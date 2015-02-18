@@ -4,6 +4,9 @@
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IntrinsicInst.h>
+
+#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 
 #include <llvm/Pass.h>
 
@@ -59,10 +62,28 @@ void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_i
     }
 }
 
-bool PrivateRecognitionPass::runOnFunction(Function &F)
+bool PrivateRecognitionPass::runOnFunction(Function &rtn)
 {
-    LoopInfo &LI = getAnalysis<LoopInfo>();
-    printLoops("", LI.rbegin( ), LI.rend( ));
+    std::vector<AllocaInst*> anlsAllocaColl;
+
+    LoopInfo &loopInfo = getAnalysis<LoopInfo>();
+    DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>( ).getDomTree( );
+
+    BasicBlock &basicBlock = rtn.getEntryBlock( );
+    for (BasicBlock::iterator bbItr = basicBlock.begin( ), bbEndItr = --basicBlock.end( ); bbItr != bbEndItr; ++bbItr)
+    {
+        AllocaInst *allocaStmt = dyn_cast<AllocaInst>(bbItr);
+        if (allocaStmt && isAllocaPromotable(allocaStmt))
+            anlsAllocaColl.push_back(allocaStmt);
+    }
+
+    if (anlsAllocaColl.empty( ))
+        return false;
+
+    for (AllocaInst *allocaInst : anlsAllocaColl)
+        allocaInst->dump( );
+
+    printLoops("", loopInfo.rbegin( ), loopInfo.rend( ));
 #if 0
     for (LoopInfo::iterator I = LI.begin( ), E = LI.end( ); I != E; ++I)
     {
@@ -99,5 +120,5 @@ bool PrivateRecognitionPass::runOnFunction(Function &F)
 #endif
     }
 #endif
-    return true; 
+    return false; 
 }
