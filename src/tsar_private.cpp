@@ -2,11 +2,13 @@
 #include <llvm/IR/Dominators.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/DebugInfo.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
+#include <llvm/Transforms/Utils/Local.h>
 
 #include <llvm/Pass.h>
 
@@ -15,6 +17,32 @@
 #include <iostream>
 
 using namespace llvm;
+
+/// \brief Print description of a variable from a source code for specified alloca.
+void printAllocaSource(raw_ostream &o, AllocaInst *AI) { 
+    DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
+    if (DDI) {
+        DIVariable DIVar(DDI->getVariable( ));
+        errs( ) << DIVar.getLineNumber( ) << ": ";
+
+        DITypeRef DITy(DIVar.getType( ));
+        if (MDNode *MDTy = dyn_cast<MDNode>((Value*) DITy)) {
+            DIDescriptor DID(MDTy);
+            if (DID.isDerivedType( )) {
+                DIDerivedType DIDTy(MDTy);
+                errs( ) << DIDTy.getTypeDerivedFrom( ).getName( ) << "* ";
+            }
+            else
+                errs( ) << DITy.getName( ) << " ";
+        }
+        else
+            errs( ) << DITy.getName( ) << " ";
+
+        errs( ) << DIVar.getName( ) << ": ";
+    }
+    AI->print(errs( ));
+    errs( ) << "\n";
+}
 
 namespace
 {
@@ -50,10 +78,8 @@ FunctionPass *llvm::createPrivateRecognitionPass( )
     return new PrivateRecognitionPass( );
 }
 
-void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_iterator rbeginItr, LoopInfo::reverse_iterator rendItr)
-{
-    for (; rbeginItr != rendItr; ++rbeginItr)
-    {
+void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_iterator rbeginItr, LoopInfo::reverse_iterator rendItr) {
+    for (; rbeginItr != rendItr; ++rbeginItr) {
         (offset + "- ").print(errs( ));
         DebugLoc loc = (*rbeginItr)->getStartLoc( );
         loc.print(getGlobalContext( ), errs( ));
@@ -62,28 +88,25 @@ void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_i
     }
 }
 
-bool PrivateRecognitionPass::runOnFunction(Function &rtn)
-{
-    std::vector<AllocaInst*> anlsAllocaColl;
+bool PrivateRecognitionPass::runOnFunction(Function &F) {
+    std::vector<AllocaInst*> AnlsAllocas;
+    LoopInfo &LpInfo = getAnalysis<LoopInfo>( );
+    DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>( ).getDomTree( );
 
-    LoopInfo &loopInfo = getAnalysis<LoopInfo>();
-    DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>( ).getDomTree( );
-
-    BasicBlock &basicBlock = rtn.getEntryBlock( );
-    for (BasicBlock::iterator bbItr = basicBlock.begin( ), bbEndItr = --basicBlock.end( ); bbItr != bbEndItr; ++bbItr)
-    {
-        AllocaInst *allocaStmt = dyn_cast<AllocaInst>(bbItr);
-        if (allocaStmt && isAllocaPromotable(allocaStmt))
-            anlsAllocaColl.push_back(allocaStmt);
+    BasicBlock &BB = F.getEntryBlock( );
+    for (BasicBlock::iterator BBItr = BB.begin( ), BBEndItr = --BB.end( ); BBItr != BBEndItr; ++BBItr) {
+        auto *AI = dyn_cast<AllocaInst>(BBItr);
+        if (AI && isAllocaPromotable(AI))
+            AnlsAllocas.push_back(AI);
     }
 
-    if (anlsAllocaColl.empty( ))
+    if (AnlsAllocas.empty( ))
         return false;
 
-    for (AllocaInst *allocaInst : anlsAllocaColl)
-        allocaInst->dump( );
+    for (AllocaInst *AI : AnlsAllocas)
+        printAllocaSource(errs( ), AI);
 
-    printLoops("", loopInfo.rbegin( ), loopInfo.rend( ));
+    printLoops("", LpInfo.rbegin( ), LpInfo.rend( ));
 #if 0
     for (LoopInfo::iterator I = LI.begin( ), E = LI.end( ); I != E; ++I)
     {
@@ -120,5 +143,5 @@ bool PrivateRecognitionPass::runOnFunction(Function &rtn)
 #endif
     }
 #endif
-    return false; 
+    return false;
 }
