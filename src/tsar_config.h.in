@@ -1,0 +1,6 @@
+/*! \file
+    \brief This contains the configured options and settings for Traits Static Analyzer (TSAR).
+*/
+
+#define TSAR_VERSION_MAJOR @TSAR_VERSION_MAJOR@
+#define TSAR_VERSION_MINOR @TSAR_VERSION_MINOR@
