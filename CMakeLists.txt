@@ -118,7 +118,7 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     include_directories("${IDB_SOURCE_DIR}/src/base")
     
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5" OR NOT LLVM_ENABLE_RTTI)
-        if(LLVM_COMPILER_IS_GCC_COMPATIBLE )
+        if(TSAR_COMPILER_IS_GCC_COMPATIBLE)
             sapfor_replace_compiler_option(CMAKE_CXX_FLAGS "-frtti" "-fno-rtti")
         elseif(MSVC)
             sapfor_replace_compiler_option(CMAKE_CXX_FLAGS "/GR" "/GR-")
