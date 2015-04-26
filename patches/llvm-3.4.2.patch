@@ -58,7 +58,7 @@ Index: include/llvm/Support/DebugLoc.h
 +#ifdef TSAR_PROJECT
 +    /// \brief prints source location /path/to/file.exe:line:col @[inlined at]
 +    void print(const LLVMContext &Ctx, raw_ostream &OS) const;
-+#endif TSAR_PROJECT
++#endif//TSAR_PROJECT
    };
  
    template <>
