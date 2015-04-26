@@ -1,16 +1,20 @@
 #include <llvm/IR/Function.h>
-#include <llvm/IR/Dominators.h>
-#include <llvm/Analysis/LoopInfo.h>
-#include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
-
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #include <llvm/Transforms/Utils/Local.h>
-
 #include <llvm/Pass.h>
+#include <llvm/Config/llvm-config.h>
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
+    #include <llvm/Analysis/Dominators.h>
+    #include <llvm/DebugInfo.h>
+#else
+    #include <llvm/IR/Dominators.h>
+    #include <llvm/IR/DebugInfo.h>
+#endif
 
 #include "tsar_pass.h"
 
@@ -25,58 +29,89 @@ void printAllocaSource(raw_ostream &o, AllocaInst *AI) {
         DIVariable DIVar(DDI->getVariable( ));
         errs( ) << DIVar.getLineNumber( ) << ": ";
 
-        DITypeRef DITy(DIVar.getType( ));
-        if (MDNode *MDTy = dyn_cast<MDNode>((Value*) DITy)) {
-            DIDescriptor DID(MDTy);
-            if (DID.isDerivedType( )) {
-                DIDerivedType DIDTy(MDTy);
-                errs( ) << DIDTy.getTypeDerivedFrom( ).getName( ) << "* ";
-            }
-            else
-                errs( ) << DITy.getName( ) << " ";
-        }
-        else
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
+        DIType DITy(DIVar.getType( ));
+        if (DITy.isDerivedType( )) {
+            DIDerivedType &DIDTy = static_cast<DIDerivedType &>(DITy);
+            errs( ) << DIDTy.getTypeDerivedFrom( ).getName( ) << "* ";
+        } else {
             errs( ) << DITy.getName( ) << " ";
-
+        }
+#else
+        DITypeRef DITyRef(DIVar.getType( ));
+        Value *DITyVal = (Value *) DITyRef;
+        if (DITyVal) {
+            if (const MDNode *MD = dyn_cast<MDNode>(DITyVal)) {
+                DIType DITy(MD);
+                if (DITy.isDerivedType( )) {
+                    DIDerivedType &DIDTy = static_cast<DIDerivedType &>(DITy);
+                    errs( ) << DIDTy.getTypeDerivedFrom( ).getName( ) << "* ";
+                } else {
+                    errs( ) << DITy.getName( ) << " ";
+                }
+            } else {
+                errs( ) << DITyRef.getName( ) << " ";
+            }
+        } else {
+            errs( ) << DITyRef.getName( ) << " ";
+        }
+#endif
         errs( ) << DIVar.getName( ) << ": ";
     }
     AI->print(errs( ));
     errs( ) << "\n";
 }
 
-namespace
-{
-    struct PrivateRecognitionPass : public FunctionPass 
-    {
-        static char ID;
-        PrivateRecognitionPass( ) : FunctionPass(ID) {
-            initializePrivateRecognitionPassPass(*PassRegistry::getPassRegistry( ));
-        }
+namespace {
+struct PrivateRecognitionPass : public FunctionPass {
+    static char ID;
+    PrivateRecognitionPass( ) : FunctionPass(ID) {
+        initializePrivateRecognitionPassPass(*PassRegistry::getPassRegistry( ));
+    }
 
-        bool runOnFunction(Function &F) override;
+    bool runOnFunction(Function &F) override;
 
-        void getAnalysisUsage(AnalysisUsage &AU) const override 
-        {
-            AU.addRequired<DominatorTreeWrapperPass>( );
-            AU.addRequired<LoopInfo>( );
-            AU.setPreservesAll( );
-        }
-    private:
-        void printLoops(const Twine &offset, LoopInfo::reverse_iterator rbeginItr, LoopInfo::reverse_iterator rendItr);
-    };
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
+        AU.addRequired<DominatorTree>( );
+#else
+        AU.addRequired<DominatorTreeWrapperPass>( );
+#endif
+        AU.addRequired<LoopInfo>( );
+        AU.setPreservesAll( );
+    }
+
+private:
+    void printLoops(const Twine &offset, LoopInfo::reverse_iterator rbeginItr, LoopInfo::reverse_iterator rendItr);
+
+    void analyzeLoop(Loop *L);
+};
 }
 
 char PrivateRecognitionPass::ID = 0;
 
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private", "Private Variable Analysis", true, true)
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
+INITIALIZE_PASS_DEPENDENCY(DominatorTree)
+#else
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+#endif
 INITIALIZE_PASS_DEPENDENCY(LoopInfo)
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private", "Private Variable Analysis", true, true)
 
-FunctionPass *llvm::createPrivateRecognitionPass( ) 
-{
+FunctionPass *llvm::createPrivateRecognitionPass( ) {
     return new PrivateRecognitionPass( );
 }
+
+void PrivateRecognitionPass::analyzeLoop(Loop *L) {
+    for (Loop::iterator I = L->begin( ), E = L->end( ); I != E; ++I) {
+        analyzeLoop(*I);
+    }
+    L->block_begin( );
+//    BasicBlock *BB;    
+}
+
+
 
 void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_iterator rbeginItr, LoopInfo::reverse_iterator rendItr) {
     for (; rbeginItr != rendItr; ++rbeginItr) {
@@ -91,7 +126,12 @@ void PrivateRecognitionPass::printLoops(const Twine &offset, LoopInfo::reverse_i
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
     std::vector<AllocaInst*> AnlsAllocas;
     LoopInfo &LpInfo = getAnalysis<LoopInfo>( );
+
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
+    DominatorTreeBase<BasicBlock> &DomTree = *(getAnalysis<DominatorTree>( ).DT);
+#else
     DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>( ).getDomTree( );
+#endif
 
     BasicBlock &BB = F.getEntryBlock( );
     for (BasicBlock::iterator BBItr = BB.begin( ), BBEndItr = --BB.end( ); BBItr != BBEndItr; ++BBItr) {
