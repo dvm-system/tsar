@@ -10,6 +10,18 @@ project(TSAR CXX)
 set(SAPFOR_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../../..")
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
+add_definitions("-D${PROJECT_NAME}_PROJECT")
+
+# Determine type of compiler to specify flags properly.
+# This code is taken from LLVM (cmake/modulesHandleLLVMOptions.cmake).
+if(CMAKE_COMPILER_IS_GNUCXX)
+    set(TSAR_COMPILER_IS_GCC_COMPATIBLE ON)
+elseif(MSVC)
+    set(TSAR_COMPILER_IS_GCC_COMPATIBLE OFF)
+elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+    set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
+endif()
+
 # There are four steps to configure LLVM:
 # 1. Check out a working copy ${LLVM_SOURCE_DIR} (or update if it already exists) from LLVM repository ${LLVM_REPO}
 # 2. Apply patch in ${CMAKE_SOURCE_DIR}/patches/llvm.patch to the working copy ${LLVM_SOURCE_DIR}
@@ -31,6 +43,7 @@ if(DOWNLOAD_LLVM AND LOCAL_LLVM)
 endif()
 
 include(llvm-utility)
+include(utility)
 
 # Download LLVM if need
 if(DOWNLOAD_LLVM)
@@ -69,6 +82,20 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
        message(STATUS "${LLVM_STATUS} - done")
     endif()
 
+    if (EXISTS "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_PACKAGE_VERSION}.patch")
+        set(LLVM_STATUS "Applying version dependent patch (${LLVM_PACKAGE_VERSION}) to the LLVM working copy")
+        message(STATUS ${LLVM_STATUS})
+        execute_process(COMMAND ${Subversion_SVN_EXECUTABLE}
+                                patch "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_PACKAGE_VERSION}.patch"
+                                ${LLVM_SOURCE_DIR}
+                                RESULT_VARIABLE LLVM_ERROR)
+        if(LLVM_ERROR)
+           message(FATAL_ERROR "${LLVM_STATUS} - error")
+        else()
+           message(STATUS "${LLVM_STATUS} - done")
+        endif()
+    endif()
+
     set(LLVM_STATUS "Specifying LLVM dependences (include directories, libraries, macros etc.)")
     message(STATUS ${LLVM_STATUS})
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
@@ -84,13 +111,19 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     if((${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
         link_directories(${LLVM_LIBRARY_DIRS})
     endif()
-    message(STATUS "${LLVM_STATUS} - done")
+    message(STATUS "${LLVM_STATUS} - done")   
 
 # Set additional include directories and definitions
     set(IDB_SOURCE_DIR "${SAPFOR_SOURCE_DIR}/idb/trunk")
     include_directories("${IDB_SOURCE_DIR}/src/base")
-
-    add_definitions("-D${PROJECT_NAME}_PROJECT")
+    
+    if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5" OR NOT LLVM_ENABLE_RTTI)
+        if(LLVM_COMPILER_IS_GCC_COMPATIBLE )
+            sapfor_replace_compiler_option(CMAKE_CXX_FLAGS "-frtti" "-fno-rtti")
+        elseif(MSVC)
+            sapfor_replace_compiler_option(CMAKE_CXX_FLAGS "/GR" "/GR-")
+        endif()
+    endif()
 
     add_subdirectory(src)
 endif()
