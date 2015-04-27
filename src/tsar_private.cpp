@@ -16,6 +16,7 @@
 #include <llvm/IR/DebugInfo.h>
 #endif
 
+#include "tsar_private.h"
 #include "tsar_pass.h"
 
 #include <iostream>
@@ -132,7 +133,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 #else
   DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 #endif
-
+  
   BasicBlock &BB = F.getEntryBlock();
   for (BasicBlock::iterator BBItr = BB.begin(), BBEndItr = --BB.end(); BBItr != BBEndItr; ++BBItr) {
     auto *AI = dyn_cast<AllocaInst>(BBItr);
