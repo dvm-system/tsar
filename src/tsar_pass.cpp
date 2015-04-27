@@ -4,10 +4,10 @@
 using namespace llvm;
 
 void llvm::initializeTSAR(PassRegistry &Registry) {
-    initializePrivateRecognitionPassPass(Registry);
+  initializePrivateRecognitionPassPass(Registry);
 }
 
 
 void initializeTSAR(LLVMPassRegistryRef R) {
-    initializeTSAR(*unwrap(R));
+  initializeTSAR(*unwrap(R));
 }

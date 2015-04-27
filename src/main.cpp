@@ -23,22 +23,19 @@
 #include "tsar_exception.h"
 #include "tsar_pass.h"
 
-namespace Base
-{
-    const Base::TextAnsi TextToAnsi(const Base::Text &text)
-    {
-        return text;
-    }
+namespace Base {
+const Base::TextAnsi TextToAnsi(const Base::Text &text) {
+  return text;
+}
 }
 
 using namespace Analyzer;
 using namespace llvm;
 
-void PrintVersion( )
-{
-    outs() << Base::TextToAnsi(Analyzer::TSAR::Acronym::Data() + TEXT(" ") +
-                               Analyzer::TSAR::Version::Field( ) + TEXT(" ") +
-                               Analyzer::TSAR::Version::Data( )).c_str( );
+void PrintVersion() {
+  outs() << Base::TextToAnsi(Analyzer::TSAR::Acronym::Data() + TEXT(" ") +
+                             Analyzer::TSAR::Version::Field() + TEXT(" ") +
+                             Analyzer::TSAR::Version::Data()).c_str();
 }
 
 static cl::list<const PassInfo*, bool, PassNameParser> passList(cl::desc("Analysis available (use with -debug-analyzer):"));
@@ -51,86 +48,78 @@ static cl::opt<std::string> outputFilename("o", cl::desc("Override output filena
 
 static cl::opt<bool> debugMode("debug-analyzer", cl::desc("Enable analysis debug mode"));
 
-int main(int argc, char** argv)
-{
-    sys::PrintStackTraceOnErrorSignal( );
-    PrettyStackTraceProgram stackTracePtrogram(argc, argv);
+int main(int argc, char** argv) {
+  sys::PrintStackTraceOnErrorSignal();
+  PrettyStackTraceProgram stackTracePtrogram(argc, argv);
 
-    EnableDebugBuffering = true;
+  EnableDebugBuffering = true;
 
-    llvm_shutdown_obj shutdownObj; //call llvm_shutdown() on exit.
+  llvm_shutdown_obj shutdownObj; //call llvm_shutdown() on exit.
 
-    LLVMContext &context = llvm::getGlobalContext( );
+  LLVMContext &context = llvm::getGlobalContext();
 
-    PassRegistry &registry = *llvm::PassRegistry::getPassRegistry( );
-    initializeCore(registry);
-    initializeDebugIRPass(registry);
-    initializeAnalysis(registry);
-    initializeTSAR(registry);
+  PassRegistry &registry = *llvm::PassRegistry::getPassRegistry();
+  initializeCore(registry);
+  initializeDebugIRPass(registry);
+  initializeAnalysis(registry);
+  initializeTSAR(registry);
 
-    cl::SetVersionPrinter(PrintVersion);
-    cl::ParseCommandLineOptions(argc, argv,
-                                Base::TextToAnsi(TSAR::Title::Data( ) +
-                                TEXT("(") + TSAR::Acronym::Data( ) + TEXT(")")).c_str( ));
+  cl::SetVersionPrinter(PrintVersion);
+  cl::ParseCommandLineOptions(argc, argv,
+                              Base::TextToAnsi(TSAR::Title::Data() +
+                              TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
 
-    SMDiagnostic error;
+  SMDiagnostic error;
 
-    std::unique_ptr<llvm::Module> module;
-    module.reset(ParseIRFile(inputProject, error, context));
+  std::unique_ptr<llvm::Module> module;
+  module.reset(ParseIRFile(inputProject, error, context));
 
-    if (!module.get( ))
-    {
-        error.print(argv[0], errs( ));
+  if (!module.get()) {
+    error.print(argv[0], errs());
+    return 1;
+  }
+
+  if (outputFilename.empty())
+    outputFilename = "-";
+  std::unique_ptr<tool_output_file> out;
+  std::string errorInfo;
+  out.reset(new tool_output_file(outputFilename.c_str(), errorInfo, sys::fs::F_None));
+  if (!errorInfo.empty()) {
+    error = SMDiagnostic(outputFilename, SourceMgr::DK_Error, errorInfo);
+    error.print(argv[0], errs());
+    return 1;
+  }
+
+  PassManager passes;
+
+  if (!debugMode && passList.size() > 0)
+    errs() << argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
+
+  if (debugMode) {
+    for (unsigned i = 0; i < passList.size(); ++i) {
+      const PassInfo *passInfo = passList[i];
+      Pass *pass = passInfo->getNormalCtor()();
+      if (!pass) {
+        errs() << argv[0] << ": error: cannot create pass: " << passInfo->getPassName() << "\n";
         return 1;
+      }
+      passes.add(pass);
     }
+  } else {
+    passes.add(createPrivateRecognitionPass());
 
-    if (outputFilename.empty( ))
-        outputFilename = "-";
-    std::unique_ptr<tool_output_file> out;
-    std::string errorInfo;
-    out.reset(new tool_output_file(outputFilename.c_str( ), errorInfo, sys::fs::F_None));
-    if (!errorInfo.empty( ))
-    {
-        error = SMDiagnostic(outputFilename, SourceMgr::DK_Error, errorInfo);
-        error.print(argv[0], errs( ));
-        return 1;
-    }
+  }
 
-    PassManager passes;
-
-    if (!debugMode && passList.size( ) > 0)
-        errs( ) << argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
-
-    if (debugMode)
-    {
-        for (unsigned i = 0; i < passList.size( ); ++i)
-        {
-            const PassInfo *passInfo = passList[i];
-            Pass *pass = passInfo->getNormalCtor( )();
-            if (!pass)
-            {
-                errs( ) << argv[0] << ": error: cannot create pass: " << passInfo->getPassName( ) << "\n";
-                return 1;
-            }
-            passes.add(pass);
-        }
-    }
-    else
-    {
-        passes.add(createPrivateRecognitionPass( ));
-
-    }
-
-    passes.add(createVerifierPass( ));
+  passes.add(createVerifierPass());
 #if (!(LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5))
-    passes.add(createDebugInfoVerifierPass( ));
+  passes.add(createDebugInfoVerifierPass());
 #endif
- 
-    cl::PrintOptionValues( );
 
-    passes.run(*module.get( ));
+  cl::PrintOptionValues();
 
-    out->keep( );
+  passes.run(*module.get());
 
-    return 0;
+  out->keep();
+
+  return 0;
 }
