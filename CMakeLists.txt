@@ -1,14 +1,18 @@
 cmake_minimum_required(VERSION 2.8.0)
 
-find_package(Subversion)
-if(NOT Subversion_FOUND)
-    message(FATAL_ERROR "Subversion command line client executable is not found.")
-endif()
-
 project(TSAR CXX)
 
 set(SAPFOR_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../../..")
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+
+include(CheckCXXCompilerFlag)
+include(llvm-utility)
+include(utility)
+
+find_package(Subversion)
+if(NOT Subversion_FOUND)
+    message(FATAL_ERROR "Subversion command line client executable is not found.")
+endif()
 
 add_definitions("-D${PROJECT_NAME}_PROJECT")
 
@@ -19,8 +23,26 @@ if(CMAKE_COMPILER_IS_GNUCXX)
 elseif(MSVC)
     set(TSAR_COMPILER_IS_GCC_COMPATIBLE OFF)
 elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-    set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
+    set(TSAR_COMPILER_IS_GCC_COMPATIBLE ON)
 endif()
+
+
+# Enable C++ 11 support.
+# This code is taken from LLVM (cmake/modulesHandleLLVMOptions.cmake).
+if(TSAR_COMPILER_IS_GCC_COMPATIBLE)
+    check_cxx_compiler_flag("-std=c++11" CXX_SUPPORTS_CXX11)
+    if(CXX_SUPPORTS_CXX11)
+      if(CYGWIN OR MINGW)
+        # MinGW and Cygwin are a bit stricter and lack things like
+        # 'strdup', 'stricmp', etc in c++11 mode.
+        append("-std=gnu++11" CMAKE_CXX_FLAGS)
+      else()
+        append("-std=c++11" CMAKE_CXX_FLAGS)
+      endif()
+    else()
+      message(FATAL_ERROR "TSAR requires C++11 support but the '-std=c++11' flag isn't supported.")
+    endif()
+endif(TSAR_COMPILER_IS_GCC_COMPATIBLE)
 
 # There are four steps to configure LLVM:
 # 1. Check out a working copy ${LLVM_SOURCE_DIR} (or update if it already exists) from LLVM repository ${LLVM_REPO}
@@ -41,9 +63,6 @@ option(LOCAL_LLVM "Use existing LLVM installation" OFF)
 if(DOWNLOAD_LLVM AND LOCAL_LLVM)
     message(FATAL_ERROR "Options DOWNLOAD_LLVM and LOCAL_LLVM are not compatible")
 endif()
-
-include(llvm-utility)
-include(utility)
 
 # Download LLVM if need
 if(DOWNLOAD_LLVM)
@@ -111,12 +130,12 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     if((${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
         link_directories(${LLVM_LIBRARY_DIRS})
     endif()
-    message(STATUS "${LLVM_STATUS} - done")   
+    message(STATUS "${LLVM_STATUS} - done")
 
 # Set additional include directories and definitions
     set(IDB_SOURCE_DIR "${SAPFOR_SOURCE_DIR}/idb/trunk")
     include_directories("${IDB_SOURCE_DIR}/src/base")
-    
+
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5" OR NOT LLVM_ENABLE_RTTI)
         if(TSAR_COMPILER_IS_GCC_COMPATIBLE)
             sapfor_replace_compiler_option(CMAKE_CXX_FLAGS "-frtti" "-fno-rtti")
