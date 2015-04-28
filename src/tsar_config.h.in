@@ -1,6 +1,22 @@
-/*! \file
-    \brief This contains the configured options and settings for Traits Static Analyzer (TSAR).
-*/
+//===------------- tsar_config.h - tsar configuration -------------*- C -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+//
+// This file enumerates variables from the TSAR configuration.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef TSAR_CONFIG_H
+#define TSAR_CONFIG_H
 
 #define TSAR_VERSION_MAJOR @TSAR_VERSION_MAJOR@
 #define TSAR_VERSION_MINOR @TSAR_VERSION_MINOR@
+#define TSAR_VERSION "@TSAR_VERSION@"
+#define TSAR_FULL_NAME "@TSAR_FULL_NAME@"
+#define TSAR_NAME "@TSAR_NAME@"
+#define TSAR_STRING "@TSAR_STRING@"
+#define TSAR_AUTHOR "@TSAR_AUTHOR@"
+
+#endif//TSAR_CONFIG_H

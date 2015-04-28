@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 2.8.0)
 
 project(TSAR CXX)
 
+set(TSAR_VERSION_MAJOR 0)
+set(TSAR_VERSION_MINOR 1)
+set(TSAR_FULL_NAME "Traits Static Analyzer")
+set(TSAR_VERSION "${TSAR_VERSION_MAJOR}.${TSAR_VERSION_MINOR}")
+set(TSAR_NAME "TSAR")
+set(TSAR_STRING "${TSAR_NAME} ${TSAR_VERSION}")
+set(TSAR_AUTHOR "Nikita A. Kataev (kataev_nik@mail.ru)")
+
+
 set(SAPFOR_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../../..")
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 

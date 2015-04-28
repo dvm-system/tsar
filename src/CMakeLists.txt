@@ -1,7 +1,3 @@
-# Build TSAR configuration header
-set(TSAR_VERSION_MAJOR 0)
-set(TSAR_VERSION_MINOR 1)
-
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
