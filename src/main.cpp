@@ -1,3 +1,16 @@
+//===-------- main.cpp ------ Traits Static Analyzer ------------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+//
+// Traits Static Analyzer (TSAR) is a part of a system for automated
+// parallelization SAPFOR. The main goal of analyzer is to determine
+// data dependences, private and induction variables and other traits of
+// analyzed program which could be helpfull to parallelize program automaticly.
+//
+//===----------------------------------------------------------------------===//
+
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>

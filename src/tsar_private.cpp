@@ -1,3 +1,13 @@
+//===--- tsar_private.cpp - Private Variable Analyzer -----------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+//
+// This file implements passes to analyze variables which can be privatized.
+//
+//===----------------------------------------------------------------------===//
+
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/LLVMContext.h>

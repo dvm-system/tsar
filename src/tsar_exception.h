@@ -1,51 +1,60 @@
-/*! \file
-    \brief This contains descriptions of errors possibly arising during analysis of a program.
-*/
+//===---- tsar_exception.h - List of TSAR errors ----------------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+//
+// This file contains descriptions of errors possibly arising
+// during analysis of a program.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef TSAR_EXCEPTION_H
 #define TSAR_EXCEPTION_H
 
 #include <exception.h>
+#include "tsar_config.h"
 
-namespace Analyzer
-{
-    namespace ErrorList
-    {
-        typedef Base::ErrorList::Unsupported Unsupported; //!< An error indicates that a feature is not implemented yet.
-        typedef Base::ErrorList::Unclassified Unclassified; //!< This is unclassified error.
-    }
+namespace Analyzer {
+namespace ErrorList {
+  /// An error indicates that a feature is not implemented yet.
+  typedef Base::ErrorList::Unsupported Unsupported;
 
-    //! This is a description of Traits Static Aalyzer.
-    struct TSAR
-    {
-        //! Name of the library.
-        DESCRIPTION_FIELD(Title, TEXT("Title"), TEXT("Traits Static Analyzer"))
+  /// This is unclassified error.
+  typedef Base::ErrorList::Unclassified Unclassified;
+}
 
-        //! Abbreviation of the name.
-        DESCRIPTION_FIELD(Acronym, TEXT("Acronym"), TEXT("TSAR"))
+/// This is a description of Traits Static Aalyzer.
+struct TSAR {
+  /// Name of the library.
+  DESCRIPTION_FIELD(Title, TEXT("Title"), TEXT(TSAR_FULL_NAME))
 
-        //! Version of the library.
-        DESCRIPTION_FIELD(Version, TEXT("Version"), TEXT("0.1 (13.12.2014)"))
+  /// Abbreviation of the name.
+  DESCRIPTION_FIELD(Acronym, TEXT("Acronym"), TEXT(TSAR_NAME))
 
-        //! Author of the library.
-        DESCRIPTION_FIELD(Author, TEXT("Author"), TEXT("Nikita A. Kataev, kataev_nik@mail.ru"))
+  /// Version of the library.
+  DESCRIPTION_FIELD(Version, TEXT("Version"), TEXT(TSAR_VERSION))
 
-        //! List contains description of the library.
-        typedef CELL_COLL_4(Title, Acronym, Version, Author) Description;
+  /// Author of the library.
+  DESCRIPTION_FIELD(Author, TEXT("Author"), TEXT(TSAR_AUTHOR))
 
-        //! List of errors possibly arising during analysis of a program.
-        typedef CELL_COLL_2(ErrorList::Unsupported, ErrorList::Unclassified) Errors;
+  /// List contains description of the library.
+  typedef CELL_COLL_4(Title, Acronym, Version, Author) Description;
 
-        //! Priority of errors.
-        typedef Base::ErrorList::Priority ErrorPriority;
+  /// List of errors possibly arising during analysis of a program.
+  typedef CELL_COLL_2(ErrorList::Unsupported, ErrorList::Unclassified) Errors;
 
-        //! Dependences from other applications.
-        typedef CELL_COLL_1(Base::BCL) Applications;
+  /// Priority of errors.
+  typedef Base::ErrorList::Priority ErrorPriority;
 
-        //! Stub required to add a description to a static list of applications.
-        typedef Utility::Null ValueType;
-    };
+  /// Dependences from other applications.
+  typedef CELL_COLL_1(Base::BCL) Applications;
 
-    //! This encapsulated base errors arising in library for program analysis.
-    typedef Base::Exception<TSAR> TSARxception;
+  /// Stub required to add a description to a static list of applications.
+  typedef Utility::Null ValueType;
+};
+
+/// This encapsulated base errors arising in library for program analysis.
+typedef Base::Exception<TSAR> TSARxception;
 }
 #endif//TSAR_EXCEPTION_H

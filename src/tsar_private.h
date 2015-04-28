@@ -1,4 +1,4 @@
-//===------ LoopInfo.h - Private Variable Analyzer --------------*- C++ -*-===//
+//===--- tsar_private.h - Private Variable Analyzer --------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
