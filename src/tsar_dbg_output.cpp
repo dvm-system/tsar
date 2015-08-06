@@ -22,8 +22,8 @@
 #include "tsar_dbg_output.h"
 
 using namespace llvm;
-using namespace tsar;
 
+namespace tsar {
 void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
@@ -67,7 +67,7 @@ namespace {
 void printLoops(llvm::raw_ostream &o, const Twine &Offset,
                 LoopInfo::reverse_iterator ReverseI,
                 LoopInfo::reverse_iterator ReverseEI) {
-  for (; ReverseI != ReverseEI; ++ReverseEI) {
+  for (; ReverseI != ReverseEI; --ReverseEI) {
     (Offset + "- ").print(o);
     DebugLoc loc = (*ReverseI)->getStartLoc();
     loc.print(getGlobalContext(), o);
@@ -79,4 +79,5 @@ void printLoops(llvm::raw_ostream &o, const Twine &Offset,
 
 void printLoops(llvm::raw_ostream &o, const LoopInfo &LI) {
   printLoops(o, "", LI.rbegin(), LI.rend());
+}
 }
