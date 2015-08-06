@@ -73,7 +73,7 @@ namespace tsar {
 /// - static meetOperator(const ValueType &, ValueType &) -
 ///     Evaluates a meet operator, the result is stored in the second
 ///     parameter.
-/// - satic bool transferFunction(const ValueType &, NodeType *)
+/// - satic bool transferFunction(ValueType, NodeType *)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
 ///     produced on previouse iteration of the data-flow analysis algorithm.
@@ -106,20 +106,22 @@ template<class GraphType> void solveDataFlowIteratively(GraphType DFG) {
   assert(DFG && "Data-flow graph must not be null!");
   for (nodes_iterator I = DFT::nodes_begin(DFG), E = DFT::nodes_end(DFG);
        I != E; ++I) {
-    DFT::setValue(DFT::boundaryCondition(DFG), *I);
+    DFT::setValue(DFT::topElement(DFG), *I);
   }
-  DFT::setValue(DFT::topElement(DFG), DFT::getEntryNode(DFG));
+  DFT::setValue(DFT::boundaryCondition(DFG), DFT::getEntryNode(DFG));
   bool isChanged = true;
   do {
     isChanged = false;
     for (nodes_iterator I = DFT::nodes_begin(DFG), E = DFT::nodes_end(DFG);
          I != E; ++I) {
-      ValueType Value = DFT::topElement(DFG);
+      assert(DFT::child_begin(*I) != DFT::child_end(*I) &&
+             "Data-flow graph must not contain unreachable nodes!");
+      ValueType Value(DFT::topElement(DFG));
       for (ChildIteratorType CI = DFT::child_begin(*I), CE = DFT::child_end(*I);
             CI != CE; ++CI) {
         DFT::meetOperator(DFT::getValue(*CI), Value);
       }
-      isChanged = isChanged || DFT::transferFunction(Value, *I);
+      isChanged = DFT::transferFunction(std::move(Value), *I) || isChanged;
     }
   } while (isChanged);
 }
@@ -144,7 +146,8 @@ template<class GraphType> void solveDataFlowTopologicaly(GraphType DFG) {
   typedef typename DFT::NodeType NodeType;
   typedef typename DFT::ValueType ValueType;
   typedef llvm::po_iterator<
-    GraphType, llvm::SmallPtrSet<NodeType *, 8>, false, DFT> po_iterator;
+    GraphType, llvm::SmallPtrSet<NodeType *, 8>, false, 
+    llvm::GraphTraits<llvm::Inverse<GraphType> > > po_iterator;
   typedef std::vector<NodeType *> RPOTraversal;
   typedef typename RPOTraversal::reverse_iterator rpo_iterator;
   assert(DFG && "Data-flow graph must not be null!");
@@ -156,10 +159,13 @@ template<class GraphType> void solveDataFlowTopologicaly(GraphType DFG) {
   rpo_iterator I = RPOT.rbegin(), E = RPOT.rend();
   assert(*I == DFT::getEntryNode(DFG) &&
           "The first node in the topological order differs from the entry node in the data-flow framework!");
-  DFT::setValue(DFT::topElement(DFG), DFT::getEntryNode(DFG));  
-  for (; I != E; ++I) {
-    DFT::setValue(DFT::boundaryCondition(DFG), *I);
-    ValueType Value = DFT::topElement(DFG);
+  for (++I; I != E; ++I)
+    DFT::setValue(DFT::topElement(DFG), *I);
+  DFT::setValue(DFT::boundaryCondition(DFG), DFT::getEntryNode(DFG));
+  for (I = RPOT.rbegin(), ++I; I != E; ++I) {
+    assert(DFT::child_begin(*I) != DFT::child_end(*I) &&
+           "Data-flow graph must not contain unreachable nodes!");
+    ValueType Value(DFT::topElement(DFG));
     for (ChildIteratorType CI = DFT::child_begin(*I), CE = DFT::child_end(*I);
          CI != CE; ++CI) {
       DFT::meetOperator(DFT::getValue(*CI), Value);
