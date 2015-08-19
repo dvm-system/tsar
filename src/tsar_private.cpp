@@ -117,7 +117,7 @@ FunctionPass *llvm::createPrivateRecognitionPass() {
   return new PrivateRecognitionPass();
 }
 
-bool PrivateDFValue::intersect(const PrivateDFValue &with) {
+bool AllocaDFValue::intersect(const AllocaDFValue &with) {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
   if (with.mKind == KIND_FULL)
@@ -135,7 +135,7 @@ bool PrivateDFValue::intersect(const PrivateDFValue &with) {
   return mAllocas.size() != PrevAllocas.size();
 }
 
-bool PrivateDFValue::merge(const PrivateDFValue &with) {
+bool AllocaDFValue::merge(const AllocaDFValue &with) {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
   if (mKind == KIND_FULL)
@@ -151,7 +151,7 @@ bool PrivateDFValue::merge(const PrivateDFValue &with) {
   return isChanged;
 }
 
-bool PrivateDFValue::operator==(const PrivateDFValue &RHS) const {
+bool AllocaDFValue::operator==(const AllocaDFValue &RHS) const {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(RHS.mKind != INVALID_KIND && "Collection is corrupted!");
   if (this == &RHS || mKind == KIND_FULL && RHS.mKind == KIND_FULL)
@@ -181,9 +181,9 @@ PrivateDFNode(AnlsAllocas), BlockBase::BlockDFBase(BB) {
   }
 }
 
-bool PrivateBBNode::transferFunction(PrivateDFValue In) {
+bool PrivateBBNode::transferFunction(AllocaDFValue In) {
   mIn = std::move(In);
-  PrivateDFValue newOut(PrivateDFValue::emptyValue());
+  AllocaDFValue newOut(AllocaDFValue::emptyValue());
   newOut.insert(mDefs.begin(), mDefs.end());
   newOut.merge(mIn);
   if (mOut != newOut) {
@@ -200,10 +200,10 @@ void PrivateLNode::collapse() {
   //   of execution paths of iterations of the loop.
   // * LatchDefs is a set of must define allocas before a branch to
   //   a next arbitrary iteration.
-  PrivateDFValue ExitingDefs(topElement());
+  AllocaDFValue ExitingDefs(topElement());
   for (PrivateDFNode *N : getExitingNodes())
     ExitingDefs.intersect(N->getOut());
-  PrivateDFValue LatchDefs(topElement());
+  AllocaDFValue LatchDefs(topElement());
   for (PrivateDFNode *N : getLatchNodes())
     LatchDefs.intersect(N->getOut());
   AllocaSet AllNodesAccesses;

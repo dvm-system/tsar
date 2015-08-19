@@ -22,11 +22,11 @@
 #include "tsar_df_loop.h"
 
 namespace tsar {
-/// \brief Representation of a data-flow value.
+/// \brief Representation of a data-flow value formed by a set of allocas.
 /// 
-/// A data-flow value is a set of variables for which a number of operations
+/// A data-flow value is a set of allocas for which a number of operations
 /// is defined.
-class PrivateDFValue {
+class AllocaDFValue {
   typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
   // There are two kind of values. The KIND_FULL kind means that the set of
   // variables is full and contains all variables used in the analyzed program.
@@ -42,20 +42,20 @@ class PrivateDFValue {
     INVALID_KIND,
     NUMBER_KIND = INVALID_KIND
   };
-  PrivateDFValue(Kind K) : mKind(K) {
+  AllocaDFValue(Kind K) : mKind(K) {
     assert(FIRST_KIND <= K && K <= LAST_KIND &&
             "The specified kind is invalid!");
   }
 public:
   /// Creats a value, which contains all variables used in the analyzed 
   /// program.
-  static PrivateDFValue fullValue() {
-    return PrivateDFValue(PrivateDFValue::KIND_FULL);
+  static AllocaDFValue fullValue() {
+    return AllocaDFValue(AllocaDFValue::KIND_FULL);
   }
 
   /// Creates an empty value.
-  static PrivateDFValue emptyValue() {
-    return PrivateDFValue(PrivateDFValue::KIND_MASK);
+  static AllocaDFValue emptyValue() {
+    return AllocaDFValue(AllocaDFValue::KIND_MASK);
   }
 
   /// \brief Calculates the difference between a set of allocas and a set
@@ -71,7 +71,7 @@ public:
   template<class alloca_iterator, class ResultSet>
   static void difference(const alloca_iterator &AIBegin,
                          const alloca_iterator &AIEnd,
-                         const PrivateDFValue &Value, ResultSet &Result) {
+                         const AllocaDFValue &Value, ResultSet &Result) {
     //If all allocas are contained in Value or range of iterators is empty,
     //than Result should be empty.
     if (Value.mKind == KIND_FULL || AIBegin == AIEnd)
@@ -84,24 +84,24 @@ public:
   }
 
   /// Destructor.
-  ~PrivateDFValue() { mKind = INVALID_KIND; }
+  ~AllocaDFValue() { mKind = INVALID_KIND; }
 
   /// Move constructor.
-  PrivateDFValue(PrivateDFValue &&that) :
+  AllocaDFValue(AllocaDFValue &&that) :
     mKind(that.mKind), mAllocas(std::move(that.mAllocas)) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
   }
 
   /// Copy constructor.
-  PrivateDFValue(const PrivateDFValue &that) :
+  AllocaDFValue(const AllocaDFValue &that) :
     mKind(that.mKind), mAllocas(that.mAllocas) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
   }
 
   /// Move assignment operator.
-  PrivateDFValue & operator= (PrivateDFValue &&that) {
+  AllocaDFValue & operator= (AllocaDFValue &&that) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
     if (this != &that) {
@@ -112,7 +112,7 @@ public:
   }
 
   /// Copy assignment operator.
-  PrivateDFValue & operator= (const PrivateDFValue &that) {
+  AllocaDFValue & operator= (const AllocaDFValue &that) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
     if (this != &that) {
@@ -161,16 +161,16 @@ public:
   }
 
   /// Realizes intersection between two values.
-  bool intersect(const PrivateDFValue &with);
+  bool intersect(const AllocaDFValue &with);
 
   /// Realizes merger between two values.
-  bool merge(const PrivateDFValue &with);
+  bool merge(const AllocaDFValue &with);
 
   /// Compares two values.
-  bool operator==(const PrivateDFValue &RHS) const;
+  bool operator==(const AllocaDFValue &RHS) const;
 
   /// Compares two values.
-  bool operator!=(const PrivateDFValue &RHS) const { return !(*this == RHS); }
+  bool operator!=(const AllocaDFValue &RHS) const { return !(*this == RHS); }
 private:
   Kind mKind;
   AllocaSet mAllocas;
@@ -189,8 +189,8 @@ private:
 template<class alloca_iterator, class ResultSet>
 static void difference(const alloca_iterator &AIBegin,
                        const alloca_iterator &AIEnd,
-                       const PrivateDFValue &Value, ResultSet &Result) {
-  PrivateDFValue::difference(AIBegin, AIEnd, Value, Result);
+                       const AllocaDFValue &Value, ResultSet &Result) {
+  AllocaDFValue::difference(AIBegin, AIEnd, Value, Result);
 }
 
 /// Instances of this class are used to represent nodes in a data-flow graph.
@@ -207,22 +207,22 @@ public:
   /// that should be analyzed.
   explicit PrivateDFNode(const AllocaSet &AnlsAllocas) :
     mAnlsAllocas(AnlsAllocas),
-    mIn(PrivateDFValue::emptyValue()), mOut(PrivateDFValue::emptyValue()) {}
+    mIn(AllocaDFValue::emptyValue()), mOut(AllocaDFValue::emptyValue()) {}
 
   /// Virtual destructor.
   virtual ~PrivateDFNode() {}
 
   /// Returns a data-flow value associated with this node.
-  const PrivateDFValue & getValue() const { return mOut; }
+  const AllocaDFValue & getValue() const { return mOut; }
 
   /// Specifies a data-flow value associated with this node.
-  void setValue(PrivateDFValue V) { mOut = std::move(V); }
+  void setValue(AllocaDFValue V) { mOut = std::move(V); }
 
   /// Returns a data-flow value before the node.
-  const PrivateDFValue & getIn() const { return mIn; }
+  const AllocaDFValue & getIn() const { return mIn; }
 
   /// Returns a data-flow value after the node.
-  const PrivateDFValue & getOut() const { return getValue(); }
+  const AllocaDFValue & getOut() const { return getValue(); }
 
   /// Returns allocas which have definitions in the node.
   const AllocaSet & getDefs() const { return mDefs; }
@@ -241,12 +241,12 @@ public:
   /// the data-flow value produced on previouse iteration of the data-flow 
   /// analysis algorithm. For the first iteration the new value compares with
   /// the initial one.
-  virtual bool transferFunction(PrivateDFValue In) = 0;
+  virtual bool transferFunction(AllocaDFValue In) = 0;
 
 protected:
   const AllocaSet &mAnlsAllocas;
-  PrivateDFValue mIn;
-  PrivateDFValue mOut;
+  AllocaDFValue mIn;
+  AllocaDFValue mOut;
   AllocaSet mDefs;
   AllocaSet mUses;
 };
@@ -388,7 +388,7 @@ public:
   ///
   /// A data-flow value for the entry node is never changed, so this function
   /// alwasy returns false.
-  bool transferFunction(PrivateDFValue) override { return false; }
+  bool transferFunction(AllocaDFValue) override { return false; }
 };
 
 /// Representation of a basic block in a data-flow framework.
@@ -403,7 +403,7 @@ public:
 
   /// Evaluate the transfer function according to a data-flow analysis
   /// algorithm.
-  bool transferFunction(PrivateDFValue In) override;
+  bool transferFunction(AllocaDFValue In) override;
 };
 
 /// Representation of a loop in a data-flow framework.
@@ -412,9 +412,9 @@ public PrivateDFNode,
 public LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> {
   typedef LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> LoopBase;
 public:
-  static PrivateDFValue topElement() { return PrivateDFValue::fullValue(); }
-  static PrivateDFValue boundaryCondition() { return PrivateDFValue::emptyValue(); }
-  static void meetOperator(const PrivateDFValue & LHS, PrivateDFValue &RHS) { RHS.intersect(LHS); }
+  static AllocaDFValue topElement() { return AllocaDFValue::fullValue(); }
+  static AllocaDFValue boundaryCondition() { return AllocaDFValue::emptyValue(); }
+  static void meetOperator(const AllocaDFValue & LHS, AllocaDFValue &RHS) { RHS.intersect(LHS); }
 
   /// Creates data-flow node and specifies a set of allocas
   /// that should be analyzed.
@@ -463,7 +463,7 @@ public:
 
   /// Evaluate the transfer function according to a data-flow analysis
   /// algorithm.
-  bool transferFunction(PrivateDFValue) override { return false; }
+  bool transferFunction(AllocaDFValue) override { return false; }
 
   void collapse();
 
@@ -502,7 +502,7 @@ namespace tsar {
 /// see it for details.
 template<> struct DataFlowTraits<PrivateLNode *> :
 llvm::GraphTraits<PrivateLNode *> {  
-  typedef PrivateDFValue ValueType;
+  typedef AllocaDFValue ValueType;
   static ValueType topElement(PrivateLNode *G) {
     return PrivateLNode::topElement();
   }
