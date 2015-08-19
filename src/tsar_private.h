@@ -46,8 +46,18 @@ class PrivateDFValue {
     assert(FIRST_KIND <= K && K <= LAST_KIND &&
             "The specified kind is invalid!");
   }
-  friend class PrivateLNode;
 public:
+  /// Creats a value, which contains all variables used in the analyzed 
+  /// program.
+  static PrivateDFValue fullValue() {
+    return PrivateDFValue(PrivateDFValue::KIND_FULL);
+  }
+
+  /// Creates an empty value.
+  static PrivateDFValue emptyValue() {
+    return PrivateDFValue(PrivateDFValue::KIND_MASK);
+  }
+
   /// \brief Calculates the difference between a set of allocas and a set
   /// which is represented as a data-flow value.
   ///
@@ -72,8 +82,6 @@ public:
       if (Value.exist(*I))
         Result.insert(*I);
   }
-  /// Constructor creates an empty value.
-  explicit PrivateDFValue() : mKind(KIND_MASK) {}
 
   /// Destructor.
   ~PrivateDFValue() { mKind = INVALID_KIND; }
@@ -198,7 +206,8 @@ public:
   /// Creates data-flow node and specifies a set of allocas 
   /// that should be analyzed.
   explicit PrivateDFNode(const AllocaSet &AnlsAllocas) :
-    mAnlsAllocas(AnlsAllocas) {}
+    mAnlsAllocas(AnlsAllocas),
+    mIn(PrivateDFValue::emptyValue()), mOut(PrivateDFValue::emptyValue()) {}
 
   /// Virtual destructor.
   virtual ~PrivateDFNode() {}
@@ -403,8 +412,8 @@ public PrivateDFNode,
 public LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> {
   typedef LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> LoopBase;
 public:
-  static PrivateDFValue topElement() { return PrivateDFValue(PrivateDFValue::KIND_FULL); }
-  static PrivateDFValue boundaryCondition() { return PrivateDFValue(PrivateDFValue::KIND_MASK); }
+  static PrivateDFValue topElement() { return PrivateDFValue::fullValue(); }
+  static PrivateDFValue boundaryCondition() { return PrivateDFValue::emptyValue(); }
   static void meetOperator(const PrivateDFValue & LHS, PrivateDFValue &RHS) { RHS.intersect(LHS); }
 
   /// Creates data-flow node and specifies a set of allocas

@@ -64,7 +64,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   BasicBlock &BB = F.getEntryBlock();
   for (BasicBlock::iterator I = BB.begin(), EI = --BB.end(); I != EI; ++I) {
     AllocaInst *AI = dyn_cast<AllocaInst>(I);
-    if (AI && isAllocaPromotable(AI))
+    if (AI && isAllocaPromotable(AI)) 
       AnlsAllocas.insert(AI);
   }
   if (AnlsAllocas.empty())
@@ -183,7 +183,7 @@ PrivateDFNode(AnlsAllocas), BlockBase::BlockDFBase(BB) {
 
 bool PrivateBBNode::transferFunction(PrivateDFValue In) {
   mIn = std::move(In);
-  PrivateDFValue newOut;
+  PrivateDFValue newOut(PrivateDFValue::emptyValue());
   newOut.insert(mDefs.begin(), mDefs.end());
   newOut.merge(mIn);
   if (mOut != newOut) {
