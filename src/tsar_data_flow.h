@@ -54,7 +54,7 @@ namespace tsar {
 ///   static ChildIteratorType child_end(NodeType *) -
 ///     Return iterators that point to the beginning and ending of the child
 ///   node list for the specified node.
-/// - typedef nodes_iterator.
+/// - typedef nodes_iterator,
 ///   static nodes_iterator nodes_begin(GraphType &G),
 ///   static nodes_iterator nodes_end (GraphType &G) -
 ///     Allow iteration over all nodes in the graph.
@@ -172,6 +172,60 @@ template<class GraphType> void solveDataFlowTopologicaly(GraphType DFG) {
     }
     DFT::transferFunction(Value, *I);
   }
+}
+
+/// \brief Data-flow framework for a hierarchy of regions.
+///
+/// This class should be specialized by different graph types
+/// which is why the default version is empty.
+/// The specialization is used to solve forward or backward data-flow problems
+/// for a hierarchy of regions. GraphType represents a data-flow graph for a
+/// region. Nodes of this graph are simple nodes or internal regions which are
+/// also represented by other data-flow graphs. Note that GraphType is
+/// generally a pointer type, for example BasicBlock *.
+/// \par There are two kinds of necessary elements to provide.
+/// At first this is elements as for DataFlowTraits.
+/// The following elements should be provided additionally:
+/// - static void collapse(NodeType *DFG) -
+///     Collapses a data-flow graph which represents a region to a one node
+///     in a data-flow graph of an outer region.
+/// - typedef regions_iterator,
+///   static regions_iterator regions_begin(GraphType &G),
+///   static regions_iterator regions_end (GraphType &G) -
+///     Allow iteration over all internal regions in the graph.
+/// \note It may be convinient to inherit DataFlowTraits to specialize this 
+/// class.
+template<class GraphType> struct RegionDFTraits {
+  /// If anyone tries to use this class without having an appropriate
+  /// specialization, make an error.
+  typedef typename GraphType::UnknownGraphTypeError NodeType;
+};
+
+/// \brief Solves data-flow problem for the specified hierarchy of regions.
+///
+/// The data-flow problems solves upward from innermost regions to the region
+/// associated with the specified data-flow graph. Before solving the data-flow
+/// problem of some region all inner regions will be collapsed to a one node in
+/// a data-flow graph associated with this region. If it is possible the
+/// problem will be solved in topological order in a single pass, otherwise
+/// iteratively.
+/// \param [in, out] DFG Data-flow graph associated with the outermost region,
+/// it can not be null.
+/// \pre The RegionDFTraits and GraphTraits should be specialized by each type
+/// of region in the hierarhy (not only for GraphType).
+/// Note that type of region is generally a pointer type,
+/// for example BasicBlock *.
+template<class GraphType> void solveDataFlowUpward(GraphType DFG) {
+  typedef RegionDFTraits<GraphType> DFT;
+  typedef typename DFT::regions_iterator regions_iterator;
+  for (regions_iterator I = DFT::regions_begin(DFG), E = DFT::regions_end(DFG);
+  I != E; ++I)
+    solveDataFlowUpward(*I);
+  if (isDAG(DFG))
+    solveDataFlowTopologicaly(DFG);
+  else
+    solveDataFlowIteratively(DFG);
+  DFT::collapse(DFG);
 }
 
 /// \brief Instances of this class are used to represent a node
