@@ -18,6 +18,7 @@ using namespace llvm;
 
 namespace tsar {
 DFLoop * buildLoopRegion(llvm::Loop *L) {
+  assert(L && "Loop must not be null!");
   DFLoop *DFL = new DFLoop(L);
   DenseMap<BasicBlock *, DFNode *> Blocks;
   for (Loop::iterator I = L->begin(), E = L->end(); I != E; ++I) {
@@ -75,5 +76,14 @@ DFLoop * buildLoopRegion(llvm::Loop *L) {
     }
   }
   return DFL;
+}
+
+void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI) {
+  assert(DFF && "Region must not be null!");
+  assert(LI && "Loop must not be null!");
+  for (Loop *L : LI) {
+    DFLoop *DFL = buildLoopRegion(L);
+    DFF->addNode(DFL);
+  }
 }
 }

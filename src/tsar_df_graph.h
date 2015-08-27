@@ -27,6 +27,8 @@
 #include "declaration.h"
 
 namespace llvm {
+class Function;
+class LoopInfo;
 class Loop;
 class BasicBlock;
 }
@@ -34,10 +36,10 @@ class BasicBlock;
 namespace tsar {
 /// \brief Representation of a node in a data-flow framework.
 ///
-/// The following kinds of nodes are supported: basic block, body of the
-/// natural loop, entry point of the graph which will be analyzed.
-/// LLVM-style RTTI for hierarch of classes that represented different nodes
-/// is avaliable.
+/// The following kinds of nodes are supported: basic block, body of a
+/// natural loop, body of a function entry point of the graph which will be
+/// analyzed. LLVM-style RTTI for hierarch of classes that represented
+/// different nodes is avaliable.
 /// \par In some cases it is convinient to use hierarchy of nodes. Some nodes
 /// are treated as regions which contain other nodes. Such regions we call
 /// parent nodes.
@@ -53,15 +55,13 @@ public:
 
     FIRST_KIND_REGION,
     KIND_LOOP = FIRST_KIND_REGION,
-    LAST_KIND_REGION = KIND_LOOP,
+    KIND_FUNCTION,
+    LAST_KIND_REGION = KIND_FUNCTION,
 
     LAST_KIND = KIND_ENTRY,
     INVALID_KIND,
     NUMBER_KIND = INVALID_KIND,
   };
-
-  /// Creates a new node of the specified type.
-  explicit DFNode(Kind K) : mKind(K), mParent(nullptr) {}
 
   /// Desctructor.
   virtual ~DFNode() {
@@ -79,6 +79,10 @@ public:
 
   /// Returns a parent node.
   const DFNode * getParent() const { return mParent; }
+
+protected:
+  /// Creates a new node of the specified type.
+  explicit DFNode(Kind K) : mKind(K), mParent(nullptr) {}
 
 private:
   friend class DFRegion;
@@ -112,9 +116,6 @@ public:
     return FIRST_KIND_REGION <= N->getKind() && 
       N->getKind() <= LAST_KIND_REGION;
   }
-
-  /// Creates a new node of the specified type.
-  explicit DFRegion(Kind K) :DFNode(K), mEntry(nullptr) {}
 
   /// \brief Deletes all nodes in the region.
   ///
@@ -195,6 +196,10 @@ public:
     if (DFRegion *R = llvm::dyn_cast<DFRegion>(N))
       mRegions.push_back(R);
   }
+protected:
+  /// Creates a new node of the specified type.
+  explicit DFRegion(Kind K) :DFNode(K), mEntry(nullptr) {}
+
 private:
   std::vector<DFNode *> mNodes;
   std::vector<DFRegion *> mRegions;
@@ -301,8 +306,8 @@ private:
 class DFBlock : public DFNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
-  static bool classof(const DFNode *R) {
-    return R->getKind() == KIND_BLOCK;
+  static bool classof(const DFNode *N) {
+    return N->getKind() == KIND_BLOCK;
   }
 
   /// \brief Ctreates representation of the block.
@@ -319,12 +324,48 @@ private:
   llvm::BasicBlock *mBlock;
 };
 
+/// \brief Representation of a function in a data-flow framework.
+///
+/// Instance of this class is used to represent abstraction of a function
+/// in data-flow framework. A function is treated as region which may contain
+/// basic blocks, collapsed inner loops and entry node.
+/// This class should be used only to solve a data-flow problem.
+class DFFunction : public DFRegion {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DFNode *N) {
+    return N->getKind() == KIND_FUNCTION;
+  }
+
+  /// \brief Ctreates representation of the block.
+  ///
+  /// \pre The block argument can not take a null value.
+  explicit DFFunction(llvm::Function *F) : DFRegion(KIND_BLOCK), mFunc(F) {
+    assert(F && "Function must not be null!");
+  }
+private:
+  llvm::Function *mFunc;
+};
+
 /// \brief Builds hierarchy of regions for the specified loop nest.
 ///
 /// This function treats a loop nest as hierarchy of regions. Each region is
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
-/// \param [in, out] L An outermost loop in the nest, it can not be null.
+/// \param [in] L An outermost loop in the nest, it can not be null.
+/// \return A region which is associated with the specified loop.
 DFLoop * buildLoopRegion(llvm::Loop *L);
+
+/// \brief Builds hierarchy of regions for all loops in a function.
+///
+/// This function add to the specified region which is associated with
+/// a function a hierarchy of regions for all loops in this function.
+/// This function treats a loop nest as hierarchy of regions. Each region is
+/// an abstraction of an inner loop. Only natural loops will be treated as a
+/// region other loops will be ignored.
+/// \param [in] DFF A region associated with a function, it can not be null.
+/// \param [in] LI Top level loop list in the function, it can not be null.
+/// \pre The function and the top level loop list should be agreed.
+void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI);
 }
 #endif//TSAR_LOOP_BODY_H
