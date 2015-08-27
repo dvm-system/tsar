@@ -17,6 +17,8 @@
 //
 // There are following main elements in this file:
 //  * DataFlowTraits - It must be specialized to determine data-flow framework.
+//  * RegionDFTraits - It must be specialized to determine data-flow framework
+//                     for a hierarchy of regions.
 //  * solveDataFlow...() - It should be used to solve data-flow problem.
 //  * SmallDFNode - It can be inherited to represent nodes of a data-flow graph.
 //
