@@ -179,7 +179,7 @@ public:
   /// - The node should be differ from other nodes of the graph.
   void addNode(DFNode *N) {
     assert(N && "Node must not be null!");
-    assert(KIND_FIRST <= N->getKind() && N->getKind() <= KIND_LAST &&
+    assert(FIRST_KIND <= N->getKind() && N->getKind() <= LAST_KIND &&
       "Unknown kind of a node!");
     assert(N != mEntry && "Only one entry node must be in the region!");
 #ifdef DEBUG
@@ -364,7 +364,7 @@ DFLoop * buildLoopRegion(llvm::Loop *L);
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
 /// \param [in] DFF A region associated with a function, it can not be null.
-/// \param [in] LI Top level loop list in the function, it can not be null.
+/// \param [in] LI Top level loop list in the function.
 /// \pre The function and the top level loop list should be agreed.
 void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI);
 }

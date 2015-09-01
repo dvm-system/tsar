@@ -80,7 +80,6 @@ DFLoop * buildLoopRegion(llvm::Loop *L) {
 
 void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI) {
   assert(DFF && "Region must not be null!");
-  assert(LI && "Loop must not be null!");
   for (Loop *L : LI) {
     DFLoop *DFL = buildLoopRegion(L);
     DFF->addNode(DFL);
