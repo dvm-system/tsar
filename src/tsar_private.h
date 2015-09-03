@@ -501,7 +501,9 @@ namespace tsar {
 /// This is a specialization of the tsar::DataFlowTraits template,
 /// see it for details.
 template<> struct DataFlowTraits<PrivateLNode *> :
-llvm::GraphTraits<PrivateLNode *> {  
+llvm::GraphTraits<PrivateLNode *> {
+  typedef PrivateLNode * GraphType;
+  static GraphType getDFG(PrivateLNode *G) { return G; }
   typedef AllocaDFValue ValueType;
   static ValueType topElement(PrivateLNode *G) {
     return PrivateLNode::topElement();
@@ -511,10 +513,10 @@ llvm::GraphTraits<PrivateLNode *> {
   }
   static void setValue(ValueType V, NodeType *N) { N->setValue(std::move(V)); }
   static const ValueType & getValue(NodeType *N) { return N->getValue(); }
-  static void meetOperator(const ValueType &LHS, ValueType &RHS) {
+  static void meetOperator(const ValueType &LHS, ValueType &RHS, PrivateLNode *) {
     PrivateLNode::meetOperator(LHS, RHS);
   }
-  static bool transferFunction(ValueType V, NodeType *N) {
+  static bool transferFunction(ValueType V, NodeType *N, PrivateLNode *) {
     return N->transferFunction(std::move(V));
   }
 };
