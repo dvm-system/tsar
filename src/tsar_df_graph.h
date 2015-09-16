@@ -19,6 +19,7 @@
 #define TSAR_LOOP_BODY_H
 
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/DenseMap.h>
 #include "llvm/Support/Casting.h"
 #include <vector>
 #include <utility.h>
@@ -80,6 +81,30 @@ public:
   /// Returns a parent node.
   const DFNode * getParent() const { return mParent; }
 
+  /// \brief Adds a new attribute to the node.
+  ///
+  /// \param [in] A Identifier of the attribute, it must not be null.
+  /// The pointer, not a referenced object, is used as identifier.
+  /// \param [in] V Value of the attribute.
+  /// \return If the attribute already exist it can not be added, so this
+  /// function returns false. Otherwise, it returns true.
+  /// \attention The pointer A is used as identifier
+  template<class Attribute, class Value> 
+  bool addAttribute(Attribute *A, Value *V) {
+    assert(A && "Attribute must not be null!");
+    return mAttributes.insert(
+      std::make_pair(static_cast<void *>(A), static_cast<void *>(V)));
+  }
+
+  /// Returns a value of the attribute or null if it does not exist.
+  template<class Attribute, class Value>
+  Value * getAttribute(Attribute *A) {
+    assert(A && "Attribute must not be null!");
+    llvm::DenseMap<void *, void *> I = 
+      mAttributes.find(static_cast<void *>(A));
+    return I == mAttributes.end() ? nullptr : *I;
+  }
+
 protected:
   /// Creates a new node of the specified type.
   explicit DFNode(Kind K) : mKind(K), mParent(nullptr) {}
@@ -88,6 +113,7 @@ private:
   friend class DFRegion;
   Kind mKind;
   DFNode *mParent;
+  llvm::DenseMap<void *, void *> mAttributes;
 };
 
 /// Representation of an entry node in a data-flow framework.
@@ -198,7 +224,7 @@ public:
   }
 protected:
   /// Creates a new node of the specified type.
-  explicit DFRegion(Kind K) :DFNode(K), mEntry(nullptr) {}
+  explicit DFRegion(Kind K) : DFNode(K), mEntry(nullptr) {}
 
 private:
   std::vector<DFNode *> mNodes;
