@@ -394,4 +394,30 @@ DFLoop * buildLoopRegion(llvm::Loop *L);
 /// \pre The function and the top level loop list should be agreed.
 void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI);
 }
+
+namespace llvm {
+template<> struct GraphTraits<tsar::DFRegion *> {
+  typedef tsar::DFNode NodeType;
+  static NodeType *getEntryNode(tsar::DFRegion *G) { return G->getEntryNode(); }
+  typedef NodeType::succ_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
+  typedef tsar::DFRegion::nodes_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::DFRegion *G) { return G->nodes_begin(); }
+  static nodes_iterator nodes_end(tsar::DFRegion *G) { return G->nodes_end(); }
+  unsigned size(tsar::DFRegion *G) { return G->getNumNodes(); }
+};
+
+template<> struct GraphTraits<Inverse<tsar::DFRegion *> > :
+  public GraphTraits<tsar::DFRegion *> {
+  static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
+};
+
+template<> struct GraphTraits<tsar::DFLoop *> :
+  public GraphTraits<tsar::DFRegion *> {};
+
+template<> struct GraphTraits<Inverse<tsar::DFLoop *> > :
+  public GraphTraits<Inverse<tsar::DFRegion *> > {};
+}
 #endif//TSAR_LOOP_BODY_H
