@@ -242,7 +242,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
 /// a single entity which is formed by regions at different levels. By analogy
 /// with the graph in which all nodes have a common type, otherwise it is
 /// impossible to properly implement the traversal. It is possible to implement
-//// difference of nodes, for example, using inheritance. Thus collapse
+/// difference of nodes, for example, using inheritance. Thus collapse
 /// function must receive a common type, as well as the transfer function,
 /// that takes a common type of graph nodes.
 template<class DFFwk > struct RegionDFTraits {
@@ -281,8 +281,6 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     solveDataFlowIteratively(DFF, DFG);
   DFT::collapse(DFG, DFF);
 }
-
-
 
 /// \brief Solves data-flow problem for the specified hierarchy of regions.
 ///
