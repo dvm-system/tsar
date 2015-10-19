@@ -15,8 +15,8 @@
 // * Functions, to build hierarchy of regions.
 //===--------------------------------------------------------------------===//
 
-#ifndef TSAR_LOOP_BODY_H
-#define TSAR_LOOP_BODY_H
+#ifndef TSAR_DF_GRAPH_H
+#define TSAR_DF_GRAPH_H
 
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseMap.h>
@@ -59,7 +59,7 @@ public:
     KIND_FUNCTION,
     LAST_KIND_REGION = KIND_FUNCTION,
 
-    LAST_KIND = KIND_ENTRY,
+    LAST_KIND = LAST_KIND_REGION,
     INVALID_KIND,
     NUMBER_KIND = INVALID_KIND,
   };
@@ -83,26 +83,45 @@ public:
 
   /// \brief Adds a new attribute to the node.
   ///
-  /// \param [in] A Identifier of the attribute, it must not be null.
-  /// The pointer, not a referenced object, is used as identifier.
+  /// \tparam Attribute which has been declared using macros
+  /// BASE_ATTR_DEF(name_, type_).
   /// \param [in] V Value of the attribute.
   /// \return If the attribute already exist it can not be added, so this
   /// function returns false. Otherwise, it returns true.
-  /// \attention The pointer A is used as identifier
-  template<class Attribute, class Value> 
-  bool addAttribute(Attribute *A, Value *V) {
-    assert(A && "Attribute must not be null!");
+  template<class Attribute> 
+  bool addAttribute(typename Attribute::Value *V) {
     return mAttributes.insert(
-      std::make_pair(static_cast<void *>(A), static_cast<void *>(V)));
+      std::make_pair(Attribute::id(), static_cast<void *>(V))).second;
   }
 
-  /// Returns a value of the attribute or null if it does not exist.
-  template<class Attribute, class Value>
-  Value * getAttribute(Attribute *A) {
-    assert(A && "Attribute must not be null!");
-    llvm::DenseMap<void *, void *> I = 
-      mAttributes.find(static_cast<void *>(A));
-    return I == mAttributes.end() ? nullptr : *I;
+  /// \brief Returns a value of the attribute or null if it does not exist.
+  ///
+  /// \tparam Attribute which has been declared using macros
+  /// BASE_ATTR_DEF(name_, type_).
+  /// \return Value of the specified attribute. If the attribute
+  /// does not exist the method returns nullptr.
+  template<class Attribute>
+  typename Attribute::Value * getAttribute() {
+    llvm::DenseMap<Utility::AttributeId , void *>::iterator I =
+      mAttributes.find(Attribute::id());
+    return I == mAttributes.end() ? nullptr :
+      static_cast<typename Attribute::Value *>(I->second);
+  }
+
+  /// \brief Removes an attribute from the node.
+  ///
+  /// \return The value of the removed attribute. If the attribute
+  /// does not exist the method returns nullptr.
+  template<class Attribute>
+  typename Attribute::Value * removeAttribute() {
+    llvm::DenseMap<Utility::AttributeId, void *>::iterator I =
+      mAttributes.find(Attribute::id());
+    if (I == mAttributes.end())
+      return nullptr;
+    typename Attribute::Value *V =
+      static_cast<typename Attribute::Value *>(I->second);
+    mAttributes.erase(I);
+    return V;
   }
 
 protected:
@@ -113,7 +132,7 @@ private:
   friend class DFRegion;
   Kind mKind;
   DFNode *mParent;
-  llvm::DenseMap<void *, void *> mAttributes;
+  llvm::DenseMap<Utility::AttributeId, void *> mAttributes;
 };
 
 /// Representation of an entry node in a data-flow framework.
@@ -366,7 +385,7 @@ public:
   /// \brief Ctreates representation of the block.
   ///
   /// \pre The block argument can not take a null value.
-  explicit DFFunction(llvm::Function *F) : DFRegion(KIND_BLOCK), mFunc(F) {
+  explicit DFFunction(llvm::Function *F) : DFRegion(KIND_FUNCTION), mFunc(F) {
     assert(F && "Function must not be null!");
   }
 private:
@@ -420,4 +439,4 @@ template<> struct GraphTraits<tsar::DFLoop *> :
 template<> struct GraphTraits<Inverse<tsar::DFLoop *> > :
   public GraphTraits<Inverse<tsar::DFRegion *> > {};
 }
-#endif//TSAR_LOOP_BODY_H
+#endif//TSAR_DF_GRAPH_H
