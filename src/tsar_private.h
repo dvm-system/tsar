@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines passes to analyze variables which can be privatized.
+// This file defines passes to determine allocas which can be privatized.
 // We use data-flow framework to implement this kind of analysis. This file
 // contains elements which is necessary to determine this framework.
 // The following articles can be helpful to understand it:
@@ -19,9 +19,45 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Pass.h>
 #include <utility.h>
-#include "tsar_df_loop.h"
+#include <cell.h>
+#include "tsar_df_graph.h"
 
 namespace tsar {
+/// \brief This covers IN and OUT values for a data-flow node.
+///
+/// \tparam Id Identifier, for example a data-flow framework which is used.
+/// This is neccessary to distinguish different data-flow values.
+/// \tparam InTy Type of data-flow value before the node (IN).
+/// \tparam OutTy Type of data-flow value after the node (OUT).
+///
+/// It is possible to set InTy or OutTy to void. In this case
+/// corresponding methods (get and set) are not available.
+template<class Id, class InTy, class OutTy = InTy >
+class DFValue {
+public:
+  /// Returns a data-flow value before the node.
+  std::enable_if_t<!std::is_same<InTy, void>::value, const InTy &>
+    getIn() const { return mIn; }
+
+  /// Specifies a data-flow value before the node.
+  void setIn(std::enable_if_t<!std::is_same<InTy, void>::value, InTy> V) {
+    mIn = std::move(V);
+  }
+
+  /// Returns a data-flow value after the node.
+  std::enable_if_t<!std::is_same<OutTy, void>::value, const OutTy &>
+    getOut() const { return mOut; }
+
+  /// Specifies a data-flow value after the node.
+  void setOut(std::enable_if_t<!std::is_same<OutTy, void>::value, OutTy> V) {
+    mOut = std::move(V);
+  }
+
+private:
+  InTy mIn;
+  OutTy mOut;
+};
+
 /// \brief Representation of a data-flow value formed by a set of allocas.
 /// 
 /// A data-flow value is a set of allocas for which a number of operations
@@ -47,7 +83,7 @@ class AllocaDFValue {
             "The specified kind is invalid!");
   }
 public:
-  /// Creats a value, which contains all variables used in the analyzed 
+  /// Creats a value, which contains all variables used in the analyzed
   /// program.
   static AllocaDFValue fullValue() {
     return AllocaDFValue(AllocaDFValue::KIND_FULL);
@@ -57,6 +93,9 @@ public:
   static AllocaDFValue emptyValue() {
     return AllocaDFValue(AllocaDFValue::KIND_MASK);
   }
+
+  /// Default constructor creates an empty value.
+  AllocaDFValue() : AllocaDFValue(AllocaDFValue::KIND_MASK) {}
 
   /// \brief Calculates the difference between a set of allocas and a set
   /// which is represented as a data-flow value.
@@ -193,75 +232,254 @@ static void difference(const alloca_iterator &AIBegin,
   AllocaDFValue::difference(AIBegin, AIEnd, Value, Result);
 }
 
-/// Instances of this class are used to represent nodes in a data-flow graph.
+/// \brief This contains allocas which have outward exposed definitions or uses
+/// in a data-flow node.
 ///
-/// This class is an abstract class and a base class for representations
-/// of nodes in data-flow graph. There are three possible types of nodes
-/// (for details see tsar_df_loop.h)
-class PrivateDFNode : public SmallDFNode<PrivateDFNode, 8> {
+/// Let us use definitions from the article "Automatic Array Privatization"
+/// written by Peng Tu and David Padua (page 6):
+/// "A definition of variable v in a basic block S is said to be outward
+/// exposed if it is the last definition of v in S. A use of v is outward
+/// exposed if S does not contain a denition of v before this use". Note that
+/// in case of loops allocas which have outward exposed uses can get value
+/// not only outside the loop but also from previouse loop iterations.
+class DefUseSet {
 public:
   /// Set of alloca instructions.
   typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
 
-  /// Creates data-flow node and specifies a set of allocas 
-  /// that should be analyzed.
-  explicit PrivateDFNode(const AllocaSet &AnlsAllocas) :
-    mAnlsAllocas(AnlsAllocas),
-    mIn(AllocaDFValue::emptyValue()), mOut(AllocaDFValue::emptyValue()) {}
-
-  /// Virtual destructor.
-  virtual ~PrivateDFNode() {}
-
-  /// Returns a data-flow value associated with this node.
-  const AllocaDFValue & getValue() const { return mOut; }
-
-  /// Specifies a data-flow value associated with this node.
-  void setValue(AllocaDFValue V) { mOut = std::move(V); }
-
-  /// Returns a data-flow value before the node.
-  const AllocaDFValue & getIn() const { return mIn; }
-
-  /// Returns a data-flow value after the node.
-  const AllocaDFValue & getOut() const { return getValue(); }
-
-  /// Returns allocas which have definitions in the node.
+  /// Returns allocas which have definitions in a data-flow node.
   const AllocaSet & getDefs() const { return mDefs; }
 
-  /// \brief Returns allocas which get values outside the node.
-  ///
-  /// The node does not contain definitions of these values before their use.
-  /// In case of loops such allocas can get value not only outside the loop
-  /// but also from previouse loop iterations.
-  const AllocaSet & getUses() const { return mUses; }
+  /// Returns true if the specified alloca have definition in a data-flow node.
+  bool hasDef(llvm::AllocaInst *AI) const { return mDefs.count(AI); }
 
-  /// \brief Evaluate the transfer function according to a data-flow analysis
-  /// algorithm.
+  /// Specifies that an alloca have definition in a data-flow node.
   ///
-  /// \return This returns true if produced data-flow value differs from
-  /// the data-flow value produced on previouse iteration of the data-flow 
-  /// analysis algorithm. For the first iteration the new value compares with
-  /// the initial one.
-  virtual bool transferFunction(AllocaDFValue In) = 0;
+  /// \return False if it has been already specified.
+  bool addDef(llvm::AllocaInst *AI) { return mDefs.insert(AI); }
 
-protected:
-  const AllocaSet &mAnlsAllocas;
-  AllocaDFValue mIn;
-  AllocaDFValue mOut;
+  /// Returns allocas which get values outside a data-flow node.
+  const AllocaSet & getUses() const { return mUses; }  
+
+  /// Returns true if the specified alloca get value outside a data-flow node.
+  bool hasUse(llvm::AllocaInst *AI) const { return mUses.count(AI); }
+
+  /// Specifies that an alloca get values outside a data-flow node.
+  ///
+  /// \return False if it has been already specified.
+  bool addUse(llvm::AllocaInst *AI) { return mUses.insert(AI); }
+private:
   AllocaSet mDefs;
   AllocaSet mUses;
+};
+
+/// This attribute is associated with DefUseSet and
+/// can be added to a node in a data-flow graph.
+BASE_ATTR_DEF(DefUseAttr, DefUseSet)
+
+/// \brief This contains privatizability information for allocas
+/// in a natural loop.
+
+
+namespace detail {
+/// This represent identifier of cells in PrivateSet collection,
+/// which is represented as a static list.
+struct PrivateSet {
+  /// Set of alloca instructions.
+  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
+  struct Private { typedef AllocaSet ValueType; };
+  struct LastPrivate { typedef AllocaSet ValueType; };
+  struct SecondToLastPrivate { typedef AllocaSet ValueType; };
+  struct DynamicPrivate { typedef AllocaSet ValueType; };
+};
+}
+
+const detail::PrivateSet::Private Private;
+const detail::PrivateSet::LastPrivate LastPrivate;
+const detail::PrivateSet::SecondToLastPrivate SecondToLastPrivate;
+const detail::PrivateSet::DynamicPrivate DynamicPrivate;
+
+/// \brief This represents which allocas can be privatize.
+///
+/// The following information is avaliable:
+/// - a set of private allocas;
+/// - a set of last private allocas;
+/// - a set of second to last private allocas;
+/// - a set of dynamic private allocas.
+///
+/// Calculation of a last private variables differs depending on internal
+/// representation of a loop. There are two type of representations.
+/// -# The first type has a following pattern:
+/// \code
+/// iter: if (...) goto exit;
+///           ...
+///         goto iter;
+/// exit:
+/// \endcode
+/// For example, representation of a for-loop refers to this type.
+/// The candidates for last private variables associated with the for-loop
+/// will be stored as second to last privates allocas, because 
+/// the last definition of these allocas is executed on the second to the last
+/// loop iteration (on the last iteration the loop condition
+/// check is executed only).
+/// -# The second type has a following pattern:
+/// \code
+/// iter:
+///           ...
+///       if (...) goto exit; else goto iter;
+/// exit:
+/// \endcode
+/// For example, representation of a do-while-loop refers to this type.
+/// In this case the candidates for last private variables
+/// will be stored as last privates allocas.
+///
+/// In some cases it is impossible to determine in static an iteration
+/// where the last definition of an alloca have been executed. Such allocas
+/// will be stored as dynamic private allocas collection.
+///
+/// Let us give the following example to explain how to access the information:
+/// \code
+/// PrivateSet PS;
+/// for (AllocaInst *AI : PS[Private]) {...}
+/// \endcode
+/// Note, (*PS)[Private] is a set of type AllocaSet, so it is possible to call
+/// all methods that is avaliable for AllocaSet.
+/// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
+/// Private to access the necessary kind of allocas.
+class PrivateSet: public CELL_COLL_4(
+    detail::PrivateSet::Private,
+    detail::PrivateSet::LastPrivate,
+    detail::PrivateSet::SecondToLastPrivate,
+    detail::PrivateSet::DynamicPrivate) {
+public:
+  /// Set of alloca instructions.
+  typedef detail::PrivateSet::AllocaSet AllocaSet;
+
+  /// \brief Checks that an alloca has a specified kind of privatizability.
+  ///
+  /// Usage: PrivateSet *PS; PS->is(Private, AI);
+  template<class Kind> bool is(Kind K, llvm::AllocaInst *AI) const {
+    return (*this)[K].count(AI) != 0;
+  }
+};
+
+/// This attribute is associated with PrivateSet and
+/// can be added to a node in a data-flow graph.
+BASE_ATTR_DEF(PrivateAttr, PrivateSet)
+
+/// \brief Data-flow framework which is used to find candidates
+/// in privatizable allocas for each natural loops.
+///
+/// The data-flow problem is solved in forward direction.
+/// The result of this analysis should be complemented to separate private
+/// from last private allocas. The reason for this is the scope of analysis.
+/// The analysis is performed for loop bodies only.
+///
+/// Two kinds of attributes for each nodes in a data-flow graph is available
+/// after this analysis. The first kind, is DefUseAttr and the second one is
+/// PrivateDFAttr. The third kind of attribute (PrivateAttr) becomes available
+/// for nodes which corresponds to natural loops. The complemented results
+/// should be stored in the value of the PrivateAttr attribute.
+class PrivateDFFwk : private Utility::Uncopyable {
+public:
+  /// Set of alloca instructions.
+  typedef PrivateSet::AllocaSet AllocaSet;
+
+  /// Information about privatizability of variables for the analysed region.
+  typedef llvm::DenseMap<llvm::Loop *, PrivateSet *> PrivateInfo;
+
+  /// Creates data-flow node and specifies a set of allocas 
+  /// that should be analyzed.
+  explicit PrivateDFFwk(DFRegion *R, const AllocaSet &AnlsAllocas,
+                        PrivateInfo &PI) :
+      mRegion(R), mAnlsAllocas(AnlsAllocas), mPrivates(PI) {
+    assert(R && "The region must not be null!");
+  }
+
+  /// Returns an analysed data-flow graph.
+  DFRegion * getDFG() { return mRegion; }
+
+  /// Returns true if the specified alloca should be analyzed.
+  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI); }
+
+  /// Collapses a data-flow graph which represents a region to a one node
+  /// in a data-flow graph of an outer region.
+  void collapse(DFRegion *R);
+
+private:
+  DFRegion *mRegion;
+  const AllocaSet &mAnlsAllocas;
+  PrivateInfo &mPrivates;
+};
+
+/// This covers IN and OUT value for a privatizability analysis.
+typedef DFValue<PrivateDFFwk, AllocaDFValue> PrivateDFValue;
+
+/// This attribute is associated with PrivateDFValue and
+/// can be added to a node in a data-flow graph.
+BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
+
+/// Traits for a data-flow framework which is used to find candidates
+/// in privatizable allocas for each natural loops.
+template<> struct DataFlowTraits<PrivateDFFwk *> {
+  typedef DFRegion * GraphType;
+  static GraphType getDFG(PrivateDFFwk *Fwk) {
+    assert(Fwk && "Framework must not be null!");
+    return Fwk->getDFG();
+  }
+  typedef AllocaDFValue ValueType;
+  static ValueType topElement(PrivateDFFwk *) {
+    return AllocaDFValue::fullValue();
+  }
+  static ValueType boundaryCondition(PrivateDFFwk *) {
+    return AllocaDFValue::emptyValue();
+  }
+  static void setValue(ValueType V, DFNode *N) {
+    assert(N && "Node must not be null!");
+    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
+    assert(PV && "Data-flow value must not be null!");
+    PV->setOut(std::move(V));
+  }
+  static const ValueType & getValue(DFNode *N) {
+    assert(N && "Node must not be null!");
+    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
+    assert(PV && "Data-flow value must not be be null!");
+    return PV->getOut();
+  }
+  static void initialize(DFNode *, PrivateDFFwk *);
+  static void meetOperator(
+      const ValueType &LHS, ValueType &RHS, PrivateDFFwk *) {
+    RHS.intersect(LHS);
+  }
+  static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *);
+};
+
+/// Tratis for a data-flow framework which is used to find candidates
+/// in privatizable allocas for each natural loops.
+template<> struct RegionDFTraits<PrivateDFFwk *> :
+    DataFlowTraits<PrivateDFFwk *> {
+  static void collapse(GraphType G, PrivateDFFwk *Fwk) { Fwk->collapse(G); }
+  typedef DFRegion::region_iterator region_iterator;
+  static region_iterator region_begin(GraphType G) {
+    return G->region_begin();
+  }
+  static region_iterator region_end(GraphType G) {
+    return G->region_end();
+  }
 };
 }
 
 namespace llvm {
 class Loop;
 
+/// This pass determines allocas which can be privatized.
 class PrivateRecognitionPass :
-  public FunctionPass, private Utility::Uncopyable {
-  typedef tsar::PrivateDFNode::AllocaSet AllocaSet;
-public: 
-  /// Iterator to access private and last private allocas.
-  typedef AllocaSet::iterator alloca_iterator;
-
+    public FunctionPass, private Utility::Uncopyable {
+  /// Set of alloca instructions.
+  typedef tsar::PrivateDFFwk::AllocaSet AllocaSet;
+  /// Information about privatizability of variables for the analysed region.
+  typedef tsar::PrivateDFFwk::PrivateInfo PrivateInfo;
+public:
   /// Pass identification, replacement for typeid
   static char ID; 
 
@@ -270,84 +488,14 @@ public:
     initializePrivateRecognitionPassPass(*PassRegistry::getPassRegistry());
   }
 
-  /// Returns range to access private allocas for the specified loop.
-  std::pair<alloca_iterator, alloca_iterator> getPrivatesFor(Loop *L) const {
+  /// Returns privatizable allocas sorted according to kinds
+  /// of their privatizability.
+  const tsar::PrivateSet & getPrivatesFor(Loop *L) const {
     assert(L && "Loop must not be null!");
-    auto LToPriv = mPrivates.find(L);
-    if (LToPriv != mPrivates.end()) {
-      return std::make_pair(LToPriv->second->begin(), LToPriv->second->end());
-    }
-    return std::make_pair(mEmptyAllocaSet.begin(), mEmptyAllocaSet.end());
-  }
-
-  /// Returns range to access last private allocas for the specified loop.
-  std::pair<alloca_iterator, alloca_iterator> getLastPrivatesFor(Loop *L) const {
-    assert(L && "Loop must not be null!");
-    auto LToPriv = mLastPrivates.find(L);
-    if (LToPriv != mLastPrivates.end()) {
-      return std::make_pair(LToPriv->second->begin(), LToPriv->second->end());
-    }
-    return std::make_pair(mEmptyAllocaSet.begin(), mEmptyAllocaSet.end());
-  }
-
-  /// Returns range to access second to last private allocas for the specified loop.
-  std::pair<alloca_iterator, alloca_iterator> getSecondToLastPrivatesFor(Loop *L) const {
-    assert(L && "Loop must not be null!");
-    auto LToPriv = mSecondToLastPrivates.find(L);
-    if (LToPriv != mSecondToLastPrivates.end()) {
-      return std::make_pair(LToPriv->second->begin(), LToPriv->second->end());
-    }
-    return std::make_pair(mEmptyAllocaSet.begin(), mEmptyAllocaSet.end());
-  }
-
-  /// Returns range to access dynamic private allocas for the specified loop.
-  std::pair<alloca_iterator, alloca_iterator> getDynamicPrivatesFor(Loop *L) const {
-    assert(L && "Loop must not be null!");
-    auto LToPriv = mDynamicPrivates.find(L);
-    if (LToPriv != mDynamicPrivates.end()) {
-      return std::make_pair(LToPriv->second->begin(), LToPriv->second->end());
-    }
-    return std::make_pair(mEmptyAllocaSet.begin(), mEmptyAllocaSet.end());
-  }
-
-  /// Returns true if the specified alloca is private for the loop.
-  bool isPrivateFor(AllocaInst *AI, Loop *L) const {
-    assert(L && "Loop must not be null!");
-    assert(AI && "Value must not be null!");
-    auto LToPriv = mPrivates.find(L);
-    if (LToPriv != mPrivates.end())
-      return LToPriv->second->count(AI);
-    return false;
-  }
-
-  /// Returns true if the specified alloca is last private for the loop.
-  bool isLastPrivateFor(AllocaInst *AI, Loop *L) const {
-    assert(L && "Loop must not be null!");
-    assert(AI && "Value must not be null!");
-    auto LToPriv = mLastPrivates.find(L);
-    if (LToPriv != mLastPrivates.end())
-      return LToPriv->second->count(AI);
-    return false;
-  }
-
-  /// Returns true if the specified alloca is second to last private for the loop.
-  bool isSecondToLastPrivateFor(AllocaInst *AI, Loop *L) const {
-    assert(L && "Loop must not be null!");
-    assert(AI && "Value must not be null!");
-    auto LToPriv = mSecondToLastPrivates.find(L);
-    if (LToPriv != mSecondToLastPrivates.end())
-      return LToPriv->second->count(AI);
-    return false;
-  }
-
-  /// Returns true if the specified alloca is dynamic private for the loop.
-  bool isDynamicPrivateFor(AllocaInst *AI, Loop *L) const {
-    assert(L && "Loop must not be null!");
-    assert(AI && "Value must not be null!");
-    auto LToPriv = mDynamicPrivates.find(L);
-    if (LToPriv != mDynamicPrivates.end())
-      return LToPriv->second->count(AI);
-    return false;
+    auto PS = mPrivates.find(L);
+    assert((PS != mPrivates.end() || PS->second) &&
+      "PrivateSet must be specified!");
+    return *PS->second;
   }
 
   /// Recognises private (last private) variables for loops
@@ -364,185 +512,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> mPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> mLastPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> mSecondToLastPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> mDynamicPrivates;
-  AllocaSet mEmptyAllocaSet;
-};
-}
-
-namespace tsar {
-/// Representation of an entry node in a data-flow framework.
-class PrivateEntryNode :
-public PrivateDFNode,
-public EntryDFBase <PrivateDFNode> {
-public:
-  /// Creates data-flow node and specifies a set of allocas 
-  /// that should be analyzed.
-  PrivateEntryNode(const AllocaSet &AnlsAllocas) :
-    PrivateDFNode(AnlsAllocas) {}
-
-  /// \brief Evaluate the transfer function according to a data-flow analysis
-  /// algorithm.
-  ///
-  /// A data-flow value for the entry node is never changed, so this function
-  /// alwasy returns false.
-  bool transferFunction(AllocaDFValue) override { return false; }
-};
-
-/// Representation of a basic block in a data-flow framework.
-class PrivateBBNode :
-public PrivateDFNode,
-public BlockDFBase<llvm::BasicBlock, PrivateDFNode> {
-  typedef BlockDFBase<llvm::BasicBlock, PrivateDFNode> BlockBase;
-public:
-  /// Creates data-flow node and specifies a set of allocas 
-  /// that should be analyzed.
-  PrivateBBNode(llvm::BasicBlock *BB, const AllocaSet &AnlsAllocas);
-
-  /// Evaluate the transfer function according to a data-flow analysis
-  /// algorithm.
-  bool transferFunction(AllocaDFValue In) override;
-};
-
-/// Representation of a loop in a data-flow framework.
-class PrivateLNode :
-public PrivateDFNode,
-public LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> {
-  typedef LoopDFBase<llvm::BasicBlock, llvm::Loop, PrivateDFNode> LoopBase;
-public:
-  static AllocaDFValue topElement() { return AllocaDFValue::fullValue(); }
-  static AllocaDFValue boundaryCondition() { return AllocaDFValue::emptyValue(); }
-  static void meetOperator(const AllocaDFValue & LHS, AllocaDFValue &RHS) { RHS.intersect(LHS); }
-
-  /// Creates data-flow node and specifies a set of allocas
-  /// that should be analyzed.
-  PrivateLNode(llvm::Loop *L, const AllocaSet &AnlsAllocas,
-               llvm::DenseMap<llvm::Loop *, AllocaSet *> &Privates,
-               llvm::DenseMap<llvm::Loop *, AllocaSet *> &LastPrivates,
-               llvm::DenseMap<llvm::Loop *, AllocaSet *> &SecondToLastPrivates,
-               llvm::DenseMap<llvm::Loop *, AllocaSet *> &DynamicPrivates) :
-    PrivateDFNode(AnlsAllocas), LoopBase::LoopDFBase(L),
-    mPrivates(Privates), mLastPrivates(LastPrivates),
-    mSecondToLastPrivates(SecondToLastPrivates),
-    mDynamicPrivates(DynamicPrivates) {}
-
-  /// Destructor.
-  ~PrivateLNode() {
-    for (PrivateDFNode *N : getNodes())
-      delete N;
-  }
-
-  /// \brief Add an entry node of the data-flow graph.
-  ///
-  /// \pre See preconditions for this function in the base class. 
-  PrivateDFNode * addEntryNode() {
-    PrivateDFNode *N = new PrivateEntryNode(mAnlsAllocas);
-    LoopBase::addEntryNode(N);
-    return N;
-  }
-
-  /// Creates an abstraction of the specified inner loop.
-  std::pair<PrivateLNode *, PrivateDFNode *> addNode(llvm::Loop *L) {
-    assert(L && "Loop must not be null!");
-    PrivateLNode *N =
-      new PrivateLNode(L, mAnlsAllocas, mPrivates, mLastPrivates,
-                       mSecondToLastPrivates, mDynamicPrivates);
-    LoopBase::addNode(N);
-    return std::pair<PrivateLNode *, PrivateDFNode *>(N, N);
-  }
-
-  /// Creates an abstraction of the specified basic block.
-  PrivateDFNode *addNode(llvm::BasicBlock *BB) {
-    assert(BB && "BasicBlock must not be null!");
-    PrivateBBNode *N = new PrivateBBNode(BB, mAnlsAllocas);
-    LoopBase::addNode(N);
-    return N;
-  }
-
-  /// Evaluate the transfer function according to a data-flow analysis
-  /// algorithm.
-  bool transferFunction(AllocaDFValue) override { return false; }
-
-  void collapse();
-
-private:
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> &mPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> &mLastPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> &mSecondToLastPrivates;
-  llvm::DenseMap<llvm::Loop *, AllocaSet *> &mDynamicPrivates;
-};
-}
-
-namespace llvm{
-template<> struct GraphTraits<tsar::PrivateLNode *> {
-  typedef tsar::PrivateDFNode NodeType;
-  static NodeType *getEntryNode(tsar::PrivateLNode *G) { return G->getEntryNode(); }
-  typedef NodeType::succ_iterator ChildIteratorType;
-  static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
-  static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
-  typedef tsar::PrivateLNode::nodes_iterator nodes_iterator;
-  static nodes_iterator nodes_begin(tsar::PrivateLNode *G) { return G->nodes_begin(); }
-  static nodes_iterator nodes_end(tsar::PrivateLNode *G) { return G->nodes_end(); }
-  unsigned size(tsar::PrivateLNode *G) { return G->getNumNodes(); }
-};
-
-template<> struct GraphTraits<Inverse<tsar::PrivateLNode *> > :
-  public GraphTraits <tsar::PrivateLNode *> {
-  static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
-  static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
-};
-}
-
-namespace tsar {
-/// \brief Data-flow framework.
-///
-/// This is a specialization of the tsar::DataFlowTraits template,
-/// see it for details.
-template<> struct DataFlowTraits<PrivateLNode *> :
-llvm::GraphTraits<PrivateLNode *> {
-  typedef PrivateLNode * GraphType;
-  static GraphType getDFG(PrivateLNode *G) { return G; }
-  typedef AllocaDFValue ValueType;
-  static ValueType topElement(PrivateLNode *G) {
-    return PrivateLNode::topElement();
-  }
-  static ValueType boundaryCondition(PrivateLNode *G) {
-    return PrivateLNode::boundaryCondition();
-  }
-  static void setValue(ValueType V, NodeType *N) { N->setValue(std::move(V)); }
-  static const ValueType & getValue(NodeType *N) { return N->getValue(); }
-  static void meetOperator(const ValueType &LHS, ValueType &RHS, PrivateLNode *) {
-    PrivateLNode::meetOperator(LHS, RHS);
-  }
-  static bool transferFunction(ValueType V, NodeType *N, PrivateLNode *) {
-    return N->transferFunction(std::move(V));
-  }
-};
-
-/// \brief Data-flow framework for loop nest.
-///
-/// This is a specialization of the tsar::LoopDFTraits template,
-/// see it for details.
-template<> struct LoopDFTraits<tsar::PrivateLNode *> :
-DataFlowTraits<PrivateLNode *> {
-  static llvm::Loop *getLoop(PrivateLNode *G) { return G->getLoop(); }
-  static NodeType * addEntryNode( PrivateLNode *G) { return G->addEntryNode(); }
-  static std::pair<PrivateLNode *, NodeType *> 
-    addNode(llvm::Loop *L, PrivateLNode *G) { return G->addNode(L); }
-  static NodeType *addNode(llvm::BasicBlock *BB, PrivateLNode *G) {
-    return G->addNode(BB);
-  }
-  static void addSuccessor(NodeType *Succ, NodeType *N) {
-    N->addSuccessor(Succ);
-  }
-  static void addPredecessor(NodeType *Pred, NodeType *N) {
-    N->addPredecessor(Pred);
-  }
-  static void collapseLoop(PrivateLNode *G) { G->collapse(); }
-  static void setExitingNode(NodeType *N, PrivateLNode *G) { G->setExitingNode(N); }
-  static void setLatchNode(NodeType *N, PrivateLNode *G) { G->setLatchNode(N); }
+  PrivateInfo mPrivates;
 };
 }
 #endif//TSAR_PRIVATE_H
