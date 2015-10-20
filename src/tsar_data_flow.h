@@ -59,10 +59,16 @@ namespace tsar {
 /// - static void setValue(ValueType, NodeType *),
 ///   static ValueType getValue(NodeType *) -
 ///     Allow to access data-flow value for the specified node.
-/// - static meetOperator(const ValueType &, ValueType &, DFFwk DFF) -
+/// - static void initialize(NodeType *, DFFwk &) -
+///     Initializes auxiliary information which is neccessary
+///     to perfrom analysis. For example, it is possible to allocate
+///     some memory or attributes to each node, etc.
+///     Do not set initial data-flow values in this function because they will
+///     be overwritten by the data-flow solver function.
+/// - static meetOperator(const ValueType &, ValueType &, DFFwk &) -
 ///     Evaluates a meet operator, the result is stored in the second
 ///     parameter.
-/// - satic bool transferFunction(ValueType, NodeType *, DFFwk DFF)
+/// - satic bool transferFunction(ValueType, NodeType *, DFFwk &)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
 ///     produced on previouse iteration of the data-flow analysis algorithm.
@@ -99,12 +105,14 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
   typedef GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
-  assert(DFF && "Data-flow framework must not be null!");  
+  assert(DFF && "Data-flow framework must not be null!");
   assert(DFG && "Data-flow graph must not be null!");
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
   I != E; ++I) {
+    DFT::initialize(*I, DFF);
     DFT::setValue(DFT::topElement(DFF), *I);
   }
+  DFT::initialize(GT::getEntryNode(DFG), DFF);
   DFT::setValue(DFT::boundaryCondition(DFF), GT::getEntryNode(DFG));
   bool isChanged = true;
   do {
@@ -181,15 +189,18 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   std::copy(po_iterator::begin(DFG), po_iterator::end(DFG),
             std::back_inserter(RPOT));
   rpo_iterator I = RPOT.rbegin(), E = RPOT.rend();
-  assert(*I == DFT::getEntryNode(DFG) &&
+  assert(*I == GT::getEntryNode(DFG) &&
           "The first node in the topological order differs from the entry node in the data-flow framework!");
-  for (++I; I != E; ++I)
-    DFT::setValue(DFT::topElement(DFG), *I);
-  DFT::setValue(DFT::boundaryCondition(DFG), GT::getEntryNode(DFG));
+  for (++I; I != E; ++I) {
+    DFT::initialize(*I, DFF);
+    DFT::setValue(DFT::topElement(DFF), *I);
+  }
+  DFT::initialize(GT::getEntryNode(DFG), DFF);
+  DFT::setValue(DFT::boundaryCondition(DFF), GT::getEntryNode(DFG));
   for (I = RPOT.rbegin(), ++I; I != E; ++I) {
     assert(GT::child_begin(*I) != GT::child_end(*I) &&
            "Data-flow graph must not contain unreachable nodes!");
-    ValueType Value(DFT::topElement(DFG));
+    ValueType Value(DFT::topElement(DFF));
     for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
          CI != CE; ++CI) {
       DFT::meetOperator(DFT::getValue(*CI), Value, DFF);
@@ -231,9 +242,9 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
 /// - static void collapse(GraphType &G, DFFwk &DFF) -
 ///     Collapses a data-flow graph which represents a region to a one node
 ///     in a data-flow graph of an outer region.
-/// - typedef regions_iterator,
-///   static regions_iterator regions_begin(GraphType &G),
-///   static regions_iterator regions_end (GraphType &G) -
+/// - typedef region_iterator,
+///   static region_iterator regions_begin(GraphType &G),
+///   static region_iterator regions_end (GraphType &G) -
 ///     Allow iteration over all internal regions in the specified region.
 /// \note It may be convinient to inherit DataFlowTraits to specialize this 
 /// class.
@@ -271,15 +282,15 @@ template<class DFFwk > struct RegionDFTraits {
 template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef RegionDFTraits<DFFwk> RT;
-  typedef typename RT::regions_iterator regions_iterator;
-  for (regions_iterator I = RT::regions_begin(DFG), E = RT::regions_end(DFG);
-  I != E; ++I)
+  typedef typename RT::region_iterator region_iterator;
+  for (region_iterator I = RT::region_begin(DFG), E = RT::region_end(DFG);
+       I != E; ++I)
     solveDataFlowUpward(DFF, *I);
   if (isDAG(DFG))
     solveDataFlowTopologicaly(DFF, DFG);
   else
     solveDataFlowIteratively(DFF, DFG);
-  DFT::collapse(DFG, DFF);
+  RT::collapse(DFG, DFF);
 }
 
 /// \brief Solves data-flow problem for the specified hierarchy of regions.
