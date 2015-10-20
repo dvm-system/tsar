@@ -23,9 +23,9 @@
 #include "llvm/Support/Casting.h"
 #include <vector>
 #include <utility.h>
+#include <declaration.h>
 #include "tsar_data_flow.h"
 #include "tsar_graph.h"
-#include "declaration.h"
 
 namespace llvm {
 class Function;
@@ -88,7 +88,7 @@ public:
   /// \param [in] V Value of the attribute.
   /// \return If the attribute already exist it can not be added, so this
   /// function returns false. Otherwise, it returns true.
-  template<class Attribute> 
+  template<class Attribute>
   bool addAttribute(typename Attribute::Value *V) {
     return mAttributes.insert(
       std::make_pair(Attribute::id(), static_cast<void *>(V))).second;
@@ -102,7 +102,7 @@ public:
   /// does not exist the method returns nullptr.
   template<class Attribute>
   typename Attribute::Value * getAttribute() {
-    llvm::DenseMap<Utility::AttributeId , void *>::iterator I =
+    llvm::DenseMap<Utility::AttributeId, void *>::iterator I =
       mAttributes.find(Attribute::id());
     return I == mAttributes.end() ? nullptr :
       static_cast<typename Attribute::Value *>(I->second);
@@ -156,9 +156,21 @@ public:
 class DFRegion : public DFNode {
 public:
 
+  /// This type used to iterate over all nodes in the region body.
+  typedef std::vector<DFNode *>::const_iterator node_iterator;
+
+  /// This type used to iterate over internal regions.
+  typedef std::vector<DFRegion *>::const_iterator region_iterator;
+
+  /// This type used to iterate over all latch nodes in the loop body.
+  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator latch_iterator;
+
+  /// This type used to iterate over all exiting nodes in the region.
+  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator exiting_iterator;
+
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DFNode *N) {
-    return FIRST_KIND_REGION <= N->getKind() && 
+    return FIRST_KIND_REGION <= N->getKind() &&
       N->getKind() <= LAST_KIND_REGION;
   }
 
@@ -171,12 +183,6 @@ public:
     delete mEntry;
   }
 
-  /// This type used to iterate over all nodes in the region body.
-  typedef std::vector<DFNode *>::const_iterator nodes_iterator;
-
-  /// This type used to iterate over internal regions.
-  typedef std::vector<DFRegion *>::const_iterator regions_iterator;
-
   /// Get the number of nodes in this region.
   unsigned getNumNodes() const { return mNodes.size(); }
 
@@ -184,10 +190,10 @@ public:
   const std::vector<DFNode *> & getNodes() const { return mNodes; }
 
   /// Returns iterator that points to the beginning of the nodes list.
-  nodes_iterator nodes_begin() const { return mNodes.begin(); }
+  node_iterator node_begin() const { return mNodes.begin(); }
 
   /// Returns iterator that points to the ending of the nodes list.
-  nodes_iterator nodes_end() const { return mNodes.end(); }
+  node_iterator node_end() const { return mNodes.end(); }
 
   /// Get the number of internal regions.
   unsigned getNumRegions() const { return mRegions.size(); }
@@ -196,10 +202,10 @@ public:
   const std::vector<DFRegion *> & getRegions() const { return mRegions; }
 
   /// Returns iterator that points to the beginning of the internal regions.
-  regions_iterator regions_begin() const { return mRegions.begin(); }
+  region_iterator region_begin() const { return mRegions.begin(); }
 
   /// Returns iterator that points to the ending of the internal regions.
-  regions_iterator regions_end() const { return mRegions.end(); }
+  region_iterator region_end() const { return mRegions.end(); }
 
   /// \brief Returns the entry-point of the data-flow graph.
   ///
@@ -213,6 +219,59 @@ public:
   DFNode * getEntryNode() const {
     assert(mEntry && "There is no entry node in the graph!");
     return mEntry;
+  }
+
+  /// \brief Specifies an exiting node of the data-flow graph.
+  ///
+  /// Multiple nodes can be specified.
+  void setExitingNode(DFNode *N) {
+    assert(N && "Node must not be null!");
+    mExitingNodes.insert(N);
+  }
+
+  /// Get a list of the exiting nodes of this region.
+  const llvm::SmallPtrSet<DFNode *, 8> & getExitingNodes() const {
+    return mExitingNodes;
+  }
+
+  /// Returns iterator that points to the beginning of the exiting nodes list.
+  exiting_iterator exiting_begin() const { return mExitingNodes.begin(); }
+
+  /// Returns iterator that points to the ending of the exiting nodes list.
+  exiting_iterator exiting_end() const { return mExitingNodes.end(); }
+
+  ///\brief Returns true if the node is an exiting node of this region.
+  ///
+  /// Exiting node is a node which is inside of the region and 
+  /// have successors outside of the region.
+  bool isExiting(const DFNode *N) const {
+    return mExitingNodes.count(const_cast<DFNode *>(N));
+  }
+
+  /// \brief Specifies an latch node of the data-flow graph.
+  ///
+  /// Multiple nodes can be specified.
+  void setLatchNode(DFNode *N) {
+    assert(N && "Node must not be null!");
+    mLatchNodes.insert(N);
+  }
+
+  /// Get a list of the latch nodes of this loop.
+  const llvm::SmallPtrSet<DFNode *, 8> & getLatchNodes() const {
+    return mLatchNodes;
+  }
+
+  /// Returns iterator that points to the beginning of the latch nodes list.
+  latch_iterator latch_begin() const { return mLatchNodes.begin(); }
+
+  /// Returns iterator that points to the ending of the latch nodes list.
+  latch_iterator latch_end() const { return mLatchNodes.end(); }
+
+  ///\brief  Returns true if the node is an latch node of this loop.
+  ///
+  /// A latch node is a node that contains a branch back to the header.
+  bool isLatch(const DFNode *N) const {
+    return mLatchNodes.count(const_cast<DFNode *>(N));
   }
 
   /// \brief Inserts a new node at the end of the list of nodes.
@@ -248,6 +307,8 @@ protected:
 private:
   std::vector<DFNode *> mNodes;
   std::vector<DFRegion *> mRegions;
+  llvm::SmallPtrSet<DFNode *, 8> mExitingNodes;
+  llvm::SmallPtrSet<DFNode *, 8> mLatchNodes;
   DFNode *mEntry;
 };
 
@@ -262,11 +323,6 @@ private:
 /// collapsed inner loop and entry node.
 class DFLoop : public DFRegion {
 public:
-  /// This type used to iterate over all exiting nodes in the loop body.
-  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator exiting_iterator;
-
-  /// This type used to iterate over all latch nodes in the loop body.
-  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator latch_iterator;
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DFNode *N) {
@@ -283,62 +339,7 @@ public:
   /// Get the loop.
   llvm::Loop * getLoop() const { return mLoop; }
 
-  /// \brief Specifies an exiting node of the data-flow graph.
-  ///
-  /// Multiple nodes can be specified.
-  void setExitingNode(DFNode *N) {
-    assert(N && "Node must not be null!");
-    mExitingNodes.insert(N);
-  }
-
-  /// Get a list of the exiting nodes of this loop.
-  const llvm::SmallPtrSet<DFNode *, 8> & getExitingNodes() const { 
-    return mExitingNodes;
-  }
-
-  /// Returns iterator that points to the beginning of the exiting nodes list.
-  exiting_iterator exiting_begin() const { return mExitingNodes.begin(); }
-
-  /// Returns iterator that points to the ending of the exiting nodes list.
-  exiting_iterator exiting_end() const { return mExitingNodes.end(); }
-
-  ///\brief  Returns true if the node is an exiting node of this loop.
-  ///
-  /// Exiting node is a node which is inside of the loop and 
-  /// have successors outside of the loop.
-  bool isLoopExiting(const DFNode *N) const {
-    return mExitingNodes.count(const_cast<DFNode *>(N));
-  }
-
-  /// \brief Specifies an latch node of the data-flow graph.
-  ///
-  /// Multiple nodes can be specified.
-  void setLatchNode(DFNode *N) {
-    assert(N && "Node must not be null!");
-    mLatchNodes.insert(N);
-  }
-
-  /// Get a list of the latch nodes of this loop.
-  const llvm::SmallPtrSet<DFNode *, 8> & getLatchNodes() const {
-    return mLatchNodes;
-  }
-
-  /// Returns iterator that points to the beginning of the latch nodes list.
-  latch_iterator latch_begin() const { return mLatchNodes.begin(); }
-
-  /// Returns iterator that points to the ending of the latch nodes list.
-  latch_iterator latch_end() const { return mLatchNodes.end(); }
-
-  ///\brief  Returns true if the node is an latch node of this loop.
-  ///
-  /// A latch node is a node that contains a branch back to the header.
-  bool isLoopLatch(const DFNode *N) const {
-    return mLatchNodes.count(const_cast<DFNode *>(N));
-  }
-
 private:
-  llvm::SmallPtrSet<DFNode *, 8> mExitingNodes;
-  llvm::SmallPtrSet<DFNode *, 8> mLatchNodes;
   llvm::Loop *mLoop;
 };
 
@@ -388,8 +389,87 @@ public:
   explicit DFFunction(llvm::Function *F) : DFRegion(KIND_FUNCTION), mFunc(F) {
     assert(F && "Function must not be null!");
   }
+
+  /// Get the function.
+  llvm::Function * getFunction() const { return mFunc; }
 private:
   llvm::Function *mFunc;
+};
+
+/// This class should be specialized by different loops which is why
+/// the default version is empty. The specialization is used to iterate over
+/// blocks and internal loops which are part of a loop.
+/// The following elements should be provided: typedef region_iterator,
+/// - typedef block_iterator,
+///   static block_iterator block_begin(LoopReptn &L),
+///   static block_iterator block_end (LoopReptn &L) -
+///     Allow iteration over all blocks in the specified loop.
+/// - typedef loop_iterator,
+///   static loop_iterator loop_begin(LoopReptn &L),
+///   static loop_iterator loop_end (LoopReptn &L) -
+///     Allow iteration over all internal loops in the specified loop.
+template<class LoopReptn> class LoopTraits {
+  /// If anyone tries to use this class without having an appropriate
+  /// specialization, make an error.
+  typedef typename LoopReptn::UnknownLoopError loop_iterator;
+};
+
+template<> class LoopTraits<llvm::Loop *> {
+public:
+  typedef llvm::Loop::block_iterator block_iterator;
+  typedef llvm::Loop::iterator loop_iterator;
+  static block_iterator block_begin(llvm::Loop *L) {
+    assert(L && "Loop must not be null!");
+    return L->block_begin();
+  }
+  static block_iterator block_end(llvm::Loop *L) {
+    assert(L && "Loop must not be null!");
+    return L->block_end();
+  }
+  static llvm::BasicBlock * getHeader(llvm::Loop *L) {
+    assert(L && "Loop must not be null!");
+    return L->getHeader();
+  }
+  static loop_iterator loop_begin(llvm::Loop *L) {
+    assert(L && "Loop must not be null!");
+    return L->begin();
+  }
+  static loop_iterator loop_end(llvm::Loop *L) {
+    assert(L && "Loop must not be null!");
+    return L->end();
+  }
+};
+
+template<> class LoopTraits<std::pair<llvm::Function *, llvm::LoopInfo *>> {
+  typedef std::pair<llvm::Function *, llvm::LoopInfo *> LoopReptn;
+public:
+  class block_iterator : public llvm::Function::iterator {
+    // Let us use this iterator to access a list of blocks in a function
+    // as a list of pointers. Originaly a list of blocks in a function is
+    // implemented as a list of objects, not a list of pointers.
+    typedef llvm::Function::iterator base;
+  public:
+    typedef pointer reference;
+    block_iterator(reference R) : base(R) {}
+    block_iterator() : base() {}
+    reference operator*() const { return base::operator pointer(); }
+  };
+  typedef llvm::LoopInfo::iterator loop_iterator;
+  static block_iterator block_begin(LoopReptn L) {
+    return static_cast<block_iterator>(L.first->begin());
+  }
+  static block_iterator block_end(LoopReptn L) {
+    return static_cast<block_iterator>(L.first->end());
+  }
+  static llvm::BasicBlock * getHeader(LoopReptn L) {
+    return &L.first->getEntryBlock();
+  }
+  static loop_iterator loop_begin(LoopReptn L) {
+    return L.second->begin();
+  }
+  static loop_iterator loop_end(LoopReptn L) {
+    return L.second->end();
+  }
 };
 
 /// \brief Builds hierarchy of regions for the specified loop nest.
@@ -397,21 +477,77 @@ private:
 /// This function treats a loop nest as hierarchy of regions. Each region is
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
+/// \tparam LoopReptn Representation of the outermost loop in the nest.
+/// The LoopTraits class should be specialized by type of each loop in the nest.
+/// For example, the outermost loop can be a loop llvm::Loop * or
+/// a whole funcction std::pair<llvm::Function *, llvm::LoopInfo *>.
 /// \param [in] L An outermost loop in the nest, it can not be null.
-/// \return A region which is associated with the specified loop.
-DFLoop * buildLoopRegion(llvm::Loop *L);
-
-/// \brief Builds hierarchy of regions for all loops in a function.
-///
-/// This function add to the specified region which is associated with
-/// a function a hierarchy of regions for all loops in this function.
-/// This function treats a loop nest as hierarchy of regions. Each region is
-/// an abstraction of an inner loop. Only natural loops will be treated as a
-/// region other loops will be ignored.
-/// \param [in] DFF A region associated with a function, it can not be null.
-/// \param [in] LI Top level loop list in the function.
-/// \pre The function and the top level loop list should be agreed.
-void addLoopRegions(DFFunction *DFF, llvm::LoopInfo &LI);
+/// \param [in, out] A region which is associated with the specified loop.
+template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
+  assert(R && "Region must not be null!");
+  typedef LoopTraits<LoopReptn> LT;
+  DenseMap<BasicBlock *, DFNode *> Blocks;
+  for (LT::loop_iterator I = LT::loop_begin(L), E = LT::loop_end(L);
+       I != E; ++I) {
+    DFLoop *DFL = new DFLoop(*I);
+    buildLoopRegion(*I, DFL);
+    R->addNode(DFL);
+    for (BasicBlock *BB : (*I)->getBlocks())
+      Blocks.insert(std::make_pair(BB, DFL));
+  }
+  for (LT::block_iterator I = LT::block_begin(L), E = LT::block_end(L);
+       I != E; ++I) {
+    if (Blocks.count(*I))
+      continue;
+    DFBlock * N = new DFBlock(*I);
+    R->addNode(N);
+    Blocks.insert(std::make_pair(*I, N));
+  }
+  assert(LT::getHeader(L) && Blocks.count(LT::getHeader(L)) &&
+    "Data-flow node for the loop header is not found!");
+  DFEntry *EntryNode = new DFEntry;
+  R->addNode(EntryNode);
+  DFNode *HeaderNode = Blocks.find(LT::getHeader(L))->second;
+  EntryNode->addSuccessor(HeaderNode);
+  HeaderNode->addPredecessor(EntryNode);
+  for (auto BBToN : Blocks) {
+    if (succ_begin(BBToN.first) == succ_end(BBToN.first))
+      R->setExitingNode(BBToN.second);
+    else
+      for (succ_iterator SI = succ_begin(BBToN.first),
+        SE = succ_end(BBToN.first); SI != SE; ++SI) {
+        auto SToNode = Blocks.find(*SI);
+        // First, exiting nodes will be specified.
+        // Second, latch nodes will be specified. A latch node is a node
+        // that contains a branch back to the header.
+        // Third, successors will be specified:
+        // 1. Back and exit edges will be ignored.
+        // 2. Branches inside inner loops will be ignored.
+        // There is branch from a data-flow node to itself
+        // (SToNode->second == BBToN.second) only if this node is an abstraction
+        // of an inner loop. So this branch is inside this inner loop
+        // and should be ignored.
+        if (SToNode == Blocks.end())
+          R->setExitingNode(BBToN.second);
+        else if (*SI == LT::getHeader(L))
+          R->setLatchNode(BBToN.second);
+        else if (SToNode->second != BBToN.second)
+          BBToN.second->addSuccessor(SToNode->second);
+      }
+    // Predecessors outsied the loop will be ignored.
+    if (BBToN.first != LT::getHeader(L)) {
+      for (pred_iterator PI = pred_begin(BBToN.first),
+        PE = pred_end(BBToN.first); PI != PE; ++PI) {
+        assert(Blocks.count(*PI) &&
+          "Data-flow node for the specified basic block is not found!");
+        DFNode *PN = Blocks.find(*PI)->second;
+        // Branches inside inner loop will be ignored (for details, see above).
+        if (PN != BBToN.second)
+          BBToN.second->addPredecessor(PN);
+      }
+    }
+  }
+}
 }
 
 namespace llvm {
@@ -421,9 +557,9 @@ template<> struct GraphTraits<tsar::DFRegion *> {
   typedef NodeType::succ_iterator ChildIteratorType;
   static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
   static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
-  typedef tsar::DFRegion::nodes_iterator nodes_iterator;
-  static nodes_iterator nodes_begin(tsar::DFRegion *G) { return G->nodes_begin(); }
-  static nodes_iterator nodes_end(tsar::DFRegion *G) { return G->nodes_end(); }
+  typedef tsar::DFRegion::node_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::DFRegion *G) { return G->node_begin(); }
+  static nodes_iterator nodes_end(tsar::DFRegion *G) { return G->node_end(); }
   unsigned size(tsar::DFRegion *G) { return G->getNumNodes(); }
 };
 
