@@ -243,8 +243,8 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
 ///     Collapses a data-flow graph which represents a region to a one node
 ///     in a data-flow graph of an outer region.
 /// - typedef region_iterator,
-///   static region_iterator regions_begin(GraphType &G),
-///   static region_iterator regions_end (GraphType &G) -
+///   static region_iterator region_begin(GraphType &G),
+///   static region_iterator region_end (GraphType &G) -
 ///     Allow iteration over all internal regions in the specified region.
 /// \note It may be convinient to inherit DataFlowTraits to specialize this 
 /// class.
