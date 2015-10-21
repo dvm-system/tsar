@@ -296,13 +296,11 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   R->addAttribute<PrivateAttr>(PS);
   assert(PS && "Result of analysis must not be null!");
   for (AllocaInst *AI : AllNodesAccesses)
-    if (!DefUse->getUses().count(AI)) {
-      printAllocaSource(errs(), AI);
+    if (!DefUse->getUses().count(AI))
       if (DefUse->getDefs().count(AI))
         (*PS)[LastPrivate].insert(AI);
       else if (LatchDefs.exist(AI))
         (*PS)[SecondToLastPrivate].insert(AI);
       else
         (*PS)[DynamicPrivate].insert(AI);
-    }
 }

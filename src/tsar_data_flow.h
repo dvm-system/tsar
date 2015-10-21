@@ -68,7 +68,7 @@ namespace tsar {
 /// - static meetOperator(const ValueType &, ValueType &, DFFwk &) -
 ///     Evaluates a meet operator, the result is stored in the second
 ///     parameter.
-/// - satic bool transferFunction(ValueType, NodeType *, DFFwk &)
+/// - static bool transferFunction(ValueType, NodeType *, DFFwk &)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
 ///     produced on previouse iteration of the data-flow analysis algorithm.
