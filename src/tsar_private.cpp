@@ -167,14 +167,16 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   assert(Fwk && "Data-flow framework must not be null");
   PrivateDFValue *V = new PrivateDFValue;
   N->addAttribute<PrivateDFAttr>(V);
-  DFBlock *DFB = dyn_cast<DFBlock>(N);
-  if (!DFB)
+  if (llvm::isa<DFRegion>(N))
     return;
-  // DefUseAttr will be added here to nodes which represented basic blocks only.
-  // For nodes which represented regions this attribute will be added
+  // DefUseAttr will be set here for nodes different to regions.
+  // For nodes which represented regions this attribute will be set
   // in collapse() function.
   DefUseSet *DU = new DefUseSet;
   N->addAttribute<DefUseAttr>(DU);
+  DFBlock *DFB = dyn_cast<DFBlock>(N);
+  if (!DFB)
+    return;
   BasicBlock *BB = DFB->getBlock();
   assert(BB && "Basic block must not be null!");
   for (Instruction &I : BB->getInstList()) {
@@ -192,13 +194,18 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
 
 bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   ValueType V, DFNode *N, PrivateDFFwk *) {
+  // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
-  if (llvm::isa<DFEntry>(N)) {
-    return false; 
-  }
   PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
   assert(PV && "Data-flow value must not be null!");
   PV->setIn(std::move(V));
+  if (llvm::isa<DFExit>(N)) {
+    if (PV->getOut() != V) {
+      PV->setOut(std::move(V));
+      return true;
+    }
+    return false;
+  }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
   AllocaDFValue newOut(AllocaDFValue::emptyValue());
@@ -221,17 +228,15 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   if (!L)
     return;
   // We need two types of defs:
-  // * ExitingDefs is a set of must define allocas (mDefs) for the loop.
+  // * ExitingDefs is a set of must define allocas (Defs) for the loop.
   //   These allocas always have definitions inside the loop regardless
   //   of execution paths of iterations of the loop.
   // * LatchDefs is a set of must define allocas before a branch to
   //   a next arbitrary iteration.
-  AllocaDFValue ExitingDefs(RT::topElement(this));
-  for (DFNode *N : L->getExitingNodes()) {
-    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be null!");
-    ExitingDefs.intersect(PV->getOut());
-  }
+  DFNode *ExitNode = R->getExitNode();
+  PrivateDFValue *ExitValue = ExitNode->getAttribute<PrivateDFAttr>();
+  assert(ExitValue && "Data-flow value must not be null!");
+  const AllocaDFValue & ExitingDefs = ExitValue->getOut();
   AllocaDFValue LatchDefs(RT::topElement(this));
   for (DFNode *N : L->getLatchNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();

@@ -53,6 +53,7 @@ public:
     FIRST_KIND = 0,
     KIND_BLOCK = FIRST_KIND,
     KIND_ENTRY,
+    KIND_EXIT,
 
     FIRST_KIND_REGION,
     KIND_LOOP = FIRST_KIND_REGION,
@@ -135,7 +136,11 @@ private:
   llvm::DenseMap<Utility::AttributeId, void *> mAttributes;
 };
 
-/// Representation of an entry node in a data-flow framework.
+/// \brief Representation of an entry node in a data-flow framework.
+///
+/// It is convenient to have additional nodes which called entry and exit
+/// in a graph. This nodes help to determine starting point for solving of
+/// a data-flow problem in forward and backward directions respectively.
 class DFEntry : public DFNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
@@ -145,6 +150,22 @@ public:
 
   /// \brief Ctreates representation of the entry node.
   DFEntry() : DFNode(KIND_ENTRY) {}
+};
+
+/// \brief Representation of an exit node in a data-flow framework.
+///
+/// It is convenient to have additional nodes which called entry and exit
+/// in a graph. This nodes help to determine starting point for solving of
+/// a data-flow problem in forward and backward directions respectively.
+class DFExit : public DFNode {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DFNode *R) {
+    return R->getKind() == KIND_EXIT;
+  }
+
+  /// \brief Ctreates representation of the exit node.
+  DFExit() : DFNode(KIND_EXIT) {}
 };
 
 /// \brief Representation of a region in a data-flow framework.
@@ -165,9 +186,6 @@ public:
   /// This type used to iterate over all latch nodes in the loop body.
   typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator latch_iterator;
 
-  /// This type used to iterate over all exiting nodes in the region.
-  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator exiting_iterator;
-
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DFNode *N) {
     return FIRST_KIND_REGION <= N->getKind() &&
@@ -180,13 +198,16 @@ public:
   ~DFRegion() {
     for (DFNode *N : mNodes)
       delete N;
-    delete mEntry;
   }
 
   /// Get the number of nodes in this region.
   unsigned getNumNodes() const { return mNodes.size(); }
 
-  /// Get a list of the nodes which make up this region body.
+  /// \brief Get a list of the nodes which make up this region body.
+  ///
+  /// The first node in the list is an entry node and the last node is
+  /// an exit node. The other way to access these nodes is getEntryNode() and
+  /// getExitNode() methods respectively.
   const std::vector<DFNode *> & getNodes() const { return mNodes; }
 
   /// Returns iterator that points to the beginning of the nodes list.
@@ -210,42 +231,27 @@ public:
   /// \brief Returns the entry-point of the data-flow graph.
   ///
   /// The result of this method is an entry point which is necessary to solve
-  /// a data-flow problem. A node which is treated as entry depends on a region
-  /// and it might not be essential in an original data-flow graph.
-  /// For example, in case of loop, the entry node is not a header of the loop,
-  /// this node is a predecessor of the header.
-  /// \attention This node should not contained in  list of nodes which is
-  /// a result of the getNodes() method. 
+  /// a data-flow problem in forward direction. A node which is treated as entry
+  /// depends on a region and it might not be essential in an original
+  /// data-flow graph. For example, in case of loop, the entry node is not
+  /// a header of the loop, this node is a predecessor of the header.
   DFNode * getEntryNode() const {
-    assert(mEntry && "There is no entry node in the graph!");
-    return mEntry;
+    assert(mNodes.size() > 0 && llvm::isa<DFEntry>(mNodes.front()) &&
+      "There is no entry node in the graph!");
+    return mNodes.front();
   }
 
-  /// \brief Specifies an exiting node of the data-flow graph.
+  /// \brief Returns the exit-point of the data-flow graph.
   ///
-  /// Multiple nodes can be specified.
-  void setExitingNode(DFNode *N) {
-    assert(N && "Node must not be null!");
-    mExitingNodes.insert(N);
-  }
-
-  /// Get a list of the exiting nodes of this region.
-  const llvm::SmallPtrSet<DFNode *, 8> & getExitingNodes() const {
-    return mExitingNodes;
-  }
-
-  /// Returns iterator that points to the beginning of the exiting nodes list.
-  exiting_iterator exiting_begin() const { return mExitingNodes.begin(); }
-
-  /// Returns iterator that points to the ending of the exiting nodes list.
-  exiting_iterator exiting_end() const { return mExitingNodes.end(); }
-
-  ///\brief Returns true if the node is an exiting node of this region.
-  ///
-  /// Exiting node is a node which is inside of the region and 
-  /// have successors outside of the region.
-  bool isExiting(const DFNode *N) const {
-    return mExitingNodes.count(const_cast<DFNode *>(N));
+  /// The result of this method is an entry point which is necessary to solve
+  /// a data-flow problem in backward direction. A node which is treated as exit
+  /// depends on a region and it might not be essential in an original
+  /// data-flow graph. For example, in case of loop, the exit node is not
+  /// an exit of the loop, this node is a successor of the exit.
+  DFNode * getExitNode() const {
+    assert(mNodes.size() > 0 && llvm::isa<DFExit>(mNodes.back()) &&
+      "There is no exit node in the graph!");
+    return mNodes.back();
   }
 
   /// \brief Specifies an latch node of the data-flow graph.
@@ -285,31 +291,35 @@ public:
     assert(N && "Node must not be null!");
     assert(FIRST_KIND <= N->getKind() && N->getKind() <= LAST_KIND &&
       "Unknown kind of a node!");
-    assert(N != mEntry && "Only one entry node must be in the region!");
+    assert(!llvm::isa<DFEntry>(N) || mNodes.empty() || N != mNodes.front() &&
+      "Only one entry node must be in the region!");
+    assert(!llvm::isa<DFExit>(N) || mNodes.empty() || N != mNodes.back() &&
+      "Only one exit node must be in the region!");
 #ifdef DEBUG
     for (DFNode *Node : mNodes)
       assert(N != Node &&
         "The node must not be contained in the region!");
 #endif
     N->mParent = this;
-    if (llvm::isa<DFEntry>(N)) {
-      mEntry = N;
-      return;
-    }
-    mNodes.push_back(N);
+    if (llvm::isa<DFEntry>(N))
+      mNodes.insert(mNodes.begin(), N);
+    else if (llvm::isa<DFExit>(N) ||
+        !mNodes.empty() && !llvm::isa<DFExit>(mNodes.back()))
+      mNodes.push_back(N);
+    else
+      mNodes.insert(--mNodes.end(), N);
     if (DFRegion *R = llvm::dyn_cast<DFRegion>(N))
       mRegions.push_back(R);
   }
 protected:
   /// Creates a new node of the specified type.
-  explicit DFRegion(Kind K) : DFNode(K), mEntry(nullptr) {}
+  explicit DFRegion(Kind K) : DFNode(K) {}
 
 private:
   std::vector<DFNode *> mNodes;
   std::vector<DFRegion *> mRegions;
   llvm::SmallPtrSet<DFNode *, 8> mExitingNodes;
   llvm::SmallPtrSet<DFNode *, 8> mLatchNodes;
-  DFNode *mEntry;
 };
 
 /// \brief Representation of a loop in a data-flow framework.
@@ -485,6 +495,10 @@ public:
 /// \param [in, out] A region which is associated with the specified loop.
 template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
   assert(R && "Region must not be null!");
+  // To improve efficiency of construction the first created node
+  // is entry and  the last is exit.
+  DFEntry *EntryNode = new DFEntry;
+  R->addNode(EntryNode);
   typedef LoopTraits<LoopReptn> LT;
   DenseMap<BasicBlock *, DFNode *> Blocks;
   for (LT::loop_iterator I = LT::loop_begin(L), E = LT::loop_end(L);
@@ -503,19 +517,21 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
     R->addNode(N);
     Blocks.insert(std::make_pair(*I, N));
   }
+  DFExit *ExitNode = new DFExit;
+  R->addNode(ExitNode);
   assert(LT::getHeader(L) && Blocks.count(LT::getHeader(L)) &&
     "Data-flow node for the loop header is not found!");
-  DFEntry *EntryNode = new DFEntry;
-  R->addNode(EntryNode);
   DFNode *HeaderNode = Blocks.find(LT::getHeader(L))->second;
   EntryNode->addSuccessor(HeaderNode);
   HeaderNode->addPredecessor(EntryNode);
   for (auto BBToN : Blocks) {
-    if (succ_begin(BBToN.first) == succ_end(BBToN.first))
-      R->setExitingNode(BBToN.second);
-    else
+    if (succ_begin(BBToN.first) == succ_end(BBToN.first)) {
+      BBToN.second->addSuccessor(ExitNode);
+      ExitNode->addPredecessor(BBToN.second);
+    }
+    else {
       for (succ_iterator SI = succ_begin(BBToN.first),
-        SE = succ_end(BBToN.first); SI != SE; ++SI) {
+           SE = succ_end(BBToN.first); SI != SE; ++SI) {
         auto SToNode = Blocks.find(*SI);
         // First, exiting nodes will be specified.
         // Second, latch nodes will be specified. A latch node is a node
@@ -527,17 +543,19 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
         // (SToNode->second == BBToN.second) only if this node is an abstraction
         // of an inner loop. So this branch is inside this inner loop
         // and should be ignored.
-        if (SToNode == Blocks.end())
-          R->setExitingNode(BBToN.second);
-        else if (*SI == LT::getHeader(L))
+        if (SToNode == Blocks.end()) {
+          BBToN.second->addSuccessor(ExitNode);
+          ExitNode->addPredecessor(BBToN.second);
+        } else if (*SI == LT::getHeader(L))
           R->setLatchNode(BBToN.second);
         else if (SToNode->second != BBToN.second)
           BBToN.second->addSuccessor(SToNode->second);
       }
+    }
     // Predecessors outsied the loop will be ignored.
     if (BBToN.first != LT::getHeader(L)) {
       for (pred_iterator PI = pred_begin(BBToN.first),
-        PE = pred_end(BBToN.first); PI != PE; ++PI) {
+           PE = pred_end(BBToN.first); PI != PE; ++PI) {
         assert(Blocks.count(*PI) &&
           "Data-flow node for the specified basic block is not found!");
         DFNode *PN = Blocks.find(*PI)->second;
@@ -551,28 +569,98 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
 }
 
 namespace llvm {
-template<> struct GraphTraits<tsar::DFRegion *> {
+template<> struct GraphTraits<tsar::Forward<tsar::DFNode *> > {
   typedef tsar::DFNode NodeType;
-  static NodeType *getEntryNode(tsar::DFRegion *G) { return G->getEntryNode(); }
-  typedef NodeType::succ_iterator ChildIteratorType;
+  static NodeType * getEntryNode(tsar::Forward<tsar::DFNode *> G) {
+    return G.Graph;
+  }
+  typedef NodeType::pred_iterator ChildIteratorType;
   static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
   static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
-  typedef tsar::DFRegion::node_iterator nodes_iterator;
-  static nodes_iterator nodes_begin(tsar::DFRegion *G) { return G->node_begin(); }
-  static nodes_iterator nodes_end(tsar::DFRegion *G) { return G->node_end(); }
-  unsigned size(tsar::DFRegion *G) { return G->getNumNodes(); }
 };
 
-template<> struct GraphTraits<Inverse<tsar::DFRegion *> > :
-  public GraphTraits<tsar::DFRegion *> {
+template<> struct GraphTraits<Inverse<tsar::Forward<tsar::DFNode *> > > {
+  typedef tsar::DFNode NodeType;
+  static NodeType * getEntryNode(Inverse<tsar::Forward<tsar::DFNode *> > G) {
+    return G.Graph.Graph;
+  }
+  typedef NodeType::succ_iterator ChildIteratorType;
   static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
   static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
 };
 
-template<> struct GraphTraits<tsar::DFLoop *> :
-  public GraphTraits<tsar::DFRegion *> {};
+/// \brief GraphTraits specializations for a data-flow graph.
+///
+/// Use it to solve data-flow problem in forward direction.
+template<> struct GraphTraits<tsar::Forward<tsar::DFRegion *> > :
+    public GraphTraits<tsar::Forward<tsar::DFNode * > > {
+  static NodeType *getEntryNode(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->getEntryNode();
+  }
+  typedef tsar::DFRegion::node_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->node_begin();
+  }
+  static nodes_iterator nodes_end(tsar::Forward<tsar::DFRegion *> G) {
+    return --G.Graph->node_end();
+  }
+  unsigned size(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->getNumNodes();
+  }
+};
 
-template<> struct GraphTraits<Inverse<tsar::DFLoop *> > :
-  public GraphTraits<Inverse<tsar::DFRegion *> > {};
+template<> struct GraphTraits<Inverse<tsar::Forward<tsar::DFRegion *> > >:
+    public GraphTraits<Inverse<tsar::Forward<tsar::DFNode *> > > {
+  static NodeType *getEntryNode(Inverse<tsar::Forward<tsar::DFRegion *> > G) {
+    return G.Graph.Graph->getEntryNode();
+  }
+};
+
+template<> struct GraphTraits<tsar::Backward<tsar::DFNode *> > {
+  typedef tsar::DFNode NodeType;
+  static NodeType * getEntryNode(tsar::Backward<tsar::DFNode *> G) {
+    return G.Graph;
+  }
+  typedef NodeType::pred_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
+  typedef tsar::DFNode NodeType;
+  static NodeType * getEntryNode(Inverse<tsar::Backward<tsar::DFNode *> > G) {
+    return G.Graph.Graph;
+  }
+  typedef NodeType::succ_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
+};
+
+/// \brief GraphTraits specializations for a data-flow graph.
+///
+/// Use it to solve data-flow problem in backward direction.
+template<> struct GraphTraits<tsar::Backward<tsar::DFRegion *> > :
+  public GraphTraits<tsar::Backward<tsar::DFNode * > > {
+  static NodeType *getEntryNode(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->getEntryNode();
+  }
+  typedef tsar::DFRegion::node_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::Backward<tsar::DFRegion *> G) {
+    return ++G.Graph->node_begin();
+  }
+  static nodes_iterator nodes_end(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->node_end();
+  }
+  unsigned size(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->getNumNodes();
+  }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFRegion *> > > :
+  public GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
+  static NodeType *getEntryNode(Inverse<tsar::Backward<tsar::DFRegion *> > G) {
+    return G.Graph.Graph->getEntryNode();
+  }
+};
 }
 #endif//TSAR_DF_GRAPH_H

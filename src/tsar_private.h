@@ -397,7 +397,7 @@ public:
   }
 
   /// Returns an analysed data-flow graph.
-  DFRegion * getDFG() { return mRegion; }
+  Forward<DFRegion *> getDFG() { return mRegion; }
 
   /// Returns true if the specified alloca should be analyzed.
   bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI); }
@@ -422,11 +422,11 @@ BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
 /// Traits for a data-flow framework which is used to find candidates
 /// in privatizable allocas for each natural loops.
 template<> struct DataFlowTraits<PrivateDFFwk *> {
-  typedef DFRegion * GraphType;
+  typedef Forward<DFRegion * > GraphType;
   static GraphType getDFG(PrivateDFFwk *Fwk) {
     assert(Fwk && "Framework must not be null!");
-    return Fwk->getDFG();
-  }
+    return (GraphType)Fwk->getDFG();
+    }
   typedef AllocaDFValue ValueType;
   static ValueType topElement(PrivateDFFwk *) {
     return AllocaDFValue::fullValue();
@@ -458,13 +458,15 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
 /// in privatizable allocas for each natural loops.
 template<> struct RegionDFTraits<PrivateDFFwk *> :
     DataFlowTraits<PrivateDFFwk *> {
-  static void collapse(GraphType G, PrivateDFFwk *Fwk) { Fwk->collapse(G); }
+  static void collapse(GraphType G, PrivateDFFwk *Fwk) {
+    Fwk->collapse(G.Graph);
+  }
   typedef DFRegion::region_iterator region_iterator;
   static region_iterator region_begin(GraphType G) {
-    return G->region_begin();
+    return G.Graph->region_begin();
   }
   static region_iterator region_end(GraphType G) {
-    return G->region_end();
+    return G.Graph->region_end();
   }
 };
 }
