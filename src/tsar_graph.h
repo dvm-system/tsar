@@ -102,7 +102,6 @@ inline std::pair<
   typename llvm::GraphTraits<GraphType>::NodeType *> findBackEdge(GraphType G) {
   typedef llvm::GraphTraits<GraphType > GT;
   typedef typename GT::NodeType NodeType;
-  assert(G && "Graph must not be null!");
   llvm::DenseMap<NodeType *, DFSColor> VisitedNodes;
   VisitedNodes.insert(std::make_pair(GT::getEntryNode(G), COLOR_GRAY));
   return detail::findBackEdge<GraphType>(GT::getEntryNode(G), VisitedNodes);
@@ -114,7 +113,6 @@ inline std::pair<
 /// \pre The llvm::GraphTraits class should be specialized by GraphType.
 /// Note that GraphType is generally a pointer type, for example BasicBlock *.
 template<class GraphType> inline bool isDAG(GraphType G) {
-  assert(G && "Graph must not be null!");  
   return !findBackEdge<GraphType>(G).first;
 }
 }
