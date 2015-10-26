@@ -45,10 +45,14 @@ namespace tsar {
 /// The following elements should be provided:
 /// - typedef GraphType - 
 ///     Type of a data-flow graph. The llvm::GraphTraits class from
-///     llvm/ADT/GraphTraits.h should be specialized by this class.
-///     To change direction of a data-flow use llvm::Inverse<...>.
-///     Below let us use NodeType which is a type of nodes in the graph and
-///     defined in llvm::GraphTraits<GraphType>.
+///     llvm/ADT/GraphTraits.h should be specialized by GraphType and by
+///     llvm::Inverse<GraphType> (if it is neccessary to slove a data-flow
+///     problem in a topological order.
+///     Note that definition of nodes_begin() and nodes_end()
+///     should iterate over all nodes in the graph excepted the entry node.
+///     If a specialization of GraphTraits already exists and does not meet
+///     this requirement specialize it by Forward<GraphType> or
+///     Backward<GraphType> instead.
 /// - static GraphType getDFG(DFFwk &) -
 ///     Returns data-flow graph for the data-flow framework.
 /// - typedef ValueType - Type of a data-flow value.
@@ -82,6 +86,25 @@ template <class DFFwk> struct DataFlowTraits {
   typedef typename DFFwk::UnknownFrameworkError GraphType;
 };
 
+
+/// \brief This class is used as a little marker class to tell
+/// the data-flow solver to solve a data-flow problem in forward direction.
+///
+/// The GraphTraits class should be specialized by the Forward<GraphType>.
+template <class GraphType> struct Forward {
+  const GraphType &Graph;
+  inline Forward(const GraphType &G) : Graph(G) {}
+};
+
+/// \brief This class is used as a little marker class to tell
+/// the data-flow solver to solve a data-flow problem in backward direction.
+///
+/// The GraphTraits class should be specialized by the Backward<GraphType>.
+template <class GraphType> struct Backward {
+  const GraphType &Graph;
+  inline Backward(const GraphType &G) : Graph(G) {}
+};
+
 /// \brief Iteratively solves data-flow problem.
 ///
 /// This computes IN and OUT for each node in the specified data-flow graph
@@ -105,10 +128,8 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
   typedef GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
-  assert(DFF && "Data-flow framework must not be null!");
-  assert(DFG && "Data-flow graph must not be null!");
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
-  I != E; ++I) {
+       I != E; ++I) {
     DFT::initialize(*I, DFF);
     DFT::setValue(DFT::topElement(DFF), *I);
   }
@@ -175,14 +196,12 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   typedef GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
-  typedef typename GT::NodeType NodeType;  
+  typedef typename GT::NodeType NodeType;
   typedef llvm::po_iterator<
-    GraphType, llvm::SmallPtrSet<NodeType *, 8>, false, 
+    GraphType, llvm::SmallPtrSet<NodeType *, 8>, false,
     llvm::GraphTraits<llvm::Inverse<GraphType> > > po_iterator;
   typedef std::vector<NodeType *> RPOTraversal;
   typedef typename RPOTraversal::reverse_iterator rpo_iterator;
-  assert(DFF && "Data-flow framework must not be null!");
-  assert(DFG && "Data-flow graph must not be null!");
   // We do not use llvm::ReversePostOrderTraversal class because
   // its implementation requires that GraphTraits is specialized by NodeType *.
   RPOTraversal RPOT;
@@ -225,7 +244,6 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
 /// The GraphTraits class should be specialized by
 /// DataFlowTraits<DFFwk>::GraphType.
 template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
-  assert(DFF && "Data-flow framework must not be null!");
   typedef DataFlowTraits<DFFwk> DFT;
   solveDataFlowTopologicaly(DFF, DFT::getDFG(DFF));
 }
@@ -309,7 +327,6 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
 /// regions in the hierarhy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
 template<class DFFwk> void solveDataFlowUpward(DFFwk DFF) {
-  assert(DFF && "Data-flow framework must not be null!");
   typedef DataFlowTraits<DFFwk> DFT;
   solveDataFlowUpward(DFF, DFT::getDFG(DFF));
 }
@@ -352,6 +369,27 @@ public:
 
   /// Returns iterator that points to the ending of the predcessor list.
   pred_iterator pred_end() const { return mAdjacentNodes[PRED].end(); }
+
+  /// Returns true if the specified node is a successor of this node.
+  bool isSuccessor(NodeTy *Node) const {
+    assert(Node && "Data-flow node must not be null!");
+    for (NodeTy * N : mAdjacentNodes[SUCC])
+      if (N == Node) return true;
+    return false;
+  }
+
+  /// Returns true if the specified node is a predcessor of this node.
+  bool isPredecessor(NodeTy *Node) const {
+    assert(Node && "Data-flow node must not be null!");
+    for (NodeTy * N : mAdjacentNodes[PRED])
+      if (N == Node) return true;
+    return false;
+  }
+
+  /// Returns true if the specified node is an adjacent node to this node.
+  bool isAdjacent(NodeTy *Node) const {
+    return isSuccessor(Node) || isPredecessor(Node);
+  }
 
   /// Adds adjacent node in the specified direction.
   void addAdjacentNode(NodeTy *Node, Direction Dir) {
