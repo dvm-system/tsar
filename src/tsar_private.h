@@ -388,16 +388,10 @@ public:
   /// Information about privatizability of variables for the analysed region.
   typedef llvm::DenseMap<llvm::Loop *, PrivateSet *> PrivateInfo;
 
-  /// Creates data-flow node and specifies a set of allocas 
+  /// Creates data-flow framework and specifies a set of allocas 
   /// that should be analyzed.
-  explicit PrivateDFFwk(DFRegion *R, const AllocaSet &AnlsAllocas,
-                        PrivateInfo &PI) :
-      mRegion(R), mAnlsAllocas(AnlsAllocas), mPrivates(PI) {
-    assert(R && "The region must not be null!");
-  }
-
-  /// Returns an analysed data-flow graph.
-  Forward<DFRegion *> getDFG() { return mRegion; }
+  explicit PrivateDFFwk(const AllocaSet &AnlsAllocas, PrivateInfo &PI) :
+    mAnlsAllocas(AnlsAllocas), mPrivates(PI) {}
 
   /// Returns true if the specified alloca should be analyzed.
   bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI); }
@@ -407,7 +401,6 @@ public:
   void collapse(DFRegion *R);
 
 private:
-  DFRegion *mRegion;
   const AllocaSet &mAnlsAllocas;
   PrivateInfo &mPrivates;
 };
@@ -423,42 +416,38 @@ BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
 /// in privatizable allocas for each natural loops.
 template<> struct DataFlowTraits<PrivateDFFwk *> {
   typedef Forward<DFRegion * > GraphType;
-  static GraphType getDFG(PrivateDFFwk *Fwk) {
-    assert(Fwk && "Framework must not be null!");
-    return (GraphType)Fwk->getDFG();
-    }
   typedef AllocaDFValue ValueType;
-  static ValueType topElement(PrivateDFFwk *) {
+  static ValueType topElement(PrivateDFFwk *, GraphType) {
     return AllocaDFValue::fullValue();
   }
-  static ValueType boundaryCondition(PrivateDFFwk *) {
+  static ValueType boundaryCondition(PrivateDFFwk *, GraphType) {
     return AllocaDFValue::emptyValue();
   }
-  static void setValue(ValueType V, DFNode *N) {
+  static void setValue(ValueType V, DFNode *N, PrivateDFFwk *) {
     assert(N && "Node must not be null!");
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
     PV->setOut(std::move(V));
   }
-  static const ValueType & getValue(DFNode *N) {
+  static const ValueType & getValue(DFNode *N, PrivateDFFwk *) {
     assert(N && "Node must not be null!");
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be be null!");
     return PV->getOut();
   }
-  static void initialize(DFNode *, PrivateDFFwk *);
+  static void initialize(DFNode *, PrivateDFFwk *, GraphType);
   static void meetOperator(
-      const ValueType &LHS, ValueType &RHS, PrivateDFFwk *) {
+      const ValueType &LHS, ValueType &RHS, PrivateDFFwk *, GraphType) {
     RHS.intersect(LHS);
   }
-  static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *);
+  static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *, GraphType);
 };
 
 /// Tratis for a data-flow framework which is used to find candidates
 /// in privatizable allocas for each natural loops.
 template<> struct RegionDFTraits<PrivateDFFwk *> :
     DataFlowTraits<PrivateDFFwk *> {
-  static void collapse(GraphType G, PrivateDFFwk *Fwk) {
+  static void collapse(PrivateDFFwk *Fwk, GraphType G) {
     Fwk->collapse(G.Graph);
   }
   typedef DFRegion::region_iterator region_iterator;

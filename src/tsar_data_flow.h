@@ -43,7 +43,7 @@ namespace tsar {
 /// should be explicitly set via definitions of functions that allow iteration
 /// over all children of the specified node.
 /// The following elements should be provided:
-/// - typedef GraphType - 
+/// - typedef GraphType -
 ///     Type of a data-flow graph. The llvm::GraphTraits class from
 ///     llvm/ADT/GraphTraits.h should be specialized by GraphType and by
 ///     llvm::Inverse<GraphType> (if it is neccessary to slove a data-flow
@@ -53,26 +53,24 @@ namespace tsar {
 ///     If a specialization of GraphTraits already exists and does not meet
 ///     this requirement specialize it by Forward<GraphType> or
 ///     Backward<GraphType> instead.
-/// - static GraphType getDFG(DFFwk &) -
-///     Returns data-flow graph for the data-flow framework.
 /// - typedef ValueType - Type of a data-flow value.
-/// - static ValueType topElement(DFFwk &) -
+/// - static ValueType topElement(DFFwk &, GraphType &) -
 ///     Returns top element for the data-flow framework.
-/// - static ValueType boundaryCondition(DFFwk &) -
+/// - static ValueType boundaryCondition(DFFwk &, GraphType &) -
 ///     Returns boundary condition for the data-flow framework.
-/// - static void setValue(ValueType, NodeType *),
-///   static ValueType getValue(NodeType *) -
+/// - static void setValue(ValueType, NodeType *, DFFwk &),
+///   static ValueType getValue(NodeType *, DFFwk &) -
 ///     Allow to access data-flow value for the specified node.
-/// - static void initialize(NodeType *, DFFwk &) -
+/// - static void initialize(NodeType *, DFFwk &, GraphType &) -
 ///     Initializes auxiliary information which is neccessary
 ///     to perfrom analysis. For example, it is possible to allocate
 ///     some memory or attributes to each node, etc.
 ///     Do not set initial data-flow values in this function because they will
 ///     be overwritten by the data-flow solver function.
-/// - static meetOperator(const ValueType &, ValueType &, DFFwk &) -
+/// - static meetOperator(const ValueType &, ValueType &, DFFwk &, GraphType &) -
 ///     Evaluates a meet operator, the result is stored in the second
 ///     parameter.
-/// - static bool transferFunction(ValueType, NodeType *, DFFwk &)
+/// - static bool transferFunction(ValueType, NodeType *, DFFwk &, GraphType &)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
 ///     produced on previouse iteration of the data-flow analysis algorithm.
@@ -130,11 +128,11 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
   typedef typename GT::ChildIteratorType ChildIteratorType;
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
        I != E; ++I) {
-    DFT::initialize(*I, DFF);
-    DFT::setValue(DFT::topElement(DFF), *I);
+    DFT::initialize(*I, DFF, DFG);
+    DFT::setValue(DFT::topElement(DFF, DFG), *I, DFF);
   }
-  DFT::initialize(GT::getEntryNode(DFG), DFF);
-  DFT::setValue(DFT::boundaryCondition(DFF), GT::getEntryNode(DFG));
+  DFT::initialize(GT::getEntryNode(DFG), DFF, DFG);
+  DFT::setValue(DFT::boundaryCondition(DFF, DFG), GT::getEntryNode(DFG), DFF);
   bool isChanged = true;
   do {
     isChanged = false;
@@ -142,33 +140,15 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
     I != E; ++I) {
       assert(GT::child_begin(*I) != GT::child_end(*I) &&
         "Data-flow graph must not contain unreachable nodes!");
-      ValueType Value(DFT::topElement(DFF));
+      ValueType Value(DFT::topElement(DFF, DFG));
       for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
       CI != CE; ++CI) {
-        DFT::meetOperator(DFT::getValue(*CI), Value, DFF);
+        DFT::meetOperator(DFT::getValue(*CI, DFF), Value, DFF, DFG);
       }
-      isChanged = DFT::transferFunction(std::move(Value), *I, DFF) || isChanged;
+      isChanged =
+        DFT::transferFunction(std::move(Value), *I, DFF, DFG) || isChanged;
     }
   } while (isChanged);
-}
-
-/// \brief Iteratively solves data-flow problem.
-///
-/// This computes IN and OUT for each node in the specified data-flow graph
-/// by successive approximation. The last computed value for each node
-/// can be optained by calling the DataFlowTraits::getValue() function.
-/// The type of computed value (IN or OUT) depends on a data-flow direction
-/// (see DataFlowTratis). In case of a forward direction it is OUT,
-/// otherwise IN.
-/// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \attention The DataFlowTraits class should be specialized by DFFwk.
-/// Note that DFFwk is generally a pointer type.
-/// The GraphTraits class should be specialized by
-/// DataFlowTraits<DFFwk>::GraphType.
-template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF) {
-  assert(DFF && "Data-flow framework must not be null!");
-  typedef DataFlowTraits<DFFwk> DFT;
-  solveDataFlowIteratively(DFF, DFT::getDFG(DFF));
 }
 
 /// \brief Solves data-flow problem in topological order during one iteration.
@@ -211,41 +191,21 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   assert(*I == GT::getEntryNode(DFG) &&
           "The first node in the topological order differs from the entry node in the data-flow framework!");
   for (++I; I != E; ++I) {
-    DFT::initialize(*I, DFF);
-    DFT::setValue(DFT::topElement(DFF), *I);
+    DFT::initialize(*I, DFF, DFG);
+    DFT::setValue(DFT::topElement(DFF, DFG), *I, DFF);
   }
-  DFT::initialize(GT::getEntryNode(DFG), DFF);
-  DFT::setValue(DFT::boundaryCondition(DFF), GT::getEntryNode(DFG));
+  DFT::initialize(GT::getEntryNode(DFG), DFF, DFG);
+  DFT::setValue(DFT::boundaryCondition(DFF, DFG), GT::getEntryNode(DFG), DFF);
   for (I = RPOT.rbegin(), ++I; I != E; ++I) {
     assert(GT::child_begin(*I) != GT::child_end(*I) &&
            "Data-flow graph must not contain unreachable nodes!");
-    ValueType Value(DFT::topElement(DFF));
+    ValueType Value(DFT::topElement(DFF, DFG));
     for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
          CI != CE; ++CI) {
-      DFT::meetOperator(DFT::getValue(*CI), Value, DFF);
+      DFT::meetOperator(DFT::getValue(*CI, DFF), Value, DFF, DFG);
     }
-    DFT::transferFunction(Value, *I, DFF);
+    DFT::transferFunction(Value, *I, DFF, DFG);
   }
-}
-
-/// \brief Solves data-flow problem in topological order during one iteration.
-///
-/// This computes IN and OUT for each node in the specified data-flow graph
-/// in a topological order, so a graph traversal is executed only two times.
-/// Firstly to calculate order of nodes and secondly to solve data-flow problem.
-/// The last computed value for each node can be optained by calling
-/// the DataFlowTraits::getValue() function.
-/// The type of computed value (IN or OUT) depends on a data-flow direction
-/// (see DataFlowTratis). In case of a forward direction it is OUT,
-/// otherwise IN.
-/// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \attention The DataFlowTraits class should be specialized by DFFwk.
-/// Note that DFFwk is generally a pointer type.
-/// The GraphTraits class should be specialized by
-/// DataFlowTraits<DFFwk>::GraphType.
-template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
-  typedef DataFlowTraits<DFFwk> DFT;
-  solveDataFlowTopologicaly(DFF, DFT::getDFG(DFF));
 }
 
 /// \brief Data-flow framework for a hierarchy of regions.
@@ -257,7 +217,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF) {
 /// Nodes of this graph are simple nodes or internal regions which are
 /// also represented by other data-flow graphs.
 /// The following elements should be provided:
-/// - static void collapse(GraphType &G, DFFwk &DFF) -
+/// - static void collapse( DFFwk &, GraphType &) -
 ///     Collapses a data-flow graph which represents a region to a one node
 ///     in a data-flow graph of an outer region.
 /// - typedef region_iterator,
@@ -308,27 +268,7 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     solveDataFlowTopologicaly(DFF, DFG);
   else
     solveDataFlowIteratively(DFF, DFG);
-  RT::collapse(DFG, DFF);
-}
-
-/// \brief Solves data-flow problem for the specified hierarchy of regions.
-///
-/// The data-flow problems solves upward from innermost regions to the region
-/// associated with the specified data-flow graph. Before solving the data-flow
-/// problem of some region all inner regions will be collapsed to a one node in
-/// a data-flow graph associated with this region. If it is possible the
-/// problem will be solved in topological order in a single pass, otherwise
-/// iteratively.
-/// \param [in, out] DFF Data-flow framework, it can not be null. The getDFG()
-/// method must return a graph which is associated with the outermost region
-/// \attention DataFlowTraits and RegionDFTraits classes should be specialized
-/// by DFFwk. Note that DFFwk is generally a pointer type.
-/// The GraphTraits class should be specialized by type of each
-/// regions in the hierarhy (not only for DataFlowTraits<DFFwk>::GraphType).
-/// Note that type of region is generally a pointer type.
-template<class DFFwk> void solveDataFlowUpward(DFFwk DFF) {
-  typedef DataFlowTraits<DFFwk> DFT;
-  solveDataFlowUpward(DFF, DFT::getDFG(DFF));
+  RT::collapse(DFF, DFG);
 }
 
 /// \brief Instances of this class are used to represent a node

@@ -69,8 +69,8 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     return false;
   DFFunction DFF(&F);
   buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
-  PrivateDFFwk PrivateFWK(&DFF, AnlsAllocas, mPrivates);
-  solveDataFlowUpward(&PrivateFWK);
+  PrivateDFFwk PrivateFWK(AnlsAllocas, mPrivates);
+  solveDataFlowUpward(&PrivateFWK, &DFF);
   for_each(LpInfo, [this](Loop *L) {
     DebugLoc loc = L->getStartLoc();
     Base::Text Offset(L->getLoopDepth(), ' ');
@@ -162,7 +162,7 @@ bool AllocaDFValue::operator==(const AllocaDFValue &RHS) const {
 }
 
 void DataFlowTraits<PrivateDFFwk*>::initialize(
-    DFNode *N, PrivateDFFwk *Fwk) {
+    DFNode *N, PrivateDFFwk *Fwk, GraphType) {
   assert(N && "Node must not be null!");
   assert(Fwk && "Data-flow framework must not be null");
   PrivateDFValue *V = new PrivateDFValue;
@@ -193,7 +193,7 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
 }
 
 bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
-  ValueType V, DFNode *N, PrivateDFFwk *) {
+  ValueType V, DFNode *N, PrivateDFFwk *, GraphType) {
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
   PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
@@ -237,7 +237,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   PrivateDFValue *ExitValue = ExitNode->getAttribute<PrivateDFAttr>();
   assert(ExitValue && "Data-flow value must not be null!");
   const AllocaDFValue & ExitingDefs = ExitValue->getOut();
-  AllocaDFValue LatchDefs(RT::topElement(this));
+  AllocaDFValue LatchDefs(RT::topElement(this, R));
   for (DFNode *N : L->getLatchNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
