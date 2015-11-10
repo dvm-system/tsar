@@ -39,7 +39,7 @@ template<class Function>
 void for_each(llvm::LoopInfo::reverse_iterator ReverseI,
               llvm::LoopInfo::reverse_iterator ReverseEI,
               Function F) {
-  for (; ReverseI != ReverseEI; --ReverseEI) {
+  for (; ReverseI != ReverseEI; ++ReverseI) {
     F(*ReverseI);
     for_each((*ReverseI)->rbegin(), (*ReverseI)->rend(), F);
   }
