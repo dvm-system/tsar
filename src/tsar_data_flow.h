@@ -217,7 +217,9 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
 /// Nodes of this graph are simple nodes or internal regions which are
 /// also represented by other data-flow graphs.
 /// The following elements should be provided:
-/// - static void collapse( DFFwk &, GraphType &) -
+/// - static void expand(DFFwk &, GraphType &) -
+///     Exapnds a region to a data-flow graph which represents it.
+/// - static void collapse(DFFwk &, GraphType &) -
 ///     Collapses a data-flow graph which represents a region to a one node
 ///     in a data-flow graph of an outer region.
 /// - typedef region_iterator,
@@ -245,11 +247,13 @@ template<class DFFwk > struct RegionDFTraits {
 /// The data-flow problems solves upward from innermost regions to the region
 /// associated with the specified data-flow graph. Before solving the data-flow
 /// problem of some region all inner regions will be collapsed to a one node in
-/// a data-flow graph associated with this region. If it is possible the
-/// problem will be solved in topological order in a single pass, otherwise
-/// iteratively.
-/// \param [in, out] DFF Data-flow framework, it can not be null. The getDFG()
-/// method must return a graph which is associated with the outermost region.
+/// a data-flow graph associated with this region. The specified graph will be
+/// also collapsed because the outermost graph is a graph, which contains
+/// one node which is associated with the whole specified graph. When traversing
+/// from the specified graph to innermost graphs, regions will be consistently
+/// expanded to a data-flow graph. If it is possible the problem will be solved
+/// in topological order in a single pass, otherwise iteratively.
+/// \param [in, out] DFF Data-flow framework, it can not be null.
 /// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
 /// Subgraph of this graph also can be used.
 /// \attention DataFlowTraits and RegionDFTraits classes should be specialized
@@ -261,6 +265,7 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef RegionDFTraits<DFFwk> RT;
   typedef typename RT::region_iterator region_iterator;
+  RT::expand(DFF, DFG);
   for (region_iterator I = RT::region_begin(DFG), E = RT::region_end(DFG);
        I != E; ++I)
     solveDataFlowUpward(DFF, *I);
@@ -268,6 +273,42 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     solveDataFlowTopologicaly(DFF, DFG);
   else
     solveDataFlowIteratively(DFF, DFG);
+  RT::collapse(DFF, DFG);
+}
+
+/// \brief Solves data-flow problem for the specified hierarchy of regions.
+///
+/// The data-flow problems solves downward from to the region associated with
+/// the specified data-flow graph to innermost regions. Before solving
+/// the data-flow problem of some region the node associated with this region in
+/// outer graph will be expanded to a data-flow graph. The outermost graph is
+/// a graph, which contains one node which is associated with the whole
+/// specified graph. The specified graph is treated as expantion of this node.
+/// After solving the data-flow problem of some region it will be collapsed to
+/// a one node in a data-flow graph associated with this region.
+/// The specified graph will be also collapsed
+/// If it is possible the problem will be solved in topological order
+/// in a single pass, otherwise iteratively.
+/// \param [in, out] DFF Data-flow framework, it can not be null.
+/// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
+/// Subgraph of this graph also can be used.
+/// \attention DataFlowTraits and RegionDFTraits classes should b e specialized
+/// by DFFwk. Note that DFFwk is generally a pointer type.
+/// The GraphTraits class should be specialized by type of each
+/// regions in the hierarhy (not only for DataFlowTraits<DFFwk>::GraphType).
+/// Note that type of region is generally a pointer type.
+template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
+  typename DataFlowTraits<DFFwk>::GraphType DFG) {
+  typedef RegionDFTraits<DFFwk> RT;
+  typedef typename RT::region_iterator region_iterator;
+  RT::expand(DFF, DFG);
+  if (isDAG(DFG))
+    solveDataFlowTopologicaly(DFF, DFG);
+  else
+    solveDataFlowIteratively(DFF, DFG);
+  for (region_iterator I = RT::region_begin(DFG), E = RT::region_end(DFG);
+       I != E; ++I)
+    solveDataFlowDownward(DFF, *I);
   RT::collapse(DFF, DFG);
 }
 
