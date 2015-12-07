@@ -4,6 +4,7 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 # Build executable targets
 add_executable(tsar main.cpp tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp)
 add_dependencies(tsar ${LLVM_LIBS})
+add_definitions("-D${PROJECT_NAME}_PROJECT")
 target_link_libraries(tsar ${LLVM_LIBS})
 
-install(TARGETS tsar DESTINATION bin)
+install(TARGETS tsar RUNTIME DESTINATION bin)
