@@ -108,10 +108,17 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     endif()
     add_custom_target(CLANG_BUILD ALL)
     add_dependencies(CLANG_BUILD clang)
-    install(PROGRAMS
-       "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang${CMAKE_EXECUTABLE_SUFFIX}"
-      "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang++${CMAKE_EXECUTABLE_SUFFIX}"
-      DESTINATION bin)
+    if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
+      install(PROGRAMS
+        "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang${CMAKE_EXECUTABLE_SUFFIX}"
+        "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang++${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    else()
+      install(PROGRAM
+        "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/clang${CMAKE_EXECUTABLE_SUFFIX}"
+        "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/clang++${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    endif()
   endif()
   if(BUILD_OPT)
     if(BUILD_TSAR AND (${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
@@ -119,9 +126,15 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     endif()
     add_custom_target(OPT_BUILD ALL)
     add_dependencies(OPT_BUILD opt)
-    install(PROGRAMS
-      "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/opt${CMAKE_EXECUTABLE_SUFFIX}"
-      DESTINATION bin)
+    if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
+      install(PROGRAMS
+        "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/opt${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    else()
+      install(PROGRAMS
+        "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/opt${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    endif()
   endif()
   sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm.patch" ${LLVM_SOURCE_DIR})
   sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.patch" ${LLVM_SOURCE_DIR})
