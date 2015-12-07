@@ -70,6 +70,7 @@ option(LOCAL_LLVM "Use existing LLVM installation" OFF)
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
+option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 
 if(DOWNLOAD_LLVM AND LOCAL_LLVM)
   message(FATAL_ERROR "Options DOWNLOAD_LLVM and LOCAL_LLVM are not compatible")
@@ -133,6 +134,22 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     else()
       install(PROGRAMS
         "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/opt${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    endif()
+  endif()
+  if(BUILD_LLC)
+    if(BUILD_TSAR AND (${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
+      message(FATAL_ERROR "Simultaneous build of TSAR and LLC avaliable only if LLVM version is greater than 3.4.2 ")
+    endif()
+    add_custom_target(LLC_BUILD ALL)
+    add_dependencies(LLC_BUILD llc)
+    if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
+      install(PROGRAMS
+        "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/llc${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+    else()
+      install(PROGRAMS
+        "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/llc${CMAKE_EXECUTABLE_SUFFIX}"
         DESTINATION bin)
     endif()
   endif()
