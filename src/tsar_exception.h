@@ -15,7 +15,7 @@
 #include <exception.h>
 #include "tsar_config.h"
 
-namespace Analyzer {
+namespace tsar {
 namespace ErrorList {
   /// An error indicates that a feature is not implemented yet.
   typedef Base::ErrorList::Unsupported Unsupported;

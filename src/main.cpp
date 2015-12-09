@@ -6,8 +6,8 @@
 //
 // Traits Static Analyzer (TSAR) is a part of a system for automated
 // parallelization SAPFOR. The main goal of analyzer is to determine
-// data dependences, private and induction variables and other traits of
-// analyzed program which could be helpfull to parallelize program automaticly.
+// data dependences, privatizable and induction variables and other traits of
+// analyzed program which could be helpfull to parallelize program automatically.
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,97 +42,80 @@ const Base::TextAnsi TextToAnsi(const Base::Text &text) {
 }
 }
 
-using namespace Analyzer;
+using namespace tsar;
 using namespace llvm;
 
-void PrintVersion() {
-  outs() << Base::TextToAnsi(Analyzer::TSAR::Acronym::Data() + TEXT(" ") +
-                             Analyzer::TSAR::Version::Field() + TEXT(" ") +
-                             Analyzer::TSAR::Version::Data()).c_str();
+void printVersion() {
+  outs() << Base::TextToAnsi(TSAR::Acronym::Data() + TEXT(" ") +
+                             TSAR::Version::Field() + TEXT(" ") +
+                             TSAR::Version::Data()).c_str();
 }
 
-static cl::list<const PassInfo*, bool, PassNameParser> passList(cl::desc("Analysis available (use with -debug-analyzer):"));
+static cl::list<const PassInfo*, bool, PassNameParser> gPassList(
+  cl::desc("Analysis available (use with -debug-analyzer):"));
+static cl::opt<std::string> gInputProject(
+  cl::Positional, cl::desc("<analyzed project name>"), cl::init("-"),
+  cl::value_desc("project"));
+static cl::opt<std::string> gOutputFilename(
+  "o", cl::desc("Override output filename"), cl::value_desc("filename"),
+  cl::Hidden);
+static cl::opt<bool> gDebugMode(
+  "debug-analyzer", cl::desc("Enable analysis debug mode"));
 
-static cl::opt<std::string> inputProject(cl::Positional, cl::desc("<analyzed project name>"),
-                                         cl::init("-"), cl::value_desc("project"));
-
-static cl::opt<std::string> outputFilename("o", cl::desc("Override output filename"),
-                                           cl::value_desc("filename"), cl::Hidden);
-
-static cl::opt<bool> debugMode("debug-analyzer", cl::desc("Enable analysis debug mode"));
-
-int main(int argc, char** argv) {
+int main(int Argc, char** Argv) {
   sys::PrintStackTraceOnErrorSignal();
-  PrettyStackTraceProgram stackTracePtrogram(argc, argv);
-
+  PrettyStackTraceProgram StackTraceProgram(Argc, Argv);
   EnableDebugBuffering = true;
-
-  llvm_shutdown_obj shutdownObj; //call llvm_shutdown() on exit.
-
-  LLVMContext &context = llvm::getGlobalContext();
-
-  PassRegistry &registry = *llvm::PassRegistry::getPassRegistry();
-  initializeCore(registry);
-  initializeDebugIRPass(registry);
-  initializeAnalysis(registry);
-  initializeTSAR(registry);
-
-  cl::SetVersionPrinter(PrintVersion);
-  cl::ParseCommandLineOptions(argc, argv,
+  llvm_shutdown_obj ShutdownObj; //call llvm_shutdown() on exit
+  LLVMContext &Context = getGlobalContext();
+  PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeCore(Registry);
+  initializeDebugIRPass(Registry);
+  initializeAnalysis(Registry);
+  initializeTSAR(Registry);
+  cl::SetVersionPrinter(printVersion);
+  cl::ParseCommandLineOptions(Argc, Argv,
                               Base::TextToAnsi(TSAR::Title::Data() +
                               TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
-
-  SMDiagnostic error;
-
-  std::unique_ptr<llvm::Module> module;
-  module.reset(ParseIRFile(inputProject, error, context));
-
-  if (!module.get()) {
-    error.print(argv[0], errs());
+  SMDiagnostic Error;
+  std::unique_ptr<Module> M;
+  M.reset(ParseIRFile(gInputProject, Error, Context));
+  if (!M.get()) {
+    Error.print(Argv[0], errs());
     return 1;
   }
-
-  if (outputFilename.empty())
-    outputFilename = "-";
-  std::unique_ptr<tool_output_file> out;
-  std::string errorInfo;
-  out.reset(new tool_output_file(outputFilename.c_str(), errorInfo, sys::fs::F_None));
-  if (!errorInfo.empty()) {
-    error = SMDiagnostic(outputFilename, SourceMgr::DK_Error, errorInfo);
-    error.print(argv[0], errs());
+  if (gOutputFilename.empty())
+    gOutputFilename = "-";
+  std::unique_ptr<tool_output_file> Out;
+  std::string ErrorInfo;
+  Out.reset(new tool_output_file(gOutputFilename.c_str(), ErrorInfo, sys::fs::F_None));
+  if (!ErrorInfo.empty()) {
+    Error = SMDiagnostic(gOutputFilename, SourceMgr::DK_Error, ErrorInfo);
+    Error.print(Argv[0], errs());
     return 1;
   }
-
-  PassManager passes;
-
-  if (!debugMode && passList.size() > 0)
-    errs() << argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
-
-  if (debugMode) {
-    for (unsigned i = 0; i < passList.size(); ++i) {
-      const PassInfo *passInfo = passList[i];
-      Pass *pass = passInfo->getNormalCtor()();
-      if (!pass) {
-        errs() << argv[0] << ": error: cannot create pass: " << passInfo->getPassName() << "\n";
+  PassManager Passes;
+  if (!gDebugMode && gPassList.size() > 0)
+    errs() << Argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
+  if (gDebugMode) {
+    for (unsigned i = 0; i < gPassList.size(); ++i) {
+      const PassInfo *PI = gPassList[i];
+      Pass *P = PI->getNormalCtor()();
+      if (!P) {
+        errs() << Argv[0] << ": error: cannot create pass: " << PI->getPassName() << "\n";
         return 1;
       }
-      passes.add(pass);
+      Passes.add(P);
     }
   } else {
-    passes.add(createPrivateRecognitionPass());
-
+    Passes.add(createPrivateRecognitionPass());
   }
-
-  passes.add(createVerifierPass());
+  Passes.add(createVerifierPass());
 #if (!(LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5))
-  passes.add(createDebugInfoVerifierPass());
+  Passes.add(createDebugInfoVerifierPass());
 #endif
-
   cl::PrintOptionValues();
-
-  passes.run(*module.get());
-
-  out->keep();
-
+  Passes.run(*M.get());
+  Out->keep();
   return 0;
 }
