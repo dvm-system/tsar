@@ -282,30 +282,36 @@ BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 
 
 namespace detail {
-/// This represent identifier of cells in PrivateSet collection,
+/// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
-struct PrivateSet {
+struct DependencySet {
   /// Set of alloca instructions.
   typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
   struct Private { typedef AllocaSet ValueType; };
   struct LastPrivate { typedef AllocaSet ValueType; };
   struct SecondToLastPrivate { typedef AllocaSet ValueType; };
   struct DynamicPrivate { typedef AllocaSet ValueType; };
+  struct Shared { typedef AllocaSet ValueType; };
+  struct Dependency { typedef AllocaSet ValueType; };
 };
 }
 
-const detail::PrivateSet::Private Private;
-const detail::PrivateSet::LastPrivate LastPrivate;
-const detail::PrivateSet::SecondToLastPrivate SecondToLastPrivate;
-const detail::PrivateSet::DynamicPrivate DynamicPrivate;
+const detail::DependencySet::Private Private;
+const detail::DependencySet::LastPrivate LastPrivate;
+const detail::DependencySet::SecondToLastPrivate SecondToLastPrivate;
+const detail::DependencySet::DynamicPrivate DynamicPrivate;
+const detail::DependencySet::Shared Shared;
+const detail::DependencySet::Dependency Dependency;
 
-/// \brief This represents which allocas can be privatize.
+/// \brief This represents data dependency in loops.
 ///
 /// The following information is avaliable:
 /// - a set of private allocas;
 /// - a set of last private allocas;
 /// - a set of second to last private allocas;
-/// - a set of dynamic private allocas.
+/// - a set of dynamic private allocas;
+/// - a set of shared allocas;
+/// - a set of allocas that caused dependency.
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -339,33 +345,35 @@ const detail::PrivateSet::DynamicPrivate DynamicPrivate;
 ///
 /// Let us give the following example to explain how to access the information:
 /// \code
-/// PrivateSet PS;
-/// for (AllocaInst *AI : PS[Private]) {...}
+/// DependencySet DS;
+/// for (AllocaInst *AI : DS[Private]) {...}
 /// \endcode
-/// Note, (*PS)[Private] is a set of type AllocaSet, so it is possible to call
+/// Note, (*DS)[Private] is a set of type AllocaSet, so it is possible to call
 /// all methods that is avaliable for AllocaSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of allocas.
-class PrivateSet: public CELL_COLL_4(
-    detail::PrivateSet::Private,
-    detail::PrivateSet::LastPrivate,
-    detail::PrivateSet::SecondToLastPrivate,
-    detail::PrivateSet::DynamicPrivate) {
+class DependencySet: public CELL_COLL_6(
+    detail::DependencySet::Private,
+    detail::DependencySet::LastPrivate,
+    detail::DependencySet::SecondToLastPrivate,
+    detail::DependencySet::DynamicPrivate,
+    detail::DependencySet::Shared,
+    detail::DependencySet::Dependency) {
 public:
   /// Set of alloca instructions.
-  typedef detail::PrivateSet::AllocaSet AllocaSet;
+  typedef detail::DependencySet::AllocaSet AllocaSet;
 
   /// \brief Checks that an alloca has a specified kind of privatizability.
   ///
-  /// Usage: PrivateSet *PS; PS->is(Private, AI);
+  /// Usage: DependencySet *DS; DS->is(Private, AI);
   template<class Kind> bool is(Kind K, llvm::AllocaInst *AI) const {
     return (*this)[K].count(AI) != 0;
   }
 };
 
-/// This attribute is associated with PrivateSet and
+/// This attribute is associated with DependencySet and
 /// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(PrivateAttr, PrivateSet)
+BASE_ATTR_DEF(PrivateAttr, DependencySet)  
 
 /// \brief Data-flow framework which is used to find candidates
 /// in privatizable allocas for each natural loops.
@@ -383,10 +391,10 @@ BASE_ATTR_DEF(PrivateAttr, PrivateSet)
 class PrivateDFFwk : private Utility::Uncopyable {
 public:
   /// Set of alloca instructions.
-  typedef PrivateSet::AllocaSet AllocaSet;
+  typedef DependencySet::AllocaSet AllocaSet;
 
   /// Information about privatizability of variables for the analysed region.
-  typedef llvm::DenseMap<llvm::Loop *, PrivateSet *> PrivateInfo;
+  typedef llvm::DenseMap<llvm::Loop *, DependencySet *> PrivateInfo;
 
   /// Creates data-flow framework and specifies a set of allocas 
   /// that should be analyzed.
@@ -447,6 +455,7 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
 /// in privatizable allocas for each natural loops.
 template<> struct RegionDFTraits<PrivateDFFwk *> :
     DataFlowTraits<PrivateDFFwk *> {
+  static void expand(PrivateDFFwk *, GraphType) {}
   static void collapse(PrivateDFFwk *Fwk, GraphType G) {
     Fwk->collapse(G.Graph);
   }
@@ -481,12 +490,12 @@ public:
 
   /// Returns privatizable allocas sorted according to kinds
   /// of their privatizability.
-  const tsar::PrivateSet & getPrivatesFor(Loop *L) const {
+  const tsar::DependencySet & getPrivatesFor(Loop *L) const {
     assert(L && "Loop must not be null!");
-    auto PS = mPrivates.find(L);
-    assert((PS != mPrivates.end() || PS->second) &&
-      "PrivateSet must be specified!");
-    return *PS->second;
+    auto DS = mPrivates.find(L);
+    assert((DS != mPrivates.end() || DS->second) &&
+      "DependencySet must be specified!");
+    return *DS->second;
   }
 
   /// Recognises private (last private) variables for loops
@@ -504,6 +513,7 @@ public:
 
 private:
   PrivateInfo mPrivates;
+  AllocaSet mAnlsAllocas;
 };
 }
 #endif//TSAR_PRIVATE_H

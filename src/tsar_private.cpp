@@ -52,7 +52,6 @@ INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
-  AllocaSet AnlsAllocas;
   LoopInfo &LpInfo = getAnalysis<LoopInfo>();
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
   DominatorTreeBase<BasicBlock> &DomTree = *(getAnalysis<DominatorTree>().DT);
@@ -63,13 +62,13 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   for (BasicBlock::iterator I = BB.begin(), EI = --BB.end(); I != EI; ++I) {
     AllocaInst *AI = dyn_cast<AllocaInst>(I);
     if (AI && isAllocaPromotable(AI)) 
-      AnlsAllocas.insert(AI);
+      mAnlsAllocas.insert(AI);
   }
-  if (AnlsAllocas.empty())
+  if (mAnlsAllocas.empty())
     return false;
   DFFunction DFF(&F);
   buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
-  PrivateDFFwk PrivateFWK(AnlsAllocas, mPrivates);
+  PrivateDFFwk PrivateFWK(mAnlsAllocas, mPrivates);
   solveDataFlowUpward(&PrivateFWK, &DFF);
   for_each(LpInfo, [this](Loop *L) {
     DebugLoc loc = L->getStartLoc();
@@ -77,19 +76,34 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     errs() << Offset;
     loc.print(getGlobalContext(), errs());
     errs() << "\n";
-    const PrivateSet &PS = getPrivatesFor(L);
+    const DependencySet &DS = getPrivatesFor(L);
+    errs() << Offset << " privates:\n";
+    for (AllocaInst *AI : DS[Private]) {
+      errs() << Offset << "  ";
+      printAllocaSource(errs(), AI);
+    }
     errs() << Offset << " last privates:\n";
-    for (AllocaInst *AI : PS[LastPrivate]) {
+    for (AllocaInst *AI : DS[LastPrivate]) {
       errs() << Offset << "  ";
       printAllocaSource(errs(), AI);
     }
     errs() << Offset << " second to last privates:\n";
-    for (AllocaInst *AI: PS[SecondToLastPrivate]) {
+    for (AllocaInst *AI: DS[SecondToLastPrivate]) {
       errs() << Offset << "  ";
       printAllocaSource(errs(), AI);
     }
     errs() << Offset << " dynamic privates:\n";
-    for (AllocaInst *AI: PS[DynamicPrivate]) {
+    for (AllocaInst *AI: DS[DynamicPrivate]) {
+      errs() << Offset << "  ";
+      printAllocaSource(errs(), AI);
+    }
+    errs() << Offset << " shared variables:\n";
+    for (AllocaInst *AI : DS[Shared]) {
+      errs() << Offset << "  ";
+      printAllocaSource(errs(), AI);
+    }
+    errs() << Offset << " dependencies:\n";
+    for (AllocaInst *AI : DS[Dependency]) {
       errs() << Offset << "  ";
       printAllocaSource(errs(), AI);
     }
@@ -243,7 +257,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     assert(PV && "Data-flow value must not be null!");
     LatchDefs.intersect(PV->getOut());
   }
-  PrivateSet::AllocaSet AllNodesAccesses;
+  DependencySet::AllocaSet AllNodesAccesses;
   for (DFNode *N : L->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
@@ -296,16 +310,18 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   // will be stored in the DynamicPrivates collection.
   // Note, in this step only candidates for last privates and privates
   // variables are calculated. The result should be corrected further.
-  PrivateSet *PS = new PrivateSet;
-  mPrivates.insert(std::make_pair(L->getLoop(), PS));
-  R->addAttribute<PrivateAttr>(PS);
-  assert(PS && "Result of analysis must not be null!");
+  DependencySet *DS = new DependencySet;
+  mPrivates.insert(std::make_pair(L->getLoop(), DS));
+  R->addAttribute<PrivateAttr>(DS);
+  assert(DS && "Result of analysis must not be null!");
   for (AllocaInst *AI : AllNodesAccesses)
-    if (!DefUse->getUses().count(AI))
-      if (DefUse->getDefs().count(AI))
-        (*PS)[LastPrivate].insert(AI);
+    if (!DefUse->hasUse(AI))
+      if (DefUse->hasDef(AI))
+        (*DS)[LastPrivate].insert(AI);
       else if (LatchDefs.exist(AI))
-        (*PS)[SecondToLastPrivate].insert(AI);
+        (*DS)[SecondToLastPrivate].insert(AI);
       else
-        (*PS)[DynamicPrivate].insert(AI);
+        (*DS)[DynamicPrivate].insert(AI);
+	else
+	  (*DS)[Dependency].insert(AI);
 }

@@ -74,9 +74,9 @@ int main(int Argc, char** Argv) {
   initializeAnalysis(Registry);
   initializeTSAR(Registry);
   cl::SetVersionPrinter(printVersion);
-  cl::ParseCommandLineOptions(Argc, Argv,
-                              Base::TextToAnsi(TSAR::Title::Data() +
-                              TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
+  cl::ParseCommandLineOptions(
+    Argc, Argv, Base::TextToAnsi(TSAR::Title::Data() +
+    TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
   SMDiagnostic Error;
   std::unique_ptr<Module> M;
   M.reset(ParseIRFile(gInputProject, Error, Context));
@@ -88,7 +88,8 @@ int main(int Argc, char** Argv) {
     gOutputFilename = "-";
   std::unique_ptr<tool_output_file> Out;
   std::string ErrorInfo;
-  Out.reset(new tool_output_file(gOutputFilename.c_str(), ErrorInfo, sys::fs::F_None));
+  Out.reset(
+    new tool_output_file(gOutputFilename.c_str(), ErrorInfo, sys::fs::F_None));
   if (!ErrorInfo.empty()) {
     Error = SMDiagnostic(gOutputFilename, SourceMgr::DK_Error, ErrorInfo);
     Error.print(Argv[0], errs());
@@ -102,7 +103,8 @@ int main(int Argc, char** Argv) {
       const PassInfo *PI = gPassList[i];
       Pass *P = PI->getNormalCtor()();
       if (!P) {
-        errs() << Argv[0] << ": error: cannot create pass: " << PI->getPassName() << "\n";
+        errs() << Argv[0] << ": error: cannot create pass: " <<
+          PI->getPassName() << "\n";
         return 1;
       }
       Passes.add(P);
