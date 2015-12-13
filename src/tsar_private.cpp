@@ -22,6 +22,7 @@
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/Debug.h>
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
 #include <llvm/DebugInfo.h>
 #else
@@ -35,6 +36,9 @@
 
 #include <declaration.h>
 #include "tsar_dbg_output.h"
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "private"
 
 using namespace llvm;
 using namespace tsar;
@@ -70,6 +74,11 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
   PrivateDFFwk PrivateFWK(mAnlsAllocas, mPrivates);
   solveDataFlowUpward(&PrivateFWK, &DFF);
+  LiveDFFwk LiveFwk(mAnlsAllocas);
+  LiveSet *LS = new LiveSet;
+  DFF.addAttribute<LiveAttr>(LS);
+  solveDataFlowDownward(&LiveFwk, &DFF);
+  resolveCandidats(&DFF);
   for_each(LpInfo, [this](Loop *L) {
     DebugLoc loc = L->getStartLoc();
     Base::Text Offset(L->getLoopDepth(), ' ');
@@ -110,6 +119,35 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     errs() << "\n";
   });
   return false;
+}
+
+void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
+  assert(R && "Region must not be null!");
+  if (llvm::isa<DFLoop>(R)) {
+    DependencySet *DS = R->getAttribute<DependencyAttr>();
+    assert(DS && "List of privatizable candidats must not be null!");
+    LiveSet *LS = R->getAttribute<LiveAttr>();
+    assert(LS && "List of live allocas must not be null!");
+    for (llvm::AllocaInst *AI : mAnlsAllocas) {
+      if (LS->getOut().count(AI) != 0)
+        continue;
+      if (DS->is(LastPrivate, AI)) {
+        (*DS)[LastPrivate].erase(AI);
+        (*DS)[Private].insert(AI);
+      }
+      else if (DS->is(SecondToLastPrivate, AI)) {
+        (*DS)[SecondToLastPrivate].erase(AI);
+        (*DS)[Private].insert(AI);
+      }
+      else if (DS->is(DynamicPrivate, AI)) {
+        (*DS)[DynamicPrivate].erase(AI);
+        (*DS)[Private].insert(AI);
+      }
+    }
+  }
+  for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
+       I != E; ++I)
+    resolveCandidats(*I);
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -184,7 +222,7 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   if (llvm::isa<DFRegion>(N))
     return;
   // DefUseAttr will be set here for nodes different to regions.
-  // For nodes which represented regions this attribute will be set
+  // For nodes which represented regions this attribute has been already set
   // in collapse() function.
   DefUseSet *DU = new DefUseSet;
   N->addAttribute<DefUseAttr>(DU);
@@ -204,6 +242,17 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
         DU->addUse(AI);
     }
   }
+  DEBUG (
+    dbgs() << "[DEFUSE] Def/Use allocas for the following basic block:";
+    DFB->getBlock()->print(dbgs());
+    dbgs() << "Outward exposed definitions:\n";
+    for (AllocaInst *AI : DU->getDefs())
+      printAllocaSource(dbgs(), AI);
+    dbgs() << "Outward exposed uses:\n";
+    for (AllocaInst *AI : DU->getUses())
+      printAllocaSource(dbgs(), AI);
+    dbgs() << "[END DEFUSE]\n";
+  );
 }
 
 bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
@@ -312,7 +361,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   // variables are calculated. The result should be corrected further.
   DependencySet *DS = new DependencySet;
   mPrivates.insert(std::make_pair(L->getLoop(), DS));
-  R->addAttribute<PrivateAttr>(DS);
+  R->addAttribute<DependencyAttr>(DS);
   assert(DS && "Result of analysis must not be null!");
   for (AllocaInst *AI : AllNodesAccesses)
     if (!DefUse->hasUse(AI))
@@ -322,6 +371,73 @@ void PrivateDFFwk::collapse(DFRegion *R) {
         (*DS)[SecondToLastPrivate].insert(AI);
       else
         (*DS)[DynamicPrivate].insert(AI);
-	else
-	  (*DS)[Dependency].insert(AI);
+    else
+      (*DS)[Dependency].insert(AI);
+}
+
+bool operator==(const LiveDFFwk::AllocaSet &LHS, const LiveDFFwk::AllocaSet &RHS) {
+  if (LHS.size() != RHS.size())
+    return false;
+  for (AllocaInst *AI : LHS)
+    if (RHS.count(AI) == 0)
+      return false;
+  return true;
+}
+
+bool operator!=(const LiveDFFwk::AllocaSet &LHS, const LiveDFFwk::AllocaSet &RHS) {
+  return !(LHS == RHS);
+}
+
+void DataFlowTraits<LiveDFFwk *>::initialize(DFNode *N, LiveDFFwk *Fwk, GraphType) {
+  assert(N && "Node must not be null!");
+  assert(Fwk && "Data-flow framework must not be null");
+  LiveSet *LS = new LiveSet;
+  N->addAttribute<LiveAttr>(LS);
+}
+
+bool DataFlowTraits<LiveDFFwk*>::transferFunction(
+    ValueType V, DFNode *N, LiveDFFwk *, GraphType) {
+  // Note, that transfer function is never evaluated for the exit node.
+  assert(N && "Node must not be null!");
+  LiveSet *LS = N->getAttribute<LiveAttr>();
+  assert(LS && "Data-flow value must not be null!");
+  LS->setOut(std::move(V));
+  if (isa<DFEntry>(N)) {
+    if (LS->getIn() != V) {
+      LS->setIn(std::move(V));
+      return true;
+    }
+    return false;
+  }
+  DefUseSet *DU = N->getAttribute<DefUseAttr>();
+  assert(DU && "Value of def-use attribute must not be null!");
+  LiveDFFwk::AllocaSet newIn(DU->getUses());
+  for (AllocaInst *AI : V) {
+    if (!DU->hasDef(AI))
+      newIn.insert(AI);
+  }
+  DEBUG(
+    dbgs() << "[LIVE] Live allocas analysis, transfer function results for:";
+    if (isa<DFBlock>(N)) {
+      cast<DFBlock>(N)->getBlock()->print(dbgs());
+    }
+    else if (isa<DFLoop>(N)) {
+      dbgs() << " loop with the following header:";
+      cast<DFLoop>(N)->getLoop()->getHeader()->print(dbgs());
+    } else {
+      dbgs() << " unknown node.\n";
+    }
+    dbgs() << "IN:\n";
+    for (AllocaInst *AI : newIn)
+      printAllocaSource(dbgs(), AI);
+    dbgs() << "OUT:\n";
+    for (AllocaInst *AI : V)
+      printAllocaSource(dbgs(), AI);
+    dbgs() << "[END LIVE]\n";
+  );
+  if (LS->getIn() != newIn) {
+    LS->setIn(std::move(newIn));
+    return true;
+  }
+  return false;
 }

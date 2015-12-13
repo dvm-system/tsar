@@ -251,7 +251,7 @@ public:
   const AllocaSet & getDefs() const { return mDefs; }
 
   /// Returns true if the specified alloca have definition in a data-flow node.
-  bool hasDef(llvm::AllocaInst *AI) const { return mDefs.count(AI); }
+  bool hasDef(llvm::AllocaInst *AI) const { return mDefs.count(AI) != 0; }
 
   /// Specifies that an alloca have definition in a data-flow node.
   ///
@@ -262,7 +262,7 @@ public:
   const AllocaSet & getUses() const { return mUses; }  
 
   /// Returns true if the specified alloca get value outside a data-flow node.
-  bool hasUse(llvm::AllocaInst *AI) const { return mUses.count(AI); }
+  bool hasUse(llvm::AllocaInst *AI) const { return mUses.count(AI) != 0; }
 
   /// Specifies that an alloca get values outside a data-flow node.
   ///
@@ -373,7 +373,7 @@ public:
 
 /// This attribute is associated with DependencySet and
 /// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(PrivateAttr, DependencySet)  
+BASE_ATTR_DEF(DependencyAttr, DependencySet)
 
 /// \brief Data-flow framework which is used to find candidates
 /// in privatizable allocas for each natural loops.
@@ -385,9 +385,9 @@ BASE_ATTR_DEF(PrivateAttr, DependencySet)
 ///
 /// Two kinds of attributes for each nodes in a data-flow graph is available
 /// after this analysis. The first kind, is DefUseAttr and the second one is
-/// PrivateDFAttr. The third kind of attribute (PrivateAttr) becomes available
+/// PrivateDFAttr. The third kind of attribute (DependencyAttr) becomes available
 /// for nodes which corresponds to natural loops. The complemented results
-/// should be stored in the value of the PrivateAttr attribute.
+/// should be stored in the value of the DependencyAttr attribute.
 class PrivateDFFwk : private Utility::Uncopyable {
 public:
   /// Set of alloca instructions.
@@ -402,7 +402,7 @@ public:
     mAnlsAllocas(AnlsAllocas), mPrivates(PI) {}
 
   /// Returns true if the specified alloca should be analyzed.
-  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI); }
+  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI) != 0; }
 
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
@@ -467,6 +467,91 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
     return G.Graph->region_end();
   }
 };
+
+/// \brief Data-flow framework which is used to find live allocas
+/// for basic blocks, loops, functions, etc.
+class LiveDFFwk : private Utility::Uncopyable {
+public:
+  /// Set of alloca instructions.
+  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
+
+  /// Creates data-flow framework and specifies a set of allocas 
+  /// that should be analyzed.
+  explicit LiveDFFwk(const AllocaSet &AnlsAllocas) :
+    mAnlsAllocas(AnlsAllocas) {}
+
+  /// Returns true if the specified alloca should be analyzed.
+  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI) != 0; }
+
+private:
+  const AllocaSet &mAnlsAllocas;
+};
+
+/// This covers IN and OUT value for a live allocas analysis.
+typedef DFValue<LiveDFFwk, LiveDFFwk::AllocaSet> LiveSet;
+
+/// This attribute is associated with LiveSet and
+/// can be added to a node in a data-flow graph.
+BASE_ATTR_DEF(LiveAttr, LiveSet)
+
+/// Traits for a data-flow framework which is used to find live allocas.
+template<> struct DataFlowTraits<LiveDFFwk *> {
+  typedef Backward<DFRegion * > GraphType;
+  typedef LiveDFFwk::AllocaSet ValueType;
+  static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
+  static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
+    LiveSet *LS = G.Graph->getAttribute<LiveAttr>();
+    assert(LS && "Data-flow value must not be be null!");
+    ValueType V(topElement(DFF, G));
+    // If an alloca is alive before a loop it is alive befor each iteration.
+    // This occurs due to conservatism of analysis.
+    // If alloca is alive befor iteration with number I then it is alive after
+    // iteration with number I-1. So it should be used as a boundary value.
+    meetOperator(LS->getIn(), V, DFF, G);
+    // If alloca is alive after a loop it also should be used as a boundary value.
+    meetOperator(LS->getOut(), V, DFF, G);
+    return V;
+  }
+  static void setValue(ValueType V, DFNode *N, LiveDFFwk *) {
+    assert(N && "Node must not be null!");
+    LiveSet *LS = N->getAttribute<LiveAttr>();
+    assert(LS && "Data-flow value must not be null!");
+    LS->setIn(std::move(V));
+  }
+  static const ValueType & getValue(DFNode *N, LiveDFFwk *) {
+    assert(N && "Node must not be null!");
+    LiveSet *LS = N->getAttribute<LiveAttr>();
+    assert(LS && "Data-flow value must not be be null!");
+    return LS->getIn();
+  }
+  static void initialize(DFNode *, LiveDFFwk *, GraphType);
+  static void meetOperator(
+      const ValueType &LHS, ValueType &RHS, LiveDFFwk *, GraphType) {
+    RHS.insert(LHS.begin(), LHS.end());
+  }
+  static bool transferFunction(ValueType, DFNode *, LiveDFFwk *, GraphType);
+};
+
+/// Traits for a data-flow framework which is used to find live allocas.
+template<> struct RegionDFTraits<LiveDFFwk *> :
+  DataFlowTraits<LiveDFFwk *> {
+  static void expand(LiveDFFwk *DFF, GraphType G) {
+    DFNode *EN = G.Graph->getExitNode();
+    for (DFRegion::latch_iterator I = G.Graph->latch_begin(),
+         E = G.Graph->latch_end(); I != E; ++I) {
+      (*I)->addSuccessor(EN);
+      EN->addPredecessor(*I);
+    }
+  }
+  static void collapse(LiveDFFwk *, GraphType) {}
+  typedef DFRegion::region_iterator region_iterator;
+  static region_iterator region_begin(GraphType G) {
+    return G.Graph->region_begin();
+  }
+  static region_iterator region_end(GraphType G) {
+    return G.Graph->region_end();
+  }
+};
 }
 
 namespace llvm {
@@ -510,6 +595,17 @@ public:
 
   /// Specifies a list of analyzes  that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  /// \brief Complements the result of loop bodies analysis.
+  ///
+  /// Privatizability analysis is performed in two steps. Firstly,
+  /// body of each natural loop is analyzed. Secondly, when live allocas
+  /// for each basic block are discovered, results of loop body analysis must be
+  /// finalized. The result of this analysis should be complemented to separate
+  /// private from last private allocas.
+  /// \param [in, out] R Region in a data-flow graph, it can not be null.
+  void resolveCandidats(tsar::DFRegion *R);
 
 private:
   PrivateInfo mPrivates;
