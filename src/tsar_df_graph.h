@@ -277,7 +277,7 @@ public:
   ///
   /// A latch node is a node that contains a branch back to the header.
   bool isLatch(const DFNode *N) const {
-    return mLatchNodes.count(const_cast<DFNode *>(N));
+    return mLatchNodes.count(const_cast<DFNode *>(N)) != 0;
   }
 
   /// \brief Inserts a new node at the end of the list of nodes.
@@ -621,9 +621,9 @@ template<> struct GraphTraits<tsar::Backward<tsar::DFNode *> > {
   static NodeType * getEntryNode(tsar::Backward<tsar::DFNode *> G) {
     return G.Graph;
   }
-  typedef NodeType::pred_iterator ChildIteratorType;
-  static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
-  static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
+  typedef NodeType::succ_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
 };
 
 template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
@@ -631,9 +631,9 @@ template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
   static NodeType * getEntryNode(Inverse<tsar::Backward<tsar::DFNode *> > G) {
     return G.Graph.Graph;
   }
-  typedef NodeType::succ_iterator ChildIteratorType;
-  static ChildIteratorType child_begin(NodeType *N) { return N->succ_begin(); }
-  static ChildIteratorType child_end(NodeType *N) { return N->succ_end(); }
+  typedef NodeType::pred_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeType *N) { return N->pred_begin(); }
+  static ChildIteratorType child_end(NodeType *N) { return N->pred_end(); }
 };
 
 /// \brief GraphTraits specializations for a data-flow graph.
@@ -642,7 +642,7 @@ template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
 template<> struct GraphTraits<tsar::Backward<tsar::DFRegion *> > :
   public GraphTraits<tsar::Backward<tsar::DFNode * > > {
   static NodeType *getEntryNode(tsar::Backward<tsar::DFRegion *> G) {
-    return G.Graph->getEntryNode();
+    return G.Graph->getExitNode();
   }
   typedef tsar::DFRegion::node_iterator nodes_iterator;
   static nodes_iterator nodes_begin(tsar::Backward<tsar::DFRegion *> G) {
@@ -659,7 +659,7 @@ template<> struct GraphTraits<tsar::Backward<tsar::DFRegion *> > :
 template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFRegion *> > > :
   public GraphTraits<Inverse<tsar::Backward<tsar::DFNode *> > > {
   static NodeType *getEntryNode(Inverse<tsar::Backward<tsar::DFRegion *> > G) {
-    return G.Graph.Graph->getEntryNode();
+    return G.Graph.Graph->getExitNode();
   }
 };
 }
