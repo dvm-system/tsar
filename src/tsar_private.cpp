@@ -233,10 +233,22 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   assert(BB && "Basic block must not be null!");
   for (Instruction &I : BB->getInstList()) {
     if (isa<StoreInst>(I)) {
+      if (!isa<AllocaInst>(I.getOperand(1))) {
+        // TODO(kaniandr@gmail.com): implement this feature.
+        errs() << "line " << I.getDebugLoc().getLine() <<
+          ": unimplemented feature: a value can be stored in variable only!\n";
+        exit(1);
+      }
       AllocaInst *AI = cast<AllocaInst>(I.getOperand(1));
       if (Fwk->isAnalyse(AI))
         DU->addDef(AI);
     } else if (isa<LoadInst>(I)) {
+      if (!isa<AllocaInst>(I.getOperand(0))) {
+        // TODO(kaniandr@gmail.com): implement this feature.
+        errs() << "line " << I.getDebugLoc().getLine() <<
+          ": unimplemented feature: a value can be loaded from variable only!\n";
+        exit(1);
+      }
       AllocaInst *AI = cast<AllocaInst>(I.getOperand(0));
       if (Fwk->isAnalyse(AI) && !DU->hasDef(AI))
         DU->addUse(AI);
@@ -296,16 +308,10 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   //   of execution paths of iterations of the loop.
   // * LatchDefs is a set of must define allocas before a branch to
   //   a next arbitrary iteration.
-  DFNode *ExitNode = R->getExitNode();
-  PrivateDFValue *ExitValue = ExitNode->getAttribute<PrivateDFAttr>();
-  assert(ExitValue && "Data-flow value must not be null!");
-  const AllocaDFValue & ExitingDefs = ExitValue->getOut();
-  AllocaDFValue LatchDefs(RT::topElement(this, R));
-  for (DFNode *N : L->getLatchNodes()) {
-    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be null!");
-    LatchDefs.intersect(PV->getOut());
-  }
+  DFNode *ExitNode = R->getExitNode();  
+  const AllocaDFValue &ExitingDefs = RT::getValue(ExitNode, this);
+  DFNode *LatchNode = R->getLatchNode();
+  const AllocaDFValue &LatchDefs = RT::getValue(LatchNode, this);
   DependencySet::AllocaSet AllNodesAccesses;
   for (DFNode *N : L->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();

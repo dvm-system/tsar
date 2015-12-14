@@ -38,9 +38,10 @@ namespace tsar {
 /// \brief Representation of a node in a data-flow framework.
 ///
 /// The following kinds of nodes are supported: basic block, body of a
-/// natural loop, body of a function entry point of the graph which will be
-/// analyzed. LLVM-style RTTI for hierarch of classes that represented
-/// different nodes is avaliable.
+/// natural loop, body of a function, entry and exit points of the graph
+/// which will be analyzed, latch node.
+/// LLVM-style RTTI for hierarch of classes that represented different nodes
+/// is avaliable.
 /// \par In some cases it is convinient to use hierarchy of nodes. Some nodes
 /// are treated as regions which contain other nodes. Such regions we call
 /// parent nodes.
@@ -54,6 +55,7 @@ public:
     KIND_BLOCK = FIRST_KIND,
     KIND_ENTRY,
     KIND_EXIT,
+    KIND_LATCH,
 
     FIRST_KIND_REGION,
     KIND_LOOP = FIRST_KIND_REGION,
@@ -139,7 +141,7 @@ private:
 /// \brief Representation of an entry node in a data-flow framework.
 ///
 /// It is convenient to have additional nodes which called entry and exit
-/// in a graph. This nodes help to determine starting point for solving of
+/// in a graph. These nodes help to determine starting point for solving of
 /// a data-flow problem in forward and backward directions respectively.
 class DFEntry : public DFNode {
 public:
@@ -155,7 +157,7 @@ public:
 /// \brief Representation of an exit node in a data-flow framework.
 ///
 /// It is convenient to have additional nodes which called entry and exit
-/// in a graph. This nodes help to determine starting point for solving of
+/// in a graph. These nodes help to determine starting point for solving of
 /// a data-flow problem in forward and backward directions respectively.
 class DFExit : public DFNode {
 public:
@@ -164,8 +166,23 @@ public:
     return R->getKind() == KIND_EXIT;
   }
 
-  /// \brief Ctreates representation of the exit node.
+  /// Ctreates representation of the exit node.
   DFExit() : DFNode(KIND_EXIT) {}
+};
+
+/// \brief Representation of an latch node in a data-flow framework.
+///
+/// It is convenient to have additional node which called latch in a graph.
+/// A latch node is a node that contains a branch back to the header.
+class DFLatch : public DFNode {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DFNode *R) {
+    return R->getKind() == KIND_LATCH;
+  }
+
+  /// Ctreates representation of the latch node.
+  DFLatch() : DFNode(KIND_LATCH) {}
 };
 
 /// \brief Representation of a region in a data-flow framework.
@@ -182,9 +199,6 @@ public:
 
   /// This type used to iterate over internal regions.
   typedef std::vector<DFRegion *>::const_iterator region_iterator;
-
-  /// This type used to iterate over all latch nodes in the loop body.
-  typedef llvm::SmallPtrSet<DFNode *, 8>::const_iterator latch_iterator;
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DFNode *N) {
@@ -254,31 +268,14 @@ public:
     return mNodes.back();
   }
 
-  /// \brief Specifies an latch node of the data-flow graph.
-  ///
-  /// Multiple nodes can be specified.
-  void setLatchNode(DFNode *N) {
-    assert(N && "Node must not be null!");
-    mLatchNodes.insert(N);
-  }
-
-  /// Get a list of the latch nodes of this loop.
-  const llvm::SmallPtrSet<DFNode *, 8> & getLatchNodes() const {
-    return mLatchNodes;
-  }
-
-  /// Returns iterator that points to the beginning of the latch nodes list.
-  latch_iterator latch_begin() const { return mLatchNodes.begin(); }
-
-  /// Returns iterator that points to the ending of the latch nodes list.
-  latch_iterator latch_end() const { return mLatchNodes.end(); }
-
-  ///\brief  Returns true if the node is an latch node of this loop.
+  /// \brief Returns the latch node of the data-flow graph.
   ///
   /// A latch node is a node that contains a branch back to the header.
-  bool isLatch(const DFNode *N) const {
-    return mLatchNodes.count(const_cast<DFNode *>(N)) != 0;
-  }
+  /// Latch nodes exists in natural loops. Control flow graph that represents
+  /// a natural loops may have several latch nodes, but for data-flow graph
+  /// let us insert additional single nodes between CFG latch nodes and header.
+  /// \return nullptr if there is no latch node in the graph.
+  DFNode * getLatchNode() const { return mLatchNode; }
 
   /// \brief Inserts a new node at the end of the list of nodes.
   ///
@@ -287,6 +284,7 @@ public:
   /// \pre
   /// - A new node can not take a null value.
   /// - The node should be differ from other nodes of the graph.
+  /// - Only one entry, exit and latch node can be inserted.
   void addNode(DFNode *N) {
     assert(N && "Node must not be null!");
     assert(FIRST_KIND <= N->getKind() && N->getKind() <= LAST_KIND &&
@@ -295,6 +293,8 @@ public:
       "Only one entry node must be in the region!");
     assert(!llvm::isa<DFExit>(N) || mNodes.empty() || N != mNodes.back() &&
       "Only one exit node must be in the region!");
+    assert(!llvm::isa<DFLatch>(N) || !mLatchNode &&
+      "Only one latch node mut be in the region!");
 #ifdef DEBUG
     for (DFNode *Node : mNodes)
       assert(N != Node &&
@@ -303,23 +303,24 @@ public:
     N->mParent = this;
     if (llvm::isa<DFEntry>(N))
       mNodes.insert(mNodes.begin(), N);
-    else if (llvm::isa<DFExit>(N) ||
-        !mNodes.empty() && !llvm::isa<DFExit>(mNodes.back()))
+    else if (llvm::isa<DFExit>(N) || mNodes.empty() ||
+        !llvm::isa<DFExit>(mNodes.back()))
       mNodes.push_back(N);
     else
       mNodes.insert(--mNodes.end(), N);
+    if (llvm::isa<DFLatch>(N))
+      mLatchNode = N;
     if (DFRegion *R = llvm::dyn_cast<DFRegion>(N))
       mRegions.push_back(R);
   }
 protected:
   /// Creates a new node of the specified type.
-  explicit DFRegion(Kind K) : DFNode(K) {}
+  explicit DFRegion(Kind K) : DFNode(K), mLatchNode(nullptr) {}
 
 private:
   std::vector<DFNode *> mNodes;
   std::vector<DFRegion *> mRegions;
-  llvm::SmallPtrSet<DFNode *, 8> mExitingNodes;
-  llvm::SmallPtrSet<DFNode *, 8> mLatchNodes;
+  DFNode *mLatchNode;
 };
 
 /// \brief Representation of a loop in a data-flow framework.
@@ -352,7 +353,6 @@ public:
 private:
   llvm::Loop *mLoop;
 };
-
 
 /// \brief Representation of a basic block in a data-flow framework.
 ///
@@ -487,6 +487,7 @@ public:
 /// This function treats a loop nest as hierarchy of regions. Each region is
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
+/// \attention Back edges for natural loops will be ommited.
 /// \tparam LoopReptn Representation of the outermost loop in the nest.
 /// The LoopTraits class should be specialized by type of each loop in the nest.
 /// For example, the outermost loop can be a loop llvm::Loop * or
@@ -496,7 +497,7 @@ public:
 template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
   assert(R && "Region must not be null!");
   // To improve efficiency of construction the first created node
-  // is entry and  the last is exit.
+  // is entry and the last is exit (for loops the last created node is latch).
   DFEntry *EntryNode = new DFEntry;
   R->addNode(EntryNode);
   typedef LoopTraits<LoopReptn> LT;
@@ -524,6 +525,7 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
   DFNode *HeaderNode = Blocks.find(LT::getHeader(L))->second;
   EntryNode->addSuccessor(HeaderNode);
   HeaderNode->addPredecessor(EntryNode);
+  DFLatch *LatchNode = nullptr;
   for (auto BBToN : Blocks) {
     if (succ_begin(BBToN.first) == succ_end(BBToN.first)) {
       BBToN.second->addSuccessor(ExitNode);
@@ -546,8 +548,14 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
         if (SToNode == Blocks.end()) {
           BBToN.second->addSuccessor(ExitNode);
           ExitNode->addPredecessor(BBToN.second);
-        } else if (*SI == LT::getHeader(L))
-          R->setLatchNode(BBToN.second);
+        } else if (*SI == LT::getHeader(L)) {
+          if (!LatchNode) {
+            LatchNode = new DFLatch;
+            R->addNode(LatchNode);
+          }
+          BBToN.second->addSuccessor(LatchNode);
+          LatchNode->addPredecessor(BBToN.second);
+        }
         else if (SToNode->second != BBToN.second)
           BBToN.second->addSuccessor(SToNode->second);
       }

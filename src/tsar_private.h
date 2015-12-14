@@ -535,15 +535,22 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
 /// Traits for a data-flow framework which is used to find live allocas.
 template<> struct RegionDFTraits<LiveDFFwk *> :
   DataFlowTraits<LiveDFFwk *> {
-  static void expand(LiveDFFwk *DFF, GraphType G) {
+  static void expand(LiveDFFwk *, GraphType G) {
+    DFNode *LN = G.Graph->getLatchNode();
+    if (!LN)
+      return;
     DFNode *EN = G.Graph->getExitNode();
-    for (DFRegion::latch_iterator I = G.Graph->latch_begin(),
-         E = G.Graph->latch_end(); I != E; ++I) {
-      (*I)->addSuccessor(EN);
-      EN->addPredecessor(*I);
-    }
+    LN->addSuccessor(EN);
+    EN->addPredecessor(LN);
   }
-  static void collapse(LiveDFFwk *, GraphType) {}
+  static void collapse(LiveDFFwk *, GraphType G) {
+    DFNode *LN = G.Graph->getLatchNode();
+    if (!LN)
+      return;
+    DFNode *EN = G.Graph->getExitNode();
+    LN->removeSuccessor(EN);
+    EN->removePredecessor(LN);
+  }
   typedef DFRegion::region_iterator region_iterator;
   static region_iterator region_begin(GraphType G) {
     return G.Graph->region_begin();
