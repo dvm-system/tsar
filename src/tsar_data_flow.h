@@ -131,7 +131,7 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
     DFT::initialize(*I, DFF, DFG);
     DFT::setValue(DFT::topElement(DFF, DFG), *I, DFF);
   }
-  DFT::initialize(GT::getEntryNode(DFG), DFF, DFG);
+  // DFT::initialize() has been already called for an entry node in loop above.
   DFT::setValue(DFT::boundaryCondition(DFF, DFG), GT::getEntryNode(DFG), DFF);
   bool isChanged = true;
   do {
@@ -320,6 +320,10 @@ template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
 /// which allows it to avoid heap allocation when the actual number of
 /// nodes is below that threshold (2*N). This allows normal "small" cases to be
 /// fast without losing generality for large inputs.
+///
+/// Multiple edges between adjacent nodes are allowed.
+/// \attention Iterator validity is the same as for operations with
+/// llvm::SmallVector.
 template<class NodeTy, unsigned N>
 class SmallDFNode : private Utility::Uncopyable {
 public:
@@ -389,6 +393,42 @@ public:
   ///
   /// \pre A new node must not be null.
   void addSuccessor(NodeTy *Node) { addAdjacentNode(Node, SUCC); }
+
+  /// \brief Removes adjacent node in the specified direction.
+  ///
+  /// If there are multiple edges between specified and current node
+  /// all edges will be removed. 
+  /// \pre A removed node must not be null.
+  void removeAdjacentNode(NodeTy *Node, Direction Dir) {
+    assert(Node && "Data-flow node must not be null!");
+    assert(FIRST_DIRECTION <= Dir && Dir <= LAST_DIRECTION &&
+      "Direction is out of range!");
+    auto I = mAdjacentNodes[Dir].end();
+    auto B = mAdjacentNodes[Dir].begin();
+    if (B == I)
+      return;
+    --I;
+    while (I != B)
+      if (*I == Node) {
+        auto R = I;
+        --I;
+        mAdjacentNodes[Dir].erase(R);
+      } else {
+        --I;
+      }
+    if (*I == Node)
+      mAdjacentNodes[Dir].erase(I);
+  }
+
+  /// \brief Removes predeccessor.
+  ///
+  /// \pre A removed node must not be null.
+  void removePredecessor(NodeTy *Node) { removeAdjacentNode(Node, PRED); }
+
+  /// \brief Removes successor.
+  ///
+  /// \pre A removed node must not be null.
+  void removeSuccessor(NodeTy *Node) { removeAdjacentNode(Node, SUCC); }
 
 private:
   llvm::SmallVector<NodeTy *, N> mAdjacentNodes[NUMBER_DIRECTION];
