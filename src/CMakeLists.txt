@@ -1,10 +1,14 @@
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-
-# Build executable targets
-add_executable(tsar main.cpp tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp)
+set(TSAR_EXECUTABLES main.cpp tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp)
+if(MSVC_IDE)
+  source_group(src FILES ${TSAR_EXECUTABLES})
+  file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
+  source_group(src FILES ${TSAR_HEADERS})
+  source_group(base FILES ${BASE_HEADERS})
+endif()
+add_executable(tsar ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS})
 add_dependencies(tsar ${LLVM_LIBS})
 add_definitions("-D${PROJECT_NAME}_PROJECT")
 target_link_libraries(tsar ${LLVM_LIBS})
-
 install(TARGETS tsar RUNTIME DESTINATION bin)
