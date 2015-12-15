@@ -313,6 +313,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   DFNode *LatchNode = R->getLatchNode();
   const AllocaDFValue &LatchDefs = RT::getValue(LatchNode, this);
   DependencySet::AllocaSet AllNodesAccesses;
+  DependencySet::AllocaSet MayDefs;
   for (DFNode *N : L->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
@@ -333,8 +334,11 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // We also calculate a set of must define allocas (Defs) for the loop.
     // These allocas always have definitions inside the loop regardless
     // of execution paths of iterations of the loop.
+    // The set of may define allocas (MayDefs) for the loop is also calculated.
+    // This set also include all must define allocas.
     for (AllocaInst *AI : DU->getDefs()) {
       AllNodesAccesses.insert(AI);
+      MayDefs.insert(AI);
       if (ExitingDefs.exist(AI))
         DefUse->addDef(AI);
     }
@@ -377,8 +381,10 @@ void PrivateDFFwk::collapse(DFRegion *R) {
         (*DS)[SecondToLastPrivate].insert(AI);
       else
         (*DS)[DynamicPrivate].insert(AI);
-    else
+    else if (MayDefs.count(AI) != 0)
       (*DS)[Dependency].insert(AI);
+    else
+      (*DS)[Shared].insert(AI);
 }
 
 bool operator==(const LiveDFFwk::AllocaSet &LHS, const LiveDFFwk::AllocaSet &RHS) {
