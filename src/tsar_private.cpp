@@ -33,6 +33,7 @@
 #include "tsar_private.h"
 #include "tsar_graph.h"
 #include "tsar_pass.h"
+#include "tsar_utility.h"
 
 #include <declaration.h>
 #include "tsar_dbg_output.h"
@@ -162,55 +163,6 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 FunctionPass *llvm::createPrivateRecognitionPass() {
   return new PrivateRecognitionPass();
-}
-
-bool AllocaDFValue::intersect(const AllocaDFValue &with) {
-  assert(mKind != INVALID_KIND && "Collection is corrupted!");
-  assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
-  if (with.mKind == KIND_FULL)
-    return false;
-  if (mKind == KIND_FULL) {
-    *this = with;
-    return true;
-  }
-  AllocaSet PrevAllocas;
-  mAllocas.swap(PrevAllocas);
-  for (llvm::AllocaInst *AI : PrevAllocas) {
-    if (with.mAllocas.count(AI))
-      mAllocas.insert(AI);
-  }
-  return mAllocas.size() != PrevAllocas.size();
-}
-
-bool AllocaDFValue::merge(const AllocaDFValue &with) {
-  assert(mKind != INVALID_KIND && "Collection is corrupted!");
-  assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
-  if (mKind == KIND_FULL)
-    return false;
-  if (with.mKind == KIND_FULL) {
-    mAllocas.clear();
-    mKind = KIND_FULL;
-    return true;
-  }
-  bool isChanged = false;
-  for (llvm::AllocaInst *AI : with.mAllocas)
-    isChanged = mAllocas.insert(AI) || isChanged;
-  return isChanged;
-}
-
-bool AllocaDFValue::operator==(const AllocaDFValue &RHS) const {
-  assert(mKind != INVALID_KIND && "Collection is corrupted!");
-  assert(RHS.mKind != INVALID_KIND && "Collection is corrupted!");
-  if (this == &RHS || mKind == KIND_FULL && RHS.mKind == KIND_FULL)
-    return true;
-  if (mKind != RHS.mKind)
-    return false;
-  if (mAllocas.size() != RHS.mAllocas.size())
-    return false;
-  for (llvm::AllocaInst *AI : mAllocas)
-    if (!RHS.mAllocas.count(AI))
-      return false;
-  return true;
 }
 
 void DataFlowTraits<PrivateDFFwk*>::initialize(
@@ -387,22 +339,11 @@ void PrivateDFFwk::collapse(DFRegion *R) {
       (*DS)[Shared].insert(AI);
 }
 
-bool operator==(const LiveDFFwk::AllocaSet &LHS, const LiveDFFwk::AllocaSet &RHS) {
-  if (LHS.size() != RHS.size())
-    return false;
-  for (AllocaInst *AI : LHS)
-    if (RHS.count(AI) == 0)
-      return false;
-  return true;
-}
-
-bool operator!=(const LiveDFFwk::AllocaSet &LHS, const LiveDFFwk::AllocaSet &RHS) {
-  return !(LHS == RHS);
-}
-
 void DataFlowTraits<LiveDFFwk *>::initialize(DFNode *N, LiveDFFwk *Fwk, GraphType) {
   assert(N && "Node must not be null!");
-  assert(Fwk && "Data-flow framework must not be null");
+  assert(Fwk && "Data-flow framework must not be null!");
+  assert(N->getAttribute<DefUseAttr>() &&
+    "Value of def-use attribute must not be null!");
   LiveSet *LS = new LiveSet;
   N->addAttribute<LiveAttr>(LS);
 }

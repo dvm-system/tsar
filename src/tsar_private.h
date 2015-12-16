@@ -21,217 +21,9 @@
 #include <utility.h>
 #include <cell.h>
 #include "tsar_df_graph.h"
+#include "tsar_df_alloca.h"
 
 namespace tsar {
-/// \brief This covers IN and OUT values for a data-flow node.
-///
-/// \tparam Id Identifier, for example a data-flow framework which is used.
-/// This is neccessary to distinguish different data-flow values.
-/// \tparam InTy Type of data-flow value before the node (IN).
-/// \tparam OutTy Type of data-flow value after the node (OUT).
-///
-/// It is possible to set InTy or OutTy to void. In this case
-/// corresponding methods (get and set) are not available.
-template<class Id, class InTy, class OutTy = InTy >
-class DFValue {
-public:
-  /// Returns a data-flow value before the node.
-  std::enable_if_t<!std::is_same<InTy, void>::value, const InTy &>
-    getIn() const { return mIn; }
-
-  /// Specifies a data-flow value before the node.
-  void setIn(std::enable_if_t<!std::is_same<InTy, void>::value, InTy> V) {
-    mIn = std::move(V);
-  }
-
-  /// Returns a data-flow value after the node.
-  std::enable_if_t<!std::is_same<OutTy, void>::value, const OutTy &>
-    getOut() const { return mOut; }
-
-  /// Specifies a data-flow value after the node.
-  void setOut(std::enable_if_t<!std::is_same<OutTy, void>::value, OutTy> V) {
-    mOut = std::move(V);
-  }
-
-private:
-  InTy mIn;
-  OutTy mOut;
-};
-
-/// \brief Representation of a data-flow value formed by a set of allocas.
-/// 
-/// A data-flow value is a set of allocas for which a number of operations
-/// is defined.
-class AllocaDFValue {
-  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
-  // There are two kind of values. The KIND_FULL kind means that the set of
-  // variables is full and contains all variables used in the analyzed program.
-  // The KIND_MASK kind means that the set contains variables located in the 
-  // alloca collection (mAllocas). This is internal information which is
-  // neccessary to safely and effectively implement a number of operations
-  // which is permissible for a arbitrary set of variables.
-  enum Kind {
-    FIRST_KIND,
-    KIND_FULL = FIRST_KIND,
-    KIND_MASK,
-    LAST_KIND = KIND_MASK,
-    INVALID_KIND,
-    NUMBER_KIND = INVALID_KIND
-  };
-  AllocaDFValue(Kind K) : mKind(K) {
-    assert(FIRST_KIND <= K && K <= LAST_KIND &&
-            "The specified kind is invalid!");
-  }
-public:
-  /// Creats a value, which contains all variables used in the analyzed
-  /// program.
-  static AllocaDFValue fullValue() {
-    return AllocaDFValue(AllocaDFValue::KIND_FULL);
-  }
-
-  /// Creates an empty value.
-  static AllocaDFValue emptyValue() {
-    return AllocaDFValue(AllocaDFValue::KIND_MASK);
-  }
-
-  /// Default constructor creates an empty value.
-  AllocaDFValue() : AllocaDFValue(AllocaDFValue::KIND_MASK) {}
-
-  /// \brief Calculates the difference between a set of allocas and a set
-  /// which is represented as a data-flow value.
-  ///
-  /// \param [in] AIBegin Iterator that points to the beginning of the allocas
-  /// set.
-  /// \param [in] AIEnd Iterator that points to the ending of the allocas set.
-  /// \param [in] Value Data-flow value.
-  /// \param [out] Result It contains the result of this operation.
-  /// The following operation should be provided:
-  /// - void ResultSet::insert(llvm::AllocaInst *).
-  template<class alloca_iterator, class ResultSet>
-  static void difference(const alloca_iterator &AIBegin,
-                         const alloca_iterator &AIEnd,
-                         const AllocaDFValue &Value, ResultSet &Result) {
-    //If all allocas are contained in Value or range of iterators is empty,
-    //than Result should be empty.
-    if (Value.mKind == KIND_FULL || AIBegin == AIEnd)
-      return;
-    if (Value.mAllocas.empty())
-      Result.insert(AIBegin, AIEnd);
-    for (alloca_iterator I = AIBegin; I != AIEnd; ++I)
-      if (Value.exist(*I))
-        Result.insert(*I);
-  }
-
-  /// Destructor.
-  ~AllocaDFValue() { mKind = INVALID_KIND; }
-
-  /// Move constructor.
-  AllocaDFValue(AllocaDFValue &&that) :
-    mKind(that.mKind), mAllocas(std::move(that.mAllocas)) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
-  }
-
-  /// Copy constructor.
-  AllocaDFValue(const AllocaDFValue &that) :
-    mKind(that.mKind), mAllocas(that.mAllocas) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
-  }
-
-  /// Move assignment operator.
-  AllocaDFValue & operator= (AllocaDFValue &&that) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
-    if (this != &that) {
-      mKind = that.mKind;
-      mAllocas = std::move(that.mAllocas);
-    }
-    return *this;
-  }
-
-  /// Copy assignment operator.
-  AllocaDFValue & operator= (const AllocaDFValue &that) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    assert(that.mKind != INVALID_KIND && "Collection is corrupted!");
-    if (this != &that) {
-      mKind = that.mKind;
-      mAllocas = that.mAllocas;
-    }
-    return *this;
-  }
-
-  /// Returns true if the value contains the specified alloca.
-  bool exist(llvm::AllocaInst *AI) const {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    return mKind == KIND_FULL || mAllocas.count(AI);
-  }
-
-  /// Returns true if the value does not contain any alloca.
-  bool empty() const {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    return mKind == KIND_MASK && mAllocas.empty();
-  }
-
-  /// Removes all allocas from the value.
-  void clear() {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    mKind = KIND_MASK;
-    mAllocas.clear();
-  }
-
-  /// Inserts a new alloca into the value, returns false if it already exists.
-  bool insert(llvm::AllocaInst *AI) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    return mKind == KIND_FULL || mAllocas.insert(AI);
-  }
-
-  /// Inserts all allocas from the range into the value, returns false
-  /// ifnothing has been added.
-  template<class alloca_iterator >
-  bool insert(const alloca_iterator &AIBegin, const alloca_iterator &AIEnd) {
-    assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    if (mKind == KIND_FULL)
-      return false;
-    bool isChanged = false;
-    for (alloca_iterator I = AIBegin; I != AIEnd; ++I)
-      isChanged = mAllocas.insert(*I) || isChanged;
-    return isChanged;
-  }
-
-  /// Realizes intersection between two values.
-  bool intersect(const AllocaDFValue &with);
-
-  /// Realizes merger between two values.
-  bool merge(const AllocaDFValue &with);
-
-  /// Compares two values.
-  bool operator==(const AllocaDFValue &RHS) const;
-
-  /// Compares two values.
-  bool operator!=(const AllocaDFValue &RHS) const { return !(*this == RHS); }
-private:
-  Kind mKind;
-  AllocaSet mAllocas;
-};
-
-/// \brief This calculates the difference between a set of allocas and a set
-/// which is represented as a data-flow value.
-///
-/// \param [in] AIBegin Iterator that points to the beginning of the allocas
-/// set.
-/// \param [in] AIEnd Iterator that points to the ending of the allocas set.
-/// \param [in] Value Data-flow value.
-/// \param [out] Result It contains the result of this operation.
-/// The following operation should be provided:
-/// - void ResultSet::insert(llvm::AllocaInst *).
-template<class alloca_iterator, class ResultSet>
-static void difference(const alloca_iterator &AIBegin,
-                       const alloca_iterator &AIEnd,
-                       const AllocaDFValue &Value, ResultSet &Result) {
-  AllocaDFValue::difference(AIBegin, AIEnd, Value, Result);
-}
-
 /// \brief This contains allocas which have outward exposed definitions or uses
 /// in a data-flow node.
 ///
@@ -277,16 +69,12 @@ private:
 /// can be added to a node in a data-flow graph.
 BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 
-/// \brief This contains privatizability information for allocas
-/// in a natural loop.
-
-
 namespace detail {
 /// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
 struct DependencySet {
   /// Set of alloca instructions.
-  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
+  typedef DefUseSet::AllocaSet AllocaSet;
   struct Private { typedef AllocaSet ValueType; };
   struct LastPrivate { typedef AllocaSet ValueType; };
   struct SecondToLastPrivate { typedef AllocaSet ValueType; };
@@ -383,7 +171,7 @@ BASE_ATTR_DEF(DependencyAttr, DependencySet)
 /// from last private allocas. The reason for this is the scope of analysis.
 /// The analysis is performed for loop bodies only.
 ///
-/// Two kinds of attributes for each nodes in a data-flow graph is available
+/// Two kinds of attributes for each nodes in a data-flow graph are available
 /// after this analysis. The first kind, is DefUseAttr and the second one is
 /// PrivateDFAttr. The third kind of attribute (DependencyAttr) becomes available
 /// for nodes which corresponds to natural loops. The complemented results
@@ -470,10 +258,16 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
 
 /// \brief Data-flow framework which is used to find live allocas
 /// for basic blocks, loops, functions, etc.
+///
+/// \pre The outward exposed uses and definitions must be calculated, so
+/// PrivateDFFwk should be used to prepare data-flow graph before evaluation.
+///
+/// The LiveAttr attribute for each nodes in a data-flow graph is available
+/// after this analysis.
 class LiveDFFwk : private Utility::Uncopyable {
 public:
   /// Set of alloca instructions.
-  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
+  typedef DefUseSet::AllocaSet AllocaSet;
 
   /// Creates data-flow framework and specifies a set of allocas 
   /// that should be analyzed.

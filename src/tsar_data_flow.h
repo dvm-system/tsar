@@ -312,6 +312,41 @@ template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
   RT::collapse(DFF, DFG);
 }
 
+/// \brief This covers IN and OUT values for a data-flow node.
+///
+/// \tparam Id Identifier, for example a data-flow framework which is used.
+/// This is neccessary to distinguish different data-flow values.
+/// \tparam InTy Type of data-flow value before the node (IN).
+/// \tparam OutTy Type of data-flow value after the node (OUT).
+///
+/// It is possible to set InTy or OutTy to void. In this case
+/// corresponding methods (get and set) are not available.
+template<class Id, class InTy, class OutTy = InTy >
+class DFValue {
+public:
+  /// Returns a data-flow value before the node.
+  std::enable_if_t<!std::is_same<InTy, void>::value, const InTy &>
+    getIn() const { return mIn; }
+
+  /// Specifies a data-flow value before the node.
+  void setIn(std::enable_if_t<!std::is_same<InTy, void>::value, InTy> V) {
+    mIn = std::move(V);
+  }
+
+  /// Returns a data-flow value after the node.
+  std::enable_if_t<!std::is_same<OutTy, void>::value, const OutTy &>
+    getOut() const { return mOut; }
+
+  /// Specifies a data-flow value after the node.
+  void setOut(std::enable_if_t<!std::is_same<OutTy, void>::value, OutTy> V) {
+    mOut = std::move(V);
+  }
+
+private:
+  InTy mIn;
+  OutTy mOut;
+};
+
 /// \brief Instances of this class are used to represent a node
 /// with a small list of the adjacent nodes.
 ///
