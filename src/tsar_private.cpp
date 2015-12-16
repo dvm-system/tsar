@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/Pass.h>
+#include "llvm/ADT/Statistic.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -38,11 +39,18 @@
 #include <declaration.h>
 #include "tsar_dbg_output.h"
 
+using namespace llvm;
+using namespace tsar;
+
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
 
-using namespace llvm;
-using namespace tsar;
+STATISTIC(NumPrivate, "Number of private allocas found");
+STATISTIC(NumLPrivate, "Number of last private allocas found");
+STATISTIC(NumSToLPrivate, "Number of second to last private allocas found");
+STATISTIC(NumDPrivate, "Number of dynamic private allocas found");
+STATISTIC(NumDeps, "Number of unsorted dependencies found");
+STATISTIC(NumShared, "Number of shraed allocas found");
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
@@ -133,16 +141,16 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       if (LS->getOut().count(AI) != 0)
         continue;
       if (DS->is(LastPrivate, AI)) {
-        (*DS)[LastPrivate].erase(AI);
-        (*DS)[Private].insert(AI);
+        (*DS)[LastPrivate].erase(AI), --NumLPrivate;
+        (*DS)[Private].insert(AI), ++NumPrivate;
       }
       else if (DS->is(SecondToLastPrivate, AI)) {
-        (*DS)[SecondToLastPrivate].erase(AI);
-        (*DS)[Private].insert(AI);
+        (*DS)[SecondToLastPrivate].erase(AI), --NumSToLPrivate;
+        (*DS)[Private].insert(AI), ++NumPrivate;
       }
       else if (DS->is(DynamicPrivate, AI)) {
-        (*DS)[DynamicPrivate].erase(AI);
-        (*DS)[Private].insert(AI);
+        (*DS)[DynamicPrivate].erase(AI), --NumDPrivate;
+        (*DS)[Private].insert(AI), ++NumPrivate;
       }
     }
   }
@@ -328,15 +336,15 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   for (AllocaInst *AI : AllNodesAccesses)
     if (!DefUse->hasUse(AI))
       if (DefUse->hasDef(AI))
-        (*DS)[LastPrivate].insert(AI);
+        (*DS)[LastPrivate].insert(AI), ++NumLPrivate;
       else if (LatchDefs.exist(AI))
-        (*DS)[SecondToLastPrivate].insert(AI);
+        (*DS)[SecondToLastPrivate].insert(AI), ++NumSToLPrivate;
       else
-        (*DS)[DynamicPrivate].insert(AI);
+        (*DS)[DynamicPrivate].insert(AI), ++NumDPrivate;
     else if (MayDefs.count(AI) != 0)
-      (*DS)[Dependency].insert(AI);
+      (*DS)[Dependency].insert(AI), ++NumDeps;
     else
-      (*DS)[Shared].insert(AI);
+      (*DS)[Shared].insert(AI), ++NumShared;
 }
 
 void DataFlowTraits<LiveDFFwk *>::initialize(DFNode *N, LiveDFFwk *Fwk, GraphType) {
