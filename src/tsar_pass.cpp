@@ -9,7 +9,12 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/InitializePasses.h>
+#include <llvm/Config/llvm-config.h>
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
 #include <llvm/PassManager.h>
+#else
+#include <llvm/IR/LegacyPassManager.h>
+#endif
 
 using namespace llvm;
 

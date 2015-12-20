@@ -144,7 +144,11 @@ public:
   /// Inserts a new alloca into the value, returns false if it already exists.
   bool insert(llvm::AllocaInst *AI) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
     return mKind == KIND_FULL || mAllocas.insert(AI);
+#else
+    return mKind == KIND_FULL || mAllocas.insert(AI).second;
+#endif
   }
 
   /// Inserts all allocas from the range into the value, returns false
@@ -156,7 +160,11 @@ public:
       return false;
     bool isChanged = false;
     for (alloca_iterator I = AIBegin; I != AIEnd; ++I)
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
       isChanged = mAllocas.insert(*I) || isChanged;
+#else
+      isChanged = mAllocas.insert(*I).second || isChanged;
+#endif
     return isChanged;
   }
 

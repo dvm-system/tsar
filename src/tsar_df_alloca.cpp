@@ -44,7 +44,11 @@ bool AllocaDFValue::merge(const AllocaDFValue &with) {
   }
   bool isChanged = false;
   for (llvm::AllocaInst *AI : with.mAllocas)
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
     isChanged = mAllocas.insert(AI) || isChanged;
+#else
+    isChanged = mAllocas.insert(AI).second || isChanged;
+#endif
   return isChanged;
 }
 

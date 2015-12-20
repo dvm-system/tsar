@@ -28,8 +28,13 @@ void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
   if (DDI) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
     DIVariable DIVar(DDI->getVariable());
     o << DIVar.getLineNumber() << ": ";
+#else
+    const DILocalVariable &DIVar = *DDI->getVariable();
+    o << DIVar.getLine() << ": ";
+#endif
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
     DIType DITy(DIVar.getType());
     if (DITy.isDerivedType()) {
@@ -40,7 +45,12 @@ void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
     }
 #else
     DITypeRef DITyRef(DIVar.getType());
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
     Value *DITyVal = (Value *) DITyRef;
+#else
+    Metadata *DITyVal = (Metadata *)DITyRef;
+#endif
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
     if (DITyVal) {
       if (const MDNode *MD = dyn_cast<MDNode>(DITyVal)) {
         DIType DITy(MD);
@@ -56,6 +66,17 @@ void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
     } else {
       o << DITyRef.getName() << " ";
     }
+#else
+    bool isDerived = false;
+    if (DIDerivedType *DITy = dyn_cast_or_null<DIDerivedType>(DITyVal)) {
+      DITyVal = DITy->getBaseType();
+      isDerived = true;
+    }
+    if (DIType *DITy = dyn_cast_or_null<DIType>(DITyVal))
+      o << DITy->getName() << " ";
+    else
+      o << "<unknown type>" << (isDerived ? "* " : " ");
+#endif
 #endif
     o << DIVar.getName() << ": ";
   }
@@ -70,7 +91,11 @@ void printLoops(llvm::raw_ostream &o, const Twine &Offset,
   for (; ReverseI != ReverseEI; --ReverseEI) {
     (Offset + "- ").print(o);
     DebugLoc loc = (*ReverseI)->getStartLoc();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
     loc.print(getGlobalContext(), o);
+#else
+    loc.print(o);
+#endif
     o << "\n";
     printLoops(o, Offset + "\t", (*ReverseI)->rbegin(), (*ReverseI)->rend());
   }

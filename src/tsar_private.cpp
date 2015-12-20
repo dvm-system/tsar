@@ -12,7 +12,10 @@
 #include "llvm/ADT/Statistic.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
+#include "llvm/IR/InstIterator.h"
 #include <llvm/Analysis/LoopInfo.h>
+#include "llvm/Analysis/ScalarEvolution.h"
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #include <llvm/Config/llvm-config.h>
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
@@ -60,12 +63,20 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTree)
 #else
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 #endif
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
 INITIALIZE_PASS_DEPENDENCY(LoopInfo)
+#else
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+#endif
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
   LoopInfo &LpInfo = getAnalysis<LoopInfo>();
+#else
+  LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+#endif
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
   DominatorTreeBase<BasicBlock> &DomTree = *(getAnalysis<DominatorTree>().DT);
 #else
@@ -92,7 +103,11 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     DebugLoc loc = L->getStartLoc();
     Base::Text Offset(L->getLoopDepth(), ' ');
     errs() << Offset;
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
     loc.print(getGlobalContext(), errs());
+#else
+    loc.print(errs());
+#endif
     errs() << "\n";
     const DependencySet &DS = getPrivatesFor(L);
     errs() << Offset << " privates:\n";
@@ -165,7 +180,12 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
 #else
   AU.addRequired<DominatorTreeWrapperPass>();
 #endif
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
   AU.addRequired<LoopInfo>();
+#else
+  AU.addRequired<LoopInfoWrapperPass>();
+#endif
+  AU.addRequired<ScalarEvolution>();
   AU.setPreservesAll();
 }
 

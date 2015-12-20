@@ -48,7 +48,13 @@ public:
   /// Specifies that an alloca have definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addDef(llvm::AllocaInst *AI) { return mDefs.insert(AI); }
+  bool addDef(llvm::AllocaInst *AI) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
+    return mDefs.insert(AI);
+#else
+    return mDefs.insert(AI).second;
+#endif
+  }
 
   /// Returns allocas which get values outside a data-flow node.
   const AllocaSet & getUses() const { return mUses; }  
@@ -59,7 +65,13 @@ public:
   /// Specifies that an alloca get values outside a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addUse(llvm::AllocaInst *AI) { return mUses.insert(AI); }
+  bool addUse(llvm::AllocaInst *AI) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
+    return mUses.insert(AI);
+#else
+    return mUses.insert(AI).second;
+#endif
+  }
 private:
   AllocaSet mDefs;
   AllocaSet mUses;
