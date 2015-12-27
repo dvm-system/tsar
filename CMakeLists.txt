@@ -175,7 +175,7 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
   if(BUILD_TSAR)
     set(LLVM_STATUS "Specifying LLVM dependences (include directories, libraries, macros etc.)")
     message(STATUS ${LLVM_STATUS})
-    set(LLVM_COMPONENTS analysis asmparser bitreader core debuginfo instrumentation
+    set(LLVM_COMPONENTS analysis asmparser bitreader core instrumentation
                           irreader scalaropts support tablegen target transformutils)
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.7")
       set(LLVM_COMPONENTS ${LLVM_COMPONENTS} debuginfo)
