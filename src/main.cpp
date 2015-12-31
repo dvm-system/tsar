@@ -16,11 +16,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Config/llvm-config.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-#include <llvm/PassManager.h>
-#else
-#include <llvm/IR/LegacyPassManager.h>
-#endif
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/FileSystem.h>
@@ -30,13 +25,18 @@
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Transforms/Scalar.h>
-#include <llvm/IR/IRPrintingPasses.h>
+#include <llvm/Analysis/Passes.h>
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
 #include "llvm/Analysis/Verifier.h"
 #include "llvm/Support/PassNameParser.h"
 #else
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/LegacyPassNameParser.h"
+#endif
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
+#include <llvm/PassManager.h>
+#else
+#include <llvm/IR/LegacyPassManager.h>
 #endif
 #include "tsar_exception.h"
 #include "tsar_pass.h"
@@ -132,6 +132,7 @@ int main(int Argc, char** Argv) {
       Passes.add(P);
     }
   } else {
+    Passes.add(createBasicAliasAnalysisPass());
     Passes.add(createPrivateRecognitionPass());
   }
   Passes.add(createVerifierPass());

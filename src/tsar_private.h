@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines passes to determine allocas which can be privatized.
+// This file defines passes to determine locations which can be privatized.
 // We use data-flow framework to implement this kind of analysis. This file
 // contains elements which is necessary to determine this framework.
 // The following articles can be helpful to understand it:
@@ -21,60 +21,143 @@
 #include <utility.h>
 #include <cell.h>
 #include "tsar_df_graph.h"
-#include "tsar_df_alloca.h"
+#include "tsar_df_location.h"
+
+namespace llvm {
+class Loop;
+class Value;
+class AliasSetTracker;
+}
 
 namespace tsar {
-/// \brief This contains allocas which have outward exposed definitions or uses
-/// in a data-flow node.
+/// \brief This contains locations which have outward exposed definitions or
+/// uses in a data-flow node.
 ///
 /// Let us use definitions from the article "Automatic Array Privatization"
 /// written by Peng Tu and David Padua (page 6):
 /// "A definition of variable v in a basic block S is said to be outward
 /// exposed if it is the last definition of v in S. A use of v is outward
 /// exposed if S does not contain a denition of v before this use". Note that
-/// in case of loops allocas which have outward exposed uses can get value
+/// in case of loops locations which have outward exposed uses can get value
 /// not only outside the loop but also from previouse loop iterations.
 class DefUseSet {
 public:
-  /// Set of alloca instructions.
-  typedef llvm::SmallPtrSet<llvm::AllocaInst *, 64> AllocaSet;
+  /// Set of locations.
+  typedef llvm::SmallPtrSet<llvm::Value *, 64> LocationSet;
 
-  /// Returns allocas which have definitions in a data-flow node.
-  const AllocaSet & getDefs() const { return mDefs; }
+  /// Returns locations which have definitions in a data-flow node.
+  const LocationSet & getDefs() const { return mDefs; }
 
-  /// Returns true if the specified alloca have definition in a data-flow node.
-  bool hasDef(llvm::AllocaInst *AI) const { return mDefs.count(AI) != 0; }
+  /// Returns true if a location have definition in a data-flow node.
+  bool hasDef(llvm::Value *Loc) const { return mDefs.count(Loc) != 0; }
 
-  /// Specifies that an alloca have definition in a data-flow node.
+  /// Specifies that a location have definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addDef(llvm::AllocaInst *AI) {
+  bool addDef(llvm::Value *Loc) {
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mDefs.insert(AI);
+    return mDefs.insert(Loc);
 #else
-    return mDefs.insert(AI).second;
+    return mDefs.insert(Loc).second;
 #endif
   }
 
-  /// Returns allocas which get values outside a data-flow node.
-  const AllocaSet & getUses() const { return mUses; }  
+  /// Returns locations which may have definitions in a data-flow node.
+  ///
+  /// May define locations arise in following cases:
+  /// - a data-flow node is a region and encapsulates other nodes.
+  /// The two locations may or may not alias. This is the least precise result.
+  /// - a location may overlap (may alias) or partially overlaps (partial alias)
+  /// with another location which is must/may define locations.
+  const LocationSet & getMayDefs() const { return mMayDefs; }
 
-  /// Returns true if the specified alloca get value outside a data-flow node.
-  bool hasUse(llvm::AllocaInst *AI) const { return mUses.count(AI) != 0; }
+  /// Returns true if a location may have definition in a data-flow node.
+  bool hasMayDef(llvm::Value *Loc) const {
+    return mMayDefs.count(Loc) != 0;
+  }
 
-  /// Specifies that an alloca get values outside a data-flow node.
+  /// Specifies that a location may have definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addUse(llvm::AllocaInst *AI) {
+  bool addMayDef(llvm::Value *Loc) {
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mUses.insert(AI);
+    return mMayDefs.insert(Loc);
 #else
-    return mUses.insert(AI).second;
+    return mMayDefs.insert(Loc).second;
+#endif
+  }
+
+  /// Returns locations which get values outside a data-flow node.
+  ///
+  /// The result contains also may use locations because conservativness
+  /// of analysis must be preserved.
+  const LocationSet & getUses() const { return mUses; }
+
+  /// Returns true if a location gets value outside a data-flow node.
+  bool hasUse(llvm::Value *Loc) const { return mUses.count(Loc) != 0; }
+
+  /// Specifies that a location gets values outside a data-flow node.
+  ///
+  /// \return False if it has been already specified.
+  bool addUse(llvm::Value *Loc) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
+    return mUses.insert(Loc);
+#else
+    return mUses.insert(Loc).second;
+#endif
+  }
+
+  /// Returns locations accesses to which are performed explicitly.
+  ///
+  /// For example, if p = &x and to access x, *p is used, let us assume that
+  /// access to x is performed implicitly and access to *p is performed
+  /// explicitly.
+  const LocationSet & getExplicitAccesses() const { return mExplicitAccesses; }
+
+  /// Returns true if there are an explicit access to a location in the node.
+  bool hasExplicitAccess(llvm::Value *Loc) const {
+    return mExplicitAccesses.count(Loc) != 0;
+  }
+
+  /// Specifies that there are an explicit access to a location in the node.
+  ///
+  /// \return False if it has been already specified.
+  bool addExplicitAccess(llvm::Value *Loc) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
+    return mExplicitAccesses.insert(Loc);
+#else
+    return mExplicitAccesses.insert(Loc).second;
+#endif
+  }
+
+  /// Returns allocas addresses of which are explicitly evaluated in the node.
+  ///
+  /// For example, if &x expression occures in the node then address of
+  /// the x alloca is evaluated. It means that this alloca can not be privatized
+  /// because the original alloca address is used.
+  const LocationSet & getAddressAccesses() const { return mAddressAccesses; }
+
+  /// Returns true if there are evaluation of a alloca address in the node.
+  bool hasAddressAccess(llvm::Value *Loc) const {
+    return mAddressAccesses.count(Loc) != 0;
+  }
+
+  /// Specifies that there are evaluation of a alloca address in the node.
+  ///
+  /// \return False if it has been already specified.
+  bool addAddressAccess(llvm::Value *Loc) {
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
+    return mAddressAccesses.insert(Loc);
+#else
+    return mAddressAccesses.insert(Loc).second;
 #endif
   }
 private:
-  AllocaSet mDefs;
-  AllocaSet mUses;
+  LocationSet mDefs;
+  LocationSet mMayDefs;
+  LocationSet mUses;
+  LocationSet mExplicitAccesses;
+  LocationSet mAddressAccesses;
 };
 
 /// This attribute is associated with DefUseSet and
@@ -85,14 +168,14 @@ namespace detail {
 /// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
 struct DependencySet {
-  /// Set of alloca instructions.
-  typedef DefUseSet::AllocaSet AllocaSet;
-  struct Private { typedef AllocaSet ValueType; };
-  struct LastPrivate { typedef AllocaSet ValueType; };
-  struct SecondToLastPrivate { typedef AllocaSet ValueType; };
-  struct DynamicPrivate { typedef AllocaSet ValueType; };
-  struct Shared { typedef AllocaSet ValueType; };
-  struct Dependency { typedef AllocaSet ValueType; };
+  /// Set of locations.
+  typedef DefUseSet::LocationSet LocationSet;
+  struct Private { typedef LocationSet ValueType; };
+  struct LastPrivate { typedef LocationSet ValueType; };
+  struct SecondToLastPrivate { typedef LocationSet ValueType; };
+  struct DynamicPrivate { typedef LocationSet ValueType; };
+  struct Shared { typedef LocationSet ValueType; };
+  struct Dependency { typedef LocationSet ValueType; };
 };
 }
 
@@ -106,12 +189,12 @@ const detail::DependencySet::Dependency Dependency;
 /// \brief This represents data dependency in loops.
 ///
 /// The following information is avaliable:
-/// - a set of private allocas;
-/// - a set of last private allocas;
-/// - a set of second to last private allocas;
-/// - a set of dynamic private allocas;
-/// - a set of shared allocas;
-/// - a set of allocas that caused dependency.
+/// - a set of private locations;
+/// - a set of last private locations;
+/// - a set of second to last private locations;
+/// - a set of dynamic private locations;
+/// - a set of shared locations;
+/// - a set of locations that caused dependency.
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -124,8 +207,8 @@ const detail::DependencySet::Dependency Dependency;
 /// \endcode
 /// For example, representation of a for-loop refers to this type.
 /// The candidates for last private variables associated with the for-loop
-/// will be stored as second to last privates allocas, because 
-/// the last definition of these allocas is executed on the second to the last
+/// will be stored as second to last privates locations, because 
+/// the last definition of these locations is executed on the second to the last
 /// loop iteration (on the last iteration the loop condition
 /// check is executed only).
 /// -# The second type has a following pattern:
@@ -137,21 +220,21 @@ const detail::DependencySet::Dependency Dependency;
 /// \endcode
 /// For example, representation of a do-while-loop refers to this type.
 /// In this case the candidates for last private variables
-/// will be stored as last privates allocas.
+/// will be stored as last privates locations.
 ///
 /// In some cases it is impossible to determine in static an iteration
-/// where the last definition of an alloca have been executed. Such allocas
-/// will be stored as dynamic private allocas collection.
+/// where the last definition of an location have been executed. Such locations
+/// will be stored as dynamic private locations collection.
 ///
 /// Let us give the following example to explain how to access the information:
 /// \code
 /// DependencySet DS;
-/// for (AllocaInst *AI : DS[Private]) {...}
+/// for (Value *Loc : DS[Private]) {...}
 /// \endcode
-/// Note, (*DS)[Private] is a set of type AllocaSet, so it is possible to call
-/// all methods that is avaliable for AllocaSet.
+/// Note, (*DS)[Private] is a set of type LocationSet, so it is possible to call
+/// all methods that is avaliable for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
-/// Private to access the necessary kind of allocas.
+/// Private to access the necessary kind of locations.
 class DependencySet: public CELL_COLL_6(
     detail::DependencySet::Private,
     detail::DependencySet::LastPrivate,
@@ -160,14 +243,14 @@ class DependencySet: public CELL_COLL_6(
     detail::DependencySet::Shared,
     detail::DependencySet::Dependency) {
 public:
-  /// Set of alloca instructions.
-  typedef detail::DependencySet::AllocaSet AllocaSet;
+  /// Set of locations.
+  typedef detail::DependencySet::LocationSet LocationSet;
 
-  /// \brief Checks that an alloca has a specified kind of privatizability.
+  /// \brief Checks that a location has a specified kind of privatizability.
   ///
-  /// Usage: DependencySet *DS; DS->is(Private, AI);
-  template<class Kind> bool is(Kind K, llvm::AllocaInst *AI) const {
-    return (*this)[K].count(AI) != 0;
+  /// Usage: DependencySet *DS; DS->is(Private, Loc);
+  template<class Kind> bool is(Kind K, llvm::Value *Loc) const {
+    return (*this)[K].count(Loc) != 0;
   }
 };
 
@@ -176,11 +259,11 @@ public:
 BASE_ATTR_DEF(DependencyAttr, DependencySet)
 
 /// \brief Data-flow framework which is used to find candidates
-/// in privatizable allocas for each natural loops.
+/// in privatizable locations for each natural loops.
 ///
 /// The data-flow problem is solved in forward direction.
 /// The result of this analysis should be complemented to separate private
-/// from last private allocas. The reason for this is the scope of analysis.
+/// from last private locations. The reason for this is the scope of analysis.
 /// The analysis is performed for loop bodies only.
 ///
 /// Two kinds of attributes for each nodes in a data-flow graph are available
@@ -190,46 +273,47 @@ BASE_ATTR_DEF(DependencyAttr, DependencySet)
 /// should be stored in the value of the DependencyAttr attribute.
 class PrivateDFFwk : private Utility::Uncopyable {
 public:
-  /// Set of alloca instructions.
-  typedef DependencySet::AllocaSet AllocaSet;
+  /// Set of locations.
+  typedef DependencySet::LocationSet LocationSet;
 
   /// Information about privatizability of variables for the analysed region.
   typedef llvm::DenseMap<llvm::Loop *, DependencySet *> PrivateInfo;
 
-  /// Creates data-flow framework and specifies a set of allocas 
-  /// that should be analyzed.
-  explicit PrivateDFFwk(const AllocaSet &AnlsAllocas, PrivateInfo &PI) :
-    mAnlsAllocas(AnlsAllocas), mPrivates(PI) {}
+  /// Creates data-flow framework.
+  explicit PrivateDFFwk(llvm::AliasSetTracker *AT, PrivateInfo &PI) :
+    mAliasTracker(AT), mPrivates(PI) {
+    assert(mAliasTracker && "AliasSetTracker must not be null!"); 
+  }
 
-  /// Returns true if the specified alloca should be analyzed.
-  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI) != 0; }
+  /// Returns a tracker for sets of aliases.
+  llvm::AliasSetTracker * getTracker() const { return mAliasTracker; }
 
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
 
 private:
-  const AllocaSet &mAnlsAllocas;
+  llvm::AliasSetTracker *mAliasTracker;
   PrivateInfo &mPrivates;
 };
 
 /// This covers IN and OUT value for a privatizability analysis.
-typedef DFValue<PrivateDFFwk, AllocaDFValue> PrivateDFValue;
+typedef DFValue<PrivateDFFwk, LocationDFValue> PrivateDFValue;
 
 /// This attribute is associated with PrivateDFValue and
 /// can be added to a node in a data-flow graph.
 BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
 
 /// Traits for a data-flow framework which is used to find candidates
-/// in privatizable allocas for each natural loops.
+/// in privatizable locations for each natural loops.
 template<> struct DataFlowTraits<PrivateDFFwk *> {
   typedef Forward<DFRegion * > GraphType;
-  typedef AllocaDFValue ValueType;
+  typedef LocationDFValue ValueType;
   static ValueType topElement(PrivateDFFwk *, GraphType) {
-    return AllocaDFValue::fullValue();
+    return LocationDFValue::fullValue();
   }
   static ValueType boundaryCondition(PrivateDFFwk *, GraphType) {
-    return AllocaDFValue::emptyValue();
+    return LocationDFValue::emptyValue();
   }
   static void setValue(ValueType V, DFNode *N, PrivateDFFwk *) {
     assert(N && "Node must not be null!");
@@ -252,7 +336,7 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
 };
 
 /// Tratis for a data-flow framework which is used to find candidates
-/// in privatizable allocas for each natural loops.
+/// in privatizable locations for each natural loops.
 template<> struct RegionDFTraits<PrivateDFFwk *> :
     DataFlowTraits<PrivateDFFwk *> {
   static void expand(PrivateDFFwk *, GraphType) {}
@@ -268,7 +352,7 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
   }
 };
 
-/// \brief Data-flow framework which is used to find live allocas
+/// \brief Data-flow framework which is used to find live locations
 /// for basic blocks, loops, functions, etc.
 ///
 /// \pre The outward exposed uses and definitions must be calculated, so
@@ -278,43 +362,42 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
 /// after this analysis.
 class LiveDFFwk : private Utility::Uncopyable {
 public:
-  /// Set of alloca instructions.
-  typedef DefUseSet::AllocaSet AllocaSet;
+  /// Set of locations.
+  typedef DefUseSet::LocationSet LocationSet;
 
-  /// Creates data-flow framework and specifies a set of allocas 
-  /// that should be analyzed.
-  explicit LiveDFFwk(const AllocaSet &AnlsAllocas) :
-    mAnlsAllocas(AnlsAllocas) {}
-
-  /// Returns true if the specified alloca should be analyzed.
-  bool isAnalyse(llvm::AllocaInst *AI) { return mAnlsAllocas.count(AI) != 0; }
+  /// Creates data-flow framework.
+  explicit LiveDFFwk(llvm::AliasSetTracker *AT) : mAliasTracker(AT) {
+    assert(mAliasTracker && "AliasSetTracker must not be null!");
+  }
 
 private:
-  const AllocaSet &mAnlsAllocas;
+  llvm::AliasSetTracker *mAliasTracker;
 };
 
-/// This covers IN and OUT value for a live allocas analysis.
-typedef DFValue<LiveDFFwk, LiveDFFwk::AllocaSet> LiveSet;
+/// This covers IN and OUT value for a live locations analysis.
+typedef DFValue<LiveDFFwk, LiveDFFwk::LocationSet> LiveSet;
 
 /// This attribute is associated with LiveSet and
 /// can be added to a node in a data-flow graph.
 BASE_ATTR_DEF(LiveAttr, LiveSet)
 
-/// Traits for a data-flow framework which is used to find live allocas.
+/// Traits for a data-flow framework which is used to find live locations.
 template<> struct DataFlowTraits<LiveDFFwk *> {
   typedef Backward<DFRegion * > GraphType;
-  typedef LiveDFFwk::AllocaSet ValueType;
+  typedef LiveDFFwk::LocationSet ValueType;
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     LiveSet *LS = G.Graph->getAttribute<LiveAttr>();
     assert(LS && "Data-flow value must not be be null!");
     ValueType V(topElement(DFF, G));
-    // If an alloca is alive before a loop it is alive befor each iteration.
+    // If a location is alive before a loop it is alive befor each iteration.
     // This occurs due to conservatism of analysis.
-    // If alloca is alive befor iteration with number I then it is alive after
-    // iteration with number I-1. So it should be used as a boundary value.
+    // If a location is alive befor iteration with number I then it is alive
+    // after iteration with number I-1. So it should be used as a boundary
+    // value.
     meetOperator(LS->getIn(), V, DFF, G);
-    // If alloca is alive after a loop it also should be used as a boundary value.
+    // If a location is alive after a loop it also should be used as a boundary
+    // value.
     meetOperator(LS->getOut(), V, DFF, G);
     return V;
   }
@@ -338,7 +421,7 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static bool transferFunction(ValueType, DFNode *, LiveDFFwk *, GraphType);
 };
 
-/// Traits for a data-flow framework which is used to find live allocas.
+/// Traits for a data-flow framework which is used to find live locations.
 template<> struct RegionDFTraits<LiveDFFwk *> :
   DataFlowTraits<LiveDFFwk *> {
   static void expand(LiveDFFwk *, GraphType G) {
@@ -368,13 +451,11 @@ template<> struct RegionDFTraits<LiveDFFwk *> :
 }
 
 namespace llvm {
-class Loop;
-
-/// This pass determines allocas which can be privatized.
+/// This pass determines locations which can be privatized.
 class PrivateRecognitionPass :
     public FunctionPass, private Utility::Uncopyable {
-  /// Set of alloca instructions.
-  typedef tsar::PrivateDFFwk::AllocaSet AllocaSet;
+  /// Set of locations.
+  typedef tsar::PrivateDFFwk::LocationSet LocationSet;
   /// Information about privatizability of variables for the analysed region.
   typedef tsar::PrivateDFFwk::PrivateInfo PrivateInfo;
 public:
@@ -386,7 +467,7 @@ public:
     initializePrivateRecognitionPassPass(*PassRegistry::getPassRegistry());
   }
 
-  /// Returns privatizable allocas sorted according to kinds
+  /// Returns privatizable locations sorted according to kinds
   /// of their privatizability.
   const tsar::DependencySet & getPrivatesFor(Loop *L) const {
     assert(L && "Loop must not be null!");
@@ -413,16 +494,18 @@ private:
   /// \brief Complements the result of loop bodies analysis.
   ///
   /// Privatizability analysis is performed in two steps. Firstly,
-  /// body of each natural loop is analyzed. Secondly, when live allocas
+  /// body of each natural loop is analyzed. Secondly, when live locations
   /// for each basic block are discovered, results of loop body analysis must be
   /// finalized. The result of this analysis should be complemented to separate
-  /// private from last private allocas.
+  /// private from last private locations. The case where location access
+  /// is performed by pointer is also considered.
   /// \param [in, out] R Region in a data-flow graph, it can not be null.
   void resolveCandidats(tsar::DFRegion *R);
 
 private:
   PrivateInfo mPrivates;
-  AllocaSet mAnlsAllocas;
+  LocationSet mLocations;
+  AliasSetTracker *mAliasTracker;
 };
 }
 #endif//TSAR_PRIVATE_H

@@ -1,20 +1,20 @@
-//===--- tsar_df_alloca.cpp - Data Flow Framework ----- ---------*- C++ -*-===//
+//===--- tsar_df_location.cpp - Data Flow Framework ----- ---------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements methdos declared in tsar_df_alloca.h
+// This file implements methdos declared in tsar_df_location.h
 //
 //===----------------------------------------------------------------------===//
 
-#include"tsar_df_alloca.h"
+#include "tsar_df_location.h"
 #include "tsar_utility.h"
 
 using namespace llvm;
 using namespace tsar;
 
-bool AllocaDFValue::intersect(const AllocaDFValue &with) {
+bool LocationDFValue::intersect(const LocationDFValue &with) {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
   if (with.mKind == KIND_FULL)
@@ -23,42 +23,42 @@ bool AllocaDFValue::intersect(const AllocaDFValue &with) {
     *this = with;
     return true;
   }
-  AllocaSet PrevAllocas;
-  mAllocas.swap(PrevAllocas);
-  for (llvm::AllocaInst *AI : PrevAllocas) {
-    if (with.mAllocas.count(AI))
-      mAllocas.insert(AI);
+  LocationSet PrevAllocas;
+  mLocations.swap(PrevAllocas);
+  for (Value *Loc : PrevAllocas) {
+    if (with.mLocations.count(Loc))
+      mLocations.insert(Loc);
   }
-  return mAllocas.size() != PrevAllocas.size();
+  return mLocations.size() != PrevAllocas.size();
 }
 
-bool AllocaDFValue::merge(const AllocaDFValue &with) {
+bool LocationDFValue::merge(const LocationDFValue &with) {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
   if (mKind == KIND_FULL)
     return false;
   if (with.mKind == KIND_FULL) {
-    mAllocas.clear();
+    mLocations.clear();
     mKind = KIND_FULL;
     return true;
   }
   bool isChanged = false;
-  for (llvm::AllocaInst *AI : with.mAllocas)
+  for (Value *AI : with.mLocations)
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    isChanged = mAllocas.insert(AI) || isChanged;
+    isChanged = mLocations.insert(AI) || isChanged;
 #else
-    isChanged = mAllocas.insert(AI).second || isChanged;
+    isChanged = mLocations.insert(AI).second || isChanged;
 #endif
   return isChanged;
 }
 
-bool AllocaDFValue::operator==(const AllocaDFValue &RHS) const {
+bool LocationDFValue::operator==(const LocationDFValue &RHS) const {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(RHS.mKind != INVALID_KIND && "Collection is corrupted!");
   if (this == &RHS || mKind == KIND_FULL && RHS.mKind == KIND_FULL)
     return true;
   if (mKind != RHS.mKind)
     return false;
-  return mAllocas == RHS.mAllocas;
+  return mLocations == RHS.mLocations;
 }
 

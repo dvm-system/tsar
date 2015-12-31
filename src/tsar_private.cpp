@@ -9,37 +9,32 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/Pass.h>
+#include <llvm/Config/llvm-config.h>
 #include "llvm/ADT/Statistic.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
-#include <llvm/Analysis/LoopInfo.h>
-#include "llvm/Analysis/ScalarEvolution.h"
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/Transforms/Utils/PromoteMemToReg.h>
-#include <llvm/Config/llvm-config.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-#include <llvm/Analysis/Dominators.h>
-#else
-#include <llvm/IR/Dominators.h>
-#endif
-
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
 #include <llvm/DebugInfo.h>
+#include <llvm/Analysis/Dominators.h>
 #else
 #include <llvm/IR/DebugInfo.h>
+#include <llvm/IR/Dominators.h>
 #endif
-
+#include <functional>
 #include <utility.h>
+#include <declaration.h>
 #include "tsar_private.h"
 #include "tsar_graph.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
-
-#include <declaration.h>
 #include "tsar_dbg_output.h"
 
 using namespace llvm;
@@ -48,12 +43,12 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
 
-STATISTIC(NumPrivate, "Number of private allocas found");
-STATISTIC(NumLPrivate, "Number of last private allocas found");
-STATISTIC(NumSToLPrivate, "Number of second to last private allocas found");
-STATISTIC(NumDPrivate, "Number of dynamic private allocas found");
+STATISTIC(NumPrivate, "Number of private locations found");
+STATISTIC(NumLPrivate, "Number of last private locations found");
+STATISTIC(NumSToLPrivate, "Number of second to last private locations found");
+STATISTIC(NumDPrivate, "Number of dynamic private locations found");
 STATISTIC(NumDeps, "Number of unsorted dependencies found");
-STATISTIC(NumShared, "Number of shraed allocas found");
+STATISTIC(NumShared, "Number of shraed locations found");
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
@@ -68,6 +63,7 @@ INITIALIZE_PASS_DEPENDENCY(LoopInfo)
 #else
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 #endif
+INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
@@ -82,19 +78,32 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 #else
   DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 #endif
-  BasicBlock &BB = F.getEntryBlock();
-  for (BasicBlock::iterator I = BB.begin(), EI = --BB.end(); I != EI; ++I) {
-    AllocaInst *AI = dyn_cast<AllocaInst>(I);
-    if (AI && isAllocaPromotable(AI)) 
-      mAnlsAllocas.insert(AI);
+  for (BasicBlock &BB : F) {
+    for (BasicBlock::iterator I = BB.begin(), EI = --BB.end(); I != EI; ++I) {
+      if (isa<AllocaInst>(I))
+        mLocations.insert(&*I);
+      else if (LoadInst *LI = dyn_cast<LoadInst>(I))
+        mLocations.insert(LI->getPointerOperand());
+      else if (StoreInst *SI = dyn_cast<StoreInst>(I))
+        mLocations.insert(SI->getPointerOperand());
+      else if (isa<FenceInst>(I) || isa<AtomicCmpXchgInst>(I) ||
+          isa<AtomicRMWInst>(I))
+        errs() << "ERROR: " << I->getDebugLoc() <<
+          "Unsupported memory access operation: " <<
+          *I << "\n", exit(1);
+    }
   }
-  if (mAnlsAllocas.empty())
+  if (mLocations.empty())
     return false;
+  AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
+  mAliasTracker = new AliasSetTracker(AA);
+  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
+    mAliasTracker->add(&*I);
   DFFunction DFF(&F);
   buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
-  PrivateDFFwk PrivateFWK(mAnlsAllocas, mPrivates);
+  PrivateDFFwk PrivateFWK(mAliasTracker, mPrivates);
   solveDataFlowUpward(&PrivateFWK, &DFF);
-  LiveDFFwk LiveFwk(mAnlsAllocas);
+  LiveDFFwk LiveFwk(mAliasTracker);
   LiveSet *LS = new LiveSet;
   DFF.addAttribute<LiveAttr>(LS);
   solveDataFlowDownward(&LiveFwk, &DFF);
@@ -111,37 +120,44 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     errs() << "\n";
     const DependencySet &DS = getPrivatesFor(L);
     errs() << Offset << " privates:\n";
-    for (AllocaInst *AI : DS[Private]) {
+    for (Value *Loc : DS[Private]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << Offset << " last privates:\n";
-    for (AllocaInst *AI : DS[LastPrivate]) {
+    for (Value *Loc : DS[LastPrivate]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << Offset << " second to last privates:\n";
-    for (AllocaInst *AI: DS[SecondToLastPrivate]) {
+    for (Value *Loc : DS[SecondToLastPrivate]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << Offset << " dynamic privates:\n";
-    for (AllocaInst *AI: DS[DynamicPrivate]) {
+    for (Value *Loc : DS[DynamicPrivate]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << Offset << " shared variables:\n";
-    for (AllocaInst *AI : DS[Shared]) {
+    for (Value *Loc : DS[Shared]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << Offset << " dependencies:\n";
-    for (AllocaInst *AI : DS[Dependency]) {
+    for (Value *Loc : DS[Dependency]) {
       errs() << Offset << "  ";
-      printAllocaSource(errs(), AI);
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
     }
     errs() << "\n";
   });
+  delete mAliasTracker, mAliasTracker = nullptr;
   return false;
 }
 
@@ -151,21 +167,36 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     DependencySet *DS = R->getAttribute<DependencyAttr>();
     assert(DS && "List of privatizable candidats must not be null!");
     LiveSet *LS = R->getAttribute<LiveAttr>();
-    assert(LS && "List of live allocas must not be null!");
-    for (llvm::AllocaInst *AI : mAnlsAllocas) {
-      if (LS->getOut().count(AI) != 0)
+    assert(LS && "List of live locations must not be null!");
+    for (llvm::Value *Loc : mLocations) {
+      if (LS->getOut().count(Loc) == 0) {
+        if (DS->is(LastPrivate, Loc)) {
+          (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
+          (*DS)[Private].insert(Loc), ++NumPrivate;
+        } else if (DS->is(SecondToLastPrivate, Loc)) {
+          (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
+          (*DS)[Private].insert(Loc), ++NumPrivate;
+        } else if (DS->is(DynamicPrivate, Loc)) {
+          (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
+          (*DS)[Private].insert(Loc), ++NumPrivate;
+        }
+      }
+      if (!isa<LoadInst>(Loc))
         continue;
-      if (DS->is(LastPrivate, AI)) {
-        (*DS)[LastPrivate].erase(AI), --NumLPrivate;
-        (*DS)[Private].insert(AI), ++NumPrivate;
-      }
-      else if (DS->is(SecondToLastPrivate, AI)) {
-        (*DS)[SecondToLastPrivate].erase(AI), --NumSToLPrivate;
-        (*DS)[Private].insert(AI), ++NumPrivate;
-      }
-      else if (DS->is(DynamicPrivate, AI)) {
-        (*DS)[DynamicPrivate].erase(AI), --NumDPrivate;
-        (*DS)[Private].insert(AI), ++NumPrivate;
+      // Let us consider the case where location access is performed by pointer.
+      LoadInst *LI = cast<LoadInst>(Loc);
+      Value *Ptr = LI->getPointerOperand();
+      if (DS->is(Shared, Ptr))
+        continue;
+      if (DS->is(LastPrivate, Loc)) {
+        (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
+        (*DS)[Dependency].insert(Loc), ++NumDeps;
+      } else if (DS->is(SecondToLastPrivate, Loc)) {
+        (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
+        (*DS)[Dependency].insert(Loc), ++NumDeps;
+      } else if (DS->is(DynamicPrivate, Loc)) {
+        (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
+        (*DS)[Dependency].insert(Loc), ++NumDeps;
       }
     }
   }
@@ -185,7 +216,7 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
 #else
   AU.addRequired<LoopInfoWrapperPass>();
 #endif
-  AU.addRequired<ScalarEvolution>();
+  AU.addRequired<AliasAnalysis>();
   AU.setPreservesAll();
 }
 
@@ -211,38 +242,64 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
     return;
   BasicBlock *BB = DFB->getBlock();
   assert(BB && "Basic block must not be null!");
+  AliasSetTracker *T = Fwk->getTracker();
+  AliasAnalysis &AA = T->getAliasAnalysis();
   for (Instruction &I : BB->getInstList()) {
-    if (isa<StoreInst>(I)) {
-      if (!isa<AllocaInst>(I.getOperand(1))) {
-        // TODO(kaniandr@gmail.com): implement this feature.
-        errs() << "line " << I.getDebugLoc().getLine() <<
-          ": unimplemented feature: a value can be stored in variable only!\n";
-        exit(1);
+    std::function<bool(Value *)> AddNeed;
+    std::function<void(Value *)> AddMust, AddMay;
+    Value *Loc;
+    if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+      AddNeed = [](Value *Loc) { return true; };
+      AddMust = [&DU](Value *Loc) {DU->addDef(Loc); };
+      AddMay = [&DU](Value *Loc) {DU->addMayDef(Loc); };
+      Loc = SI->getPointerOperand();
+      Value *Val = SI->getValueOperand();
+      if (isa<AllocaInst>(Val))
+        DU->addAddressAccess(Val);
+    } else if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+      AddNeed = [&DU](Value *Loc) { return !DU->hasDef(Loc); };
+      AddMay = AddMust = [&DU](Value *Loc) {DU->addUse(Loc); };
+      Loc = LI->getPointerOperand();
+    } else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
+      Value *Val = GEPI->getPointerOperand();
+      if (isa<AllocaInst>(Val))
+        DU->addAddressAccess(Val);
+      continue;
+    } else {
+      continue;
+    }
+    DU->addExplicitAccess(Loc);
+    AAMDNodes AAInfo;
+    I.getAAMetadata(AAInfo);
+    uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
+    AliasSet &ASet = T->getAliasSetForPointer(Loc, LocSize, AAInfo);
+    // DefUseAttr will be set for all locations from alias set.
+    // This attribute will be also set for locations which are accessed
+    // implicitly.
+    for (auto Ptr : ASet) {
+      if (!AddNeed(Ptr.getValue()))
+        continue;
+      AliasResult AR = AA.alias(Loc, LocSize, Ptr.getValue(), Ptr.getSize());
+      switch (AR) {
+        case MayAlias:
+        case PartialAlias: AddMay(Ptr.getValue()); break;
+        case MustAlias: AddMust(Ptr.getValue()); break;
+        default: assert("Unknown results of an alias query!"); break;
       }
-      AllocaInst *AI = cast<AllocaInst>(I.getOperand(1));
-      if (Fwk->isAnalyse(AI))
-        DU->addDef(AI);
-    } else if (isa<LoadInst>(I)) {
-      if (!isa<AllocaInst>(I.getOperand(0))) {
-        // TODO(kaniandr@gmail.com): implement this feature.
-        errs() << "line " << I.getDebugLoc().getLine() <<
-          ": unimplemented feature: a value can be loaded from variable only!\n";
-        exit(1);
-      }
-      AllocaInst *AI = cast<AllocaInst>(I.getOperand(0));
-      if (Fwk->isAnalyse(AI) && !DU->hasDef(AI))
-        DU->addUse(AI);
     }
   }
   DEBUG (
-    dbgs() << "[DEFUSE] Def/Use allocas for the following basic block:";
+    dbgs() << "[DEFUSE] Def/Use locations for the following basic block:";
     DFB->getBlock()->print(dbgs());
-    dbgs() << "Outward exposed definitions:\n";
-    for (AllocaInst *AI : DU->getDefs())
-      printAllocaSource(dbgs(), AI);
+    dbgs() << "Outward exposed must define locations:\n";
+    for (Value *Loc : DU->getDefs())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    dbgs() << "Outward exposed may define locations:\n";
+    for (Value *Loc : DU->getMayDefs())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
     dbgs() << "Outward exposed uses:\n";
-    for (AllocaInst *AI : DU->getUses())
-      printAllocaSource(dbgs(), AI);
+    for (Value *Loc : DU->getUses())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
     dbgs() << "[END DEFUSE]\n";
   );
 }
@@ -263,7 +320,7 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
-  AllocaDFValue newOut(AllocaDFValue::emptyValue());
+  LocationDFValue newOut(LocationDFValue::emptyValue());
   newOut.insert(DU->getDefs().begin(), DU->getDefs().end());
   newOut.merge(V);
   if (PV->getOut() != newOut) {
@@ -283,45 +340,46 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   if (!L)
     return;
   // We need two types of defs:
-  // * ExitingDefs is a set of must define allocas (Defs) for the loop.
-  //   These allocas always have definitions inside the loop regardless
+  // * ExitingDefs is a set of must define locations (Defs) for the loop.
+  //   These locations always have definitions inside the loop regardless
   //   of execution paths of iterations of the loop.
-  // * LatchDefs is a set of must define allocas before a branch to
+  // * LatchDefs is a set of must define locations before a branch to
   //   a next arbitrary iteration.
-  DFNode *ExitNode = R->getExitNode();  
-  const AllocaDFValue &ExitingDefs = RT::getValue(ExitNode, this);
+  DFNode *ExitNode = R->getExitNode();
+  const LocationDFValue &ExitingDefs = RT::getValue(ExitNode, this);
   DFNode *LatchNode = R->getLatchNode();
-  const AllocaDFValue &LatchDefs = RT::getValue(LatchNode, this);
-  DependencySet::AllocaSet AllNodesAccesses;
-  DependencySet::AllocaSet MayDefs;
+  const LocationDFValue &LatchDefs = RT::getValue(LatchNode, this);
   for (DFNode *N : L->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
     DefUseSet *DU = N->getAttribute<DefUseAttr>();
     assert(DU && "Value of def-use attribute must not be null!");
-    // First, we calculat a set of allocas accessed in loop nodes.
-    // Second, we calculate a set of allocas (Uses)
+    // We calculate a set of locations (Uses)
     // which get values outside the loop or from previouse loop iterations.
-    // These allocas can not be privatized.
-    for (AllocaInst *AI : DU->getUses()) {
-      AllNodesAccesses.insert(AI);
-      if (!PV->getIn().exist(AI))
-        DefUse->addUse(AI);
+    // These locations can not be privatized.
+    for (Value *Loc : DU->getUses()) {
+      if (!PV->getIn().exist(Loc))
+        DefUse->addUse(Loc);
     }
-    // It is possible that some allocas are only written in the loop.
-    // In this case this allocas are not located at set of node uses but
+    // It is possible that some locations are only written in the loop.
+    // In this case this locations are not located at set of node uses but
     // they are located at set of node defs.
-    // We also calculate a set of must define allocas (Defs) for the loop.
-    // These allocas always have definitions inside the loop regardless
+    // We calculate a set of must define locations (Defs) for the loop.
+    // These locations always have definitions inside the loop regardless
     // of execution paths of iterations of the loop.
-    // The set of may define allocas (MayDefs) for the loop is also calculated.
-    // This set also include all must define allocas.
-    for (AllocaInst *AI : DU->getDefs()) {
-      AllNodesAccesses.insert(AI);
-      MayDefs.insert(AI);
-      if (ExitingDefs.exist(AI))
-        DefUse->addDef(AI);
+    // The set of may define locations (MayDefs) for the loop is also
+    // calculated. This set also include all must define locations.
+    for (Value *Loc : DU->getDefs()) {
+      DefUse->addMayDef(Loc);
+      if (ExitingDefs.exist(Loc))
+        DefUse->addDef(Loc);
     }
+    for (Value *Loc : DU->getMayDefs())
+      DefUse->addMayDef(Loc);
+    for (Value *Loc : DU->getExplicitAccesses())
+      DefUse->addExplicitAccess(Loc);
+    for (Value *Loc : DU->getAddressAccesses())
+      DefUse->addAddressAccess(Loc);
   }
   // Calculation of a last private variables differs depending on internal
   // representation of a loop. There are two type of representations.
@@ -331,10 +389,10 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   //         goto iter;
   //   exit:
   // For example, representation of a for-loop refers to this type.
-  // In this case allocas from the LatchDefs collection should be used
-  // to determine candidates for last private variables. These allocas will be
+  // In this case locations from the LatchDefs collection should be used
+  // to determine candidates for last private variables. These locations will be
   // stored in the SecondToLastPrivates collection, i.e. the last definition of
-  // these allocas is executed on the second to the last loop iteration
+  // these locations is executed on the second to the last loop iteration
   // (on the last iteration the loop condition check is executed only).
   // 2. The second type has a following patterm:
   //   iter:
@@ -342,10 +400,10 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   //         if (...) goto exit; else goto iter;
   //   exit:
   // For example, representation of a do-while-loop refers to this type.
-  // In this case allocas from the ExitDefs collection should be used.
+  // In this case locations from the ExitDefs collection should be used.
   // The result will be stored in the LastPrivates collection.
   // In some cases it is impossible to determine in static an iteration
-  // where the last definition of an alloca have been executed. Such allocas
+  // where the last definition of an location have been executed. Such locations
   // will be stored in the DynamicPrivates collection.
   // Note, in this step only candidates for last privates and privates
   // variables are calculated. The result should be corrected further.
@@ -353,21 +411,72 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   mPrivates.insert(std::make_pair(L->getLoop(), DS));
   R->addAttribute<DependencyAttr>(DS);
   assert(DS && "Result of analysis must not be null!");
-  for (AllocaInst *AI : AllNodesAccesses)
-    if (!DefUse->hasUse(AI))
-      if (DefUse->hasDef(AI))
-        (*DS)[LastPrivate].insert(AI), ++NumLPrivate;
-      else if (LatchDefs.exist(AI))
-        (*DS)[SecondToLastPrivate].insert(AI), ++NumSToLPrivate;
+  AliasAnalysis &AA = mAliasTracker->getAliasAnalysis();
+  for (Value *Loc : DefUse->getExplicitAccesses()) {
+    if (!DefUse->hasUse(Loc)) {
+      uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
+      AliasSet &ASet =
+        mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
+      bool isDependency = false;
+      for (auto Ptr : ASet)
+        if (Loc != Ptr.getValue() && 
+            DefUse->hasExplicitAccess(Ptr.getValue())) {
+          (*DS)[Dependency].insert(Loc), ++NumDeps;
+          isDependency = true;
+          break;
+        }
+      if (isDependency)
+        continue;
+      if (DefUse->hasDef(Loc))
+        (*DS)[LastPrivate].insert(Loc), ++NumLPrivate;
+      else if (LatchDefs.exist(Loc))
+        (*DS)[SecondToLastPrivate].insert(Loc), ++NumSToLPrivate;
       else
-        (*DS)[DynamicPrivate].insert(AI), ++NumDPrivate;
-    else if (MayDefs.count(AI) != 0)
-      (*DS)[Dependency].insert(AI), ++NumDeps;
-    else
-      (*DS)[Shared].insert(AI), ++NumShared;
+        (*DS)[DynamicPrivate].insert(Loc), ++NumDPrivate;
+    }
+    else if (DefUse->hasMayDef(Loc)) {
+      (*DS)[Dependency].insert(Loc), ++NumDeps;
+    }
+    else {
+      (*DS)[Shared].insert(Loc), ++NumShared;
+    }
+  }
+  // If &x expression occures in the node then address of the x alloca
+  // is evaluated. It means that this alloca and all locations which alias with
+  // it can not be privatized because the original alloca address is used.
+  // Consideration of all alias locations is strong but simple.It seems
+  // acceptable from the point of view of the frequent occurrence of these
+  // situations.
+  for (Value *Loc : DefUse->getAddressAccesses()) {
+    uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
+    AliasSet &ASet =
+      mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
+    for (auto Ptr : ASet) {
+      if (!DefUse->hasExplicitAccess(Ptr.getValue()) ||
+          DS->is(Shared, Ptr.getValue()))
+        continue;
+      if (DS->is(Private, Ptr.getValue())) {
+        (*DS)[Private].erase(Ptr.getValue()), --NumPrivate;
+        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
+      }
+      if (DS->is(SecondToLastPrivate, Ptr.getValue())) {
+        (*DS)[SecondToLastPrivate].erase(Ptr.getValue()), --NumSToLPrivate;
+        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
+      }
+      if (DS->is(LastPrivate, Ptr.getValue())) {
+        (*DS)[LastPrivate].erase(Ptr.getValue()), --NumLPrivate;
+        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
+      }
+      if (DS->is(DynamicPrivate, Ptr.getValue())) {
+        (*DS)[DynamicPrivate].erase(Ptr.getValue()), --NumDPrivate;
+        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
+      }
+    }
+  }
 }
 
-void DataFlowTraits<LiveDFFwk *>::initialize(DFNode *N, LiveDFFwk *Fwk, GraphType) {
+void DataFlowTraits<LiveDFFwk *>::initialize(
+    DFNode *N, LiveDFFwk *Fwk, GraphType) {
   assert(N && "Node must not be null!");
   assert(Fwk && "Data-flow framework must not be null!");
   assert(N->getAttribute<DefUseAttr>() &&
@@ -392,13 +501,13 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
-  LiveDFFwk::AllocaSet newIn(DU->getUses());
-  for (AllocaInst *AI : V) {
-    if (!DU->hasDef(AI))
-      newIn.insert(AI);
+  LiveDFFwk::LocationSet newIn(DU->getUses());
+  for (Value *Loc : V) {
+    if (!DU->hasDef(Loc))
+      newIn.insert(Loc);
   }
   DEBUG(
-    dbgs() << "[LIVE] Live allocas analysis, transfer function results for:";
+    dbgs() << "[LIVE] Live locations analysis, transfer function results for:";
     if (isa<DFBlock>(N)) {
       cast<DFBlock>(N)->getBlock()->print(dbgs());
     }
@@ -409,11 +518,11 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
       dbgs() << " unknown node.\n";
     }
     dbgs() << "IN:\n";
-    for (AllocaInst *AI : newIn)
-      printAllocaSource(dbgs(), AI);
+    for (Value *Loc : newIn)
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
     dbgs() << "OUT:\n";
-    for (AllocaInst *AI : V)
-      printAllocaSource(dbgs(), AI);
+    for (Value *Loc : V)
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
     dbgs() << "[END LIVE]\n";
   );
   if (LS->getIn() != newIn) {
