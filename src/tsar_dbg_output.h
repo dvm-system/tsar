@@ -25,7 +25,8 @@ namespace tsar {
 /// specified memory location.
 ///
 /// \pre At this moment location can be represented as a sequence of 'load' or
-/// 'getelementptr' instructions ending alloca instruction.
+/// 'getelementptr' instructions ending alloca instruction, alloca instructions
+/// or global variables.
 /// A location must not be null.
 /// \par Example
 /// \code
@@ -41,11 +42,15 @@ namespace tsar {
 /// %0 will be *(1: int *p: %p = alloca i32*, align 4).
 void printLocationSource(llvm::raw_ostream &o, llvm::Value *V);
 
-/// \brief Prints description of a variable from a source code
-/// for specified alloca.
+/// \brief Print description of a type from a source code.
 ///
-/// \pre The alloca must not be null.
-void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI);
+/// \param [in] DITy Meta information for a type.
+void printDIType(llvm::raw_ostream &o, const llvm::DITypeRef &DITy);
+
+/// \brief Print description of a variable from a source code.
+///
+/// \param [in] DIVar Meta information for a variable.
+void printDIVariable(llvm::raw_ostream &o, llvm:: DIVariable *DIVar);
 
 /// \brief Prints loop tree which is calculated by the LoopInfo pass.
 ///

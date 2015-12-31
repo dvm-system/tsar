@@ -12,6 +12,13 @@
 
 #include <llvm/ADT/SmallPtrSet.h>
 
+namespace llvm {
+class DIGlobalVariable;
+class GlobalVariable;
+class DILocalVariable;
+class AllocaInst;
+}
+
 namespace tsar {
 /// Compares two set.
 template<class PtrType, unsigned SmallSize>
@@ -32,5 +39,10 @@ bool operator!=(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
   return !(LHS == RHS);
 }
 
+/// Returns a meta information for a global variable or nullptr;
+llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
+
+/// Returns a meta information for a local variable or nullptr;
+llvm::DILocalVariable * getMetadata(llvm::AllocaInst *AI);
 }
 #endif//TSAR_UTILITY_H
