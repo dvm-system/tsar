@@ -21,10 +21,30 @@ namespace llvm {
 }
 
 namespace tsar {
+/// \brief Prints information avaliable from a source code for the
+/// specified memory location.
+///
+/// \pre At this moment location can be represented as a sequence of 'load' or
+/// 'getelementptr' instructions ending alloca instruction.
+/// A location must not be null.
+/// \par Example
+/// \code
+///    ...
+/// 1: int *p;
+/// 2: *p = 5;
+/// \endcode
+/// \code
+/// %p = alloca i32*, align 4
+/// %0 = load i32*, i32** %p, align 4
+/// \endcode
+/// If debug information is available the result for
+/// %0 will be *(1: int *p: %p = alloca i32*, align 4).
+void printLocationSource(llvm::raw_ostream &o, llvm::Value *V);
+
 /// \brief Prints description of a variable from a source code
 /// for specified alloca.
 ///
-/// The alloca must not be null.
+/// \pre The alloca must not be null.
 void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI);
 
 /// \brief Prints loop tree which is calculated by the LoopInfo pass.

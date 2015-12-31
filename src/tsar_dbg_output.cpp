@@ -24,6 +24,24 @@
 using namespace llvm;
 
 namespace tsar {
+void printLocationSource(llvm::raw_ostream &o, Value *Loc) {
+  assert(Loc && "Location must not be null!");
+  if (LoadInst *LI = dyn_cast<LoadInst>(Loc)) {
+    Loc = LI->getPointerOperand();
+    o << "*(", printLocationSource(o, Loc), o << ")";
+    return;
+  }
+  if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Loc)) {
+    Loc = GEPI->getPointerOperand();
+    o << "(", printLocationSource(o, Loc), o << ") + ...";
+    return;
+  }
+  if (AllocaInst *AI = dyn_cast<AllocaInst>(Loc))
+    printAllocaSource(o, AI);
+  else
+    o << "<unsupported location> " << (*Loc);
+}
+
 void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
@@ -81,7 +99,6 @@ void printAllocaSource(llvm::raw_ostream &o, llvm::AllocaInst *AI) {
     o << DIVar.getName() << ": ";
   }
   AI->print(o);
-  o << "\n";
 }
 
 namespace {
