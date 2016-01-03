@@ -13,9 +13,12 @@
 #define TSAR_DF_LOCATION_H
 
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 
 namespace llvm {
 class Value;
+class LoadInst;
+class GetElementPtrInst;
 }
 
 namespace tsar {
@@ -200,6 +203,51 @@ static void difference(const location_iterator &LocBegin,
   const LocationDFValue &Value, ResultSet &Result) {
   LocationDFValue::difference(LocBegin, LocEnd, Value, Result);
 }
+
+/// \brief Represents memory location as an expression in a source language.
+///
+/// \return A string which represents the memory location or an empty string.
+/// \pre At this moment arrays does not supported. Location must not be null!
+std::string locationToSource(llvm::Value *Loc);
+
+namespace detail {
+/// \brief Represents memory location as an expression in a source language.
+///
+/// \param [in] Loc A memory location.
+/// \param [out] DITy Meta information describing a type of this location.
+/// \param [out] NeadBracket This specifies that brackets are necessary
+/// to combined the result with other expressions. For example, brackets are
+/// necessary if the result is 'p+1', where 'p' is a pointer. To dereference
+/// this location *(p+1) expression should be used.
+/// \return A string which represents the memory location or an empty string.
+/// \pre At this moment arrays does not supported. Location must not be null!
+std::string locationToSource(
+  llvm::Value *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+
+/// \brief Represents memory location as an expression in a source language.
+///
+/// This function is overloaded for locations which are represented as a 'load'
+/// instructions.
+std::string locationToSource(
+  llvm::LoadInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+
+/// \brief Represents memory location as an expression in a source language.
+///
+/// This function is overloaded for locations which are represented as a
+/// 'getelementptr' instructions.
+std::string locationToSource(
+  llvm::GetElementPtrInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+}
+
+/// Returns the base location with respect to which an analysis is performed.
+///
+/// For a given location, this returns the base memory location
+/// with respect to which an analysis is performed. For example,
+/// a base location for 'a[i]' is a whole array 'a'.
+/// 
+///TODO (kaniandr@gmail.com): locationToSource method must return valid
+/// representation for each base location.
+llvm::Value * findLocationBase(llvm::Value *Loc);
 }
 
 #endif//TSAR_DF_LOCATION_H
