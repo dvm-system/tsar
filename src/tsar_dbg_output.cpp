@@ -15,12 +15,9 @@
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Config/llvm-config.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-#include <llvm/DebugInfo.h>
-#else
 #include <llvm/IR/DebugInfo.h>
-#endif
 #include "tsar_dbg_output.h"
+#include "tsar_df_location.h"
 #include "tsar_utility.h"
 
 using namespace llvm;
@@ -28,30 +25,20 @@ using namespace llvm;
 namespace tsar {
 void printLocationSource(llvm::raw_ostream &o, Value *Loc) {
   assert(Loc && "Location must not be null!");
-  if (LoadInst *LI = dyn_cast<LoadInst>(Loc)) {
-    Loc = LI->getPointerOperand();
-    o << "*(", printLocationSource(o, Loc), o << ")";
+  auto Src = locationToSource(Loc);
+  o << Src;
+  if (!Src.empty())
     return;
-  }
-  if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Loc)) {
-    Loc = GEPI->getPointerOperand();
-    o << "(", printLocationSource(o, Loc), o << ") + ...";
-    return;
-  }
-  DIVariable *DIVar = nullptr;
-  if (GlobalVariable *Var = dyn_cast<GlobalVariable>(Loc))
-    DIVar = getMetadata(Var);
-  else if (AllocaInst *AI = dyn_cast<AllocaInst>(Loc))
-    DIVar = getMetadata(AI);
-  if (DIVar)
-    printDIVariable(o, DIVar);
+  if (LoadInst *LI = dyn_cast<LoadInst>(Loc))
+    o << "*(", printLocationSource(o, LI->getPointerOperand()), o << ")";
+  else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Loc))
+    o << "(", printLocationSource(o, GEPI->getPointerOperand()), o << ") + ...";
   else
-    o << "<unsupported location>";
-  o << " " << *Loc;
+    o << Loc;
 }
 
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {
-  Metadata *DITyVal = (Metadata *)DITy;
+  Metadata *DITyVal = DITy;
   bool isDerived = false;
   if (DIDerivedType *DITy = dyn_cast_or_null<DIDerivedType>(DITyVal)) {
     DITyVal = DITy->getBaseType();

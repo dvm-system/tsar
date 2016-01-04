@@ -12,12 +12,13 @@
 #define TSAR_DBG_OUTPUT_H
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 
 namespace llvm {
-  class AllocaInst;
-  class raw_ostream;
-  class Function;
-  class LoopInfo;
+class raw_ostream;
+class Function;
+class Value;
+class LoopInfo;
 }
 
 namespace tsar {
@@ -39,7 +40,7 @@ namespace tsar {
 /// %0 = load i32*, i32** %p, align 4
 /// \endcode
 /// If debug information is available the result for
-/// %0 will be *(1: int *p: %p = alloca i32*, align 4).
+/// %0 will be *p otherwise it will be *(%p = alloca i32*, align 4).
 void printLocationSource(llvm::raw_ostream &o, llvm::Value *V);
 
 /// \brief Print description of a type from a source code.
