@@ -10,7 +10,8 @@
 
 #include <llvm/Pass.h>
 #include <llvm/Config/llvm-config.h>
-#include "llvm/ADT/Statistic.h"
+#include <llvm/ADT/Statistic.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
@@ -39,6 +40,7 @@
 
 using namespace llvm;
 using namespace tsar;
+using Utility::operator "" _b;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
@@ -47,6 +49,7 @@ STATISTIC(NumPrivate, "Number of private locations found");
 STATISTIC(NumLPrivate, "Number of last private locations found");
 STATISTIC(NumSToLPrivate, "Number of second to last private locations found");
 STATISTIC(NumDPrivate, "Number of dynamic private locations found");
+STATISTIC(NumFPrivate, "Number of dynamic first private locations found");
 STATISTIC(NumDeps, "Number of unsorted dependencies found");
 STATISTIC(NumShared, "Number of shraed locations found");
 
@@ -78,23 +81,6 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 #else
   DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 #endif
-  for (BasicBlock &BB : F) {
-    for (BasicBlock::iterator I = BB.begin(), EI = --BB.end(); I != EI; ++I) {
-      if (isa<AllocaInst>(I))
-        mLocations.insert(&*I);
-      else if (LoadInst *LI = dyn_cast<LoadInst>(I))
-        mLocations.insert(LI->getPointerOperand());
-      else if (StoreInst *SI = dyn_cast<StoreInst>(I))
-        mLocations.insert(SI->getPointerOperand());
-      else if (isa<FenceInst>(I) || isa<AtomicCmpXchgInst>(I) ||
-          isa<AtomicRMWInst>(I))
-        errs() << "ERROR: " << I->getDebugLoc() <<
-          "Unsupported memory access operation: " <<
-          *I << "\n", exit(1);
-    }
-  }
-  if (mLocations.empty())
-    return false;
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
@@ -143,6 +129,12 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       printLocationSource(errs(), Loc);
       errs() << "\n";
     }
+    errs() << Offset << " first privates:\n";
+    for (Value *Loc : DS[FirstPrivate]) {
+      errs() << Offset << "  ";
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
+    }
     errs() << Offset << " shared variables:\n";
     for (Value *Loc : DS[Shared]) {
       errs() << Offset << "  ";
@@ -163,12 +155,26 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 
 void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   assert(R && "Region must not be null!");
-  if (llvm::isa<DFLoop>(R)) {
+  if (isa<DFLoop>(R)) {
+    DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
+    assert(DefUse && "Value of def-use attribute must not be null");
     DependencySet *DS = R->getAttribute<DependencyAttr>();
     assert(DS && "List of privatizable candidats must not be null!");
     LiveSet *LS = R->getAttribute<LiveAttr>();
     assert(LS && "List of live locations must not be null!");
-    for (llvm::Value *Loc : mLocations) {
+    DenseMap<Value *, unsigned long long> LocBases;
+    constexpr auto NoAccessFlag = 111111_b;
+    constexpr auto SharedFlag = 011111_b;
+    constexpr auto PrivateFlag = 001111_b;
+    constexpr auto LPrivateFlag = 000111_b;
+    constexpr auto FLPrivateFlag = 000110_b;
+    constexpr auto SToLPrivateFlag = 001011_b;
+    constexpr auto FSToLPrivateFlag = 001010_b;
+    constexpr auto FPrivateFlag = 001110_b;
+    constexpr auto DPrivateFlag = 000011_b;
+    constexpr auto FDPrivateFlag = 000010_b;
+    constexpr auto DependencyFlag = 000000_b;
+    for (Value *Loc : DefUse->getExplicitAccesses()) {
       if (LS->getOut().count(Loc) == 0) {
         if (DS->is(LastPrivate, Loc)) {
           (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
@@ -181,23 +187,96 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
           (*DS)[Private].insert(Loc), ++NumPrivate;
         }
       }
-      if (!isa<LoadInst>(Loc))
-        continue;
       // Let us consider the case where location access is performed by pointer.
-      LoadInst *LI = cast<LoadInst>(Loc);
-      Value *Ptr = LI->getPointerOperand();
-      if (DS->is(Shared, Ptr))
-        continue;
-      if (DS->is(LastPrivate, Loc)) {
-        (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
-        (*DS)[Dependency].insert(Loc), ++NumDeps;
-      } else if (DS->is(SecondToLastPrivate, Loc)) {
-        (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
-        (*DS)[Dependency].insert(Loc), ++NumDeps;
-      } else if (DS->is(DynamicPrivate, Loc)) {
-        (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
-        (*DS)[Dependency].insert(Loc), ++NumDeps;
+      if (isa<LoadInst>(Loc)) {
+        LoadInst *LI = cast<LoadInst>(Loc);
+        Value *Ptr = LI->getPointerOperand();
+        if (!DS->is(Shared, Ptr)) {
+          if (DS->is(LastPrivate, Loc)) {
+            (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
+            (*DS)[Dependency].insert(Loc), ++NumDeps;
+          } else if (DS->is(SecondToLastPrivate, Loc)) {
+            (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
+            (*DS)[Dependency].insert(Loc), ++NumDeps;
+          } else if (DS->is(DynamicPrivate, Loc)) {
+            (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
+            (*DS)[Dependency].insert(Loc), ++NumDeps;
+          }
+        }
       }
+      Value *Base = findLocationBase(Loc);
+      auto BaseInfo = LocBases.insert(std::make_pair(Base, NoAccessFlag));
+      BaseInfo.first->second &= [&](Value *Loc) {
+        if (DS->is(Shared, Loc))
+          return SharedFlag;
+        if (DS->is(Private, Loc))
+          return PrivateFlag;
+        if (DS->is(LastPrivate, Loc))
+          return LPrivateFlag;
+        if (DS->is(SecondToLastPrivate, Loc))
+          return SToLPrivateFlag;
+        if (DS->is(DynamicPrivate, Loc))
+          return DPrivateFlag;
+        if (DS->is(Dependency, Loc))
+          return DependencyFlag;
+        return NoAccessFlag;
+      }(Loc);
+    }
+    NumShared = NumPrivate = NumFPrivate = NumLPrivate = 0;
+    NumSToLPrivate = NumDPrivate = NumDeps = 0;
+    (*DS)[Shared].clear();
+    (*DS)[Private].clear();
+    (*DS)[FirstPrivate].clear();
+    (*DS)[LastPrivate].clear();
+    (*DS)[SecondToLastPrivate].clear();
+    (*DS)[DynamicPrivate].clear();
+    (*DS)[Dependency].clear();
+    for (auto BaseInfo : LocBases) {
+      Value *Loc = BaseInfo.first;
+      switch (BaseInfo.second) {
+        case SharedFlag: (*DS)[Shared].insert(Loc); ++NumShared; break;
+        case PrivateFlag: (*DS)[Private].insert(Loc); ++NumPrivate; break;
+        case FLPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
+        case LPrivateFlag: (*DS)[LastPrivate].insert(Loc); ++NumLPrivate; break;
+        case FSToLPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
+        case SToLPrivateFlag:
+          (*DS)[SecondToLastPrivate].insert(Loc); ++NumSToLPrivate; break;
+        case FPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate; break;
+        case FDPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
+        case DPrivateFlag:
+          (*DS)[DynamicPrivate].insert(Loc); ++NumDPrivate; break;
+        case DependencyFlag: (*DS)[Dependency].insert(Loc); ++NumDeps; break;
+      }
+    }
+    // The following analysis has not been performed for base locations
+    // which differ from accessed location. For example, it has been 
+    // performed for a[i] but not for all location which is started at *a.
+    for (auto BaseInfo : LocBases) {
+      Value *Loc = BaseInfo.first;
+      if (DS->is(Shared, Loc))
+        continue;
+      AliasAnalysis &AA = mAliasTracker->getAliasAnalysis();
+      uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
+      AliasSet &ASet =
+        mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
+      for (auto Ptr : ASet)
+        if (Loc != Ptr.getValue() &&
+          LocBases.count(Ptr.getValue()) != 0) {
+          if (DS->is(Dependency, Loc))
+            break;
+          (*DS)[Dependency].insert(Loc), ++NumDeps;
+          if (DS->is(FirstPrivate, Loc))
+            (*DS)[Private].erase(Loc), --NumFPrivate;
+          if (DS->is(Private, Loc))
+            (*DS)[Private].erase(Loc), --NumPrivate;
+          else if (DS->is(LastPrivate, Loc))
+            (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
+          else if (DS->is(SecondToLastPrivate, Loc))
+            (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
+          else if (DS->is(DynamicPrivate, Loc))
+            (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
+          break;
+        }
     }
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
@@ -248,18 +327,21 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
     std::function<bool(Value *)> AddNeed;
     std::function<void(Value *)> AddMust, AddMay;
     Value *Loc;
+    uint64_t LocSize;
     if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
       AddNeed = [](Value *Loc) { return true; };
       AddMust = [&DU](Value *Loc) {DU->addDef(Loc); };
       AddMay = [&DU](Value *Loc) {DU->addMayDef(Loc); };
       Loc = SI->getPointerOperand();
       Value *Val = SI->getValueOperand();
+      LocSize = AA.getTypeStoreSize(Val->getType());
       if (isa<AllocaInst>(Val))
         DU->addAddressAccess(Val);
     } else if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
       AddNeed = [&DU](Value *Loc) { return !DU->hasDef(Loc); };
       AddMay = AddMust = [&DU](Value *Loc) {DU->addUse(Loc); };
       Loc = LI->getPointerOperand();
+      LocSize = AA.getTypeStoreSize(Loc->getType());
     } else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
       Value *Val = GEPI->getPointerOperand();
       if (isa<AllocaInst>(Val))
@@ -271,7 +353,6 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
     DU->addExplicitAccess(Loc);
     AAMDNodes AAInfo;
     I.getAAMetadata(AAInfo);
-    uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
     AliasSet &ASet = T->getAliasSetForPointer(Loc, LocSize, AAInfo);
     // DefUseAttr will be set for all locations from alias set.
     // This attribute will be also set for locations which are accessed
@@ -419,7 +500,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
         mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
       bool isDependency = false;
       for (auto Ptr : ASet)
-        if (Loc != Ptr.getValue() && 
+        if (Loc != Ptr.getValue() &&
             DefUse->hasExplicitAccess(Ptr.getValue())) {
           (*DS)[Dependency].insert(Loc), ++NumDeps;
           isDependency = true;
@@ -439,38 +520,6 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     }
     else {
       (*DS)[Shared].insert(Loc), ++NumShared;
-    }
-  }
-  // If &x expression occures in the node then address of the x alloca
-  // is evaluated. It means that this alloca and all locations which alias with
-  // it can not be privatized because the original alloca address is used.
-  // Consideration of all alias locations is strong but simple.It seems
-  // acceptable from the point of view of the frequent occurrence of these
-  // situations.
-  for (Value *Loc : DefUse->getAddressAccesses()) {
-    uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
-    AliasSet &ASet =
-      mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
-    for (auto Ptr : ASet) {
-      if (!DefUse->hasExplicitAccess(Ptr.getValue()) ||
-          DS->is(Shared, Ptr.getValue()))
-        continue;
-      if (DS->is(Private, Ptr.getValue())) {
-        (*DS)[Private].erase(Ptr.getValue()), --NumPrivate;
-        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
-      }
-      if (DS->is(SecondToLastPrivate, Ptr.getValue())) {
-        (*DS)[SecondToLastPrivate].erase(Ptr.getValue()), --NumSToLPrivate;
-        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
-      }
-      if (DS->is(LastPrivate, Ptr.getValue())) {
-        (*DS)[LastPrivate].erase(Ptr.getValue()), --NumLPrivate;
-        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
-      }
-      if (DS->is(DynamicPrivate, Ptr.getValue())) {
-        (*DS)[DynamicPrivate].erase(Ptr.getValue()), --NumDPrivate;
-        (*DS)[Dependency].insert(Ptr.getValue()), ++NumDeps;
-      }
     }
   }
 }

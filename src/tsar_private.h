@@ -174,6 +174,7 @@ struct DependencySet {
   struct LastPrivate { typedef LocationSet ValueType; };
   struct SecondToLastPrivate { typedef LocationSet ValueType; };
   struct DynamicPrivate { typedef LocationSet ValueType; };
+  struct FirstPrivate { typedef LocationSet ValueType; };
   struct Shared { typedef LocationSet ValueType; };
   struct Dependency { typedef LocationSet ValueType; };
 };
@@ -183,6 +184,7 @@ const detail::DependencySet::Private Private;
 const detail::DependencySet::LastPrivate LastPrivate;
 const detail::DependencySet::SecondToLastPrivate SecondToLastPrivate;
 const detail::DependencySet::DynamicPrivate DynamicPrivate;
+const detail::DependencySet::FirstPrivate FirstPrivate;
 const detail::DependencySet::Shared Shared;
 const detail::DependencySet::Dependency Dependency;
 
@@ -193,6 +195,7 @@ const detail::DependencySet::Dependency Dependency;
 /// - a set of last private locations;
 /// - a set of second to last private locations;
 /// - a set of dynamic private locations;
+/// - a set of first private locations;
 /// - a set of shared locations;
 /// - a set of locations that caused dependency.
 ///
@@ -235,11 +238,12 @@ const detail::DependencySet::Dependency Dependency;
 /// all methods that is avaliable for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of locations.
-class DependencySet: public CELL_COLL_6(
+class DependencySet: public CELL_COLL_7(
     detail::DependencySet::Private,
     detail::DependencySet::LastPrivate,
     detail::DependencySet::SecondToLastPrivate,
     detail::DependencySet::DynamicPrivate,
+    detail::DependencySet::FirstPrivate,
     detail::DependencySet::Shared,
     detail::DependencySet::Dependency) {
 public:
@@ -504,7 +508,6 @@ private:
 
 private:
   PrivateInfo mPrivates;
-  LocationSet mLocations;
   AliasSetTracker *mAliasTracker;
 };
 }
