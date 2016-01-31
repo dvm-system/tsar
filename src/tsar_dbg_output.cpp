@@ -23,18 +23,18 @@
 using namespace llvm;
 
 namespace tsar {
-void printLocationSource(llvm::raw_ostream &o, Value *Loc) {
+void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
   assert(Loc && "Location must not be null!");
   auto Src = locationToSource(Loc);
   o << Src;
   if (!Src.empty())
     return;
-  if (LoadInst *LI = dyn_cast<LoadInst>(Loc))
+  if (auto *LI = dyn_cast<const LoadInst>(Loc))
     o << "*(", printLocationSource(o, LI->getPointerOperand()), o << ")";
-  else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Loc))
+  else if (auto *GEPI = dyn_cast<const GetElementPtrInst>(Loc))
     o << "(", printLocationSource(o, GEPI->getPointerOperand()), o << ") + ...";
   else
-    o << Loc;
+    o << *Loc;
 }
 
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {

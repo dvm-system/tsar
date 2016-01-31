@@ -204,7 +204,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
          CI != CE; ++CI) {
       DFT::meetOperator(DFT::getValue(*CI, DFF), Value, DFF, DFG);
     }
-    DFT::transferFunction(Value, *I, DFF, DFG);
+    DFT::transferFunction(std::move(Value), *I, DFF, DFG);
   }
 }
 

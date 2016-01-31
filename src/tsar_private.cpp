@@ -16,11 +16,11 @@
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/AliasAnalysis.h>
-#include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
 #include <llvm/DebugInfo.h>
@@ -40,7 +40,6 @@
 
 using namespace llvm;
 using namespace tsar;
-using Utility::operator "" _b;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
@@ -52,6 +51,7 @@ STATISTIC(NumDPrivate, "Number of dynamic private locations found");
 STATISTIC(NumFPrivate, "Number of dynamic first private locations found");
 STATISTIC(NumDeps, "Number of unsorted dependencies found");
 STATISTIC(NumShared, "Number of shraed locations found");
+STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated");
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
@@ -71,6 +71,7 @@ INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
+  releaseMemory();
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
   LoopInfo &LpInfo = getAnalysis<LoopInfo>();
 #else
@@ -87,13 +88,14 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     mAliasTracker->add(&*I);
   DFFunction DFF(&F);
   buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
-  PrivateDFFwk PrivateFWK(mAliasTracker, mPrivates);
+  PrivateDFFwk PrivateFWK(mAliasTracker);
   solveDataFlowUpward(&PrivateFWK, &DFF);
   LiveDFFwk LiveFwk(mAliasTracker);
   LiveSet *LS = new LiveSet;
   DFF.addAttribute<LiveAttr>(LS);
   solveDataFlowDownward(&LiveFwk, &DFF);
   resolveCandidats(&DFF);
+  releaseMemory(&DFF);
   for_each(LpInfo, [this](Loop *L) {
     DebugLoc loc = L->getStartLoc();
     Base::Text Offset(L->getLoopDepth(), ' ');
@@ -147,6 +149,12 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       printLocationSource(errs(), Loc);
       errs() << "\n";
     }
+    errs() << Offset << " addresses:\n";
+    for (Value *Loc : DS[AddressAccess]) {
+      errs() << Offset << "  ";
+      printLocationSource(errs(), Loc);
+      errs() << "\n";
+    }
     errs() << "\n";
   });
   delete mAliasTracker, mAliasTracker = nullptr;
@@ -155,133 +163,188 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 
 void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   assert(R && "Region must not be null!");
-  if (isa<DFLoop>(R)) {
+  if (auto *L = dyn_cast<DFLoop>(R)) {
     DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
     assert(DefUse && "Value of def-use attribute must not be null");
-    DependencySet *DS = R->getAttribute<DependencyAttr>();
-    assert(DS && "List of privatizable candidats must not be null!");
     LiveSet *LS = R->getAttribute<LiveAttr>();
     assert(LS && "List of live locations must not be null!");
+    // Analysis will performed for base locations. This means that results
+    // for two elements of array a[i] and a[j] will be generalized for a whole
+    // array 'a'. The key in following map LocBases is a base location.
     DenseMap<Value *, unsigned long long> LocBases;
-    constexpr auto NoAccessFlag = 111111_b;
-    constexpr auto SharedFlag = 011111_b;
-    constexpr auto PrivateFlag = 001111_b;
-    constexpr auto LPrivateFlag = 000111_b;
-    constexpr auto FLPrivateFlag = 000110_b;
-    constexpr auto SToLPrivateFlag = 001011_b;
-    constexpr auto FSToLPrivateFlag = 001010_b;
-    constexpr auto FPrivateFlag = 001110_b;
-    constexpr auto DPrivateFlag = 000011_b;
-    constexpr auto FDPrivateFlag = 000010_b;
-    constexpr auto DependencyFlag = 000000_b;
-    for (Value *Loc : DefUse->getExplicitAccesses()) {
-      if (LS->getOut().count(Loc) == 0) {
-        if (DS->is(LastPrivate, Loc)) {
-          (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
-          (*DS)[Private].insert(Loc), ++NumPrivate;
-        } else if (DS->is(SecondToLastPrivate, Loc)) {
-          (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
-          (*DS)[Private].insert(Loc), ++NumPrivate;
-        } else if (DS->is(DynamicPrivate, Loc)) {
-          (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
-          (*DS)[Private].insert(Loc), ++NumPrivate;
-        }
-      }
-      // Let us consider the case where location access is performed by pointer.
-      if (isa<LoadInst>(Loc)) {
-        LoadInst *LI = cast<LoadInst>(Loc);
-        Value *Ptr = LI->getPointerOperand();
-        if (!DS->is(Shared, Ptr)) {
-          if (DS->is(LastPrivate, Loc)) {
-            (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
-            (*DS)[Dependency].insert(Loc), ++NumDeps;
-          } else if (DS->is(SecondToLastPrivate, Loc)) {
-            (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
-            (*DS)[Dependency].insert(Loc), ++NumDeps;
-          } else if (DS->is(DynamicPrivate, Loc)) {
-            (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
-            (*DS)[Dependency].insert(Loc), ++NumDeps;
-          }
-        }
-      }
-      Value *Base = findLocationBase(Loc);
-      auto BaseInfo = LocBases.insert(std::make_pair(Base, NoAccessFlag));
-      BaseInfo.first->second &= [&](Value *Loc) {
-        if (DS->is(Shared, Loc))
-          return SharedFlag;
-        if (DS->is(Private, Loc))
-          return PrivateFlag;
-        if (DS->is(LastPrivate, Loc))
-          return LPrivateFlag;
-        if (DS->is(SecondToLastPrivate, Loc))
-          return SToLPrivateFlag;
-        if (DS->is(DynamicPrivate, Loc))
-          return DPrivateFlag;
-        if (DS->is(Dependency, Loc))
-          return DependencyFlag;
-        return NoAccessFlag;
-      }(Loc);
-    }
-    NumShared = NumPrivate = NumFPrivate = NumLPrivate = 0;
-    NumSToLPrivate = NumDPrivate = NumDeps = 0;
-    (*DS)[Shared].clear();
-    (*DS)[Private].clear();
-    (*DS)[FirstPrivate].clear();
-    (*DS)[LastPrivate].clear();
-    (*DS)[SecondToLastPrivate].clear();
-    (*DS)[DynamicPrivate].clear();
-    (*DS)[Dependency].clear();
-    for (auto BaseInfo : LocBases) {
-      Value *Loc = BaseInfo.first;
-      switch (BaseInfo.second) {
-        case SharedFlag: (*DS)[Shared].insert(Loc); ++NumShared; break;
-        case PrivateFlag: (*DS)[Private].insert(Loc); ++NumPrivate; break;
-        case FLPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
-        case LPrivateFlag: (*DS)[LastPrivate].insert(Loc); ++NumLPrivate; break;
-        case FSToLPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
-        case SToLPrivateFlag:
-          (*DS)[SecondToLastPrivate].insert(Loc); ++NumSToLPrivate; break;
-        case FPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate; break;
-        case FDPrivateFlag: (*DS)[FirstPrivate].insert(Loc); ++NumFPrivate;
-        case DPrivateFlag:
-          (*DS)[DynamicPrivate].insert(Loc); ++NumDPrivate; break;
-        case DependencyFlag: (*DS)[Dependency].insert(Loc); ++NumDeps; break;
-      }
-    }
-    // The following analysis has not been performed for base locations
-    // which differ from accessed location. For example, it has been 
-    // performed for a[i] but not for all location which is started at *a.
-    for (auto BaseInfo : LocBases) {
-      Value *Loc = BaseInfo.first;
-      if (DS->is(Shared, Loc))
-        continue;
-      AliasAnalysis &AA = mAliasTracker->getAliasAnalysis();
-      uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
-      AliasSet &ASet =
-        mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
-      for (auto Ptr : ASet)
-        if (Loc != Ptr.getValue() &&
-          LocBases.count(Ptr.getValue()) != 0) {
-          if (DS->is(Dependency, Loc))
-            break;
-          (*DS)[Dependency].insert(Loc), ++NumDeps;
-          if (DS->is(FirstPrivate, Loc))
-            (*DS)[Private].erase(Loc), --NumFPrivate;
-          if (DS->is(Private, Loc))
-            (*DS)[Private].erase(Loc), --NumPrivate;
-          else if (DS->is(LastPrivate, Loc))
-            (*DS)[LastPrivate].erase(Loc), --NumLPrivate;
-          else if (DS->is(SecondToLastPrivate, Loc))
-            (*DS)[SecondToLastPrivate].erase(Loc), --NumSToLPrivate;
-          else if (DS->is(DynamicPrivate, Loc))
-            (*DS)[DynamicPrivate].erase(Loc), --NumDPrivate;
+    DFNode *LatchNode = R->getLatchNode();
+    PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
+    assert(LatchDF && "List of must defined locations must not be null!");
+    // LatchDefs is a set of must define locations before a branch to
+    // a next arbitrary iteration.
+    const LocationDFValue &LatchDefs = LatchDF->getOut();
+    for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+      if (AS.isForwardingAliasSet() || AS.empty())
+        continue; // The set is empty if it contains only unknown instructions.
+      auto I = AS.begin(), E = AS.end();
+      Value *CurrBase = findLocationBase(I.getPointer());
+      auto CurrTraits =
+        LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
+      for (; I != E; ++I) {
+        MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
+        Value *Base = findLocationBase(I.getPointer());
+        if (CurrBase != Base) {
+          // Current alias set contains memory locations with different bases.
+          // So there are explicitly accessed locations with different bases
+          // which alias each other.
+          if (CurrTraits->second != Shared.Id)
+            CurrTraits->second = Dependency.Id;
           break;
         }
+        if (!DefUse->hasUse(Loc)) {
+          if (!LS->getOut().overlap(Loc))
+            CurrTraits->second &= Private.Id;
+          else if (DefUse->hasDef(Loc))
+            CurrTraits->second &= LastPrivate.Id;
+          else if (LatchDefs.contain(Loc))
+            // These location will be stored as second to last private, i.e.
+            // the last definition of these locations is executed on the second
+            // to the last loop iteration (on the last iteration the loop
+            // condition check is executed only).
+            CurrTraits->second &= SecondToLastPrivate.Id & FirstPrivate.Id;
+          else
+            // There is no certainty that the location is always assigned
+            // the value in the loop. Therefore, it must be declared as a
+            // first private, to preserve the value obtained before the loop
+            // if it has not been assigned.
+            CurrTraits->second &= DynamicPrivate.Id & FirstPrivate.Id;
+        } else if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc)) {
+          CurrTraits->second &= Dependency.Id;
+        } else {
+          CurrTraits->second &= Shared.Id;
+        }
+      }
+      for (; I != E; ++I) {
+          MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
+          CurrBase = findLocationBase(I.getPointer());
+          CurrTraits =
+            LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
+          if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
+            CurrTraits->second &= Dependency.Id;
+          else
+            CurrTraits->second &= Shared.Id;
+        }
     }
+    // Let us consider the case where location access is performed by pointer.
+    // *p means that address of location should be loaded from p using 'load'.
+    for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+      if (AS.isForwardingAliasSet() || AS.empty())
+        continue; // The set is empty if it contains only unknown instructions.
+      for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
+        Value *V = I.getPointer();
+        if (Operator::getOpcode(V) == Instruction::BitCast ||
+            Operator::getOpcode(V) == Instruction::AddrSpaceCast)
+          V = cast<Operator>(V)->getOperand(0);
+        if (auto *LI = dyn_cast<LoadInst>(V)) {
+          Value *Loc = findLocationBase(V);
+          auto LocTraits = LocBases.find(Loc);
+          assert(LocTraits != LocBases.end() &&
+            "Traits of location must be initialized!");
+          if (LocTraits->second == Private.Id ||
+              LocTraits->second == Shared.Id)
+            continue;
+          Value *Ptr = findLocationBase(LI->getPointerOperand());
+          auto PtrTraits = LocBases.find(Ptr);
+          assert(PtrTraits != LocBases.end() &&
+            "Traits of location must be initialized!");
+          if (PtrTraits->second == Shared.Id)
+            continue;
+          if ((LocTraits->second & FirstPrivate.Id) ==
+              (LastPrivate.Id & FirstPrivate.Id))
+            PtrTraits->second &= LastPrivate.Id;
+          else if ((LocTraits->second & FirstPrivate.Id) ==
+              (SecondToLastPrivate.Id & FirstPrivate.Id) &&
+              (PtrTraits->second & FirstPrivate.Id) !=
+              (LastPrivate.Id & FirstPrivate.Id))
+            PtrTraits->second &= SecondToLastPrivate.Id;
+          else
+            LocTraits->second = Dependency.Id;
+        }
+      }
+    }
+    DependencySet *DS = new DependencySet;
+    mPrivates.insert(std::make_pair(L->getLoop(), DS));
+    R->addAttribute<DependencyAttr>(DS);
+    for (auto &LocTraits : LocBases) {
+      // TODO (kaniandr@gmail.com) : This is very conservative assumption
+      // but very simple to check. Let see an example:
+      // int X[3];
+      // X[2] = ...
+      // for (int I = 0; I < 2; ++I)
+      //   X[I] = ...;
+      // X[2] = X[0] + X[1] + X[2];
+      // If X will be defined as last private only, X[2] will be lost after
+      // copy out from this loop. So it must be defined as a first private.
+      // Such check is complex even for scalar variables, for example:
+      // int X;
+      // *(&X + 10) = ...
+      if (LocTraits.second == LastPrivate.Id ||
+          LocTraits.second == SecondToLastPrivate.Id ||
+          LocTraits.second == DynamicPrivate.Id)
+        LocTraits.second &= FirstPrivate.Id;
+      switch (LocTraits.second) {
+        case Shared.Id:
+          (*DS)[Shared].insert(LocTraits.first); ++NumShared; break;
+        case Dependency.Id:
+          (*DS)[Dependency].insert(LocTraits.first); ++NumDeps; break;
+        case Private.Id:
+          (*DS)[Private].insert(LocTraits.first); ++NumPrivate; break;
+        case FirstPrivate.Id:
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate; break;
+        case FirstPrivate.Id & LastPrivate.Id:
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+        case LastPrivate.Id:
+          (*DS)[LastPrivate].insert(LocTraits.first); ++NumLPrivate; break;
+        case FirstPrivate.Id & SecondToLastPrivate.Id:
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+        case SecondToLastPrivate.Id:
+          (*DS)[SecondToLastPrivate].insert(LocTraits.first); ++NumSToLPrivate;
+          break;
+        case FirstPrivate.Id & DynamicPrivate.Id:
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+        case DynamicPrivate.Id:
+          (*DS)[DynamicPrivate].insert(LocTraits.first); ++NumDPrivate; break;
+      }
+    }
+    for (llvm::Value *Loc : DefUse->getAddressAccesses())
+      (*DS)[AddressAccess].insert(findLocationBase(Loc)), ++NumAddressAccess;
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)
     resolveCandidats(*I);
+}
+
+void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
+  assert(R && "Region must not be null!");
+  DefUseSet *DefUse = R->removeAttribute<DefUseAttr>();
+  if (DefUse)
+    delete DefUse;
+  LiveSet *LS = R->removeAttribute<LiveAttr>();
+  if (LS)
+    delete LS;
+  PrivateDFValue *PV = R->removeAttribute<PrivateDFAttr>();
+  if (PV)
+    delete PV;
+  for (auto I = R->node_begin(), E = R->node_end(); I != E; ++I) {
+    if (auto InnerRegion = dyn_cast<DFRegion>(*I)) {
+      releaseMemory(InnerRegion);
+    } else {
+      DefUseSet *DefUse = (*I)->removeAttribute<DefUseAttr>();
+      if (DefUse)
+        delete DefUse;
+      LiveSet *LS = (*I)->removeAttribute<LiveAttr>();
+      if (LS)
+        delete LS;
+      PrivateDFValue *PV = (*I)->removeAttribute<PrivateDFAttr>();
+      if (PV)
+        delete PV;
+    }
+  }
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -303,6 +366,99 @@ FunctionPass *llvm::createPrivateRecognitionPass() {
   return new PrivateRecognitionPass();
 }
 
+bool DefUseSet::hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
+  for (auto I = mExplicitAccesses.begin(), E = mExplicitAccesses.end();
+       I != E; ++I) {
+    if (I->isForwardingAliasSet() || I->empty())
+      continue;
+    for (auto LocI = I->begin(), LocE = I->end(); LocI != LocE; ++LocI)
+      if (LocI->getValue() == Loc.Ptr)
+        return true;
+  }
+  return false;
+}
+
+namespace {
+bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
+  assert(I && "Instruction must not be null!");
+  assert(AST && "AliasSetTracker mut not be null!");
+  assert(DU && "Value of def-use attribute must not be null!");
+  assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
+  Value *Ptr;
+  uint16_t Size;
+  std::function<void(const MemoryLocation &)> AddMust, AddMay;
+  AliasAnalysis &AA = AST->getAliasAnalysis();
+  if (auto *SI = dyn_cast<StoreInst>(I)) {
+    AddMust = [&DU](const MemoryLocation &Loc) { DU->addDef(Loc); };
+    AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
+    Ptr = SI->getPointerOperand();
+    Value *Val = SI->getValueOperand();
+    Size = AA.getTypeStoreSize(Val->getType());
+    if (isa<AllocaInst>(Val))
+      DU->addAddressAccess(Val);
+  } else if (auto *LI = dyn_cast<LoadInst>(I)) {
+    AddMay = AddMust = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
+    Ptr = LI->getPointerOperand();
+    Size = AA.getTypeStoreSize(Ptr->getType());
+  } else {
+    return false;
+  }
+  AAMDNodes AATags;
+  I->getAAMetadata(AATags);
+  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);
+  MemoryLocation Loc(Ptr, Size, AATags);
+  for (auto APtr : ASet) {
+    MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
+    // A condition below is necessary even in case of store instruction.
+    // It is possible that Loc1 aliases Loc2 and Loc1 is already written
+    // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
+    // repeatted.
+    if (DU->hasDef(ALoc))
+      continue;
+    AliasResult AR = AA.alias(Loc, ALoc);
+    switch (AR) {
+      case MayAlias: case PartialAlias: AddMay(ALoc); break;
+      case MustAlias: AddMust(ALoc); break;
+    }
+  }
+  return true;
+}
+
+void evaluateUnknownAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
+  assert(I && "Instruction must not be null!");
+  assert(AST && "AliasSetTracker mut not be null!");
+  assert(DU && "Value of def-use attribute must not be null!");
+  assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
+  DU->addUnknownInst(I);
+  std::function<void(const MemoryLocation &)> AddMay;
+  if (I->mayReadFromMemory() && I->mayWriteToMemory())
+    AddMay = [&DU](const MemoryLocation &Loc) {
+      DU->addUse(Loc);
+      DU->addMayDef(Loc);
+    };
+  else if (I->mayReadFromMemory())
+    AddMay = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
+  else
+    AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
+  AliasAnalysis &AA = AST->getAliasAnalysis();
+  auto ASetI = AST->begin(), ASetE = AST->end();
+  for ( ; ASetI != ASetE; ++ASetI) {
+    if (ASetI->isForwardingAliasSet() || ASetI->empty())
+      continue;
+    if (ASetI->aliasesUnknownInst(I, AA))
+      break;
+  }
+  if (ASetI == ASetE)
+    return;
+  for (auto APtr : *ASetI) {
+    MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
+    if (!DU->hasDef(ALoc) &&
+        AA.getModRefInfo(I, ALoc) != AliasAnalysis::NoModRef)
+      AddMay(ALoc);
+  }
+}
+}
+
 void DataFlowTraits<PrivateDFFwk*>::initialize(
     DFNode *N, PrivateDFFwk *Fwk, GraphType) {
   assert(N && "Node must not be null!");
@@ -314,73 +470,48 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   // DefUseAttr will be set here for nodes different to regions.
   // For nodes which represented regions this attribute has been already set
   // in collapse() function.
-  DefUseSet *DU = new DefUseSet;
+  AliasSetTracker *AST = Fwk->getTracker();
+  AliasAnalysis &AA = AST->getAliasAnalysis();
+  DefUseSet *DU = new DefUseSet(AA);
   N->addAttribute<DefUseAttr>(DU);
   DFBlock *DFB = dyn_cast<DFBlock>(N);
   if (!DFB)
     return;
   BasicBlock *BB = DFB->getBlock();
   assert(BB && "Basic block must not be null!");
-  AliasSetTracker *T = Fwk->getTracker();
-  AliasAnalysis &AA = T->getAliasAnalysis();
   for (Instruction &I : BB->getInstList()) {
-    std::function<bool(Value *)> AddNeed;
-    std::function<void(Value *)> AddMust, AddMay;
-    Value *Loc;
-    uint64_t LocSize;
-    if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
-      AddNeed = [](Value *Loc) { return true; };
-      AddMust = [&DU](Value *Loc) {DU->addDef(Loc); };
-      AddMay = [&DU](Value *Loc) {DU->addMayDef(Loc); };
-      Loc = SI->getPointerOperand();
-      Value *Val = SI->getValueOperand();
-      LocSize = AA.getTypeStoreSize(Val->getType());
-      if (isa<AllocaInst>(Val))
-        DU->addAddressAccess(Val);
-    } else if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
-      AddNeed = [&DU](Value *Loc) { return !DU->hasDef(Loc); };
-      AddMay = AddMust = [&DU](Value *Loc) {DU->addUse(Loc); };
-      Loc = LI->getPointerOperand();
-      LocSize = AA.getTypeStoreSize(Loc->getType());
-    } else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
-      Value *Val = GEPI->getPointerOperand();
-      if (isa<AllocaInst>(Val))
-        DU->addAddressAccess(Val);
-      continue;
-    } else {
+    if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
+      Value *Ptr = GEPI->getPointerOperand();
+      Ptr = findLocationBase(Ptr);
+      DU->addAddressAccess(Ptr);
       continue;
     }
-    DU->addExplicitAccess(Loc);
-    AAMDNodes AAInfo;
-    I.getAAMetadata(AAInfo);
-    AliasSet &ASet = T->getAliasSetForPointer(Loc, LocSize, AAInfo);
-    // DefUseAttr will be set for all locations from alias set.
-    // This attribute will be also set for locations which are accessed
-    // implicitly.
-    for (auto Ptr : ASet) {
-      if (!AddNeed(Ptr.getValue()))
-        continue;
-      AliasResult AR = AA.alias(Loc, LocSize, Ptr.getValue(), Ptr.getSize());
-      switch (AR) {
-        case MayAlias:
-        case PartialAlias: AddMay(Ptr.getValue()); break;
-        case MustAlias: AddMust(Ptr.getValue()); break;
-        default: assert("Unknown results of an alias query!"); break;
-      }
-    }
+    if (!I.mayReadOrWriteMemory())
+      continue;
+    DU->addExplicitAccess(&I);
+    // 1. Must/may def-use information will be set for location accessed in a
+    // current instruction.
+    // 2. Must/may def-use information will be set for all locations (except
+    // locations with unknown descriptions) aliases location accessed in a
+    // current instruction.
+    // Note that this attribute will be also set for locations which are
+    // accessed implicitly.
+    // 3. Unknown instructions will be remembered in DefUseAttr.
+    if (!evaluateAlias(&I, AST, DU))
+      evaluateUnknownAlias(&I, AST, DU);
   }
   DEBUG (
     dbgs() << "[DEFUSE] Def/Use locations for the following basic block:";
     DFB->getBlock()->print(dbgs());
     dbgs() << "Outward exposed must define locations:\n";
-    for (Value *Loc : DU->getDefs())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    for (auto &Loc : DU->getDefs())
+      (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
     dbgs() << "Outward exposed may define locations:\n";
-    for (Value *Loc : DU->getMayDefs())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    for (auto &Loc : DU->getMayDefs())
+      (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
     dbgs() << "Outward exposed uses:\n";
-    for (Value *Loc : DU->getUses())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    for (auto &Loc : DU->getUses())
+      (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
     dbgs() << "[END DEFUSE]\n";
   );
 }
@@ -389,47 +520,65 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   ValueType V, DFNode *N, PrivateDFFwk *, GraphType) {
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
+  DEBUG(
+    dbgs() << "[TRANSFER PRIVATE]\n";
+    if (auto DFB = dyn_cast<DFBlock>(N))
+      DFB->getBlock()->dump();
+    dbgs() << "IN:\n";
+    V.dump();
+    dbgs() << "OUT:\n";
+  );
   PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
   assert(PV && "Data-flow value must not be null!");
-  PV->setIn(std::move(V));
+  PV->setIn(std::move(V)); // Do not use V below to avoid undefined behaviour.
   if (llvm::isa<DFExit>(N)) {
-    if (PV->getOut() != V) {
-      PV->setOut(std::move(V));
+    if (PV->getOut() != PV->getIn()) {
+      PV->setOut(PV->getIn());
+      DEBUG(
+        PV->getOut().dump();
+        dbgs() << "[END TRANSFER]\n";
+        );
       return true;
     }
+    DEBUG(
+      PV->getOut().dump();
+      dbgs() << "[END TRANSFER]\n";);
     return false;
   }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
   LocationDFValue newOut(LocationDFValue::emptyValue());
   newOut.insert(DU->getDefs().begin(), DU->getDefs().end());
-  newOut.merge(V);
+  newOut.merge(PV->getIn());
   if (PV->getOut() != newOut) {
     PV->setOut(std::move(newOut));
+    DEBUG(
+      PV->getOut().dump();
+      dbgs() << "[END TRANSFER]\n";
+    );
     return true;
   }
+  DEBUG(
+    PV->getOut().dump();
+    dbgs() << "[END TRANSFER]\n";
+  );
   return false;
 }
 
 void PrivateDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
   typedef RegionDFTraits<PrivateDFFwk *> RT;
-  DefUseSet *DefUse = new DefUseSet;
+  DefUseSet *DefUse = new DefUseSet(mAliasTracker->getAliasAnalysis());
   R->addAttribute<DefUseAttr>(DefUse);
   assert(DefUse && "Value of def-use attribute must not be null!");
   DFLoop *L = llvm::dyn_cast<DFLoop>(R);
   if (!L)
     return;
-  // We need two types of defs:
-  // * ExitingDefs is a set of must define locations (Defs) for the loop.
-  //   These locations always have definitions inside the loop regardless
-  //   of execution paths of iterations of the loop.
-  // * LatchDefs is a set of must define locations before a branch to
-  //   a next arbitrary iteration.
+  // ExitingDefs is a set of must define locations (Defs) for the loop.
+  // These locations always have definitions inside the loop regardless
+  // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
   const LocationDFValue &ExitingDefs = RT::getValue(ExitNode, this);
-  DFNode *LatchNode = R->getLatchNode();
-  const LocationDFValue &LatchDefs = RT::getValue(LatchNode, this);
   for (DFNode *N : L->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
@@ -438,10 +587,9 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // We calculate a set of locations (Uses)
     // which get values outside the loop or from previouse loop iterations.
     // These locations can not be privatized.
-    for (Value *Loc : DU->getUses()) {
-      if (!PV->getIn().exist(Loc))
+    for (auto &Loc : DU->getUses())
+      if (!PV->getIn().contain(Loc))
         DefUse->addUse(Loc);
-    }
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
     // they are located at set of node defs.
@@ -449,78 +597,21 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // These locations always have definitions inside the loop regardless
     // of execution paths of iterations of the loop.
     // The set of may define locations (MayDefs) for the loop is also
-    // calculated. This set also include all must define locations.
-    for (Value *Loc : DU->getDefs()) {
+    // calculated. Let us use conservative assumption to calculate this
+    // set and do not perform complicated control flow analysis. So
+    // this set will also include all must define locations.
+    for (auto &Loc : DU->getDefs()) {
       DefUse->addMayDef(Loc);
-      if (ExitingDefs.exist(Loc))
+      if (ExitingDefs.contain(Loc))
         DefUse->addDef(Loc);
     }
-    for (Value *Loc : DU->getMayDefs())
+    for (auto &Loc : DU->getMayDefs())
       DefUse->addMayDef(Loc);
-    for (Value *Loc : DU->getExplicitAccesses())
-      DefUse->addExplicitAccess(Loc);
-    for (Value *Loc : DU->getAddressAccesses())
+    DefUse->addExplicitAccesses(DU->getExplicitAccesses());
+    for (auto Loc : DU->getAddressAccesses())
       DefUse->addAddressAccess(Loc);
-  }
-  // Calculation of a last private variables differs depending on internal
-  // representation of a loop. There are two type of representations.
-  // 1. The first type has a following pattern:
-  //   iter: if (...) goto exit;
-  //             ...
-  //         goto iter;
-  //   exit:
-  // For example, representation of a for-loop refers to this type.
-  // In this case locations from the LatchDefs collection should be used
-  // to determine candidates for last private variables. These locations will be
-  // stored in the SecondToLastPrivates collection, i.e. the last definition of
-  // these locations is executed on the second to the last loop iteration
-  // (on the last iteration the loop condition check is executed only).
-  // 2. The second type has a following patterm:
-  //   iter:
-  //             ...
-  //         if (...) goto exit; else goto iter;
-  //   exit:
-  // For example, representation of a do-while-loop refers to this type.
-  // In this case locations from the ExitDefs collection should be used.
-  // The result will be stored in the LastPrivates collection.
-  // In some cases it is impossible to determine in static an iteration
-  // where the last definition of an location have been executed. Such locations
-  // will be stored in the DynamicPrivates collection.
-  // Note, in this step only candidates for last privates and privates
-  // variables are calculated. The result should be corrected further.
-  DependencySet *DS = new DependencySet;
-  mPrivates.insert(std::make_pair(L->getLoop(), DS));
-  R->addAttribute<DependencyAttr>(DS);
-  assert(DS && "Result of analysis must not be null!");
-  AliasAnalysis &AA = mAliasTracker->getAliasAnalysis();
-  for (Value *Loc : DefUse->getExplicitAccesses()) {
-    if (!DefUse->hasUse(Loc)) {
-      uint64_t LocSize = AA.getTypeStoreSize(Loc->getType());
-      AliasSet &ASet =
-        mAliasTracker->getAliasSetForPointer(Loc, LocSize, AAMDNodes());
-      bool isDependency = false;
-      for (auto Ptr : ASet)
-        if (Loc != Ptr.getValue() &&
-            DefUse->hasExplicitAccess(Ptr.getValue())) {
-          (*DS)[Dependency].insert(Loc), ++NumDeps;
-          isDependency = true;
-          break;
-        }
-      if (isDependency)
-        continue;
-      if (DefUse->hasDef(Loc))
-        (*DS)[LastPrivate].insert(Loc), ++NumLPrivate;
-      else if (LatchDefs.exist(Loc))
-        (*DS)[SecondToLastPrivate].insert(Loc), ++NumSToLPrivate;
-      else
-        (*DS)[DynamicPrivate].insert(Loc), ++NumDPrivate;
-    }
-    else if (DefUse->hasMayDef(Loc)) {
-      (*DS)[Dependency].insert(Loc), ++NumDeps;
-    }
-    else {
-      (*DS)[Shared].insert(Loc), ++NumShared;
-    }
+    for (auto Inst : DU->getUnknownInsts())
+      DefUse->addUnknownInst(Inst);
   }
 }
 
@@ -540,18 +631,18 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   assert(N && "Node must not be null!");
   LiveSet *LS = N->getAttribute<LiveAttr>();
   assert(LS && "Data-flow value must not be null!");
-  LS->setOut(std::move(V));
+  LS->setOut(std::move(V)); // Do not use V below to avoid undefined behaviour.
   if (isa<DFEntry>(N)) {
-    if (LS->getIn() != V) {
-      LS->setIn(std::move(V));
+    if (LS->getIn() != LS->getOut()) {
+      LS->setIn(LS->getOut());
       return true;
     }
     return false;
   }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
-  LiveDFFwk::LocationSet newIn(DU->getUses());
-  for (Value *Loc : V) {
+  LocationSet newIn(DU->getUses());
+  for (auto &Loc : LS->getOut()) {
     if (!DU->hasDef(Loc))
       newIn.insert(Loc);
   }
@@ -567,11 +658,11 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
       dbgs() << " unknown node.\n";
     }
     dbgs() << "IN:\n";
-    for (Value *Loc : newIn)
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    for (auto &Loc : newIn)
+      (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
     dbgs() << "OUT:\n";
-    for (Value *Loc : V)
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    for (auto &Loc : V)
+      (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
     dbgs() << "[END LIVE]\n";
   );
   if (LS->getIn() != newIn) {

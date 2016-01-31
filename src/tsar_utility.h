@@ -43,6 +43,6 @@ bool operator!=(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
 llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
 
 /// Returns a meta information for a local variable or nullptr;
-llvm::DILocalVariable * getMetadata(llvm::AllocaInst *AI);
+llvm::DILocalVariable * getMetadata(const llvm::AllocaInst *AI);
 }
 #endif//TSAR_UTILITY_H

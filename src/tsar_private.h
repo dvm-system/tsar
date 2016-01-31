@@ -17,16 +17,27 @@
 #define TSAR_PRIVATE_H
 
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/IR/ValueMap.h>
+#include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
+#ifdef DEBUG
+#include <llvm/IR/Instruction.h>
+#endif//DEBUG
 #include <utility.h>
 #include <cell.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
 
+using Utility::operator "" _b;
+
 namespace llvm {
 class Loop;
 class Value;
-class AliasSetTracker;
+class Instruction;
+class StoreInst;
+class AliasAnalysis;
+struct AAMDNodes;
 }
 
 namespace tsar {
@@ -42,69 +53,108 @@ namespace tsar {
 /// not only outside the loop but also from previouse loop iterations.
 class DefUseSet {
 public:
-  /// Set of locations.
-  typedef llvm::SmallPtrSet<llvm::Value *, 64> LocationSet;
+  /// Set of pointers to locations.
+  typedef llvm::SmallPtrSet<llvm::Value *, 64> PointerSet;
 
-  /// Returns locations which have definitions in a data-flow node.
+  /// Set of instructions.
+  typedef llvm::SmallPtrSet<llvm::Instruction *, 64> InstructionSet;
+
+  /// Constructor.
+  DefUseSet(llvm::AliasAnalysis &AA) : mExplicitAccesses(AA) {}
+
+  /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
 
   /// Returns true if a location have definition in a data-flow node.
-  bool hasDef(llvm::Value *Loc) const { return mDefs.count(Loc) != 0; }
-
-  /// Specifies that a location have definition in a data-flow node.
   ///
-  /// \return False if it has been already specified.
-  bool addDef(llvm::Value *Loc) {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mDefs.insert(Loc);
-#else
-    return mDefs.insert(Loc).second;
-#endif
+  /// \attention This method does not use alias information.
+  bool hasDef(const llvm::MemoryLocation &Loc) const {
+    return mDefs.contain(Loc);
   }
 
-  /// Returns locations which may have definitions in a data-flow node.
+  /// Specifies that a location has definition in a data-flow node.
   ///
-  /// May define locations arise in following cases:
-  /// - a data-flow node is a region and encapsulates other nodes.
-  /// The two locations may or may not alias. This is the least precise result.
-  /// - a location may overlap (may alias) or partially overlaps (partial alias)
-  /// with another location which is must/may define locations.
+  /// \return False if it has been already specified.
+  bool addDef(const llvm::MemoryLocation &Loc) {
+    return mDefs.insert(Loc).second;
+  }
+
+  /// Specifies that a stored location have definition in a data-flow node.
+  ///
+  /// \return True if a new alias set has been created.
+  bool addDef(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    assert(llvm::isa<llvm::StoreInst>(I) &&
+      "Only store instructions produce must defined locations!");
+    return addDef(llvm::MemoryLocation::get(I));
+  }
+
+  /// Returns set of the may defined locations.
   const LocationSet & getMayDefs() const { return mMayDefs; }
 
   /// Returns true if a location may have definition in a data-flow node.
-  bool hasMayDef(llvm::Value *Loc) const {
-    return mMayDefs.count(Loc) != 0;
+  ///
+  /// May define locations arise in following cases:
+  /// - a data-flow node is a region and encapsulates other nodes.
+  /// It is necessary to use this conservative assumption due to complexity of
+  /// CFG analysis.
+  /// - a location may overlap (may alias) or partially overlaps (partial alias)
+  /// with another location which is must/may define locations.
+  /// \attention
+  /// - This method does not use alias information.
+  /// - This method returns true even if only part of the location may have
+  /// definition.
+  bool hasMayDef(const llvm::MemoryLocation &Loc) const {
+    return mMayDefs.overlap(Loc);
   }
 
   /// Specifies that a location may have definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addMayDef(llvm::Value *Loc) {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mMayDefs.insert(Loc);
-#else
+  bool addMayDef(const llvm::MemoryLocation &Loc) {
     return mMayDefs.insert(Loc).second;
-#endif
   }
 
-  /// Returns locations which get values outside a data-flow node.
+  /// Specifies that a modified location may have definition in a data-flow node.
   ///
-  /// The result contains also may use locations because conservativness
-  /// of analysis must be preserved.
+  /// \return False if it has been already specified.
+  /// \pre The specified instruction may modify memory.
+  bool addMayDef(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    assert(I->mayWriteToMemory() && "Instrcution does not modify memory!");
+    return addMayDef(llvm::MemoryLocation::get(I));
+  }
+
+  /// Returns set of the locations which get values outside a data-flow node.
   const LocationSet & getUses() const { return mUses; }
 
   /// Returns true if a location gets value outside a data-flow node.
-  bool hasUse(llvm::Value *Loc) const { return mUses.count(Loc) != 0; }
+  ///
+  /// May use locations should be also counted because conservativness
+  /// of analysis must be preserved.
+  /// \attention
+  /// - This method does not use alias information.
+  /// - This method returns true even if only part of the location
+  /// get values outside a data-flow node.
+  bool hasUse(const llvm::MemoryLocation &Loc) const {
+    return mUses.overlap(Loc);
+  }
 
   /// Specifies that a location gets values outside a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addUse(llvm::Value *Loc) {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mUses.insert(Loc);
-#else
+  bool addUse(const llvm::MemoryLocation &Loc) {
     return mUses.insert(Loc).second;
-#endif
+  }
+
+  /// Specifies that a location gets values outside a data-flow node.
+  ///
+  /// \return False if it has been already specified.
+  /// \pre The specified instruction may read memory.
+  bool addUse(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    assert(I->mayReadFromMemory() && "Instrcution does not read memory!");
+    return addUse(llvm::MemoryLocation::get(I));
   }
 
   /// Returns locations accesses to which are performed explicitly.
@@ -112,52 +162,92 @@ public:
   /// For example, if p = &x and to access x, *p is used, let us assume that
   /// access to x is performed implicitly and access to *p is performed
   /// explicitly.
-  const LocationSet & getExplicitAccesses() const { return mExplicitAccesses; }
+  const llvm::AliasSetTracker & getExplicitAccesses() const {
+    return mExplicitAccesses;
+  }
 
   /// Returns true if there are an explicit access to a location in the node.
-  bool hasExplicitAccess(llvm::Value *Loc) const {
-    return mExplicitAccesses.count(Loc) != 0;
+  ///
+  /// \attention This method returns true even if only part of the location
+  /// has explicit access.
+  bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const;
+
+  /// Specifies that there are an explicit access to a location in the node.
+  ///
+  /// \return True if a new alias set has been created.
+  bool addExplicitAccess(const llvm::MemoryLocation &Loc) {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    return mExplicitAccesses.add(
+      const_cast<llvm::Value *>(Loc.Ptr), Loc.Size, Loc.AATags);
   }
 
   /// Specifies that there are an explicit access to a location in the node.
   ///
-  /// \return False if it has been already specified.
-  bool addExplicitAccess(llvm::Value *Loc) {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mExplicitAccesses.insert(Loc);
-#else
-    return mExplicitAccesses.insert(Loc).second;
-#endif
+  /// \return True if a new alias set has been created.
+  /// \pre The specified instruction may read or modify memory.
+  bool addExplicitAccess(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    assert(I->mayReadOrWriteMemory() &&
+      "Instrcution does not read nor write memory!");
+    return mExplicitAccesses.add(I);
   }
 
-  /// Returns allocas addresses of which are explicitly evaluated in the node.
+  /// Specifies that accesses to all locations from AST are performed
+  /// explicitly.
+  void addExplicitAccesses(const llvm::AliasSetTracker &AST) {
+    mExplicitAccesses.add(AST);
+  }
+
+  /// Returns locations addresses of which are explicitly evaluated in the node.
   ///
   /// For example, if &x expression occures in the node then address of
-  /// the x alloca is evaluated. It means that this alloca can not be privatized
-  /// because the original alloca address is used.
-  const LocationSet & getAddressAccesses() const { return mAddressAccesses; }
+  /// the x alloca is evaluated. It means that regardless of whether the
+  /// location will be privatized the original location address should be
+  /// available.
+  const PointerSet & getAddressAccesses() const { return mAddressAccesses; }
 
-  /// Returns true if there are evaluation of a alloca address in the node.
-  bool hasAddressAccess(llvm::Value *Loc) const {
-    return mAddressAccesses.count(Loc) != 0;
+  /// Returns true if there are evaluation of a location address in the node.
+  bool hasAddressAccess(llvm::Value *Ptr) const {
+    assert(Ptr && "Pointer to memory location must not be null!");
+    return mAddressAccesses.count(Ptr) != 0;
   }
 
-  /// Specifies that there are evaluation of a alloca address in the node.
+  /// Specifies that there are evaluation of a location address in the node.
   ///
   /// \return False if it has been already specified.
-  bool addAddressAccess(llvm::Value *Loc) {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mAddressAccesses.insert(Loc);
-#else
-    return mAddressAccesses.insert(Loc).second;
-#endif
+  bool addAddressAccess(llvm::Value *Ptr) {
+    assert(Ptr && "Pointer to memory location must not be null!");
+    return mAddressAccesses.insert(Ptr).second;
   }
+
+  /// Returns unknown instructions which are evaluated in the node.
+  ///
+  /// An unknown instruction is a instruction wich accessed memory with unknown
+  /// description. For example, in general case call instruction is an unknown
+  /// instruction.
+  const InstructionSet & getUnknownInsts() const { return mUnknownInsts; }
+
+  /// Returns true if there are an unknown instructions in the node.
+  bool hasUnknownInst(llvm::Instruction *I) const {
+    assert(I && "Instruction must not be null!");
+    return mUnknownInsts.count(I) != 0;
+  }
+
+  /// Specifies that there are unknown instructions in the node.
+  ///
+  /// \return False if it has been already specified.
+  bool addUnknownInst(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    return mUnknownInsts.insert(I).second;
+  }
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
   LocationSet mUses;
-  LocationSet mExplicitAccesses;
-  LocationSet mAddressAccesses;
+  llvm::AliasSetTracker mExplicitAccesses;
+  PointerSet mAddressAccesses;
+  InstructionSet mUnknownInsts;
 };
 
 /// This attribute is associated with DefUseSet and
@@ -165,32 +255,41 @@ private:
 BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 
 namespace detail {
+/// Declaration of a trait recognized by analyzer.
+#define TSAR_TRAIT_DEF(name_, id_, collection_) \
+struct name_ { static constexpr auto Id = id_; typedef collection_ ValueType; };
+
 /// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
 struct DependencySet {
   /// Set of locations.
-  typedef DefUseSet::LocationSet LocationSet;
-  struct Private { typedef LocationSet ValueType; };
-  struct LastPrivate { typedef LocationSet ValueType; };
-  struct SecondToLastPrivate { typedef LocationSet ValueType; };
-  struct DynamicPrivate { typedef LocationSet ValueType; };
-  struct FirstPrivate { typedef LocationSet ValueType; };
-  struct Shared { typedef LocationSet ValueType; };
-  struct Dependency { typedef LocationSet ValueType; };
+  typedef DefUseSet::PointerSet LocationSet;
+  TSAR_TRAIT_DEF(NoAccess, 1111111_b, LocationSet)
+  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, LocationSet)
+  TSAR_TRAIT_DEF(Shared, 0111110_b, LocationSet)
+  TSAR_TRAIT_DEF(Private, 0101111_b, LocationSet)
+  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, LocationSet)
+  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, LocationSet)
+  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, LocationSet)
+  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, LocationSet)
+  TSAR_TRAIT_DEF(Dependency, 0100000_b, LocationSet)
 };
 }
 
-const detail::DependencySet::Private Private;
-const detail::DependencySet::LastPrivate LastPrivate;
-const detail::DependencySet::SecondToLastPrivate SecondToLastPrivate;
-const detail::DependencySet::DynamicPrivate DynamicPrivate;
-const detail::DependencySet::FirstPrivate FirstPrivate;
-const detail::DependencySet::Shared Shared;
-const detail::DependencySet::Dependency Dependency;
+constexpr detail::DependencySet::NoAccess NoAccess;
+constexpr detail::DependencySet::AddressAccess AddressAccess;
+constexpr detail::DependencySet::Private Private;
+constexpr detail::DependencySet::LastPrivate LastPrivate;
+constexpr detail::DependencySet::SecondToLastPrivate SecondToLastPrivate;
+constexpr detail::DependencySet::DynamicPrivate DynamicPrivate;
+constexpr detail::DependencySet::FirstPrivate FirstPrivate;
+constexpr detail::DependencySet::Shared Shared;
+constexpr detail::DependencySet::Dependency Dependency;
 
 /// \brief This represents data dependency in loops.
 ///
 /// The following information is avaliable:
+/// - a set of locations addresses of which are evaluated;
 /// - a set of private locations;
 /// - a set of last private locations;
 /// - a set of second to last private locations;
@@ -238,7 +337,8 @@ const detail::DependencySet::Dependency Dependency;
 /// all methods that is avaliable for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of locations.
-class DependencySet: public CELL_COLL_7(
+class DependencySet: public CELL_COLL_8(
+    detail::DependencySet::AddressAccess,
     detail::DependencySet::Private,
     detail::DependencySet::LastPrivate,
     detail::DependencySet::SecondToLastPrivate,
@@ -262,30 +362,20 @@ public:
 /// can be added to a node in a data-flow graph.
 BASE_ATTR_DEF(DependencyAttr, DependencySet)
 
-/// \brief Data-flow framework which is used to find candidates
-/// in privatizable locations for each natural loops.
+/// \brief Data-flow framework which is used to find must defined locations
+/// for each natural loops.
 ///
 /// The data-flow problem is solved in forward direction.
-/// The result of this analysis should be complemented to separate private
-/// from last private locations. The reason for this is the scope of analysis.
 /// The analysis is performed for loop bodies only.
 ///
 /// Two kinds of attributes for each nodes in a data-flow graph are available
 /// after this analysis. The first kind, is DefUseAttr and the second one is
-/// PrivateDFAttr. The third kind of attribute (DependencyAttr) becomes available
-/// for nodes which corresponds to natural loops. The complemented results
-/// should be stored in the value of the DependencyAttr attribute.
+/// PrivateDFAttr.
 class PrivateDFFwk : private Utility::Uncopyable {
 public:
-  /// Set of locations.
-  typedef DependencySet::LocationSet LocationSet;
-
-  /// Information about privatizability of variables for the analysed region.
-  typedef llvm::DenseMap<llvm::Loop *, DependencySet *> PrivateInfo;
-
   /// Creates data-flow framework.
-  explicit PrivateDFFwk(llvm::AliasSetTracker *AT, PrivateInfo &PI) :
-    mAliasTracker(AT), mPrivates(PI) {
+  explicit PrivateDFFwk(llvm::AliasSetTracker *AST) :
+    mAliasTracker(AST){
     assert(mAliasTracker && "AliasSetTracker must not be null!"); 
   }
 
@@ -298,7 +388,6 @@ public:
 
 private:
   llvm::AliasSetTracker *mAliasTracker;
-  PrivateInfo &mPrivates;
 };
 
 /// This covers IN and OUT value for a privatizability analysis.
@@ -366,11 +455,8 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
 /// after this analysis.
 class LiveDFFwk : private Utility::Uncopyable {
 public:
-  /// Set of locations.
-  typedef DefUseSet::LocationSet LocationSet;
-
   /// Creates data-flow framework.
-  explicit LiveDFFwk(llvm::AliasSetTracker *AT) : mAliasTracker(AT) {
+  explicit LiveDFFwk(llvm::AliasSetTracker *AST) : mAliasTracker(AST) {
     assert(mAliasTracker && "AliasSetTracker must not be null!");
   }
 
@@ -379,7 +465,7 @@ private:
 };
 
 /// This covers IN and OUT value for a live locations analysis.
-typedef DFValue<LiveDFFwk, LiveDFFwk::LocationSet> LiveSet;
+typedef DFValue<LiveDFFwk, LocationSet> LiveSet;
 
 /// This attribute is associated with LiveSet and
 /// can be added to a node in a data-flow graph.
@@ -388,7 +474,7 @@ BASE_ATTR_DEF(LiveAttr, LiveSet)
 /// Traits for a data-flow framework which is used to find live locations.
 template<> struct DataFlowTraits<LiveDFFwk *> {
   typedef Backward<DFRegion * > GraphType;
-  typedef LiveDFFwk::LocationSet ValueType;
+  typedef LocationSet ValueType;
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     LiveSet *LS = G.Graph->getAttribute<LiveAttr>();
@@ -458,10 +544,8 @@ namespace llvm {
 /// This pass determines locations which can be privatized.
 class PrivateRecognitionPass :
     public FunctionPass, private Utility::Uncopyable {
-  /// Set of locations.
-  typedef tsar::PrivateDFFwk::LocationSet LocationSet;
   /// Information about privatizability of variables for the analysed region.
-  typedef tsar::PrivateDFFwk::PrivateInfo PrivateInfo;
+  typedef llvm::DenseMap<llvm::Loop *, tsar::DependencySet *> PrivateInfo;
 public:
   /// Pass identification, replacement for typeid
   static char ID; 
@@ -485,26 +569,33 @@ public:
   /// in the specified function.
   bool runOnFunction(Function &F) override;
 
-  /// Release allocated memory.
+  /// Releases allocated memory.
   void releaseMemory() override {
-  // TODO(kaniandr@gmail.com): implement this method and release memory
-  // which has been allocated for a data-flow graph of loop nests.
+    for (auto &Pair : mPrivates)
+      delete Pair.second;
+    mPrivates.clear();
   }
 
   /// Specifies a list of analyzes  that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  /// \brief Complements the result of loop bodies analysis.
+  /// \brief Implements recognition of privatizable locations.
   ///
   /// Privatizability analysis is performed in two steps. Firstly,
   /// body of each natural loop is analyzed. Secondly, when live locations
   /// for each basic block are discovered, results of loop body analysis must be
   /// finalized. The result of this analysis should be complemented to separate
   /// private from last private locations. The case where location access
-  /// is performed by pointer is also considered.
+  /// is performed by pointer is also considered. Shared locations also
+  /// analyzed.
   /// \param [in, out] R Region in a data-flow graph, it can not be null.
+  /// \pre Def-use and live analysis have been performed for the region.
   void resolveCandidats(tsar::DFRegion *R);
+
+
+  /// Releases memory allocated for attributes in a data-flow graph.
+  void releaseMemory(tsar::DFRegion *R);
 
 private:
   PrivateInfo mPrivates;

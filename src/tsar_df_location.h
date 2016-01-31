@@ -12,22 +12,276 @@
 #ifndef TSAR_DF_LOCATION_H
 #define TSAR_DF_LOCATION_H
 
-#include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Analysis/MemoryLocation.h>
 
 namespace llvm {
-class Value;
 class LoadInst;
 class GetElementPtrInst;
+class raw_ostream;
 }
 
 namespace tsar {
+/// \brief This implements a set of memory locations.
+///
+/// Methods of this class do not use alias information. Consequently,
+/// two locations may overlap if they have identical address of beginning.
+/// \note This class manages memory allocation to store elements of
+/// a location set.
+class LocationSet {
+  /// Map from pointers to locations.
+  typedef llvm::DenseMap<const llvm::Value *, llvm::MemoryLocation *> MapTy;
+public:
+  /// \brief Calculates the difference between two sets of locations.
+  ///
+  /// \param [in] LocBegin Iterator that points to the beginning of
+  /// the first locations set.
+  /// \param [in] LocEnd Iterator that points to the ending of
+  /// the first locations set.
+  /// \param [in] LocSet The second location set.
+  /// \param [out] Result It contains the result of this operation.
+  /// The following operation should be provided:
+  /// - void ResultSet::insert(const llvm::MemoryLocation &)
+  /// - viud ResultSet::insert(location_iterator &, location_iterator &)
+  template<class location_iterator, class ResultSet>
+  static void difference(
+    const location_iterator &LocBegin, const location_iterator &LocEnd,
+    const LocationSet &LocSet, ResultSet &Result) {
+    if (LocSet.mLocations.empty())
+      Result.insert(LocBegin, LocEnd);
+    for (location_iterator I = LocBegin; I != LocEnd; ++I)
+      if (!LocSet.exist(*I))
+        Result.insert(*I);
+  }
+
+  /// This implements iterator over all memory locations in a set.
+  template<class map_iterator> class MemoryLocationItr :
+    public std::iterator<std::forward_iterator_tag, llvm::MemoryLocation> {
+  public:
+    explicit MemoryLocationItr(map_iterator &I) : mCurItr(I) {}
+
+    bool operator==(const MemoryLocationItr &RHS) const {
+      return mCurItr == RHS.mCurItr;
+    }
+
+    bool operator!=(const MemoryLocationItr &RHS) const {
+      return !operator==(RHS);
+    }
+
+    value_type & operator*() const { return *(mCurItr->second); }
+
+    value_type * operator->() const { return &operator*(); }
+
+    /// Preincrement
+    MemoryLocationItr & operator++() { ++mCurItr; return *this; }
+
+    /// Postincrement
+    MemoryLocationItr operator++(int) {
+      auto tmp = *this; ++*this; return tmp;
+    }
+
+  private:
+    map_iterator mCurItr;
+  };
+
+  /// This type used to iterate over all locations in this set.
+  typedef MemoryLocationItr<MapTy::iterator> iterator;
+
+  /// This type used to iterate over all locations in this set.
+  typedef MemoryLocationItr<MapTy::const_iterator> const_iterator;
+
+  /// Default constructor.
+  LocationSet() {}
+
+  /// Destructor.
+  ~LocationSet() { mLocations.clear(); }
+
+  /// Move constructor.
+  LocationSet(LocationSet &&that) :
+    mLocations(std::move(that.mLocations)) {}
+
+  /// Copy constructor.
+  LocationSet(const LocationSet &that) {
+    insert(that.begin(), that.end());
+  }
+
+  /// Move assignment operator.
+  LocationSet & operator=(LocationSet &&that) {
+    if (this != &that)
+      mLocations = std::move(that.mLocations);
+    return *this;
+  }
+
+  /// Copy assignment operator.
+  LocationSet & operator=(const LocationSet &that) {
+    if (this != &that)
+      insert(that.begin(), that.end());
+    return *this;
+  }
+
+  /// Returns iterator that points to the beginning of locations.
+  iterator begin() { return iterator(mLocations.begin()); }
+
+  /// Returns iterator that points to the ending of locations.
+  iterator end() { return iterator(mLocations.end()); }
+
+  /// Returns iterator that points to the beginning of locations.
+  const_iterator begin() const { return const_iterator(mLocations.begin()); }
+
+  /// Returns iterator that points to the ending of locations.
+  const_iterator end() const { return const_iterator(mLocations.end()); }
+
+  /// Returns a location which contains the specified location.
+  iterator findContaining(const llvm::MemoryLocation &Loc) {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    auto I = mLocations.find(Loc.Ptr);
+    return (I != mLocations.end() &&
+      Loc.Size <= I->second->Size &&
+      Loc.AATags == I->second->AATags) ?
+      iterator(I) : iterator(mLocations.end());
+  }
+
+  /// Returns a location which contains the specified location.
+  const_iterator findContaining(const llvm::MemoryLocation &Loc) const {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    auto I = mLocations.find(Loc.Ptr);
+    return (I != mLocations.end() &&
+      Loc.Size <= I->second->Size &&
+      Loc.AATags == I->second->AATags) ?
+      const_iterator(I) : const_iterator(mLocations.end());
+  }
+
+  /// Returns true if there is a location in this set which contains
+  /// the specified location.
+  bool contain(const llvm::MemoryLocation &Loc) const {
+    return findContaining(Loc) != end();
+  }
+
+  /// Returns a location which is conatined in the specified location.
+  iterator findCoveredBy(const llvm::MemoryLocation &Loc) {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    auto I = mLocations.find(Loc.Ptr);
+    return (I != mLocations.end() &&
+      Loc.Size >= I->second->Size &&
+      Loc.AATags == I->second->AATags) ?
+      iterator(I) : iterator(mLocations.end());
+  }
+
+  /// Returns a location which is conatined in the specified location.
+  const_iterator findCoveredBy(const llvm::MemoryLocation &Loc) const {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    auto I = mLocations.find(Loc.Ptr);
+    return (I != mLocations.end() &&
+      Loc.Size >= I->second->Size &&
+      Loc.AATags == I->second->AATags) ?
+      const_iterator(I) : const_iterator(mLocations.end());
+  }
+
+  /// Returns true if there is a location in this set which is contained
+  /// the specified location.
+  bool cover(const llvm::MemoryLocation &Loc) const {
+    return findCoveredBy(Loc) != end();
+  }
+
+  /// Returns a location which may overlap with the specified location.
+  iterator findOverlappedWith(const llvm::MemoryLocation &Loc) {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    return iterator(mLocations.find(Loc.Ptr));
+  }
+
+  /// Returns a location which may overlap with the specified location.
+  const_iterator findOverlappedWith(const llvm::MemoryLocation &Loc) const {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    return const_iterator(mLocations.find(Loc.Ptr));
+  }
+
+  /// Returns true if there is a location in this set which may overlap with
+  /// the specified location.
+  bool overlap(const llvm::MemoryLocation &Loc) const {
+    return findOverlappedWith(Loc) != end();
+  }
+
+  /// Returns true if this set does not contain any location.
+  bool empty() const {return mLocations.empty();}
+
+  /// Removes all locations from this set.
+  void clear() {
+    for (auto Pair : mLocations)
+      delete Pair.second;
+    mLocations.clear();
+  }
+
+  /// \brief Inserts a new location into this set, returns false if it already
+  /// exists.
+  ///
+  /// If the specified value contains some value in this set, the appropriate
+  /// value will be updated. In this case, this method also returns true.
+  std::pair<iterator, bool> insert(const llvm::MemoryLocation &Loc);
+
+  /// Inserts all locations from the range into this set, returns false
+  /// if nothing has been added and updated.
+  template<class location_iterator >
+  bool insert(
+      const location_iterator &LocBegin, const location_iterator &LocEnd) {
+    bool isChanged = false;
+    for (location_iterator I = LocBegin; I != LocEnd; ++I)
+      isChanged = insert(*I).second || isChanged;
+    return isChanged;
+  }
+
+  /// Realizes intersection between two sets.
+  bool intersect(const LocationSet &with);
+
+  /// Realizes merger between two sets.
+  bool merge(const LocationSet &with) {
+    if (this == &with)
+      return false;
+    bool isChanged = false;
+    for (auto Pair : with.mLocations)
+      isChanged = insert(*Pair.second).second || isChanged;
+    return isChanged;
+  }
+
+  /// Compares two sets.
+  bool operator!=(const LocationSet &RHS) const { return !(*this == RHS); }
+
+  /// Compares two sets.
+  bool operator==(const LocationSet &RHS) const;
+
+  /// Prints set of memory locatinos.
+  void print(llvm::raw_ostream &OS) const;
+
+  /// Support for debugging.
+  void dump() const;
+
+private:
+  MapTy mLocations;
+};
+
+/// \brief Calculates the difference between two sets of locations.
+///
+/// \param [in] LocBegin Iterator that points to the beginning of
+/// the first locations set.
+/// \param [in] LocEnd Iterator that points to the ending of
+/// the first locations set.
+/// \param [in] LocSet The second location set.
+/// \param [out] Result It contains the result of this operation.
+/// The following operation should be provided:
+/// - void ResultSet::insert(const llvm::MemoryLocation &)
+/// - viud ResultSet::insert(location_iterator &, location_iterator &)
+template<class location_iterator, class ResultSet>
+void difference(const location_iterator &LocBegin,
+  const location_iterator &LocEnd,
+  const LocationSet &LocSet, ResultSet &Result) {
+  LocationSet::difference(LocBegin, LocEnd, LocSet, Result);
+}
+
 /// \brief Representation of a data-flow value formed by a set of locations.
 /// 
 /// A data-flow value is a set of locations for which a number of operations
 /// is defined.
 class LocationDFValue {
-  typedef llvm::SmallPtrSet<llvm::Value *, 64> LocationSet;
   // There are two kind of values. The KIND_FULL kind means that the set of
   // variables is full and contains all variables used in the analyzed program.
   // The KIND_MASK kind means that the set contains variables located in the 
@@ -64,13 +318,15 @@ public:
   /// \brief Calculates the difference between a set of locations and a set
   /// which is represented as a data-flow value.
   ///
-  /// \param [in] LocBegin Iterator that points to the beginning of the locations
-  /// set.
-  /// \param [in] LocEnd Iterator that points to the ending of the locations set.
+  /// \param [in] LocBegin Iterator that points to the beginning of
+  /// the locations set.
+  /// \param [in] LocEnd Iterator that points to the ending of
+  /// the locations set.
   /// \param [in] Value Data-flow value.
   /// \param [out] Result It contains the result of this operation.
   /// The following operation should be provided:
-  /// - void ResultSet::insert(llvm::Value *).
+  /// - void ResultSet::insert(const llvm::MemoryLocation &)
+  /// - viud ResultSet::insert(location_iterator &, location_iterator &)
   template<class location_iterator, class ResultSet>
   static void difference(
       const location_iterator &LocBegin, const location_iterator &LocEnd,
@@ -82,12 +338,15 @@ public:
     if (Value.mLocations.empty())
       Result.insert(LocBegin, LocEnd);
     for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      if (Value.exist(*I))
+      if (!Value.exist(*I))
         Result.insert(*I);
   }
 
   /// Destructor.
-  ~LocationDFValue() { mKind = INVALID_KIND; }
+  ~LocationDFValue() {
+    mLocations.clear();
+    mKind = INVALID_KIND;
+  }
 
   /// Move constructor.
   LocationDFValue(LocationDFValue &&that) :
@@ -126,9 +385,10 @@ public:
   }
 
   /// Returns true if the value contains the specified location.
-  bool exist(llvm::Value *Loc) const {
+  bool contain(const llvm::MemoryLocation &Loc) const {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    return mKind == KIND_FULL || mLocations.count(Loc);
+    return mKind == KIND_FULL || mLocations.contain(Loc);
   }
 
   /// Returns true if the value does not contain any location.
@@ -144,31 +404,28 @@ public:
     mLocations.clear();
   }
 
-  /// Inserts a new location into the value, returns false if it already exists.
-  bool insert(llvm::Value *Loc) {
+  /// \brief Inserts a new location into the value, returns false if it already
+  /// exists.
+  ///
+  /// If the specified value contains some value in this set, the appropriate
+  /// value will be updated. In this case, this method also returns true.
+  bool insert(const llvm::MemoryLocation &Loc) {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-    return mKind == KIND_FULL || mLocations.insert(Loc);
-#else
-    return mKind == KIND_FULL || mLocations.insert(Loc).second;
-#endif
+    if (mKind == KIND_FULL)
+      return true;
+    return mLocations.insert(Loc).second;
   }
 
   /// Inserts all locations from the range into the value, returns false
-  /// ifnothing has been added.
+  /// if nothing has been added.
   template<class location_iterator >
-  bool insert(const location_iterator &LocBegin, const location_iterator &LocEnd) {
+  bool insert(
+      const location_iterator &LocBegin, const location_iterator &LocEnd) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     if (mKind == KIND_FULL)
       return false;
-    bool isChanged = false;
-    for (location_iterator I = LocBegin; I != LocEnd; ++I)
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-      isChanged = mLocations.insert(*I) || isChanged;
-#else
-      isChanged = mLocations.insert(*I).second || isChanged;
-#endif
-    return isChanged;
+    return mLocations.insert(LocBegin, LocEnd);
   }
 
   /// Realizes intersection between two values.
@@ -178,10 +435,25 @@ public:
   bool merge(const LocationDFValue &with);
 
   /// Compares two values.
-  bool operator==(const LocationDFValue &RHS) const;
+  bool operator==(const LocationDFValue &RHS) const {
+    assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    assert(RHS.mKind != INVALID_KIND && "Collection is corrupted!");
+    if (this == &RHS || mKind == KIND_FULL && RHS.mKind == KIND_FULL)
+      return true;
+    if (mKind != RHS.mKind)
+      return false;
+    return mLocations == RHS.mLocations;
+  }
 
   /// Compares two values.
   bool operator!=(const LocationDFValue &RHS) const { return !(*this == RHS); }
+
+  /// Prints value.
+  void print(llvm::raw_ostream &OS) const;
+
+  /// Support for debugging.
+  void dump() const;
+
 private:
   Kind mKind;
   LocationSet mLocations;
@@ -196,9 +468,10 @@ private:
 /// \param [in] Value Data-flow value.
 /// \param [out] Result It contains the result of this operation.
 /// The following operation should be provided:
-/// - void ResultSet::insert(llvm::Value *).
+/// - void ResultSet::insert(const llvm::MemoryLocation *)
+/// - viud ResultSet::insert(location_iterator &, location_iterator &)
 template<class location_iterator, class ResultSet>
-static void difference(const location_iterator &LocBegin,
+void difference(const location_iterator &LocBegin,
   const location_iterator &LocEnd,
   const LocationDFValue &Value, ResultSet &Result) {
   LocationDFValue::difference(LocBegin, LocEnd, Value, Result);
@@ -208,7 +481,7 @@ static void difference(const location_iterator &LocBegin,
 ///
 /// \return A string which represents the memory location or an empty string.
 /// \pre At this moment arrays does not supported. Location must not be null!
-std::string locationToSource(llvm::Value *Loc);
+std::string locationToSource(const llvm::Value *Loc);
 
 namespace detail {
 /// \brief Represents memory location as an expression in a source language.
@@ -222,21 +495,21 @@ namespace detail {
 /// \return A string which represents the memory location or an empty string.
 /// \pre At this moment arrays does not supported. Location must not be null!
 std::string locationToSource(
-  llvm::Value *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+  const llvm::Value *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
 
 /// \brief Represents memory location as an expression in a source language.
 ///
 /// This function is overloaded for locations which are represented as a 'load'
 /// instructions.
 std::string locationToSource(
-  llvm::LoadInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+  const llvm::LoadInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
 
 /// \brief Represents memory location as an expression in a source language.
 ///
 /// This function is overloaded for locations which are represented as a
 /// 'getelementptr' instructions.
 std::string locationToSource(
-  llvm::GetElementPtrInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
+  const llvm::GetElementPtrInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
 }
 
 /// Returns the base location with respect to which an analysis is performed.

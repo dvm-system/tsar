@@ -41,7 +41,7 @@ namespace tsar {
 /// \endcode
 /// If debug information is available the result for
 /// %0 will be *p otherwise it will be *(%p = alloca i32*, align 4).
-void printLocationSource(llvm::raw_ostream &o, llvm::Value *V);
+void printLocationSource(llvm::raw_ostream &o, const llvm::Value *V);
 
 /// \brief Print description of a type from a source code.
 ///

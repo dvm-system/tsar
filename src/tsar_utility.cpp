@@ -34,9 +34,9 @@ DIGlobalVariable * getMetadata(const GlobalVariable *Var) {
   return nullptr;
 }
 
-DILocalVariable *getMetadata(AllocaInst *AI) {
+DILocalVariable *getMetadata(const AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
-  DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
+  DbgDeclareInst *DDI = FindAllocaDbgDeclare(const_cast<AllocaInst *>(AI));
   return DDI ? DDI->getVariable() : nullptr;
 }
 }
