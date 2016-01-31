@@ -43,7 +43,7 @@ STATISTIC(NumPrivate, "Number of private locations found");
 STATISTIC(NumLPrivate, "Number of last private locations found");
 STATISTIC(NumSToLPrivate, "Number of second to last private locations found");
 STATISTIC(NumDPrivate, "Number of dynamic private locations found");
-STATISTIC(NumFPrivate, "Number of dynamic first private locations found");
+STATISTIC(NumFPrivate, "Number of first private locations found");
 STATISTIC(NumDeps, "Number of unsorted dependencies found");
 STATISTIC(NumShared, "Number of shraed locations found");
 STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated");
