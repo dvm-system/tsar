@@ -178,6 +178,7 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM)
     set(LLVM_COMPONENTS analysis asmparser bitreader core instrumentation
                           irreader scalaropts support tablegen target transformutils)
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.7")
+       message(FATAL_ERROR "Unsupported version of LLVM: ${LLVM_PACKAGE_VERSION}. Versions less then 3.7 is unsupported.")
       set(LLVM_COMPONENTS ${LLVM_COMPONENTS} debuginfo)
     else()
       set(LLVM_COMPONENTS ${LLVM_COMPONENTS} debuginfodwarf)

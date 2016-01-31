@@ -22,13 +22,8 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Transforms/Utils/PromoteMemToReg.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-#include <llvm/DebugInfo.h>
-#include <llvm/Analysis/Dominators.h>
-#else
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/Dominators.h>
-#endif
 #include <functional>
 #include <utility.h>
 #include <declaration.h>
@@ -56,32 +51,16 @@ STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated")
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
                       "Private Variable Analysis", true, true)
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
-#else
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-#endif
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-INITIALIZE_PASS_DEPENDENCY(LoopInfo)
-#else
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-#endif
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-  LoopInfo &LpInfo = getAnalysis<LoopInfo>();
-#else
   LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-#endif
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-  DominatorTreeBase<BasicBlock> &DomTree = *(getAnalysis<DominatorTree>().DT);
-#else
   DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-#endif
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
@@ -100,11 +79,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     DebugLoc loc = L->getStartLoc();
     Base::Text Offset(L->getLoopDepth(), ' ');
     errs() << Offset;
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-    loc.print(getGlobalContext(), errs());
-#else
     loc.print(errs());
-#endif
     errs() << "\n";
     const DependencySet &DS = getPrivatesFor(L);
     errs() << Offset << " privates:\n";

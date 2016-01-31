@@ -26,18 +26,9 @@
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Analysis/Passes.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-#include "llvm/Analysis/Verifier.h"
-#include "llvm/Support/PassNameParser.h"
-#else
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/LegacyPassNameParser.h"
-#endif
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-#include <llvm/PassManager.h>
-#else
 #include <llvm/IR/LegacyPassManager.h>
-#endif
 #include "tsar_exception.h"
 #include "tsar_pass.h"
 
@@ -82,12 +73,7 @@ int main(int Argc, char** Argv) {
     Argc, Argv, Base::TextToAnsi(TSAR::Title::Data() +
     TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
   SMDiagnostic Error;
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-  std::unique_ptr<Module> M;
-  M.reset(ParseIRFile(gInputProject, Error, Context));
-#else
   std::unique_ptr<Module> M = parseIRFile(gInputProject, Error, Context);
-#endif
   if (!M.get()) {
     Error.print(Argv[0], errs());
     return 1;
@@ -95,16 +81,6 @@ int main(int Argc, char** Argv) {
   if (gOutputFilename.empty())
     gOutputFilename = "-";
   std::unique_ptr<tool_output_file> Out;
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 6)
-  std::string ErrorInfo;
-  Out.reset(
-    new tool_output_file(gOutputFilename.c_str(), ErrorInfo, sys::fs::F_None));
-  if (!ErrorInfo.empty()) {
-    Error = SMDiagnostic(gOutputFilename, SourceMgr::DK_Error, ErrorInfo);
-    Error.print(Argv[0], errs());
-    return 1;
-  }
-#else
   std::error_code EC;
   Out.reset(
     new tool_output_file(gOutputFilename.c_str(), EC, sys::fs::F_None));
@@ -112,12 +88,7 @@ int main(int Argc, char** Argv) {
     errs() << EC.message() << '\n';
     return 1;
   }
-#endif
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-  PassManager Passes;
-#else
   legacy::PassManager Passes;
-#endif
   if (!gDebugMode && gPassList.size() > 0)
     errs() << Argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
   if (gDebugMode) {
@@ -136,11 +107,6 @@ int main(int Argc, char** Argv) {
     Passes.add(createPrivateRecognitionPass());
   }
   Passes.add(createVerifierPass());
-#if (!(LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5))
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-  Passes.add(createDebugInfoVerifierPass());
-#endif
-#endif
   cl::PrintOptionValues();
   Passes.run(*M.get());
   Out->keep();
