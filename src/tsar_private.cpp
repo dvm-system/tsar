@@ -229,16 +229,16 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
             "Traits of location must be initialized!");
           if (PtrTraits->second == Shared.Id)
             continue;
-          if ((LocTraits->second & FirstPrivate.Id) ==
-              (LastPrivate.Id & FirstPrivate.Id))
-            PtrTraits->second &= LastPrivate.Id;
-          else if ((LocTraits->second & FirstPrivate.Id) ==
-              (SecondToLastPrivate.Id & FirstPrivate.Id) &&
-              (PtrTraits->second & FirstPrivate.Id) !=
-              (LastPrivate.Id & FirstPrivate.Id))
-            PtrTraits->second &= SecondToLastPrivate.Id;
-          else
-            LocTraits->second = Dependency.Id;
+          // Location can not be declared as copy in or copy out without
+          // additional analysis because we do not know which memory must
+          // be copy. Let see an example:
+          // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
+          // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
+          // Note that case when location is shared, but pointer is not shared
+          // may be dificulty to implement for distributed memory, for example:
+          // for(...) { P = ...; ... = *P; } It is not evident which memory
+          // should be copy to each processor.
+          LocTraits->second = Dependency.Id;
         }
       }
     }
