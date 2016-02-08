@@ -28,6 +28,7 @@
 #include <cell.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
+#include <list>
 
 using Utility::operator "" _b;
 
@@ -222,7 +223,7 @@ public:
 
   /// Returns unknown instructions which are evaluated in the node.
   ///
-  /// An unknown instruction is a instruction wich accessed memory with unknown
+  /// An unknown instruction is a instruction which accessed memory with unknown
   /// description. For example, in general case call instruction is an unknown
   /// instruction.
   const InstructionSet & getUnknownInsts() const { return mUnknownInsts; }
@@ -262,17 +263,17 @@ struct name_ { static constexpr auto Id = id_; typedef collection_ ValueType; };
 /// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
 struct DependencySet {
-  /// Set of locations.
-  typedef DefUseSet::PointerSet LocationSet;
-  TSAR_TRAIT_DEF(NoAccess, 1111111_b, LocationSet)
-  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, LocationSet)
-  TSAR_TRAIT_DEF(Shared, 0111110_b, LocationSet)
-  TSAR_TRAIT_DEF(Private, 0101111_b, LocationSet)
-  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, LocationSet)
-  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, LocationSet)
-  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, LocationSet)
-  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, LocationSet)
-  TSAR_TRAIT_DEF(Dependency, 0100000_b, LocationSet)
+  /// List of locations with an appropriate trait.
+  typedef std::list<const llvm::MemoryLocation *> LocationList;
+  TSAR_TRAIT_DEF(NoAccess, 1111111_b, LocationList)
+  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, LocationList)
+  TSAR_TRAIT_DEF(Shared, 0111110_b, LocationList)
+  TSAR_TRAIT_DEF(Private, 0101111_b, LocationList)
+  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, LocationList)
+  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, LocationList)
+  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, LocationList)
+  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, LocationList)
+  TSAR_TRAIT_DEF(Dependency, 0100000_b, LocationList)
 };
 }
 
@@ -288,7 +289,7 @@ constexpr detail::DependencySet::Dependency Dependency;
 
 /// \brief This represents data dependency in loops.
 ///
-/// The following information is avaliable:
+/// The following information is available:
 /// - a set of locations addresses of which are evaluated;
 /// - a set of private locations;
 /// - a set of last private locations;
@@ -334,7 +335,7 @@ constexpr detail::DependencySet::Dependency Dependency;
 /// for (Value *Loc : DS[Private]) {...}
 /// \endcode
 /// Note, (*DS)[Private] is a set of type LocationSet, so it is possible to call
-/// all methods that is avaliable for LocationSet.
+/// all methods that is available for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of locations.
 class DependencySet: public CELL_COLL_8(
@@ -348,7 +349,7 @@ class DependencySet: public CELL_COLL_8(
     detail::DependencySet::Dependency) {
 public:
   /// Set of locations.
-  typedef detail::DependencySet::LocationSet LocationSet;
+  typedef detail::DependencySet::LocationList LocationList;
 
   /// \brief Checks that a location has a specified kind of privatizability.
   ///

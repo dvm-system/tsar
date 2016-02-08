@@ -43,7 +43,7 @@ public:
   /// \param [out] Result It contains the result of this operation.
   /// The following operation should be provided:
   /// - void ResultSet::insert(const llvm::MemoryLocation &)
-  /// - viud ResultSet::insert(location_iterator &, location_iterator &)
+  /// - void ResultSet::insert(location_iterator &, location_iterator &)
   template<class location_iterator, class ResultSet>
   static void difference(
     const location_iterator &LocBegin, const location_iterator &LocEnd,
@@ -158,7 +158,7 @@ public:
     return findContaining(Loc) != end();
   }
 
-  /// Returns a location which is conatined in the specified location.
+  /// Returns a location which is contained in the specified location.
   iterator findCoveredBy(const llvm::MemoryLocation &Loc) {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
@@ -168,7 +168,7 @@ public:
       iterator(I) : iterator(mLocations.end());
   }
 
-  /// Returns a location which is conatined in the specified location.
+  /// Returns a location which is contained in the specified location.
   const_iterator findCoveredBy(const llvm::MemoryLocation &Loc) const {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
@@ -249,7 +249,7 @@ public:
   /// Compares two sets.
   bool operator==(const LocationSet &RHS) const;
 
-  /// Prints set of memory locatinos.
+  /// Prints set of memory locations.
   void print(llvm::raw_ostream &OS) const;
 
   /// Support for debugging.
@@ -269,7 +269,7 @@ private:
 /// \param [out] Result It contains the result of this operation.
 /// The following operation should be provided:
 /// - void ResultSet::insert(const llvm::MemoryLocation &)
-/// - viud ResultSet::insert(location_iterator &, location_iterator &)
+/// - void ResultSet::insert(location_iterator &, location_iterator &)
 template<class location_iterator, class ResultSet>
 void difference(const location_iterator &LocBegin,
   const location_iterator &LocEnd,
@@ -286,7 +286,7 @@ class LocationDFValue {
   // variables is full and contains all variables used in the analyzed program.
   // The KIND_MASK kind means that the set contains variables located in the 
   // location collection (mLocations). This is internal information which is
-  // neccessary to safely and effectively implement a number of operations
+  // necessary to safely and effectively implement a number of operations
   // which is permissible for a arbitrary set of variables.
   enum Kind {
     FIRST_KIND,
@@ -301,7 +301,7 @@ class LocationDFValue {
       "The specified kind is invalid!");
   }
 public:
-  /// Creats a value, which contains all locations used in the analyzed
+  /// Creates a value, which contains all locations used in the analyzed
   /// program.
   static LocationDFValue fullValue() {
     return LocationDFValue(LocationDFValue::KIND_FULL);
@@ -326,7 +326,7 @@ public:
   /// \param [out] Result It contains the result of this operation.
   /// The following operation should be provided:
   /// - void ResultSet::insert(const llvm::MemoryLocation &)
-  /// - viud ResultSet::insert(location_iterator &, location_iterator &)
+  /// - void ResultSet::insert(location_iterator &, location_iterator &)
   template<class location_iterator, class ResultSet>
   static void difference(
       const location_iterator &LocBegin, const location_iterator &LocEnd,
@@ -469,13 +469,59 @@ private:
 /// \param [out] Result It contains the result of this operation.
 /// The following operation should be provided:
 /// - void ResultSet::insert(const llvm::MemoryLocation *)
-/// - viud ResultSet::insert(location_iterator &, location_iterator &)
+/// - void ResultSet::insert(location_iterator &, location_iterator &)
 template<class location_iterator, class ResultSet>
 void difference(const location_iterator &LocBegin,
   const location_iterator &LocEnd,
   const LocationDFValue &Value, ResultSet &Result) {
   LocationDFValue::difference(LocBegin, LocEnd, Value, Result);
 }
+
+/// \brief This implements a set of base memory locations.
+///
+/// The base memory location is used to represent results of program analysis.
+/// Let see an example of a base location for 'a[i]', it is a whole array 'a'.
+/// \attention Methods of this class do not use alias information.
+/// Consequently, two locations may overlap.
+/// \note This class manages memory allocation to store elements of
+/// a location set.
+class BaseLocationSet {
+  /// \brief Map from stripped pointers which address base locations to a sets
+  /// which contain all base locations addressed by the key pointer.
+  typedef llvm::DenseMap<const llvm::Value *, LocationSet *> StrippedMap;
+
+public:
+  /// \brief Returns base location for the specified memory location.
+  ///
+  /// If determined base location already exists in the collection of bases
+  /// it will be merged with exist base. For example,
+  /// the following expressions *(short*)P and *P where P has type int
+  /// have the same base locations *P. When *(short*)P will be evaluated
+  /// the result will be *P with size size_of(short). When *P will be evaluated
+  /// the result will be *P with size size_of(int). These two results will be 
+  /// merged, so the general base must be *P with size size_of(int).
+  const llvm::MemoryLocation * base(const llvm::MemoryLocation &Loc);
+
+private:
+  /// \brief Strips a pointer to an 'alloca' or a 'global variable'.
+  static const llvm::Value * stripPointer(const llvm::Value *Ptr);
+
+  /// \brief Strips a location to its base.
+  ///
+  /// Base location will be stored in the parameter Loc: pointer or size can be
+  /// changed. Final type cast will be eliminate but size will be remembered.
+  /// A base location for element of an array is a whole array, so 'getelementpr'
+  /// will be stripped (pointer will be changed) and size will be changed to
+  /// llvm::MemoryLocation::UnknownSize. But if this element is a structure
+  /// 'getelementptr' will not be stripped because it is convenient to analyze
+  /// different members of structure separately.
+  static void  stripToBase(llvm::MemoryLocation &Loc);
+
+  /// Compares to bases.
+  static bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
+
+  StrippedMap mBases;
+};
 
 /// \brief Represents memory location as an expression in a source language.
 ///
@@ -511,16 +557,6 @@ std::string locationToSource(
 std::string locationToSource(
   const llvm::GetElementPtrInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
 }
-
-/// Returns the base location with respect to which an analysis is performed.
-///
-/// For a given location, this returns the base memory location
-/// with respect to which an analysis is performed. For example,
-/// a base location for 'a[i]' is a whole array 'a'.
-/// 
-///TODO (kaniandr@gmail.com): locationToSource method must return valid
-/// representation for each base location.
-llvm::Value * findLocationBase(llvm::Value *Loc);
 }
 
 #endif//TSAR_DF_LOCATION_H

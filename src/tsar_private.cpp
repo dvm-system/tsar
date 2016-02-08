@@ -83,51 +83,51 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
     errs() << "\n";
     const DependencySet &DS = getPrivatesFor(L);
     errs() << Offset << " privates:\n";
-    for (Value *Loc : DS[Private]) {
+    for (const MemoryLocation *Loc : DS[Private]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " last privates:\n";
-    for (Value *Loc : DS[LastPrivate]) {
+    for (const MemoryLocation *Loc : DS[LastPrivate]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " second to last privates:\n";
-    for (Value *Loc : DS[SecondToLastPrivate]) {
+    for (const MemoryLocation *Loc : DS[SecondToLastPrivate]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " dynamic privates:\n";
-    for (Value *Loc : DS[DynamicPrivate]) {
+    for (const MemoryLocation *Loc : DS[DynamicPrivate]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " first privates:\n";
-    for (Value *Loc : DS[FirstPrivate]) {
+    for (const MemoryLocation *Loc : DS[FirstPrivate]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " shared variables:\n";
-    for (Value *Loc : DS[Shared]) {
+    for (const MemoryLocation *Loc : DS[Shared]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " dependencies:\n";
-    for (Value *Loc : DS[Dependency]) {
+    for (const MemoryLocation *Loc : DS[Dependency]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << Offset << " addresses:\n";
-    for (Value *Loc : DS[AddressAccess]) {
+    for (const MemoryLocation *Loc : DS[AddressAccess]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc);
+      printLocationSource(errs(), Loc->Ptr);
       errs() << "\n";
     }
     errs() << "\n";
@@ -146,7 +146,8 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     // Analysis will performed for base locations. This means that results
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
-    DenseMap<Value *, unsigned long long> LocBases;
+    DenseMap<const MemoryLocation *, unsigned long long> LocBases;
+    BaseLocationSet Bases;
     DFNode *LatchNode = R->getLatchNode();
     PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
     assert(LatchDF && "List of must defined locations must not be null!");
@@ -157,12 +158,13 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       if (AS.isForwardingAliasSet() || AS.empty())
         continue; // The set is empty if it contains only unknown instructions.
       auto I = AS.begin(), E = AS.end();
-      Value *CurrBase = findLocationBase(I.getPointer());
+      const MemoryLocation *CurrBase = Bases.base(
+        MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo()));
       auto CurrTraits =
         LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
       for (; I != E; ++I) {
         MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-        Value *Base = findLocationBase(I.getPointer());
+        const MemoryLocation *Base = Bases.base(Loc);
         if (CurrBase != Base) {
           // Current alias set contains memory locations with different bases.
           // So there are explicitly accessed locations with different bases
@@ -196,7 +198,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       }
       for (; I != E; ++I) {
           MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-          CurrBase = findLocationBase(I.getPointer());
+          CurrBase = Bases.base(Loc);
           CurrTraits =
             LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
           if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
@@ -216,14 +218,15 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
             Operator::getOpcode(V) == Instruction::AddrSpaceCast)
           V = cast<Operator>(V)->getOperand(0);
         if (auto *LI = dyn_cast<LoadInst>(V)) {
-          Value *Loc = findLocationBase(V);
+          const MemoryLocation *Loc = Bases.base(
+            MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo()));
           auto LocTraits = LocBases.find(Loc);
           assert(LocTraits != LocBases.end() &&
             "Traits of location must be initialized!");
           if (LocTraits->second == Private.Id ||
               LocTraits->second == Shared.Id)
             continue;
-          Value *Ptr = findLocationBase(LI->getPointerOperand());
+          const MemoryLocation *Ptr = Bases.base(MemoryLocation::get(LI));
           auto PtrTraits = LocBases.find(Ptr);
           assert(PtrTraits != LocBases.end() &&
             "Traits of location must be initialized!");
@@ -235,7 +238,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
           // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
           // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
           // Note that case when location is shared, but pointer is not shared
-          // may be dificulty to implement for distributed memory, for example:
+          // may be difficulty to implement for distributed memory, for example:
           // for(...) { P = ...; ... = *P; } It is not evident which memory
           // should be copy to each processor.
           LocTraits->second = Dependency.Id;
@@ -253,7 +256,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       // for (int I = 0; I < 2; ++I)
       //   X[I] = ...;
       // X[2] = X[0] + X[1] + X[2];
-      // If X will be defined as last private only, X[2] will be lost after
+      // If X will be defined as a last private only, X[2] will be lost after
       // copy out from this loop. So it must be defined as a first private.
       // Such check is complex even for scalar variables, for example:
       // int X;
@@ -264,30 +267,30 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
         LocTraits.second &= FirstPrivate.Id;
       switch (LocTraits.second) {
         case Shared.Id:
-          (*DS)[Shared].insert(LocTraits.first); ++NumShared; break;
+          (*DS)[Shared].push_back(LocTraits.first); ++NumShared; break;
         case Dependency.Id:
-          (*DS)[Dependency].insert(LocTraits.first); ++NumDeps; break;
+          (*DS)[Dependency].push_back(LocTraits.first); ++NumDeps; break;
         case Private.Id:
-          (*DS)[Private].insert(LocTraits.first); ++NumPrivate; break;
+          (*DS)[Private].push_back(LocTraits.first); ++NumPrivate; break;
         case FirstPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate; break;
+          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate; break;
         case FirstPrivate.Id & LastPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
         case LastPrivate.Id:
-          (*DS)[LastPrivate].insert(LocTraits.first); ++NumLPrivate; break;
+          (*DS)[LastPrivate].push_back(LocTraits.first); ++NumLPrivate; break;
         case FirstPrivate.Id & SecondToLastPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
         case SecondToLastPrivate.Id:
-          (*DS)[SecondToLastPrivate].insert(LocTraits.first); ++NumSToLPrivate;
+          (*DS)[SecondToLastPrivate].push_back(LocTraits.first); ++NumSToLPrivate;
           break;
         case FirstPrivate.Id & DynamicPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
         case DynamicPrivate.Id:
-          (*DS)[DynamicPrivate].insert(LocTraits.first); ++NumDPrivate; break;
+          (*DS)[DynamicPrivate].push_back(LocTraits.first); ++NumDPrivate; break;
       }
     }
-    for (llvm::Value *Loc : DefUse->getAddressAccesses())
-      (*DS)[AddressAccess].insert(findLocationBase(Loc)), ++NumAddressAccess;
+    for (llvm::Value *Ptr : DefUse->getAddressAccesses())
+      (*DS)[AddressAccess].push_back(Bases.base(MemoryLocation(Ptr, 0))) , ++NumAddressAccess;
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)
@@ -387,7 +390,7 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
     // A condition below is necessary even in case of store instruction.
     // It is possible that Loc1 aliases Loc2 and Loc1 is already written
     // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
-    // repeatted.
+    // repeated.
     if (DU->hasDef(ALoc))
       continue;
     AliasResult AR = AA.alias(Loc, ALoc);
@@ -401,7 +404,7 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
 
 void evaluateUnknownAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   assert(I && "Instruction must not be null!");
-  assert(AST && "AliasSetTracker mut not be null!");
+  assert(AST && "AliasSetTracker must not be null!");
   assert(DU && "Value of def-use attribute must not be null!");
   assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
   DU->addUnknownInst(I);
@@ -457,7 +460,6 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   for (Instruction &I : BB->getInstList()) {
     if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
       Value *Ptr = GEPI->getPointerOperand();
-      Ptr = findLocationBase(Ptr);
       DU->addAddressAccess(Ptr);
       continue;
     }
@@ -505,7 +507,7 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   );
   PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
   assert(PV && "Data-flow value must not be null!");
-  PV->setIn(std::move(V)); // Do not use V below to avoid undefined behaviour.
+  PV->setIn(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (llvm::isa<DFExit>(N)) {
     if (PV->getOut() != PV->getIn()) {
       PV->setOut(PV->getIn());
@@ -560,7 +562,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     DefUseSet *DU = N->getAttribute<DefUseAttr>();
     assert(DU && "Value of def-use attribute must not be null!");
     // We calculate a set of locations (Uses)
-    // which get values outside the loop or from previouse loop iterations.
+    // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses())
       if (!PV->getIn().contain(Loc))
@@ -606,7 +608,7 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   assert(N && "Node must not be null!");
   LiveSet *LS = N->getAttribute<LiveAttr>();
   assert(LS && "Data-flow value must not be null!");
-  LS->setOut(std::move(V)); // Do not use V below to avoid undefined behaviour.
+  LS->setOut(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (isa<DFEntry>(N)) {
     if (LS->getIn() != LS->getOut()) {
       LS->setIn(LS->getOut());

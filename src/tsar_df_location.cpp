@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements methdos declared in tsar_df_location.h
+// This file implements methods declared in tsar_df_location.h
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,7 +21,7 @@ using namespace llvm;
 
 namespace tsar {
 std::pair<LocationSet::iterator, bool> LocationSet::insert(
-    const llvm::MemoryLocation &Loc) {
+  const llvm::MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   auto I = mLocations.find(Loc.Ptr);
   if (I == mLocations.end()) {
@@ -125,6 +125,104 @@ void LocationDFValue::print(raw_ostream &OS) const {
 
 void LocationDFValue::dump() const { print(dbgs()); }
 
+const Value * BaseLocationSet::stripPointer(const Value *Ptr) {
+  assert(Ptr && "Pointer to memory location must not be null!");
+  if (Operator::getOpcode(Ptr) == Instruction::BitCast ||
+      Operator::getOpcode(Ptr) == Instruction::AddrSpaceCast)
+    return stripPointer(cast<Operator>(Ptr)->getOperand(0));
+  if (auto LI = dyn_cast<const LoadInst>(Ptr))
+    return stripPointer(LI->getPointerOperand());
+  if (auto GEPI = dyn_cast<const GetElementPtrInst>(Ptr))
+    return stripPointer(GEPI->getPointerOperand());
+  assert((isa<const GlobalVariable>(Ptr) || isa<const AllocaInst>(Ptr)) &&
+    "Unsupported type of pointer to memory location!");
+  return Ptr;
+}
+
+void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
+  assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  if (Operator::getOpcode(Loc.Ptr) == Instruction::BitCast ||
+      Operator::getOpcode(Loc.Ptr) == Instruction::AddrSpaceCast) {
+    Loc.Ptr = cast<const Operator>(Loc.Ptr)->getOperand(0);
+    return stripToBase(Loc);
+  }
+  if (auto GEPI = dyn_cast<const GetElementPtrInst>(Loc.Ptr)) {
+    Type *Ty = GEPI->getSourceElementType();
+    // TODO (kaniandr@gmail.com) : it is possible that sequence of
+    // 'getelmentptr' instructions is represented as a single instruction.
+    // If the result of it is a member of a structure this case must be
+    // evaluated separately. It this moment only individual access to 
+    // members is supported: for struct STy {int X;}; it is
+    // %X = getelementptr inbounds %struct.STy, %struct.STy* %S, i32 0, i32 0
+    // Also fix it in isSameBase().
+    if (!isa<StructType>(Ty) || GEPI->getNumIndices() != 2) {
+      Loc.Ptr = GEPI->getPointerOperand();
+      Loc.Size = MemoryLocation::UnknownSize;
+      return stripToBase(Loc);
+    }
+  }
+  assert((isa<const GlobalVariable>(Loc.Ptr) || isa<const AllocaInst>(Loc.Ptr)
+    || isa<const GetElementPtrInst>(Loc.Ptr) || isa<const LoadInst>(Loc.Ptr)) &&
+    "Unsupported type of pointer to memory location!");
+  return;
+}
+
+bool BaseLocationSet::isSameBase(
+    const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
+  assert(BasePtr1 && "Pointer to memory location must not be null!");
+  assert(BasePtr2 && "Pointer to memory location must not be null!");
+  if (BasePtr1 == BasePtr2)
+    return true;
+  if (BasePtr1->getValueID() != BasePtr2->getValueID())
+    return false;
+  if (auto LI = dyn_cast<const LoadInst>(BasePtr1))
+    return isSameBase(LI->getPointerOperand(),
+      cast<const LoadInst>(BasePtr2)->getPointerOperand());
+  if (auto GEPI1 = dyn_cast<const GetElementPtrInst>(BasePtr1)) {
+    auto GEPI2 = dyn_cast<const GetElementPtrInst>(BasePtr2);
+    if (!isSameBase(GEPI1->getPointerOperand(), GEPI2->getPointerOperand()))
+      return false;
+    Type *Ty1 = GEPI1->getSourceElementType();
+    Type *Ty2 = GEPI2->getSourceElementType();
+    if (!isa<StructType>(Ty1) && !isa<StructType>(Ty2))
+      return true;
+    // TODO (kaniandr@gmail.com) : see stripToBase().
+    if (Ty1 != Ty2 || GEPI1->getNumIndices() != 2 ||
+        GEPI1->getNumIndices() != GEPI2->getNumIndices())
+      return false;
+    const Use *Idx1 = GEPI1->idx_begin();
+    const Use *Idx2 = GEPI2->idx_begin();
+    assert(isa<ConstantInt>(Idx1) && cast<ConstantInt>(Idx1)->isZero() &&
+      "First index in getelemenptr for structure is not a zero value!");
+    assert(isa<ConstantInt>(Idx2) && cast<ConstantInt>(Idx2)->isZero() &&
+      "First index in getelemenptr for structure is not a zero value!");
+    ++Idx1; ++Idx2;
+    return cast<ConstantInt>(Idx1)->getZExtValue() ==
+      cast<ConstantInt>(Idx2)->getZExtValue();
+  }
+}
+
+const MemoryLocation * BaseLocationSet::base(const MemoryLocation &Loc) {
+  assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  LocationSet *LS;
+  MemoryLocation Base(Loc);
+  stripToBase(Base);
+  const Value *StrippedPtr = stripPointer(Base.Ptr);
+  auto I = mBases.find(StrippedPtr);
+  if (I != mBases.end()) {
+    LS = I->second;
+    for (MemoryLocation &Curr : *LS)
+      if (isSameBase(Curr.Ptr, Base.Ptr)) {
+        Base.Ptr = Curr.Ptr;
+        break;
+      }
+  } else {
+    LS = new LocationSet;
+    mBases.insert(std::make_pair(StrippedPtr, LS));
+  } 
+  return LS->insert(Base).first.operator->();
+}
+
 std::string locationToSource(const Value *Loc) {
   bool NB;
   DITypeRef DITy;
@@ -135,9 +233,6 @@ namespace detail {
 std::string locationToSource(
     const Value *Loc, DITypeRef &DITy, bool &NeadBracket) {
   assert(Loc && "Location must not be null!");
-  if (Operator::getOpcode(Loc) == Instruction::BitCast ||
-      Operator::getOpcode(Loc) == Instruction::AddrSpaceCast)
-    Loc = cast<Operator>(Loc)->getOperand(0);
   if (auto *LI = dyn_cast<const LoadInst>(Loc))
     return locationToSource(LI, DITy, NeadBracket);
   if (auto *GEPI = dyn_cast<const GetElementPtrInst>(Loc))
@@ -176,7 +271,7 @@ std::string locationToSource(
   assert(Loc && "Location must not be null!");
   NeadBracket = false;
   Type *Ty = Loc->getSourceElementType();
-  if (!isa<StructType>(Ty))
+  if (!isa<StructType>(Ty) || Loc->getNumIndices() != 2)
     return "";
   StructType *StructTy = cast<StructType>(Ty);
   const Value *Ptr = Loc->getPointerOperand();
@@ -198,7 +293,7 @@ std::string locationToSource(
         // For example, let us consider the following C-code:
         // struct S {int X;};
         // struct S Z;
-        // There are following heararche of meta information for type of Z:
+        // There are following hierarchy of meta information for type of Z:
         // DICompositeType with the S name and one element which is
         //   DIDerivedType with the X name and base type
         //     DIBaseType with the int name.
@@ -212,20 +307,6 @@ std::string locationToSource(
   }
   return Str;
 }
-}
-
-Value * findLocationBase(Value *Loc) {
-  assert(Loc && "Location must not be null!");
-  auto Src = locationToSource(Loc);
-  if (!Src.empty())
-    return Loc;
-  if (LoadInst *LI = dyn_cast<LoadInst>(Loc))
-    Loc = LI->getPointerOperand();
-  else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Loc))
-    Loc = GEPI->getPointerOperand();
-  else
-    return Loc;
-  return findLocationBase(Loc);
 }
 }
 
