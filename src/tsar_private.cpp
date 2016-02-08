@@ -139,6 +139,9 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
+    DependencySet *DS = new DependencySet;
+    mPrivates.insert(std::make_pair(L->getLoop(), DS));
+    R->addAttribute<DependencyAttr>(DS);
     DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
     assert(DefUse && "Value of def-use attribute must not be null");
     LiveSet *LS = R->getAttribute<LiveAttr>();
@@ -147,7 +150,6 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
     DenseMap<const MemoryLocation *, unsigned long long> LocBases;
-    BaseLocationSet Bases;
     DFNode *LatchNode = R->getLatchNode();
     PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
     assert(LatchDF && "List of must defined locations must not be null!");
@@ -158,13 +160,13 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       if (AS.isForwardingAliasSet() || AS.empty())
         continue; // The set is empty if it contains only unknown instructions.
       auto I = AS.begin(), E = AS.end();
-      const MemoryLocation *CurrBase = Bases.base(
-        MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo()));
+      const MemoryLocation *CurrBase = *(*DS)[Analyze].insert(
+        MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
       auto CurrTraits =
         LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
       for (; I != E; ++I) {
         MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-        const MemoryLocation *Base = Bases.base(Loc);
+        const MemoryLocation *Base = *(*DS)[Analyze].insert(Loc).first;
         if (CurrBase != Base) {
           // Current alias set contains memory locations with different bases.
           // So there are explicitly accessed locations with different bases
@@ -198,7 +200,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       }
       for (; I != E; ++I) {
           MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-          CurrBase = Bases.base(Loc);
+          CurrBase = *(*DS)[Analyze].insert(Loc).first;
           CurrTraits =
             LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
           if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
@@ -218,15 +220,16 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
             Operator::getOpcode(V) == Instruction::AddrSpaceCast)
           V = cast<Operator>(V)->getOperand(0);
         if (auto *LI = dyn_cast<LoadInst>(V)) {
-          const MemoryLocation *Loc = Bases.base(
-            MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo()));
+          const MemoryLocation *Loc = *(*DS)[Analyze].insert(
+            MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
           auto LocTraits = LocBases.find(Loc);
           assert(LocTraits != LocBases.end() &&
             "Traits of location must be initialized!");
           if (LocTraits->second == Private.Id ||
               LocTraits->second == Shared.Id)
             continue;
-          const MemoryLocation *Ptr = Bases.base(MemoryLocation::get(LI));
+          const MemoryLocation *Ptr =
+            *(*DS)[Analyze].insert(MemoryLocation::get(LI)).first;
           auto PtrTraits = LocBases.find(Ptr);
           assert(PtrTraits != LocBases.end() &&
             "Traits of location must be initialized!");
@@ -245,9 +248,6 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
         }
       }
     }
-    DependencySet *DS = new DependencySet;
-    mPrivates.insert(std::make_pair(L->getLoop(), DS));
-    R->addAttribute<DependencyAttr>(DS);
     for (auto &LocTraits : LocBases) {
       // TODO (kaniandr@gmail.com) : This is very conservative assumption
       // but very simple to check. Let see an example:
@@ -289,8 +289,11 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
           (*DS)[DynamicPrivate].push_back(LocTraits.first); ++NumDPrivate; break;
       }
     }
-    for (llvm::Value *Ptr : DefUse->getAddressAccesses())
-      (*DS)[AddressAccess].push_back(Bases.base(MemoryLocation(Ptr, 0))) , ++NumAddressAccess;
+    for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
+      (*DS)[AddressAccess].push_back(
+        *(*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first);
+      ++NumAddressAccess;
+    }
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)

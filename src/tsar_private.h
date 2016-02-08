@@ -265,6 +265,7 @@ struct name_ { static constexpr auto Id = id_; typedef collection_ ValueType; };
 struct DependencySet {
   /// List of locations with an appropriate trait.
   typedef std::list<const llvm::MemoryLocation *> LocationList;
+  struct Analyze { typedef BaseLocationSet ValueType; };
   TSAR_TRAIT_DEF(NoAccess, 1111111_b, LocationList)
   TSAR_TRAIT_DEF(AddressAccess, 1011111_b, LocationList)
   TSAR_TRAIT_DEF(Shared, 0111110_b, LocationList)
@@ -277,6 +278,7 @@ struct DependencySet {
 };
 }
 
+constexpr detail::DependencySet::Analyze Analyze;
 constexpr detail::DependencySet::NoAccess NoAccess;
 constexpr detail::DependencySet::AddressAccess AddressAccess;
 constexpr detail::DependencySet::Private Private;
@@ -290,6 +292,7 @@ constexpr detail::DependencySet::Dependency Dependency;
 /// \brief This represents data dependency in loops.
 ///
 /// The following information is available:
+/// - a set of analyzed locations;
 /// - a set of locations addresses of which are evaluated;
 /// - a set of private locations;
 /// - a set of last private locations;
@@ -338,7 +341,8 @@ constexpr detail::DependencySet::Dependency Dependency;
 /// all methods that is available for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of locations.
-class DependencySet: public CELL_COLL_8(
+class DependencySet: public CELL_COLL_9(
+    detail::DependencySet::Analyze,
     detail::DependencySet::AddressAccess,
     detail::DependencySet::Private,
     detail::DependencySet::LastPrivate,
@@ -354,7 +358,7 @@ public:
   /// \brief Checks that a location has a specified kind of privatizability.
   ///
   /// Usage: DependencySet *DS; DS->is(Private, Loc);
-  template<class Kind> bool is(Kind K, llvm::Value *Loc) const {
+  template<class Kind> bool is(Kind K, const llvm::MemoryLocation *Loc) const {
     return (*this)[K].count(Loc) != 0;
   }
 };

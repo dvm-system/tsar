@@ -15,6 +15,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Analysis/MemoryLocation.h>
+#include <list>
 
 namespace llvm {
 class LoadInst;
@@ -490,17 +491,54 @@ class BaseLocationSet {
   /// which contain all base locations addressed by the key pointer.
   typedef llvm::DenseMap<const llvm::Value *, LocationSet *> StrippedMap;
 
+  /// This is used to implement efficient iteration over all locations
+  /// in the set.
+  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 64> BaseSet;
+
 public:
-  /// \brief Returns base location for the specified memory location.
+  /// This type used to represent properties associated with a size of the set.
+  typedef unsigned size_type;
+
+  /// This type used to iterate over all locations in this set.
+  typedef BaseSet::const_iterator iterator;
+
+  /// This type used to iterate over all locations in this set.
+  typedef BaseSet::const_iterator const_iterator;
+
+  /// \brief Inserts a new base location into this set, returns false if
+  ///  it already exists.
   ///
-  /// If determined base location already exists in the collection of bases
-  /// it will be merged with exist base. For example,
+  /// If a base location for the specified location contains some base location
+  /// in this set, the appropriate location will be updated.
+  /// In this case, this method also returns true. For example,
   /// the following expressions *(short*)P and *P where P has type int
-  /// have the same base locations *P. When *(short*)P will be evaluated
-  /// the result will be *P with size size_of(short). When *P will be evaluated
-  /// the result will be *P with size size_of(int). These two results will be 
-  /// merged, so the general base must be *P with size size_of(int).
-  const llvm::MemoryLocation * base(const llvm::MemoryLocation &Loc);
+  /// have base locations started at *P with different sizes.
+  /// When *(short*)P will be evaluated the result will be *P with size
+  /// size_of(short). When *P will be evaluated the result will be *P with
+  /// size size_of(int). These two results will be  merged, so the general base
+  /// must be *P with size size_of(int).
+  std::pair<iterator, bool> insert(const llvm::MemoryLocation &Loc);
+
+  /// Returns true if there are no base locations is the set.
+  bool empty() const { return mBases.empty(); }
+
+  /// Returns number of base locations in the set.
+  size_type size() const { return mBases.size(); }
+
+  /// Return 1 if the specified location is in the set, 0 otherwise.
+  size_type count(const llvm::MemoryLocation &Loc) const;
+
+  /// Returns iterator that points to the beginning of locations.
+  iterator begin() { return mBaseList.begin(); }
+
+  /// Returns iterator that points to the ending of locations.
+  iterator end() { return mBaseList.end(); }
+
+  /// Returns iterator that points to the beginning of locations.
+  const_iterator begin() const { return mBaseList.begin(); }
+
+  /// Returns iterator that points to the ending of locations.
+  const_iterator end() const { return mBaseList.end(); }
 
 private:
   /// \brief Strips a pointer to an 'alloca' or a 'global variable'.
@@ -515,12 +553,13 @@ private:
   /// llvm::MemoryLocation::UnknownSize. But if this element is a structure
   /// 'getelementptr' will not be stripped because it is convenient to analyze
   /// different members of structure separately.
-  static void  stripToBase(llvm::MemoryLocation &Loc);
+  static void stripToBase(llvm::MemoryLocation &Loc);
 
   /// Compares to bases.
   static bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
 
   StrippedMap mBases;
+  BaseSet mBaseList;
 };
 
 /// \brief Represents memory location as an expression in a source language.

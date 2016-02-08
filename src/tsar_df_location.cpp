@@ -202,7 +202,8 @@ bool BaseLocationSet::isSameBase(
   }
 }
 
-const MemoryLocation * BaseLocationSet::base(const MemoryLocation &Loc) {
+std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
+    const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   LocationSet *LS;
   MemoryLocation Base(Loc);
@@ -219,8 +220,29 @@ const MemoryLocation * BaseLocationSet::base(const MemoryLocation &Loc) {
   } else {
     LS = new LocationSet;
     mBases.insert(std::make_pair(StrippedPtr, LS));
-  } 
-  return LS->insert(Base).first.operator->();
+  }
+  auto Pair = LS->insert(Base);
+  return std::make_pair(
+    mBaseList.insert(Pair.first.operator->()).first,
+    Pair.second);
+}
+
+BaseLocationSet::size_type BaseLocationSet::count(
+    const MemoryLocation &Loc) const {
+  assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  MemoryLocation Base(Loc);
+  stripToBase(Base);
+  const Value *StrippedPtr = stripPointer(Base.Ptr);
+  auto I = mBases.find(StrippedPtr);
+  if (I != mBases.end()) {
+    LocationSet *LS = I->second;
+    for (MemoryLocation &Curr : *LS)
+      if (isSameBase(Curr.Ptr, Base.Ptr)) {
+        Base.Ptr = Curr.Ptr;
+        return LS->contain(Base) ? 1 : 0;
+      }
+  }
+  return 0;
 }
 
 std::string locationToSource(const Value *Loc) {
