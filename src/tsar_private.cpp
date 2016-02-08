@@ -125,9 +125,9 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       errs() << "\n";
     }
     errs() << Offset << " addresses:\n";
-    for (const MemoryLocation *Loc : DS[AddressAccess]) {
+    for (const Value *Ptr : DS[AddressAccess]) {
       errs() << Offset << "  ";
-      printLocationSource(errs(), Loc->Ptr);
+      printLocationSource(errs(), Ptr);
       errs() << "\n";
     }
     errs() << "\n";
@@ -267,31 +267,31 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
         LocTraits.second &= FirstPrivate.Id;
       switch (LocTraits.second) {
         case Shared.Id:
-          (*DS)[Shared].push_back(LocTraits.first); ++NumShared; break;
+          (*DS)[Shared].insert(LocTraits.first); ++NumShared; break;
         case Dependency.Id:
-          (*DS)[Dependency].push_back(LocTraits.first); ++NumDeps; break;
+          (*DS)[Dependency].insert(LocTraits.first); ++NumDeps; break;
         case Private.Id:
-          (*DS)[Private].push_back(LocTraits.first); ++NumPrivate; break;
+          (*DS)[Private].insert(LocTraits.first); ++NumPrivate; break;
         case FirstPrivate.Id:
-          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate; break;
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate; break;
         case FirstPrivate.Id & LastPrivate.Id:
-          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
         case LastPrivate.Id:
-          (*DS)[LastPrivate].push_back(LocTraits.first); ++NumLPrivate; break;
+          (*DS)[LastPrivate].insert(LocTraits.first); ++NumLPrivate; break;
         case FirstPrivate.Id & SecondToLastPrivate.Id:
-          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
         case SecondToLastPrivate.Id:
-          (*DS)[SecondToLastPrivate].push_back(LocTraits.first); ++NumSToLPrivate;
+          (*DS)[SecondToLastPrivate].insert(LocTraits.first); ++NumSToLPrivate;
           break;
         case FirstPrivate.Id & DynamicPrivate.Id:
-          (*DS)[FirstPrivate].push_back(LocTraits.first); ++NumFPrivate;
+          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
         case DynamicPrivate.Id:
-          (*DS)[DynamicPrivate].push_back(LocTraits.first); ++NumDPrivate; break;
+          (*DS)[DynamicPrivate].insert(LocTraits.first); ++NumDPrivate; break;
       }
     }
     for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
-      (*DS)[AddressAccess].push_back(
-        *(*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first);
+      auto I = (*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first;
+      (*DS)[AddressAccess].insert((*I)->Ptr);
       ++NumAddressAccess;
     }
   }

@@ -15,7 +15,6 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Analysis/MemoryLocation.h>
-#include <list>
 
 namespace llvm {
 class LoadInst;

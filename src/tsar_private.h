@@ -28,7 +28,6 @@
 #include <cell.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
-#include <list>
 
 using Utility::operator "" _b;
 
@@ -49,9 +48,9 @@ namespace tsar {
 /// written by Peng Tu and David Padua (page 6):
 /// "A definition of variable v in a basic block S is said to be outward
 /// exposed if it is the last definition of v in S. A use of v is outward
-/// exposed if S does not contain a denition of v before this use". Note that
+/// exposed if S does not contain a definition of v before this use". Note that
 /// in case of loops locations which have outward exposed uses can get value
-/// not only outside the loop but also from previouse loop iterations.
+/// not only outside the loop but also from previous loop iterations.
 class DefUseSet {
 public:
   /// Set of pointers to locations.
@@ -122,7 +121,7 @@ public:
   /// \pre The specified instruction may modify memory.
   bool addMayDef(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
-    assert(I->mayWriteToMemory() && "Instrcution does not modify memory!");
+    assert(I->mayWriteToMemory() && "Instruction does not modify memory!");
     return addMayDef(llvm::MemoryLocation::get(I));
   }
 
@@ -131,7 +130,7 @@ public:
 
   /// Returns true if a location gets value outside a data-flow node.
   ///
-  /// May use locations should be also counted because conservativness
+  /// May use locations should be also counted because conservativeness
   /// of analysis must be preserved.
   /// \attention
   /// - This method does not use alias information.
@@ -154,7 +153,7 @@ public:
   /// \pre The specified instruction may read memory.
   bool addUse(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
-    assert(I->mayReadFromMemory() && "Instrcution does not read memory!");
+    assert(I->mayReadFromMemory() && "Instruction does not read memory!");
     return addUse(llvm::MemoryLocation::get(I));
   }
 
@@ -189,7 +188,7 @@ public:
   bool addExplicitAccess(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
     assert(I->mayReadOrWriteMemory() &&
-      "Instrcution does not read nor write memory!");
+      "Instruction does not read nor write memory!");
     return mExplicitAccesses.add(I);
   }
 
@@ -201,8 +200,8 @@ public:
 
   /// Returns locations addresses of which are explicitly evaluated in the node.
   ///
-  /// For example, if &x expression occures in the node then address of
-  /// the x alloca is evaluated. It means that regardless of whether the
+  /// For example, if &x expression occurs in the node then address of
+  /// the x 'alloca' is evaluated. It means that regardless of whether the
   /// location will be privatized the original location address should be
   /// available.
   const PointerSet & getAddressAccesses() const { return mAddressAccesses; }
@@ -263,18 +262,20 @@ struct name_ { static constexpr auto Id = id_; typedef collection_ ValueType; };
 /// This represents identifier of cells in DependencySet collection,
 /// which is represented as a static list.
 struct DependencySet {
-  /// List of locations with an appropriate trait.
-  typedef std::list<const llvm::MemoryLocation *> LocationList;
+  /// Set of locations with an appropriate trait.
+  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 64> TraitSet;
+  /// Set of pointers to memory locations.
+  typedef llvm::SmallPtrSet<const llvm::Value *, 64> PointerSet;
   struct Analyze { typedef BaseLocationSet ValueType; };
-  TSAR_TRAIT_DEF(NoAccess, 1111111_b, LocationList)
-  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, LocationList)
-  TSAR_TRAIT_DEF(Shared, 0111110_b, LocationList)
-  TSAR_TRAIT_DEF(Private, 0101111_b, LocationList)
-  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, LocationList)
-  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, LocationList)
-  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, LocationList)
-  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, LocationList)
-  TSAR_TRAIT_DEF(Dependency, 0100000_b, LocationList)
+  TSAR_TRAIT_DEF(NoAccess, 1111111_b, TraitSet)
+  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, PointerSet)
+  TSAR_TRAIT_DEF(Shared, 0111110_b, TraitSet)
+  TSAR_TRAIT_DEF(Private, 0101111_b, TraitSet)
+  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, TraitSet)
+  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, TraitSet)
+  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, TraitSet)
+  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, TraitSet)
+  TSAR_TRAIT_DEF(Dependency, 0100000_b, TraitSet)
 };
 }
 
@@ -352,8 +353,11 @@ class DependencySet: public CELL_COLL_9(
     detail::DependencySet::Shared,
     detail::DependencySet::Dependency) {
 public:
-  /// Set of locations.
-  typedef detail::DependencySet::LocationList LocationList;
+  /// Set of locations with an appropriate trait.
+  typedef detail::DependencySet::TraitSet TraitSet;
+
+  /// Set of pointers to memory locations.
+  typedef detail::DependencySet::PointerSet PointerSet;
 
   /// \brief Checks that a location has a specified kind of privatizability.
   ///
