@@ -182,9 +182,12 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
             CurrTraits->second &= LastPrivate.Id;
           else if (LatchDefs.contain(Loc))
             // These location will be stored as second to last private, i.e.
-            // the last definition of these locations is executed on the second
-            // to the last loop iteration (on the last iteration the loop
-            // condition check is executed only).
+            // the last definition of these locations is executed on the
+            // second to the last loop iteration (on the last iteration the
+            // loop condition check is executed only).
+            // It is possible that there is only one (last) iteration in
+            // the loop. In this case the location has not been assigned and
+            // must be declared as a first private.
             CurrTraits->second &= SecondToLastPrivate.Id & FirstPrivate.Id;
           else
             // There is no certainty that the location is always assigned
@@ -258,12 +261,10 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
       // X[2] = X[0] + X[1] + X[2];
       // If X will be defined as a last private only, X[2] will be lost after
       // copy out from this loop. So it must be defined as a first private.
-      // Such check is complex even for scalar variables, for example:
-      // int X;
-      // *(&X + 10) = ...
-      if (LocTraits.second == LastPrivate.Id ||
-          LocTraits.second == SecondToLastPrivate.Id ||
-          LocTraits.second == DynamicPrivate.Id)
+      if ((LocTraits.second == LastPrivate.Id ||
+           LocTraits.second == SecondToLastPrivate.Id ||
+           LocTraits.second == DynamicPrivate.Id) &&
+          !DefUse->hasDef(*LocTraits.first))
         LocTraits.second &= FirstPrivate.Id;
       switch (LocTraits.second) {
         case Shared.Id:
@@ -366,7 +367,7 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   assert(DU && "Value of def-use attribute must not be null!");
   assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
   Value *Ptr;
-  uint16_t Size;
+  uint64_t Size;
   std::function<void(const MemoryLocation &)> AddMust, AddMay;
   AliasAnalysis &AA = AST->getAliasAnalysis();
   if (auto *SI = dyn_cast<StoreInst>(I)) {

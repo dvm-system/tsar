@@ -1,4 +1,4 @@
-//===--- tsar_df_location.cpp - Data Flow Framework ----- ---------*- C++ -*-===//
+//===--- tsar_df_location.cpp - Data Flow Framework ----- -------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -151,7 +151,7 @@ void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
     // TODO (kaniandr@gmail.com) : it is possible that sequence of
     // 'getelmentptr' instructions is represented as a single instruction.
     // If the result of it is a member of a structure this case must be
-    // evaluated separately. It this moment only individual access to 
+    // evaluated separately. It this moment only individual access to
     // members is supported: for struct STy {int X;}; it is
     // %X = getelementptr inbounds %struct.STy, %struct.STy* %S, i32 0, i32 0
     // Also fix it in isSameBase().
@@ -200,6 +200,7 @@ bool BaseLocationSet::isSameBase(
     return cast<ConstantInt>(Idx1)->getZExtValue() ==
       cast<ConstantInt>(Idx2)->getZExtValue();
   }
+  return false;
 }
 
 std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
