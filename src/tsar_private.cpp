@@ -72,6 +72,20 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   LiveDFFwk LiveFwk(mAliasTracker);
   LiveSet *LS = new LiveSet;
   DFF.addAttribute<LiveAttr>(LS);
+  DefUseSet *DefUse = DFF.getAttribute<DefUseAttr>();
+  // If inter-procedural analysis is not performed conservative assumption for
+  // live variable analysis should be made. All locations except 'alloca' are
+  // considered as alive before exit from this function.
+  LocationSet MayLives;
+  for (MemoryLocation &Loc : DefUse->getDefs()) {
+    if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
+      MayLives.insert(Loc);
+  }
+  for (MemoryLocation &Loc : DefUse->getMayDefs()) {
+    if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
+      MayLives.insert(Loc);
+  }
+  LS->setOut(std::move(MayLives));
   solveDataFlowDownward(&LiveFwk, &DFF);
   resolveCandidats(&DFF);
   releaseMemory(&DFF);
@@ -613,15 +627,12 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   DefUseSet *DefUse = new DefUseSet(mAliasTracker->getAliasAnalysis());
   R->addAttribute<DefUseAttr>(DefUse);
   assert(DefUse && "Value of def-use attribute must not be null!");
-  DFLoop *L = llvm::dyn_cast<DFLoop>(R);
-  if (!L)
-    return;
   // ExitingDefs is a set of must define locations (Defs) for the loop.
   // These locations always have definitions inside the loop regardless
   // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
   const LocationDFValue &ExitingDefs = RT::getValue(ExitNode, this);
-  for (DFNode *N : L->getNodes()) {
+  for (DFNode *N : R->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
     DefUseSet *DU = N->getAttribute<DefUseAttr>();
