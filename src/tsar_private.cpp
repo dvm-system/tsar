@@ -329,9 +329,13 @@ void PrivateRecognitionPass::resolveAddresses(
     "Dependency set must be related to the specified loop!");
   for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
     auto I = (*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first;
-    // If this address is stored in some location do not remember it, because
-    // locations are analyzed separately.
-    if (isa<LoadInst>((*I)->Ptr))
+    // Do not remember an address:
+    // * if it is stored in some location, for example isa<LoadInst>((*I)->Ptr),
+    //  locations are analyzed separately;
+    // * if it points to a temporary location and should not be analyzed:
+    // for example, a result of a call can be a pointer.
+    if (!(*I)->Ptr ||
+        !isa<AllocaInst>((*I)->Ptr) && !isa<GlobalVariable>((*I)->Ptr))
       continue;
     Loop *Lp = L->getLoop();
     // If this is an address of a location declared in the loop do not

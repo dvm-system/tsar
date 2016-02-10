@@ -22,7 +22,6 @@ using namespace llvm;
 namespace tsar {
 std::pair<LocationSet::iterator, bool> LocationSet::insert(
   const llvm::MemoryLocation &Loc) {
-  assert(Loc.Ptr && "Pointer to memory location must not be null!");
   auto I = mLocations.find(Loc.Ptr);
   if (I == mLocations.end()) {
     MemoryLocation *NewLoc = new MemoryLocation(Loc);
@@ -161,19 +160,20 @@ void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
       return stripToBase(Loc);
     }
   }
-  assert((isa<const GlobalVariable>(Loc.Ptr) || isa<const AllocaInst>(Loc.Ptr)
-    || isa<const GetElementPtrInst>(Loc.Ptr) || isa<const LoadInst>(Loc.Ptr)) &&
-    "Unsupported type of pointer to memory location!");
+  if (!(isa<const GlobalVariable>(Loc.Ptr) || isa<const AllocaInst>(Loc.Ptr)
+    || isa<const GetElementPtrInst>(Loc.Ptr) || isa<const LoadInst>(Loc.Ptr))) {
+    Loc.Ptr = nullptr;
+    Loc.Size = MemoryLocation::UnknownSize;
+  }
   return;
 }
 
 bool BaseLocationSet::isSameBase(
     const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
-  assert(BasePtr1 && "Pointer to memory location must not be null!");
-  assert(BasePtr2 && "Pointer to memory location must not be null!");
   if (BasePtr1 == BasePtr2)
     return true;
-  if (BasePtr1->getValueID() != BasePtr2->getValueID())
+  if (!BasePtr1 || !BasePtr2 ||
+      BasePtr1->getValueID() != BasePtr2->getValueID())
     return false;
   if (auto LI = dyn_cast<const LoadInst>(BasePtr1))
     return isSameBase(LI->getPointerOperand(),
@@ -209,7 +209,7 @@ std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
   LocationSet *LS;
   MemoryLocation Base(Loc);
   stripToBase(Base);
-  const Value *StrippedPtr = stripPointer(Base.Ptr);
+  const Value *StrippedPtr = Base.Ptr ? stripPointer(Base.Ptr) : nullptr;
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
     LS = I->second;

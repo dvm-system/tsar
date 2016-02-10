@@ -134,7 +134,6 @@ public:
 
   /// Returns a location which contains the specified location.
   iterator findContaining(const llvm::MemoryLocation &Loc) {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
     return (I != mLocations.end() &&
       Loc.Size <= I->second->Size &&
@@ -144,7 +143,6 @@ public:
 
   /// Returns a location which contains the specified location.
   const_iterator findContaining(const llvm::MemoryLocation &Loc) const {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
     return (I != mLocations.end() &&
       Loc.Size <= I->second->Size &&
@@ -160,7 +158,6 @@ public:
 
   /// Returns a location which is contained in the specified location.
   iterator findCoveredBy(const llvm::MemoryLocation &Loc) {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
     return (I != mLocations.end() &&
       Loc.Size >= I->second->Size &&
@@ -170,7 +167,6 @@ public:
 
   /// Returns a location which is contained in the specified location.
   const_iterator findCoveredBy(const llvm::MemoryLocation &Loc) const {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     auto I = mLocations.find(Loc.Ptr);
     return (I != mLocations.end() &&
       Loc.Size >= I->second->Size &&
@@ -186,13 +182,11 @@ public:
 
   /// Returns a location which may overlap with the specified location.
   iterator findOverlappedWith(const llvm::MemoryLocation &Loc) {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     return iterator(mLocations.find(Loc.Ptr));
   }
 
   /// Returns a location which may overlap with the specified location.
   const_iterator findOverlappedWith(const llvm::MemoryLocation &Loc) const {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     return const_iterator(mLocations.find(Loc.Ptr));
   }
 
@@ -278,13 +272,13 @@ void difference(const location_iterator &LocBegin,
 }
 
 /// \brief Representation of a data-flow value formed by a set of locations.
-/// 
+///
 /// A data-flow value is a set of locations for which a number of operations
 /// is defined.
 class LocationDFValue {
   // There are two kind of values. The KIND_FULL kind means that the set of
   // variables is full and contains all variables used in the analyzed program.
-  // The KIND_MASK kind means that the set contains variables located in the 
+  // The KIND_MASK kind means that the set contains variables located in the
   // location collection (mLocations). This is internal information which is
   // necessary to safely and effectively implement a number of operations
   // which is permissible for a arbitrary set of variables.
@@ -386,7 +380,6 @@ public:
 
   /// Returns true if the value contains the specified location.
   bool contain(const llvm::MemoryLocation &Loc) const {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.contain(Loc);
   }
@@ -410,7 +403,6 @@ public:
   /// If the specified value contains some value in this set, the appropriate
   /// value will be updated. In this case, this method also returns true.
   bool insert(const llvm::MemoryLocation &Loc) {
-    assert(Loc.Ptr && "Pointer to memory location must not be null!");
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     if (mKind == KIND_FULL)
       return true;
@@ -516,6 +508,10 @@ public:
   /// size_of(short). When *P will be evaluated the result will be *P with
   /// size size_of(int). These two results will be  merged, so the general base
   /// must be *P with size size_of(int).
+  ///
+  /// For some locations base location is unknown, for convenience unknown base
+  /// location will be also stored in the set with null pointer to the beginning
+  /// and unknown size.
   std::pair<iterator, bool> insert(const llvm::MemoryLocation &Loc);
 
   /// Returns true if there are no base locations is the set.
@@ -551,7 +547,8 @@ private:
   /// will be stripped (pointer will be changed) and size will be changed to
   /// llvm::MemoryLocation::UnknownSize. But if this element is a structure
   /// 'getelementptr' will not be stripped because it is convenient to analyze
-  /// different members of structure separately.
+  /// different members of structure separately. If base is unknown Loc.Ptr will
+  /// be set to nullptr.
   static void stripToBase(llvm::MemoryLocation &Loc);
 
   /// Compares to bases.
