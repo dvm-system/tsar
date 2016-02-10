@@ -211,8 +211,6 @@ std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
   LocationSet *LS;
   MemoryLocation Base(Loc);
   stripToBase(Base);
-  if (!Base.Ptr)
-    Loc.Ptr->dump();
   const Value *StrippedPtr = Base.Ptr ? stripPointer(Base.Ptr) : nullptr;
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
