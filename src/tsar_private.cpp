@@ -149,179 +149,212 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     // Analysis will performed for base locations. This means that results
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
-    DenseMap<const MemoryLocation *, unsigned long long> LocBases;
-    DFNode *LatchNode = R->getLatchNode();
-    PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
-    assert(LatchDF && "List of must defined locations must not be null!");
-    // LatchDefs is a set of must define locations before a branch to
-    // a next arbitrary iteration.
-    const LocationDFValue &LatchDefs = LatchDF->getOut();
-    for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
-      if (AS.isForwardingAliasSet() || AS.empty())
-        continue; // The set is empty if it contains only unknown instructions.
-      auto I = AS.begin(), E = AS.end();
-      const MemoryLocation *CurrBase = *(*DS)[Analyze].insert(
-        MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
-      auto CurrTraits =
-        LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
-      for (; I != E; ++I) {
-        MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-        const MemoryLocation *Base = *(*DS)[Analyze].insert(Loc).first;
-        if (CurrBase != Base) {
-          // Current alias set contains memory locations with different bases.
-          // So there are explicitly accessed locations with different bases
-          // which alias each other.
-          if (CurrTraits->second != Shared.Id)
-            CurrTraits->second = Dependency.Id;
-          break;
-        }
-        if (!DefUse->hasUse(Loc)) {
-          if (!LS->getOut().overlap(Loc))
-            CurrTraits->second &= Private.Id;
-          else if (DefUse->hasDef(Loc))
-            CurrTraits->second &= LastPrivate.Id;
-          else if (LatchDefs.contain(Loc))
-            // These location will be stored as second to last private, i.e.
-            // the last definition of these locations is executed on the
-            // second to the last loop iteration (on the last iteration the
-            // loop condition check is executed only).
-            // It is possible that there is only one (last) iteration in
-            // the loop. In this case the location has not been assigned and
-            // must be declared as a first private.
-            CurrTraits->second &= SecondToLastPrivate.Id & FirstPrivate.Id;
-          else
-            // There is no certainty that the location is always assigned
-            // the value in the loop. Therefore, it must be declared as a
-            // first private, to preserve the value obtained before the loop
-            // if it has not been assigned.
-            CurrTraits->second &= DynamicPrivate.Id & FirstPrivate.Id;
-        } else if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc)) {
-          CurrTraits->second &= Dependency.Id;
-        } else {
-          CurrTraits->second &= Shared.Id;
-        }
-      }
-      for (; I != E; ++I) {
-          MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-          CurrBase = *(*DS)[Analyze].insert(Loc).first;
-          CurrTraits =
-            LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
-          if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
-            CurrTraits->second &= Dependency.Id;
-          else
-            CurrTraits->second &= Shared.Id;
-        }
-    }
-    // Let us consider the case where location access is performed by pointer.
-    // *p means that address of location should be loaded from p using 'load'.
-    for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
-      if (AS.isForwardingAliasSet() || AS.empty())
-        continue; // The set is empty if it contains only unknown instructions.
-      for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
-        Value *V = I.getPointer();
-        if (Operator::getOpcode(V) == Instruction::BitCast ||
-            Operator::getOpcode(V) == Instruction::AddrSpaceCast)
-          V = cast<Operator>(V)->getOperand(0);
-        if (auto *LI = dyn_cast<LoadInst>(V)) {
-          const MemoryLocation *Loc = *(*DS)[Analyze].insert(
-            MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
-          auto LocTraits = LocBases.find(Loc);
-          assert(LocTraits != LocBases.end() &&
-            "Traits of location must be initialized!");
-          if (LocTraits->second == Private.Id ||
-              LocTraits->second == Shared.Id)
-            continue;
-          const MemoryLocation *Ptr =
-            *(*DS)[Analyze].insert(MemoryLocation::get(LI)).first;
-          auto PtrTraits = LocBases.find(Ptr);
-          assert(PtrTraits != LocBases.end() &&
-            "Traits of location must be initialized!");
-          if (PtrTraits->second == Shared.Id)
-            continue;
-          // Location can not be declared as copy in or copy out without
-          // additional analysis because we do not know which memory must
-          // be copy. Let see an example:
-          // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
-          // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
-          // Note that case when location is shared, but pointer is not shared
-          // may be difficulty to implement for distributed memory, for example:
-          // for(...) { P = ...; ... = *P; } It is not evident which memory
-          // should be copy to each processor.
-          LocTraits->second = Dependency.Id;
-        }
-      }
-    }
-    for (auto &LocTraits : LocBases) {
-      // TODO (kaniandr@gmail.com) : This is very conservative assumption
-      // but very simple to check. Let see an example:
-      // int X[3];
-      // X[2] = ...
-      // for (int I = 0; I < 2; ++I)
-      //   X[I] = ...;
-      // X[2] = X[0] + X[1] + X[2];
-      // If X will be defined as a last private only, X[2] will be lost after
-      // copy out from this loop. So it must be defined as a first private.
-      if ((LocTraits.second == LastPrivate.Id ||
-           LocTraits.second == SecondToLastPrivate.Id ||
-           LocTraits.second == DynamicPrivate.Id) &&
-          !DefUse->hasDef(*LocTraits.first))
-        LocTraits.second &= FirstPrivate.Id;
-      switch (LocTraits.second) {
-        case Shared.Id:
-          (*DS)[Shared].insert(LocTraits.first); ++NumShared; break;
-        case Dependency.Id:
-          (*DS)[Dependency].insert(LocTraits.first); ++NumDeps; break;
-        case Private.Id:
-          (*DS)[Private].insert(LocTraits.first); ++NumPrivate; break;
-        case FirstPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate; break;
-        case FirstPrivate.Id & LastPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
-        case LastPrivate.Id:
-          (*DS)[LastPrivate].insert(LocTraits.first); ++NumLPrivate; break;
-        case FirstPrivate.Id & SecondToLastPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
-        case SecondToLastPrivate.Id:
-          (*DS)[SecondToLastPrivate].insert(LocTraits.first); ++NumSToLPrivate;
-          break;
-        case FirstPrivate.Id & DynamicPrivate.Id:
-          (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
-        case DynamicPrivate.Id:
-          (*DS)[DynamicPrivate].insert(LocTraits.first); ++NumDPrivate; break;
-      }
-    }
-    for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
-      auto I = (*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first;
-      // If this address is stored in some location do not remember it, because
-      // locations are analyzed separately.
-      if (isa<LoadInst>((*I)->Ptr))
-        continue;
-      Loop *Lp = L->getLoop();
-      // If this is an address of a location declared in the loop do not
-      // remember it.
-      if (auto AI = dyn_cast<AllocaInst>((*I)->Ptr))
-        if (Lp->contains(AI->getParent()))
-          continue;
-      for (auto User : Ptr->users()) {
-        auto UI = dyn_cast<Instruction>(User);
-        if (!UI || !Lp->contains(UI->getParent()))
-          continue;
-        // The address is used inside the loop.
-        // Remember it if it is used for computation instead of memory access or
-        // if we do not know how it will be used.
-        if (isa<PtrToIntInst>(User) ||
-            (isa<StoreInst>(User) &&
-             cast<StoreInst>(User)->getValueOperand() == Ptr)) {
-          (*DS)[AddressAccess].insert((*I)->Ptr);
-          ++NumAddressAccess;
-          break;
-        }
-      }
-    }
+    TraitMap LocBases;
+    resolveAccesses(R->getLatchNode(), DefUse, LS, LocBases, DS);
+    resolvePointers(DefUse, LocBases, DS);
+    storeResults(DefUse, LocBases, DS);
+    resolveAddresses(L, DefUse, DS);
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)
     resolveCandidats(*I);
+}
+
+void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
+    const tsar::DefUseSet *DefUse, const tsar::LiveSet *LS,
+    TraitMap &LocBases, tsar::DependencySet *DS) {
+  assert(LatchNode && "Latch node must not be null!");
+  assert(DefUse && "Def-use set must not be null!");
+  assert(LS && "Live set must not be null!");
+  assert(DS && "Dependency set must not be null!");
+  PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
+  assert(LatchDF && "List of must defined locations must not be null!");
+  // LatchDefs is a set of must define locations before a branch to
+  // a next arbitrary iteration.
+  const LocationDFValue &LatchDefs = LatchDF->getOut();
+  for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+    if (AS.isForwardingAliasSet() || AS.empty())
+      continue; // The set is empty if it contains only unknown instructions.
+    auto I = AS.begin(), E = AS.end();
+    const MemoryLocation *CurrBase = *(*DS)[Analyze].insert(
+      MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
+    auto CurrTraits =
+      LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
+    for (; I != E; ++I) {
+      MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
+      const MemoryLocation *Base = *(*DS)[Analyze].insert(Loc).first;
+      if (CurrBase != Base) {
+        // Current alias set contains memory locations with different bases.
+        // So there are explicitly accessed locations with different bases
+        // which alias each other.
+        if (CurrTraits->second != Shared.Id)
+          CurrTraits->second = Dependency.Id;
+        break;
+      }
+      if (!DefUse->hasUse(Loc)) {
+        if (!LS->getOut().overlap(Loc))
+          CurrTraits->second &= Private.Id;
+        else if (DefUse->hasDef(Loc))
+          CurrTraits->second &= LastPrivate.Id;
+        else if (LatchDefs.contain(Loc))
+          // These location will be stored as second to last private, i.e.
+          // the last definition of these locations is executed on the
+          // second to the last loop iteration (on the last iteration the
+          // loop condition check is executed only).
+          // It is possible that there is only one (last) iteration in
+          // the loop. In this case the location has not been assigned and
+          // must be declared as a first private.
+          CurrTraits->second &= SecondToLastPrivate.Id & FirstPrivate.Id;
+        else
+          // There is no certainty that the location is always assigned
+          // the value in the loop. Therefore, it must be declared as a
+          // first private, to preserve the value obtained before the loop
+          // if it has not been assigned.
+          CurrTraits->second &= DynamicPrivate.Id & FirstPrivate.Id;
+      } else if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc)) {
+        CurrTraits->second &= Dependency.Id;
+      } else {
+        CurrTraits->second &= Shared.Id;
+      }
+    }
+    for (; I != E; ++I) {
+      MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
+      CurrBase = *(*DS)[Analyze].insert(Loc).first;
+      CurrTraits =
+        LocBases.insert(std::make_pair(CurrBase, NoAccess.Id)).first;
+      if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
+        CurrTraits->second &= Dependency.Id;
+      else
+        CurrTraits->second &= Shared.Id;
+    }
+  }
+}
+
+void PrivateRecognitionPass::resolvePointers(const tsar::DefUseSet *DefUse,
+    TraitMap &LocBases, tsar::DependencySet *DS) {
+  assert(DefUse && "Def-use set must not be null!");
+  assert(DS && "Dependency set must not be null!");
+  for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+    if (AS.isForwardingAliasSet() || AS.empty())
+      continue; // The set is empty if it contains only unknown instructions.
+    for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
+      Value *V = I.getPointer();
+      if (Operator::getOpcode(V) == Instruction::BitCast ||
+        Operator::getOpcode(V) == Instruction::AddrSpaceCast)
+        V = cast<Operator>(V)->getOperand(0);
+      // *p means that address of location should be loaded from p using 'load'.
+      if (auto *LI = dyn_cast<LoadInst>(V)) {
+        const MemoryLocation *Loc = *(*DS)[Analyze].insert(
+          MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
+        auto LocTraits = LocBases.find(Loc);
+        assert(LocTraits != LocBases.end() &&
+          "Traits of location must be initialized!");
+        if (LocTraits->second == Private.Id ||
+          LocTraits->second == Shared.Id)
+          continue;
+        const MemoryLocation *Ptr =
+          *(*DS)[Analyze].insert(MemoryLocation::get(LI)).first;
+        auto PtrTraits = LocBases.find(Ptr);
+        assert(PtrTraits != LocBases.end() &&
+          "Traits of location must be initialized!");
+        if (PtrTraits->second == Shared.Id)
+          continue;
+        // Location can not be declared as copy in or copy out without
+        // additional analysis because we do not know which memory must
+        // be copy. Let see an example:
+        // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
+        // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
+        // Note that case when location is shared, but pointer is not shared
+        // may be difficulty to implement for distributed memory, for example:
+        // for(...) { P = ...; ... = *P; } It is not evident which memory
+        // should be copy to each processor.
+        LocTraits->second = Dependency.Id;
+      }
+    }
+  }
+}
+
+void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
+    TraitMap &LocBases, tsar::DependencySet *DS) {
+  assert(DS && "Dependency set must not be null!");
+  for (auto &LocTraits : LocBases) {
+    // TODO (kaniandr@gmail.com) : This is very conservative assumption
+    // but very simple to check. Let see an example:
+    // int X[3];
+    // X[2] = ...
+    // for (int I = 0; I < 2; ++I)
+    //   X[I] = ...;
+    // X[2] = X[0] + X[1] + X[2];
+    // If X will be defined as a last private only, X[2] will be lost after
+    // copy out from this loop. So it must be defined as a first private.
+    if ((LocTraits.second == LastPrivate.Id ||
+      LocTraits.second == SecondToLastPrivate.Id ||
+      LocTraits.second == DynamicPrivate.Id) &&
+      !DefUse->hasDef(*LocTraits.first))
+      LocTraits.second &= FirstPrivate.Id;
+    switch (LocTraits.second) {
+      case Shared.Id:
+        (*DS)[Shared].insert(LocTraits.first); ++NumShared; break;
+      case Dependency.Id:
+        (*DS)[Dependency].insert(LocTraits.first); ++NumDeps; break;
+      case Private.Id:
+        (*DS)[Private].insert(LocTraits.first); ++NumPrivate; break;
+      case FirstPrivate.Id:
+        (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate; break;
+      case FirstPrivate.Id & LastPrivate.Id:
+        (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+      case LastPrivate.Id:
+        (*DS)[LastPrivate].insert(LocTraits.first); ++NumLPrivate; break;
+      case FirstPrivate.Id & SecondToLastPrivate.Id:
+        (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+      case SecondToLastPrivate.Id:
+        (*DS)[SecondToLastPrivate].insert(LocTraits.first); ++NumSToLPrivate;
+        break;
+      case FirstPrivate.Id & DynamicPrivate.Id:
+        (*DS)[FirstPrivate].insert(LocTraits.first); ++NumFPrivate;
+      case DynamicPrivate.Id:
+        (*DS)[DynamicPrivate].insert(LocTraits.first); ++NumDPrivate; break;
+    }
+  }
+}
+
+void PrivateRecognitionPass::resolveAddresses(
+  const DFLoop *L, const tsar::DefUseSet *DefUse, tsar::DependencySet *DS) {
+  assert(L && "Loop must not be null!");
+  assert(DefUse && "Def-use set must not be null!");
+  assert(DS && "Dependency set must not be null!");
+  assert(DefUse == L->getAttribute<DefUseAttr>() &&
+    "Def-use set must be related to the specified loop!");
+  assert(DS == L->getAttribute<DependencyAttr>() &&
+    "Dependency set must be related to the specified loop!");
+  for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
+    auto I = (*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first;
+    // If this address is stored in some location do not remember it, because
+    // locations are analyzed separately.
+    if (isa<LoadInst>((*I)->Ptr))
+      continue;
+    Loop *Lp = L->getLoop();
+    // If this is an address of a location declared in the loop do not
+    // remember it.
+    if (auto AI = dyn_cast<AllocaInst>((*I)->Ptr))
+      if (Lp->contains(AI->getParent()))
+        continue;
+    for (auto User : Ptr->users()) {
+      auto UI = dyn_cast<Instruction>(User);
+      if (!UI || !Lp->contains(UI->getParent()))
+        continue;
+      // The address is used inside the loop.
+      // Remember it if it is used for computation instead of memory access or
+      // if we do not know how it will be used.
+      if (isa<PtrToIntInst>(User) ||
+        (isa<StoreInst>(User) &&
+          cast<StoreInst>(User)->getValueOperand() == Ptr)) {
+        (*DS)[AddressAccess].insert((*I)->Ptr);
+        ++NumAddressAccess;
+        break;
+      }
+    }
+  }
 }
 
 void PrivateRecognitionPass::releaseMemory(DFRegion *R) {

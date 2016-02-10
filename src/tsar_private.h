@@ -8,7 +8,7 @@
 // We use data-flow framework to implement this kind of analysis. This file
 // contains elements which is necessary to determine this framework.
 // The following articles can be helpful to understand it:
-//  * "Automatic Array Privatization" Peng Tu and David Padua 
+//  * "Automatic Array Privatization" Peng Tu and David Padua
 //  * "Array Privatization for Parallel Execution of Loops" Zhiyuan Li.
 //
 //===----------------------------------------------------------------------===//
@@ -314,7 +314,7 @@ constexpr detail::DependencySet::Dependency Dependency;
 /// \endcode
 /// For example, representation of a for-loop refers to this type.
 /// The candidates for last private variables associated with the for-loop
-/// will be stored as second to last privates locations, because 
+/// will be stored as second to last privates locations, because
 /// the last definition of these locations is executed on the second to the last
 /// loop iteration (on the last iteration the loop condition
 /// check is executed only).
@@ -385,7 +385,7 @@ public:
   /// Creates data-flow framework.
   explicit PrivateDFFwk(llvm::AliasSetTracker *AST) :
     mAliasTracker(AST){
-    assert(mAliasTracker && "AliasSetTracker must not be null!"); 
+    assert(mAliasTracker && "AliasSetTracker must not be null!");
   }
 
   /// Returns a tracker for sets of aliases.
@@ -553,11 +553,14 @@ namespace llvm {
 /// This pass determines locations which can be privatized.
 class PrivateRecognitionPass :
     public FunctionPass, private Utility::Uncopyable {
-  /// Information about privatizability of variables for the analysed region.
+  /// Information about privatizability of variables for the analyzed region.
   typedef llvm::DenseMap<llvm::Loop *, tsar::DependencySet *> PrivateInfo;
+
+  /// Map from base location to traits.
+  typedef DenseMap<const MemoryLocation *, unsigned long long> TraitMap;
 public:
-  /// Pass identification, replacement for typeid
-  static char ID; 
+  /// Pass identification, replacement for typeid.
+  static char ID;
 
   /// Default constructor.
   PrivateRecognitionPass() : FunctionPass(ID) {
@@ -574,7 +577,7 @@ public:
     return *DS->second;
   }
 
-  /// Recognises private (last private) variables for loops
+  /// Recognizes private (last private) variables for loops
   /// in the specified function.
   bool runOnFunction(Function &F) override;
 
@@ -602,6 +605,35 @@ private:
   /// \pre Def-use and live analysis have been performed for the region.
   void resolveCandidats(tsar::DFRegion *R);
 
+  /// Evaluates explicitly accessed variables in a loop.
+  void resolveAccesses(const tsar::DFNode *LatchNode,
+    const tsar::DefUseSet *DefUse, const tsar::LiveSet *LS,
+    TraitMap &LocBases, tsar::DependencySet *DS);
+
+  /// Evaluates cases when location access is performed by pointer in a loop.
+  void resolvePointers(const tsar::DefUseSet *DefUse, TraitMap &LocBases,
+    tsar::DependencySet *DS);
+
+  /// Store results for subsequent passes.
+  ///
+  /// \attention This method can update LocBases, so use with caution
+  /// methods which read LocBases before this method.
+  void storeResults(const tsar::DefUseSet *DefUse, TraitMap &LocBases,
+    tsar::DependencySet *DS);
+
+  /// \brief Recognizes addresses of locations which is evaluated in a loop a
+  /// for which need to pay attention during loop transformation.
+  ///
+  /// In the following example the variable X can be privitaized, but address
+  /// of the original variable X should be available after transformation.
+  /// \code
+  /// int X;
+  /// for (...)
+  ///   ... = &X;
+  /// ..X = ...;
+  /// \endcode
+  void resolveAddresses(const tsar::DFLoop *L, const tsar::DefUseSet *DefUse,
+    tsar::DependencySet *DS);
 
   /// Releases memory allocated for attributes in a data-flow graph.
   void releaseMemory(tsar::DFRegion *R);
