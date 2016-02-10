@@ -127,7 +127,8 @@ void LocationDFValue::dump() const { print(dbgs()); }
 const Value * BaseLocationSet::stripPointer(const Value *Ptr) {
   assert(Ptr && "Pointer to memory location must not be null!");
   if (Operator::getOpcode(Ptr) == Instruction::BitCast ||
-      Operator::getOpcode(Ptr) == Instruction::AddrSpaceCast)
+      Operator::getOpcode(Ptr) == Instruction::AddrSpaceCast ||
+      Operator::getOpcode(Ptr) == Instruction::IntToPtr)
     return stripPointer(cast<Operator>(Ptr)->getOperand(0));
   if (auto LI = dyn_cast<const LoadInst>(Ptr))
     return stripPointer(LI->getPointerOperand());
@@ -141,7 +142,8 @@ const Value * BaseLocationSet::stripPointer(const Value *Ptr) {
 void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   if (Operator::getOpcode(Loc.Ptr) == Instruction::BitCast ||
-      Operator::getOpcode(Loc.Ptr) == Instruction::AddrSpaceCast) {
+      Operator::getOpcode(Loc.Ptr) == Instruction::AddrSpaceCast ||
+      Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr) {
     Loc.Ptr = cast<const Operator>(Loc.Ptr)->getOperand(0);
     return stripToBase(Loc);
   }
@@ -160,8 +162,8 @@ void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
       return stripToBase(Loc);
     }
   }
-  if (!(isa<const GlobalVariable>(Loc.Ptr) || isa<const AllocaInst>(Loc.Ptr)
-    || isa<const GetElementPtrInst>(Loc.Ptr) || isa<const LoadInst>(Loc.Ptr))) {
+  if (!(isa<const GlobalVariable>(Loc.Ptr) || isa<const AllocaInst>(Loc.Ptr) ||
+       isa<const GetElementPtrInst>(Loc.Ptr) || isa<const LoadInst>(Loc.Ptr))) {
     Loc.Ptr = nullptr;
     Loc.Size = MemoryLocation::UnknownSize;
   }
@@ -209,6 +211,8 @@ std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
   LocationSet *LS;
   MemoryLocation Base(Loc);
   stripToBase(Base);
+  if (!Base.Ptr)
+    Loc.Ptr->dump();
   const Value *StrippedPtr = Base.Ptr ? stripPointer(Base.Ptr) : nullptr;
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
@@ -283,9 +287,13 @@ std::string locationToSource(
   auto Str = locationToSource(Ptr, DITy, NB);
   if (Str.empty())
     return Str;
-  assert(isa<DIDerivedType>(DITy) &&
-    "Type of loadable location is not a pointer!");
-  DITy = cast<DIDerivedType>(DITy)->getBaseType();
+  // Type of location may not be a pointer if there is type case 'inttoptr':
+  // %1 = load i32, i32* %x
+  // %2 = inttoptr i32 % 1 to i8*
+  // store i8 10, i8* %2
+  // Type of %1 is not a pointer.
+  if (isa<DIDerivedType>(DITy))
+    DITy = cast<DIDerivedType>(DITy)->getBaseType();
   return "*" + (NB ? "(" + Str + ")" : Str);
 }
 

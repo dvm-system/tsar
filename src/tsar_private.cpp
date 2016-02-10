@@ -240,7 +240,8 @@ void PrivateRecognitionPass::resolvePointers(const tsar::DefUseSet *DefUse,
     for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
       Value *V = I.getPointer();
       if (Operator::getOpcode(V) == Instruction::BitCast ||
-        Operator::getOpcode(V) == Instruction::AddrSpaceCast)
+        Operator::getOpcode(V) == Instruction::AddrSpaceCast ||
+        Operator::getOpcode(V) == Instruction::IntToPtr)
         V = cast<Operator>(V)->getOperand(0);
       // *p means that address of location should be loaded from p using 'load'.
       if (auto *LI = dyn_cast<LoadInst>(V)) {

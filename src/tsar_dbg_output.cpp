@@ -24,7 +24,10 @@ using namespace llvm;
 
 namespace tsar {
 void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
-  assert(Loc && "Location must not be null!");
+  if (!Loc) {
+    o << "<unknown location>";
+    return;
+  }
   auto Src = locationToSource(Loc);
   o << Src;
   if (!Src.empty())
