@@ -292,8 +292,31 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     }
     for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
       auto I = (*DS)[Analyze].insert(MemoryLocation(Ptr, 0)).first;
-      (*DS)[AddressAccess].insert((*I)->Ptr);
-      ++NumAddressAccess;
+      // If this address is stored in some location do not remember it, because
+      // locations are analyzed separately.
+      if (isa<LoadInst>((*I)->Ptr))
+        continue;
+      Loop *Lp = L->getLoop();
+      // If this is an address of a location declared in the loop do not
+      // remember it.
+      if (auto AI = dyn_cast<AllocaInst>((*I)->Ptr))
+        if (Lp->contains(AI->getParent()))
+          continue;
+      for (auto User : Ptr->users()) {
+        auto UI = dyn_cast<Instruction>(User);
+        if (!UI || !Lp->contains(UI->getParent()))
+          continue;
+        // The address is used inside the loop.
+        // Remember it if it is used for computation instead of memory access or
+        // if we do not know how it will be used.
+        if (isa<PtrToIntInst>(User) ||
+            (isa<StoreInst>(User) &&
+             cast<StoreInst>(User)->getValueOperand() == Ptr)) {
+          (*DS)[AddressAccess].insert((*I)->Ptr);
+          ++NumAddressAccess;
+          break;
+        }
+      }
     }
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
@@ -376,8 +399,6 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
     Ptr = SI->getPointerOperand();
     Value *Val = SI->getValueOperand();
     Size = AA.getTypeStoreSize(Val->getType());
-    if (isa<AllocaInst>(Val))
-      DU->addAddressAccess(Val);
   } else if (auto *LI = dyn_cast<LoadInst>(I)) {
     AddMay = AddMust = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
     Ptr = LI->getPointerOperand();
@@ -462,10 +483,12 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   BasicBlock *BB = DFB->getBlock();
   assert(BB && "Basic block must not be null!");
   for (Instruction &I : BB->getInstList()) {
-    if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
-      Value *Ptr = GEPI->getPointerOperand();
-      DU->addAddressAccess(Ptr);
-      continue;
+    if (I.getType() && I.getType()->isPointerTy())
+      DU->addAddressAccess(&I);
+    for (auto OpI = I.value_op_begin(), OpE = I.value_op_end();
+         OpI != OpE; ++OpI) {
+      if (isa<AllocaInst>(*OpI) || isa<GlobalVariable>(*OpI))
+        DU->addAddressAccess(*OpI);
     }
     if (!I.mayReadOrWriteMemory())
       continue;
