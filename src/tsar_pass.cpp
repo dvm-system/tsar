@@ -18,7 +18,6 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializePrivateRecognitionPassPass(Registry);
 }
 
-
 void initializeTSAR(LLVMPassRegistryRef R) {
   initializeTSAR(*unwrap(R));
 }

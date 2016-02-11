@@ -405,16 +405,8 @@ void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 5)
-  AU.addRequired<DominatorTree>();
-#else
   AU.addRequired<DominatorTreeWrapperPass>();
-#endif
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-  AU.addRequired<LoopInfo>();
-#else
   AU.addRequired<LoopInfoWrapperPass>();
-#endif
   AU.addRequired<AliasAnalysis>();
   AU.setPreservesAll();
 }
@@ -438,7 +430,7 @@ bool DefUseSet::hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
 namespace {
 bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   assert(I && "Instruction must not be null!");
-  assert(AST && "AliasSetTracker mut not be null!");
+  assert(AST && "AliasSetTracker must not be null!");
   assert(DU && "Value of def-use attribute must not be null!");
   assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
   Value *Ptr;

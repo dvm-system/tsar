@@ -6,9 +6,9 @@
 //
 // This file defines functions and classes to represent a data-flow graph.
 // The graph could be used in a data-flow framework to solve data-flow problem.
-// In some cases it is convinient to use hierarchy of nodes. Some nodes are
-// treated as regions which contain other nodes. LLVM-style RTTI for hierarch
-// of classes that represented different nodes is avaliable.
+// In some cases it is convenient to use hierarchy of nodes. Some nodes are
+// treated as regions which contain other nodes. LLVM-style RTTI for hierarchy
+// of classes that represented different nodes is available.
 //
 // There are following main elements in this file:
 // * Classes which is used to represent nodes and regions in a data-flow graph.
@@ -40,9 +40,9 @@ namespace tsar {
 /// The following kinds of nodes are supported: basic block, body of a
 /// natural loop, body of a function, entry and exit points of the graph
 /// which will be analyzed, latch node.
-/// LLVM-style RTTI for hierarch of classes that represented different nodes
-/// is avaliable.
-/// \par In some cases it is convinient to use hierarchy of nodes. Some nodes
+/// LLVM-style RTTI for hierarchy of classes that represented different nodes
+/// is available.
+/// \par In some cases it is convenient to use hierarchy of nodes. Some nodes
 /// are treated as regions which contain other nodes. Such regions we call
 /// parent nodes.
 class DFNode : public tsar::SmallDFNode<DFNode, 8> {
@@ -67,7 +67,7 @@ public:
     NUMBER_KIND = INVALID_KIND,
   };
 
-  /// Desctructor.
+  /// Destructor.
   virtual ~DFNode() {
 #ifdef DEBUG
     mKind = INVALID_KIND;
@@ -104,9 +104,8 @@ public:
   /// \return Value of the specified attribute. If the attribute
   /// does not exist the method returns nullptr.
   template<class Attribute>
-  typename Attribute::Value * getAttribute() {
-    llvm::DenseMap<Utility::AttributeId, void *>::iterator I =
-      mAttributes.find(Attribute::id());
+  typename Attribute::Value * getAttribute() const {
+    auto I = mAttributes.find(Attribute::id());
     return I == mAttributes.end() ? nullptr :
       static_cast<typename Attribute::Value *>(I->second);
   }
@@ -150,7 +149,7 @@ public:
     return R->getKind() == KIND_ENTRY;
   }
 
-  /// \brief Ctreates representation of the entry node.
+  /// \brief Creates representation of the entry node.
   DFEntry() : DFNode(KIND_ENTRY) {}
 };
 
@@ -166,7 +165,7 @@ public:
     return R->getKind() == KIND_EXIT;
   }
 
-  /// Ctreates representation of the exit node.
+  /// Creates representation of the exit node.
   DFExit() : DFNode(KIND_EXIT) {}
 };
 
@@ -181,16 +180,16 @@ public:
     return R->getKind() == KIND_LATCH;
   }
 
-  /// Ctreates representation of the latch node.
+  /// Creates representation of the latch node.
   DFLatch() : DFNode(KIND_LATCH) {}
 };
 
 /// \brief Representation of a region in a data-flow framework.
 ///
-/// In some cases it is convinient to use hierarchy of nodes. Some nodes
+/// In some cases it is convenient to use hierarchy of nodes. Some nodes
 /// are treated as regions which contain other nodes.
-/// LLVM-style RTTI for hierarch of classes that represented different regions
-/// is avaliable.
+/// LLVM-style RTTI for hierarchy of classes that represented different regions
+/// is available.
 class DFRegion : public DFNode {
 public:
 
@@ -294,7 +293,7 @@ public:
     assert(!llvm::isa<DFExit>(N) || mNodes.empty() || N != mNodes.back() &&
       "Only one exit node must be in the region!");
     assert(!llvm::isa<DFLatch>(N) || !mLatchNode &&
-      "Only one latch node mut be in the region!");
+      "Only one latch node must be in the region!");
 #ifdef DEBUG
     for (DFNode *Node : mNodes)
       assert(N != Node &&
@@ -366,7 +365,7 @@ public:
     return N->getKind() == KIND_BLOCK;
   }
 
-  /// \brief Ctreates representation of the block.
+  /// \brief Creates representation of the block.
   ///
   /// \pre The block argument can not take a null value.
   explicit DFBlock(llvm::BasicBlock *B) : DFNode(KIND_BLOCK), mBlock(B) {
@@ -393,7 +392,7 @@ public:
     return N->getKind() == KIND_FUNCTION;
   }
 
-  /// \brief Ctreates representation of the block.
+  /// \brief Creates representation of the block.
   ///
   /// \pre The block argument can not take a null value.
   explicit DFFunction(llvm::Function *F) : DFRegion(KIND_FUNCTION), mFunc(F) {
@@ -455,7 +454,7 @@ template<> class LoopTraits<std::pair<llvm::Function *, llvm::LoopInfo *>> {
 public:
   class block_iterator : public llvm::Function::iterator {
     // Let us use this iterator to access a list of blocks in a function
-    // as a list of pointers. Originaly a list of blocks in a function is
+    // as a list of pointers. Originally a list of blocks in a function is
     // implemented as a list of objects, not a list of pointers.
     typedef llvm::Function::iterator base;
   public:
@@ -487,11 +486,11 @@ public:
 /// This function treats a loop nest as hierarchy of regions. Each region is
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
-/// \attention Back edges for natural loops will be ommited.
+/// \attention Back edges for natural loops will be omitted.
 /// \tparam LoopReptn Representation of the outermost loop in the nest.
 /// The LoopTraits class should be specialized by type of each loop in the nest.
 /// For example, the outermost loop can be a loop llvm::Loop * or
-/// a whole funcction std::pair<llvm::Function *, llvm::LoopInfo *>.
+/// a whole function std::pair<llvm::Function *, llvm::LoopInfo *>.
 /// \param [in] L An outermost loop in the nest, it can not be null.
 /// \param [in, out] A region which is associated with the specified loop.
 template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
@@ -560,7 +559,7 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
           BBToN.second->addSuccessor(SToNode->second);
       }
     }
-    // Predecessors outsied the loop will be ignored.
+    // Predecessors outside the loop will be ignored.
     if (BBToN.first != LT::getHeader(L)) {
       for (pred_iterator PI = pred_begin(BBToN.first),
            PE = pred_end(BBToN.first); PI != PE; ++PI) {

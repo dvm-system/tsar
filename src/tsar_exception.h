@@ -24,7 +24,7 @@ namespace ErrorList {
   typedef Base::ErrorList::Unclassified Unclassified;
 }
 
-/// This is a description of Traits Static Aalyzer.
+/// This is a description of Traits Static Analyzer.
 struct TSAR {
   /// Name of the library.
   DESCRIPTION_FIELD(Title, TEXT("Title"), TEXT(TSAR_FULL_NAME))

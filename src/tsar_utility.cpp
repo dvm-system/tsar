@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements methdos declared in tsar_utility.h
+// This file implements methods declared in tsar_utility.h
 //
 //===----------------------------------------------------------------------===//
 

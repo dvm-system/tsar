@@ -1,4 +1,4 @@
-//===----- tsar_graph.h -------- Graph Properies ----------------*- C++ -*-===//
+//===----- tsar_graph.h -------- Graph Properties ---------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -7,7 +7,7 @@
 // This file defines functions to evaluate different properties of the graph.
 // Various bits of information can be calculated, for example:
 //  * whether the directed graph is acyclic (DAG)
-//  * back edges of the the graph 
+//  * back edges of the graph
 //  * etc.
 //
 //===----------------------------------------------------------------------===//
@@ -41,14 +41,14 @@ namespace detail {
 /// assuming that nodes from the specified list have been already visited and
 /// colored.
 /// \param [in] N Node that must be visited.
-/// \param [in, out] VisitedNodes Already visited nodes and the new node N 
+/// \param [in, out] VisitedNodes Already visited nodes and the new node N
 /// that must be visited.
 /// \return Back edge represented as a pair of two nodes: successor and
 /// predecessor.
 /// If back edge in not found this function returns a pair of nullptrs
 /// \pre The llvm::GraphTraits class should be specialized by GraphType.
 /// Note that GraphType is generally a pointer type, for example BasicBlock *.
-/// The new node N that must be visited should be located in the VisitedNodes 
+/// The new node N that must be visited should be located in the VisitedNodes
 /// collection.
 /// \note It is not possible to use generic depth first graph iterator
 /// which is implemented in LLVM, because this implementation does not collect
@@ -64,7 +64,8 @@ std::pair<
   typedef llvm::GraphTraits<GraphType> GT;
   typedef typename GT::NodeType NodeType;
   assert(N && "Node must not be null!");
-  assert(VisitedNodes.count(N) && "Node must be located in the VisitedNodes collection!");
+  assert(VisitedNodes.count(N) &&
+    "Node must be located in the VisitedNodes collection!");
   for (auto CI = GT::child_begin(N), CE = GT::child_end(N); CI != CE; ++CI) {
     // The new node is inserted in VisitedNodes before a recursive call of
     // the findBackEdge() function to reduce number of searches.
@@ -75,7 +76,7 @@ std::pair<
         return BE;
       // The color of the node becomes black only if the back edge is not found,
       // otherwise there is no assurance that all children have been opened.
-      // The new search is neccessary because the iterators in a DenseMap
+      // The new search is necessary because the iterators in a DenseMap
       // are invalidated  whenever an insertion occurs.
       VisitedNodes.find(*CI)->second = COLOR_BLACK;
     } else if (VI.first->second == COLOR_GRAY) {

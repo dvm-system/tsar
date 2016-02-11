@@ -69,11 +69,7 @@ void printLoops(llvm::raw_ostream &o, const Twine &Offset,
   for (; ReverseI != ReverseEI; --ReverseEI) {
     (Offset + "- ").print(o);
     DebugLoc loc = (*ReverseI)->getStartLoc();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 7)
-    loc.print(getGlobalContext(), o);
-#else
     loc.print(o);
-#endif
     o << "\n";
     printLoops(o, Offset + "\t", (*ReverseI)->rbegin(), (*ReverseI)->rend());
   }

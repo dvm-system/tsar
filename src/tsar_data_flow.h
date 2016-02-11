@@ -8,7 +8,7 @@
 // problem is to find a solution to a set of constraints on data-flow values for
 // all nodes of the specified directed graph. The data-flow value represents an
 // abstraction of the set of all possible states that can be observed for
-// the node. The data-flow value before and after each node n is denoted by 
+// the node. The data-flow value before and after each node n is denoted by
 // IN[n] and OUT[n], respectively. In general case data-flow problem can be
 // solved by an iterative algorithm. The input of the algorithm is a data-flow
 // framework. Details can be found in the book
@@ -39,14 +39,14 @@ namespace tsar {
 ///
 /// This class should be specialized by different framework types
 /// which is why the default version is empty. The specialization is used
-/// to solve forward or backward data-flow problems. A direction of data-flow 
+/// to solve forward or backward data-flow problems. A direction of data-flow
 /// should be explicitly set via definitions of functions that allow iteration
 /// over all children of the specified node.
 /// The following elements should be provided:
 /// - typedef GraphType -
 ///     Type of a data-flow graph. The llvm::GraphTraits class from
 ///     llvm/ADT/GraphTraits.h should be specialized by GraphType and by
-///     llvm::Inverse<GraphType> (if it is neccessary to slove a data-flow
+///     llvm::Inverse<GraphType> (if it is necessary to solve a data-flow
 ///     problem in a topological order.
 ///     Note that definition of nodes_begin() and nodes_end()
 ///     should iterate over all nodes in the graph excepted the entry node.
@@ -62,8 +62,8 @@ namespace tsar {
 ///   static ValueType getValue(NodeType *, DFFwk &) -
 ///     Allow to access data-flow value for the specified node.
 /// - static void initialize(NodeType *, DFFwk &, GraphType &) -
-///     Initializes auxiliary information which is neccessary
-///     to perfrom analysis. For example, it is possible to allocate
+///     Initializes auxiliary information which is necessary
+///     to perform analysis. For example, it is possible to allocate
 ///     some memory or attributes to each node, etc.
 ///     Do not set initial data-flow values in this function because they will
 ///     be overwritten by the data-flow solver function.
@@ -73,7 +73,7 @@ namespace tsar {
 /// - static bool transferFunction(ValueType, NodeType *, DFFwk &, GraphType &)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
-///     produced on previouse iteration of the data-flow analysis algorithm.
+///     produced on previous iteration of the data-flow analysis algorithm.
 ///     For the first iteration the new value compares with the initial one.
 ///
 /// Direction of the data-flow is specified by child_begin and child_end
@@ -107,12 +107,12 @@ template <class GraphType> struct Backward {
 ///
 /// This computes IN and OUT for each node in the specified data-flow graph
 /// by successive approximation. The last computed value for each node
-/// can be optained by calling the DataFlowTraits::getValue() function.
+/// can be obtained by calling the DataFlowTraits::getValue() function.
 /// The type of computed value (IN or OUT) depends on a data-flow direction
 /// (see DataFlowTratis). In case of a forward direction it is OUT,
 /// otherwise IN.
 /// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
+/// \param [in, out] DFG Data-flow graph specified in the data-flow framework.
 /// Subgraph of this graph also can be used.
 /// \attention The DataFlowTraits class should be specialized by DFFwk.
 /// Note that DFFwk is generally a pointer type.
@@ -156,13 +156,13 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
 /// This computes IN and OUT for each node in the specified data-flow graph
 /// in a topological order, so a graph traversal is executed only two times.
 /// Firstly to calculate order of nodes and secondly to solve data-flow problem.
-/// The last computed value for each node can be optained by calling
+/// The last computed value for each node can be obtained by calling
 /// the DataFlowTraits::getValue() function.
 /// The type of computed value (IN or OUT) depends on a data-flow direction
 /// (see DataFlowTratis). In case of a forward direction it is OUT,
 /// otherwise IN.
 /// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
+/// \param [in, out] DFG Data-flow graph specified in the data-flow framework.
 /// Subgraph of this graph also can be used.
 /// \attention The DataFlowTraits class should be specialized by DFFwk.
 /// Note that DFFwk is generally a pointer type.
@@ -218,7 +218,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
 /// also represented by other data-flow graphs.
 /// The following elements should be provided:
 /// - static void expand(DFFwk &, GraphType &) -
-///     Exapnds a region to a data-flow graph which represents it.
+///     Expands a region to a data-flow graph which represents it.
 /// - static void collapse(DFFwk &, GraphType &) -
 ///     Collapses a data-flow graph which represents a region to a one node
 ///     in a data-flow graph of an outer region.
@@ -226,7 +226,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
 ///   static region_iterator region_begin(GraphType &G),
 ///   static region_iterator region_end (GraphType &G) -
 ///     Allow iteration over all internal regions in the specified region.
-/// \note It may be convinient to inherit DataFlowTraits to specialize this 
+/// \note It may be convenient to inherit DataFlowTraits to specialize this
 /// class.
 /// \note Whether regions at different levels of hierarchy have the same type
 /// or not? They have the same type. The hierarchy of subregions is regarded as
@@ -254,12 +254,12 @@ template<class DFFwk > struct RegionDFTraits {
 /// expanded to a data-flow graph. If it is possible the problem will be solved
 /// in topological order in a single pass, otherwise iteratively.
 /// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
+/// \param [in, out] DFG Data-flow graph specified in the data-flow framework.
 /// Subgraph of this graph also can be used.
 /// \attention DataFlowTraits and RegionDFTraits classes should be specialized
 /// by DFFwk. Note that DFFwk is generally a pointer type.
 /// The GraphTraits class should be specialized by type of each
-/// regions in the hierarhy (not only for DataFlowTraits<DFFwk>::GraphType).
+/// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
 template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
@@ -283,19 +283,19 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
 /// the data-flow problem of some region the node associated with this region in
 /// outer graph will be expanded to a data-flow graph. The outermost graph is
 /// a graph, which contains one node which is associated with the whole
-/// specified graph. The specified graph is treated as expantion of this node.
+/// specified graph. The specified graph is treated as expansion of this node.
 /// After solving the data-flow problem of some region it will be collapsed to
 /// a one node in a data-flow graph associated with this region.
 /// The specified graph will be also collapsed
 /// If it is possible the problem will be solved in topological order
 /// in a single pass, otherwise iteratively.
 /// \param [in, out] DFF Data-flow framework, it can not be null.
-/// \param [in, out] DFG Data-flow graph sepcified in the data-flow framework.
+/// \param [in, out] DFG Data-flow graph specified in the data-flow framework.
 /// Subgraph of this graph also can be used.
 /// \attention DataFlowTraits and RegionDFTraits classes should b e specialized
 /// by DFFwk. Note that DFFwk is generally a pointer type.
 /// The GraphTraits class should be specialized by type of each
-/// regions in the hierarhy (not only for DataFlowTraits<DFFwk>::GraphType).
+/// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
 template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
   typename DataFlowTraits<DFFwk>::GraphType DFG) {
@@ -315,7 +315,7 @@ template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
 /// \brief This covers IN and OUT values for a data-flow node.
 ///
 /// \tparam Id Identifier, for example a data-flow framework which is used.
-/// This is neccessary to distinguish different data-flow values.
+/// This is necessary to distinguish different data-flow values.
 /// \tparam InTy Type of data-flow value before the node (IN).
 /// \tparam OutTy Type of data-flow value after the node (OUT).
 ///
@@ -351,7 +351,7 @@ private:
 /// with a small list of the adjacent nodes.
 ///
 /// This is a node, optimized for the case when a number of adjacent nodes
-/// is small. It contains some number of adjacent nodes in-place, 
+/// is small. It contains some number of adjacent nodes in-place,
 /// which allows it to avoid heap allocation when the actual number of
 /// nodes is below that threshold (2*N). This allows normal "small" cases to be
 /// fast without losing generality for large inputs.
@@ -384,10 +384,10 @@ public:
   /// Returns iterator that points to the ending of the successor list.
   succ_iterator succ_end() const { return mAdjacentNodes[SUCC].end(); }
 
-  /// Returns iterator that points to the beginning of the predcessor list.
+  /// Returns iterator that points to the beginning of the predecessor list.
   pred_iterator pred_begin() const { return mAdjacentNodes[PRED].begin(); }
 
-  /// Returns iterator that points to the ending of the predcessor list.
+  /// Returns iterator that points to the ending of the predecessor list.
   pred_iterator pred_end() const { return mAdjacentNodes[PRED].end(); }
 
   /// Returns true if the specified node is a successor of this node.
@@ -398,7 +398,7 @@ public:
     return false;
   }
 
-  /// Returns true if the specified node is a predcessor of this node.
+  /// Returns true if the specified node is a predecessor of this node.
   bool isPredecessor(NodeTy *Node) const {
     assert(Node && "Data-flow node must not be null!");
     for (NodeTy * N : mAdjacentNodes[PRED])
@@ -432,7 +432,7 @@ public:
   /// \brief Removes adjacent node in the specified direction.
   ///
   /// If there are multiple edges between specified and current node
-  /// all edges will be removed. 
+  /// all edges will be removed.
   /// \pre A removed node must not be null.
   void removeAdjacentNode(NodeTy *Node, Direction Dir) {
     assert(Node && "Data-flow node must not be null!");
@@ -455,7 +455,7 @@ public:
       mAdjacentNodes[Dir].erase(I);
   }
 
-  /// \brief Removes predeccessor.
+  /// \brief Removes predecessor.
   ///
   /// \pre A removed node must not be null.
   void removePredecessor(NodeTy *Node) { removeAdjacentNode(Node, PRED); }

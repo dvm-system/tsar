@@ -426,7 +426,7 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
   static const ValueType & getValue(DFNode *N, PrivateDFFwk *) {
     assert(N && "Node must not be null!");
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be be null!");
+    assert(PV && "Data-flow value must not be null!");
     return PV->getOut();
   }
   static void initialize(DFNode *, PrivateDFFwk *, GraphType);
@@ -437,7 +437,7 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
   static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *, GraphType);
 };
 
-/// Tratis for a data-flow framework which is used to find candidates
+/// Traits for a data-flow framework which is used to find candidates
 /// in privatizable locations for each natural loops.
 template<> struct RegionDFTraits<PrivateDFFwk *> :
     DataFlowTraits<PrivateDFFwk *> {
@@ -487,11 +487,11 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     LiveSet *LS = G.Graph->getAttribute<LiveAttr>();
-    assert(LS && "Data-flow value must not be be null!");
+    assert(LS && "Data-flow value must not be null!");
     ValueType V(topElement(DFF, G));
-    // If a location is alive before a loop it is alive befor each iteration.
+    // If a location is alive before a loop it is alive before each iteration.
     // This occurs due to conservatism of analysis.
-    // If a location is alive befor iteration with number I then it is alive
+    // If a location is alive before iteration with number I then it is alive
     // after iteration with number I-1. So it should be used as a boundary
     // value.
     meetOperator(LS->getIn(), V, DFF, G);
@@ -509,7 +509,7 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static const ValueType & getValue(DFNode *N, LiveDFFwk *) {
     assert(N && "Node must not be null!");
     LiveSet *LS = N->getAttribute<LiveAttr>();
-    assert(LS && "Data-flow value must not be be null!");
+    assert(LS && "Data-flow value must not be null!");
     return LS->getIn();
   }
   static void initialize(DFNode *, LiveDFFwk *, GraphType);
@@ -624,7 +624,7 @@ private:
   /// \brief Recognizes addresses of locations which is evaluated in a loop a
   /// for which need to pay attention during loop transformation.
   ///
-  /// In the following example the variable X can be privitaized, but address
+  /// In the following example the variable X can be privatized, but address
   /// of the original variable X should be available after transformation.
   /// \code
   /// int X;

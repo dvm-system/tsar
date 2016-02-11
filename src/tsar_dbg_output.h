@@ -22,12 +22,12 @@ class LoopInfo;
 }
 
 namespace tsar {
-/// \brief Prints information avaliable from a source code for the
+/// \brief Prints information available from a source code for the
 /// specified memory location.
 ///
 /// \pre At this moment location can be represented as a sequence of 'load' or
-/// 'getelementptr' instructions ending alloca instruction, alloca instructions
-/// or global variables.
+/// 'getelementptr' instructions ending 'alloca' instruction, 'alloca'
+/// instructions or global variables.
 /// A location must not be null.
 /// \par Example
 /// \code

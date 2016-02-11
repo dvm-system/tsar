@@ -7,7 +7,7 @@
 // Traits Static Analyzer (TSAR) is a part of a system for automated
 // parallelization SAPFOR. The main goal of analyzer is to determine
 // data dependences, privatizable and induction variables and other traits of
-// analyzed program which could be helpfull to parallelize program automatically.
+// analyzed program which could be helpful to parallelize program automatically.
 //
 //===----------------------------------------------------------------------===//
 
@@ -90,7 +90,8 @@ int main(int Argc, char** Argv) {
   }
   legacy::PassManager Passes;
   if (!gDebugMode && gPassList.size() > 0)
-    errs() << Argv[0] << ": warning: the pass specification option is ignored in no debug mode (use -debug-analyzer)";
+    errs() << Argv[0] << ": warning: the pass specification option is ignored "
+      << "in no debug mode (use -debug-analyzer)";
   if (gDebugMode) {
     for (unsigned i = 0; i < gPassList.size(); ++i) {
       const PassInfo *PI = gPassList[i];
