@@ -118,6 +118,7 @@ template <class GraphType> struct Backward {
 /// Note that DFFwk is generally a pointer type.
 /// The GraphTraits class should be specialized by
 /// DataFlowTraits<DFFwk>::GraphType.
+/// \pre The graph must not contain unreachable nodes.
 template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef DataFlowTraits<DFFwk> DFT;
@@ -138,7 +139,8 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
     isChanged = false;
     for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
     I != E; ++I) {
-      assert(GT::child_begin(*I) != GT::child_end(*I) &&
+      assert((*I == GT::getEntryNode(DFG) ||
+        GT::child_begin(*I) != GT::child_end(*I)) &&
         "Data-flow graph must not contain unreachable nodes!");
       ValueType Value(DFT::topElement(DFF, DFG));
       for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
@@ -168,6 +170,7 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
 /// Note that DFFwk is generally a pointer type.
 /// The GraphTraits class should be specialized by
 /// DataFlowTraits<DFFwk>::GraphType.
+/// \pre The graph must not contain unreachable nodes.
 template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef DataFlowTraits<DFFwk> DFT;
@@ -177,6 +180,13 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
   typedef typename GT::NodeType NodeType;
+#ifdef DEBUG
+  for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
+       I != E; ++I)
+    assert((*I == GT::getEntryNode(DFG) ||
+      GT::child_begin(*I) != GT::child_end(*I)) &&
+      "Data-flow graph must not contain unreachable nodes!");
+#endif
   typedef llvm::po_iterator<
     GraphType, llvm::SmallPtrSet<NodeType *, 8>, false,
     llvm::GraphTraits<llvm::Inverse<GraphType> > > po_iterator;
@@ -197,8 +207,6 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   DFT::initialize(GT::getEntryNode(DFG), DFF, DFG);
   DFT::setValue(DFT::boundaryCondition(DFF, DFG), GT::getEntryNode(DFG), DFF);
   for (I = RPOT.rbegin(), ++I; I != E; ++I) {
-    assert(GT::child_begin(*I) != GT::child_end(*I) &&
-           "Data-flow graph must not contain unreachable nodes!");
     ValueType Value(DFT::topElement(DFF, DFG));
     for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
          CI != CE; ++CI) {
@@ -261,6 +269,7 @@ template<class DFFwk > struct RegionDFTraits {
 /// The GraphTraits class should be specialized by type of each
 /// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
+/// \pre The graph must not contain unreachable nodes.
 template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
     typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef RegionDFTraits<DFFwk> RT;
@@ -297,6 +306,7 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
 /// The GraphTraits class should be specialized by type of each
 /// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
+/// \pre The graph must not contain unreachable nodes.
 template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
   typename DataFlowTraits<DFFwk>::GraphType DFG) {
   typedef RegionDFTraits<DFFwk> RT;

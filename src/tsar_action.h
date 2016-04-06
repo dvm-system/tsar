@@ -1,4 +1,4 @@
-//===--- CodeGenAction.h ---- TSAR Frontend Action --------------*- C++ -*-===//
+//===--- tsar_action.h ------ TSAR Frontend Action --------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //

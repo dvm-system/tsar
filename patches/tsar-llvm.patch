@@ -14,6 +14,8 @@ Index: include/llvm/InitializePasses.h
 +
 +void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 +
++void initializePrivatePrintPassPass(PassRegistry &Registry);
++
 +#endif//TSAR_PROJECT
 +
  /// initializeCore - Initialize all passes linked into the
@@ -40,6 +42,7 @@ Index: include/llvm/LinkAllPasses.h
  
 +#ifdef TSAR_PROJECT
 +      (void) llvm::createPrivateRecognitionPass();
++      (void) llvm::createPrivatePrintPass();
 +#endif//TSAR_PROJECT
 +
        (void) llvm::createAAEvalPass();

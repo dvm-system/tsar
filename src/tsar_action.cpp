@@ -1,6 +1,8 @@
-//===--- CodeGenAction.cpp - LLVM Code Generation Frontend Action ---------===//
+//===--- tsar_action.cpp ---- TSAR Frontend Action --------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
+//                       Traits Static Analyzer (SAPFOR)
+//
+// This file implements front-end action which is necessary to analyze sources.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +20,7 @@
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/Timer.h>
 #include <llvm/Analysis/Passes.h>
+#include <llvm/CodeGen/Passes.h>
 #include <memory>
 #include "tsar_action.h"
 #include "tsar_pass.h"
@@ -34,6 +37,22 @@ static void AnalyseModule(llvm::Module *M) {
   initializeAnalysis(Registry);
   initializeTSAR(Registry);
   legacy::PassManager Passes;
+  // The 'unreachableblockelim' pass is necessary because implementation
+  // of data-flow analysis relies on suggestion that control-flow graph does
+  // not contain unreachable basic blocks.
+  // For the example int main() {exit(1);} 'clang' will generate the LLVM IR:
+  // define i32 @main() #0 {
+  // entry:
+  //  %retval = alloca i32, align 4
+  //  store i32 0, i32* %retval
+  //   call void @exit(i32 1) #2, !dbg !11
+  //  unreachable, !dbg !11
+  // return:
+  //  %0 = load i32, i32* %retval, !dbg !12
+  //  ret i32 %0, !dbg !12
+  //}
+  // In other cases 'clang' automatically deletes unreachable blocks.
+  Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createBasicAliasAnalysisPass());
   Passes.add(createPrivateRecognitionPass());
   Passes.add(createVerifierPass());

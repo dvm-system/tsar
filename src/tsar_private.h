@@ -579,6 +579,8 @@ public:
 
   /// Recognizes private (last private) variables for loops
   /// in the specified function.
+  /// \pre A control-flow graph of the specified function must not contain
+  /// unreachable nodes.
   bool runOnFunction(Function &F) override;
 
   /// Releases allocated memory.

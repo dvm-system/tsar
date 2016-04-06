@@ -59,6 +59,11 @@ INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
+#ifdef DEBUG
+  for (const BasicBlock &BB : F)
+    assert((&F.getEntryBlock() == &BB || BB.getNumUses() > 0 )&&
+      "Data-flow graph must not contain unreachable nodes!");
+#endif
   LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
