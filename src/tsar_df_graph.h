@@ -20,7 +20,8 @@
 
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseMap.h>
-#include "llvm/Support/Casting.h"
+#include <llvm/Support/Casting.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <vector>
 #include <utility.h>
 #include <declaration.h>

@@ -16,6 +16,8 @@ using namespace llvm;
 
 void llvm::initializeTSAR(PassRegistry &Registry) {
   initializePrivateRecognitionPassPass(Registry);
+  initializeRewriterInitializationPassPass(Registry);
+  initializePrivateCClassifierPassPass(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {

@@ -12,30 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include <clang/Tooling/Tooling.h>
-#include <clang/Tooling/ArgumentsAdjusters.h>
-#include <clang/Tooling/Tooling.h>
-#include <clang/CodeGen/CodeGenAction.h>
-#include <llvm/InitializePasses.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include "llvm/IR/Verifier.h"
-#include "llvm/IR/LegacyPassNameParser.h"
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/IRReader/IRReader.h>
-#include <llvm/Config/llvm-config.h>
 #include <llvm/Support/CommandLine.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/PrettyStackTrace.h>
 #include <llvm/Support/Signals.h>
-#include <llvm/Support/SourceMgr.h>
-#include <llvm/Support/ToolOutputFile.h>
+#include <llvm/Support/Debug.h>
 #include <llvm/Support/TargetSelect.h>
-#include <llvm/Transforms/Scalar.h>
-#include <llvm/Analysis/Passes.h>
 #include "tsar_exception.h"
-#include "tsar_pass.h"
 #include "tsar_action.h"
 
 namespace Base {
@@ -64,17 +47,19 @@ static void printVersion() {
 /// main(int Argc, char **Argv) function.
 /// \param [out]  Sources The list of sources which have been specified in
 ///  a command line will be stored here.
+/// \param [out] CommandLine The parsed command line to compile all sources will
+/// be stored here.
 /// \param [out] EmitOnly This will be set to true if analysis does not require.
 /// \return Compilation data base.
 static std::unique_ptr<CompilationDatabase> parseCLOptions(
-    int Argc, const char **Argv, std::vector<std::string> &Sources,
-    bool &EmitOnly) {
-  auto &Help = *[]() {
-    StringMap<llvm::cl::Option*> &opts = llvm::cl::getRegisteredOptions();
-    assert(opts.count("help") == 1 && "Option '-help' must be specified!");
-    return opts["help"];
-  }();
-  static cl::alias HelpA("h", cl::aliasopt(Help), cl::desc("Alias for -help"));
+  int Argc, const char **Argv,
+  std::vector<std::string> &Sources,
+  std::vector<std::string> &CommandLine,
+  bool &EmitOnly) {
+  StringMap<llvm::cl::Option*> &opts = llvm::cl::getRegisteredOptions();
+  assert(opts.count("help") == 1 && "Option '-help' must be specified!");
+  auto Help = opts["help"];
+  static cl::alias HelpA("h", cl::aliasopt(*Help), cl::desc("Alias for -help"));
   static cl::list<std::string> SourcePaths(
     cl::Positional, cl::desc("<source0> [... <sourceN>]"), cl::OneOrMore);
   std::vector<cl::OptionCategory *> Categories;
@@ -88,9 +73,22 @@ static std::unique_ptr<CompilationDatabase> parseCLOptions(
     cl::value_desc("standard"), cl::desc("Language standard to compile for"));
   static cl::OptionCategory DebugCategory("Debugging options");
   Categories.push_back(&DebugCategory);
-  static cl::opt<bool> EmitLLVM(
-    "emit-llvm", cl::desc("Emit llvm without analysis"),
-    cl::cat(DebugCategory));
+  static cl::opt<bool> EmitLLVM("emit-llvm", cl::cat(DebugCategory),
+    cl::desc("Emit llvm without analysis"));
+  static cl::opt<bool> TimeReport("ftime-report", cl::cat(DebugCategory),
+    cl::desc("Print some statistics about the time consumed by each pass when it finishes"));
+#ifdef DEBUG
+  assert(opts.count("stats") == 1 && "Option '-stats' must be specified!");
+  opts["stats"]->setCategory(DebugCategory);
+  assert(opts.count("debug") == 1 && "Option '-debug' must be specified!");
+  auto Debug = opts["debug"];
+  Debug->setCategory(DebugCategory);
+  Debug->setHiddenFlag(cl::NotHidden);
+  assert(opts.count("debug-only") == 1 && "Option '-debug-only' must be specified!");
+  auto DebugOnly = opts["debug-only"];
+  DebugOnly->setCategory(DebugCategory);
+  DebugOnly->setHiddenFlag(cl::NotHidden);
+#endif
   cl::SetVersionPrinter(printVersion);
   cl::HideUnrelatedOptions(Categories);
   cl::ParseCommandLineOptions(
@@ -98,10 +96,11 @@ static std::unique_ptr<CompilationDatabase> parseCLOptions(
       TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
   Sources = SourcePaths;
   EmitOnly = EmitLLVM;
-  std::vector<std::string> CommandLine;
   CommandLine.push_back("-g");
   if (!LanguageStd.empty())
     CommandLine.push_back("-std=" + LanguageStd);
+  if (TimeReport)
+    CommandLine.push_back("-ftime-report");
   for (auto &Path : IncludePaths)
     CommandLine.push_back("-I" + Path);
   for (auto &Macro : MacroDefs)
@@ -120,11 +119,13 @@ int main(int Argc, const char** Argv) {
   InitializeAllTargetMCs();
   InitializeAllAsmParsers();
   std::vector<std::string> Sources;
+  std::vector<std::string> CommandLine;
   bool EmitOnly;
   std::unique_ptr<CompilationDatabase> Compilations =
-    parseCLOptions(Argc, Argv, Sources, EmitOnly);
+    parseCLOptions(Argc, Argv, Sources, CommandLine, EmitOnly);
   ClangTool Tool(*Compilations, Sources);
   if (EmitOnly)
     return Tool.run(newFrontendActionFactory<EmitLLVMAnalysisAction>().get());
-  return Tool.run(newFrontendActionFactory<AnalysisAction>().get());
+  return Tool.run(newAnalysisActionFactory<AnalysisAction>(
+    std::move(CommandLine)).get());
 }

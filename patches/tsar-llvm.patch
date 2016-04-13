@@ -1,50 +1,54 @@
 Index: include/llvm/InitializePasses.h
 ===================================================================
---- include/llvm/InitializePasses.h	(revision 224330)
+--- include/llvm/InitializePasses.h	(revision 254850)
 +++ include/llvm/InitializePasses.h	(working copy)
-@@ -19,6 +19,16 @@
- 
+@@ -19,6 +19,20 @@
+
  class PassRegistry;
- 
+
 +#ifdef TSAR_PROJECT
 +
-+/// initializeTSAR - Initialize all passes linked into the 
++/// initializeTSAR - Initialize all passes linked into the
 +/// TSAR project.
 +void initializeTSAR(PassRegistry &Registry);
 +
 +void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 +
-+void initializePrivatePrintPassPass(PassRegistry &Registry);
++void initializeRewriterInitializationPassPass(PassRegistry &Registry);
++
++void initializePrivateCClassifierPassPass(PassRegistry &Registry);
 +
 +#endif//TSAR_PROJECT
 +
  /// initializeCore - Initialize all passes linked into the
  /// TransformUtils library.
  void initializeCore(PassRegistry&);
+
 Index: include/llvm/LinkAllPasses.h
 ===================================================================
---- include/llvm/LinkAllPasses.h	(revision 224330)
+--- include/llvm/LinkAllPasses.h	(revision 254850)
 +++ include/llvm/LinkAllPasses.h	(working copy)
-@@ -12,6 +12,10 @@
- //
- //===----------------------------------------------------------------------===//
- 
+@@ -39,6 +39,10 @@
+ #include "llvm/Support/Valgrind.h"
+ #include <cstdlib>
+
 +#ifdef TSAR_PROJECT
 +#include "tsar_pass.h"
 +#endif//TSAR_PROJECT
 +
- #ifndef LLVM_LINKALLPASSES_H
- #define LLVM_LINKALLPASSES_H
- 
-@@ -47,6 +51,10 @@
+ namespace {
+   struct ForcePassLinking {
+     ForcePassLinking() {
+@@ -49,6 +53,12 @@
        if (std::getenv("bar") != (char*) -1)
          return;
- 
+
 +#ifdef TSAR_PROJECT
 +      (void) llvm::createPrivateRecognitionPass();
-+      (void) llvm::createPrivatePrintPass();
++      (void) llvm::createRewriterInitializationPass();
++      (void) llvm::createPrivateCClassifierPass();
 +#endif//TSAR_PROJECT
 +
        (void) llvm::createAAEvalPass();
        (void) llvm::createAggressiveDCEPass();
-       (void) llvm::createAliasAnalysisCounterPass();
+       (void) llvm::createBitTrackingDCEPass();
