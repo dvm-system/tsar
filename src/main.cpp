@@ -50,12 +50,13 @@ static void printVersion() {
 /// \param [out] CommandLine The parsed command line to compile all sources will
 /// be stored here.
 /// \param [out] EmitOnly This will be set to true if analysis does not require.
+/// \param [out] Instr This will be set to true if instrumentation is required.
 /// \return Compilation data base.
 static std::unique_ptr<CompilationDatabase> parseCLOptions(
   int Argc, const char **Argv,
   std::vector<std::string> &Sources,
   std::vector<std::string> &CommandLine,
-  bool &EmitOnly) {
+  bool &EmitOnly, bool &Instr) {
   StringMap<llvm::cl::Option*> &opts = llvm::cl::getRegisteredOptions();
   assert(opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = opts["help"];
@@ -71,6 +72,8 @@ static std::unique_ptr<CompilationDatabase> parseCLOptions(
     cl::value_desc("name=definition"), cl::desc("Predefine name as a macro"));
   static cl::opt<std::string> LanguageStd("std", cl::cat(CompileCategory),
     cl::value_desc("standard"), cl::desc("Language standard to compile for"));
+  static cl::opt<bool> InstrLLVM("instr-llvm", cl::cat(CompileCategory),
+    cl::desc("Perform low-level (LLVM IR) instrumentation"));
   static cl::OptionCategory DebugCategory("Debugging options");
   Categories.push_back(&DebugCategory);
   static cl::opt<bool> EmitLLVM("emit-llvm", cl::cat(DebugCategory),
@@ -96,6 +99,7 @@ static std::unique_ptr<CompilationDatabase> parseCLOptions(
       TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
   Sources = SourcePaths;
   EmitOnly = EmitLLVM;
+  Instr = InstrLLVM;
   CommandLine.push_back("-g");
   if (!LanguageStd.empty())
     CommandLine.push_back("-std=" + LanguageStd);
@@ -120,12 +124,15 @@ int main(int Argc, const char** Argv) {
   InitializeAllAsmParsers();
   std::vector<std::string> Sources;
   std::vector<std::string> CommandLine;
-  bool EmitOnly;
+  bool EmitOnly, Instr;
   std::unique_ptr<CompilationDatabase> Compilations =
-    parseCLOptions(Argc, Argv, Sources, CommandLine, EmitOnly);
+    parseCLOptions(Argc, Argv, Sources, CommandLine, EmitOnly, Instr);
   ClangTool Tool(*Compilations, Sources);
   if (EmitOnly)
     return Tool.run(newFrontendActionFactory<EmitLLVMAnalysisAction>().get());
+  else if (Instr)
+    return Tool.run(newFrontendActionFactory<InstrumentationAction>().get());
+  else
   return Tool.run(newAnalysisActionFactory<MainAction>(
     std::move(CommandLine)).get());
 }

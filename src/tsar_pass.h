@@ -26,6 +26,9 @@ FunctionPass * createPrivateCClassifierPass();
 
 /// Creates a pass to access source level transformation enginer.
 ImmutablePass * createTransformationEnginePass();
+
+/// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
+FunctionPass * createInstrumentationPass();
 }
 
 #endif//TSAR_PASS_H

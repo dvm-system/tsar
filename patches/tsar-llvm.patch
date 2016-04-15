@@ -2,7 +2,7 @@ Index: include/llvm/InitializePasses.h
 ===================================================================
 --- include/llvm/InitializePasses.h	(revision 254850)
 +++ include/llvm/InitializePasses.h	(working copy)
-@@ -19,6 +19,20 @@
+@@ -19,6 +19,22 @@
 
  class PassRegistry;
 
@@ -17,6 +17,8 @@ Index: include/llvm/InitializePasses.h
 +void initializeTransformationEnginePassPass(PassRegistry &Registry);
 +
 +void initializePrivateCClassifierPassPass(PassRegistry &Registry);
++
++void initializeInstrumentationPassPass(PassRegistry &Registry);
 +
 +#endif//TSAR_PROJECT
 +
@@ -39,7 +41,7 @@ Index: include/llvm/LinkAllPasses.h
  namespace {
    struct ForcePassLinking {
      ForcePassLinking() {
-@@ -49,6 +53,12 @@
+@@ -49,6 +53,13 @@
        if (std::getenv("bar") != (char*) -1)
          return;
 
@@ -47,6 +49,7 @@ Index: include/llvm/LinkAllPasses.h
 +      (void) llvm::createPrivateRecognitionPass();
 +      (void) llvm::createTransfomrationEnginePass();
 +      (void) llvm::createPrivateCClassifierPass();
++      (void) llvm::createInstrumentationPass();
 +#endif//TSAR_PROJECT
 +
        (void) llvm::createAAEvalPass();

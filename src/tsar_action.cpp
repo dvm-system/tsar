@@ -32,6 +32,7 @@
 #include "tsar_pass.h"
 #include "tsar_action.h"
 #include "tsar_transformation.h"
+#include "tsar_instrumentation.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -185,20 +186,19 @@ public:
     }
     assert(mModule.get() == M &&
       "Unexpected module change during IR generation");
-    // Transformation engine pass will manage the context when it will be
-    // created. If it is already exists the context is already managed by it.
-    TransformationContext *TfmCtx = mTransformContext.release();
     switch (mAction) {
       case AnalysisActionBase::KIND_ANALYSIS:
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.startTimer();
-        AnalyzeAndTransform(M, TfmCtx);
+        AnalyzeAndTransform(M, mTransformContext.release());
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.stopTimer();
         break;
       case AnalysisActionBase::KIND_EMIT_LLVM: EmitLLVM(); break;
+      case AnalysisActionBase::KIND_INSTRUMENT: InstrumentLLVM(); break;
       case AnalysisActionBase::KIND_TRANSFORM:
           llvm_unreachable("Transformation action is not implemented yet!");
+          mTransformContext.release();
         break;
       default: assert("Unknown kind of action, so do nothing!"); break;
     }
@@ -244,6 +244,16 @@ public:
     Passes.run(*mModule.get());
   }
 
+  /// Perform instrumentaion of LLVM IR.
+  void InstrumentLLVM() {
+    legacy::PassManager Passes;
+    Passes.add(createInstrumentationPass());
+    Passes.add(createVerifierPass());
+    Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts.EmitLLVMUseLists));
+    cl::PrintOptionValues();
+    Passes.run(*mModule.get());
+  }
+
 private:
   AnalysisActionBase::Kind mAction;
   raw_pwrite_stream *mOS;
@@ -274,6 +284,7 @@ AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   raw_pwrite_stream *OS = nullptr;
   switch (mKind) {
   case KIND_EMIT_LLVM:
+  case KIND_INSTRUMENT:
     OS = CI.createDefaultOutputFile(false, InFile, "ll"); break;
   }
   return std::make_unique<AnalysisConsumer>(mKind, OS, CI, InFile,
@@ -336,3 +347,6 @@ EmitLLVMAnalysisAction::EmitLLVMAnalysisAction() :
 
 TransformationAction::TransformationAction(TransformationContext &Ctx) :
   AnalysisActionBase(KIND_TRANSFORM, &Ctx, makeArrayRef<std::string>("")) {}
+
+InstrumentationAction::InstrumentationAction() :
+  AnalysisActionBase(KIND_INSTRUMENT, nullptr, makeArrayRef<std::string>("")) {}

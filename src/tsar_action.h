@@ -28,6 +28,8 @@ public:
     KIND_ANALYSIS = FIRST_KIND,
     /// Emit only LLVM IR and do not perform any analysis.
     KIND_EMIT_LLVM,
+    /// Perform low-level (LLVM IR) instrumentation.
+    KIND_INSTRUMENT,
     /// Perform set of transformation passese with the same
     /// transformation context.
     KIND_TRANSFORM,
@@ -79,6 +81,11 @@ public:
 class TransformationAction : public AnalysisActionBase {
 public:
   explicit TransformationAction(tsar::TransformationContext &Ctx);
+};
+
+class InstrumentationAction : public AnalysisActionBase {
+public:
+  explicit InstrumentationAction();
 };
 
 /// Creats an analysis/transformations actions factory.
