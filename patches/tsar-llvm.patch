@@ -14,7 +14,7 @@ Index: include/llvm/InitializePasses.h
 +
 +void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 +
-+void initializeRewriterInitializationPassPass(PassRegistry &Registry);
++void initializeTransformationEnginePassPass(PassRegistry &Registry);
 +
 +void initializePrivateCClassifierPassPass(PassRegistry &Registry);
 +
@@ -45,7 +45,7 @@ Index: include/llvm/LinkAllPasses.h
 
 +#ifdef TSAR_PROJECT
 +      (void) llvm::createPrivateRecognitionPass();
-+      (void) llvm::createRewriterInitializationPass();
++      (void) llvm::createTransfomrationEnginePass();
 +      (void) llvm::createPrivateCClassifierPass();
 +#endif//TSAR_PROJECT
 +

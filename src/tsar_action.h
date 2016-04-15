@@ -14,7 +14,7 @@
 #include <memory>
 
 namespace tsar {
-class RewriterContext;
+class TransformationContext;
 }
 
 namespace clang {
@@ -24,30 +24,17 @@ public:
   /// This is a list of supported actions.
   enum Kind {
     FIRST_KIND,
-    /// Perform analysis.
+    /// Perform a main analysis and transformations action.
     KIND_ANALYSIS = FIRST_KIND,
     /// Emit only LLVM IR and do not perform any analysis.
     KIND_EMIT_LLVM,
-    /// Supplemented rewriter context by additional information to configure
-    /// rewriter.
-    KIND_CONFIGURE_REWRITER,
-    LAST_KIND = KIND_CONFIGURE_REWRITER,
+    /// Perform set of transformation passese with the same
+    /// transformation context.
+    KIND_TRANSFORM,
+    LAST_KIND = KIND_TRANSFORM,
     INVALID_KIND,
     NUMBER_KIND = INVALID_KIND
   };
-
-  /// Creates specified analysis action.
-  ///
-  /// \attention
-  /// - If kind of new action is KIND_CONFIGURE_REWRITER then rewriter
-  /// context must be specified. It will be supplemented by additional
-  /// information to configure rewrite for an evaluated source. The context will
-  /// not be taken under control of this class, so do not free it separately.
-  /// - If a rewriter context and a command line both are specified the command
-  /// line from the rewriter context must be equal to the specified command
-  /// line.
-  AnalysisActionBase(Kind AK, tsar::RewriterContext *Ctx,
-    ArrayRef<std::string> CL);
 
   /// Creates AST Consumer.
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
@@ -59,15 +46,29 @@ public:
   /// Executes action, evaluateion of IR files is also supported.
   void ExecuteAction() override;
 
+protected:
+  /// Creates specified action.
+  ///
+  /// \attention
+  /// - If kind of new action is KIND_TRANSFORM then transformation context
+  /// must be specified. It will be used to access to transformation engine from
+  /// LLVM transformation passes. The context will not be taken under control of
+  /// this class.
+  /// - If transformation context and command line both are specified the
+  /// command line will  be ignored and command line from transformation context
+  /// will be used.
+  AnalysisActionBase(Kind AK, tsar::TransformationContext *Ctx,
+    ArrayRef<std::string> CL);
+
 private:
   Kind mKind;
-  tsar::RewriterContext *mRewriterContext;
+  tsar::TransformationContext *mTransformContext;
   std::vector<std::string> mCommandLine;
 };
 
-class AnalysisAction : public AnalysisActionBase {
+class MainAction : public AnalysisActionBase {
 public:
-  explicit AnalysisAction(ArrayRef<std::string> CL);
+  explicit MainAction(ArrayRef<std::string> CL);
 };
 
 class EmitLLVMAnalysisAction : public AnalysisActionBase {
@@ -75,12 +76,12 @@ public:
   explicit EmitLLVMAnalysisAction();
 };
 
-class RewriterInitAction : public AnalysisActionBase {
+class TransformationAction : public AnalysisActionBase {
 public:
-  explicit RewriterInitAction(tsar::RewriterContext *Ctx);
+  explicit TransformationAction(tsar::TransformationContext &Ctx);
 };
 
-/// Creats an analysis actions factory.
+/// Creats an analysis/transformations actions factory.
 template <class ActionTy, class ArgTy>
 std::unique_ptr<tooling::FrontendActionFactory> newAnalysisActionFactory(
     ArgTy &Arg) {

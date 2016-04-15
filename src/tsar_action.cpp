@@ -3,7 +3,7 @@
 //                       Traits Static Analyzer (SAPFOR)
 //
 // This file implements front-end action which is necessary to analyze and
-// transfomr sources. It also implements LLVM passess which initializes rewriter
+// transform sources. It also implements LLVM passes which initializes rewriter
 // to transform sources in subsequent passes.
 //
 //===----------------------------------------------------------------------===//
@@ -31,123 +31,21 @@
 #include <memory>
 #include "tsar_pass.h"
 #include "tsar_action.h"
-#include "tsar_rewriter_init.h"
+#include "tsar_transformation.h"
 
 using namespace clang;
 using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
-namespace tsar {
-/// This class represents general information that is necessary to configure
-/// rewriter of sources. A single instance of this class associated with a
-/// single source file (with additional include files) and command line options
-///  wich is necessary to parse this file before it would be rewritten.
-/// To configure rewriter additional information is needed, such information
-/// could be reseted multiple times.
-class RewriterContext {
-public:
-  /// Constructor wich specifies general and additional information to configure
-  /// rewriter.
-  ///
-  /// \attention A code generator is going to be taken under control of this
-  /// class, so do not free it separately.
-  RewriterContext(SourceManager &SM, CompilerInvocation &CI, CodeGenerator *Gen,
-    ArrayRef<std::string> &CL) :
-    mSourceMgr(&SM), mInvocation(&CI), mGen(Gen),
-    mCommandLine(CL), mIsReset(false) {
-    assert(Gen &&
-      "Code generator must not be null if other additional data is specified!");
-    FileID FID = mSourceMgr->getMainFileID();
-    const FileEntry *File = mSourceMgr->getFileEntryForID(FID);
-    mPath = File->getName();
-  }
-
-  /// Constructor wich specifies only general information.
-  /// \param [in] Path A source file that would be rewritten.
-  /// \param [in] CL Command line arguments to parse the source file.
-  RewriterContext(StringRef Path, ArrayRef<std::string> &CL) :
-    mPath(Path), mCommandLine(CL), mIsReset(false) {}
-
-  /// Returns a source file.
-  ArrayRef<std::string> getSource() const { return makeArrayRef(mPath); }
-
-  /// Returns command line to parse a source file.
-  ArrayRef<std::string> getCommandLine() const { return mCommandLine; }
-
-  /// Returns functional to obtain initial names for mangled names.
-  Demangler getDemangler() {
-    assert(mGen && "Rewriter context has no code generator!");
-    return [this](StringRef Name) {
-      return const_cast<Decl *>(mGen->GetDeclForMangledName(Name));
-    };
-  }
-
-  /// Returns source manager.
-  SourceManager & getSourceManager() {
-    assert(mSourceMgr && "Rewriter context has no source manager!");
-    return *mSourceMgr;
-  }
-
-  /// Returns language options.
-  const LangOptions & getLangOpts() {
-    assert(mInvocation && mInvocation->getLangOpts() &&
-      "Rewriter context has no language options!");
-    return *mInvocation->getLangOpts();
-  }
-
-  /// Checks whether the additional information is specified.
-  bool hasInstanceData() { return mSourceMgr != nullptr; }
-
-  /// Returns true if instance data have been reseted at least one time.
-  bool isInstanceDataReset() { return mIsReset; }
-
-  /// Resets additional information wich is necessary to configure rewriter.
-  ///
-  /// \attention A code generator is going to be taken under control of this
-  /// class, so do not free it separately.
-  void resetInstanceData(SourceManager &SM, CompilerInvocation &CI,
-    CodeGenerator *Gen) {
-    assert(Gen &&
-      "Code generator must not be null if other additional data is specified!");
-    mSourceMgr = &SM;
-    mInvocation = &CI;
-    mGen.reset(Gen);
-    mIsReset = true;
-  }
-
-  /// Resets additional information wich is necessary to configure rewriter.
-  ///
-  /// \attention The managed code generator will be deleted. It is possible to
-  /// use the releaseGenerator() method to releases its the ownership.
-  void resetInstanceData() {
-    mSourceMgr = nullptr;
-    mInvocation = nullptr;
-    mGen.reset(nullptr);
-    mIsReset = true;
-  }
-
-  /// Releases the ownership of the managed code generator.
-  CodeGenerator * releaseGenerator() noexcept { mGen.release(); }
-
-private:
-  IntrusiveRefCntPtr<SourceManager> mSourceMgr;
-  IntrusiveRefCntPtr<CompilerInvocation> mInvocation;
-  std::unique_ptr<CodeGenerator> mGen;
-  std::vector<std::string> mCommandLine;
-  std::string mPath;
-  bool mIsReset;
-};
-}
-
 namespace clang {
-/// Analysis the specified module and transformes source file associated with it
+/// Analysis the specified module and transforms source file associated with it
 /// if rewriter context is specified.
 ///
 /// \attention The rewriter context is going to be taken under control, so do
-/// not free it separatly.
+/// not free it separately.
 static void AnalyzeAndTransform(llvm::Module *M,
-    RewriterContext *Ctx = nullptr) {
+    TransformationContext *Ctx = nullptr) {
   assert(M && "Module must not be null!");
   LLVMContext &Context = getGlobalContext();
   PassRegistry &Registry = *PassRegistry::getPassRegistry();
@@ -155,6 +53,12 @@ static void AnalyzeAndTransform(llvm::Module *M,
   initializeAnalysis(Registry);
   initializeTSAR(Registry);
   legacy::PassManager Passes;
+  if (Ctx) {
+    auto TEP = static_cast<TransformationEnginePass *>(
+      createTransformationEnginePass());
+    TEP->setContext(*M, Ctx);
+    Passes.add(TEP);
+  }
   // The 'unreachableblockelim' pass is necessary because implementation
   // of data-flow analysis relies on suggestion that control-flow graph does
   // not contain unreachable basic blocks.
@@ -171,12 +75,6 @@ static void AnalyzeAndTransform(llvm::Module *M,
   //}
   // In other cases 'clang' automatically deletes unreachable blocks.
   Passes.add(createUnreachableBlockEliminationPass());
-  if (Ctx) {
-    auto RewriterInit = static_cast<RewriterInitializationPass *>(
-      createRewriterInitializationPass());
-    RewriterInit->setRewriterContext(*M, Ctx);
-    Passes.add(RewriterInit);
-  }
   Passes.add(createBasicAliasAnalysisPass());
   Passes.add(createPrivateRecognitionPass());
   if (Ctx)
@@ -191,9 +89,9 @@ static void AnalyzeAndTransform(llvm::Module *M,
 class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
-  AnalysisConsumer(AnalysisAction::Kind AK, raw_pwrite_stream *OS,
+  AnalysisConsumer(AnalysisActionBase::Kind AK, raw_pwrite_stream *OS,
       CompilerInstance &CI, StringRef InFile,
-      RewriterContext *RewriterCtx = nullptr,
+      TransformationContext *TransformContext = nullptr,
       ArrayRef<std::string> CL = makeArrayRef<std::string>(""))
     : mAction(AK), mOS(OS),  mLLVMIRGeneration("LLVM IR Generation Time"),
     mLLVMIRAnalysis("LLVM IR Analysis Time"),
@@ -201,31 +99,22 @@ public:
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
-    mRewriterContext(RewriterCtx), mCodeGenOpts(CI.getCodeGenOpts()) {
-    assert(AnalysisAction::FIRST_KIND <= AK && AK <= AnalysisAction::LAST_KIND
-      && "Unknown kind of action!");
-    assert((AK != AnalysisAction::KIND_CONFIGURE_REWRITER || mRewriterContext)
-      && "For a configure rewriter action context must not be null!");
-    assert(mAction != AnalysisAction::KIND_EMIT_LLVM || !mOS ||
+    mTransformContext(TransformContext), mCodeGenOpts(CI.getCodeGenOpts()),
+    mCommandLine(CL) {
+    assert(AnalysisActionBase::FIRST_KIND <= AK &&
+      AK <= AnalysisActionBase::LAST_KIND  && "Unknown kind of action!");
+    assert((AK != AnalysisActionBase::KIND_TRANSFORM || mTransformContext) &&
+      "For a configure rewriter action context must not be null!");
+    assert((mAction != AnalysisActionBase::KIND_EMIT_LLVM || mOS) &&
       "Output stream must not be null if emit action is selected!");
     TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
-    switch (mAction) {
-    default:
-      mRewriterContext.reset(new RewriterContext(CI.getSourceManager(),
-        CI.getInvocation(), mGen, CL));
-      break;
-    case AnalysisAction::KIND_CONFIGURE_REWRITER:
-      mRewriterContext->resetInstanceData(CI.getSourceManager(),
-        CI.getInvocation(), mGen);
-      break;
-    }
   }
 
   ~AnalysisConsumer() {
-    // Be careful if kind of action KIND_CONFIGURE_REWRITER the rewriter
-    // context should not be deleted whis this consumer.
-    if (mAction == AnalysisAction::KIND_CONFIGURE_REWRITER)
-      mRewriterContext.release();
+    // Be careful if kind of action KIND_TRANSFORM the transformation
+    // context should not be deleted whith this consumer.
+    if (mAction == AnalysisActionBase::KIND_TRANSFORM)
+      mTransformContext.release();
   }
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
@@ -239,6 +128,11 @@ public:
       return;
     }
     mASTContext = &Ctx;
+    if (!mTransformContext)
+      mTransformContext.reset(
+        new TransformationContext(Ctx, *mGen, mCommandLine));
+    else
+      mTransformContext->reset(Ctx, *mGen);
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.startTimer();
     mGen->Initialize(Ctx);
@@ -291,17 +185,20 @@ public:
     }
     assert(mModule.get() == M &&
       "Unexpected module change during IR generation");
+    // Transformation engine pass will manage the context when it will be
+    // created. If it is already exists the context is already managed by it.
+    TransformationContext *TfmCtx = mTransformContext.release();
     switch (mAction) {
-      case AnalysisAction::KIND_ANALYSIS:
+      case AnalysisActionBase::KIND_ANALYSIS:
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.startTimer();
-        AnalyzeAndTransform(M, mRewriterContext.release());
+        AnalyzeAndTransform(M, TfmCtx);
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.stopTimer();
         break;
-      case AnalysisAction::KIND_EMIT_LLVM: EmitLLVM(); break;
-      case AnalysisAction::KIND_CONFIGURE_REWRITER:
-        // Do nothing because mRewriterContext has been updated in constructor.
+      case AnalysisActionBase::KIND_EMIT_LLVM: EmitLLVM(); break;
+      case AnalysisActionBase::KIND_TRANSFORM:
+          llvm_unreachable("Transformation action is not implemented yet!");
         break;
       default: assert("Unknown kind of action, so do nothing!"); break;
     }
@@ -348,27 +245,28 @@ public:
   }
 
 private:
-  AnalysisAction::Kind mAction;
+  AnalysisActionBase::Kind mAction;
   raw_pwrite_stream *mOS;
   Timer mLLVMIRGeneration;
   Timer mLLVMIRAnalysis;
   ASTContext *mASTContext;
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
-  // Do not remove mGen explicitly, it will be removed with mRewriterContext if
-  // it is necessary.
-  CodeGenerator *mGen;
-  std::unique_ptr<RewriterContext> mRewriterContext;
+  std::unique_ptr<CodeGenerator> mGen;
+  std::unique_ptr<TransformationContext> mTransformContext;
   const CodeGenOptions mCodeGenOpts;
+  ArrayRef<std::string> mCommandLine;
   std::unique_ptr<llvm::Module> mModule;
 };
 }
 
-AnalysisActionBase::AnalysisActionBase(Kind AK, RewriterContext *Ctx,
+AnalysisActionBase::AnalysisActionBase(Kind AK, TransformationContext *Ctx,
     ArrayRef<std::string> CL) :
-  mKind(AK), mRewriterContext(Ctx), mCommandLine(CL) {
+  mKind(AK), mTransformContext(Ctx), mCommandLine(CL) {
   assert(FIRST_KIND <= AK && AK <= LAST_KIND && "Unknown kind of action!");
-  assert((AK != KIND_CONFIGURE_REWRITER || Ctx) &&
-    "For a configure rewriter action context must not be null!");
+  assert((AK != KIND_TRANSFORM || Ctx) &&
+    "For a transformation action context must not be null!");
+  if (mTransformContext)
+    mCommandLine = mTransformContext->getCommandLine();
 }
 
 std::unique_ptr<ASTConsumer>
@@ -379,7 +277,7 @@ AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     OS = CI.createDefaultOutputFile(false, InFile, "ll"); break;
   }
   return std::make_unique<AnalysisConsumer>(mKind, OS, CI, InFile,
-    mRewriterContext, mCommandLine);
+    mTransformContext, mCommandLine);
 }
 
 void AnalysisActionBase::ExecuteAction() {
@@ -430,54 +328,11 @@ void AnalysisActionBase::ExecuteAction() {
 
 bool AnalysisActionBase::hasIRSupport() const { return true; }
 
-AnalysisAction::AnalysisAction(ArrayRef<std::string> CL) :
+MainAction::MainAction(ArrayRef<std::string> CL) :
   AnalysisActionBase(KIND_ANALYSIS, nullptr, CL) {}
 
 EmitLLVMAnalysisAction::EmitLLVMAnalysisAction() :
   AnalysisActionBase(KIND_EMIT_LLVM, nullptr, makeArrayRef<std::string>("")) {}
 
-RewriterInitAction::RewriterInitAction(RewriterContext *Ctx) :
-  AnalysisActionBase(KIND_CONFIGURE_REWRITER, Ctx,
-    makeArrayRef<std::string>("")) {}
-
-#undef DEBUG_TYPE
-#define DEBUG_TYPE "rewriter-init"
-
-char RewriterInitializationPass::ID = 0;
-INITIALIZE_PASS(RewriterInitializationPass, "rewriter-init",
-  "Source Code Rewriter Initializer", true, true)
-
-bool RewriterInitializationPass::runOnModule(llvm::Module &M) {
-  auto CtxItr = mRewriterCtx.find(&M);
-  assert(CtxItr != mRewriterCtx.end() && "The module has no rewriter context!");
-  tsar::RewriterContext *Ctx = CtxItr->second;
-  if (Ctx->isInstanceDataReset() || !Ctx->hasInstanceData()) {
-    // If condition is not met then this is the first run of this pass under
-    // the control of a pass manager for the specified module so it is
-    // not necessary to re-parse source code for the module (if additional data
-    // is specified). The subsequent launches of this pass require that source
-    // code has been re-parsed because it is possible that is has been
-    //transformed.
-    std::unique_ptr<CompilationDatabase> Compilations(
-      new FixedCompilationDatabase(".", Ctx->getCommandLine()));
-    ClangTool Tool(*Compilations, Ctx->getSource());
-    Tool.run(newAnalysisActionFactory<RewriterInitAction>(Ctx).get());
-  }
-  mDemangler = Ctx->getDemangler();
-  mRewriter.setSourceMgr(Ctx->getSourceManager(), Ctx->getLangOpts());
-  return false;
-}
-
-void RewriterInitializationPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.setPreservesAll();
-}
-
-void RewriterInitializationPass::releaseMemory() {
-  for (auto &Ctx : mRewriterCtx)
-    delete Ctx.second;
-  mRewriterCtx.clear();
-}
-
-ModulePass * llvm::createRewriterInitializationPass() {
-  return new RewriterInitializationPass();
-}
+TransformationAction::TransformationAction(TransformationContext &Ctx) :
+  AnalysisActionBase(KIND_TRANSFORM, &Ctx, makeArrayRef<std::string>("")) {}

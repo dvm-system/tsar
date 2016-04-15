@@ -16,6 +16,7 @@
 namespace llvm {
 class FunctionPass;
 class ModulePass;
+class ImmutablePass;
 
 /// Creates a pass to analyze private variables.
 FunctionPass * createPrivateRecognitionPass();
@@ -23,8 +24,8 @@ FunctionPass * createPrivateRecognitionPass();
 /// Creates a pass to make more precise analysis of for-loops in C sources.
 FunctionPass * createPrivateCClassifierPass();
 
-/// Creates a pass to initialize source code rewriter.
-ModulePass * createRewriterInitializationPass();
+/// Creates a pass to access source level transformation enginer.
+ImmutablePass * createTransformationEnginePass();
 }
 
 #endif//TSAR_PASS_H

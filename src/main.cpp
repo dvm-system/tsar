@@ -126,6 +126,6 @@ int main(int Argc, const char** Argv) {
   ClangTool Tool(*Compilations, Sources);
   if (EmitOnly)
     return Tool.run(newFrontendActionFactory<EmitLLVMAnalysisAction>().get());
-  return Tool.run(newAnalysisActionFactory<AnalysisAction>(
+  return Tool.run(newAnalysisActionFactory<MainAction>(
     std::move(CommandLine)).get());
 }
