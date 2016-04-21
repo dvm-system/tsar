@@ -11,6 +11,7 @@
 #include <llvm/InitializePasses.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include "tsar_pass.h"
 
 using namespace llvm;
 

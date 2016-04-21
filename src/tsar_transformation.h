@@ -17,6 +17,7 @@
 #include <llvm/Pass.h>
 #include <functional>
 #include <utility.h>
+#include "tsar_pass.h"
 
 namespace clang {
 class Decl;

@@ -28,6 +28,7 @@
 #include <cell.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
+#include "tsar_pass.h"
 
 using Utility::operator "" _b;
 

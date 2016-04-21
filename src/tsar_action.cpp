@@ -48,11 +48,6 @@ namespace clang {
 static void AnalyzeAndTransform(llvm::Module *M,
     TransformationContext *Ctx = nullptr) {
   assert(M && "Module must not be null!");
-  LLVMContext &Context = getGlobalContext();
-  PassRegistry &Registry = *PassRegistry::getPassRegistry();
-  initializeCore(Registry);
-  initializeAnalysis(Registry);
-  initializeTSAR(Registry);
   legacy::PassManager Passes;
   if (Ctx) {
     auto TEP = static_cast<TransformationEnginePass *>(

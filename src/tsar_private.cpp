@@ -8,7 +8,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Pass.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/DenseMap.h>
@@ -29,7 +28,6 @@
 #include <declaration.h>
 #include "tsar_private.h"
 #include "tsar_graph.h"
-#include "tsar_pass.h"
 #include "tsar_utility.h"
 #include "tsar_dbg_output.h"
 
@@ -51,7 +49,6 @@ STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated")
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
                       "Private Variable Analysis", true, true)
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",

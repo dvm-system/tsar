@@ -1,6 +1,6 @@
 #include <clang/AST/Decl.h>
 #include <llvm/Analysis/LoopInfo.h>
-#include "tsar_pass.h"
+#include "tsar_dbg_output.h"
 #include "tsar_private.h"
 #include "tsar_private_c.h"
 #include "tsar_transformation.h"

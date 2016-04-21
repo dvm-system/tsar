@@ -11,7 +11,6 @@
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/FrontendDiagnostic.h>
 #include <llvm/Support/Path.h>
-#include "tsar_pass.h"
 #include "tsar_transformation.h"
 
 using namespace tsar;

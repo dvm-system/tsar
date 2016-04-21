@@ -13,7 +13,6 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/Function.h>
 #include "tsar_instrumentation.h"
-#include "tsar_pass.h"
 
 using namespace llvm;
 using namespace tsar;

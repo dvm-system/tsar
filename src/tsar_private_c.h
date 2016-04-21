@@ -3,6 +3,7 @@
 
 #include <llvm/Pass.h>
 #include <utility.h>
+#include "tsar_pass.h"
 
 namespace llvm {
 class PrivateCClassifierPass :
