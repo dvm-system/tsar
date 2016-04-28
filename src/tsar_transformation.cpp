@@ -101,7 +101,7 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
     if (!Pair.second)
       ++Pair.first->getValue();
     char Buf[10];
-    _itoa_s(Pair.first->getValue(), Buf, 10);
+    snprintf(Buf, 10, "%d", Pair.first->getValue());
     SmallString<128> Path = Filename;
     sys::path::replace_extension(Path, Buf + sys::path::extension(Path));
     return Path.str();

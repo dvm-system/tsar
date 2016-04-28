@@ -90,17 +90,17 @@ public:
 
 /// Creats an analysis/transformations actions factory.
 template <class ActionTy, class ArgTy>
-std::unique_ptr<tooling::FrontendActionFactory> newAnalysisActionFactory(
-    ArgTy &Arg) {
+std::unique_ptr<tooling::FrontendActionFactory>
+newAnalysisActionFactory(ArgTy Arg) {
   class AnalysisActionFactory : public tooling::FrontendActionFactory {
   public:
-    AnalysisActionFactory(ArgTy &Arg) : mArg(Arg) {}
+    AnalysisActionFactory(ArgTy Arg) : mArg(std::move(Arg)) {}
     clang::FrontendAction *create() override { return new ActionTy(mArg); }
   private:
     ArgTy mArg;
   };
   return std::unique_ptr<tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(Arg));
+    new AnalysisActionFactory(std::move(Arg)));
 }
 }
 #endif//TSAR_ACTION_H

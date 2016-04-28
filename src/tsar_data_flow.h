@@ -27,11 +27,13 @@
 #ifndef TSAR_DATA_FLOW_H
 #define TSAR_DATA_FLOW_H
 
+#include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/PostOrderIterator.h>
-#include <iterator>
-#include <vector>
 #include <algorithm>
+#include <iterator>
+#include <type_traits>
+#include <vector>
 #include <utility.h>
 
 namespace tsar {
@@ -77,7 +79,7 @@ namespace tsar {
 ///     For the first iteration the new value compares with the initial one.
 ///
 /// Direction of the data-flow is specified by child_begin and child_end
-/// functions which is defined is the GraphTraits<GraphType> class.
+/// functions which is defined in the llvm::GraphTraits<GraphType> class.
 template <class DFFwk> struct DataFlowTraits {
   /// If anyone tries to use this class without having an appropriate
   /// specialization, make an error.
@@ -124,7 +126,7 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
   typedef DataFlowTraits<DFFwk> DFT;
   typedef typename DFT::ValueType ValueType;
   typedef typename DFT::GraphType GraphType;
-  typedef GraphTraits<GraphType> GT;
+  typedef llvm::GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
@@ -176,7 +178,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   typedef DataFlowTraits<DFFwk> DFT;
   typedef typename DFT::ValueType ValueType;
   typedef typename DFT::GraphType GraphType;
-  typedef GraphTraits<GraphType> GT;
+  typedef llvm::GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
   typedef typename GT::NodeType NodeType;
@@ -192,8 +194,9 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
     llvm::GraphTraits<llvm::Inverse<GraphType> > > po_iterator;
   typedef std::vector<NodeType *> RPOTraversal;
   typedef typename RPOTraversal::reverse_iterator rpo_iterator;
-  // We do not use llvm::ReversePostOrderTraversal class because
-  // its implementation requires that GraphTraits is specialized by NodeType *.
+  // We do not use llvm::ReversePostOrderTraversal class because its
+  // implementation requires that llvm::GraphTraits is specialized by^M
+  // NodeType *.
   RPOTraversal RPOT;
   std::copy(po_iterator::begin(DFG), po_iterator::end(DFG),
             std::back_inserter(RPOT));
@@ -266,7 +269,7 @@ template<class DFFwk > struct RegionDFTraits {
 /// Subgraph of this graph also can be used.
 /// \attention DataFlowTraits and RegionDFTraits classes should be specialized
 /// by DFFwk. Note that DFFwk is generally a pointer type.
-/// The GraphTraits class should be specialized by type of each
+/// The llvm::GraphTraits class should be specialized by type of each
 /// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
 /// \pre The graph must not contain unreachable nodes.
@@ -303,7 +306,7 @@ template<class DFFwk> void solveDataFlowUpward(DFFwk DFF,
 /// Subgraph of this graph also can be used.
 /// \attention DataFlowTraits and RegionDFTraits classes should b e specialized
 /// by DFFwk. Note that DFFwk is generally a pointer type.
-/// The GraphTraits class should be specialized by type of each
+/// The llvm::GraphTraits class should be specialized by type of each
 /// regions in the hierarchy (not only for DataFlowTraits<DFFwk>::GraphType).
 /// Note that type of region is generally a pointer type.
 /// \pre The graph must not contain unreachable nodes.
@@ -322,6 +325,33 @@ template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
   RT::collapse(DFF, DFG);
 }
 
+namespace detail{
+/// This covers an IN value for a data-flwo node.
+template<class InTy> class DFValueIn {
+public:
+  /// Returns a data-flow value before the node.
+  const InTy & getIn() const { return mIn; }
+
+  /// Specifies a data-flow value before the node.
+  void setIn(InTy V) { mIn = std::move(V); }
+
+private:
+  InTy mIn;
+};
+
+/// This covers an OUT value for a data-flwo node.
+template<class OutTy> class DFValueOut {
+public:
+  /// Returns a data-flow value after the node.
+  const OutTy & getOut() const { return mOut; }
+
+  /// Specifies a data-flow value after the node.
+  void setOut(OutTy V) { mOut = std::move(V); }
+
+private:
+  OutTy mOut;
+};
+}
 /// \brief This covers IN and OUT values for a data-flow node.
 ///
 /// \tparam Id Identifier, for example a data-flow framework which is used.
@@ -329,33 +359,14 @@ template<class DFFwk> void solveDataFlowDownward(DFFwk DFF,
 /// \tparam InTy Type of data-flow value before the node (IN).
 /// \tparam OutTy Type of data-flow value after the node (OUT).
 ///
-/// It is possible to set InTy or OutTy to void. In this case
+/// It is possible to set InTy or OutTy to void. In this Case
 /// corresponding methods (get and set) are not available.
 template<class Id, class InTy, class OutTy = InTy >
-class DFValue {
-public:
-  /// Returns a data-flow value before the node.
-  std::enable_if_t<!std::is_same<InTy, void>::value, const InTy &>
-    getIn() const { return mIn; }
-
-  /// Specifies a data-flow value before the node.
-  void setIn(std::enable_if_t<!std::is_same<InTy, void>::value, InTy> V) {
-    mIn = std::move(V);
-  }
-
-  /// Returns a data-flow value after the node.
-  std::enable_if_t<!std::is_same<OutTy, void>::value, const OutTy &>
-    getOut() const { return mOut; }
-
-  /// Specifies a data-flow value after the node.
-  void setOut(std::enable_if_t<!std::is_same<OutTy, void>::value, OutTy> V) {
-    mOut = std::move(V);
-  }
-
-private:
-  InTy mIn;
-  OutTy mOut;
-};
+class DFValue :
+  public std::conditional<std::is_void<InTy>::value,
+			  Utility::Null, detail::DFValueIn<InTy>>::type,
+  public std::conditional<std::is_void<OutTy>::value,
+			  Utility::Null, detail::DFValueOut<OutTy>>::type {};
 
 /// \brief Instances of this class are used to represent a node
 /// with a small list of the adjacent nodes.
@@ -403,16 +414,16 @@ public:
   /// Returns true if the specified node is a successor of this node.
   bool isSuccessor(NodeTy *Node) const {
     assert(Node && "Data-flow node must not be null!");
-    for (NodeTy * N : mAdjacentNodes[SUCC])
-      if (N == Node) return true;
+    for (NodeTy *CurrNode : mAdjacentNodes[SUCC])
+      if (CurrNode == Node) return true;
     return false;
   }
 
   /// Returns true if the specified node is a predecessor of this node.
   bool isPredecessor(NodeTy *Node) const {
     assert(Node && "Data-flow node must not be null!");
-    for (NodeTy * N : mAdjacentNodes[PRED])
-      if (N == Node) return true;
+    for (NodeTy *CurrNode : mAdjacentNodes[PRED])
+      if (CurrNode == Node) return true;
     return false;
   }
 

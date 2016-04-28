@@ -20,6 +20,7 @@
 
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/IR/CFG.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <vector>
@@ -501,17 +502,15 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
   DFEntry *EntryNode = new DFEntry;
   R->addNode(EntryNode);
   typedef LoopTraits<LoopReptn> LT;
-  DenseMap<BasicBlock *, DFNode *> Blocks;
-  for (LT::loop_iterator I = LT::loop_begin(L), E = LT::loop_end(L);
-       I != E; ++I) {
+  llvm::DenseMap<llvm::BasicBlock *, DFNode *> Blocks;
+  for (auto I = LT::loop_begin(L), E = LT::loop_end(L); I != E; ++I) {
     DFLoop *DFL = new DFLoop(*I);
     buildLoopRegion(*I, DFL);
     R->addNode(DFL);
-    for (BasicBlock *BB : (*I)->getBlocks())
+    for (llvm::BasicBlock *BB : (*I)->getBlocks())
       Blocks.insert(std::make_pair(BB, DFL));
   }
-  for (LT::block_iterator I = LT::block_begin(L), E = LT::block_end(L);
-       I != E; ++I) {
+  for (auto I = LT::block_begin(L), E = LT::block_end(L); I != E; ++I) {
     if (Blocks.count(*I))
       continue;
     DFBlock * N = new DFBlock(*I);
@@ -532,7 +531,7 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
       ExitNode->addPredecessor(BBToN.second);
     }
     else {
-      for (succ_iterator SI = succ_begin(BBToN.first),
+      for (llvm::succ_iterator SI = succ_begin(BBToN.first),
            SE = succ_end(BBToN.first); SI != SE; ++SI) {
         auto SToNode = Blocks.find(*SI);
         // First, exiting nodes will be specified.
@@ -562,7 +561,7 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
     }
     // Predecessors outside the loop will be ignored.
     if (BBToN.first != LT::getHeader(L)) {
-      for (pred_iterator PI = pred_begin(BBToN.first),
+      for (llvm::pred_iterator PI = pred_begin(BBToN.first),
            PE = pred_end(BBToN.first); PI != PE; ++PI) {
         assert(Blocks.count(*PI) &&
           "Data-flow node for the specified basic block is not found!");

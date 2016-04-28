@@ -282,8 +282,9 @@ AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   case KIND_INSTRUMENT:
     OS = CI.createDefaultOutputFile(false, InFile, "ll"); break;
   }
-  return std::make_unique<AnalysisConsumer>(mKind, OS, CI, InFile,
-    mTransformContext, mCommandLine);
+  return std::unique_ptr<AnalysisConsumer>(
+    new AnalysisConsumer(mKind, OS, CI, InFile,
+      mTransformContext, mCommandLine));
 }
 
 void AnalysisActionBase::ExecuteAction() {
