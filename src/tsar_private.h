@@ -1,4 +1,4 @@
-//===--- tsar_private.h - Private Variable Analyzer --------------*- C++ -*-===//
+//===--- tsar_private.h - Private Variable Analyzer -------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -25,12 +25,10 @@
 #include <llvm/IR/Instruction.h>
 #endif//DEBUG
 #include <utility.h>
-#include <cell.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
 #include "tsar_pass.h"
-
-using Utility::operator "" _b;
+#include "tsar_trait.h"
 
 namespace llvm {
 class Loop;
@@ -254,123 +252,6 @@ private:
 /// This attribute is associated with DefUseSet and
 /// can be added to a node in a data-flow graph.
 BASE_ATTR_DEF(DefUseAttr, DefUseSet)
-
-namespace detail {
-/// Declaration of a trait recognized by analyzer.
-#define TSAR_TRAIT_DEF(name_, id_, collection_) \
-struct name_ { static constexpr auto Id = id_; typedef collection_ ValueType; };
-
-/// This represents identifier of cells in DependencySet collection,
-/// which is represented as a static list.
-struct DependencySet {
-  /// Set of locations with an appropriate trait.
-  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 64> TraitSet;
-  /// Set of pointers to memory locations.
-  typedef llvm::SmallPtrSet<const llvm::Value *, 64> PointerSet;
-  struct Analyze { typedef BaseLocationSet ValueType; };
-  TSAR_TRAIT_DEF(NoAccess, 1111111_b, TraitSet)
-  TSAR_TRAIT_DEF(AddressAccess, 1011111_b, PointerSet)
-  TSAR_TRAIT_DEF(Shared, 0111110_b, TraitSet)
-  TSAR_TRAIT_DEF(Private, 0101111_b, TraitSet)
-  TSAR_TRAIT_DEF(FirstPrivate, 0101110_b, TraitSet)
-  TSAR_TRAIT_DEF(SecondToLastPrivate, 0101011_b, TraitSet)
-  TSAR_TRAIT_DEF(LastPrivate, 0100111_b, TraitSet)
-  TSAR_TRAIT_DEF(DynamicPrivate, 0100011_b, TraitSet)
-  TSAR_TRAIT_DEF(Dependency, 0100000_b, TraitSet)
-};
-}
-
-constexpr detail::DependencySet::Analyze Analyze;
-constexpr detail::DependencySet::NoAccess NoAccess;
-constexpr detail::DependencySet::AddressAccess AddressAccess;
-constexpr detail::DependencySet::Private Private;
-constexpr detail::DependencySet::LastPrivate LastPrivate;
-constexpr detail::DependencySet::SecondToLastPrivate SecondToLastPrivate;
-constexpr detail::DependencySet::DynamicPrivate DynamicPrivate;
-constexpr detail::DependencySet::FirstPrivate FirstPrivate;
-constexpr detail::DependencySet::Shared Shared;
-constexpr detail::DependencySet::Dependency Dependency;
-
-/// \brief This represents data dependency in loops.
-///
-/// The following information is available:
-/// - a set of analyzed locations;
-/// - a set of locations addresses of which are evaluated;
-/// - a set of private locations;
-/// - a set of last private locations;
-/// - a set of second to last private locations;
-/// - a set of dynamic private locations;
-/// - a set of first private locations;
-/// - a set of shared locations;
-/// - a set of locations that caused dependency.
-///
-/// Calculation of a last private variables differs depending on internal
-/// representation of a loop. There are two type of representations.
-/// -# The first type has a following pattern:
-/// \code
-/// iter: if (...) goto exit;
-///           ...
-///         goto iter;
-/// exit:
-/// \endcode
-/// For example, representation of a for-loop refers to this type.
-/// The candidates for last private variables associated with the for-loop
-/// will be stored as second to last privates locations, because
-/// the last definition of these locations is executed on the second to the last
-/// loop iteration (on the last iteration the loop condition
-/// check is executed only).
-/// -# The second type has a following pattern:
-/// \code
-/// iter:
-///           ...
-///       if (...) goto exit; else goto iter;
-/// exit:
-/// \endcode
-/// For example, representation of a do-while-loop refers to this type.
-/// In this case the candidates for last private variables
-/// will be stored as last privates locations.
-///
-/// In some cases it is impossible to determine in static an iteration
-/// where the last definition of an location have been executed. Such locations
-/// will be stored as dynamic private locations collection.
-///
-/// Let us give the following example to explain how to access the information:
-/// \code
-/// DependencySet DS;
-/// for (Value *Loc : DS[Private]) {...}
-/// \endcode
-/// Note, (*DS)[Private] is a set of type LocationSet, so it is possible to call
-/// all methods that is available for LocationSet.
-/// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
-/// Private to access the necessary kind of locations.
-class DependencySet: public CELL_COLL_9(
-    detail::DependencySet::Analyze,
-    detail::DependencySet::AddressAccess,
-    detail::DependencySet::Private,
-    detail::DependencySet::LastPrivate,
-    detail::DependencySet::SecondToLastPrivate,
-    detail::DependencySet::DynamicPrivate,
-    detail::DependencySet::FirstPrivate,
-    detail::DependencySet::Shared,
-    detail::DependencySet::Dependency) {
-public:
-  /// Set of locations with an appropriate trait.
-  typedef detail::DependencySet::TraitSet TraitSet;
-
-  /// Set of pointers to memory locations.
-  typedef detail::DependencySet::PointerSet PointerSet;
-
-  /// \brief Checks that a location has a specified kind of privatizability.
-  ///
-  /// Usage: DependencySet *DS; DS->is(Private, Loc);
-  template<class Kind> bool is(Kind K, const llvm::MemoryLocation *Loc) const {
-    return (*this)[K].count(Loc) != 0;
-  }
-};
-
-/// This attribute is associated with DependencySet and
-/// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(DependencyAttr, DependencySet)
 
 /// \brief Data-flow framework which is used to find must defined locations
 /// for each natural loops.
