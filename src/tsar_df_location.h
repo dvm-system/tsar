@@ -1,4 +1,4 @@
-//===--- tsar_df_location.h - Data Flow Framework ------ ----------*- C++ -*-===//
+//===--- tsar_df_location.h - Data Flow Framework ------ --------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -35,6 +35,8 @@ class LocationSet {
 public:
   /// \brief Calculates the difference between two sets of locations.
   ///
+  /// The result set will contain locations from the first set which are not
+  /// overlapped with any locations from the second set.
   /// \param [in] LocBegin Iterator that points to the beginning of
   /// the first locations set.
   /// \param [in] LocEnd Iterator that points to the ending of
@@ -51,7 +53,7 @@ public:
     if (LocSet.mLocations.empty())
       Result.insert(LocBegin, LocEnd);
     for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      if (!LocSet.exist(*I))
+      if (!LocSet.overlap(*I))
         Result.insert(*I);
   }
 
@@ -59,7 +61,7 @@ public:
   template<class map_iterator> class MemoryLocationItr :
     public std::iterator<std::forward_iterator_tag, llvm::MemoryLocation> {
   public:
-    explicit MemoryLocationItr(map_iterator &I) : mCurItr(I) {}
+    explicit MemoryLocationItr(const map_iterator &I) : mCurItr(I) {}
 
     bool operator==(const MemoryLocationItr &RHS) const {
       return mCurItr == RHS.mCurItr;
@@ -95,7 +97,7 @@ public:
   LocationSet() {}
 
   /// Destructor.
-  ~LocationSet() { mLocations.clear(); }
+  ~LocationSet() { clear(); }
 
   /// Move constructor.
   LocationSet(LocationSet &&that) :
@@ -108,15 +110,19 @@ public:
 
   /// Move assignment operator.
   LocationSet & operator=(LocationSet &&that) {
-    if (this != &that)
+    if (this != &that) {
+      clear();
       mLocations = std::move(that.mLocations);
+    }
     return *this;
   }
 
   /// Copy assignment operator.
   LocationSet & operator=(const LocationSet &that) {
-    if (this != &that)
+    if (this != &that) {
+      clear();
       insert(that.begin(), that.end());
+    }
     return *this;
   }
 
@@ -175,7 +181,7 @@ public:
   }
 
   /// Returns true if there is a location in this set which is contained
-  /// the specified location.
+  /// in the specified location.
   bool cover(const llvm::MemoryLocation &Loc) const {
     return findCoveredBy(Loc) != end();
   }
@@ -312,6 +318,8 @@ public:
   /// \brief Calculates the difference between a set of locations and a set
   /// which is represented as a data-flow value.
   ///
+  /// The result set will contain locations from the first set which are not
+  /// overlapped with any locations from the value.
   /// \param [in] LocBegin Iterator that points to the beginning of
   /// the locations set.
   /// \param [in] LocEnd Iterator that points to the ending of
@@ -332,7 +340,7 @@ public:
     if (Value.mLocations.empty())
       Result.insert(LocBegin, LocEnd);
     for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      if (!Value.exist(*I))
+      if (!Value.mLocations.overlap(*I))
         Result.insert(*I);
   }
 
