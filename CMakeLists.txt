@@ -203,9 +203,9 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
       set(LLVM_COMPONENTS ${LLVM_COMPONENTS} debuginfodwarf)
     endif()
     llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
-    set(LLVM_LIBS ${LLVM_LIBS} clangFrontend clangDriver clangSerialization)
-    set(LLVM_LIBS ${LLVM_LIBS} clangParse clangSema clangAnalysis clangRewrite)
-    set(LLVM_LIBS ${LLVM_LIBS} clangEdit clangAST clangLex clangBasic clangTooling clangCodeGen)  
+    set(CLANG_LIBS clangTooling clangCodeGen clangFrontend clangDriver
+      clangSerialization  clangParse clangSema clangAnalysis clangRewrite
+      clangEdit clangAST clangLex clangBasic)
     if(NOT PACKAGE_LLVM)
       set(LLVM_INCLUDE_DIRS "${LLVM_INCLUDE_DIRS};${CLANG_SOURCE_DIR}/include;${CLANG_BINARY_DIR}/include")
     endif()
