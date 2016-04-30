@@ -83,14 +83,17 @@ static std::unique_ptr<CompilationDatabase> parseCLOptions(
 #ifdef DEBUG
   assert(opts.count("stats") == 1 && "Option '-stats' must be specified!");
   opts["stats"]->setCategory(DebugCategory);
-  assert(opts.count("debug") == 1 && "Option '-debug' must be specified!");
-  auto Debug = opts["debug"];
-  Debug->setCategory(DebugCategory);
-  Debug->setHiddenFlag(cl::NotHidden);
-  assert(opts.count("debug-only") == 1 && "Option '-debug-only' must be specified!");
-  auto DebugOnly = opts["debug-only"];
-  DebugOnly->setCategory(DebugCategory);
-  DebugOnly->setHiddenFlag(cl::NotHidden);
+  // Debug options are not available if LLVM has been built in release mode.
+  if (opts.count("debug") == 1) {
+    auto Debug = opts["debug"];
+    Debug->setCategory(DebugCategory);
+    Debug->setHiddenFlag(cl::NotHidden);
+    assert(opts.count("debug-only") == 1 &&
+      "Option '-debug-only' must be specified!");
+    auto DebugOnly = opts["debug-only"];
+    DebugOnly->setCategory(DebugCategory);
+    DebugOnly->setHiddenFlag(cl::NotHidden);
+  }
 #endif
   cl::SetVersionPrinter(printVersion);
   cl::HideUnrelatedOptions(Categories);
