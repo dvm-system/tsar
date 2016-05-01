@@ -606,10 +606,10 @@ template<> struct GraphTraits<tsar::Forward<tsar::DFRegion *> > :
   }
   typedef tsar::DFRegion::node_iterator nodes_iterator;
   static nodes_iterator nodes_begin(tsar::Forward<tsar::DFRegion *> G) {
-    return G.Graph->node_begin();
+    return ++G.Graph->node_begin();
   }
   static nodes_iterator nodes_end(tsar::Forward<tsar::DFRegion *> G) {
-    return --G.Graph->node_end();
+    return G.Graph->node_end();
   }
   unsigned size(tsar::Forward<tsar::DFRegion *> G) {
     return G.Graph->getNumNodes();
@@ -653,10 +653,10 @@ template<> struct GraphTraits<tsar::Backward<tsar::DFRegion *> > :
   }
   typedef tsar::DFRegion::node_iterator nodes_iterator;
   static nodes_iterator nodes_begin(tsar::Backward<tsar::DFRegion *> G) {
-    return ++G.Graph->node_begin();
+    return G.Graph->node_begin();
   }
   static nodes_iterator nodes_end(tsar::Backward<tsar::DFRegion *> G) {
-    return G.Graph->node_end();
+    return --G.Graph->node_end();
   }
   unsigned size(tsar::Backward<tsar::DFRegion *> G) {
     return G.Graph->getNumNodes();

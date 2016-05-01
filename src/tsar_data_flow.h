@@ -134,19 +134,19 @@ template<class DFFwk> void solveDataFlowIteratively(DFFwk DFF,
     DFT::initialize(*I, DFF, DFG);
     DFT::setValue(DFT::topElement(DFF, DFG), *I, DFF);
   }
-  // DFT::initialize() has been already called for an entry node in loop above.
+  DFT::initialize(GT::getEntryNode(DFG), DFF, DFG);
   DFT::setValue(DFT::boundaryCondition(DFF, DFG), GT::getEntryNode(DFG), DFF);
   bool isChanged = true;
   do {
     isChanged = false;
     for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
-    I != E; ++I) {
+         I != E; ++I) {
       assert((*I == GT::getEntryNode(DFG) ||
         GT::child_begin(*I) != GT::child_end(*I)) &&
         "Data-flow graph must not contain unreachable nodes!");
       ValueType Value(DFT::topElement(DFF, DFG));
       for (ChildIteratorType CI = GT::child_begin(*I), CE = GT::child_end(*I);
-      CI != CE; ++CI) {
+           CI != CE; ++CI) {
         DFT::meetOperator(DFT::getValue(*CI, DFF), Value, DFF, DFG);
       }
       isChanged =
