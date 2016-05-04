@@ -1,0 +1,56 @@
+### makefile for C static analyzer (based on llvm+clang)
+# requires variables: LLVMCONFIG CXX
+# optional variables:
+
+CXXFLAGS = $(shell $(LLVMCONFIG) --cxxflags) -I../idb/src/base
+
+OBJS = tsar_action.o tsar_dbg_output.o tsar_df_location.o \
+	tsar_instrumentation.o tsar_pass.o tsar_private_c.o tsar_private.o \
+	tsar_trait.o tsar_transformation.o tsar_utility.o
+
+LIB = ../analyzer.a
+
+all: $(LIB)
+	@echo "*** COMPILING cdvmh/analyzer/src DIRECTORY DONE ***"
+
+$(LIB): $(OBJS)
+	rm -f $@
+	ar crs $@ $(OBJS)
+
+tsar_action.o: tsar_action.cpp tsar_pass.h tsar_action.h \
+ tsar_transformation.h tsar_instrumentation.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_action.o tsar_action.cpp
+tsar_dbg_output.o: tsar_dbg_output.cpp tsar_dbg_output.h \
+ tsar_df_location.h tsar_utility.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_dbg_output.o tsar_dbg_output.cpp
+tsar_df_location.o: tsar_df_location.cpp tsar_df_location.h \
+ tsar_utility.h tsar_dbg_output.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_df_location.o tsar_df_location.cpp
+tsar_instrumentation.o: tsar_instrumentation.cpp tsar_instrumentation.h \
+ tsar_pass.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_instrumentation.o tsar_instrumentation.cpp
+tsar_pass.o: tsar_pass.cpp tsar_pass.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_pass.o tsar_pass.cpp
+tsar_private_c.o: tsar_private_c.cpp tsar_dbg_output.h tsar_private.h \
+ tsar_df_graph.h tsar_data_flow.h tsar_graph.h tsar_df_location.h \
+ tsar_pass.h tsar_trait.h tsar_private_c.h tsar_transformation.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_private_c.o tsar_private_c.cpp
+tsar_private.o: tsar_private.cpp tsar_private.h \
+ tsar_df_graph.h tsar_data_flow.h tsar_graph.h tsar_df_location.h \
+ tsar_pass.h tsar_trait.h tsar_utility.h tsar_dbg_output.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_private.o tsar_private.cpp
+tsar_trait.o: tsar_trait.cpp tsar_trait.h tsar_df_location.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_trait.o tsar_trait.cpp
+tsar_transformation.o: tsar_transformation.cpp tsar_transformation.h \
+ tsar_pass.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_transformation.o tsar_transformation.cpp
+tsar_utility.o: tsar_utility.cpp tsar_utility.h
+	$(CXX) $(CXXFLAGS) -c -o tsar_utility.o tsar_utility.cpp
+
+clean:
+	rm -f $(OBJS)
+
+cleanall: clean
+	rm -f $(LIB)
+
+.PHONY: all clean cleanall
