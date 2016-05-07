@@ -39,16 +39,16 @@ struct TSAR {
   DESCRIPTION_FIELD(Author, TEXT("Author"), TEXT(TSAR_AUTHOR))
 
   /// List contains description of the library.
-  typedef CELL_COLL_4(Title, Acronym, Version, Author) Description;
+  typedef bcl::StaticMap<Title, Acronym, Version, Author> Description;
 
   /// List of errors possibly arising during analysis of a program.
-  typedef CELL_COLL_2(ErrorList::Unsupported, ErrorList::Unclassified) Errors;
+  typedef bcl::StaticMap<ErrorList::Unsupported, ErrorList::Unclassified> Errors;
 
   /// Priority of errors.
   typedef Base::ErrorList::Priority ErrorPriority;
 
   /// Dependences from other applications.
-  typedef CELL_COLL_1(Base::BCL) Applications;
+  typedef bcl::StaticMap<Base::BCL> Applications;
 
   /// Stub required to add a description to a static list of applications.
   typedef Utility::Null ValueType;

@@ -124,7 +124,7 @@ static constexpr name_##Ty name_ = name_##Ty();
 /// all methods that is available for LocationSet.
 /// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
 /// Private to access the necessary kind of locations.
-class DependencySet : public CELL_COLL_9(
+class DependencySet : public bcl::StaticMap<
   trait::AnalyzeTy,
   trait::AddressAccessTy,
   trait::PrivateTy,
@@ -133,7 +133,7 @@ class DependencySet : public CELL_COLL_9(
   trait::DynamicPrivateTy,
   trait::FirstPrivateTy,
   trait::SharedTy,
-  trait::DependencyTy) {
+  trait::DependencyTy> {
 public:
   /// \brief Checks that a location has a specified kind of privatizability.
   ///
