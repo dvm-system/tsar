@@ -281,8 +281,15 @@ private:
   llvm::AliasSetTracker *mAliasTracker;
 };
 
+/// This presents information whether a location has definition after a node
+/// in a data-flow graph.
+struct DefinitionInfo {  
+  LocationDFValue MustReach;
+  LocationDFValue MayReach;
+};
+
 /// This covers IN and OUT value for a privatizability analysis.
-typedef DFValue<PrivateDFFwk, LocationDFValue> PrivateDFValue;
+typedef DFValue<PrivateDFFwk, DefinitionInfo> PrivateDFValue;
 
 /// This attribute is associated with PrivateDFValue and
 /// can be added to a node in a data-flow graph.
@@ -292,12 +299,18 @@ BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
 /// in privatizable locations for each natural loops.
 template<> struct DataFlowTraits<PrivateDFFwk *> {
   typedef Forward<DFRegion * > GraphType;
-  typedef LocationDFValue ValueType;
+  typedef DefinitionInfo ValueType;
   static ValueType topElement(PrivateDFFwk *, GraphType) {
-    return LocationDFValue::fullValue();
+    DefinitionInfo DI;
+    DI.MustReach = std::move(LocationDFValue::fullValue());
+    DI.MayReach = std::move(LocationDFValue::emptyValue());
+    return std::move(DI);
   }
   static ValueType boundaryCondition(PrivateDFFwk *, GraphType) {
-    return LocationDFValue::emptyValue();
+    DefinitionInfo DI;
+    DI.MustReach = std::move(LocationDFValue::emptyValue());
+    DI.MayReach = std::move(LocationDFValue::emptyValue());
+    return std::move(DI);
   }
   static void setValue(ValueType V, DFNode *N, PrivateDFFwk *) {
     assert(N && "Node must not be null!");
@@ -314,7 +327,8 @@ template<> struct DataFlowTraits<PrivateDFFwk *> {
   static void initialize(DFNode *, PrivateDFFwk *, GraphType);
   static void meetOperator(
       const ValueType &LHS, ValueType &RHS, PrivateDFFwk *, GraphType) {
-    RHS.intersect(LHS);
+    RHS.MustReach.intersect(LHS.MustReach);
+    RHS.MayReach.merge(LHS.MayReach);
   }
   static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *, GraphType);
 };
@@ -491,8 +505,8 @@ private:
 
   /// Evaluates explicitly accessed variables in a loop.
   void resolveAccesses(const tsar::DFNode *LatchNode,
-    const tsar::DefUseSet *DefUse, const tsar::LiveSet *LS,
-    TraitMap &LocBases, tsar::DependencySet *DS);
+    const tsar::DFNode *ExitNode, const tsar::DefUseSet *DefUse,
+    const tsar::LiveSet *LS, TraitMap &LocBases, tsar::DependencySet *DS);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
   void resolvePointers(const tsar::DefUseSet *DefUse, TraitMap &LocBases,

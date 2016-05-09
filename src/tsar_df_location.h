@@ -386,10 +386,25 @@ public:
     return *this;
   }
 
-  /// Returns true if the value contains the specified location.
+  /// Returns true if there is a location in this value which contains
+  /// the specified location.
   bool contain(const llvm::MemoryLocation &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.contain(Loc);
+  }
+  
+  /// Returns true if there is a location in this value which may overlap with
+  /// the specified location.
+  bool overlap(const llvm::MemoryLocation &Loc) const {
+    assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    return mKind == KIND_FULL || mLocations.overlap(Loc);
+  }
+  
+  /// Returns true if there is a location in this value which is contained
+  /// in the specified location.
+  bool cover(const llvm::MemoryLocation &Loc) const {
+    assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    return mKind != KIND_FULL && mLocations.cover(Loc);
   }
 
   /// Returns true if the value does not contain any location.

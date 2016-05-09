@@ -62,13 +62,12 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       "Data-flow graph must not contain unreachable nodes!");
 #endif
   LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  DominatorTree &DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
   DFFunction DFF(&F);
-  buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
+  buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);  
   PrivateDFFwk PrivateFWK(mAliasTracker);
   solveDataFlowUpward(&PrivateFWK, &DFF);
   LiveDFFwk LiveFwk(mAliasTracker);
@@ -166,7 +165,8 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
     TraitMap LocBases;
-    resolveAccesses(R->getLatchNode(), DefUse, LS, LocBases, DS);
+    resolveAccesses(R->getLatchNode(), R->getExitNode(),
+      DefUse, LS, LocBases, DS);
     resolvePointers(DefUse, LocBases, DS);
     storeResults(DefUse, LocBases, DS);
     resolveAddresses(L, DefUse, DS);
@@ -177,17 +177,23 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
 }
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
-    const tsar::DefUseSet *DefUse, const tsar::LiveSet *LS,
-    TraitMap &LocBases, tsar::DependencySet *DS) {
+    const DFNode *ExitNode, const tsar::DefUseSet *DefUse,
+    const tsar::LiveSet *LS, TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(LatchNode && "Latch node must not be null!");
+  assert(ExitNode && "Exit node must not be null!");
   assert(DefUse && "Def-use set must not be null!");
   assert(LS && "Live set must not be null!");
   assert(DS && "Dependency set must not be null!");
   PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
-  assert(LatchDF && "List of must defined locations must not be null!");
-  // LatchDefs is a set of must define locations before a branch to
+  assert(LatchDF && "List of must/may defined locations must not be null!");
+  // LatchDefs is a set of must/may define locations before a branch to
   // a next arbitrary iteration.
-  const LocationDFValue &LatchDefs = LatchDF->getOut();
+  const DefinitionInfo &LatchDefs = LatchDF->getOut();
+  // ExitingDefs is a set of must and may define locations which obtains
+  // definitions in the iteration in which exit from a loop takes place.
+  PrivateDFValue *ExitDF = ExitNode->getAttribute<PrivateDFAttr>();
+  assert(ExitDF && "List of must/may defined locations must not be null!");
+  const DefinitionInfo &ExitingDefs = ExitDF->getOut();
   for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
     if (AS.isForwardingAliasSet() || AS.empty())
       continue; // The set is empty if it contains only unknown instructions.
@@ -212,7 +218,8 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
           CurrTraits->second &= trait::Private;
         else if (DefUse->hasDef(Loc))
           CurrTraits->second &= trait::LastPrivate;
-        else if (LatchDefs.contain(Loc))
+        else if (LatchDefs.MustReach.contain(Loc) &&
+          !ExitingDefs.MayReach.overlap(Loc))
           // These location will be stored as second to last private, i.e.
           // the last definition of these locations is executed on the
           // second to the last loop iteration (on the last iteration the
@@ -221,7 +228,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
           // the loop. In this case the location has not been assigned and
           // must be declared as a first private.
           CurrTraits->second &=
-                  trait::SecondToLastPrivate & trait::FirstPrivate;
+            trait::SecondToLastPrivate & trait::FirstPrivate;
         else
           // There is no certainty that the location is always assigned
           // the value in the loop. Therefore, it must be declared as a
@@ -444,7 +451,7 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   Value *Ptr;
   uint64_t Size;
   std::function<void(const MemoryLocation &)> AddMust, AddMay;
-  AliasAnalysis &AA = AST->getAliasAnalysis();
+  AliasAnalysis &AA = AST->getAliasAnalysis(); 
   if (auto *SI = dyn_cast<StoreInst>(I)) {
     AddMust = [&DU](const MemoryLocation &Loc) { DU->addDef(Loc); };
     AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
@@ -454,20 +461,20 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   } else if (auto *LI = dyn_cast<LoadInst>(I)) {
     AddMay = AddMust = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
     Ptr = LI->getPointerOperand();
-    Size = AA.getTypeStoreSize(Ptr->getType());
+    Size = AA.getTypeStoreSize(LI->getType());
   } else {
     return false;
   }
   AAMDNodes AATags;
   I->getAAMetadata(AATags);
-  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);
+  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);  
   MemoryLocation Loc(Ptr, Size, AATags);
   for (auto APtr : ASet) {
     MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
     // A condition below is necessary even in case of store instruction.
     // It is possible that Loc1 aliases Loc2 and Loc1 is already written
     // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
-    // repeated.
+    // repeated. 
     if (DU->hasDef(ALoc))
       continue;
     AliasResult AR = AA.alias(Loc, ALoc);
@@ -581,41 +588,76 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
     if (auto DFB = dyn_cast<DFBlock>(N))
       DFB->getBlock()->dump();
     dbgs() << "IN:\n";
-    V.dump();
+    dbgs() << "MUST REACH DEFINITIONS:\n";
+    V.MustReach.dump();
+    dbgs() << "MAY REACH DEFINITIONS:\n";
+    V.MayReach.dump();
     dbgs() << "OUT:\n";
   );
   PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
   assert(PV && "Data-flow value must not be null!");
   PV->setIn(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (llvm::isa<DFExit>(N)) {
-    if (PV->getOut() != PV->getIn()) {
+    if (PV->getOut().MustReach != PV->getIn().MustReach ||
+        PV->getOut().MayReach != PV->getIn().MayReach) {
       PV->setOut(PV->getIn());
       DEBUG(
-        PV->getOut().dump();
+        dbgs() << "MUST REACH DEFINITIONS:\n";
+        PV->getOut().MustReach.dump();
+        dbgs() << "MAY REACH DEFINITIONS:\n";
+        PV->getOut().MayReach.dump();
         dbgs() << "[END TRANSFER]\n";
-        );
+      ); 
       return true;
     }
     DEBUG(
-      PV->getOut().dump();
-      dbgs() << "[END TRANSFER]\n";);
+      dbgs() << "MUST REACH DEFINITIONS:\n";
+      PV->getOut().MustReach.dump();
+      dbgs() << "MAY REACH DEFINITIONS:\n";
+      PV->getOut().MayReach.dump();
+      dbgs() << "[END TRANSFER]\n";
+    );
     return false;
   }
   DefUseSet *DU = N->getAttribute<DefUseAttr>();
   assert(DU && "Value of def-use attribute must not be null!");
-  LocationDFValue newOut(LocationDFValue::emptyValue());
-  newOut.insert(DU->getDefs().begin(), DU->getDefs().end());
-  newOut.merge(PV->getIn());
-  if (PV->getOut() != newOut) {
+  DefinitionInfo newOut;
+  newOut.MustReach = std::move(LocationDFValue::emptyValue());
+  newOut.MustReach.insert(DU->getDefs().begin(), DU->getDefs().end());
+  newOut.MustReach.merge(PV->getIn().MustReach);
+  newOut.MayReach = std::move(LocationDFValue::emptyValue());    
+  // newOut.MayReach must contain both must and may defined locations.
+  // Let us consider an example:
+  // for(...) {
+  //   if (...) {
+  //     X = ...
+  //     break;
+  // }
+  // MustReach must not contain X, because if conditional is always false
+  // the X variable will not be written. But MayReach must contain X.
+  // In the basic block that is associated with a body of if statement X is a
+  // must defined location. So it is necessary to insert must defined locations
+  // in the MayReach collection.
+  newOut.MayReach.insert(DU->getDefs().begin(), DU->getDefs().end());  
+  newOut.MayReach.insert(DU->getMayDefs().begin(), DU->getMayDefs().end());
+  newOut.MayReach.merge(PV->getIn().MayReach); 
+  if (PV->getOut().MustReach != newOut.MustReach ||
+      PV->getOut().MayReach != newOut.MayReach) {
     PV->setOut(std::move(newOut));
     DEBUG(
-      PV->getOut().dump();
+      dbgs() << "MUST REACH DEFINITIONS:\n";
+      PV->getOut().MustReach.dump();
+      dbgs() << "MAY REACH DEFINITIONS:\n";
+      PV->getOut().MayReach.dump();
       dbgs() << "[END TRANSFER]\n";
     );
     return true;
   }
   DEBUG(
-    PV->getOut().dump();
+    dbgs() << "MUST REACH DEFINITIONS:\n";
+    PV->getOut().MustReach.dump();
+    dbgs() << "MAY REACH DEFINITIONS:\n";
+    PV->getOut().MayReach.dump();
     dbgs() << "[END TRANSFER]\n";
   );
   return false;
@@ -627,11 +669,11 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   DefUseSet *DefUse = new DefUseSet(mAliasTracker->getAliasAnalysis());
   R->addAttribute<DefUseAttr>(DefUse);
   assert(DefUse && "Value of def-use attribute must not be null!");
-  // ExitingDefs is a set of must define locations (Defs) for the loop.
-  // These locations always have definitions inside the loop regardless
+  // ExitingDefs.MustReach is a set of must define locations (Defs) for the
+  // loop. These locations always have definitions inside the loop regardless
   // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
-  const LocationDFValue &ExitingDefs = RT::getValue(ExitNode, this);
+  const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
   for (DFNode *N : R->getNodes()) {
     PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
     assert(PV && "Data-flow value must not be null!");
@@ -641,7 +683,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses())
-      if (!PV->getIn().contain(Loc))
+      if (!PV->getIn().MustReach.contain(Loc))
         DefUse->addUse(Loc);
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
@@ -655,7 +697,7 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // this set will also include all must define locations.
     for (auto &Loc : DU->getDefs()) {
       DefUse->addMayDef(Loc);
-      if (ExitingDefs.contain(Loc))
+      if (ExitingDefs.MustReach.contain(Loc))
         DefUse->addDef(Loc);
     }
     for (auto &Loc : DU->getMayDefs())
