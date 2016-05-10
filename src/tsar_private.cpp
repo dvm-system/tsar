@@ -67,7 +67,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
   DFFunction DFF(&F);
-  buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);  
+  buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
   PrivateDFFwk PrivateFWK(mAliasTracker);
   solveDataFlowUpward(&PrivateFWK, &DFF);
   LiveDFFwk LiveFwk(mAliasTracker);
@@ -305,12 +305,12 @@ void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
   for (auto &LocTraits : LocBases) {
     // TODO (kaniandr@gmail.com) : This is very conservative assumption
     // but very simple to check. Let see an example:
-    // int X[3];
-    // X[2] = ...
-    // for (int I = 0; I < 2; ++I)
-    //   X[I] = ...;
-    // X[2] = X[0] + X[1] + X[2];
-    // If X will be defined as a last private only, X[2] will be lost after
+    // int X[2];
+    // X[1] = ...
+    // for (int I = 0; I < N; ++I)
+    //   X[0] = ...;
+    // X[1] = X[0] + X[1];
+    // If X will be defined as a last private only, X[1] will be lost after
     // copy out from this loop. So it must be defined as a first private.
     if ((LocTraits.second == trait::LastPrivate ||
       LocTraits.second == trait::SecondToLastPrivate ||
@@ -451,7 +451,7 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   Value *Ptr;
   uint64_t Size;
   std::function<void(const MemoryLocation &)> AddMust, AddMay;
-  AliasAnalysis &AA = AST->getAliasAnalysis(); 
+  AliasAnalysis &AA = AST->getAliasAnalysis();
   if (auto *SI = dyn_cast<StoreInst>(I)) {
     AddMust = [&DU](const MemoryLocation &Loc) { DU->addDef(Loc); };
     AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
@@ -467,14 +467,14 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   }
   AAMDNodes AATags;
   I->getAAMetadata(AATags);
-  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);  
+  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);
   MemoryLocation Loc(Ptr, Size, AATags);
   for (auto APtr : ASet) {
     MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
     // A condition below is necessary even in case of store instruction.
     // It is possible that Loc1 aliases Loc2 and Loc1 is already written
     // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
-    // repeated. 
+    // repeated.
     if (DU->hasDef(ALoc))
       continue;
     AliasResult AR = AA.alias(Loc, ALoc);
@@ -607,7 +607,7 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
         dbgs() << "MAY REACH DEFINITIONS:\n";
         PV->getOut().MayReach.dump();
         dbgs() << "[END TRANSFER]\n";
-      ); 
+      );
       return true;
     }
     DEBUG(
@@ -625,7 +625,7 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   newOut.MustReach = std::move(LocationDFValue::emptyValue());
   newOut.MustReach.insert(DU->getDefs().begin(), DU->getDefs().end());
   newOut.MustReach.merge(PV->getIn().MustReach);
-  newOut.MayReach = std::move(LocationDFValue::emptyValue());    
+  newOut.MayReach = std::move(LocationDFValue::emptyValue());
   // newOut.MayReach must contain both must and may defined locations.
   // Let us consider an example:
   // for(...) {
@@ -638,9 +638,9 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   // In the basic block that is associated with a body of if statement X is a
   // must defined location. So it is necessary to insert must defined locations
   // in the MayReach collection.
-  newOut.MayReach.insert(DU->getDefs().begin(), DU->getDefs().end());  
+  newOut.MayReach.insert(DU->getDefs().begin(), DU->getDefs().end());
   newOut.MayReach.insert(DU->getMayDefs().begin(), DU->getMayDefs().end());
-  newOut.MayReach.merge(PV->getIn().MayReach); 
+  newOut.MayReach.merge(PV->getIn().MayReach);
   if (PV->getOut().MustReach != newOut.MustReach ||
       PV->getOut().MayReach != newOut.MayReach) {
     PV->setOut(std::move(newOut));
@@ -692,13 +692,24 @@ void PrivateDFFwk::collapse(DFRegion *R) {
     // These locations always have definitions inside the loop regardless
     // of execution paths of iterations of the loop.
     // The set of may define locations (MayDefs) for the loop is also
-    // calculated. Let us use conservative assumption to calculate this
-    // set and do not perform complicated control flow analysis. So
-    // this set will also include all must define locations.
+    // calculated.
+    // Note that if ExitingDefs.MustReach does not comprises a location it
+    // means that it may have definition it the loop but it does not mean
+    // that ExitingDefs.MayReach comprises it. In the following example
+    // may definitions for the loop contains X, but ExitingDefs.MayReach does
+    // not contain it (there is no iteration on which exit from this loop
+    // occurs and X is written).
+    // for (;;) {
+    //   if (...)
+    //     break;
+    //   if (...)
+    //     X = ...;
+    // }
     for (auto &Loc : DU->getDefs()) {
-      DefUse->addMayDef(Loc);
       if (ExitingDefs.MustReach.contain(Loc))
         DefUse->addDef(Loc);
+      else
+        DefUse->addMayDef(Loc);
     }
     for (auto &Loc : DU->getMayDefs())
       DefUse->addMayDef(Loc);

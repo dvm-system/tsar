@@ -283,7 +283,7 @@ private:
 
 /// This presents information whether a location has definition after a node
 /// in a data-flow graph.
-struct DefinitionInfo {  
+struct DefinitionInfo {
   LocationDFValue MustReach;
   LocationDFValue MayReach;
 };
