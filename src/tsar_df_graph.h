@@ -488,7 +488,11 @@ public:
 /// This function treats a loop nest as hierarchy of regions. Each region is
 /// an abstraction of an inner loop. Only natural loops will be treated as a
 /// region other loops will be ignored.
-/// \attention Back edges for natural loops will be omitted.
+/// \attention Back edges for natural loops will be omitted. If there are no
+/// explicit exists from the loop the following arcs will be added:
+/// - an arc from an entry node of this loop to an exit node of it;
+/// - an arc from region which is associated with this loop in an outer loop to
+/// an exit node of the outer loop.
 /// \tparam LoopReptn Representation of the outermost loop in the nest.
 /// The LoopTraits class should be specialized by type of each loop in the nest.
 /// For example, the outermost loop can be a loop llvm::Loop * or
@@ -497,9 +501,10 @@ public:
 /// \param [in, out] A region which is associated with the specified loop.
 template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
   assert(R && "Region must not be null!");
-  // To improve efficiency of construction the first created node
-  // is entry and the last is exit (for loops the last created node is latch).
+  // To improve efficiency of construction the first added node
+  // is entry and the last is exit (for loops the last added node is latch).
   DFEntry *EntryNode = new DFEntry;
+  DFExit *ExitNode = new DFExit;
   R->addNode(EntryNode);
   typedef LoopTraits<LoopReptn> LT;
   llvm::DenseMap<llvm::BasicBlock *, DFNode *> Blocks;
@@ -517,7 +522,7 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
     R->addNode(N);
     Blocks.insert(std::make_pair(*I, N));
   }
-  DFExit *ExitNode = new DFExit;
+
   R->addNode(ExitNode);
   assert(LT::getHeader(L) && Blocks.count(LT::getHeader(L)) &&
     "Data-flow node for the loop header is not found!");
@@ -570,6 +575,22 @@ template<class LoopReptn> void buildLoopRegion(LoopReptn L, DFRegion *R) {
         if (PN != BBToN.second)
           BBToN.second->addPredecessor(PN);
       }
+    }
+  }
+  // If there are no explicit exits from this loop, let us build an arc from
+  // the entry node to the exit node to remove unreachable nodes.
+  if (ExitNode->pred_begin() == ExitNode->pred_end()) {
+    EntryNode->addSuccessor(ExitNode);
+    ExitNode->addPredecessor(EntryNode);
+  }
+  for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I) {
+    // If there are no explicit exits from an internal loop (it may be an
+    // infinite loop), let us build an arc from a region associated with this
+    // loop to an exit node of currently evaluated region to remove unreachable
+    // nodes.
+    if ((*I)->numberOfSuccessors() == 0) {
+      (*I)->addSuccessor(ExitNode);
+      ExitNode->addPredecessor(*I);
     }
   }
 }

@@ -399,6 +399,9 @@ public:
   /// Type used to iterate over predecessors.
   typedef typename llvm::SmallVectorImpl<NodeTy *>::const_iterator pred_iterator;
 
+  /// Type used to represent number of adjacent nodes.
+  typedef typename llvm::SmallVector<NodeTy *, N>::size_type size_type;
+
   /// Returns iterator that points to the beginning of the successor list.
   succ_iterator succ_begin() const { return mAdjacentNodes[SUCC].begin(); }
 
@@ -485,6 +488,19 @@ public:
   ///
   /// \pre A removed node must not be null.
   void removeSuccessor(NodeTy *Node) { removeAdjacentNode(Node, SUCC); }
+
+  /// Returns number of adjacent nodes in the specified direction.
+  size_type numberOfAdjacentNodes(Direction Dir) {
+    assert(FIRST_DIRECTION <= Dir && Dir <= LAST_DIRECTION &&
+      "Direction is out of range!");
+    return mAdjacentNodes[Dir].size();
+  }
+
+  /// Returns number of successors for the specified node.
+  size_type numberOfSuccessors() { return numberOfAdjacentNodes(SUCC); }
+
+  /// Returns number of predecessors for the specified node.
+  size_type numberOfPredecessors() { return numberOfAdjacentNodes(PRED); }
 
 private:
   llvm::SmallVector<NodeTy *, N> mAdjacentNodes[NUMBER_DIRECTION];
