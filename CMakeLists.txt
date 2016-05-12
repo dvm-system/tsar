@@ -7,6 +7,7 @@ set(TSAR_VERSION "${TSAR_VERSION_MAJOR}.${TSAR_VERSION_MINOR}")
 set(TSAR_NAME "TSAR")
 set(TSAR_STRING "${TSAR_NAME} ${TSAR_VERSION}")
 set(TSAR_AUTHOR "Nikita A. Kataev (kataev_nik@mail.ru)")
+set(TSAR_URL "http://dvm-system.org/")
 set(SAPFOR_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../../..")
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(CheckCXXCompilerFlag)
@@ -73,7 +74,7 @@ option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 if(DOWNLOAD_LLVM AND LOCAL_LLVM OR
    DOWNLOAD_LLVM AND PACKAGE_LLVM OR
-   LOCAL_LLVM AND PACAGE_LLVM)
+   LOCAL_LLVM AND PACKAGE_LLVM)
   message(FATAL_ERROR "Options DOWNLOAD_LLVM and LOCAL_LLVM are not compatible")
 endif()
 # Download LLVM if need

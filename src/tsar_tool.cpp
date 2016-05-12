@@ -19,12 +19,6 @@ using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
-namespace Base {
-const Base::TextAnsi TextToAnsi(const Base::Text &text) {
-  return text;
-}
-}
-
 Options::Options() :
   Sources(cl::Positional, cl::desc("<source0> [... <sourceN>]"),
     cl::OneOrMore),
@@ -61,7 +55,7 @@ Options::Options() :
     DebugOnly->setHiddenFlag(cl::NotHidden);
   }
 #endif
-  cl::SetVersionPrinter(printVersion);
+  cl::AddExtraVersionPrinter(printVersion);
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
   Categories.push_back(&DebugCategory);
@@ -69,9 +63,21 @@ Options::Options() :
 }
 
 void Options::printVersion() {
-  outs() << Base::TextToAnsi(TSAR::Acronym::Data() + TEXT(" ") +
-    TSAR::Version::Field() + TEXT(" ") +
-    TSAR::Version::Data()).c_str();
+  raw_ostream &OS = outs();
+  OS << TSAR::Acronym::Data() + " (" + TSAR::URL::Data() + "):\n";
+  OS << "  " << TSAR::Version::Field() + " " + TSAR::Version::Data() << "\n";
+#ifndef __OPTIMIZE__
+  OS << "  DEBUG build";
+#else
+  OS << "Optimized build";
+#endif
+#ifndef NDEBUG
+  OS << " with assertions";
+#endif
+  OS << ".\n";
+  OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
+  std::string CPU = sys::getHostCPUName();
+  OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
 }
 
 Tool::Tool(int Argc, const char **Argv) {
@@ -84,9 +90,8 @@ Tool::Tool(int Argc, const char **Argv) {
 
 void Tool::parseCLOptions(int Argc, const char **Argv) {
   getOptions(); // At first, initialize command line options.
-  cl::ParseCommandLineOptions(
-    Argc, Argv, Base::TextToAnsi(TSAR::Title::Data() +
-      TEXT("(") + TSAR::Acronym::Data() + TEXT(")")).c_str());
+  std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
+  cl::ParseCommandLineOptions(Argc, Argv, Descr.c_str());
   mSources = getOptions().Sources;
   mCommandLine.push_back("-g");
   if (!getOptions().LanguageStd.empty())

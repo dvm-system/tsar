@@ -152,7 +152,7 @@ class Module;
 
 /// Intializes rewriter to update source code of the specified module.
 class TransformationEnginePass :
-  public ImmutablePass, private Utility::Uncopyable {
+  public ImmutablePass, private bcl::Uncopyable {
   typedef llvm::DenseMap<llvm::Module *, tsar::TransformationContext *>
     TransformationMap;
 

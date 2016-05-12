@@ -2,7 +2,7 @@
 # requires variables: LLVMCONFIG CXX
 # optional variables:
 
-CXXFLAGS = $(shell $(LLVMCONFIG) --cxxflags) -I../idb/src/base
+CXXFLAGS = $(shell $(LLVMCONFIG) --cxxflags) -I../idb/src/base -DTSAR_VERSION="0.1"
 
 OBJS = tsar_action.o tsar_dbg_output.o tsar_df_location.o \
 	tsar_instrumentation.o tsar_pass.o tsar_private_c.o tsar_private.o \

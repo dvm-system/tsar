@@ -381,7 +381,7 @@ class DFValue :
 /// \attention Iterator validity is the same as for operations with
 /// llvm::SmallVector.
 template<class NodeTy, unsigned N>
-class SmallDFNode : private Utility::Uncopyable {
+class SmallDFNode : private bcl::Uncopyable {
 public:
   /// Direction to adjacent node.
   enum Direction {

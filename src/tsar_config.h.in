@@ -18,5 +18,6 @@
 #define TSAR_NAME "@TSAR_NAME@"
 #define TSAR_STRING "@TSAR_STRING@"
 #define TSAR_AUTHOR "@TSAR_AUTHOR@"
+#define TSAR_URL "@TSAR_URL@"
 
 #endif//TSAR_CONFIG_H

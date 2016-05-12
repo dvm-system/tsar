@@ -7,7 +7,7 @@
 
 namespace llvm {
 class PrivateCClassifierPass :
-  public FunctionPass, private Utility::Uncopyable {
+  public FunctionPass, private bcl::Uncopyable {
   public:
     /// Pass identification, replacement for typeid.
     static char ID;

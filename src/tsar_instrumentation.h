@@ -23,7 +23,7 @@ class Function;
 
 /// This per-function pass performs instrumentation of LLVM IR.
 class InstrumentationPass :
-  public FunctionPass, Utility::Uncopyable {
+  public FunctionPass, bcl::Uncopyable {
 public:
   /// Pass identification, replacement for typeid.
   static char ID;

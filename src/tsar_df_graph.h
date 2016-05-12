@@ -118,7 +118,7 @@ public:
   /// does not exist the method returns nullptr.
   template<class Attribute>
   typename Attribute::Value * removeAttribute() {
-    llvm::DenseMap<Utility::AttributeId, void *>::iterator I =
+    llvm::DenseMap<bcl::AttributeId, void *>::iterator I =
       mAttributes.find(Attribute::id());
     if (I == mAttributes.end())
       return nullptr;
@@ -136,7 +136,7 @@ private:
   friend class DFRegion;
   Kind mKind;
   DFNode *mParent;
-  llvm::DenseMap<Utility::AttributeId, void *> mAttributes;
+  llvm::DenseMap<bcl::AttributeId, void *> mAttributes;
 };
 
 /// \brief Representation of an entry node in a data-flow framework.

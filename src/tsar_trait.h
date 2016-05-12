@@ -21,7 +21,7 @@ class Value;
 }
 
 namespace tsar {
-using Utility::operator "" _b;
+using bcl::operator "" _b;
 
 /// This represents list of traits which can be racognized by analyzer.
 ///

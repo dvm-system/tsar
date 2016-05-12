@@ -1,11 +1,11 @@
-//===---- tsar_exception.h - List of TSAR errors ----------------*- C++ -*-===//
+//===---- tsar_exception.h ------- List Of Errors ---------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains descriptions of errors possibly arising
-// during analysis of a program.
+// This file contains descriptions of errors possibly arising during analysis
+// of a program.
 //
 //===----------------------------------------------------------------------===//
 
@@ -13,7 +13,15 @@
 #define TSAR_EXCEPTION_H
 
 #include <exception.h>
+#ifdef TSAR_CONFIG
 #include "tsar_config.h"
+#else
+#define TSAR_FULL_NAME "Traits Static Analyzer"
+#define TSAR_NAME "TSAR"
+#define TSAR_STRING "TSAR"
+#define TSAR_AUTHOR "Nikita A. Kataev (kaniandr@gmail.com)"
+#define TSAR_URL "http://dvm-system.org/"
+#endif
 
 namespace tsar {
 namespace ErrorList {
@@ -32,11 +40,14 @@ struct TSAR {
   /// Abbreviation of the name.
   DESCRIPTION_FIELD(Acronym, TEXT("Acronym"), TEXT(TSAR_NAME))
 
-  /// Version of the library.
+  /// Version of the analyzer.
   DESCRIPTION_FIELD(Version, TEXT("Version"), TEXT(TSAR_VERSION))
 
-  /// Author of the library.
+  /// Author of the analyzer.
   DESCRIPTION_FIELD(Author, TEXT("Author"), TEXT(TSAR_AUTHOR))
+
+  /// URL of the analyzer.
+  DESCRIPTION_FIELD(URL, TEXT("URL"), TEXT(TSAR_URL))
 
   /// List contains description of the library.
   typedef bcl::StaticMap<Title, Acronym, Version, Author> Description;
@@ -55,6 +66,6 @@ struct TSAR {
 };
 
 /// This encapsulated base errors arising in library for program analysis.
-typedef Base::Exception<TSAR> TSARxception;
+typedef Base::Exception<TSAR> TSARException;
 }
 #endif//TSAR_EXCEPTION_H

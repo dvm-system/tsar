@@ -18,13 +18,12 @@
 
 #include <clang/Tooling/Tooling.h>
 #include <llvm/Support/CommandLine.h>
-
 #include <string>
 #include <vector>
 #include <utility.h>
 
 namespace tsar {
-struct Options : private Utility::Uncopyable {
+struct Options : private bcl::Uncopyable {
   /// Default constructor
   Options();
 
@@ -44,7 +43,7 @@ struct Options : private Utility::Uncopyable {
   llvm::cl::opt<bool> TimeReport;
 };
 
-class Tool : private Utility::Uncopyable {
+class Tool : private bcl::Uncopyable {
 public:
   /// \brief Creates analyzer according to the specified command line.
   ///

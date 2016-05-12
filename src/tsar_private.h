@@ -262,7 +262,7 @@ BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 /// Two kinds of attributes for each nodes in a data-flow graph are available
 /// after this analysis. The first kind, is DefUseAttr and the second one is
 /// PrivateDFAttr.
-class PrivateDFFwk : private Utility::Uncopyable {
+class PrivateDFFwk : private bcl::Uncopyable {
 public:
   /// Creates data-flow framework.
   explicit PrivateDFFwk(llvm::AliasSetTracker *AST) :
@@ -358,7 +358,7 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
 ///
 /// The LiveAttr attribute for each nodes in a data-flow graph is available
 /// after this analysis.
-class LiveDFFwk : private Utility::Uncopyable {
+class LiveDFFwk : private bcl::Uncopyable {
 public:
   /// Creates data-flow framework.
   explicit LiveDFFwk(llvm::AliasSetTracker *AST) : mAliasTracker(AST) {
@@ -448,7 +448,7 @@ template<> struct RegionDFTraits<LiveDFFwk *> :
 namespace llvm {
 /// This pass determines locations which can be privatized.
 class PrivateRecognitionPass :
-    public FunctionPass, private Utility::Uncopyable {
+    public FunctionPass, private bcl::Uncopyable {
   /// Information about privatizability of variables for the analyzed region.
   typedef llvm::DenseMap<llvm::Loop *, tsar::DependencySet *> PrivateInfo;
 

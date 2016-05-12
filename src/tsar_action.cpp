@@ -108,7 +108,7 @@ public:
 
   ~AnalysisConsumer() {
     // Be careful if kind of action KIND_TRANSFORM the transformation
-    // context should not be deleted whith this consumer.
+    // context should not be deleted with this consumer.
     if (mAction == AnalysisActionBase::KIND_TRANSFORM)
       mTransformContext.release();
   }
@@ -239,7 +239,7 @@ public:
     Passes.run(*mModule.get());
   }
 
-  /// Perform instrumentaion of LLVM IR.
+  /// Perform instrumentation of LLVM IR.
   void InstrumentLLVM() {
     legacy::PassManager Passes;
     Passes.add(createInstrumentationPass());
