@@ -40,9 +40,7 @@ Options::Options() :
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
   static cl::alias HelpA("h", cl::aliasopt(*Help), cl::desc("Alias for -help"));
-#ifdef DEBUG
-  assert(Opts.count("stats") == 1 && "Option '-stats' must be specified!");
-  Opts["stats"]->setCategory(DebugCategory);
+#ifndef NDEBUG
   // Debug options are not available if LLVM has been built in release mode.
   if (Opts.count("debug") == 1) {
     auto Debug = Opts["debug"];
@@ -53,6 +51,8 @@ Options::Options() :
     auto DebugOnly = Opts["debug-only"];
     DebugOnly->setCategory(DebugCategory);
     DebugOnly->setHiddenFlag(cl::NotHidden);
+    assert(Opts.count("stats") == 1 && "Option '-stats' must be specified!");
+    Opts["stats"]->setCategory(DebugCategory);
   }
 #endif
   cl::AddExtraVersionPrinter(printVersion);
