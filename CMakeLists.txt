@@ -59,7 +59,7 @@ endif(TSAR_COMPILER_IS_GCC_COMPATIBLE)
 set(LLVM_REPO "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_370/final/"
     CACHE STRING "URL of LLVM subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 set(CLANG_REPO "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_370/final/"
-    CACHE STRING "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM and BUILD_CLANG are set)")
+    CACHE STRING "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH "Root of LLVM source tree")
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
@@ -75,14 +75,12 @@ option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 if(DOWNLOAD_LLVM AND LOCAL_LLVM OR
    DOWNLOAD_LLVM AND PACKAGE_LLVM OR
    LOCAL_LLVM AND PACKAGE_LLVM)
-  message(FATAL_ERROR "Options DOWNLOAD_LLVM and LOCAL_LLVM are not compatible")
+  message(FATAL_ERROR "Options DOWNLOAD_LLVM, LOCAL_LLVM and PACKAGE_LLVM are not compatible")
 endif()
 # Download LLVM if need
 set(DOWNLOAD_CLANG ${DOWNLOAD_LLVM})
 if(DOWNLOAD_LLVM)
   sapfor_download_llvm()
-elseif(LOCAL_LLVM OR PACKAGE_LLVM)
-  unset(LLVM_REPO CACHE)
 endif()
 if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
   if(PACKAGE_LLVM)
