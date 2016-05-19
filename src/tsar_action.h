@@ -15,10 +15,11 @@
 
 namespace tsar {
 class TransformationContext;
+class QueryManager;
 }
 
 namespace clang {
-/// Main front-end action to analyse and transform sources.
+/// Main front-end action to analyze and transform sources.
 class AnalysisActionBase : public ASTFrontendAction {
 public:
   /// This is a list of supported actions.
@@ -26,11 +27,11 @@ public:
     FIRST_KIND,
     /// Perform a main analysis and transformations action.
     KIND_ANALYSIS = FIRST_KIND,
-    /// Emit only LLVM IR and do not perform any analysis.
+    /// Perform analysis and transformations actions incrementally.
     KIND_EMIT_LLVM,
     /// Perform low-level (LLVM IR) instrumentation.
     KIND_INSTRUMENT,
-    /// Perform set of transformation passese with the same
+    /// Perform set of transformation passes with the same
     /// transformation context.
     KIND_TRANSFORM,
     LAST_KIND = KIND_TRANSFORM,
@@ -45,7 +46,7 @@ public:
   /// Return true because this action supports use with IR files.
   bool hasIRSupport() const override;
 
-  /// Executes action, evaluateion of IR files is also supported.
+  /// Executes action, evaluation of IR files is also supported.
   void ExecuteAction() override;
 
 protected:
@@ -60,17 +61,18 @@ protected:
   /// command line will  be ignored and command line from transformation context
   /// will be used.
   AnalysisActionBase(Kind AK, tsar::TransformationContext *Ctx,
-    ArrayRef<std::string> CL);
+    ArrayRef<std::string> CL, tsar::QueryManager *QM);
 
 private:
   Kind mKind;
   tsar::TransformationContext *mTransformContext;
   std::vector<std::string> mCommandLine;
+  tsar::QueryManager *mQueryManager;
 };
 
 class MainAction : public AnalysisActionBase {
 public:
-  explicit MainAction(ArrayRef<std::string> CL);
+  explicit MainAction(ArrayRef<std::string> CL, tsar::QueryManager *QM);
 };
 
 class EmitLLVMAnalysisAction : public AnalysisActionBase {
@@ -88,19 +90,23 @@ public:
   explicit InstrumentationAction();
 };
 
-/// Creats an analysis/transformations actions factory.
-template <class ActionTy, class ArgTy>
+/// Creates an analysis/transformations actions factory.
+template <class ActionTy, class FirstTy, class SecondTy>
 std::unique_ptr<tooling::FrontendActionFactory>
-newAnalysisActionFactory(ArgTy Arg) {
+newAnalysisActionFactory(FirstTy First, SecondTy Second) {
   class AnalysisActionFactory : public tooling::FrontendActionFactory {
   public:
-    AnalysisActionFactory(ArgTy Arg) : mArg(std::move(Arg)) {}
-    clang::FrontendAction *create() override { return new ActionTy(mArg); }
+    AnalysisActionFactory(FirstTy F, SecondTy S) :
+      mFirst(std::move(F)), mSecond(std::move(S)) {}
+    clang::FrontendAction *create() override {
+      return new ActionTy(mFirst, mSecond);
+    }
   private:
-    ArgTy mArg;
+    FirstTy mFirst;
+    SecondTy mSecond;
   };
   return std::unique_ptr<tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(std::move(Arg)));
+    new AnalysisActionFactory(std::move(First), std::move(Second)));
 }
 }
 #endif//TSAR_ACTION_H

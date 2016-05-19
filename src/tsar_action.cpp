@@ -29,24 +29,18 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
 #include <memory>
-#include "tsar_pass.h"
 #include "tsar_action.h"
-#include "tsar_transformation.h"
 #include "tsar_instrumentation.h"
+#include "tsar_query.h"
+#include "tsar_pass.h"
+#include "tsar_transformation.h"
 
 using namespace clang;
 using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
-namespace clang {
-/// Analysis the specified module and transforms source file associated with it
-/// if rewriter context is specified.
-///
-/// \attention The rewriter context is going to be taken under control, so do
-/// not free it separately.
-static void AnalyzeAndTransform(llvm::Module *M,
-    TransformationContext *Ctx = nullptr) {
+void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
   if (Ctx) {
@@ -70,16 +64,21 @@ static void AnalyzeAndTransform(llvm::Module *M,
   //  ret i32 %0, !dbg !12
   //}
   // In other cases 'clang' automatically deletes unreachable blocks.
+  if (Pass *P = createInitializationPass())
+    Passes.add(P);
   Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createBasicAliasAnalysisPass());
   Passes.add(createPrivateRecognitionPass());
   if (Ctx)
     Passes.add(createPrivateCClassifierPass());
   Passes.add(createVerifierPass());
+  if (Pass *P = createFinalizationPass())
+    Passes.add(P);
   cl::PrintOptionValues();
   Passes.run(*M);
 }
 
+namespace clang {
 /// This consumer builds LLVM IR for the specified file and launch analysis of
 /// the LLVM IR.
 class AnalysisConsumer : public ASTConsumer {
@@ -87,8 +86,8 @@ public:
   /// Constructor.
   AnalysisConsumer(AnalysisActionBase::Kind AK, raw_pwrite_stream *OS,
       CompilerInstance &CI, StringRef InFile,
-      TransformationContext *TransformContext = nullptr,
-      ArrayRef<std::string> CL = makeArrayRef<std::string>(""))
+      TransformationContext *TransformContext, ArrayRef<std::string> CL,
+      QueryManager *QM)
     : mAction(AK), mOS(OS),  mLLVMIRGeneration("LLVM IR Generation Time"),
     mLLVMIRAnalysis("LLVM IR Analysis Time"),
     mASTContext(nullptr), mLLVMContext(new LLVMContext),
@@ -96,7 +95,7 @@ public:
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
     mTransformContext(TransformContext), mCodeGenOpts(CI.getCodeGenOpts()),
-    mCommandLine(CL) {
+    mCommandLine(CL), mQueryManager(QM) {
     assert(AnalysisActionBase::FIRST_KIND <= AK &&
       AK <= AnalysisActionBase::LAST_KIND  && "Unknown kind of action!");
     assert((AK != AnalysisActionBase::KIND_TRANSFORM || mTransformContext) &&
@@ -185,7 +184,7 @@ public:
       case AnalysisActionBase::KIND_ANALYSIS:
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.startTimer();
-        AnalyzeAndTransform(M, mTransformContext.release());
+        mQueryManager->run(M, mTransformContext.release());
         if (llvm::TimePassesIsEnabled)
           mLLVMIRAnalysis.stopTimer();
         break;
@@ -258,6 +257,7 @@ private:
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
   std::unique_ptr<CodeGenerator> mGen;
   std::unique_ptr<TransformationContext> mTransformContext;
+  QueryManager *mQueryManager;
   const CodeGenOptions mCodeGenOpts;
   ArrayRef<std::string> mCommandLine;
   std::unique_ptr<llvm::Module> mModule;
@@ -265,11 +265,13 @@ private:
 }
 
 AnalysisActionBase::AnalysisActionBase(Kind AK, TransformationContext *Ctx,
-    ArrayRef<std::string> CL) :
-  mKind(AK), mTransformContext(Ctx), mCommandLine(CL) {
+    ArrayRef<std::string> CL, QueryManager *QM) :
+  mKind(AK), mTransformContext(Ctx), mCommandLine(CL), mQueryManager(QM) {
   assert(FIRST_KIND <= AK && AK <= LAST_KIND && "Unknown kind of action!");
   assert((AK != KIND_TRANSFORM || Ctx) &&
     "For a transformation action context must not be null!");
+  assert((QM || AK != KIND_ANALYSIS) &&
+    "For analysis action query manager must be specified!");
   if (mTransformContext)
     mCommandLine = mTransformContext->getCommandLine();
 }
@@ -284,13 +286,17 @@ AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   }
   return std::unique_ptr<AnalysisConsumer>(
     new AnalysisConsumer(mKind, OS, CI, InFile,
-      mTransformContext, mCommandLine));
+      mTransformContext, mCommandLine, mQueryManager));
 }
 
 void AnalysisActionBase::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
   if (getCurrentFileKind() != IK_LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
+    return;
+  }
+  if (mKind != AnalysisActionBase::KIND_ANALYSIS) {
+    errs() << getCurrentFile() << " error: requested action is not available\n";
     return;
   }
   bool Invalid;
@@ -329,20 +335,23 @@ void AnalysisActionBase::ExecuteAction() {
       << TargetOpts.Triple;
     M->setTargetTriple(TargetOpts.Triple);
   }
-  AnalyzeAndTransform(M.get());
+  mQueryManager->run(M.get(), nullptr);
   return;
 }
 
 bool AnalysisActionBase::hasIRSupport() const { return true; }
 
-MainAction::MainAction(ArrayRef<std::string> CL) :
-  AnalysisActionBase(KIND_ANALYSIS, nullptr, CL) {}
+MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM) :
+  AnalysisActionBase(KIND_ANALYSIS, nullptr, CL, QM) {}
 
 EmitLLVMAnalysisAction::EmitLLVMAnalysisAction() :
-  AnalysisActionBase(KIND_EMIT_LLVM, nullptr, makeArrayRef<std::string>("")) {}
+  AnalysisActionBase(KIND_EMIT_LLVM, nullptr,
+    makeArrayRef<std::string>(""), nullptr) {}
 
 TransformationAction::TransformationAction(TransformationContext &Ctx) :
-  AnalysisActionBase(KIND_TRANSFORM, &Ctx, makeArrayRef<std::string>("")) {}
+  AnalysisActionBase(KIND_TRANSFORM, &Ctx,
+    makeArrayRef<std::string>(""), nullptr) {}
 
 InstrumentationAction::InstrumentationAction() :
-  AnalysisActionBase(KIND_INSTRUMENT, nullptr, makeArrayRef<std::string>("")) {}
+  AnalysisActionBase(KIND_INSTRUMENT, nullptr,
+    makeArrayRef<std::string>(""), nullptr) {}

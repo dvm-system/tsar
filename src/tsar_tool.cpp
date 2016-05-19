@@ -11,8 +11,9 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/TargetSelect.h>
 #include "tsar_action.h"
-#include "tsar_tool.h"
 #include "tsar_exception.h"
+#include "tsar_query.h"
+#include "tsar_tool.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -82,38 +83,49 @@ void Options::printVersion() {
 
 Tool::Tool(int Argc, const char **Argv) {
   assert(Argv && "List of command line arguments must not be null!");
-  parseCLOptions(Argc, Argv);
+  Options::get(); // At first, initialize command line options.
+  std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
+  cl::ParseCommandLineOptions(Argc, Argv, Descr.c_str());
+  storeCLOptions();
   InitializeAllTargetInfos();
   InitializeAllTargetMCs();
   InitializeAllAsmParsers();
 }
 
-void Tool::parseCLOptions(int Argc, const char **Argv) {
-  getOptions(); // At first, initialize command line options.
-  std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
-  cl::ParseCommandLineOptions(Argc, Argv, Descr.c_str());
-  mSources = getOptions().Sources;
+Tool::Tool() {
+  storeCLOptions();
+  InitializeAllTargetInfos();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
+}
+
+void Tool::storeCLOptions() {
+  mSources = Options::get().Sources;
   mCommandLine.push_back("-g");
-  if (!getOptions().LanguageStd.empty())
-    mCommandLine.push_back("-std=" + getOptions().LanguageStd);
-  if (getOptions().TimeReport)
+  if (!Options::get().LanguageStd.empty())
+    mCommandLine.push_back("-std=" + Options::get().LanguageStd);
+  if (Options::get().TimeReport)
     mCommandLine.push_back("-ftime-report");
-  for (auto &Path : getOptions().Includes)
+  for (auto &Path : Options::get().Includes)
     mCommandLine.push_back("-I" + Path);
-  for (auto &Macro : getOptions().MacroDefs)
+  for (auto &Macro : Options::get().MacroDefs)
     mCommandLine.push_back("-D" + Macro);
   mCompilations = std::unique_ptr<CompilationDatabase>(
     new FixedCompilationDatabase(".", mCommandLine));
+  mEmitLLVM = Options::get().EmitLLVM;
+  mInstrLLVM = Options::get().InstrLLVM;
 }
 
-int Tool::run() {
+int Tool::run(QueryManager *QM) {
+  QueryManager Mgr;
   std::unique_ptr<FrontendActionFactory> Factory;
-  if (getOptions().EmitLLVM)
+  if (mEmitLLVM)
     Factory = newFrontendActionFactory<EmitLLVMAnalysisAction>();
-  else if (getOptions().InstrLLVM)
+  else if (mInstrLLVM)
     Factory = newFrontendActionFactory<InstrumentationAction>();
   else
-    Factory = newAnalysisActionFactory<MainAction>(std::move(mCommandLine));
+    Factory = newAnalysisActionFactory<MainAction>(mCommandLine, QM ? QM : &Mgr);
   ClangTool CTool(*mCompilations, mSources);
   return CTool.run(Factory.get());
 }
+
