@@ -198,6 +198,16 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     if (AS.isForwardingAliasSet() || AS.empty())
       continue; // The set is empty if it contains only unknown instructions.
     auto I = AS.begin(), E = AS.end();
+    // Note that analysis which is performed for base locations is not the same
+    // as analysis which is performed for variables form a source code.
+    // For example, the base location for (short&)X is a memory location with
+    // a size equal to size_of(short) regardless the size of X which might have
+    // type int. Be careful when results of this analysis is propagated for
+    // variables from a source code.
+    // for (...) { (short&X) = ... ;} ... = X;
+    // The short part of X will be recognized as last private, but the whole
+    // variable X must be also set to first private to preserve the value
+    // obtained before the loop.
     const MemoryLocation *CurrBase = *(*DS)[trait::Analyze].insert(
       MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo())).first;
     auto CurrTraits =
@@ -251,6 +261,20 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
       else
         CurrTraits->second &= trait::Shared;
     }
+    // The following two tests check whether whole base location will be written
+    // in the loop. Let us propose the following explanation. Consider a loop
+    // where some location Loc is written and this memory is going to be read
+    // after an exit from this loop. It is possible that base for this location
+    // BaseLoc covers this location, so not a whole memory comprises BaseLoc is
+    // written in the loop. To avoid a loss of data stored before the loop
+    // execution in a part of memory which is not written after copy out from
+    // this loop the BaseLoc must be also treated as a first private.
+    if (CurrTraits->second == trait::LastPrivate &&
+        !ExitingDefs.MustReach.contain(*CurrBase))
+      CurrTraits->second &= trait::FirstPrivate;
+    if (CurrTraits->second == trait::SecondToLastPrivate &&
+        !LatchDefs.MustReach.contain(*CurrBase))
+      CurrTraits->second &= trait::FirstPrivate;
   }
 }
 
@@ -303,20 +327,6 @@ void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
     TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(DS && "Dependency set must not be null!");
   for (auto &LocTraits : LocBases) {
-    // TODO (kaniandr@gmail.com) : This is very conservative assumption
-    // but very simple to check. Let see an example:
-    // int X[2];
-    // X[1] = ...
-    // for (int I = 0; I < N; ++I)
-    //   X[0] = ...;
-    // X[1] = X[0] + X[1];
-    // If X will be defined as a last private only, X[1] will be lost after
-    // copy out from this loop. So it must be defined as a first private.
-    if ((LocTraits.second == trait::LastPrivate ||
-      LocTraits.second == trait::SecondToLastPrivate ||
-      LocTraits.second == trait::DynamicPrivate) &&
-      !DefUse->hasDef(*LocTraits.first))
-      LocTraits.second &= trait::FirstPrivate;
     switch (LocTraits.second) {
       case trait::Shared:
         (*DS)[trait::Shared].insert(LocTraits.first); ++NumShared; break;

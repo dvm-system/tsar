@@ -262,6 +262,16 @@ BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 /// Two kinds of attributes for each nodes in a data-flow graph are available
 /// after this analysis. The first kind, is DefUseAttr and the second one is
 /// PrivateDFAttr.
+/// \attention Note that analysis which is performed for base locations is not
+/// the same as analysis which is performed for variables form a source code.
+/// For example, the base location for (short&)X is a memory location with
+/// a size equal to size_of(short) regardless the size of X which might have
+/// type int. Be careful when results of this analysis is propagated for
+/// variables from a source code.
+/// for (...) { (short&X) = ... ;} ... = X;
+/// The short part of X will be recognized as last private, but the whole
+/// variable X must be also set to first private to preserve the value
+/// obtained before the loop.
 class PrivateDFFwk : private bcl::Uncopyable {
 public:
   /// Creates data-flow framework.
