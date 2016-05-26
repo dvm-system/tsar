@@ -48,8 +48,8 @@ public:
   /// - void ResultSet::insert(location_iterator &, location_iterator &)
   template<class location_iterator, class ResultSet>
   static void difference(
-    const location_iterator &LocBegin, const location_iterator &LocEnd,
-    const LocationSet &LocSet, ResultSet &Result) {
+      const location_iterator &LocBegin, const location_iterator &LocEnd,
+      const LocationSet &LocSet, ResultSet &Result) {
     if (LocSet.mLocations.empty())
       Result.insert(LocBegin, LocEnd);
     for (location_iterator I = LocBegin; I != LocEnd; ++I)
@@ -392,14 +392,14 @@ public:
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.contain(Loc);
   }
-  
+
   /// Returns true if there is a location in this value which may overlap with
   /// the specified location.
   bool overlap(const llvm::MemoryLocation &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
-  
+
   /// Returns true if there is a location in this value which is contained
   /// in the specified location.
   bool cover(const llvm::MemoryLocation &Loc) const {
@@ -588,6 +588,13 @@ private:
 std::string locationToSource(const llvm::Value *Loc);
 
 namespace detail {
+/// \brief Strips types that do not change representation of appropriate
+/// expression in a source language.
+///
+/// For example, const int and int & will be stripped to int, typedef will be
+/// also stripped.
+void stripDIType(DITypeRef &DITy);
+
 /// \brief Represents memory location as an expression in a source language.
 ///
 /// \param [in] Loc A memory location.

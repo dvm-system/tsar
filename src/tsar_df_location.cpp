@@ -152,7 +152,7 @@ void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
     // TODO (kaniandr@gmail.com) : it is possible that sequence of
     // 'getelmentptr' instructions is represented as a single instruction.
     // If the result of it is a member of a structure this case must be
-    // evaluated separately. It this moment only individual access to
+    // evaluated separately. At this moment only individual access to
     // members is supported: for struct STy {int X;}; it is
     // %X = getelementptr inbounds %struct.STy, %struct.STy* %S, i32 0, i32 0
     // Also fix it in isSameBase().
@@ -255,6 +255,19 @@ std::string locationToSource(const Value *Loc) {
 }
 
 namespace detail {
+void stripDIType(DITypeRef &DITy) {
+  if (!isa<DIDerivedType>(DITy))
+    return;
+  switch (cast<DIDerivedType>(DITy)->getTag()) {
+    case dwarf::DW_TAG_typedef:
+    case dwarf::DW_TAG_const_type:
+    case dwarf::DW_TAG_reference_type:
+      DITy = cast<DIDerivedType>(DITy)->getBaseType();
+      stripDIType(DITy);
+      break;
+  }
+}
+
 std::string locationToSource(
     const Value *Loc, DITypeRef &DITy, bool &NeadBracket) {
   assert(Loc && "Location must not be null!");
@@ -273,6 +286,7 @@ std::string locationToSource(
   if (!DIVar)
     return "";
   DITy = DIVar->getType();
+  stripDIType(DITy);
   return DIVar->getName();
 }
 
@@ -290,8 +304,12 @@ std::string locationToSource(
   // %2 = inttoptr i32 % 1 to i8*
   // store i8 10, i8* %2
   // Type of %1 is not a pointer.
-  if (isa<DIDerivedType>(DITy))
+  // The second condition is necessary to prevent stripping of unsupported
+  // types.
+  if (isa<DIDerivedType>(DITy) &&
+      cast<DIDerivedType>(DITy)->getTag() == dwarf::DW_TAG_pointer_type)
     DITy = cast<DIDerivedType>(DITy)->getBaseType();
+  stripDIType(DITy);
   return "*" + (NB ? "(" + Str + ")" : Str);
 }
 
@@ -306,7 +324,8 @@ std::string locationToSource(
   const Value *Ptr = Loc->getPointerOperand();
   bool NB;
   auto Str = locationToSource(Ptr, DITy, NB);
-  if (Str.empty() || !isa<DICompositeType>(DITy))
+  if (Str.empty() || !isa<DICompositeType>(DITy) ||
+      !cast<DICompositeType>(DITy)->getTag() == dwarf::DW_TAG_structure_type)
     return "";
   if (NB || Str.front() == '*')
     Str = "(" + Str + ")";
@@ -327,11 +346,13 @@ std::string locationToSource(
         //   DIDerivedType with the X name and base type
         //     DIBaseType with the int name.
         DITy = DITypeRef(cast<DIDerivedType>(El)->getBaseType());
+        stripDIType(DITy);
         break;
       }
     if (++Idx == EIdx)
       break;
-    if (!isa<DICompositeType>(DITy))
+    if (!isa<DICompositeType>(DITy) ||
+        !cast<DICompositeType>(DITy)->getTag() == dwarf::DW_TAG_structure_type)
       return "";
   }
   return Str;
