@@ -12,9 +12,17 @@
 #ifndef TSAR_QUERY_H
 #define TSAR_QUERY_H
 
+#include <llvm/ADT/StringRef.h>
+
 namespace llvm {
 class Pass;
 class Module;
+class raw_pwrite_stream;
+}
+
+namespace clang {
+class CompilerInstance;
+class CodeGenOptions;
 }
 
 namespace tsar {
@@ -31,6 +39,19 @@ class TransformationContext;
 /// - The second way is to override whole sequence of performed passes.
 class QueryManager {
 public:
+  /// \brief Callback at the start of processing a single input.
+  ///
+  /// \return True on success, on failure run() passes will not be called.
+  virtual bool beginSourceFile(clang::CompilerInstance &, llvm::StringRef) {
+    return true;
+  }
+
+  /// \brief Callback at the end of processing a single input.
+  ///
+  /// This is guaranteed to only be called following a successful call to
+  /// beginSourceFile().
+  virtual void endSourceFile() {}
+
   /// Creates an initialization pass to respond a query.
   virtual llvm::Pass * createInitializationPass() { return nullptr; }
 
@@ -43,7 +64,25 @@ public:
   /// \attention The transformation context is going to be taken under control,
   /// so do not free it separately. Be careful if a method is overloaded,
   /// do not forget to release context.
-  virtual void run(llvm::Module *M, TransformationContext *Ctx);
+  virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx);
+};
+
+
+/// This prints LLVM IR to the standard output stream.
+class EmitLLVMQueryManager : public QueryManager {
+public:
+  bool beginSourceFile(
+    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+  void run(llvm::Module *M, tsar::TransformationContext *) override;
+private:
+  llvm::raw_pwrite_stream *mOS = nullptr;
+  const clang::CodeGenOptions *mCodeGenOpts = nullptr;
+};
+
+/// This performs instrumentation of LLVM IR and prints it to the standard
+/// output stream after instrumentation.
+class InstrLLVMQueryManager : public EmitLLVMQueryManager {
+  llvm::Pass * createInitializationPass() override;
 };
 }
 

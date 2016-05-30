@@ -16,9 +16,7 @@
 #ifndef TSAR_TOOL_H
 #define TSAR_TOOL_H
 
-#include <clang/AST/Decl.h>
 #include <clang/Tooling/Tooling.h>
-#include <llvm/ADT/DenseMap.h>
 #include <llvm/Support/CommandLine.h>
 #include <string>
 #include <vector>

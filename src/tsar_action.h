@@ -27,10 +27,6 @@ public:
     FIRST_KIND,
     /// Perform a main analysis and transformations action.
     KIND_ANALYSIS = FIRST_KIND,
-    /// Perform analysis and transformations actions incrementally.
-    KIND_EMIT_LLVM,
-    /// Perform low-level (LLVM IR) instrumentation.
-    KIND_INSTRUMENT,
     /// Perform set of transformation passes with the same
     /// transformation context.
     KIND_TRANSFORM,
@@ -42,6 +38,18 @@ public:
   /// Creates AST Consumer.
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
     StringRef InFile) override;
+
+  /// \brief Callback at the start of processing a single input.
+  ///
+  /// \return True on success; on failure ExecutionAction() and
+  /// EndSourceFileAction() will not be called.
+  bool BeginSourceFileAction(CompilerInstance &CI, StringRef InFile) override;
+
+  /// \brief Callback at the end of processing a single input.
+  ///
+  /// This is guaranteed to only be called following a successful call to
+  /// BeginSourceFileAction (and BeginSourceFile).
+  void EndSourceFileAction() override;
 
   /// Return true because this action supports use with IR files.
   bool hasIRSupport() const override;
@@ -75,19 +83,9 @@ public:
   explicit MainAction(ArrayRef<std::string> CL, tsar::QueryManager *QM);
 };
 
-class EmitLLVMAnalysisAction : public AnalysisActionBase {
-public:
-  explicit EmitLLVMAnalysisAction();
-};
-
 class TransformationAction : public AnalysisActionBase {
 public:
   explicit TransformationAction(tsar::TransformationContext &Ctx);
-};
-
-class InstrumentationAction : public AnalysisActionBase {
-public:
-  explicit InstrumentationAction();
 };
 
 /// Creates an analysis/transformations actions factory.

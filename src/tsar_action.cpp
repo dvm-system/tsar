@@ -78,31 +78,50 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.run(*M);
 }
 
+bool EmitLLVMQueryManager::beginSourceFile(
+    CompilerInstance &CI, StringRef InFile) {
+  mOS = CI.createDefaultOutputFile(false, InFile, "ll");
+  mCodeGenOpts = &CI.getCodeGenOpts();
+  return mOS && mCodeGenOpts;
+}
+
+void EmitLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (Pass *P = createInitializationPass())
+    Passes.add(P);
+  Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
+  if (Pass *P = createFinalizationPass())
+    Passes.add(P);
+  cl::PrintOptionValues();
+  Passes.run(*M);
+}
+
+Pass *InstrLLVMQueryManager::createInitializationPass() {
+  return createInstrumentationPass();
+}
+
 namespace clang {
 /// This consumer builds LLVM IR for the specified file and launch analysis of
 /// the LLVM IR.
 class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
-  AnalysisConsumer(AnalysisActionBase::Kind AK, raw_pwrite_stream *OS,
+  AnalysisConsumer(AnalysisActionBase::Kind AK,
       CompilerInstance &CI, StringRef InFile,
       TransformationContext *TransformContext, ArrayRef<std::string> CL,
       QueryManager *QM)
-    : mAction(AK), mOS(OS),  mLLVMIRGeneration("LLVM IR Generation Time"),
-    mLLVMIRAnalysis("LLVM IR Analysis Time"),
+    : mAction(AK), mLLVMIRGeneration("LLVM IR Generation Time"),
     mASTContext(nullptr), mLLVMContext(new LLVMContext),
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
-    mTransformContext(TransformContext), mCodeGenOpts(CI.getCodeGenOpts()),
+    mTransformContext(TransformContext),
     mCommandLine(CL), mQueryManager(QM) {
     assert(AnalysisActionBase::FIRST_KIND <= AK &&
       AK <= AnalysisActionBase::LAST_KIND  && "Unknown kind of action!");
     assert((AK != AnalysisActionBase::KIND_TRANSFORM || mTransformContext) &&
       "For a configure rewriter action context must not be null!");
-    assert((mAction != AnalysisActionBase::KIND_EMIT_LLVM || mOS) &&
-      "Output stream must not be null if emit action is selected!");
-    TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
   }
 
   ~AnalysisConsumer() {
@@ -180,16 +199,15 @@ public:
     }
     assert(mModule.get() == M &&
       "Unexpected module change during IR generation");
+    Timer LLVMIRAnalysis("LLVM IR Analysis Time");
     switch (mAction) {
       case AnalysisActionBase::KIND_ANALYSIS:
         if (llvm::TimePassesIsEnabled)
-          mLLVMIRAnalysis.startTimer();
+          LLVMIRAnalysis.startTimer();
         mQueryManager->run(M, mTransformContext.release());
         if (llvm::TimePassesIsEnabled)
-          mLLVMIRAnalysis.stopTimer();
+          LLVMIRAnalysis.stopTimer();
         break;
-      case AnalysisActionBase::KIND_EMIT_LLVM: EmitLLVM(); break;
-      case AnalysisActionBase::KIND_INSTRUMENT: InstrumentLLVM(); break;
       case AnalysisActionBase::KIND_TRANSFORM:
           llvm_unreachable("Transformation action is not implemented yet!");
           mTransformContext.release();
@@ -229,36 +247,14 @@ public:
     mGen->HandleDependentLibrary(Opts);
   }
 
-  /// Prints LLVM IR to the output stream which has been specified in
-  /// a constructor of this action.
-  void EmitLLVM() {
-    legacy::PassManager Passes;
-    Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts.EmitLLVMUseLists));
-    cl::PrintOptionValues();
-    Passes.run(*mModule.get());
-  }
-
-  /// Perform instrumentation of LLVM IR.
-  void InstrumentLLVM() {
-    legacy::PassManager Passes;
-    Passes.add(createInstrumentationPass());
-    Passes.add(createVerifierPass());
-    Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts.EmitLLVMUseLists));
-    cl::PrintOptionValues();
-    Passes.run(*mModule.get());
-  }
-
 private:
   AnalysisActionBase::Kind mAction;
-  raw_pwrite_stream *mOS;
   Timer mLLVMIRGeneration;
-  Timer mLLVMIRAnalysis;
   ASTContext *mASTContext;
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
   std::unique_ptr<CodeGenerator> mGen;
   std::unique_ptr<TransformationContext> mTransformContext;
   QueryManager *mQueryManager;
-  const CodeGenOptions mCodeGenOpts;
   ArrayRef<std::string> mCommandLine;
   std::unique_ptr<llvm::Module> mModule;
 };
@@ -276,17 +272,21 @@ AnalysisActionBase::AnalysisActionBase(Kind AK, TransformationContext *Ctx,
     mCommandLine = mTransformContext->getCommandLine();
 }
 
+bool AnalysisActionBase::BeginSourceFileAction(
+    CompilerInstance &CI, StringRef InFile) {
+  TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
+  return mQueryManager->beginSourceFile(CI, InFile);
+}
+
+void AnalysisActionBase::EndSourceFileAction() {
+  mQueryManager->endSourceFile();
+}
+
 std::unique_ptr<ASTConsumer>
 AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  raw_pwrite_stream *OS = nullptr;
-  switch (mKind) {
-  case KIND_EMIT_LLVM:
-  case KIND_INSTRUMENT:
-    OS = CI.createDefaultOutputFile(false, InFile, "ll"); break;
-  }
   return std::unique_ptr<AnalysisConsumer>(
-    new AnalysisConsumer(mKind, OS, CI, InFile,
-      mTransformContext, mCommandLine, mQueryManager));
+    new AnalysisConsumer(mKind, CI, InFile, mTransformContext, mCommandLine,
+      mQueryManager));
 }
 
 void AnalysisActionBase::ExecuteAction() {
@@ -335,7 +335,12 @@ void AnalysisActionBase::ExecuteAction() {
       << TargetOpts.Triple;
     M->setTargetTriple(TargetOpts.Triple);
   }
+  Timer LLVMIRAnalysis("LLVM IR Analysis Time");
+  if (llvm::TimePassesIsEnabled)
+    LLVMIRAnalysis.startTimer();
   mQueryManager->run(M.get(), nullptr);
+  if (llvm::TimePassesIsEnabled)
+    LLVMIRAnalysis.stopTimer();
   return;
 }
 
@@ -344,14 +349,6 @@ bool AnalysisActionBase::hasIRSupport() const { return true; }
 MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM) :
   AnalysisActionBase(KIND_ANALYSIS, nullptr, CL, QM) {}
 
-EmitLLVMAnalysisAction::EmitLLVMAnalysisAction() :
-  AnalysisActionBase(KIND_EMIT_LLVM, nullptr,
-    makeArrayRef<std::string>(""), nullptr) {}
-
 TransformationAction::TransformationAction(TransformationContext &Ctx) :
   AnalysisActionBase(KIND_TRANSFORM, &Ctx,
-    makeArrayRef<std::string>(""), nullptr) {}
-
-InstrumentationAction::InstrumentationAction() :
-  AnalysisActionBase(KIND_INSTRUMENT, nullptr,
     makeArrayRef<std::string>(""), nullptr) {}

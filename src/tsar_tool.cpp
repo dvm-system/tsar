@@ -116,16 +116,30 @@ void Tool::storeCLOptions() {
   mInstrLLVM = Options::get().InstrLLVM;
 }
 
+inline static QueryManager * getDefaultQM() {
+  static QueryManager QM;
+  return &QM;
+}
+inline static EmitLLVMQueryManager * getEmitLLVMQM() {
+  static EmitLLVMQueryManager QM;
+  return &QM;
+}
+
+inline static InstrLLVMQueryManager * getInstrLLVMQM() {
+  static InstrLLVMQueryManager QM;
+  return &QM;
+}
+
 int Tool::run(QueryManager *QM) {
-  QueryManager Mgr;
-  std::unique_ptr<FrontendActionFactory> Factory;
-  if (mEmitLLVM)
-    Factory = newFrontendActionFactory<EmitLLVMAnalysisAction>();
-  else if (mInstrLLVM)
-    Factory = newFrontendActionFactory<InstrumentationAction>();
-  else
-    Factory = newAnalysisActionFactory<MainAction>(mCommandLine, QM ? QM : &Mgr);
+  if (!QM) {
+    if (mEmitLLVM)
+      QM = getEmitLLVMQM();
+    else if (mInstrLLVM)
+      QM = getInstrLLVMQM();
+    else
+      QM = getDefaultQM();
+  }
   ClangTool CTool(*mCompilations, mSources);
-  return CTool.run(Factory.get());
+  return CTool.run(newAnalysisActionFactory<MainAction>(mCommandLine, QM).get());
 }
 
