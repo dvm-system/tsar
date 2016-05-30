@@ -593,7 +593,7 @@ namespace detail {
 ///
 /// For example, const int and int & will be stripped to int, typedef will be
 /// also stripped.
-void stripDIType(DITypeRef &DITy);
+void stripDIType(llvm::DITypeRef &DITy);
 
 /// \brief Represents memory location as an expression in a source language.
 ///
