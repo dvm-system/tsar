@@ -189,7 +189,14 @@ public:
   Bimap() = default;
 
   /// Copy constructor.
-  Bimap(const Self &BM) : Bimap(BM.begin(), BM.end()) { }
+  Bimap(const Bimap &BM) : Bimap(BM.begin(), BM.end()) { }
+
+  /// Move constructor.
+  Bimap(Bimap &&BM) :
+      mFirstToSecond(std::move(BM.mFirstToSecond)),
+      mSecondToFirst(std::move(BM.mSecondToFirst)) {
+    mColl.splice(mColl.begin(), BM.mColl);
+  }
 
   /// Constructs the container with the contents of the range [I, EI).
   template<class Itr> Bimap(Itr I, Itr EI) {
@@ -205,6 +212,8 @@ public:
   /// Copy assignment operator. Replaces the contents with a copy of the
   /// contents of other
   Bimap & operator=(const Bimap &BM) {
+    if (this == &BM)
+      return *this;
     mFirstToSecond.clear();
     mSecondToFirst.clear();
     auto LHS = mColl.begin(), LHSE = mColl.end();
@@ -217,7 +226,18 @@ public:
     if (LHS != LHSE)
       mColl.erase(LHS, LHSE);
     else
-      insert(RHS, RHSE);
+      insert(iterator(RHS), iterator(RHSE));
+  }
+
+  /// Move assignment operator. Replaces the contents with those of other using
+  /// move semantics
+  Bimap & operator=(Bimap &&BM) {
+    if (this == &BM)
+      return *this;
+    mColl.clear();
+    mColl.splice(mColl.begin(), BM.mColl);
+    mFirstToSecond = std::move(BM.mFirstToSecond);
+    mSecondToFirst = std::move(BM.mSecondToFirst);
   }
 
   /// Replaces the contents with those identified by initializer list.
@@ -321,7 +341,7 @@ public:
   /// whether the insertion took place.
   template<typename Pair,
     typename = typename std::enable_if<
-      std::is_constructible<value_type,  Pair&&>::value>::type>
+      std::is_constructible<value_type, Pair&&>::value>::type>
   std::pair<iterator, bool> insert(Pair&& Val) {
     auto Res = lookup(Val);
     if (!Res.second)
@@ -404,7 +424,7 @@ public:
   /// to Second.
   ///
   /// \return True if the element has been found and removed.
-  bool earse_second(const SecondTy &Second) {
+  bool erase_second(const SecondTy &Second) {
     auto I = mSecondToFirst.find_as(Second);
     if (I == mSecondToFirst.end())
       return false;
@@ -443,6 +463,39 @@ private:
   FirstToSecondMap mFirstToSecond;
   SecondToFirstMap mSecondToFirst;
 };
+}
+
+/// Specializes the std::swap algorithm for tsar::Bimap.
+template<class FirstTy, class SecondTy, class FirstInfoTy, class SecondInfoTy>
+inline void std::swap(
+    tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &LHS,
+    tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &RHS) {
+  LHS.swap(RHS);
+}
+
+/// Compares the contents of two bidirectional maps.
+template<class FirstTy, class SecondTy, class FirstInfoTy, class SecondInfoTy>
+bool operator==(
+    const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &LHS,
+    const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &RHS) {
+  if (&LHS == &RHS)
+    return true;
+  auto LHSItr = LHS.begin(), LHSEndItr = LHS.end();
+  auto RHSItr = RHS.begin(), RHSEndItr = RHS.end();
+  for (; LHSItr != LHSEndItr && RHSItr != RHSEndItr; ++LHSItr, ++RHSItr)
+    if (LHSItr->first != RHSItr->first || LHSItr->second != RHSItr->second)
+      return false;
+  if (LHSItr != LHSEndItr || RHSItr != RHSEndItr)
+    return false;
+  return true;
+}
+
+/// Compares the contents of two bidirectional maps.
+template<class FirstTy, class SecondTy, class FirstInfoTy, class SecondInfoTy>
+bool operator!=(
+    const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &LHS,
+    const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &RHS) {
+  return !operator==(LHS, RHS);
 }
 #endif//TSAR_BIMAP_H
 
