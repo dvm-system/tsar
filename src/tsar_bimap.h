@@ -17,6 +17,7 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/ilist.h>
 #include <llvm/ADT/ilist_node.h>
+#include <tagged.h>
 #include <type_traits>
 
 namespace tsar {
@@ -72,8 +73,8 @@ struct BimapInfoBase {
 /// \brief Bidirectional associative container, where both values in a pair are
 /// treated as keys, which can be retrieved in quadratic time.
 ///
-/// \tparam FirstTy Type of first object in a pair.
-/// \tparam SecondTy Type of first object in a pair.
+/// \tparam FTy Type of first object in a pair.
+/// \tparam STy Type of first object in a pair.
 /// \tparam FirstInfoTy Implementation of traits which is necessary to build
 /// hash for the first key.
 /// \tparam SecondInfoTy Implementation of traits which is necessary to build
@@ -83,18 +84,61 @@ struct BimapInfoBase {
 /// occur only when element is removed from the container. But only entities
 /// referring the removed element are invalidated. All other iterators, pointers
 /// and reference keep their validity.
-template<class FirstTy, class SecondTy,
-  class FirstInfoTy = llvm::DenseMapInfo<FirstTy>,
-  class SecondInfoTy = llvm::DenseMapInfo<SecondTy>>
+///
+/// It is possible to tag a type of keys stored in this container. It means that
+/// is is possible to use user-friendly names to access first and second keys of
+/// each element. To use this set FTy and STy as a bcl::tagged<...> template.
+///
+/// Let us consider an example: the first key represents name of a person and
+/// the second key represents its telephone number. To access the Bimap we want
+/// to use tags Name and Telephone.
+///
+/// At first, we must declare this tags:
+/// \code
+/// struct Name {};
+/// struct Telephone {};
+/// \endcode
+/// Now we can use these tags to declare and access Bimap:
+/// \code
+/// Bimap<
+///   bcl::tagged<std::string, Name>,
+///   bcl::tagged<unsigned, Telephone>> Folks;
+///
+/// Folks.emplace("Ivan", 1234);
+/// auto I = Folks.find<Name>("Ivan");
+/// std::cout << I->get<Name>() << " has tel. " << I->get<Telephone>() << "\n";
+/// Folks.erase<Telephone>(1234)
+/// \encode
+/// Predefined tags Bimap<...>::First and Bimap<...>::Second are also available.
+template<class FTy, class STy,
+  class FirstInfoTy = llvm::DenseMapInfo<bcl::add_alias_tagged_t<FTy, FTy>>,
+  class SecondInfoTy = llvm::DenseMapInfo<bcl::add_alias_tagged_t<STy, STy>>>
 class Bimap {
+  /// Type of this bidirectional map.
+  typedef Bimap<FTy, STy, FirstInfoTy, SecondInfoTy> Self;
+
 public:
-  typedef std::pair<FirstTy, SecondTy> value_type;
+  /// This tag can be used to access first key in a pair.
+  struct First {};
+
+  /// This tag can be used to access second key in a pair.
+  struct Second {};
+
+private:
+  typedef bcl::TypeList<
+    bcl::add_alias_tagged<FTy, First>,
+    bcl::add_alias_tagged<STy, Second>> Taggeds;
+  typedef bcl::get_tagged_t<First, Taggeds> FirstTy;
+  typedef bcl::get_tagged_t<Second, Taggeds> SecondTy;
+public:
+  typedef bcl::tagged_pair<
+    bcl::get_tagged<First, Taggeds>,
+    bcl::get_tagged<Second, Taggeds>> value_type;
   typedef value_type & reference;
   typedef const value_type & const_reference;
   typedef value_type * pointer;
   typedef const value_type * const_pointer;
 
-private:
   struct BimapNode : public llvm::ilist_node<BimapNode> {
 
     constexpr BimapNode() = default;
@@ -118,9 +162,6 @@ private:
   typedef typename Collection::const_iterator InternalItrC;
   typedef typename Collection::reverse_iterator InternalItrR;
   typedef typename Collection::const_reverse_iterator InternalItrRC;
-
-  /// Type of this bidirectional map.
-  typedef Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> Self;
 
   /// Implementation of llvm::DenseMapInfo to access the first key.
   struct BimapFirstInfo : public detail::BimapInfoBase<
@@ -373,16 +414,25 @@ public:
     return Res;
   }
 
-  /// Finds an element with first key equivalent to key.
+  /// Finds an element with first key equivalent to First.
   iterator find_first(const FirstTy &First) const {
     auto I = mFirstToSecond.find_as(First);
     return I == mFirstToSecond.end() ? end() : iterator(*I);
   }
 
-  /// Finds an element with second key equivalent to key.
+  /// Finds an element with second key equivalent to Second.
   iterator find_second(const SecondTy &Second) const {
     auto I = mSecondToFirst.find_as(Second);
     return I == mSecondToFirst.end() ? end() : iterator(*I);
+  }
+
+  /// Finds an element with a key Tag equivalent to Key.
+  template<class Tag,
+    class = typename std::enable_if<
+      !std::is_void<bcl::get_tagged<Tag, Taggeds>>::value>::type>
+  iterator find(const bcl::get_tagged_t<Tag, Taggeds> &Key) const {
+    return taggedFindImp(
+      Key, std::is_same<FTy, bcl::get_tagged<Tag, Taggeds>>());
   }
 
   /// \brief Removes specified element from the container.
@@ -434,6 +484,18 @@ public:
     return true;
   }
 
+  /// \brief Removes the element (if one exists) with the key Tag equivalent to
+  /// Key.
+  ///
+  /// \return True if the element has been found and removed.
+  template<class Tag,
+    class = typename std::enable_if<
+      !std::is_void<bcl::get_tagged<Tag, Taggeds>>::value>::type>
+  bool erase(const bcl::get_tagged_t<Tag, Taggeds> &Key) {
+    return taggedEraseImp(
+      Key, std::is_same<FTy, bcl::get_tagged<Tag, Taggeds>>());
+  }
+
 private:
   /// \brief Finds element with key equivalent to some of specified keys
   /// (first or second).
@@ -457,6 +519,26 @@ private:
     mFirstToSecond.insert(Node);
     mSecondToFirst.insert(Node);
     return std::make_pair(iterator(Node), true);
+  }
+
+  /// Overloaded method. Finds an element with first key equivalent to key.
+  iterator taggedFindImp(const FirstTy &Key, std::true_type) const {
+    return find_first(Key);
+  }
+
+  /// Overloaded method. Finds an element with second key equivalent to key.
+  iterator taggedFindImp(const SecondTy &Key, std::false_type) const {
+    return find_second(Key);
+  }
+
+  /// Overloaded method. Removes an element with the specified first key.
+  bool taggedEraseImp(const FirstTy &Key, std::true_type) {
+    return erase_first(Key);
+  }
+
+  /// Overloaded method. Removes an element with the specified second key.
+  bool taggedEraseImp(const SecondTy &Key, std::false_type) {
+    return erase_second(Key);
   }
 
   Collection mColl;
