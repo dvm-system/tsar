@@ -11,6 +11,7 @@
 #define TSAR_UTILITY_H
 
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/Analysis/LoopInfo.h>
 
 namespace llvm {
 class DIGlobalVariable;
@@ -37,6 +38,26 @@ template<class PtrType, unsigned SmallSize>
 bool operator!=(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
   const llvm::SmallPtrSet<PtrType, SmallSize> &RHS) {
   return !(LHS == RHS);
+}
+
+namespace detail {
+/// Applies a specified function object to each loop in a loop tree.
+template<class Function>
+void for_each(llvm::LoopInfo::reverse_iterator ReverseI,
+              llvm::LoopInfo::reverse_iterator ReverseEI,
+              Function F) {
+  for (; ReverseI != ReverseEI; ++ReverseI) {
+    F(*ReverseI);
+    for_each((*ReverseI)->rbegin(), (*ReverseI)->rend(), F);
+  }
+}
+}
+
+/// Applies a specified function object to each loop in a loop tree.
+template<class Function>
+Function for_each(const llvm::LoopInfo &LI, Function F) {
+  detail::for_each(LI.rbegin(), LI.rend(), F);
+  return std::move(F);
 }
 
 /// Returns a meta information for a global variable or nullptr;
