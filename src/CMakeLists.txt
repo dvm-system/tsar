@@ -2,7 +2,8 @@ configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 set(TSAR_EXECUTABLES main.cpp tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp tsar_private_c.cpp
-  tsar_transformation.cpp tsar_instrumentation.cpp tsar_trait.cpp tsar_tool.cpp)
+  tsar_transformation.cpp tsar_instrumentation.cpp tsar_trait.cpp tsar_tool.cpp
+  tsar_loop_matcher.cpp)
 if(MSVC_IDE)
   source_group(src FILES ${TSAR_EXECUTABLES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)

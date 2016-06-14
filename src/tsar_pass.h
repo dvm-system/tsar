@@ -45,6 +45,12 @@ void initializeInstrumentationPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
 FunctionPass * createInstrumentationPass();
+
+/// Initialize a pass to match high-level and low-level loops.
+void initializeLoopMatcherPassPass(PassRegistry &Registry);
+
+/// Creates a pass to match high-level and low-level loops.
+FunctionPass * createLoopMatcherPass();
 }
 
 #endif//TSAR_PASS_H
