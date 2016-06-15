@@ -140,10 +140,7 @@ public:
   typedef const value_type * const_pointer;
 
   struct BimapNode : public llvm::ilist_node<BimapNode> {
-
-    constexpr BimapNode() = default;
     ~BimapNode() = default;
-
     BimapNode & operator=(const BimapNode &) = default;
     BimapNode & operator=(BimapNode &&) = default;
 
@@ -547,9 +544,13 @@ private:
 };
 }
 
+
+//#include <alghorithm>
+
+namespace std {
 /// Specializes the std::swap algorithm for tsar::Bimap.
 template<class FirstTy, class SecondTy, class FirstInfoTy, class SecondInfoTy>
-inline void std::swap(
+inline void swap(
     tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &LHS,
     tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &RHS) {
   LHS.swap(RHS);
@@ -578,6 +579,7 @@ bool operator!=(
     const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &LHS,
     const tsar::Bimap<FirstTy, SecondTy, FirstInfoTy, SecondInfoTy> &RHS) {
   return !operator==(LHS, RHS);
+}
 }
 #endif//TSAR_BIMAP_H
 
