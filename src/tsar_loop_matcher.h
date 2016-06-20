@@ -29,6 +29,7 @@ struct AST {};
 
 namespace clang {
 class ForStmt;
+class Decl;
 }
 
 namespace llvm {
@@ -52,7 +53,7 @@ public:
     initializeLoopMatcherPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnFunction(Function &M) override;
+  bool runOnFunction(Function &F) override;
 
   /// Set analysis information that is necessary to run this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
