@@ -22,6 +22,7 @@
 namespace clang {
 class Decl;
 class CodeGenerator;
+class ASTContext;
 }
 
 namespace tsar {
@@ -31,13 +32,13 @@ namespace tsar {
 /// files are used to writer or read data.
 typedef std::function<std::string(llvm::StringRef)> FilenameAdjuster;
 
-/// Returns a filename adjuster wich does not moidfy name of files.
+/// Returns a filename adjuster which does not modify name of files.
 inline FilenameAdjuster getPureFilenameAdjuster() {
   return [](llvm::StringRef Filename) { return Filename; };
 }
 
-/// \brief Returns a filename adjuster which generate the following name:
-/// name.extnsion -> name.number.extension.
+/// \brief Returns a filename adjuster which generates the following name:
+/// name.extension -> name.number.extension.
 ///
 /// For the same file the 'number' is increased every time the adjuster is
 /// called.
@@ -89,14 +90,25 @@ private:
 /// A single configured instance of this class associated with a single source
 /// file (with additional include files) and command line options which is
 /// necessary to parse this file before it would be rewritten. The configuration
-/// can be reseted reseted multiple times.
+/// can be reseted multiple times.
 class TransformationContext {
 public:
-  /// Constructor.
+  /// \brief Constructor.
+  ///
+  /// \param [in] CL Command line which is necessary to parse input file.
+  /// \post Transformation engine is NOT configured yet.
+  explicit TransformationContext(llvm::ArrayRef<std::string> CL);
+
+  /// \brief Constructor.
+  ///
+  /// \param [in] CL Command line which is necessary to parse input file.
+  /// \post Transformation engine is configured.
   TransformationContext(clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
     llvm::ArrayRef<std::string> CL);
 
-  /// Returns an input source file.
+  /// \brief Returns an input source file.
+  ///
+  /// \pre Transformation instance must be configured.
   llvm::StringRef getInput() const;
 
   /// Returns command line to parse a source file.
@@ -108,7 +120,9 @@ public:
     return mRewriter;
   }
 
-  /// Returns a declaration for a mangled name.
+  /// \brief Returns a declaration for a mangled name.
+  ///
+  /// \pre Transformation instance must be configured.
   clang::Decl * getDeclForMangledName(llvm::StringRef Name);
 
   /// Returns true if transformation engine is configured.
@@ -122,22 +136,29 @@ public:
 
   /// \brief Save all changed files to disk.
   ///
-  /// \param FA Filename adjuster wich modifies names of files where the changes
-  /// must be saved. The parameter for an adjuster is a name of a modified file.
+  /// \param FA Filename adjuster which modifies names of files where the
+  /// changes must be saved. The parameter for an adjuster is a name of a
+  /// modified file.
   /// \return Pair of values. The first value is the name of file where main
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   std::pair<std::string, bool> release(
     FilenameAdjuster FA = getDumpFilenameAdjuster()) const;
 
-  /// Resets existence configuration of transformation engine.
+  /// \brief Resets existence configuration of transformation engine.
+  ///
+  /// \post Transformation engine is configured.
   void reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
       llvm::ArrayRef<std::string> CL);
 
-  /// Resets existence configuration of transformation engine.
+  /// \brief Resets existence configuration of transformation engine.
+  ///
+  /// \post Transformation engine is configured.
   void reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen);
 
-  /// Resets existence configuration of transformation engine.
+  /// \brief Resets existence configuration of transformation engine.
+  ///
+  /// \post Transformation engine is NOT configured.
   void reset() { mGen = nullptr; }
 
 private:
@@ -150,7 +171,7 @@ private:
 namespace llvm {
 class Module;
 
-/// Intializes rewriter to update source code of the specified module.
+/// Initializes rewriter to update source code of the specified module.
 class TransformationEnginePass :
   public ImmutablePass, private bcl::Uncopyable {
   typedef llvm::DenseMap<llvm::Module *, tsar::TransformationContext *>
@@ -176,14 +197,11 @@ public:
   /// is associated with the specified module will be prevented. If this
   /// function is called several times it accumulates information for different
   ///  modules. So it is possible to prevent re-parsing of multiple sources.
-  /// \attention The pass retains ownership of the context, so do not delete it
-  /// from the outside.
   void setContext(llvm::Module &M, tsar::TransformationContext *Ctx) {
-    mTransformCtx.insert(std::make_pair(&M, Ctx));
+    auto Pair = mTransformCtx.insert(std::make_pair(&M, Ctx));
+    if (!Pair.second)
+      Pair.first->second = Ctx;
   }
-
-  /// Releases all transformation contexts.
-  void releaseMemory() override;
 
   /// Returns transformation context for the module or null.
   tsar::TransformationContext * getContext(llvm::Module &M) {

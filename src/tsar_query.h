@@ -61,9 +61,8 @@ public:
   /// Analysis the specified module and transforms source file associated with
   /// it if rewriter context is specified.
   ///
-  /// \attention The transformation context is going to be taken under control,
-  /// so do not free it separately. Be careful if a method is overloaded,
-  /// do not forget to release context.
+  /// \attention Neither module nor transformation context is not going to be
+  /// taken under control.
   virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx);
 };
 

@@ -84,12 +84,6 @@ char TransformationEnginePass::ID = 0;
 INITIALIZE_PASS(TransformationEnginePass, "transform",
   "Transformation Engine Accessor", true, true)
 
-  void TransformationEnginePass::releaseMemory() {
-  for (auto &Ctx : mTransformCtx)
-    delete Ctx.second;
-  mTransformCtx.clear();
-}
-
 ImmutablePass * llvm::createTransformationEnginePass() {
   return new TransformationEnginePass();
 }
@@ -110,11 +104,15 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
 }
 
 TransformationContext::TransformationContext(
+  ArrayRef<std::string> CL) : mCommandLine(CL) {}
+
+TransformationContext::TransformationContext(
   ASTContext &Ctx, CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) :
   mRewriter(Ctx.getSourceManager(), Ctx.getLangOpts()),
   mGen(&Gen), mCommandLine(CL) { }
 
 llvm::StringRef TransformationContext::getInput() const {
+  assert(hasInstance() && "Rewriter is not configured!");
   SourceManager &SM = mRewriter.getSourceMgr();
   FileID FID = SM.getMainFileID();
   const FileEntry *File = SM.getFileEntryForID(FID);

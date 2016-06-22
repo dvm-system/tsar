@@ -107,28 +107,15 @@ namespace clang {
 class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
-  AnalysisConsumer(AnalysisActionBase::Kind AK,
-      CompilerInstance &CI, StringRef InFile,
-      TransformationContext *TransformContext, ArrayRef<std::string> CL,
-      QueryManager *QM)
-    : mAction(AK), mLLVMIRGeneration("LLVM IR Generation Time"),
+  AnalysisConsumer(CompilerInstance &CI, StringRef InFile,
+    TransformationContext *TfmCtx, QueryManager *QM)
+    : mLLVMIRGeneration("LLVM IR Generation Time"),
     mASTContext(nullptr), mLLVMContext(new LLVMContext),
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
-    mTransformContext(TransformContext),
-    mCommandLine(CL), mQueryManager(QM) {
-    assert(AnalysisActionBase::FIRST_KIND <= AK &&
-      AK <= AnalysisActionBase::LAST_KIND  && "Unknown kind of action!");
-    assert((AK != AnalysisActionBase::KIND_TRANSFORM || mTransformContext) &&
-      "For a configure rewriter action context must not be null!");
-  }
-
-  ~AnalysisConsumer() {
-    // Be careful if kind of action KIND_TRANSFORM the transformation
-    // context should not be deleted with this consumer.
-    if (mAction == AnalysisActionBase::KIND_TRANSFORM)
-      mTransformContext.release();
+    mTransformContext(TfmCtx), mQueryManager(QM) {
+    assert(mTransformContext && "Transformation context must not be null!");
   }
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
@@ -142,11 +129,7 @@ public:
       return;
     }
     mASTContext = &Ctx;
-    if (!mTransformContext)
-      mTransformContext.reset(
-        new TransformationContext(Ctx, *mGen, mCommandLine));
-    else
-      mTransformContext->reset(Ctx, *mGen);
+    mTransformContext->reset(Ctx, *mGen);
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.startTimer();
     mGen->Initialize(Ctx);
@@ -200,20 +183,11 @@ public:
     assert(mModule.get() == M &&
       "Unexpected module change during IR generation");
     Timer LLVMIRAnalysis("LLVM IR Analysis Time");
-    switch (mAction) {
-      case AnalysisActionBase::KIND_ANALYSIS:
-        if (llvm::TimePassesIsEnabled)
-          LLVMIRAnalysis.startTimer();
-        mQueryManager->run(M, mTransformContext.release());
-        if (llvm::TimePassesIsEnabled)
-          LLVMIRAnalysis.stopTimer();
-        break;
-      case AnalysisActionBase::KIND_TRANSFORM:
-          llvm_unreachable("Transformation action is not implemented yet!");
-          mTransformContext.release();
-        break;
-      default: assert("Unknown kind of action, so do nothing!"); break;
-    }
+    if (llvm::TimePassesIsEnabled)
+      LLVMIRAnalysis.startTimer();
+    mQueryManager->run(M, mTransformContext);
+    if (llvm::TimePassesIsEnabled)
+      LLVMIRAnalysis.stopTimer();
   }
 
   void HandleTagDeclDefinition(TagDecl *D) override {
@@ -248,54 +222,37 @@ public:
   }
 
 private:
-  AnalysisActionBase::Kind mAction;
   Timer mLLVMIRGeneration;
   ASTContext *mASTContext;
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
   std::unique_ptr<CodeGenerator> mGen;
-  std::unique_ptr<TransformationContext> mTransformContext;
+  TransformationContext *mTransformContext;
   QueryManager *mQueryManager;
-  ArrayRef<std::string> mCommandLine;
   std::unique_ptr<llvm::Module> mModule;
 };
 }
 
-AnalysisActionBase::AnalysisActionBase(Kind AK, TransformationContext *Ctx,
-    ArrayRef<std::string> CL, QueryManager *QM) :
-  mKind(AK), mTransformContext(Ctx), mCommandLine(CL), mQueryManager(QM) {
-  assert(FIRST_KIND <= AK && AK <= LAST_KIND && "Unknown kind of action!");
-  assert((AK != KIND_TRANSFORM || Ctx) &&
-    "For a transformation action context must not be null!");
-  assert((QM || AK != KIND_ANALYSIS) &&
-    "For analysis action query manager must be specified!");
-  if (mTransformContext)
-    mCommandLine = mTransformContext->getCommandLine();
+ActionBase::ActionBase(QueryManager *QM) : mQueryManager(QM) {
+  assert(QM && "Query manager must be specified!");
 }
 
-bool AnalysisActionBase::BeginSourceFileAction(
+bool ActionBase::BeginSourceFileAction(
     CompilerInstance &CI, StringRef InFile) {
   TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
   return mQueryManager->beginSourceFile(CI, InFile);
 }
 
-void AnalysisActionBase::EndSourceFileAction() {
+void ActionBase::EndSourceFileAction() {
   mQueryManager->endSourceFile();
 }
 
-std::unique_ptr<ASTConsumer>
-AnalysisActionBase::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return std::unique_ptr<AnalysisConsumer>(
-    new AnalysisConsumer(mKind, CI, InFile, mTransformContext, mCommandLine,
-      mQueryManager));
-}
-
-void AnalysisActionBase::ExecuteAction() {
+void ActionBase::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
   if (getCurrentFileKind() != IK_LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
     return;
   }
-  if (mKind != AnalysisActionBase::KIND_ANALYSIS) {
+  if (!hasIRSupport()) {
     errs() << getCurrentFile() << " error: requested action is not available\n";
     return;
   }
@@ -328,7 +285,7 @@ void AnalysisActionBase::ExecuteAction() {
     CI.getDiagnostics().Report(Loc, DiagID) << Msg;
     return;
   }
-  const TargetOptions &TargetOpts = CI.getTargetOpts();
+  const auto &TargetOpts = CI.getTargetOpts();
   if (M->getTargetTriple() != TargetOpts.Triple) {
     CI.getDiagnostics().Report(SourceLocation(),
       diag::warn_fe_override_module)
@@ -344,11 +301,11 @@ void AnalysisActionBase::ExecuteAction() {
   return;
 }
 
-bool AnalysisActionBase::hasIRSupport() const { return true; }
+std::unique_ptr<ASTConsumer>
+MainAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
+  return std::unique_ptr<AnalysisConsumer>(
+    new AnalysisConsumer(CI, InFile, mTfmCtx.get(), mQueryManager));
+}
 
 MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM) :
-  AnalysisActionBase(KIND_ANALYSIS, nullptr, CL, QM) {}
-
-TransformationAction::TransformationAction(TransformationContext &Ctx) :
-  AnalysisActionBase(KIND_TRANSFORM, &Ctx,
-    makeArrayRef<std::string>(""), nullptr) {}
+  ActionBase(QM), mTfmCtx(new TransformationContext(CL)) {}

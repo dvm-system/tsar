@@ -16,34 +16,17 @@
 namespace tsar {
 class TransformationContext;
 class QueryManager;
-}
 
-namespace clang {
-/// Main front-end action to analyze and transform sources.
-class AnalysisActionBase : public ASTFrontendAction {
+/// Base front-end action to analyze and transform sources. Concrete actions
+/// must inherit this.
+class ActionBase : public clang::ASTFrontendAction {
 public:
-  /// This is a list of supported actions.
-  enum Kind {
-    FIRST_KIND,
-    /// Perform a main analysis and transformations action.
-    KIND_ANALYSIS = FIRST_KIND,
-    /// Perform set of transformation passes with the same
-    /// transformation context.
-    KIND_TRANSFORM,
-    LAST_KIND = KIND_TRANSFORM,
-    INVALID_KIND,
-    NUMBER_KIND = INVALID_KIND
-  };
-
-  /// Creates AST Consumer.
-  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-    StringRef InFile) override;
-
   /// \brief Callback at the start of processing a single input.
   ///
   /// \return True on success; on failure ExecutionAction() and
   /// EndSourceFileAction() will not be called.
-  bool BeginSourceFileAction(CompilerInstance &CI, StringRef InFile) override;
+  bool BeginSourceFileAction(
+    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
 
   /// \brief Callback at the end of processing a single input.
   ///
@@ -52,47 +35,38 @@ public:
   void EndSourceFileAction() override;
 
   /// Return true because this action supports use with IR files.
-  bool hasIRSupport() const override;
+  bool hasIRSupport() const override { return true; }
 
   /// Executes action, evaluation of IR files is also supported.
   void ExecuteAction() override;
 
 protected:
   /// Creates specified action.
-  ///
-  /// \attention
-  /// - If kind of new action is KIND_TRANSFORM then transformation context
-  /// must be specified. It will be used to access to transformation engine from
-  /// LLVM transformation passes. The context will not be taken under control of
-  /// this class.
-  /// - If transformation context and command line both are specified the
-  /// command line will  be ignored and command line from transformation context
-  /// will be used.
-  AnalysisActionBase(Kind AK, tsar::TransformationContext *Ctx,
-    ArrayRef<std::string> CL, tsar::QueryManager *QM);
+  explicit ActionBase(QueryManager *QM);
 
-private:
-  Kind mKind;
-  tsar::TransformationContext *mTransformContext;
-  std::vector<std::string> mCommandLine;
   tsar::QueryManager *mQueryManager;
 };
 
-class MainAction : public AnalysisActionBase {
+/// Main action to perform analysis and transformation for a single
+/// compilation unit.
+class MainAction : public ActionBase {
 public:
-  explicit MainAction(ArrayRef<std::string> CL, tsar::QueryManager *QM);
-};
+  /// Constructor.
+  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM);
 
-class TransformationAction : public AnalysisActionBase {
-public:
-  explicit TransformationAction(tsar::TransformationContext &Ctx);
+  /// Creates AST Consumer.
+  std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+
+private:
+  std::unique_ptr<TransformationContext> mTfmCtx;
 };
 
 /// Creates an analysis/transformations actions factory.
 template <class ActionTy, class FirstTy, class SecondTy>
-std::unique_ptr<tooling::FrontendActionFactory>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
 newAnalysisActionFactory(FirstTy First, SecondTy Second) {
-  class AnalysisActionFactory : public tooling::FrontendActionFactory {
+  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
   public:
     AnalysisActionFactory(FirstTy F, SecondTy S) :
       mFirst(std::move(F)), mSecond(std::move(S)) {}
@@ -103,7 +77,7 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second) {
     FirstTy mFirst;
     SecondTy mSecond;
   };
-  return std::unique_ptr<tooling::FrontendActionFactory>(
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
     new AnalysisActionFactory(std::move(First), std::move(Second)));
 }
 }
