@@ -35,8 +35,6 @@ class Loop;
 class Value;
 class Instruction;
 class StoreInst;
-class AliasAnalysis;
-struct AAMDNodes;
 }
 
 namespace tsar {

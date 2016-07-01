@@ -50,7 +50,11 @@ char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
                       "Private Variable Analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+#else
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+#endif
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
@@ -62,7 +66,11 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       "Data-flow graph must not contain unreachable nodes!");
 #endif
   LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
+#else
+  AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+#endif
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
@@ -432,7 +440,11 @@ void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   AU.addRequired<AliasAnalysis>();
+#else
+  AU.addRequired<AAResultsWrapperPass>();
+#endif
   AU.setPreservesAll();
 }
 
@@ -462,16 +474,31 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   uint64_t Size;
   std::function<void(const MemoryLocation &)> AddMust, AddMay;
   AliasAnalysis &AA = AST->getAliasAnalysis();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
+#else
+  auto BB = I->getParent();
+  auto F = BB->getParent();
+  auto M = F->getParent();
+  auto &DL = M->getDataLayout();
+#endif
   if (auto *SI = dyn_cast<StoreInst>(I)) {
     AddMust = [&DU](const MemoryLocation &Loc) { DU->addDef(Loc); };
     AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
     Ptr = SI->getPointerOperand();
     Value *Val = SI->getValueOperand();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
     Size = AA.getTypeStoreSize(Val->getType());
+#else
+    Size = DL.getTypeStoreSize(Val->getType());
+#endif
   } else if (auto *LI = dyn_cast<LoadInst>(I)) {
     AddMay = AddMust = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
     Ptr = LI->getPointerOperand();
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
     Size = AA.getTypeStoreSize(LI->getType());
+#else
+    Size = DL.getTypeStoreSize(LI->getType());
+#endif
   } else {
     return false;
   }
@@ -525,7 +552,11 @@ void evaluateUnknownAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
   for (auto APtr : *ASetI) {
     MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
     if (!DU->hasDef(ALoc) &&
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
         AA.getModRefInfo(I, ALoc) != AliasAnalysis::NoModRef)
+#else
+        AA.getModRefInfo(I, ALoc) != MRI_NoModRef)
+#endif
       AddMay(ALoc);
   }
 }

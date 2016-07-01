@@ -8,7 +8,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/AST/Stmt.h>
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/DenseMap.h>

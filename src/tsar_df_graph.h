@@ -460,6 +460,8 @@ public:
     // implemented as a list of objects, not a list of pointers.
     typedef llvm::Function::iterator base;
   public:
+    explicit block_iterator(llvm::Function::iterator &Itr) :
+      llvm::Function::iterator(Itr) {}
     typedef pointer reference;
     block_iterator(reference R) : base(R) {}
     block_iterator() : base() {}
@@ -467,10 +469,10 @@ public:
   };
   typedef llvm::LoopInfo::iterator loop_iterator;
   static block_iterator block_begin(LoopReptn L) {
-    return static_cast<block_iterator>(L.first->begin());
+    return block_iterator(L.first->begin());
   }
   static block_iterator block_end(LoopReptn L) {
-    return static_cast<block_iterator>(L.first->end());
+    return block_iterator(L.first->end());
   }
   static llvm::BasicBlock * getHeader(LoopReptn L) {
     return &L.first->getEntryBlock();

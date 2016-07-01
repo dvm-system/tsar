@@ -211,6 +211,7 @@ public:
 
   private:
     friend Self;
+    iterator_wrapper(typename Itr::pointer NP) : mCurItr(NP) {}
     iterator_wrapper(const Itr &I) : mCurItr(I) {}
 
     Itr mCurItr;
@@ -264,7 +265,7 @@ public:
     if (LHS != LHSE)
       mColl.erase(LHS, LHSE);
     else
-      insert(iterator(RHS), iterator(RHSE));
+      insert(iterator(*RHS), iterator(*RHSE));
   }
 
   /// Move assignment operator. Replaces the contents with those of other using

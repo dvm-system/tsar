@@ -10,6 +10,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/FrontendDiagnostic.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Support/Path.h>
 #include "tsar_transformation.h"
 

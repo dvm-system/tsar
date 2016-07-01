@@ -8,6 +8,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/Config/llvm-config.h>
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
+#else
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#endif
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/ASTConsumer.h>
 #include <clang/AST/ASTContext.h>
@@ -67,7 +72,11 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   if (Pass *P = createInitializationPass())
     Passes.add(P);
   Passes.add(createUnreachableBlockEliminationPass());
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   Passes.add(createBasicAliasAnalysisPass());
+#else
+  Passes.add(createBasicAAWrapperPass());
+#endif
   Passes.add(createPrivateRecognitionPass());
   if (Ctx)
     Passes.add(createPrivateCClassifierPass());
