@@ -47,13 +47,24 @@ namespace {
 /// \attention Only single object of a specialized template can be exist at the
 /// same time. For this reason this template is defined in anonymous namespace.
 ///
-/// TODO(kaniandr@gmail.com): provide access to analysis group (for example,
-/// AliasAnalysis).
-///
 /// To access passes P1 and P2 from a module pass P do the following.
 ///
 /// 1. Declare a provider pass in the anonymous namespace in a .cpp file
-/// `typedef FunctionPassProvider<P1, P2> SimpleProviderPass;`
+///   a. `typedef FunctionPassProvider<P1, P2> SimpleProviderPass;`
+///   b. If some additional passes (for example special implementation of
+///   analysis group) must be perform before the provider pass, inherit the pass:
+///   \code
+///   namespace {
+///   class SimplePassProviderPass: public FunctionPassProvider<P1, P2> {
+///     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
+///        auto P = createSomePass();
+///        AU.addRequiredID(P->getPassID());
+///        delete P;
+///        FunctionPassProvider::getAnalysisUsage(AU);
+///     }
+///   };
+///   }
+///   \endcode
 ///
 /// 2. Enable implicit initialization of provider pass and passes P1 and P2.
 /// \code
