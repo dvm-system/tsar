@@ -13,20 +13,42 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include "tsar_df_location.h"
 #include <cell.h>
+#include <trait.h>
 #include <utility.h>
 
 namespace llvm {
 class MemoryLocation;
-class Value;
 }
 
 namespace tsar {
 using bcl::operator "" _b;
 
-/// This represents list of traits which can be racognized by analyzer.
+/// Declaration of a trait recognized by analyzer.
+#define TSAR_TRAIT_DECL(name_, id_, string_) \
+struct name_ : public bcl::TraitBase<id_> { \
+  static llvm::StringRef toString() { \
+    static std::string Str(string_); \
+    return Str; \
+  } \
+};
+
+namespace trait {
+TSAR_TRAIT_DECL(AddressAccess, 1_b, "address access")
+TSAR_TRAIT_DECL(NoAccess, 1111111_b, "no access")
+TSAR_TRAIT_DECL(Shared, 1011110_b, "shared")
+TSAR_TRAIT_DECL(Private, 0001111_b, "private")
+TSAR_TRAIT_DECL(FirstPrivate, 0001110_b, "first private")
+TSAR_TRAIT_DECL(SecondToLastPrivate, 0001011_b, "second to last private")
+TSAR_TRAIT_DECL(LastPrivate, 0000111_b, "last private")
+TSAR_TRAIT_DECL(DynamicPrivate, 00100011_b, "dynamic private")
+TSAR_TRAIT_DECL(Reduction, 1000000, "reduction")
+TSAR_TRAIT_DECL(Dependency, 0000000_b, "dependency")
+}
+
+/// This represents list of traits for a memory location which can be recognized
+/// by analyzer.
 ///
 /// The following information is available:
-/// - a set of analyzed locations;
 /// - a set of locations addresses of which are evaluated;
 /// - a set of private locations;
 /// - a set of last private locations;
@@ -65,82 +87,120 @@ using bcl::operator "" _b;
 /// In some cases it is impossible to determine in static an iteration
 /// where the last definition of an location have been executed. Such locations
 /// will be stored as dynamic private locations collection.
-struct trait {
-  /// Identifier of a trait.
-  typedef unsigned long long TraitId;
+using DependencyDescriptor = bcl::TraitDescriptor<trait::AddressAccess,
+  bcl::TraitAlternative<trait::NoAccess, trait::Shared, trait::Private,
+    trait::Reduction, trait::Dependency,
+    bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate>,
+    bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate>,
+    bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate>>>;
 
-  /// Set of memory locations.
-  typedef tsar::LocationSet LocationSet;
-
-  /// Set of base memory locations.
-  typedef tsar::BaseLocationSet BaseLocationSet;
-
-  /// \brief Weak set of memory locations.
-  ///
-  /// This set is weak because it does not manage memory allocation unlike
-  /// tsar::LocationSet. It is convinient to use the trait::Analyze trait
-  /// to manage memory allocation.
-  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 64> LocationWeakSet;
-
-  /// Set of pointers to memory locations.
-  typedef llvm::SmallPtrSet<const llvm::Value *, 64> PointerSet;
-
-  /// Set of instructions.
-  typedef llvm::SmallPtrSet<llvm::Instruction *, 64> InstructionSet;
-
-/// \brief Declaration of a trait recognized by analyzer.
+/// \brief This is a set of traits for a memory location.
 ///
-/// Use this macro with TSAR_TRAIT_DEF
-#define TSAR_TRAIT_DECL(name_, id_, collection_) \
-struct name_##Ty { \
-  static constexpr TraitId Id = id_; \
-  typedef collection_ ValueType; \
-  constexpr operator const TraitId & () const { return Id; } \
-}; \
-static constexpr name_##Ty name_ = name_##Ty();
+/// In general this class represents traits of base locations which has been
+/// collected by a base location set, so it is not possible to modify this
+///locations.
+class LocationTraitSet : public bcl::TraitSet<
+  DependencyDescriptor, llvm::DenseMap<bcl::TraitKey, void *>> {
+  /// Base class.
+  using Base = bcl::TraitSet<
+    DependencyDescriptor, llvm::DenseMap<bcl::TraitKey, void *>>;
 
-  TSAR_TRAIT_DECL(Analyze, 0000000_b, BaseLocationSet)
-  TSAR_TRAIT_DECL(NoAccess, 1111111_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(AddressAccess, 1011111_b, PointerSet)
-  TSAR_TRAIT_DECL(Shared, 0111110_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(Private, 0101111_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(FirstPrivate, 0101110_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(SecondToLastPrivate, 0101011_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(LastPrivate, 0100111_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(DynamicPrivate, 0100011_b, LocationWeakSet)
-  TSAR_TRAIT_DECL(Dependency, 0100000_b, LocationWeakSet)
+public:
+  /// \brief Creates set of traits.
+  LocationTraitSet(const llvm::MemoryLocation *Loc, DependencyDescriptor Dptr) :
+    Base(Dptr), mLoc(Loc) {
+    assert(Loc && "Location must not be null!");
+  }
 
-#undef TSAR_TRAIT_DECL
+  /// Returns memory location.
+  const llvm::MemoryLocation * memory() const { return mLoc; }
+
+private:
+  const llvm::MemoryLocation *mLoc;
 };
 
-/// \brief This is a static list of different traits suitable for loops.
-///
-/// Let us give the following example to explain how to access the information:
-/// \code
-/// DependencySet DS;
-/// for (Value *Loc : DS[Private]) {...}
-/// \endcode
-/// Note, (*DS)[Private] is a set of type LocationSet, so it is possible to call
-/// all methods that is available for LocationSet.
-/// You can also use LastPrivate, SecondToLastPrivate, DynamicPrivate instead of
-/// Private to access the necessary kind of locations.
-class DependencySet : public bcl::StaticMap<
-  trait::AnalyzeTy,
-  trait::AddressAccessTy,
-  trait::PrivateTy,
-  trait::LastPrivateTy,
-  trait::SecondToLastPrivateTy,
-  trait::DynamicPrivateTy,
-  trait::FirstPrivateTy,
-  trait::SharedTy,
-  trait::DependencyTy> {
+/// This is a set of different traits suitable for loops.
+class DependencySet {
+  typedef llvm::DenseMap<const llvm::MemoryLocation *,
+    std::unique_ptr<LocationTraitSet>> LocationTraitMap;
 public:
-  /// \brief Checks that a location has a specified kind of privatizability.
+  /// This class used to iterate over traits of different memory locations.
+  class iterator :
+    public std::iterator<std::forward_iterator_tag, LocationTraitSet> {
+  public:
+    explicit iterator(const LocationTraitMap::const_iterator &I) :
+      mCurrItr(I) {}
+    explicit iterator(LocationTraitMap::const_iterator &&I) :
+      mCurrItr(std::move(I)) {}
+    LocationTraitSet & operator*() const { return *mCurrItr->second; }
+    LocationTraitSet * operator->() const { return &operator*(); }
+    bool operator==(const iterator &RHS) const {
+      return mCurrItr == RHS.mCurrItr;
+    }
+    bool operator!=(const iterator &RHS) const { return !operator==(RHS); }
+    iterator & operator++() { ++mCurrItr; return *this; }
+    iterator operator++(int) { iterator Tmp = *this; ++*this; return Tmp; }
+  private:
+    LocationTraitMap::const_iterator mCurrItr;
+  };
+
+  /// This type used to iterate over traits of different memory locations.
+  typedef iterator const_iterator;
+
+  /// \brief Returns base memory location for a specified one.
   ///
-  /// Usage: DependencySet *DS; DS->is(trait::Private, Loc);
-  template<class Kind> bool is(Kind K, const llvm::MemoryLocation *Loc) const {
-    return (*this)[K].count(Loc) != 0;
+  /// The base location will be stored in a base location set and memory
+  /// allocation will be managed by this class.
+  const llvm::MemoryLocation * base(const llvm::MemoryLocation &Loc) const {
+    return *mBases.insert(Loc).first;
   }
+
+  /// \brief Finds traits of a base memory location.
+  ///
+  /// If the specified location is not a base memory location the base location
+  /// will be obtained at first. Then results for the base location will be
+  /// returned.
+  iterator find(const llvm::MemoryLocation &Loc) const {
+    return iterator(mTraits.find(base(Loc)));
+  }
+
+  /// \brief Insert traits of a base memory location.
+  ///
+  /// If the specified location is not a base memory location the base location
+  /// will be obtained at first. Note, that this class manages memory allocation
+  /// to store traits.
+  std::pair<iterator, bool> insert(
+      const llvm::MemoryLocation &Loc, DependencyDescriptor Dptr) {
+    auto BaseLoc = base(Loc);
+    auto Pair = mTraits.insert(
+      std::make_pair(BaseLoc,
+      std::unique_ptr<LocationTraitSet>(new LocationTraitSet(BaseLoc, Dptr))));
+    return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
+  }
+
+  /// Erase traits of a base memory location.
+  bool erase(const llvm::MemoryLocation &Loc) {
+    return mTraits.erase(base(Loc));
+  }
+
+  /// Erase traits of all base memory locations.
+  void clear() { mTraits.clear(); }
+
+  /// Returns true if there are no locations with known traits.
+  bool empty() const { return mTraits.empty(); }
+
+  /// Returns number of locations with known traits.
+  unsigned size() const { return mTraits.size(); }
+
+  /// Returns iterator that points to the beginning of the traits list.
+  iterator begin() const { return iterator(mTraits.begin()); }
+
+  /// Returns iterator that points to the ending of the traits list.
+  iterator end() const { return iterator(mTraits.end()); }
+
+private:
+  mutable BaseLocationSet mBases;
+  LocationTraitMap mTraits;
 };
 
 /// This attribute is associated with DependencySet and

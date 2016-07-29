@@ -461,7 +461,7 @@ class PrivateRecognitionPass :
   typedef llvm::DenseMap<llvm::Loop *, tsar::DependencySet *> PrivateInfo;
 
   /// Map from base location to traits.
-  typedef DenseMap<const MemoryLocation *, unsigned long long> TraitMap;
+  typedef DenseMap<const MemoryLocation *, tsar::DependencyDescriptor> TraitMap;
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -539,7 +539,7 @@ private:
   /// ..X = ...;
   /// \endcode
   void resolveAddresses(const tsar::DFLoop *L, const tsar::DefUseSet *DefUse,
-    tsar::DependencySet *DS);
+    TraitMap &LocBases, tsar::DependencySet *DS);
 
   /// Releases memory allocated for attributes in a data-flow graph.
   void releaseMemory(tsar::DFRegion *R);
