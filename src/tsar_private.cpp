@@ -58,72 +58,6 @@ INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
                     "Private Variable Analysis", true, true)
 
-namespace {
-/// This functor stores representation of a trait in a static map as a string.
-class TraitToStringFunctor {
-public:
-  /// Static map from trait to its string representation.
-  typedef bcl::StaticTraitMap<
-    std::string, DependencyDescriptor> TraitToStringMap;
-
-  /// Creates the functor.
-  explicit TraitToStringFunctor(TraitToStringMap &Map) : mMap(&Map) {}
-
-  /// Stores representation of a trait in a static map as a string.
-  template<class Trait> void operator()() {
-    assert(mTS && "Trait set must not be null!");
-    llvm::raw_string_ostream OS(mMap->value<Trait>());
-    printLocationSource(OS, mTS->memory()->Ptr);
-    OS << "\n";
-  }
-
-  /// Returns a static trait map.
-  TraitToStringMap & getStringMap() { return *mMap; }
-
-  /// \brief Returns current trait set.
-  ///
-  /// \pre Trait set must not be null and has been specified by setTraitSet().
-  LocationTraitSet & getTraitSet() {
-    assert(mTS && "Trait set must not be null!");
-    return *mTS;
-  }
-
-  /// Specifies current trait set.
-  void setTraitSet(LocationTraitSet &TS) { mTS = &TS; }
-
-  /// Returns offset for a current trait.
-  llvm::StringRef getOffset() { return mOffset; }
-
-  /// Set offset for a current trait.
-  void setOffset(llvm::StringRef Offset) { mOffset = Offset; }
-
-private:
-  TraitToStringMap *mMap;
-  LocationTraitSet *mTS;
-  std::string mOffset;
-};
-
-/// Prints a static map from trait to its string representation to a specified
-/// output stream.
-class TraitToStringPrinter {
-public:
-  /// Creates functor.
-  TraitToStringPrinter(llvm::raw_ostream &OS, llvm::StringRef Offset) :
-    mOS(OS), mOffset(Offset) {}
-
-  /// Prints a specified trait.
-  template<class Trait> void operator()(llvm::StringRef Str) {
-    if (Str.empty())
-      return;
-    mOS << mOffset << Trait::toString() << ":\n" << mOffset << " " << Str;
-  }
-
-private:
-  llvm::raw_ostream &mOS;
-  std::string mOffset;
-};
-}
-
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
 #ifdef DEBUG
@@ -164,22 +98,6 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   solveDataFlowDownward(&LiveFwk, &DFF);
   resolveCandidats(&DFF);
   releaseMemory(&DFF);
-  for_each(LpInfo, [this](Loop *L) {
-    DebugLoc loc = L->getStartLoc();
-    std::string Offset(L->getLoopDepth(), ' ');
-    dbgs() << Offset;
-    loc.print(dbgs());
-    dbgs() << "\n";
-    const DependencySet &DS = getPrivatesFor(L);
-    TraitToStringFunctor::TraitToStringMap TraitToStr;
-    TraitToStringFunctor ToStrFunctor(TraitToStr);
-    for (auto &TS : DS) {
-      ToStrFunctor.setTraitSet(TS);
-      ToStrFunctor.setOffset(Offset);
-      TS.for_each(ToStrFunctor);
-    }
-    TraitToStr.for_each(TraitToStringPrinter(dbgs(), Offset + " "));
-  });
   delete mAliasTracker, mAliasTracker = nullptr;
   return false;
 }
@@ -468,6 +386,87 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AAResultsWrapperPass>();
 #endif
   AU.setPreservesAll();
+}
+
+namespace {
+/// This functor stores representation of a trait in a static map as a string.
+class TraitToStringFunctor {
+public:
+  /// Static map from trait to its string representation.
+  typedef bcl::StaticTraitMap<
+    std::string, DependencyDescriptor> TraitToStringMap;
+
+  /// Creates the functor.
+  TraitToStringFunctor(TraitToStringMap &Map, llvm::StringRef Offset) :
+    mMap(&Map), mOffset(Offset) {}
+
+  /// Stores representation of a trait in a static map as a string.
+  template<class Trait> void operator()() {
+    assert(mTS && "Trait set must not be null!");
+    llvm::raw_string_ostream OS(mMap->value<Trait>());
+    OS << mOffset;
+    printLocationSource(OS, mTS->memory()->Ptr);
+    OS << "\n";
+  }
+
+  /// Returns a static trait map.
+  TraitToStringMap & getStringMap() { return *mMap; }
+
+  /// \brief Returns current trait set.
+  ///
+  /// \pre Trait set must not be null and has been specified by setTraitSet().
+  LocationTraitSet & getTraitSet() {
+    assert(mTS && "Trait set must not be null!");
+    return *mTS;
+  }
+
+  /// Specifies current trait set.
+  void setTraitSet(LocationTraitSet &TS) { mTS = &TS; }
+
+private:
+  TraitToStringMap *mMap;
+  LocationTraitSet *mTS;
+  std::string mOffset;
+};
+
+/// Prints a static map from trait to its string representation to a specified
+/// output stream.
+class TraitToStringPrinter {
+public:
+  /// Creates functor.
+  TraitToStringPrinter(llvm::raw_ostream &OS, llvm::StringRef Offset) :
+    mOS(OS), mOffset(Offset) {}
+
+  /// Prints a specified trait.
+  template<class Trait> void operator()(llvm::StringRef Str) {
+    if (Str.empty())
+      return;
+    mOS << mOffset << Trait::toString() << ":\n" << Str;
+  }
+
+private:
+  llvm::raw_ostream &mOS;
+  std::string mOffset;
+};
+}
+
+void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
+  LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  for_each(LpInfo, [this, &OS](Loop *L) {
+    DebugLoc Loc = L->getStartLoc();
+    std::string Offset(L->getLoopDepth(), ' ');
+    OS << Offset;
+    Loc.print(OS);
+    OS << "\n";
+    const DependencySet &DS = getPrivatesFor(L);
+    TraitToStringFunctor::TraitToStringMap TraitToStr;
+    TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ");
+    for (auto &TS : DS) {
+      ToStrFunctor.setTraitSet(TS);
+      TS.for_each(ToStrFunctor);
+    }
+    TraitToStr.for_each(TraitToStringPrinter(OS, Offset + " "));
+  });
 }
 
 FunctionPass *llvm::createPrivateRecognitionPass() {

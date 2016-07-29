@@ -19,28 +19,28 @@ class FunctionPass;
 class ModulePass;
 class ImmutablePass;
 
-/// Initialize all passes developed for TSAR project
+/// Initializes all passes developed for TSAR project
 void initializeTSAR(PassRegistry &Registry);
 
-/// Initialize a pass to analyze private variables.
+/// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 
 /// Creates a pass to analyze private variables.
 FunctionPass * createPrivateRecognitionPass();
 
-/// Initialize a pass to access source level transformation enginer.
+/// Initializes a pass to access source level transformation enginer.
 void initializeTransformationEnginePassPass(PassRegistry &Registry);
 
 /// Creates a pass to make more precise analysis of for-loops in C sources.
 FunctionPass * createPrivateCClassifierPass();
 
-/// Initialize a pass to make more precise analysis of for-loops in C sources.
+/// Initializes a pass to make more precise analysis of for-loops in C sources.
 void initializePrivateCClassifierPassPass(PassRegistry &Registry);
 
 /// Creates a pass to access source level transformation enginer.
 ImmutablePass * createTransformationEnginePass();
 
-/// Initialize a pass to perform low-level (LLVM IR) instrumentation of program.
+/// Initializes a pass to perform low-level (LLVM IR) instrumentation of program.
 void initializeInstrumentationPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
@@ -51,6 +51,10 @@ void initializeLoopMatcherPassPass(PassRegistry &Registry);
 
 /// Creates a pass to match high-level and low-level loops.
 FunctionPass * createLoopMatcherPass();
+
+/// Creates a pass to print internal state of the specified pass after the
+/// last execution.
+FunctionPass * createFunctionPassPrinter(const PassInfo *PI, raw_ostream &OS);
 }
 
 #endif//TSAR_PASS_H

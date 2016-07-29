@@ -497,6 +497,10 @@ public:
   /// Specifies a list of analyzes  that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
+  /// Prints out the internal state of the pass. This also used to produce
+  /// analysis correctness tests.
+  void print(raw_ostream &O, const Module *M) const override;
+
 private:
   /// \brief Implements recognition of privatizable locations.
   ///

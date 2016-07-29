@@ -77,7 +77,10 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
 #else
   Passes.add(createBasicAAWrapperPass());
 #endif
-  Passes.add(createPrivateRecognitionPass());
+  auto PRP = createPrivateRecognitionPass();
+  Passes.add(PRP);
+  Passes.add(createFunctionPassPrinter(
+    PassRegistry::getPassRegistry()->getPassInfo(PRP->getPassID()), errs()));
   if (Ctx)
     Passes.add(createPrivateCClassifierPass());
   Passes.add(createVerifierPass());
