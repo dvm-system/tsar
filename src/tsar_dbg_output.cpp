@@ -100,6 +100,8 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
+    mOut << "Printing analysis '" << mPassToPrint->getPassName()
+      << "' for function '" << F.getName() << "':\n";
     getAnalysisID<Pass>(mPassToPrint->getTypeInfo()).
       print(mOut, F.getParent());
     return false;
