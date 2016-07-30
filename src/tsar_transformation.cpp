@@ -91,12 +91,14 @@ ImmutablePass * llvm::createTransformationEnginePass() {
 
 FilenameAdjuster tsar::getDumpFilenameAdjuster() {
   static FilenameAdjuster FA = [](StringRef Filename) -> std::string {
-    static StringMap<short> DumpFiles;
+    static StringMap<unsigned short> DumpFiles;
     auto Pair = DumpFiles.insert(std::make_pair(Filename, 1));
     if (!Pair.second)
       ++Pair.first->getValue();
-    char Buf[10];
-    snprintf(Buf, 10, "%d", Pair.first->getValue());
+    auto constexpr MaxDigits =
+      std::numeric_limits<unsigned short>::digits10 + 1;
+    char Buf[MaxDigits];
+    snprintf(Buf, MaxDigits, "%d", Pair.first->getValue());
     SmallString<128> Path = Filename;
     sys::path::replace_extension(Path, Buf + sys::path::extension(Path));
     return Path.str();

@@ -40,8 +40,9 @@ inline FilenameAdjuster getPureFilenameAdjuster() {
 /// \brief Returns a filename adjuster which generates the following name:
 /// name.extension -> name.number.extension.
 ///
-/// For the same file the 'number' is increased every time the adjuster is
-/// called.
+/// For the same file during a single program work session the 'number' is
+/// increased every time the adjuster is called. For different work sessions
+/// the countdown begins again and the files will be overwritten.
 FilenameAdjuster getDumpFilenameAdjuster();
 
 /// \brief A wrapper for a file stream that atomically overwrites the target.
