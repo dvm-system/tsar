@@ -201,6 +201,7 @@ private:
 }
 
 bool LoopMatcherPass::runOnFunction(Function &F) {
+  releaseMemory();
   auto M = F.getParent();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())

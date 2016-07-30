@@ -64,6 +64,12 @@ public:
   /// Returns high-level declaration of the last analyzed function.
   clang::Decl * getFunctionDecl() const noexcept { return mFuncDecl; }
 
+  /// Releases allocated memory.
+  void releaseMemory() override {
+    mMatcher.clear();
+    mFuncDecl = nullptr;
+  }
+
 private:
   LoopMatcher mMatcher;
   clang::Decl * mFuncDecl;
