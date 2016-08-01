@@ -13,6 +13,7 @@
 #include "tsar_action.h"
 #include "tsar_exception.h"
 #include "tsar_query.h"
+#include "tsar_test.h"
 #include "tsar_tool.h"
 
 using namespace clang;
@@ -36,7 +37,9 @@ Options::Options() :
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
   TimeReport("ftime-report", cl::cat(DebugCategory),
-    cl::desc("Print some statistics about the time consumed by each pass when it finishes")) {
+    cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
+  Test("test", cl::cat(DebugCategory),
+    cl::desc("Insert results of analysis to a source file")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
@@ -114,6 +117,7 @@ void Tool::storeCLOptions() {
     new FixedCompilationDatabase(".", mCommandLine));
   mEmitLLVM = Options::get().EmitLLVM;
   mInstrLLVM = Options::get().InstrLLVM;
+  mTest = Options::get().Test;
 }
 
 inline static QueryManager * getDefaultQM() {
@@ -130,12 +134,19 @@ inline static InstrLLVMQueryManager * getInstrLLVMQM() {
   return &QM;
 }
 
+inline static TestQueryManager * getTestQM() {
+  static TestQueryManager QM;
+  return &QM;
+}
+
 int Tool::run(QueryManager *QM) {
   if (!QM) {
     if (mEmitLLVM)
       QM = getEmitLLVMQM();
     else if (mInstrLLVM)
       QM = getInstrLLVMQM();
+    else if (mTest)
+      QM = getTestQM();
     else
       QM = getDefaultQM();
   }

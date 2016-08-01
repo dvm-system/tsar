@@ -21,6 +21,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializePrivateCClassifierPassPass(Registry);
   initializeInstrumentationPassPass(Registry);
   initializeLoopMatcherPassPass(Registry);
+  initializeTestPrinterPassPass(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {

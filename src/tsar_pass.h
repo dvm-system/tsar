@@ -55,6 +55,12 @@ FunctionPass * createLoopMatcherPass();
 /// Creates a pass to print internal state of the specified pass after the
 /// last execution.
 FunctionPass * createFunctionPassPrinter(const PassInfo *PI, raw_ostream &OS);
+
+/// Initializes a pass to print results of a test.
+void initializeTestPrinterPassPass(PassRegistry &Registry);
+
+/// Creates a pass to print results of a test.
+ModulePass * createTestPrinterPass();
 }
 
 #endif//TSAR_PASS_H

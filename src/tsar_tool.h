@@ -47,6 +47,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
   llvm::cl::opt<bool> TimeReport;
+  llvm::cl::opt<bool> Test;
 private:
   /// Default constructor.
   ///
@@ -103,6 +104,7 @@ private:
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
   bool mEmitLLVM;
   bool mInstrLLVM;
+  bool mTest;
 };
 }
 #endif//TSAR_TOOL_H
