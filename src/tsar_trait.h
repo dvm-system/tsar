@@ -24,8 +24,8 @@ namespace tsar {
 using bcl::operator "" _b;
 
 /// Declaration of a trait recognized by analyzer.
-#define TSAR_TRAIT_DECL(name_, id_, string_) \
-struct name_ : public bcl::TraitBase<id_> { \
+#define TSAR_TRAIT_DECL(name_, string_) \
+struct name_ { \
   static llvm::StringRef toString() { \
     static std::string Str(string_); \
     return Str; \
@@ -33,16 +33,16 @@ struct name_ : public bcl::TraitBase<id_> { \
 };
 
 namespace trait {
-TSAR_TRAIT_DECL(AddressAccess,        1_b, "address access")
-TSAR_TRAIT_DECL(NoAccess,             1111111_b, "no access")
-TSAR_TRAIT_DECL(Shared,               1011110_b, "shared")
-TSAR_TRAIT_DECL(Private,              0001111_b, "private")
-TSAR_TRAIT_DECL(FirstPrivate,         0001110_b, "first private")
-TSAR_TRAIT_DECL(SecondToLastPrivate,  0001011_b, "second to last private")
-TSAR_TRAIT_DECL(LastPrivate,          0000111_b, "last private")
-TSAR_TRAIT_DECL(DynamicPrivate,       0000011_b, "dynamic private")
-TSAR_TRAIT_DECL(Reduction,            1000000_b, "reduction")
-TSAR_TRAIT_DECL(Dependency,           0000000_b, "dependency")
+TSAR_TRAIT_DECL(AddressAccess, "address access")
+TSAR_TRAIT_DECL(NoAccess, "no access")
+TSAR_TRAIT_DECL(Shared, "shared")
+TSAR_TRAIT_DECL(Private, "private")
+TSAR_TRAIT_DECL(FirstPrivate, "first private")
+TSAR_TRAIT_DECL(SecondToLastPrivate, "second to last private")
+TSAR_TRAIT_DECL(LastPrivate, "last private")
+TSAR_TRAIT_DECL(DynamicPrivate, "dynamic private")
+TSAR_TRAIT_DECL(Reduction, "reduction")
+TSAR_TRAIT_DECL(Dependency, "dependency")
 }
 
 /// This represents list of traits for a memory location which can be recognized
