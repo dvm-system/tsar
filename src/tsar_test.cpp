@@ -22,6 +22,7 @@
 #include <llvm/Support/Path.h>
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 #include "tsar_df_location.h"
@@ -84,19 +85,24 @@ public:
   /// Creates functor.
   explicit TraitClausePrinter(llvm::raw_ostream &OS) : mOS(OS) {}
 
-  /// Prints an appropriate clause for each trait in the vector.
+  /// \brief Prints an appropriate clause for each trait in the vector.
+  ///
+  /// Variable names in analysis clauses is printed in alphabetical order and do
+  /// not change from run to run.
   template<class Trait> void operator()(
       std::vector<LocationTraitSet *> &TraitVector) {
     if (TraitVector.empty())
       return;
     std::string Clause = Trait::toString();
     Clause.erase(std::remove(Clause.begin(), Clause.end(), ' '), Clause.end());
+    std::set<std::string, std::less<std::string>> SortedVarList;
+    for (auto TS : TraitVector)
+      SortedVarList.insert(locationToSource(TS->memory()->Ptr));
     mOS << " " << Clause << "(";
-    auto I = TraitVector.begin();
-    for (auto EI = TraitVector.end() - 1; I != EI; ++I) {
-      mOS << locationToSource((*I)->memory()->Ptr) << ", ";
-    }
-    mOS << locationToSource((*I)->memory()->Ptr);
+    auto I = SortedVarList.begin(), EI = SortedVarList.end();
+    for (--EI; I != EI; ++I)
+      mOS << *I << ", ";
+    mOS << *I;
     mOS << ")";
   }
 
