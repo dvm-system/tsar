@@ -152,7 +152,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       raw_string_ostream OS(PragmaStr);
       TM.for_each(TraitClausePrinter(OS << mAnalysisPragma));
       OS << "\n";
-      Rewriter.InsertText(Match.get<AST>()->getForLoc(), OS.str(), true, true);
+      Rewriter.InsertText(Match.get<AST>()->getLocStart(), OS.str(), true, true);
     }
   }
   TfmCtx->release(getTestFilenameAdjuster());

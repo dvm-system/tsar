@@ -153,21 +153,23 @@ public:
     mMatcher(&LM), mLocToLoop(&LocMap), mSrcMgr(&SrcMgr) {}
 
   bool VisitStmt(Stmt *S) {
-    if (!isa<ForStmt>(S))
+    if (!isa<WhileStmt>(S) && !isa<DoStmt>(S) && !isa<ForStmt>(S))
       return true;
-    ForStmt *For = cast<ForStmt>(S);
-    // To determine appropriate loop in LLVM IR it is necessary to use start
-    // location of initialization instruction, if it is available.
-    if (Stmt *Init = For->getInit()) {
-      if (Loop *L = findLoopForLocation(Init->getLocStart())) {
-        mMatcher->emplace(For, L);
-        return true;
+    if (auto *For = dyn_cast<ForStmt>(S)) {
+      // To determine appropriate loop in LLVM IR it is necessary to use start
+      // location of initialization instruction, if it is available.
+      if (Stmt *Init = For->getInit()) {
+        if (Loop *L = findLoopForLocation(Init->getLocStart())) {
+          mMatcher->emplace(For, L);
+          return true;
+        }
       }
     }
-    // If there is no initialization instruction or an appropriate loop has not
-    // been found try to use accurate loop location.
-    if (Loop *L = findLoopForLocation(For->getLocStart()))
-      mMatcher->emplace(For, L);
+    // If there is no initialization instruction, an appropriate loop has not
+    // been found or considered loop is not a for-loop try to use accurate loop
+    // location.
+    if (Loop *L = findLoopForLocation(S->getLocStart()))
+      mMatcher->emplace(S, L);
     else
       ++NumNonMatchASTLoop;
     return true;

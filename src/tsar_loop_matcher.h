@@ -36,13 +36,13 @@ namespace llvm {
 class Function;
 class Loop;
 
-/// This per-function pass maths different loops in a source high level code
+/// This per-function pass matches different loops in a source high level code
 /// and appropriated loops in low-level LLVM IR.
 class LoopMatcherPass :
   public FunctionPass, private bcl::Uncopyable {
 public:
   typedef tsar::Bimap<
-    bcl::tagged<clang::ForStmt *, tsar::AST>,
+    bcl::tagged<clang::Stmt *, tsar::AST>,
     bcl::tagged<llvm::Loop *, tsar::IR>> LoopMatcher;
 
   /// Pass identification, replacement for typeid.
