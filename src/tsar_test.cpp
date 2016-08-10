@@ -141,6 +141,11 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
     auto FuncDecl = LMP.getFunctionDecl();
     auto &PRP = Provider.get<PrivateRecognitionPass>();
     for (auto &Match : LpMatcher) {
+      if (!isa<ForStmt>(Match.get<AST>()) &&
+          !isa<WhileStmt>(Match.get<AST>()) &&
+          !isa<DoStmt>(Match.get<AST>()))
+        printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+          [](raw_ostream &OS) { OS << " loop(" << mImplicitLoopClause << ")"; });
       auto &DS = PRP.getPrivatesFor(Match.get<IR>());
       typedef bcl::StaticTraitMap<
         std::vector<LocationTraitSet *>, DependencyDescriptor> TraitMap;
@@ -148,15 +153,88 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       for (auto &TS : DS)
         TS.for_each(
           bcl::TraitMapConstructor<LocationTraitSet, TraitMap>(TS, TM));
-      std::string PragmaStr;
-      raw_string_ostream OS(PragmaStr);
-      TM.for_each(TraitClausePrinter(OS << mAnalysisPragma));
-      OS << "\n";
-      Rewriter.InsertText(Match.get<AST>()->getLocStart(), OS.str(), true, true);
+      printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+        [&TM](raw_ostream &OS) {
+          TM.for_each(TraitClausePrinter(OS));
+      });
+    }
+    for (auto L : LMP.getUnmatchedAST()) {
+      printPragma(L->getLocStart(), Rewriter,
+        [](raw_ostream &OS) { OS << " " << mUnavailableClause; });
     }
   }
   TfmCtx->release(getTestFilenameAdjuster());
   return false;
+}
+
+template<class Function>
+void TestPrinterPass::printPragma(
+    const SourceLocation &StartLoc, Rewriter &R, Function &&F) const {
+  std::string PragmaStr;
+  raw_string_ostream OS(PragmaStr);
+  auto &SrcMgr = R.getSourceMgr();
+  assert(!StartLoc.isInvalid() && "Invalid location!");
+  // If loop is in a macro the '\' should be added before the line end.
+  const char * EndLine = StartLoc.isMacroID() ? " \\\n" : "\n";
+  auto SpellLoc = SrcMgr.getSpellingLoc(StartLoc);
+  if (!isLineBegin(SrcMgr, SpellLoc))
+    OS << EndLine;
+  OS << mAnalysisPragma;
+  F(OS);
+  printExpansionClause(SrcMgr, StartLoc, OS);
+  OS << EndLine;
+  // If one file has been included multiple times there are different FileID
+  // for each include. So to combine transformation of each include in a single
+  // file we recalculate the SpellLoc location.
+  static StringMap<FileID> FileNameToId;
+  auto DecLoc = SrcMgr.getDecomposedLoc(SpellLoc);
+  auto Pair = FileNameToId.insert(
+    std::make_pair(SrcMgr.getFilename(SpellLoc), DecLoc.first));
+  if (!Pair.second && Pair.first != FileNameToId.end()) {
+    // File with such name has been already transformed.
+    auto FileStartLoc = SrcMgr.getLocForStartOfFile(Pair.first->second);
+    SpellLoc = FileStartLoc.getLocWithOffset(DecLoc.second);
+  }
+  R.InsertText(SpellLoc, OS.str(), true, true);
+}
+
+void TestPrinterPass::printExpansionClause(
+    SourceManager &SrcMgr, const SourceLocation &Loc, raw_ostream &OS) const {
+  if (!Loc.isValid())
+    return;
+  if (Loc.isMacroID()) {
+    auto PLoc = SrcMgr.getPresumedLoc(Loc);
+    OS << " " << mExpansionClause << "("
+      << sys::path::filename(PLoc.getFilename()) << ":"
+      << PLoc.getLine() << ":" << PLoc.getColumn()
+      << ")";
+  }
+  auto IncludeLoc = SrcMgr.getIncludeLoc(SrcMgr.getFileID(Loc));
+  if (IncludeLoc.isValid()) {
+    auto PLoc = SrcMgr.getPresumedLoc(IncludeLoc);
+    OS << " " << mIncludeClause << "("
+      << sys::path::filename(PLoc.getFilename()) << ":"
+      << PLoc.getLine() << ":" << PLoc.getColumn()
+      << ")";
+  }
+}
+
+bool TestPrinterPass::isLineBegin(
+    SourceManager &SrcMgr, SourceLocation &Loc) const {
+  FileID FID;
+  unsigned StartOffs;
+  std::tie(FID, StartOffs) = SrcMgr.getDecomposedLoc(Loc);
+  StringRef MB = SrcMgr.getBufferData(FID);
+  unsigned LineNo = SrcMgr.getLineNumber(FID, StartOffs) - 1;
+  const SrcMgr::ContentCache *Content =
+    SrcMgr.getSLocEntry(FID).getFile().getContentCache();
+  unsigned LineOffs = Content->SourceLineCache[LineNo];
+  unsigned Column;
+  for (Column = LineOffs; bcl::isWhitespace(MB[Column]); ++Column);
+  Column -= LineOffs; ++Column; // The first column without a whitespace.
+  if (Column < SrcMgr.getColumnNumber(FID, StartOffs))
+    return false;
+  return true;
 }
 
 void TestPrinterPass::getAnalysisUsage(AnalysisUsage &AU) const {
