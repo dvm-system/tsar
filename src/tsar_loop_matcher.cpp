@@ -20,6 +20,7 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/Function.h>
+#include <cstring>
 #include <queue>
 #include "tsar_loop_matcher.h"
 #include "tsar_transformation.h"
@@ -92,22 +93,31 @@ struct DILocationMapInfo {
 /// This can be in two states. At first this contains only one element which is
 /// stored as a pointer. But if the second element will be inserted the internal
 /// data storage will be transparently converted to a queue of elements.
+template<class Loop>
 class LoopQueue{
 public:
   /// Creates a queue that contains a one loop.
-  LoopQueue(Loop *L) noexcept : mIsSingle(true), mLoop(L) {
+  explicit LoopQueue(Loop *L) noexcept : mIsSingle(true), mLoop(L) {
     assert(L && "Loop must not be null!");
   }
 
-  LoopQueue(const LoopQueue &) = default;
-  LoopQueue(LoopQueue &&) = default;
+  LoopQueue(const LoopQueue &) = delete;
+  LoopQueue & operator=(const LoopQueue &) = delete;
 
-  LoopQueue & operator=(const LoopQueue &) = default;
-  LoopQueue & operator=(LoopQueue &&) = default;
+  LoopQueue(LoopQueue &&LQ) : mIsSingle(std::move(LQ.mIsSingle)) {
+    std::memmove(&mQueue, &LQ.mQueue, sizeof(mQueue));
+    LQ.mIsSingle = true;
+  }
+
+  LoopQueue & operator=(LoopQueue &&LQ) {
+    mIsSingle = std::move(LQ.mIsSingle);
+    std::memmove(&mQueue, &LQ.mQueue, sizeof(mQueue));
+    LQ.mIsSingle = true;
+  }
 
   /// Removes allocated memory if it is necessary.
   ~LoopQueue() {
-    if (!mIsSingle)
+    if (!mIsSingle && mQueue  )
       delete mQueue;
   }
 
@@ -122,7 +132,7 @@ public:
     mQueue->push(L);
   }
 
-  /// Removes loop at the beginning of this queue
+  /// Removes loop at the beginning of this queue.
   Loop * pop() {
     if (mIsSingle) {
       Loop *L = mLoop;
@@ -136,6 +146,16 @@ public:
     return L;
   }
 
+  /// Returns number of loops in this queue.
+  std::size_t size() const {
+    return mIsSingle ? mLoop ? 1 : 0 : mQueue->size();
+  }
+
+  /// Returns true if the queue is empty.
+  bool empty() const {
+    return mIsSingle ? mLoop == nullptr : mQueue->empty();
+  }
+
 private:
   bool mIsSingle;
   union {
@@ -144,23 +164,124 @@ private:
   };
 };
 
-class MatchASTVisitor : public RecursiveASTVisitor<MatchASTVisitor> {
+/// This is a base class which is inherited to match loops.
+class MatchASTBase {
 public:
-  typedef DenseMap<DILocation *, LoopQueue, DILocationMapInfo> LocToLoopMap;
+  typedef DenseMap<
+    DILocation *, LoopQueue<Loop>, DILocationMapInfo> LocToLoopMap;
 
-  MatchASTVisitor(LoopMatcherPass::LoopMatcher &LM,
-      LocToLoopMap &LocMap, SourceManager &SrcMgr) :
+protected:
+  MatchASTBase(LoopMatcherPass::LoopMatcher &LM,
+     LocToLoopMap &LocMap, SourceManager &SrcMgr) :
     mMatcher(&LM), mLocToLoop(&LocMap), mSrcMgr(&SrcMgr) {}
 
-  bool VisitStmt(Stmt *S) {
+  /// Finds low-level representation of a loop at the specified location.
+  ///
+  /// \return LLVM IR for a loop or `nullptr`.
+  Loop * findLoopForLocation(SourceLocation Loc) {
+    auto LocItr = findItrForLocation(Loc);
+    if (LocItr == mLocToLoop->end())
+      return nullptr;
+    return LocItr->second.pop();
+  }
+
+  /// Finds low-level representation of a loop at the specified location.
+  ///
+  /// \return Iterator to an element in LocToLoopMap.
+  LocToLoopMap::iterator findItrForLocation(SourceLocation Loc) {
+    if (Loc.isInvalid())
+      return mLocToLoop->end();
+    PresumedLoc PLoc = mSrcMgr->getPresumedLoc(Loc, false);
+    return mLocToLoop->find_as(PLoc);
+  }
+
+  LoopMatcherPass::LoopMatcher *mMatcher;
+  LocToLoopMap *mLocToLoop;
+  SourceManager *mSrcMgr;
+};
+
+/// This matches explicit for, while and do-while loops.
+class MatchExplicitVisitor :
+  public MatchASTBase, public RecursiveASTVisitor<MatchExplicitVisitor> {
+public:
+  typedef DenseMap<unsigned, LoopQueue<Stmt>> LocToStmtMap;
+
+  /// Constructor.
+  ///
+  /// \param LM If match is found it will be stored in a bidirectional map LM.
+  /// \param LocMap is a map from loop location to loop (explicit or implicit).
+  /// \param ImplicitMap If a loop in the LocMap map is recognized as implicit
+  /// the appropriate high-level representation of this loop will not be
+  /// determined (it could be determined later in MatchImplicitVisitor) but
+  /// low-level representation will be stored in ImplicitMap. This map is also a
+  /// map from location to loop but
+  /// a key is always location of terminator in a loop header.
+  /// \param MacroMap All explicit loops defined in macros is going to store
+  /// in this map. These loops will not inserted in LM map and must be evaluated
+  /// further. The key in this map is a raw encoding for expansion location.
+  /// To decode it use SourceLocation::getFromRawEncoding() method.
+  MatchExplicitVisitor(LoopMatcherPass::LoopMatcher &LM,
+      LoopMatcherPass::LoopASTSet &Unmatched,
+      LocToLoopMap &LocMap, LocToLoopMap &ImplicitMap, LocToStmtMap &MacroMap,
+      SourceManager &SrcMgr) :
+    MatchASTBase(LM, LocMap, SrcMgr), mUnmatched(&Unmatched),
+    mLocToImplicit(&ImplicitMap), mLocToMacro(&MacroMap) {}
+
+  /// \brief Evaluates statements expanded from a macro.
+  ///
+  /// Implicit loops which are expanded from macro are not going to be
+  /// evaluated, because in LLVM IR these loops have locations equal to
+  /// expansion location. So it is not possible to determine token in macro
+  /// body where these loops starts without additional analysis of AST.
+  void VisitFromMacro(Stmt *S) {
+    assert(S->getLocStart().isMacroID() &&
+      "Statement must be expanded from macro!");
     if (!isa<WhileStmt>(S) && !isa<DoStmt>(S) && !isa<ForStmt>(S))
+      return;
+    auto Loc = S->getLocStart();
+    if (Loc.isInvalid())
+      return;
+    Loc = mSrcMgr->getExpansionLoc(Loc);
+    if (Loc.isInvalid())
+      return;
+    auto Pair = mLocToMacro->insert(
+      std::make_pair(Loc.getRawEncoding(), LoopQueue<Stmt>(S)));
+    if (!Pair.second)
+      Pair.first->second.push(S);
+    return;
+  }
+
+  bool VisitStmt(Stmt *S) {
+    if (S->getLocStart().isMacroID()) {
+      VisitFromMacro(S);
       return true;
+    }
     if (auto *For = dyn_cast<ForStmt>(S)) {
       // To determine appropriate loop in LLVM IR it is necessary to use start
       // location of initialization instruction, if it is available.
       if (Stmt *Init = For->getInit()) {
-        if (Loop *L = findLoopForLocation(Init->getLocStart())) {
+        auto LpItr = findItrForLocation(Init->getLocStart());
+        if (LpItr != mLocToLoop->end()) {
+          Loop *L = LpItr->second.pop();
           mMatcher->emplace(For, L);
+          ++NumMatchLoop;
+          --NumNonMatchIRLoop;
+          // If there are multiple for-loops in a LoopQueue it means that these
+          // loops have been included from some file (macro is evaluated
+          // separately). It is necessary to restore this LoopQueue with accurate
+          // location (not a location of initialization instruction) in mLocToLop.
+          // Otherwise when such instruction of currently evaluated loop will be
+          // visited some loop from LoopQueue will be linked with the instruction.
+          if (!LpItr->second.empty()) {
+            auto HeadBB = L->getHeader();
+            auto HeaderLoc = HeadBB ?
+              HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
+            PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getLocStart(), false);
+            if (HeaderLoc && DILocationMapInfo::isEqual(PLoc, HeaderLoc))
+              mLocToLoop->insert(
+                std::make_pair(HeaderLoc, std::move(LpItr->second)));
+            mLocToLoop->erase(LpItr);
+          }
           return true;
         }
       }
@@ -168,57 +289,93 @@ public:
     // If there is no initialization instruction, an appropriate loop has not
     // been found or considered loop is not a for-loop try to use accurate loop
     // location.
-    if (Loop *L = findLoopForLocation(S->getLocStart()))
-      mMatcher->emplace(S, L);
-    else
-      ++NumNonMatchASTLoop;
+    auto StartLoc = S->getLocStart();
+    if (isa<WhileStmt>(S) || isa<DoStmt>(S) || isa<ForStmt>(S)) {
+      if (Loop *L = findLoopForLocation(StartLoc)) {
+        mMatcher->emplace(S, L);
+        ++NumMatchLoop;
+        --NumNonMatchIRLoop;
+      } else {
+        mUnmatched->insert(S);
+        ++NumNonMatchASTLoop;
+      }
+    } else {
+      if (Loop *L = findLoopForLocation(StartLoc)) {
+        // We do not use Loop::getStartLoc() method for implicit loops because
+        // it try to find start location in a pre-header but this location is
+        // not suitable for such loops. The following example demonstrates this:
+        // 1: goto l;
+        // 2: ...
+        // 3: l: ...
+        // The loop starts at 3 but getStartLoc() returns 1.
+        auto HeadBB = L->getHeader();
+        auto HeaderLoc = HeadBB ?
+          HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
+        if (HeaderLoc) {
+          auto Pair =
+            mLocToImplicit->insert(
+              std::make_pair(HeaderLoc, LoopQueue<Loop>(L)));
+          if (!Pair.second)
+            Pair.first->second.push(L);
+        }
+      }
+    }
     return true;
   }
+private:
+  LocToLoopMap *mLocToImplicit;
+  LocToStmtMap *mLocToMacro;
+  LoopMatcherPass::LoopASTSet *mUnmatched;
+};
 
-  bool VisitFunctionDecl(FunctionDecl *F) {
+/// This matches implicit loops.
+class MatchImplicitVisitor :
+  public MatchASTBase, public RecursiveASTVisitor<MatchImplicitVisitor> {
+public:
+  MatchImplicitVisitor(LoopMatcherPass::LoopMatcher &LM,
+      LocToLoopMap &LocMap, SourceManager &SrcMgr) :
+    MatchASTBase(LM, LocMap, SrcMgr), mLastLabel(nullptr) {}
+
+  bool VisitStmt(Stmt *S) {
+    // We try to find a label which is a start of the loop header.
+    if (isa<WhileStmt>(S) || isa<DoStmt>(S) || isa<ForStmt>(S))
+      return true;
+    if (isa<LabelStmt>(S)) {
+      mLastLabel = cast<LabelStmt>(S);
+      return true;
+    }
+    if (!mLastLabel)
+      return true;
+    if (Loop *L = findLoopForLocation(S->getLocStart())) {
+        mMatcher->emplace(mLastLabel, L);
+      ++NumMatchLoop;
+      --NumNonMatchIRLoop;
+    }
     return true;
   }
 
 private:
-  /// Finds low-level representation of a loop at the specified location.
-  ///
-  /// \return LLVM IR for a loop or `nullptr`.
-  Loop * findLoopForLocation(SourceLocation Loc) {
-    if (Loc.isInvalid())
-      return nullptr;
-    Loc = mSrcMgr->getExpansionLoc(Loc);
-    if (Loc.isInvalid())
-      return nullptr;
-    PresumedLoc PLoc = mSrcMgr->getPresumedLoc(Loc, false);
-    auto LocItr = mLocToLoop->find_as(PLoc);
-    if (LocItr == mLocToLoop->end())
-      return nullptr;
-    return LocItr->second.pop();
-  }
-
-  LoopMatcherPass::LoopMatcher *mMatcher;
-  LocToLoopMap *mLocToLoop;
-  SourceManager *mSrcMgr;
+  LabelStmt *mLastLabel;
 };
 }
 
 bool LoopMatcherPass::runOnFunction(Function &F) {
   releaseMemory();
   auto M = F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto TfmCtx  = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   mFuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!mFuncDecl)
     return false;
   auto &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  MatchASTVisitor::LocToLoopMap LocToLoop;
+  MatchASTBase::LocToLoopMap LocToLoop;
   for_each(LpInfo, [&LocToLoop](Loop *L) {
-    auto Loc = L->getStartLoc().get();
-    if (!Loc) {
-      ++NumNonMatchIRLoop;
-    } else {
-      auto Pair = LocToLoop.insert(std::make_pair(Loc, LoopQueue(L)));
+    auto Loc = L->getStartLoc();
+    // If an appropriate loop will be found the counter will be decreased.
+    ++NumNonMatchIRLoop;
+    if (Loc) {
+      auto Pair = LocToLoop.insert(std::make_pair(Loc, LoopQueue<Loop>(L)));
       // In some cases different loops have the same locations. For example,
       // if these loops have been produced by one loop from a file that had been
       // included multiple times. The other case is a loop defined in macro.
@@ -227,8 +384,33 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     }
   });
   auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
-  MatchASTVisitor MatchVisitor(mMatcher, LocToLoop, SrcMgr);
-  MatchVisitor.TraverseDecl(mFuncDecl);
+  MatchASTBase::LocToLoopMap LocToImplicit;
+  MatchExplicitVisitor::LocToStmtMap LocToMacro;
+  MatchExplicitVisitor MatchExplicit(mMatcher, mUnmatchedAST,
+    LocToLoop, LocToImplicit, LocToMacro, SrcMgr);
+  MatchExplicit.TraverseDecl(mFuncDecl);
+  MatchImplicitVisitor MatchImplicit(mMatcher, LocToImplicit, SrcMgr);
+  MatchImplicit.TraverseDecl(mFuncDecl);
+  // Evaluate loops in macros.
+  for (auto &InMacro : LocToMacro) {
+    PresumedLoc PLoc = SrcMgr.getPresumedLoc(
+      SourceLocation::getFromRawEncoding(InMacro.first), false);
+    auto IRLoopItr = LocToLoop.find_as(PLoc);
+    // If sizes of queues of AST and IR loops are not equal this is mean that
+    // there are implicit loops in a macro. Such loops are not going to be
+    // evaluated due to necessity of additional analysis of AST.
+    if (IRLoopItr == LocToLoop.end() ||
+        IRLoopItr->second.size() != InMacro.second.size()) {
+      NumNonMatchASTLoop += InMacro.second.size();
+      while (auto ASTLoop = InMacro.second.pop())
+        mUnmatchedAST.insert(ASTLoop);
+    } else {
+      NumMatchLoop += InMacro.second.size();
+      NumNonMatchIRLoop -= InMacro.second.size();
+      while (auto ASTLoop = InMacro.second.pop())
+        mMatcher.emplace(ASTLoop, IRLoopItr->second.pop());
+    }
+  }
   return false;
 }
 
