@@ -9,9 +9,12 @@
 //===----------------------------------------------------------------------===//
 
 #include <clang/AST/Decl.h>
-#include "clang/AST/PrettyPrinter.h"
+#include <clang/AST/PrettyPrinter.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/Analysis/Passes.h>
+#if (LLVM_VERSION_MAJOR > 2 && LLVM_VERSION_MINOR > 7)
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#endif
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/LegacyPassManagers.h>
 #include <llvm/IR/LegacyPassManager.h>

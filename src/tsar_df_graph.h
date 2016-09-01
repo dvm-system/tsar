@@ -460,7 +460,7 @@ public:
     // implemented as a list of objects, not a list of pointers.
     typedef llvm::Function::iterator base;
   public:
-    explicit block_iterator(llvm::Function::iterator &Itr) :
+    explicit block_iterator(const llvm::Function::iterator &Itr) :
       llvm::Function::iterator(Itr) {}
     typedef pointer reference;
     block_iterator(reference R) : base(R) {}

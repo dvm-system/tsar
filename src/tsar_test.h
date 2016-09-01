@@ -44,19 +44,19 @@ public:
   static char ID;
 
   /// This is a SAPFOR Analysis pragma.
-  static constexpr char * mAnalysisPragma = "#pragma sapfor analysis";
+  static constexpr const char * mAnalysisPragma = "#pragma sapfor analysis";
 
   /// This is a SAPFOR Unavailable clause.
-  static constexpr char * mUnavailableClause = "unavailable";
+  static constexpr const char * mUnavailableClause = "unavailable";
 
   /// This is a SAPFOR Implicit Loop clause.
-  static constexpr char *mImplicitLoopClause = "implicit";
+  static constexpr const char *mImplicitLoopClause = "implicit";
 
   /// This is a SAPFOR Expansion clause.
-  static constexpr char *mExpansionClause = "expansion";
+  static constexpr const char *mExpansionClause = "expansion";
 
   /// This is a SAPFOR Include clause.
-  static constexpr char *mIncludeClause = "include";
+  static constexpr const char *mIncludeClause = "include";
 
   /// Default constructor.
   TestPrinterPass() : ModulePass(ID) {
