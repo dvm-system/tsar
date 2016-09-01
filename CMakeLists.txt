@@ -56,9 +56,9 @@ endif(TSAR_COMPILER_IS_GCC_COMPATIBLE)
 #    All suitable patches will be applied simultaneously
 # 3. Configure LLVM project.
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
-set(LLVM_REPO "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_370/final/"
+set(LLVM_REPO "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_381/final/"
     CACHE STRING "URL of LLVM subversion repository (usefull only if DOWNLOAD_LLVM is set)")
-set(CLANG_REPO "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_370/final/"
+set(CLANG_REPO "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_381/final/"
     CACHE STRING "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH "Root of LLVM source tree")
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
@@ -72,6 +72,8 @@ option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
+set(PACKAGE_LLVM_VERSION "3.8"
+ CACHE STRING "Version of installed LLVM package (usefull only if PACKAGE_LLVM is set)")
 if(DOWNLOAD_LLVM AND LOCAL_LLVM OR
    DOWNLOAD_LLVM AND PACKAGE_LLVM OR
    LOCAL_LLVM AND PACKAGE_LLVM)
@@ -84,7 +86,7 @@ if(DOWNLOAD_LLVM)
 endif()
 if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
   if(PACKAGE_LLVM)
-    find_package(LLVM 3.7 REQUIRED CONFIG)
+    find_package(LLVM ${PACKAGE_LLVM_VERSION} REQUIRED CONFIG)
   else()  
     # Configure LLVM
     if(NOT EXISTS ${LLVM_SOURCE_DIR})
