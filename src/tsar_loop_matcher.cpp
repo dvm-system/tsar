@@ -22,6 +22,7 @@
 #include <llvm/IR/Function.h>
 #include <cstring>
 #include <queue>
+#include <transparent_queue.h>
 #include "tsar_loop_matcher.h"
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
@@ -88,87 +89,11 @@ struct DILocationMapInfo {
   }
 };
 
-/// \brief Simple queue that store loops.
-///
-/// This can be in two states. At first this contains only one element which is
-/// stored as a pointer. But if the second element will be inserted the internal
-/// data storage will be transparently converted to a queue of elements.
-template<class Loop>
-class LoopQueue{
-public:
-  /// Creates a queue that contains a one loop.
-  explicit LoopQueue(Loop *L) noexcept : mIsSingle(true), mLoop(L) {
-    assert(L && "Loop must not be null!");
-  }
-
-  LoopQueue(const LoopQueue &) = delete;
-  LoopQueue & operator=(const LoopQueue &) = delete;
-
-  LoopQueue(LoopQueue &&LQ) : mIsSingle(std::move(LQ.mIsSingle)) {
-    std::memmove(&mQueue, &LQ.mQueue, sizeof(mQueue));
-    LQ.mIsSingle = true;
-  }
-
-  LoopQueue & operator=(LoopQueue &&LQ) {
-    mIsSingle = std::move(LQ.mIsSingle);
-    std::memmove(&mQueue, &LQ.mQueue, sizeof(mQueue));
-    LQ.mIsSingle = true;
-  }
-
-  /// Removes allocated memory if it is necessary.
-  ~LoopQueue() {
-    if (!mIsSingle && mQueue  )
-      delete mQueue;
-  }
-
-  /// Insert loop at the end of this queue.
-  void push(Loop *L) {
-    if (mIsSingle) {
-      mIsSingle = false;
-      Loop *CurLoop = mLoop;
-      mQueue = new std::queue<Loop *>();
-      mQueue->push(CurLoop);
-    }
-    mQueue->push(L);
-  }
-
-  /// Removes loop at the beginning of this queue.
-  Loop * pop() {
-    if (mIsSingle) {
-      Loop *L = mLoop;
-      mLoop = nullptr;
-      return L;
-    }
-    if (mQueue->empty())
-      return nullptr;
-    Loop *L = mQueue->front();
-    mQueue->pop();
-    return L;
-  }
-
-  /// Returns number of loops in this queue.
-  std::size_t size() const {
-    return mIsSingle ? mLoop ? 1 : 0 : mQueue->size();
-  }
-
-  /// Returns true if the queue is empty.
-  bool empty() const {
-    return mIsSingle ? mLoop == nullptr : mQueue->empty();
-  }
-
-private:
-  bool mIsSingle;
-  union {
-    Loop *mLoop;
-    std::queue<Loop *> *mQueue;
-  };
-};
-
 /// This is a base class which is inherited to match loops.
 class MatchASTBase {
 public:
   typedef DenseMap<
-    DILocation *, LoopQueue<Loop>, DILocationMapInfo> LocToLoopMap;
+    DILocation *, bcl::TransparentQueue<Loop>, DILocationMapInfo> LocToLoopMap;
 
 protected:
   MatchASTBase(LoopMatcherPass::LoopMatcher &LM,
@@ -204,7 +129,7 @@ protected:
 class MatchExplicitVisitor :
   public MatchASTBase, public RecursiveASTVisitor<MatchExplicitVisitor> {
 public:
-  typedef DenseMap<unsigned, LoopQueue<Stmt>> LocToStmtMap;
+  typedef DenseMap<unsigned, bcl::TransparentQueue<Stmt>> LocToStmtMap;
 
   /// Constructor.
   ///
@@ -245,7 +170,7 @@ public:
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), LoopQueue<Stmt>(S)));
+      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
     if (!Pair.second)
       Pair.first->second.push(S);
     return;
@@ -314,7 +239,7 @@ public:
         if (HeaderLoc) {
           auto Pair =
             mLocToImplicit->insert(
-              std::make_pair(HeaderLoc, LoopQueue<Loop>(L)));
+              std::make_pair(HeaderLoc, bcl::TransparentQueue<Loop>(L)));
           if (!Pair.second)
             Pair.first->second.push(L);
         }
@@ -375,7 +300,8 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     // If an appropriate loop will be found the counter will be decreased.
     ++NumNonMatchIRLoop;
     if (Loc) {
-      auto Pair = LocToLoop.insert(std::make_pair(Loc, LoopQueue<Loop>(L)));
+      auto Pair = LocToLoop.insert(
+        std::make_pair(Loc, bcl::TransparentQueue<Loop>(L)));
       // In some cases different loops have the same locations. For example,
       // if these loops have been produced by one loop from a file that had been
       // included multiple times. The other case is a loop defined in macro.
