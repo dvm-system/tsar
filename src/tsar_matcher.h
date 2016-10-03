@@ -141,8 +141,8 @@ public:
   void matchInMacro(llvm::Statistic &NumMatch, llvm::Statistic &NumNonMatchAST,
       llvm::Statistic &NumNonMatchIR) {
     for (auto &InMacro : *mLocToMacro) {
-      PresumedLoc PLoc = mSrcMgr->getPresumedLoc(
-        SourceLocation::getFromRawEncoding(InMacro.first), false);
+      clang:: PresumedLoc PLoc = mSrcMgr->getPresumedLoc(
+        clang::SourceLocation::getFromRawEncoding(InMacro.first), false);
       auto IREntityItr = mLocToIR->find_as(PLoc);
       // If sizes of queues of AST and IR entities are not equal this is mean
       // that there are implicit entities (for example, implicit loops) in
