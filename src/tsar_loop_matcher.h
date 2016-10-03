@@ -19,14 +19,7 @@
 #include <utility.h>
 #include "tsar_bimap.h"
 #include "tsar_pass.h"
-
-namespace tsar {
-/// This tag provides access to low-level representation of matched entities.
-struct IR {};
-
-/// This tag provides access to source-level representation of matched entities.
-struct AST {};
-}
+#include "tsar_utility.h"
 
 namespace clang {
 class ForStmt;

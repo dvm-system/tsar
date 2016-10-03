@@ -107,12 +107,12 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
 }
 
 TransformationContext::TransformationContext(
-  ArrayRef<std::string> CL) : mCommandLine(CL) {}
+  ArrayRef<std::string> CL) : mCommandLine(CL), mGen(nullptr), mCtx(nullptr) {}
 
 TransformationContext::TransformationContext(
   ASTContext &Ctx, CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) :
   mRewriter(Ctx.getSourceManager(), Ctx.getLangOpts()),
-  mGen(&Gen), mCommandLine(CL) { }
+  mCtx(&Ctx), mGen(&Gen), mCommandLine(CL) { }
 
 llvm::StringRef TransformationContext::getInput() const {
   assert(hasInstance() && "Rewriter is not configured!");
@@ -131,12 +131,14 @@ clang::Decl * TransformationContext::getDeclForMangledName(StringRef Name) {
 void TransformationContext::reset(clang::ASTContext &Ctx,
   clang::CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCtx = &Ctx;
   mGen = &Gen;
   mCommandLine = CL;
 }
 
 void TransformationContext::reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCtx = &Ctx;
   mGen = &Gen;
 }
 

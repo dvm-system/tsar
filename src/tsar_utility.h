@@ -21,6 +21,12 @@ class AllocaInst;
 }
 
 namespace tsar {
+/// This tag provides access to low-level representation of matched entities.
+struct IR {};
+
+/// This tag provides access to source-level representation of matched entities.
+struct AST {};
+
 /// Compares two set.
 template<class PtrType, unsigned SmallSize>
 bool operator==(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,

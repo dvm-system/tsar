@@ -52,6 +52,12 @@ void initializeLoopMatcherPassPass(PassRegistry &Registry);
 /// Creates a pass to match high-level and low-level loops.
 FunctionPass * createLoopMatcherPass();
 
+/// Initialize a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherPassPass(PassRegistry &Registry);
+
+/// Creates a pass to match variables and allocas (or global variables).
+ModulePass * createMemoryMatcherPass();
+
 /// Creates a pass to print internal state of the specified pass after the
 /// last execution.
 FunctionPass * createFunctionPassPrinter(const PassInfo *PI, raw_ostream &OS);

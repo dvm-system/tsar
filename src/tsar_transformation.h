@@ -121,13 +121,19 @@ public:
     return mRewriter;
   }
 
+  /// Returns context.
+  clang::ASTContext & getContext() {
+    assert(hasInstance() && "Rewriter is not configured!");
+    return *mCtx;
+  }
+
   /// \brief Returns a declaration for a mangled name.
   ///
   /// \pre Transformation instance must be configured.
   clang::Decl * getDeclForMangledName(llvm::StringRef Name);
 
   /// Returns true if transformation engine is configured.
-  bool hasInstance() const { return mGen; }
+  bool hasInstance() const { return mGen && mCtx; }
 
   /// Returns true if modifications have been made to some files.
   bool hasModification() const {
@@ -160,11 +166,12 @@ public:
   /// \brief Resets existence configuration of transformation engine.
   ///
   /// \post Transformation engine is NOT configured.
-  void reset() { mGen = nullptr; }
+  void reset() { mGen = nullptr; mCtx = nullptr; }
 
 private:
   clang::Rewriter mRewriter;
   clang::CodeGenerator *mGen;
+  clang::ASTContext *mCtx;
   std::vector<std::string> mCommandLine;
 };
 }
