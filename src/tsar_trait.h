@@ -10,7 +10,9 @@
 #ifndef TSAR_TRAIT_H
 #define TSAR_TRAIT_H
 
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/ADT/StringRef.h>
 #include "tsar_df_location.h"
 #include <cell.h>
 #include <trait.h>
@@ -21,8 +23,6 @@ class MemoryLocation;
 }
 
 namespace tsar {
-using bcl::operator "" _b;
-
 /// Declaration of a trait recognized by analyzer.
 #define TSAR_TRAIT_DECL(name_, string_) \
 struct name_ { \
@@ -43,10 +43,13 @@ TSAR_TRAIT_DECL(LastPrivate, "last private")
 TSAR_TRAIT_DECL(DynamicPrivate, "dynamic private")
 TSAR_TRAIT_DECL(Reduction, "reduction")
 TSAR_TRAIT_DECL(Dependency, "dependency")
+TSAR_TRAIT_DECL(Induction, "induction")
 }
 
-/// This represents list of traits for a memory location which can be recognized
-/// by analyzer.
+#undef TSAR_TRAIT_DECL
+
+/// \brief This represents list of traits for a memory location which can be
+/// recognized by analyzer.
 ///
 /// The following information is available:
 /// - a set of locations addresses of which are evaluated;
@@ -57,6 +60,7 @@ TSAR_TRAIT_DECL(Dependency, "dependency")
 /// - a set of first private locations;
 /// - a set of shared locations;
 /// - a set of locations that caused dependency.
+/// - a set of loop induction locations;
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -89,7 +93,7 @@ TSAR_TRAIT_DECL(Dependency, "dependency")
 /// will be stored as dynamic private locations collection.
 using DependencyDescriptor = bcl::TraitDescriptor<trait::AddressAccess,
   bcl::TraitAlternative<trait::NoAccess, trait::Shared, trait::Private,
-    trait::Reduction, trait::Dependency,
+    trait::Reduction, trait::Dependency, trait::Induction,
     bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate>,
     bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate>,
     bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate>>>;

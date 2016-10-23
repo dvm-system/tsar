@@ -22,7 +22,7 @@
 #include "tsar_utility.h"
 
 namespace clang {
-class ForStmt;
+class Stmt;
 class Decl;
 }
 
