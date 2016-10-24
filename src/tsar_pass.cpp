@@ -16,11 +16,13 @@
 using namespace llvm;
 
 void llvm::initializeTSAR(PassRegistry &Registry) {
+  initializeDFRegionInfoPassPass(Registry);
   initializePrivateRecognitionPassPass(Registry);
   initializeTransformationEnginePassPass(Registry);
   initializePrivateCClassifierPassPass(Registry);
   initializeInstrumentationPassPass(Registry);
   initializeLoopMatcherPassPass(Registry);
+  initializeMemoryMatcherPassPass(Registry);
   initializeTestPrinterPassPass(Registry);
 }
 

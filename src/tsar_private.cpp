@@ -30,9 +30,11 @@
 #include "tsar_graph.h"
 #include "tsar_utility.h"
 #include "tsar_dbg_output.h"
+#include "DFRegionInfo.h"
 
 using namespace llvm;
 using namespace tsar;
+using bcl::operator "" _b;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
@@ -50,6 +52,7 @@ char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
                       "Private Variable Analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 #else
@@ -71,17 +74,17 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 #else
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
 #endif
+  DFRegionInfo &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
-  DFFunction DFF(&F);
-  buildLoopRegion(std::make_pair(&F, &LpInfo), &DFF);
+  auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   PrivateDFFwk PrivateFWK(mAliasTracker);
-  solveDataFlowUpward(&PrivateFWK, &DFF);
+  solveDataFlowUpward(&PrivateFWK, DFF);
   LiveDFFwk LiveFwk(mAliasTracker);
   LiveSet *LS = new LiveSet;
-  DFF.addAttribute<LiveAttr>(LS);
-  DefUseSet *DefUse = DFF.getAttribute<DefUseAttr>();
+  DFF->addAttribute<LiveAttr>(LS);
+  DefUseSet *DefUse = DFF->getAttribute<DefUseAttr>();
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
   // considered as alive before exit from this function.
@@ -95,9 +98,9 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       MayLives.insert(Loc);
   }
   LS->setOut(std::move(MayLives));
-  solveDataFlowDownward(&LiveFwk, &DFF);
-  resolveCandidats(&DFF);
-  releaseMemory(&DFF);
+  solveDataFlowDownward(&LiveFwk, DFF);
+  resolveCandidats(DFF);
+  releaseMemory(DFF);
   delete mAliasTracker, mAliasTracker = nullptr;
   return false;
 }
@@ -171,11 +174,11 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
       continue; // The set is empty if it contains only unknown instructions.
     auto I = AS.begin(), E = AS.end();
     // Note that analysis which is performed for base locations is not the same
-    // as analysis which is performed for variables form a source code.
+    // as the analysis which is performed for variables from a source code.
     // For example, the base location for (short&)X is a memory location with
-    // a size equal to size_of(short) regardless the size of X which might have
-    // type int. Be careful when results of this analysis is propagated for
-    // variables from a source code.
+    // a size equal to the size_of(short), regardless the size of X which might
+    // have type int. Be careful when results of this analysis are propagated
+    // for variables from a source code.
     // for (...) { (short&X) = ... ;} ... = X;
     // The short part of X will be recognized as last private, but the whole
     // variable X must be also set to first private to preserve the value
@@ -233,11 +236,11 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     // The following two tests check whether whole base location will be written
     // in the loop. Let us propose the following explanation. Consider a loop
     // where some location Loc is written and this memory is going to be read
-    // after an exit from this loop. It is possible that base for this location
-    // BaseLoc covers this location, so not a whole memory comprises BaseLoc is
-    // written in the loop. To avoid a loss of data stored before the loop
-    // execution in a part of memory which is not written after copy out from
-    // this loop the BaseLoc must be also treated as a first private.
+    // after the program exit from this loop. It is possible that the base for
+    // this location BaseLoc covers this location, so not a whole memory that
+    // comprises BaseLoc is written in the loop. To avoid a loss of data stored
+    // before the loop execution in a part of memory which is not written after
+    // copy out from this loop the BaseLoc must be also set as a first private.
     if (CurrTraits->second == LastPrivate &&
         !ExitingDefs.MustReach.contain(*CurrBase))
       CurrTraits->second &= FirstPrivate;
@@ -403,8 +406,8 @@ void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequired<DFRegionInfoPass>();
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   AU.addRequired<AliasAnalysis>();
 #else

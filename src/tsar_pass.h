@@ -22,11 +22,25 @@ class ImmutablePass;
 /// Initializes all passes developed for TSAR project
 void initializeTSAR(PassRegistry &Registry);
 
+/// Initializes a pass to builde hierarchy of data-flow regions.
+void initializeDFRegionInfoPassPass(PassRegistry &Registry);
+
+/// Creates a pass to builde hierarchy of data-flow regions.
+FunctionPass * createDFRegionInfoPass();
+
 /// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 
 /// Creates a pass to analyze private variables.
 FunctionPass * createPrivateRecognitionPass();
+
+/// Initializes a pass to fetch private variables before they will be promoted
+/// to registers or removed.
+void initializeFetchPromotePrivatePassPass(PassRegistry &Registry);
+
+/// Creates a pass to fetch private variables before they will be promoted
+/// to registers or removed.
+FunctionPass * createFetchPromotePrivatePass();
 
 /// Initializes a pass to access source level transformation enginer.
 void initializeTransformationEnginePassPass(PassRegistry &Registry);
