@@ -161,3 +161,7 @@ void DFRegionInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
   AU.setPreservesAll();
 }
+
+FunctionPass *llvm::createDFRegionInfoPass() {
+  return new DFRegionInfoPass();
+}

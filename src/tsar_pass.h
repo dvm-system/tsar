@@ -28,6 +28,18 @@ void initializeDFRegionInfoPassPass(PassRegistry &Registry);
 /// Creates a pass to builde hierarchy of data-flow regions.
 FunctionPass * createDFRegionInfoPass();
 
+/// Initializes a pass to find must defined locations for each data-flow region.
+void initializeDefinedMemoryPassPass(PassRegistry &Registry);
+
+/// Creates a pass to find must defined locations for each data-flow region.
+FunctionPass * createDefinedMemoryPass();
+
+/// Initializes a pass to find live locations for each data-flow region.
+void initializeLiveMemoryPassPass(PassRegistry &Registry);
+
+/// Creates a pass to find live locations for each data-flow region.
+FunctionPass * createLiveMemoryPass();
+
 /// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 
