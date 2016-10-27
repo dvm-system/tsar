@@ -15,6 +15,7 @@
 #include "tsar_data_flow.h"
 #include "tsar_df_location.h"
 #include "DFRegionInfo.h"
+#include "tsar_utility.h"
 
 namespace tsar {
 /// \brief Data-flow framework which is used to find live locations
@@ -22,14 +23,26 @@ namespace tsar {
 ///
 /// The LiveAttr attribute for each nodes in a data-flow graph is available
 /// after this analysis.
-class LiveDFFwk : private bcl::Uncopyable {};
+class LiveDFFwk : private bcl::Uncopyable {
+public:
+  typedef DFValue<LiveDFFwk, LocationSet> LiveSet;
+  typedef llvm::DenseMap<DFNode *, std::unique_ptr<LiveSet>,
+    llvm::DenseMapInfo<DFNode*>,
+    tsar::TaggedDenseMapPair<
+      bcl::tagged<DFNode *, DFNode>,
+      bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>> LiveMemoryInfo;
+  LiveDFFwk(LiveMemoryInfo &LiveInfo) : mLiveInfo(&LiveInfo) {}
+  LiveMemoryInfo & getLiveInfo() noexcept { return *mLiveInfo; }
+  const LiveMemoryInfo & getLiveInfo() const noexcept { return *mLiveInfo; }
+private:
+  LiveMemoryInfo *mLiveInfo;
+};
 
 /// This covers IN and OUT value for a live locations analysis.
-typedef DFValue<LiveDFFwk, LocationSet> LiveSet;
+typedef LiveDFFwk::LiveSet LiveSet;
 
-/// This attribute is associated with LiveSet and
-/// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(LiveAttr, LiveSet)
+/// Representation of live memory analysis resutls.
+typedef LiveDFFwk::LiveMemoryInfo LiveMemoryInfo;
 
 /// Traits for a data-flow framework which is used to find live locations.
 template<> struct DataFlowTraits<LiveDFFwk *> {
@@ -37,7 +50,11 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   typedef LocationSet ValueType;
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
-    LiveSet *LS = G.Graph->getAttribute<LiveAttr>();
+    assert(DFF && "Data-flow framework must not be null!");
+    auto &I = DFF->getLiveInfo().find(G.Graph);
+    assert(I != DFF->getLiveInfo().end() &&
+      "Data-flow value must be specified!");
+    LiveSet *LS = I->get<LiveSet>().get();
     assert(LS && "Data-flow value must not be null!");
     ValueType V(topElement(DFF, G));
     // If a location is alive before a loop it is alive before each iteration.
@@ -51,15 +68,23 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
     meetOperator(LS->getOut(), V, DFF, G);
     return V;
   }
-  static void setValue(ValueType V, DFNode *N, LiveDFFwk *) {
+  static void setValue(ValueType V, DFNode *N, LiveDFFwk *DFF) {
     assert(N && "Node must not be null!");
-    LiveSet *LS = N->getAttribute<LiveAttr>();
+    assert(DFF && "Data-flow framework must not be null!");
+    auto &I = DFF->getLiveInfo().find(N);
+    assert(I != DFF->getLiveInfo().end() &&
+      "Data-flow value must be specified!");
+    LiveSet *LS = I->get<LiveSet>().get();
     assert(LS && "Data-flow value must not be null!");
     LS->setIn(std::move(V));
   }
-  static const ValueType & getValue(DFNode *N, LiveDFFwk *) {
+  static const ValueType & getValue(DFNode *N, LiveDFFwk *DFF) {
     assert(N && "Node must not be null!");
-    LiveSet *LS = N->getAttribute<LiveAttr>();
+    assert(DFF && "Data-flow framework must not be null!");
+    auto &I = DFF->getLiveInfo().find(N);
+    assert(I != DFF->getLiveInfo().end() &&
+      "Data-flow value must be specified!");
+    LiveSet *LS = I->get<LiveSet>().get();
     assert(LS && "Data-flow value must not be null!");
     return LS->getIn();
   }
@@ -111,13 +136,26 @@ public:
     initializeLiveMemoryPassPass(*PassRegistry::getPassRegistry());
   }
 
+  /// Returns results of live memory analysis.
+  tsar::LiveMemoryInfo & getLiveInfo() noexcept {
+    return mLiveInfo;
+  }
+
+  /// Returns results of live memory analysis.
+  const tsar::LiveMemoryInfo & getLiveInfo() const noexcept {
+    return mLiveInfo;
+  }
+
+  /// Executes live memory analysis for a specified function.
   bool runOnFunction(Function &F) override;
 
   /// Specifies a list of analyzes  that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   /// Releases memory.
-  void releaseMemory() override { }
+  void releaseMemory() override { mLiveInfo.clear(); }
+private:
+  tsar::LiveMemoryInfo mLiveInfo;
 };
 }
 

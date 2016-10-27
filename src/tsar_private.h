@@ -92,8 +92,9 @@ private:
   /// is performed by pointer is also considered. Shared locations also
   /// analyzed.
   /// \param [in, out] R Region in a data-flow graph, it can not be null.
+  /// \param [in] LiveInfo Results of live memory analysis.
   /// \pre Def-use and live analysis have been performed for the region.
-  void resolveCandidats(tsar::DFRegion *R);
+  void resolveCandidats(tsar::DFRegion *R, tsar::LiveMemoryInfo &LiveInfo);
 
   /// Evaluates explicitly accessed variables in a loop.
   void resolveAccesses(const tsar::DFNode *LatchNode,

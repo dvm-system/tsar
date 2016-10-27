@@ -75,12 +75,12 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 #endif
   DFRegionInfo &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   getAnalysis<DefinedMemoryPass>();
-  getAnalysis<LiveMemoryPass>();
+  auto &LiveInfo = getAnalysis<LiveMemoryPass>().getLiveInfo();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  resolveCandidats(DFF);
+  resolveCandidats(DFF, LiveInfo);
   releaseMemory(DFF);
   delete mAliasTracker, mAliasTracker = nullptr;
   return false;
@@ -106,7 +106,8 @@ enum TraitId : unsigned long long {
 };
 }
 
-void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
+void PrivateRecognitionPass::resolveCandidats(
+    DFRegion *R, LiveMemoryInfo &LiveInfo) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     DependencySet *DS = new DependencySet;
@@ -114,7 +115,10 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     R->addAttribute<DependencyAttr>(DS);
     DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
     assert(DefUse && "Value of def-use attribute must not be null");
-    LiveSet *LS = R->getAttribute<LiveAttr>();
+    auto LiveItr = LiveInfo.find(R);
+    assert(LiveItr != LiveInfo.end() &&
+      "List of live locations must be specified!");
+    LiveSet *LS = LiveItr->get<LiveSet>().get();
     assert(LS && "List of live locations must not be null!");
     // Analysis will performed for base locations. This means that results
     // for two elements of array a[i] and a[j] will be generalized for a whole
@@ -129,7 +133,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)
-    resolveCandidats(*I);
+    resolveCandidats(*I, LiveInfo);
 }
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
@@ -363,9 +367,6 @@ void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
   DefUseSet *DefUse = R->removeAttribute<DefUseAttr>();
   if (DefUse)
     delete DefUse;
-  LiveSet *LS = R->removeAttribute<LiveAttr>();
-  if (LS)
-    delete LS;
   PrivateDFValue *PV = R->removeAttribute<PrivateDFAttr>();
   if (PV)
     delete PV;
@@ -376,9 +377,6 @@ void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
       DefUseSet *DefUse = (*I)->removeAttribute<DefUseAttr>();
       if (DefUse)
         delete DefUse;
-      LiveSet *LS = (*I)->removeAttribute<LiveAttr>();
-      if (LS)
-        delete LS;
       PrivateDFValue *PV = (*I)->removeAttribute<PrivateDFAttr>();
       if (PV)
         delete PV;

@@ -12,6 +12,7 @@
 
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <tagged.h>
 
 namespace llvm {
 class DIGlobalVariable;
@@ -71,5 +72,29 @@ llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
 
 /// Returns a meta information for a local variable or nullptr;
 llvm::DILocalVariable * getMetadata(const llvm::AllocaInst *AI);
+
+/// \brief This is an implementation of detail::DenseMapPair which supports
+/// access to a first and second value via tag of a type (Pair.get<Tag>()).
+///
+/// Let us see an example:
+/// \code
+///   struct Foo {};
+///   typedef llvm::DenseMap<KT *, VT *, llvm::DenseMapInfo<KT *>,
+///     tsar::TaggedDenseMapPair<
+///       bcl::tagged<KT *, KT>, bcl::tagged<VT *, Foo>>> Map;
+///   Map M;
+///   auto I = M.begin();
+///   I->get<KT>() // equivalent to I->first
+///   I->get<Foo>() // equivalent to I->second
+/// \endcode
+template<class TaggedKey, class TaggedValue>
+struct TaggedDenseMapPair : public bcl::tagged_pair<TaggedKey, TaggedValue> {
+  typedef typename TaggedKey::type KeyT;
+  typedef typename TaggedValue::type ValueT;
+  KeyT &getFirst() { return std::pair<KeyT, ValueT>::first; }
+  const KeyT &getFirst() const { return std::pair<KeyT, ValueT>::first; }
+  ValueT &getSecond() { return std::pair<KeyT, ValueT>::second; }
+  const ValueT &getSecond() const { return std::pair<KeyT, ValueT>::second; }
+};
 }
 #endif//TSAR_UTILITY_H

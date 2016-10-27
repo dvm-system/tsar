@@ -8,6 +8,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Debug.h>
 #include "tsar_dbg_output.h"
 #include "DefinedMemory.h"
@@ -21,19 +22,20 @@ using namespace tsar;
 
 char LiveMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(LiveMemoryPass, "live-mem",
-  "Live Memory Region Analysis", true, true)
+  "Live Memory Analysis", true, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
-  "Live Memory Region Analysis", true, true)
+  "Live Memory Analysis", true, true)
 
 bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DMP = getAnalysis<DefinedMemoryPass>();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  LiveDFFwk LiveFwk;
-  LiveSet *LS = new LiveSet;
-  DFF->addAttribute<LiveAttr>(LS);
+  LiveDFFwk LiveFwk(mLiveInfo);
+  auto LiveItr = mLiveInfo.insert(
+    std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
+  auto LS = LiveItr->get<LiveSet>().get();
   DefUseSet *DefUse = DFF->getAttribute<DefUseAttr>();
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
@@ -63,20 +65,24 @@ FunctionPass * llvm::createLiveMemoryPass() {
 }
 
 void DataFlowTraits<LiveDFFwk *>::initialize(
-  DFNode *N, LiveDFFwk *Fwk, GraphType) {
+  DFNode *N, LiveDFFwk *DFF, GraphType) {
   assert(N && "Node must not be null!");
-  assert(Fwk && "Data-flow framework must not be null!");
+  assert(DFF && "Data-flow framework must not be null!");
   assert(N->getAttribute<DefUseAttr>() &&
     "Value of def-use attribute must not be null!");
-  LiveSet *LS = new LiveSet;
-  N->addAttribute<LiveAttr>(LS);
+  DFF->getLiveInfo().insert(
+    std::make_pair(N, llvm::make_unique<LiveSet>()));
 }
 
 bool DataFlowTraits<LiveDFFwk*>::transferFunction(
-  ValueType V, DFNode *N, LiveDFFwk *, GraphType) {
+  ValueType V, DFNode *N, LiveDFFwk *DFF, GraphType) {
   // Note, that transfer function is never evaluated for the exit node.
   assert(N && "Node must not be null!");
-  LiveSet *LS = N->getAttribute<LiveAttr>();
+  assert(DFF && "Data-flow framework must not be null!");
+  auto &I = DFF->getLiveInfo().find(N);
+  assert(I != DFF->getLiveInfo().end() &&
+    "Data-flow value must be specified!");
+  LiveSet *LS = I->get<LiveSet>().get();
   assert(LS && "Data-flow value must not be null!");
   LS->setOut(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (isa<DFEntry>(N)) {
