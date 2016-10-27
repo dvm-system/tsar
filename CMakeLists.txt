@@ -74,9 +74,9 @@ option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 set(PACKAGE_LLVM_VERSION "3.8"
  CACHE STRING "Version of installed LLVM package (usefull only if PACKAGE_LLVM is set)")
-if(DOWNLOAD_LLVM AND LOCAL_LLVM OR
-   DOWNLOAD_LLVM AND PACKAGE_LLVM OR
-   LOCAL_LLVM AND PACKAGE_LLVM)
+if((DOWNLOAD_LLVM AND LOCAL_LLVM) OR
+   (DOWNLOAD_LLVM AND PACKAGE_LLVM) OR
+   (LOCAL_LLVM AND PACKAGE_LLVM))
   message(FATAL_ERROR "Options DOWNLOAD_LLVM, LOCAL_LLVM and PACKAGE_LLVM are not compatible")
 endif()
 # Download LLVM if need
