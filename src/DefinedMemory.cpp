@@ -31,7 +31,11 @@ char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", true, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+#else
+  INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+#endif
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", true, true)
 
