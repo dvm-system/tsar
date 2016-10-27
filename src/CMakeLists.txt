@@ -13,7 +13,11 @@ if(MSVC_IDE)
   source_group(patches FILES ${TSAR_PATCHES})
 endif()
 add_executable(tsar ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
-add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})
+# Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM 
+# libraries are not top-level targets in this case. So this works incorrect.
+if(NOT PACKAGE_LLVM)
+  add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})
+endif()
 add_definitions("-D${PROJECT_NAME}_PROJECT" "-D${PROJECT_NAME}_CONFIG")
 target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS})
 install(TARGETS tsar RUNTIME DESTINATION bin)
