@@ -99,7 +99,7 @@ private:
   /// Evaluates explicitly accessed variables in a loop.
   void resolveAccesses(const tsar::DFNode *LatchNode,
     const tsar::DFNode *ExitNode, const tsar::DefUseSet *DefUse,
-    const tsar::LiveSet *LS, TraitMap &LocBases, tsar::DependencySet *DS);
+    const tsar::LiveSet &LS, TraitMap &LocBases, tsar::DependencySet *DS);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
   void resolvePointers(const tsar::DefUseSet *DefUse, TraitMap &LocBases,

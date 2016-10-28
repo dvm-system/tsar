@@ -116,16 +116,14 @@ void PrivateRecognitionPass::resolveCandidats(
     DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
     assert(DefUse && "Value of def-use attribute must not be null");
     auto LiveItr = LiveInfo.find(R);
-    assert(LiveItr != LiveInfo.end() &&
+    assert(LiveItr != LiveInfo.end() && LiveItr->get<LiveSet>() &&
       "List of live locations must be specified!");
-    LiveSet *LS = LiveItr->get<LiveSet>().get();
-    assert(LS && "List of live locations must not be null!");
     // Analysis will performed for base locations. This means that results
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
     TraitMap LocBases;
     resolveAccesses(R->getLatchNode(), R->getExitNode(),
-      DefUse, LS, LocBases, DS);
+      DefUse, *LiveItr->get<LiveSet>(), LocBases, DS);
     resolvePointers(DefUse, LocBases, DS);
     storeResults(DefUse, LocBases, DS);
     // resolveAddresses() uses DS so storeResults() had to be already executed.
@@ -138,11 +136,10 @@ void PrivateRecognitionPass::resolveCandidats(
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     const DFNode *ExitNode, const tsar::DefUseSet *DefUse,
-    const tsar::LiveSet *LS, TraitMap &LocBases, tsar::DependencySet *DS) {
+    const tsar::LiveSet &LS, TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(LatchNode && "Latch node must not be null!");
   assert(ExitNode && "Exit node must not be null!");
   assert(DefUse && "Def-use set must not be null!");
-  assert(LS && "Live set must not be null!");
   assert(DS && "Dependency set must not be null!");
   PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
   assert(LatchDF && "List of must/may defined locations must not be null!");
@@ -183,7 +180,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         break;
       }
       if (!DefUse->hasUse(Loc)) {
-        if (!LS->getOut().overlap(Loc))
+        if (!LS.getOut().overlap(Loc))
           CurrTraits->second &= Private;
         else if (DefUse->hasDef(Loc))
           CurrTraits->second &= LastPrivate;
@@ -329,7 +326,6 @@ void PrivateRecognitionPass::resolveAddresses(
     }
   }
 }
-#include <array>
 
 void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
   TraitMap &LocBases, tsar::DependencySet *DS) {

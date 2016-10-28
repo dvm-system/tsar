@@ -52,10 +52,9 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     assert(DFF && "Data-flow framework must not be null!");
     auto &I = DFF->getLiveInfo().find(G.Graph);
-    assert(I != DFF->getLiveInfo().end() &&
+    assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
-    LiveSet *LS = I->get<LiveSet>().get();
-    assert(LS && "Data-flow value must not be null!");
+    auto &LS = I->get<LiveSet>();
     ValueType V(topElement(DFF, G));
     // If a location is alive before a loop it is alive before each iteration.
     // This occurs due to conservatism of analysis.
@@ -72,20 +71,18 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
     assert(N && "Node must not be null!");
     assert(DFF && "Data-flow framework must not be null!");
     auto &I = DFF->getLiveInfo().find(N);
-    assert(I != DFF->getLiveInfo().end() &&
+    assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
-    LiveSet *LS = I->get<LiveSet>().get();
-    assert(LS && "Data-flow value must not be null!");
+    auto & LS = I->get<LiveSet>();
     LS->setIn(std::move(V));
   }
   static const ValueType & getValue(DFNode *N, LiveDFFwk *DFF) {
     assert(N && "Node must not be null!");
     assert(DFF && "Data-flow framework must not be null!");
     auto &I = DFF->getLiveInfo().find(N);
-    assert(I != DFF->getLiveInfo().end() &&
+    assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
-    LiveSet *LS = I->get<LiveSet>().get();
-    assert(LS && "Data-flow value must not be null!");
+    auto &LS = I->get<LiveSet>();
     return LS->getIn();
   }
   static void initialize(DFNode *, LiveDFFwk *, GraphType);

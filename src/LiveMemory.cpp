@@ -35,7 +35,7 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   LiveDFFwk LiveFwk(mLiveInfo);
   auto LiveItr = mLiveInfo.insert(
     std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
-  auto LS = LiveItr->get<LiveSet>().get();
+  auto &LS = LiveItr->get<LiveSet>();
   DefUseSet *DefUse = DFF->getAttribute<DefUseAttr>();
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
@@ -80,10 +80,9 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null!");
   auto &I = DFF->getLiveInfo().find(N);
-  assert(I != DFF->getLiveInfo().end() &&
+  assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
     "Data-flow value must be specified!");
-  LiveSet *LS = I->get<LiveSet>().get();
-  assert(LS && "Data-flow value must not be null!");
+  auto &LS = I->get<LiveSet>();
   LS->setOut(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (isa<DFEntry>(N)) {
     if (LS->getIn() != LS->getOut()) {
