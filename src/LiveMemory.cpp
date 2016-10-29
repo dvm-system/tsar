@@ -79,7 +79,7 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   // Note, that transfer function is never evaluated for the exit node.
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null!");
-  auto &I = DFF->getLiveInfo().find(N);
+  auto I = DFF->getLiveInfo().find(N);
   assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
     "Data-flow value must be specified!");
   auto &LS = I->get<LiveSet>();

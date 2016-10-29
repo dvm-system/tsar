@@ -51,7 +51,7 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     assert(DFF && "Data-flow framework must not be null!");
-    auto &I = DFF->getLiveInfo().find(G.Graph);
+    auto I = DFF->getLiveInfo().find(G.Graph);
     assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
     auto &LS = I->get<LiveSet>();
@@ -70,7 +70,7 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static void setValue(ValueType V, DFNode *N, LiveDFFwk *DFF) {
     assert(N && "Node must not be null!");
     assert(DFF && "Data-flow framework must not be null!");
-    auto &I = DFF->getLiveInfo().find(N);
+    auto I = DFF->getLiveInfo().find(N);
     assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
     auto & LS = I->get<LiveSet>();
@@ -79,7 +79,7 @@ template<> struct DataFlowTraits<LiveDFFwk *> {
   static const ValueType & getValue(DFNode *N, LiveDFFwk *DFF) {
     assert(N && "Node must not be null!");
     assert(DFF && "Data-flow framework must not be null!");
-    auto &I = DFF->getLiveInfo().find(N);
+    auto I = DFF->getLiveInfo().find(N);
     assert(I != DFF->getLiveInfo().end() && I->get<LiveSet>() &&
       "Data-flow value must be specified!");
     auto &LS = I->get<LiveSet>();
