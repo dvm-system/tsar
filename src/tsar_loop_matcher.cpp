@@ -113,19 +113,20 @@ public:
           --NumNonMatchIRLoop;
           // If there are multiple for-loops in a LoopQueue it means that these
           // loops have been included from some file (macro is evaluated
-          // separately). It is necessary to restore this LoopQueue with accurate
-          // location (not a location of initialization instruction) in mLocToLop.
-          // Otherwise when such instruction of currently evaluated loop will be
-          // visited some loop from LoopQueue will be linked with the instruction.
+          // separately). It is necessary to restore this LoopQueue with
+          // accurate location (not a location of initialization instruction) in
+          // mLocToLoop. Otherwise when such instruction of currently evaluated
+          // loop will be visited some loop from LoopQueue will be linked with
+          // the instruction.
           if (!LpItr->second.empty()) {
             auto HeadBB = L->getHeader();
             auto HeaderLoc = HeadBB ?
               HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
             PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getLocStart(), false);
-            if (HeaderLoc && DILocationMapInfo::isEqual(PLoc, HeaderLoc))
-              mLocToIR->insert(
-                std::make_pair(HeaderLoc, std::move(LpItr->second)));
+            auto Tmp = std::move(LpItr->second);
             mLocToIR->erase(LpItr);
+            if (HeaderLoc && DILocationMapInfo::isEqual(PLoc, HeaderLoc))
+              mLocToIR->insert(std::make_pair(HeaderLoc, std::move(Tmp)));
           }
           return true;
         }
