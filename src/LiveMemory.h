@@ -14,6 +14,7 @@
 #include <utility.h>
 #include "tsar_data_flow.h"
 #include "tsar_df_location.h"
+#include "DefinedMemory.h"
 #include "DFRegionInfo.h"
 #include "tsar_utility.h"
 
@@ -31,11 +32,15 @@ public:
     tsar::TaggedDenseMapPair<
       bcl::tagged<DFNode *, DFNode>,
       bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>> LiveMemoryInfo;
-  LiveDFFwk(LiveMemoryInfo &LiveInfo) : mLiveInfo(&LiveInfo) {}
+  LiveDFFwk(LiveMemoryInfo &LiveInfo, DefinedMemoryInfo &DefInfo) :
+    mLiveInfo(&LiveInfo), mDefInfo(&DefInfo) {}
   LiveMemoryInfo & getLiveInfo() noexcept { return *mLiveInfo; }
   const LiveMemoryInfo & getLiveInfo() const noexcept { return *mLiveInfo; }
+  DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
+  const DefinedMemoryInfo & getDefInfo() const noexcept { return *mDefInfo; }
 private:
   LiveMemoryInfo *mLiveInfo;
+  DefinedMemoryInfo *mDefInfo;
 };
 
 /// This covers IN and OUT value for a live locations analysis.

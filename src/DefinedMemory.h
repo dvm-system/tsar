@@ -25,10 +25,12 @@
 #include <llvm/IR/Instruction.h>
 #endif//DEBUG
 #include <llvm/Pass.h>
+#include <tagged.h>
 #include <utility.h>
 #include "tsar_df_location.h"
-#include "DFRegionInfo.h"
 #include "tsar_data_flow.h"
+#include "DFRegionInfo.h"
+#include "tsar_utility.h"
 
 namespace llvm {
 class Value;
@@ -246,9 +248,12 @@ private:
   InstructionSet mUnknownInsts;
 };
 
-/// This attribute is associated with DefUseSet and
-/// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(DefUseAttr, DefUseSet)
+/// This presents information whether a location has definition after a node
+/// in a data-flow graph.
+struct DefinitionInfo {
+  LocationDFValue MustReach;
+  LocationDFValue MayReach;
+};
 
 /// \brief Data-flow framework which is used to find must defined locations
 /// for each natural loops.
@@ -256,9 +261,9 @@ BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 /// The data-flow problem is solved in forward direction.
 /// The analysis is performed for loop bodies only.
 ///
-/// Two kinds of attributes for each nodes in a data-flow graph are available
-/// after this analysis. The first kind, is DefUseAttr and the second one is
-/// PrivateDFAttr.
+/// Two kinds of information for each nodes in a data-flow graph are available
+/// after this analysis. The first kind, is DefUseSet and the second one is
+/// ReachSet.
 /// \attention Note that analysis which is performed for base locations is not
 /// the same as analysis which is performed for variables form a source code.
 /// For example, the base location for (short&)X is a memory location with
@@ -269,13 +274,29 @@ BASE_ATTR_DEF(DefUseAttr, DefUseSet)
 /// The short part of X will be recognized as last private, but the whole
 /// variable X must be also set to first private to preserve the value
 /// obtained before the loop.
-class PrivateDFFwk : private bcl::Uncopyable {
+class ReachDFFwk : private bcl::Uncopyable {
 public:
+  /// This covers IN and OUT value for a must/may reach definition analysis.
+  typedef DFValue<ReachDFFwk, DefinitionInfo> ReachSet;
+
+  /// This represents results of reach definition analysis results.
+  typedef llvm::DenseMap<DFNode *,
+    std::tuple<std::unique_ptr<DefUseSet>, std::unique_ptr<ReachSet>>,
+    llvm::DenseMapInfo<DFNode *>,
+    tsar::TaggedDenseMapTuple<
+      bcl::tagged<DFNode *, DFNode>,
+      bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>,
+      bcl::tagged<std::unique_ptr<ReachSet>, ReachSet>>> DefinedMemoryInfo;
+
   /// Creates data-flow framework.
-  explicit PrivateDFFwk(llvm::AliasSetTracker *AST) :
-    mAliasTracker(AST) {
-    assert(mAliasTracker && "AliasSetTracker must not be null!");
-  }
+  ReachDFFwk(llvm::AliasSetTracker &AST, DefinedMemoryInfo &DefInfo) :
+    mAliasTracker(&AST), mDefInfo(&DefInfo) { }
+
+  /// Returns representation of reach definition analysis results.
+  DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
+
+  /// Returns representation of reach definition analysis results.
+  const DefinedMemoryInfo & getDefInfo() const noexcept { return *mDefInfo; }
 
   /// Returns a tracker for sets of aliases.
   llvm::AliasSetTracker * getTracker() const { return mAliasTracker; }
@@ -286,66 +307,63 @@ public:
 
 private:
   llvm::AliasSetTracker *mAliasTracker;
+  DefinedMemoryInfo *mDefInfo;
 };
 
-/// This presents information whether a location has definition after a node
-/// in a data-flow graph.
-struct DefinitionInfo {
-  LocationDFValue MustReach;
-  LocationDFValue MayReach;
-};
+/// This covers IN and OUT value for a must/may reach definition analysis.
+typedef ReachDFFwk::ReachSet ReachSet;
 
-/// This covers IN and OUT value for a privatizability analysis.
-typedef DFValue<PrivateDFFwk, DefinitionInfo> PrivateDFValue;
+/// This represents results of reach definition analysis results.
+typedef ReachDFFwk::DefinedMemoryInfo DefinedMemoryInfo;
 
-/// This attribute is associated with PrivateDFValue and
-/// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(PrivateDFAttr, PrivateDFValue)
-
-/// Traits for a data-flow framework which is used to find candidates
-/// in privatizable locations for each natural loops.
-template<> struct DataFlowTraits<PrivateDFFwk *> {
+/// Traits for a data-flow framework which is used to find reach definitions.
+template<> struct DataFlowTraits<ReachDFFwk *> {
   typedef Forward<DFRegion * > GraphType;
   typedef DefinitionInfo ValueType;
-  static ValueType topElement(PrivateDFFwk *, GraphType) {
+  static ValueType topElement(ReachDFFwk *, GraphType) {
     DefinitionInfo DI;
     DI.MustReach = std::move(LocationDFValue::fullValue());
     DI.MayReach = std::move(LocationDFValue::emptyValue());
     return std::move(DI);
   }
-  static ValueType boundaryCondition(PrivateDFFwk *, GraphType) {
+  static ValueType boundaryCondition(ReachDFFwk *, GraphType) {
     DefinitionInfo DI;
     DI.MustReach = std::move(LocationDFValue::emptyValue());
     DI.MayReach = std::move(LocationDFValue::emptyValue());
     return std::move(DI);
   }
-  static void setValue(ValueType V, DFNode *N, PrivateDFFwk *) {
+  static void setValue(ValueType V, DFNode *N, ReachDFFwk *DFF) {
     assert(N && "Node must not be null!");
-    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be null!");
-    PV->setOut(std::move(V));
+    assert(DFF && "Data-flow framework must not be null!");
+    auto I = DFF->getDefInfo().find(N);
+    assert(I != DFF->getDefInfo().end() && I->get<ReachSet>() &&
+      "Data-flow value must be specified!");
+    auto &RS = I->get<ReachSet>();
+    RS->setOut(std::move(V));
   }
-  static const ValueType & getValue(DFNode *N, PrivateDFFwk *) {
+  static const ValueType & getValue(DFNode *N, ReachDFFwk *DFF) {
     assert(N && "Node must not be null!");
-    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be null!");
-    return PV->getOut();
+    assert(DFF && "Data-flow framework must not be null!");
+    auto I = DFF->getDefInfo().find(N);
+    assert(I != DFF->getDefInfo().end() && I->get<ReachSet>() &&
+      "Data-flow value must be specified!");
+    auto &RS = I->get<ReachSet>();
+    return RS->getOut();
   }
-  static void initialize(DFNode *, PrivateDFFwk *, GraphType);
+  static void initialize(DFNode *, ReachDFFwk *, GraphType);
   static void meetOperator(
-    const ValueType &LHS, ValueType &RHS, PrivateDFFwk *, GraphType) {
+    const ValueType &LHS, ValueType &RHS, ReachDFFwk *, GraphType) {
     RHS.MustReach.intersect(LHS.MustReach);
     RHS.MayReach.merge(LHS.MayReach);
   }
-  static bool transferFunction(ValueType, DFNode *, PrivateDFFwk *, GraphType);
+  static bool transferFunction(ValueType, DFNode *, ReachDFFwk *, GraphType);
 };
 
-/// Traits for a data-flow framework which is used to find candidates
-/// in privatizable locations for each natural loops.
-template<> struct RegionDFTraits<PrivateDFFwk *> :
-  DataFlowTraits<PrivateDFFwk *> {
-  static void expand(PrivateDFFwk *, GraphType) {}
-  static void collapse(PrivateDFFwk *Fwk, GraphType G) {
+/// Traits for a data-flow framework which is used to find reach definitions.
+template<> struct RegionDFTraits<ReachDFFwk *> :
+  DataFlowTraits<ReachDFFwk *> {
+  static void expand(ReachDFFwk *, GraphType) {}
+  static void collapse(ReachDFFwk *Fwk, GraphType G) {
     Fwk->collapse(G.Graph);
   }
   typedef DFRegion::region_iterator region_iterator;
@@ -360,7 +378,6 @@ template<> struct RegionDFTraits<PrivateDFFwk *> :
 
 namespace llvm {
 class DefinedMemoryPass : public FunctionPass, private bcl::Uncopyable {
-  typedef llvm::DenseMap<tsar::DFNode *, tsar::DefUseSet *> NodeToDUMap;
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -370,28 +387,25 @@ public:
     initializeDefinedMemoryPassPass(*PassRegistry::getPassRegistry());
   }
 
-  tsar::DefUseSet & getDefUseFor(tsar::DFNode *N) {
-    assert(N && "Node must not be null!");
-    auto DU = mNodeToDU.find(N);
-    assert(DU != mNodeToDU.end() && DU->second &&
-      "Def-use set must be specified!");
-    return *DU->second;
+  /// Returns results of reach definition analysis.
+  tsar::DefinedMemoryInfo & getDefInfo() noexcept { return mDefInfo; }
+
+  /// Returns results of reach definition analysis.
+  const tsar::DefinedMemoryInfo & getDefInfo() const noexcept {
+    return mDefInfo;
   }
 
+  /// Executes reach definition analysis for a specified function.
   bool runOnFunction(Function &F) override;
 
   /// Specifies a list of analyzes  that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   /// Releases memory.
-  void releaseMemory() override {
-    for (auto &Pair : mNodeToDU)
-      delete Pair.second;
-    mNodeToDU.clear();
-  }
+  void releaseMemory() override { mDefInfo.clear(); }
 
 private:
-  NodeToDUMap mNodeToDU;
+  tsar::DefinedMemoryInfo mDefInfo;
 };
 }
 #endif//TSAR_DEFINED_MEMORY_H

@@ -74,14 +74,13 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
 #endif
   DFRegionInfo &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  getAnalysis<DefinedMemoryPass>();
-  auto &LiveInfo = getAnalysis<LiveMemoryPass>().getLiveInfo();
+  mDefInfo = &getAnalysis<DefinedMemoryPass>().getDefInfo();
+  mLiveInfo = &getAnalysis<LiveMemoryPass>().getLiveInfo();
   mAliasTracker = new AliasSetTracker(AA);
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     mAliasTracker->add(&*I);
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  resolveCandidats(DFF, LiveInfo);
-  releaseMemory(DFF);
+  resolveCandidats(DFF);
   delete mAliasTracker, mAliasTracker = nullptr;
   return false;
 }
@@ -106,52 +105,58 @@ enum TraitId : unsigned long long {
 };
 }
 
-void PrivateRecognitionPass::resolveCandidats(
-    DFRegion *R, LiveMemoryInfo &LiveInfo) {
+void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     DependencySet *DS = new DependencySet;
     mPrivates.insert(std::make_pair(L->getLoop(), DS));
+    auto DefItr = mDefInfo->find(L);
+    assert(DefItr != mDefInfo->end() &&
+      DefItr->get<DefUseSet>() && DefItr->get<ReachSet>() &&
+      "Def-use and reach definition set must be specified!");
     R->addAttribute<DependencyAttr>(DS);
-    DefUseSet *DefUse = R->getAttribute<DefUseAttr>();
-    assert(DefUse && "Value of def-use attribute must not be null");
-    auto LiveItr = LiveInfo.find(R);
-    assert(LiveItr != LiveInfo.end() && LiveItr->get<LiveSet>() &&
+    auto LiveItr = mLiveInfo->find(L);
+    assert(LiveItr != mLiveInfo->end() && LiveItr->get<LiveSet>() &&
       "List of live locations must be specified!");
     // Analysis will performed for base locations. This means that results
     // for two elements of array a[i] and a[j] will be generalized for a whole
     // array 'a'. The key in following map LocBases is a base location.
     TraitMap LocBases;
     resolveAccesses(R->getLatchNode(), R->getExitNode(),
-      DefUse, *LiveItr->get<LiveSet>(), LocBases, DS);
-    resolvePointers(DefUse, LocBases, DS);
-    storeResults(DefUse, LocBases, DS);
+      *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), LocBases, DS);
+    resolvePointers(*DefItr->get<DefUseSet>(), LocBases, DS);
+    storeResults(LocBases, DS);
     // resolveAddresses() uses DS so storeResults() had to be already executed.
-    resolveAddresses(L, DefUse, LocBases, DS);
+    resolveAddresses(L, *DefItr->get<DefUseSet>(), LocBases, DS);
   }
   for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
        I != E; ++I)
-    resolveCandidats(*I, LiveInfo);
+    resolveCandidats(*I);
 }
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
-    const DFNode *ExitNode, const tsar::DefUseSet *DefUse,
+    const DFNode *ExitNode, const tsar::DefUseSet &DefUse,
     const tsar::LiveSet &LS, TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(LatchNode && "Latch node must not be null!");
   assert(ExitNode && "Exit node must not be null!");
-  assert(DefUse && "Def-use set must not be null!");
   assert(DS && "Dependency set must not be null!");
-  PrivateDFValue *LatchDF = LatchNode->getAttribute<PrivateDFAttr>();
+  auto LatchDefItr = mDefInfo->find(const_cast<DFNode *>(LatchNode));
+  assert(LatchDefItr != mDefInfo->end() && LatchDefItr->get<ReachSet>() &&
+    "Reach definition set must be specified!");
+  auto &LatchDF = LatchDefItr->get<ReachSet>();
   assert(LatchDF && "List of must/may defined locations must not be null!");
   // LatchDefs is a set of must/may define locations before a branch to
   // a next arbitrary iteration.
   const DefinitionInfo &LatchDefs = LatchDF->getOut();
   // ExitingDefs is a set of must and may define locations which obtains
   // definitions in the iteration in which exit from a loop takes place.
-  PrivateDFValue *ExitDF = ExitNode->getAttribute<PrivateDFAttr>();
+  auto ExitDefItr = mDefInfo->find(const_cast<DFNode *>(ExitNode));
+  assert(ExitDefItr != mDefInfo->end() && ExitDefItr->get<ReachSet>() &&
+    "Reach definition set must be specified!");
+  auto &ExitDF = ExitDefItr->get<ReachSet>();
   assert(ExitDF && "List of must/may defined locations must not be null!");
   const DefinitionInfo &ExitingDefs = ExitDF->getOut();
-  for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+  for (const AliasSet &AS : DefUse.getExplicitAccesses()) {
     if (AS.isForwardingAliasSet() || AS.empty())
       continue; // The set is empty if it contains only unknown instructions.
     auto I = AS.begin(), E = AS.end();
@@ -179,10 +184,10 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
           CurrTraits->second = Dependency;
         break;
       }
-      if (!DefUse->hasUse(Loc)) {
+      if (!DefUse.hasUse(Loc)) {
         if (!LS.getOut().overlap(Loc))
           CurrTraits->second &= Private;
-        else if (DefUse->hasDef(Loc))
+        else if (DefUse.hasDef(Loc))
           CurrTraits->second &= LastPrivate;
         else if (LatchDefs.MustReach.contain(Loc) &&
           !ExitingDefs.MayReach.overlap(Loc))
@@ -200,7 +205,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
           // first private, to preserve the value obtained before the loop
           // if it has not been assigned.
           CurrTraits->second &= DynamicPrivate & FirstPrivate;
-      } else if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc)) {
+      } else if (DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc)) {
         CurrTraits->second &= Dependency;
       } else {
         CurrTraits->second &= Shared;
@@ -210,7 +215,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
       MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
       CurrBase = DS->base(Loc);
       CurrTraits = LocBases.insert(std::make_pair(CurrBase, NoAccess)).first;
-      if (DefUse->hasMayDef(Loc) || DefUse->hasDef(Loc))
+      if (DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))
         CurrTraits->second &= Dependency;
       else
         CurrTraits->second &= Shared;
@@ -232,11 +237,10 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
   }
 }
 
-void PrivateRecognitionPass::resolvePointers(const tsar::DefUseSet *DefUse,
+void PrivateRecognitionPass::resolvePointers(const tsar::DefUseSet &DefUse,
     TraitMap &LocBases, tsar::DependencySet *DS) {
-  assert(DefUse && "Def-use set must not be null!");
   assert(DS && "Dependency set must not be null!");
-  for (const AliasSet &AS : DefUse->getExplicitAccesses()) {
+  for (const AliasSet &AS : DefUse.getExplicitAccesses()) {
     if (AS.isForwardingAliasSet() || AS.empty())
       continue; // The set is empty if it contains only unknown instructions.
     for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
@@ -277,16 +281,11 @@ void PrivateRecognitionPass::resolvePointers(const tsar::DefUseSet *DefUse,
 }
 
 void PrivateRecognitionPass::resolveAddresses(
-    const DFLoop *L, const tsar::DefUseSet *DefUse,
+    DFLoop *L, const DefUseSet &DefUse,
     TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(L && "Loop must not be null!");
-  assert(DefUse && "Def-use set must not be null!");
   assert(DS && "Dependency set must not be null!");
-  assert(DefUse == L->getAttribute<DefUseAttr>() &&
-    "Def-use set must be related to the specified loop!");
-  assert(DS == L->getAttribute<DependencyAttr>() &&
-    "Dependency set must be related to the specified loop!");
-  for (llvm::Value *Ptr : DefUse->getAddressAccesses()) {
+  for (llvm::Value *Ptr : DefUse.getAddressAccesses()) {
     const llvm::MemoryLocation * Base = DS->base(MemoryLocation(Ptr, 0));
     // Do not remember an address:
     // * if it is stored in some location, for example isa<LoadInst>((*I)->Ptr),
@@ -327,8 +326,8 @@ void PrivateRecognitionPass::resolveAddresses(
   }
 }
 
-void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
-  TraitMap &LocBases, tsar::DependencySet *DS) {
+void PrivateRecognitionPass::storeResults(
+    TraitMap &LocBases, tsar::DependencySet *DS) {
   assert(DS && "Dependency set must not be null!");
   for (auto &LocTraits : LocBases) {
     DependencyDescriptor Dptr;
@@ -355,28 +354,6 @@ void PrivateRecognitionPass::storeResults(const tsar::DefUseSet *DefUse,
       break;
     }
     DS->insert(*LocTraits.first, Dptr);
-  }
-}
-
-void PrivateRecognitionPass::releaseMemory(DFRegion *R) {
-  assert(R && "Region must not be null!");
-  DefUseSet *DefUse = R->removeAttribute<DefUseAttr>();
-  if (DefUse)
-    delete DefUse;
-  PrivateDFValue *PV = R->removeAttribute<PrivateDFAttr>();
-  if (PV)
-    delete PV;
-  for (auto I = R->node_begin(), E = R->node_end(); I != E; ++I) {
-    if (auto InnerRegion = dyn_cast<DFRegion>(*I)) {
-      releaseMemory(InnerRegion);
-    } else {
-      DefUseSet *DefUse = (*I)->removeAttribute<DefUseAttr>();
-      if (DefUse)
-        delete DefUse;
-      PrivateDFValue *PV = (*I)->removeAttribute<PrivateDFAttr>();
-      if (PV)
-        delete PV;
-    }
   }
 }
 

@@ -8,6 +8,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -50,8 +51,8 @@ AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
     AliasTracker.add(&*I);
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  PrivateDFFwk PrivateFWK(&AliasTracker);
-  solveDataFlowUpward(&PrivateFWK, DFF);
+  ReachDFFwk ReachDefFwk(AliasTracker, mDefInfo);
+  solveDataFlowUpward(&ReachDefFwk, DFF);
   return false;
 }
 
@@ -179,21 +180,21 @@ void evaluateUnknownAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
 }
 }
 
-void DataFlowTraits<PrivateDFFwk*>::initialize(
-  DFNode *N, PrivateDFFwk *Fwk, GraphType) {
+void DataFlowTraits<ReachDFFwk*>::initialize(
+  DFNode *N, ReachDFFwk *DFF, GraphType) {
   assert(N && "Node must not be null!");
-  assert(Fwk && "Data-flow framework must not be null");
-  PrivateDFValue *V = new PrivateDFValue;
-  N->addAttribute<PrivateDFAttr>(V);
+  assert(DFF && "Data-flow framework must not be null");
   if (llvm::isa<DFRegion>(N))
     return;
-  // DefUseAttr will be set here for nodes different to regions.
-  // For nodes which represented regions this attribute has been already set
-  // in collapse() function.
-  AliasSetTracker *AST = Fwk->getTracker();
+  AliasSetTracker *AST = DFF->getTracker();
   AliasAnalysis &AA = AST->getAliasAnalysis();
-  DefUseSet *DU = new DefUseSet(AA);
-  N->addAttribute<DefUseAttr>(DU);
+  auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
+    llvm::make_unique<DefUseSet>(AA),
+    llvm::make_unique<ReachSet>())));
+  // DefUseSet will be calculated here for nodes different to regions.
+  // For nodes which represented regions this attribute has been already
+  // calculated in collapse() function.
+  auto &DU = Pair.first->get<DefUseSet>();
   DFBlock *DFB = dyn_cast<DFBlock>(N);
   if (!DFB)
     return;
@@ -218,8 +219,8 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
     // Note that this attribute will be also set for locations which are
     // accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseAttr.
-    if (!evaluateAlias(&I, AST, DU))
-      evaluateUnknownAlias(&I, AST, DU);
+    if (!evaluateAlias(&I, AST, DU.get()))
+      evaluateUnknownAlias(&I, AST, DU.get());
   }
   DEBUG(
     dbgs() << "[DEFUSE] Def/Use locations for the following basic block:";
@@ -237,12 +238,13 @@ void DataFlowTraits<PrivateDFFwk*>::initialize(
   );
 }
 
-bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
-  ValueType V, DFNode *N, PrivateDFFwk *, GraphType) {
+bool DataFlowTraits<ReachDFFwk*>::transferFunction(
+  ValueType V, DFNode *N, ReachDFFwk *DFF, GraphType) {
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
+  assert(DFF && "Data-flow framework must not be null");
   DEBUG(
-    dbgs() << "[TRANSFER PRIVATE]\n";
+    dbgs() << "[TRANSFER REACH]\n";
   if (auto DFB = dyn_cast<DFBlock>(N))
     DFB->getBlock()->dump();
   dbgs() << "IN:\n";
@@ -252,37 +254,40 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   V.MayReach.dump();
   dbgs() << "OUT:\n";
   );
-  PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-  assert(PV && "Data-flow value must not be null!");
-  PV->setIn(std::move(V)); // Do not use V below to avoid undefined behavior.
+  auto I = DFF->getDefInfo().find(N);
+  assert(I != DFF->getDefInfo().end() &&
+    I->get<ReachSet>() && I->get<DefUseSet>() &&
+    "Data-flow value must be specified!");
+  auto &RS = I->get<ReachSet>();
+  RS->setIn(std::move(V)); // Do not use V below to avoid undefined behavior.
   if (llvm::isa<DFExit>(N)) {
-    if (PV->getOut().MustReach != PV->getIn().MustReach ||
-        PV->getOut().MayReach != PV->getIn().MayReach) {
-      PV->setOut(PV->getIn());
+    if (RS->getOut().MustReach != RS->getIn().MustReach ||
+        RS->getOut().MayReach != RS->getIn().MayReach) {
+      RS->setOut(RS->getIn());
       DEBUG(
         dbgs() << "MUST REACH DEFINITIONS:\n";
-      PV->getOut().MustReach.dump();
+      RS->getOut().MustReach.dump();
       dbgs() << "MAY REACH DEFINITIONS:\n";
-      PV->getOut().MayReach.dump();
+      RS->getOut().MayReach.dump();
       dbgs() << "[END TRANSFER]\n";
       );
       return true;
     }
     DEBUG(
       dbgs() << "MUST REACH DEFINITIONS:\n";
-    PV->getOut().MustReach.dump();
+    RS->getOut().MustReach.dump();
     dbgs() << "MAY REACH DEFINITIONS:\n";
-    PV->getOut().MayReach.dump();
+    RS->getOut().MayReach.dump();
     dbgs() << "[END TRANSFER]\n";
     );
     return false;
   }
-  DefUseSet *DU = N->getAttribute<DefUseAttr>();
+  auto &DU = I->get<DefUseSet>();
   assert(DU && "Value of def-use attribute must not be null!");
   DefinitionInfo newOut;
   newOut.MustReach = std::move(LocationDFValue::emptyValue());
   newOut.MustReach.insert(DU->getDefs().begin(), DU->getDefs().end());
-  newOut.MustReach.merge(PV->getIn().MustReach);
+  newOut.MustReach.merge(RS->getIn().MustReach);
   newOut.MayReach = std::move(LocationDFValue::emptyValue());
   // newOut.MayReach must contain both must and may defined locations.
   // Let us consider an example:
@@ -298,34 +303,38 @@ bool DataFlowTraits<PrivateDFFwk*>::transferFunction(
   // in the MayReach collection.
   newOut.MayReach.insert(DU->getDefs().begin(), DU->getDefs().end());
   newOut.MayReach.insert(DU->getMayDefs().begin(), DU->getMayDefs().end());
-  newOut.MayReach.merge(PV->getIn().MayReach);
-  if (PV->getOut().MustReach != newOut.MustReach ||
-    PV->getOut().MayReach != newOut.MayReach) {
-    PV->setOut(std::move(newOut));
+  newOut.MayReach.merge(RS->getIn().MayReach);
+  if (RS->getOut().MustReach != newOut.MustReach ||
+    RS->getOut().MayReach != newOut.MayReach) {
+    RS->setOut(std::move(newOut));
     DEBUG(
       dbgs() << "MUST REACH DEFINITIONS:\n";
-    PV->getOut().MustReach.dump();
+    RS->getOut().MustReach.dump();
     dbgs() << "MAY REACH DEFINITIONS:\n";
-    PV->getOut().MayReach.dump();
+    RS->getOut().MayReach.dump();
     dbgs() << "[END TRANSFER]\n";
     );
     return true;
   }
   DEBUG(
     dbgs() << "MUST REACH DEFINITIONS:\n";
-  PV->getOut().MustReach.dump();
+  RS->getOut().MustReach.dump();
   dbgs() << "MAY REACH DEFINITIONS:\n";
-  PV->getOut().MayReach.dump();
+  RS->getOut().MayReach.dump();
   dbgs() << "[END TRANSFER]\n";
   );
   return false;
 }
 
-void PrivateDFFwk::collapse(DFRegion *R) {
+void ReachDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
-  typedef RegionDFTraits<PrivateDFFwk *> RT;
-  DefUseSet *DefUse = new DefUseSet(mAliasTracker->getAliasAnalysis());
-  R->addAttribute<DefUseAttr>(DefUse);
+  typedef RegionDFTraits<ReachDFFwk *> RT;
+  AliasSetTracker *AST = getTracker();
+  AliasAnalysis &AA = AST->getAliasAnalysis();
+  auto Pair = getDefInfo().insert(std::make_pair(R, std::make_tuple(
+    llvm::make_unique<DefUseSet>(AA),
+    llvm::make_unique<ReachSet>())));
+  auto &DefUse = Pair.first->get<DefUseSet>();
   assert(DefUse && "Value of def-use attribute must not be null!");
   // ExitingDefs.MustReach is a set of must define locations (Defs) for the
   // loop. These locations always have definitions inside the loop regardless
@@ -333,15 +342,17 @@ void PrivateDFFwk::collapse(DFRegion *R) {
   DFNode *ExitNode = R->getExitNode();
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
   for (DFNode *N : R->getNodes()) {
-    PrivateDFValue *PV = N->getAttribute<PrivateDFAttr>();
-    assert(PV && "Data-flow value must not be null!");
-    DefUseSet *DU = N->getAttribute<DefUseAttr>();
-    assert(DU && "Value of def-use attribute must not be null!");
+    auto DefItr = getDefInfo().find(N);
+    assert(DefItr != getDefInfo().end() &&
+      DefItr->get<ReachSet>() && DefItr->get<DefUseSet>() &&
+      "Data-flow value must be specified!");
+    auto &RS = DefItr->get<ReachSet>();
+    auto &DU = DefItr->get<DefUseSet>();
     // We calculate a set of locations (Uses)
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses())
-      if (!PV->getIn().MustReach.contain(Loc))
+      if (!RS->getIn().MustReach.contain(Loc))
         DefUse->addUse(Loc);
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but

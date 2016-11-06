@@ -22,12 +22,14 @@
 #include <utility.h>
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
+#include "DefinedMemory.h"
 #include "LiveMemory.h"
 #include "tsar_pass.h"
 #include "tsar_trait.h"
 
 namespace tsar {
 class DefUseSet;
+class DFLoop;
 }
 
 namespace llvm {
@@ -72,6 +74,8 @@ public:
     for (auto &Pair : mPrivates)
       delete Pair.second;
     mPrivates.clear();
+    mDefInfo = nullptr;
+    mLiveInfo = nullptr;
   }
 
   /// Specifies a list of analyzes  that are necessary for this pass.
@@ -92,25 +96,24 @@ private:
   /// is performed by pointer is also considered. Shared locations also
   /// analyzed.
   /// \param [in, out] R Region in a data-flow graph, it can not be null.
-  /// \param [in] LiveInfo Results of live memory analysis.
-  /// \pre Def-use and live analysis have been performed for the region.
-  void resolveCandidats(tsar::DFRegion *R, tsar::LiveMemoryInfo &LiveInfo);
+  /// \pre Results of live memory analysis and reach definition analysis
+  /// must be available from mLiveInfo and mDefInfo.
+  void resolveCandidats(tsar::DFRegion *R);
 
   /// Evaluates explicitly accessed variables in a loop.
   void resolveAccesses(const tsar::DFNode *LatchNode,
-    const tsar::DFNode *ExitNode, const tsar::DefUseSet *DefUse,
+    const tsar::DFNode *ExitNode, const tsar::DefUseSet &DefUse,
     const tsar::LiveSet &LS, TraitMap &LocBases, tsar::DependencySet *DS);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
-  void resolvePointers(const tsar::DefUseSet *DefUse, TraitMap &LocBases,
+  void resolvePointers(const tsar::DefUseSet &DefUse, TraitMap &LocBases,
     tsar::DependencySet *DS);
 
   /// Store results for subsequent passes.
   ///
   /// \attention This method can update LocBases, so use with caution
   /// methods which read LocBases before this method.
-  void storeResults(const tsar::DefUseSet *DefUse, TraitMap &LocBases,
-    tsar::DependencySet *DS);
+  void storeResults(TraitMap &LocBases, tsar::DependencySet *DS);
 
   /// \brief Recognizes addresses of locations which is evaluated in a loop a
   /// for which need to pay attention during loop transformation.
@@ -123,15 +126,14 @@ private:
   ///   ... = &X;
   /// ..X = ...;
   /// \endcode
-  void resolveAddresses(const tsar::DFLoop *L, const tsar::DefUseSet *DefUse,
+  void resolveAddresses(tsar::DFLoop *L, const tsar::DefUseSet &DefUse,
     TraitMap &LocBases, tsar::DependencySet *DS);
-
-  /// Releases memory allocated for attributes in a data-flow graph.
-  void releaseMemory(tsar::DFRegion *R);
 
 private:
   PrivateInfo mPrivates;
-  AliasSetTracker *mAliasTracker;
+  AliasSetTracker *mAliasTracker = nullptr;
+  const tsar::DefinedMemoryInfo *mDefInfo = nullptr;
+  const tsar::LiveMemoryInfo *mLiveInfo = nullptr;
 };
 }
 #endif//TSAR_PRIVATE_H

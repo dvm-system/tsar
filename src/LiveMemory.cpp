@@ -30,13 +30,15 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
 
 bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  auto &DMP = getAnalysis<DefinedMemoryPass>();
+  auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  LiveDFFwk LiveFwk(mLiveInfo);
   auto LiveItr = mLiveInfo.insert(
     std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
   auto &LS = LiveItr->get<LiveSet>();
-  DefUseSet *DefUse = DFF->getAttribute<DefUseAttr>();
+  auto DefItr = DefInfo.find(DFF);
+  assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
+    "Def-use set must not be null!");
+  auto &DefUse = DefItr->get<DefUseSet>();
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
   // considered as alive before exit from this function.
@@ -50,6 +52,7 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
       MayLives.insert(Loc);
   }
   LS->setOut(std::move(MayLives));
+  LiveDFFwk LiveFwk(mLiveInfo, DefInfo);
   solveDataFlowDownward(&LiveFwk, DFF);
   return false;
 }
@@ -68,8 +71,6 @@ void DataFlowTraits<LiveDFFwk *>::initialize(
   DFNode *N, LiveDFFwk *DFF, GraphType) {
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null!");
-  assert(N->getAttribute<DefUseAttr>() &&
-    "Value of def-use attribute must not be null!");
   DFF->getLiveInfo().insert(
     std::make_pair(N, llvm::make_unique<LiveSet>()));
 }
@@ -91,8 +92,10 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
     }
     return false;
   }
-  DefUseSet *DU = N->getAttribute<DefUseAttr>();
-  assert(DU && "Value of def-use attribute must not be null!");
+  auto DefItr = DFF->getDefInfo().find(N);
+  assert(DefItr != DFF->getDefInfo().end() && DefItr->get<DefUseSet>() &&
+    "Def-use set must not be null!");
+  auto &DU = DefItr->get<DefUseSet>();
   LocationSet newIn(DU->getUses());
   for (auto &Loc : LS->getOut()) {
     if (!DU->hasDef(Loc))
