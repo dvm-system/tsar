@@ -28,6 +28,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "DefinedMemory.h"
 #include "tsar_df_location.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_private.h"
@@ -48,7 +49,8 @@ using ::llvm::Module;
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
 namespace {
 class TestPrinterProvider : public FunctionPassProvider<
-  PrivateRecognitionPass, TransformationEnginePass, LoopMatcherPass> {
+  PrivateRecognitionPass, TransformationEnginePass,
+  LoopMatcherPass, DFRegionInfoPass> {
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
     auto P = createBasicAliasAnalysisPass();
     AU.addRequiredID(P->getPassID());
@@ -62,7 +64,8 @@ typedef FunctionPassProvider<
   BasicAAWrapperPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
-  LoopMatcherPass> TestPrinterProvider;
+  LoopMatcherPass,
+  DFRegionInfoPass> TestPrinterProvider;
 #endif
 
 INITIALIZE_PROVIDER_BEGIN(TestPrinterProvider, "test-provider",
@@ -70,6 +73,7 @@ INITIALIZE_PROVIDER_BEGIN(TestPrinterProvider, "test-provider",
 INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PROVIDER_END(TestPrinterProvider, "test-provider",
   "Test Printer Provider")
 
@@ -142,18 +146,22 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
     auto &LMP = Provider.get<LoopMatcherPass>();
     auto &LpMatcher = LMP.getMatcher();
     auto FuncDecl = LMP.getFunctionDecl();
-    auto &PRP = Provider.get<PrivateRecognitionPass>();
+    auto &PrivateInfo = Provider.get<PrivateRecognitionPass>().getPrivateInfo();
+    auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     for (auto &Match : LpMatcher) {
       if (!isa<ForStmt>(Match.get<AST>()) &&
           !isa<WhileStmt>(Match.get<AST>()) &&
           !isa<DoStmt>(Match.get<AST>()))
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
-          [](raw_ostream &OS) { OS << " loop(" << mImplicitLoopClause << ")"; });
-      auto &DS = PRP.getPrivatesFor(Match.get<IR>());
+          [](raw_ostream &OS) {OS << " loop(" << mImplicitLoopClause << ")"; });
+      auto N = RegionInfo.getRegionFor(Match.get<IR>());
+      auto DSItr = PrivateInfo.find(N);
+      assert(DSItr != PrivateInfo.end() && DSItr->get<DependencySet>() &&
+        "Privatiability information must be specified!");
       typedef bcl::StaticTraitMap<
         std::vector<LocationTraitSet *>, DependencyDescriptor> TraitMap;
       TraitMap TM;
-      for (auto &TS : DS)
+      for (auto &TS : *DSItr->get<DependencySet>())
         TS.for_each(
           bcl::TraitMapConstructor<LocationTraitSet, TraitMap>(TS, TM));
       printPragma(Match.get<AST>()->getLocStart(), Rewriter,

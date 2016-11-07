@@ -206,9 +206,5 @@ private:
   mutable BaseLocationSet mBases;
   LocationTraitMap mTraits;
 };
-
-/// This attribute is associated with DependencySet and
-/// can be added to a node in a data-flow graph.
-BASE_ATTR_DEF(DependencyAttr, DependencySet)
 }
 #endif//TSAR_TRAIT_H
