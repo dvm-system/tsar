@@ -364,9 +364,9 @@ private:
 template<class Id, class InTy, class OutTy = InTy >
 class DFValue :
   public std::conditional<std::is_void<InTy>::value,
-			  Utility::Null, detail::DFValueIn<InTy>>::type,
+    Utility::Null, detail::DFValueIn<InTy>>::type,
   public std::conditional<std::is_void<OutTy>::value,
-			  Utility::Null, detail::DFValueOut<OutTy>>::type {};
+    Utility::Null, detail::DFValueOut<OutTy>>::type {};
 
 /// \brief Instances of this class are used to represent a node
 /// with a small list of the adjacent nodes.

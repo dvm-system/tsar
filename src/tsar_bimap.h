@@ -403,7 +403,7 @@ public:
   /// Inserts a new element into the container by constructing it in-place with
   /// the given Args if there is no element with the key in the container.
   template<typename... ArgTy>
-  std::pair<iterator, bool>	emplace(ArgTy&&... Args) {
+  std::pair<iterator, bool> emplace(ArgTy&&... Args) {
     auto Node = new BimapNode(std::forward<ArgTy>(Args)...);
     auto Res = lookup(Node->mValue);
     if (Res.second)
