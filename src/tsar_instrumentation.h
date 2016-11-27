@@ -14,7 +14,7 @@
 #include "tsar_pass.h"
 
 namespace tsar {
-// Implement here all functionality that is not related to LLVM directly.
+// Implement hear all functionalyti that is not related to LLVM directly.
 
 }
 

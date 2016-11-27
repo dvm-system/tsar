@@ -31,7 +31,7 @@ class TransformationContext;
 /// This is a query manager that controls construction of response when analysis
 /// and transformation tool is launched.
 ///
-/// This describes default behavior of a tool. Two ways are available to
+/// This describes default behavior of a tool. Tow ways are available to
 /// override it:
 /// - The simplest way is to override createInitializationPass() and
 /// createFinalizationPass() methods. Passes constructed by these methods are
