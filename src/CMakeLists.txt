@@ -32,4 +32,6 @@ if(NOT PACKAGE_LLVM)
 endif()
 add_definitions("-D${PROJECT_NAME}_PROJECT" "-D${PROJECT_NAME}_CONFIG")
 target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS})
-install(TARGETS tsar RUNTIME DESTINATION bin)
+install(TARGETS tsar 
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION bin)
