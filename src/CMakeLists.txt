@@ -1,10 +1,15 @@
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-set(TSAR_EXECUTABLES main.cpp tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
+set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp tsar_private_c.cpp
   tsar_transformation.cpp tsar_instrumentation.cpp tsar_tool.cpp tsar_test.cpp
   tsar_loop_matcher.cpp tsar_memory_matcher.cpp tsar_pragma.cpp
   DFRegionInfo.cpp DefinedMemory.cpp LiveMemory.cpp)
+if (TSAR_SHARED)
+  set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
+else()
+  set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} main.cpp)
+endif()
 if(MSVC_IDE)
   source_group(src FILES ${TSAR_EXECUTABLES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
@@ -12,8 +17,15 @@ if(MSVC_IDE)
   source_group(base FILES ${BASE_HEADERS})
   source_group(patches FILES ${TSAR_PATCHES})
 endif()
-add_executable(tsar ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
-# Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM 
+if (TSAR_SHARED)
+  add_library(tsar SHARED
+    ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
+  add_definitions("-DBCL_EXPORTING")
+else()
+  add_executable(tsar
+    ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
+endif()
+# Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
   add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})

@@ -30,6 +30,10 @@ struct name_ { \
     static std::string Str(string_); \
     return Str; \
   } \
+  static std::string & name() { \
+    static std::string Str(#name_); \
+    return Str; \
+  } \
 };
 
 namespace trait {

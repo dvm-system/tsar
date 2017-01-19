@@ -13,6 +13,11 @@
 #ifndef TSAR_PASS_H
 #define TSAR_PASS_H
 
+namespace bcl {
+class IntrusiveConnection;
+class RedirectIO;
+}
+
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
@@ -49,6 +54,14 @@ FunctionPass * createPrivateRecognitionPass();
 /// Initializes a pass to fetch private variables before they will be promoted
 /// to registers or removed.
 void initializeFetchPromotePrivatePassPass(PassRegistry &Registry);
+
+/// Creates an interaction pass to obtain results of private variables analysis.
+ModulePass * createPrivateServerPass(
+  bcl::IntrusiveConnection &IC, bcl::RedirectIO &StdErr);
+
+/// Initializes an interaction pass to obtain results of private variables
+/// analysis.
+void initializePrivateServerPassPass(PassRegistry &Registry);
 
 /// Creates a pass to fetch private variables before they will be promoted
 /// to registers or removed.

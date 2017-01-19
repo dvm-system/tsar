@@ -72,8 +72,12 @@ option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
+option(TSAR_SHARED "Build shared library for TSAR" OFF)
 set(PACKAGE_LLVM_VERSION "3.8"
  CACHE STRING "Version of installed LLVM package (usefull only if PACKAGE_LLVM is set)")
+if(TSAR_SHARED AND NOT BUILD_TSAR)
+  message(FATAL_ERROR "For option TSAR_SHARED the following options must be set: BUILD_tSAR")
+endif()
 if((DOWNLOAD_LLVM AND LOCAL_LLVM) OR
    (DOWNLOAD_LLVM AND PACKAGE_LLVM) OR
    (LOCAL_LLVM AND PACKAGE_LLVM))

@@ -67,14 +67,6 @@ public:
   /// int main(int Argc, char **Argv) function.
   Tool(int Argc, const char **Argv);
 
-  /// \brief Creates analyzer according to specified options.
-  ///
-  /// It is possible to set options explicitly via access to Options structure.
-  /// For example, Options::get().EmitLLVM = true.
-  /// \attention Be careful when use this constructor because no checks for
-  /// options correctness will be performed.
-  Tool();
-
   /// \brief Performs analysis.
   ///
   /// \param [in, out] QM This is a query manager for this tool, that specifies
@@ -85,6 +77,14 @@ public:
   int run(QueryManager *QM = nullptr);
 
 private:
+  /// \brief Creates analyzer according to specified options.
+  ///
+  /// It is possible to set options explicitly via access to Options structure.
+  /// For example, Options::get().EmitLLVM = true.
+  /// \attention Be careful when use this constructor because no checks for
+  /// options correctness will be performed.
+  /// To activate options do not forget to invoke storeCLOptions().
+  Tool();
 
   /// \brief Stores command line options.
   ///
