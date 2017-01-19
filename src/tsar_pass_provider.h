@@ -28,6 +28,7 @@
 #define TSAR_PASS_PROVIDER_H
 
 #include <llvm/IR/Function.h>
+#include <llvm/IR/LegacyPassManagers.h>
 #include <llvm/Pass.h>
 #include <forward_list>
 #include <type_traits>

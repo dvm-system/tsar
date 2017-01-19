@@ -22,6 +22,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/raw_ostream.h>
@@ -89,8 +90,10 @@ public:
 }
 }
 
-template<> struct json::Traits<::tsar::msg::CommandLine> :
+namespace json {
+template<> struct Traits<::tsar::msg::CommandLine> :
   public json::Traits<::tsar::msg::detail::CommandLine::Base> {};
+}
 
 namespace {
 class ServerQueryManager : public QueryManager {
@@ -182,7 +185,9 @@ void run(IntrusiveConnection C) {
 }
 }
 
+namespace bcl {
 template<> BCL_DECLSPEC
-void bcl::createServer<std::string>(const Socket<std::string> *S) {
+void createServer<std::string>(const Socket<std::string> *S) {
   IntrusiveConnection::connect(S, '$', run);
+}
 }

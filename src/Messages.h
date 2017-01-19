@@ -101,15 +101,15 @@ struct Field { MSG_NAME(Field) typedef Type ValueType; };
 
 /// Specifies a way to access message fields.
 #define MSG_FIELD(Msg, Field) \
-static constexpr detail::##Msg##::##Field Field = detail::##Msg##::##Field();
+static constexpr detail::Msg::Field Field = detail::Msg::Field();
 
 namespace tsar {
 namespace msg {
 /// Represents general static information about header files.
 struct HeaderFile {
   MSG_NAME(header)
-  static const std::array<char *, 2> & extensions() {
-    static std::array<char *, 2> Exts{ { ".h", ".hpp" } };
+  static const std::array<const char *, 2> & extensions() {
+    static std::array<const char *, 2> Exts{ { ".h", ".hpp" } };
     return Exts;
   }
 };
@@ -117,8 +117,8 @@ struct HeaderFile {
 /// Represents general static information about source files.
 struct SourceFile {
   MSG_NAME(source)
-  static const std::array<char *, 3> & extensions() {
-    static std::array<char *, 3> Exts{ {".c", ".cpp", ".cxx"} };
+  static const std::array<const char *, 3> & extensions() {
+    static std::array<const char *, 3> Exts{ {".c", ".cpp", ".cxx"} };
     return Exts;
   }
 };
@@ -197,8 +197,9 @@ public:
 }
 }
 
+namespace json {
 /// Specialization of JSON serialization traits for tsar::msg::Status type.
-template<> struct json::Traits<tsar::msg::Status> {
+template<> struct Traits<tsar::msg::Status> {
   static bool parse(tsar::msg::Status &Dest, json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
@@ -225,7 +226,7 @@ template<> struct json::Traits<tsar::msg::Status> {
 };
 
 /// Specialization of JSON serialization traits for tsar::msg::Analysis type.
-template<> struct json::Traits<tsar::msg::Analysis> {
+template<> struct Traits<tsar::msg::Analysis> {
   static bool parse(tsar::msg::Analysis &Dest, json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
@@ -251,6 +252,7 @@ template<> struct json::Traits<tsar::msg::Analysis> {
   }
 };
 
-template<> struct json::Traits<tsar::msg::Diagnostic> :
+template<> struct Traits<tsar::msg::Diagnostic> :
   public json::Traits<tsar::msg::detail::Diagnostic::Base> {};
+}
 #endif//TSAR_MESSAGES_H

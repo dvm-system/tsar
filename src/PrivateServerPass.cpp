@@ -81,8 +81,10 @@ public:
 }
 }
 
-template<> struct json::Traits<tsar::msg::Statistic> :
+namespace json {
+template<> struct Traits<tsar::msg::Statistic> :
   public json::Traits<tsar::msg::detail::Statistic::Base> {};
+}
 
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
 namespace {
