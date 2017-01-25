@@ -42,12 +42,12 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
   // considered as alive before exit from this function.
-  LocationSet MayLives;
-  for (MemoryLocation &Loc : DefUse->getDefs()) {
+  MemorySet<MemoryLocation> MayLives;
+  for (const MemoryLocation &Loc : DefUse->getDefs()) {
     if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
       MayLives.insert(Loc);
   }
-  for (MemoryLocation &Loc : DefUse->getMayDefs()) {
+  for (const MemoryLocation &Loc : DefUse->getMayDefs()) {
     if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
       MayLives.insert(Loc);
   }
@@ -96,7 +96,7 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   assert(DefItr != DFF->getDefInfo().end() && DefItr->get<DefUseSet>() &&
     "Def-use set must not be null!");
   auto &DU = DefItr->get<DefUseSet>();
-  LocationSet newIn(DU->getUses());
+  MemorySet<MemoryLocation> newIn(DU->getUses());
   for (auto &Loc : LS->getOut()) {
     if (!DU->hasDef(Loc))
       newIn.insert(Loc);

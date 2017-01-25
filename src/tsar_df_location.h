@@ -15,6 +15,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Analysis/MemoryLocation.h>
+#include "MemorySet.h"
 
 namespace llvm {
 class LoadInst;
@@ -23,260 +24,6 @@ class raw_ostream;
 }
 
 namespace tsar {
-/// \brief This implements a set of memory locations.
-///
-/// Methods of this class do not use alias information. Consequently,
-/// two locations may overlap if they have identical address of beginning.
-/// \note This class manages memory allocation to store elements of
-/// a location set.
-class LocationSet {
-  /// Map from pointers to locations.
-  typedef llvm::DenseMap<const llvm::Value *, llvm::MemoryLocation *> MapTy;
-public:
-  /// \brief Calculates the difference between two sets of locations.
-  ///
-  /// The result set will contain locations from the first set which are not
-  /// overlapped with any locations from the second set.
-  /// \param [in] LocBegin Iterator that points to the beginning of
-  /// the first locations set.
-  /// \param [in] LocEnd Iterator that points to the ending of
-  /// the first locations set.
-  /// \param [in] LocSet The second location set.
-  /// \param [out] Result It contains the result of this operation.
-  /// The following operation should be provided:
-  /// - void ResultSet::insert(const llvm::MemoryLocation &)
-  /// - void ResultSet::insert(location_iterator &, location_iterator &)
-  template<class location_iterator, class ResultSet>
-  static void difference(
-      const location_iterator &LocBegin, const location_iterator &LocEnd,
-      const LocationSet &LocSet, ResultSet &Result) {
-    if (LocSet.mLocations.empty())
-      Result.insert(LocBegin, LocEnd);
-    for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      if (!LocSet.overlap(*I))
-        Result.insert(*I);
-  }
-
-  /// This implements iterator over all memory locations in a set.
-  template<class map_iterator> class MemoryLocationItr :
-    public std::iterator<std::forward_iterator_tag, llvm::MemoryLocation> {
-  public:
-    explicit MemoryLocationItr(const map_iterator &I) : mCurItr(I) {}
-
-    bool operator==(const MemoryLocationItr &RHS) const {
-      return mCurItr == RHS.mCurItr;
-    }
-
-    bool operator!=(const MemoryLocationItr &RHS) const {
-      return !operator==(RHS);
-    }
-
-    value_type & operator*() const { return *(mCurItr->second); }
-
-    value_type * operator->() const { return &operator*(); }
-
-    /// Preincrement
-    MemoryLocationItr & operator++() { ++mCurItr; return *this; }
-
-    /// Postincrement
-    MemoryLocationItr operator++(int) {
-      auto tmp = *this; ++*this; return tmp;
-    }
-
-  private:
-    map_iterator mCurItr;
-  };
-
-  /// This type used to iterate over all locations in this set.
-  typedef MemoryLocationItr<MapTy::iterator> iterator;
-
-  /// This type used to iterate over all locations in this set.
-  typedef MemoryLocationItr<MapTy::const_iterator> const_iterator;
-
-  /// Default constructor.
-  LocationSet() {}
-
-  /// Destructor.
-  ~LocationSet() { clear(); }
-
-  /// Move constructor.
-  LocationSet(LocationSet &&that) :
-    mLocations(std::move(that.mLocations)) {}
-
-  /// Copy constructor.
-  LocationSet(const LocationSet &that) {
-    insert(that.begin(), that.end());
-  }
-
-  /// Move assignment operator.
-  LocationSet & operator=(LocationSet &&that) {
-    if (this != &that) {
-      clear();
-      mLocations = std::move(that.mLocations);
-    }
-    return *this;
-  }
-
-  /// Copy assignment operator.
-  LocationSet & operator=(const LocationSet &that) {
-    if (this != &that) {
-      clear();
-      insert(that.begin(), that.end());
-    }
-    return *this;
-  }
-
-  /// Returns iterator that points to the beginning of locations.
-  iterator begin() { return iterator(mLocations.begin()); }
-
-  /// Returns iterator that points to the ending of locations.
-  iterator end() { return iterator(mLocations.end()); }
-
-  /// Returns iterator that points to the beginning of locations.
-  const_iterator begin() const { return const_iterator(mLocations.begin()); }
-
-  /// Returns iterator that points to the ending of locations.
-  const_iterator end() const { return const_iterator(mLocations.end()); }
-
-  /// Returns a location which contains the specified location.
-  iterator findContaining(const llvm::MemoryLocation &Loc) {
-    auto I = mLocations.find(Loc.Ptr);
-    return (I != mLocations.end() &&
-      Loc.Size <= I->second->Size &&
-      Loc.AATags == I->second->AATags) ?
-      iterator(I) : iterator(mLocations.end());
-  }
-
-  /// Returns a location which contains the specified location.
-  const_iterator findContaining(const llvm::MemoryLocation &Loc) const {
-    auto I = mLocations.find(Loc.Ptr);
-    return (I != mLocations.end() &&
-      Loc.Size <= I->second->Size &&
-      Loc.AATags == I->second->AATags) ?
-      const_iterator(I) : const_iterator(mLocations.end());
-  }
-
-  /// Returns true if there is a location in this set which contains
-  /// the specified location.
-  bool contain(const llvm::MemoryLocation &Loc) const {
-    return findContaining(Loc) != end();
-  }
-
-  /// Returns a location which is contained in the specified location.
-  iterator findCoveredBy(const llvm::MemoryLocation &Loc) {
-    auto I = mLocations.find(Loc.Ptr);
-    return (I != mLocations.end() &&
-      Loc.Size >= I->second->Size &&
-      Loc.AATags == I->second->AATags) ?
-      iterator(I) : iterator(mLocations.end());
-  }
-
-  /// Returns a location which is contained in the specified location.
-  const_iterator findCoveredBy(const llvm::MemoryLocation &Loc) const {
-    auto I = mLocations.find(Loc.Ptr);
-    return (I != mLocations.end() &&
-      Loc.Size >= I->second->Size &&
-      Loc.AATags == I->second->AATags) ?
-      const_iterator(I) : const_iterator(mLocations.end());
-  }
-
-  /// Returns true if there is a location in this set which is contained
-  /// in the specified location.
-  bool cover(const llvm::MemoryLocation &Loc) const {
-    return findCoveredBy(Loc) != end();
-  }
-
-  /// Returns a location which may overlap with the specified location.
-  iterator findOverlappedWith(const llvm::MemoryLocation &Loc) {
-    return iterator(mLocations.find(Loc.Ptr));
-  }
-
-  /// Returns a location which may overlap with the specified location.
-  const_iterator findOverlappedWith(const llvm::MemoryLocation &Loc) const {
-    return const_iterator(mLocations.find(Loc.Ptr));
-  }
-
-  /// Returns true if there is a location in this set which may overlap with
-  /// the specified location.
-  bool overlap(const llvm::MemoryLocation &Loc) const {
-    return findOverlappedWith(Loc) != end();
-  }
-
-  /// Returns true if this set does not contain any location.
-  bool empty() const {return mLocations.empty();}
-
-  /// Removes all locations from this set.
-  void clear() {
-    for (auto Pair : mLocations)
-      delete Pair.second;
-    mLocations.clear();
-  }
-
-  /// \brief Inserts a new location into this set, returns false if it already
-  /// exists.
-  ///
-  /// If the specified value contains some value in this set, the appropriate
-  /// value will be updated. In this case, this method also returns true.
-  std::pair<iterator, bool> insert(const llvm::MemoryLocation &Loc);
-
-  /// Inserts all locations from the range into this set, returns false
-  /// if nothing has been added and updated.
-  template<class location_iterator >
-  bool insert(
-      const location_iterator &LocBegin, const location_iterator &LocEnd) {
-    bool isChanged = false;
-    for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      isChanged = insert(*I).second || isChanged;
-    return isChanged;
-  }
-
-  /// Realizes intersection between two sets.
-  bool intersect(const LocationSet &with);
-
-  /// Realizes merger between two sets.
-  bool merge(const LocationSet &with) {
-    if (this == &with)
-      return false;
-    bool isChanged = false;
-    for (auto Pair : with.mLocations)
-      isChanged = insert(*Pair.second).second || isChanged;
-    return isChanged;
-  }
-
-  /// Compares two sets.
-  bool operator!=(const LocationSet &RHS) const { return !(*this == RHS); }
-
-  /// Compares two sets.
-  bool operator==(const LocationSet &RHS) const;
-
-  /// Prints set of memory locations.
-  void print(llvm::raw_ostream &OS) const;
-
-  /// Support for debugging.
-  void dump() const;
-
-private:
-  MapTy mLocations;
-};
-
-/// \brief Calculates the difference between two sets of locations.
-///
-/// \param [in] LocBegin Iterator that points to the beginning of
-/// the first locations set.
-/// \param [in] LocEnd Iterator that points to the ending of
-/// the first locations set.
-/// \param [in] LocSet The second location set.
-/// \param [out] Result It contains the result of this operation.
-/// The following operation should be provided:
-/// - void ResultSet::insert(const llvm::MemoryLocation &)
-/// - void ResultSet::insert(location_iterator &, location_iterator &)
-template<class location_iterator, class ResultSet>
-void difference(const location_iterator &LocBegin,
-  const location_iterator &LocEnd,
-  const LocationSet &LocSet, ResultSet &Result) {
-  LocationSet::difference(LocBegin, LocEnd, LocSet, Result);
-}
-
 /// \brief Representation of a data-flow value formed by a set of locations.
 ///
 /// A data-flow value is a set of locations for which a number of operations
@@ -471,7 +218,7 @@ public:
 
 private:
   Kind mKind;
-  LocationSet mLocations;
+  MemorySet<llvm::MemoryLocation> mLocations;
 };
 
 /// \brief This calculates the difference between a set of locations and a set
@@ -503,11 +250,12 @@ void difference(const location_iterator &LocBegin,
 class BaseLocationSet {
   /// \brief Map from stripped pointers which address base locations to a sets
   /// which contain all base locations addressed by the key pointer.
-  typedef llvm::DenseMap<const llvm::Value *, LocationSet *> StrippedMap;
+  using StrippedMap = llvm::DenseMap<
+    const llvm::Value *, MemorySet<llvm::MemoryLocation> *>;
 
   /// This is used to implement efficient iteration over all locations
   /// in the set.
-  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 32> BaseSet;
+  using BaseSet = llvm::SmallPtrSet<const llvm::MemoryLocation *, 32>;
 
 public:
   /// This type used to represent properties associated with a size of the set.

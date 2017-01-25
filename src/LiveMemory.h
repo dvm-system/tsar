@@ -26,7 +26,7 @@ namespace tsar {
 /// after this analysis.
 class LiveDFFwk : private bcl::Uncopyable {
 public:
-  typedef DFValue<LiveDFFwk, LocationSet> LiveSet;
+  typedef DFValue<LiveDFFwk, MemorySet<llvm::MemoryLocation>> LiveSet;
   typedef llvm::DenseMap<DFNode *, std::unique_ptr<LiveSet>,
     llvm::DenseMapInfo<DFNode*>,
     tsar::TaggedDenseMapPair<
@@ -52,7 +52,7 @@ typedef LiveDFFwk::LiveMemoryInfo LiveMemoryInfo;
 /// Traits for a data-flow framework which is used to find live locations.
 template<> struct DataFlowTraits<LiveDFFwk *> {
   typedef Backward<DFRegion * > GraphType;
-  typedef LocationSet ValueType;
+  typedef MemorySet<llvm::MemoryLocation> ValueType;
   static ValueType topElement(LiveDFFwk *, GraphType) { return ValueType(); }
   static ValueType boundaryCondition(LiveDFFwk *DFF, GraphType G) {
     assert(DFF && "Data-flow framework must not be null!");

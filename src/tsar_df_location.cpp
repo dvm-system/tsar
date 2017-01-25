@@ -20,76 +20,6 @@
 using namespace llvm;
 
 namespace tsar {
-std::pair<LocationSet::iterator, bool> LocationSet::insert(
-  const llvm::MemoryLocation &Loc) {
-  auto I = mLocations.find(Loc.Ptr);
-  if (I == mLocations.end()) {
-    MemoryLocation *NewLoc = new MemoryLocation(Loc);
-    auto Pair = mLocations.insert(std::make_pair(Loc.Ptr, NewLoc));
-    return std::make_pair(iterator(Pair.first), true);
-  }
-  bool isChanged = true;
-  if (I->second->AATags != Loc.AATags)
-    if (I->second->AATags == DenseMapInfo<AAMDNodes>::getEmptyKey())
-      I->second->AATags = Loc.AATags;
-    else
-      I->second->AATags = DenseMapInfo<AAMDNodes>::getTombstoneKey();
-  else
-    isChanged = false;
-  if (I->second->Size < Loc.Size) {
-    I->second->Size = Loc.Size;
-    isChanged = true;
-  }
-  return std::make_pair(iterator(I), isChanged);
-}
-
-bool LocationSet::intersect(const LocationSet &with) {
-  if (this == &with)
-    return false;
-  MapTy PrevLocations;
-  mLocations.swap(PrevLocations);
-  bool isChanged = false;
-  for (auto Pair : PrevLocations) {
-    auto I = with.findContaining(*Pair.second);
-    if (I != with.end()) {
-      insert(*Pair.second);
-      continue;
-    }
-    I = with.findCoveredBy(*Pair.second);
-    if (I != with.end()) {
-      insert(*I);
-      isChanged = true;
-    }
-  }
-  for (auto Pair : PrevLocations)
-    delete Pair.second;
-  return isChanged;
-}
-
-bool LocationSet::operator==(const LocationSet &RHS) const {
-  if (this == &RHS)
-    return true;
-  if (mLocations.size() != RHS.mLocations.size())
-    return false;
-  for (auto Pair : mLocations) {
-    auto I = RHS.mLocations.find(Pair.first);
-    if (I == RHS.mLocations.end() ||
-      I->second->Size != Pair.second->Size ||
-      I->second->AATags != Pair.second->AATags)
-      return false;
-  }
-  return true;
-}
-
-void LocationSet::print(raw_ostream &OS) const {
-  for (auto Pair : mLocations) {
-    printLocationSource(OS, Pair.second->Ptr);
-    OS << " " << *Pair.second->Ptr << "\n";
-  }
-}
-
-void LocationSet::dump() const { print(dbgs()); }
-
 bool LocationDFValue::intersect(const LocationDFValue &with) {
   assert(mKind != INVALID_KIND && "Collection is corrupted!");
   assert(with.mKind != INVALID_KIND && "Collection is corrupted!");
@@ -116,10 +46,14 @@ bool LocationDFValue::merge(const LocationDFValue &with) {
 }
 
 void LocationDFValue::print(raw_ostream &OS) const {
-  if (mKind == KIND_FULL)
+  if (mKind == KIND_FULL) {
     OS << "whole program memory\n";
-  else
-    mLocations.print(OS);
+    return;
+  }
+  for (auto &Loc: mLocations) {
+    printLocationSource(OS, Loc.Ptr);
+    OS << " " << *Loc.Ptr << "\n";
+  }
 }
 
 void LocationDFValue::dump() const { print(dbgs()); }
@@ -207,7 +141,7 @@ bool BaseLocationSet::isSameBase(
 std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
     const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
-  LocationSet *LS;
+  MemorySet<MemoryLocation> *LS;
   MemoryLocation Base(Loc);
   stripToBase(Base);
   const Value *StrippedPtr = Base.Ptr ? stripPointer(Base.Ptr) : nullptr;
@@ -220,7 +154,7 @@ std::pair<BaseLocationSet::iterator, bool> BaseLocationSet::insert(
         break;
       }
   } else {
-    LS = new LocationSet;
+    LS = new MemorySet<MemoryLocation>;
     mBases.insert(std::make_pair(StrippedPtr, LS));
   }
   auto Pair = LS->insert(Base);
@@ -237,7 +171,7 @@ BaseLocationSet::size_type BaseLocationSet::count(
   const Value *StrippedPtr = stripPointer(Base.Ptr);
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
-    LocationSet *LS = I->second;
+    MemorySet<MemoryLocation> *LS = I->second;
     for (MemoryLocation &Curr : *LS)
       if (isSameBase(Curr.Ptr, Base.Ptr)) {
         Base.Ptr = Curr.Ptr;

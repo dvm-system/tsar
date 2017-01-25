@@ -57,6 +57,9 @@ public:
   /// Set of instructions.
   typedef llvm::SmallPtrSet<llvm::Instruction *, 32> InstructionSet;
 
+  /// Set of memory locations.
+  typedef MemorySet<llvm::MemoryLocation> LocationSet;
+
   /// Constructor.
   DefUseSet(llvm::AliasAnalysis &AA) : mExplicitAccesses(AA) {}
 
