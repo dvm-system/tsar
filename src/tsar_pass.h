@@ -108,6 +108,12 @@ void initializeTestPrinterPassPass(PassRegistry &Registry);
 
 /// Creates a pass to print results of a test.
 ModulePass * createTestPrinterPass();
+
+/// Initializes a pass to determine perfect for-loops in a source code.
+void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
+
+/// Creates a pass to determine perfect for-loops in a source code.
+FunctionPass * createClangPerfectLoopPass();
 }
 
 #endif//TSAR_PASS_H

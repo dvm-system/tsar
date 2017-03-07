@@ -83,6 +83,7 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     PassRegistry::getPassRegistry()->getPassInfo(PRP->getPassID()), errs()));
   if (Ctx)
     Passes.add(createPrivateCClassifierPass());
+  Passes.add(createClangPerfectLoopPass());
   Passes.add(createVerifierPass());
   if (Pass *P = createFinalizationPass())
     Passes.add(P);
