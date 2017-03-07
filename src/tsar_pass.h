@@ -19,10 +19,12 @@ class RedirectIO;
 }
 
 namespace llvm {
+class PassInfo;
 class PassRegistry;
 class FunctionPass;
 class ModulePass;
 class ImmutablePass;
+class raw_ostream;
 
 /// Initializes all passes developed for TSAR project
 void initializeTSAR(PassRegistry &Registry);
