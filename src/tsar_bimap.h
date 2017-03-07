@@ -430,7 +430,8 @@ public:
       !std::is_void<bcl::get_tagged<Tag, Taggeds>>::value>::type>
   iterator find(const bcl::get_tagged_t<Tag, Taggeds> &Key) const {
     return taggedFindImp(
-      Key, std::is_same<FTy, bcl::get_tagged<Tag, Taggeds>>());
+      Key, std::is_same<
+        bcl::get_tagged<First, Taggeds>, bcl::get_tagged<Tag, Taggeds>>());
   }
 
   /// \brief Removes specified element from the container.
@@ -491,7 +492,8 @@ public:
       !std::is_void<bcl::get_tagged<Tag, Taggeds>>::value>::type>
   bool erase(const bcl::get_tagged_t<Tag, Taggeds> &Key) {
     return taggedEraseImp(
-      Key, std::is_same<FTy, bcl::get_tagged<Tag, Taggeds>>());
+      Key, std::is_same<
+        bcl::get_tagged<First, Taggeds>, bcl::get_tagged<Tag, Taggeds>>());
   }
 
 private:
