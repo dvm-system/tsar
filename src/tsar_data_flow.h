@@ -28,6 +28,7 @@
 #define TSAR_DATA_FLOW_H
 
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <algorithm>
@@ -60,10 +61,10 @@ namespace tsar {
 ///     Returns top element for the data-flow framework.
 /// - static ValueType boundaryCondition(DFFwk &, GraphType &) -
 ///     Returns boundary condition for the data-flow framework.
-/// - static void setValue(ValueType, NodeType *, DFFwk &),
-///   static ValueType getValue(NodeType *, DFFwk &) -
+/// - static void setValue(ValueType, NodeRef, DFFwk &),
+///   static ValueType getValue(NodeRef, DFFwk &) -
 ///     Allow to access data-flow value for the specified node.
-/// - static void initialize(NodeType *, DFFwk &, GraphType &) -
+/// - static void initialize(NodeRef, DFFwk &, GraphType &) -
 ///     Initializes auxiliary information which is necessary
 ///     to perform analysis. For example, it is possible to allocate
 ///     some memory or attributes to each node, etc.
@@ -72,7 +73,7 @@ namespace tsar {
 /// - static meetOperator(const ValueType &, ValueType &, DFFwk &, GraphType &) -
 ///     Evaluates a meet operator, the result is stored in the second
 ///     parameter.
-/// - static bool transferFunction(ValueType, NodeType *, DFFwk &, GraphType &)
+/// - static bool transferFunction(ValueType, NodeRef, DFFwk &, GraphType &)
 ///     Evaluates a transfer function for the specified node. This returns
 ///     true if produced data-flow value differs from the data-flow value
 ///     produced on previous iteration of the data-flow analysis algorithm.
@@ -181,7 +182,11 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
   typedef llvm::GraphTraits<GraphType> GT;
   typedef typename GT::nodes_iterator nodes_iterator;
   typedef typename GT::ChildIteratorType ChildIteratorType;
+#if (LLVM_VERSION_MAJOR < 4)
   typedef typename GT::NodeType NodeType;
+#else
+  typedef typename GT::NodeRef NodeRef;
+#endif
 #ifdef DEBUG
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
        I != E; ++I)
@@ -190,13 +195,21 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
       "Data-flow graph must not contain unreachable nodes!");
 #endif
   typedef llvm::po_iterator<
+#if (LLVM_VERSION_MAJOR < 4)
     GraphType, llvm::SmallPtrSet<NodeType *, 8>, false,
+#else
+    GraphType, llvm::SmallPtrSet<NodeRef, 8>, false,
+#endif
     llvm::GraphTraits<llvm::Inverse<GraphType> > > po_iterator;
+#if (LLVM_VERSION_MAJOR < 4)
   typedef std::vector<NodeType *> RPOTraversal;
+#else
+  typedef std::vector<NodeRef> RPOTraversal;
+#endif
   typedef typename RPOTraversal::reverse_iterator rpo_iterator;
   // We do not use llvm::ReversePostOrderTraversal class because its
-  // implementation requires that llvm::GraphTraits is specialized by^M
-  // NodeType *.
+  // implementation requires that llvm::GraphTraits is specialized by
+  // NodeRef.
   RPOTraversal RPOT;
   std::copy(po_iterator::begin(DFG), po_iterator::end(DFG),
             std::back_inserter(RPOT));

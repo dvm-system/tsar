@@ -409,6 +409,7 @@ private:
 }
 
 namespace llvm {
+#if (LLVM_VERSION_MAJOR < 4)
 template<> struct GraphTraits<tsar::Forward<tsar::DFNode *> > {
   typedef tsar::DFNode NodeType;
   static NodeType * getEntryNode(tsar::Forward<tsar::DFNode *> G) {
@@ -502,5 +503,100 @@ template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFRegion *> > > :
     return G.Graph.Graph->getExitNode();
   }
 };
+#else
+template<> struct GraphTraits<tsar::Forward<tsar::DFNode *>> {
+  typedef tsar::DFNode * NodeRef;
+  static NodeRef getEntryNode(tsar::Forward<tsar::DFNode *> G) {
+    return G.Graph;
+  }
+  typedef tsar::DFNode::pred_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeRef N) { return N->pred_begin(); }
+  static ChildIteratorType child_end(NodeRef N) { return N->pred_end(); }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Forward<tsar::DFNode *>>> {
+  typedef tsar::DFNode * NodeRef;
+  static NodeRef getEntryNode(Inverse<tsar::Forward<tsar::DFNode *>> G) {
+    return G.Graph.Graph;
+  }
+  typedef tsar::DFNode::succ_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeRef N) { return N->succ_begin(); }
+  static ChildIteratorType child_end(NodeRef N) { return N->succ_end(); }
+};
+
+/// \brief GraphTraits specializations for a data-flow graph.
+///
+/// Use it to solve data-flow problem in forward direction.
+template<> struct GraphTraits<tsar::Forward<tsar::DFRegion *>> :
+    public GraphTraits<tsar::Forward<tsar::DFNode * > > {
+  static NodeRef getEntryNode(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->getEntryNode();
+  }
+  typedef tsar::DFRegion::node_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::Forward<tsar::DFRegion *> G) {
+    return ++G.Graph->node_begin();
+  }
+  static nodes_iterator nodes_end(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->node_end();
+  }
+  unsigned size(tsar::Forward<tsar::DFRegion *> G) {
+    return G.Graph->getNumNodes();
+  }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Forward<tsar::DFRegion *>>>:
+    public GraphTraits<Inverse<tsar::Forward<tsar::DFNode *>>> {
+  static NodeRef getEntryNode(Inverse<tsar::Forward<tsar::DFRegion *>> G) {
+    return G.Graph.Graph->getEntryNode();
+  }
+};
+
+template<> struct GraphTraits<tsar::Backward<tsar::DFNode *>> {
+  typedef tsar::DFNode * NodeRef;
+  static NodeRef getEntryNode(tsar::Backward<tsar::DFNode *> G) {
+    return G.Graph;
+  }
+  typedef tsar::DFNode::succ_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeRef N) { return N->succ_begin(); }
+  static ChildIteratorType child_end(NodeRef N) { return N->succ_end(); }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFNode *>>> {
+  typedef tsar::DFNode * NodeRef;
+  static NodeRef getEntryNode(Inverse<tsar::Backward<tsar::DFNode *>> G) {
+    return G.Graph.Graph;
+  }
+  typedef tsar::DFNode::pred_iterator ChildIteratorType;
+  static ChildIteratorType child_begin(NodeRef N) { return N->pred_begin(); }
+  static ChildIteratorType child_end(NodeRef N) { return N->pred_end(); }
+};
+
+/// \brief GraphTraits specializations for a data-flow graph.
+///
+/// Use it to solve data-flow problem in backward direction.
+template<> struct GraphTraits<tsar::Backward<tsar::DFRegion *>> :
+  public GraphTraits<tsar::Backward<tsar::DFNode *>> {
+  static NodeRef getEntryNode(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->getExitNode();
+  }
+  typedef tsar::DFRegion::node_iterator nodes_iterator;
+  static nodes_iterator nodes_begin(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->node_begin();
+  }
+  static nodes_iterator nodes_end(tsar::Backward<tsar::DFRegion *> G) {
+    return --G.Graph->node_end();
+  }
+  unsigned size(tsar::Backward<tsar::DFRegion *> G) {
+    return G.Graph->getNumNodes();
+  }
+};
+
+template<> struct GraphTraits<Inverse<tsar::Backward<tsar::DFRegion *>>> :
+  public GraphTraits<Inverse<tsar::Backward<tsar::DFNode *>>> {
+  static NodeRef getEntryNode(Inverse<tsar::Backward<tsar::DFRegion *>> G) {
+    return G.Graph.Graph->getExitNode();
+  }
+};
+#endif
 }
 #endif//TSAR_DF_GRAPH_H

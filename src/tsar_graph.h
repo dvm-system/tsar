@@ -15,6 +15,7 @@
 #ifndef TSAR_GRAPH_H
 #define TSAR_GRAPH_H
 
+#include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseMap.h>
 
@@ -54,6 +55,7 @@ namespace detail {
 /// which is implemented in LLVM, because this implementation does not collect
 /// information about color of the node. So we can not determine whether all
 /// children of some node have been already visited.
+#if (LLVM_VERSION_MAJOR < 4)
 template<class GraphType>
 std::pair<
   typename llvm::GraphTraits<GraphType>::NodeType *,
@@ -63,6 +65,17 @@ std::pair<
     &VisitedNodes) {
   typedef llvm::GraphTraits<GraphType> GT;
   typedef typename GT::NodeType NodeType;
+#else
+template<class GraphType>
+std::pair<
+  typename llvm::GraphTraits<GraphType>::NodeRef,
+  typename llvm::GraphTraits<GraphType>::NodeRef> findBackEdge(
+    typename llvm::GraphTraits<GraphType>::NodeRef N,
+    llvm::DenseMap<typename llvm::GraphTraits<GraphType>::NodeRef, DFSColor>
+    &VisitedNodes) {
+  typedef llvm::GraphTraits<GraphType> GT;
+  typedef typename GT::NodeRef NodeRef;
+#endif
   assert(N && "Node must not be null!");
   assert(VisitedNodes.count(N) &&
     "Node must be located in the VisitedNodes collection!");
@@ -83,7 +96,11 @@ std::pair<
       return std::make_pair(N, *CI);
     }
   }
+#if (LLVM_VERSION_MAJOR < 4)
   return std::pair<NodeType *, NodeType *>(nullptr, nullptr);
+#else
+  return std::pair<NodeRef, NodeRef>(nullptr, nullptr);
+#endif
 }
 }
 
@@ -97,6 +114,7 @@ std::pair<
 /// If back edge in not found this function returns a pair of nullptrs
 /// \pre The llvm::GraphTraits class should be specialized by GraphType.
 /// Note that GraphType is generally a pointer type, for example BasicBlock *.
+#if (LLVM_VERSION_MAJOR < 4)
 template<class GraphType>
 inline std::pair<
   typename llvm::GraphTraits<GraphType>::NodeType *,
@@ -104,6 +122,15 @@ inline std::pair<
   typedef llvm::GraphTraits<GraphType > GT;
   typedef typename GT::NodeType NodeType;
   llvm::DenseMap<NodeType *, DFSColor> VisitedNodes;
+#else
+template<class GraphType>
+inline std::pair<
+  typename llvm::GraphTraits<GraphType>::NodeRef,
+  typename llvm::GraphTraits<GraphType>::NodeRef> findBackEdge(GraphType G) {
+  typedef llvm::GraphTraits<GraphType > GT;
+  typedef typename GT::NodeRef NodeRef;
+  llvm::DenseMap<NodeRef, DFSColor> VisitedNodes;
+#endif
   VisitedNodes.insert(std::make_pair(GT::getEntryNode(G), COLOR_GRAY));
   return detail::findBackEdge<GraphType>(GT::getEntryNode(G), VisitedNodes);
 }
