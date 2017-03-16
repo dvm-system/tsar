@@ -17,6 +17,7 @@
 #define TSAR_LOOP_TRAITS_H
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Function.h>
 #include <assert.h>
 #include <utility>
@@ -69,6 +70,7 @@ public:
 template<> class LoopTraits<std::pair<llvm::Function *, llvm::LoopInfo *>> {
   typedef std::pair<llvm::Function *, llvm::LoopInfo *> LoopReptn;
 public:
+#if (LLVM_VERSION_MAJOR < 4)
   class block_iterator : public llvm::Function::iterator {
     // Let us use this iterator to access a list of blocks in a function
     // as a list of pointers. Originally a list of blocks in a function is
@@ -82,6 +84,20 @@ public:
     block_iterator() : base() {}
     reference operator*() const { return base::operator pointer(); }
   };
+#else
+  class block_iterator : public llvm::Function::iterator {
+    // Let us use this iterator to access a list of blocks in a function
+    // as a list of pointers.
+    typedef llvm::Function::iterator base;
+  public:
+    explicit block_iterator(const llvm::Function::iterator &Itr) :
+      llvm::Function::iterator(Itr) {}
+    typedef pointer reference;
+    block_iterator(reference R) : base(R) {}
+    block_iterator() : base() {}
+    reference operator*() const { return &base::operator *(); }
+  };
+#endif
   typedef llvm::LoopInfo::iterator loop_iterator;
   static block_iterator block_begin(LoopReptn L) {
     return block_iterator(L.first->begin());
