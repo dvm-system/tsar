@@ -121,7 +121,12 @@ public:
   /// Constructor.
   AnalysisConsumer(CompilerInstance &CI, StringRef InFile,
     TransformationContext *TfmCtx, QueryManager *QM)
-    : mLLVMIRGeneration("LLVM IR Generation Time"),
+    : mLLVMIRGeneration(
+#if LLVM_VERSION_MAJOR > 3
+      "mLLVMIRGeneration",
+#endif
+      "LLVM IR Generation Time"
+    ),
     mASTContext(nullptr), mLLVMContext(new LLVMContext),
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
@@ -161,12 +166,20 @@ public:
     return true;
   }
 
+#if (LLVM_VERSION_MAJOR < 4)
   void HandleInlineMethodDefinition(CXXMethodDecl *D) override {
+#else
+  void HandleInlineFunctionDefinition(FunctionDecl *D) override {
+#endif
     PrettyStackTraceDecl CrashInfo(D, SourceLocation(),
       mASTContext->getSourceManager(), "LLVM IR generation of inline method");
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.startTimer();
-    mGen->HandleInlineMethodDefinition(D);
+#if (LLVM_VERSION_MAJOR < 4)
+     mGen->HandleInlineMethodDefinition(D);
+#else
+    mGen->HandleInlineFunctionDefinition(D);
+#endif
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.stopTimer();
   }
@@ -194,7 +207,11 @@ public:
     }
     assert(mModule.get() == M &&
       "Unexpected module change during IR generation");
-    Timer LLVMIRAnalysis("LLVM IR Analysis Time");
+    Timer LLVMIRAnalysis(
+#if LLVM_VERSION_MAJOR > 3
+      "LLVMIRAnalysis",
+#endif
+      "LLVM IR Analysis Time");
     if (llvm::TimePassesIsEnabled)
       LLVMIRAnalysis.startTimer();
     mQueryManager->run(M, mTransformContext);
@@ -216,10 +233,17 @@ public:
     mGen->CompleteTentativeDefinition(D);
   }
 
+#if (LLVM_VERSION_MAJOR > 3)
+  void AssignInheritanceModel(CXXRecordDecl *RD) override {
+    mGen->AssignInheritanceModel(RD);
+  }
+#endif
+
   void HandleVTable(CXXRecordDecl *RD) override {
     mGen->HandleVTable(RD);
   }
 
+#if (LLVM_VERSION_MAJOR < 4)
   void HandleLinkerOptionPragma(llvm::StringRef Opts) override {
     mGen->HandleLinkerOptionPragma(Opts);
   }
@@ -232,6 +256,7 @@ public:
   void HandleDependentLibrary(llvm::StringRef Opts) override {
     mGen->HandleDependentLibrary(Opts);
   }
+#endif
 
 private:
   Timer mLLVMIRGeneration;
@@ -304,7 +329,11 @@ void ActionBase::ExecuteAction() {
       << TargetOpts.Triple;
     M->setTargetTriple(TargetOpts.Triple);
   }
-  Timer LLVMIRAnalysis("LLVM IR Analysis Time");
+  Timer LLVMIRAnalysis(
+#if LLVM_VERSION_MAJOR > 3
+    "LLVMIRAnalysis",
+#endif
+    "LLVM IR Analysis Time");
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.startTimer();
   mQueryManager->run(M.get(), nullptr);
