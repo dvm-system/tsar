@@ -35,19 +35,19 @@ namespace ErrorList {
 /// This is a description of Traits Static Analyzer.
 struct TSAR {
   /// Name of the library.
-  DESCRIPTION_FIELD(Title, TEXT("Title"), TEXT(TSAR_FULL_NAME))
+  DESCRIPTION_FIELD(Title, "Title", TSAR_FULL_NAME)
 
   /// Abbreviation of the name.
-  DESCRIPTION_FIELD(Acronym, TEXT("Acronym"), TEXT(TSAR_NAME))
+  DESCRIPTION_FIELD(Acronym, "Acronym", TSAR_NAME)
 
   /// Version of the analyzer.
-  DESCRIPTION_FIELD(Version, TEXT("Version"), TEXT(TSAR_VERSION))
+  DESCRIPTION_FIELD(Version, "Version", TSAR_VERSION)
 
   /// Author of the analyzer.
-  DESCRIPTION_FIELD(Author, TEXT("Author"), TEXT(TSAR_AUTHOR))
+  DESCRIPTION_FIELD(Author, "Author", TSAR_AUTHOR)
 
   /// URL of the analyzer.
-  DESCRIPTION_FIELD(URL, TEXT("URL"), TEXT(TSAR_URL))
+  DESCRIPTION_FIELD(URL, "URL", TSAR_URL)
 
   /// List contains description of the library.
   typedef bcl::StaticMap<Title, Acronym, Version, Author> Description;
