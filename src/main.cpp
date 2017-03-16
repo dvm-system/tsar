@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/Config/llvm-config.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/PrettyStackTrace.h>
@@ -21,7 +22,11 @@ using namespace llvm;
 using namespace tsar;
 
 int main(int Argc, const char** Argv) {
+#if (LLVM_VERSION_MAJOR < 4)
   sys::PrintStackTraceOnErrorSignal();
+#else
+  sys::PrintStackTraceOnErrorSignal(Argv[0]);
+#endif
   PrettyStackTraceProgram StackTraceProgram(Argc, Argv);
   EnableDebugBuffering = true;
   llvm_shutdown_obj ShutdownObj; //call llvm_shutdown() on exit

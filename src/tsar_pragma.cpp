@@ -12,6 +12,7 @@
 #include <clang/AST/Stmt.h>
 #include <clang/Lex/Preprocessor.h>
 #include <llvm/ADT/StringSwitch.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Instructions.h>
 #include "tsar_pragma.h"
 
@@ -31,9 +32,13 @@ void AnalysisPragmaHandler::HandlePragma(
       return;
   } while (Tok.isNot(tok::eod));
   AddToken(tok::r_brace, Tok.getLocation(), 1);
+#if (LLVM_VERSION_MAJOR < 4)
   Token *TokenArray = new Token[mTokenList.size()];
   std::copy(mTokenList.begin(), mTokenList.end(), TokenArray);
-  PP.EnterTokenStream(TokenArray, mTokenList.size(), false, true);
+  PP.EnterTokenStream(TokenArray, mTOkenList.size(), false, true);
+#else
+  PP.EnterTokenStream(mTokenList, false);
+#endif
 }
 
 inline void AnalysisPragmaHandler::AddToken(

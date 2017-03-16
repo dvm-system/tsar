@@ -16,7 +16,6 @@
 #ifndef TSAR_PRIVATE_H
 #define TSAR_PRIVATE_H
 
-#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
 #include <utility.h>

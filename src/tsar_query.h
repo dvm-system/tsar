@@ -13,6 +13,7 @@
 #define TSAR_QUERY_H
 
 #include <llvm/ADT/StringRef.h>
+#include <llvm/Config/llvm-config.h>
 
 namespace llvm {
 class Pass;
@@ -74,7 +75,11 @@ public:
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
   void run(llvm::Module *M, tsar::TransformationContext *) override;
 private:
+#if (LLVM_VERSION_MAJOR < 4)
   llvm::raw_pwrite_stream *mOS = nullptr;
+#else
+  std::unique_ptr<llvm::raw_pwrite_stream > mOS;
+#endif
   const clang::CodeGenOptions *mCodeGenOpts = nullptr;
 };
 

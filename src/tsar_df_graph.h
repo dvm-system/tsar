@@ -216,7 +216,7 @@ public:
   }
 
   /// Get the number of nodes in this region.
-  unsigned getNumNodes() const { return mNodes.size(); }
+  size_t getNumNodes() const { return mNodes.size(); }
 
   /// \brief Get a list of the nodes which make up this region body.
   ///
@@ -232,7 +232,7 @@ public:
   node_iterator node_end() const { return mNodes.end(); }
 
   /// Get the number of internal regions.
-  unsigned getNumRegions() const { return mRegions.size(); }
+  size_t getNumRegions() const { return mRegions.size(); }
 
   // Get a list of internal regions.
   const std::vector<DFRegion *> & getRegions() const { return mRegions; }

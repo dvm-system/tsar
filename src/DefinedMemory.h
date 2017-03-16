@@ -52,10 +52,10 @@ namespace tsar {
 class DefUseSet {
 public:
   /// Set of pointers to locations.
-  typedef llvm::SmallPtrSet<llvm::Value *, 64> PointerSet;
+  typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
 
   /// Set of instructions.
-  typedef llvm::SmallPtrSet<llvm::Instruction *, 64> InstructionSet;
+  typedef llvm::SmallPtrSet<llvm::Instruction *, 32> InstructionSet;
 
   /// Constructor.
   DefUseSet(llvm::AliasAnalysis &AA) : mExplicitAccesses(AA) {}
@@ -171,23 +171,21 @@ public:
   bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const;
 
   /// Specifies that there are an explicit access to a location in the node.
-  ///
-  /// \return True if a new alias set has been created.
-  bool addExplicitAccess(const llvm::MemoryLocation &Loc) {
+  void addExplicitAccess(const llvm::MemoryLocation &Loc) {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
-    return mExplicitAccesses.add(
+    mExplicitAccesses.add(
       const_cast<llvm::Value *>(Loc.Ptr), Loc.Size, Loc.AATags);
   }
 
-  /// Specifies that there are an explicit access to a location in the node.
+  /// \brief Specifies that there are an explicit access to a location in
+  /// the node.
   ///
-  /// \return True if a new alias set has been created.
   /// \pre The specified instruction may read or modify memory.
-  bool addExplicitAccess(llvm::Instruction *I) {
+  void addExplicitAccess(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
     assert(I->mayReadOrWriteMemory() &&
       "Instruction does not read nor write memory!");
-    return mExplicitAccesses.add(I);
+    mExplicitAccesses.add(I);
   }
 
   /// Specifies that accesses to all locations from AST are performed

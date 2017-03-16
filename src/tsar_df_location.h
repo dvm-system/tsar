@@ -507,7 +507,7 @@ class BaseLocationSet {
 
   /// This is used to implement efficient iteration over all locations
   /// in the set.
-  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 64> BaseSet;
+  typedef llvm::SmallPtrSet<const llvm::MemoryLocation *, 32> BaseSet;
 
 public:
   /// This type used to represent properties associated with a size of the set.

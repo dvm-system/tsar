@@ -107,7 +107,7 @@ public:
     return false;
   }
 
-  const char *getPassName() const override { return mPassName.c_str(); }
+  StringRef getPassName() const override { return mPassName; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequiredID(mPassToPrint->getTypeInfo());
