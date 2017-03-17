@@ -56,9 +56,9 @@ endif(TSAR_COMPILER_IS_GCC_COMPATIBLE)
 #    All suitable patches will be applied simultaneously
 # 3. Configure LLVM project.
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
-set(LLVM_REPO "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_381/final/"
+set(LLVM_REPO "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_400/final/"
     CACHE STRING "URL of LLVM subversion repository (usefull only if DOWNLOAD_LLVM is set)")
-set(CLANG_REPO "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_381/final/"
+set(CLANG_REPO "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_400/final/"
     CACHE STRING "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH "Root of LLVM source tree")
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
@@ -73,7 +73,7 @@ option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 option(TSAR_SHARED "Build shared library for TSAR" OFF)
-set(PACKAGE_LLVM_VERSION "3.8"
+set(PACKAGE_LLVM_VERSION "4.0"
  CACHE STRING "Version of installed LLVM package (usefull only if PACKAGE_LLVM is set)")
 if(TSAR_SHARED AND NOT BUILD_TSAR)
   message(FATAL_ERROR "For option TSAR_SHARED the following options must be set: BUILD_tSAR")
@@ -205,12 +205,18 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
 			mipsasmparser mipsinfo mipscodegen              			
 			sparcasmparser sparcinfo sparccodegen
 			systemzasmparser systemzinfo systemzcodegen
-			cppbackendinfo cppbackendcodegen
 			hexagoninfo hexagoncodegen
 			xcoreinfo xcorecodegen
 			bpfinfo bpfcodegen
 			nvptxinfo nvptxcodegen
 			msp430info msp430codegen)
+    if((${LLVM_PACKAGE_VERSION} VERSION_LESS "4.0"))
+      set(LLVM_COMPONENTS ${LLVM_COMPONENTS} cppbackendinfo cppbackendcodegen)
+    else()
+      set(LLVM_COMPONENTS ${LLVM_COMPONENTS}
+        lanaiasmparser lanaiinfo lanaicodegen
+        riscvdesc riscvinfo riscvcodegen)
+    endif()
     if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.7")
       message(FATAL_ERROR "Unsupported version of LLVM: ${LLVM_PACKAGE_VERSION}. Versions less then 3.7 is unsupported.")
       set(LLVM_COMPONENTS ${LLVM_COMPONENTS} debuginfo)
