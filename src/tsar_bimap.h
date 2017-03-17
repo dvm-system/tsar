@@ -146,11 +146,12 @@ public:
 
     template<class... ArgsTy,
       class = typename std::enable_if<
-        std::is_constructible<value_type, ArgsTy&&...>::value>::type>
+        std::is_constructible<
+          typename Self::value_type, ArgsTy&&...>::value>::type>
     BimapNode(ArgsTy&&... Args) :
       mValue(std::forward<ArgsTy>(Args)...) {}
 
-    value_type mValue;
+    typename Self::value_type mValue;
   };
 
   /// This is a main collection that contains all pairs of elements in the map.
