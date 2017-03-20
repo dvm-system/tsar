@@ -10,7 +10,7 @@
 
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/Analysis/Passes.h>
-#if (LLVM_VERSION_MAJOR > 2 && LLVM_VERSION_MINOR > 7)
+#if (LLVM_VERSION_MAJOR > 2 && LLVM_VERSION_MINOR > 7 || LLVM_VERSION_MAJOR > 3)
 # include <llvm/Analysis/BasicAliasAnalysis.h>
 #endif
 #include <llvm/CodeGen/Passes.h>
