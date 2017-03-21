@@ -47,6 +47,12 @@ void initializeLiveMemoryPassPass(PassRegistry &Registry);
 /// Creates a pass to find live locations for each data-flow region.
 FunctionPass * createLiveMemoryPass();
 
+/// Initializes a pass to build hierarchy of accessed memory.
+void initializeEstimateMemoryPassPass(PassRegistry &Registry);
+
+/// Creates a pass to build hierarchy of accessed memory.
+FunctionPass * createEstimateMemoryPass();
+
 /// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 

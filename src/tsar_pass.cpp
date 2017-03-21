@@ -19,6 +19,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeDFRegionInfoPassPass(Registry);
   initializeDefinedMemoryPassPass(Registry);
   initializeLiveMemoryPassPass(Registry);
+  initializeEstimateMemoryPassPass(Registry);
   initializePrivateRecognitionPassPass(Registry);
   initializeTransformationEnginePassPass(Registry);
   initializePrivateCClassifierPassPass(Registry);
