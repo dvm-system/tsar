@@ -22,6 +22,8 @@
 #include "tsar_utility.h"
 #include <Chain.h>
 #include <utility.h>
+#include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/simple_ilist.h>
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -602,6 +604,71 @@ inline void AliasNode::release(const AliasTree &G) const {
 }
 
 namespace llvm {
+//===----------------------------------------------------------------------===//
+// GraphTraits specializations for alias tree (AliasTree)
+//===----------------------------------------------------------------------===//
+
+template<> struct GraphTraits<tsar::AliasNode *> {
+  using NodeRef = tsar::AliasNode *;
+  static NodeRef getEntryNode(tsar::AliasNode *AN) noexcept {
+    return AN;
+  }
+  using ChildIteratorType =
+    pointer_iterator<tsar::AliasNode::child_iterator>;
+  static ChildIteratorType child_begin(NodeRef AN) {
+    return ChildIteratorType(AN->child_begin());
+  }
+  static ChildIteratorType child_end(NodeRef AN) {
+    return ChildIteratorType(AN->child_end());
+  }
+};
+
+template<> struct GraphTraits<const tsar::AliasNode *> {
+  using NodeRef = const tsar::AliasNode *;
+  static NodeRef getEntryNode(const tsar::AliasNode *AN) noexcept {
+    return AN;
+  }
+  using ChildIteratorType =
+    pointer_iterator<tsar::AliasNode::const_child_iterator>;
+  static ChildIteratorType child_begin(NodeRef AN) {
+    return ChildIteratorType(AN->child_begin());
+  }
+  static ChildIteratorType child_end(NodeRef AN) {
+    return ChildIteratorType(AN->child_end());
+  }
+};
+
+template<> struct GraphTraits<tsar::AliasTree *> :
+    public GraphTraits<tsar::AliasNode *> {
+  static NodeRef getEntryNode(tsar::AliasTree *AT) noexcept {
+    return AT->getTopLevelNode();
+  }
+  using nodes_iterator = pointer_iterator<tsar::AliasTree::iterator>;
+  static nodes_iterator nodes_begin(tsar::AliasTree *AT) {
+    return nodes_iterator(AT->begin());
+  }
+  static nodes_iterator nodes_end(tsar::AliasTree *AT) {
+    return nodes_iterator(AT->end());
+  }
+  static unsigned size(tsar::AliasTree *AT) { AT->size(); }
+};
+
+template<> struct GraphTraits<const tsar::AliasTree *> :
+    public GraphTraits<const tsar::AliasNode *> {
+  static NodeRef getEntryNode(const tsar::AliasTree *AT) noexcept {
+    return AT->getTopLevelNode();
+  }
+  using nodes_iterator = pointer_iterator<tsar::AliasTree::const_iterator>;
+  static nodes_iterator nodes_begin(const tsar::AliasTree *AT) {
+    return nodes_iterator(AT->begin());
+  }
+  static nodes_iterator nodes_end(const tsar::AliasTree *AT) {
+    return nodes_iterator(AT->end());
+  }
+  static unsigned size(const tsar::AliasTree *AT) { AT->size(); }
+};
+
+
 /// This per-function analysis pass build hierarchy of a whole memory which
 /// is used in an analyzed function.
 class EstimateMemoryPass : public FunctionPass, private bcl::Uncopyable {
