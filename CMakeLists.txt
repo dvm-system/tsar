@@ -64,7 +64,6 @@ set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH "Root of LLVM source t
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
-set(LLVM_DIR "${LLVM_BINARY_DIR}/share/llvm/cmake")
 option(DOWNLOAD_LLVM "Download LLVM from subversion repository" OFF)
 option(LOCAL_LLVM "Use existing LLVM installation" OFF)
 option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
@@ -105,7 +104,10 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/llvm-install")
     add_subdirectory(${LLVM_SOURCE_DIR} ${LLVM_BINARY_DIR} EXCLUDE_FROM_ALL)
     set(CMAKE_INSTALL_PREFIX ${SAVE_CMAKE_INSTALL_PREFIX})
-    find_package(LLVM CONFIG)
+    find_package(LLVM CONFIG PATHS
+      "${LLVM_BINARY_DIR}/share/llvm/cmake"
+      "${LLVM_BINARY_DIR}/lib/cmake/llvm"
+      NO_DEFAULT_PATH)
     if(NOT LLVM_FOUND)
      message(FATAL_ERROR "${LLVM_STATUS} - error")
     else()
