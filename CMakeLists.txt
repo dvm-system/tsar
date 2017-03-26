@@ -201,7 +201,7 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     set(LLVM_STATUS "Specifying LLVM dependences (include directories, libraries, macros etc.)")
     message(STATUS ${LLVM_STATUS})
        set(LLVM_COMPONENTS analysis asmparser bitreader core instrumentation
-                        irreader scalaropts support tablegen target transformutils
+                        irreader scalaropts support tablegen target transformutils coverage
 			mcparser option
 			x86asmparser x86info x86codegen
 			powerpcasmparser powerpcinfo powerpccodegen
