@@ -50,7 +50,7 @@ public:
   int run(QueryManager *QM = nullptr);
 
 private:
-   /// \brief Stores command line options.
+  /// \brief Stores command line options.
   ///
   /// The Options::get() method returns an object accessed from different
   /// places. To avoid redefinition of options after creation of this tool it
@@ -74,6 +74,9 @@ private:
   bool mEmitLLVM;
   bool mInstrLLVM;
   bool mTest;
+#ifdef FINLINER
+  bool mInline;
+#endif
   std::string mOutputFilename;
   std::string mLanguage;
 };

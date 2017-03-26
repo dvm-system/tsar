@@ -10,19 +10,26 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#ifdef FINLINER
+
 #if !defined(TSAR_FINLINER_H)
 #define TSAR_FINLINER_H
 
-#include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/ASTMatchers/ASTMatchFinder.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Lex/Lexer.h"
-#include "clang/Rewrite/Core/Rewriter.h"
+#include "tsar_action.h"
+#include "tsar_transformation.h"
 
+#include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/ASTMatchers/ASTMatchFinder.h>
+#include <clang/CodeGen/ModuleBuilder.h>
+#include <clang/Frontend/CompilerInstance.h>
+#include <clang/Lex/Lexer.h>
+#include <clang/Rewrite/Core/Rewriter.h>
+#include <llvm/IR/Module.h>
 
 namespace detail {
+
 /// Contains information required for correct and complete function body
-/// instantiation and access methods to it.
+/// instantiation and access methods to it
 class Template {
 public:
   clang::FunctionDecl* getFuncDecl() const {
@@ -68,71 +75,54 @@ private:
 };
 
 /// Represents one specific place in user source code where one of specified
-/// functions (for inlining) is called.
-class TemplateInstantiation {
-public:
-  TemplateInstantiation(
-    clang::FunctionDecl* FD, clang::Stmt* S, clang::CallExpr* CE)
-    : mFuncDecl(FD), mStmt(S), mCallExpr(CE), mTemplate(nullptr) {
-  }
-
-  clang::FunctionDecl* getFuncDecl() const {
-    return mFuncDecl;
-  }
-
-  void setFuncDecl(clang::FunctionDecl* FD) {
-    mFuncDecl = FD;
-    return;
-  }
-
-  clang::Stmt* getStmt() const {
-    return mStmt;
-  }
-
-  clang::CallExpr* getCallExpr() const {
-    return mCallExpr;
-  }
-
-  Template* getTemplate() const {
-    return mTemplate;
-  }
-
-  void setTemplate(Template* T) {
-    mTemplate = T;
-    return;
-  }
-
-private:
+/// functions (for inlining) is called
+struct TemplateInstantiation {
   clang::FunctionDecl* mFuncDecl;
   clang::Stmt* mStmt;
   clang::CallExpr* mCallExpr;
   Template* mTemplate;
 };
+
+inline bool operator==(
+  const TemplateInstantiation& lhs, const TemplateInstantiation& rhs) {
+  return lhs.mFuncDecl == rhs.mFuncDecl
+    && lhs.mStmt == rhs.mStmt
+    && lhs.mCallExpr == rhs.mCallExpr
+    && lhs.mTemplate == rhs.mTemplate;
 }
-using namespace detail;
+
+}
+
+namespace tsar {
 
 /// This class provides both AST traversing and source code buffer modification
-/// (through Rewriter). Note that the only result of its work - modified
-/// Rewriter (buffer) object passed by reference to its constructor.
+/// (through Rewriter API). Note that the only result of its work - modified
+/// Rewriter (buffer) object inside passed Transformation Context.
 class FInliner :
   public clang::RecursiveASTVisitor<FInliner>,
   public clang::ASTConsumer {
 public:
   explicit FInliner(
-    clang::CompilerInstance& Compiler, clang::Rewriter& Rewriter)
-    : mCompiler(Compiler), mContext(mCompiler.getASTContext()),
-    mRewriter(Rewriter) {
+      clang::CompilerInstance& CI, llvm::StringRef InFile,
+      tsar::TransformationContext* TfmCtx, tsar::QueryManager* QM)
+      : mCompiler(CI), mContext(mCompiler.getASTContext()),
+      mLLVMContext(new llvm::LLVMContext),
+      mGen(clang::CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
+        CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
+        CI.getCodeGenOpts(), *mLLVMContext)), mTransformContext(TfmCtx),
+      mQueryManager(QM),
+      mRewriter(TfmCtx->getRewriter()) {
+    assert(mTransformContext && "Transformation context must not be null!");
+    mTransformContext->reset(mContext, *mGen);
   }
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
+  bool VisitForStmt(clang::ForStmt* FS);
+
   bool VisitDeclRefExpr(clang::DeclRefExpr* DRE);
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
-
-  bool VisitLabelStmt(clang::LabelStmt* LS);
-
-  bool VisitNamedDecl(clang::NamedDecl* ND);
 
   /// Traverses AST, collects necessary information using overriden methods above
   /// and applies it to source code using private methods below
@@ -141,18 +131,24 @@ public:
 private:
   /// Constructs correct language declaration of \p identifier with \p type
   /// Uses bruteforce with linear complexity dependent on number of tokens
-  /// in \p type where token is word or non-whitespace character.
+  /// in \p type where token is non-whitespace character or special sequence.
+  /// \p context is a string containing declarations used in case of referencing
+  /// in \p type.
   /// \returns vector of tokens which can be transformed to text string for
   /// insertion into source code
   std::vector<std::string> construct(
-      const std::string& type, const std::string& identifier);
+    const std::string& type, const std::string& identifier,
+    std::string& context);
 
   /// Does instantiation of \p TI using \p args generating non-collidable
-  /// identifiers/labels if necessary.
+  /// identifiers/labels if necessary. Since instantiation is recursive,
+  /// collects all visible and newly created named declarations in \p decls
+  /// to avoid later possible collisions.
   /// \returns text of instantiated function body and result identifier
   std::pair<std::string, std::string> compile(
-      const TemplateInstantiation& TI, const std::vector<std::string>& args,
-      std::set<std::string>& identifiers, std::set<std::string>& labels);
+    const detail::TemplateInstantiation& TI,
+    const std::vector<std::string>& args,
+    std::set<std::string>& decls);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
@@ -165,7 +161,7 @@ private:
   /// necessary operators available (e.g. private operator=, etc).
   /// Used only for turning off llvm::errs() during bruteforce in construct() -
   /// each variant is attempted for parsing into correct AST (only one variant
-  /// gives correct AST) with multiple warning and errors.
+  /// gives correct AST) with multiple warnings and errors.
   template<typename T>
   void swap(T& lhs, T& rhs) const;
 
@@ -173,25 +169,14 @@ private:
   /// \p identifiers
   /// \returns new identifier (which is already inserted into identifiers)
   std::string addSuffix(
-      const std::string& prefix, std::set<std::string>& identifiers) const;
+    const std::string& prefix, std::set<std::string>& identifiers) const;
 
   /// Splits string \p s into tokens using pattern \p p
   std::vector<std::string> tokenize(std::string s, std::string p) const;
 
-  /// Replaces all undefined words in \p tokens with "int", removes special
-  /// declaration specifiers. Allows to neglect original context of entity
-  /// which is "encoded" in \p tokens. \p keywords are context-independent
-  /// so it can be left
-  /// \returns positions of removed declaration specifiers (for recovery)
-  std::map<std::string, std::vector<int>> preprocess(
-      std::vector<std::string>& tokens,
-      const std::vector<std::string>& keywords) const;
-
-  /// Method is opposite to previous - recovers removed declaration
-  /// specifiers using \p positions
-  void postprocess(
-      std::vector<std::string>& tokens,
-      std::map<std::string, std::vector<int>> positions) const;
+  /// if \p S is declaration statement we shouldn't place braces if
+  /// declarations were referenced outside it
+  bool requiresBraces(clang::Stmt* S) const;
 
   /// Local matcher to find correct node in AST during construct()
   class : public clang::ast_matchers::MatchFinder::MatchCallback {
@@ -199,15 +184,16 @@ private:
     void run(const clang::ast_matchers::MatchFinder::MatchResult& MatchResult) {
       const clang::VarDecl* VD
         = MatchResult.Nodes.getNodeAs<clang::VarDecl>("varDecl");
-      if (processor(VD->getType().getAsString()) == type) {
+      if (VD->getName() == identifier
+        && processor(VD->getType().getAsString()) == type) {
         ++count;
       }
       return;
     }
-    void setParameters(
-        const std::string& type,
+    void setParameters(const std::string& type, const std::string& identifier,
         const std::function<std::string(const std::string&)>& processor) {
       this->type = type;
+      this->identifier = identifier;
       this->processor = processor;
       return;
     }
@@ -220,21 +206,56 @@ private:
     }
   private:
     std::string type;
-    std::function<std::string(const std::string&)> processor;  // combination of tokenize, preprocess and join
+    std::string identifier;
+    std::function<std::string(const std::string&)> processor; 
     int count;
   } varDeclHandler;
+
+  tsar::TransformationContext* mTransformContext;
+  tsar::QueryManager* mQueryManager;
 
   clang::CompilerInstance& mCompiler;
   clang::ASTContext& mContext;
   clang::Rewriter& mRewriter;
 
+  std::unique_ptr<llvm::LLVMContext> mLLVMContext;
+  std::unique_ptr<clang::CodeGenerator> mGen;
+
+  /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD;
 
-  std::map<clang::FunctionDecl*, Template> mTs;
-  std::map<clang::FunctionDecl*, std::vector<TemplateInstantiation>> mTIs;
+  /// for statements - for detecting call expressions which can be inlined
+  std::vector<clang::Stmt*> mFSs;
 
-  std::map<clang::FunctionDecl*, std::vector<clang::LabelStmt*>> mLSs;  // labeled statements in each function definition
-  std::map<clang::FunctionDecl*, std::vector<clang::NamedDecl*>> mNDs;  // named declarations in each function definition
+  std::set<clang::DeclRefExpr*> mRefs;
+
+  std::set<clang::Decl*> mGlobalDecls;
+
+  std::map<clang::FunctionDecl*, detail::Template> mTs;
+  std::map<clang::FunctionDecl*, std::vector<detail::TemplateInstantiation>> mTIs;
 };
+
+class FInlinerAction : public tsar::ActionBase {
+public:
+  FInlinerAction(std::vector<std::string> CL, tsar::QueryManager* QM);
+
+  std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance& CI, llvm::StringRef InFile);
+
+  static std::string createProjectFile(const std::vector<std::string>& sources);
+
+  /// reformats content of file \p FID with LLVM style
+  bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
+
+  /// overwrites changed files and reformats them for readability
+  void EndSourceFileAction();
+
+private:
+  std::unique_ptr<tsar::TransformationContext> mTfmCtx;
+};
+
+}
+
+#endif
 
 #endif
