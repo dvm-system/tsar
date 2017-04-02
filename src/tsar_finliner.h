@@ -23,6 +23,7 @@
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
+#include <clang/Lex/Preprocessor.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
 
@@ -230,7 +231,7 @@ private:
   std::set<clang::DeclRefExpr*> mRefs;
 
   std::set<clang::Decl*> mGlobalDecls;
-
+  std::map<clang::FunctionDecl*, std::set<std::string>> decls;
   std::map<clang::FunctionDecl*, detail::Template> mTs;
   std::map<clang::FunctionDecl*, std::vector<detail::TemplateInstantiation>> mTIs;
 };
@@ -247,10 +248,27 @@ public:
   /// reformats content of file \p FID with LLVM style
   bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
 
+  /// preprocessing
+  bool BeginSourceFileAction(clang::CompilerInstance& CI, llvm::StringRef InFile);
+
   /// overwrites changed files and reformats them for readability
   void EndSourceFileAction();
 
 private:
+  /// local matcher for #include directives, required for cases
+  /// when inlined in one file function body from the second file contains
+  /// references of objects defined in second file' includes
+  class IncludeCallback : public clang::PPCallbacks {
+  public:
+    void InclusionDirective(clang::SourceLocation HashLoc,
+      const clang::Token& IncludeTok, StringRef FileName, bool IsAngled,
+      clang::CharSourceRange FilenameRange, const clang::FileEntry* File,
+      llvm::StringRef SearchPath, llvm::StringRef RelativePath,
+      const llvm::Module* Imported) {
+    }
+  };
+
+  clang::CompilerInstance* mCompilerInstance;
   std::unique_ptr<tsar::TransformationContext> mTfmCtx;
 };
 

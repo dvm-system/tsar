@@ -28,10 +28,10 @@
 #include <clang/Tooling/Tooling.h>
 #include <llvm/Support/raw_ostream.h>
 
-// TODO(jury.zykov@yandex.ru): decrease size of context used in construct() (currently works slow)
-// TODO(jury.zykov@yandex.ru): add constraints checks for inlinable functions
+// TODO(jury.zykov@yandex.ru): replacements in macro
+// TODO(jury.zykov@yandex.ru): add include-directives when needed
 // TODO(jury.zykov@yandex.ru): direct argument passing without local variables when possible
-// TODO(jury.zykov@yandex.ru): add helpful comments near instantiations in user files
+// TODO(jury.zykov@yandex.ru): simplify use
 
 using namespace tsar;
 using namespace detail;
@@ -137,9 +137,6 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
 
 bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr* DRE) {
   mRefs.insert(DRE);
-  if (mTs.find(mCurrentFD) == mTs.end()) {
-    return true;
-  }
   // parameter reference
   if (llvm::isa<clang::ParmVarDecl>(DRE->getDecl()) == true) {
     mTs[mCurrentFD].addParmRef(
@@ -149,9 +146,6 @@ bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr* DRE) {
 }
 
 bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
-  if (mTs.find(mCurrentFD) == mTs.end()) {
-    return true;
-  }
   mTs[mCurrentFD].addRetStmt(RS);
   return true;
 }
@@ -166,8 +160,7 @@ std::vector<std::string> FInliner::construct(
   std::vector<std::string> tokens = tokenize(type, pattern);
   varDeclHandler.setParameters(join(tokens, " "), identifier,
     [&](const std::string& s) -> std::string {
-    std::vector<std::string> tokens = tokenize(s, pattern);
-    return join(tokens, " ");
+    return join(tokenize(s, pattern), " ");
   });
   tokens.push_back(identifier);
   std::vector<int> counts(tokens.size(), 0);
@@ -208,23 +201,30 @@ std::pair<std::string, std::string> FInliner::compile(
     && "Undefined behavior: incorrect number of arguments specified");
   clang::Rewriter lRewriter(mCompiler.getSourceManager(),
     mCompiler.getLangOpts());
+  clang::SourceManager& SM = lRewriter.getSourceMgr();
   std::string params;
   std::string context;
-  for (auto& decl : mGlobalDecls) {
-    context += getSourceText(decl->getSourceRange()) + ";";
-  }
   decls.insert(std::begin(args), std::end(args));
   for (auto& PVD : TI.mTemplate->getFuncDecl()->params()) {
     std::string identifier = addSuffix(PVD->getName(), decls);
     std::vector<std::string> tokens
-      = construct(PVD->getType().getUnqualifiedType().getAsString(), identifier,
-        context);
+      = tokenize(getSourceText(PVD->getSourceRange()), "\\w+");
+    for (auto& decl : mGlobalDecls) {
+      if (clang::isa<clang::NamedDecl>(decl) == true) {
+        if (std::find(std::begin(tokens), std::end(tokens),
+          reinterpret_cast<clang::NamedDecl*>(decl)->getName())
+          != std::end(tokens)) {
+          context += getSourceText(decl->getSourceRange()) + ";";
+        }
+      }
+    }
+    tokens = construct(PVD->getType().getAsString(), identifier, context);
     params.append(join(tokens, " ") + " = " + args[PVD->getFunctionScopeIndex()]
       + ";");
     std::vector<clang::DeclRefExpr*> parameterReferences
       = TI.mTemplate->getParmRefs(PVD);
     for (auto& DRE : parameterReferences) {
-      lRewriter.ReplaceText(DRE->getSourceRange(), identifier);
+      lRewriter.ReplaceText(SM.getSpellingLoc(DRE->getLocStart()), identifier);
     }
   }
 
@@ -254,6 +254,9 @@ std::pair<std::string, std::string> FInliner::compile(
         lRewriter.InsertTextBefore(TI.mStmt->getSourceRange().getBegin(),
           text.first);
       }
+      lRewriter.InsertTextBefore(TI.mStmt->getLocStart(),
+        "/* " + getSourceText(TI.mCallExpr->getSourceRange())
+        + " is inlined below */\n");
     }
   }
 
@@ -294,41 +297,95 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     mGlobalDecls.insert(decl);
   }
   // associate instantiations with templates
+  std::set<clang::FunctionDecl*> callable;
   for (auto& TIs : mTIs) {
     for (auto& TI : TIs.second) {
       const clang::FunctionDecl* definition = nullptr;
       TI.mCallExpr->getDirectCallee()->hasBody(definition);
       TI.mTemplate = &mTs.at(const_cast<clang::FunctionDecl*>(definition));
+      callable.insert(const_cast<clang::FunctionDecl*>(definition));
     }
   }
+  // identifiers in scope
+  for (auto& TIs : mTIs) {
+    for (auto& decl : mGlobalDecls) {
+      if (clang::isa<clang::NamedDecl>(decl) == true) {
+        decls[TIs.first].insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
+      }
+    }
+    for (auto& decl : TIs.first->decls()) {
+      if (clang::isa<clang::NamedDecl>(decl) == true) {
+        decls[TIs.first].insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
+      }
+    }
+  }
+  // remove unused templates
+  for (auto it = mTs.begin(); it != mTs.end();) {
+    if (callable.find(it->first) == callable.end()) {
+      it = mTs.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  // disable instantiation of recursive functions
+  std::set<clang::FunctionDecl*> recursive;
+  for (auto& pair : mTIs) {
+    bool ok = true;
+    std::set<clang::FunctionDecl*> callers = {pair.first};
+    std::set<clang::FunctionDecl*> callees;
+    for (auto& TIs : pair.second) {
+      callees.insert(TIs.mTemplate->getFuncDecl());
+    }
+    while (ok == true && callees.size() != 0) {
+      std::set<clang::FunctionDecl*> intersection;
+      std::set_intersection(callers.begin(), callers.end(),
+        callees.begin(), callees.end(),
+        std::inserter(intersection, intersection.end()));
+      if (intersection.size() != 0) {
+        ok = false;
+        break;
+      } else {
+        std::set<clang::FunctionDecl*> tmp;
+        for (auto& caller : callees) {
+          for (auto& pair : mTIs[caller]) {
+            tmp.insert(pair.mTemplate->getFuncDecl());
+          }
+        }
+        callees.swap(tmp);
+      }
+    }
+    if (ok == false) {
+      recursive.insert(pair.first);
+    }
+  }
+  for (auto& FD : recursive) {
+    mTs[FD].setFuncDecl(nullptr);
+  }
+  llvm::errs() << mTIs.size() << " template instantiations" << '\n';
+  llvm::errs() << mTs.size() << " templates" << '\n';
+  llvm::errs() << callable.size() << " unused templates" << '\n';
+  llvm::errs() << recursive.size() << " recursive templates" << '\n';
   // recursive instantiation
   for (auto& TIs : mTIs) {
-    auto pr = [&](const std::pair<clang::FunctionDecl*, Template> &lhs)
+    auto pr = [&](const std::pair<clang::FunctionDecl*, Template>& lhs)
       -> bool {
       return lhs.first == TIs.first;
     };
     if (std::find_if(std::begin(mTs), std::end(mTs), pr) == std::end(mTs)) {
       for (auto& TI : TIs.second) {
-        std::set<std::string> decls;
-        for (auto& decl : mGlobalDecls) {
-          if (clang::isa<clang::NamedDecl>(decl) == true) {
-            decls.insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
-          }
+        if (TI.mTemplate->getFuncDecl() == nullptr) {
+          continue;
         }
-        for (auto& decl : TI.mFuncDecl->decls()) {
-          if (clang::isa<clang::NamedDecl>(decl) == true) {
-            decls.insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
-          }
-        }
+        std::set<std::string>& fDecls = decls[TI.mFuncDecl];
         std::vector<std::string> args(TI.mCallExpr->getNumArgs());
         std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
           std::begin(args),
           [&](const clang::Expr* arg) -> std::string {
           return getSourceText(arg->getSourceRange());
         });
-        decls.insert(std::begin(args), std::end(args));
+        fDecls.insert(std::begin(args), std::end(args));
         std::pair<std::string, std::string> text
-          = compile(TI, args, decls);
+          = compile(TI, args, fDecls);
         if (text.second.size() == 0) {
           mRewriter.ReplaceText(TI.mStmt->getSourceRange(), text.first);
         } else {
@@ -341,6 +398,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
           mRewriter.InsertTextBefore(TI.mStmt->getSourceRange().getBegin(),
             text.first);
         }
+        mRewriter.InsertTextBefore(TI.mStmt->getLocStart(),
+          "/* " + getSourceText(TI.mCallExpr->getSourceRange())
+          + " is inlined below */\n");
       }
     }
   }
@@ -380,16 +440,15 @@ void FInliner::swap(T& lhs, T& rhs) const {
 std::string FInliner::addSuffix(
     const std::string& prefix,
     std::set<std::string>& identifiers) const {
-  std::string identifier(prefix);
   int count = 0;
+  std::string identifier(prefix + std::to_string(count++));
   bool ok = false;
   while (ok == false) {
     ok = true;
     if (std::find(std::begin(identifiers), std::end(identifiers), identifier)
       != std::end(identifiers)) {
       ok = false;
-      identifier = prefix + std::to_string(count);
-      ++count;
+      identifier = prefix + std::to_string(count++);
     }
   }
   identifiers.insert(identifier);
@@ -476,7 +535,7 @@ bool FInlinerAction::format(
   unsigned int Offset = SM.getFileOffset(SM.getLocForStartOfFile(FID));
   unsigned int Length = SM.getFileOffset(SM.getLocForEndOfFile(FID)) - Offset;
   std::vector<clang::tooling::Range> Ranges({
-    clang::tooling::Range(Offset, Length) });
+    clang::tooling::Range(Offset, Length)});
   clang::format::FormatStyle FormatStyle
     = clang::format::getStyle("LLVM", "", "LLVM");
   clang::tooling::Replacements Replaces = clang::format::sortIncludes(
@@ -485,7 +544,7 @@ bool FInlinerAction::format(
   std::string ChangedCode = clang::tooling::applyAllReplacements(
     Code->getBuffer(), Replaces);
   for (const auto& R : Replaces) {
-    Ranges.push_back({ R.getOffset(), R.getLength() });
+    Ranges.push_back({R.getOffset(), R.getLength()});
   }
   clang::tooling::Replacements FormatChanges = clang::format::reformat(
     FormatStyle, ChangedCode, Ranges, SM.getFileEntryForID(FID)->getName());
@@ -494,27 +553,29 @@ bool FInlinerAction::format(
   return false;
 }
 
+bool FInlinerAction::BeginSourceFileAction(
+    clang::CompilerInstance& CI, llvm::StringRef InFile) {
+  mCompilerInstance = &CI;
+  mCompilerInstance->getPreprocessor().addPPCallbacks(
+    std::move(std::unique_ptr<IncludeCallback>(new IncludeCallback())));
+  return true;
+}
+
 void FInlinerAction::EndSourceFileAction() {
   mTfmCtx->release(getFilenameAdjuster());
   clang::Rewriter& Rewriter = mTfmCtx->getRewriter();
   clang::SourceManager& SM = Rewriter.getSourceMgr();
+  clang::Rewriter Rewrite(SM, clang::LangOptions());
   for (auto I = Rewriter.buffer_begin(), E = Rewriter.buffer_end();
     I != E; ++I) {
     const clang::FileEntry* Entry = SM.getFileEntryForID(I->first);
     std::string Name = getFilenameAdjuster()(Entry->getName());
-    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> CodeOrErr
-      = llvm::MemoryBuffer::getFile(Name);
-    if (std::error_code EC = CodeOrErr.getError()) {
-      llvm::errs() << EC.message() << '\n';
-      return;
-    }
     clang::FileID FID = SM.createFileID(SM.getFileManager().getFile(Name),
       clang::SourceLocation(), clang::SrcMgr::C_User);
-    clang::Rewriter Rewrite(SM, clang::LangOptions());
     format(Rewrite, FID);
-    if (Rewrite.overwriteChangedFiles() == false) {
-      llvm::outs() << "File " << '"' << Name << '"' << " was created" << '\n';
-    }
+  }
+  if (Rewrite.overwriteChangedFiles() == false) {
+    llvm::outs() << "All changes were successfully saved" << '\n';
   }
   return;
 }
