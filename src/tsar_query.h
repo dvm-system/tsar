@@ -74,6 +74,13 @@ public:
   bool beginSourceFile(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
   void run(llvm::Module *M, tsar::TransformationContext *) override;
+  void endSourceFile() override {
+#if (LLVM_VERSION_MAJOR > 3)
+    // An output stream attached to a temporary output file should be freed.
+    // Otherwise it prevents renaming a temporary output file to a regular one.
+    mOS.reset();
+#endif
+  }
 private:
 #if (LLVM_VERSION_MAJOR < 4)
   llvm::raw_pwrite_stream *mOS = nullptr;
