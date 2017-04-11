@@ -135,7 +135,12 @@ bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
     AliasResult AR = AA.alias(Loc, ALoc);
     switch (AR) {
       case MayAlias: case PartialAlias: AddMay(ALoc); break;
-      case MustAlias: AddMust(ALoc); break;
+      case MustAlias:
+        if (ALoc.Size == Loc.Size)
+          AddMust(ALoc);
+        else
+          AddMay(ALoc);
+          break;
     }
   }
   return true;
