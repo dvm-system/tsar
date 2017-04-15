@@ -17,6 +17,8 @@
 #include <llvm/IR/Function.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/Module.h>
+#include <typeinfo>
 
 using namespace llvm;
 using namespace clang;
@@ -43,7 +45,15 @@ public:
   explicit LoopVisitor(Rewriter &R) : mRewriter(&R) {}
 
   /// Inserts appropriate pragma before a for-loop.
-  bool VisitForStmt(ForStmt *For) {
+  /// Calls TraverseStmt() that walks through the body of cycle
+  bool TraverseForStmt(ForStmt *For) {
+    // Keeping values of external cycle if it exists
+    int PrevNumberOfLoops = ++mNumberOfLoops;
+    bool PrevIsThereOperators = mIsThereOperators;
+    // Starting analysis
+    mNumberOfLoops = 0;
+    mIsThereOperators = false;
+    // Preparing output
     std::string PragmaStr;
     raw_string_ostream OS(PragmaStr);
     auto StartLoc = For->getLocStart();
@@ -57,30 +67,22 @@ public:
     if (!isLineBegin(SrcMgr, SpellLoc))
       OS << EndLine;
     OS << mAnalysisPragmaStart << " ";
-    if (auto Body = dyn_cast<CompoundStmt>(For->getBody())) {
-      auto ChildItr = Body->child_begin(), ChildEItr = Body->child_end();
-      for (; ChildItr != ChildEItr && !isa<ForStmt>(*ChildItr); ++ChildItr);
-      if (ChildItr != ChildEItr) {
-        auto ForChildItr = ChildItr;
-        ++ChildItr;
-        if (ForChildItr != Body->child_begin() || ChildItr != ChildEItr) {
-          OS << mImperfectLoopClause;
-          ++NumImPerfect;
-        }
-        else {
-          ++NumPerfect;
-          OS << mPerfectLoopClause;
-        }
-      } else {
-        OS << mPerfectLoopClause;
-        ++NumPerfect;
-      }
-    } else {
+    // Here goes traverse
+    auto Res = RecursiveASTVisitor::TraverseStmt(For->getBody());
+    // Analyzing data
+    if (((mNumberOfLoops == 1) && (!mIsThereOperators)) || (mNumberOfLoops == 0)) {
       OS << mPerfectLoopClause;
       ++NumPerfect;
+    } else {
+      OS << mImperfectLoopClause;
+      ++NumImPerfect;
     }
     printExpansionClause(SrcMgr, StartLoc, OS);
     OS << mAnalysisPragmaEnd << EndLine;
+    // Analysis ended
+    // Return values of external cycle
+    mNumberOfLoops = PrevNumberOfLoops;
+    mIsThereOperators = PrevIsThereOperators;
     // If one file has been included multiple times there are different FileID
     // for each include. So to combine transformation of each include in a single
     // file we recalculate the SpellLoc location.
@@ -95,6 +97,14 @@ public:
     }
     mRewriter->InsertText(SpellLoc, OS.str(), true, true);
     return true;
+  }
+
+  /// Actually visiting statements
+  /// Called from TraverseStmt(), replaces VisitStmt()
+  bool VisitStmt(Stmt *Statement) {
+      if (!llvm::isa<CompoundStmt>(Statement))
+        mIsThereOperators = true;
+      return true;
   }
 
 private:
@@ -162,6 +172,11 @@ private:
 
   /// This is a SAPFOR Imperfect Loop clause.
   static constexpr const char *mImperfectLoopClause = "imperfect";
+  
+  // This is number of loops,existence of none-cycle operators
+  // inside the analyzed one's body
+  int mNumberOfLoops;
+  bool mIsThereOperators;
 
   Rewriter *mRewriter;
 };
