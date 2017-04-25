@@ -342,11 +342,12 @@ FunctionPass * llvm::createEstimateMemoryPass() {
   return new EstimateMemoryPass();
 }
 
-bool EstimateMemoryPass::runOnFunction(Function & F) {
+bool EstimateMemoryPass::runOnFunction(Function &F) {
+  releaseMemory();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
-  AliasTree AT(AA, DL);
+  mAliasTree = new AliasTree(AA, DL);
   // TODO (kaniandr@gmail.com): implements evaluation of transfer intrinsics.
   // This should be also implemented in DefinedMemoryPass.
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
@@ -355,7 +356,7 @@ bool EstimateMemoryPass::runOnFunction(Function & F) {
     switch (I->getOpcode()) {
       case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
       case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
-        AT.add(MemoryLocation::get(&*I)); break;
+        mAliasTree->add(MemoryLocation::get(&*I)); break;
     }
   }
   return false;

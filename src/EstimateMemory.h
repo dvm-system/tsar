@@ -500,6 +500,14 @@ public:
     mNodes.push_back(mTopLevelNode);
   }
 
+  /// Destroys alias tree.
+  ~AliasTree() {
+    for (auto &Pair : mBases) {
+      for (auto *EM : Pair.second)
+        delete EM;
+    }
+  }
+
   /// Returns root of the alias tree.
   AliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
 
@@ -681,11 +689,34 @@ public:
     initializeEstimateMemoryPassPass(*PassRegistry::getPassRegistry());
   }
 
+  /// Returns alias tree for the last analyzed function.
+  tsar::AliasTree & getAliasTree() {
+    assert(mAliasTree && "Alias tree has not been constructed yet!");
+    return *mAliasTree;
+  }
+
+  /// Returns alias tree for the last analyzed function.
+  const tsar::AliasTree & getAliasTree() const {
+    assert(mAliasTree && "Alias tree has not been constructed yet!");
+    return *mAliasTree;
+  }
+
   /// Build hierarchy of accessed memory for a specified function.
   bool runOnFunction(Function &F) override;
 
   /// Specifies a list of analyzes that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+  /// Releases memory.
+  void releaseMemory() override {
+    if (mAliasTree) {
+      delete mAliasTree;
+      mAliasTree = nullptr;
+    }
+  }
+
+private:
+  tsar::AliasTree *mAliasTree = nullptr;
 };
 }
 #endif//TSAR_ESTIMATE_MEMORY_H
