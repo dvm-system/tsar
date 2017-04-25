@@ -549,6 +549,15 @@ public:
   /// allocation to store nodes.
   void removeNode(AliasNode *N);
 
+  /// \brief This pop up ghostview window and displays the alias tree.
+  ///
+  /// This depends on there being a 'dot' and 'gv' program in a system path.
+  void view() const;
+
+  /// This works like view() but this does not display ambiguous pointers. This
+  /// show name of base locations and their sizes only.
+  void viewOnly() const;
+
 private:
   /// Performs depth-first search of a new node insertion point
   /// and insert a new empty node, if it is necessary.

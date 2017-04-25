@@ -53,6 +53,30 @@ void initializeEstimateMemoryPassPass(PassRegistry &Registry);
 /// Creates a pass to build hierarchy of accessed memory.
 FunctionPass * createEstimateMemoryPass();
 
+/// Initializes a pass to display alias tree.
+void initializeAliasTreeViewerPass(PassRegistry &Registry);
+
+/// Creates a pass to display alias tree.
+FunctionPass * createAliasTreeViewerPass();
+
+/// Initializes a pass to display alias tree (alias summary only).
+void initializeAliasTreeOnlyViewerPass(PassRegistry &Registry);
+
+/// Creates a pass to display alias tree (alias summary only).
+FunctionPass * createAliasTreeOnlyViewerPass();
+
+/// Initializes a pass to print alias tree to 'dot' file.
+void initializeAliasTreePrinterPass(PassRegistry &Registry);
+
+/// Creates a pass to print alias tree to 'dot' file.
+FunctionPass * createAliasTreePrinterPass();
+
+/// Initializes a pass to print alias tree to 'dot' file (alias summary only).
+void initializeAliasTreeOnlyPrinterPass(PassRegistry &Registry);
+
+/// Creates a pass to print alias tree to 'dot' file (alias summary only).
+FunctionPass * createAliasTreeOnlyPrinterPass();
+
 /// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 
