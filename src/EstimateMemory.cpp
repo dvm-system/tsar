@@ -205,8 +205,10 @@ AliasNode * AliasTree::addEmptyNode(
     Aliases.clear();
     for (auto &Child : make_range(Current->child_begin(), Current->child_end()))
       for (auto &EM : Child)
-        if (slowMayAlias(EM, NewEM))
-            Aliases.push_back(&EM);
+        if (slowMayAlias(EM, NewEM)) {
+          Aliases.push_back(&EM);
+          break;
+        }
     if (Aliases.empty())
       return newNode(*Current);
     if (Aliases.size() == 1) {
