@@ -114,7 +114,6 @@ public:
     Passes.add(createUnreachableBlockEliminationPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
-    cl::PrintOptionValues();
     Passes.run(*M);
   }
 private:

@@ -22,44 +22,12 @@
 #include <vector>
 #include <utility.h>
 
+namespace llvm {
+class PassInfo;
+}
+
 namespace tsar {
 class QueryManager;
-
-/// Represents possible options for TSAR.
-struct Options : private bcl::Uncopyable {
-  /// This is a version printer for TSAR.
-  static void printVersion();
-
-  /// Returns all possible analyzer options.
-  static Options & get() {
-    static Options Opts;
-    return Opts;
-  }
-
-  llvm::cl::list<std::string> Sources;
-
-  llvm::cl::OptionCategory CompileCategory;
-  llvm::cl::list<std::string> Includes;
-  llvm::cl::list<std::string> MacroDefs;
-  llvm::cl::opt<std::string> LanguageStd;
-  llvm::cl::opt<bool> InstrLLVM;
-  llvm::cl::opt<bool> EmitAST;
-  llvm::cl::opt<bool> MergeAST;
-  llvm::cl::alias MergeASTA;
-  llvm::cl::opt<std::string> Output;
-  llvm::cl::opt<std::string> Language;
-
-  llvm::cl::OptionCategory DebugCategory;
-  llvm::cl::opt<bool> EmitLLVM;
-  llvm::cl::opt<bool> TimeReport;
-  llvm::cl::opt<bool> Test;
-private:
-  /// Default constructor.
-  ///
-  /// This structure is designed according to a singleton pattern, so all
-  /// constructors are private.
-  Options();
-};
 
 /// A tool which performs different analysis and transformations actions.
 ///
@@ -82,16 +50,7 @@ public:
   int run(QueryManager *QM = nullptr);
 
 private:
-  /// \brief Creates analyzer according to specified options.
-  ///
-  /// It is possible to set options explicitly via access to Options structure.
-  /// For example, Options::get().EmitLLVM = true.
-  /// \attention Be careful when use this constructor because no checks for
-  /// options correctness will be performed.
-  /// To activate options do not forget to invoke storeCLOptions().
-  Tool();
-
-  /// \brief Stores command line options.
+   /// \brief Stores command line options.
   ///
   /// The Options::get() method returns an object accessed from different
   /// places. To avoid redefinition of options after creation of this tool it
@@ -106,6 +65,7 @@ private:
 
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
+  std::vector<const llvm::PassInfo *> mOutputPasses;
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
   bool mEmitAST;
   bool mMergeAST;

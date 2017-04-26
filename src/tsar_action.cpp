@@ -45,7 +45,7 @@ using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
-void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
+void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
   if (Ctx) {
@@ -69,8 +69,6 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   //  ret i32 %0, !dbg !12
   //}
   // In other cases 'clang' automatically deletes unreachable blocks.
-  if (Pass *P = createInitializationPass())
-    Passes.add(P);
   Passes.add(createUnreachableBlockEliminationPass());
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   Passes.add(createBasicAliasAnalysisPass());
@@ -84,9 +82,14 @@ void QueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   if (Ctx)
     Passes.add(createPrivateCClassifierPass());
   Passes.add(createVerifierPass());
-  if (Pass *P = createFinalizationPass())
-    Passes.add(P);
-  cl::PrintOptionValues();
+  for (auto PI : mOutputPasses) {
+    if (!PI->getNormalCtor()) {
+      /// TODO (kainadnr@gmail.com): add a name of executable before diagnostic.
+      errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
+      continue;
+    }
+    Passes.add(PI->getNormalCtor()());
+  }
   Passes.run(*M);
 }
 
@@ -100,17 +103,16 @@ bool EmitLLVMQueryManager::beginSourceFile(
 void EmitLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
-  if (Pass *P = createInitializationPass())
-    Passes.add(P);
   Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
-  if (Pass *P = createFinalizationPass())
-    Passes.add(P);
-  cl::PrintOptionValues();
   Passes.run(*M);
 }
 
-Pass *InstrLLVMQueryManager::createInitializationPass() {
-  return createInstrumentationPass();
+void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  Passes.add(createInstrumentationPass());
+  Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
+  Passes.run(*M);
 }
 
 namespace clang {

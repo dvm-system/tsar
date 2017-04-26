@@ -279,6 +279,5 @@ void TestQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createTestPrinterPass());
   Passes.add(createVerifierPass());
-  cl::PrintOptionValues();
   Passes.run(*M);
 }

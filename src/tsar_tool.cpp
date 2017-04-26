@@ -15,6 +15,7 @@
 #include "tsar_test.h"
 #include "tsar_tool.h"
 #include <clang/Frontend/FrontendActions.h>
+#include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
@@ -24,9 +25,56 @@ using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
+namespace {
+extern const char AllowediOutputPassArgs[] = "\
+  -view-em -view-em-only\
+  -dot-em -dot-em-only";
+
+/// Represents possible options for TSAR.
+struct Options : private bcl::Uncopyable {
+  /// This is a version printer for TSAR.
+  static void printVersion();
+
+  /// Returns all possible analyzer options.
+  static Options & get() {
+    static Options Opts;
+    return Opts;
+  }
+
+  llvm::cl::list<std::string> Sources;
+
+  llvm::cl::list<const llvm::PassInfo*, bool,
+    llvm::FilteredPassNameParser<
+    llvm::PassArgFilter<AllowediOutputPassArgs>>> OutputPasses;
+
+  llvm::cl::OptionCategory CompileCategory;
+  llvm::cl::list<std::string> Includes;
+  llvm::cl::list<std::string> MacroDefs;
+  llvm::cl::opt<std::string> LanguageStd;
+  llvm::cl::opt<bool> InstrLLVM;
+  llvm::cl::opt<bool> EmitAST;
+  llvm::cl::opt<bool> MergeAST;
+  llvm::cl::alias MergeASTA;
+  llvm::cl::opt<std::string> Output;
+  llvm::cl::opt<std::string> Language;
+
+  llvm::cl::OptionCategory DebugCategory;
+  llvm::cl::opt<bool> EmitLLVM;
+  llvm::cl::opt<bool> TimeReport;
+  llvm::cl::opt<bool> Test;
+private:
+  /// Default constructor.
+  ///
+  /// This structure is designed according to a singleton pattern, so all
+  /// constructors are private.
+  Options();
+};
+}
+
 Options::Options() :
   Sources(cl::Positional, cl::desc("<source0> [... <sourceN>]"),
     cl::OneOrMore),
+  OutputPasses(cl::desc("Analysis available:")),
   CompileCategory("Compilation options"),
   Includes("I", cl::cat(CompileCategory), cl::value_desc("path"),
     cl::desc("Add directory to include search path")),
@@ -100,18 +148,15 @@ Tool::Tool(int Argc, const char **Argv) {
   assert(Argv && "List of command line arguments must not be null!");
   Options::get(); // At first, initialize command line options.
   std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
+  // Passes should be initialized previously then command line options are
+  // parsed, due to initialize list of available passes.
+  initializeTSAR(*PassRegistry::getPassRegistry());
   cl::ParseCommandLineOptions(Argc, Argv, Descr);
   storeCLOptions();
   InitializeAllTargetInfos();
   InitializeAllTargetMCs();
   InitializeAllAsmParsers();
-}
-
-Tool::Tool() {
-  storeCLOptions();
-  InitializeAllTargetInfos();
-  InitializeAllTargetMCs();
-  InitializeAllAsmParsers();
+  cl::PrintOptionValues();
 }
 
 void Tool::storeCLOptions() {
@@ -131,6 +176,8 @@ void Tool::storeCLOptions() {
     new FixedCompilationDatabase(".", mCommandLine));
   mEmitAST = Options::get().EmitAST;
   mMergeAST = Options::get().MergeAST;
+  for (auto PI : Options::get().OutputPasses)
+    mOutputPasses.push_back(PI);
   mEmitLLVM = Options::get().EmitLLVM;
   mInstrLLVM = Options::get().InstrLLVM;
   mTest = Options::get().Test;
@@ -138,8 +185,9 @@ void Tool::storeCLOptions() {
   mLanguage = Options::get().Language;
 }
 
-inline static QueryManager * getDefaultQM() {
-  static QueryManager QM;
+inline static QueryManager * getDefaultQM(
+    const DefaultQueryManager::PassList &OutputPasses) {
+  static DefaultQueryManager QM(OutputPasses);
   return &QM;
 }
 inline static EmitLLVMQueryManager * getEmitLLVMQM() {
@@ -220,7 +268,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else
-      QM = getDefaultQM();
+      QM = getDefaultQM(mOutputPasses);
   }
   if (mMergeAST) {
     ClangTool CTool(*mCompilations, SourcesToMerge.back());

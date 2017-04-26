@@ -14,9 +14,11 @@
 
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Config/llvm-config.h>
+#include <vector>
 
 namespace llvm {
 class Pass;
+class PassInfo;
 class Module;
 class raw_pwrite_stream;
 }
@@ -32,12 +34,8 @@ class TransformationContext;
 /// This is a query manager that controls construction of response when analysis
 /// and transformation tool is launched.
 ///
-/// This describes default behavior of a tool. Tow ways are available to
-/// override it:
-/// - The simplest way is to override createInitializationPass() and
-/// createFinalizationPass() methods. Passes constructed by these methods are
-/// launched before and after default sequence of passes.
-/// - The second way is to override whole sequence of performed passes.
+/// At least run() method should be overridden to specify a whole sequence of
+/// performed passes.
 class QueryManager {
 public:
   /// \brief Callback at the start of processing a single input.
@@ -53,20 +51,34 @@ public:
   /// beginSourceFile().
   virtual void endSourceFile() {}
 
-  /// Creates an initialization pass to respond a query.
-  virtual llvm::Pass * createInitializationPass() { return nullptr; }
-
-  /// Creates a finalization pass to respond a query.
-  virtual llvm::Pass * createFinalizationPass() { return nullptr; }
-
   /// Analysis the specified module and transforms source file associated with
   /// it if rewriter context is specified.
   ///
   /// \attention Neither module nor transformation context is not going to be
   /// taken under control.
-  virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx);
+  virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx) = 0;
 };
 
+/// This specify default pass sequence, which can be configured by command line
+/// options in some ways.
+class DefaultQueryManager: public QueryManager {
+public:
+  /// List of passes.
+  typedef std::vector<const llvm::PassInfo *> PassList;
+
+  /// Creates query manager.
+  ///
+  /// \param [in] OutputPasses This specifies passes that should be run to
+  /// show program exploration results.
+  explicit DefaultQueryManager(const PassList &OutputPasses) :
+    mOutputPasses(OutputPasses) {}
+
+  /// Runs default sequence of passes.
+  void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
+
+private:
+  PassList mOutputPasses;
+};
 
 /// This prints LLVM IR to the standard output stream.
 class EmitLLVMQueryManager : public QueryManager {
@@ -74,6 +86,7 @@ public:
   bool beginSourceFile(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
   void run(llvm::Module *M, tsar::TransformationContext *) override;
+
   void endSourceFile() override {
 #if (LLVM_VERSION_MAJOR > 3)
     // An output stream attached to a temporary output file should be freed.
@@ -81,7 +94,8 @@ public:
     mOS.reset();
 #endif
   }
-private:
+
+protected:
 #if (LLVM_VERSION_MAJOR < 4)
   llvm::raw_pwrite_stream *mOS = nullptr;
 #else
@@ -93,7 +107,7 @@ private:
 /// This performs instrumentation of LLVM IR and prints it to the standard
 /// output stream after instrumentation.
 class InstrLLVMQueryManager : public EmitLLVMQueryManager {
-  llvm::Pass * createInitializationPass() override;
+  void run(llvm::Module *M, tsar::TransformationContext *) override;
 };
 }
 
