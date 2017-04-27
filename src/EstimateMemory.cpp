@@ -42,7 +42,7 @@ Value * stripPointer(Value *Ptr, const DataLayout &DL) {
   return Ptr;
 }
 
-void stripToBase(MemoryLocation &Loc) {
+void stripToBase(MemoryLocation &Loc, const DataLayout &DL) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   // It seams that it is safe to strip 'inttoptr', 'addrspacecast' and that an
   // alias analysis works well in this case. LLVM IR specification requires that
@@ -52,7 +52,7 @@ void stripToBase(MemoryLocation &Loc) {
       Operator::getOpcode(Loc.Ptr) == Instruction::AddrSpaceCast ||
       Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr) {
     Loc.Ptr = cast<const Operator>(Loc.Ptr)->getOperand(0);
-    return stripToBase(Loc);
+    return stripToBase(Loc, DL);
   }
   if (auto GEPI = dyn_cast<const GetElementPtrInst>(Loc.Ptr)) {
     Type *Ty = GEPI->getSourceElementType();
@@ -65,8 +65,9 @@ void stripToBase(MemoryLocation &Loc) {
     // Also fix it in isSameBase().
     if (!isa<StructType>(Ty) || GEPI->getNumIndices() != 2) {
       Loc.Ptr = GEPI->getPointerOperand();
-      Loc.Size = MemoryLocation::UnknownSize;
-      return stripToBase(Loc);
+      Loc.Size = Ty->isArrayTy() ?
+        DL.getTypeStoreSize(Ty) : MemoryLocation::UnknownSize;
+      return stripToBase(Loc, DL);
     }
   }
 }
@@ -280,7 +281,7 @@ std::tuple<EstimateMemory *, bool, bool>
 AliasTree::insert(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
-  stripToBase(Base);
+  stripToBase(Base, *mDL);
   Value *StrippedPtr = stripPointer(const_cast<Value *>(Base.Ptr), *mDL);
   BaseList *BL;
   auto I = mBases.find(StrippedPtr);

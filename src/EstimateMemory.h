@@ -34,6 +34,7 @@
 
 namespace llvm {
 class EstimateMemoryPass;
+class DataLayout;
 }
 
 namespace tsar {
@@ -71,7 +72,7 @@ llvm::Value * stripPointer(llvm::Value *Ptr, const llvm::DataLayout &DL);
 ///   %0 = bitcast i32* %x to i16*
 ///   %1 = load i16, i16* %0, align 4
 /// \endcode
-void stripToBase(llvm::MemoryLocation &Loc);
+void stripToBase(llvm::MemoryLocation &Loc, const llvm::DataLayout &DL);
 
 /// Compares to bases.
 bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
