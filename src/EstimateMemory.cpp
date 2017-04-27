@@ -287,7 +287,9 @@ AliasTree::insert(const MemoryLocation &Loc) {
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
     BL = &I->second;
-    for (auto *Chain : *BL) {
+    for (auto ChainItr = BL->begin(), ChainEItr = BL->end();
+         ChainItr != ChainEItr; ++ChainItr) {
+      auto Chain = *ChainItr;
       if (!isSameBase(Chain->front(), Base.Ptr))
         continue;
       bool AddAmbiguous = false;
@@ -299,7 +301,7 @@ AliasTree::insert(const MemoryLocation &Loc) {
         break;
       }
       using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-      EstimateMemory *Prev = nullptr, *EM = nullptr;
+      EstimateMemory *Prev = nullptr;
       do {
         if (Base.Size == Chain->getSize()) {
           Chain->updateAAInfo(Base.AATags);
@@ -309,13 +311,14 @@ AliasTree::insert(const MemoryLocation &Loc) {
           auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
           ++NumEstimateMemory;
           CT::setPrev(EM, Chain);
+          *ChainItr = EM; // update start point of this chain in a base list
           return std::make_tuple(EM, true, AddAmbiguous);
         }
       } while (Prev = Chain, Chain = CT::getNext(Chain));
-      Chain = new EstimateMemory(*Prev, Base.Size, Base.AATags);
+      auto EM = new EstimateMemory(*Prev, Base.Size, Base.AATags);
       ++NumEstimateMemory;
-      CT::setNext(Chain, Prev);
-      return std::make_tuple(Chain, true, AddAmbiguous);
+      CT::setNext(EM, Prev);
+      return std::make_tuple(EM, true, AddAmbiguous);
     }
   } else {
     BL = &mBases.insert(std::make_pair(StrippedPtr, BaseList())).first->second;
