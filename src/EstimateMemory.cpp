@@ -14,6 +14,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
@@ -106,33 +107,114 @@ bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
   return false;
 }
 
-template<class ItrTy>
-AliasRelation aliasRelation(AAResults &AA, const EstimateMemory &EM,
-    const ItrTy &BeginItr, const ItrTy &EndItr) {
-  bool IsAlias = false;
-  bool IsLarger = false;
-  bool IsSmaller = false;
-  for (auto &TmpEM : make_range(BeginItr, EndItr))
-    for (auto &TmpPtr : TmpEM)
-      for (auto &Ptr : EM) {
-        auto AR = AA.alias(
-          MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo()),
-          MemoryLocation(TmpPtr, TmpEM.getSize(), TmpEM.getAAInfo()));
-        switch (AR) {
-        case NoAlias: continue;
-        case MayAlias: return AliasRelation::MayAlias;
-        case PartialAlias: return AliasRelation::PartialAlias;
-        }
-        IsAlias = true;
-        IsSmaller = IsSmaller || EM.getSize() <  TmpEM.getSize();
-        IsLarger = IsLarger || EM.getSize() > TmpEM.getSize();
-        if (IsLarger && IsSmaller)
-          return AliasRelation::MayAlias;
-      }
-  return !IsAlias ? AliasRelation::NoAlias :
-    IsLarger ? AliasRelation::Cover :
-    IsSmaller ? AliasRelation::Contained :
-    AliasRelation::Coincide;
+AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
+    const MemoryLocation &LHS, const MemoryLocation &RHS) {
+  AliasDescriptor Dptr;
+  auto AR = AA.alias(LHS, RHS);
+  switch (AR) {
+  default: llvm_unreachable("Unknown result of alias analysis!");
+  case NoAlias: Dptr.set<trait::NoAlias>(); break;
+  case MayAlias: Dptr.set<trait::MayAlias>(); break;
+  case PartialAlias:
+    {
+      Dptr.set<trait::PartialAlias>();
+      // Now we try to prove that one location covers other location.
+      if (LHS.Size == RHS.Size ||
+          LHS.Size == MemoryLocation::UnknownSize &&
+          RHS.Size == MemoryLocation::UnknownSize)
+        break;
+      int64_t OffsetLHS, OffsetRHS;
+      auto BaseLHS = GetPointerBaseWithConstantOffset(LHS.Ptr, OffsetLHS, DL);
+      auto BaseRHS = GetPointerBaseWithConstantOffset(RHS.Ptr, OffsetRHS, DL);
+      if (OffsetLHS == 0 && OffsetRHS == 0)
+        break;
+      auto BaseAlias = AA.alias(
+        BaseLHS, MemoryLocation::UnknownSize,
+        BaseRHS, MemoryLocation::UnknownSize);
+      // It is possible to precisely compare two partially overlapped
+      // locations in case of the same base pointer only.
+      if (BaseAlias != MustAlias)
+        break;
+      if (OffsetLHS < OffsetRHS &&
+          OffsetLHS + LHS.Size >= OffsetRHS + RHS.Size)
+        Dptr.set<trait::CoverAlias>();
+      else if (OffsetLHS > OffsetRHS &&
+          OffsetLHS + LHS.Size <= OffsetRHS + RHS.Size)
+        Dptr.set<trait::ContainedAlias>();
+    }
+    break;
+  case MustAlias:
+    Dptr.set<trait::MustAlias>();
+    if (LHS.Size == RHS.Size)
+      Dptr.set<trait::CoincideAlias>();
+    else if (LHS.Size > RHS.Size)
+      Dptr.set<trait::CoverAlias>();
+    if (LHS.Size < RHS.Size)
+      Dptr.set<trait::ContainedAlias>();
+    break;
+  }
+  return Dptr;
+}
+
+AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
+    const EstimateMemory &LHS, const EstimateMemory &RHS) {
+  auto MergedAD = aliasRelation(AA, DL,
+    MemoryLocation(LHS.front(), LHS.getSize(), LHS.getAAInfo()),
+    MemoryLocation(RHS.front(), RHS.getSize(), RHS.getAAInfo()));
+  if (MergedAD.is<trait::MayAlias>())
+    return MergedAD;
+  for (auto PtrLHS: LHS)
+    for (auto PtrRHS : RHS) {
+      auto AD = aliasRelation(AA, DL,
+        MemoryLocation(PtrLHS, LHS.getSize(), LHS.getAAInfo()),
+        MemoryLocation(PtrRHS, RHS.getSize(), RHS.getAAInfo()));
+      MergedAD = mergeAliasRelation(MergedAD, AD);
+      if (MergedAD.is<trait::MayAlias>())
+        return MergedAD;
+    }
+  return MergedAD;
+}
+
+AliasDescriptor mergeAliasRelation(
+    const AliasDescriptor &LHS, const AliasDescriptor &RHS) {
+  assert((LHS.is<trait::NoAlias>() || LHS.is<trait::MayAlias>() ||
+    LHS.is<trait::PartialAlias>() || LHS.is<trait::MustAlias>()) &&
+    "Alias results must be set!");
+  assert((RHS.is<trait::NoAlias>() || RHS.is<trait::MayAlias>() ||
+    RHS.is<trait::PartialAlias>() || RHS.is<trait::MustAlias>()) &&
+    "Alias results must be set!");
+  if (LHS == RHS)
+    return LHS;
+  // Now we know that for LHS and RHS is not set NoAlias.
+  AliasDescriptor ARLHS(LHS), ARRHS(RHS);
+  ARLHS.unset<trait::CoincideAlias, trait::ContainedAlias, trait::CoverAlias>();
+  ARRHS.unset<trait::CoincideAlias, trait::ContainedAlias, trait::CoverAlias>();
+  if (ARLHS == ARRHS) {
+    // ARLHS and ARRHS is both MustAlias or PartialAlias.
+    if (LHS.is<trait::CoincideAlias>() || RHS.is<trait::CoincideAlias>())
+      ARLHS.set<trait::CoincideAlias>();
+    if (LHS.is<trait::ContainedAlias>() && RHS.is<trait::CoverAlias>() ||
+      LHS.is<trait::CoverAlias>() && RHS.is<trait::ContainedAlias>())
+      ARLHS.unset<
+        trait::CoincideAlias, trait::CoverAlias, trait::ContainedAlias>();
+    return ARLHS;
+  }
+  AliasDescriptor Dptr;
+  if (LHS.is<trait::PartialAlias>() && RHS.is<trait::MustAlias>() ||
+    LHS.is<trait::MustAlias>() && RHS.is<trait::PartialAlias>()) {
+    // If MustAlias and PartialAlias are merged then PartialAlias is obtained.
+    Dptr.set<trait::PartialAlias>();
+    if (LHS.is<trait::CoincideAlias>() || RHS.is<trait::CoincideAlias>())
+      Dptr.set<trait::CoincideAlias>();
+    if (LHS.is<trait::ContainedAlias>() && RHS.is<trait::CoverAlias>() ||
+      LHS.is<trait::CoverAlias>() && RHS.is<trait::ContainedAlias>())
+      Dptr.unset<
+        trait::CoincideAlias, trait::CoverAlias, trait::ContainedAlias>();
+  } else {
+    // Otherwise, we do not know anything.
+    Dptr.set<trait::MayAlias>();
+  }
+  return Dptr;
 }
 }
 
@@ -215,32 +297,33 @@ AliasNode * AliasTree::addEmptyNode(
     if (Aliases.size() == 1) {
       auto Node = Aliases.front()->getAliasNode(*this);
       assert(Node && "Alias node for memory location must not be null!");
-      auto AR = aliasRelation(
-        *mAA, NewEM, AliasNode::iterator(Aliases.front()), Node->end());
-      if (AR == AliasRelation::MayAlias || AR == AliasRelation::PartialAlias)
-        return Node;
-      if (AR == AliasRelation::Cover) {
+      auto AD = aliasRelation(
+        *mAA, *mDL, NewEM, AliasNode::iterator(Aliases.front()), Node->end());
+      if (AD.is<trait::CoverAlias>()) {
         auto *NewNode = newNode(*Current);
         Node->setParent(*NewNode);
         return NewNode;
       }
+      if (!AD.is<trait::ContainedAlias>())
+        return Node;
       Current = Node;
       continue;
     }
     for (auto EM : Aliases) {
       auto Node = EM->getAliasNode(*this);
       assert(Node && "Alias node for memory location must not be null!");
-      auto AR = aliasRelation(*mAA, NewEM, Node->begin(), Node->end());
-      if (AR != AliasRelation::Cover) {
-        // If the new estimate location aliases with locations from different
-        // alias nodes at the same level and does not cover memory described by
-        // this nodes, this nodes should be merged.
-        auto I = Aliases.begin(), EI = Aliases.end();
-        auto ForwardNode = (*I)->getAliasNode(*this);
-        for (++I; I != EI; ++I, ++NumMergedNode)
-          ForwardNode->mergeNodeIn(*(*I)->getAliasNode(*this));
-        return ForwardNode;
-      }
+      auto AD = aliasRelation(*mAA, *mDL, NewEM, Node->begin(), Node->end());
+      if (AD.is<trait::CoverAlias>() ||
+          (AD.is<trait::CoincideAlias>() && !AD.is<trait::ContainedAlias>()))
+        continue;
+      // If the new estimate location aliases with locations from different
+      // alias nodes at the same level and does not cover (or coincide with)
+      // memory described by this nodes, this nodes should be merged.
+      auto I = Aliases.begin(), EI = Aliases.end();
+      auto ForwardNode = (*I)->getAliasNode(*this);
+      for (++I; I != EI; ++I, ++NumMergedNode)
+        ForwardNode->mergeNodeIn(*(*I)->getAliasNode(*this));
+      return ForwardNode;
     }
     auto *NewNode = newNode(*Current);
     for (auto EM : Aliases)

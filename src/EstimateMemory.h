@@ -7,8 +7,8 @@
 // This file defines AliasTree and AliasNode classes to classify a collection of
 // pointer references in hierarchical way. Each AliasNode refers to memory
 // disjoint from its sibling nodes. Union of memory from a parent node covers
-// all memory from its children. To represent memory location EstimateMemory
-// class is used.
+// (or coincide with) all memory from its children. To represent memory location
+// EstimateMemory class is used.
 //
 // EstimateMemoryPass is also proposed to construct an AliasTree.
 //
@@ -21,6 +21,7 @@
 #include "tsar_pass.h"
 #include "tsar_utility.h"
 #include <Chain.h>
+#include <trait.h>
 #include <utility.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/iterator.h>
@@ -77,27 +78,67 @@ void stripToBase(llvm::MemoryLocation &Loc, const llvm::DataLayout &DL);
 /// Compares to bases.
 bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
 
+namespace trait {
+//===----------------------------------------------------------------------===//
+// Alias tags which represents more accurate relations between alias pointers.
+//===----------------------------------------------------------------------===//
+struct NoAlias {};
+struct MayAlias {};
+struct PartialAlias {};
+struct MustAlias {};
+struct CoincideAlias {};
+struct ContainedAlias {};
+struct CoverAlias {};
+}
+
 /// \brief Represents more accurate relations between alias pointers.
 ///
 /// Alongside general information which available from llvm::AliasResult enum,
-/// this enum also specify relation between memory location sizes:
-/// - Coincide means that locations have the same sizes.
-/// - Contained means that one location is strictly contained into another location.
-/// - Cover means that one location strictly covers another location.
-enum class AliasRelation : uint8_t {
-  NoAlias,
-  MayAlias,
-  PartialAlias,
-  Coincide,
-  Contained,
-  Cover
-};
+/// this enumeration also specify relation between memory location sizes:
+/// - trait::CoincideAlias means that locations have the same sizes.
+/// - trait::ContainedAlias means that one location is strictly contained
+///   into another one.
+/// - trait::CoverAlias means that one location strictly covers another
+/// location.
+/// Note that CoincideAlias compliant with ContainedAlias and CoverAlias in
+/// this case this relation between sizes are <= or >= correspondingly.
+/// llvm::AliasResult values are represented as trait::NoAlias, trait::MayAlias,
+/// trait::PartialAlias and trait::MustAlias.
+using AliasDescriptor = bcl::TraitDescriptor<
+  bcl::TraitAlternative<trait::NoAlias, trait::MayAlias,
+    bcl::TraitUnion<trait::PartialAlias, trait::CoincideAlias,
+      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>,
+    bcl::TraitUnion<trait::MustAlias, trait::CoincideAlias,
+      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>>>;
+
+/// This merges two alias descriptors.
+AliasDescriptor mergeAliasRelation(
+  const AliasDescriptor &LHS, const AliasDescriptor &RHS);
+
+/// This determines alias relation of a first memory location to a second one.
+AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
+    const llvm::MemoryLocation &LHS, const llvm::MemoryLocation &RHS);
+
+/// This determines alias relation of a first estimate location to a second one.
+AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
+    const EstimateMemory &LHS, const EstimateMemory &RHS);
 
 /// This determines alias relation between a specified estimate location'EM' and
 /// locations from a specified range [BeginItr, EndItr).
 template<class ItrTy>
-AliasRelation aliasRelation(llvm::AAResults &AA, const EstimateMemory &EM,
-  const ItrTy &BeginItr, const ItrTy &EndItr);
+AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
+    const EstimateMemory &EM, const ItrTy &BeginItr, const ItrTy &EndItr) {
+  auto I = BeginItr;
+  auto MergedAD = aliasRelation(AA, DL, EM, *I);
+  if (MergedAD.is<trait::MayAlias>())
+    return MergedAD;
+  for (++I; I != EndItr; ++I) {
+    MergedAD = mergeAliasRelation(MergedAD, aliasRelation(AA, DL, EM, *I));
+    if (MergedAD.is<trait::MayAlias>())
+      return MergedAD;
+  }
+  return MergedAD;
+}
 
 /// Represents reference to a list of ambiguous pointers which refer to the
 /// same estimate memory location.
