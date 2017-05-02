@@ -52,17 +52,26 @@ class EstimateMemory;
 /// In some cases there is no unique 'alloca' or 'global variable'.
 /// For example, 'i32* inttoptr (i32 5 to i32*)' cast an expression to
 /// a pointer. In this case this expression will be returned.
-llvm::Value * stripPointer(llvm::Value *Ptr, const llvm::DataLayout &DL);
+llvm::Value * stripPointer(const llvm::DataLayout &DL, llvm::Value *Ptr);
+
+/// \brief Extends a memory location to an enclosing memory location.
+///
+/// For example, this extends element of array to a whole array, and element
+/// of a structure to a whole structure.
+///
+/// TODO (kaniandr@gmail.com): It is known that `getelementptr` instruction
+/// may contains multiple indices. At this moment this function discards all
+/// such indices. For example the result of S.X.Y will be S in case of
+/// single `getelementptr` or S.X in case of sequence of two instructions.
+/// The last case is preferred, so try to update this method in such way.
+bool stripMemoryLevel(const llvm::DataLayout &DL, llvm::MemoryLocation &Loc);
 
 /// \brief Strips a location to its base, the nearest estimate location.
 ///
-/// Base location will be stored in the parameter Loc: pointer or size can be
+/// Base location will be stored in the parameter Loc, pointer or size can be
 /// changed. Final type cast will be eliminate but size will be remembered.
-/// A base location for element of an array is a whole array, so 'getelementpr'
-/// will be stripped (pointer will be changed) and size will be changed to
-/// llvm::MemoryLocation::UnknownSize. But if this element is a structure
-/// 'getelementptr' will not be stripped because it is convenient to analyze
-/// different members of structure separately.
+/// Note that `getelementptr` instructions  will not be stripped because, this
+/// differs this function from llvm::GetUnderlyingObject().
 /// \post Loc.Ptr will never be set to nullptr.
 ///
 /// In the following example the base for %0 will be <&x, 2>. Note that whole
@@ -73,10 +82,17 @@ llvm::Value * stripPointer(llvm::Value *Ptr, const llvm::DataLayout &DL);
 ///   %0 = bitcast i32* %x to i16*
 ///   %1 = load i16, i16* %0, align 4
 /// \endcode
-void stripToBase(llvm::MemoryLocation &Loc, const llvm::DataLayout &DL);
+void stripToBase(const llvm::DataLayout &D, llvm::MemoryLocation &Loc);
 
-/// Compares to bases.
-bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
+/// \brief Compares to bases.
+///
+/// TODO (kaniandr@gmail.com): When `getelementptr` instructions are compared
+/// they should have the same number of operands which are compared between
+/// themselves. It does not consider the case when one `getlementptr`
+/// instruction is split into sequence of instructions and other instruction
+/// is not split.
+bool isSameBase(const llvm::DataLayout &DL,
+    const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
 
 namespace trait {
 //===----------------------------------------------------------------------===//
@@ -300,6 +316,18 @@ private:
       mAmbiguous(AL) {
     assert(Loc.Ptr && "Pointer to a memory must not be null!");
     mAmbiguous->push_back(std::move(Loc.Ptr));
+  }
+
+  /// Creates an estimate location for a specified memory.
+  ///
+  /// \pre The second parameter specifies a list of ambiguous pointer which
+  /// refer this location. It should be the same for all locations in hierarchy
+  /// sequence but locations in unambiguous and alias sequences should have
+  /// different lists.
+  EstimateMemory(const llvm::MemoryLocation &Loc, AmbiguousRef &&AL) :
+      mSize(Loc.Size), mAATags(Loc.AATags), mAmbiguous(AL) {
+    assert(Loc.Ptr && "Pointer to a memory must not be null!");
+    mAmbiguous->push_back(Loc.Ptr);
   }
 
   /// Creates a copy of specified location with a new size and metadata node.

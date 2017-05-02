@@ -31,78 +31,118 @@ STATISTIC(NumMergedNode, "Number of alias nodes merged in");
 STATISTIC(NumEstimateMemory, "Number of estimate memory created");
 
 namespace tsar {
-Value * stripPointer(Value *Ptr, const DataLayout &DL) {
+Value * stripPointer(const DataLayout &DL, Value *Ptr) {
   assert(Ptr && "Pointer to memory location must not be null!");
   Ptr = GetUnderlyingObject(Ptr, DL);
   if (auto LI = dyn_cast<LoadInst>(Ptr))
-    return stripPointer(LI->getPointerOperand(), DL);
+    return stripPointer(DL, LI->getPointerOperand());
   if (Operator::getOpcode(Ptr) == Instruction::IntToPtr) {
-    return stripPointer(
-      GetUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), DL), DL);
+    return stripPointer(DL,
+      GetUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), DL));
   }
   return Ptr;
 }
 
-void stripToBase(MemoryLocation &Loc, const DataLayout &DL) {
+void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  // GepUnderlyingObject() will strip `getelementptr` instruction, so ignore such
+  // behavior.
+  if (auto  GEP = dyn_cast<const GEPOperator>(Loc.Ptr))
+    return;
   // It seams that it is safe to strip 'inttoptr', 'addrspacecast' and that an
   // alias analysis works well in this case. LLVM IR specification requires that
   // if the address space conversion is legal then both result and operand refer
   // to the same memory location.
-  if (Operator::getOpcode(Loc.Ptr) == Instruction::BitCast ||
-      Operator::getOpcode(Loc.Ptr) == Instruction::AddrSpaceCast ||
-      Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr) {
+  if (Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr) {
     Loc.Ptr = cast<const Operator>(Loc.Ptr)->getOperand(0);
-    return stripToBase(Loc, DL);
+    return stripToBase(DL, Loc);
   }
-  if (auto GEPI = dyn_cast<const GetElementPtrInst>(Loc.Ptr)) {
-    Type *Ty = GEPI->getSourceElementType();
-    // TODO (kaniandr@gmail.com): it is possible that sequence of
-    // 'getelmentptr' instructions is represented as a single instruction.
-    // If the result of it is a member of a structure this case must be
-    // evaluated separately. At this moment only individual access to
-    // members is supported: for struct STy {int X;}; it is
-    // %X = getelementptr inbounds %struct.STy, %struct.STy* %S, i32 0, i32 0
-    // Also fix it in isSameBase().
-    if (!isa<StructType>(Ty) || GEPI->getNumIndices() != 2) {
-      Loc.Ptr = GEPI->getPointerOperand();
-      Loc.Size = Ty->isArrayTy() ?
-        DL.getTypeStoreSize(Ty) : MemoryLocation::UnknownSize;
-      return stripToBase(Loc, DL);
-    }
-  }
+  auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), DL, 1);
+  if (BasePtr == Loc.Ptr)
+    return;
+  Loc.Ptr = BasePtr;
+  stripToBase(DL, Loc);
 }
 
-bool isSameBase(const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
+bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
+  assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  auto Ty = Loc.Ptr->getType();
+  if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
+    auto Size = DL.getTypeStoreSize(PtrTy->getElementType());
+    if (Size != Loc.Size) {
+      Loc.Size = Size;
+      return true;
+    }
+  }
+  if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
+    Loc.Ptr = GEP->getPointerOperand();
+    Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
+    Type *SrcTy = GEP->getSourceElementType();
+    Loc.Size = SrcTy->isArrayTy() || SrcTy->isStructTy() ?
+      DL.getTypeStoreSize(SrcTy) : MemoryLocation::UnknownSize;
+    return true;
+  }
+  return false;
+}
+
+bool isSameBase(const DataLayout &DL,
+    const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
   if (BasePtr1 == BasePtr2)
     return true;
   if (!BasePtr1 || !BasePtr2 ||
       BasePtr1->getValueID() != BasePtr2->getValueID())
     return false;
+  if (Operator::getOpcode(BasePtr1) == Instruction::IntToPtr ||
+      Operator::getOpcode(BasePtr1) == Instruction::BitCast ||
+      Operator::getOpcode(BasePtr1) == Instruction::AddrSpaceCast)
+    return isSameBase(DL,
+      cast<const Operator>(BasePtr1)->getOperand(0),
+      cast<const Operator>(BasePtr2)->getOperand(0));
   if (auto LI = dyn_cast<const LoadInst>(BasePtr1))
-    return isSameBase(LI->getPointerOperand(),
+    return isSameBase(DL, LI->getPointerOperand(),
       cast<const LoadInst>(BasePtr2)->getPointerOperand());
-  if (auto GEPI1 = dyn_cast<const GetElementPtrInst>(BasePtr1)) {
-    auto GEPI2 = dyn_cast<const GetElementPtrInst>(BasePtr2);
-    if (!isSameBase(GEPI1->getPointerOperand(), GEPI2->getPointerOperand()))
+  if (auto GEP1 = dyn_cast<const GEPOperator>(BasePtr1)) {
+    auto GEP2 = dyn_cast<const GEPOperator>(BasePtr2);
+    if (!isSameBase(DL, GEP1->getPointerOperand(), GEP2->getPointerOperand()))
       return false;
-    // TODO (kaniandr@gmail.com) : see stripToBase().
-    Type *Ty1 = GEPI1->getSourceElementType();
-    Type *Ty2 = GEPI2->getSourceElementType();
-    if ((!isa<StructType>(Ty1) || GEPI1->getNumIndices() != 2) &&
-        (!isa<StructType>(Ty2) || GEPI2->getNumIndices() != 2))
-      return true;
-    if (Ty1 != Ty2 || GEPI1->getNumIndices() != GEPI2->getNumIndices())
+    if (GEP1->getSourceElementType() != GEP2->getSourceElementType())
       return false;
-    const Use *Idx1 = GEPI1->idx_begin();
-    const Use *Idx2 = GEPI2->idx_begin();
-    assert(isa<ConstantInt>(Idx1) && cast<ConstantInt>(Idx1)->isZero() &&
-      "First index in getelemenptr for structure is not a zero value!");
-    assert(isa<ConstantInt>(Idx2) && cast<ConstantInt>(Idx2)->isZero() &&
-      "First index in getelemenptr for structure is not a zero value!");
-    ++Idx1; ++Idx2;
-    return cast<ConstantInt>(Idx1)->getZExtValue() ==
-      cast<ConstantInt>(Idx2)->getZExtValue();
+    if (GEP1->getNumIndices() != GEP2->getNumIndices())
+      return false;
+    auto I1 = gep_type_begin(GEP1), E1 = gep_type_end(GEP1);
+    auto I2 = gep_type_begin(GEP2);
+    auto BitWidth1 = DL.getPointerSizeInBits(GEP1->getPointerAddressSpace());
+    auto BitWidth2 = DL.getPointerSizeInBits(GEP2->getPointerAddressSpace());
+    for (; I1 != E1; ++I1, I2++) {
+      if (I1.getOperand() == I2.getOperand())
+        continue;
+      auto OpC1 = dyn_cast<ConstantInt>(I1.getOperand());
+      auto OpC2 = dyn_cast<ConstantInt>(I2.getOperand());
+      if (!OpC1 || !OpC2)
+        return false;
+      APInt Offset1, Offset2;
+      if (auto STy1 = I1.getStructTypeOrNull()) {
+        assert(I2.getStructTypeOrNull() && "It must be a structure!");
+        auto Idx1 = OpC1->getZExtValue();
+        auto SL1 = DL.getStructLayout(STy1);
+        Offset1 = APInt(BitWidth1, SL1->getElementOffset(Idx1));
+        auto STy2 = I2.getStructType();
+        auto Idx2 = OpC2->getZExtValue();
+        auto SL2 = DL.getStructLayout(STy2);
+        Offset2 = APInt(BitWidth2, SL2->getElementOffset(Idx2));
+      } else {
+        assert(!I2.getStructTypeOrNull() && "It must not be a structure!");
+        APInt Idx1 = OpC1->getValue().sextOrTrunc(BitWidth1);
+        Offset1 = Idx1 *
+          APInt(BitWidth1, DL.getTypeAllocSize(I1.getIndexedType()));
+        APInt Idx2 = OpC2->getValue().sextOrTrunc(BitWidth2);
+        Offset2 = Idx2 *
+          APInt(BitWidth2, DL.getTypeAllocSize(I2.getIndexedType()));
+      }
+      if (Offset1 != Offset2)
+        return false;
+    }
+    return true;
   }
   return false;
 }
@@ -230,39 +270,43 @@ const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
 }
 
 void AliasTree::add(const MemoryLocation &Loc) {
-  EstimateMemory *EM;
-  bool IsNew, AddAmbiguous;
-  std::tie(EM, IsNew, AddAmbiguous) = insert(Loc);
-  assert(EM && "New estimate memory must not be null!");
-  if (!IsNew && !AddAmbiguous)
-    return;
-  using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-  if (AddAmbiguous) {
-    /// TODO (kaniandr@gmail.com): optimize duplicate search.
-    if (IsNew) {
-      auto Node = addEmptyNode(*EM, *getTopLevelNode());
+  MemoryLocation Base(Loc);
+  do {
+    stripToBase(*mDL, Base);
+    EstimateMemory *EM;
+    bool IsNew, AddAmbiguous;
+    std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
+    assert(EM && "New estimate memory must not be null!");
+    if (!IsNew && !AddAmbiguous)
+      return;
+    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    if (AddAmbiguous) {
+      /// TODO (kaniandr@gmail.com): optimize duplicate search.
+      if (IsNew) {
+        auto Node = addEmptyNode(*EM, *getTopLevelNode());
+        EM->setAliasNode(*Node);
+      }
+      while (CT::getPrev(EM))
+        EM = CT::getPrev(EM);
+      do {
+        auto Node = addEmptyNode(*EM, *getTopLevelNode());
+        auto Forward = EM->getAliasNode(*this);
+        assert(Forward && "Alias node for memory location must not be null!");
+        while (Forward != Node) {
+          auto Parent = Forward->getParent();
+          assert(Parent && "Parent node must not be null!");
+          Parent->mergeNodeIn(*Forward), ++NumMergedNode;
+          Forward = Parent;
+        }
+        EM = CT::getNext(EM);
+      } while (EM);
+    } else {
+      auto *CurrNode = CT::getNext(EM) ?
+        CT::getNext(EM)->getAliasNode(*this) : getTopLevelNode();
+      auto Node = addEmptyNode(*EM, *CurrNode);
       EM->setAliasNode(*Node);
     }
-    while (CT::getPrev(EM))
-      EM = CT::getPrev(EM);
-    do {
-      auto Node = addEmptyNode(*EM, *getTopLevelNode());
-      auto Forward = EM->getAliasNode(*this);
-      assert(Forward && "Alias node for memory location must not be null!");
-      while (Forward != Node) {
-        auto Parent = Forward->getParent();
-        assert(Parent && "Parent node must not be null!");
-        Parent->mergeNodeIn(*Forward), ++NumMergedNode;
-        Forward = Parent;
-      }
-      EM = CT::getNext(EM);
-    } while (EM);
-  } else {
-    auto *CurrNode =
-      CT::getNext(EM) ? CT::getNext(EM)->getAliasNode(*this) : getTopLevelNode();
-    auto Node = addEmptyNode(*EM, *CurrNode);
-    EM->setAliasNode(*Node);
-  }
+  } while (stripMemoryLevel(*mDL, Base));
 }
 
 void AliasTree::removeNode(AliasNode *N) {
@@ -361,11 +405,9 @@ bool AliasTree::slowMayAlias(
 }
 
 std::tuple<EstimateMemory *, bool, bool>
-AliasTree::insert(const MemoryLocation &Loc) {
-  assert(Loc.Ptr && "Pointer to memory location must not be null!");
-  MemoryLocation Base(Loc);
-  stripToBase(Base, *mDL);
-  Value *StrippedPtr = stripPointer(const_cast<Value *>(Base.Ptr), *mDL);
+AliasTree::insert(const MemoryLocation &Base) {
+  assert(Base.Ptr && "Pointer to memory location must not be null!");
+  Value *StrippedPtr = stripPointer(*mDL, const_cast<Value *>(Base.Ptr));
   BaseList *BL;
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
@@ -373,7 +415,7 @@ AliasTree::insert(const MemoryLocation &Loc) {
     for (auto ChainItr = BL->begin(), ChainEItr = BL->end();
          ChainItr != ChainEItr; ++ChainItr) {
       auto Chain = *ChainItr;
-      if (!isSameBase(Chain->front(), Base.Ptr))
+      if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
         continue;
       bool AddAmbiguous = false;
       switch (isSamePointer(*Chain, Base)) {
@@ -406,8 +448,7 @@ AliasTree::insert(const MemoryLocation &Loc) {
   } else {
     BL = &mBases.insert(std::make_pair(StrippedPtr, BaseList())).first->second;
   }
-  auto Chain = new EstimateMemory(
-    std::move(Base), AmbiguousRef::make(mAmbiguousPool));
+  auto Chain = new EstimateMemory(Base, AmbiguousRef::make(mAmbiguousPool));
   ++NumEstimateMemory;
   BL->push_back(Chain);
   return std::make_tuple(Chain, true, false);
@@ -416,12 +457,14 @@ AliasTree::insert(const MemoryLocation &Loc) {
 char EstimateMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", true, true)
-  INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", true, true)
 
 void EstimateMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<AAResultsWrapperPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -439,6 +482,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // This should be also implemented in DefinedMemoryPass.
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
   // for example, in call and invoke instructions.
+  uint64_t S;
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
     switch (I->getOpcode()) {
       case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
