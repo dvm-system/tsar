@@ -69,7 +69,7 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   auto Ty = Loc.Ptr->getType();
   if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
     auto Size = DL.getTypeStoreSize(PtrTy->getElementType());
-    if (Size != Loc.Size) {
+    if (Size > Loc.Size) {
       Loc.Size = Size;
       return true;
     }
@@ -77,9 +77,15 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
     Loc.Ptr = GEP->getPointerOperand();
     Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
+    Loc.Size = MemoryLocation::UnknownSize;
     Type *SrcTy = GEP->getSourceElementType();
-    Loc.Size = SrcTy->isArrayTy() || SrcTy->isStructTy() ?
-      DL.getTypeStoreSize(SrcTy) : MemoryLocation::UnknownSize;
+    // We can to precise location size, if this instruction is used to
+    // access element of array or structure without shifting of a pointer.
+    if ((SrcTy->isArrayTy() || SrcTy->isStructTy()) &&
+        GEP->getNumOperands() > 2)
+      if (auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(1)))
+        if (OpC->isZero())
+          Loc.Size = DL.getTypeStoreSize(SrcTy);
     return true;
   }
   return false;
