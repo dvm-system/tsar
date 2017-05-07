@@ -12,6 +12,7 @@
 
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Type.h>
 #include <tuple>
 #include <tagged.h>
 
@@ -23,6 +24,13 @@ class AllocaInst;
 }
 
 namespace tsar {
+/// Returns number of dimensions in a specified type or 0 if it is not an array.
+inline unsigned dimensionsNum(const llvm::Type *Ty) {
+  unsigned Dims = 0;
+  for (; Ty->isArrayTy(); Ty = Ty->getArrayElementType(), ++Dims);
+  return Dims;
+}
+
 /// This tag provides access to low-level representation of matched entities.
 struct IR {};
 

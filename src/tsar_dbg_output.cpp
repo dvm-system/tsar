@@ -19,7 +19,7 @@
 #include <llvm/Pass.h>
 #include <utility.h>
 #include "tsar_dbg_output.h"
-#include "tsar_df_location.h"
+#include "DIUnparser.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
 
@@ -27,19 +27,9 @@ using namespace llvm;
 
 namespace tsar {
 void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
-  if (!Loc) {
+  if (!Loc)
     o << "<unknown location>";
-    return;
-  }
-  auto Src = locationToSource(Loc);
-  o << Src;
-  if (!Src.empty())
-    return;
-  if (auto *LI = dyn_cast<const LoadInst>(Loc))
-    o << "*(", printLocationSource(o, LI->getPointerOperand()), o << ")";
-  else if (auto *GEPI = dyn_cast<const GetElementPtrInst>(Loc))
-    o << "(", printLocationSource(o, GEPI->getPointerOperand()), o << ") + ...";
-  else
+  else if (!unparsePrint(Loc, o))
     o << *Loc;
 }
 

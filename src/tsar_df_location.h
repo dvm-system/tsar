@@ -18,8 +18,6 @@
 #include "MemorySet.h"
 
 namespace llvm {
-class LoadInst;
-class GetElementPtrInst;
 class raw_ostream;
 }
 
@@ -328,48 +326,5 @@ private:
   StrippedMap mBases;
   BaseSet mBaseList;
 };
-
-/// \brief Represents memory location as an expression in a source language.
-///
-/// \return A string which represents the memory location or an empty string.
-/// \pre At this moment arrays does not supported. Location must not be null!
-std::string locationToSource(const llvm::Value *Loc);
-
-namespace detail {
-/// \brief Strips types that do not change representation of appropriate
-/// expression in a source language.
-///
-/// For example, const int and int & will be stripped to int, typedef will be
-/// also stripped.
-void stripDIType(llvm::DITypeRef &DITy);
-
-/// \brief Represents memory location as an expression in a source language.
-///
-/// \param [in] Loc A memory location.
-/// \param [out] DITy Meta information describing a type of this location.
-/// \param [out] NeadBracket This specifies that brackets are necessary
-/// to combined the result with other expressions. For example, brackets are
-/// necessary if the result is 'p+1', where 'p' is a pointer. To dereference
-/// this location *(p+1) expression should be used.
-/// \return A string which represents the memory location or an empty string.
-/// \pre At this moment arrays does not supported. Location must not be null!
-std::string locationToSource(
-  const llvm::Value *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
-
-/// \brief Represents memory location as an expression in a source language.
-///
-/// This function is overloaded for locations which are represented as a 'load'
-/// instructions.
-std::string locationToSource(
-  const llvm::LoadInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
-
-/// \brief Represents memory location as an expression in a source language.
-///
-/// This function is overloaded for locations which are represented as a
-/// 'getelementptr' instructions.
-std::string locationToSource(
-  const llvm::GetElementPtrInst *Loc, llvm::DITypeRef &DITy, bool &NeadBracket);
 }
-}
-
 #endif//TSAR_DF_LOCATION_H

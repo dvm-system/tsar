@@ -25,9 +25,7 @@ namespace tsar {
 /// specified memory location.
 ///
 /// \pre At this moment location can be represented as a sequence of 'load' or
-/// 'getelementptr' instructions ending 'alloca' instruction, 'alloca'
-/// instructions or global variables.
-/// A location must not be null.
+/// 'getelementptr' instructions ending 'alloca' instruction or global variable.
 /// \par Example
 /// \code
 ///    ...
@@ -39,7 +37,7 @@ namespace tsar {
 /// %0 = load i32*, i32** %p, align 4
 /// \endcode
 /// If debug information is available the result for
-/// %0 will be *p otherwise it will be *(%p = alloca i32*, align 4).
+/// %0 will be p[0] otherwise it will be *(%p = alloca i32*, align 4).
 void printLocationSource(llvm::raw_ostream &o, const llvm::Value *Loc);
 
 /// \brief Print description of a type from a source code.

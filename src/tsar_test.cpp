@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 #include "DefinedMemory.h"
-#include "tsar_df_location.h"
+#include "DIUnparser.h"
 #include "tsar_loop_matcher.h"
 #include "PerfectLoop.h"
 #include "tsar_private.h"
@@ -106,8 +106,13 @@ public:
     std::string Clause = Trait::toString();
     Clause.erase(std::remove(Clause.begin(), Clause.end(), ' '), Clause.end());
     std::set<std::string, std::less<std::string>> SortedVarList;
-    for (auto TS : TraitVector)
-      SortedVarList.insert(locationToSource(TS->memory()->Ptr));
+    for (auto TS : TraitVector) {
+      SmallString<10> Str;
+      if (unparseToString(TS->memory()->Ptr, Str))
+        SortedVarList.insert(Str.str());
+      else
+        SortedVarList.insert("?");
+    }
     mOS << " " << Clause << "(";
     auto I = SortedVarList.begin(), EI = SortedVarList.end();
     for (--EI; I != EI; ++I)
