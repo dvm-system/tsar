@@ -333,7 +333,13 @@ int Tool::run(QueryManager *QM) {
   if (mInline == true) {
     std::string projectFile = FInlinerAction::createProjectFile(mSources);
     clang::tooling::ClangTool CT(*mCompilations, {projectFile});
-    return CT.run(tsar::newAnalysisActionFactory<FInlinerAction>(mCommandLine, QM).get());
+    int ret = CT.run(
+      tsar::newAnalysisActionFactory<FInlinerAction>(mCommandLine, QM).get());
+    if (ret != 0) {
+      return ret;
+    } else {
+      mSources = {projectFile};
+    }
   }
 #endif
   ClangTool CTool(*mCompilations, mSources);

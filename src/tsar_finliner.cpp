@@ -26,12 +26,11 @@
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Core/Replacement.h>
 #include <clang/Tooling/Tooling.h>
+#include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
 // TODO(jury.zykov@yandex.ru): replacements in macro
-// TODO(jury.zykov@yandex.ru): add include-directives when needed
 // TODO(jury.zykov@yandex.ru): direct argument passing without local variables when possible
-// TODO(jury.zykov@yandex.ru): simplify use
 
 using namespace tsar;
 using namespace detail;
@@ -50,8 +49,8 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
   // which can be inlined
   std::unique_ptr<clang::CFG> CFG = clang::CFG().buildCFG(
     nullptr, FS, &mContext, clang::CFG::BuildOptions());
-  assert(CFG.get() != nullptr && "CFG construction failed for "
-    + mCurrentFD->getName());
+  assert(CFG.get() != nullptr && ("CFG construction failed for "
+    + mCurrentFD->getName()).str().data());
   for (auto B : *CFG) {
     for (auto I1 = B->begin(); I1 != B->end(); ++I1) {
       if (llvm::Optional<clang::CFGStmt> CS = I1->getAs<clang::CFGStmt>()) {
@@ -136,7 +135,7 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
 }
 
 bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr* DRE) {
-  mRefs.insert(DRE);
+  mDeclRefs[mCurrentFD].insert(DRE);
   // parameter reference
   if (llvm::isa<clang::ParmVarDecl>(DRE->getDecl()) == true) {
     mTs[mCurrentFD].addParmRef(
@@ -150,14 +149,27 @@ bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
   return true;
 }
 
+bool FInliner::VisitExpr(clang::Expr* E) {
+  mTypeRefs[mCurrentFD].insert(
+    const_cast<clang::Type*>(E->getType().getTypePtrOrNull()));
+  return true;
+}
+
 std::vector<std::string> FInliner::construct(
     const std::string& type, const std::string& identifier,
-    std::string& context) {
-  const std::string pattern("(struct|union|enum)\\s+\\w+|\\w+|\\S");
+    const std::string& context,
+    std::map<std::string, std::string>& replacements) {
+  const std::string pattern(
+    "[(struct|union|enum)\\s+]?" + mIdentifierPattern + "|\\S");
   clang::ast_matchers::MatchFinder MatchFinder;
   MatchFinder.addMatcher(clang::ast_matchers::varDecl().bind("varDecl"),
     &varDeclHandler);
   std::vector<std::string> tokens = tokenize(type, pattern);
+  for (auto& token : tokens) {
+    if (replacements.find(token) != std::end(replacements)) {
+      token = replacements[token];
+    }
+  }
   varDeclHandler.setParameters(join(tokens, " "), identifier,
     [&](const std::string& s) -> std::string {
     return join(tokenize(s, pattern), " ");
@@ -190,9 +202,16 @@ std::vector<std::string> FInliner::construct(
   }) - std::begin(counts);
   tokens.erase(std::begin(tokens));
   tokens.insert(std::begin(tokens) + position, identifier);
-  context += join(tokens, " ") + ";";
   return tokens;
 }
+
+template<>
+struct std::less<clang::SourceRange> {
+  bool operator()(clang::SourceRange lhs, clang::SourceRange rhs) {
+    return lhs.getBegin() == rhs.getBegin()
+      ? lhs.getEnd() < rhs.getEnd() : lhs.getBegin() < rhs.getBegin();
+  }
+};
 
 std::pair<std::string, std::string> FInliner::compile(
   const TemplateInstantiation& TI, const std::vector<std::string>& args,
@@ -204,33 +223,40 @@ std::pair<std::string, std::string> FInliner::compile(
   clang::SourceManager& SM = lRewriter.getSourceMgr();
   std::string params;
   std::string context;
+  std::map<std::string, std::string> replacements;
   decls.insert(std::begin(args), std::end(args));
-  for (auto& PVD : TI.mTemplate->getFuncDecl()->params()) {
+  for (auto& PVD : TI.mTemplate->getFuncDecl()->parameters()) {
     std::string identifier = addSuffix(PVD->getName(), decls);
+    replacements[PVD->getName()] = identifier;
     std::vector<std::string> tokens
-      = tokenize(getSourceText(PVD->getSourceRange()), "\\w+");
-    for (auto& decl : mGlobalDecls) {
-      if (clang::isa<clang::NamedDecl>(decl) == true) {
-        if (std::find(std::begin(tokens), std::end(tokens),
-          reinterpret_cast<clang::NamedDecl*>(decl)->getName())
+      = tokenize(getSourceText(getSpellingRange(PVD)), mIdentifierPattern);
+    for (auto& decl : mContext.getTranslationUnitDecl()->decls()) {
+      if (clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
+        if (std::find(std::begin(tokens), std::end(tokens), ND->getName())
           != std::end(tokens)) {
-          context += getSourceText(decl->getSourceRange()) + ";";
+          context += getSourceText(getSpellingRange(ND)) + ";";
         }
       }
     }
-    tokens = construct(PVD->getType().getAsString(), identifier, context);
+    tokens
+      = construct(PVD->getType().getAsString(), identifier, context, replacements);
+    context += join(tokens, " ") + ";";
     params.append(join(tokens, " ") + " = " + args[PVD->getFunctionScopeIndex()]
       + ";");
-    std::vector<clang::DeclRefExpr*> parameterReferences
-      = TI.mTemplate->getParmRefs(PVD);
-    for (auto& DRE : parameterReferences) {
-      lRewriter.ReplaceText(SM.getSpellingLoc(DRE->getLocStart()), identifier);
+    std::set<clang::SourceRange, std::less<clang::SourceRange>> parameterReferences;
+    for (auto DRE : TI.mTemplate->getParmRefs(PVD)) {
+      parameterReferences.insert(std::end(parameterReferences),
+        getSpellingRange(DRE));
+    }
+    for (auto& SR : parameterReferences) {
+      lRewriter.ReplaceText(SR, identifier);
     }
   }
 
   auto pr = [&](const std::pair<clang::FunctionDecl*,
     std::vector<TemplateInstantiation>> &lhs) -> bool {
-    return lhs.first == TI.mTemplate->getFuncDecl();
+    return TI.mTemplate != nullptr && TI.mTemplate->getFuncDecl() != nullptr
+      && lhs.first == TI.mTemplate->getFuncDecl();
   };
   if (std::find_if(std::begin(mTIs), std::end(mTIs), pr) != std::end(mTIs)) {
     for (auto& TI : mTIs[TI.mTemplate->getFuncDecl()]) {
@@ -238,24 +264,24 @@ std::pair<std::string, std::string> FInliner::compile(
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
         std::begin(args),
         [&](const clang::Expr* arg) -> std::string {
-        return lRewriter.getRewrittenText(arg->getSourceRange());
+        return lRewriter.getRewrittenText(getSpellingRange(arg));
       });
       std::pair<std::string, std::string> text
         = compile(TI, args, decls);
       if (text.second.size() == 0) {
-        lRewriter.ReplaceText(TI.mStmt->getSourceRange(), text.first);
+        lRewriter.ReplaceText(getSpellingRange(TI.mStmt), text.first);
       } else {
-        if (requiresBraces(TI.mStmt) == true) {
+        if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
           text.first.insert(std::begin(text.first), '{');
-          lRewriter.InsertTextAfterToken(TI.mStmt->getSourceRange().getEnd(),
+          lRewriter.InsertTextAfterToken(getSpellingRange(TI.mStmt).getEnd(),
             ";}");
         }
-        lRewriter.ReplaceText(TI.mCallExpr->getSourceRange(), text.second);
-        lRewriter.InsertTextBefore(TI.mStmt->getSourceRange().getBegin(),
+        lRewriter.ReplaceText(getSpellingRange(TI.mCallExpr), text.second);
+        lRewriter.InsertTextBefore(getSpellingRange(TI.mStmt).getBegin(),
           text.first);
       }
-      lRewriter.InsertTextBefore(TI.mStmt->getLocStart(),
-        "/* " + getSourceText(TI.mCallExpr->getSourceRange())
+      lRewriter.InsertTextBefore(getSpellingRange(TI.mStmt).getBegin(),
+        "/* " + getSourceText(getSpellingRange(TI.mCallExpr))
         + " is inlined below */\n");
     }
   }
@@ -269,22 +295,22 @@ std::pair<std::string, std::string> FInliner::compile(
     context = "";
     std::vector<std::string> tokens
       = construct(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
-        identifier, context);
+        identifier, context, std::map<std::string, std::string>());
     ret = join(tokens, " ") + ";";
     for (auto& RS : returnStmts) {
       std::string text = "{" + identifier + " = "
-        + lRewriter.getRewrittenText(RS->getRetValue()->getSourceRange())
+        + lRewriter.getRewrittenText(getSpellingRange(RS->getRetValue()))
         + ";goto " + retLab + ";}";
-      lRewriter.ReplaceText(RS->getSourceRange(), text);
+      lRewriter.ReplaceText(getSpellingRange(RS), text);
     }
-    lRewriter.ReplaceText(TI.mCallExpr->getSourceRange(), identifier);
+    lRewriter.ReplaceText(getSpellingRange(TI.mCallExpr), identifier);
   } else {
     for (auto& RS : returnStmts) {
-      lRewriter.ReplaceText(RS->getSourceRange(), "goto " + retLab);
+      lRewriter.ReplaceText(getSpellingRange(RS), "goto " + retLab);
     }
   }
   std::string text = lRewriter.getRewrittenText(
-    TI.mTemplate->getFuncDecl()->getBody()->getSourceRange())
+    getSpellingRange(TI.mTemplate->getFuncDecl()->getBody()))
     + retLab + ":;";
   text.insert(std::begin(text) + 1, std::begin(params), std::end(params));
   text.insert(std::begin(text), std::begin(ret), std::end(ret));
@@ -293,9 +319,6 @@ std::pair<std::string, std::string> FInliner::compile(
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
-  for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
-    mGlobalDecls.insert(decl);
-  }
   // associate instantiations with templates
   std::set<clang::FunctionDecl*> callable;
   for (auto& TIs : mTIs) {
@@ -307,24 +330,31 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
   }
   // identifiers in scope
+  std::map<clang::FunctionDecl*, std::set<std::string>> decls;
   for (auto& TIs : mTIs) {
-    for (auto& decl : mGlobalDecls) {
-      if (clang::isa<clang::NamedDecl>(decl) == true) {
-        decls[TIs.first].insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
+    for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
+      if (clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
+        decls[TIs.first].insert(ND->getName());
       }
     }
     for (auto& decl : TIs.first->decls()) {
-      if (clang::isa<clang::NamedDecl>(decl) == true) {
-        decls[TIs.first].insert(reinterpret_cast<clang::NamedDecl*>(decl)->getName());
+      if (clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
+        decls[TIs.first].insert(ND->getName());
       }
     }
   }
   // remove unused templates
-  for (auto it = mTs.begin(); it != mTs.end();) {
-    if (callable.find(it->first) == callable.end()) {
+  for (auto it = std::begin(mTs); it != std::end(mTs);) {
+    if (callable.find(it->first) == std::end(callable)) {
       it = mTs.erase(it);
     } else {
       ++it;
+    }
+  }
+  // disable instantiation of variadic functions
+  for (auto& pair : mTs) {
+    if (pair.first->isVariadic() == true) {
+      pair.second.setFuncDecl(nullptr);
     }
   }
   // disable instantiation of recursive functions
@@ -334,13 +364,15 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     std::set<clang::FunctionDecl*> callers = {pair.first};
     std::set<clang::FunctionDecl*> callees;
     for (auto& TIs : pair.second) {
-      callees.insert(TIs.mTemplate->getFuncDecl());
+      if (TIs.mTemplate->getFuncDecl() != nullptr) {
+        callees.insert(TIs.mTemplate->getFuncDecl());
+      }
     }
     while (ok == true && callees.size() != 0) {
       std::set<clang::FunctionDecl*> intersection;
-      std::set_intersection(callers.begin(), callers.end(),
-        callees.begin(), callees.end(),
-        std::inserter(intersection, intersection.end()));
+      std::set_intersection(std::begin(callers), std::end(callers),
+        std::begin(callees), std::end(callees),
+        std::inserter(intersection, std::end(intersection)));
       if (intersection.size() != 0) {
         ok = false;
         break;
@@ -348,7 +380,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         std::set<clang::FunctionDecl*> tmp;
         for (auto& caller : callees) {
           for (auto& pair : mTIs[caller]) {
-            tmp.insert(pair.mTemplate->getFuncDecl());
+            if (pair.mTemplate->getFuncDecl() != nullptr) {
+              tmp.insert(pair.mTemplate->getFuncDecl());
+            }
           }
         }
         callees.swap(tmp);
@@ -361,10 +395,151 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto& FD : recursive) {
     mTs[FD].setFuncDecl(nullptr);
   }
-  llvm::errs() << mTIs.size() << " template instantiations" << '\n';
-  llvm::errs() << mTs.size() << " templates" << '\n';
-  llvm::errs() << callable.size() << " unused templates" << '\n';
-  llvm::errs() << recursive.size() << " recursive templates" << '\n';
+  // get functions' intermodular calls
+  std::set<TemplateInstantiation*> intermodularTIs;
+  std::set<Template*> intermodularTs;
+  for (auto& TIs : mTIs) {
+    for (auto& TI : TIs.second) {
+      if (TI.mTemplate->getFuncDecl() != nullptr
+        && mSourceManager.getFileID(getSpellingRange(TI.mFuncDecl).getBegin())
+        != mSourceManager.getFileID(
+          getSpellingRange(TI.mTemplate->getFuncDecl()).getBegin())) {
+        intermodularTIs.insert(&TI);
+        intermodularTs.insert(TI.mTemplate);
+      }
+    }
+  }
+  // check external dependencies in intermodular case
+  // [C99 6.2.1] identifier can denote: object, function, tag/member of
+  // struct/union/enum, typedef name, label name, macro name, macro parameter.
+  // Label name - by definition has function scope, macro' objects should be
+  // processed during preprocessing stage. Other cases are handled below.
+  for (auto T : intermodularTs) {
+    std::set<clang::Type*>& typeDecls = mTypeDecls[T->getFuncDecl()];
+    std::set<clang::Type*>& typeRefs = mTypeRefs[T->getFuncDecl()];
+    for (auto decl : T->getFuncDecl()->decls()) {
+      if (clang::TypeDecl* TD = clang::dyn_cast<clang::TypeDecl>(decl)) {
+        typeDecls.insert(const_cast<clang::Type*>(TD->getTypeForDecl()));
+      } else if (clang::ValueDecl* VD = clang::dyn_cast<clang::ValueDecl>(decl)) {
+        typeRefs.insert(const_cast<clang::Type*>(VD->getType().getTypePtrOrNull()));
+      }
+    }
+    assert(typeRefs.find(nullptr) == std::end(typeRefs)
+      && "Non-typed declaration was found");
+    for (auto it = std::begin(typeRefs); it != std::end(typeRefs);) {
+      if (typeDecls.find(*it) != std::end(typeDecls)) {
+        it = typeRefs.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (auto it1 = std::begin(typeRefs); it1 != std::end(typeRefs);) {
+      std::vector<std::string> tokens
+        = tokenize(clang::QualType(*it1, 0).getAsString(), mIdentifierPattern);
+      for (auto it2 = std::begin(tokens); it2 != std::end(tokens);) {
+        if (std::find(std::begin(mKeywords), std::end(mKeywords), *it2)
+          != std::end(mKeywords)) {
+          it2 = tokens.erase(it2);
+        } else {
+          ++it2;
+        }
+      }
+      if (tokens.size() != 0) {
+        ++it1;
+      } else {
+        it1 = typeRefs.erase(it1);
+      }
+    }
+    // TODO: this type can contain reference to variable
+    bool ok = true;
+    if (typeRefs.size() != 0) {
+      for (auto& ref : typeRefs) {
+        llvm::errs() << '"' << T->getFuncDecl()->getName() << '"' << ':'
+          << " nonlocal type reference found:" << ' ' << '"'
+          << clang::QualType(ref, 0).getAsString() << '"' << ' ' << ref << '\n';
+      }
+      ok = false;
+    }
+    for (auto DRE : mDeclRefs[T->getFuncDecl()]) {
+      if (std::find(T->getFuncDecl()->decls_begin(),
+        T->getFuncDecl()->decls_end(), DRE->getFoundDecl())
+        == T->getFuncDecl()->decls_end()) {
+        llvm::errs() << '"' << T->getFuncDecl()->getName() << '"' << ':'
+          << " nonlocal value reference found:" << ' ' << '"'
+          << getSourceText(getSpellingRange(DRE)) << '"' << ' ' << DRE << '\n';
+        ok = false;
+      }
+    }
+    if (ok == false) {
+      for (auto TI : intermodularTIs) {
+        if (TI->mTemplate == T) {
+          TI->mTemplate = nullptr;
+        }
+      }
+    }
+  }
+  // info
+  [&]() {
+    llvm::errs() << '\n';
+    llvm::errs() << "Total template instantiations:" << '\n';
+    for (auto& TIs : mTIs) {
+      if (TIs.second.size() == 0) {
+        continue;
+      }
+      llvm::errs() << ' ' << "in " << '"' << TIs.first->getName()
+        << '"' << ':' << '\n';
+      for (auto& TI : TIs.second) {
+        llvm::errs() << "  " << '"'
+          << getSourceText(getSpellingRange(TI.mCallExpr)) << '"' << '\n';
+      }
+      llvm::errs() << '\n';
+    }
+    llvm::errs() << '\n';
+    llvm::errs() << "Total templates:" << '\n';
+    for (auto& T : mTs) {
+      llvm::errs() << ' ' << '"' << T.first->getName() << '"' << '\n';
+    }
+    llvm::errs() << '\n';
+    llvm::errs() << "Unused templates (removed) ("
+      << callable.size() << ')' << '\n';
+    llvm::errs() << '\n';
+    llvm::errs() << "Disabled templates ("
+      << std::count_if(std::begin(mTs), std::end(mTs),
+        [&](const std::pair<clang::FunctionDecl*, Template>& lhs) -> bool {
+      return lhs.second.getFuncDecl() == nullptr;
+    }) << "):" << '\n';
+    for (auto& T : mTs) {
+      if (T.second.getFuncDecl() == nullptr) {
+        llvm::errs() << ' ' << '"' << T.first->getName() << '"' << '\n';
+      }
+    }
+    llvm::errs() << '\n';
+    llvm::errs() << "Disabled template instantiations: ("
+      << [&]() -> size_t {
+      size_t s = 0;
+      for (auto& TI : mTIs) {
+        s += std::count_if(std::begin(TI.second), std::end(TI.second),
+          [&](const TemplateInstantiation& lhs) -> bool {
+          return lhs.mTemplate == nullptr;
+        });
+      }
+      return s;
+    }() << "):" << '\n';
+    for (auto& TIs : mTIs) {
+      if (TIs.second.size() == 0) {
+        continue;
+      }
+      llvm::errs() << ' ' << '"' << TIs.first->getName() << '"' << ':' << '\n';
+      for (auto& TI : TIs.second) {
+        if (TI.mTemplate == nullptr || TI.mTemplate->getFuncDecl() == nullptr) {
+          llvm::errs() << "  " << '"'
+            << getSourceText(getSpellingRange(TI.mCallExpr)) << '"' << '\n';
+        }
+      }
+      llvm::errs() << '\n';
+    }
+    llvm::errs() << '\n';
+  }();
   // recursive instantiation
   for (auto& TIs : mTIs) {
     auto pr = [&](const std::pair<clang::FunctionDecl*, Template>& lhs)
@@ -373,7 +548,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     };
     if (std::find_if(std::begin(mTs), std::end(mTs), pr) == std::end(mTs)) {
       for (auto& TI : TIs.second) {
-        if (TI.mTemplate->getFuncDecl() == nullptr) {
+        if (TI.mTemplate == nullptr
+          || TI.mTemplate->getFuncDecl() == nullptr) {
           continue;
         }
         std::set<std::string>& fDecls = decls[TI.mFuncDecl];
@@ -381,25 +557,25 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
           std::begin(args),
           [&](const clang::Expr* arg) -> std::string {
-          return getSourceText(arg->getSourceRange());
+          return getSourceText(getSpellingRange(arg));
         });
         fDecls.insert(std::begin(args), std::end(args));
         std::pair<std::string, std::string> text
           = compile(TI, args, fDecls);
         if (text.second.size() == 0) {
-          mRewriter.ReplaceText(TI.mStmt->getSourceRange(), text.first);
+          mRewriter->ReplaceText(getSpellingRange(TI.mStmt), text.first);
         } else {
-          if (requiresBraces(TI.mStmt) == true) {
+          if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
             text.first.insert(std::begin(text.first), '{');
-            mRewriter.InsertTextAfterToken(TI.mStmt->getSourceRange().getEnd(),
+            mRewriter->InsertTextAfterToken(getSpellingRange(TI.mStmt).getEnd(),
               ";}");
           }
-          mRewriter.ReplaceText(TI.mCallExpr->getSourceRange(), text.second);
-          mRewriter.InsertTextBefore(TI.mStmt->getSourceRange().getBegin(),
+          mRewriter->ReplaceText(getSpellingRange(TI.mCallExpr), text.second);
+          mRewriter->InsertTextBefore(getSpellingRange(TI.mStmt).getBegin(),
             text.first);
         }
-        mRewriter.InsertTextBefore(TI.mStmt->getLocStart(),
-          "/* " + getSourceText(TI.mCallExpr->getSourceRange())
+        mRewriter->InsertTextBefore(getSpellingRange(TI.mStmt).getBegin(),
+          "/* " + getSourceText(getSpellingRange(TI.mCallExpr))
           + " is inlined below */\n");
       }
     }
@@ -410,6 +586,12 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
 std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
   return clang::Lexer::getSourceText(clang::CharSourceRange::getTokenRange(SR),
     mContext.getSourceManager(), mContext.getLangOpts());
+}
+
+template<typename T>
+clang::SourceRange FInliner::getSpellingRange(T* node) const {
+  return {mSourceManager.getSpellingLoc(node->getSourceRange().getBegin()),
+    mSourceManager.getSpellingLoc(node->getSourceRange().getEnd())};
 }
 
 template<typename _Container>
@@ -466,22 +648,21 @@ std::vector<std::string> FInliner::tokenize(
   return tokens;
 }
 
-bool FInliner::requiresBraces(clang::Stmt* S) const {
-  if (clang::isa<clang::DeclStmt>(S) == true) {
-    clang::DeclStmt* DS = reinterpret_cast<clang::DeclStmt*>(S);
+bool FInliner::requiresBraces(clang::FunctionDecl* FD, clang::Stmt* S) {
+  if (clang::DeclStmt* DS = clang::dyn_cast<clang::DeclStmt>(S)) {
     std::set<clang::Decl*> decls(DS->decl_begin(), DS->decl_end());
     std::set<clang::DeclRefExpr*> refs;
-    std::copy_if(std::begin(mRefs), std::end(mRefs),
+    std::copy_if(std::begin(mDeclRefs[FD]), std::end(mDeclRefs[FD]),
       std::inserter(refs, std::begin(refs)),
       [&](clang::DeclRefExpr* arg) -> bool {
       return std::find(std::begin(decls), std::end(decls), arg->getFoundDecl())
         != std::end(decls);
     });
     for (auto obj : refs) {
-      if (DS->getSourceRange().getBegin().getRawEncoding()
-        <= obj->getSourceRange().getBegin().getRawEncoding()
-        && obj->getSourceRange().getEnd().getRawEncoding()
-        <= DS->getSourceRange().getEnd().getRawEncoding()) {
+      if (getSpellingRange(DS).getBegin().getRawEncoding()
+        <= getSpellingRange(obj).getBegin().getRawEncoding()
+        && getSpellingRange(obj).getEnd().getRawEncoding()
+        <= getSpellingRange(DS).getEnd().getRawEncoding()) {
         refs.erase(obj);
       }
     }
@@ -492,6 +673,7 @@ bool FInliner::requiresBraces(clang::Stmt* S) const {
 
 std::string FInlinerAction::createProjectFile(
     const std::vector<std::string>& sources) {
+  mSources = sources;
   const char projectFile[]{".proj.c"};
   std::error_code ec;
   llvm::raw_fd_ostream out(projectFile, ec, llvm::sys::fs::OpenFlags::F_Text);
@@ -541,25 +723,20 @@ bool FInlinerAction::format(
   clang::tooling::Replacements Replaces = clang::format::sortIncludes(
     FormatStyle, Code->getBuffer(), Ranges,
     SM.getFileEntryForID(FID)->getName());
-  std::string ChangedCode = clang::tooling::applyAllReplacements(
-    Code->getBuffer(), Replaces);
+  llvm::Expected<std::string> ChangedCode
+    = clang::tooling::applyAllReplacements(Code->getBuffer(), Replaces);
+  assert(bool(ChangedCode) == true && "Failed to apply replacements");
   for (const auto& R : Replaces) {
     Ranges.push_back({R.getOffset(), R.getLength()});
   }
   clang::tooling::Replacements FormatChanges = clang::format::reformat(
-    FormatStyle, ChangedCode, Ranges, SM.getFileEntryForID(FID)->getName());
-  Replaces = clang::tooling::mergeReplacements(Replaces, FormatChanges);
+    FormatStyle, ChangedCode.get(), Ranges, SM.getFileEntryForID(FID)->getName());
+  Replaces = Replaces.merge(FormatChanges);
   clang::tooling::applyAllReplacements(Replaces, Rewriter);
   return false;
 }
 
-bool FInlinerAction::BeginSourceFileAction(
-    clang::CompilerInstance& CI, llvm::StringRef InFile) {
-  mCompilerInstance = &CI;
-  mCompilerInstance->getPreprocessor().addPPCallbacks(
-    std::move(std::unique_ptr<IncludeCallback>(new IncludeCallback())));
-  return true;
-}
+std::vector<std::string> FInlinerAction::mSources = {};
 
 void FInlinerAction::EndSourceFileAction() {
   mTfmCtx->release(getFilenameAdjuster());
@@ -573,10 +750,15 @@ void FInlinerAction::EndSourceFileAction() {
     clang::FileID FID = SM.createFileID(SM.getFileManager().getFile(Name),
       clang::SourceLocation(), clang::SrcMgr::C_User);
     format(Rewrite, FID);
+    *std::find(std::begin(mSources), std::end(mSources),
+      llvm::sys::path::filename(Entry->getName()))
+      = llvm::sys::path::filename(Name);
   }
   if (Rewrite.overwriteChangedFiles() == false) {
     llvm::outs() << "All changes were successfully saved" << '\n';
   }
+  // rewrite project file with new overwritten *.inl.*'s for further analysis
+  createProjectFile(mSources);
   return;
 }
 

@@ -18,6 +18,8 @@
 #include "tsar_action.h"
 #include "tsar_transformation.h"
 
+#include <set>
+
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/CodeGen/ModuleBuilder.h>
@@ -70,6 +72,7 @@ public:
   }
 
 private:
+  /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
   clang::FunctionDecl* mFuncDecl;
   std::map<clang::ParmVarDecl*, std::vector<clang::DeclRefExpr*>> mParmRefs;
   std::vector<clang::ReturnStmt*> mRSs;
@@ -81,6 +84,7 @@ struct TemplateInstantiation {
   clang::FunctionDecl* mFuncDecl;
   clang::Stmt* mStmt;
   clang::CallExpr* mCallExpr;
+  /// mTemplate == nullptr <-> instantiation is disabled for this call
   Template* mTemplate;
 };
 
@@ -107,14 +111,15 @@ public:
       clang::CompilerInstance& CI, llvm::StringRef InFile,
       tsar::TransformationContext* TfmCtx, tsar::QueryManager* QM)
       : mCompiler(CI), mContext(mCompiler.getASTContext()),
+      mSourceManager(mContext.getSourceManager()),
       mLLVMContext(new llvm::LLVMContext),
       mGen(clang::CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
         CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
         CI.getCodeGenOpts(), *mLLVMContext)), mTransformContext(TfmCtx),
-      mQueryManager(QM),
-      mRewriter(TfmCtx->getRewriter()) {
+      mQueryManager(QM) {
     assert(mTransformContext && "Transformation context must not be null!");
     mTransformContext->reset(mContext, *mGen);
+    mRewriter = &TfmCtx->getRewriter();
   }
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
@@ -124,6 +129,8 @@ public:
   bool VisitDeclRefExpr(clang::DeclRefExpr* DRE);
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
+
+  bool VisitExpr(clang::Expr* E);
 
   /// Traverses AST, collects necessary information using overriden methods above
   /// and applies it to source code using private methods below
@@ -139,7 +146,7 @@ private:
   /// insertion into source code
   std::vector<std::string> construct(
     const std::string& type, const std::string& identifier,
-    std::string& context);
+    const std::string& context, std::map<std::string, std::string>& replacements);
 
   /// Does instantiation of \p TI using \p args generating non-collidable
   /// identifiers/labels if necessary. Since instantiation is recursive,
@@ -152,6 +159,10 @@ private:
     std::set<std::string>& decls);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
+
+  /// T must provide getSourceRange() method
+  template<typename T>
+  clang::SourceRange getSpellingRange(T* node) const;
 
   /// Merges \p _Cont of tokens to string using \p delimiter between each pair
   /// of tokens.
@@ -177,7 +188,7 @@ private:
 
   /// if \p S is declaration statement we shouldn't place braces if
   /// declarations were referenced outside it
-  bool requiresBraces(clang::Stmt* S) const;
+  bool requiresBraces(clang::FunctionDecl* FD, clang::Stmt* S);
 
   /// Local matcher to find correct node in AST during construct()
   class : public clang::ast_matchers::MatchFinder::MatchCallback {
@@ -211,13 +222,21 @@ private:
     std::function<std::string(const std::string&)> processor; 
     int count;
   } varDeclHandler;
-
+  
+  // [C99 6.7.2, 6.7.3]
+  const std::vector<std::string> mKeywords = { "register",
+    "void", "char", "short", "int", "long", "float", "double",
+    "signed", "unsigned", "_Bool", "_Complex", "struct", "union", "enum",
+    "const", "restrict", "volatile" };
+  const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
+  
   tsar::TransformationContext* mTransformContext;
   tsar::QueryManager* mQueryManager;
 
   clang::CompilerInstance& mCompiler;
   clang::ASTContext& mContext;
-  clang::Rewriter& mRewriter;
+  clang::SourceManager& mSourceManager;
+  clang::Rewriter* mRewriter;
 
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
   std::unique_ptr<clang::CodeGenerator> mGen;
@@ -228,10 +247,11 @@ private:
   /// for statements - for detecting call expressions which can be inlined
   std::vector<clang::Stmt*> mFSs;
 
-  std::set<clang::DeclRefExpr*> mRefs;
+  std::map<clang::FunctionDecl*, std::set<clang::Type*>> mTypeDecls;
+  std::map<clang::FunctionDecl*, std::set<clang::Type*>> mTypeRefs;
 
-  std::set<clang::Decl*> mGlobalDecls;
-  std::map<clang::FunctionDecl*, std::set<std::string>> decls;
+  std::map<clang::FunctionDecl*, std::set<clang::DeclRefExpr*>> mDeclRefs;
+  
   std::map<clang::FunctionDecl*, detail::Template> mTs;
   std::map<clang::FunctionDecl*, std::vector<detail::TemplateInstantiation>> mTIs;
 };
@@ -248,25 +268,11 @@ public:
   /// reformats content of file \p FID with LLVM style
   bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
 
-  /// preprocessing
-  bool BeginSourceFileAction(clang::CompilerInstance& CI, llvm::StringRef InFile);
-
   /// overwrites changed files and reformats them for readability
   void EndSourceFileAction();
 
 private:
-  /// local matcher for #include directives, required for cases
-  /// when inlined in one file function body from the second file contains
-  /// references of objects defined in second file' includes
-  class IncludeCallback : public clang::PPCallbacks {
-  public:
-    void InclusionDirective(clang::SourceLocation HashLoc,
-      const clang::Token& IncludeTok, StringRef FileName, bool IsAngled,
-      clang::CharSourceRange FilenameRange, const clang::FileEntry* File,
-      llvm::StringRef SearchPath, llvm::StringRef RelativePath,
-      const llvm::Module* Imported) {
-    }
-  };
+  static std::vector<std::string> mSources;
 
   clang::CompilerInstance* mCompilerInstance;
   std::unique_ptr<tsar::TransformationContext> mTfmCtx;
