@@ -11,9 +11,7 @@
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
 #include "tsar_exception.h"
-#ifdef FINLINER
-# include "tsar_finliner.h"
-#endif
+#include "tsar_finliner.h"
 #include "tsar_query.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
@@ -110,11 +108,8 @@ Options::Options() :
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
     cl::desc("Insert results of analysis to a source file"))
-#ifdef FINLINER
   , Inline("inline", cl::cat(DebugCategory),
-    cl::desc("Inline function calls in loops"))
-#endif
-  {
+    cl::desc("Inline function calls in loops")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
@@ -218,9 +213,7 @@ void Tool::storeCLOptions() {
   mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mTest = addIfSet(Options::get().Test);
-#ifdef FINLINER
   mInline = Options::get().Inline;
-#endif
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
   if (IncompatibleOpts.size() > 1) {
@@ -329,7 +322,6 @@ int Tool::run(QueryManager *QM) {
     return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
   }
-#ifdef FINLINER
   if (mInline == true) {
     std::string projectFile = FInlinerAction::createProjectFile(mSources);
     clang::tooling::ClangTool CT(*mCompilations, {projectFile});
@@ -341,7 +333,6 @@ int Tool::run(QueryManager *QM) {
       mSources = {projectFile};
     }
   }
-#endif
   ClangTool CTool(*mCompilations, mSources);
   if (mDumpAST)
     return CTool.run(newFrontendActionFactory<tsar::ASTDumpAction>().get());

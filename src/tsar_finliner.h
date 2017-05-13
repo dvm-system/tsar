@@ -10,8 +10,6 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#ifdef FINLINER
-
 #if !defined(TSAR_FINLINER_H)
 #define TSAR_FINLINER_H
 
@@ -25,7 +23,6 @@
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
-#include <clang/Lex/Preprocessor.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
 
@@ -162,7 +159,9 @@ private:
 
   /// T must provide getSourceRange() method
   template<typename T>
-  clang::SourceRange getSpellingRange(T* node) const;
+  clang::SourceRange getRange(T* node) const;
+
+  clang::SourceLocation getLoc(clang::SourceLocation SL) const;
 
   /// Merges \p _Cont of tokens to string using \p delimiter between each pair
   /// of tokens.
@@ -251,7 +250,8 @@ private:
   std::map<clang::FunctionDecl*, std::set<clang::Type*>> mTypeRefs;
 
   std::map<clang::FunctionDecl*, std::set<clang::DeclRefExpr*>> mDeclRefs;
-  
+  std::set<clang::Decl*> mGlobalDecls;
+
   std::map<clang::FunctionDecl*, detail::Template> mTs;
   std::map<clang::FunctionDecl*, std::vector<detail::TemplateInstantiation>> mTIs;
 };
@@ -279,7 +279,5 @@ private:
 };
 
 }
-
-#endif
 
 #endif

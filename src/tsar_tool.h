@@ -74,9 +74,7 @@ private:
   bool mEmitLLVM;
   bool mInstrLLVM;
   bool mTest;
-#ifdef FINLINER
   bool mInline;
-#endif
   std::string mOutputFilename;
   std::string mLanguage;
 };
