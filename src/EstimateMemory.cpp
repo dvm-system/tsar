@@ -265,7 +265,7 @@ AliasDescriptor mergeAliasRelation(
 }
 
 const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
-  assert(mNode && "Alias not is not specified yet!");
+  assert(mNode && "Alias node is not specified yet!");
   if (mNode->isForwarding()) {
     auto *OldNode = mNode;
     mNode = OldNode->getForwardedTarget(G);
@@ -273,6 +273,17 @@ const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
     OldNode->release(G);
   }
   return mNode;
+}
+
+const AliasNode * AliasNode::getParent(const AliasTree &G) const {
+  assert(mParent && "Parent is not specified yet!");
+  if (mParent->isForwarding()) {
+    auto *OldNode = mParent;
+    mParent = OldNode->getForwardedTarget(G);
+    mParent->retain();
+    OldNode->release(G);
+  }
+  return mParent;
 }
 
 void AliasTree::add(const MemoryLocation &Loc) {
@@ -290,7 +301,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
       /// TODO (kaniandr@gmail.com): optimize duplicate search.
       if (IsNew) {
         auto Node = addEmptyNode(*EM, *getTopLevelNode());
-        EM->setAliasNode(*Node);
+        EM->setAliasNode(*Node, *this);
       }
       while (CT::getPrev(EM))
         EM = CT::getPrev(EM);
@@ -299,9 +310,9 @@ void AliasTree::add(const MemoryLocation &Loc) {
         auto Forward = EM->getAliasNode(*this);
         assert(Forward && "Alias node for memory location must not be null!");
         while (Forward != Node) {
-          auto Parent = Forward->getParent();
+          auto Parent = Forward->getParent(*this);
           assert(Parent && "Parent node must not be null!");
-          Parent->mergeNodeIn(*Forward), ++NumMergedNode;
+          Parent->mergeNodeIn(*Forward, *this), ++NumMergedNode;
           Forward = Parent;
         }
         EM = CT::getNext(EM);
@@ -310,7 +321,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
       auto *CurrNode = CT::getNext(EM) ?
         CT::getNext(EM)->getAliasNode(*this) : getTopLevelNode();
       auto Node = addEmptyNode(*EM, *CurrNode);
-      EM->setAliasNode(*Node);
+      EM->setAliasNode(*Node, *this);
     }
   } while (stripMemoryLevel(*mDL, Base));
 }
@@ -372,7 +383,7 @@ AliasNode * AliasTree::addEmptyNode(
       auto I = Aliases.begin(), EI = Aliases.end();
       auto ForwardNode = (*I)->getAliasNode(*this);
       for (++I; I != EI; ++I, ++NumMergedNode)
-        ForwardNode->mergeNodeIn(*(*I)->getAliasNode(*this));
+        ForwardNode->mergeNodeIn(*(*I)->getAliasNode(*this), *this);
       return ForwardNode;
     }
     auto *NewNode = newNode(*Current);

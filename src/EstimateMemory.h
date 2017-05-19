@@ -341,7 +341,7 @@ private:
   const AmbiguousRef & getAmbiguousList() { return mAmbiguous; }
 
   /// Add this location to a specified node `N` in alias tree.
-  void setAliasNode(AliasNode &N) noexcept;
+  void setAliasNode(AliasNode &N, const AliasTree &G);
 
   friend class AliasTree;
 
@@ -395,10 +395,13 @@ public:
   bool empty() const noexcept { return mAliases.empty(); }
 
   /// Returns parent of the node.
-  AliasNode * getParent() noexcept { return mParent; }
+  AliasNode * getParent(const AliasTree &G) {
+    return const_cast<AliasNode *>(
+      static_cast<const AliasNode *>(this)->getParent(G));
+  }
 
   /// Returns parent of the node.
-  const AliasNode * getParent() const noexcept { return mParent; }
+  const AliasNode * getParent(const AliasTree &G) const;
 
   /// Returns iterator that points to the beginning of the children list.
   child_iterator child_begin() { return mChildren.begin(); }
@@ -413,17 +416,17 @@ public:
   const_child_iterator child_end() const { return mChildren.end(); }
 
   /// Merges two nodes with a common parent or an immediate child into a parent.
-  void mergeNodeIn(AliasNode &AN) {
+  void mergeNodeIn(AliasNode &AN, const AliasTree &G) {
     assert(!AN.mForward && "Alias node is already forwarding!");
     assert(!mForward && "This set is a forwarding node!");
-    assert(AN.getParent() == getParent() || AN.getParent() == this &&
+    assert(AN.getParent(G) == getParent(G) || AN.getParent(G) == this &&
       "Only nodes with a common parent or an immediate child in a parent can be merged!");
     assert(&AN != this && "Alias node can not be merged with itself!");
     AN.mForward = this;
     retain();
     mChildren.splice(mChildren.end(), AN.mChildren);
     mAliases.splice(mAliases.end(), AN.mAliases);
-    AN.getParent()->mChildren.erase(child_iterator(AN));
+    AN.getParent(G)->mChildren.erase(child_iterator(AN));
   }
 
   /// \brief Returns true if this node should be ignored as a part of the graph
@@ -439,7 +442,7 @@ public:
   /// This is not a thread-safe method.
   /// This uses union-find algorithm to search real alias node.
   AliasNode *getForwardedTarget(const AliasTree &G) const {
-    if (isForwarding()) return const_cast<AliasNode *>(this);
+    if (!isForwarding()) return const_cast<AliasNode *>(this);
     AliasNode *Dest = mForward->getForwardedTarget(G);
     if (Dest != mForward) {
       Dest->retain();
@@ -480,7 +483,7 @@ private:
   /// specified graph if there is no references any more.
   void release(const AliasTree &G) const;
 
-  AliasNode *mParent = nullptr;
+  mutable AliasNode *mParent = nullptr;
   ChildList mChildren;
   AliasList mAliases;
   mutable AliasNode *mForward = nullptr;
@@ -678,14 +681,17 @@ private:
   StrippedMap mBases;
 };
 
-inline void EstimateMemory::setAliasNode(AliasNode &N) noexcept {
+inline void EstimateMemory::setAliasNode(AliasNode &N, const AliasTree &G) {
+  if (mNode)
+    mNode->release(G);
   mNode = &N;
   mNode->push_back(*this);
+  mNode->retain();
 }
 
 inline void AliasNode::release(const AliasTree &G) const {
-  assert(mRefCount != 0 && "The node is already released!");
-  if (++mRefCount == 0)
+  assert(mRefCount > 0 && "The node is already released!");
+  if (--mRefCount == 0)
     const_cast<AliasTree &>(G).removeNode(const_cast<AliasNode *>(this));
 }
 }
