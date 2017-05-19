@@ -42,8 +42,8 @@ LLVM_DUMP_METHOD bool DIUnparser::dump() {
 
 void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   if (Str.empty() || !mDIType || mIsDITypeEnd ||
-    !isa<GEPOperator>(mLastAddressChange) &&
-    !isa<LoadInst>(mLastAddressChange))
+      !isa<GEPOperator>(mLastAddressChange) &&
+      !isa<LoadInst>(mLastAddressChange))
     return;
   if (auto DICTy = dyn_cast<DICompositeType>(mDIType)) {
     // 1. There may be no 'getelementptr' instructions, this depends on
@@ -55,11 +55,15 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
         DICTy->getTag() == dwarf::DW_TAG_array_type) {
       // We do not know how much dimensions should be specified because
       // a starting point for unparse is unknown. To underline this
-      // [?]:0..N will be append to the result, where N is a number of
+      // [?]:1..N will be append to the result, where N is a number of
       // dimensions.
-      Str.append({ '[','?',']',':','0','.','.' });
-      auto Dims = std::to_string(DICTy->getElements().size());
-      Str.append(Dims.begin(), Dims.end());
+      Str.append({ '[','?',']' });
+      auto Dims = DICTy->getElements().size();
+      if (Dims > 1) {
+        Str.append({':', '0', '.', '.'});
+        auto DimsStr = std::to_string(DICTy->getElements().size());
+        Str.append(DimsStr.begin(), DimsStr.end());
+      }
       mDIType = stripDIType(DICTy->getBaseType());
     }
   } else if (auto DIDTy = dyn_cast<DIDerivedType>(mDIType)) {
@@ -71,8 +75,7 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   } else {
     llvm_unreachable("Unsupported debug type!");
   }
-  mIsDITypeEnd =
-    !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
+  mIsDITypeEnd = !isa<DICompositeType>(mDIType);
 }
 
 bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
@@ -87,6 +90,8 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
   } else if (auto LI = dyn_cast<const LoadInst>(Expr)) {
     if (Result = unparse(LI->getPointerOperand(), Str))
       endDITypeIfNeed(Str);
+    mIsDITypeEnd =
+      !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
     mLastAddressChange = Expr;
   } else {
     mLastAddressChange = Expr;
@@ -100,8 +105,7 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
     if (!DIVar)
       return false;
     mDIType = stripDIType(DIVar->getType());
-    mIsDITypeEnd =
-      !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
+    mIsDITypeEnd = !isa<DICompositeType>(mDIType);
     auto Name = DIVar->getName();
     Str.append(Name.begin(), Name.end());
   }
@@ -163,8 +167,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
       Str.push_back('.');
       Str.append(El->getName().begin(), El->getName().end());
       mDIType = stripDIType(El->getBaseType());
-      mIsDITypeEnd =
-        !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
+      mIsDITypeEnd = !isa<DICompositeType>(mDIType);
       continue;
     }
     auto DICTy = cast<DICompositeType>(mDIType);
@@ -186,8 +189,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
     // a type of an array element.
     if (!isa<ArrayType>(I.getIndexedType())) {
       mDIType = stripDIType(DICTy->getBaseType());
-      mIsDITypeEnd =
-        !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
+      mIsDITypeEnd = !isa<DICompositeType>(mDIType);
     } else {
       mIsDITypeEnd = true;
     }
