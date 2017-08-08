@@ -421,6 +421,34 @@ bool AliasTree::slowMayAlias(
   return false;
 }
 
+const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
+  assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  MemoryLocation Base(Loc);
+  stripToBase(*mDL, Base);
+  Value *StrippedPtr = stripPointer(*mDL, const_cast<Value *>(Base.Ptr));
+  auto I = mBases.find(StrippedPtr);
+  if (I == mBases.end())
+    return nullptr;
+  for (auto ChainItr = I->second.begin(), ChainEItr = I->second.end();
+       ChainItr != ChainEItr; ++ChainItr) {
+    auto Chain = *ChainItr;
+    if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
+      continue;
+    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    EstimateMemory *Prev = nullptr;
+    do {
+      if (Base.Size > Chain->getSize())
+        continue;
+      auto AATags = Chain->getAAInfo();
+      return (AATags == Base.AATags ||
+        AATags == DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey()) ?
+        Chain : nullptr;
+    } while (Prev = Chain, Chain = CT::getNext(Chain));
+    return nullptr;
+  }
+  return nullptr;
+}
+
 std::tuple<EstimateMemory *, bool, bool>
 AliasTree::insert(const MemoryLocation &Base) {
   assert(Base.Ptr && "Pointer to memory location must not be null!");

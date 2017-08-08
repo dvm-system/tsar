@@ -604,7 +604,7 @@ public:
   const_iterator end() const { return const_iterator(mNodes.end()); }
 
   /// Returns true if this alias tree is empty.
-  bool empty() { return mNodes.empty(); }
+  bool empty() const { return mNodes.empty(); }
 
   /// Returns number of nodes, including forwarding.
   size_type size() const { return mNodes.size(); }
@@ -621,6 +621,17 @@ public:
   /// Removes node from the graph, note that this class manages memory
   /// allocation to store nodes.
   void removeNode(AliasNode *N);
+
+  /// Returns the smallest estimate memory location which covers a specified
+  /// memory location or nullptr.
+  const EstimateMemory * find(const llvm::MemoryLocation &Loc) const;
+
+  /// Returns the smallest estimate memory location which covers a specified
+  /// memory location or nullptr.
+  EstimateMemory * find(const llvm::MemoryLocation &Loc) {
+    return const_cast<EstimateMemory *>(
+      static_cast<const AliasTree *>(this)->find(Loc));
+  }
 
   /// \brief This pop up ghostview window and displays the alias tree.
   ///
