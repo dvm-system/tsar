@@ -58,6 +58,7 @@ llvm::Value * stripPointer(const llvm::DataLayout &DL, llvm::Value *Ptr);
 ///
 /// For example, this extends element of array to a whole array, and element
 /// of a structure to a whole structure.
+/// \return True if it was successfully extended.
 ///
 /// TODO (kaniandr@gmail.com): It is known that `getelementptr` instruction
 /// may contains multiple indices. At this moment this function discards all
@@ -92,7 +93,7 @@ void stripToBase(const llvm::DataLayout &D, llvm::MemoryLocation &Loc);
 /// instruction is split into sequence of instructions and other instruction
 /// is not split.
 bool isSameBase(const llvm::DataLayout &DL,
-    const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
+  const llvm::Value *BasePtr1, const llvm::Value *BasePtr2);
 
 namespace trait {
 //===----------------------------------------------------------------------===//
@@ -122,10 +123,10 @@ struct CoverAlias {};
 /// trait::PartialAlias and trait::MustAlias.
 using AliasDescriptor = bcl::TraitDescriptor<
   bcl::TraitAlternative<trait::NoAlias, trait::MayAlias,
-    bcl::TraitUnion<trait::PartialAlias, trait::CoincideAlias,
-      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>,
-    bcl::TraitUnion<trait::MustAlias, trait::CoincideAlias,
-      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>>>;
+  bcl::TraitUnion<trait::PartialAlias, trait::CoincideAlias,
+  bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>,
+  bcl::TraitUnion<trait::MustAlias, trait::CoincideAlias,
+  bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>>>;
 
 /// This merges two alias descriptors.
 AliasDescriptor mergeAliasRelation(
@@ -133,17 +134,17 @@ AliasDescriptor mergeAliasRelation(
 
 /// This determines alias relation of a first memory location to a second one.
 AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
-    const llvm::MemoryLocation &LHS, const llvm::MemoryLocation &RHS);
+  const llvm::MemoryLocation &LHS, const llvm::MemoryLocation &RHS);
 
 /// This determines alias relation of a first estimate location to a second one.
 AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
-    const EstimateMemory &LHS, const EstimateMemory &RHS);
+  const EstimateMemory &LHS, const EstimateMemory &RHS);
 
 /// This determines alias relation between a specified estimate location'EM' and
 /// locations from a specified range [BeginItr, EndItr).
 template<class ItrTy>
 AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
-    const EstimateMemory &EM, const ItrTy &BeginItr, const ItrTy &EndItr) {
+  const EstimateMemory &EM, const ItrTy &BeginItr, const ItrTy &EndItr) {
   auto I = BeginItr;
   auto MergedAD = aliasRelation(AA, DL, EM, *I);
   if (MergedAD.is<trait::MayAlias>())
@@ -189,10 +190,21 @@ public:
 
   /// Returns a pointer to the list.
   AmbiguousList * operator->() const { return &operator*(); }
+
+  /// Compares two lists.
+  bool operator==(const AmbiguousRef &With) const noexcept {
+    return mPool == With.mPool && mListIdx == With.mListIdx;
+  }
+
+  /// Compares two lists.
+  bool operator!=(const AmbiguousRef &With) const noexcept {
+    return !operator==(With);
+  }
 private:
   AmbigiousPool *mPool;
   size_t mListIdx;
 };
+
 
 /// \brief This tag uses to implement a sequence of memory locations which are
 /// ordered by inclusion.
@@ -210,25 +222,88 @@ struct Sibling {};
 
 /// This tag uses to implement a sequence of nodes which is treated as a pool.
 struct Pool {};
+}
 
+namespace bcl {
+/// This is a specialization of intrusive chain aims to access sequence of
+/// estimate memory locations with the same bases.
+template<> class Chain<tsar::EstimateMemory, tsar::Hierarchy> {
+public:
+  /// Implicit cast to a data type Ty.
+  operator tsar::EstimateMemory & () noexcept {
+    return static_cast<tsar::EstimateMemory &>(*this);
+  }
+
+  /// Implicit cast to a data type Ty.
+  operator const tsar::EstimateMemory & () const noexcept {
+    return static_cast<const tsar::EstimateMemory &>(*this);
+  }
+
+private:
+  /// \brief Sets a specified node as a next node for this one.
+  ///
+  /// \post Appropriate parents and children will be updated.
+  void setNext(Chain *N);
+
+  /// \brief Sets a specified node as a previous node for this one.
+  ///
+  /// \post Appropriates parents and children will be updated.
+  void setPrev(Chain *N);
+
+  /// Returns a next node.
+  tsar::EstimateMemory * getNext() {
+    return const_cast<tsar::EstimateMemory *>(
+      static_cast<const Chain<tsar::EstimateMemory, tsar::Hierarchy> *>(this)->getNext());
+  };
+
+  /// Returns a next node.
+  const tsar::EstimateMemory * getNext() const;
+
+  /// Returns a previous node.
+  tsar::EstimateMemory * getPrev() {
+    return const_cast<tsar::EstimateMemory *>(
+      static_cast<const Chain<tsar::EstimateMemory,
+        tsar::Hierarchy> *>(this)->getPrev());
+  }
+
+  /// Returns a previous node.
+  const tsar::EstimateMemory * getPrev() const;
+
+private:
+  template<class EstimateMemory, class Hierarchy> friend struct ChainTraits;
+  template<class EstimateMemory, class Hierarchy> friend struct ChainIterator;
+};
+}
+
+namespace tsar {
 /// \brief This proposes a representation of a memory location to present
 /// results of data dependence analysis.
 ///
-/// Different locations are joined into sequences of three types:
-/// * a hierarchy sequence of memory locations which are ordered by inclusion,
-/// * a sequence of memory locations which may alias.
-/// All locations from hierarchy sequence have the same list of ambiguous
-/// pointers which may refer these locations. Note that at runtime it can be
-/// investigated that this pointers refer different memory but due to inaccurate
-/// alias analysis it might not be determined by a static analysis.
-/// All locations from alias sequence collapsed into the single alias node into
-/// a program alias tree.
+/// Different locations are joined into a sequence of memory locations which may
+/// alias. All locations from alias sequence collapsed into the single alias
+/// node into a program alias tree.
+/// Each location is a part of estimate memory location tree. A parent in this
+/// tree covers all its children. All locations in a tree with the same list of
+/// ambiguous pointers which may refer these locations represents a hierarchy
+/// sequence. Note that at runtime it can be investigated that this pointers
+/// refer different memory but due to inaccurate alias analysis it might not be
+/// determined by a static analysis.
 class EstimateMemory :
-    public bcl::Chain<EstimateMemory, Hierarchy>,
-    public llvm::ilist_node<EstimateMemory, llvm::ilist_tag<Alias>> {
+  public llvm::ilist_node<EstimateMemory, llvm::ilist_tag<Alias>>,
+  public llvm::ilist_node<EstimateMemory, llvm::ilist_tag<Sibling>>,
+  public bcl::Chain<EstimateMemory, Hierarchy> {
+
+  using ChildList =
+    llvm::simple_ilist<EstimateMemory, llvm::ilist_tag<Sibling>>;
 public:
   /// This type used to iterate over all ambiguous pointers.
   using ambiguous_iterator = AmbiguousRef::AmbiguousList::const_iterator;
+
+  /// This type is used to iterate over all children of this node.
+  using child_iterator = ChildList::iterator;
+
+  /// This type is used to iterate over all children of this node.
+  using const_child_iterator = ChildList::const_iterator;
 
   /// Returns size of location in address units or
   /// llvm::MemoryLocation:: UnknownSize if the size is not known.
@@ -239,7 +314,7 @@ public:
   llvm::AAMDNodes getAAInfo() const {
     // If we have missing or conflicting AAInfo, return null.
     if (mAATags == llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey() ||
-        mAATags == llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey())
+      mAATags == llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey())
       return llvm::AAMDNodes();
     return mAATags;
   }
@@ -304,6 +379,29 @@ public:
   /// This uses union-find algorithm to search real alias node for the location.
   const AliasNode * getAliasNode(const AliasTree &G) const;
 
+  /// Returns true if this location and a specified one have the same bases.
+  bool isSameBase(const EstimateMemory &EM) const noexcept {
+    return mAmbiguous == EM.mAmbiguous;
+  }
+
+  /// Returns parent.
+  EstimateMemory * getParent() noexcept { return mParent; }
+
+  /// Returns parent.
+  const EstimateMemory * getParent() const noexcept { return mParent; }
+
+  /// Returns iterator that points to the beginning of the children list.
+  child_iterator child_begin() { return mChildren.begin(); }
+
+  /// Returns iterator that points to the ending of the children list.
+  child_iterator child_end() { return mChildren.end(); }
+
+  /// Returns iterator that points to the beginning of the children list.
+  const_child_iterator child_begin() const { return mChildren.begin(); }
+
+  /// Returns iterator that points to the ending of the children list.
+  const_child_iterator child_end() const { return mChildren.end(); }
+
 private:
   /// Creates an estimate location for a specified memory.
   ///
@@ -312,8 +410,8 @@ private:
   /// sequence but locations in unambiguous and alias sequences should have
   /// different lists.
   EstimateMemory(llvm::MemoryLocation &&Loc, AmbiguousRef &&AL) :
-      mSize(std::move(Loc.Size)), mAATags(std::move(Loc.AATags)),
-      mAmbiguous(AL) {
+    mSize(std::move(Loc.Size)), mAATags(std::move(Loc.AATags)),
+    mAmbiguous(AL) {
     assert(Loc.Ptr && "Pointer to a memory must not be null!");
     mAmbiguous->push_back(std::move(Loc.Ptr));
   }
@@ -325,12 +423,17 @@ private:
   /// sequence but locations in unambiguous and alias sequences should have
   /// different lists.
   EstimateMemory(const llvm::MemoryLocation &Loc, AmbiguousRef &&AL) :
-      mSize(Loc.Size), mAATags(Loc.AATags), mAmbiguous(AL) {
+    mSize(Loc.Size), mAATags(Loc.AATags), mAmbiguous(AL) {
     assert(Loc.Ptr && "Pointer to a memory must not be null!");
     mAmbiguous->push_back(Loc.Ptr);
   }
 
-  /// Creates a copy of specified location with a new size and metadata node.
+  /// Creates an out of tree copy of a specified location.
+  EstimateMemory(const EstimateMemory &EM) :
+    mSize(EM.mSize), mAATags(EM.mAATags), mAmbiguous(EM.mAmbiguous) { }
+
+  /// Creates an out of tree copy of a specified location with a new size
+  /// and metadata node.
   EstimateMemory(const EstimateMemory &EM, uint64_t Size,
       const llvm::AAMDNodes &AATags) : EstimateMemory(EM) {
     mSize = Size;
@@ -338,25 +441,28 @@ private:
   }
 
   /// Returns list of ambiguous pointers which refer this location.
-  const AmbiguousRef & getAmbiguousList() { return mAmbiguous; }
+  const AmbiguousRef & getAmbiguousList() noexcept { return mAmbiguous; }
 
   /// Add this location to a specified node `N` in alias tree.
   void setAliasNode(AliasNode &N, const AliasTree &G);
 
   friend class AliasTree;
+  friend class bcl::Chain<EstimateMemory, Hierarchy>;
 
   uint64_t mSize;
   llvm::AAMDNodes mAATags;
   AmbiguousRef mAmbiguous;
   mutable AliasNode *mNode = nullptr;
+  EstimateMemory *mParent = nullptr;
+  ChildList mChildren;
 };
 
 /// This represents node in an alias tree which refers an alias sequence of
 /// estimate memory locations.
 class AliasNode :
-    public llvm::ilist_node<AliasNode, llvm::ilist_tag<Pool>,
-      llvm::ilist_sentinel_tracking<true>>,
-    public llvm::ilist_node<AliasNode, llvm::ilist_tag<Sibling>> {
+  public llvm::ilist_node<AliasNode, llvm::ilist_tag<Pool>,
+  llvm::ilist_sentinel_tracking<true>>,
+  public llvm::ilist_node<AliasNode, llvm::ilist_tag<Sibling>> {
 
   using ChildList = llvm::simple_ilist<AliasNode, llvm::ilist_tag<Sibling>>;
   using AliasList = llvm::simple_ilist<EstimateMemory, llvm::ilist_tag<Alias>>;
@@ -569,7 +675,7 @@ public:
 
   /// Creates empty alias tree.
   AliasTree(llvm::AAResults &AA, const llvm::DataLayout &DL) :
-      mAA(&AA), mDL(&DL), mTopLevelNode(new AliasNode) {
+    mAA(&AA), mDL(&DL), mTopLevelNode(new AliasNode) {
     mNodes.push_back(mTopLevelNode);
   }
 
@@ -611,7 +717,7 @@ public:
 
   /// Inserts new estimate memory location.
   void add(const llvm::Value *Ptr,
-      uint64_t Size, const llvm::AAMDNodes &AAInfo) {
+    uint64_t Size, const llvm::AAMDNodes &AAInfo) {
     return add(llvm::MemoryLocation(Ptr, Size, AAInfo));
   }
 
@@ -705,6 +811,60 @@ inline void AliasNode::release(const AliasTree &G) const {
   if (--mRefCount == 0)
     const_cast<AliasTree &>(G).removeNode(const_cast<AliasNode *>(this));
 }
+}
+
+inline const tsar::EstimateMemory *
+bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::getNext() const {
+  auto &Chain = static_cast<const tsar::EstimateMemory &>(*this);
+  auto Next = Chain.getParent();
+  return Next && Chain.isSameBase(*Next) ? Next : nullptr;
+}
+
+inline const tsar::EstimateMemory *
+bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::getPrev() const {
+  auto &Chain = static_cast<const tsar::EstimateMemory &>(*this);
+  auto Prev = Chain.child_begin();
+  return Prev != Chain.child_end() && Chain.isSameBase(*Prev) ?
+    &*Prev : nullptr;
+}
+
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setNext(
+    bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
+  assert(N != this && "A node must not follow itself!");
+  auto Chain = static_cast<tsar::EstimateMemory *>(this);
+  auto Next = static_cast<tsar::EstimateMemory *>(N);
+  if (Chain->getParent() == Next)
+    return;
+  if (Next) {
+    Next->mParent = Chain->mParent;
+    Next->mChildren.push_back(*Chain);
+  }
+  if (Chain->mParent) {
+    for (auto &Child: Chain->mParent->mChildren)
+      if (&Child == Chain) {
+        Chain->mParent->mChildren.remove(Child);
+        break;
+      }
+    if (Next)
+      Chain->mParent->mChildren.push_back(*Next);
+  }
+  Chain->mParent = Next;
+}
+
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setPrev(
+    bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
+  assert(N != this && "A node must not precede itself!");
+  auto Chain = static_cast<tsar::EstimateMemory *>(this);
+  auto Prev = static_cast<tsar::EstimateMemory *>(N);
+  if (Prev->getParent() == Chain)
+    return;
+  for (auto &Child : Chain->mChildren)
+    Child.mParent = Prev;
+  if (Prev) {
+    Prev->mChildren.splice(Prev->mChildren.end(), Chain->mChildren);
+    Prev->mParent = Chain;
+    Chain->mChildren.push_back(*Prev);
+  }
 }
 
 namespace llvm {

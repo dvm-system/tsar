@@ -72,6 +72,8 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     if (Size > Loc.Size) {
       Loc.Size = Size;
       return true;
+    } else if (Size < Loc.Size) {
+      return false;
     }
   }
   if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
@@ -287,16 +289,25 @@ const AliasNode * AliasNode::getParent(const AliasTree &G) const {
 }
 
 void AliasTree::add(const MemoryLocation &Loc) {
+  using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
+  EstimateMemory *PrevChainEnd = nullptr;
   do {
     stripToBase(*mDL, Base);
     EstimateMemory *EM;
     bool IsNew, AddAmbiguous;
     std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
     assert(EM && "New estimate memory must not be null!");
+    if (PrevChainEnd && PrevChainEnd != EM) {
+      assert((!PrevChainEnd->getParent() || PrevChainEnd->getParent() == EM) &&
+        "Inconsistent parent of a node in estimate memory tree!");
+      CT::setNext(EM, PrevChainEnd);
+    }
     if (!IsNew && !AddAmbiguous)
       return;
-    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    PrevChainEnd = EM;
+    while (CT::getNext(PrevChainEnd))
+      PrevChainEnd = CT::getNext(PrevChainEnd);
     if (AddAmbiguous) {
       /// TODO (kaniandr@gmail.com): optimize duplicate search.
       if (IsNew) {
@@ -495,6 +506,22 @@ AliasTree::insert(const MemoryLocation &Base) {
         Chain->getAmbiguousList()->push_back(Base.Ptr);
         break;
       }
+      auto StripedBase = Base;
+      MemoryLocation StripedChain(
+        Chain->front(), Chain->getSize(), Chain->getAAInfo());
+      bool IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
+      bool IsStripedChain = stripMemoryLevel(*mDL, StripedChain);
+      // This condition checks that it is safe to insert a specified location
+      // Base into the estimate memory tree which contains location Chain.
+      // The following cases lead to building new estimate memory tree:
+      // 1. Base and Chain are x.y.z but striped locations are x.y and x.
+      // It is possible due to implementation of strimMemoryLevel() function.
+      // 2. Size of Base or Chain are greater than getTypeStoreSize(). In this
+      // case it is not possible to strip such location. Note, that if both
+      // Base and Chain have such problem they can be inserted in a single tree.
+      if ((IsStripedBase || IsStripedChain) &&
+          !isSameBase(*mDL, StripedBase.Ptr, StripedChain.Ptr))
+        continue;
       using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
       EstimateMemory *Prev = nullptr;
       do {
