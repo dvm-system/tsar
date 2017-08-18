@@ -434,6 +434,11 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
     auto Chain = *ChainItr;
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
       continue;
+    switch (isSamePointer(*Chain, Base)) {
+    case NoAlias: continue;
+    case MayAlias: case MustAlias:  break;
+    default: llvm_unreachable("Unknown result of alias query!"); break;
+    }
     using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
     EstimateMemory *Prev = nullptr;
     do {
@@ -462,9 +467,29 @@ AliasTree::insert(const MemoryLocation &Base) {
       auto Chain = *ChainItr;
       if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
         continue;
+      /// TODO (kaniandr@gamil.com): The following case is possible:
+      /// p = &x; ... p = &y;
+      /// In this case single estimate memory locations will be created at this
+      /// (*(p = &x), *(p = &y)). This is permissible but not good because
+      /// it is not possible to analyze &x and &y separately. In case of
+      /// creation of two locations there are also some problems.
+      /// Let us consider the following case:
+      /// if (...) { p = &x;} else { p = &y;} *p = ...
+      /// It is not also possible to create (*(p = &x), *p) and (*(p = &y), *p)
+      /// because *p must not have two different estimate memory locations.
+      /// So, this two locations should be merged: (*(p = &x), *p, *(p = &y))
+      /// and all chains of locations also should be merged. After that alias
+      /// tree should be updated. The last operation is not simple.
+      /// The worst case is if estimate memory locations for p and p does not
+      /// alias but for striped bases they alias. In this case it is not
+      /// trivially to update alias tree.
+      /// So the more accurate creation of estimate memory locations will
+      /// be implemented later.
       bool AddAmbiguous = false;
       switch (isSamePointer(*Chain, Base)) {
+      default: llvm_unreachable("Unknown result of alias query!"); break;
       case NoAlias: continue;
+      case MustAlias: break;
       case MayAlias:
         AddAmbiguous = true;
         Chain->getAmbiguousList()->push_back(Base.Ptr);
