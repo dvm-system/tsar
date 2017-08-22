@@ -301,7 +301,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
     if (PrevChainEnd && PrevChainEnd != EM) {
       assert((!PrevChainEnd->getParent() || PrevChainEnd->getParent() == EM) &&
         "Inconsistent parent of a node in estimate memory tree!");
-      CT::setNext(EM, PrevChainEnd);
+      CT::mergeNext(EM, PrevChainEnd);
     }
     if (!IsNew && !AddAmbiguous)
       return;
@@ -538,14 +538,14 @@ AliasTree::insert(const MemoryLocation &Base) {
         if (Base.Size < Chain->getSize()) {
           auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
           ++NumEstimateMemory;
-          CT::setPrev(EM, Chain);
+          CT::splicePrev(EM, Chain);
           *ChainItr = EM; // update start point of this chain in a base list
           return std::make_tuple(EM, true, AddAmbiguous);
         }
       } while (Prev = Chain, Chain = CT::getNext(Chain));
       auto EM = new EstimateMemory(*Prev, Base.Size, Base.AATags);
       ++NumEstimateMemory;
-      CT::setNext(EM, Prev);
+      CT::spliceNext(EM, Prev);
       return std::make_tuple(EM, true, AddAmbiguous);
     }
   } else {

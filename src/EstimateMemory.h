@@ -240,15 +240,17 @@ public:
   }
 
 private:
-  /// \brief Sets a specified node as a next node for this one.
-  ///
-  /// \post Appropriate parents and children will be updated.
-  void setNext(Chain *N);
+  /// Sets a specified node as a next node for this one.
+  void spliceNext(Chain *N);
 
-  /// \brief Sets a specified node as a previous node for this one.
-  ///
-  /// \post Appropriates parents and children will be updated.
-  void setPrev(Chain *N);
+  /// Sets a specified node as a next node for this one.
+  void mergeNext(Chain *N);
+
+  /// Sets a specified node as a previous node for this one.
+  void splicePrev(Chain *N);
+
+  /// Sets a specified node as a previous node for this one.
+  void mergePrev(Chain *N);
 
   /// Returns a next node.
   tsar::EstimateMemory * getNext() {
@@ -828,7 +830,7 @@ bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::getPrev() const {
     &*Prev : nullptr;
 }
 
-inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setNext(
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::spliceNext(
     bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
   assert(N != this && "A node must not follow itself!");
   auto Chain = static_cast<tsar::EstimateMemory *>(this);
@@ -851,12 +853,31 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setNext(
   Chain->mParent = Next;
 }
 
-inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setPrev(
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergeNext(
+    bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
+  assert(N != this && "A node must not follow itself!");
+  auto Chain = static_cast<tsar::EstimateMemory *>(this);
+  auto Next = static_cast<tsar::EstimateMemory *>(N);
+  if (Chain->getParent() == Next)
+    return;
+  if (Next)
+    Next->mChildren.push_back(*Chain);
+  if (Chain->mParent) {
+    for (auto &Child: Chain->mParent->mChildren)
+      if (&Child == Chain) {
+        Chain->mParent->mChildren.remove(Child);
+        break;
+      }
+  }
+  Chain->mParent = Next;
+}
+
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::splicePrev(
     bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
   assert(N != this && "A node must not precede itself!");
   auto Chain = static_cast<tsar::EstimateMemory *>(this);
   auto Prev = static_cast<tsar::EstimateMemory *>(N);
-  if (Prev->getParent() == Chain)
+  if (Prev && Prev->getParent() == Chain)
     return;
   for (auto &Child : Chain->mChildren)
     Child.mParent = Prev;
@@ -867,6 +888,21 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::setPrev(
   }
 }
 
+inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergePrev(
+    bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
+  assert(N != this && "A node must not precede itself!");
+  auto Chain = static_cast<tsar::EstimateMemory *>(this);
+  auto Prev = static_cast<tsar::EstimateMemory *>(N);
+  if (Prev && Prev->getParent() == Chain)
+    return;
+  for (auto &Child : Chain->mChildren)
+    Child.mParent = nullptr;
+  if (Prev) {
+    Prev->mParent = Chain;
+    Chain->mChildren.clear();
+    Chain->mChildren.push_back(*Prev);
+  }
+}
 namespace llvm {
 //===----------------------------------------------------------------------===//
 // GraphTraits specializations for alias tree (AliasTree)
