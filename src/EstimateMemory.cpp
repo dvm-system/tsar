@@ -355,6 +355,9 @@ AliasNode * AliasTree::addEmptyNode(
     NewNode->setParent(Parrent);
     return NewNode;
   };
+  SmallPtrSet<const AliasNode *, 8> ChildrenNodes;
+  for (auto I = NewEM.child_begin(), E = NewEM.child_end(); I != E; ++I)
+    ChildrenNodes.insert(I->getAliasNode(*this));
   SmallVector<EstimateMemory *, 4> Aliases;
   for (;;) {
     Aliases.clear();
@@ -376,7 +379,10 @@ AliasNode * AliasTree::addEmptyNode(
         Node->setParent(*NewNode);
         return NewNode;
       }
-      if (!AD.is<trait::ContainedAlias>())
+      // The second condition is necessary due to alias node which contains
+      // full memory should not be descendant of a node which contains part
+      // of this memory.
+      if (!AD.is<trait::ContainedAlias>() || ChildrenNodes.count(Node))
         return Node;
       Current = Node;
       continue;
