@@ -842,11 +842,7 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::spliceNext(
     Next->mChildren.push_back(*Chain);
   }
   if (Chain->mParent) {
-    for (auto &Child: Chain->mParent->mChildren)
-      if (&Child == Chain) {
-        Chain->mParent->mChildren.remove(Child);
-        break;
-      }
+    Chain->mParent->mChildren.remove(*Chain);
     if (Next)
       Chain->mParent->mChildren.push_back(*Next);
   }
@@ -862,13 +858,8 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergeNext(
     return;
   if (Next)
     Next->mChildren.push_back(*Chain);
-  if (Chain->mParent) {
-    for (auto &Child: Chain->mParent->mChildren)
-      if (&Child == Chain) {
-        Chain->mParent->mChildren.remove(Child);
-        break;
-      }
-  }
+  if (Chain->mParent)
+    Chain->mParent->mChildren.remove(*Chain);
   Chain->mParent = Next;
 }
 
