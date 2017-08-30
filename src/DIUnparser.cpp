@@ -88,11 +88,12 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
   } else if (auto GEP = dyn_cast<const GEPOperator>(Expr)) {
     Result = unparse(GEP, Str);
   } else if (auto LI = dyn_cast<const LoadInst>(Expr)) {
-    if (Result = unparse(LI->getPointerOperand(), Str))
-      endDITypeIfNeed(Str);
+    mLastAddressChange = Expr;
+    if (!unparse(LI->getPointerOperand(), Str))
+      return false;
+    endDITypeIfNeed(Str);
     mIsDITypeEnd =
       !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
-    mLastAddressChange = Expr;
   } else {
     mLastAddressChange = Expr;
     DIVariable *DIVar;
