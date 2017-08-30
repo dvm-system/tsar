@@ -68,7 +68,9 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   auto Ty = Loc.Ptr->getType();
   if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
-    auto Size = DL.getTypeStoreSize(PtrTy->getElementType());
+    auto Size = PtrTy->getElementType()->isSized() ?
+      DL.getTypeStoreSize(PtrTy->getElementType()) :
+      MemoryLocation::UnknownSize;
     if (Size > Loc.Size) {
       Loc.Size = Size;
       return true;
