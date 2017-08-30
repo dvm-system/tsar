@@ -4,33 +4,33 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a set of output functions specified in tsar_dbg_output.h
+// This file implements a set of output functions.
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/IR/Instructions.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Transforms/Utils/Local.h>
-#include <llvm/Analysis/LoopInfo.h>
-#include <llvm/Config/llvm-config.h>
-#include <llvm/IR/DebugInfo.h>
-#include <llvm/Pass.h>
-#include <utility.h>
 #include "tsar_dbg_output.h"
 #include "DIUnparser.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
+#include <utility.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Config/llvm-config.h>
+#include <llvm/IR/DebugInfo.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/Utils/Local.h>
 
 using namespace llvm;
 
 namespace tsar {
-void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
+void printLocationSource(llvm::raw_ostream &O, const Value *Loc) {
   if (!Loc)
-    o << "<unknown location>";
-  else if (!unparsePrint(Loc, o))
-    o << *Loc;
+    O << "<unknown location>";
+  else if (!unparsePrint(Loc, O))
+    O << *Loc;
 }
 
 void printLocationSource(

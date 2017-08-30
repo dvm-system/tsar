@@ -14,11 +14,11 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 
 namespace llvm {
-class raw_ostream;
 class Function;
-class Value;
 class LoopInfo;
 class MemoryLocation;
+class raw_ostream;
+class Value;
 }
 
 namespace tsar {
@@ -39,7 +39,7 @@ namespace tsar {
 /// \endcode
 /// If debug information is available the result for
 /// %0 will be p[0] otherwise it will be *(%p = alloca i32*, align 4).
-void printLocationSource(llvm::raw_ostream &o, const llvm::Value *Loc);
+void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc);
 
 /// Prints information available from a source code for the specified memory
 /// location and its size (<location, size>).
