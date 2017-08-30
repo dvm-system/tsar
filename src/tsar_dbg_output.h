@@ -18,6 +18,7 @@ class raw_ostream;
 class Function;
 class Value;
 class LoopInfo;
+class MemoryLocation;
 }
 
 namespace tsar {
@@ -39,6 +40,10 @@ namespace tsar {
 /// If debug information is available the result for
 /// %0 will be p[0] otherwise it will be *(%p = alloca i32*, align 4).
 void printLocationSource(llvm::raw_ostream &o, const llvm::Value *Loc);
+
+/// Prints information available from a source code for the specified memory
+/// location and its size (<location, size>).
+void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc);
 
 /// \brief Print description of a type from a source code.
 ///

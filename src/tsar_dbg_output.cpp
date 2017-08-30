@@ -33,6 +33,18 @@ void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
     o << *Loc;
 }
 
+void printLocationSource(
+    llvm::raw_ostream &O, const llvm::MemoryLocation &Loc) {
+  O << "<";
+  printLocationSource(O, Loc.Ptr);
+  O << ", ";
+  if (Loc.Size == MemoryLocation::UnknownSize)
+    O << "?";
+  else
+    O << Loc.Size;
+  O << "> ";
+}
+
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {
   Metadata *DITyVal = DITy;
   bool isDerived = false;
