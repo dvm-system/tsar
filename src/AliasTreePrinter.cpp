@@ -36,14 +36,8 @@ template<> struct DOTGraphTraits<AliasTree *> :
     llvm::raw_string_ostream OS(Str);
     for (auto &EM : *Node) {
       if (isSimple()) {
-        OS << "<";
-        printLocationSource(OS, EM.front());
-        OS << ", ";
-        if (EM.getSize() == MemoryLocation::UnknownSize)
-          OS << "?";
-        else
-          OS << EM.getSize();
-        OS << "> ";
+        printLocationSource(OS,
+          MemoryLocation(EM.front(), EM.getSize(), EM.getAAInfo()));
       } else if (EM.isAmbiguous()) {
         OS << "Ambiguous, size ";
         if (EM.getSize() == MemoryLocation::UnknownSize)
