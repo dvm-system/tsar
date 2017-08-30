@@ -956,7 +956,7 @@ template<> struct GraphTraits<const tsar::AliasTree *> :
   static nodes_iterator nodes_end(const tsar::AliasTree *AT) {
     return nodes_iterator(AT->end());
   }
-  static unsigned size(const tsar::AliasTree *AT) { AT->size(); }
+  static unsigned size(const tsar::AliasTree *AT) { return AT->size(); }
 };
 
 
