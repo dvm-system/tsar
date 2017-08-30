@@ -327,6 +327,8 @@ void AliasTree::add(const MemoryLocation &Loc) {
     PrevChainEnd = EM;
     while (CT::getNext(PrevChainEnd))
       PrevChainEnd = CT::getNext(PrevChainEnd);
+    // Already evaluated locations should be omitted to avoid loops in chain.
+    Base.Size = PrevChainEnd->getSize();
     if (AddAmbiguous) {
       /// TODO (kaniandr@gmail.com): optimize duplicate search.
       if (IsNew) {
