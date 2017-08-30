@@ -157,6 +157,30 @@ AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
   return MergedAD;
 }
 
+/// Determines which of specified nodes is an ancestor of other node in
+/// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
+const EstimateMemory * ancestor(
+    const EstimateMemory *LHS, const EstimateMemory *RHS);
+
+/// Determines which of specified nodes is an ancestor of other node in
+/// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
+inline EstimateMemory * ancestor(EstimateMemory *LHS, EstimateMemory *RHS) {
+  return const_cast<EstimateMemory *>(ancestor(LHS, RHS));
+}
+
+/// Determines which of specified nodes is an descendant of other node in
+/// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
+inline const EstimateMemory * descendant(
+    const EstimateMemory *LHS, const EstimateMemory *RHS) {
+  return LHS == ancestor(LHS, RHS) ? RHS : LHS;
+}
+
+/// Determines which of specified nodes is an descendant of other node in
+/// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
+inline EstimateMemory * descendant(EstimateMemory *LHS, EstimateMemory *RHS) {
+  return const_cast<EstimateMemory *>(descendant(LHS, RHS));
+}
+
 /// Represents reference to a list of ambiguous pointers which refer to the
 /// same estimate memory location.
 class AmbiguousRef {
@@ -391,6 +415,20 @@ public:
 
   /// Returns parent.
   const EstimateMemory * getParent() const noexcept { return mParent; }
+
+  /// Returns top level memory location in the estimate memory tree.
+  EstimateMemory * getTopLevelParent() noexcept {
+    return const_cast<EstimateMemory *>(
+      static_cast<const EstimateMemory *>(this)->getTopLevelParent());
+  }
+
+  /// Returns top level memory location in the estimate memory tree.
+  const EstimateMemory * getTopLevelParent() const noexcept {
+    auto Current = this;
+    while (auto Parent = Current->getParent())
+      Current = Parent;
+    return Current;
+  }
 
   /// Returns iterator that points to the beginning of the children list.
   child_iterator child_begin() { return mChildren.begin(); }

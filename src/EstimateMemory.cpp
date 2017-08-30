@@ -225,6 +225,16 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
   return MergedAD;
 }
 
+const EstimateMemory * ancestor(
+    const EstimateMemory *LHS, const EstimateMemory *RHS) {
+  for (auto EM = LHS; EM; EM = EM->getParent())
+    if (EM == RHS)
+      return RHS;
+  for (auto EM = RHS; EM; EM = EM->getParent())
+    if (EM == LHS)
+      return LHS;
+  return nullptr;
+}
 AliasDescriptor mergeAliasRelation(
     const AliasDescriptor &LHS, const AliasDescriptor &RHS) {
   assert((LHS.is<trait::NoAlias>() || LHS.is<trait::MayAlias>() ||
