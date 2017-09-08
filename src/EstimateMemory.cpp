@@ -279,8 +279,7 @@ AliasDescriptor mergeAliasRelation(
 }
 
 const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
-  assert(mNode && "Alias node is not specified yet!");
-  if (mNode->isForwarding()) {
+  if (mNode && mNode->isForwarding()) {
     auto *OldNode = mNode;
     mNode = OldNode->getForwardedTarget(G);
     mNode->retain();
@@ -290,8 +289,7 @@ const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
 }
 
 const AliasNode * AliasNode::getParent(const AliasTree &G) const {
-  assert(mParent && "Parent is not specified yet!");
-  if (mParent->isForwarding()) {
+  if (mParent && mParent->isForwarding()) {
     auto *OldNode = mParent;
     mParent = OldNode->getForwardedTarget(G);
     mParent->retain();
@@ -385,7 +383,7 @@ AliasNode * AliasTree::addEmptyNode(
     auto *NewNode = new AliasNode;
     ++NumAliasNode;
     mNodes.push_back(NewNode);
-    NewNode->setParent(Parrent);
+    NewNode->setParent(Parrent, *this);
     return NewNode;
   };
   SmallPtrSet<const AliasNode *, 8> ChildrenNodes;
@@ -409,7 +407,7 @@ AliasNode * AliasTree::addEmptyNode(
         *mAA, *mDL, NewEM, AliasNode::iterator(Aliases.front()), Node->end());
       if (AD.is<trait::CoverAlias>()) {
         auto *NewNode = newNode(*Current);
-        Node->setParent(*NewNode);
+        Node->setParent(*NewNode, *this);
         return NewNode;
       }
       // The second condition is necessary due to alias node which contains
@@ -438,7 +436,7 @@ AliasNode * AliasTree::addEmptyNode(
     }
     auto *NewNode = newNode(*Current);
     for (auto EM : Aliases)
-      EM->getAliasNode(*this)->setParent(*NewNode);
+      EM->getAliasNode(*this)->setParent(*NewNode, *this);
     return NewNode;
   }
 }

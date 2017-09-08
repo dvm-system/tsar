@@ -605,18 +605,14 @@ private:
   AliasNode() {};
 
   /// Specifies a parent for this node.
-  void setParent(AliasNode &Parent) {
-    if (mParent)
+  void setParent(AliasNode &Parent, const AliasTree &G) {
+    if (mParent) {
       mParent->mChildren.erase(child_iterator(this));
+      mParent->release(G);
+    }
     mParent = &Parent;
     mParent->mChildren.push_back(*this);
-  }
-
-  /// Specifies a parent for this node, but set this node as a parent for all
-  /// children of a specified node `Parent`.
-  void replaceParent(AliasNode &Parent) {
-    mChildren.splice(mChildren.end(), Parent.mChildren);
-    mParent = &Parent;
+    mParent->retain();
   }
 
   /// Inserts new estimate memory location at the end of memory sequence.
@@ -624,6 +620,7 @@ private:
 
   /// Increases number of references to this node.
   void retain() const noexcept { ++mRefCount; }
+
 
   /// Decreases a number of references to this node and remove it from a
   /// specified graph if there is no references any more.
@@ -847,7 +844,6 @@ inline void EstimateMemory::setAliasNode(AliasNode &N, const AliasTree &G) {
 }
 
 inline void AliasNode::release(const AliasTree &G) const {
-  assert(mRefCount > 0 && "The node is already released!");
   if (--mRefCount == 0)
     const_cast<AliasTree &>(G).removeNode(const_cast<AliasNode *>(this));
 }
