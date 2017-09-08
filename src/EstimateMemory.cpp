@@ -235,6 +235,7 @@ const EstimateMemory * ancestor(
       return LHS;
   return nullptr;
 }
+
 AliasDescriptor mergeAliasRelation(
     const AliasDescriptor &LHS, const AliasDescriptor &RHS) {
   assert((LHS.is<trait::NoAlias>() || LHS.is<trait::MayAlias>() ||
@@ -612,17 +613,38 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL);
+  DenseSet<const Value *> AccessedMemory;
   // TODO (kaniandr@gmail.com): implements evaluation of transfer intrinsics.
   // This should be also implemented in DefinedMemoryPass.
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
   // for example, in call and invoke instructions.
-  uint64_t S;
-  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-    switch (I->getOpcode()) {
-      case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
-      case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
-        mAliasTree->add(MemoryLocation::get(&*I)); break;
+  for (auto &I : make_range(inst_begin(F), inst_end(F))) {
+    switch (I.getOpcode()) {
+    case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
+    case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
+      auto Loc = MemoryLocation::get(&I);
+      AccessedMemory.insert(Loc.Ptr);
+      mAliasTree->add(std::move(Loc));
+      break;
     }
+  }
+  // If there are some pointers to memory locations which are not accessed
+  // than such memory locations also should be inserted in the alias tree.
+  // To avoid destruction of metadata for locations which have been already
+  // inserted into the alias tree `AccessedMemory` set is used.
+  auto addPointeeIfNeed = [&DL, &AccessedMemory, this](const Value *V) {
+    if (!V->getType() || !V->getType()->isPointerTy() ||
+        AccessedMemory.count(V))
+      return;
+    auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
+    assert(PointeeTy && "Pointee type must not be null!");
+    mAliasTree->add(MemoryLocation(V, PointeeTy->isSized() ?
+      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
+  };
+  for (auto &I : make_range(inst_begin(F), inst_end(F))) {
+    addPointeeIfNeed(&I);
+    for (auto *Op : make_range(I.value_op_begin(), I.value_op_end()))
+      addPointeeIfNeed(Op);
   }
   return false;
 }
