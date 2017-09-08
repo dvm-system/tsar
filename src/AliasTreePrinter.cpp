@@ -44,10 +44,20 @@ template<> struct DOTGraphTraits<AliasTree *> :
           OS << "unknown\\l";
         else
           OS << EM.getSize() << "\\l";
-        for (auto Ptr : EM)
-          OS << "  ", Ptr->print(OS, true), OS << "\\l";
+        for (auto Ptr : EM) {
+          OS << "  ";
+          if (isa<Function>(Ptr))
+            Ptr->printAsOperand(OS);
+          else
+            Ptr->print(OS, true);
+          OS << "\\l";
+        }
       } else {
-        EM.front()->print(OS, true), OS << ", size ";
+        if (isa<Function>(EM.front()))
+          EM.front()->printAsOperand(OS);
+        else
+          EM.front()->print(OS, true);
+        OS << ", size ";
         if (EM.getSize() == MemoryLocation::UnknownSize)
           OS << "unknown\\l";
         else

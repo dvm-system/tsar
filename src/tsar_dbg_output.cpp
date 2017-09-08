@@ -30,7 +30,7 @@ void printLocationSource(llvm::raw_ostream &O, const Value *Loc) {
   if (!Loc)
     O << "<unknown location>";
   else if (!unparsePrint(Loc, O))
-    O << *Loc;
+    Loc->printAsOperand(O, false);
 }
 
 void printLocationSource(
