@@ -610,35 +610,58 @@ FunctionPass * llvm::createEstimateMemoryPass() {
 bool EstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL);
   DenseSet<const Value *> AccessedMemory;
-  // TODO (kaniandr@gmail.com): implements evaluation of transfer intrinsics.
-  // This should be also implemented in DefinedMemoryPass.
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
   // for example, in call and invoke instructions.
+  auto addLocation = [&AccessedMemory, this](MemoryLocation &&Loc) {
+    if (isa<MetadataAsValue>(Loc.Ptr))
+      return;
+    AccessedMemory.insert(Loc.Ptr);
+    mAliasTree->add(std::move(Loc));
+  };
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
     switch (I.getOpcode()) {
     case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
     case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
-      auto Loc = MemoryLocation::get(&I);
-      AccessedMemory.insert(Loc.Ptr);
-      mAliasTree->add(std::move(Loc));
+      addLocation(MemoryLocation::get(&I));
+      break;
+    case Instruction::Call:
+      {
+        ImmutableCallSite CS(cast<CallInst>(&I));
+        for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
+          addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+      }
+      break;
+    case Instruction::Invoke:
+      {
+        ImmutableCallSite CS(cast<InvokeInst>(&I));
+        for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
+          addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+      }
       break;
     }
   }
   // If there are some pointers to memory locations which are not accessed
-  // than such memory locations also should be inserted in the alias tree.
+  // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already
   // inserted into the alias tree `AccessedMemory` set is used.
-  auto addPointeeIfNeed = [&DL, &AccessedMemory, this](const Value *V) {
-    if (!V->getType() || !V->getType()->isPointerTy() ||
-        AccessedMemory.count(V))
+  auto addPointeeIfNeed = [&DL, &AccessedMemory,& addLocation, this](
+      const Value *V) {
+    if (!V->getType() || !V->getType()->isPointerTy())
+      return;
+    if (auto F = dyn_cast<Function>(V))
+      switch (F->getIntrinsicID()) {
+      case Intrinsic::dbg_declare: case Intrinsic::dbg_value: return;
+      }
+    if (AccessedMemory.count(V))
       return;
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
     assert(PointeeTy && "Pointee type must not be null!");
-    mAliasTree->add(MemoryLocation(V, PointeeTy->isSized() ?
+    addLocation(MemoryLocation(V, PointeeTy->isSized() ?
       DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
   };
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
