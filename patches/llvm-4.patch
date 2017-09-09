@@ -1,6 +1,6 @@
 Index: include/llvm/ADT/DenseSet.h
 ===================================================================
---- include/llvm/ADT/DenseSet.h	(revision 297848)
+--- include/llvm/ADT/DenseSet.h	(revision 298000)
 +++ include/llvm/ADT/DenseSet.h	(working copy)
 @@ -104,7 +104,9 @@
      Iterator(const typename MapTy::iterator &i) : I(i) {}
@@ -23,3 +23,34 @@ Index: include/llvm/ADT/DenseSet.h
  
      ConstIterator& operator++() { ++I; return *this; }
      ConstIterator operator++(int) { auto T = *this; ++I; return T; }
+Index: include/llvm/ADT/iterator.h
+===================================================================
+--- include/llvm/ADT/iterator.h	(revision 298000)
++++ include/llvm/ADT/iterator.h	(working copy)
+@@ -286,8 +286,11 @@
+ template <typename WrappedIteratorT,
+           typename T = decltype(&*std::declval<WrappedIteratorT>())>
+ class pointer_iterator
+-    : public iterator_adaptor_base<pointer_iterator<WrappedIteratorT>,
+-                                   WrappedIteratorT, T> {
++    : public iterator_adaptor_base<
++        pointer_iterator<WrappedIteratorT>,
++        WrappedIteratorT,
++        typename std::iterator_traits<WrappedIteratorT>::iterator_category,
++        T> {
+   mutable T Ptr;
+
+ public:
+Index: include/llvm/IR/LegacyPassNameParser.h
+===================================================================
+--- include/llvm/IR/LegacyPassNameParser.h	(revision 298000)
++++ include/llvm/IR/LegacyPassNameParser.h	(working copy)
+@@ -105,6 +105,8 @@
+   Filter filter;
+
+ public:
++  FilteredPassNameParser(cl::Option &O) : PassNameParser(O) {}
++
+   bool ignorablePassImpl(const PassInfo *P) const override {
+     return !filter(*P);
+   }
