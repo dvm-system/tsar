@@ -325,11 +325,14 @@ public:
   /// This type used to iterate over all ambiguous pointers.
   using ambiguous_iterator = AmbiguousRef::AmbiguousList::const_iterator;
 
-  /// This type is used to iterate over all children of this node.
+  /// This type is used to iterate over all children of this location.
   using child_iterator = ChildList::iterator;
 
-  /// This type is used to iterate over all children of this node.
+  /// This type is used to iterate over all children of this location.
   using const_child_iterator = ChildList::const_iterator;
+
+  /// This type is used to calculates number of children of this location.
+  using child_size = ChildList::size_type;
 
   /// Returns size of location in address units or
   /// llvm::MemoryLocation:: UnknownSize if the size is not known.
@@ -441,6 +444,13 @@ public:
 
   /// Returns iterator that points to the ending of the children list.
   const_child_iterator child_end() const { return mChildren.end(); }
+
+  /// Returns number of children in linear time.
+  child_size getChildNumber() const { return mChildren.size(); }
+
+  /// Returns true if this memory is a leaf in the estimate memory tree
+  /// (in constant time).
+  bool isLeaf() const { return mChildren.empty(); }
 
 private:
   /// Creates an estimate location for a specified memory.
@@ -929,6 +939,39 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergePrev(
   }
 }
 namespace llvm {
+//===----------------------------------------------------------------------===//
+// GraphTraits specializations for estimate memory tree (EstimateMemory)
+//===----------------------------------------------------------------------===//
+
+template<> struct GraphTraits<tsar::EstimateMemory *> {
+  using NodeRef = tsar::EstimateMemory *;
+  static NodeRef getEntryNode(tsar::EstimateMemory *N) noexcept {
+    return N;
+  }
+  using ChildIteratorType =
+    pointer_iterator<tsar::EstimateMemory::child_iterator>;
+  static ChildIteratorType child_begin(NodeRef N) {
+    return ChildIteratorType(N->child_begin());
+  }
+  static ChildIteratorType child_end(NodeRef N) {
+    return ChildIteratorType(N->child_end());
+  }
+};
+
+template<> struct GraphTraits<const tsar::EstimateMemory *> {
+  using NodeRef = const tsar::EstimateMemory *;
+  static NodeRef getEntryNode(const tsar::EstimateMemory *N) noexcept {
+    return N;
+  }
+  using ChildIteratorType =
+    pointer_iterator<tsar::EstimateMemory::const_child_iterator>;
+  static ChildIteratorType child_begin(NodeRef N) {
+    return ChildIteratorType(N->child_begin());
+  }
+  static ChildIteratorType child_end(NodeRef N) {
+    return ChildIteratorType(N->child_end());
+  }
+};
 //===----------------------------------------------------------------------===//
 // GraphTraits specializations for alias tree (AliasTree)
 //===----------------------------------------------------------------------===//
