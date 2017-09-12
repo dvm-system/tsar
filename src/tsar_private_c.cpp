@@ -5,6 +5,7 @@
 #include "tsar_private.h"
 #include "tsar_private_c.h"
 #include "tsar_transformation.h"
+#include "EstimateMemory.h"
 
 using namespace llvm;
 using namespace tsar;

@@ -30,6 +30,7 @@
 #include <vector>
 #include "DefinedMemory.h"
 #include "DIUnparser.h"
+#include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
 #include "PerfectLoop.h"
 #include "tsar_private.h"
@@ -93,26 +94,44 @@ namespace {
 class TraitClausePrinter {
 public:
   /// Creates functor.
-  explicit TraitClausePrinter(llvm::raw_ostream &OS) : mOS(OS) {}
+  explicit TraitClausePrinter(
+      const AliasTree *AT, llvm::raw_ostream &OS) : mAliasTree(AT), mOS(OS) {}
 
   /// \brief Prints an appropriate clause for each trait in the vector.
   ///
   /// Variable names in analysis clauses is printed in alphabetical order and do
   /// not change from run to run.
   template<class Trait> void operator()(
-      std::vector<LocationTraitSet *> &TraitVector) {
+      std::vector<AliasTrait *> &TraitVector) {
     if (TraitVector.empty())
       return;
     std::string Clause = Trait::toString();
     Clause.erase(std::remove(Clause.begin(), Clause.end(), ' '), Clause.end());
     std::set<std::string, std::less<std::string>> SortedVarList;
-    for (auto TS : TraitVector) {
-      SmallString<10> Str;
-      if (unparseToString(TS->memory()->Ptr, Str))
-        SortedVarList.insert(Str.str());
-      else
-        SortedVarList.insert("?");
+    for (auto *AT : TraitVector) {
+      if (AT->getNode() == mAliasTree->getTopLevelNode())
+        continue;
+      for (auto &T : *AT) {
+        if (!std::is_same<Trait, trait::AddressAccess>::value &&
+              T.is<trait::NoAccess>() ||
+            std::is_same<Trait, trait::AddressAccess>::value && !T.is<Trait>())
+          continue;
+        std::string Str;
+        raw_string_ostream TmpOS(Str);
+        TmpOS << '<';
+        if (!unparsePrint(T.getMemory()->front(), TmpOS))
+          TmpOS << '?';
+        TmpOS << ',';
+        if (T.getMemory()->isSized())
+          TmpOS << T.getMemory()->getSize();
+        else
+          TmpOS << '?';
+        TmpOS << '>';
+        SortedVarList.insert(TmpOS.str());
+      }
     }
+    if (SortedVarList.empty())
+      return;
     mOS << " " << Clause << "(";
     auto I = SortedVarList.begin(), EI = SortedVarList.end();
     for (--EI; I != EI; ++I)
@@ -122,6 +141,7 @@ public:
   }
 
 private:
+  const AliasTree *mAliasTree;
   raw_ostream &mOS;
 };
 
@@ -168,14 +188,15 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       assert(DSItr != PrivateInfo.end() && DSItr->get<DependencySet>() &&
         "Privatiability information must be specified!");
       typedef bcl::StaticTraitMap<
-        std::vector<LocationTraitSet *>, DependencyDescriptor> TraitMap;
+        std::vector<AliasTrait *>, DependencyDescriptor> TraitMap;
       TraitMap TM;
       for (auto &TS : *DSItr->get<DependencySet>())
         TS.for_each(
-          bcl::TraitMapConstructor<LocationTraitSet, TraitMap>(TS, TM));
+          bcl::TraitMapConstructor<AliasTrait, TraitMap>(TS, TM));
+      auto *AT = DSItr->get<DependencySet>()->getAliasTree();
       printPragma(Match.get<AST>()->getLocStart(), Rewriter,
-        [&TM](raw_ostream &OS) {
-          TM.for_each(TraitClausePrinter(OS));
+        [&TM, AT](raw_ostream &OS) {
+          TM.for_each(TraitClausePrinter(AT, OS));
       });
       if (PLoopInfo.find(N) != PLoopInfo.end()) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,

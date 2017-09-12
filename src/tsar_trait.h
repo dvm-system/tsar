@@ -7,22 +7,21 @@
 // This file defines traits which could be recognized by the analyzer.
 //
 //===----------------------------------------------------------------------===//
-#ifndef TSAR_TRAIT_H
-#define TSAR_TRAIT_H
+#ifndef TSAR_MEMORY_TRAIT_H
+#define TSAR_MEMORY_TRAIT_H
 
+#include <trait.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/StringRef.h>
-#include "tsar_df_location.h"
-#include <cell.h>
-#include <trait.h>
-#include <utility.h>
-
-namespace llvm {
-class MemoryLocation;
-}
 
 namespace tsar {
+class AliasNode;
+class AliasTree;
+class EstimateMemory;
+class ExplicitAccseeCoverage;
+
 /// Declaration of a trait recognized by analyzer.
 #define TSAR_TRAIT_DECL(name_, string_) \
 struct name_ { \
@@ -38,6 +37,7 @@ struct name_ { \
 
 namespace trait {
 TSAR_TRAIT_DECL(AddressAccess, "address access")
+TSAR_TRAIT_DECL(ExplicitAccess, "explicit access")
 TSAR_TRAIT_DECL(NoAccess, "no access")
 TSAR_TRAIT_DECL(Shared, "shared")
 TSAR_TRAIT_DECL(Private, "private")
@@ -56,15 +56,25 @@ TSAR_TRAIT_DECL(Induction, "induction")
 /// recognized by analyzer.
 ///
 /// The following information is available:
-/// - a set of locations addresses of which are evaluated;
-/// - a set of private locations;
-/// - a set of last private locations;
-/// - a set of second to last private locations;
-/// - a set of dynamic private locations;
-/// - a set of first private locations;
-/// - a set of shared locations;
-/// - a set of locations that caused dependency.
-/// - a set of loop induction locations;
+/// - is it a location which is not accessed in a region
+/// - is it a location which is explicitly accessed in a region
+/// - is it a location address of which is evaluated;
+/// - is it private location;
+/// - is it a last private location;
+/// - is it a second to last private location;
+/// - is it a dynamic private location;
+/// - is it a first private location;
+/// - is it a shared location;
+/// - is it a location that caused dependency.
+/// - is it a loop induction location;
+///
+/// If location is not accessed in a region it will be marked as 'no access'
+/// only if it has some other traits, otherwise it can be omitted in a list
+/// of region traits.
+///
+/// Location is accessed in a region implicitly if descendant of it in an
+/// estimate memory tree will be accessed explicitly. If some other location is
+/// accessed due to alias with such location it is not treated.
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -95,120 +105,312 @@ TSAR_TRAIT_DECL(Induction, "induction")
 /// In some cases it is impossible to determine in static an iteration
 /// where the last definition of an location have been executed. Such locations
 /// will be stored as dynamic private locations collection.
-using DependencyDescriptor = bcl::TraitDescriptor<trait::AddressAccess,
+using DependencyDescriptor = bcl::TraitDescriptor<
+  trait::AddressAccess, trait::ExplicitAccess,
   bcl::TraitAlternative<trait::NoAccess, trait::Shared, trait::Private,
-    trait::Reduction, trait::Dependency, trait::Induction,
-    bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate>,
-    bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate>,
-    bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate>>>;
+  trait::Reduction, trait::Dependency, trait::Induction,
+  bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate>,
+  bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate>,
+  bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate>>>;
 
 /// \brief This is a set of traits for a memory location.
 ///
-/// In general this class represents traits of base locations which has been
-/// collected by a base location set, so it is not possible to modify this
-///locations.
-class LocationTraitSet : public bcl::TraitSet<
-  DependencyDescriptor, llvm::DenseMap<bcl::TraitKey, void *>> {
-  /// Base class.
-  using Base = bcl::TraitSet<
-    DependencyDescriptor, llvm::DenseMap<bcl::TraitKey, void *>>;
-
+/// In general this class represents traits of estimate locations which has been
+/// collected by an alias tree, so it is not possible to modify this locations.
+class LocationTrait : public DependencyDescriptor {
 public:
-  /// \brief Creates set of traits.
-  LocationTraitSet(const llvm::MemoryLocation *Loc, DependencyDescriptor Dptr) :
-    Base(Dptr), mLoc(Loc) {
+  /// Creates set of traits.
+  explicit LocationTrait(const EstimateMemory *Loc) : mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
+  /// Creates set of traits.
+  LocationTrait(const EstimateMemory *Loc, const DependencyDescriptor &Dptr) :
+    DependencyDescriptor(Dptr), mLoc(Loc) {
+    assert(Loc && "Location must not be null!");
+  }
+
+  /// Creates set of traits.
+  LocationTrait(const EstimateMemory *Loc, DependencyDescriptor &&Dptr) :
+    DependencyDescriptor(std::move(Dptr)), mLoc(Loc) {
+    assert(Loc && "Location must not be null!");
+  }
+
+  /// Assigns dependency descriptor to this set of traits.
+  LocationTrait & operator=(const DependencyDescriptor &Dptr) noexcept {
+    DependencyDescriptor::operator=(Dptr);
+    return *this;
+  }
+
+  /// Assigns dependency descriptor to this set traits.
+  LocationTrait & operator=(DependencyDescriptor &&Dptr) noexcept {
+    DependencyDescriptor::operator=(std::move(Dptr));
+    return *this;
+  }
+
   /// Returns memory location.
-  const llvm::MemoryLocation * memory() const { return mLoc; }
+  const EstimateMemory * getMemory() const { return mLoc; }
 
 private:
-  const llvm::MemoryLocation *mLoc;
+  const EstimateMemory *mLoc;
 };
+}
 
-/// This is a set of different traits suitable for loops.
-class DependencySet {
-  typedef llvm::DenseMap<const llvm::MemoryLocation *,
-    std::unique_ptr<LocationTraitSet>> LocationTraitMap;
+namespace llvm {
+/// This provides DenseMapInfo for LocationTrait.
+template<> struct DenseMapInfo<tsar::LocationTrait> {
+  static inline tsar::LocationTrait getEmptyKey() {
+    return tsar::LocationTrait(
+      DenseMapInfo<const tsar::EstimateMemory *>::getEmptyKey());
+  }
+  static inline tsar::LocationTrait getTombstoneKey() {
+    return tsar::LocationTrait(
+      DenseMapInfo<const tsar::EstimateMemory *>::getTombstoneKey());
+  }
+  static unsigned getHashValue(const tsar::LocationTrait &Val) {
+    return DenseMapInfo<const tsar::EstimateMemory *>
+      ::getHashValue(Val.getMemory());
+  }
+  static unsigned getHashValue(const tsar::EstimateMemory *Val) {
+    assert(Val && "Estimate memory must not be null!");
+    return DenseMapInfo<const tsar::EstimateMemory *>
+      ::getHashValue(Val);
+  }
+  static bool isEqual(
+      const tsar::LocationTrait &LHS, const tsar::LocationTrait &RHS) {
+    return LHS.getMemory() == RHS.getMemory(); }
+  static bool isEqual(
+      const tsar::EstimateMemory *LHS, const tsar::LocationTrait &RHS) {
+    return LHS == RHS.getMemory();
+  }
+};
+}
+
+namespace tsar {
+/// \brief This is a set of traits for an alias node.
+///
+/// In general this class represents traits of alias nodes which has been
+/// collected by an alias tree, so it is not possible to modify this nodes.
+///
+/// For a node a number of accessed estimate memory locations are available.
+/// Each of these locations either is explicitly accessed in the analyzed region
+/// or covers some of explicitly accessed locations. There are also traits of
+/// each such location. Conservative combination of these traits leads to
+/// the proposed traits of a node. Nodes that explicitly accessed locations may
+/// be associated in some of descendant alias nodes of the current one.
+class AliasTrait : public DependencyDescriptor, private bcl::Uncopyable {
+  /// List of explicitly accessed estimate memory locations and their traits.
+  using AccessTraits = llvm::DenseSet<LocationTrait>;
+
 public:
   /// This class used to iterate over traits of different memory locations.
-  class iterator :
-    public std::iterator<std::forward_iterator_tag, LocationTraitSet> {
+  using iterator = AccessTraits::iterator;
+
+  /// This class used to iterate over traits of different memory locations.
+  using const_iterator = AccessTraits::const_iterator;
+
+  /// This stores size of a list of explicitly accessed locations.
+  using size_type = AccessTraits::size_type;
+
+  /// Creates representation of traits.
+  explicit AliasTrait(const AliasNode *N) : mNode(N) {
+    assert(N && "Alias node must not be null!");
+  }
+
+  /// Creates representation of traits.
+  AliasTrait(const AliasNode *N, const DependencyDescriptor &Dptr) :
+    DependencyDescriptor(Dptr), mNode(N) {
+    assert(N && "Alias node must not be null!");
+  }
+
+  /// Creates representation of traits.
+  AliasTrait(const AliasNode *N, DependencyDescriptor &&Dptr) :
+    DependencyDescriptor(std::move(Dptr)), mNode(N) {
+    assert(N && "Alias node must not be null!");
+  }
+
+  /// Assigns dependency descriptor to this set of traits.
+  AliasTrait & operator=(const DependencyDescriptor &Dptr) noexcept {
+    DependencyDescriptor::operator=(Dptr);
+    return *this;
+  }
+
+  /// Assigns dependency descriptor to this set of traits.
+  AliasTrait & operator=(DependencyDescriptor &&Dptr) noexcept {
+    DependencyDescriptor::operator=(std::move(Dptr));
+    return *this;
+  }
+
+  /// Returns an alias node for which traits is specified.
+  const AliasNode * getNode() const noexcept { return mNode; }
+
+  /// \brief Adds traits of an explicitly accessed location, returns false if
+  /// such location already exists. Its traits will not be updated.
+  ///
+  /// \pre The specified estimate memory location is contained in the `node()`.
+  std::pair<iterator, bool> insert(const LocationTrait &LT) {
+    return mAccesses.insert(LT);
+  }
+
+  /// \brief Adds traits of an explicitly accessed location, returns false if
+  /// such location already exists. Its traits will not be updated.
+  ///
+  /// \pre The specified estimate memory location is contained in the `node()`.
+  std::pair<iterator, bool> insert(LocationTrait &&LT) {
+    return mAccesses.insert(std::move(LT));
+  }
+
+  /// Returns iterator that points to the beginning of the list of
+  /// explicitly accessed locations.
+  iterator begin() { return mAccesses.begin(); }
+
+  /// Returns iterator that points to the ending of the list of
+  /// explicitly accessed locations.
+  iterator end() { return mAccesses.end(); }
+
+  /// Returns iterator that points to the beginning of the list of
+  /// explicitly accessed locations.
+  const_iterator begin() const { return mAccesses.begin(); }
+
+  /// Returns iterator that points to the ending of the list of
+  /// explicitly accessed locations.
+  const_iterator end() const { return mAccesses.end(); }
+
+  /// Returns traits of a specified estimate memory location if it is
+  /// explicitly accessed.
+  iterator find(const EstimateMemory *EM) {
+    assert(EM && "Estimate memory must not be null!");
+    return mAccesses.find_as(EM);
+  }
+
+  /// Returns traits of a specified estimate memory location if it is
+  /// explicitly accessed.
+  const_iterator find(const EstimateMemory *EM) const {
+    assert(EM && "Estimate memory must not be null!");
+    return mAccesses.find_as(EM);
+  }
+
+  /// Returns number of explicitly accessed locations.
+  size_type count() const { return mAccesses.size(); }
+
+  /// Returns true if there are no explicitly accessed locations.
+  bool empty() const { return mAccesses.empty(); }
+
+  /// Removes an explicitly accessed location from the list.
+  bool erase(const EstimateMemory *EM) {
+    auto I = find(EM);
+    return I != end() ? mAccesses.erase(I), true : false;
+  }
+
+  /// Removes all explicitly accessed locations from the list.
+  void clear() { mAccesses.clear(); }
+
+private:
+  const AliasNode *mNode;
+  AccessTraits mAccesses;
+};
+
+/// This is a set of different traits suitable for a region.
+class DependencySet {
+  using AliasTraits =
+    llvm::DenseMap<const AliasNode *, std::unique_ptr<AliasTrait>>;
+public:
+  /// This class used to iterate over traits of different alias nodes.
+  class const_iterator :
+    public std::iterator<std::forward_iterator_tag, AliasTrait> {
   public:
-    explicit iterator(const LocationTraitMap::const_iterator &I) :
+    explicit const_iterator(const AliasTraits::const_iterator &I) :
       mCurrItr(I) {}
-    explicit iterator(LocationTraitMap::const_iterator &&I) :
+    explicit const_iterator(AliasTraits::const_iterator &&I) :
       mCurrItr(std::move(I)) {}
-    LocationTraitSet & operator*() const { return *mCurrItr->second; }
-    LocationTraitSet * operator->() const { return &operator*(); }
-    bool operator==(const iterator &RHS) const {
+    const AliasTrait & operator*() const { return *mCurrItr->second; }
+    const AliasTrait * operator->() const { return &operator*(); }
+    bool operator==(const const_iterator &RHS) const {
       return mCurrItr == RHS.mCurrItr;
     }
-    bool operator!=(const iterator &RHS) const { return !operator==(RHS); }
+    bool operator!=(const const_iterator &RHS) const {
+      return !operator==(RHS);
+    }
     iterator & operator++() { ++mCurrItr; return *this; }
     iterator operator++(int) { iterator Tmp = *this; ++*this; return Tmp; }
   private:
-    LocationTraitMap::const_iterator mCurrItr;
+    AliasTraits::const_iterator mCurrItr;
   };
 
-  /// This type used to iterate over traits of different memory locations.
-  typedef iterator const_iterator;
+  /// This type used to iterate over traits of different alias nodes.
+  class iterator : public const_iterator {
+  public:
+    explicit iterator(const AliasTraits::const_iterator &I) :
+      const_iterator(I) {}
+    explicit iterator(AliasTraits::const_iterator &&I) :
+      const_iterator(std::move(I)) {}
+    AliasTrait & operator*() const {
+      return const_cast<AliasTrait &>(const_iterator::operator*());
+    }
+    AliasTrait * operator->() const { return &operator*(); }
+    bool operator==(const const_iterator &RHS) const {
+      return const_iterator::operator==(RHS);
+    }
+    bool operator!=(const const_iterator &RHS) const {
+      return !operator==(RHS);
+    }
+    iterator & operator++() { const_iterator::operator++(); return *this; }
+    iterator operator++(int) { iterator Tmp = *this; ++*this; return Tmp; }
+  };
 
-  /// \brief Returns base memory location for a specified one.
-  ///
-  /// The base location will be stored in a base location set and memory
-  /// allocation will be managed by this class.
-  const llvm::MemoryLocation * base(const llvm::MemoryLocation &Loc) const {
-    return *mBases.insert(Loc).first;
-  }
+  /// Creates set of traits.
+  explicit DependencySet(const AliasTree &AT) : mAliasTree(&AT) {}
 
-  /// \brief Finds traits of a base memory location.
-  ///
-  /// If the specified location is not a base memory location the base location
-  /// will be obtained at first. Then results for the base location will be
-  /// returned.
-  iterator find(const llvm::MemoryLocation &Loc) const {
-    return iterator(mTraits.find(base(Loc)));
-  }
+  /// Returns alias tree nodes of which are analyzed.
+  const AliasTree * getAliasTree() const noexcept { return mAliasTree; }
 
-  /// \brief Insert traits of a base memory location.
-  ///
-  /// If the specified location is not a base memory location the base location
-  /// will be obtained at first. Note, that this class manages memory allocation
-  /// to store traits.
+  /// Returns iterator that points to the beginning of the traits list.
+  iterator begin() { return iterator(mTraits.begin()); }
+
+  /// Returns iterator that points to the ending of the traits list.
+  iterator end() { return iterator(mTraits.end()); }
+
+  /// Returns iterator that points to the beginning of the traits list.
+  const_iterator begin() const { return const_iterator(mTraits.begin()); }
+
+  /// Returns iterator that points to the ending of the traits list.
+  const_iterator end() const { return const_iterator(mTraits.end()); }
+
+
+  /// Finds traits of a specified alias node.
+  iterator find(const AliasNode *N) const { return iterator(mTraits.find(N)); }
+
+  /// Inserts traits of a specified alias node.
   std::pair<iterator, bool> insert(
-      const llvm::MemoryLocation &Loc, DependencyDescriptor Dptr) {
-    auto BaseLoc = base(Loc);
+      const AliasNode *N, const DependencyDescriptor &Dptr) {
     auto Pair = mTraits.insert(
-      std::make_pair(BaseLoc,
-      std::unique_ptr<LocationTraitSet>(new LocationTraitSet(BaseLoc, Dptr))));
+      std::make_pair(N, llvm::make_unique<AliasTrait>(N, Dptr)));
     return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
   }
 
-  /// Erase traits of a base memory location.
-  bool erase(const llvm::MemoryLocation &Loc) {
-    return mTraits.erase(base(Loc));
+  /// Inserts traits of a specified alias node.
+  std::pair<iterator, bool> insert(
+      const AliasNode *N, DependencyDescriptor &&Dptr) {
+    auto Pair = mTraits.insert(
+      std::make_pair(N, llvm::make_unique<AliasTrait>(N, std::move(Dptr))));
+    return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
   }
 
-  /// Erase traits of all base memory locations.
+  /// Erases traits of a specified alias node.
+  bool erase(const AliasNode *N) { return mTraits.erase(N); }
+
+  /// Erases traits of all alias nodes.
   void clear() { mTraits.clear(); }
 
-  /// Returns true if there are no locations with known traits.
+  /// Returns true if there are no alias nodes with known traits.
   bool empty() const { return mTraits.empty(); }
 
-  /// Returns number of locations with known traits.
+  /// Returns number of alias nodes with known traits.
   unsigned size() const { return mTraits.size(); }
 
-  /// Returns iterator that points to the beginning of the traits list.
-  iterator begin() const { return iterator(mTraits.begin()); }
-
-  /// Returns iterator that points to the ending of the traits list.
-  iterator end() const { return iterator(mTraits.end()); }
-
 private:
-  mutable BaseLocationSet mBases;
-  LocationTraitMap mTraits;
+  AliasTraits mTraits;
+  const AliasTree *mAliasTree;
 };
 }
-#endif//TSAR_TRAIT_H
+#endif//TSAR_MEMORY_TRAIT_H
