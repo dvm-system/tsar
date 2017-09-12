@@ -31,8 +31,6 @@ template<class ItrTy>
 bool cover(
     const AliasTree &AT, const GraphNumbering<const AliasNode *> &Numbers,
     const EstimateMemory &EM, const ItrTy &BeginItr, const ItrTy &EndItr) {
-  assert(Numbers.size() == AT.size() &&
-    "A graph numbering must contain all nodes of the graph!");
   if (BeginItr == EndItr)
     return false;
   using PointeeItr = typename std::conditional<
