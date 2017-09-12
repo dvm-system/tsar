@@ -82,16 +82,16 @@ struct NumberingTraits<NodeRef, GraphNumbering<NodeRef> *> {
     return GN->insert(std::make_pair(N, NumberingTuple(0, 0, 0, 0))).first;
   }
   static void setPreorder(std::size_t N, NumberRef I) {
-    I->get<Preorder>() = N;
+    I->template get<Preorder>() = N;
   }
   static void setReversePreorder(std::size_t N, NumberRef I) {
-    I->get<ReversePreorder>() = N;
+    I->template get<ReversePreorder>() = N;
   }
   static void setPostorder(std::size_t N, NumberRef I) {
-    I->get<Postorder>() = N;
+    I->template get<Postorder>() = N;
   }
   static void setReversePostorder(std::size_t N, NumberRef I) {
-    I->get<ReversePostorder>() = N;
+    I->template get<ReversePostorder>() = N;
   }
 };
 

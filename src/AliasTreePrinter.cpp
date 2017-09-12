@@ -20,6 +20,7 @@
 using namespace llvm;
 using namespace tsar;
 
+namespace llvm {
 template<> struct DOTGraphTraits<AliasTree *> :
     public DefaultDOTGraphTraits {
 
@@ -73,6 +74,7 @@ struct EstimateMemoryPassGraphTraits {
     return &EMP->getAliasTree();
   }
 };
+}
 
 namespace {
 struct AliasTreePrinter:

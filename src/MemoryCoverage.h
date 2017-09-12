@@ -56,22 +56,23 @@ bool cover(
     assert(NodeItr != Numbers.end() && "Number of an alias node  must be set!");
     PreorderTraversal.emplace(
       std::piecewise_construct,
-      std::forward_as_tuple(NodeItr->get<Preorder>()),
-      std::forward_as_tuple(NodeItr->get<ReversePostorder>(), I->getSize()));
+      std::forward_as_tuple(NodeItr->template get<Preorder>()),
+      std::forward_as_tuple(
+        NodeItr->template get<ReversePostorder>(), I->getSize()));
   }
   uint64_t TotalSize = 0;
   auto PreorderItr = PreorderTraversal.begin();
   auto PreorderEndItr = PreorderTraversal.end();
-  auto SubTreeRoot = PreorderItr->second.get<ReversePostorder>();
-  auto CurrentSize = PreorderItr->second.get<Size>();
+  auto SubTreeRoot = PreorderItr->second.template get<ReversePostorder>();
+  auto CurrentSize = PreorderItr->second.template get<Size>();
   for (++PreorderItr; PreorderItr != PreorderEndItr; ++PreorderItr) {
-    if (SubTreeRoot < PreorderItr->second.get<ReversePostorder>()) {
+    if (SubTreeRoot < PreorderItr->second.template get<ReversePostorder>()) {
       CurrentSize = std::max(
-        CurrentSize, PreorderItr->second.get<Size>());
+        CurrentSize, PreorderItr->second.template get<Size>());
       continue;
     }
     TotalSize += CurrentSize;
-    CurrentSize = PreorderItr->second.get<Size>();
+    CurrentSize = PreorderItr->second.template get<Size>();
   }
   TotalSize += CurrentSize;
   return TotalSize >= EM.getSize();

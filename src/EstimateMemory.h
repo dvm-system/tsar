@@ -147,11 +147,11 @@ AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
   const EstimateMemory &EM, const ItrTy &BeginItr, const ItrTy &EndItr) {
   auto I = BeginItr;
   auto MergedAD = aliasRelation(AA, DL, EM, *I);
-  if (MergedAD.is<trait::MayAlias>())
+  if (MergedAD.template is<trait::MayAlias>())
     return MergedAD;
   for (++I; I != EndItr; ++I) {
     MergedAD = mergeAliasRelation(MergedAD, aliasRelation(AA, DL, EM, *I));
-    if (MergedAD.is<trait::MayAlias>())
+    if (MergedAD.template is<trait::MayAlias>())
       return MergedAD;
   }
   return MergedAD;
