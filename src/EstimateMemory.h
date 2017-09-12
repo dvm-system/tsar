@@ -338,6 +338,11 @@ public:
   /// llvm::MemoryLocation:: UnknownSize if the size is not known.
   uint64_t getSize() const noexcept { return mSize; }
 
+  /// Returns true if size is known.
+  bool isSized() const noexcept {
+    return mSize != llvm::MemoryLocation::UnknownSize;
+  }
+
   /// Returns the metadata nodes which describes the aliasing of the location,
   /// or null if there is no information or conflicting information.
   llvm::AAMDNodes getAAInfo() const {
