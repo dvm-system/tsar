@@ -297,7 +297,7 @@ private:
 
 private:
   template<class EstimateMemory, class Hierarchy> friend struct ChainTraits;
-  template<class EstimateMemory, class Hierarchy> friend struct ChainIterator;
+  template<class EstimateMemory, class Hierarchy> friend class ChainIterator;
 };
 }
 
@@ -1023,7 +1023,7 @@ template<> struct GraphTraits<tsar::AliasTree *> :
   static nodes_iterator nodes_end(tsar::AliasTree *AT) {
     return nodes_iterator(AT->end());
   }
-  static unsigned size(tsar::AliasTree *AT) { return AT->size(); }
+  static std::size_t size(tsar::AliasTree *AT) { return AT->size(); }
 };
 
 template<> struct GraphTraits<const tsar::AliasTree *> :
@@ -1038,7 +1038,7 @@ template<> struct GraphTraits<const tsar::AliasTree *> :
   static nodes_iterator nodes_end(const tsar::AliasTree *AT) {
     return nodes_iterator(AT->end());
   }
-  static unsigned size(const tsar::AliasTree *AT) { return AT->size(); }
+  static std::size_t size(const tsar::AliasTree *AT) { return AT->size(); }
 };
 
 

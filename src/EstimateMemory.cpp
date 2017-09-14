@@ -133,11 +133,11 @@ bool isSameBase(const DataLayout &DL,
       APInt Offset1, Offset2;
       if (auto STy1 = I1.getStructTypeOrNull()) {
         assert(I2.getStructTypeOrNull() && "It must be a structure!");
-        auto Idx1 = OpC1->getZExtValue();
+        auto Idx1 = static_cast<unsigned>(OpC1->getZExtValue());
         auto SL1 = DL.getStructLayout(STy1);
         Offset1 = APInt(BitWidth1, SL1->getElementOffset(Idx1));
         auto STy2 = I2.getStructType();
-        auto Idx2 = OpC2->getZExtValue();
+        auto Idx2 = static_cast<unsigned>(OpC2->getZExtValue());
         auto SL2 = DL.getStructLayout(STy2);
         Offset2 = APInt(BitWidth2, SL2->getElementOffset(Idx2));
       } else {
@@ -649,7 +649,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already
   // inserted into the alias tree `AccessedMemory` set is used.
-  auto addPointeeIfNeed = [&DL, &AccessedMemory,& addLocation, this](
+  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation, this](
       const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
