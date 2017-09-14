@@ -396,7 +396,7 @@ public:
   }
 
   /// Return true if an alias node has been already specified.
-  bool hasAliasNode() const noexcept { mNode != nullptr; }
+  bool hasAliasNode() const noexcept { return mNode != nullptr; }
 
   /// \brief Returns a node in alias graph which contains this location.
   ///
