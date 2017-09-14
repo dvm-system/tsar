@@ -10,6 +10,7 @@
 
 #include "EstimateMemory.h"
 #include "tsar_dbg_output.h"
+#include "KnownFunctionTraits.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
@@ -607,6 +608,7 @@ FunctionPass * llvm::createEstimateMemoryPass() {
   return new EstimateMemoryPass();
 }
 
+
 bool EstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
@@ -631,16 +633,38 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       break;
     case Instruction::Call:
       {
+        LibFunc::Func F;
         ImmutableCallSite CS(cast<CallInst>(&I));
-        for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
-          addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+        if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+          foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
+                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+          });
+        } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
+          foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
+                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+          });
+        } else {
+          for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
+            addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+        }
       }
       break;
     case Instruction::Invoke:
       {
+        LibFunc::Func F;
         ImmutableCallSite CS(cast<InvokeInst>(&I));
-        for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
-          addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+        if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+          foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
+                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+          });
+        } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
+          foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
+                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+          });
+        } else {
+          for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
+            addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+        }
       }
       break;
     }
