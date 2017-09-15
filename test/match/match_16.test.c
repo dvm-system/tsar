@@ -7,7 +7,7 @@ body:
     goto end;
   I = I + 1;
 #pragma sapfor analysis loop(implicit)
-#pragma sapfor analysis dependency(I)
+#pragma sapfor analysis dependency(<I,4>) explicitaccess(<I,4>)
 head:
   goto body;
 end:
