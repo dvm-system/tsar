@@ -57,6 +57,12 @@ public:
 
   /// This is a SAPFOR Include clause.
   static constexpr const char *mIncludeClause = "include";
+  
+    /// This is a SAPFOR Perfect Loop clause.
+  static constexpr const char *mPerfectLoopClause = "perfect";
+
+  /// This is a SAPFOR Imperfect Loop clause.
+  static constexpr const char *mImperfectLoopClause = "imperfect";
 
   /// Default constructor.
   TestPrinterPass() : ModulePass(ID) {

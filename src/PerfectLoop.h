@@ -12,8 +12,16 @@
 #define TSAR_CLANG_PERFECT_LOOP_H
 
 #include "tsar_pass.h"
+#include "tsar_utility.h"
+#include "DFRegionInfo.h"
 #include <utility.h>
 #include <llvm/Pass.h>
+
+namespace tsar {
+
+/// Set of perfect loops
+typedef std::set<DFNode *> PerfectLoopInfo;
+}
 
 namespace llvm {
 /// \brief This per-function pass determines perfect for-loops in a source code.
@@ -31,12 +39,24 @@ public:
     initializeClangPerfectLoopPassPass(*PassRegistry::getPassRegistry());
   }
 
+  /// Returns information about loops for an analyzed region.
+  tsar::PerfectLoopInfo & getPerfectLoopInfo() noexcept {return mPerfectLoopInfo;}
+
+  /// Returns information about loops for an analyzed region.
+  const tsar::PerfectLoopInfo & getPerfectLoopInfo() const noexcept {return mPerfectLoopInfo;}
+  
   // Inserts into a source code perfect/imperfect pragma before each for-loop.
   bool runOnFunction(Function &F) override;
+  
+  void releaseMemory() override {
+    mPerfectLoopInfo.clear();
+  }
 
   /// Specifies a list of analyzes that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
+private:
+  tsar::PerfectLoopInfo mPerfectLoopInfo;
 };
 }
 #endif// TSAR_CLANG_PERFECT_LOOP_H
