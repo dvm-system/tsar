@@ -80,5 +80,30 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second) {
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
     new AnalysisActionFactory(std::move(First), std::move(Second)));
 }
+
+/// Creates an analysis/transformations actions factory with adaptor.
+template <class ActionTy, class AdaptorTy,
+          class FirstTy, class SecondTy, class AdaptorArgTy>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
+newAnalysisActionFactory(
+    FirstTy First, SecondTy Second, AdaptorArgTy AdaptorArg) {
+  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
+  public:
+    AnalysisActionFactory(FirstTy F, SecondTy S, AdaptorArgTy A) :
+      mFirst(std::move(F)), mSecond(std::move(S)), mAdaptorArg(std::move(A)) {}
+    clang::FrontendAction *create() override {
+      std::unique_ptr<clang::FrontendAction> Action(
+        new ActionTy(mFirst, mSecond));
+      return new AdaptorTy(std::move(Action), mAdaptorArg);
+    }
+  private:
+    FirstTy mFirst;
+    SecondTy mSecond;
+    AdaptorArgTy mAdaptorArg;
+  };
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
+    new AnalysisActionFactory(
+      std::move(First), std::move(Second), std::move(AdaptorArg)));
+}
 }
 #endif//TSAR_ACTION_H

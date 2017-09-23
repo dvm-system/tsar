@@ -43,6 +43,11 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::list<std::string> MacroDefs;
   llvm::cl::opt<std::string> LanguageStd;
   llvm::cl::opt<bool> InstrLLVM;
+  llvm::cl::opt<bool> EmitAST;
+  llvm::cl::opt<bool> MergeAST;
+  llvm::cl::alias MergeASTA;
+  llvm::cl::opt<std::string> Output;
+  llvm::cl::opt<std::string> Language;
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
@@ -102,9 +107,13 @@ private:
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
+  bool mEmitAST;
+  bool mMergeAST;
   bool mEmitLLVM;
   bool mInstrLLVM;
   bool mTest;
+  std::string mOutputFilename;
+  std::string mLanguage;
 };
 }
 #endif//TSAR_TOOL_H
