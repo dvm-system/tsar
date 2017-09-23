@@ -8,15 +8,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clang/Frontend/FrontendActions.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/Path.h>
-#include <llvm/Support/TargetSelect.h>
 #include "tsar_action.h"
+#include "ASTMergeAction.h"
 #include "tsar_exception.h"
 #include "tsar_query.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
+#include <clang/Frontend/FrontendActions.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/Path.h>
+#include <llvm/Support/TargetSelect.h>
 
 using namespace clang;
 using namespace clang::tooling;
@@ -224,7 +225,7 @@ int Tool::run(QueryManager *QM) {
   if (mMergeAST) {
     ClangTool CTool(*mCompilations, SourcesToMerge.back());
     SourcesToMerge.pop_back();
-    return CTool.run(newAnalysisActionFactory<MainAction, ASTMergeAction>(
+    return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
   } else {
     ClangTool CTool(*mCompilations, mSources);
