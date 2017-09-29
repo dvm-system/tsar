@@ -15,8 +15,10 @@
 #include <clang/AST/ASTImporter.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
+#include <llvm/ADT/SmallPtrSet.h>
 
 using namespace clang;
+using namespace llvm;
 using namespace tsar;
 
 namespace tsar {
@@ -28,6 +30,7 @@ void ASTMergeAction::ExecuteAction() {
     &CI.getASTContext());
   IntrusiveRefCntPtr<DiagnosticIDs>
     DiagIDs(CI.getDiagnostics().getDiagnosticIDs());
+  std::vector<VarDecl *> TentativeDefinitions;
   for (unsigned I = 0, N = mASTFiles.size(); I != N; ++I) {
     IntrusiveRefCntPtr<DiagnosticsEngine>
       Diags(new DiagnosticsEngine(DiagIDs, &CI.getDiagnosticOpts(),
@@ -59,8 +62,21 @@ void ASTMergeAction::ExecuteAction() {
       if (ToD) {
         DeclGroupRef DGR(ToD);
         CI.getASTConsumer().HandleTopLevelDecl(DGR);
+        if (isa<VarDecl>(ToD) &&
+            cast<VarDecl>(ToD)->isThisDeclarationADefinition() ==
+              VarDecl::TentativeDefinition)
+          TentativeDefinitions.push_back(cast<VarDecl>(ToD));
       }
     }
+  }
+  // Note LLVM IR will not be generated for tentative definitions
+  // without call of ASTConsumer::CompleteTentativeDefinition() function.
+  SmallPtrSet<VarDecl *, 32> Seen;
+  for (auto *V : TentativeDefinitions) {
+    VarDecl *VD = V->getActingDefinition();
+    if (!VD || VD->isInvalidDecl() || !Seen.insert(VD).second)
+      continue;
+    CI.getASTConsumer().CompleteTentativeDefinition(VD);
   }
   WrapperFrontendAction::ExecuteAction();
   CI.getDiagnostics().getClient()->EndSourceFile();
