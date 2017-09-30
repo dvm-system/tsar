@@ -23,32 +23,30 @@ using namespace llvm;
 using namespace tsar;
 
 namespace tsar {
+/// This is implementation of ASTImporter for the general use in analyzer.
+class GeneralImporter : public ASTImporter {
+public:
+  GeneralImporter(ASTContext &ToContext, FileManager &ToFileManager,
+      ASTContext &FromContext, FileManager &FromFileManager,
+      bool MinimalImport) :
+    ASTImporter(ToContext, ToFileManager, FromContext, FromFileManager,
+      MinimalImport) {}
+
+  DeclarationName HandleNameConflict(DeclarationName Name, DeclContext *DC,
+      unsigned IDNS, NamedDecl **Decls, unsigned NumDecls) override {
+    for (unsigned I = 0; I < NumDecls; ++I)
+      ToDiag(Decls[I]->getLocation(), diag::err_redefinition_different_kind)
+        << Name;
+    return DeclarationName();
+  }
+};
+
 std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
     ASTImporter &Importer, std::vector<VarDecl *> &TentativeDefinitions) {
   auto ToD = Importer.Import(FromV);
   if (!ToD)
     return std::make_pair(FromV, nullptr);
   auto ToV = cast<VarDecl>(ToD);
-  unsigned IDNS = Decl::IDNS_Ordinary;
-  SmallVector<NamedDecl *, 2> FoundDecls;
-  // The following loop checks for redefinitions of a variable. ASTImporter
-  // can import a variable if a function with the same name has been imported
-  // previously. However, it is not possible to generate LLVM IR in this case.
-  // Note that it is not possible to import a function if a variable has been
-  // already imported (ASTImporter checks this case).
-  ToV->getDeclContext()->getRedeclContext()->localUncachedLookup(
-    ToV->getDeclName(), FoundDecls);
-  for (unsigned I = 0, N = FoundDecls.size(); I != N; ++I) {
-    NamedDecl *OldD = FoundDecls[I];
-    if (!OldD->isInIdentifierNamespace(IDNS) ||
-        isa<VarDecl>(OldD))
-      continue;
-    Importer.ToDiag(ToV->getLocation(), diag::err_redefinition_different_kind)
-      << ToV->getDeclName();
-    if (OldD->getLocation().isValid())
-      Importer.ToDiag(OldD->getLocation(), diag::note_previous_definition);
-    return std::make_pair(FromV, nullptr);
-  }
   switch (ToV->isThisDeclarationADefinition()) {
   case VarDecl::TentativeDefinition:
     TentativeDefinitions.push_back(ToV); break;
@@ -96,6 +94,18 @@ void ASTMergeAction::ExecuteAction() {
   IntrusiveRefCntPtr<DiagnosticIDs>
     DiagIDs(CI.getDiagnostics().getDiagnosticIDs());
   std::vector<VarDecl *> TentativeDefinitions;
+  // TODO (kaniandr@gmail.com): This is a hack which is used to load locations
+  // from external storage (decls_begin() performs implicit load).
+  // View the following explanation. Some locations from external storage will
+  // not be find if localUncachedLookup() will be used. So some conflicts will
+  // not be recognized. Let us consider un example:
+  // - file bar.c contains `static int f() { return 0;}`
+  // - file foo.c contains `int f`;
+  // - command is `tsar -m bar.c foo.c -emit-llvm`
+  // In this case `int f` will not be find and function 'f()' will be
+  // successfully loaded. However this leads to assertion fail when deferred
+  // locations f will be emitted by CodeGenModule::EmitDeferred().
+  CI.getASTContext().getTranslationUnitDecl()->decls_begin();
   for (unsigned I = 0, N = mASTFiles.size(); I != N; ++I) {
     IntrusiveRefCntPtr<DiagnosticsEngine>
       Diags(new DiagnosticsEngine(DiagIDs, &CI.getDiagnosticOpts(),
@@ -106,7 +116,7 @@ void ASTMergeAction::ExecuteAction() {
         Diags, CI.getFileSystemOpts(), false);
     if (!Unit)
       continue;
-    ASTImporter Importer(CI.getASTContext(), CI.getFileManager(),
+    GeneralImporter Importer(CI.getASTContext(), CI.getFileManager(),
       Unit->getASTContext(), Unit->getFileManager(), /*MinimalImport=*/false);
     TranslationUnitDecl *TU = Unit->getASTContext().getTranslationUnitDecl();
     for (auto *D : TU->decls()) {
