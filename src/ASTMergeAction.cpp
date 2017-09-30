@@ -15,6 +15,7 @@
 #include <clang/AST/ASTImporter.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
+#include <clang/Sema/SemaDiagnostic.h>
 #include <llvm/ADT/SmallPtrSet.h>
 
 using namespace clang;
@@ -26,8 +27,28 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
     ASTImporter &Importer, std::vector<VarDecl *> &TentativeDefinitions) {
   auto ToD = Importer.Import(FromV);
   if (!ToD)
-    return std::make_pair(FromV, ToD);
+    return std::make_pair(FromV, nullptr);
   auto ToV = cast<VarDecl>(ToD);
+  unsigned IDNS = Decl::IDNS_Ordinary;
+  SmallVector<NamedDecl *, 2> FoundDecls;
+  // The following loop checks for redefinitions of a variable. ASTImporter
+  // can import a variable if a function with the same name has been imported
+  // previously. However, it is not possible to generate LLVM IR in this case.
+  // Note that it is not possible to import a function if a variable has been
+  // already imported (ASTImporter checks this case).
+  ToV->getDeclContext()->getRedeclContext()->localUncachedLookup(
+    ToV->getDeclName(), FoundDecls);
+  for (unsigned I = 0, N = FoundDecls.size(); I != N; ++I) {
+    NamedDecl *OldD = FoundDecls[I];
+    if (!OldD->isInIdentifierNamespace(IDNS) ||
+        isa<VarDecl>(OldD))
+      continue;
+    Importer.ToDiag(ToV->getLocation(), diag::err_redefinition_different_kind)
+      << ToV->getDeclName();
+    if (OldD->getLocation().isValid())
+      Importer.ToDiag(OldD->getLocation(), diag::note_previous_definition);
+    return std::make_pair(FromV, nullptr);
+  }
   switch (ToV->isThisDeclarationADefinition()) {
   case VarDecl::TentativeDefinition:
     TentativeDefinitions.push_back(ToV); break;
