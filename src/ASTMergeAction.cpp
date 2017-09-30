@@ -22,6 +22,50 @@ using namespace llvm;
 using namespace tsar;
 
 namespace tsar {
+std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
+    ASTImporter &Importer, std::vector<VarDecl *> &TentativeDefinitions) {
+  auto ToD = Importer.Import(FromV);
+  if (!ToD)
+    return std::make_pair(FromV, ToD);
+  auto ToV = cast<VarDecl>(ToD);
+  switch (ToV->isThisDeclarationADefinition()) {
+  case VarDecl::TentativeDefinition:
+    TentativeDefinitions.push_back(ToV); break;
+  case VarDecl::DeclarationOnly:
+    // Let us check that the result of previously imported declaration
+    // which is similar to FromV is used but some data is lost.
+    // Let us consider an example.
+    //   extern int X; // (1)
+    //   int X; // (2)
+    // At first, (1) will be imported and ToV will be constructed.
+    // So result of import of (2) is this ToV (new VarDecl will not be
+    // constructed). However the storage class of ToV is extern and
+    // in LLVM IR it will be external location without definition. To
+    // solve this problem additional VarDecl can be created which has
+    // the same storage class as imported declaration (2).
+    if (FromV->isThisDeclarationADefinition() ==
+        VarDecl::TentativeDefinition) {
+      VarDecl *ToTentative = VarDecl::Create(
+        ToV->getASTContext(), ToV->getDeclContext(),
+        Importer.Import(FromV->getInnerLocStart()),
+        Importer.Import(FromV->getLocation()),
+        ToV->getDeclName().getAsIdentifierInfo(),
+        ToV->getType(), ToV->getTypeSourceInfo(),
+        FromV->getStorageClass());
+      ToTentative->setQualifierInfo(ToV->getQualifierLoc());
+      ToTentative->setAccess(ToV->getAccess());
+      ToTentative->setLexicalDeclContext(ToV->getLexicalDeclContext());
+      ToV->getLexicalDeclContext()->addDeclInternal(ToTentative);
+      if (!ToV->isFileVarDecl() && ToV->isUsed())
+        ToTentative->setIsUsed();
+      TentativeDefinitions.push_back(ToTentative);
+      return std::make_pair(FromV, ToTentative);
+    }
+    break;
+  }
+  return std::make_pair(FromV, ToV);
+}
+
 void ASTMergeAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   CI.getDiagnostics().getClient()->BeginSourceFile(
@@ -50,22 +94,23 @@ void ASTMergeAction::ExecuteAction() {
         if (IdentifierInfo *II = ND->getIdentifier())
           if (II->isStr("__va_list_tag") || II->isStr("__builtin_va_list"))
             continue;
-      if (const auto *FuncDecl = dyn_cast<FunctionDecl>(D)) {
+      Decl *ToD = nullptr;
+      if (const auto *F = dyn_cast<FunctionDecl>(D)) {
         // It is not safe to import prototype. In this case parameters from
         // prototype will be imported but body will be imported from definition.
         // This leads to loss of information about parameters in the body.
         // Parameters in the definition and prototype does not linked together.
-        FuncDecl->hasBody(FuncDecl);
-        D = const_cast<FunctionDecl *>(FuncDecl);
+        F->hasBody(F);
+        D = const_cast<FunctionDecl *>(F);
+        ToD = Importer.Import(D);
+      } else if (auto *V = dyn_cast<VarDecl>(D)) {
+        std::tie(D, ToD) = ImportVarDecl(V, Importer, TentativeDefinitions);
+      } else {
+        ToD = Importer.Import(D);
       }
-      Decl *ToD = Importer.Import(D);
       if (ToD) {
         DeclGroupRef DGR(ToD);
         CI.getASTConsumer().HandleTopLevelDecl(DGR);
-        if (isa<VarDecl>(ToD) &&
-            cast<VarDecl>(ToD)->isThisDeclarationADefinition() ==
-              VarDecl::TentativeDefinition)
-          TentativeDefinitions.push_back(cast<VarDecl>(ToD));
       }
     }
   }

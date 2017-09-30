@@ -14,6 +14,13 @@
 #define TSAR_AST_MERGE_ACTION_H
 
 #include "FrontendActions.h"
+#include <vector>
+
+namespace clang {
+class ASTImporter;
+class Decl;
+class VarDecl;
+}
 
 namespace tsar {
 /// \brief Frontend action adapter that merges ASTs together.
@@ -38,6 +45,11 @@ protected:
   void ExecuteAction() override;
 
 private:
+  /// Imports variable declaration, tentative definitions will be stored in
+  /// a specified collection.
+  std::pair<clang::Decl *, clang::Decl *> ImportVarDecl(
+    clang::VarDecl *V, clang::ASTImporter &Importer,
+    std::vector<clang::VarDecl *> &TentativeDefinitions);
   std::vector<std::string> mASTFiles;
 };
 }
