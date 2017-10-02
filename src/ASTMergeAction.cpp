@@ -8,6 +8,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Diagnostic.h"
 #include "ASTMergeAction.h"
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/AST/ASTContext.h>
@@ -142,7 +143,18 @@ void ASTMergeAction::ExecuteAction() {
       if (ToD) {
         DeclGroupRef DGR(ToD);
         CI.getASTConsumer().HandleTopLevelDecl(DGR);
+        continue;
       }
+      // Report errors.
+      if (auto *ND = dyn_cast<NamedDecl>(D)) {
+        if (auto ImportedName = Importer.Import(ND->getDeclName())) {
+          toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+            diag::err_import_named) << ImportedName;
+          continue;
+        }
+      }
+      toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+        diag::err_import);
     }
   }
   // Note LLVM IR will not be generated for tentative definitions
