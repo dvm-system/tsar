@@ -25,6 +25,10 @@ else()
   add_executable(tsar
     ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
 endif()
+tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
+  SOURCE DiagnosticKinds.td
+  TARGET DiagnosticKinds)
+add_dependencies(tsar DiagnosticKinds)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
