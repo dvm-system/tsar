@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PerfectLoop.h"
+#include "DFRegionInfo.h"
 #include "tsar_transformation.h"
 #include "tsar_loop_matcher.h"
 #include <clang/AST/Decl.h>
@@ -19,7 +20,6 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/Module.h>
-#include <typeinfo>
 
 using namespace llvm;
 using namespace clang;
@@ -46,58 +46,56 @@ class LoopVisitor : public RecursiveASTVisitor<LoopVisitor> {
 public:
   /// Creates visitor.
   explicit LoopVisitor(DFRegionInfo &DFRI,
-      const LoopMatcherPass::LoopMatcher &LM, tsar::PerfectLoopInfo *PLI) : 
-       mRgnInfo(&DFRI), mLoopInfo(&LM), mPerfectLoopInfo(PLI) {}
+      const LoopMatcherPass::LoopMatcher &LM, tsar::PerfectLoopInfo &PLI) :
+    mRgnInfo(&DFRI), mLoopInfo(&LM), mPerfectLoopInfo(&PLI) {}
 
-  /// Inserts appropriate pragma before a for-loop.
-  /// Calls TraverseStmt() that walks through the body of cycle
+  /// \brief Overridden traversing of for-loops.
+  ///
+  /// For a specified loop a number of inner loops are calculated. This function
+  /// also checks whether some statements are placed between heads or tails of
+  /// loops are calculated.
+  /// \attention Only statements comprises body of a loop is going
+  /// to be visited.
   bool TraverseForStmt(ForStmt *For) {
-    // Keeping values of external cycle if it exists
+    // Keep values of external loop if it exists.
     int PrevNumberOfLoops = ++mNumberOfLoops;
-    bool PrevIsThereOperators = mIsThereOperators;
-    // Starting analysis
+    bool PrevIsThereOperators = mIsThereStmt;
     mNumberOfLoops = 0;
-    mIsThereOperators = false;
-    // Here goes traverse
+    mIsThereStmt = false;
     auto Res = RecursiveASTVisitor::TraverseStmt(For->getBody());
-    // Getting match AST <--> IR with ForStmt (AST)
-    auto Match = mLoopInfo->find<AST>(static_cast<Stmt*>(For));
-    // Getting DFNode* with IR
-    tsar::DFNode* Region;
-    if (Match != mLoopInfo->end())
-      Region = mRgnInfo->getRegionFor(Match->get<IR>());
-    else
-      Region = nullptr;
-    // Analyzing data
-    if (((mNumberOfLoops == 1) && (!mIsThereOperators)) || (mNumberOfLoops == 0)) {
+    if (mNumberOfLoops == 1 && !mIsThereStmt || mNumberOfLoops == 0) {
       ++NumPerfect;
-      // Adding info about this loop
-      if (Region)
+      auto Match = mLoopInfo->find<AST>(For);
+      if (Match != mLoopInfo->end()) {
+        auto Region = mRgnInfo->getRegionFor(Match->get<IR>());
         auto PLInfo = mPerfectLoopInfo->insert(Region);
+      }
     } else {
       ++NumImPerfect;
     }
-    // Analysis ended
-    // Return values of external cycle
+    // Return values of external loop.
     mNumberOfLoops = PrevNumberOfLoops;
-    mIsThereOperators = PrevIsThereOperators;
+    mIsThereStmt = PrevIsThereOperators;
     return true;
   }
 
-  /// Actually visiting statements
-  /// Called from TraverseStmt(), replaces VisitStmt()
-  bool VisitStmt(Stmt *Statement) {
-      if (!llvm::isa<CompoundStmt>(Statement))
-        mIsThereOperators = true;
-      return true;
+  /// Checks that a specified statement makes a currently evaluated loop
+  /// imperfect.
+  bool VisitStmt(Stmt *S) {
+    if (!isa<CompoundStmt>(S))
+      mIsThereStmt = true;
+    return true;
   }
 
 private:
-  // This is number of loops,existence of none-cycle operators
-  // inside the analyzed one's body
+  /// This is number of loops,existence of none-cycle operators
+  /// inside the analyzed one's body
+  /// Number of inner loops for a current loop.
   int mNumberOfLoops;
-  bool mIsThereOperators;
-  // Information about passes
+
+  /// Existence of none-loop statement inside the analyzed one's body.
+  bool mIsThereStmt;
+
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
@@ -105,6 +103,7 @@ private:
 }
 
 bool ClangPerfectLoopPass::runOnFunction(Function &F) {
+  releaseMemory();
   auto M = F.getParent();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())
@@ -114,8 +113,7 @@ bool ClangPerfectLoopPass::runOnFunction(Function &F) {
     return false;
   auto &RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  // Information about loops will be in mPerfect after the Traverse
-  LoopVisitor Visitor(RgnInfo, LoopInfo, &mPerfectLoopInfo);
+  LoopVisitor Visitor(RgnInfo, LoopInfo, mPerfectLoopInfo);
   Visitor.TraverseDecl(FuncDecl);
   return false;
 }

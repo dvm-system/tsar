@@ -29,9 +29,9 @@
 #include <string>
 #include <vector>
 #include "DefinedMemory.h"
-#include "PerfectLoop.h"
 #include "tsar_df_location.h"
 #include "tsar_loop_matcher.h"
+#include "PerfectLoop.h"
 #include "tsar_private.h"
 #include "tsar_pass_provider.h"
 #include "tsar_test.h"
@@ -176,7 +176,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mPerfectLoopClause; });
       } else {
-          printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+        printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mImperfectLoopClause; });
       }
     }
