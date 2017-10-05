@@ -22,3 +22,4 @@ class Fatal<string str>     : Diagnostic<str, Fatal>;
 
 def err_import_named : Error<"unable to import declaration %0">;
 def err_import : Error<"unable to import declaration">;
+def warn_import_typedef : Warning<"import of typedef declaration is partially supported">;

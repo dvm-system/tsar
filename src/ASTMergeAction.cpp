@@ -138,6 +138,25 @@ void ASTMergeAction::ExecuteAction() {
       } else if (auto *V = dyn_cast<VarDecl>(D)) {
         std::tie(D, ToD) = ImportVarDecl(V, Importer, TentativeDefinitions);
       } else {
+        /// TODO (kaniandr@gmail.com): This is a hack which is necessary due to
+        /// implementation of import of `TypeSourceInfo` is unfinished.
+        /// Only basic info is supported. For example, attributes is ignored.
+        /// This means that `typedef int INT __attribute__((__mode__(__HI__)));`
+        /// will be imported as int instead of short. So we replace underlying
+        /// type of source `D` with `short` before import.
+        /// For details, see `ASTImporter::Import(TypeSourceInfo *FromTSI)`.
+        if (auto Typedef = dyn_cast<TypedefNameDecl>(D)) {
+          assert(Typedef->getTypeSourceInfo() &&
+            "TypeSourceInfo must not be null for a named typedef");
+          if (Typedef->getTypeSourceInfo()->getType()
+              != Typedef->getUnderlyingType()) {
+            auto Stash = Typedef->getTypeSourceInfo()->getType();
+            Typedef->getTypeSourceInfo()->overrideType(
+              Typedef->getUnderlyingType());
+            toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+              diag::warn_import_typedef);
+          }
+        }
         ToD = Importer.Import(D);
       }
       if (ToD) {
