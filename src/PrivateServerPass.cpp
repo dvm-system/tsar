@@ -72,6 +72,7 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic() : JSON_INIT_ROOT, JSON_INIT(Statistic, 0) {
     (*this)[Statistic::Traits].for_each(InitTraitsFunctor());
   }
+  ~Statistic() = default;
 
   Statistic(const Statistic &) = default;
   Statistic & operator=(const Statistic &) = default;
@@ -79,10 +80,29 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic & operator=(Statistic &&) = default;
 
 JSON_OBJECT_END(Statistic)
+
+JSON_OBJECT_BEGIN(FunctionList)
+JSON_OBJECT_ROOT_PAIR_6(FunctionList,
+  Functions, std::vector<std::string>,
+  StartCols, std::vector<unsigned>,
+  StartLines, std::vector<unsigned>,
+  EndCols, std::vector<unsigned>,
+  EndLines, std::vector<unsigned>,
+  NumLoops, std::vector<unsigned>)
+
+  FunctionList() : JSON_INIT_ROOT {}
+  ~FunctionList() = default;
+
+  FunctionList(const FunctionList &) = default;
+  FunctionList & operator=(const FunctionList &) = default;
+  FunctionList(FunctionList &&) = default;
+  FunctionList & operator=(FunctionList &&) = default;
+JSON_OBJECT_END(FunctionList)
 }
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
+JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
 
 using ServerPrivateProvider = FunctionPassProvider<
   BasicAAWrapperPass,
@@ -219,6 +239,28 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     Stat[msg::Statistic::Loops].insert(
       std::make_pair(msg::Analysis::No, Loops.second));
     return json::Parser<msg::Statistic>::unparseAsObject(Stat);
+  });
+  mConnection->answer(
+      [this, &M](const std::string &Request) -> std::string {
+    msg::FunctionList FuncLst;
+    for (Function &F : M) {
+      if (F.empty())
+        continue;
+      FuncLst[msg::FunctionList::Functions].push_back(F.getName());
+      unsigned NL = 0;
+      auto &Provider = getAnalysis<ServerPrivateProvider>(F);
+      auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
+      for (auto &Match : Matcher) {
+        NL++;
+        auto LR = Match.get<IR>()->getLocRange();
+        FuncLst[msg::FunctionList::StartCols].push_back(LR.getStart().getCol());
+        FuncLst[msg::FunctionList::StartLines].push_back(LR.getStart().getLine());
+        FuncLst[msg::FunctionList::EndCols].push_back(LR.getEnd().getCol());
+        FuncLst[msg::FunctionList::EndLines].push_back(LR.getEnd().getLine());
+      }
+      FuncLst[msg::FunctionList::NumLoops].push_back(NL);
+    }
+    return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
   });
   return false;
 }
