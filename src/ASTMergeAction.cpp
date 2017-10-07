@@ -208,9 +208,12 @@ void ASTMergeAction::ExecuteAction() {
         // prototype will be imported but body will be imported from definition.
         // This leads to loss of information about parameters in the body.
         // Parameters in the definition and prototype does not linked together.
-        F->hasBody(F);
-        D = const_cast<FunctionDecl *>(F);
+        const FunctionDecl *FuncWithBody = nullptr;
+        D = const_cast<FunctionDecl *>(
+          F->hasBody(FuncWithBody) ? FuncWithBody : F);
         ToD = Importer.Import(D);
+        if (F != FuncWithBody && ToD)
+          Importer.Imported(const_cast<FunctionDecl *>(F), ToD);
       } else if (auto *V = dyn_cast<VarDecl>(D)) {
         std::tie(D, ToD) = ImportVarDecl(V, Importer, TentativeDefinitions);
       } else {
