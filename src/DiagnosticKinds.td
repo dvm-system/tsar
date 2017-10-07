@@ -21,5 +21,6 @@ class Error<string str>     : Diagnostic<str, Error>;
 class Fatal<string str>     : Diagnostic<str, Fatal>;
 
 def err_import_named : Error<"unable to import declaration %0">;
-def err_import : Error<"unable to import declaration">;
+def err_import : Error<"unable to import">;
 def warn_import_typedef : Warning<"import of typedef declaration is partially supported">;
+def warn_import_variable_array : Warning<"import of variable-length array is partially supported">;

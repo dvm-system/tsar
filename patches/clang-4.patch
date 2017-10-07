@@ -1,3 +1,15 @@
+Index: include/clang/AST/ASTImporter.h
+===================================================================
+--- include/clang/AST/ASTImporter.h	(revision 298000)
++++ include/clang/AST/ASTImporter.h	(working copy)
+@@ -38,6 +38,7 @@
+   /// \brief Imports selected nodes from one AST context into another context,
+   /// merging AST nodes where appropriate.
+   class ASTImporter {
++   friend class VariableArrayCallback;
+   public:
+     typedef llvm::DenseSet<std::pair<Decl *, Decl *> > NonEquivalentDeclSet;
+     typedef llvm::DenseMap<const CXXBaseSpecifier *, CXXBaseSpecifier *>
 Index: lib/AST/ASTImporter.cpp
 ===================================================================
 --- lib/AST/ASTImporter.cpp	(revision 298000)

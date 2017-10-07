@@ -14,6 +14,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>
 #include <clang/AST/ASTImporter.h>
+#include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Sema/SemaDiagnostic.h>
@@ -22,6 +23,68 @@
 using namespace clang;
 using namespace llvm;
 using namespace tsar;
+
+namespace clang {
+/// This callback for ASTMatcher tries to perform manual import of variable
+/// array types if clang::ASTImporter can not perform it itself.
+///
+/// TODO (kaniandr@gmail.com): VariableArrayType with null size expression is
+/// not imported by ASTImporter (VisitVariableArrayType() in ASTImporter.cpp).
+/// Such import is implemented hear to avoid patching of ASTImporter.cpp,
+/// only ASTImporter.h is patched. The patch marks this class as friend for
+/// ASTImporter to enable access to ASTImporter::ImportedTypes map.
+/// VariableArrayType with null size expression occurs in ImplicitCastExpr in a
+/// function call. This class should be removed when ASTImporter will be fixed.
+class VariableArrayCallback : public ast_matchers::MatchFinder::MatchCallback {
+public:
+  /// Creates callback.
+  explicit VariableArrayCallback(ASTImporter &Importer,
+      DiagnosticsEngine &Diags) : mImporter(&Importer), mDiags(&Diags) {}
+
+  /// Imports variable array type which is used in implicit cast expression.
+  void run(const ast_matchers::MatchFinder::MatchResult &Result) override {
+    auto VAT = Result.Nodes.getNodeAs<VariableArrayType>("vaType");
+    if (VAT->getSizeExpr() || mImporter->ImportedTypes.count(VAT))
+      return;
+    auto To = VisitVariableArrayType(VAT);
+    if (To.isNull())
+      toDiag(*mDiags, mImporter->Import(VAT->getLBracketLoc()),
+        diag::err_import);
+    else
+      toDiag(*mDiags, mImporter->Import(VAT->getLBracketLoc()),
+        diag::warn_import_variable_array);
+  }
+
+private:
+  /// Imports variable array type.
+  QualType VisitVariableArrayType(const VariableArrayType *T) {
+    QualType ToElementType = mImporter->Import(T->getElementType());
+    // We try to import type manually if built-in clang::ASTImporter has been
+    // unsuccessful.
+    if (ToElementType.isNull() && !T->getElementType().isNull() &&
+        isa<VariableArrayType>(T->getElementType().getTypePtr())) {
+      ToElementType = VisitVariableArrayType(
+        cast<VariableArrayType>(T->getElementType().getTypePtr()));
+      ToElementType = mImporter->getToContext().getQualifiedType(
+        ToElementType, T->getElementType().getLocalQualifiers());
+    }
+    if (ToElementType.isNull())
+      return QualType();
+    Expr *Size = mImporter->Import(T->getSizeExpr());
+    if (!Size && T->getSizeExpr())
+      return QualType();
+    SourceRange Brackets = mImporter->Import(T->getBracketsRange());
+    auto To = mImporter->getToContext().getVariableArrayType(
+      ToElementType, Size, T->getSizeModifier(),
+      T->getIndexTypeCVRQualifiers(), Brackets);
+    mImporter->ImportedTypes[T] = To.getTypePtr();
+    return To;
+  }
+
+  ASTImporter *mImporter;
+  DiagnosticsEngine *mDiags;
+};
+}
 
 namespace tsar {
 /// This is implementation of ASTImporter for the general use in analyzer.
@@ -86,6 +149,18 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
   return std::make_pair(FromV, ToV);
 }
 
+void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
+    DiagnosticsEngine &Diags, ASTImporter &Importer) {
+  ast_matchers::MatchFinder Finder;
+  VariableArrayCallback VAC(Importer, Diags);
+  Finder.addMatcher(
+    ast_matchers::implicitCastExpr(
+      ast_matchers::hasImplicitDestinationType(
+        ast_matchers::pointsTo(
+          ast_matchers::variableArrayType().bind("vaType")))), &VAC);
+  Finder.matchAST(Unit.getASTContext());
+}
+
 void ASTMergeAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   CI.getDiagnostics().getClient()->BeginSourceFile(
@@ -120,6 +195,7 @@ void ASTMergeAction::ExecuteAction() {
     GeneralImporter Importer(CI.getASTContext(), CI.getFileManager(),
       Unit->getASTContext(), Unit->getFileManager(), /*MinimalImport=*/false);
     TranslationUnitDecl *TU = Unit->getASTContext().getTranslationUnitDecl();
+    PrepareToImport(*Unit, CI.getDiagnostics(), Importer);
     for (auto *D : TU->decls()) {
       // Don't re-import __va_list_tag, __builtin_va_list.
       if (const auto *ND = dyn_cast<NamedDecl>(D))

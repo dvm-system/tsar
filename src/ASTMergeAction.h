@@ -18,6 +18,7 @@
 
 namespace clang {
 class ASTImporter;
+class ASTUnit;
 class Decl;
 class VarDecl;
 }
@@ -50,6 +51,14 @@ private:
   std::pair<clang::Decl *, clang::Decl *> ImportVarDecl(
     clang::VarDecl *V, clang::ASTImporter &Importer,
     std::vector<clang::VarDecl *> &TentativeDefinitions);
+
+  /// Prepares to import a specified unit.
+  ///
+  /// For example, try to perform manual imported of objects which can not be
+  /// successfully processed by clang::ASTImporter.
+  void PrepareToImport(clang::ASTUnit &Unit, clang::DiagnosticsEngine &Diags,
+    clang::ASTImporter &Importer);
+
   std::vector<std::string> mASTFiles;
 };
 }
