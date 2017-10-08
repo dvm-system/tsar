@@ -98,11 +98,38 @@ public:
 
   DeclarationName HandleNameConflict(DeclarationName Name, DeclContext *DC,
       unsigned IDNS, NamedDecl **Decls, unsigned NumDecls) override {
-    for (unsigned I = 0; I < NumDecls; ++I)
+    for (unsigned I = 0; I < NumDecls; ++I) {
+      if (mInternalFuncs.count(Decls[I])) {
+        // Conflicts for internal functions from the current unit are ignored.
+        // This conflicts occur because ASTImporter all names similar to
+        // name of internal function as a conflict (even for function
+        // definitions).
+        mLastConflict = Decls[I];
+        return Name;
+      }
       ToDiag(Decls[I]->getLocation(), diag::err_redefinition_different_kind)
         << Name;
+    }
     return DeclarationName();
   }
+
+  Decl *Imported(Decl *From, Decl *To) override {
+    To = ASTImporter::Imported(From, To);
+    if (auto FromF = dyn_cast<FunctionDecl>(From)) {
+      if (!FromF->hasExternalFormalLinkage()) {
+        mInternalFuncs.insert(To);
+        if (mLastConflict && isa<FunctionDecl>(mLastConflict)) {
+          auto Recent = cast<FunctionDecl>(mLastConflict->getMostRecentDecl());
+          cast<FunctionDecl>(To)->setPreviousDecl(Recent);
+          mLastConflict = nullptr;
+        }
+      }
+    }
+    return To;
+  }
+private:
+  SmallPtrSet<Decl *, 8> mInternalFuncs;
+  Decl *mLastConflict = nullptr;
 };
 
 std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
