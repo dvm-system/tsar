@@ -106,7 +106,7 @@ public:
 };
 
 std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
-    ASTImporter &Importer, std::vector<VarDecl *> &TentativeDefinitions) {
+    ASTImporter &Importer, std::vector<VarDecl *> &TentativeDefinitions) const {
   auto ToD = Importer.Import(FromV);
   if (!ToD)
     return std::make_pair(FromV, nullptr);
@@ -149,8 +149,30 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
   return std::make_pair(FromV, ToV);
 }
 
+std::pair<Decl *, Decl *> ASTMergeAction::ImportFunctionDecl(
+    FunctionDecl *FromF, ASTImporter &Importer) const {
+  // It is not safe to import prototype. In this case parameters from
+  // prototype will be imported but body will be imported from definition.
+  // This leads to loss of information about parameters in the body.
+  // Parameters in the definition and prototype does not linked together.
+  const FunctionDecl *FuncWithBody = nullptr;
+  FromF->hasBody(FuncWithBody);
+  if (FromF == FuncWithBody) {
+    for (auto Redecl : FromF->redecls()) {
+      if (auto ToRedecl = Importer.GetAlreadyImportedOrNull(Redecl)) {
+        cast<FunctionDecl>(ToRedecl)->setBody(nullptr);
+      }
+    }
+  }
+  auto ToF = Importer.Import(FromF);
+  if (ToF && FromF != FuncWithBody)
+    cast<FunctionDecl>(ToF)->setBody(nullptr);
+  return std::make_pair(FromF, ToF);
+}
+
+
 void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
-    DiagnosticsEngine &Diags, ASTImporter &Importer) {
+    DiagnosticsEngine &Diags, ASTImporter &Importer) const {
   ast_matchers::MatchFinder Finder;
   VariableArrayCallback VAC(Importer, Diags);
   Finder.addMatcher(
@@ -203,17 +225,8 @@ void ASTMergeAction::ExecuteAction() {
           if (II->isStr("__va_list_tag") || II->isStr("__builtin_va_list"))
             continue;
       Decl *ToD = nullptr;
-      if (const auto *F = dyn_cast<FunctionDecl>(D)) {
-        // It is not safe to import prototype. In this case parameters from
-        // prototype will be imported but body will be imported from definition.
-        // This leads to loss of information about parameters in the body.
-        // Parameters in the definition and prototype does not linked together.
-        const FunctionDecl *FuncWithBody = nullptr;
-        D = const_cast<FunctionDecl *>(
-          F->hasBody(FuncWithBody) ? FuncWithBody : F);
-        ToD = Importer.Import(D);
-        if (F != FuncWithBody && ToD)
-          Importer.Imported(const_cast<FunctionDecl *>(F), ToD);
+      if (auto *F = dyn_cast<FunctionDecl>(D)) {
+        std::tie(D, ToD) = ImportFunctionDecl(F, Importer);
       } else if (auto *V = dyn_cast<VarDecl>(D)) {
         std::tie(D, ToD) = ImportVarDecl(V, Importer, TentativeDefinitions);
       } else {
