@@ -25,8 +25,8 @@ using namespace llvm;
 using namespace tsar;
 
 namespace clang {
-/// This callback for ASTMatcher tries to perform manual import of variable
-/// array types if clang::ASTImporter can not perform it itself.
+/// \brief This callback for ASTMatcher tries to perform manual import of
+/// variable array types if clang::ASTImporter can not perform it itself.
 ///
 /// TODO (kaniandr@gmail.com): VariableArrayType with null size expression is
 /// not imported by ASTImporter (VisitVariableArrayType() in ASTImporter.cpp).
@@ -81,6 +81,38 @@ private:
     return To;
   }
 
+  ASTImporter *mImporter;
+  DiagnosticsEngine *mDiags;
+};
+
+/// \brief This callback for ASTMatcher try to perform manual import of case
+/// statement.
+///
+/// TODO (kaniandr@gmail.com): ASTImporter does not import getSubStmt() for
+/// a case statements. This callback performs such import.
+/// This class should be removed when ASTImporter will be fixed.
+class CaseStmtCallback : public ast_matchers::MatchFinder::MatchCallback {
+public:
+  /// Creates callback.
+  explicit CaseStmtCallback(ASTImporter &Importer,
+      DiagnosticsEngine &Diags) : mImporter(&Importer), mDiags(&Diags) {}
+
+  /// Imports case statements.
+  void run(const ast_matchers::MatchFinder::MatchResult &Result) override {
+    auto FromCS = Result.Nodes.getNodeAs<CaseStmt>("case");
+    auto ToCS = mImporter->Import(const_cast<CaseStmt *>(FromCS));
+    if (!ToCS || !FromCS->getSubStmt())
+      return;
+    auto ToSubStmt =
+      mImporter->Import(const_cast<Stmt *>(FromCS->getSubStmt()));
+    if (!ToSubStmt)
+      toDiag(*mDiags, ToCS->getLocStart(), diag::err_import);
+    else
+      toDiag(*mDiags, ToCS->getLocStart(), diag::warn_import_case);
+    cast<CaseStmt>(ToCS)->setSubStmt(ToSubStmt);
+  }
+
+private:
   ASTImporter *mImporter;
   DiagnosticsEngine *mDiags;
 };
@@ -209,6 +241,8 @@ void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
       ast_matchers::hasImplicitDestinationType(
         ast_matchers::pointsTo(
           ast_matchers::variableArrayType().bind("vaType")))), &VAC);
+  CaseStmtCallback CSC(Importer, Diags);
+  Finder.addMatcher(ast_matchers::caseStmt().bind("case"), &CSC);
   Finder.matchAST(Unit.getASTContext());
 }
 
