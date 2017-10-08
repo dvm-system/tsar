@@ -186,6 +186,8 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportFunctionDecl(
   FromF->hasBody(FuncWithBody);
   if (FromF == FuncWithBody) {
     for (auto Redecl : FromF->redecls()) {
+      if (Redecl == FromF)
+        continue;
       if (auto ToRedecl = Importer.GetAlreadyImportedOrNull(Redecl)) {
         cast<FunctionDecl>(ToRedecl)->setBody(nullptr);
       }
