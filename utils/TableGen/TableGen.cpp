@@ -1,4 +1,4 @@
-//===- TableGen.cpp - Top-Level TableGen implementation for TSAR ----------===//
+//===- TableGen.cpp - Top-Level TableGen Implementation for TSAR -*- C++ -*===//
 //
 //                     Traits Static Analyzer (SAPFOR)
 //
@@ -8,13 +8,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Signals.h"
-#include "llvm/TableGen/Main.h"
-#include "llvm/TableGen/Record.h"
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/CommandLine.h>
+#include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/PrettyStackTrace.h>
+#include <llvm/Support/Signals.h>
+#include <llvm/TableGen/Main.h>
+#include <llvm/TableGen/Record.h>
 
 using namespace llvm;
 
@@ -30,6 +30,12 @@ namespace {
                                "Generate TSAR diagnostics definitions")),
          cl::values(clEnumValN(GenTSARIntrinsicsDefs,"gen-tsar-intrinsics-defs",
                                "Generate TSAR intrinsics definitions")));
+
+void GenFileHeader(raw_ostream &OS) {
+  OS << "\
+//===- Automatically TableGen'erated file, do not edit!----------*- C++ -*-===//\
+\n\n";
+}
 
 void GenTypeKindList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "// Enum values for type kinds of intrinsic parameters\n";
@@ -99,6 +105,7 @@ void GenIntrinsicOffsetList(raw_ostream &OS, RecordKeeper &Records) {
 }
 
 bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
+  GenFileHeader(OS);
   switch (Action) {
   case GenTSARDiagsDefs:
     for (Record *Rec : Records.getAllDerivedDefinitions("Diagnostic")) {
