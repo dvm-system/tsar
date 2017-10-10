@@ -625,48 +625,33 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(std::move(Loc));
   };
+  auto addActualParams = [&TLI, &addLocation](ImmutableCallSite CS) {
+    LibFunc::Func F;
+    if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+      foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
+        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+      });
+    } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
+      foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
+        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+      });
+    } else {
+      for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx) {
+        if (isa<Constant>(CS.getArgument(Idx)))
+          continue;
+        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
+      }
+    }
+  };
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
     switch (I.getOpcode()) {
     case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
     case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
       addLocation(MemoryLocation::get(&I));
       break;
-    case Instruction::Call:
-      {
-        LibFunc::Func F;
-        ImmutableCallSite CS(cast<CallInst>(&I));
-        if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
-          foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
-                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-          });
-        } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
-          foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
-                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-          });
-        } else {
-          for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
-            addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-        }
-      }
-      break;
+      addActualParams(cast<CallInst>(&I)); break;
     case Instruction::Invoke:
-      {
-        LibFunc::Func F;
-        ImmutableCallSite CS(cast<InvokeInst>(&I));
-        if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
-          foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
-                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-          });
-        } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
-          foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
-                addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-          });
-        } else {
-          for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx)
-            addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-        }
-      }
-      break;
+      addActualParams(cast<InvokeInst>(&I)); break;
     }
   }
   // If there are some pointers to memory locations which are not accessed
