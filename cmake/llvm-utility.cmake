@@ -8,6 +8,10 @@
 #       from Clang repository ${CLANG_REPO} or update it if the working copy
 #       already exist.
 function(sapfor_download_llvm)
+  find_package(Subversion)
+  if(NOT Subversion_FOUND)
+    message(FATAL_ERROR "Subversion command line client executable is not found.")
+  endif()
   if(NOT EXISTS ${LLVM_SOURCE_DIR})
     set(LLVM_STATUS "Checking out LLVM working copy")
     message(STATUS ${LLVM_STATUS})

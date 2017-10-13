@@ -14,10 +14,6 @@ include(CheckCXXCompilerFlag)
 include(llvm-utility)
 include(utility)
 include(tsar-tablegen)
-find_package(Subversion)
-if(NOT Subversion_FOUND)
-  message(FATAL_ERROR "Subversion command line client executable is not found.")
-endif()
 # Determine type of compiler to specify flags properly.
 # This code is taken from LLVM (cmake/modulesHandleLLVMOptions.cmake).
 if(CMAKE_COMPILER_IS_GNUCXX)
@@ -95,7 +91,13 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     endif()
     unset(LLVM_DIR CACHE)
     find_package(LLVM ${PACKAGE_LLVM_VERSION} REQUIRED CONFIG)
-  else()  
+    set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
+    set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
+    set(TSAR_PATCH_PATCH_OPTIONS "-p2")
+    set(TSAR_PATCH_SUBVERSION_OPTIONS "")
+    set(TSAR_PATCH_IGNORE "IGNORE")
+    set(TSAR_PATCH_COMMAND "PATCH")
+  else()
     # Configure LLVM
     if(NOT EXISTS ${LLVM_SOURCE_DIR})
       message(FATAL_ERROR "LLVM_SOURCE_DIR '${LLVM_SOURCE_DIR}' does not exist")
@@ -118,6 +120,10 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     else()
      message(STATUS "${LLVM_STATUS} - done")
     endif()
+    set(TSAR_PATCH_PATCH_OPTIONS "-p0")
+    set(TSAR_PATCH_SUBVERSION_OPTIONS "")
+    set(TSAR_PATCH_IGNORE "")
+    set(TSAR_PATCH_COMMAND "")
     if(BUILD_CLANG)
       if(BUILD_TSAR AND (${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
         message(FATAL_ERROR "Simultaneous build of TSAR and CLANG avaliable only if LLVM version is greater than 3.4.2 ")
@@ -178,26 +184,44 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
           DESTINATION bin)
       endif()
     endif()
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm.patch" ${LLVM_SOURCE_DIR})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.patch" ${LLVM_SOURCE_DIR})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch" ${LLVM_SOURCE_DIR})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_PACKAGE_VERSION}.patch" ${LLVM_SOURCE_DIR})
-    if(BUILD_CLANG)
-      sapfor_patch("${PROJECT_SOURCE_DIR}/patches/clang.patch" ${CLANG_SOURCE_DIR})
-      sapfor_patch("${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.patch" ${CLANG_SOURCE_DIR})
-      sapfor_patch("${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch" ${CLANG_SOURCE_DIR})
-      sapfor_patch("${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_PACKAGE_VERSION}.patch" ${CLANG_SOURCE_DIR})
-    endif()
-    if(NOT BUILD_TSAR)
-      set(TSAR_PATCH_REVERS "--reverse-diff")
-    else()
-      set(TSAR_PATCH_REVERS "")
-    endif()
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/tsar-llvm.patch" ${LLVM_SOURCE_DIR} ${TSAR_PATCH_REVERS})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_VERSION_MAJOR}.patch" ${LLVM_SOURCE_DIR} ${TSAR_PATCH_REVERS})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch" ${LLVM_SOURCE_DIR} ${TSAR_PATCH_REVERS})
-    sapfor_patch("${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_PACKAGE_VERSION}.patch" ${LLVM_SOURCE_DIR} ${TSAR_PATCH_REVERS})
   endif(PACKAGE_LLVM)
+  set(TSAR_PATCH_REVERSE "")
+  set(TSAR_LLVM_PATCHES
+    "${PROJECT_SOURCE_DIR}/patches/llvm.patch"
+    "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_PACKAGE_VERSION}.patch")
+  set(TSAR_CLANG_PATCHES
+    "${PROJECT_SOURCE_DIR}/patches/clang.patch"
+    "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_PACKAGE_VERSION}.patch")
+  foreach(PATCH ${TSAR_LLVM_PATCHES})
+    sapfor_patch(PATCHFILE ${PATCH} TARGET ${LLVM_SOURCE_DIR}
+                 ${TSAR_PATCH_REVERSE} ${TSAR_PATCH_IGNORE} ${TSAR_PATCH_COMMAND}
+                 PATCH_OPTIONS ${TSAR_PATCH_PATCH_OPTIONS}
+                 SUBVERSION_OPTIONS ${TSAR_PATCH_SUBVERSION_OPTIONS})
+  endforeach()
+  foreach(PATCH ${TSAR_CLANG_PATCHES})
+    sapfor_patch(PATCHFILE ${PATCH} TARGET ${CLANG_SOURCE_DIR}
+                 ${TSAR_PATCH_REVERSE} ${TSAR_PATCH_IGNORE} ${TSAR_PATCH_COMMAND}
+                 PATCH_OPTIONS ${TSAR_PATCH_PATCH_OPTIONS}
+                 SUBVERSION_OPTIONS ${TSAR_PATCH_SUBVERSION_OPTIONS})
+  endforeach()
+  if(NOT BUILD_TSAR)
+    set(TSAR_PATCH_REVERSE "REVERSE")
+  endif()
+  set(TSAR_LLVM_PATCHES
+    "${PROJECT_SOURCE_DIR}/patches/tsar-llvm.patch"
+    "${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_VERSION_MAJOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch"
+    "${PROJECT_SOURCE_DIR}/patches/tsar-llvm-${LLVM_PACKAGE_VERSION}.patch")
+  foreach(PATCH ${TSAR_LLVM_PATCHES})
+    sapfor_patch(PATCHFILE ${PATCH} TARGET ${LLVM_SOURCE_DIR}
+                 ${TSAR_PATCH_REVERSE} ${TSAR_PATCH_IGNORE} ${TSAR_PATCH_COMMAND}
+                 PATCH_OPTIONS ${TSAR_PATCH_PATCH_OPTIONS}
+                 SUBVERSION_OPTIONS ${TSAR_PATCH_SUBVERSION_OPTIONS})
+  endforeach()
   if(BUILD_TSAR)
     set(LLVM_STATUS "Specifying LLVM dependences (include directories, libraries, macros etc.)")
     message(STATUS ${LLVM_STATUS})
