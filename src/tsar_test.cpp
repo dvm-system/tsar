@@ -28,6 +28,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "CanonicalLoop.h"
 #include "DefinedMemory.h"
 #include "DIUnparser.h"
 #include "EstimateMemory.h"
@@ -52,7 +53,8 @@ using ::llvm::Module;
 namespace {
 class TestPrinterProvider : public FunctionPassProvider<
   PrivateRecognitionPass, TransformationEnginePass,
-  LoopMatcherPass, DFRegionInfoPass, ClangPerfectLoopPass> {
+  LoopMatcherPass, DFRegionInfoPass, ClangPerfectLoopPass,
+  CanonicalLoopPass> {
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
     auto P = createBasicAliasAnalysisPass();
     AU.addRequiredID(P->getPassID());
@@ -68,7 +70,8 @@ typedef FunctionPassProvider<
   TransformationEnginePass,
   LoopMatcherPass,
   DFRegionInfoPass,
-  ClangPerfectLoopPass> TestPrinterProvider;
+  ClangPerfectLoopPass,
+  CanonicalLoopPass> TestPrinterProvider;
 #endif
 
 INITIALIZE_PROVIDER_BEGIN(TestPrinterProvider, "test-provider",
@@ -78,6 +81,7 @@ INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PROVIDER_END(TestPrinterProvider, "test-provider",
   "Test Printer Provider")
 
@@ -177,6 +181,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
     auto &PrivateInfo = Provider.get<PrivateRecognitionPass>().getPrivateInfo();
     auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+    auto &CLoopInfo = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
     for (auto &Match : LpMatcher) {
       if (!isa<ForStmt>(Match.get<AST>()) &&
           !isa<WhileStmt>(Match.get<AST>()) &&
@@ -204,6 +209,13 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       } else {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mImperfectLoopClause; });
+      }
+      if (CLoopInfo.find(N) != CLoopInfo.end()) {
+        printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+          [](raw_ostream &OS) { OS << " " << mCanonicalLoopClause; });
+      } else {
+          printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+          [](raw_ostream &OS) { OS << " " << mNonCanonicalLoopClause; });
       }
     }
     for (auto L : LMP.getUnmatchedAST()) {

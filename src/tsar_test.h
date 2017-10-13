@@ -64,6 +64,12 @@ public:
   /// This is a SAPFOR Imperfect Loop clause.
   static constexpr const char *mImperfectLoopClause = "imperfect";
 
+  /// This is a SAPFOR Canonical Loop clause.
+  static constexpr const char *mCanonicalLoopClause = "canonical";
+
+  /// This is a SAPFOR Non-Canonical Loop clause.
+  static constexpr const char *mNonCanonicalLoopClause = "non-canonical";
+
   /// Default constructor.
   TestPrinterPass() : ModulePass(ID) {
     initializeTestPrinterPassPass(*PassRegistry::getPassRegistry());

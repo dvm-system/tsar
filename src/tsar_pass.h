@@ -150,6 +150,12 @@ void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
 
 /// Creates a pass to determine perfect for-loops in a source code.
 FunctionPass * createClangPerfectLoopPass();
+
+/// Initializes a pass to determine canonical for-loops in a source code.
+void initializeCanonicalLoopPassPass(PassRegistry &Registry);
+
+/// Creates a pass to determine canonical for-loops in a source code.
+FunctionPass * createCanonicalLoopPass();
 }
 
 #endif//TSAR_PASS_H
