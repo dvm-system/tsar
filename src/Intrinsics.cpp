@@ -27,14 +27,14 @@ static const char * const IntrinsicNameTable[] = {
 #undef GET_INTRINSIC_NAME_TABLE
 };
 
+namespace {
 /// Kinds of types which can be used in an intrinsic prototype.
-static enum TypeKind : unsigned {
+enum TypeKind : unsigned {
 #define GET_INTRINSIC_TYPE_KINDS
 #include "Intrinsics.gen"
 #undef GET_INTRINSIC_TYPE_KINDS
 };
 
-namespace {
 /// This literal type contains offsets for a prototype in table of prototypes
 /// (see PrototypeOffsetTable and PrototypeTable for details).
 struct PrototypeDescriptor {
