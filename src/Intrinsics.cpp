@@ -34,13 +34,21 @@ static enum TypeKind : unsigned {
 #undef GET_INTRINSIC_TYPE_KINDS
 };
 
+namespace {
+/// This literal type contains offsets for a prototype in table of prototypes
+/// (see PrototypeOffsetTable and PrototypeTable for details).
+struct PrototypeDescriptor {
+  unsigned Start;
+  unsigned End;
+};
+}
 ///\brief Table of offsets in prototype table indexed by enum value.
 ///
 /// Each intrinsic has a prototype which is described by a table of prototypes.
 /// Each description record has start and end points which are stored in this
 /// table. So start point of a prototype for an intrinsic Id can be accessed
 /// in a following way `PrototypeTable[PrototypeOffsetTable[Id].first]`.
-static constexpr std::pair<unsigned, unsigned> PrototypeOffsetTable[] = {
+static constexpr PrototypeDescriptor PrototypeOffsetTable[] = {
 #define PROTOTYPE(Start,End) {Start, End},
   PROTOTYPE(0,0) // there is no prototype for `tsar_not_intrinsic`
 #define GET_INTRINSIC_PROTOTYPE_OFFSET_TABLE
@@ -78,12 +86,11 @@ StringRef getName(IntrinsicId Id) {
 }
 
 FunctionType *getType(LLVMContext &Ctx, IntrinsicId Id) {
-  unsigned Start, End;
-  std::tie(Start, End) = PrototypeOffsetTable[static_cast<unsigned>(Id)];
-  Type *ResultTy = DecodeType(Ctx, Start);
+  auto Offset = PrototypeOffsetTable[static_cast<unsigned>(Id)];
+  Type *ResultTy = DecodeType(Ctx, Offset.Start);
   SmallVector<Type *, 8> ArgsTys;
-  while (Start < End)
-    ArgsTys.push_back(DecodeType(Ctx, Start));
+  while (Offset.Start < Offset.End)
+    ArgsTys.push_back(DecodeType(Ctx, Offset.Start));
   return FunctionType::get(ResultTy, ArgsTys, false);
 }
 
