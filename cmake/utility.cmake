@@ -84,12 +84,11 @@ function(sapfor_patch)
     execute_process(COMMAND ${Subversion_SVN_EXECUTABLE} patch
       ${options} ${SP_PATCHFILE} ${SP_TARGET} RESULT_VARIABLE error)
   else()
-    execute_process(COMMAND patch ${SP_PATCH_OPTIONS} -stb -R -r /dev/null
-      -d "${SP_TARGET}" INPUT_FILE ${SP_PATCHFILE} RESULT_VARIABLE error)
-    if(NOT SP_REVERSE)
-      execute_process(COMMAND patch ${SP_PATCH_OPTIONS} -stb -r /dev/null
-        -d "${SP_TARGET}" INPUT_FILE ${SP_PATCHFILE} RESULT_VARIABLE error)
+    if(SP_REVERSE)
+      set(REVERSE "-R")
     endif()
+    execute_process(COMMAND patch ${SP_PATCH_OPTIONS} -Nstb ${REVERSE} -r /dev/null
+      -d "${SP_TARGET}" -i ${SP_PATCHFILE} RESULT_VARIABLE error)
   endif()
   if(error)
     message(${FATAL_ERROR} "${status} - error")
