@@ -59,13 +59,13 @@ void DFRegionInfo::buildLoopRegion(LoopReptn L, DFRegion *R) {
   assert(R && "Region must not be null!");
   // To improve efficiency of construction the first added node
   // is entry and the last is exit (for loops the last added node is latch).
-  DFEntry *EntryNode = new DFEntry;
-  DFExit *ExitNode = new DFExit;
+  auto *EntryNode = new DFEntry;
+  auto *ExitNode = new DFExit;
   R->addNode(EntryNode);
   typedef LoopTraits<LoopReptn> LT;
   llvm::DenseMap<llvm::BasicBlock *, DFNode *> Blocks;
   for (auto I = LT::loop_begin(L), E = LT::loop_end(L); I != E; ++I) {
-    DFLoop *DFL = new DFLoop(*I);
+    auto *DFL = new DFLoop(*I);
     ++NumLoopRegion;
     buildLoopRegion(*I, DFL);
     R->addNode(DFL);
@@ -75,7 +75,7 @@ void DFRegionInfo::buildLoopRegion(LoopReptn L, DFRegion *R) {
   for (auto I = LT::block_begin(L), E = LT::block_end(L); I != E; ++I) {
     if (Blocks.count(*I))
       continue;
-    DFBlock * N = new DFBlock(*I);
+    auto *N = new DFBlock(*I);
     ++NumBlockRegion;
     R->addNode(N);
     Blocks.insert(std::make_pair(*I, N));

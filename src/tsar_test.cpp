@@ -254,9 +254,7 @@ bool TestPrinterPass::isLineBegin(
   unsigned Column;
   for (Column = LineOffs; bcl::isWhitespace(MB[Column]); ++Column);
   Column -= LineOffs; ++Column; // The first column without a whitespace.
-  if (Column < SrcMgr.getColumnNumber(FID, StartOffs))
-    return false;
-  return true;
+  return Column >= SrcMgr.getColumnNumber(FID, StartOffs);
 }
 
 void TestPrinterPass::getAnalysisUsage(AnalysisUsage &AU) const {

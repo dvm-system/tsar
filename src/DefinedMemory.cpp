@@ -200,7 +200,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
   auto &DU = Pair.first->get<DefUseSet>();
-  DFBlock *DFB = dyn_cast<DFBlock>(N);
+  auto *DFB = dyn_cast<DFBlock>(N);
   if (!DFB)
     return;
   BasicBlock *BB = DFB->getBlock();

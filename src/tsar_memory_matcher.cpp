@@ -64,7 +64,6 @@ public:
       std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<VarDecl>(D)));
     if (!Pair.second)
       Pair.first->second.push(D);
-    return;
   }
 
   bool VisitVarDecl(VarDecl *D) {

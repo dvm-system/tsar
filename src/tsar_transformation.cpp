@@ -143,7 +143,7 @@ void TransformationContext::reset(clang::ASTContext &Ctx, clang::CodeGenerator &
 }
 
 std::pair<std::string, bool> TransformationContext::release(
-  FilenameAdjuster FA) const {
+    const FilenameAdjuster &FA) const {
   DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();
   std::unique_ptr<llvm::raw_fd_ostream> OS;
   bool AllWritten = true;

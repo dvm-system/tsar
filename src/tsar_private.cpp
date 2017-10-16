@@ -109,7 +109,7 @@ enum TraitId : unsigned long long {
 void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
-    DependencySet *DS = new DependencySet;
+    auto *DS = new DependencySet;
     auto PrivInfo = mPrivates.insert(
       std::make_pair(L, llvm::make_unique<DependencySet>()));
     auto DefItr = mDefInfo->find(L);
@@ -134,7 +134,7 @@ void PrivateRecognitionPass::resolveCandidats(DFRegion *R) {
     resolveAddresses(L, *DefItr->get<DefUseSet>(), LocBases,
       *PrivInfo.first->get<DependencySet>());
   }
-  for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
+  for (auto I = R->region_begin(), E = R->region_end();
        I != E; ++I)
     resolveCandidats(*I);
 }

@@ -339,7 +339,6 @@ void ActionBase::ExecuteAction() {
   mQueryManager->run(M.get(), nullptr);
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.stopTimer();
-  return;
 }
 
 std::unique_ptr<ASTConsumer>

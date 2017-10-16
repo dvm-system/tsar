@@ -46,7 +46,7 @@ void printLocationSource(llvm::raw_ostream &o, const Value *Loc) {
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {
   Metadata *DITyVal = DITy;
   bool isDerived = false;
-  if (DIDerivedType *DITy = dyn_cast_or_null<DIDerivedType>(DITyVal)) {
+  if (auto *DITy = dyn_cast_or_null<DIDerivedType>(DITyVal)) {
     DITyVal = DITy->getBaseType();
     isDerived = true;
   }

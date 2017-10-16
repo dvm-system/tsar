@@ -100,7 +100,7 @@ Tool::Tool(int Argc, const char **Argv) {
   assert(Argv && "List of command line arguments must not be null!");
   Options::get(); // At first, initialize command line options.
   std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
-  cl::ParseCommandLineOptions(Argc, Argv, Descr.c_str());
+  cl::ParseCommandLineOptions(Argc, Argv, Descr);
   storeCLOptions();
   InitializeAllTargetInfos();
   InitializeAllTargetMCs();
@@ -116,11 +116,11 @@ Tool::Tool() {
 
 void Tool::storeCLOptions() {
   mSources = Options::get().Sources;
-  mCommandLine.push_back("-g");
+  mCommandLine.emplace_back("-g");
   if (!Options::get().LanguageStd.empty())
     mCommandLine.push_back("-std=" + Options::get().LanguageStd);
   if (Options::get().TimeReport)
-    mCommandLine.push_back("-ftime-report");
+    mCommandLine.emplace_back("-ftime-report");
   if (!Options::get().Language.empty())
     mCommandLine.push_back("-x" + Options::get().Language);
   for (auto &Path : Options::get().Includes)
@@ -176,11 +176,11 @@ int Tool::run(QueryManager *QM) {
         StringRef Arg = CL[I];
         // If `-fsyntax-only` is set all output files will be ignored.
         if (Arg.startswith("-fsyntax-only"))
-          Adjusted.push_back("-emit-ast");
+          Adjusted.emplace_back("-emit-ast");
         else
           Adjusted.push_back(Arg);
       }
-      Adjusted.push_back("-o");
+      Adjusted.emplace_back("-o");
       if (mOutputFilename.empty()) {
         SmallString<128> PCHFile = Filename;
         sys::path::replace_extension(PCHFile, ".ast");
@@ -227,10 +227,9 @@ int Tool::run(QueryManager *QM) {
     SourcesToMerge.pop_back();
     return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
-  } else {
-    ClangTool CTool(*mCompilations, mSources);
-    return CTool.run(newAnalysisActionFactory<MainAction>(
-      mCommandLine, QM).get());
   }
+  ClangTool CTool(*mCompilations, mSources);
+  return CTool.run(newAnalysisActionFactory<MainAction>(
+    mCommandLine, QM).get());
 }
 

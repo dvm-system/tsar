@@ -167,7 +167,6 @@ void BaseLocationSet::stripToBase(MemoryLocation &Loc) {
     Loc.Ptr = nullptr;
     Loc.Size = MemoryLocation::UnknownSize;
   }
-  return;
 }
 
 bool BaseLocationSet::isSameBase(
@@ -325,7 +324,7 @@ std::string locationToSource(
   bool NB;
   auto Str = locationToSource(Ptr, DITy, NB);
   if (Str.empty() || !isa<DICompositeType>(DITy) ||
-      !cast<DICompositeType>(DITy)->getTag() == dwarf::DW_TAG_structure_type)
+      cast<DICompositeType>(DITy)->getTag() != dwarf::DW_TAG_structure_type)
     return "";
   if (NB || Str.front() == '*')
     Str = "(" + Str + ")";
@@ -352,7 +351,7 @@ std::string locationToSource(
     if (++Idx == EIdx)
       break;
     if (!isa<DICompositeType>(DITy) ||
-        !cast<DICompositeType>(DITy)->getTag() == dwarf::DW_TAG_structure_type)
+        cast<DICompositeType>(DITy)->getTag() != dwarf::DW_TAG_structure_type)
       return "";
   }
   return Str;

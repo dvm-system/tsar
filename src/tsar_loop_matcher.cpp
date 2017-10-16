@@ -93,7 +93,6 @@ public:
       std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
     if (!Pair.second)
       Pair.first->second.push(S);
-    return;
   }
 
   bool VisitStmt(Stmt *S) {

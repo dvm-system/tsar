@@ -150,7 +150,7 @@ public:
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   std::pair<std::string, bool> release(
-    FilenameAdjuster FA = getDumpFilenameAdjuster()) const;
+    const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const;
 
   /// \brief Resets existence configuration of transformation engine.
   ///

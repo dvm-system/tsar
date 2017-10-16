@@ -49,7 +49,7 @@ private:
   /// Imports variable declaration, tentative definitions will be stored in
   /// a specified collection.
   std::pair<clang::Decl *, clang::Decl *> ImportVarDecl(
-    clang::VarDecl *V, clang::ASTImporter &Importer,
+    clang::VarDecl *FromV, clang::ASTImporter &Importer,
     std::vector<clang::VarDecl *> &TentativeDefinitions) const;
 
   /// Imports function declaration.
