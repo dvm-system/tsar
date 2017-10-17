@@ -24,7 +24,8 @@ namespace llvm {
 template<> struct DOTGraphTraits<AliasTree *> :
     public DefaultDOTGraphTraits {
 
-  DOTGraphTraits(bool IsSimple = false) : DefaultDOTGraphTraits(IsSimple) {}
+  explicit DOTGraphTraits(bool IsSimple = false) :
+    DefaultDOTGraphTraits(IsSimple) {}
 
   static std::string getGraphName(const AliasTree *) {
     return "Alias Tree";

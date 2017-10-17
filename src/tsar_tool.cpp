@@ -26,7 +26,7 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
-extern const char AllowediOutputPassArgs[] = "\
+extern const char gAllowedOutputPassArgs[] = "\
   -view-em -view-em-only\
   -dot-em -dot-em-only";
 
@@ -45,7 +45,7 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::list<const llvm::PassInfo*, bool,
     llvm::FilteredPassNameParser<
-    llvm::PassArgFilter<AllowediOutputPassArgs>>> OutputPasses;
+    llvm::PassArgFilter<gAllowedOutputPassArgs>>> OutputPasses;
 
   llvm::cl::OptionCategory CompileCategory;
   llvm::cl::list<std::string> Includes;

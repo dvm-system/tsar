@@ -83,7 +83,7 @@ bool stripMemoryLevel(const llvm::DataLayout &DL, llvm::MemoryLocation &Loc);
 ///   %0 = bitcast i32* %x to i16*
 ///   %1 = load i16, i16* %0, align 4
 /// \endcode
-void stripToBase(const llvm::DataLayout &D, llvm::MemoryLocation &Loc);
+void stripToBase(const llvm::DataLayout &DL, llvm::MemoryLocation &Loc);
 
 /// \brief Compares to bases.
 ///
@@ -809,7 +809,7 @@ private:
   /// \param [in] Start Start node for search.
   /// \return Alias node that should refer to a specified memory `NewEM`.
   /// This method may merge some nodes or return already existing one.
-  AliasNode * addEmptyNode(const EstimateMemory &NewEM, AliasNode &Current);
+  AliasNode * addEmptyNode(const EstimateMemory &NewEM, AliasNode &Start);
 
   /// Checks whether pointers to specified locations may refer the same address.
   llvm::AliasResult isSamePointer(
@@ -840,7 +840,7 @@ private:
   /// - `true` if a specified location `Loc` add ambiguousness to existed
   ///   hierarchy sequence. The first and second value may be set to true both.
   std::tuple<EstimateMemory *, bool, bool>
-    insert(const llvm::MemoryLocation &Loc);
+    insert(const llvm::MemoryLocation &Base);
 
   llvm::AAResults *mAA;
   const llvm::DataLayout *mDL;

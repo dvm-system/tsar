@@ -75,9 +75,9 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     if (Size > Loc.Size) {
       Loc.Size = Size;
       return true;
-    } else if (Size < Loc.Size) {
-      return false;
     }
+    if (Size < Loc.Size)
+      return false;
   }
   if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
     Loc.Ptr = GEP->getPointerOperand();
@@ -479,9 +479,7 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
     return nullptr;
-  for (auto ChainItr = I->second.begin(), ChainEItr = I->second.end();
-       ChainItr != ChainEItr; ++ChainItr) {
-    auto Chain = *ChainItr;
+  for (auto *Chain : I->second) {
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
       continue;
     switch (isSamePointer(*Chain, Base)) {
@@ -512,9 +510,7 @@ AliasTree::insert(const MemoryLocation &Base) {
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
     BL = &I->second;
-    for (auto ChainItr = BL->begin(), ChainEItr = BL->end();
-         ChainItr != ChainEItr; ++ChainItr) {
-      auto Chain = *ChainItr;
+    for (auto &Chain : *BL) {
       if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
         continue;
       /// TODO (kaniandr@gamil.com): The following case is possible:
@@ -572,7 +568,7 @@ AliasTree::insert(const MemoryLocation &Base) {
           auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
           ++NumEstimateMemory;
           CT::splicePrev(EM, Chain);
-          *ChainItr = EM; // update start point of this chain in a base list
+          Chain = EM; // update start point of this chain in a base list
           return std::make_tuple(EM, true, AddAmbiguous);
         }
       } while (Prev = Chain, Chain = CT::getNext(Chain));

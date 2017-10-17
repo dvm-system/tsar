@@ -189,10 +189,10 @@ public:
   }
 
   /// Realizes intersection between two values.
-  bool intersect(const LocationDFValue &with);
+  bool intersect(const LocationDFValue &With);
 
   /// Realizes merger between two values.
-  bool merge(const LocationDFValue &with);
+  bool merge(const LocationDFValue &With);
 
   /// Compares two values.
   bool operator==(const LocationDFValue &RHS) const {

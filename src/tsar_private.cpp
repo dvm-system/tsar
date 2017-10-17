@@ -24,6 +24,8 @@
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
@@ -31,8 +33,6 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
-#include <llvm/Analysis/LoopInfo.h>
-#include <llvm/Analysis/AliasAnalysis.h>
 #include <utility.h>
 
 using namespace llvm;
@@ -181,8 +181,7 @@ void PrivateRecognitionPass::resolveCandidats(
     propagateTraits(Numbers, *R, ExplicitAccesses, NodeTraits,
       *PrivInfo.first->get<DependencySet>());
   }
-  for (DFRegion::region_iterator I = R->region_begin(), E = R->region_end();
-       I != E; ++I)
+  for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
     resolveCandidats(Numbers, *I);
 }
 
