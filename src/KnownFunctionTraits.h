@@ -141,7 +141,7 @@ void foreachLibFuncMemArg(const llvm::Function &Func,
     const llvm::TargetLibraryInfo &TLI, Function &&F) {
   using namespace llvm;
   LibFunc::Func Id;
-  if (!TLI.getLibFunc(*Func, Id) && !TLI.has(Func))
+  if (!TLI.getLibFunc(Func, Id) && !TLI.has(Id))
     return;
   return foreachLibFuncMemArg(Id, std::forward<Function>(F));
 }
