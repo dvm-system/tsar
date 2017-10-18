@@ -479,7 +479,8 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
     return nullptr;
-  for (auto *Chain : I->second) {
+  for (auto ChainBegin : I->second) {
+    auto Chain = ChainBegin;
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
       continue;
     switch (isSamePointer(*Chain, Base)) {
@@ -510,7 +511,8 @@ AliasTree::insert(const MemoryLocation &Base) {
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
     BL = &I->second;
-    for (auto &Chain : *BL) {
+    for (auto ChainBegin : *BL) {
+      auto Chain = ChainBegin;
       if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
         continue;
       /// TODO (kaniandr@gamil.com): The following case is possible:
