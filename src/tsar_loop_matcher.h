@@ -77,6 +77,7 @@ public:
   /// Releases allocated memory.
   void releaseMemory() override {
     mMatcher.clear();
+    mUnmatchedAST.clear();
     mFuncDecl = nullptr;
   }
 

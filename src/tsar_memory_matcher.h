@@ -61,7 +61,10 @@ public:
   }
 
   /// Releases allocated memory.
-  void releaseMemory() override { mMatcher.clear(); }
+  void releaseMemory() override {
+    mMatcher.clear();
+    mUnmatchedAST.clear();
+  }
 
 private:
   MemoryMatcher mMatcher;
