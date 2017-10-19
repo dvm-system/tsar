@@ -13,6 +13,8 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/Function.h>
 #include "tsar_instrumentation.h"
+#include "Instrumentation.h"
+#include <llvm/IR/InstIterator.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -33,6 +35,12 @@ bool InstrumentationPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   llvm::Module *M = F.getParent();
+  Instrumentation Instr;
+  Instr.visitFunction(F);
+  for(auto &I : make_range(inst_begin(F), inst_end(F))){
+    Instr.visit(I);		  
+  }		  
+
   return true;
 }
 
