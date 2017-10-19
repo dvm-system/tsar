@@ -635,7 +635,9 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       });
     } else {
       for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx) {
-        if (isa<Constant>(CS.getArgument(Idx)))
+        assert(CS.getArgument(Idx)->getType() &&
+          "All actual parameters must be typed!");
+        if (!CS.getArgument(Idx)->getType()->isPointerTy())
           continue;
         addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
       }
