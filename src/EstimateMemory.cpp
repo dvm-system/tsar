@@ -10,14 +10,13 @@
 
 #include "EstimateMemory.h"
 #include "tsar_dbg_output.h"
-#include "KnownFunctionTraits.h"
+#include "MemoryAccessUtils.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Operator.h>
-#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -606,7 +605,6 @@ FunctionPass * llvm::createEstimateMemoryPass() {
   return new EstimateMemoryPass();
 }
 
-
 bool EstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
@@ -617,50 +615,21 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   DenseSet<const Value *> AccessedMemory;
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
   // for example, in call and invoke instructions.
-  auto addLocation = [&AccessedMemory, this](MemoryLocation &&Loc) {
+  auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
+      MemoryLocation &&Loc, bool IsRead = false, bool IsWrite = false) {
     if (isa<MetadataAsValue>(Loc.Ptr))
       return;
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(std::move(Loc));
   };
-  auto addActualParams = [&TLI, &addLocation](ImmutableCallSite CS) {
-    LibFunc::Func F;
-    if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
-      foreachIntrinsicMemArg(*II, [&CS, &TLI, &addLocation](unsigned Idx) {
-        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-      });
-    } else if (TLI.getLibFunc(*CS.getCalledFunction(), F)) {
-      foreachLibFuncMemArg(F, [&CS, &TLI, &addLocation](unsigned Idx) {
-        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-      });
-    } else {
-      for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx) {
-        assert(CS.getArgument(Idx)->getType() &&
-          "All actual parameters must be typed!");
-        if (!CS.getArgument(Idx)->getType()->isPointerTy())
-          continue;
-        addLocation(MemoryLocation::getForArgument(CS, Idx, TLI));
-      }
-    }
-  };
-  for (auto &I : make_range(inst_begin(F), inst_end(F))) {
-    switch (I.getOpcode()) {
-    case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
-    case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
-      addLocation(MemoryLocation::get(&I));
-      break;
-    case Instruction::Call:
-      addActualParams(cast<CallInst>(&I)); break;
-    case Instruction::Invoke:
-      addActualParams(cast<InvokeInst>(&I)); break;
-    }
-  }
+  for_each_memory(F, TLI, addLocation,
+    [](const Instruction &/*I*/, bool IsRead = false, bool IsWrite = false) {});
   // If there are some pointers to memory locations which are not accessed
   // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already
   // inserted into the alias tree `AccessedMemory` set is used.
   auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation, this](
-      const Value *V) {
+      const Instruction &I, const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
     if (auto F = dyn_cast<Function>(V))
@@ -671,13 +640,13 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       return;
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
     assert(PointeeTy && "Pointee type must not be null!");
-    addLocation(MemoryLocation(V, PointeeTy->isSized() ?
+    addLocation(I, MemoryLocation(V, PointeeTy->isSized() ?
       DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
   };
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
-    addPointeeIfNeed(&I);
+    addPointeeIfNeed(I, &I);
     for (auto *Op : make_range(I.value_op_begin(), I.value_op_end()))
-      addPointeeIfNeed(Op);
+      addPointeeIfNeed(I, Op);
   }
   return false;
 }
