@@ -647,6 +647,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
       addLocation(MemoryLocation::get(&I));
       break;
+    case Instruction::Call:
       addActualParams(cast<CallInst>(&I)); break;
     case Instruction::Invoke:
       addActualParams(cast<InvokeInst>(&I)); break;
