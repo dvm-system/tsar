@@ -21,6 +21,7 @@
 #include <Json.h>
 #include <RedirectIO.h>
 #include "DFRegionInfo.h"
+#include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"
 #include "Messages.h"
@@ -123,13 +124,26 @@ INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(PrivateServerPass, "test-printer",
+INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
 namespace {
+/// This functor increments count of analyzed traits (according to number of
+/// explicitly accessed locations from 'mAT') in a map 'mTM'.
+template<class TraitMap>
+struct TraitCounter {
+  template<class Trait> void operator()() {
+    for (auto &LT : AT)
+      LT.for_each(bcl::TraitMapConstructor<
+        LocationTrait, TraitMap, bcl::CountInserter>(LT, TM));
+  }
+  AliasTrait &AT;
+  TraitMap &TM;
+};
+
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
-void incrementTraitCount(Function &F, ServerPrivateProvider &P, TraitMap &TM) {
+void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
   auto &LMP = P.get<LoopMatcherPass>();
   auto &PI = P.get<PrivateRecognitionPass>().getPrivateInfo();
   auto &RI = P.get<DFRegionInfoPass>().getRegionInfo();
@@ -138,10 +152,8 @@ void incrementTraitCount(Function &F, ServerPrivateProvider &P, TraitMap &TM) {
     auto DSItr = PI.find(N);
     assert(DSItr != PI.end() && DSItr->get<DependencySet>() &&
       "Privatiability information must be specified!");
-    for (auto &TS : *DSItr->get<DependencySet>())
-      TS.for_each(
-        bcl::TraitMapConstructor<
-        LocationTraitSet, TraitMap, bcl::CountInserter>(TS, TM));
+    for (auto &AT : *DSItr->get<DependencySet>())
+      AT.for_each(TraitCounter<TraitMap>{AT, TM});
   }
 }
 }
@@ -210,7 +222,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       auto &LMP = Provider.get<LoopMatcherPass>();
       Loops.first += LMP.getMatcher().size();
       Loops.second += LMP.getUnmatchedAST().size();
-      incrementTraitCount(F, Provider, Stat[msg::Statistic::Traits]);
+      incrementTraitCount(Provider, Stat[msg::Statistic::Traits]);
     }
     Stat[msg::Statistic::Loops].insert(
       std::make_pair(msg::Analysis::Yes, Loops.first));
