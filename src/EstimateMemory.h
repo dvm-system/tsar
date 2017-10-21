@@ -457,6 +457,34 @@ public:
   /// (in constant time).
   bool isLeaf() const { return mChildren.empty(); }
 
+  /// Checks whether this estimate memory location is ancestor of a specified
+  /// 'EM' location.
+  bool isAncestorOf(const EstimateMemory &EM) const noexcept {
+    auto Current = &EM;
+    do
+      if (this == Current)
+        return true;
+    while (Current = Current->getParent());
+    return false;
+  }
+
+  /// Checks whether this estimate memory location is descendant of a specified
+  /// 'EM' location.
+  bool isDescendantOf(const EstimateMemory &EM) const noexcept {
+    auto Current = this;
+    do
+      if (&EM == Current)
+        return true;
+    while (Current = Current->getParent());
+    return false;
+  }
+
+  /// Checks whether this estimate memory locations and a specified
+  /// 'EM' location are neither ancestor nor descendant.
+  bool isUnreachable(const EstimateMemory &EM) const noexcept {
+    return !isAncestorOf(EM) && !isDescendantOf(EM);
+  }
+
 private:
   /// Creates an estimate location for a specified memory.
   ///

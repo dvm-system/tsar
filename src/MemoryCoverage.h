@@ -50,8 +50,12 @@ bool cover(
       bcl::tagged<std::size_t, ReversePostorder>,
       bcl::tagged<uint64_t, Size>>> PreorderTraversal;
   for (PointeeItr I = BeginItr, E = EndItr; I != E; ++I) {
+    if (EM.isDescendantOf(*I))
+      return true;
+    if (EM.isUnreachable(*I))
+      continue;
     auto NodeItr = Numbers.find(I->getAliasNode(AT));
-    assert(NodeItr != Numbers.end() && "Number of an alias node  must be set!");
+    assert(NodeItr != Numbers.end() && "Number of an alias node must be set!");
     PreorderTraversal.emplace(
       std::piecewise_construct,
       std::forward_as_tuple(NodeItr->template get<Preorder>()),
