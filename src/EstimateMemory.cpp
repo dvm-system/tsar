@@ -318,7 +318,20 @@ void AliasTree::add(const MemoryLocation &Loc) {
     DEBUG(
       dbgs() << "[ALIAS TREE]: update estimate memory location tree:";
       dbgs() << " IsNew=" << (IsNew ? "true" : "false");
-      dbgs() << " AddAmbiguous=" << (AddAmbiguous ? "true" : "false") << "\n";
+      dbgs() << " AddAmbiguous=" << (AddAmbiguous ? "true" : "false");
+      dbgs() << " Neighbors={";
+      if (auto PrevEM = CT::getPrev(EM))
+        printLocationSource(dbgs(),
+          MemoryLocation(PrevEM->front(), PrevEM->getSize()));
+      else
+        dbgs() << "NULL";
+      dbgs() << " ";
+      if (auto NextEM = CT::getNext(EM))
+        printLocationSource(dbgs(),
+          MemoryLocation(NextEM->front(), NextEM->getSize()));
+      else
+        dbgs() << "NULL";
+      dbgs() << "}\n";
     );
     assert(EM && "New estimate memory must not be null!");
     if (PrevChainEnd && PrevChainEnd != EM) {
@@ -332,6 +345,21 @@ void AliasTree::add(const MemoryLocation &Loc) {
           MemoryLocation(PrevChainEnd->front(), PrevChainEnd->getSize()));
       );
       CT::mergeNext(EM, PrevChainEnd);
+      DEBUG(
+        dbgs() << ": Neighbors={";
+        if (auto PrevEM = CT::getPrev(EM))
+          printLocationSource(dbgs(),
+            MemoryLocation(PrevEM->front(), PrevEM->getSize()));
+        else
+          dbgs() << "NULL";
+        dbgs() << " ";
+        if (auto NextEM = CT::getNext(EM))
+          printLocationSource(dbgs(),
+            MemoryLocation(NextEM->front(), NextEM->getSize()));
+        else
+          dbgs() << "NULL";
+        dbgs() << "}\n";
+      );
     }
     if (!IsNew && !AddAmbiguous)
       return;
