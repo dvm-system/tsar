@@ -498,7 +498,7 @@ bool AliasTree::slowMayAlias(
   return false;
 }
 
-const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
+const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
   stripToBase(*mDL, Base);
@@ -521,11 +521,13 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation & Loc) const {
       if (Base.Size > Chain->getSize())
         continue;
       auto AATags = Chain->getAAInfo();
-      return (AATags == Base.AATags ||
-        AATags == DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey()) ?
-        Chain : nullptr;
+      if (AATags == Base.AATags ||
+          AATags == DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey())
+        return Chain;
+      // Different chains with the same base may exist, so go to the
+      // next iteration of a for-loop to traverse all such chains.
+      break;
     } while (Prev = Chain, Chain = CT::getNext(Chain));
-    return nullptr;
   }
   return nullptr;
 }
