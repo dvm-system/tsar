@@ -34,15 +34,28 @@ namespace tsar {
 template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {
-  auto traverseActualParams = [&TLI, &Func, &UnknownFunc](
-      ImmutableCallSite CS) {
-    LibFunc::Func LibId;
-    if (auto II = dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+  using llvm::CallSite;
+  using llvm::Function;
+  using llvm::Instruction;
+  using llvm::IntrinsicInst;
+  using llvm::MemoryLocation;
+  auto traverseActualParams = [&TLI, &Func, &UnknownFunc](CallSite CS) {
+    auto Callee =
+      llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    llvm::LibFunc::Func LibId;
+    if (auto II = llvm::dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+      /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
+      /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
+      switch (II->getIntrinsicID()) {
+      case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
+      case llvm::Intrinsic::assume:
+        return;
+      }
       foreachIntrinsicMemArg(*II, [&CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
           !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
       });
-    } else if (TLI.getLibFunc(*CS.getCalledFunction(), LibId)) {
+    } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
       foreachLibFuncMemArg(LibId, [&CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
           !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
@@ -62,15 +75,18 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
   };
   switch (I.getOpcode()) {
+  default:
+    if (!I.mayReadOrWriteMemory())
+      return;
+    UnknownFunc(I, I.mayReadFromMemory(), I.mayWriteToMemory());
+    break;
   case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
   case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
     Func(I, MemoryLocation::get(&I),
       I.mayReadFromMemory(), I.mayWriteToMemory());
     break;
-  case Instruction::Call:
-    traverseActualParams(cast<CallInst>(&I)); break;
-  case Instruction::Invoke:
-    traverseActualParams(cast<InvokeInst>(&I)); break;
+  case Instruction::Call: case Instruction::Invoke:
+    traverseActualParams(CallSite(&I)); break;
   }
 }
 
