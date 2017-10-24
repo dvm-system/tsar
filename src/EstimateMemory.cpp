@@ -12,6 +12,7 @@
 #include "tsar_dbg_output.h"
 #include "MemoryAccessUtils.h"
 #include <llvm/ADT/Statistic.h>
+#include <llvm/ADT/PointerUnion.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ValueTracking.h>
@@ -27,8 +28,11 @@ using namespace llvm;
 #define DEBUG_TYPE "estimate-mem"
 
 STATISTIC(NumAliasNode, "Number of alias nodes created");
+STATISTIC(NumEstimateNode, "Number of estimate nodes created");
+STATISTIC(NumUnknownNode, "Number of unknown nodes created");
 STATISTIC(NumMergedNode, "Number of alias nodes merged in");
 STATISTIC(NumEstimateMemory, "Number of estimate memory created");
+STATISTIC(NumUnknownMemory, "Number of unknown memory created");
 
 namespace tsar {
 Value * stripPointer(const DataLayout &DL, Value *Ptr) {
@@ -279,10 +283,11 @@ AliasDescriptor mergeAliasRelation(
 }
 }
 
-const AliasNode * EstimateMemory::getAliasNode(const AliasTree &G) const {
+const AliasEstimateNode * EstimateMemory::getAliasNode(
+    const AliasTree &G) const {
   if (mNode && mNode->isForwarding()) {
     auto *OldNode = mNode;
-    mNode = OldNode->getForwardedTarget(G);
+    mNode = cast<AliasEstimateNode>(OldNode->getForwardedTarget(G));
     mNode->retain();
     OldNode->release(G);
   }
@@ -392,13 +397,40 @@ void AliasTree::add(const MemoryLocation &Loc) {
         EM = CT::getPrev(EM);
       do {
         auto Node = addEmptyNode(*EM, *getTopLevelNode());
-        auto Forward = EM->getAliasNode(*this);
+        AliasNode *Forward = EM->getAliasNode(*this);
         assert(Forward && "Alias node for memory location must not be null!");
+        SmallVector<AliasUnknownNode *, 2> UnknownNodes;
         while (Forward != Node) {
           auto Parent = Forward->getParent(*this);
           assert(Parent && "Parent node must not be null!");
+          if (auto UN = dyn_cast<AliasUnknownNode>(Parent)) {
+            if (!UnknownNodes.empty())
+              UnknownNodes.back()->setParent(*UN, *this);
+            else
+              UN->retain();
+            UnknownNodes.push_back(UN);
+            Forward->setParent(*Parent->getParent(*this), *this);
+            continue;
+          }
           Parent->mergeNodeIn(*Forward, *this), ++NumMergedNode;
           Forward = Parent;
+        }
+        if (!UnknownNodes.empty()) {
+          while (Forward != getTopLevelNode() || isa<AliasUnknownNode>(Forward))
+            Forward = Forward->getParent(*this);
+          if (Forward == getTopLevelNode()) {
+            UnknownNodes.push_back(
+              make_node<AliasUnknownNode, llvm::Statistic, 2> (
+                *getTopLevelNode(), {&NumAliasNode, &NumUnknownNode}));
+          }
+          auto UI = UnknownNodes.begin(), UE = UnknownNodes.end();
+          auto ForwardUI = UI;
+          auto FirstForward = *ForwardUI;
+          for (++UI; UI != UE; ForwardUI = UI++, ++NumMergedNode)
+            (*UI)->mergeNodeIn(**ForwardUI, *this);
+          // The following release() is a pair for retain() in a loop which
+          // builds UnknownNodes collection.
+          FirstForward->release(*this);
         }
         EM = CT::getNext(EM);
       } while (EM);
@@ -411,6 +443,47 @@ void AliasTree::add(const MemoryLocation &Loc) {
   } while (stripMemoryLevel(*mDL, Base));
 }
 
+void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
+  assert(I && "Instruction which accesses unknown memory must not be null!");
+  DEBUG(dbgs() << "[ALIAS TREE]: add unknown memory location\n");
+  if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+    /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
+    /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
+    switch (II->getIntrinsicID()) {
+    default: break;
+    case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
+    case Intrinsic::assume:
+      return;
+    }
+  }
+  if (!I->mayReadOrWriteMemory())
+    return;
+  SmallVector<AliasNode *, 4> Aliases;
+  auto Children = make_range(
+    getTopLevelNode()->child_begin(), getTopLevelNode()->child_end());
+  for (auto &Child : Children)
+    if (Child.slowMayAliasUnknown(I, *mAA))
+      Aliases.push_back(&Child);
+  AliasUnknownNode *Node;
+  if (!Aliases.empty() && isa<AliasUnknownNode>(Aliases.front())) {
+    auto AI = Aliases.begin(), EI = Aliases.end();
+    Node = cast<AliasUnknownNode>(*AI);
+    for (++AI; AI != EI; ++AI, ++NumMergedNode) {
+      assert(isa<AliasUnknownNode>(*AI) &&
+        "Mix of unknown and other nodes is not allowed!");
+      Node->mergeNodeIn(**AI, *this);
+    }
+  } else {
+    Node = make_node<AliasUnknownNode, llvm::Statistic, 2>(
+      *getTopLevelNode(), { &NumAliasNode, &NumUnknownNode });
+    for (auto Alias : Aliases)
+      Alias->setParent(*Node, *this);
+  }
+  if (Node->empty())
+    Node->retain();
+  Node->push_back(I), ++NumUnknownMemory;
+}
+
 void AliasTree::removeNode(AliasNode *N) {
   if (auto *Fwd = N->mForward) {
     Fwd->release(*this);
@@ -419,37 +492,93 @@ void AliasTree::removeNode(AliasNode *N) {
   mNodes.erase(N);
 }
 
-AliasNode * AliasTree::addEmptyNode(
+bool AliasEstimateNode::slowMayAliasUnknownImp(
+    const Instruction *I, AAResults &AA) const {
+  assert(I && "Instruction must not be null!");
+  for (auto &EM : *this) {
+    for (auto *Ptr : EM)
+      if (AA.getModRefInfo(I,
+            MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
+        return true;
+  }
+  return false;
+}
+
+bool AliasUnknownNode::slowMayAliasUnknownImp(
+    const Instruction *I, AAResults &AA) const {
+  assert(I && "Instruction must not be null!");
+  for (auto &UI : *this) {
+    ImmutableCallSite C1(UI), C2(I);
+    if (!C1 || !C2 || AA.getModRefInfo(C1, C2) != MRI_NoModRef ||
+      AA.getModRefInfo(C2, C1) != MRI_NoModRef)
+      return true;
+  }
+  return false;
+}
+
+std::pair<bool, EstimateMemory *>
+AliasEstimateNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
+  for (auto &ThisEM : *this)
+    for (auto *LHSPtr : ThisEM)
+      for (auto *RHSPtr : EM) {
+        auto AR = AA.alias(
+          MemoryLocation(LHSPtr, ThisEM.getSize(), ThisEM.getAAInfo()),
+          MemoryLocation(RHSPtr, EM.getSize(), EM.getAAInfo()));
+        if (AR == NoAlias)
+          continue;
+        return std::make_pair(true, &ThisEM);
+      }
+  return std::make_pair(false, nullptr);
+}
+
+std::pair<bool, EstimateMemory *>
+AliasUnknownNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
+  for (auto &UI : *this) {
+    for (auto *Ptr : EM)
+      if (AA.getModRefInfo(UI,
+            MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
+        return std::make_pair(true, nullptr);
+  }
+  return std::make_pair(false, nullptr);
+}
+
+AliasEstimateNode * AliasTree::addEmptyNode(
     const EstimateMemory &NewEM,  AliasNode &Start) {
   auto Current = &Start;
-  auto newNode = [this](AliasNode &Parrent) {
-    auto *NewNode = new AliasNode;
-    ++NumAliasNode;
-    mNodes.push_back(NewNode);
-    NewNode->setParent(Parrent, *this);
-    return NewNode;
-  };
   SmallPtrSet<const AliasNode *, 8> ChildrenNodes;
   for (auto I = NewEM.child_begin(), E = NewEM.child_end(); I != E; ++I)
     ChildrenNodes.insert(I->getAliasNode(*this));
-  SmallVector<EstimateMemory *, 4> Aliases;
+  SmallVector<PointerUnion<EstimateMemory *, AliasNode *>, 4> Aliases;
+  auto getAliasNode = [this](decltype(Aliases)::reference Ptr) {
+    return Ptr.is<AliasNode *>() ? Ptr.get<AliasNode *>() :
+      Ptr.get<EstimateMemory *>()->getAliasNode(*this);
+  };
   for (;;) {
     Aliases.clear();
-    for (auto &Child : make_range(Current->child_begin(), Current->child_end()))
-      for (auto &EM : Child)
-        if (slowMayAlias(EM, NewEM)) {
-          Aliases.push_back(&EM);
-          break;
-        }
+    for (auto &Ch : make_range(Current->child_begin(), Current->child_end())) {
+      auto Result = Ch.slowMayAlias(NewEM, *mAA);
+      if (Result.first)
+        if (Result.second)
+          Aliases.push_back(Result.second);
+        else
+          Aliases.push_back(&Ch);
+    }
     if (Aliases.empty())
-      return newNode(*Current);
+      return make_node<AliasEstimateNode, llvm::Statistic, 2>(
+        *Current, {&NumAliasNode, &NumEstimateNode});
     if (Aliases.size() == 1) {
-      auto Node = Aliases.front()->getAliasNode(*this);
+      if (Aliases.front().is<AliasNode *>()) {
+        Current = Aliases.front().get<AliasNode *>();
+        continue;
+      }
+      auto EM = Aliases.front().get<EstimateMemory *>();
+      auto Node = EM->getAliasNode(*this);
       assert(Node && "Alias node for memory location must not be null!");
       auto AD = aliasRelation(
-        *mAA, *mDL, NewEM, AliasNode::iterator(Aliases.front()), Node->end());
+        *mAA, *mDL, NewEM, AliasEstimateNode::iterator(EM), Node->end());
       if (AD.is<trait::CoverAlias>()) {
-        auto *NewNode = newNode(*Current);
+        auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
+          *Current, {&NumAliasNode, &NumEstimateNode});
         Node->setParent(*NewNode, *this);
         return NewNode;
       }
@@ -461,25 +590,34 @@ AliasNode * AliasTree::addEmptyNode(
       Current = Node;
       continue;
     }
-    for (auto EM : Aliases) {
-      auto Node = EM->getAliasNode(*this);
-      assert(Node && "Alias node for memory location must not be null!");
-      auto AD = aliasRelation(*mAA, *mDL, NewEM, Node->begin(), Node->end());
-      if (AD.is<trait::CoverAlias>() ||
+    for (auto &Alias : Aliases) {
+      if (Alias.is<EstimateMemory *>()) {
+        auto EM = Alias.get<EstimateMemory *>();
+        auto Node = EM->getAliasNode(*this);
+        assert(Node && "Alias node for memory location must not be null!");
+        auto AD = aliasRelation(*mAA, *mDL, NewEM, Node->begin(), Node->end());
+        if (AD.is<trait::CoverAlias>() ||
           (AD.is<trait::CoincideAlias>() && !AD.is<trait::ContainedAlias>()))
-        continue;
+          continue;
+      }
       // If the new estimate location aliases with locations from different
       // alias nodes at the same level and does not cover (or coincide with)
       // memory described by this nodes, this nodes should be merged.
+      // If the new estimate location aliases with some unknown memory
+      // this nodes should be merged also. However, in this case it is possible
+      // to go down to the next level in the alias tree.
       auto I = Aliases.begin(), EI = Aliases.end();
-      auto ForwardNode = (*I)->getAliasNode(*this);
+      Current = getAliasNode(*I);
       for (++I; I != EI; ++I, ++NumMergedNode)
-        ForwardNode->mergeNodeIn(*(*I)->getAliasNode(*this), *this);
-      return ForwardNode;
+        Current->mergeNodeIn(*getAliasNode(*I), *this);
+      if (isa<AliasUnknownNode>(Current))
+        continue;
+      return cast<AliasEstimateNode>(Current);
     }
-    auto *NewNode = newNode(*Current);
-    for (auto EM : Aliases)
-      EM->getAliasNode(*this)->setParent(*NewNode, *this);
+    auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
+        *Current, {&NumAliasNode, &NumEstimateNode});
+    for (auto &Alias : Aliases)
+      getAliasNode(Alias)->setParent(*NewNode, *this);
     return NewNode;
   }
 }
@@ -496,20 +634,6 @@ AliasResult AliasTree::isSamePointer(
     }
   }
   return IsAmbiguous ? MayAlias : NoAlias;
-}
-
-bool AliasTree::slowMayAlias(
-    const EstimateMemory &LHS, const EstimateMemory &RHS) const {
-  for (auto &LHSPtr : LHS)
-    for (auto &RHSPtr : RHS) {
-      auto AR = mAA->alias(
-        MemoryLocation(LHSPtr, LHS.getSize(), LHS.getAAInfo()),
-        MemoryLocation(RHSPtr, RHS.getSize(), RHS.getAAInfo()));
-      if (AR == NoAlias)
-        continue;
-      return true;
-    }
-  return false;
 }
 
 const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
@@ -661,13 +785,13 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // for example, in call and invoke instructions.
   auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
       MemoryLocation &&Loc, bool IsRead = false, bool IsWrite = false) {
-    if (isa<MetadataAsValue>(Loc.Ptr))
-      return;
     AccessedMemory.insert(Loc.Ptr);
-    mAliasTree->add(std::move(Loc));
+    mAliasTree->add(Loc);
   };
   for_each_memory(F, TLI, addLocation,
-    [](const Instruction &/*I*/, bool IsRead = false, bool IsWrite = false) {});
+    [this](Instruction &I, bool IsRead = false, bool IsWrite = false) {
+      mAliasTree->addUnknown(&I);
+  });
   // If there are some pointers to memory locations which are not accessed
   // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already

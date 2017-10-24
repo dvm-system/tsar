@@ -14,7 +14,8 @@
 #include "EstimateMemory.h"
 #include "tsar_dbg_output.h"
 #include "tsar_pass.h"
-#include "llvm/Analysis/DOTGraphTraitsPass.h"
+#include <llvm/Analysis/DOTGraphTraitsPass.h>
+#include <llvm/IR/CallSite.h>
 #include <llvm/Support/GraphWriter.h>
 
 using namespace llvm;
@@ -24,22 +25,28 @@ namespace llvm {
 template<> struct DOTGraphTraits<AliasTree *> :
     public DefaultDOTGraphTraits {
 
+  using GT = GraphTraits<AliasTree *>;
+  using EdgeItr = typename GT::ChildIteratorType;
+
   explicit DOTGraphTraits(bool IsSimple = false) :
     DefaultDOTGraphTraits(IsSimple) {}
 
-  static std::string getGraphName(const AliasTree *) {
+  static std::string getGraphName(const AliasTree */*G*/) {
     return "Alias Tree";
   }
 
-  std::string getNodeLabel(AliasNode *Node, AliasTree *Graph) {
-    if (Node == Graph->getTopLevelNode())
+  std::string getNodeLabel(AliasTopNode */*N*/, AliasTree */*G*/) {
       return "Whole Memory";
+  }
+
+  std::string getNodeLabel(AliasEstimateNode *N, AliasTree */*G*/) {
     std::string Str;
     llvm::raw_string_ostream OS(Str);
-    for (auto &EM : *Node) {
+    for (auto &EM : *N) {
       if (isSimple()) {
         printLocationSource(OS,
           MemoryLocation(EM.front(), EM.getSize(), EM.getAAInfo()));
+        OS << ' ';
       } else if (EM.isAmbiguous()) {
         OS << "Ambiguous, size ";
         if (EM.getSize() == MemoryLocation::UnknownSize)
@@ -67,6 +74,59 @@ template<> struct DOTGraphTraits<AliasTree *> :
       }
     }
     return OS.str();
+  }
+
+  std::string getNodeLabel(AliasUnknownNode *N, AliasTree */*G*/) {
+    std::string Str;
+    llvm::raw_string_ostream OS(Str);
+    OS << "Unknown Memory\n";
+    for (auto &Unknown : *N) {
+      if (isSimple()) {
+        ImmutableCallSite CS(Unknown);
+        if (auto Callee = [CS]() {
+          return !CS ? nullptr : dyn_cast<Function>(
+            CS.getCalledValue()->stripPointerCasts());
+        }())
+          Callee->printAsOperand(OS, false);
+        else
+          Unknown->printAsOperand(OS, false);
+        OS << ' ';
+      } else if (isa<Function>(*Unknown)) {
+        Unknown->printAsOperand(OS, true);
+        OS << "\\l";
+      }
+      else {
+        Unknown->print(OS, true);
+        OS << "\\l";
+      }
+    }
+   return OS.str();
+  }
+
+  struct GetNodeLabelSwitch {
+    template<class Ty> void operator()() {
+      if (!isa<Ty>(Node))
+        return;
+      Result = This->getNodeLabel(cast<Ty>(Node), Graph);
+    }
+
+    DOTGraphTraits<AliasTree *> *This;
+    AliasNode *Node;
+    AliasTree *Graph;
+    std::string Result;
+  };
+
+  std::string getNodeLabel(AliasNode *N, AliasTree *G) {
+    GetNodeLabelSwitch Switch{ this, N, G };
+    AliasNode::KindList::for_each_type(Switch);
+    return std::move(Switch.Result);
+  }
+
+  static std::string getEdgeAttributes(
+    AliasNode *N, EdgeItr /*E*/, const AliasTree */*G*/) {
+    if (isa<AliasUnknownNode>(N))
+      return "style=dashed";
+    return "";
   }
 };
 

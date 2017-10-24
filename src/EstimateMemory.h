@@ -8,7 +8,27 @@
 // pointer references in hierarchical way. Each AliasNode refers to memory
 // disjoint from its sibling nodes. Union of memory from a parent node covers
 // (or coincide with) all memory from its children. To represent memory location
-// EstimateMemory class is used.
+// EstimateMemory class is used. The special case is representation of unknown
+// memory. For example, such memory is accessed by function calls. For this
+// reason special nodes (AliasUnknownNode) are used. Union of memory from such
+// node may not cover (or coincide with) all memory from its children. But
+// parent of this node covers (or coincide with) union of all memory from this
+// node and all memory from its children.
+//
+// Let us consider an example.
+//   int X, Y;
+//   void bar();
+//   void foo() { ++X; ++Y; bar(); }
+//
+// The alias tree is
+//  AliasTopNode
+//       |
+//  AliasUnknownNode: <memory accessed by a call of bar(); }
+//       |                         |
+//  AliasEstimateNode: X      AliasEstimateNode: Y
+//
+// Note that relation between memory accessed by a call of bar, X and Y is
+// unknown.
 //
 // EstimateMemoryPass is also proposed to construct an AliasTree.
 //
@@ -29,9 +49,12 @@
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/MemoryLocation.h>
+#include <llvm/IR/ValueHandle.h>
 #include <llvm/Pass.h>
+#include <array>
 #include <iterator>
 #include <tuple>
+#include <vector>
 
 namespace llvm {
 class EstimateMemoryPass;
@@ -39,6 +62,9 @@ class DataLayout;
 }
 
 namespace tsar {
+class AliasTopNode;
+class AliasEstimateNode;
+class AliasUnknownNode;
 class AliasNode;
 class AliasTree;
 class EstimateMemory;
@@ -402,8 +428,8 @@ public:
   ///
   /// This is not a thread-safe method.
   /// This uses union-find algorithm to search real alias node for the location.
-  AliasNode * getAliasNode(const AliasTree &G) {
-    return const_cast<AliasNode *>(
+  AliasEstimateNode * getAliasNode(const AliasTree &G) {
+    return const_cast<AliasEstimateNode *>(
       static_cast<const EstimateMemory *>(this)->getAliasNode(G));
   }
 
@@ -411,7 +437,7 @@ public:
   ///
   /// This is not a thread-safe method.
   /// This uses union-find algorithm to search real alias node for the location.
-  const AliasNode * getAliasNode(const AliasTree &G) const;
+  const AliasEstimateNode * getAliasNode(const AliasTree &G) const;
 
   /// Returns true if this location and a specified one have the same bases.
   bool isSameBase(const EstimateMemory &EM) const noexcept {
@@ -527,7 +553,7 @@ private:
   const AmbiguousRef & getAmbiguousList() noexcept { return mAmbiguous; }
 
   /// Add this location to a specified node `N` in alias tree.
-  void setAliasNode(AliasNode &N, const AliasTree &G);
+  void setAliasNode(AliasEstimateNode &N, const AliasTree &G);
 
   friend class AliasTree;
   friend class bcl::Chain<EstimateMemory, Hierarchy>;
@@ -535,27 +561,27 @@ private:
   uint64_t mSize;
   llvm::AAMDNodes mAATags;
   AmbiguousRef mAmbiguous;
-  mutable AliasNode *mNode = nullptr;
+  mutable AliasEstimateNode *mNode = nullptr;
   EstimateMemory *mParent = nullptr;
   ChildList mChildren;
 };
 
-/// This represents node in an alias tree which refers an alias sequence of
-/// estimate memory locations.
+/// This represents node in an alias tree which refers an alias sequence
+/// of estimate memory locations.
 class AliasNode :
   public llvm::ilist_node<AliasNode, llvm::ilist_tag<Pool>,
-  llvm::ilist_sentinel_tracking<true>>,
+    llvm::ilist_sentinel_tracking<true>>,
   public llvm::ilist_node<AliasNode, llvm::ilist_tag<Sibling>> {
 
   using ChildList = llvm::simple_ilist<AliasNode, llvm::ilist_tag<Sibling>>;
-  using AliasList = llvm::simple_ilist<EstimateMemory, llvm::ilist_tag<Alias>>;
 
 public:
-  /// This type is used to iterate over all alias memory locations in this node.
-  using iterator = AliasList::iterator;
+  /// List of available node kinds.
+  using KindList = bcl::TypeList<
+    AliasTopNode, AliasEstimateNode, AliasUnknownNode>;
 
-  /// This type is used to iterate over all alias memory locations in this node.
-  using const_iterator = AliasList::const_iterator;
+  /// Kind of node.
+  using Kind = uint8_t;
 
   /// This type is used to iterate over all children of this node.
   using child_iterator = ChildList::iterator;
@@ -563,25 +589,15 @@ public:
   /// This type is used to iterate over all children of this node.
   using const_child_iterator = ChildList::const_iterator;
 
+  virtual ~AliasNode() = default;
+
   AliasNode(const AliasNode &) = delete;
   AliasNode(AliasNode &&) = delete;
   AliasNode & operator=(const AliasNode &) = delete;
   AliasNode & operator=(AliasNode &&) = delete;
 
-  /// Returns iterator that points to the beginning of the alias list.
-  iterator begin() { return mAliases.begin(); }
-
-  /// Returns iterator that points to the beginning of the alias list.
-  const_iterator begin() const { mAliases.begin(); }
-
-  /// Returns iterator that points to the ending of the alias list.
-  iterator end() { return mAliases.end(); }
-
-  /// Returns iterator that points to the ending of the alias list.
-  const_iterator end() const { return mAliases.end(); }
-
-  /// Returns true if the node does not contain memory locations.
-  bool empty() const noexcept { return mAliases.empty(); }
+  /// Returns the kind of this node.
+  Kind getKind() const noexcept { return mKind; }
 
   /// Returns parent of the node.
   AliasNode * getParent(const AliasTree &G) {
@@ -606,16 +622,7 @@ public:
 
   /// Merges two nodes with a common parent or an immediate child into a parent.
   void mergeNodeIn(AliasNode &AN, const AliasTree &G) {
-    assert(!AN.mForward && "Alias node is already forwarding!");
-    assert(!mForward && "This set is a forwarding node!");
-    assert(AN.getParent(G) == getParent(G) || AN.getParent(G) == this &&
-      "Only nodes with a common parent or an immediate child in a parent can be merged!");
-    assert(&AN != this && "Alias node can not be merged with itself!");
-    AN.mForward = this;
-    retain();
-    mChildren.splice(mChildren.end(), AN.mChildren);
-    mAliases.splice(mAliases.end(), AN.mAliases);
-    AN.getParent(G)->mChildren.erase(child_iterator(AN));
+    KindList::for_each_type(MergeNodeInSwitch{ *this, AN, G });
   }
 
   /// \brief Returns true if this node should be ignored as a part of the graph
@@ -640,12 +647,52 @@ public:
     }
     return Dest;
   }
-private:
-  friend AliasTree;
-  friend EstimateMemory;
+protected:
+  /// Creates an empty node of a specified kind `K`.
+  explicit AliasNode(Kind K) : mKind(K) {};
 
-  /// Creates an empty node.
-  AliasNode() {};
+  /// This functor switches to an appropriate method depending on a node type.
+  struct MergeNodeInSwitch {
+    template<class Ty> void operator()() {
+      if (!llvm::isa<Ty>(This))
+        return;
+      llvm::cast<Ty>(This).mergeNodeInImp(Forward, Tree);
+    }
+    AliasNode &This;
+    AliasNode &Forward;
+    const AliasTree &Tree;
+  };
+
+  /// This functor switches to an appropriate method depending on a node type.
+  struct SlowMayAliasSwitch {
+    template<class Ty> void operator()() {
+      if (!llvm::isa<Ty>(This))
+        return;
+      Result = llvm::cast<Ty>(This).slowMayAliasImp(EM, AA);
+    }
+    AliasNode &This;
+    const EstimateMemory &EM;
+    llvm::AAResults &AA;
+    std::pair<bool, EstimateMemory *> Result;
+  };
+
+  /// This functor switches to an appropriate method depending on a node type.
+  struct SlowMayAliasUnknownSwitch {
+    template<class Ty> void operator()() {
+      if (!llvm::isa<Ty>(This))
+        return;
+      Result = llvm::cast<Ty>(This).slowMayAliasUnknownImp(I, AA);
+    }
+    const AliasNode &This;
+    const llvm::Instruction *I;
+    llvm::AAResults &AA;
+    bool Result;
+  };
+
+  friend AliasTree;
+  friend MergeNodeInSwitch;
+  friend SlowMayAliasSwitch;
+  friend SlowMayAliasUnknownSwitch;
 
   /// Specifies a parent for this node.
   void setParent(AliasNode &Parent, const AliasTree &G) {
@@ -658,22 +705,229 @@ private:
     mParent->retain();
   }
 
-  /// Inserts new estimate memory location at the end of memory sequence.
-  void push_back(EstimateMemory &EM) { mAliases.push_back(EM); }
-
   /// Increases number of references to this node.
   void retain() const noexcept { ++mRefCount; }
-
 
   /// Decreases a number of references to this node and remove it from a
   /// specified graph if there is no references any more.
   void release(const AliasTree &G) const;
 
+  /// Merges two nodes with a common parent or an immediate child into a parent.
+  /// This is basic implementation which shall be used by derived classes.
+  void mergeNodeInImp(AliasNode &AN, const AliasTree &G) {
+    assert(!AN.mForward && "Alias node is already forwarding!");
+    assert(!mForward && "This set is a forwarding node!");
+    assert(AN.getParent(G) == getParent(G) || AN.getParent(G) == this &&
+      "Only nodes with a common parent or an immediate child in a parent can be merged!");
+    assert(&AN != this && "Alias node can not be merged with itself!");
+    assert(getKind() == AN.getKind() &&
+      "Nodes of the same kind can be merged only!");
+    AN.mForward = this;
+    retain();
+    mChildren.splice(mChildren.end(), AN.mChildren);
+    AN.getParent(G)->mChildren.erase(child_iterator(AN));
+  }
+
+  /// \brief Checks whether specified estimate locations may alias
+  /// one of the members of this node.
+  ///
+  /// This method is potentially slow because in the worst cast it uses
+  /// AAResults::alias() method to compare all possible pairs of ambiguous
+  /// pointers.
+  /// \return True in case of alias relation, if a known location is found it
+  /// is returned as a second part of a pair.
+  std::pair<bool, EstimateMemory *> slowMayAlias(
+      const EstimateMemory &EM, llvm::AAResults &AA) {
+    SlowMayAliasSwitch Switch{ *this, EM, AA };
+    KindList::for_each_type(Switch);
+    return std::move(Switch.Result);
+  }
+
+  /// This is a stub for nodes which does not support slowMayAlias().
+  std::pair<bool, EstimateMemory *> slowMayAliasImp(
+      const EstimateMemory &/*EM*/, llvm::AAResults &/*AA*/) {
+    llvm_unreachable("slowMayAlias() is not implemented for this node!");
+    return std::make_pair(false, nullptr);
+  }
+
+  /// \brief Returns true if a memory accessed by a specified instruction may
+  /// alias one of the members of this node.
+  ///
+  /// This method is potentially slow because in the worst cast it uses
+  /// AAResults::alias() method to compare all possible pairs of ambiguous
+  /// pointers.
+  bool slowMayAliasUnknown(
+      const llvm::Instruction *I, llvm::AAResults &AA) const {
+    SlowMayAliasUnknownSwitch Switch{ *this, I, AA };
+    KindList::for_each_type(Switch);
+    return std::move(Switch.Result);
+  }
+
+  /// This is a stub for nodes which does not support slowMayAliasUnknown().
+  bool slowMayAliasUnknownImp(
+      const llvm::Instruction */*I*/, llvm::AAResults &/*AA*/) const {
+    llvm_unreachable("slowMayAliasUnknown() is not implemented for this node!");
+    return false;
+  }
+
+  Kind mKind;
   mutable AliasNode *mParent = nullptr;
   ChildList mChildren;
-  AliasList mAliases;
   mutable AliasNode *mForward = nullptr;
   mutable unsigned mRefCount = 0;
+};
+
+/// This represents a root of an alias tree.
+class AliasTopNode : public AliasNode {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const AliasNode *N) {
+    return N->getKind() == KindList::index_of<AliasTopNode>();
+  }
+
+private:
+  friend AliasTree;
+
+  /// Default constructor.
+  AliasTopNode() : AliasNode(KindList::index_of<AliasTopNode>()) {}
+};
+
+class AliasEstimateNode : public AliasNode {
+  using AliasList = llvm::simple_ilist<EstimateMemory, llvm::ilist_tag<Alias>>;
+
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const AliasNode *N) {
+    return N->getKind() == KindList::index_of<AliasEstimateNode>();
+  }
+
+  /// This type is used to iterate over all alias memory locations in this node.
+  using iterator = AliasList::iterator;
+
+  /// This type is used to iterate over all alias memory locations in this node.
+  using const_iterator = AliasList::const_iterator;
+
+  /// Returns iterator that points to the beginning of the alias list.
+  iterator begin() { return mAliases.begin(); }
+
+  /// Returns iterator that points to the beginning of the alias list.
+  const_iterator begin() const { return mAliases.begin(); }
+
+  /// Returns iterator that points to the ending of the alias list.
+  iterator end() { return mAliases.end(); }
+
+  /// Returns iterator that points to the ending of the alias list.
+  const_iterator end() const { return mAliases.end(); }
+
+  /// Returns true if the node does not contain memory locations.
+  bool empty() const noexcept(noexcept(std::declval<AliasList>().empty())) {
+    return mAliases.empty();
+  }
+
+private:
+  friend AliasNode;
+  friend AliasTree;
+  friend EstimateMemory;
+  friend MergeNodeInSwitch;
+  friend SlowMayAliasSwitch;
+  friend SlowMayAliasUnknownSwitch;
+
+  /// Default constructor.
+  AliasEstimateNode() : AliasNode(KindList::index_of<AliasEstimateNode>()) {}
+
+  /// Inserts new estimate memory location at the end of memory sequence.
+  void push_back(EstimateMemory &EM) { mAliases.push_back(EM); }
+
+  /// Merges two nodes with a common parent or an immediate child into a parent.
+  void mergeNodeInImp(AliasNode &AN, const AliasTree &G) {
+    AliasNode::mergeNodeInImp(AN, G);
+    mAliases.splice(mAliases.end(), llvm::cast<AliasEstimateNode>(AN).mAliases);
+  }
+
+  /// Implementation for appropriate function from the base class.
+  std::pair<bool, EstimateMemory *> slowMayAliasImp(
+    const EstimateMemory &EM, llvm::AAResults &AA);
+
+  /// Implementation for appropriate function from the base class.
+  bool slowMayAliasUnknownImp(
+    const llvm::Instruction *I, llvm::AAResults &AA) const;
+
+   AliasList mAliases;
+};
+
+/// This represents information of accesses to unknown memory.
+class AliasUnknownNode : public AliasNode {
+  using UnknownList = std::vector<llvm::AssertingVH<llvm::Instruction>>;
+
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const AliasNode *N) {
+    return N->getKind() == KindList::index_of<AliasUnknownNode>();
+  }
+
+  /// This type is used to iterate over all alias memory locations in this node.
+  using iterator = UnknownList::iterator;
+
+  /// This type is used to iterate over all alias memory locations in this node.
+  using const_iterator = UnknownList::const_iterator;
+
+  /// Returns iterator that points to the beginning of the alias list.
+  iterator begin() { return mUnknownInsts.begin(); }
+
+  /// Returns iterator that points to the beginning of the alias list.
+  const_iterator begin() const { return mUnknownInsts.begin(); }
+
+  /// Returns iterator that points to the ending of the alias list.
+  iterator end() { return mUnknownInsts.end(); }
+
+  /// Returns iterator that points to the ending of the alias list.
+  const_iterator end() const { return mUnknownInsts.end(); }
+
+  /// Returns true if the node does not contain memory locations.
+  bool empty() const noexcept(noexcept(std::declval<UnknownList>().empty())) {
+    return mUnknownInsts.empty();
+  }
+
+private:
+  friend AliasNode;
+  friend AliasTree;
+  friend MergeNodeInSwitch;
+  friend SlowMayAliasSwitch;
+  friend SlowMayAliasUnknownSwitch;
+
+  /// Default constructor.
+  AliasUnknownNode() : AliasNode(KindList::index_of<AliasUnknownNode>()) {}
+
+  /// Inserts unknown memory access at the end of unknown memory sequence.
+  void push_back(llvm::Instruction *I) { mUnknownInsts.emplace_back(I); }
+
+  /// Merges two nodes with a common parent or an immediate child into a parent.
+  void mergeNodeInImp(AliasNode &AN, const AliasTree &G) {
+    auto &UN = llvm::cast<AliasUnknownNode>(AN);
+    AliasNode::mergeNodeInImp(AN, G);
+    if (empty()) {
+      if (!UN.empty()) {
+        std::swap(mUnknownInsts, UN.mUnknownInsts);
+        retain();
+        UN.release(G);
+      }
+    } else if (!UN.empty()) {
+      mUnknownInsts.insert(mUnknownInsts.end(),
+        UN.mUnknownInsts.begin(), UN.mUnknownInsts.end());
+      UN.mUnknownInsts.clear();
+      UN.release(G);
+    }
+  }
+
+  /// Implementation for appropriate function from the base class.
+  std::pair<bool, EstimateMemory *> slowMayAliasImp(
+    const EstimateMemory &EM, llvm::AAResults &AA);
+
+  /// Implementation for appropriate function from the base class.
+  bool slowMayAliasUnknownImp(
+    const llvm::Instruction *I, llvm::AAResults &AA) const;
+
+  UnknownList mUnknownInsts;
 };
 
 class AliasTree {
@@ -755,7 +1009,7 @@ public:
 
   /// Creates empty alias tree.
   AliasTree(llvm::AAResults &AA, const llvm::DataLayout &DL) :
-    mAA(&AA), mDL(&DL), mTopLevelNode(new AliasNode) {
+    mAA(&AA), mDL(&DL), mTopLevelNode(new AliasTopNode) {
     mNodes.push_back(mTopLevelNode);
   }
 
@@ -804,6 +1058,9 @@ public:
   /// Inserts new estimate memory location.
   void add(const llvm::MemoryLocation &Loc);
 
+  /// Inserts unknown memory access.
+  void addUnknown(llvm::Instruction *I);
+
   /// Removes node from the graph, note that this class manages memory
   /// allocation to store nodes.
   void removeNode(AliasNode *N);
@@ -829,6 +1086,18 @@ public:
   void viewOnly() const;
 
 private:
+  /// Allocates memory for a new child node of a specified parent and increases
+  /// value of each count from a specified list of counts.
+  template<class NodeTy, class CountTy, std::size_t CountNum>
+  NodeTy * make_node(
+      AliasNode &Parent, std::array<CountTy *, CountNum> Counts) {
+    auto *NewNode = new NodeTy;
+    for (auto Count : Counts)
+      ++(*Count);
+    mNodes.push_back(NewNode);
+    NewNode->setParent(Parent, *this);
+    return NewNode;
+  }
   /// Performs depth-first search of a new node insertion point
   /// and insert a new empty node, if it is necessary.
   ///
@@ -837,18 +1106,12 @@ private:
   /// \param [in] Start Start node for search.
   /// \return Alias node that should refer to a specified memory `NewEM`.
   /// This method may merge some nodes or return already existing one.
-  AliasNode * addEmptyNode(const EstimateMemory &NewEM, AliasNode &Start);
+  AliasEstimateNode * addEmptyNode(
+    const EstimateMemory &NewEM, AliasNode &Start);
 
   /// Checks whether pointers to specified locations may refer the same address.
   llvm::AliasResult isSamePointer(
     const EstimateMemory &EM, const llvm::MemoryLocation &Loc) const;
-
-  /// \brief Checks whether specified estimate locations may alias each other.
-  ///
-  /// This method is potentially slow because in the worst cast it uses
-  /// AAResults::alias() method to compare all possible pairs of ambiguous
-  /// pointers.
-  bool slowMayAlias(const EstimateMemory &LHS, const EstimateMemory &RHS) const;
 
   /// Inserts a new base location into the stripped map or update existing ones.
   ///
@@ -878,7 +1141,8 @@ private:
   StrippedMap mBases;
 };
 
-inline void EstimateMemory::setAliasNode(AliasNode &N, const AliasTree &G) {
+inline void EstimateMemory::setAliasNode(
+    AliasEstimateNode &N, const AliasTree &G) {
   if (mNode)
     mNode->release(G);
   mNode = &N;
