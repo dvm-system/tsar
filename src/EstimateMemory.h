@@ -369,6 +369,16 @@ public:
     return mSize != llvm::MemoryLocation::UnknownSize;
   }
 
+  /// Returns true if this location is explicitly mentioned in a
+  /// source code.
+  bool isExplicit() const noexcept { return mIsExplicit; }
+
+  /// Marks this node as explicitly mentioned in a source code if `true` is
+  /// specified.
+  void setExplicit(bool IsExplicit = true) noexcept {
+    mIsExplicit = IsExplicit;
+  }
+
   /// Returns the metadata nodes which describes the aliasing of the location,
   /// or null if there is no information or conflicting information.
   llvm::AAMDNodes getAAInfo() const {
@@ -564,6 +574,7 @@ private:
   mutable AliasEstimateNode *mNode = nullptr;
   EstimateMemory *mParent = nullptr;
   ChildList mChildren;
+  bool mIsExplicit = false;
 };
 
 /// This represents node in an alias tree which refers an alias sequence

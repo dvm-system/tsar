@@ -371,6 +371,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
     EstimateMemory *EM;
     bool IsNew, AddAmbiguous;
     std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
+    EM->setExplicit(EM->isExplicit() || !PrevChainEnd);
     DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous));
     assert(EM && "New estimate memory must not be null!");
     if (PrevChainEnd && PrevChainEnd != EM) {

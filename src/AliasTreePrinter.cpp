@@ -46,13 +46,15 @@ template<> struct DOTGraphTraits<AliasTree *> :
       if (isSimple()) {
         printLocationSource(OS,
           MemoryLocation(EM.front(), EM.getSize(), EM.getAAInfo()));
-        OS << ' ';
+        OS << (!EM.isExplicit() ? "*" : "") << ' ';
       } else if (EM.isAmbiguous()) {
         OS << "Ambiguous, size ";
         if (EM.getSize() == MemoryLocation::UnknownSize)
-          OS << "unknown\\l";
+          OS << "unknown";
         else
-          OS << EM.getSize() << "\\l";
+          OS << EM.getSize();
+        OS << (EM.isExplicit() ? ", explicit" : ", implicit");
+        OS << "\\l";
         for (auto Ptr : EM) {
           OS << "  ";
           if (isa<Function>(Ptr))
@@ -68,9 +70,11 @@ template<> struct DOTGraphTraits<AliasTree *> :
           EM.front()->print(OS, true);
         OS << ", size ";
         if (EM.getSize() == MemoryLocation::UnknownSize)
-          OS << "unknown\\l";
+          OS << "unknown";
         else
-          OS << EM.getSize() << "\\l";
+          OS << EM.getSize();
+        OS << (EM.isExplicit() ? ", explicit" : ", implicit");
+        OS << "\\l";
       }
     }
     return OS.str();
