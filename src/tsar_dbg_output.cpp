@@ -42,7 +42,7 @@ void printLocationSource(
     O << "?";
   else
     O << Loc.Size;
-  O << "> ";
+  O << ">";
 }
 
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {
