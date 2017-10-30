@@ -43,6 +43,7 @@
 #include <Chain.h>
 #include <trait.h>
 #include <utility.h>
+#include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/simple_ilist.h>
@@ -1383,5 +1384,16 @@ public:
 private:
   tsar::AliasTree *mAliasTree = nullptr;
 };
+}
+
+namespace tsar {
+/// Applies a function to each node which aliases with a specified one.
+template<class FuncTy> void for_each_alias(AliasNode *AN, FuncTy &&Func) {
+  assert(AN && "Alias node must not be null!");
+  for (auto N = AN->getParent(); N; Curr = N->getParent())
+    Func(Curr);
+  for (auto N : llvm::make_range(llvm::df_begin(AN), llvm::df_end(AN)))
+    Func(N);
+}
 }
 #endif//TSAR_ESTIMATE_MEMORY_H
