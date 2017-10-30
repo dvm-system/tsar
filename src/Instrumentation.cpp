@@ -1,9 +1,14 @@
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/IRBuilder.h>
 #include "Instrumentation.h"
 #include "Intrinsics.h"
 
 using namespace llvm;
 using namespace tsar;
+
+Instrumentation::Instrumentation(LoopInfo &LI, Function &F): LoopInfo_(LI) {
+  visitFunction(F);	
+}  
 
 void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   Function* Fun;	
@@ -51,28 +56,114 @@ void Instrumentation::visitInvokeInst(llvm::InvokeInst &I) {
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
   //not llvm function	
   if(I.getFunction()->isIntrinsic())
-    return;	  
+    return;  
   //not tsar instrumentation function
-  for(int i = 1; i<static_cast<int>(tsar::IntrinsicId::num_intrinsics); ++i){
-    if(tsar::getName(static_cast<tsar::IntrinsicId>(i))
-      .equals(I.getFunction()->getName())) {
-      return;
-    }      
+  IntrinsicId Id;
+  if(getTsarLibFunc(I.getFunction()->getName().data(), Id)) {
+    return;
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
   CallInst::Create(Fun, {}, "", &I);	  
 }
 
+void Instrumentation::loopBeginInstr(llvm::Loop const *L, llvm::BasicBlock &Header){
+  //looking through all possible loop predeccessors
+  for(auto it = pred_begin(&Header), et = pred_end(&Header); it != et; ++it) {
+    BasicBlock* Predeccessor = *it;
+    if(!L->contains(Predeccessor)) {	
+      auto ExitInstr = Predeccessor->getTerminator();
+      //looking for successor which is our Header
+      for(unsigned I = 0; I < ExitInstr->getNumSuccessors(); ++I) {
+        //create a new BasicBlock between predeccessor and Header
+	//insert a function call there	
+	if(ExitInstr->getSuccessor(I) == &Header) {
+          //looks like label "loop_begin" would be 
+	  //renamed automatically to make it unique		  
+          auto Block4Insert = BasicBlock::Create(Header.getContext(), 
+	   "loop_begin", Header.getParent());
+          IRBuilder<> Builder(Block4Insert, Block4Insert->end());
+          Builder.CreateBr(ExitInstr->getSuccessor(I));
+          ExitInstr->setSuccessor(I, Block4Insert);
+          Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
+	    (Block4Insert)->begin()));
+          auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_begin);
+          auto Call = Builder.CreateCall(Fun);    
+	}
+      }	  
+    }
+  }
+}
+
+void Instrumentation::loopEndInstr(llvm::Loop const *L, llvm::BasicBlock &Header) {
+  //Creating a node between inside/outside blocks of the loop. Then insert
+  //call of tsarSLEnd() in this node.
+  SmallVector<BasicBlock*, 8> ExitBlocks;
+  SmallVector<BasicBlock*, 8> ExitingBlocks;
+  L->getExitBlocks(ExitBlocks);
+  L->getExitingBlocks(ExitingBlocks);
+
+  for(auto Exiting: ExitingBlocks) {
+    auto ExitInstr = Exiting->getTerminator();
+    for(unsigned SucNumb = 0; SucNumb < ExitInstr->getNumSuccessors(); ++SucNumb) {
+      for(auto Exit : ExitBlocks) {
+        if(Exiting->getTerminator()->getSuccessor(SucNumb) == Exit) {    	
+          auto Block4Insert = BasicBlock::Create(Header.getContext(),"loop_exit", Header.getParent());
+          IRBuilder<> Builder(Block4Insert, Block4Insert->end());
+          Builder.CreateBr(ExitInstr->getSuccessor(SucNumb));
+          ExitInstr->setSuccessor(SucNumb, Block4Insert);
+          Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
+	    (Block4Insert)->begin()));
+          auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_end);
+          auto Call = Builder.CreateCall(Fun);    
+	}
+      }	
+    }
+  }
+}
+
+void Instrumentation::loopIterInstr(llvm::Loop const *L, 
+  llvm::BasicBlock &Header) {
+  auto HeaderTerm = Header.getTerminator();
+  //looking for all Header successors which are inside the loop
+  //then insert call of sapforSLIter at the begginning of these successors
+  for(unsigned I = 0; I < HeaderTerm->getNumSuccessors(); ++I) {
+    auto CurSucc = HeaderTerm->getSuccessor(I);
+    if(L->contains(CurSucc)) {
+      auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
+      CallInst::Create(Fun, {}, "", &(*CurSucc->begin()));	  
+    }
+  }
+}
+void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
+  if(LoopInfo_.isLoopHeader(&B)) {
+    auto Loop = LoopInfo_.getLoopFor(&B);	  
+    loopBeginInstr(Loop, B);
+    loopEndInstr(Loop, B);
+    loopIterInstr(Loop, B);
+  }
+
+  //visit all Instructions
+  for(auto &I : B){
+    visit(I);
+  } 
+}
+
 void Instrumentation::visitFunction(llvm::Function &F) {
   if(F.isIntrinsic())
     return;	  
-  for(int i = 1; i < static_cast<int>(IntrinsicId::num_intrinsics); ++i) {
-    if(getName(static_cast<IntrinsicId>(i)).equals(F.getName()))
-      return;	    
+
+  IntrinsicId Id;
+  if(getTsarLibFunc(F.getName().data(), Id)) {
+    return;
   }
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
   auto Begin = inst_begin(F);	  
   CallInst::Create(Fun, {}, "", &(*Begin));
+
+  //visit all Blocks
+  for(auto &I : F.getBasicBlockList()) {
+    visitBasicBlock(I);
+  }    
 }
 
 

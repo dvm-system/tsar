@@ -85,3 +85,12 @@ def func_end : Intrinsic<"sapforFuncEnd",
 
 def func_call_end : Intrinsic<"sapforFuncCallEnd",
                         tsar_void_ty>;
+
+def sl_begin : Intrinsic<"sapforSLBegin",
+                        tsar_void_ty>;
+
+def sl_end : Intrinsic<"sapforSLEnd",
+                        tsar_void_ty>;
+
+def sl_iter : Intrinsic<"sapforSLIter",
+                        tsar_void_ty>;
