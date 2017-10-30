@@ -587,12 +587,16 @@ class AliasNode :
   using ChildList = llvm::simple_ilist<AliasNode, llvm::ilist_tag<Sibling>>;
 
 public:
-  /// List of available node kinds.
-  using KindList = bcl::TypeList<
-    AliasTopNode, AliasEstimateNode, AliasUnknownNode>;
-
   /// Kind of node.
-  using Kind = uint8_t;
+  enum Kind : uint8_t {
+    FIRST_KIND = 0,
+    KIND_TOP = FIRST_KIND,
+    KIND_ESTIMATE,
+    KIND_UNKNOWN,
+    LAST_KIND = KIND_UNKNOWN,
+    INVALID_KIND,
+    NUMBER_KIND = INVALID_KIND,
+  };
 
   /// This type is used to iterate over all children of this node.
   using child_iterator = ChildList::iterator;
@@ -632,9 +636,7 @@ public:
   const_child_iterator child_end() const { return mChildren.end(); }
 
   /// Merges two nodes with a common parent or an immediate child into a parent.
-  void mergeNodeIn(AliasNode &AN, const AliasTree &G) {
-    KindList::for_each_type(MergeNodeInSwitch{ *this, AN, G });
-  }
+  void mergeNodeIn(AliasNode &AN, const AliasTree &G);
 
   /// \brief Returns true if this node should be ignored as a part of the graph
   /// due to this node has been merged with some other node.
@@ -662,48 +664,7 @@ protected:
   /// Creates an empty node of a specified kind `K`.
   explicit AliasNode(Kind K) : mKind(K) {};
 
-  /// This functor switches to an appropriate method depending on a node type.
-  struct MergeNodeInSwitch {
-    template<class Ty> void operator()() {
-      if (!llvm::isa<Ty>(This))
-        return;
-      llvm::cast<Ty>(This).mergeNodeInImp(Forward, Tree);
-    }
-    AliasNode &This;
-    AliasNode &Forward;
-    const AliasTree &Tree;
-  };
-
-  /// This functor switches to an appropriate method depending on a node type.
-  struct SlowMayAliasSwitch {
-    template<class Ty> void operator()() {
-      if (!llvm::isa<Ty>(This))
-        return;
-      Result = llvm::cast<Ty>(This).slowMayAliasImp(EM, AA);
-    }
-    AliasNode &This;
-    const EstimateMemory &EM;
-    llvm::AAResults &AA;
-    std::pair<bool, EstimateMemory *> Result;
-  };
-
-  /// This functor switches to an appropriate method depending on a node type.
-  struct SlowMayAliasUnknownSwitch {
-    template<class Ty> void operator()() {
-      if (!llvm::isa<Ty>(This))
-        return;
-      Result = llvm::cast<Ty>(This).slowMayAliasUnknownImp(I, AA);
-    }
-    const AliasNode &This;
-    const llvm::Instruction *I;
-    llvm::AAResults &AA;
-    bool Result;
-  };
-
   friend AliasTree;
-  friend MergeNodeInSwitch;
-  friend SlowMayAliasSwitch;
-  friend SlowMayAliasUnknownSwitch;
 
   /// Specifies a parent for this node.
   void setParent(AliasNode &Parent, const AliasTree &G) {
@@ -748,11 +709,7 @@ protected:
   /// \return True in case of alias relation, if a known location is found it
   /// is returned as a second part of a pair.
   std::pair<bool, EstimateMemory *> slowMayAlias(
-      const EstimateMemory &EM, llvm::AAResults &AA) {
-    SlowMayAliasSwitch Switch{ *this, EM, AA };
-    KindList::for_each_type(Switch);
-    return std::move(Switch.Result);
-  }
+    const EstimateMemory &EM, llvm::AAResults &AA);
 
   /// This is a stub for nodes which does not support slowMayAlias().
   std::pair<bool, EstimateMemory *> slowMayAliasImp(
@@ -768,11 +725,7 @@ protected:
   /// AAResults::alias() method to compare all possible pairs of ambiguous
   /// pointers.
   bool slowMayAliasUnknown(
-      const llvm::Instruction *I, llvm::AAResults &AA) const {
-    SlowMayAliasUnknownSwitch Switch{ *this, I, AA };
-    KindList::for_each_type(Switch);
-    return std::move(Switch.Result);
-  }
+      const llvm::Instruction *I, llvm::AAResults &AA) const;
 
   /// This is a stub for nodes which does not support slowMayAliasUnknown().
   bool slowMayAliasUnknownImp(
@@ -793,14 +746,14 @@ class AliasTopNode : public AliasNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const AliasNode *N) {
-    return N->getKind() == KindList::index_of<AliasTopNode>();
+    return N->getKind() == KIND_TOP;
   }
 
 private:
   friend AliasTree;
 
   /// Default constructor.
-  AliasTopNode() : AliasNode(KindList::index_of<AliasTopNode>()) {}
+  AliasTopNode() : AliasNode(KIND_TOP) {}
 };
 
 class AliasEstimateNode : public AliasNode {
@@ -809,7 +762,7 @@ class AliasEstimateNode : public AliasNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const AliasNode *N) {
-    return N->getKind() == KindList::index_of<AliasEstimateNode>();
+    return N->getKind() == KIND_ESTIMATE;
   }
 
   /// This type is used to iterate over all alias memory locations in this node.
@@ -839,12 +792,9 @@ private:
   friend AliasNode;
   friend AliasTree;
   friend EstimateMemory;
-  friend MergeNodeInSwitch;
-  friend SlowMayAliasSwitch;
-  friend SlowMayAliasUnknownSwitch;
 
   /// Default constructor.
-  AliasEstimateNode() : AliasNode(KindList::index_of<AliasEstimateNode>()) {}
+  AliasEstimateNode() : AliasNode(KIND_ESTIMATE) {}
 
   /// Inserts new estimate memory location at the end of memory sequence.
   void push_back(EstimateMemory &EM) { mAliases.push_back(EM); }
@@ -873,7 +823,7 @@ class AliasUnknownNode : public AliasNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const AliasNode *N) {
-    return N->getKind() == KindList::index_of<AliasUnknownNode>();
+    return N->getKind() == KIND_UNKNOWN;
   }
 
   /// This type is used to iterate over all alias memory locations in this node.
@@ -902,12 +852,9 @@ public:
 private:
   friend AliasNode;
   friend AliasTree;
-  friend MergeNodeInSwitch;
-  friend SlowMayAliasSwitch;
-  friend SlowMayAliasUnknownSwitch;
 
   /// Default constructor.
-  AliasUnknownNode() : AliasNode(KindList::index_of<AliasUnknownNode>()) {}
+  AliasUnknownNode() : AliasNode(KIND_UNKNOWN) {}
 
   /// Inserts unknown memory access at the end of unknown memory sequence.
   void push_back(llvm::Instruction *I) { mUnknownInsts.emplace_back(I); }
@@ -1031,6 +978,9 @@ public:
         delete EM;
     }
   }
+
+  /// Return the underlying alias analysis object used by this tree.
+  llvm::AAResults & getAliasAnalysis() const { return *mAA; }
 
   /// Returns root of the alias tree.
   AliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
@@ -1159,6 +1109,53 @@ inline void EstimateMemory::setAliasNode(
   mNode = &N;
   mNode->push_back(*this);
   mNode->retain();
+}
+
+inline void AliasNode::mergeNodeIn(AliasNode &AN, const AliasTree &G) {
+  switch (getKind()) {
+  default:
+    llvm_unreachable("Unknown kind of an alias node!");
+    break;
+  case KIND_TOP:
+    llvm::cast<AliasTopNode>(this)->mergeNodeInImp(AN, G);
+    break;
+  case KIND_ESTIMATE:
+    llvm::cast<AliasEstimateNode>(this)->mergeNodeInImp(AN, G);
+    break;
+  case KIND_UNKNOWN:
+    llvm::cast<AliasUnknownNode>(this)->mergeNodeInImp(AN, G);
+    break;
+  }
+}
+
+inline std::pair<bool, EstimateMemory *> AliasNode::slowMayAlias(
+    const EstimateMemory &EM, llvm::AAResults &AA) {
+  switch (getKind()) {
+  default:
+    llvm_unreachable("Unknown kind of an alias node!");
+    break;
+  case KIND_TOP:
+    return llvm::cast<AliasTopNode>(this)->slowMayAliasImp(EM, AA);
+  case KIND_ESTIMATE:
+    return llvm::cast<AliasEstimateNode>(this)->slowMayAliasImp(EM, AA);
+  case KIND_UNKNOWN:
+    return llvm::cast<AliasUnknownNode>(this)->slowMayAliasImp(EM, AA);
+  }
+}
+
+inline bool AliasNode::slowMayAliasUnknown(
+    const llvm::Instruction *I, llvm::AAResults &AA) const {
+  switch (getKind()) {
+  default:
+    llvm_unreachable("Unknown kind of an alias node!");
+    break;
+  case KIND_TOP:
+    return llvm::cast<AliasTopNode>(this)->slowMayAliasUnknownImp(I, AA);
+  case KIND_ESTIMATE:
+    return llvm::cast<AliasEstimateNode>(this)->slowMayAliasUnknownImp(I, AA);
+  case KIND_UNKNOWN:
+    return llvm::cast<AliasUnknownNode>(this)->slowMayAliasUnknownImp(I, AA);
+  }
 }
 
 inline void AliasNode::release(const AliasTree &G) const {

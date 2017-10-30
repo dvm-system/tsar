@@ -107,23 +107,18 @@ template<> struct DOTGraphTraits<AliasTree *> :
    return OS.str();
   }
 
-  struct GetNodeLabelSwitch {
-    template<class Ty> void operator()() {
-      if (!isa<Ty>(Node))
-        return;
-      Result = This->getNodeLabel(cast<Ty>(Node), Graph);
-    }
-
-    DOTGraphTraits<AliasTree *> *This;
-    AliasNode *Node;
-    AliasTree *Graph;
-    std::string Result;
-  };
-
   std::string getNodeLabel(AliasNode *N, AliasTree *G) {
-    GetNodeLabelSwitch Switch{ this, N, G };
-    AliasNode::KindList::for_each_type(Switch);
-    return std::move(Switch.Result);
+    switch (N->getKind()) {
+    default:
+      llvm_unreachable("Unknown kind of an alias node!");
+      break;
+    case AliasNode::KIND_TOP:
+      return getNodeLabel(cast<AliasTopNode>(N), G);
+    case AliasNode::KIND_ESTIMATE:
+      return getNodeLabel(cast<AliasEstimateNode>(N), G);
+    case AliasNode::KIND_UNKNOWN:
+      return getNodeLabel(cast<AliasUnknownNode>(N), G);
+    }
   }
 
   static std::string getEdgeAttributes(
