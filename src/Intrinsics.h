@@ -42,5 +42,8 @@ llvm::FunctionType *getType(llvm::LLVMContext &Ctx, IntrinsicId Id);
 
 /// Creates or inserts an LLVM Function declaration for an intrinsic.
 llvm::Function * getDeclaration(llvm::Module *M, IntrinsicId Id);
+
+/// Find tsar function by name. Return false if not found.
+bool getTsarLibFunc(llvm::StringRef funcName, IntrinsicId &Id); 
 }
 #endif//TSAR_INTRINSICS_H

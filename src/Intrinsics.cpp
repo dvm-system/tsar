@@ -98,4 +98,18 @@ llvm::Function * getDeclaration(Module *M, IntrinsicId Id) {
   return cast<Function>(
     M->getOrInsertFunction(getName(Id), getType(M->getContext(), Id)));
 }
+
+bool getTsarLibFunc(StringRef funcName, IntrinsicId &Id) {
+  const char* const *Start = &IntrinsicNameTable[0];
+  const char* const *End = 
+    &IntrinsicNameTable[(unsigned)IntrinsicId::num_intrinsics];
+  if (funcName.empty())
+    return false;
+  const char* const *I = std::find(Start, End, funcName); 
+  if (I != End) {
+    Id = (IntrinsicId)(I - Start);
+    return true;
+  }
+  return false;
+}
 }
