@@ -169,12 +169,12 @@ private:
 
   template<class Tag> bcl::get_tagged_t<Tag, TaggedValue...> &
   get(std::false_type) noexcept {
-    return BaseT::second.get<Tag>();
+    return BaseT::second.template get<Tag>();
   }
 
   template<class Tag> const bcl::get_tagged_t<Tag, TaggedValue...> &
   get(std::false_type) const noexcept {
-    return BaseT::second.get<Tag>();
+    return BaseT::second.template get<Tag>();
   }
 };
 }
