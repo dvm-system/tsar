@@ -91,7 +91,7 @@ char MemoryMatcherImmutableStorage::ID = 0;
 INITIALIZE_PASS(MemoryMatcherImmutableStorage, "memory-matcher-is",
   "High and Low Memory Matcher (Immutable Storage)", true, true)
 
-char MemoryMatcherImmutableWrapper::ID = 0;
+template<> char MemoryMatcherImmutableWrapper::ID = 0;
 INITIALIZE_PASS(MemoryMatcherImmutableWrapper, "memory-matcher-iw",
   "High and Low Memory Matcher (Immutable Wrapper)", true, true)
 

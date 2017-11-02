@@ -1388,12 +1388,14 @@ private:
 
 namespace tsar {
 /// Applies a function to each node which aliases with a specified one.
-template<class FuncTy> void for_each_alias(AliasNode *AN, FuncTy &&Func) {
+template<class FuncTy>
+void for_each_alias(AliasTree *AT, AliasNode *AN, FuncTy &&Func) {
+  assert(AT && "Alias tree must not be null!");
   assert(AN && "Alias node must not be null!");
-  for (auto N = AN->getParent(); N; Curr = N->getParent())
+  for (auto *Curr = AN->getParent(*AT); Curr; Curr = Curr->getParent(*AT))
     Func(Curr);
-  for (auto N : llvm::make_range(llvm::df_begin(AN), llvm::df_end(AN)))
-    Func(N);
+  for (auto *Curr : llvm::make_range(llvm::df_begin(AN), llvm::df_end(AN)))
+    Func(Curr);
 }
 }
 #endif//TSAR_ESTIMATE_MEMORY_H
