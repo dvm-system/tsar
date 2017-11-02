@@ -123,8 +123,14 @@ void initializeLoopMatcherPassPass(PassRegistry &Registry);
 /// Creates a pass to match high-level and low-level loops.
 FunctionPass * createLoopMatcherPass();
 
-/// Initialize a pass to match variables and allocas (or global variables).
+/// Initializes a pass to match variables and allocas (or global variables).
 void initializeMemoryMatcherPassPass(PassRegistry &Registry);
+
+/// Initializes a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherImmutableStoragePass(PassRegistry &Registry);
+
+/// Initializes a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherImmutableWrapperPass(PassRegistry &Registry);
 
 /// Creates a pass to match variables and allocas (or global variables).
 ModulePass * createMemoryMatcherPass();
