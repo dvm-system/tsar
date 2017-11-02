@@ -33,6 +33,7 @@
 #include "DIUnparser.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
+#include "tsar_memory_matcher.h"
 #include "PerfectLoop.h"
 #include "tsar_private.h"
 #include "tsar_pass_provider.h"
@@ -54,7 +55,7 @@ namespace {
 class TestPrinterProvider : public FunctionPassProvider<
   PrivateRecognitionPass, TransformationEnginePass,
   LoopMatcherPass, DFRegionInfoPass, ClangPerfectLoopPass,
-  CanonicalLoopPass> {
+  CanonicalLoopPass, MemoryMatcherImmutableWrapper> {
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
     auto P = createBasicAliasAnalysisPass();
     AU.addRequiredID(P->getPassID());
@@ -71,7 +72,8 @@ typedef FunctionPassProvider<
   LoopMatcherPass,
   DFRegionInfoPass,
   ClangPerfectLoopPass,
-  CanonicalLoopPass> TestPrinterProvider;
+  CanonicalLoopPass,
+  MemoryMatcherImmutableWrapper> TestPrinterProvider;
 #endif
 
 INITIALIZE_PROVIDER_BEGIN(TestPrinterProvider, "test-provider",
@@ -82,6 +84,7 @@ INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PROVIDER_END(TestPrinterProvider, "test-provider",
   "Test Printer Provider")
 
@@ -90,6 +93,7 @@ INITIALIZE_PASS_BEGIN(TestPrinterPass, "test-printer",
   "Test Result Printer", true, true)
 INITIALIZE_PASS_DEPENDENCY(TestPrinterProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_END(TestPrinterPass, "test-printer",
   "Test Result Printer", true, true)
 
@@ -169,6 +173,11 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
   TestPrinterProvider::initialize<TransformationEnginePass>(
     [&M, &TfmCtx](TransformationEnginePass &TEP) {
       TEP.setContext(M, TfmCtx);
+  });
+  auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
+  TestPrinterProvider::initialize<MemoryMatcherImmutableWrapper>(
+    [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
+      Wrapper.set(*MMWrapper);
   });
   auto &Rewriter = TfmCtx->getRewriter();
   for (Function &F : M) {
@@ -298,6 +307,7 @@ bool TestPrinterPass::isLineBegin(
 void TestPrinterPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TestPrinterProvider>();
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -315,6 +325,7 @@ void TestQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     Passes.add(TEP);
   }
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createMemoryMatcherPass());
   Passes.add(createTestPrinterPass());
   Passes.add(createVerifierPass());
   Passes.run(*M);

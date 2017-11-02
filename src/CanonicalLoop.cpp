@@ -39,6 +39,8 @@ INITIALIZE_PASS_BEGIN(CanonicalLoopPass, "canonical-loop",
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
+INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_END(CanonicalLoopPass, "canonical-loop",
   "Canonical Form Loop Analysis", true, true)
 
@@ -47,9 +49,13 @@ namespace {
 class CanonicalLoopLabeler : public MatchFinder::MatchCallback {
 public:
   /// Creates visitor.
-  explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
-      const LoopMatcherPass::LoopMatcher &LM, tsar::CanonicalLoopInfo *CLI) : 
-       mRgnInfo(&DFRI), mLoopInfo(&LM), mCanonicalLoopInfo(CLI) {}
+  explicit CanonicalLoopLabeler(Rewriter &R, DFRegionInfo &DFRI,
+      const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
+      const MemoryMatchInfo::MemoryMatcher &MM,
+      const MemoryMatchInfo::MemoryASTSet &MS, llvm::Module *M,
+      tsar::CanonicalLoopInfo *CLI) : mRw(&R), mRgnInfo(&DFRI), mLoopInfo(&LM),
+      mDefInfo(&DefI), mMemoryMatcher(&MM), mMemoryUnmatched(&MS), mModule(M),
+      mCanonicalLoopInfo(CLI) {}
 
   /// This function is called each time LoopMatcher finds appropriate loop
   virtual void run(const MatchFinder::MatchResult &Result) {
@@ -106,6 +112,10 @@ private:
   
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
+  DefinedMemoryInfo *mDefInfo;
+  const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
+  const MemoryMatchInfo::MemoryASTSet *mMemoryUnmatched;
+  llvm::Module *mModule;
   tsar::CanonicalLoopInfo *mCanonicalLoopInfo;
 };
 
@@ -194,6 +204,11 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
     return false;
   auto &RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
+  auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
+  auto &MemInfo =
+    getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
+  auto &MemUnmatched =
+    getAnalysis<MemoryMatcherImmutableWrapper>()->UnmatchedAST;
   StatementMatcher LoopMatcher = makeLoopMatcher();
   MatchFinder Finder;
   CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, &mCanonicalLoopInfo);
@@ -206,6 +221,8 @@ void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
+  AU.addRequired<DefinedMemoryPass>();
+  AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.setPreservesAll();
 }
 
