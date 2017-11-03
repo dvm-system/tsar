@@ -637,6 +637,21 @@ AliasResult AliasTree::isSamePointer(
   return IsAmbiguous ? MayAlias : NoAlias;
 }
 
+const AliasUnknownNode * AliasTree::findUnknown(
+    const llvm::Instruction &I) const {
+  auto Children = make_range(
+    getTopLevelNode()->child_begin(), getTopLevelNode()->child_end());
+  for (auto &Child : Children) {
+    if (!isa<AliasUnknownNode>(Child))
+      continue;
+    for (auto &I : cast<AliasUnknownNode>(Child)) {
+      if (I == &*I)
+        return &cast<AliasUnknownNode>(Child);
+    }
+  }
+  return nullptr;
+}
+
 const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);

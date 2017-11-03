@@ -1038,6 +1038,27 @@ public:
       static_cast<const AliasTree *>(this)->find(Loc));
   }
 
+  /// Returns alias node which contains a specified unknown memory access.
+  const AliasUnknownNode * findUnknown(const llvm::Instruction *I) const {
+    assert(I && "Instruction must not be null!");
+    return findUnknown(*I);
+  }
+
+  /// Returns alias node which contains a specified unknown memory access.
+  const AliasUnknownNode * findUnknown(const llvm::Instruction &I) const;
+
+  /// Returns alias node which contains a specified unknown memory access.
+  AliasUnknownNode * findUnknown(const llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    return findUnknown(*I);
+  }
+
+  /// Returns alias node which contains a specified unknown memory access.
+  AliasUnknownNode * findUnknown(const llvm::Instruction &I) {
+    return const_cast<AliasUnknownNode *>(
+      static_cast<const AliasTree *>(this)->findUnknown(I));
+  }
+
   /// \brief This pop up ghostview window and displays the alias tree.
   ///
   /// This depends on there being a 'dot' and 'gv' program in a system path.
