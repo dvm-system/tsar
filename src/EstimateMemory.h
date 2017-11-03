@@ -221,17 +221,17 @@ public:
 
   /// Pool of ambiguous lists, which is necessary because all estimate locations
   /// in a hierarchy chain should have the same lists of ambiguous pointers.
-  using AmbigiousPool = std::vector<AmbiguousList>;
+  using AmbiguousPool = std::vector<AmbiguousList>;
 
   /// Adds new list to a specified pool and returns reference to this list.
-  static AmbiguousRef make(AmbigiousPool &P) {
+  static AmbiguousRef make(AmbiguousPool &P) {
     P.push_back(AmbiguousList());
     return AmbiguousRef(P, P.size() - 1);
   }
 
   /// Creates a reference to an ambiguous list which is stored in a pool `Pool`
   /// and has a specified index `Idx`.
-  AmbiguousRef(AmbigiousPool &P, size_t Idx) : mPool(&P), mListIdx(Idx) {
+  AmbiguousRef(AmbiguousPool &P, size_t Idx) : mPool(&P), mListIdx(Idx) {
     assert(mPool->size() > mListIdx && mListIdx >= 0 &&
       "Index is out of range!");
   }
@@ -252,7 +252,7 @@ public:
     return !operator==(With);
   }
 private:
-  AmbigiousPool *mPool;
+  AmbiguousPool *mPool;
   size_t mListIdx;
 };
 
@@ -1099,7 +1099,7 @@ private:
   const llvm::DataLayout *mDL;
   AliasNodePool mNodes;
   AliasNode *mTopLevelNode;
-  tsar::AmbiguousRef::AmbigiousPool mAmbiguousPool;
+  tsar::AmbiguousRef::AmbiguousPool mAmbiguousPool;
   StrippedMap mBases;
 };
 
