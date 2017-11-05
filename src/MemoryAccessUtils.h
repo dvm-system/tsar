@@ -12,6 +12,7 @@
 #define TSAR_ESTIMATE_MEMORY_UTILS_H
 
 #include "KnownFunctionTraits.h"
+#include <trait.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/CallSite.h>
@@ -20,17 +21,20 @@
 #include <utility>
 
 namespace tsar {
+/// Flags indicating assurance in memory access.
+enum class AccessInfo : uint8_t { No, May, Must };
+
 /// \brief Applies a specified function to each memory location accessed in a
 /// specified instruction.
 ///
 /// The function `Func` must have the following prototype:
-/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc,
-///            bool IsRead, bool IsWrite)`
-/// - `IsRead` means that a location `Loc` is read,
-/// - `IsWrite` means that it is written.
+/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc, unsigned OpIdx,
+///            AccessInfo IsRead, AccessInfo IsWrite)`
 /// The function `UnknownFunc` evaluate accesses to unknown memory which occurs
 /// for example in function calls. It must have the following prototype:
-/// `void UnknownFunc(llvm::Instruction &I, bool IsRead, bool IsWrite).
+/// `void UnknownFunc(llvm::Instruction &I,
+///                   AccessInfo IsRead, AccessInfo IsWrite).
+/// Note, that alias analysis is not used to determine access type.
 template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {
@@ -39,6 +43,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
   using llvm::Instruction;
   using llvm::IntrinsicInst;
   using llvm::MemoryLocation;
+  using llvm::StoreInst;
   auto traverseActualParams = [&TLI, &Func, &UnknownFunc](CallSite CS) {
     auto Callee =
       llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
@@ -53,12 +58,14 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
       }
       foreachIntrinsicMemArg(*II, [&CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
-          !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
+          Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+          CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       });
     } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
       foreachLibFuncMemArg(LibId, [&CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
-          !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
+          Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+          CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       });
     } else {
       for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx) {
@@ -67,23 +74,36 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!CS.getArgument(Idx)->getType()->isPointerTy())
           continue;
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
-         !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
+         Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+         CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       }
     }
     if (!CS.onlyAccessesArgMemory())
       UnknownFunc(*CS.getInstruction(),
-        !CS.doesNotReadMemory(), !CS.onlyReadsMemory());
+        CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+        CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
   };
   switch (I.getOpcode()) {
   default:
     if (!I.mayReadOrWriteMemory())
       return;
-    UnknownFunc(I, I.mayReadFromMemory(), I.mayWriteToMemory());
+    UnknownFunc(I,
+      I.mayReadFromMemory() ? AccessInfo::May : AccessInfo::No,
+      I.mayWriteToMemory() ? AccessInfo::May : AccessInfo::No);
     break;
-  case Instruction::Load: case Instruction::Store: case Instruction::VAArg:
+  case Instruction::Load: case Instruction::VAArg:
   case Instruction::AtomicRMW: case Instruction::AtomicCmpXchg:
-    Func(I, MemoryLocation::get(&I),
-      I.mayReadFromMemory(), I.mayWriteToMemory());
+    assert(MemoryLocation::get(&I).Ptr == I.getOperand(0) &&
+      "Operand with a specified number must be a specified memory location!");
+    Func(I, MemoryLocation::get(&I), 0,
+      I.mayReadFromMemory() ? AccessInfo::Must : AccessInfo::No,
+      I.mayWriteToMemory() ? AccessInfo::Must : AccessInfo::No);
+    break;
+  case Instruction::Store:
+    assert(MemoryLocation::get(&I).Ptr == I.getOperand(1) &&
+      "Operand with a specified number must be a specified memory location!");
+    Func(I, MemoryLocation::get(cast<StoreInst>(&I)), 1,
+      AccessInfo::No, AccessInfo::Must);
     break;
   case Instruction::Call: case Instruction::Invoke:
     traverseActualParams(CallSite(&I)); break;
@@ -94,13 +114,13 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
 /// specified function.
 ///
 /// The function `Func` must have the following prototype:
-/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc,
-///            bool IsRead, bool IsWrite)`
-/// - `IsRead` means that a location `Loc` is read,
-/// - `IsWrite` means that it is written.
+/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc, unsigned OpIdx,
+///            AccessInfo IsRead, AccessInfo IsWrite)`
 /// The function `UnknownFunc` evaluate accesses to unknown memory which occurs
 /// for example in function calls. It must have the following prototype:
-/// `void UnknownFunc(llvm::Instruction &I, bool IsRead, bool IsWrite).
+/// `void UnknownFunc(llvm::Instruction &I,
+///                   AccessInfo IsRead, AccessInfo IsWrite).
+/// Note, that alias analysis is not used to determine access type.
 template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::Function &F, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {
@@ -113,13 +133,13 @@ void for_each_memory(llvm::Function &F, llvm::TargetLibraryInfo &TLI,
 /// specified basic block.
 ///
 /// The function `Func` must have the following prototype:
-/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc,
-///            bool IsRead, bool IsWrite)`
-/// - `IsRead` means that a location `Loc` is read,
-/// - `IsWrite` means that it is written.
+/// `void Func(llvm::Instruction &I, llvm::MemoryLocation &&Loc, unsigned OpIdx,
+///            AccessInfo IsRead, AccessInfo IsWrite)`
 /// The function `UnknownFunc` evaluate accesses to unknown memory which occurs
 /// for example in function calls. It must have the following prototype:
-/// `void UnknownFunc(llvm::Instruction &I, bool IsRead, bool IsWrite).
+/// `void UnknownFunc(llvm::Instruction &I,
+///                   AccessInfo IsRead, AccessInfo IsWrite).
+/// Note, that alias analysis is not used to determine access type.
 template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::BasicBlock &BB, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {

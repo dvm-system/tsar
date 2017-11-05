@@ -800,12 +800,13 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // TODO (kaniandr@gmail.com): implements support for unknown memory access,
   // for example, in call and invoke instructions.
   auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
-      MemoryLocation &&Loc, bool IsRead = false, bool IsWrite = false) {
+      MemoryLocation &&Loc, unsigned Idx, AccessInfo IsRead = AccessInfo::May,
+      AccessInfo IsWrite = AccessInfo::May) {
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(Loc);
   };
   for_each_memory(F, TLI, addLocation,
-    [this](Instruction &I, bool IsRead = false, bool IsWrite = false) {
+    [this](Instruction &I, AccessInfo, AccessInfo) {
       mAliasTree->addUnknown(&I);
   });
   // If there are some pointers to memory locations which are not accessed
@@ -825,7 +826,8 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
     assert(PointeeTy && "Pointee type must not be null!");
     addLocation(I, MemoryLocation(V, PointeeTy->isSized() ?
-      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
+      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize),
+      I.getNumOperands());
   };
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
     addPointeeIfNeed(I, &I);
