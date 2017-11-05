@@ -11,6 +11,8 @@
 // The following articles can be helpful to understand it:
 //  * "Automatic Array Privatization" Peng Tu and David Padua
 //  * "Array Privatization for Parallel Execution of Loops" Zhiyuan Li.
+// Note that each location in obtained sets has been stripped to the nearest
+// estimate location (see tsar::stripToBase() function).
 //
 //===----------------------------------------------------------------------===//
 
@@ -36,9 +38,12 @@ namespace llvm {
 class Value;
 class Instruction;
 class StoreInst;
+class TargetLibraryInfo;
 }
 
 namespace tsar {
+class AliasTree;
+
 /// \brief This contains locations which have outward exposed definitions or
 /// uses in a data-flow node.
 ///
@@ -290,8 +295,9 @@ public:
       bcl::tagged<std::unique_ptr<ReachSet>, ReachSet>>> DefinedMemoryInfo;
 
   /// Creates data-flow framework.
-  ReachDFFwk(llvm::AliasSetTracker &AST, DefinedMemoryInfo &DefInfo) :
-    mAliasTracker(&AST), mDefInfo(&DefInfo) { }
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      DefinedMemoryInfo &DefInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDefInfo(&DefInfo) { }
 
   /// Returns representation of reach definition analysis results.
   DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
@@ -299,15 +305,18 @@ public:
   /// Returns representation of reach definition analysis results.
   const DefinedMemoryInfo & getDefInfo() const noexcept { return *mDefInfo; }
 
-  /// Returns a tracker for sets of aliases.
-  llvm::AliasSetTracker * getTracker() const { return mAliasTracker; }
+  /// Returns an alias tree.
+  AliasTree & getAliasTree() const noexcept { return *mAliasTree; }
+
+  llvm::TargetLibraryInfo & getTLI() const noexcept { return *mTLI; }
 
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
 
 private:
-  llvm::AliasSetTracker *mAliasTracker;
+  AliasTree *mAliasTree;
+  llvm::TargetLibraryInfo *mTLI;
   DefinedMemoryInfo *mDefInfo;
 };
 

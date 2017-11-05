@@ -8,6 +8,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "DefinedMemory.h"
+#include "tsar_dbg_output.h"
+#include "DFRegionInfo.h"
+#include "EstimateMemory.h"
+#include "MemoryAccessUtils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
@@ -18,9 +23,6 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/Support/Debug.h>
 #include <functional>
-#include "tsar_dbg_output.h"
-#include "DefinedMemory.h"
-#include "DFRegionInfo.h"
 
 using namespace llvm;
 using namespace tsar;
@@ -32,6 +34,8 @@ char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", true, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 #else
@@ -47,17 +51,19 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
 #else
 AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
 #endif
-  AliasSetTracker AliasTracker(AA);
-  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
-    AliasTracker.add(&*I);
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  ReachDFFwk ReachDefFwk(AliasTracker, mDefInfo);
+  ReachDFFwk ReachDefFwk(AliasTree, TLI, mDefInfo);
   solveDataFlowUpward(&ReachDefFwk, DFF);
   return false;
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
+  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.setPreservesAll();
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   AU.addRequired<AliasAnalysis>();
 #else
@@ -83,106 +89,154 @@ bool DefUseSet::hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
 }
 
 namespace {
-bool evaluateAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
-  assert(I && "Instruction must not be null!");
-  assert(AST && "AliasSetTracker must not be null!");
-  assert(DU && "Value of def-use attribute must not be null!");
-  assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
-  Value *Ptr;
-  uint64_t Size;
-  std::function<void(const MemoryLocation &)> AddMust, AddMay;
-  AliasAnalysis &AA = AST->getAliasAnalysis();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-#else
-  auto BB = I->getParent();
-  auto F = BB->getParent();
-  auto M = F->getParent();
-  auto &DL = M->getDataLayout();
-#endif
-  if (auto *SI = dyn_cast<StoreInst>(I)) {
-    AddMust = [&DU](const MemoryLocation &Loc) { DU->addDef(Loc); };
-    AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
-    Ptr = SI->getPointerOperand();
-    Value *Val = SI->getValueOperand();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-    Size = AA.getTypeStoreSize(Val->getType());
-#else
-    Size = DL.getTypeStoreSize(Val->getType());
-#endif
-  } else if (auto *LI = dyn_cast<LoadInst>(I)) {
-    AddMay = AddMust = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
-    Ptr = LI->getPointerOperand();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-    Size = AA.getTypeStoreSize(LI->getType());
-#else
-    Size = DL.getTypeStoreSize(LI->getType());
-#endif
-  } else {
-    return false;
-  }
-  AAMDNodes AATags;
-  I->getAAMetadata(AATags);
-  AliasSet &ASet = AST->getAliasSetForPointer(Ptr, Size, AATags);
-  MemoryLocation Loc(Ptr, Size, AATags);
-  for (auto APtr : ASet) {
-    MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
-    // A condition below is necessary even in case of store instruction.
-    // It is possible that Loc1 aliases Loc2 and Loc1 is already written
-    // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
-    // repeated.
-    if (DU->hasDef(ALoc))
-      continue;
-    AliasResult AR = AA.alias(Loc, ALoc);
-    switch (AR) {
-      case MayAlias: case PartialAlias: AddMay(ALoc); break;
-      case MustAlias:
-        if (ALoc.Size == Loc.Size)
-          AddMust(ALoc);
-        else
-          AddMay(ALoc);
-          break;
+/// \brief This is a base class for functors which adds memory locations from a
+/// specified AliasNode into a specified DefUseSet.
+///
+/// The derived classes may override add... methods.
+template<class ImpTy> class AddAccessFunctor {
+public:
+  /// Create functor.
+  AddAccessFunctor(AAResults &AA, const DataLayout &DL, DefUseSet &DU) :
+    mAA(AA), mDL(DL), mDU(DU) {}
+
+  /// Switches processing of a node to an appropriate add... method.
+  void operator()(AliasNode *N) {
+    assert(N && "Node must not be null!");
+    auto Imp = static_cast<ImpTy *>(this);
+    switch (N->getKind()) {
+    default: llvm_unreachable("Unknown kind of alias node!"); break;
+    case AliasNode::KIND_TOP: break;
+    case AliasNode::KIND_ESTIMATE:
+      Imp->addEstimate(cast<AliasEstimateNode>(*N)); break;
+    case AliasNode::KIND_UNKNOWN:
+      Imp->addUnknown(cast<AliasUnknownNode>(*N)); break;
     }
   }
-  return true;
-}
 
-void evaluateUnknownAlias(Instruction *I, AliasSetTracker *AST, DefUseSet *DU) {
-  assert(I && "Instruction must not be null!");
-  assert(AST && "AliasSetTracker must not be null!");
-  assert(DU && "Value of def-use attribute must not be null!");
-  assert(I->mayReadOrWriteMemory() && "Instruction must access memory!");
-  DU->addUnknownInst(I);
-  std::function<void(const MemoryLocation &)> AddMay;
-  if (I->mayReadFromMemory() && I->mayWriteToMemory())
-    AddMay = [&DU](const MemoryLocation &Loc) {
-    DU->addUse(Loc);
-    DU->addMayDef(Loc);
-  };
-  else if (I->mayReadFromMemory())
-    AddMay = [&DU](const MemoryLocation &Loc) { DU->addUse(Loc); };
-  else
-    AddMay = [&DU](const MemoryLocation &Loc) { DU->addMayDef(Loc); };
-  AliasAnalysis &AA = AST->getAliasAnalysis();
-  auto ASetI = AST->begin(), ASetE = AST->end();
-  for (; ASetI != ASetE; ++ASetI) {
-    if (ASetI->isForwardingAliasSet() || ASetI->empty())
-      continue;
-    if (ASetI->aliasesUnknownInst(I, AA))
-      break;
+  /// Implements default processing of estimate alias nodes.
+  void addEstimate(AliasEstimateNode &N) {
+    for (auto &EM : N)
+      for (auto *Ptr : EM) {
+        MemoryLocation Loc(Ptr, EM.getSize(), EM.getAAInfo());
+        mDU.addMayDef(Loc);
+        mDU.addUse(Loc)
+      }
   }
-  if (ASetI == ASetE)
-    return;
-  for (auto APtr : *ASetI) {
-    MemoryLocation ALoc(APtr.getValue(), APtr.getSize(), APtr.getAAInfo());
-    if (!DU->hasDef(ALoc) &&
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-      AA.getModRefInfo(I, ALoc) != AliasAnalysis::NoModRef)
-#else
-      AA.getModRefInfo(I, ALoc) != MRI_NoModRef)
-#endif
-      AddMay(ALoc);
+
+  /// Implements default processing of unknown alias node.
+  void addUnknown(AliasUnknownNode &N) {
+    for (auto &I : N)
+      mDU.addUnknownInst(&(*I));
   }
-}
+
+protected:
+  AAResults &mAA;
+  const DataLayout &mDL;
+  DefUseSet &mDU;
+};
+
+/// This functor adds into a specified DefUseSet all locations from a specified
+/// AliasNode which aliases with a memory accessed by a specified instruction.
+class AddUnknownAccessFunctor :
+  public AddAccessFunctor<AddUnknownAccessFunctor> {
+public:
+  AddUnknownAccessFunctor(AAResults &AA, const DataLayout &DL,
+      const Instruction &Inst, DefUseSet &DU) :
+    AddAccessFunctor<AddUnknownAccessFunctor>(AA, DL, DU), mInst(Inst) {}
+
+  void addEstimate(AliasEstimateNode &N) {
+    for (auto &EM : N) {
+      if (!EM.isExplicit())
+        continue;
+      for (auto *APtr : EM) {
+        MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());
+        // A condition below is necessary even in case of store instruction.
+        // It is possible that Loc1 aliases Loc2 and Loc1 is already written
+        // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
+        // repeated.
+        if (mDU.hasDef(ALoc))
+          continue;
+        switch (mAA.getModRefInfo(&mInst, ALoc)) {
+        case MRI_ModRef: mDU.addUse(ALoc); mDU.addMayDef(ALoc); break;
+        case MRI_Mod: mDU.addMayDef(ALoc); break;
+        case MRI_Ref: mDU.addUse(ALoc); break;
+        }
+      }
+    }
+  }
+private:
+  const Instruction &mInst;
+};
+
+/// This functor adds into a specified DefUseSet all locations from a specified
+/// AliasNode which aliases with a specified memory location. Derived classes
+/// should be used to specify access modes (Def/MayDef/Use).
+template<class ImpTy>
+class AddKnownAccessFunctor :
+    public AddAccessFunctor<AddKnownAccessFunctor<ImpTy>> {
+  using Base = AddAccessFunctor<AddKnownAccessFunctor<ImpTy>>;
+public:
+  AddKnownAccessFunctor(AAResults &AA, const DataLayout &DL,
+      const MemoryLocation &Loc, DefUseSet &DU) :
+    Base(AA, DL, DU), mLoc(Loc) {}
+
+  void addEstimate(AliasEstimateNode &N) {
+    for (auto &EM : N) {
+      if (!EM.isExplicit())
+        continue;
+      for (auto *APtr : EM) {
+        MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());
+        // A condition below is necessary even in case of store instruction.
+        // It is possible that Loc1 aliases Loc2 and Loc1 is already written
+        // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
+        // repeated.
+        if (mDU.hasDef(ALoc))
+          continue;
+        auto AR = aliasRelation(mAA, mDL, mLoc, ALoc);
+        if (AR.is<trait::CoverAlias>())
+          addMust(ALoc);
+        else
+          addMay(ALoc);
+      }
+    }
+  }
+
+private:
+  void addMust(const MemoryLocation &Loc) {
+    static_cast<ImpTy *>(this)->addMust(Loc);
+  }
+
+  void addMay(const MemoryLocation &Loc) {
+    static_cast<ImpTy *>(this)->addMay(Loc);
+  }
+
+  const MemoryLocation &mLoc;
+};
+
+/// This macro determine functors according to a specified memory access modes.
+#define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST) \
+class NAME : public BASE<NAME> { \
+public: \
+  NAME(AAResults &AA, const DataLayout &DL, MEM &Loc, DefUseSet &DU) : \
+    BASE<NAME>(AA, DL, Loc, DU) {} \
+private: \
+  friend BASE<NAME>; \
+  void addMust(const MemoryLocation &Loc) { MUST; } \
+  void addMay(const MemoryLocation &Loc) { MAY; } \
+};
+
+ADD_ACCESS_FUNCTOR(AddDefFunctor, AddKnownAccessFunctor,
+  const MemoryLocation, mDU.addDef(Loc), mDU.addMayDef(Loc))
+ADD_ACCESS_FUNCTOR(AddMayDefFunctor, AddKnownAccessFunctor,
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc))
+ADD_ACCESS_FUNCTOR(AddUseFunctor, AddKnownAccessFunctor,
+  const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc))
+ADD_ACCESS_FUNCTOR(AddDefUseFunctor, AddKnownAccessFunctor,
+  const MemoryLocation,
+  mDU.addDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
+ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
+  const MemoryLocation,
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
 }
 
 void DataFlowTraits<ReachDFFwk*>::initialize(
@@ -191,10 +245,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   assert(DFF && "Data-flow framework must not be null");
   if (llvm::isa<DFRegion>(N))
     return;
-  AliasSetTracker *AST = DFF->getTracker();
-  AliasAnalysis &AA = AST->getAliasAnalysis();
+  auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
-    llvm::make_unique<DefUseSet>(AA),
+    llvm::make_unique<DefUseSet>(AT.getAliasAnalysis()),
     llvm::make_unique<ReachSet>())));
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
@@ -208,37 +261,90 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   for (Instruction &I : BB->getInstList()) {
     if (I.getType() && I.getType()->isPointerTy())
       DU->addAddressAccess(&I);
-    for (auto OpI = I.value_op_begin(), OpE = I.value_op_end();
-      OpI != OpE; ++OpI) {
-      if (isa<AllocaInst>(*OpI) || isa<GlobalVariable>(*OpI))
-        DU->addAddressAccess(*OpI);
+    for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
+      if (!Op->getType() || !Op->getType()->isPointerTy())
+        continue;
+      if (auto F = dyn_cast<Function>(Op))
+        /// TODO (kaniandr@gmail.com): may be some other intrinsics also should
+        /// be ignored, see llvm::AliasSetTracker::addUnknown() for details.
+        switch (F->getIntrinsicID()) {
+        default: break;
+        case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
+        case Intrinsic::assume:
+          continue;
+        }
+      DU->addAddressAccess(Op);
     }
     if (!I.mayReadOrWriteMemory())
       continue;
-    DU->addExplicitAccess(&I);
     // 1. Must/may def-use information will be set for location accessed in a
     // current instruction.
-    // 2. Must/may def-use information will be set for all locations (except
-    // locations with unknown descriptions) aliases location accessed in a
-    // current instruction.
-    // Note that this attribute will be also set for locations which are
-    // accessed implicitly.
-    // 3. Unknown instructions will be remembered in DefUseAttr.
-    if (!evaluateAlias(&I, AST, DU.get()))
-      evaluateUnknownAlias(&I, AST, DU.get());
+    // 2. Must/may def-use information will be set for all explicitly mentioned
+    // locations (except locations with unknown descriptions) aliases location
+    // accessed in a current instruction. Note that this attribute will be also
+    // set for locations which are accessed implicitly.
+    // 3. Unknown instructions will be remembered in DefUseSet.
+    auto &DL = I.getModule()->getDataLayout();
+    for_each_memory(I, DFF->getTLI(),
+      [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
+          AccessInfo R, AccessInfo W) {
+        stripToBase(DL, Loc);
+        DU->addExplicitAccess(Loc);
+        auto *EM = AT.find(Loc);
+        assert(EM && "Estimate memory location must not be null!");
+        auto AN = EM->getAliasNode(AT);
+        assert(AN && "Alias node must not be null!");
+        auto &AA = AT.getAliasAnalysis();
+        ImmutableCallSite CS(&I);
+        if (CS) {
+          switch (AA.getArgModRefInfo(CS, Idx)) {
+          case MRI_NoModRef: W = R = AccessInfo::No; break;
+          case MRI_Mod: W = AccessInfo::May; R = AccessInfo::No; break;
+          case MRI_Ref: W = AccessInfo::No; R = AccessInfo::May; break;
+          case MRI_ModRef: W = R = AccessInfo::May; break;
+          }
+        }
+        switch (W) {
+        case AccessInfo::No:
+          if (R != AccessInfo::No)
+            for_each_alias(&AT, AN, AddUseFunctor(AA, DL, Loc, *DU));
+          break;
+        case AccessInfo::May:
+          if (R != AccessInfo::No)
+            for_each_alias(&AT, AN, AddMayDefUseFunctor(AA, DL, Loc, *DU));
+          else
+            for_each_alias(&AT, AN, AddMayDefFunctor(AA, DL, Loc, *DU));
+          break;
+        case AccessInfo::Must:
+          if (R != AccessInfo::No)
+            for_each_alias(&AT, AN, AddDefUseFunctor(AA, DL, Loc, *DU));
+          else
+            for_each_alias(&AT, AN, AddDefFunctor(AA, DL, Loc, *DU));
+          break;
+        }
+      },
+      [&DL, &AT, &DU](Instruction &I, AccessInfo, AccessInfo) {
+        DU->addExplicitAccess(&I);
+        DU->addUnknownInst(&I);
+        auto *AN = AT.findUnknown(I);
+        assert(AN && "Alias node must not be null!");
+        auto &AA = AT.getAliasAnalysis();
+        for_each_alias(&AT, AN, AddUnknownAccessFunctor(AA, DL, I, *DU));
+      }
+    );
   }
   DEBUG(
     dbgs() << "[DEFUSE] Def/Use locations for the following basic block:";
   DFB->getBlock()->print(dbgs());
   dbgs() << "Outward exposed must define locations:\n";
   for (auto &Loc : DU->getDefs())
-    (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
   dbgs() << "Outward exposed may define locations:\n";
   for (auto &Loc : DU->getMayDefs())
-    (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
   dbgs() << "Outward exposed uses:\n";
   for (auto &Loc : DU->getUses())
-    (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
   dbgs() << "[END DEFUSE]\n";
   );
 }
@@ -334,8 +440,8 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
 void ReachDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
   typedef RegionDFTraits<ReachDFFwk *> RT;
-  AliasSetTracker *AST = getTracker();
-  AliasAnalysis &AA = AST->getAliasAnalysis();
+  auto &AT = getAliasTree();
+  auto &AA = AT.getAliasAnalysis();
   auto Pair = getDefInfo().insert(std::make_pair(R, std::make_tuple(
     llvm::make_unique<DefUseSet>(AA),
     llvm::make_unique<ReachSet>())));
@@ -393,4 +499,16 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }
+  DEBUG(
+    dbgs() << "[DEFUSE] Def/Use locations for a collapsed region.\n";
+    dbgs() << "Outward exposed must define locations:\n";
+    for (auto &Loc : DefUse->getDefs())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    dbgs() << "Outward exposed may define locations:\n";
+    for (auto &Loc : DefUse->getMayDefs())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+    dbgs() << "Outward exposed uses:\n";
+    for (auto &Loc : DefUse->getUses())
+      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
+  );
 }
