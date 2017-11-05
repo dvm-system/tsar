@@ -813,13 +813,18 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already
   // inserted into the alias tree `AccessedMemory` set is used.
-  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation, this](
+  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](
       const Instruction &I, const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
     if (auto F = dyn_cast<Function>(V))
+      /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
+      /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
       switch (F->getIntrinsicID()) {
-      case Intrinsic::dbg_declare: case Intrinsic::dbg_value: return;
+      default: break;
+      case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
+      case Intrinsic::assume:
+        return;
       }
     if (AccessedMemory.count(V))
       return;

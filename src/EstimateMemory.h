@@ -150,10 +150,10 @@ struct CoverAlias {};
 /// trait::PartialAlias and trait::MustAlias.
 using AliasDescriptor = bcl::TraitDescriptor<
   bcl::TraitAlternative<trait::NoAlias, trait::MayAlias,
-  bcl::TraitUnion<trait::PartialAlias, trait::CoincideAlias,
-  bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>,
-  bcl::TraitUnion<trait::MustAlias, trait::CoincideAlias,
-  bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>>>;
+    bcl::TraitUnion<trait::PartialAlias, trait::CoincideAlias,
+      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>,
+    bcl::TraitUnion<trait::MustAlias, trait::CoincideAlias,
+      bcl::TraitAlternative<trait::ContainedAlias, trait::CoverAlias>>>>;
 
 /// This merges two alias descriptors.
 AliasDescriptor mergeAliasRelation(
@@ -310,7 +310,8 @@ private:
   /// Returns a next node.
   tsar::EstimateMemory * getNext() {
     return const_cast<tsar::EstimateMemory *>(
-      static_cast<const Chain<tsar::EstimateMemory, tsar::Hierarchy> *>(this)->getNext());
+      static_cast<const Chain<tsar::EstimateMemory, tsar::Hierarchy> *>(this)
+        ->getNext());
   };
 
   /// Returns a next node.
