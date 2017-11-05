@@ -230,7 +230,7 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
 }
 
 const EstimateMemory * ancestor(
-    const EstimateMemory *LHS, const EstimateMemory *RHS) {
+    const EstimateMemory *LHS, const EstimateMemory *RHS) noexcept {
   for (auto EM = LHS; EM; EM = EM->getParent())
     if (EM == RHS)
       return RHS;

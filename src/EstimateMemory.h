@@ -187,25 +187,29 @@ AliasDescriptor aliasRelation(llvm::AAResults &AA, const llvm::DataLayout &DL,
 /// Determines which of specified nodes is an ancestor of other node in
 /// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
 const EstimateMemory * ancestor(
-    const EstimateMemory *LHS, const EstimateMemory *RHS);
+    const EstimateMemory *LHS, const EstimateMemory *RHS) noexcept;
 
 /// Determines which of specified nodes is an ancestor of other node in
 /// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
-inline EstimateMemory * ancestor(EstimateMemory *LHS, EstimateMemory *RHS) {
-  return const_cast<EstimateMemory *>(ancestor(LHS, RHS));
+inline EstimateMemory * ancestor(
+    EstimateMemory *LHS, EstimateMemory *RHS) noexcept {
+  return const_cast<EstimateMemory *>(ancestor(
+    static_cast<const EstimateMemory *>(LHS),
+    static_cast<const EstimateMemory *>(RHS)));
 }
 
 /// Determines which of specified nodes is an descendant of other node in
 /// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
 inline const EstimateMemory * descendant(
-    const EstimateMemory *LHS, const EstimateMemory *RHS) {
+    const EstimateMemory *LHS, const EstimateMemory *RHS) noexcept {
   return LHS == ancestor(LHS, RHS) ? RHS : LHS;
 }
 
 /// Determines which of specified nodes is an descendant of other node in
 /// estimate memory tree. If nodes are not connected 'nullptr' will be returned.
-inline EstimateMemory * descendant(EstimateMemory *LHS, EstimateMemory *RHS) {
-  return const_cast<EstimateMemory *>(descendant(LHS, RHS));
+inline EstimateMemory * descendant(
+    EstimateMemory *LHS, EstimateMemory *RHS) noexcept {
+  return LHS == ancestor(LHS, RHS) ? RHS : LHS;
 }
 
 /// Represents reference to a list of ambiguous pointers which refer to the
