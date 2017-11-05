@@ -19,20 +19,20 @@
 #ifndef TSAR_DEFINED_MEMORY_H
 #define TSAR_DEFINED_MEMORY_H
 
+#include "tsar_df_location.h"
+#include "tsar_data_flow.h"
+#include "DFRegionInfo.h"
+#include "tsar_utility.h"
+#include <tagged.h>
+#include <utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #ifdef DEBUG
-#include <llvm/IR/Instruction.h>
+# include <llvm/IR/Instruction.h>
 #endif//DEBUG
 #include <llvm/Pass.h>
-#include <tagged.h>
-#include <utility.h>
-#include "tsar_df_location.h"
-#include "tsar_data_flow.h"
-#include "DFRegionInfo.h"
-#include "tsar_utility.h"
 
 namespace llvm {
 class Value;
@@ -332,15 +332,15 @@ template<> struct DataFlowTraits<ReachDFFwk *> {
   typedef DefinitionInfo ValueType;
   static ValueType topElement(ReachDFFwk *, GraphType) {
     DefinitionInfo DI;
-    DI.MustReach = std::move(LocationDFValue::fullValue());
-    DI.MayReach = std::move(LocationDFValue::emptyValue());
-    return std::move(DI);
+    DI.MustReach = LocationDFValue::fullValue();
+    DI.MayReach = LocationDFValue::emptyValue();
+    return DI;
   }
   static ValueType boundaryCondition(ReachDFFwk *, GraphType) {
     DefinitionInfo DI;
-    DI.MustReach = std::move(LocationDFValue::emptyValue());
-    DI.MayReach = std::move(LocationDFValue::emptyValue());
-    return std::move(DI);
+    DI.MustReach = LocationDFValue::emptyValue();
+    DI.MayReach = LocationDFValue::emptyValue();
+    return DI;
   }
   static void setValue(ValueType V, DFNode *N, ReachDFFwk *DFF) {
     assert(N && "Node must not be null!");

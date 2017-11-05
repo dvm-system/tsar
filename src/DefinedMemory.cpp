@@ -119,7 +119,7 @@ public:
       for (auto *Ptr : EM) {
         MemoryLocation Loc(Ptr, EM.getSize(), EM.getAAInfo());
         mDU.addMayDef(Loc);
-        mDU.addUse(Loc)
+        mDU.addUse(Loc);
       }
   }
 
@@ -190,10 +190,10 @@ public:
         // It is possible that Loc1 aliases Loc2 and Loc1 is already written
         // when Loc2 is evaluated. In this case evaluation of Loc1 should not be
         // repeated.
-        if (mDU.hasDef(ALoc))
+        if (this->mDU.hasDef(ALoc))
           continue;
-        auto AR = aliasRelation(mAA, mDL, mLoc, ALoc);
-        if (AR.is<trait::CoverAlias>())
+        auto AR = aliasRelation(this->mAA, this->mDL, mLoc, ALoc);
+        if (AR.template is<trait::CoverAlias>())
           addMust(ALoc);
         else
           addMay(ALoc);
@@ -396,10 +396,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   auto &DU = I->get<DefUseSet>();
   assert(DU && "Value of def-use attribute must not be null!");
   DefinitionInfo newOut;
-  newOut.MustReach = std::move(LocationDFValue::emptyValue());
+  newOut.MustReach = LocationDFValue::emptyValue();
   newOut.MustReach.insert(DU->getDefs().begin(), DU->getDefs().end());
   newOut.MustReach.merge(RS->getIn().MustReach);
-  newOut.MayReach = std::move(LocationDFValue::emptyValue());
+  newOut.MayReach = LocationDFValue::emptyValue();
   // newOut.MayReach must contain both must and may defined locations.
   // Let us consider an example:
   // for(...) {

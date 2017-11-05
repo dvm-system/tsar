@@ -39,6 +39,7 @@ template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {
   using llvm::CallSite;
+  using llvm::cast;
   using llvm::Function;
   using llvm::Instruction;
   using llvm::IntrinsicInst;
