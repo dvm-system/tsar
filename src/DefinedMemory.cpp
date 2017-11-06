@@ -36,21 +36,13 @@ INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
-#else
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
-#endif
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", true, true)
 
 bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
-#else
-AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
-#endif
+  auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
@@ -64,11 +56,7 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  AU.addRequired<AliasAnalysis>();
-#else
   AU.addRequired<AAResultsWrapperPass>();
-#endif
   AU.setPreservesAll();
 }
 
