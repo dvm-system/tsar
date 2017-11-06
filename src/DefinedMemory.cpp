@@ -225,6 +225,61 @@ ADD_ACCESS_FUNCTOR(AddDefUseFunctor, AddKnownAccessFunctor,
 ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
   mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
+
+#ifndef NDEBUG
+void intializeDefUseSetLog(const DFNode &N, const DefUseSet &DU) {
+  dbgs() << "[DEFUSE] Def/Use locations for ";
+  if (isa<DFBlock>(N)) {
+    dbgs() << "the following basic block:\n";
+    cast<DFBlock>(N).getBlock()->dump();
+  } else if (isa<DFEntry>(N) || isa<DFExit>(N) || isa<DFLatch>(N)) {
+    dbgs() << "an empty boundary basic block:\n";
+  } else {
+    dbgs() << "a collapsed region:\n";
+  }
+  dbgs() << "Outward exposed must define locations:\n";
+  for (auto &Loc : DU.getDefs())
+    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+  dbgs() << "Outward exposed may define locations:\n";
+  for (auto &Loc : DU.getMayDefs())
+    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+  dbgs() << "Outward exposed uses:\n";
+  for (auto &Loc : DU.getUses())
+    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+  dbgs() << "[END DEFUSE]\n";
+};
+
+void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In) {
+  dbgs() << "[TRANSFER REACH] Transfer function for ";
+  if (isa<DFBlock>(N)) {
+    dbgs() << "the following basic block:\n";
+    cast<DFBlock>(N).getBlock()->dump();
+  } else if (isa<DFEntry>(N) || isa<DFExit>(N) || isa<DFLatch>(N)) {
+    dbgs() << "an empty boundary basic block:\n";
+  } else {
+    dbgs() << "a collapsed region:\n";
+  }
+  dbgs() << "IN:\n";
+  dbgs() << "MUST REACH DEFINITIONS:\n";
+  In.MustReach.dump();
+  dbgs() << "MAY REACH DEFINITIONS:\n";
+  In.MayReach.dump();
+}
+
+void initializeTransferEndLog(const DefinitionInfo &Out, bool HasChanges) {
+  dbgs() << "OUT ";
+  if (HasChanges)
+    dbgs() << "with changes:\n";
+  else
+    dbgs() << "without changes:\n";
+  dbgs() << "MUST REACH DEFINITIONS:\n";
+  Out.MustReach.dump();
+  dbgs() << "MAY REACH DEFINITIONS:\n";
+  Out.MayReach.dump();
+  dbgs() << "[END TRANSFER]\n";
+
+}
+#endif
 }
 
 void DataFlowTraits<ReachDFFwk*>::initialize(
@@ -321,38 +376,16 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       }
     );
   }
-  DEBUG(
-    dbgs() << "[DEFUSE] Def/Use locations for the following basic block:";
-  DFB->getBlock()->print(dbgs());
-  dbgs() << "Outward exposed must define locations:\n";
-  for (auto &Loc : DU->getDefs())
-    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-  dbgs() << "Outward exposed may define locations:\n";
-  for (auto &Loc : DU->getMayDefs())
-    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-  dbgs() << "Outward exposed uses:\n";
-  for (auto &Loc : DU->getUses())
-    (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-  dbgs() << "[END DEFUSE]\n";
-  );
+  DEBUG(intializeDefUseSetLog(*N, *DU));
 }
+
 
 bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   ValueType V, DFNode *N, ReachDFFwk *DFF, GraphType) {
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null");
-  DEBUG(
-    dbgs() << "[TRANSFER REACH]\n";
-  if (auto DFB = dyn_cast<DFBlock>(N))
-    DFB->getBlock()->dump();
-  dbgs() << "IN:\n";
-  dbgs() << "MUST REACH DEFINITIONS:\n";
-  V.MustReach.dump();
-  dbgs() << "MAY REACH DEFINITIONS:\n";
-  V.MayReach.dump();
-  dbgs() << "OUT:\n";
-  );
+  DEBUG(initializeTransferBeginLog(*N, V));
   auto I = DFF->getDefInfo().find(N);
   assert(I != DFF->getDefInfo().end() &&
     I->get<ReachSet>() && I->get<DefUseSet>() &&
@@ -363,22 +396,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
     if (RS->getOut().MustReach != RS->getIn().MustReach ||
         RS->getOut().MayReach != RS->getIn().MayReach) {
       RS->setOut(RS->getIn());
-      DEBUG(
-        dbgs() << "MUST REACH DEFINITIONS:\n";
-      RS->getOut().MustReach.dump();
-      dbgs() << "MAY REACH DEFINITIONS:\n";
-      RS->getOut().MayReach.dump();
-      dbgs() << "[END TRANSFER]\n";
-      );
+      DEBUG(initializeTransferEndLog(RS->getOut(), true));
       return true;
     }
-    DEBUG(
-      dbgs() << "MUST REACH DEFINITIONS:\n";
-    RS->getOut().MustReach.dump();
-    dbgs() << "MAY REACH DEFINITIONS:\n";
-    RS->getOut().MayReach.dump();
-    dbgs() << "[END TRANSFER]\n";
-    );
+    DEBUG(initializeTransferEndLog(RS->getOut(), false));
     return false;
   }
   auto &DU = I->get<DefUseSet>();
@@ -406,22 +427,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   if (RS->getOut().MustReach != newOut.MustReach ||
     RS->getOut().MayReach != newOut.MayReach) {
     RS->setOut(std::move(newOut));
-    DEBUG(
-      dbgs() << "MUST REACH DEFINITIONS:\n";
-    RS->getOut().MustReach.dump();
-    dbgs() << "MAY REACH DEFINITIONS:\n";
-    RS->getOut().MayReach.dump();
-    dbgs() << "[END TRANSFER]\n";
-    );
+    DEBUG(initializeTransferEndLog(RS->getOut(), true));
     return true;
   }
-  DEBUG(
-    dbgs() << "MUST REACH DEFINITIONS:\n";
-  RS->getOut().MustReach.dump();
-  dbgs() << "MAY REACH DEFINITIONS:\n";
-  RS->getOut().MayReach.dump();
-  dbgs() << "[END TRANSFER]\n";
-  );
+  DEBUG(initializeTransferEndLog(RS->getOut(), false));
   return false;
 }
 
@@ -487,16 +496,5 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }
-  DEBUG(
-    dbgs() << "[DEFUSE] Def/Use locations for a collapsed region.\n";
-    dbgs() << "Outward exposed must define locations:\n";
-    for (auto &Loc : DefUse->getDefs())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-    dbgs() << "Outward exposed may define locations:\n";
-    for (auto &Loc : DefUse->getMayDefs())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-    dbgs() << "Outward exposed uses:\n";
-    for (auto &Loc : DefUse->getUses())
-      (printLocationSource(dbgs(), Loc), dbgs() << "\n");
-  );
+  DEBUG(intializeDefUseSetLog(*R, *DefUse));
 }
