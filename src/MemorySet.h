@@ -143,8 +143,7 @@ public:
   template<class Ty> iterator findContaining(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second) &&
-        MemoryInfo::getAATags(Loc) == MemoryInfo::getAATags(*I->second)) ?
+        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second)) ?
       iterator(I) : iterator(mLocations.end());
   }
 
@@ -155,8 +154,7 @@ public:
   template<class Ty> const_iterator findContaining(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second) &&
-        MemoryInfo::getAATags(Loc) == MemoryInfo::getAATags(*I->second)) ?
+        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second)) ?
       const_iterator(I) : const_iterator(mLocations.end());
   }
 
@@ -176,8 +174,7 @@ public:
   template<class Ty> iterator findCoveredBy(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second) &&
-        MemoryInfo::getAATags(Loc) == MemoryInfo::getAATags(*I->second)) ?
+        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second)) ?
       iterator(I) : iterator(mLocations.end());
   }
 
@@ -188,8 +185,7 @@ public:
   template<class Ty> const_iterator findCoveredBy(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second) &&
-        MemoryInfo::getAATags(Loc) == MemoryInfo::getAATags(*I->second)) ?
+        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second)) ?
       const_iterator(I) : const_iterator(mLocations.end());
   }
 
