@@ -495,12 +495,12 @@ void PrivateRecognitionPass::storeResults(
         EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
       NodeTraitItr->set<trait::ExplicitAccess>();
     NodeTraitItr->insert(
-      LocationTrait(EMI->get<EstimateMemory>(), *NodeTraitItr));
+      EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr));
     return;
   }
   // There are memory locations which are explicitly accessed in the loop and
   // which are covered by estimate memory locations from different estimate
-  // memory tree. So only two type of combined results are possible: shared or
+  // memory trees. So only two type of combined results are possible: shared or
   // dependency.
   TraitImp CombinedTrait;
   for (; EMI != E; ++EMI) {
@@ -515,7 +515,7 @@ void PrivateRecognitionPass::storeResults(
       Dptr.set<trait::ExplicitAccess>();
     }
     NodeTraitItr->insert(
-      LocationTrait(EMI->get<EstimateMemory>(), std::move(Dptr)));
+      EstimateMemoryTrait(EMI->get<EstimateMemory>(), std::move(Dptr)));
   }
   CombinedTrait &=
     (CombinedTrait | ~AddressAccess) == Shared ? Shared : Dependency;
