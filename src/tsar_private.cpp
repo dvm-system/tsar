@@ -206,91 +206,76 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
   auto &ExitDF = ExitDefItr->get<ReachSet>();
   assert(ExitDF && "List of must/may defined locations must not be null!");
   const DefinitionInfo &ExitingDefs = ExitDF->getOut();
-  for (const AliasSet &AS : DefUse.getExplicitAccesses()) {
-    if (AS.isForwardingAliasSet() || AS.empty())
-      continue; // The set is empty if it contains only unknown instructions.
-    for (auto I = AS.begin(), E = AS.end(); I != E; ++I) {
-      MemoryLocation Loc(I.getPointer(), I.getSize(), I.getAAInfo());
-      const EstimateMemory *Base = mAliasTree->find(Loc);
-      assert(Base && "Estimate memory location must not be null!");
-      auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
-      if (Pair.second) {
-        auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
-        I->get<TraitList>().push_front(std::make_pair(Base, TraitImp()));
-        Pair.first->get<TraitImp>() =
-          &I->get<TraitList>().front().get<TraitImp>();
-      }
-      auto &CurrTraits = *Pair.first->get<TraitImp>();
-      if (!DefUse.hasUse(Loc)) {
-        if (!LS.getOut().overlap(Loc))
-          CurrTraits &= Private;
-        else if (DefUse.hasDef(Loc))
-          CurrTraits &= LastPrivate;
-        else if (LatchDefs.MustReach.contain(Loc) &&
-          !ExitingDefs.MayReach.overlap(Loc))
-          // These location will be stored as second to last private, i.e.
-          // the last definition of these locations is executed on the
-          // second to the last loop iteration (on the last iteration the
-          // loop condition check is executed only).
-          // It is possible that there is only one (last) iteration in
-          // the loop. In this case the location has not been assigned and
-          // must be declared as a first private.
-          CurrTraits &= SecondToLastPrivate & FirstPrivate;
-        else
-          // There is no certainty that the location is always assigned
-          // the value in the loop. Therefore, it must be declared as a
-          // first private, to preserve the value obtained before the loop
-          // if it has not been assigned.
-          CurrTraits &= DynamicPrivate & FirstPrivate;
-      } else if (DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc)) {
-        CurrTraits &= Dependency;
-      } else {
-        CurrTraits &= Shared;
-      }
+  for (const auto &Loc : DefUse.getExplicitAccesses()) {
+    const EstimateMemory *Base = mAliasTree->find(Loc);
+    assert(Base && "Estimate memory location must not be null!");
+    auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
+    if (Pair.second) {
+      auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
+      I->get<TraitList>().push_front(std::make_pair(Base, TraitImp()));
+      Pair.first->get<TraitImp>() =
+        &I->get<TraitList>().front().get<TraitImp>();
+    }
+    auto &CurrTraits = *Pair.first->get<TraitImp>();
+    if (!DefUse.hasUse(Loc)) {
+      if (!LS.getOut().overlap(Loc))
+        CurrTraits &= Private;
+      else if (DefUse.hasDef(Loc))
+        CurrTraits &= LastPrivate;
+      else if (LatchDefs.MustReach.contain(Loc) &&
+        !ExitingDefs.MayReach.overlap(Loc))
+        // These location will be stored as second to last private, i.e.
+        // the last definition of these locations is executed on the
+        // second to the last loop iteration (on the last iteration the
+        // loop condition check is executed only).
+        // It is possible that there is only one (last) iteration in
+        // the loop. In this case the location has not been assigned and
+        // must be declared as a first private.
+        CurrTraits &= SecondToLastPrivate & FirstPrivate;
+      else
+        // There is no certainty that the location is always assigned
+        // the value in the loop. Therefore, it must be declared as a
+        // first private, to preserve the value obtained before the loop
+        // if it has not been assigned.
+        CurrTraits &= DynamicPrivate & FirstPrivate;
+    } else if (DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc)) {
+      CurrTraits &= Dependency;
+    } else {
+      CurrTraits &= Shared;
     }
   }
 }
 
 void PrivateRecognitionPass::resolvePointers(
     const tsar::DefUseSet &DefUse, TraitMap &ExplicitAccesses) {
-  for (const AliasSet &AS : DefUse.getExplicitAccesses()) {
-    if (AS.isForwardingAliasSet() || AS.empty())
-      continue; // The set is empty if it contains only unknown instructions.
-    for (AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
-      Value *V = I.getPointer();
-      if (Operator::getOpcode(V) == Instruction::BitCast ||
-        Operator::getOpcode(V) == Instruction::AddrSpaceCast ||
-        Operator::getOpcode(V) == Instruction::IntToPtr)
-        V = cast<Operator>(V)->getOperand(0);
-      // *p means that address of location should be loaded from p using 'load'.
-      if (auto *LI = dyn_cast<LoadInst>(V)) {
-        const EstimateMemory *Loc = mAliasTree->find(
-          MemoryLocation(I.getPointer(), I.getSize(), I.getAAInfo()));
-        assert(Loc && "Estimate memory location must not be null!");
-        auto LocTraits = ExplicitAccesses.find(Loc);
-        assert(LocTraits != ExplicitAccesses.end() &&
-          "Traits of location must be initialized!");
-        if ((*LocTraits->get<TraitImp>() | ~AddressAccess) == Private ||
-            (*LocTraits->get<TraitImp>() | ~AddressAccess) == Shared)
-          continue;
-        const EstimateMemory *Ptr = mAliasTree->find(MemoryLocation::get(LI));
-        assert(Ptr && "Estimate memory location must not be null!");
-        auto PtrTraits = ExplicitAccesses.find(Ptr);
-        assert(PtrTraits != ExplicitAccesses.end() &&
-          "Traits of location must be initialized!");
-        if ((*PtrTraits->get<TraitImp>() | ~AddressAccess) == Shared)
-          continue;
-        // Location can not be declared as copy in or copy out without
-        // additional analysis because we do not know which memory must
-        // be copy. Let see an example:
-        // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
-        // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
-        // Note that case when location is shared, but pointer is not shared
-        // may be difficulty to implement for distributed memory, for example:
-        // for(...) { P = ...; ... = *P; } It is not evident which memory
-        // should be copy to each processor.
-        *LocTraits->get<TraitImp>() &= Dependency;
-      }
+  for (const auto &Loc : DefUse.getExplicitAccesses()) {
+    // *p means that address of location should be loaded from p using 'load'.
+    if (auto *LI = dyn_cast<LoadInst>(Loc.Ptr)) {
+      auto *EM = mAliasTree->find(Loc);
+      assert(EM && "Estimate memory location must not be null!");
+      auto LocTraits = ExplicitAccesses.find(EM);
+      assert(LocTraits != ExplicitAccesses.end() &&
+        "Traits of location must be initialized!");
+      if ((*LocTraits->get<TraitImp>() | ~AddressAccess) == Private ||
+          (*LocTraits->get<TraitImp>() | ~AddressAccess) == Shared)
+        continue;
+      const EstimateMemory *Ptr = mAliasTree->find(MemoryLocation::get(LI));
+      assert(Ptr && "Estimate memory location must not be null!");
+      auto PtrTraits = ExplicitAccesses.find(Ptr);
+      assert(PtrTraits != ExplicitAccesses.end() &&
+        "Traits of location must be initialized!");
+      if ((*PtrTraits->get<TraitImp>() | ~AddressAccess) == Shared)
+        continue;
+      // Location can not be declared as copy in or copy out without
+      // additional analysis because we do not know which memory must
+      // be copy. Let see an example:
+      // for (...) { P = &X; *P = ...; P = &Y; } after loop P = &Y, not &X.
+      // P = &Y; for (...) { *P = ...; P = &X; } before loop P = &Y, not &X.
+      // Note that case when location is shared, but pointer is not shared
+      // may be difficulty to implement for distributed memory, for example:
+      // for(...) { P = ...; ... = *P; } It is not evident which memory
+      // should be copy to each processor.
+      *LocTraits->get<TraitImp>() &= Dependency;
     }
   }
 }

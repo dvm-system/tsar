@@ -65,9 +65,6 @@ public:
   /// Set of memory locations.
   typedef MemorySet<llvm::MemoryLocation> LocationSet;
 
-  /// Constructor.
-  DefUseSet(llvm::AliasAnalysis &AA) : mExplicitAccesses(AA) {}
-
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
 
@@ -168,7 +165,7 @@ public:
   /// For example, if p = &x and to access x, *p is used, let us assume that
   /// access to x is performed implicitly and access to *p is performed
   /// explicitly.
-  const llvm::AliasSetTracker & getExplicitAccesses() const {
+  const LocationSet & getExplicitAccesses() const {
     return mExplicitAccesses;
   }
 
@@ -176,30 +173,21 @@ public:
   ///
   /// \attention This method returns true even if only part of the location
   /// has explicit access.
-  bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const;
+  bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
+    assert(Loc.Ptr && "Pointer to memory location must not be null!");
+    mExplicitAccesses.overlap(Loc);
+  }
 
   /// Specifies that there are an explicit access to a location in the node.
   void addExplicitAccess(const llvm::MemoryLocation &Loc) {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
-    mExplicitAccesses.add(
-      const_cast<llvm::Value *>(Loc.Ptr), Loc.Size, Loc.AATags);
+    mExplicitAccesses.insert(Loc);
   }
 
-  /// \brief Specifies that there are an explicit access to a location in
-  /// the node.
-  ///
-  /// \pre The specified instruction may read or modify memory.
-  void addExplicitAccess(llvm::Instruction *I) {
-    assert(I && "Instruction must not be null!");
-    assert(I->mayReadOrWriteMemory() &&
-      "Instruction does not read nor write memory!");
-    mExplicitAccesses.add(I);
-  }
-
-  /// Specifies that accesses to all locations from AST are performed
-  /// explicitly.
-  void addExplicitAccesses(const llvm::AliasSetTracker &AST) {
-    mExplicitAccesses.add(AST);
+  /// Specifies that there are an explicit access to all locations from a
+  /// specified set.
+  void addExplicitAccesses(const LocationSet &Accesses) {
+    mExplicitAccesses.insert(Accesses.begin(), Accesses.end());
   }
 
   /// Returns locations addresses of which are explicitly evaluated in the node.
@@ -245,13 +233,43 @@ public:
     return mUnknownInsts.insert(I).second;
   }
 
+  /// Returns explicitly called instructions which accesses unknown memory.
+  const InstructionSet & getExplicitUnknowns() const {
+    return mExplicitUnknowns;
+  }
+
+  /// Returns true if there are an explicit access to an unknown location.
+  bool hasExplicitUnknown(llvm::Instruction *I) const {
+    assert(I && "Instruction must not be null!");
+    return mExplicitUnknowns.count(I) != 0;
+  }
+
+  /// \brief Specifies that there are an explicit access to an unknown location
+  /// in the node.
+  ///
+  /// \pre The specified instruction may read or modify memory.
+  void addExplicitUnknown(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    assert(I->mayReadOrWriteMemory() &&
+      "Instruction does not read nor write memory!");
+    mExplicitUnknowns.insert(I);
+  }
+
+  /// Specifies that there are an explicit access to all unknown locations from
+  /// a specified set.
+  void addExplicitUnknowns(const InstructionSet &Accesses) {
+    mExplicitUnknowns.insert(Accesses.begin(), Accesses.end());
+  }
+
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
   LocationSet mUses;
-  llvm::AliasSetTracker mExplicitAccesses;
+  LocationSet mExplicitAccesses;
   PointerSet mAddressAccesses;
   InstructionSet mUnknownInsts;
+  InstructionSet mExplicitUnknowns;
 };
 
 /// This presents information whether a location has definition after a node

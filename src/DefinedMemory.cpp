@@ -64,18 +64,6 @@ FunctionPass * llvm::createDefinedMemoryPass() {
   return new DefinedMemoryPass();
 }
 
-bool DefUseSet::hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
-  for (auto I = mExplicitAccesses.begin(), E = mExplicitAccesses.end();
-    I != E; ++I) {
-    if (I->isForwardingAliasSet() || I->empty())
-      continue;
-    for (auto LocI = I->begin(), LocE = I->end(); LocI != LocE; ++LocI)
-      if (LocI->getValue() == Loc.Ptr)
-        return true;
-  }
-  return false;
-}
-
 namespace {
 /// \brief This is a base class for functors which adds memory locations from a
 /// specified AliasNode into a specified DefUseSet.
@@ -290,8 +278,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     return;
   auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
-    llvm::make_unique<DefUseSet>(AT.getAliasAnalysis()),
-    llvm::make_unique<ReachSet>())));
+    llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
@@ -367,7 +354,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         }
       },
       [&DL, &AT, &DU](Instruction &I, AccessInfo, AccessInfo) {
-        DU->addExplicitAccess(&I);
+        DU->addExplicitUnknown(&I);
         DU->addUnknownInst(&I);
         auto *AN = AT.findUnknown(I);
         assert(AN && "Alias node must not be null!");
@@ -440,8 +427,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
   auto &AT = getAliasTree();
   auto &AA = AT.getAliasAnalysis();
   auto Pair = getDefInfo().insert(std::make_pair(R, std::make_tuple(
-    llvm::make_unique<DefUseSet>(AA),
-    llvm::make_unique<ReachSet>())));
+    llvm::make_unique<DefUseSet>(), llvm::make_unique<ReachSet>())));
   auto &DefUse = Pair.first->get<DefUseSet>();
   assert(DefUse && "Value of def-use attribute must not be null!");
   // ExitingDefs.MustReach is a set of must define locations (Defs) for the
@@ -491,6 +477,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto &Loc : DU->getMayDefs())
       DefUse->addMayDef(Loc);
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());
+    DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
     for (auto Loc : DU->getAddressAccesses())
       DefUse->addAddressAccess(Loc);
     for (auto Inst : DU->getUnknownInsts())
