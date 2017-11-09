@@ -118,7 +118,7 @@ struct TaggedDenseMapPair : public bcl::tagged_pair<TaggedKey, TaggedValue> {
 ///   typedef llvm::DenseMap<KT *,
 ///     std::tuple<VT1 *, VT2 *>,
 ///     llvm::DenseMapInfo<KT *>,
-///     tsar::TaggedDenseMapPair<
+///     tsar::TaggedDenseMapTuple<
 ///       bcl::tagged<KT *, KT>,
 ///       bcl::tagged<VT1 *, Foo>>
 ///       bcl::tagged<VT2 *, Bar>>> Map;
