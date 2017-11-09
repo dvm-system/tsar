@@ -391,6 +391,11 @@ public:
   class const_iterator :
     public std::iterator<std::forward_iterator_tag, AliasTrait> {
   public:
+    const_iterator() = default;
+    const_iterator(const const_iterator &) = default;
+    const_iterator(const_iterator &&) = default;
+    const_iterator & operator=(const const_iterator &) = default;
+    const_iterator & operator=(const_iterator &&) = default;
     explicit const_iterator(const AliasTraits::const_iterator &I) :
       mCurrItr(I) {}
     explicit const_iterator(AliasTraits::const_iterator &&I) :
@@ -412,6 +417,11 @@ public:
   /// This type used to iterate over traits of different alias nodes.
   class iterator : public const_iterator {
   public:
+    iterator() = default;
+    iterator(const iterator &) = default;
+    iterator(iterator &&) = default;
+    iterator & operator=(const iterator &) = default;
+    iterator & operator=(iterator &&) = default;
     explicit iterator(const AliasTraits::const_iterator &I) :
       const_iterator(I) {}
     explicit iterator(AliasTraits::const_iterator &&I) :
