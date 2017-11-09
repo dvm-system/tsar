@@ -170,15 +170,17 @@ void PrivateRecognitionPass::resolveCandidats(
     assert(LiveItr != mLiveInfo->end() && LiveItr->get<LiveSet>() &&
       "List of live locations must be specified!");
     TraitMap ExplicitAccesses;
+    UnknownMap ExplicitUnknowns;
     AliasMap NodeTraits;
     for (auto &N : *mAliasTree)
-      NodeTraits.insert(std::make_pair(&N, TraitList()));
+      NodeTraits.insert(
+        std::make_pair(&N, std::make_tuple(TraitList(), UnknownList())));
     resolveAccesses(R->getLatchNode(), R->getExitNode(),
       *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(),
-      ExplicitAccesses, NodeTraits);
+      ExplicitAccesses, ExplicitUnknowns, NodeTraits);
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
-    propagateTraits(Numbers, *R, ExplicitAccesses, NodeTraits,
+    propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
       *PrivInfo.first->get<DependencySet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
@@ -187,7 +189,8 @@ void PrivateRecognitionPass::resolveCandidats(
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     const DFNode *ExitNode, const tsar::DefUseSet &DefUse,
-    const tsar::LiveSet &LS, TraitMap &ExplicitAccesses, AliasMap &NodeTraits) {
+    const tsar::LiveSet &LS, TraitMap &ExplicitAccesses,
+    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits) {
   assert(LatchNode && "Latch node must not be null!");
   assert(ExitNode && "Exit node must not be null!");
   auto LatchDefItr = mDefInfo->find(const_cast<DFNode *>(LatchNode));
@@ -243,6 +246,18 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     } else {
       CurrTraits &= Shared;
     }
+  }
+  for (const auto &Unknown : DefUse.getExplicitUnknowns()) {
+    const auto N = mAliasTree->findUnknown(Unknown);
+    assert(N && "Alias node for unknown memory location must not be null!");
+    auto I = NodeTraits.find(N);
+    auto &AA = mAliasTree->getAliasAnalysis();
+    ImmutableCallSite CS(Unknown);
+    TraitId TID = (CS && AA.onlyReadsMemory(CS)) ?
+      TraitId::Shared : TraitId::Dependency;
+    I->get<UnknownList>().push_front(std::make_pair(Unknown, TraitImp(TID)));
+    auto &CurrTraits = ExplicitUnknowns.insert(std::make_pair(Unknown,
+      std::make_tuple(N, &I->get<UnknownList>().front().get<TraitImp>())));
   }
 }
 
@@ -330,13 +345,14 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
 void PrivateRecognitionPass::propagateTraits(
     const tsar::GraphNumbering<const AliasNode *> &Numbers,
     const tsar::DFRegion &R,
-    TraitMap &ExplicitAccesses, AliasMap &NodeTraits, DependencySet &DS) {
-  std::stack<TraitList *> ChildTraits;
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
+    AliasMap &NodeTraits, DependencySet &DS) {
+  std::stack<TraitPair> ChildTraits;
   auto *Prev = mAliasTree->getTopLevelNode();
   // Such initialization of Prev is sufficient for the first iteration, then
   // it will be overwritten.
   for (auto *N : post_order(mAliasTree)) {
-    auto &NT = NodeTraits.find(N)->get<TraitList>();
+    auto NTItr = NodeTraits.find(N);
     if (Prev->getParent(*mAliasTree) == N) {
       // All children has been analyzed and now it is possible to combine
       // obtained results and to propagate to a current node N.
@@ -344,27 +360,31 @@ void PrivateRecognitionPass::propagateTraits(
         // This for loop is used to extract all necessary information from
         // the ChildTraits stack. Number of pop() calls should be the same
         // as a number of children.
-        auto &CT = *ChildTraits.top();
+        auto &CT = ChildTraits.top();
         ChildTraits.pop();
-        for (auto &EMToT : CT) {
+        for (auto &EMToT : *CT.get<TraitList>()) {
           auto Parent = EMToT.get<EstimateMemory>()->getParent();
           if (!Parent || Parent->getAliasNode(*mAliasTree) != N) {
-            NT.push_front(std::move(EMToT));
+            NTItr->get<TraitList>().push_front(std::move(EMToT));
           } else {
             auto EA = ExplicitAccesses.find(Parent);
             if (EA != ExplicitAccesses.end())
               *EA->get<TraitImp>() &= EMToT.get<TraitImp>();
             else
-              NT.push_front(
+              NTItr->get<TraitList>().push_front(
                 std::make_pair(Parent, std::move(EMToT.get<TraitImp>())));
           }
         }
+        for (auto &UToT : *CT.get<UnknownList>())
+          NTItr->get<UnknownList>().push_front(std::move(UToT));
       }
     }
-    for (auto BI = NT.before_begin(), I = NT.begin(), E = NT.end(); I != E;)
-      removeRedundant(N, NT, BI, I);
-    storeResults(Numbers, R, *N, ExplicitAccesses, NT, DS);
-    ChildTraits.push(&NT);
+    auto &TL = NTItr->get<TraitList>();
+    for (auto BI = TL.before_begin(), I = TL.begin(), E = TL.end(); I != E;)
+      removeRedundant(N, NTItr->get<TraitList>(), BI, I);
+    TraitPair NT(&NTItr->get<TraitList>(), &NTItr->get<UnknownList>());
+    storeResults(Numbers, R, *N, ExplicitAccesses, ExplicitUnknowns, NT, DS);
+    ChildTraits.push(std::move(NT));
     Prev = N;
   }
   std::vector<const AliasNode *> Coverage;
@@ -478,24 +498,31 @@ void PrivateRecognitionPass::removeRedundant(
 
 void PrivateRecognitionPass::storeResults(
     const GraphNumbering<const tsar::AliasNode *> &Numbers,
-    const DFRegion &R, const AliasNode &N, const TraitMap &ExplicitAccesses,
-    TraitList &Traits, DependencySet &DS) {
+    const DFRegion &R, const AliasNode &N,
+    const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
+    const TraitPair &Traits, DependencySet &DS) {
   assert(DS.find(&N) == DS.end() && "Results must not be already stored!");
-  if (Traits.empty())
-    return;
-  auto NodeTraitItr = DS.insert(&N, DependencyDescriptor()).first;
-  auto EMI = Traits.begin(), E = Traits.end();
-  auto SecondEM = Traits.begin(); ++SecondEM;
-  if (SecondEM == E) {
-    *NodeTraitItr = toDescriptor(EMI->get<TraitImp>(), 1);
-    checkFirstPrivate(Numbers, R, EMI, *NodeTraitItr);
-    auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
-    if (ExplicitItr != ExplicitAccesses.end() &&
-        (*ExplicitItr->second | ~AddressAccess) != NoAccess &&
-        EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
-      NodeTraitItr->set<trait::ExplicitAccess>();
-    NodeTraitItr->insert(
-      EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr));
+  DependencySet::iterator NodeTraitItr;
+  auto EMI = Traits.get<TraitList>()->begin();
+  auto EME = Traits.get<TraitList>()->end();
+  if (!Traits.get<TraitList>()->empty()) {
+    NodeTraitItr = DS.insert(&N, DependencyDescriptor()).first;
+    auto SecondEM = Traits.get<TraitList>()->begin(); ++SecondEM;
+    if (Traits.get<UnknownList>()->empty() && SecondEM == EME) {
+      *NodeTraitItr = toDescriptor(EMI->get<TraitImp>(), 1);
+      checkFirstPrivate(Numbers, R, EMI, *NodeTraitItr);
+      auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
+      if (ExplicitItr != ExplicitAccesses.end() &&
+          (*ExplicitItr->second | ~AddressAccess) != NoAccess &&
+          EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
+        NodeTraitItr->set<trait::ExplicitAccess>();
+      NodeTraitItr->insert(
+        EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr));
+      return;
+    }
+  } else if (!Traits.get<UnknownList>()->empty()) {
+    NodeTraitItr = DS.insert(&N, DependencyDescriptor()).first;
+  } else {
     return;
   }
   // There are memory locations which are explicitly accessed in the loop and
@@ -503,19 +530,32 @@ void PrivateRecognitionPass::storeResults(
   // memory trees. So only two type of combined results are possible: shared or
   // dependency.
   TraitImp CombinedTrait;
-  for (; EMI != E; ++EMI) {
+  for (; EMI != EME; ++EMI) {
     CombinedTrait &= EMI->get<TraitImp>();
     auto Dptr = toDescriptor(EMI->get<TraitImp>(), 0);
     checkFirstPrivate(Numbers, R, EMI, Dptr);
     auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
     if (ExplicitItr != ExplicitAccesses.end() &&
-        (*ExplicitItr->second | ~AddressAccess) != NoAccess &&
+        (*ExplicitItr->get<TraitImp>() | ~AddressAccess) != NoAccess &&
         EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
     }
     NodeTraitItr->insert(
       EstimateMemoryTrait(EMI->get<EstimateMemory>(), std::move(Dptr)));
+  }
+  for (auto &U : *Traits.get<UnknownList>()) {
+    CombinedTrait &= U.get<TraitImp>();
+    auto Dptr = toDescriptor(U.get<TraitImp>(), 0);
+    auto ExplicitItr = ExplicitUnknowns.find(U.get<Instruction>());
+    if (ExplicitItr != ExplicitUnknowns.end() &&
+        (*ExplicitItr->get<TraitImp>() | ~AddressAccess) != NoAccess &&
+        ExplicitItr->get<AliasNode>() == &N) {
+      NodeTraitItr->set<trait::ExplicitAccess>();
+      Dptr.set<trait::ExplicitAccess>();
+    }
+    NodeTraitItr->insert(
+      UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
   CombinedTrait &=
     (CombinedTrait | ~AddressAccess) == Shared ? Shared : Dependency;
@@ -607,6 +647,22 @@ public:
         OS << "?";
       else
         OS << T.getMemory()->getSize();
+      OS << "> ";
+    }
+    for (auto T : make_range(mTS->unknown_begin(), mTS->unknown_end())) {
+      if (!std::is_same<Trait, trait::AddressAccess>::value &&
+           T.is<trait::NoAccess>() ||
+          std::is_same<Trait, trait::AddressAccess>::value && !T.is<Trait>())
+        continue;
+      OS << "<";
+      ImmutableCallSite CS(T.getMemory());
+      if (auto Callee = [CS]() {
+        return !CS ? nullptr : dyn_cast<Function>(
+          CS.getCalledValue()->stripPointerCasts());
+      }())
+        Callee->printAsOperand(OS, false);
+      else
+        T.getMemory()->printAsOperand(OS, false);
       OS << "> ";
     }
     OS << "\n";

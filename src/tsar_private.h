@@ -28,6 +28,7 @@
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
 #include <forward_list>
+#include <tuple>
 
 namespace tsar {
 class AliasNode;
@@ -75,17 +76,39 @@ class PrivateRecognitionPass :
       bcl::tagged<const tsar::EstimateMemory *, tsar::EstimateMemory>,
       bcl::tagged<tsar::detail::TraitImp *, tsar::detail::TraitImp>>>;
 
+  /// Map from unknown memory location to traits.
+  using UnknownMap = DenseMap<
+    const llvm::Instruction *,
+    std::tuple<const tsar::AliasNode *, tsar::detail::TraitImp*>,
+    DenseMapInfo<const llvm::Instruction *>,
+    tsar::TaggedDenseMapTuple<
+      bcl::tagged<const llvm::Instruction *, llvm::Instruction>,
+      bcl::tagged<const tsar::AliasNode *, tsar::AliasNode>,
+      bcl::tagged<tsar::detail::TraitImp *, tsar::detail::TraitImp>>>;
+
   /// List of memory location traits.
   using TraitList = std::forward_list<bcl::tagged_pair<
       bcl::tagged<const tsar::EstimateMemory *, tsar::EstimateMemory>,
       bcl::tagged<tsar::detail::TraitImp, tsar::detail::TraitImp>>>;
 
+  /// List of unknown memory location traits.
+  using UnknownList = std::forward_list<bcl::tagged_pair<
+      bcl::tagged<const llvm::Instruction *, llvm::Instruction>,
+      bcl::tagged<tsar::detail::TraitImp, tsar::detail::TraitImp>>>;
+
+  /// Pair of lists of traits.
+  using TraitPair = bcl::tagged_tuple<
+      bcl::tagged<TraitList *, TraitList>,
+      bcl::tagged<UnknownList *, UnknownList>>;
+
   /// Map from alias node to a number of memory locations.
-  using AliasMap = DenseMap<const tsar::AliasNode *, TraitList,
+  using AliasMap = DenseMap<const tsar::AliasNode *,
+    std::tuple<TraitList, UnknownList>,
     DenseMapInfo<const tsar::AliasNode *>,
-    tsar::TaggedDenseMapPair<
+    tsar::TaggedDenseMapTuple<
       bcl::tagged<const tsar::AliasNode *, tsar::AliasNode>,
-      bcl::tagged<TraitList, TraitList>>>;
+      bcl::tagged<TraitList, TraitList>,
+      bcl::tagged<UnknownList, UnknownList>>>;
 
 public:
   /// Pass identification, replacement for typeid.
@@ -150,7 +173,8 @@ private:
   /// parameters.
   void resolveAccesses(const tsar::DFNode *LatchNode,
     const tsar::DFNode *ExitNode, const tsar::DefUseSet &DefUse,
-    const tsar::LiveSet &LS, TraitMap &ExplicitAccesses, AliasMap &NodeTraits);
+    const tsar::LiveSet &LS, TraitMap &ExplicitAccesses,
+    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
   void resolvePointers(const tsar::DefUseSet &DefUse,
@@ -185,18 +209,22 @@ private:
   /// obtained before the loop. This method propagates trait to all estimate
   /// locations and alias nodes in a hierarchy.
   /// \post Traits will be stored into a dependency set `DS`,
-  /// `ExplicitAccesses` and `NodeTraits` will be corrupted and can no longer
-  /// be used.
+  /// `ExplicitAccesses`, `ExplicitUnknowns` and `NodeTraits` will be corrupted
+  /// and can no longer be used.
   /// \param [in] Numbers This contains numbers of all alias nodes.
   /// \param [in] R Region in a data-flow graph, it can not be null.
   /// \param [in, out] ExplicitAccesses List of estimate memory locations and
   /// their traits which is explicitly accessed in a loop.
+  /// \param [in, out] ExplicitUnknowns List of unknown memory locations and
+  /// their traits which is explicitly accessed in a loop.
   /// \param [in, out] NodeTraits Utility list of traits for all nodes in
   /// the alias tree.
   /// \param [out] DS Representation of traits of a currently evaluated loop.
-  void propagateTraits(const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
-    const tsar::DFRegion &R, TraitMap &ExplicitAccesses, AliasMap &NodeTraits,
-    tsar::DependencySet &DS);
+  void propagateTraits(
+    const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
+    const tsar::DFRegion &R,
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
+    AliasMap &NodeTraits, tsar::DependencySet &DS);
 
   /// \brief This removes redundant traits from a list.
   ///
@@ -241,16 +269,19 @@ private:
   /// \param [in] N An alias node which has been analyzed.
   /// \param [in] ExplicitAccesses List of estimate memory locations and
   /// their traits which is explicitly accessed in a loop.
-  /// \param [in, out] Traits Internal representation of traits of estimate memory
-  /// from alias node 'N' which are explicitly accessed in a loop. This traits
-  /// will be safely combined and trait for the whole node 'N' will be obtained.
+  /// \param [in] ExplicitUnknowns List of unknown memory locations and
+  /// their traits which is explicitly accessed in a loop.
+  /// \param [in, out] TraitPair Internal representation of traits of estimate
+  /// memory from alias node 'N' which are explicitly accessed in a loop.
+  /// This traits will be safely combined and trait for the whole node 'N' will
+  /// be obtained.
   /// \param [out] DS Dependency set which stores results for a loop which
   /// is currently evaluated.
   void storeResults(
      const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
      const tsar::DFRegion &R, const tsar::AliasNode &N,
-     const TraitMap &ExplicitAccesses,
-     TraitList &Traits, tsar::DependencySet &DS);
+     const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
+     const TraitPair &Traits, tsar::DependencySet &DS);
 
   /// \brief Converts internal representation of a trait to a dependency
   /// descriptor.
