@@ -677,13 +677,7 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
     do {
       if (Base.Size > Chain->getSize())
         continue;
-      auto AATags = Chain->getAAInfo();
-      if (AATags == Base.AATags ||
-          AATags == DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey())
-        return Chain;
-      // Different chains with the same base may exist, so go to the
-      // next iteration of a for-loop to traverse all such chains.
-      break;
+      return Chain;
     } while (Prev = Chain, Chain = CT::getNext(Chain));
   }
   return nullptr;
