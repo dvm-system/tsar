@@ -1,4 +1,4 @@
-//===--- DefinedMemory.h --- Defined Memory Analysis ------------*- C++ -*-===//
+//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -354,10 +354,11 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         }
       },
       [&DL, &AT, &DU](Instruction &I, AccessInfo, AccessInfo) {
+        auto *AN = AT.findUnknown(I);
+        if (!AN)
+          return;
         DU->addExplicitUnknown(&I);
         DU->addUnknownInst(&I);
-        auto *AN = AT.findUnknown(I);
-        assert(AN && "Alias node must not be null!");
         auto &AA = AT.getAliasAnalysis();
         for_each_alias(&AT, AN, AddUnknownAccessFunctor(AA, DL, I, *DU));
       }

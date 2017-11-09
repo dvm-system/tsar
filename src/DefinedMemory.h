@@ -217,16 +217,23 @@ public:
   /// An unknown instruction is a instruction which accessed memory with unknown
   /// description. For example, in general case call instruction is an unknown
   /// instruction.
+  /// Unknown instructions may access memory which is differ from objects
+  /// pointed to by their pointer-typed arguments.
   const InstructionSet & getUnknownInsts() const { return mUnknownInsts; }
 
-  /// Returns true if there are an unknown instructions in the node.
+  /// \brief Returns true if there are an unknown instructions in the node.
+  ///
+  /// Unknown instructions may access memory which is differ from objects
+  /// pointed to by their pointer-typed arguments.
   bool hasUnknownInst(llvm::Instruction *I) const {
     assert(I && "Instruction must not be null!");
     return mUnknownInsts.count(I) != 0;
   }
 
-  /// Specifies that there are unknown instructions in the node.
+  /// \brief Specifies that there are unknown instructions in the node.
   ///
+  /// Unknown instructions may access memory which is differ from objects
+  /// pointed to by their pointer-typed arguments.
   /// \return False if it has been already specified.
   bool addUnknownInst(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
@@ -247,7 +254,8 @@ public:
   /// \brief Specifies that there are an explicit access to an unknown location
   /// in the node.
   ///
-  /// \pre The specified instruction may read or modify memory.
+  /// \pre The specified instruction may read or modify memory which is differ
+  /// from objects pointed to by their pointer-typed arguments.
   void addExplicitUnknown(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
     assert(I->mayReadOrWriteMemory() &&

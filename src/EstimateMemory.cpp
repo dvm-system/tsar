@@ -459,6 +459,9 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   }
   if (!I->mayReadOrWriteMemory())
     return;
+  ImmutableCallSite CS(I);
+  if (CS && AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
+    return;
   SmallVector<AliasNode *, 4> Aliases;
   auto Children = make_range(
     getTopLevelNode()->child_begin(), getTopLevelNode()->child_end());

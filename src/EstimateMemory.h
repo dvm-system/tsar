@@ -1025,7 +1025,11 @@ public:
   /// Inserts new estimate memory location.
   void add(const llvm::MemoryLocation &Loc);
 
-  /// Inserts unknown memory access.
+  /// \brief Inserts unknown memory access.
+  ///
+  /// If a specified instruction does not access memory or reads/writes memory
+  /// from objects pointed to by their pointer-typed arguments only this
+  /// instruction will be ignored.
   void addUnknown(llvm::Instruction *I);
 
   /// Removes node from the graph, note that this class manages memory
