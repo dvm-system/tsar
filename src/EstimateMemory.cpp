@@ -669,8 +669,12 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
       continue;
     switch (isSamePointer(*Chain, Base)) {
     case NoAlias: continue;
-    case MayAlias: case MustAlias:  break;
-    default: llvm_unreachable("Unknown result of alias query!"); break;
+    case MustAlias: break;
+    case MayAlias:
+      llvm_unreachable("It seems that something goes wrong or memory location"\
+                       "was not added to alias tree!"); break;
+    default:
+      llvm_unreachable("Unknown result of alias query!"); break;
     }
     using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
     EstimateMemory *Prev = nullptr;
