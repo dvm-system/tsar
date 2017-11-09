@@ -256,7 +256,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     TraitId TID = (CS && AA.onlyReadsMemory(CS)) ?
       TraitId::Shared : TraitId::Dependency;
     I->get<UnknownList>().push_front(std::make_pair(Unknown, TraitImp(TID)));
-    auto &CurrTraits = ExplicitUnknowns.insert(std::make_pair(Unknown,
+    ExplicitUnknowns.insert(std::make_pair(Unknown,
       std::make_tuple(N, &I->get<UnknownList>().front().get<TraitImp>())));
   }
 }
