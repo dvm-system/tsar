@@ -10,7 +10,11 @@
 
 #include "CanonicalLoop.h"
 #include "DFRegionInfo.h"
+#include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
+#include "MemoryAccessUtils.h"
+#include "tsar_memory_matcher.h"
+#include "SpanningTreeRelation.h"
 #include "tsar_transformation.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -41,6 +45,8 @@ INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(CanonicalLoopPass, "canonical-loop",
   "Canonical Form Loop Analysis", true, true)
 
@@ -51,11 +57,11 @@ public:
   /// Creates visitor.
   explicit CanonicalLoopLabeler(Rewriter &R, DFRegionInfo &DFRI,
       const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
-      const MemoryMatchInfo::MemoryMatcher &MM,
-      const MemoryMatchInfo::MemoryASTSet &MS, llvm::Module *M,
-      tsar::CanonicalLoopInfo *CLI) : mRw(&R), mRgnInfo(&DFRI), mLoopInfo(&LM),
-      mDefInfo(&DefI), mMemoryMatcher(&MM), mMemoryUnmatched(&MS), mModule(M),
-      mCanonicalLoopInfo(CLI) {}
+      const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
+      TargetLibraryInfo &TLI, tsar::CanonicalLoopInfo *CLI) : mRw(&R),
+      mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
+      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
+      mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
 
   /// This function is called each time LoopMatcher finds appropriate loop
   virtual void run(const MatchFinder::MatchResult &Result) {
@@ -63,7 +69,7 @@ public:
     ASTContext *Context = Result.Context;
     // We do not want to convert header files!
     if (!FS||!Context->getSourceManager().isWrittenInMainFile(FS->getForLoc()))
-      return; 
+      return;
     const VarDecl *UnIncVar = Result.Nodes.getNodeAs
         <VarDecl>("UnIncVarName");
     const VarDecl *BinIncVar = Result.Nodes.getNodeAs
@@ -94,14 +100,15 @@ public:
       else
         Region = nullptr;
       if (Region) {
-        auto PLInfo = mCanonicalLoopInfo->insert(Region);
-        ++NumCanonical;
-      } else {
-        ++NumNonCanonical;
+        if (CheckLoop(Region,
+            const_cast<VarDecl*>(InitVar->getCanonicalDecl()))) {
+          auto PLInfo = mCanonicalLoopInfo->insert(Region);
+          ++NumCanonical;
+          return;
+        }
       }
-    } else {
-      ++NumNonCanonical;
     }
+    ++NumNonCanonical;
   }
 
 private:
@@ -109,14 +116,73 @@ private:
   bool sameVar(const ValueDecl *First, const ValueDecl *Second) {
     return First->getCanonicalDecl() == Second->getCanonicalDecl();
   }
+
+  bool CheckLoop(tsar::DFNode* Region, VarDecl *Var) {
+    auto MemMatch = mMemoryMatcher->find<AST>(Var);
+    if (MemMatch == mMemoryMatcher->end()) {
+      return false;
+    }
+    auto alloca = MemMatch->get<IR>();
+    auto type = (llvm::dyn_cast<llvm::PointerType>(alloca->getType()))->getElementType();
+    if (!type->isSized()) {
+      return false;
+    }
+    llvm::MemoryLocation MemLoc(alloca, 1);
+    if (tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region)) {
+      for (auto I = DFFor->node_begin(); I != DFFor->node_end(); ++I) {
+        auto Match = mDefInfo->find(*I);
+        if (Match != mDefInfo->end()) {
+          auto &DUS = Match->get<DefUseSet>();
+          if ((DUS->hasDef(MemLoc)) ||  (DUS->hasMayDef(MemLoc))) {
+            if (tsar::DFBlock* DFB = llvm::dyn_cast<DFBlock>(*I)) {
+              if (DFFor->getLoop()->isLoopLatch(DFB->getBlock())) {
+                auto EMI = mAliasTree.find(MemLoc);
+                assert(EMI && "Estimate memory location must not be null!");
+                auto ANI = EMI->getAliasNode(mAliasTree);
+                assert(ANI && "Alias node must not be null!");
+                auto &AT = mAliasTree;
+                auto &STR = mSTR;
+                bool unreachable = true;
+                bool *res = &unreachable;
+                for_each_memory(*(DFB->getBlock()), mTLI,
+                  [&AT, &STR, &ANI, &res] (Instruction &I, MemoryLocation &&Loc,
+                      unsigned Idx, AccessInfo R, AccessInfo W) {
+                    auto EM = AT.find(Loc);
+                    assert(EM && "Estimate memory location must not be null!");
+                    auto AN = EM->getAliasNode(AT);
+                    assert(AN && "Alias node must not be null!");
+                    if (!(STR.isEqual(ANI, AN) || STR.isUnreachable(ANI, AN)))
+                      *res = false;
+                  },
+                  [&AT, &STR, &ANI, &res](Instruction &I, AccessInfo,
+                      AccessInfo) {
+                    auto AN = AT.findUnknown(I);
+                    if (!AN)
+                      return;
+                    if (!(STR.isEqual(ANI, AN) || STR.isUnreachable(ANI, AN)))
+                      *res = false;
+                  }
+                );
+                if (unreachable)
+                  return true;
+              }
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
   
+  Rewriter* mRw;
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
   DefinedMemoryInfo *mDefInfo;
   const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
-  const MemoryMatchInfo::MemoryASTSet *mMemoryUnmatched;
-  llvm::Module *mModule;
+  tsar::AliasTree &mAliasTree;
+  TargetLibraryInfo &mTLI;
   tsar::CanonicalLoopInfo *mCanonicalLoopInfo;
+  SpanningTreeRelation<const AliasTree *> mSTR;
 };
 
 /// returns LoopMatcher that matches loops that can be canonical
@@ -207,11 +273,12 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
   auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
   auto &MemInfo =
     getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
-  auto &MemUnmatched =
-    getAnalysis<MemoryMatcherImmutableWrapper>()->UnmatchedAST;
+  auto &ATree = getAnalysis<EstimateMemoryPass>().getAliasTree();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   StatementMatcher LoopMatcher = makeLoopMatcher();
   MatchFinder Finder;
-  CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, &mCanonicalLoopInfo);
+  CanonicalLoopLabeler Labeler(Rwriter, RgnInfo, LoopInfo, DefInfo, MemInfo,
+      ATree, TLI, &mCanonicalLoopInfo);
   Finder.addMatcher(LoopMatcher, &Labeler);
   Finder.matchAST(FuncDecl->getASTContext());
   return false;
@@ -223,6 +290,8 @@ void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopMatcherPass>();
   AU.addRequired<DefinedMemoryPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
