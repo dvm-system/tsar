@@ -6,7 +6,7 @@
 using namespace llvm;
 using namespace tsar;
 
-Instrumentation::Instrumentation(LoopInfo &LI, Function &F): LoopInfo_(LI) {
+Instrumentation::Instrumentation(LoopInfo &LI, Function &F): mLoopInfo(LI) {
   visitFunction(F);	
 }  
 
@@ -123,20 +123,13 @@ void Instrumentation::loopEndInstr(llvm::Loop const *L, llvm::BasicBlock &Header
 
 void Instrumentation::loopIterInstr(llvm::Loop const *L, 
   llvm::BasicBlock &Header) {
-  auto HeaderTerm = Header.getTerminator();
-  //looking for all Header successors which are inside the loop
-  //then insert call of sapforSLIter at the begginning of these successors
-  for(unsigned I = 0; I < HeaderTerm->getNumSuccessors(); ++I) {
-    auto CurSucc = HeaderTerm->getSuccessor(I);
-    if(L->contains(CurSucc)) {
-      auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
-      CallInst::Create(Fun, {}, "", &(*CurSucc->begin()));	  
-    }
-  }
+  auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
+  CallInst::Create(Fun, {}, "", Header.getTerminator());
 }
+
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
-  if(LoopInfo_.isLoopHeader(&B)) {
-    auto Loop = LoopInfo_.getLoopFor(&B);	  
+  if(mLoopInfo.isLoopHeader(&B)) {
+    auto Loop = mLoopInfo.getLoopFor(&B);	  
     loopBeginInstr(Loop, B);
     loopEndInstr(Loop, B);
     loopIterInstr(Loop, B);
@@ -153,7 +146,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     return;	  
 
   IntrinsicId Id;
-  if(getTsarLibFunc(F.getName().data(), Id)) {
+  if(getTsarLibFunc(F.getName(), Id)) {
     return;
   }
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);

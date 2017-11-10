@@ -7,7 +7,7 @@
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 private:
-  llvm::LoopInfo& LoopInfo_; 	
+  llvm::LoopInfo& mLoopInfo; 	
 
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them	
