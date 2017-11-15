@@ -65,7 +65,7 @@ public:
 
   /// Checks whether specified nodes are neither ancestor nor descendant.
   bool isUnreachable(NodeRef LHS, NodeRef RHS) const {
-    return compare(What, Of) == RELATION_UNREACHABLE;
+    return compare(LHS, RHS) == RELATION_UNREACHABLE;
   }
 
 private:
