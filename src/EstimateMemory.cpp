@@ -797,14 +797,14 @@ AliasTree::insert(const MemoryLocation &Base) {
 
 char EstimateMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(EstimateMemoryPass, "estimate-mem",
-  "Memory Estimator", true, true)
+  "Memory Estimator", false, true)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(EstimateMemoryPass, "estimate-mem",
-  "Memory Estimator", true, true)
+  "Memory Estimator", false, true)
 
 void EstimateMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
-  AU.addRequired<AAResultsWrapperPass>();
+  AU.addRequiredTransitive<AAResultsWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }

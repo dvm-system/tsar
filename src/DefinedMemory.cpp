@@ -32,17 +32,15 @@ using namespace tsar;
 
 char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
-  "Defined Memory Region Analysis", true, true)
+  "Defined Memory Region Analysis", false, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-  INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
-  "Defined Memory Region Analysis", true, true)
+  "Defined Memory Region Analysis", false, true)
 
 bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
@@ -55,8 +53,6 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
-  AU.setPreservesAll();
-  AU.addRequired<AAResultsWrapperPass>();
   AU.setPreservesAll();
 }
 

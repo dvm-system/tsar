@@ -97,12 +97,12 @@ INITIALIZE_PASS(MemoryMatcherImmutableWrapper, "memory-matcher-iw",
 
 char MemoryMatcherPass::ID = 0;
 INITIALIZE_PASS_BEGIN(MemoryMatcherPass, "memory-matcher",
-  "High and Low Memory Matcher", true, true)
+  "High and Low Memory Matcher", false , true)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableStorage)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_END(MemoryMatcherPass, "memory-matcher",
-  "High and Low Level Memory Matcher", true, true)
+  "High and Low Level Memory Matcher", false, true)
 
 STATISTIC(NumMatchMemory, "Number of matched memory units");
 STATISTIC(NumNonMatchIRMemory, "Number of non-matched IR allocas");

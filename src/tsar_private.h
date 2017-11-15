@@ -56,7 +56,6 @@ class TraitImp;
 }
 
 namespace llvm {
-class AliasSetTracker;
 class Loop;
 
 /// This pass determines locations which can be privatized.
@@ -139,7 +138,6 @@ public:
     mDefInfo = nullptr;
     mLiveInfo = nullptr;
     mAliasTree = nullptr;
-    mAliasTracker = nullptr;
   }
 
   /// Specifies a list of analyzes  that are necessary for this pass.
@@ -295,7 +293,6 @@ private:
 
 private:
   tsar::PrivateInfo mPrivates;
-  AliasSetTracker *mAliasTracker = nullptr;
   const tsar::DefinedMemoryInfo *mDefInfo = nullptr;
   const tsar::LiveMemoryInfo *mLiveInfo = nullptr;
   const tsar::AliasTree *mAliasTree = nullptr;

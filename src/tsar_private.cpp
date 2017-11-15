@@ -18,14 +18,12 @@
 #include "MemoryCoverage.h"
 #include "MemoryTraitUtils.h"
 #include "tsar_utility.h"
-#include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/LoopInfo.h>
-#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
@@ -54,19 +52,14 @@ STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated")
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
-                      "Private Variable Analysis", true, true)
+                      "Private Variable Analysis", false, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(LiveMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
-#else
-INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
-#endif
 INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
-                    "Private Variable Analysis", true, true)
+                    "Private Variable Analysis", false, true)
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
@@ -76,23 +69,14 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
       "Data-flow graph must not contain unreachable nodes!");
 #endif
   LoopInfo &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  AliasAnalysis &AA = getAnalysis<AliasAnalysis>();
-#else
-  AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
-#endif
   DFRegionInfo &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   mDefInfo = &getAnalysis<DefinedMemoryPass>().getDefInfo();
   mLiveInfo = &getAnalysis<LiveMemoryPass>().getLiveInfo();
-  mAliasTracker = new AliasSetTracker(AA);
   mAliasTree = &getAnalysis<EstimateMemoryPass>().getAliasTree();
-  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I)
-    mAliasTracker->add(&*I);
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   GraphNumbering<const AliasNode *> Numbers;
   numberGraph(mAliasTree, &Numbers);
   resolveCandidats(Numbers, DFF);
-  delete mAliasTracker, mAliasTracker = nullptr;
   return false;
 }
 
@@ -609,11 +593,6 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<DefinedMemoryPass>();
   AU.addRequired<LiveMemoryPass>();
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  AU.addRequired<AliasAnalysis>();
-#else
-  AU.addRequired<AAResultsWrapperPass>();
-#endif
   AU.addRequired<EstimateMemoryPass>();
   AU.setPreservesAll();
 }

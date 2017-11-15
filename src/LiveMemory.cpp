@@ -22,11 +22,11 @@ using namespace tsar;
 
 char LiveMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(LiveMemoryPass, "live-mem",
-  "Live Memory Analysis", true, true)
+  "Live Memory Analysis", false, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
-  "Live Memory Analysis", true, true)
+  "Live Memory Analysis", false, true)
 
 bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
