@@ -44,13 +44,21 @@ public:
       return RELATION_EQUAL;
     auto LeftItr = mNumbering.find(LHS);
     auto RightItr = mNumbering.find(RHS);
-    if (LeftItr->get<Preorder>() < RightItr->get<Preorder>() &&
-        LeftItr->get<ReversePostorder>() < RightItr->get<ReversePostorder>())
+    if (LeftItr->template get<Preorder>() <
+            RightItr->template get<Preorder>() &&
+        LeftItr->template get<ReversePostorder>() <
+            RightItr->template get<ReversePostorder>())
       return RELATION_ANCESTOR;
-    if (LeftItr->get<Preorder>() > RightItr->get<Preorder>() &&
-      LeftItr->get<ReversePostorder>() > RightItr->get<ReversePostorder>())
+    if (LeftItr->template get<Preorder>() >
+            RightItr->template get<Preorder>() &&
+      LeftItr->template get<ReversePostorder>() >
+            RightItr->template get<ReversePostorder>())
       return RELATION_DESCENDANT;
     return RELATION_UNREACHABLE;
+  }
+
+  bool isEqual(NodeRef LHS, NodeRef RHS) const {
+    return compare(LHS, RHS) == RELATION_EQUAL;
   }
 
   /// Checks whether the 'What' node in ancestor of 'Of' node.
