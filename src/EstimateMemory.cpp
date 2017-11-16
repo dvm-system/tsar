@@ -612,10 +612,24 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       // to go down to the next level in the alias tree.
       auto I = Aliases.begin(), EI = Aliases.end();
       Current = getAliasNode(*I);
-      for (++I; I != EI; ++I, ++NumMergedNode)
-        Current->mergeNodeIn(*getAliasNode(*I), *this);
-      if (isa<AliasUnknownNode>(Current))
-        continue;
+      AliasNode *Opposite = nullptr;
+      for (++I; I != EI; ++I, ++NumMergedNode) {
+        auto *Node = getAliasNode(*I);
+        if (Node->getKind() == Current->getKind())
+          Current->mergeNodeIn(*Node, *this);
+        else if (Opposite)
+          Opposite->mergeNodeIn(*Node, *this);
+        else
+          Opposite = Node;
+      }
+      if (!Opposite) {
+        if (isa<AliasUnknownNode>(Current))
+          continue;
+      } else {
+        if (!isa<AliasUnknownNode>(Opposite))
+          std::swap(Current, Opposite);
+        Current->setParent(*Opposite, *this);
+      }
       return cast<AliasEstimateNode>(Current);
     }
     auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
