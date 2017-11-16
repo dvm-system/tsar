@@ -60,6 +60,8 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
+  llvm::cl::opt<bool> PrintAST;
+  llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
   llvm::cl::opt<bool> Test;
 private:
@@ -97,6 +99,10 @@ Options::Options() :
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
+  PrintAST("print-ast", cl::cat(DebugCategory),
+    cl::desc("Build ASTs and then pretty - print them")),
+  DumpAST("dump-ast", cl::cat(DebugCategory),
+    cl::desc("Build ASTs and then debug dump them")),
   TimeReport("ftime-report", cl::cat(DebugCategory),
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
@@ -188,15 +194,31 @@ void Tool::storeCLOptions() {
     mCommandLine.push_back("-D" + Macro);
   mCompilations = std::unique_ptr<CompilationDatabase>(
     new FixedCompilationDatabase(".", mCommandLine));
-  mEmitAST = Options::get().EmitAST;
-  mMergeAST = Options::get().MergeAST;
+  SmallVector<cl::Option *, 8> IncompatibleOpts;
+  auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> bool {
+    if (O)
+      IncompatibleOpts.push_back(&O);
+    return O;
+  };
+  mEmitAST = addIfSet(Options::get().EmitAST);
+  mMergeAST = mEmitAST ?
+    addIfSet(Options::get().MergeAST) : Options::get().MergeAST;
+  mPrintAST = addIfSet(Options::get().PrintAST);
+  mDumpAST = addIfSet(Options::get().DumpAST);
   for (auto PI : Options::get().OutputPasses)
     mOutputPasses.push_back(PI);
-  mEmitLLVM = Options::get().EmitLLVM;
-  mInstrLLVM = Options::get().InstrLLVM;
-  mTest = Options::get().Test;
+  mEmitLLVM = addIfSet(Options::get().EmitLLVM);
+  mInstrLLVM = addIfSet(Options::get().InstrLLVM);
+  mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
+  if (IncompatibleOpts.size() > 1) {
+    std::string Msg("error - this option is incompatible with");
+    for (unsigned I = 1; I < IncompatibleOpts.size(); ++I)
+      Msg.append(" -").append(IncompatibleOpts[1]->ArgStr);
+    IncompatibleOpts[0]->error(Msg);
+    exit(1);
+  }
 }
 
 inline static QueryManager * getDefaultQM(
@@ -287,10 +309,20 @@ int Tool::run(QueryManager *QM) {
   if (mMergeAST) {
     ClangTool CTool(*mCompilations, SourcesToMerge.back());
     SourcesToMerge.pop_back();
+    if (mDumpAST)
+      return CTool.run(newFrontendActionFactory<
+        tsar::ASTDumpAction, tsar::ASTMergeAction>(SourcesToMerge).get());
+    if (mPrintAST)
+      return CTool.run(newFrontendActionFactory<
+        tsar::ASTPrintAction, tsar::ASTMergeAction>(SourcesToMerge).get());
     return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
   }
   ClangTool CTool(*mCompilations, mSources);
+  if (mDumpAST)
+    return CTool.run(newFrontendActionFactory<tsar::ASTDumpAction>().get());
+  if (mPrintAST)
+    return CTool.run(newFrontendActionFactory<tsar::ASTPrintAction>().get());
   return CTool.run(newAnalysisActionFactory<MainAction>(
     mCommandLine, QM).get());
 }

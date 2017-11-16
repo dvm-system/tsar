@@ -106,4 +106,24 @@ newAnalysisActionFactory(
       std::move(First), std::move(Second), std::move(AdaptorArg)));
 }
 }
+namespace clang {
+/// Creates an frontend actions factory with adaptor.
+template <class ActionTy, class AdaptorTy, class AdaptorArgTy>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
+newFrontendActionFactory(AdaptorArgTy AdaptorArg) {
+  class SimpleFrontendActionFactory :
+    public clang::tooling::FrontendActionFactory {
+  public:
+    SimpleFrontendActionFactory(AdaptorArgTy A) : mAdaptorArg(std::move(A)) {}
+    clang::FrontendAction *create() override {
+      std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
+      return new AdaptorTy(std::move(Action), mAdaptorArg);
+    }
+  private:
+    AdaptorArgTy mAdaptorArg;
+  };
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
+    new SimpleFrontendActionFactory(std::move(AdaptorArg)));
+}
+}
 #endif//TSAR_ACTION_H

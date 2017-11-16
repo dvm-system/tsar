@@ -36,5 +36,19 @@ public:
 private:
   clang::FrontendAction *mWrappedAction;
 };
+
+/// This action is used to print AST.
+class ASTPrintAction : public clang::ASTFrontendAction {
+protected:
+  std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+};
+
+/// This action is used to dump AST.
+class ASTDumpAction : public clang::ASTFrontendAction {
+protected:
+  std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+};
 }
 #endif//TSAR_FRONTEND_ACTIONS_H
