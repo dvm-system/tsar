@@ -77,9 +77,9 @@ Options::Options() :
   OutputPasses(cl::desc("Analysis available:")),
   CompileCategory("Compilation options"),
   Includes("I", cl::cat(CompileCategory), cl::value_desc("path"),
-    cl::desc("Add directory to include search path")),
+    cl::desc("Add directory to include search path"), cl::Prefix),
   MacroDefs("D", cl::cat(CompileCategory), cl::value_desc("name=definition"),
-    cl::desc("Predefine name as a macro")),
+    cl::desc("Predefine name as a macro"), cl::Prefix),
   LanguageStd("std", cl::cat(CompileCategory), cl::value_desc("standard"),
     cl::desc("Language standard to compile for")),
   InstrLLVM("instr-llvm", cl::cat(CompileCategory),
@@ -90,9 +90,10 @@ Options::Options() :
     cl::desc("Merge Clang AST for source inputs before analysis")),
   MergeASTA("m", cl::aliasopt(MergeAST), cl::desc("Alias for -merge-ast")),
   Output("o", cl::cat(CompileCategory), cl::value_desc("file"),
-    cl::desc("Write output to <file>")),
+    cl::desc("Write output to <file>"), cl::Prefix),
   Language("x", cl::cat(CompileCategory), cl::value_desc("language"),
-    cl::desc("Treat subsequent input files as having type <language>")),
+    cl::desc("Treat subsequent input files as having type <language>"),
+    cl::Prefix),
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
@@ -110,15 +111,28 @@ Options::Options() :
     auto Debug = Opts["debug"];
     Debug->setCategory(DebugCategory);
     Debug->setHiddenFlag(cl::NotHidden);
-    assert(Opts.count("debug-only") == 1 &&
-      "Option '-debug-only' must be specified!");
+    assert(Opts.count("debug-only") == 1 && "Option must be specified!");
     auto DebugOnly = Opts["debug-only"];
     DebugOnly->setCategory(DebugCategory);
     DebugOnly->setHiddenFlag(cl::NotHidden);
-    assert(Opts.count("stats") == 1 && "Option '-stats' must be specified!");
+    auto DebugPass = Opts["debug-pass"];
+    assert(Opts.count("debug-pass") == 1 && "Option must be specified!");
+    DebugPass->setCategory(DebugCategory);
+    DebugPass->setHiddenFlag(cl::NotHidden);
+    assert(Opts.count("stats") == 1 && "Option must be specified!");
     Opts["stats"]->setCategory(DebugCategory);
   }
 #endif
+  assert(Opts.count("print-before") == 1 && "Option must be specified!");
+  assert(Opts.count("print-after") == 1 && "Option must be specified!");
+  assert(Opts.count("print-before-all") == 1 && "Option must be specified!");
+  assert(Opts.count("print-after-all") == 1 && "Option must be specified!");
+  assert(Opts.count("filter-print-funcs") == 1 && "Option must be specified!");
+  Opts["print-before"]->setCategory(DebugCategory);
+  Opts["print-after"]->setCategory(DebugCategory);
+  Opts["print-before-all"]->setCategory(DebugCategory);
+  Opts["print-after-all"]->setCategory(DebugCategory);
+  Opts["filter-print-funcs"]->setCategory(DebugCategory);
   cl::AddExtraVersionPrinter(printVersion);
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
