@@ -101,8 +101,8 @@ public:
 
   /// Implements default processing of unknown alias node.
   void addUnknown(AliasUnknownNode &N) {
-    for (auto &I : N)
-      mDU.addUnknownInst(&(*I));
+    for (auto *I : N)
+      mDU.addUnknownInst(I);
   }
 
 protected:

@@ -84,7 +84,7 @@ template<> struct DOTGraphTraits<AliasTree *> :
     std::string Str;
     llvm::raw_string_ostream OS(Str);
     OS << "Unknown Memory\n";
-    for (auto &Unknown : *N) {
+    for (auto *Unknown : *N) {
       if (isSimple()) {
         ImmutableCallSite CS(Unknown);
         if (auto Callee = [CS]() {

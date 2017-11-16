@@ -47,10 +47,10 @@
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/simple_ilist.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/MemoryLocation.h>
-#include <llvm/IR/ValueHandle.h>
 #include <llvm/Pass.h>
 #include <array>
 #include <iterator>
@@ -730,14 +730,16 @@ protected:
   /// This method is potentially slow because in the worst cast it uses
   /// AAResults::alias() method to compare all possible pairs of ambiguous
   /// pointers.
-  bool slowMayAliasUnknown(
+  /// \return True in case of alias relation, if an uknown location is found it
+  /// is returned as a second part of a pair.
+  std::pair<bool, llvm::Instruction *> slowMayAliasUnknown(
       const llvm::Instruction *I, llvm::AAResults &AA) const;
 
   /// This is a stub for nodes which does not support slowMayAliasUnknown().
-  bool slowMayAliasUnknownImp(
+  std::pair<bool, llvm::Instruction *> slowMayAliasUnknownImp(
       const llvm::Instruction */*I*/, llvm::AAResults &/*AA*/) const {
     llvm_unreachable("slowMayAliasUnknown() is not implemented for this node!");
-    return false;
+    return std::make_pair(false, nullptr);
   }
 
   Kind mKind;
@@ -816,7 +818,7 @@ private:
     const EstimateMemory &EM, llvm::AAResults &AA);
 
   /// Implementation for appropriate function from the base class.
-  bool slowMayAliasUnknownImp(
+  std::pair<bool, llvm::Instruction *> slowMayAliasUnknownImp(
     const llvm::Instruction *I, llvm::AAResults &AA) const;
 
    AliasList mAliases;
@@ -824,7 +826,7 @@ private:
 
 /// This represents information of accesses to unknown memory.
 class AliasUnknownNode : public AliasNode {
-  using UnknownList = std::vector<llvm::AssertingVH<llvm::Instruction>>;
+  using UnknownList = llvm::SmallPtrSet<llvm::Instruction *, 8>;
 
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
@@ -863,7 +865,7 @@ private:
   AliasUnknownNode() : AliasNode(KIND_UNKNOWN) {}
 
   /// Inserts unknown memory access at the end of unknown memory sequence.
-  void push_back(llvm::Instruction *I) { mUnknownInsts.emplace_back(I); }
+  void push_back(llvm::Instruction *I) { mUnknownInsts.insert(I); }
 
   /// Merges two nodes with a common parent or an immediate child into a parent.
   void mergeNodeInImp(AliasNode &AN, const AliasTree &G) {
@@ -876,8 +878,7 @@ private:
         UN.release(G);
       }
     } else if (!UN.empty()) {
-      mUnknownInsts.insert(mUnknownInsts.end(),
-        UN.mUnknownInsts.begin(), UN.mUnknownInsts.end());
+      mUnknownInsts.insert(UN.mUnknownInsts.begin(), UN.mUnknownInsts.end());
       UN.mUnknownInsts.clear();
       UN.release(G);
     }
@@ -888,7 +889,7 @@ private:
     const EstimateMemory &EM, llvm::AAResults &AA);
 
   /// Implementation for appropriate function from the base class.
-  bool slowMayAliasUnknownImp(
+  std::pair<bool, llvm::Instruction *> slowMayAliasUnknownImp(
     const llvm::Instruction *I, llvm::AAResults &AA) const;
 
   UnknownList mUnknownInsts;
@@ -1174,7 +1175,7 @@ inline std::pair<bool, EstimateMemory *> AliasNode::slowMayAlias(
   }
 }
 
-inline bool AliasNode::slowMayAliasUnknown(
+inline std::pair<bool, llvm::Instruction *> AliasNode::slowMayAliasUnknown(
     const llvm::Instruction *I, llvm::AAResults &AA) const {
   switch (getKind()) {
   default:

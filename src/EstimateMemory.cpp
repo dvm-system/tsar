@@ -465,9 +465,14 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   SmallVector<AliasNode *, 4> Aliases;
   auto Children = make_range(
     getTopLevelNode()->child_begin(), getTopLevelNode()->child_end());
-  for (auto &Child : Children)
-    if (Child.slowMayAliasUnknown(I, *mAA))
-      Aliases.push_back(&Child);
+  for (auto &Child : Children) {
+    auto AR = Child.slowMayAliasUnknown(I, *mAA);
+    if (AR.first)
+      if (AR.second == I)
+        return;
+      else
+        Aliases.push_back(&Child);
+  }
   AliasUnknownNode *Node;
   if (!Aliases.empty() && isa<AliasUnknownNode>(Aliases.front())) {
     auto AI = Aliases.begin(), EI = Aliases.end();
@@ -496,28 +501,32 @@ void AliasTree::removeNode(AliasNode *N) {
   mNodes.erase(N);
 }
 
-bool AliasEstimateNode::slowMayAliasUnknownImp(
+std::pair<bool, Instruction *>
+AliasEstimateNode::slowMayAliasUnknownImp(
     const Instruction *I, AAResults &AA) const {
   assert(I && "Instruction must not be null!");
   for (auto &EM : *this) {
     for (auto *Ptr : EM)
       if (AA.getModRefInfo(I,
             MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
-        return true;
+        return std::make_pair(true, nullptr);
   }
-  return false;
+  return std::make_pair(false, nullptr);
 }
 
-bool AliasUnknownNode::slowMayAliasUnknownImp(
+std::pair<bool, Instruction *>
+AliasUnknownNode::slowMayAliasUnknownImp(
     const Instruction *I, AAResults &AA) const {
   assert(I && "Instruction must not be null!");
-  for (auto &UI : *this) {
+  if (mUnknownInsts.count(const_cast<Instruction *>(I)))
+    return std::make_pair(true, const_cast<Instruction *>(I));
+  for (auto *UI : *this) {
     ImmutableCallSite C1(UI), C2(I);
     if (!C1 || !C2 || AA.getModRefInfo(C1, C2) != MRI_NoModRef ||
       AA.getModRefInfo(C2, C1) != MRI_NoModRef)
-      return true;
+      return std::make_pair(true, UI);
   }
-  return false;
+  return std::make_pair(false, nullptr);
 }
 
 std::pair<bool, EstimateMemory *>
@@ -537,7 +546,7 @@ AliasEstimateNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
 
 std::pair<bool, EstimateMemory *>
 AliasUnknownNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
-  for (auto &UI : *this) {
+  for (auto *UI : *this) {
     for (auto *Ptr : EM)
       if (AA.getModRefInfo(UI,
             MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
@@ -661,8 +670,8 @@ const AliasUnknownNode * AliasTree::findUnknown(
   for (auto &Child : Children) {
     if (!isa<AliasUnknownNode>(Child))
       continue;
-    for (auto &I : cast<AliasUnknownNode>(Child)) {
-      if (I == &*I)
+    for (auto *UI : cast<AliasUnknownNode>(Child)) {
+      if (&I == UI)
         return &cast<AliasUnknownNode>(Child);
     }
   }
