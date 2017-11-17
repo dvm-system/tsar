@@ -175,7 +175,7 @@ public:
   /// has explicit access.
   bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
-    mExplicitAccesses.overlap(Loc);
+    return mExplicitAccesses.overlap(Loc);
   }
 
   /// Specifies that there are an explicit access to a location in the node.
