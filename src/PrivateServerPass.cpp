@@ -74,7 +74,7 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic() : JSON_INIT_ROOT, JSON_INIT(Statistic, 0) {
     (*this)[Statistic::Traits].for_each(InitTraitsFunctor());
   }
-  ~Statistic() override {}
+  ~Statistic() override = default;
 
   Statistic(const Statistic &) = default;
   Statistic & operator=(const Statistic &) = default;
@@ -99,8 +99,23 @@ JSON_OBJECT_PAIR_5(MainLoopInfo,
   MainLoopInfo & operator=(MainLoopInfo &&) = default;
 JSON_OBJECT_END(MainLoopInfo)
 
+JSON_OBJECT_BEGIN(LoopTree)
+JSON_OBJECT_ROOT_PAIR_2(LoopTree,
+  ID, unsigned,
+  Loops, std::vector<MainLoopInfo>)
+
+  LoopTree() : JSON_INIT_ROOT {}
+  ~LoopTree() override = default;
+
+  LoopTree(const LoopTree &) = default;
+  LoopTree & operator=(const LoopTree &) = default;
+  LoopTree(LoopTree &&) = default;
+  LoopTree & operator=(LoopTree &&) = default;
+JSON_OBJECT_END(LoopTree)
+
 JSON_OBJECT_BEGIN(MainFuncInfo)
-JSON_OBJECT_PAIR_2(MainFuncInfo,
+JSON_OBJECT_PAIR_3(MainFuncInfo,
+  ID, unsigned,
   Name, std::string,
   Loops, std::vector<MainLoopInfo>)
 
@@ -118,7 +133,7 @@ JSON_OBJECT_ROOT_PAIR(FunctionList,
   Functions, std::vector<MainFuncInfo>)
 
   FunctionList() : JSON_INIT_ROOT {}
-  ~FunctionList() override {}
+  ~FunctionList() override = default;
 
   FunctionList(const FunctionList &) = default;
   FunctionList & operator=(const FunctionList &) = default;
@@ -130,6 +145,7 @@ JSON_OBJECT_END(FunctionList)
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
+JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
 
@@ -258,49 +274,65 @@ void getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr,
   Loop[msg::MainLoopInfo::EndLine] = EndLine;
 }
 
-std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx) {
-  msg::FunctionList FuncLst;
-  typedef msg::MainFuncInfo FuncInfo;
-  typedef msg::MainLoopInfo LoopInfo;
-  auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
+    llvm::Module &M, tsar::TransformationContext *TfmCtx,
+    msg::LoopTree LoopTree) {
+  unsigned ID = 1;
   for (Function &F : M) {
     if (F.empty())
       continue;
-    msg::MainFuncInfo Func;
-    Func[FuncInfo::Name] = F.getName();
+    if (ID != LoopTree[msg::LoopTree::ID]) {
+      ID++;
+      continue;
+    }
+    typedef msg::MainLoopInfo LoopInfo;
+    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
     msg::MainLoopInfo Loop;
     for (auto &Match : Matcher) {
       getLoopInfo(Match.get<AST>(), SrcMgr, Loop);
-      Func[FuncInfo::Loops].push_back(Loop);
+      LoopTree[msg::LoopTree::Loops].push_back(Loop);
     }
     for (auto &Unmatch : Unmatcher) {
       getLoopInfo(Unmatch, SrcMgr, Loop);
-      Func[FuncInfo::Loops].push_back(Loop);
+      LoopTree[msg::LoopTree::Loops].push_back(Loop);
     }
-    std::sort(Func[FuncInfo::Loops].begin(),
-      Func[FuncInfo::Loops].end(),
+    std::sort(LoopTree[msg::LoopTree::Loops].begin(),
+      LoopTree[msg::LoopTree::Loops].end(),
       [](msg::MainLoopInfo &LHS,
-          msg::MainLoopInfo &RHS) -> bool {
-      return (LHS[LoopInfo::StartLine] < RHS[LoopInfo::StartLine]) ||
-          ((LHS[LoopInfo::StartLine] == RHS[LoopInfo::StartLine]) &&
+         msg::MainLoopInfo &RHS) -> bool {
+        return (LHS[LoopInfo::StartLine] < RHS[LoopInfo::StartLine]) ||
+          ((RHS[LoopInfo::StartLine] == RHS[LoopInfo::StartLine]) &&
           (LHS[LoopInfo::StartCol] < RHS[LoopInfo::StartCol]));
     });
     std::vector<std::pair<unsigned, unsigned>> Levels;
-    for (auto &Loop : Func[FuncInfo::Loops]) {
+    for (auto &Loop : LoopTree[msg::LoopTree::Loops]) {
       while (!Levels.empty() &&
           ((Levels[Levels.size() - 1].first < Loop[LoopInfo::EndLine]) ||
           ((Levels[Levels.size() - 1].first == Loop[LoopInfo::EndLine]) &&
           (Levels[Levels.size() - 1].second < Loop[LoopInfo::EndCol]))))
         Levels.pop_back();
       Loop[msg::MainLoopInfo::Level] = Levels.size() + 1;
-      Levels.emplace_back(
-        std::make_pair(Loop[LoopInfo::EndLine], Loop[LoopInfo::EndCol]));
+      Levels.emplace_back(Loop[LoopInfo::EndLine], Loop[LoopInfo::EndCol]);
     }
-    FuncLst[msg::FunctionList::Functions].push_back(Func);
+    break;
+  }
+  return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
+}
+
+std::string answerFunctionList(llvm::Module &M) {
+  msg::FunctionList FuncLst;
+  typedef msg::MainFuncInfo FuncInfo;
+  unsigned ID = 1;
+  for (Function &F : M) {
+    if (F.empty())
+      continue;
+    msg::MainFuncInfo Func;
+    Func[FuncInfo::Name] = F.getName();
+    Func[FuncInfo::ID] = ID++;
+    FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
 }
@@ -328,13 +360,16 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
       return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
     }
-    json::Parser<msg::Statistic, msg::FunctionList> P(Request);
+    json::Parser<msg::Statistic, msg::LoopTree, msg::FunctionList> P(Request);
     auto Obj = P.parse();
-    assert(Obj && "error: invalid request");
+    assert(Obj && "Invalid request!");
     if (Obj->is<msg::Statistic>())
       return answerStatistic(this, M, TfmCtx);
+    if (Obj->is<msg::LoopTree>())
+      return answerLoopTree(this, M, TfmCtx, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())
-      return answerFunctionList(this, M, TfmCtx);
+      return answerFunctionList(M);
+    llvm_unreachable("Unknown request to server!");
   }));
   return false;
 }
