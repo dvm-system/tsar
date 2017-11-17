@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PrivateServerPass.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
@@ -29,7 +30,6 @@
 #include "Messages.h"
 #include "tsar_pass_provider.h"
 #include "tsar_private.h"
-#include "PrivateServerPass.h"
 #include "tsar_trait.h"
 #include "tsar_transformation.h"
 #include <bcl/cell.h>
@@ -39,8 +39,8 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/StringSwitch.h>
-#include <llvm/Analysis/Passes.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/Analysis/Passes.h>
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Path.h>
@@ -260,18 +260,19 @@ std::string answerStatistic(llvm::PrivateServerPass * const PSP,
   return json::Parser<msg::Statistic>::unparseAsObject(Stat);
 }
 
-void getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr,
-    msg::MainLoopInfo &Loop) {
+msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
   auto LocStart = Ptr->getLocStart();
   auto LocEnd = Ptr->getLocEnd();
   auto StartCol = SrcMgr.getExpansionColumnNumber(LocStart);
   auto StartLine = SrcMgr.getExpansionLineNumber(LocStart);
   auto EndCol = SrcMgr.getExpansionColumnNumber(LocEnd);
   auto EndLine = SrcMgr.getExpansionLineNumber(LocEnd);
+  msg::MainLoopInfo Loop;
   Loop[msg::MainLoopInfo::StartCol] = StartCol;
   Loop[msg::MainLoopInfo::StartLine] = StartLine;
   Loop[msg::MainLoopInfo::EndCol] = EndCol;
   Loop[msg::MainLoopInfo::EndLine] = EndLine;
+  return Loop;
 }
 
 std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
@@ -290,15 +291,12 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    msg::MainLoopInfo Loop;
-    for (auto &Match : Matcher) {
-      getLoopInfo(Match.get<AST>(), SrcMgr, Loop);
-      LoopTree[msg::LoopTree::Loops].push_back(Loop);
-    }
-    for (auto &Unmatch : Unmatcher) {
-      getLoopInfo(Unmatch, SrcMgr, Loop);
-      LoopTree[msg::LoopTree::Loops].push_back(Loop);
-    }
+    for (auto &Match : Matcher)
+      LoopTree[msg::LoopTree::Loops].push_back(
+        getLoopInfo(Match.get<AST>(), SrcMgr));
+    for (auto &Unmatch : Unmatcher)
+      LoopTree[msg::LoopTree::Loops].push_back(
+        getLoopInfo(Unmatch, SrcMgr));
     std::sort(LoopTree[msg::LoopTree::Loops].begin(),
       LoopTree[msg::LoopTree::Loops].end(),
       [](msg::MainLoopInfo &LHS,
