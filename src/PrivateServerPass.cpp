@@ -78,17 +78,29 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic & operator=(const Statistic &) = default;
   Statistic(Statistic &&) = default;
   Statistic & operator=(Statistic &&) = default;
-
 JSON_OBJECT_END(Statistic)
 
+JSON_OBJECT_BEGIN(MainLoopInfo)
+JSON_OBJECT_PAIR_4(MainLoopInfo,
+  StartCol, unsigned,
+  StartLine, unsigned,
+  EndCol, unsigned,
+  EndLine, unsigned)
+
+  MainLoopInfo() = default;
+  ~MainLoopInfo() = default;
+
+  MainLoopInfo(const MainLoopInfo &) = default;
+  MainLoopInfo & operator=(const MainLoopInfo &) = default;
+  MainLoopInfo(MainLoopInfo &&) = default;
+  MainLoopInfo & operator=(MainLoopInfo &&) = default;
+JSON_OBJECT_END(MainLoopInfo)
+
 JSON_OBJECT_BEGIN(FunctionList)
-JSON_OBJECT_ROOT_PAIR_6(FunctionList,
+JSON_OBJECT_ROOT_PAIR_3(FunctionList,
   Functions, std::vector<std::string>,
-  StartCols, std::vector<unsigned>,
-  StartLines, std::vector<unsigned>,
-  EndCols, std::vector<unsigned>,
-  EndLines, std::vector<unsigned>,
-  NumLoops, std::vector<unsigned>)
+  NumLoops, std::vector<unsigned>,
+  Loops, std::vector<MainLoopInfo>)
 
   FunctionList() : JSON_INIT_ROOT {}
   ~FunctionList() = default;
@@ -102,6 +114,7 @@ JSON_OBJECT_END(FunctionList)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
+JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
 
 using ServerPrivateProvider = FunctionPassProvider<
@@ -253,10 +266,12 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       for (auto &Match : Matcher) {
         NL++;
         auto LR = Match.get<IR>()->getLocRange();
-        FuncLst[msg::FunctionList::StartCols].push_back(LR.getStart().getCol());
-        FuncLst[msg::FunctionList::StartLines].push_back(LR.getStart().getLine());
-        FuncLst[msg::FunctionList::EndCols].push_back(LR.getEnd().getCol());
-        FuncLst[msg::FunctionList::EndLines].push_back(LR.getEnd().getLine());
+        msg::MainLoopInfo LoopInfo;
+        LoopInfo[msg::MainLoopInfo::StartCol] = LR.getStart().getCol();
+        LoopInfo[msg::MainLoopInfo::StartLine] = LR.getStart().getLine();
+        LoopInfo[msg::MainLoopInfo::EndCol] = LR.getEnd().getCol();
+        LoopInfo[msg::MainLoopInfo::EndLine] = LR.getEnd().getLine();
+        FuncLst[msg::FunctionList::Loops].push_back(LoopInfo);
       }
       FuncLst[msg::FunctionList::NumLoops].push_back(NL);
     }
