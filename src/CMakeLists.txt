@@ -9,7 +9,7 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   FrontendActions.cpp CanonicalLoop.cpp Intrinsics.cpp Instrumentation.cpp
   MetadataUtils.cpp tsar_finliner.cpp tsar_fcopy_elimination.cpp Diagnostic.cpp
   Directives.cpp ClangUtils.cpp GlobalInfoExtractor.cpp ClangFormatPass.cpp
-  NoMacroAssert.cpp)
+  NoMacroAssert.cpp DILoopRetriever.cpp)
 if (TSAR_SHARED)
   set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
 else()

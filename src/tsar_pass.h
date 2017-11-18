@@ -25,6 +25,7 @@ struct ASTImportInfo;
 }
 
 namespace llvm {
+class Pass;
 class PassInfo;
 class PassRegistry;
 class FunctionPass;
@@ -150,6 +151,14 @@ void initializeTestPrinterPassPass(PassRegistry &Registry);
 
 /// Creates a pass to print results of a test.
 ModulePass * createTestPrinterPass();
+
+/// Initializes a pass which retrieves some debug information for a loop if
+/// it is not presented in LLVM IR.
+void initializeDILoopRetrieverPassPass(PassRegistry &Registry);
+
+/// Creates a pass which retrieves some debug information for a loop if
+/// it is not presented in LLVM IR.
+Pass * createDILoopRetrieverPass();
 
 /// Initializes a pass to determine perfect for-loops in a source code.
 void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
