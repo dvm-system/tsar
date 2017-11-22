@@ -4,10 +4,12 @@
 #include <llvm/IR/InstVisitor.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include "Intrinsics.h"
+#include "Registrator.h"
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 private:
   llvm::LoopInfo& mLoopInfo; 	
+  Registrator& mRegistrator;
 
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them	
@@ -36,8 +38,9 @@ public:
   //but in tsar_instrumentation.cpp LoopInfo is already taken in runOnFunction 
   //right before Instrumentation class declaration. So decided to do it 
   //simplier and send it like a constructor parameter. Should I change it? 
-  Instrumentation(llvm::LoopInfo &LI, llvm::Function &F);
+  Instrumentation(llvm::LoopInfo &LI, Registrator &R, llvm::Function &F);
 
+  void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
   void visitStoreInst(llvm::StoreInst &I);
   void visitCallInst(llvm::CallInst &I);
@@ -45,7 +48,6 @@ public:
   void visitReturnInst(llvm::ReturnInst &I);
   void visitBasicBlock(llvm::BasicBlock &B);
   void visitFunction(llvm::Function &F);
-
 };
 
 #endif // INSTRUMENTATION_H

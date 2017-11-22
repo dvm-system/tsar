@@ -6,7 +6,16 @@
 using namespace llvm;
 using namespace tsar;
 
-Instrumentation::Instrumentation(LoopInfo &LI, Function &F): mLoopInfo(LI) {
+Instrumentation::Instrumentation(LoopInfo &LI, Registrator &R, Function &F)
+  : mLoopInfo(LI), mRegistrator(R) {
+  //insert extern declaration of DIVarPool if it wasn't declared in this
+  //module yet
+  if(!F.getParent()->getGlobalVariable("DIVarPool")) { 	  
+    auto Pool = new GlobalVariable((*F.getParent()), PointerType::getUnqual(Type
+      ::getInt8PtrTy(F.getContext())), false, GlobalValue::LinkageTypes
+      ::ExternalLinkage, nullptr, "DIVarPool", nullptr);
+    Pool->setAlignment(4);
+  }
   visitFunction(F);	
 }  
 
@@ -41,6 +50,38 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   }
   auto Call = CallInst::Create(Fun, {}, "");
   Call->insertAfter(&I);
+}
+
+//insert call of sapforRegVar(void*) or sapforRegArr(void*, size_t) before
+//specified alloca instruction. 
+//did without void* Addr as last parameter for now, I would add it later
+void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
+  auto Pool = I.getModule()->getGlobalVariable("DIVarPool");
+  auto Int0 = ConstantInt::get(Type::getInt64Ty(I.getContext()), 0);
+  auto RegInt = ConstantInt::get(Type::getInt32Ty(I.getContext()), 
+    mRegistrator.regVar());
+  //getting element in DIVarPool with mRegistrator.regVar index
+  //
+  //looks like it's impossible to put here only one GEP instruction with array
+  //indexes. So 2 GEP and 2 Load instructions
+  auto Arr = GetElementPtrInst::Create(nullptr, Pool, {Int0}, "Arr", &I);
+  auto LoadArr = new LoadInst(Arr, "LoadArr", &I);
+  auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {RegInt}, "Elem", &I);
+  auto DIVar = new LoadInst(Elem, "DIVar", &I);
+
+  auto TypeId = I.getAllocatedType()->getTypeID();	
+
+  //Alloca instruction has isArrayAllocation method, but it looks like it 
+  //doesn't work like i wanted it. So checking for array in this way
+  if(TypeId == Type::TypeID::ArrayTyID || TypeId == Type::TypeID::PointerTyID){
+    auto ArrSize = ConstantInt::get(Type::getInt64Ty(I.getContext()),
+      I.getAllocatedType()->getArrayNumElements());		  	    
+    auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_arr);	
+    CallInst::Create(Fun, {DIVar, ArrSize}, "", &I);
+  } else {
+    auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_var);
+    CallInst::Create(Fun, {DIVar}, "", &I);
+  }
 }
 
 void Instrumentation::visitCallInst(llvm::CallInst &I) {
@@ -136,8 +177,11 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   }
 
   //visit all Instructions
-  for(auto &I : B){
-    visit(I);
+  for(auto I = B.begin(); I != B.end();  I++){
+    visit(&*I);
+    //if(AllocaInst::classof(&*I)) 
+      //I++;
+      //I++;
   } 
 }
 

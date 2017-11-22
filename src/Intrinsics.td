@@ -22,7 +22,6 @@ class Type<TypeKind kind> {
 }
 
 def tsar_void_ty : Type<Void>;
-def tsar_int_ty : Type<Int>;
 def tsar_any_ty : Type<Any>;
 def tsar_size_ty : Type<Size>;
 def tsar_position_ty : Type<Size>;
@@ -50,11 +49,11 @@ class Intrinsic<string name,
 
 def reg_var : Intrinsic<"sapforRegVar",
                         tsar_void_ty,
-                        [tsar_di_var_ty, tsar_addr_ty]>;
+                        [tsar_di_var_ty]>;
 
 def reg_arr : Intrinsic<"sapforRegArr",
-                        tsar_void_ty>;
-                        //[tsar_di_var_ty, tsar_size_ty, tsar_addr_ty]>;
+                        tsar_void_ty,
+                        [tsar_di_var_ty, tsar_size_ty]>;
 
 def read_var : Intrinsic<"sapforReadVar",
                         tsar_void_ty>;
