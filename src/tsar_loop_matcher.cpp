@@ -39,11 +39,11 @@ STATISTIC(NumNonMatchASTLoop, "Number of non-matched AST loops");
 
 char LoopMatcherPass::ID = 0;
 INITIALIZE_PASS_BEGIN(LoopMatcherPass, "loop-matcher",
-  "High and Low Loop Matcher", true, true)
+  "High and Low Loop Matcher", true, false)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_END(LoopMatcherPass, "loop-matcher",
-  "High and Low Level Loop Matcher", true, true)
+  "High and Low Level Loop Matcher", true, false)
 
 namespace {
 /// This matches explicit for, while and do-while loops.
@@ -191,15 +191,59 @@ public:
     if (!mLastLabel)
       return true;
     if (Loop *L = findIRForLocation(S->getLocStart())) {
-        mMatcher->emplace(mLastLabel, L);
+      mMatcher->emplace(mLastLabel, L);
       ++NumMatchLoop;
       --NumNonMatchIRLoop;
+      updateMetadata(L);
     }
     return true;
   }
 
+  /// Returns true some of !llvm.loop metadata have been changed.
+  bool isDILoopChanged() const noexcept { return mDILoopChanged; }
+
 private:
+  /// Updates metadata for L if the metadata have been already set and loop
+  /// is matched.
+  ///
+  /// Location of loop label will be set as a loop start location.
+  /// If metadata will be updated isDILoopChanged() returns true.
+  void updateMetadata(Loop *L) {
+    assert(L && "Loop must not be null!");
+    assert(mLastLabel && "Label must not be null!");
+    if (auto LoopID = L->getLoopID()) {
+      SmallVector<Metadata *, 3> MDs(1);
+      auto HeadBB = L->getHeader();
+      DILocation *DILoopLoc;
+      auto LabelLoc = mLastLabel->getLocStart();
+      auto HeaderLoc = HeadBB->getTerminator()->getDebugLoc().get();
+      // The following assert should not fail because the condition has
+      // been checked in MatchExplicitVisitor.
+      assert(HeaderLoc && "Location must not be null!");
+      if (LabelLoc.isInvalid()) {
+        DILoopLoc = HeaderLoc;
+      } else {
+        auto PLoc = mSrcMgr->getPresumedLoc(LabelLoc, false);
+        DILoopLoc = DILocation::get(HeadBB->getContext(),
+          PLoc.getLine(), PLoc.getColumn(),
+          HeaderLoc->getScope(), HeaderLoc->getInlinedAt());
+      }
+      MDs.push_back(DILoopLoc);
+      for (unsigned I = 1, EI = LoopID->getNumOperands(); I < EI; ++I) {
+        MDNode *Node = cast<MDNode>(LoopID->getOperand(I));
+        if (isa<DILocation>(Node))
+          continue;
+        MDs.push_back(Node);
+      }
+      auto NewLoopID = MDNode::get(L->getHeader()->getContext(), MDs);
+      NewLoopID->replaceOperandWith(0, NewLoopID);
+      L->setLoopID(NewLoopID);
+      mDILoopChanged |= true;
+    }
+  }
+
   LabelStmt *mLastLabel;
+  bool mDILoopChanged = false;
 };
 }
 
@@ -239,7 +283,7 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
   MatchImplicit.TraverseDecl(mFuncDecl);
   MatchExplicit.matchInMacro(
     NumMatchLoop, NumNonMatchASTLoop, NumNonMatchIRLoop);
-  return false;
+  return MatchImplicit.isDILoopChanged();
 }
 
 void LoopMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {

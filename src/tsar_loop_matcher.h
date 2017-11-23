@@ -33,6 +33,10 @@ class Loop;
 /// \brief This per-function pass matches different loops in a source high level
 /// code and appropriated loops in low-level LLVM IR.
 ///
+/// This pass may changes !llvm.loop metadata, it updates locations for implicit
+/// loops that have been successfully matched. Metadata will be update if they
+/// have been already set only.
+///
 /// TODO (kaniander@gmail.com): Implicit loops which are expanded from macro are
 /// not evaluated, because in LLVM IR these loops have locations equal to
 /// expansion location. So it is not possible to determine token in macro
