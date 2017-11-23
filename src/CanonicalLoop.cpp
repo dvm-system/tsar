@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CanonicalLoop.h"
+#include "DefinedMemory.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
@@ -55,13 +56,12 @@ namespace {
 class CanonicalLoopLabeler : public MatchFinder::MatchCallback {
 public:
   /// Creates visitor.
-  explicit CanonicalLoopLabeler(Rewriter &R, DFRegionInfo &DFRI,
+  explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
       const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
-      TargetLibraryInfo &TLI, tsar::CanonicalLoopInfo *CLI) : mRw(&R),
+      TargetLibraryInfo &TLI, tsar::CanonicalLoopInfo *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
-      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
-      mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
+      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI) {}
 
   /// This function is called each time LoopMatcher finds appropriate loop
   virtual void run(const MatchFinder::MatchResult &Result) {
@@ -70,42 +70,54 @@ public:
     // We do not want to convert header files!
     if (!FS||!Context->getSourceManager().isWrittenInMainFile(FS->getForLoc()))
       return;
+    const VarDecl *InitVar = Result.Nodes.getNodeAs
+        <VarDecl>("InitVarName");
+    assert(InitVar && "InitVar must not be null!");
     const VarDecl *UnIncVar = Result.Nodes.getNodeAs
         <VarDecl>("UnIncVarName");
     const VarDecl *BinIncVar = Result.Nodes.getNodeAs
         <VarDecl>("BinIncVarName");
-    const VarDecl *InitVar = Result.Nodes.getNodeAs
-        <VarDecl>("InitVarName");
+    const clang::UnaryOperator *UnaryIncr = Result.Nodes.getNodeAs
+        <clang::UnaryOperator>("UnaryIncr");
+    const clang::BinaryOperator *BinaryIncr = Result.Nodes.getNodeAs
+        <clang::BinaryOperator>("BinaryIncr");
     const VarDecl *AssignmentVar = Result.Nodes.getNodeAs
-        <VarDecl>("AssignmentVarName"); 
+        <VarDecl>("AssignmentVarName");
     const VarDecl *FirstAssignmentVar = Result.Nodes.getNodeAs
-        <VarDecl>("FirstAssignmentVarName"); 
+        <VarDecl>("FirstAssignmentVarName");
     const VarDecl *SecondAssignmentVar = Result.Nodes.getNodeAs
         <VarDecl>("SecondAssignmentVarName");
     const VarDecl *FirstConditionVar = Result.Nodes.getNodeAs
-        <VarDecl>("FirstConditionVarName"); 
+        <VarDecl>("FirstConditionVarName");
+    const clang::BinaryOperator *Condition = Result.Nodes.getNodeAs
+        <clang::BinaryOperator>("Condition");
+    assert(Condition && "Condition must not be null!");
     const VarDecl *SecondConditionVar = Result.Nodes.getNodeAs
         <VarDecl>("SecondConditionVarName");
-    if (InitVar && ((UnIncVar && sameVar(UnIncVar, InitVar)) ||
+    bool CheckCondVar = false;
+    bool ReversedCond = false;
+    if (FirstConditionVar && sameVar(InitVar, FirstConditionVar))
+      CheckCondVar = true;
+    if (SecondConditionVar && sameVar(InitVar, SecondConditionVar)) {
+      CheckCondVar = true;
+      ReversedCond = true;
+    }
+    if (((UnIncVar && sameVar(UnIncVar, InitVar)) ||
         (BinIncVar && sameVar(BinIncVar, InitVar)) ||
         (AssignmentVar && sameVar(AssignmentVar, InitVar) &&
         ((FirstAssignmentVar && sameVar(InitVar, FirstAssignmentVar)) ||
         (SecondAssignmentVar && sameVar(InitVar, SecondAssignmentVar))))) &&
-        ((FirstConditionVar && sameVar(InitVar, FirstConditionVar)) ||
-        (SecondConditionVar && sameVar(InitVar, SecondConditionVar)))) {
+        (CheckCondVar &&
+        ((UnaryIncr && coherent(UnaryIncr, Condition, ReversedCond)) ||
+        (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
       auto Match = mLoopInfo->find<AST>(const_cast<ForStmt*>(FS));
-      tsar::DFNode* Region;
-      if (Match != mLoopInfo->end())
-        Region = mRgnInfo->getRegionFor(Match->get<IR>());
-      else
-        Region = nullptr;
-      if (Region) {
-        if (CheckLoop(Region,
-            const_cast<VarDecl*>(InitVar->getCanonicalDecl()))) {
-          auto PLInfo = mCanonicalLoopInfo->insert(Region);
-          ++NumCanonical;
-          return;
-        }
+      assert(Match != mLoopInfo->end() && "ForStmt must be specified!");
+      tsar::DFNode* Region = mRgnInfo->getRegionFor(Match->get<IR>());
+      if (checkLoop(Region, const_cast<VarDecl*>
+          (InitVar->getCanonicalDecl()))) {
+        auto PLInfo = mCanonicalLoopInfo->insert(Region);
+        ++NumCanonical;
+        return;
       }
     }
     ++NumNonCanonical;
@@ -116,65 +128,118 @@ private:
   bool sameVar(const ValueDecl *First, const ValueDecl *Second) {
     return First->getCanonicalDecl() == Second->getCanonicalDecl();
   }
-
-  bool CheckLoop(tsar::DFNode* Region, VarDecl *Var) {
+  
+  /// Checks coherence of increment and condition
+  bool coherent(const clang::UnaryOperator *Incr,
+      const clang::BinaryOperator *Condition, bool ReversedCond) {
+    bool Increment = false;
+    if (Incr->getOpcodeStr(Incr->getOpcode()) == "++")
+      Increment = true;
+    bool LessCondition = false;
+    if ((Condition->getOpcodeStr(Condition->getOpcode()) == "<") ||
+        (Condition->getOpcodeStr(Condition->getOpcode()) == "<="))
+      LessCondition = true;
+    if (Increment && LessCondition && !(ReversedCond) ||
+        Increment && !(LessCondition) && ReversedCond ||
+        !(Increment) && !(LessCondition) && !(ReversedCond) ||
+        !(Increment) && LessCondition && ReversedCond)
+      return true;
+    return false;
+  }
+  
+  bool coherent(const clang::BinaryOperator *Incr,
+      const clang::BinaryOperator *Condition, bool ReversedCond) {
+    bool Increment = false;
+    if ((Incr->getOpcodeStr(Incr->getOpcode()) == "+") ||
+        (Incr->getOpcodeStr(Incr->getOpcode()) == "+="))
+      Increment = true;
+    bool LessCondition = false;
+    if ((Condition->getOpcodeStr(Condition->getOpcode()) == "<") ||
+        (Condition->getOpcodeStr(Condition->getOpcode()) == "<="))
+      LessCondition = true;
+    if (Increment && LessCondition && !(ReversedCond) ||
+        Increment && !(LessCondition) && ReversedCond ||
+        !(Increment) && !(LessCondition) && !(ReversedCond) ||
+        !(Increment) && LessCondition && ReversedCond)
+      return true;
+    return false;
+  }
+  
+  /// Checks if labeled loop is canonical
+  bool checkLoop(tsar::DFNode* Region, VarDecl *Var) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end()) {
       return false;
     }
     auto alloca = MemMatch->get<IR>();
-    auto type = (llvm::dyn_cast<llvm::PointerType>(alloca->getType()))->getElementType();
-    if (!type->isSized()) {
+    if (!((llvm::dyn_cast<llvm::PointerType>
+        (alloca->getType()))->getElementType())->isSized()) {
       return false;
     }
     llvm::MemoryLocation MemLoc(alloca, 1);
-    if (tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region)) {
-      for (auto I = DFFor->node_begin(); I != DFFor->node_end(); ++I) {
-        auto Match = mDefInfo->find(*I);
-        if (Match != mDefInfo->end()) {
-          auto &DUS = Match->get<DefUseSet>();
-          if ((DUS->hasDef(MemLoc)) ||  (DUS->hasMayDef(MemLoc))) {
-            if (tsar::DFBlock* DFB = llvm::dyn_cast<DFBlock>(*I)) {
-              if (DFFor->getLoop()->isLoopLatch(DFB->getBlock())) {
-                auto EMI = mAliasTree.find(MemLoc);
-                assert(EMI && "Estimate memory location must not be null!");
-                auto ANI = EMI->getAliasNode(mAliasTree);
-                assert(ANI && "Alias node must not be null!");
-                auto &AT = mAliasTree;
-                auto &STR = mSTR;
-                bool unreachable = true;
-                bool *res = &unreachable;
-                for_each_memory(*(DFB->getBlock()), mTLI,
-                  [&AT, &STR, &ANI, &res] (Instruction &I, MemoryLocation &&Loc,
-                      unsigned Idx, AccessInfo R, AccessInfo W) {
-                    auto EM = AT.find(Loc);
-                    assert(EM && "Estimate memory location must not be null!");
-                    auto AN = EM->getAliasNode(AT);
-                    assert(AN && "Alias node must not be null!");
-                    if (!(STR.isEqual(ANI, AN) || STR.isUnreachable(ANI, AN)))
-                      *res = false;
-                  },
-                  [&AT, &STR, &ANI, &res](Instruction &I, AccessInfo,
-                      AccessInfo) {
-                    auto AN = AT.findUnknown(I);
-                    if (!AN)
-                      return;
-                    if (!(STR.isEqual(ANI, AN) || STR.isUnreachable(ANI, AN)))
-                      *res = false;
-                  }
-                );
-                if (unreachable)
-                  return true;
-              }
+    tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region);
+    assert(DFFor && "DFNode must not be null!");
+    llvm::Loop *LLoop = DFFor->getLoop();
+    auto BlocksEnd = LLoop->block_end();
+    for (auto I = LLoop->block_begin(); I != BlocksEnd; ++I) {
+      auto DFN = mRgnInfo->getRegionFor(*I);
+      assert(DFN && "DFNode must not be null!");
+      auto Match = mDefInfo->find(DFN);
+      assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
+          Match->get<DefUseSet>() && "Data-flow value must be specified!");
+      auto &DUS = Match->get<DefUseSet>();
+      if (!(DUS->hasDef(MemLoc)) || (DUS->hasMayDef(MemLoc)))
+        continue;
+      tsar::DFBlock* DFB = llvm::dyn_cast<DFBlock>(DFN);
+      if (!DFB)
+        continue;
+      if (!(DFFor->getLoop()->isLoopLatch(DFB->getBlock())))
+        return false;
+      auto &AT = mAliasTree;
+      int Unreachable = 1;
+      for_each_memory(*(DFB->getBlock()), mTLI,
+        [&AT, &MemLoc, &Unreachable] (Instruction &I,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+          auto EMI = AT.find(MemLoc);
+          assert(EMI && "Estimate memory location must not be null!");
+          auto ANI = EMI->getAliasNode(AT);
+          assert(ANI && "Alias node must not be null!");
+          auto EM = AT.find(Loc);
+          assert(EM && "Estimate memory location must not be null!");
+          auto AN = EM->getAliasNode(AT);
+          assert(AN && "Alias node must not be null!");
+          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
+          if (Unreachable)
+            if (STR.isEqual(ANI, AN)) {
+              Unreachable = (Unreachable + 1) % 4;
+            } else if (!(STR.isUnreachable(ANI, AN))) {
+              Unreachable = 0;
             }
-          }
+        },
+        [&AT, &MemLoc, &Unreachable](Instruction &I, AccessInfo,
+            AccessInfo) {
+          auto EMI = AT.find(MemLoc);
+          assert(EMI && "Estimate memory location must not be null!");
+          auto ANI = EMI->getAliasNode(AT);
+          assert(ANI && "Alias node must not be null!");
+          auto AN = AT.findUnknown(I);
+          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
+          if (!AN)
+            return;
+          if (Unreachable)
+            if (STR.isEqual(ANI, AN)) {
+              Unreachable = (Unreachable + 1) % 4;
+            } else if (!(STR.isUnreachable(ANI, AN))) {
+              Unreachable = 0;
+            }
         }
-      }
+      );
+      if (!Unreachable)
+        return false;
     }
-    return false;
+    return true;
   }
   
-  Rewriter* mRw;
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
   DefinedMemoryInfo *mDefInfo;
@@ -182,7 +247,6 @@ private:
   tsar::AliasTree &mAliasTree;
   TargetLibraryInfo &mTLI;
   tsar::CanonicalLoopInfo *mCanonicalLoopInfo;
-  SpanningTreeRelation<const AliasTree *> mSTR;
 };
 
 /// returns LoopMatcher that matches loops that can be canonical
@@ -204,14 +268,14 @@ StatementMatcher makeLoopMatcher() {
             hasOperatorName("--")),
           hasUnaryOperand(declRefExpr(to(
             varDecl(hasType(isInteger()))
-            .bind("UnIncVarName"))))),
+            .bind("UnIncVarName"))))).bind("UnaryIncr"),
         binaryOperator(
           eachOf(
             hasOperatorName("+="),
             hasOperatorName("-=")),
           hasLHS(declRefExpr(to(
             varDecl(hasType(isInteger()))
-            .bind("BinIncVarName"))))),
+            .bind("BinIncVarName"))))).bind("BinaryIncr"),
         binaryOperator(
           hasOperatorName("="),
           hasLHS(declRefExpr(to(
@@ -230,14 +294,14 @@ StatementMatcher makeLoopMatcher() {
                   hasImplicitDestinationType(isInteger()),
                   hasSourceExpression(declRefExpr(to(
                     varDecl(hasType(isInteger()))
-                    .bind("SecondAssignmentVarName")))))))),
+                    .bind("SecondAssignmentVarName")))))))).bind("BinaryIncr"),
             binaryOperator(
               hasOperatorName("-"),
               hasLHS(implicitCastExpr(
                 hasImplicitDestinationType(isInteger()),
                 hasSourceExpression(declRefExpr(to(
                   varDecl(hasType(isInteger()))
-                  .bind("FirstAssignmentVarName")))))))))))),
+                  .bind("FirstAssignmentVarName"))))))).bind("BinaryIncr")))))),
       hasCondition(binaryOperator(
         eachOf(
           hasOperatorName("<"),
@@ -255,7 +319,7 @@ StatementMatcher makeLoopMatcher() {
             hasImplicitDestinationType(isInteger()),
             hasSourceExpression(declRefExpr(to(
               varDecl(hasType(isInteger()))
-              .bind("SecondConditionVarName"))))))))))
+              .bind("SecondConditionVarName")))))))).bind("Condition")))
   .bind("forLoop");
 }
 }
@@ -277,8 +341,8 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   StatementMatcher LoopMatcher = makeLoopMatcher();
   MatchFinder Finder;
-  CanonicalLoopLabeler Labeler(Rwriter, RgnInfo, LoopInfo, DefInfo, MemInfo,
-      ATree, TLI, &mCanonicalLoopInfo);
+  CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, DefInfo, MemInfo, ATree,
+      TLI, &mCanonicalLoopInfo);
   Finder.addMatcher(LoopMatcher, &Labeler);
   Finder.matchAST(FuncDecl->getASTContext());
   return false;
