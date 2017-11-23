@@ -13,14 +13,14 @@
 #ifndef TSAR_MATCHER_H
 #define TSAR_MATCHER_H
 
+#include "tsar_bimap.h"
+#include "tsar_utility.h"
+#include <transparent_queue.h>
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <set>
-#include <transparent_queue.h>
-#include "tsar_bimap.h"
-#include "tsar_utility.h"
 
 namespace llvm {
 /// \brief Implementation of a DenseMapInfo for DILocation *.
@@ -163,11 +163,11 @@ public:
   }
 
 protected:
-  Matcher *mMatcher;
   clang::SourceManager *mSrcMgr;
+  Matcher *mMatcher;
+  UnmatchedASTSet *mUnmatchedAST;
   LocToIRMap *mLocToIR;
   LocToASTMap *mLocToMacro;
-  UnmatchedASTSet *mUnmatchedAST;
 };
 }
 #endif//TSAR_MATCHER_H

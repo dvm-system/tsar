@@ -8,6 +8,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar_loop_matcher.h"
+#include "tsar_matcher.h"
+#include "tsar_transformation.h"
+#include <transparent_queue.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -20,10 +24,6 @@
 #include <llvm/Support/raw_ostream.h>
 #include <cstring>
 #include <queue>
-#include <transparent_queue.h>
-#include "tsar_loop_matcher.h"
-#include "tsar_matcher.h"
-#include "tsar_transformation.h"
 
 using namespace clang;
 using namespace llvm;
