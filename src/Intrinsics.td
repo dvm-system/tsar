@@ -49,11 +49,11 @@ class Intrinsic<string name,
 
 def reg_var : Intrinsic<"sapforRegVar",
                         tsar_void_ty,
-                        [tsar_di_var_ty]>;
+                        [tsar_di_var_ty, tsar_addr_ty]>;
 
 def reg_arr : Intrinsic<"sapforRegArr",
                         tsar_void_ty,
-                        [tsar_di_var_ty, tsar_size_ty]>;
+                        [tsar_di_var_ty, tsar_size_ty, tsar_addr_ty]>;
 
 def read_var : Intrinsic<"sapforReadVar",
                         tsar_void_ty>;
