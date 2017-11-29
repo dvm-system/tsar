@@ -82,12 +82,26 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic & operator=(Statistic &&) = default;
 JSON_OBJECT_END(Statistic)
 
+JSON_OBJECT_BEGIN(Location)
+JSON_OBJECT_PAIR_4(Location,
+  Line, unsigned,
+  Column, unsigned,
+  MacroLine, unsigned,
+  MacroColumn, unsigned)
+
+  Location() = default;
+  ~Location() = default;
+
+  Location(const Location &) = default;
+  Location & operator=(const Location &) = default;
+  Location(Location &&) = default;
+  Location & operator=(Location &&) = default;
+JSON_OBJECT_END(Location)
+
 JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_5(MainLoopInfo,
-  StartCol, unsigned,
-  StartLine, unsigned,
-  EndCol, unsigned,
-  EndLine, unsigned,
+JSON_OBJECT_PAIR_3(MainLoopInfo,
+  StartLocation, Location,
+  EndLocation, Location,
   Level, unsigned)
 
   MainLoopInfo() = default;
@@ -144,6 +158,7 @@ JSON_OBJECT_END(FunctionList)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
+JSON_DEFAULT_TRAITS(tsar::msg::, Location)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
@@ -262,15 +277,23 @@ std::string answerStatistic(llvm::PrivateServerPass * const PSP,
 msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
   auto LocStart = Ptr->getLocStart();
   auto LocEnd = Ptr->getLocEnd();
-  auto StartCol = SrcMgr.getExpansionColumnNumber(LocStart);
-  auto StartLine = SrcMgr.getExpansionLineNumber(LocStart);
-  auto EndCol = SrcMgr.getExpansionColumnNumber(LocEnd);
-  auto EndLine = SrcMgr.getExpansionLineNumber(LocEnd);
   msg::MainLoopInfo Loop;
-  Loop[msg::MainLoopInfo::StartCol] = StartCol;
-  Loop[msg::MainLoopInfo::StartLine] = StartLine;
-  Loop[msg::MainLoopInfo::EndCol] = EndCol;
-  Loop[msg::MainLoopInfo::EndLine] = EndLine;
+  Loop[msg::MainLoopInfo::StartLocation][msg::Location::Line] =
+    SrcMgr.getExpansionLineNumber(LocStart);
+  Loop[msg::MainLoopInfo::StartLocation][msg::Location::Column] =
+    SrcMgr.getExpansionColumnNumber(LocStart);
+  Loop[msg::MainLoopInfo::StartLocation][msg::Location::MacroLine] =
+    SrcMgr.getSpellingLineNumber(LocStart);
+  Loop[msg::MainLoopInfo::StartLocation][msg::Location::MacroColumn] =
+    SrcMgr.getSpellingColumnNumber(LocStart);
+  Loop[msg::MainLoopInfo::EndLocation][msg::Location::Line] =
+    SrcMgr.getExpansionLineNumber(LocEnd);
+  Loop[msg::MainLoopInfo::EndLocation][msg::Location::Column] =
+    SrcMgr.getExpansionColumnNumber(LocEnd);
+  Loop[msg::MainLoopInfo::EndLocation][msg::Location::MacroLine] =
+    SrcMgr.getSpellingLineNumber(LocEnd);
+  Loop[msg::MainLoopInfo::EndLocation][msg::Location::MacroColumn] =
+    SrcMgr.getSpellingColumnNumber(LocEnd);
   return Loop;
 }
 
@@ -300,19 +323,62 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       LoopTree[msg::LoopTree::Loops].end(),
       [](msg::MainLoopInfo &LHS,
          msg::MainLoopInfo &RHS) -> bool {
-        return (LHS[LoopInfo::StartLine] < RHS[LoopInfo::StartLine]) ||
-          ((LHS[LoopInfo::StartLine] == RHS[LoopInfo::StartLine]) &&
-          (LHS[LoopInfo::StartCol] < RHS[LoopInfo::StartCol]));
+        return
+          (LHS[LoopInfo::StartLocation][msg::Location::Line] <
+              RHS[LoopInfo::StartLocation][msg::Location::Line]) ||
+          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
+              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::Column] <
+              RHS[LoopInfo::StartLocation][msg::Location::Column])) ||
+          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
+              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::Column] ==
+              RHS[LoopInfo::StartLocation][msg::Location::Column]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::MacroLine] <
+              RHS[LoopInfo::StartLocation][msg::Location::MacroLine])) ||
+          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
+              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::Column] ==
+              RHS[LoopInfo::StartLocation][msg::Location::Column]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::MacroLine] ==
+              RHS[LoopInfo::StartLocation][msg::Location::MacroLine]) &&
+          (LHS[LoopInfo::StartLocation][msg::Location::MacroColumn] <
+              RHS[LoopInfo::StartLocation][msg::Location::MacroColumn]));
     });
-    std::vector<std::pair<unsigned, unsigned>> Levels;
+    std::vector<std::pair<std::pair<unsigned, unsigned>,
+        std::pair<unsigned, unsigned>>> Levels;
     for (auto &Loop : LoopTree[msg::LoopTree::Loops]) {
       while (!Levels.empty() &&
-          ((Levels[Levels.size() - 1].first < Loop[LoopInfo::EndLine]) ||
-          ((Levels[Levels.size() - 1].first == Loop[LoopInfo::EndLine]) &&
-          (Levels[Levels.size() - 1].second < Loop[LoopInfo::EndCol]))))
+          ((Levels[Levels.size() - 1].first.first <
+              Loop[LoopInfo::EndLocation][msg::Location::Line]) ||
+          ((Levels[Levels.size() - 1].first.first ==
+              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1].first.second <
+              Loop[LoopInfo::EndLocation][msg::Location::Column])) ||
+          ((Levels[Levels.size() - 1].first.first ==
+              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1].first.second ==
+              Loop[LoopInfo::EndLocation][msg::Location::Column]) &&
+          (Levels[Levels.size() - 1].second.first <
+              Loop[LoopInfo::EndLocation][msg::Location::MacroLine])) ||
+          ((Levels[Levels.size() - 1].first.first ==
+              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1].first.second ==
+              Loop[LoopInfo::EndLocation][msg::Location::Column]) &&
+          (Levels[Levels.size() - 1].second.first ==
+              Loop[LoopInfo::EndLocation][msg::Location::MacroLine]) &&
+          (Levels[Levels.size() - 1].second.second <
+              Loop[LoopInfo::EndLocation][msg::Location::MacroColumn]))))
         Levels.pop_back();
       Loop[msg::MainLoopInfo::Level] = Levels.size() + 1;
-      Levels.emplace_back(Loop[LoopInfo::EndLine], Loop[LoopInfo::EndCol]);
+      Levels.emplace_back(
+        std::piecewise_construct,
+        std::forward_as_tuple(
+          Loop[LoopInfo::EndLocation][msg::Location::Line],
+          Loop[LoopInfo::EndLocation][msg::Location::Column]),
+        std::forward_as_tuple(
+          Loop[LoopInfo::EndLocation][msg::Location::MacroLine],
+          Loop[LoopInfo::EndLocation][msg::Location::MacroColumn]));
     }
     break;
   }
