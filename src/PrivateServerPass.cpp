@@ -211,7 +211,6 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
     }
   }
 }
-}
 
 std::string answerStatistic(llvm::PrivateServerPass * const PSP,
     llvm::Module &M, tsar::TransformationContext *TfmCtx) {
@@ -302,7 +301,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       [](msg::MainLoopInfo &LHS,
          msg::MainLoopInfo &RHS) -> bool {
         return (LHS[LoopInfo::StartLine] < RHS[LoopInfo::StartLine]) ||
-          ((RHS[LoopInfo::StartLine] == RHS[LoopInfo::StartLine]) &&
+          ((LHS[LoopInfo::StartLine] == RHS[LoopInfo::StartLine]) &&
           (LHS[LoopInfo::StartCol] < RHS[LoopInfo::StartCol]));
     });
     std::vector<std::pair<unsigned, unsigned>> Levels;
@@ -333,6 +332,7 @@ std::string answerFunctionList(llvm::Module &M) {
     FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
+}
 }
 
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
