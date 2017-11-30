@@ -99,7 +99,8 @@ JSON_OBJECT_PAIR_4(Location,
 JSON_OBJECT_END(Location)
 
 JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_3(MainLoopInfo,
+JSON_OBJECT_PAIR_4(MainLoopInfo,
+  ID, unsigned,
   StartLocation, Location,
   EndLocation, Location,
   Level, unsigned)
@@ -278,6 +279,7 @@ msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
   auto LocStart = Ptr->getLocStart();
   auto LocEnd = Ptr->getLocEnd();
   msg::MainLoopInfo Loop;
+  Loop[msg::MainLoopInfo::ID] = LocStart.getRawEncoding();
   Loop[msg::MainLoopInfo::StartLocation][msg::Location::Line] =
     SrcMgr.getExpansionLineNumber(LocStart);
   Loop[msg::MainLoopInfo::StartLocation][msg::Location::Column] =
@@ -300,14 +302,14 @@ msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
 std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     llvm::Module &M, tsar::TransformationContext *TfmCtx,
     msg::LoopTree LoopTree) {
-  unsigned ID = 1;
   for (Function &F : M) {
-    if (F.empty())
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    if (!Decl)
       continue;
-    if (ID != LoopTree[msg::LoopTree::ID]) {
-      ID++;
+    auto FuncDecl = Decl->getAsFunction();
+    if (FuncDecl->getLocStart().getRawEncoding() !=
+        LoopTree[msg::LoopTree::ID])
       continue;
-    }
     typedef msg::MainLoopInfo LoopInfo;
     auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
@@ -385,16 +387,18 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
   return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
 }
 
-std::string answerFunctionList(llvm::Module &M) {
+std::string answerFunctionList(llvm::Module &M,
+    tsar::TransformationContext *TfmCtx) {
   msg::FunctionList FuncLst;
   typedef msg::MainFuncInfo FuncInfo;
-  unsigned ID = 1;
   for (Function &F : M) {
-    if (F.empty())
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    if (!Decl)
       continue;
+    auto FuncDecl = Decl->getAsFunction();
     msg::MainFuncInfo Func;
     Func[FuncInfo::Name] = F.getName();
-    Func[FuncInfo::ID] = ID++;
+    Func[FuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
     FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
@@ -432,7 +436,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     if (Obj->is<msg::LoopTree>())
       return answerLoopTree(this, M, TfmCtx, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())
-      return answerFunctionList(M);
+      return answerFunctionList(M, TfmCtx);
     llvm_unreachable("Unknown request to server!");
   }));
   return false;
