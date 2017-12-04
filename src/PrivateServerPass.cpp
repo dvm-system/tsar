@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrivateServerPass.h"
+#include "PerfectLoop.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
@@ -98,11 +99,28 @@ JSON_OBJECT_PAIR_4(Location,
   Location & operator=(Location &&) = default;
 JSON_OBJECT_END(Location)
 
+JSON_OBJECT_BEGIN(LoopTraits)
+JSON_OBJECT_PAIR_3(LoopTraits,
+  IsAnalyzed, Analysis,
+  Perfect, Analysis,
+  Exit, Analysis)
+
+  LoopTraits() :
+    JSON_INIT(LoopTraits, Analysis::No, Analysis::No, Analysis::No) {}
+  ~LoopTraits() = default;
+
+  LoopTraits(const LoopTraits &) = default;
+  LoopTraits & operator=(const LoopTraits &) = default;
+  LoopTraits(LoopTraits &&) = default;
+  LoopTraits & operator=(LoopTraits &&) = default;
+JSON_OBJECT_END(LoopTraits)
+
 JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_4(MainLoopInfo,
+JSON_OBJECT_PAIR_5(MainLoopInfo,
   ID, unsigned,
   StartLocation, Location,
   EndLocation, Location,
+  Traits, LoopTraits,
   Level, unsigned)
 
   MainLoopInfo() = default;
@@ -160,6 +178,7 @@ JSON_OBJECT_END(FunctionList)
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
 JSON_DEFAULT_TRAITS(tsar::msg::, Location)
+JSON_DEFAULT_TRAITS(tsar::msg::, LoopTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
@@ -170,7 +189,8 @@ using ServerPrivateProvider = FunctionPassProvider<
   PrivateRecognitionPass,
   TransformationEnginePass,
   LoopMatcherPass,
-  DFRegionInfoPass>;
+  DFRegionInfoPass,
+  ClangPerfectLoopPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
@@ -178,6 +198,7 @@ INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
@@ -315,9 +336,22 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    for (auto &Match : Matcher)
-      LoopTree[msg::LoopTree::Loops].push_back(
-        getLoopInfo(Match.get<AST>(), SrcMgr));
+    auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
+    auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+    for (auto &Match : Matcher) {
+      auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
+      auto &LT = Loop[msg::MainLoopInfo::Traits];
+      LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::Yes;
+      if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
+        LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
+      for (auto BB : Match.get<IR>()->blocks())
+        for (auto &Instr : BB->getInstList()) {
+          ImmutableCallSite CS(&Instr);
+          if (CS)
+            LT[msg::LoopTraits::Exit] = msg::Analysis::Yes;
+        }
+      LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
+    }
     for (auto &Unmatch : Unmatcher)
       LoopTree[msg::LoopTree::Loops].push_back(
         getLoopInfo(Unmatch, SrcMgr));
