@@ -69,6 +69,9 @@ struct DIMemoryLocation {
   /// If DW_OP_deref exists it returns true.
   bool hasDeref() const;
 
+  /// If the first operation in expression is DW_OP_deref it returns true.
+  bool startsWithDeref() const;
+
   /// \brief Returns true if size is known.
   ///
   /// \attention It does not check whether memory out of range memory access
