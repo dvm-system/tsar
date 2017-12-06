@@ -9,8 +9,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_dbg_output.h"
+#include "DIMemoryLocation.h"
 #include "DIUnparser.h"
 #include "tsar_pass.h"
+#include "SourceUnparserUtils.h"
 #include "tsar_utility.h"
 #include <utility.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -42,6 +44,28 @@ void printLocationSource(
     O << "?";
   else
     O << Loc.Size;
+  O << ">";
+}
+
+void printDILocationSource(unsigned DWLang,
+    const DIMemoryLocation &Loc, raw_ostream &O) {
+  if (!Loc.isValid()) {
+    O << "<";
+    O << "invalid";
+    if (Loc.Var)
+      O << "(" << Loc.Var->getName() << ")";
+    O << ",?>";
+    return;
+  }
+  O << "<";
+  if (!unparsePrint(DWLang, Loc, O))
+    O << "?" << Loc.Var->getName() << "?";
+  O << ", ";
+  auto Size = Loc.getSize();
+  if (Size == MemoryLocation::UnknownSize)
+    O << "?";
+  else
+    O << Size;
   O << ">";
 }
 

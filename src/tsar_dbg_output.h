@@ -22,6 +22,8 @@ class Value;
 }
 
 namespace tsar {
+struct DIMemoryLocation;
+
 /// \brief Prints information available from a source code for the
 /// specified memory location.
 ///
@@ -44,6 +46,11 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc);
 /// Prints information available from a source code for the specified memory
 /// location and its size (<location, size>).
 void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc);
+
+/// Prints source level representation (in a specified language 'DWLang')
+/// of a debug level memory location.
+void printDILocationSource(unsigned DWLang,
+    const DIMemoryLocation &Loc, llvm::raw_ostream &O);
 
 /// \brief Print description of a type from a source code.
 ///
