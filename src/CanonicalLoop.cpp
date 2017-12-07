@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CanonicalLoop.h"
+#include "tsar_dbg_output.h"
 #include "DefinedMemory.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
@@ -165,6 +166,45 @@ private:
     return false;
   }
   
+  /// Checks if operands of inductive variable are static
+  bool CheckMemLocsFromInstr(Instruction *I, Loop *LLoop) {
+    auto &AT = mAliasTree;
+    auto &RI = mRgnInfo;
+    auto &DI = mDefInfo;
+    auto LBB = LLoop->block_begin();
+    auto LBE = LLoop->block_end();
+    bool Result = true;
+    for_each_memory(*I, mTLI,
+      [&RI, &DI, &LBB, &LBE, &Result] (Instruction &Instr,
+          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+        printLocationSource(dbgs(), Loc);
+        for (auto J = LBB; J != LBE; ++J) {
+          auto DFN = RI->getRegionFor(*J);
+          assert(DFN && "DFNode must not be null!");
+          auto Match = DI->find(DFN);
+          assert(Match != DI->end() && Match->get<ReachSet>() &&
+              Match->get<DefUseSet>() && "Data-flow value must be specified!");
+          auto &DUS = Match->get<DefUseSet>();
+          if ((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)))
+            Result = false;
+        }
+      },
+      [&RI, &DI, &LLoop, &Result] (Instruction &Instr, AccessInfo,
+          AccessInfo) {
+        // don't know what to do here
+      }
+    );
+    if (!Result)
+      return false;
+    auto OpE = I->op_end();
+    // guess i should keep instructions which have been processed already
+    for (auto J = I->op_begin(); J != OpE; ++J)
+      if (auto Instr = llvm::dyn_cast<Instruction>(*J))
+        if (!CheckMemLocsFromInstr(Instr, LLoop))
+          return false;
+    return true;
+  }
+  
   /// Checks if labeled loop is canonical
   bool checkLoop(tsar::DFNode* Region, VarDecl *Var) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
@@ -177,6 +217,11 @@ private:
       return false;
     }
     llvm::MemoryLocation MemLoc(alloca, 1);
+    auto &AT = mAliasTree;
+    auto EMI = AT.find(MemLoc);
+    assert(EMI && "Estimate memory location must not be null!");
+    auto ANI = EMI->getAliasNode(AT);
+    assert(ANI && "Alias node must not be null!");
     tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region);
     assert(DFFor && "DFNode must not be null!");
     llvm::Loop *LLoop = DFFor->getLoop();
@@ -188,22 +233,17 @@ private:
       assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
           Match->get<DefUseSet>() && "Data-flow value must be specified!");
       auto &DUS = Match->get<DefUseSet>();
-      if (!(DUS->hasDef(MemLoc)) || (DUS->hasMayDef(MemLoc)))
+      if (!((DUS->hasDef(MemLoc)) || (DUS->hasMayDef(MemLoc))))
         continue;
       tsar::DFBlock* DFB = llvm::dyn_cast<DFBlock>(DFN);
       if (!DFB)
         continue;
       if (!(DFFor->getLoop()->isLoopLatch(DFB->getBlock())))
         return false;
-      auto &AT = mAliasTree;
       int Unreachable = 1;
       for_each_memory(*(DFB->getBlock()), mTLI,
-        [&AT, &MemLoc, &Unreachable] (Instruction &I,
+        [&AT, &ANI, &Unreachable] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EMI = AT.find(MemLoc);
-          assert(EMI && "Estimate memory location must not be null!");
-          auto ANI = EMI->getAliasNode(AT);
-          assert(ANI && "Alias node must not be null!");
           auto EM = AT.find(Loc);
           assert(EM && "Estimate memory location must not be null!");
           auto AN = EM->getAliasNode(AT);
@@ -216,12 +256,8 @@ private:
               Unreachable = 0;
             }
         },
-        [&AT, &MemLoc, &Unreachable](Instruction &I, AccessInfo,
+        [&AT, &ANI, &Unreachable] (Instruction &I, AccessInfo,
             AccessInfo) {
-          auto EMI = AT.find(MemLoc);
-          assert(EMI && "Estimate memory location must not be null!");
-          auto ANI = EMI->getAliasNode(AT);
-          assert(ANI && "Alias node must not be null!");
           auto AN = AT.findUnknown(I);
           auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
           if (!AN)
@@ -235,6 +271,47 @@ private:
         }
       );
       if (!Unreachable)
+        return false;
+    }
+    auto BBPreheader = LLoop->getLoopPreheader();
+    Instruction *LI = nullptr;
+    BBPreheader->dump();
+    auto I = BBPreheader->rbegin();
+    auto InstrEnd = BBPreheader->rend();
+    while ((I != InstrEnd) && (!(LI))) {
+      bool RequiredInstr = false;
+      for_each_memory(*I, mTLI,
+        [&AT, &ANI, &RequiredInstr] (Instruction &I,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+          auto EM = AT.find(Loc);
+          assert(EM && "Estimate memory location must not be null!");
+          auto AN = EM->getAliasNode(AT);
+          assert(AN && "Alias node must not be null!");
+          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
+          if ((STR.isEqual(ANI, AN)) && (W != AccessInfo::No)) {
+            RequiredInstr = true;
+          }
+        },
+        [&AT, &ANI, &RequiredInstr] (Instruction &I, AccessInfo,
+            AccessInfo) {
+          auto AN = AT.findUnknown(I);
+          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
+          if (!AN)
+            return;
+          if (STR.isEqual(ANI, AN)) {
+            // is it possible and should i do smth in case it is?
+          }
+        }
+      );
+      if (RequiredInstr)
+        LI = &(*I);
+      ++I;
+    }
+    LI->dump();
+    auto LV = LI->getOperand(0);
+    LV->dump();
+    if (auto I = llvm::dyn_cast<Instruction>(LV)) {
+      if (!CheckMemLocsFromInstr(I, LLoop))
         return false;
     }
     return true;
