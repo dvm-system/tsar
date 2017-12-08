@@ -156,6 +156,11 @@ void initializeCanonicalLoopPassPass(PassRegistry &Registry);
 
 /// Creates a pass to determine canonical for-loops in a source code.
 FunctionPass * createCanonicalLoopPass();
+
+void initializeFunctionInlinerImmutableStoragePass(PassRegistry &Registry);
+void initializeFunctionInlinerImmutableWrapperPass(PassRegistry &Registry);
+void initializeFunctionInlinerPassPass(PassRegistry &Registry);
+ModulePass * createFunctionInlinerPass();
 }
 
 #endif//TSAR_PASS_H

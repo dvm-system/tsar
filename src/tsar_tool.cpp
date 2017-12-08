@@ -65,6 +65,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
   llvm::cl::opt<bool> Test;
+  llvm::cl::opt<bool> Inline;
 private:
   /// Default constructor.
   ///
@@ -107,9 +108,9 @@ Options::Options() :
   TimeReport("ftime-report", cl::cat(DebugCategory),
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
-    cl::desc("Insert results of analysis to a source file"))
-  , Inline("inline", cl::cat(DebugCategory),
-    cl::desc("Inline function calls in loops")) {
+    cl::desc("Insert results of analysis to a source file")),
+  Inline("inline", cl::cat(DebugCategory),
+    cl::desc("Dump inlined versions of source files")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
@@ -213,7 +214,7 @@ void Tool::storeCLOptions() {
   mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mTest = addIfSet(Options::get().Test);
-  mInline = Options::get().Inline;
+  mInline = addIfSet(Options::get().Inline);
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
   if (IncompatibleOpts.size() > 1) {
@@ -242,6 +243,11 @@ inline static InstrLLVMQueryManager * getInstrLLVMQM() {
 
 inline static TestQueryManager * getTestQM() {
   static TestQueryManager QM;
+  return &QM;
+}
+
+inline static FunctionInlinerQueryManager * getInlineQM() {
+  static FunctionInlinerQueryManager QM;
   return &QM;
 }
 
@@ -307,6 +313,8 @@ int Tool::run(QueryManager *QM) {
       QM = getInstrLLVMQM();
     else if (mTest)
       QM = getTestQM();
+    else if (mInline)
+      QM = getInlineQM();
     else
       QM = getDefaultQM(mOutputPasses);
   }
@@ -321,17 +329,6 @@ int Tool::run(QueryManager *QM) {
         tsar::ASTPrintAction, tsar::ASTMergeAction>(SourcesToMerge).get());
     return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
-  }
-  if (mInline == true) {
-    std::string projectFile = FInlinerAction::createProjectFile(mSources);
-    clang::tooling::ClangTool CT(*mCompilations, {projectFile});
-    int ret = CT.run(
-      tsar::newAnalysisActionFactory<FInlinerAction>(mCommandLine, QM).get());
-    if (ret != 0) {
-      return ret;
-    } else {
-      mSources = {projectFile};
-    }
   }
   ClangTool CTool(*mCompilations, mSources);
   if (mDumpAST)

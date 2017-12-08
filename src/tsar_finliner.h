@@ -10,9 +10,13 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#if !defined(TSAR_FINLINER_H)
-#define TSAR_FINLINER_H
 
+#ifndef TSAR_FUNCTION_INLINER_H
+#define TSAR_FUNCTION_INLINER_H
+
+#include "AnalysisWrapperPass.h"
+#include "tsar_pass.h"
+#include "tsar_query.h"
 #include "tsar_action.h"
 #include "tsar_transformation.h"
 
@@ -20,11 +24,57 @@
 
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
-#include <clang/CodeGen/ModuleBuilder.h>
-#include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
+
+namespace tsar {
+
+class FunctionInlinerQueryManager : public QueryManager {
+  void run(llvm::Module *M, TransformationContext *Ctx) override;
+};
+
+struct FunctionInlineInfo : private bcl::Uncopyable {
+  // place data for further passes
+};
+}
+
+namespace llvm {
+using FunctionInlinerImmutableWrapper = AnalysisWrapperPass<tsar::FunctionInlineInfo>;
+
+class FunctionInlinerImmutableStorage :
+  public ImmutablePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  FunctionInlinerImmutableStorage() : ImmutablePass(ID) {}
+
+  const tsar::FunctionInlineInfo& getFunctionInlineInfo() const noexcept {
+    return mFunctionInlineInfo;
+  }
+
+  tsar::FunctionInlineInfo& getFunctionInlineInfo() noexcept {
+    return mFunctionInlineInfo;
+  }
+
+private:
+  tsar::FunctionInlineInfo mFunctionInlineInfo;
+};
+
+class FunctionInlinerPass :
+  public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  FunctionInlinerPass() : ModulePass(ID) {
+    initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(llvm::Module& M) override;
+
+  void getAnalysisUsage(AnalysisUsage& AU) const override;
+};
+}
 
 namespace detail {
 
@@ -104,19 +154,10 @@ class FInliner :
   public clang::RecursiveASTVisitor<FInliner>,
   public clang::ASTConsumer {
 public:
-  explicit FInliner(
-      clang::CompilerInstance& CI, llvm::StringRef InFile,
-      tsar::TransformationContext* TfmCtx, tsar::QueryManager* QM)
-      : mCompiler(CI), mContext(mCompiler.getASTContext()),
-      mSourceManager(mContext.getSourceManager()),
-      mLLVMContext(new llvm::LLVMContext),
-      mGen(clang::CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
-        CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
-        CI.getCodeGenOpts(), *mLLVMContext)), mTransformContext(TfmCtx),
-      mQueryManager(QM) {
-    assert(mTransformContext && "Transformation context must not be null!");
-    mTransformContext->reset(mContext, *mGen);
-    mRewriter = &TfmCtx->getRewriter();
+  explicit FInliner(tsar::TransformationContext* TfmCtx)
+    : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
+    mRewriter(TfmCtx->getRewriter()),
+    mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {
   }
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
@@ -151,7 +192,7 @@ private:
   /// to avoid later possible collisions.
   /// \returns text of instantiated function body and result identifier
   std::pair<std::string, std::string> compile(
-    const detail::TemplateInstantiation& TI,
+    const ::detail::TemplateInstantiation& TI,
     const std::vector<std::string>& args,
     std::set<std::string>& decls);
 
@@ -202,7 +243,7 @@ private:
       return;
     }
     void setParameters(const std::string& type, const std::string& identifier,
-        const std::function<std::string(const std::string&)>& processor) {
+      const std::function<std::string(const std::string&)>& processor) {
       this->type = type;
       this->identifier = identifier;
       this->processor = processor;
@@ -218,27 +259,27 @@ private:
   private:
     std::string type;
     std::string identifier;
-    std::function<std::string(const std::string&)> processor; 
+    std::function<std::string(const std::string&)> processor;
     int count;
   } varDeclHandler;
-  
+
   // [C99 6.7.2, 6.7.3]
   const std::vector<std::string> mKeywords = { "register",
     "void", "char", "short", "int", "long", "float", "double",
     "signed", "unsigned", "_Bool", "_Complex", "struct", "union", "enum",
     "const", "restrict", "volatile" };
   const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
-  
-  tsar::TransformationContext* mTransformContext;
-  tsar::QueryManager* mQueryManager;
 
-  clang::CompilerInstance& mCompiler;
+  tsar::TransformationContext* mTransformContext;
+  //tsar::QueryManager* mQueryManager;
+
+  //clang::CompilerInstance& mCompiler;
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
-  clang::Rewriter* mRewriter;
+  clang::Rewriter& mRewriter;
 
-  std::unique_ptr<llvm::LLVMContext> mLLVMContext;
-  std::unique_ptr<clang::CodeGenerator> mGen;
+  //std::unique_ptr<llvm::LLVMContext> mLLVMContext;
+  //std::unique_ptr<clang::CodeGenerator> mGen;
 
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD;
@@ -252,32 +293,32 @@ private:
   std::map<clang::FunctionDecl*, std::set<clang::DeclRefExpr*>> mDeclRefs;
   std::set<clang::Decl*> mGlobalDecls;
 
-  std::map<clang::FunctionDecl*, detail::Template> mTs;
-  std::map<clang::FunctionDecl*, std::vector<detail::TemplateInstantiation>> mTIs;
+  std::map<clang::FunctionDecl*, ::detail::Template> mTs;
+  std::map<clang::FunctionDecl*, std::vector<::detail::TemplateInstantiation>> mTIs;
 };
 
-class FInlinerAction : public tsar::ActionBase {
+/*class FInlinerAction : public tsar::ActionBase {
 public:
-  FInlinerAction(std::vector<std::string> CL, tsar::QueryManager* QM);
+FInlinerAction(std::vector<std::string> CL, tsar::QueryManager* QM);
 
-  std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
-    clang::CompilerInstance& CI, llvm::StringRef InFile);
+std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+clang::CompilerInstance& CI, llvm::StringRef InFile);
 
-  static std::string createProjectFile(const std::vector<std::string>& sources);
+static std::string createProjectFile(const std::vector<std::string>& sources);
 
-  /// reformats content of file \p FID with LLVM style
-  bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
+/// reformats content of file \p FID with LLVM style
+bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
 
-  /// overwrites changed files and reformats them for readability
-  void EndSourceFileAction();
+/// overwrites changed files and reformats them for readability
+void EndSourceFileAction();
 
 private:
-  static std::vector<std::string> mSources;
+static std::vector<std::string> mSources;
 
-  clang::CompilerInstance* mCompilerInstance;
-  std::unique_ptr<tsar::TransformationContext> mTfmCtx;
-};
+clang::CompilerInstance* mCompilerInstance;
+std::unique_ptr<tsar::TransformationContext> mTfmCtx;
+};*/
 
 }
 
-#endif
+#endif//TSAR_FUNCTION_INLINER_H

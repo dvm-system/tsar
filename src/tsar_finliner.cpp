@@ -9,7 +9,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+
 #include "tsar_finliner.h"
+#include "tsar_pass_provider.h"
+#include "tsar_transformation.h"
 
 #include <algorithm>
 #include <numeric>
@@ -19,21 +22,97 @@
 #include <vector>
 #include <type_traits>
 
+#include <clang/AST/ASTContext.h>
+#include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Analysis/CFG.h>
-#include <clang/Format/Format.h>
-#include <clang/Tooling/CommonOptionsParser.h>
-#include <clang/Tooling/Core/Replacement.h>
-#include <clang/Tooling/Tooling.h>
+#include <llvm/IR/LegacyPassManagers.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
-// TODO(jury.zykov@yandex.ru): direct argument passing without local variables when possible
 
+// TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
+
+using namespace clang;
+using namespace llvm;
 using namespace tsar;
-using namespace detail;
+using namespace ::detail;
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "function-inliner"
+
+char FunctionInlinerImmutableStorage::ID = 0;
+INITIALIZE_PASS(FunctionInlinerImmutableStorage, "function-inliner-is",
+  "Function Inliner (Immutable Storage)", true, true)
+
+char FunctionInlinerImmutableWrapper::ID = 0;
+INITIALIZE_PASS(FunctionInlinerImmutableWrapper, "function-inliner-iw",
+  "Function Inliner (Immutable Wrapper)", true, true)
+
+typedef FunctionPassProvider<
+  TransformationEnginePass
+> FunctionInlinerProvider;
+
+INITIALIZE_PROVIDER_BEGIN(FunctionInlinerProvider, "function-inliner-provider",
+  "Function Inliner Data Provider")
+  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PROVIDER_END(FunctionInlinerProvider, "function-inliner-provider",
+  "Function Inliner Data Provider")
+
+char FunctionInlinerPass::ID = 0;
+INITIALIZE_PASS_BEGIN(FunctionInlinerPass, "function-inliner",
+  "Function Inliner", false, false)
+  INITIALIZE_PASS_DEPENDENCY(FunctionInlinerProvider)
+  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_END(FunctionInlinerPass, "function-inliner",
+  "Function Inliner", false, false)
+
+ModulePass* llvm::createFunctionInlinerPass() {
+  return new FunctionInlinerPass();
+}
+
+void FunctionInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
+  AU.addRequired<FunctionInlinerProvider>();
+  AU.addRequired<TransformationEnginePass>();
+}
+
+inline FilenameAdjuster getFilenameAdjuster() {
+  return [](llvm::StringRef Filename) -> std::string {
+    llvm::SmallString<128> Path = Filename;
+    llvm::sys::path::replace_extension(
+      Path, ".inl" + llvm::sys::path::extension(Path));
+    return Path.str();
+  };
+}
+
+bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
+  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!TfmCtx || !TfmCtx->hasInstance()) {
+    errs() << "error: can not transform sources for the module "
+      << M.getName() << "\n";
+    return false;
+  }
+  FunctionInlinerProvider::initialize<TransformationEnginePass>(
+    [&M, &TfmCtx](TransformationEnginePass& TEP) {
+    TEP.setContext(M, TfmCtx);
+  });
+  auto& Context = TfmCtx->getContext();
+  auto& Rewriter = TfmCtx->getRewriter();
+  auto& SrcMgr = Rewriter.getSourceMgr();
+  FInliner inliner(TfmCtx);
+  inliner.HandleTranslationUnit(Context);
+  /*for (Function& F : M) {
+  if (F.empty())
+  continue;
+  auto& Provider = getAnalysis<FunctionInlinerProvider>(F);
+  }*/
+  TfmCtx->release(getFilenameAdjuster());
+  return false;
+}
+
 
 bool operator<=(
-    const clang::SourceLocation& lhs, const clang::SourceLocation& rhs) {
+  const clang::SourceLocation& lhs, const clang::SourceLocation& rhs) {
   return lhs < rhs || lhs == rhs;
 }
 
@@ -147,7 +226,7 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
           if (B->getLoopTarget() != nullptr) {
             continue;
           }
-          TemplateInstantiation TI = {mCurrentFD, P, CE, nullptr};
+          TemplateInstantiation TI = { mCurrentFD, P, CE, nullptr };
           if (std::find(std::begin(mTIs[mCurrentFD]),
             std::end(mTIs[mCurrentFD]), TI) == std::end(mTIs[mCurrentFD])) {
             mTIs[mCurrentFD].push_back(TI);
@@ -181,9 +260,9 @@ bool FInliner::VisitExpr(clang::Expr* E) {
 }
 
 std::vector<std::string> FInliner::construct(
-    const std::string& type, const std::string& identifier,
-    const std::string& context,
-    std::map<std::string, std::string>& replacements) {
+  const std::string& type, const std::string& identifier,
+  const std::string& context,
+  std::map<std::string, std::string>& replacements) {
   const std::string pattern(
     "[(struct|union|enum)\\s+]?" + mIdentifierPattern + "|\\S");
   clang::ast_matchers::MatchFinder MatchFinder;
@@ -235,8 +314,8 @@ std::pair<std::string, std::string> FInliner::compile(
   std::set<std::string>& decls) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == args.size()
     && "Undefined behavior: incorrect number of arguments specified");
-  clang::Rewriter lRewriter(mCompiler.getSourceManager(),
-    mCompiler.getLangOpts());
+  clang::Rewriter lRewriter(mSourceManager,
+    mRewriter.getLangOpts());
   clang::SourceManager& SM = lRewriter.getSourceMgr();
   std::string params;
   std::string context;
@@ -294,7 +373,10 @@ std::pair<std::string, std::string> FInliner::compile(
       std::pair<std::string, std::string> text
         = compile(TI, args, decls);
       if (text.second.size() == 0) {
+        text.first.insert(std::begin(text.first), '{');
         lRewriter.ReplaceText(getRange(TI.mStmt), text.first);
+        lRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
+          ";}");
       } else {
         if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
           text.first.insert(std::begin(text.first), '{');
@@ -350,7 +432,7 @@ std::pair<std::string, std::string> FInliner::compile(
     + retLab + ":;";
   text.insert(std::begin(text) + 1, std::begin(params), std::end(params));
   text.insert(std::begin(text), std::begin(ret), std::end(ret));
-  return {text, identifier};
+  return{ text, identifier };
 }
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
@@ -625,18 +707,21 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         std::pair<std::string, std::string> text
           = compile(TI, args, fDecls);
         if (text.second.size() == 0) {
-          mRewriter->ReplaceText(getRange(TI.mStmt), text.first);
+          text.first.insert(std::begin(text.first), '{');
+          mRewriter.ReplaceText(getRange(TI.mStmt), text.first);
+          mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
+            ";}");
         } else {
           if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
             text.first.insert(std::begin(text.first), '{');
-            mRewriter->InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
+            mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
               ";}");
           }
-          mRewriter->ReplaceText(getRange(TI.mCallExpr), text.second);
-          mRewriter->InsertTextBefore(getRange(TI.mStmt).getBegin(),
+          mRewriter.ReplaceText(getRange(TI.mCallExpr), text.second);
+          mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
             text.first);
         }
-        mRewriter->InsertTextBefore(getRange(TI.mStmt).getBegin(),
+        mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
           "/* " + getSourceText(getRange(TI.mCallExpr))
           + " is inlined below */\n");
       }
@@ -652,8 +737,8 @@ std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
 
 template<typename T>
 clang::SourceRange FInliner::getRange(T* node) const {
-  return {mSourceManager.getFileLoc(node->getSourceRange().getBegin()),
-    mSourceManager.getFileLoc(node->getSourceRange().getEnd())};
+  return{ mSourceManager.getFileLoc(node->getSourceRange().getBegin()),
+    mSourceManager.getFileLoc(node->getSourceRange().getEnd()) };
 }
 
 clang::SourceLocation FInliner::getLoc(clang::SourceLocation SL) const {
@@ -686,8 +771,8 @@ void FInliner::swap(T& lhs, T& rhs) const {
 }
 
 std::string FInliner::addSuffix(
-    const std::string& prefix,
-    std::set<std::string>& identifiers) const {
+  const std::string& prefix,
+  std::set<std::string>& identifiers) const {
   int count = 0;
   std::string identifier(prefix + std::to_string(count++));
   bool ok = false;
@@ -704,7 +789,7 @@ std::string FInliner::addSuffix(
 }
 
 std::vector<std::string> FInliner::tokenize(
-    std::string s, std::string p) const {
+  std::string s, std::string p) const {
   std::vector<std::string> tokens;
   std::regex rgx(p);
   std::smatch sm;
@@ -737,107 +822,124 @@ bool FInliner::requiresBraces(clang::FunctionDecl* FD, clang::Stmt* S) {
   return true;
 }
 
+// for debug
+void FunctionInlinerQueryManager::run(llvm::Module* M, TransformationContext* Ctx) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (Ctx) {
+    auto TEP = static_cast<TransformationEnginePass *>(
+      createTransformationEnginePass());
+    TEP->setContext(*M, Ctx);
+    Passes.add(TEP);
+  }
+  Passes.add(createFunctionInlinerPass());
+  Passes.run(*M);
+  return;
+}
+
+/*
 std::string FInlinerAction::createProjectFile(
-    const std::vector<std::string>& sources) {
-  mSources = sources;
-  const char projectFile[]{".proj.c"};
-  std::error_code ec;
-  llvm::raw_fd_ostream out(projectFile, ec, llvm::sys::fs::OpenFlags::F_Text);
-  if (out.has_error() == true) {
-    return std::string();
-  }
-  for (auto& source : sources) {
-    out << "#include \"" << source << "\"\n";
-  }
-  out.close();
-  return projectFile;
+const std::vector<std::string>& sources) {
+mSources = sources;
+const char projectFile[]{ ".proj.c" };
+std::error_code ec;
+llvm::raw_fd_ostream out(projectFile, ec, llvm::sys::fs::OpenFlags::F_Text);
+if (out.has_error() == true) {
+return std::string();
+}
+for (auto& source : sources) {
+out << "#include \"" << source << "\"\n";
+}
+out.close();
+return projectFile;
 }
 
 std::unique_ptr<clang::ASTConsumer>
 FInlinerAction::CreateASTConsumer(
-    clang::CompilerInstance& CI, llvm::StringRef InFile) {
-  return std::unique_ptr<FInliner>(
-    new FInliner(CI, InFile, mTfmCtx.get(), mQueryManager));
+clang::CompilerInstance& CI, llvm::StringRef InFile) {
+return std::unique_ptr<FInliner>(
+new FInliner(CI, InFile, mTfmCtx.get(), mQueryManager));
 }
 
 FInlinerAction::FInlinerAction(
-    std::vector<std::string> CL, QueryManager* QM)
-  : ActionBase(QM), mTfmCtx(new TransformationContext(CL)) {
+std::vector<std::string> CL, QueryManager* QM)
+: ActionBase(QM), mTfmCtx(new TransformationContext(CL)) {
 }
 
 inline FilenameAdjuster getFilenameAdjuster() {
-  return [](llvm::StringRef Filename) -> std::string {
-    llvm::SmallString<128> Path = Filename;
-    llvm::sys::path::replace_extension(
-      Path, ".inl" + llvm::sys::path::extension(Path));
-    return Path.str();
-  };
+return [](llvm::StringRef Filename) -> std::string {
+llvm::SmallString<128> Path = Filename;
+llvm::sys::path::replace_extension(
+Path, ".inl" + llvm::sys::path::extension(Path));
+return Path.str();
+};
 }
 
 bool FInlinerAction::format(
-    clang::Rewriter& Rewriter, clang::FileID FID) const {
-  clang::SourceManager& SM = Rewriter.getSourceMgr();
-  llvm::MemoryBuffer* Code = SM.getBuffer(FID);
-  if (Code->getBufferSize() == 0)
-    return false;
-  unsigned int Offset = SM.getFileOffset(SM.getLocForStartOfFile(FID));
-  unsigned int Length = SM.getFileOffset(SM.getLocForEndOfFile(FID)) - Offset;
-  std::vector<clang::tooling::Range> Ranges({
-    clang::tooling::Range(Offset, Length)});
-  clang::format::FormatStyle FormatStyle
-    = clang::format::getStyle("LLVM", "", "LLVM");
-  clang::tooling::Replacements Replaces = clang::format::sortIncludes(
-    FormatStyle, Code->getBuffer(), Ranges,
-    SM.getFileEntryForID(FID)->getName());
-  llvm::Expected<std::string> ChangedCode
-    = clang::tooling::applyAllReplacements(Code->getBuffer(), Replaces);
-  assert(bool(ChangedCode) == true && "Failed to apply replacements");
-  for (const auto& R : Replaces) {
-    Ranges.push_back({R.getOffset(), R.getLength()});
-  }
-  clang::tooling::Replacements FormatChanges = clang::format::reformat(
-    FormatStyle, ChangedCode.get(), Ranges, SM.getFileEntryForID(FID)->getName());
-  Replaces = Replaces.merge(FormatChanges);
-  clang::tooling::applyAllReplacements(Replaces, Rewriter);
-  return false;
+clang::Rewriter& Rewriter, clang::FileID FID) const {
+clang::SourceManager& SM = Rewriter.getSourceMgr();
+llvm::MemoryBuffer* Code = SM.getBuffer(FID);
+if (Code->getBufferSize() == 0)
+return false;
+unsigned int Offset = SM.getFileOffset(SM.getLocForStartOfFile(FID));
+unsigned int Length = SM.getFileOffset(SM.getLocForEndOfFile(FID)) - Offset;
+std::vector<clang::tooling::Range> Ranges({
+clang::tooling::Range(Offset, Length) });
+clang::format::FormatStyle FormatStyle
+= clang::format::getStyle("LLVM", "", "LLVM");
+clang::tooling::Replacements Replaces = clang::format::sortIncludes(
+FormatStyle, Code->getBuffer(), Ranges,
+SM.getFileEntryForID(FID)->getName());
+llvm::Expected<std::string> ChangedCode
+= clang::tooling::applyAllReplacements(Code->getBuffer(), Replaces);
+assert(bool(ChangedCode) == true && "Failed to apply replacements");
+for (const auto& R : Replaces) {
+Ranges.push_back({ R.getOffset(), R.getLength() });
+}
+clang::tooling::Replacements FormatChanges = clang::format::reformat(
+FormatStyle, ChangedCode.get(), Ranges, SM.getFileEntryForID(FID)->getName());
+Replaces = Replaces.merge(FormatChanges);
+clang::tooling::applyAllReplacements(Replaces, Rewriter);
+return false;
 }
 
 std::vector<std::string> FInlinerAction::mSources = {};
 
 void FInlinerAction::EndSourceFileAction() {
-  mTfmCtx->release(getFilenameAdjuster());
-  clang::Rewriter& Rewriter = mTfmCtx->getRewriter();
-  clang::SourceManager& SM = Rewriter.getSourceMgr();
-  clang::Rewriter Rewrite(SM, clang::LangOptions());
-  llvm::SmallVector<char, 128> cwd;
-  llvm::sys::fs::current_path(cwd);
-  std::vector<std::string> sources;
-  std::transform(std::begin(mSources), std::end(mSources),
-    std::inserter(sources, std::end(sources)),
-    [&](const std::string& lhs) -> std::string {
-    llvm::SmallVector<char, 128> path = cwd;
-    llvm::sys::path::append(path, lhs);
-    llvm::sys::path::remove_dots(path, true);
-    return std::string(path.data(), path.size());
-  });
-  for (auto I = Rewriter.buffer_begin(), E = Rewriter.buffer_end();
-    I != E; ++I) {
-    const clang::FileEntry* Entry = SM.getFileEntryForID(I->first);
-    std::string Name = getFilenameAdjuster()(Entry->getName());
-    clang::FileID FID = SM.createFileID(SM.getFileManager().getFile(Name),
-      clang::SourceLocation(), clang::SrcMgr::C_User);
-    format(Rewrite, FID);
-    mSources[std::find_if(std::begin(sources), std::end(sources),
-      [&](const std::string& lhs) -> bool {
-      return SM.getFileManager().getFile(lhs)
-        == Entry;
-    }) - std::begin(sources)] = Name;
-    llvm::errs() << Name << ':' << " ready for rewriting" << '\n';
-  }
-  if (Rewrite.overwriteChangedFiles() == false) {
-    llvm::errs() << "All changes were successfully saved" << '\n';
-  }
-  // rewrite project file with created *.inl.*'s for further analysis
-  createProjectFile(mSources);
-  return;
+mTfmCtx->release(getFilenameAdjuster());
+clang::Rewriter& Rewriter = mTfmCtx->getRewriter();
+clang::SourceManager& SM = Rewriter.getSourceMgr();
+clang::Rewriter Rewrite(SM, clang::LangOptions());
+llvm::SmallVector<char, 128> cwd;
+llvm::sys::fs::current_path(cwd);
+std::vector<std::string> sources;
+std::transform(std::begin(mSources), std::end(mSources),
+std::inserter(sources, std::end(sources)),
+[&](const std::string& lhs) -> std::string {
+llvm::SmallVector<char, 128> path = cwd;
+llvm::sys::path::append(path, lhs);
+llvm::sys::path::remove_dots(path, true);
+return std::string(path.data(), path.size());
+});
+for (auto I = Rewriter.buffer_begin(), E = Rewriter.buffer_end();
+I != E; ++I) {
+const clang::FileEntry* Entry = SM.getFileEntryForID(I->first);
+std::string Name = getFilenameAdjuster()(Entry->getName());
+clang::FileID FID = SM.createFileID(SM.getFileManager().getFile(Name),
+clang::SourceLocation(), clang::SrcMgr::C_User);
+format(Rewrite, FID);
+mSources[std::find_if(std::begin(sources), std::end(sources),
+[&](const std::string& lhs) -> bool {
+return SM.getFileManager().getFile(lhs)
+== Entry;
+}) - std::begin(sources)] = Name;
+llvm::errs() << Name << ':' << " ready for rewriting" << '\n';
 }
+if (Rewrite.overwriteChangedFiles() == false) {
+llvm::errs() << "All changes were successfully saved" << '\n';
+}
+// rewrite project file with created *.inl.*'s for further analysis
+createProjectFile(mSources);
+return;
+}
+*/
