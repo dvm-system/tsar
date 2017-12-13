@@ -62,7 +62,8 @@ public:
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
       TargetLibraryInfo &TLI, tsar::CanonicalLoopInfo *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
-      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI) {}
+      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
+      mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
 
   /// This function is called each time LoopMatcher finds appropriate loop
   virtual void run(const MatchFinder::MatchResult &Result) {
@@ -165,19 +166,64 @@ private:
       return true;
     return false;
   }
-  
-  /// Checks if operands of inductive variable are static
-  bool CheckMemLocsFromInstr(Instruction *I, Loop *LLoop) {
+
+  /// Finds last instruction of block w/ inductive variable
+  Instruction* FindLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
+    Instruction *LastInstruction = nullptr;
     auto &AT = mAliasTree;
+    auto &STR = mSTR;
+    auto I = BB->rbegin();
+    auto InstrEnd = BB->rend();
+    while ((I != InstrEnd) && (!(LastInstruction))) {
+      bool RequiredInstruction = false;
+      for_each_memory(*I, mTLI,
+        [&AT, &STR, &ANI, &RequiredInstruction] (Instruction &I,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+          auto EM = AT.find(Loc);
+          assert(EM && "Estimate memory location must not be null!");
+          auto AN = EM->getAliasNode(AT);
+          assert(AN && "Alias node must not be null!");
+          if ((STR.isEqual(ANI, AN)) && (W != AccessInfo::No)) {
+            RequiredInstruction = true;
+          }
+        },
+        [&AT, &STR, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
+            AccessInfo) {
+          auto AN = AT.findUnknown(I);
+          if (!AN)
+            return;
+          if (STR.isEqual(ANI, AN)) {
+            // is it possible and should i do smth in case it is?
+          }
+        }
+      );
+      if (RequiredInstruction)
+        LastInstruction = &(*I);
+      ++I;
+    }
+    return LastInstruction;
+  }
+
+  /// Checks if operands of inductive variable are static
+  bool CheckMemLocsFromInstr(Instruction *I, AliasEstimateNode *ANI, Loop *L) {
+    I->dump();
+    auto &AT = mAliasTree;
+    auto &STR = mSTR;
     auto &RI = mRgnInfo;
     auto &DI = mDefInfo;
-    auto LBB = LLoop->block_begin();
-    auto LBE = LLoop->block_end();
+    auto LBB = L->block_begin();
+    auto LBE = L->block_end();
     bool Result = true;
     for_each_memory(*I, mTLI,
-      [&RI, &DI, &LBB, &LBE, &Result] (Instruction &Instr,
+      [&AT, &STR, &RI, &DI, &LBB, &LBE, &ANI, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         printLocationSource(dbgs(), Loc);
+        auto EM = AT.find(Loc);
+        assert(EM && "Estimate memory location must not be null!");
+        auto AN = EM->getAliasNode(AT);
+        assert(AN && "Alias node must not be null!");
+        if (STR.isEqual(ANI, AN))
+          return;
         for (auto J = LBB; J != LBE; ++J) {
           auto DFN = RI->getRegionFor(*J);
           assert(DFN && "DFNode must not be null!");
@@ -189,8 +235,8 @@ private:
             Result = false;
         }
       },
-      [&RI, &DI, &LLoop, &Result] (Instruction &Instr, AccessInfo,
-          AccessInfo) {
+      [&AT, &STR, &RI, &DI, &LBB, &LBE, &ANI, &Result] (Instruction &Instr,
+          AccessInfo, AccessInfo) {
         // don't know what to do here
       }
     );
@@ -200,11 +246,11 @@ private:
     // guess i should keep instructions which have been processed already
     for (auto J = I->op_begin(); J != OpE; ++J)
       if (auto Instr = llvm::dyn_cast<Instruction>(*J))
-        if (!CheckMemLocsFromInstr(Instr, LLoop))
+        if (!CheckMemLocsFromInstr(Instr, ANI, L))
           return false;
     return true;
   }
-  
+
   /// Checks if labeled loop is canonical
   bool checkLoop(tsar::DFNode* Region, VarDecl *Var) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
@@ -218,6 +264,7 @@ private:
     }
     llvm::MemoryLocation MemLoc(alloca, 1);
     auto &AT = mAliasTree;
+    auto &STR = mSTR;
     auto EMI = AT.find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
     auto ANI = EMI->getAliasNode(AT);
@@ -242,13 +289,12 @@ private:
         return false;
       int Unreachable = 1;
       for_each_memory(*(DFB->getBlock()), mTLI,
-        [&AT, &ANI, &Unreachable] (Instruction &I,
+        [&AT, &STR, &ANI, &Unreachable] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
           auto EM = AT.find(Loc);
           assert(EM && "Estimate memory location must not be null!");
           auto AN = EM->getAliasNode(AT);
           assert(AN && "Alias node must not be null!");
-          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
           if (Unreachable)
             if (STR.isEqual(ANI, AN)) {
               Unreachable = (Unreachable + 1) % 4;
@@ -256,10 +302,9 @@ private:
               Unreachable = 0;
             }
         },
-        [&AT, &ANI, &Unreachable] (Instruction &I, AccessInfo,
+        [&AT, &STR, &ANI, &Unreachable] (Instruction &I, AccessInfo,
             AccessInfo) {
           auto AN = AT.findUnknown(I);
-          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
           if (!AN)
             return;
           if (Unreachable)
@@ -273,47 +318,14 @@ private:
       if (!Unreachable)
         return false;
     }
-    auto BBPreheader = LLoop->getLoopPreheader();
-    Instruction *LI = nullptr;
-    BBPreheader->dump();
-    auto I = BBPreheader->rbegin();
-    auto InstrEnd = BBPreheader->rend();
-    while ((I != InstrEnd) && (!(LI))) {
-      bool RequiredInstr = false;
-      for_each_memory(*I, mTLI,
-        [&AT, &ANI, &RequiredInstr] (Instruction &I,
-            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EM = AT.find(Loc);
-          assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(AT);
-          assert(AN && "Alias node must not be null!");
-          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
-          if ((STR.isEqual(ANI, AN)) && (W != AccessInfo::No)) {
-            RequiredInstr = true;
-          }
-        },
-        [&AT, &ANI, &RequiredInstr] (Instruction &I, AccessInfo,
-            AccessInfo) {
-          auto AN = AT.findUnknown(I);
-          auto STR = SpanningTreeRelation<const AliasTree *>(&AT);
-          if (!AN)
-            return;
-          if (STR.isEqual(ANI, AN)) {
-            // is it possible and should i do smth in case it is?
-          }
-        }
-      );
-      if (RequiredInstr)
-        LI = &(*I);
-      ++I;
-    }
-    LI->dump();
-    auto LV = LI->getOperand(0);
-    LV->dump();
-    if (auto I = llvm::dyn_cast<Instruction>(LV)) {
-      if (!CheckMemLocsFromInstr(I, LLoop))
-        return false;
-    }
+    Instruction *LI = FindLastInstruction(ANI, LLoop->getLoopPreheader());
+    assert(LI && "Last instruction should not be nullptr!");
+    if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
+      return false;
+    LI = FindLastInstruction(ANI, LLoop->getLoopLatch());
+    assert(LI && "Last instruction should not be nullptr!");
+    if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
+      return false;
     return true;
   }
   
@@ -324,6 +336,7 @@ private:
   tsar::AliasTree &mAliasTree;
   TargetLibraryInfo &mTLI;
   tsar::CanonicalLoopInfo *mCanonicalLoopInfo;
+  SpanningTreeRelation<const AliasTree *> mSTR;
 };
 
 /// returns LoopMatcher that matches loops that can be canonical
@@ -331,7 +344,7 @@ StatementMatcher makeLoopMatcher() {
   return forStmt(
       hasLoopInit(eachOf(
         declStmt(hasSingleDecl(
-          varDecl(hasInitializer(integerLiteral()))
+          varDecl(hasType(isInteger()))
           .bind("InitVarName"))),
         binaryOperator(
           hasOperatorName("="),
