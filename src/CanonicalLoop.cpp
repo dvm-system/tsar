@@ -167,6 +167,21 @@ private:
     return false;
   }
 
+  bool CheckMemLoc(MemoryLocation &Loc, Loop *L) {
+    auto LBE = L->block_end();
+    for (auto I = L->block_begin(); I != LBE; ++I) {
+      auto DFN = mRgnInfo->getRegionFor(*I);
+      assert(DFN && "DFNode must not be null!");
+      auto Match = mDefInfo->find(DFN);
+      assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
+          Match->get<DefUseSet>() && "Data-flow value must be specified!");
+      auto &DUS = Match->get<DefUseSet>();
+      if ((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)))
+        return false;
+    }
+    return true;
+  }
+
   /// Finds last instruction of block w/ inductive variable
   Instruction* FindLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
     Instruction *LastInstruction = nullptr;
@@ -209,13 +224,9 @@ private:
     I->dump();
     auto &AT = mAliasTree;
     auto &STR = mSTR;
-    auto &RI = mRgnInfo;
-    auto &DI = mDefInfo;
-    auto LBB = L->block_begin();
-    auto LBE = L->block_end();
     bool Result = true;
     for_each_memory(*I, mTLI,
-      [&AT, &STR, &RI, &DI, &LBB, &LBE, &ANI, &Result] (Instruction &Instr,
+      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         printLocationSource(dbgs(), Loc);
         auto EM = AT.find(Loc);
@@ -224,18 +235,9 @@ private:
         assert(AN && "Alias node must not be null!");
         if (STR.isEqual(ANI, AN))
           return;
-        for (auto J = LBB; J != LBE; ++J) {
-          auto DFN = RI->getRegionFor(*J);
-          assert(DFN && "DFNode must not be null!");
-          auto Match = DI->find(DFN);
-          assert(Match != DI->end() && Match->get<ReachSet>() &&
-              Match->get<DefUseSet>() && "Data-flow value must be specified!");
-          auto &DUS = Match->get<DefUseSet>();
-          if ((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)))
-            Result = false;
-        }
+        Result &= CheckMemLoc(Loc, L);
       },
-      [&AT, &STR, &RI, &DI, &LBB, &LBE, &ANI, &Result] (Instruction &Instr,
+      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
         // don't know what to do here
       }
@@ -248,6 +250,33 @@ private:
       if (auto Instr = llvm::dyn_cast<Instruction>(*J))
         if (!CheckMemLocsFromInstr(Instr, ANI, L))
           return false;
+    return true;
+  }
+  
+  bool CheckMemLocsFromBlock(BasicBlock *BB, AliasEstimateNode *ANI, Loop *L) {
+    BB->dump();
+    auto &AT = mAliasTree;
+    auto &STR = mSTR;
+    bool Result = true;
+    for_each_memory(*BB, mTLI,
+      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+        printLocationSource(dbgs(), Loc);
+        auto EM = AT.find(Loc);
+        assert(EM && "Estimate memory location must not be null!");
+        auto AN = EM->getAliasNode(AT);
+        assert(AN && "Alias node must not be null!");
+        if (STR.isEqual(ANI, AN))
+          return;
+        Result &= CheckMemLoc(Loc, L);
+      },
+      [&AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+          AccessInfo, AccessInfo) {
+        // don't know what to do here
+      }
+    );
+    if (!Result)
+      return false;
     return true;
   }
 
@@ -325,6 +354,8 @@ private:
     LI = FindLastInstruction(ANI, LLoop->getLoopLatch());
     assert(LI && "Last instruction should not be nullptr!");
     if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
+      return false;
+    if (!CheckMemLocsFromBlock(LLoop->getHeader(), ANI, LLoop))
       return false;
     return true;
   }
