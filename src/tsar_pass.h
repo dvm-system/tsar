@@ -78,6 +78,12 @@ void initializeAliasTreeOnlyViewerPass(PassRegistry &Registry);
 /// Creates a pass to display alias tree (alias summary only).
 FunctionPass * createAliasTreeOnlyViewerPass();
 
+/// Initializes a pass to display alias tree.
+void initializeDIAliasTreeViewerPass(PassRegistry &Registry);
+
+/// Creates a pass to display alias tree.
+FunctionPass * createDIAliasTreeViewerPass();
+
 /// Initializes a pass to print alias tree to 'dot' file.
 void initializeAliasTreePrinterPass(PassRegistry &Registry);
 
@@ -89,6 +95,12 @@ void initializeAliasTreeOnlyPrinterPass(PassRegistry &Registry);
 
 /// Creates a pass to print alias tree to 'dot' file (alias summary only).
 FunctionPass * createAliasTreeOnlyPrinterPass();
+
+/// Initializes a pass to print alias tree to 'dot' file.
+void initializeDIAliasTreePrinterPass(PassRegistry &Registry);
+
+/// Creates a pass to print alias tree to 'dot' file.
+FunctionPass * createDIAliasTreePrinterPass();
 
 /// Initializes a pass to analyze private variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);

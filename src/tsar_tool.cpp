@@ -447,3 +447,4 @@ int Tool::run(QueryManager *QM) {
     CLLTool.run(newAnalysisActionFactory<MainAction>(mCommandLine, QM).get()) ?
     1 : 0;
 }
+

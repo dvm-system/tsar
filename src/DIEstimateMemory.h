@@ -423,6 +423,11 @@ public:
     return *Pair.first;
   }
 
+  /// \brief This pop up ghostview window and displays the alias tree.
+  ///
+  /// This depends on there being a 'dot' and 'gv' program in a system path.
+  void view() const;
+
 private:
   AliasNodePool mNodes;
   DIAliasNode *mTopLevelNode = nullptr;
