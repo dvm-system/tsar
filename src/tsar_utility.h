@@ -139,6 +139,25 @@ inline uint64_t getSize(llvm::DIType *Ty) {
   return (Ty->getSizeInBits() + 7) / 8;
 }
 
+/// \brief Strips types that do not change representation of appropriate
+/// expression in a source language.
+///
+/// For example, const int and int & will be stripped to int, typedef will be
+/// also stripped.
+inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
+  if (!isa<llvm::DIDerivedType>(DITy))
+    return DITy;
+  auto DIDTy = cast<llvm::DIDerivedType>(DITy);
+  switch (DIDTy->getTag()) {
+  case dwarf::DW_TAG_typedef:
+  case dwarf::DW_TAG_const_type:
+  case dwarf::DW_TAG_reference_type:
+  case dwarf::DW_TAG_volatile_type:
+    return stripDIType(DIDTy->getBaseType());
+  }
+  return DITy;
+}
+
 /// Compares two set.
 template<class PtrType, unsigned SmallSize>
 bool operator==(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,

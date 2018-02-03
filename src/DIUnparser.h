@@ -22,7 +22,7 @@ class Value;
 }
 
 namespace tsar {
-/// \brief This class perform unparsing of a value and represents in
+/// \brief This class performs unparsing of a value and represents it in
 /// a high-level form.
 ///
 /// TODO (kaniandr@gmail.com): add support for union types, enumerations, etc.
@@ -31,13 +31,6 @@ namespace tsar {
 /// TODO (kaniandr@gmail.com): add support for arithmetical expressions.
 class DIUnparser {
 public:
-  /// \brief Strips types that do not change representation of appropriate
-  /// expression in a source language.
-  ///
-  /// For example, const int and int & will be stripped to int, typedef will be
-  /// also stripped.
-  static llvm::DITypeRef stripDIType(llvm::DITypeRef DITy);
-
   /// Creates unparser for a specified expression.
   explicit DIUnparser(const llvm::Value *Expr) noexcept : mExpr(Expr) {
     assert(Expr && "Memory location must not be null!");

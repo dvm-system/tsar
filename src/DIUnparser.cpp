@@ -17,20 +17,6 @@
 using namespace tsar;
 using namespace llvm;
 
-DITypeRef DIUnparser::stripDIType(DITypeRef DITy) {
-  if (!isa<DIDerivedType>(DITy))
-    return DITy;
-  auto DIDTy = cast<DIDerivedType>(DITy);
-  switch (DIDTy->getTag()) {
-  case dwarf::DW_TAG_typedef:
-  case dwarf::DW_TAG_const_type:
-  case dwarf::DW_TAG_reference_type:
-  case dwarf::DW_TAG_volatile_type:
-    return stripDIType(DIDTy->getBaseType());
-  }
-  return DITy;
-}
-
 bool DIUnparser::print(llvm::raw_ostream &OS) {
   SmallString<64> Str;
   return toString(Str) ? OS << Str, true : false;
