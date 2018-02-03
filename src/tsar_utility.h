@@ -15,6 +15,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
 #include <tuple>
@@ -33,6 +34,23 @@ class Use;
 }
 
 namespace tsar {
+/// This tag provides access to low-level representation of matched entities.
+struct IR {};
+
+/// This tag provides access to source-level representation of matched entities.
+struct AST {};
+
+/// This tag is used to implement hierarchy of nodes.
+struct Hierarchy {};
+
+/// This tag is used to implement a sequence of memory locations which may alias.
+struct Alias {};
+
+/// This tag is used to implement a sequence of sibling nodes.
+struct Sibling {};
+
+/// This tag is used to implement a sequence of nodes which is treated as a pool.
+struct Pool {};
 /// Merges elements from a specified range using a specified delimiter, put
 /// result to a specified buffer and returns reference to it.
 template<class ItrT>
@@ -113,14 +131,13 @@ inline std::pair<unsigned, uint64_t> arraySize(const llvm::Type *Ty) {
   for (; Ty->isArrayTy(); Ty = Ty->getArrayElementType(), ++Dims)
     NumElements *= llvm::cast<llvm::ArrayType>(Ty)->getArrayNumElements();
   return std::make_pair(Dims, NumElements);
-
 }
 
-/// This tag provides access to low-level representation of matched entities.
-struct IR {};
-
-/// This tag provides access to source-level representation of matched entities.
-struct AST {};
+/// Returns size of type, in address units, type must not be null.
+inline uint64_t getSize(llvm::DIType *Ty) {
+  assert(Ty && "Type must not be null!");
+  return (Ty->getSizeInBits() + 7) / 8;
+}
 
 /// Compares two set.
 template<class PtrType, unsigned SmallSize>

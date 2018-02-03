@@ -259,24 +259,6 @@ private:
   AmbiguousPool *mPool;
   size_t mListIdx;
 };
-
-
-/// \brief This tag uses to implement a sequence of memory locations which are
-/// ordered by inclusion.
-///
-/// All locations in a chain starts at the same points and have the same lists
-/// of ambiguous pointers. The first location in a chain has the smallest size,
-/// each subsequent location has larger size.
-struct Hierarchy {};
-
-/// This tag uses to implement a sequence of memory locations which may alias.
-struct Alias {};
-
-/// This tag uses to implement a sequence of sibling nodes.
-struct Sibling {};
-
-/// This tag uses to implement a sequence of nodes which is treated as a pool.
-struct Pool {};
 }
 
 namespace bcl {
@@ -346,6 +328,11 @@ namespace tsar {
 /// sequence. Note that at runtime it can be investigated that this pointers
 /// refer different memory but due to inaccurate alias analysis it might not be
 /// determined by a static analysis.
+///
+/// The tag `Hierarchy` is used to implement a sequence of memory locations
+/// which are ordered by inclusion. All locations in a chain starts at the same
+/// points and have the same lists of ambiguous pointers. The first location in
+/// a chain has the smallest size, each subsequent location has larger size.
 class EstimateMemory :
   public llvm::ilist_node<EstimateMemory, llvm::ilist_tag<Alias>>,
   public llvm::ilist_node<EstimateMemory, llvm::ilist_tag<Sibling>>,
