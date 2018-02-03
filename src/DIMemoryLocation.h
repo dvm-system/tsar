@@ -98,4 +98,26 @@ struct DIMemoryLocation {
   bool isValid() const;
 };
 }
+
+namespace llvm {
+template<> struct DenseMapInfo<tsar::DIMemoryLocation> {
+  using PairInfo = DenseMapInfo<
+    std::pair<DIVariable *, DIExpression *>>;
+  static inline tsar::DIMemoryLocation getEmptyKey() {
+    auto Pair = PairInfo::getEmptyKey();
+    return tsar::DIMemoryLocation{ Pair.first, Pair.second };
+  }
+  static inline tsar::DIMemoryLocation getTombstoneKey() {
+    auto Pair = PairInfo::getTombstoneKey();
+    return tsar::DIMemoryLocation{ Pair.first, Pair.second };
+  }
+  static inline unsigned getHashValue(const tsar::DIMemoryLocation &Loc) {
+    return PairInfo::getHashValue(std::make_pair(Loc.Var, Loc.Expr));
+  }
+  static inline bool isEqual(
+      const tsar::DIMemoryLocation &LHS, const tsar::DIMemoryLocation &RHS) {
+    return LHS.Var == RHS.Var && LHS.Expr == RHS.Expr;
+  }
+};
+}
 #endif//TSAR_DI_MEMORY_LOCATION_H
