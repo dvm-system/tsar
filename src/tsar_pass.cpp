@@ -20,6 +20,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeDefinedMemoryPassPass(Registry);
   initializeLiveMemoryPassPass(Registry);
   initializeEstimateMemoryPassPass(Registry);
+  initializeDIEstimateMemoryPassPass(Registry);
   initializeAliasTreeViewerPass(Registry);
   initializeAliasTreeOnlyViewerPass(Registry);
   initializeAliasTreePrinterPass(Registry);

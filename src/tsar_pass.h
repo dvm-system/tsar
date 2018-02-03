@@ -60,6 +60,12 @@ void initializeEstimateMemoryPassPass(PassRegistry &Registry);
 /// Creates a pass to build hierarchy of accessed memory.
 FunctionPass * createEstimateMemoryPass();
 
+/// Initializes a pass to build hierarchy of accessed memory.
+void initializeDIEstimateMemoryPassPass(PassRegistry &Registry);
+
+/// Creates a pass to build hierarchy of accessed memory.
+FunctionPass * createDIEstimateMemoryPass();
+
 /// Initializes a pass to display alias tree.
 void initializeAliasTreeViewerPass(PassRegistry &Registry);
 
