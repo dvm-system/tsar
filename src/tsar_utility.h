@@ -139,13 +139,18 @@ inline uint64_t getSize(llvm::DIType *Ty) {
   return (Ty->getSizeInBits() + 7) / 8;
 }
 
+/// Returns size of type, in address units, type must not be null.
+inline uint64_t getSize(llvm::DITypeRef DITy) {
+  return getSize(DITy.resolve());
+}
+
 /// \brief Strips types that do not change representation of appropriate
 /// expression in a source language.
 ///
 /// For example, const int and int & will be stripped to int, typedef will be
 /// also stripped.
 inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
-  if (!isa<llvm::DIDerivedType>(DITy))
+  if (!DITy.resolve() || !isa<llvm::DIDerivedType>(DITy))
     return DITy;
   auto DIDTy = cast<llvm::DIDerivedType>(DITy);
   switch (DIDTy->getTag()) {

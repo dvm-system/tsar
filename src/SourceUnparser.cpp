@@ -43,7 +43,7 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
     return unparseAsScalarTy(Offset, IsPositive);
   DIDerivedType *CurrEl = nullptr;
   for (auto El: DICTy->getElements()) {
-    auto DITy = cast<DIDerivedType>(El);
+    auto DITy = cast<DIDerivedType>(stripDIType(cast<DIType>(El)));
     auto ElOffset = DITy->getOffsetInBits() / 8;
     // It is necessary to use both checks (== and >) to accurately evaluate
     // structures with bit fields. In this case the first field will be
@@ -68,7 +68,7 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
   updatePriority(TOKEN_FIELD, TOKEN_FIELD);
   mSuffix.append({ TOKEN_FIELD,TOKEN_IDENTIFIER });
   mIdentifiers.push_back(CurrEl->getName());
-  mCurrType = CurrEl->getBaseType().resolve();
+  mCurrType = stripDIType(CurrEl->getBaseType()).resolve();
   Offset -= CurrEl->getOffsetInBits() / 8;
   return unparse(Offset, true);
 }
@@ -82,7 +82,7 @@ bool SourceUnparserImp::unparseAsPointerTy(uint64_t Offset, bool IsPositive) {
   if (!mIsAddress)
     return unparseAsScalarTy(Offset, IsPositive);
   auto DIDTy = cast<DIDerivedType>(mCurrType);
-  mCurrType = DIDTy->getBaseType().resolve();
+  mCurrType = stripDIType(DIDTy->getBaseType()).resolve();
   auto TySize = mCurrType ? getSize(mCurrType) : 0;
   if (TySize == 0)
     return unparseAsScalarTy(Offset, IsPositive);
@@ -105,11 +105,11 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
   assert(mCurrType && "Currently evaluated type must not be null!");
   auto DICTy = cast<DICompositeType>(mCurrType);
   auto TySize = getSize(mCurrType);
-  mCurrType = DICTy->getBaseType().resolve();
-  auto ElSize = getSize(mCurrType);
+  mCurrType = stripDIType(DICTy->getBaseType()).resolve();
+  auto ElSize = mCurrType ? getSize(mCurrType) : 0;
   mIsAddress = true;
   if (DICTy->getElements().size() == 0 || !IsPositive || TySize <= Offset ||
-      !mCurrType || ElSize == 0)
+      ElSize == 0)
     return unparseAsScalarTy(Offset, IsPositive);
   SmallVector<std::pair<int64_t, int64_t>, 8> Dims;
   if (mIsForwardDim)
@@ -188,7 +188,7 @@ bool SourceUnparserImp::unparse() {
   SmallBitVector SignMask;
   mLoc.getOffsets(Offsets, SignMask);
   assert(!Offsets.empty() && "Number of offsets must not be null!");
-  mCurrType = mLoc.Var->getType().resolve();
+  mCurrType = stripDIType(mLoc.Var->getType()).resolve();
   for (unsigned OffsetIdx = 0, E = Offsets.size() - 1;
        OffsetIdx < E; ++OffsetIdx) {
     if (!unparse(Offsets[OffsetIdx], SignMask.test(OffsetIdx)) ||

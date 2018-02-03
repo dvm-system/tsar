@@ -176,7 +176,7 @@ public:
 
   /// Builds a subtree of an alias tree.
   void buildSubtree() {
-    auto Ty = mVar->getType().resolve();
+    auto Ty = stripDIType(mVar->getType()).resolve();
     if (!Ty) {
       addFragments(*mAliasTree->getTopLevelNode(), 0, mSortedFragments.size());
       return;
@@ -312,7 +312,7 @@ private:
       "Type to evaluate must be a structure or class!");
     assert(Parent && "Alias node must not be null!");
     auto DICTy = cast<DICompositeType>(Ty);
-    auto ElTy = DICTy->getBaseType().resolve();
+    auto ElTy = stripDIType(DICTy->getBaseType()).resolve();
     auto ElSize = getSize(ElTy);
     unsigned FirstElIdx = 0;
     unsigned ElIdx = 0;
@@ -346,7 +346,8 @@ private:
     unsigned  FirstElIdx = 0;
     for (unsigned ElIdx = 0, ElEnd = DICTy->getElements().size();
          ElIdx < ElEnd && FragmentIdx < Fragments.second; ++ElIdx) {
-      auto ElTy = cast<DIDerivedType>(DICTy->getElements()[ElIdx]);
+      auto ElTy = cast<DIDerivedType>(
+        stripDIType(cast<DIType>(DICTy->getElements()[ElIdx])));
       auto ElOffset = ElTy->getOffsetInBits() / 8;
       auto ElSize = getSize(ElTy);
       evaluateElement(Offset, Fragments, Parent, ElTy->getBaseType().resolve(),
