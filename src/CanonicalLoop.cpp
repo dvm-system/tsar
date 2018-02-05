@@ -279,6 +279,27 @@ private:
       return false;
     return true;
   }
+  
+  bool CheckFuncCallsFromBlock(BasicBlock *BB) {
+    BB->dump();
+    auto &AA = mAliasTree.getAliasAnalysis();
+    auto InstEnd = BB->end();
+    for (auto Inst = BB->begin(); Inst != InstEnd; ++Inst) {
+      if (llvm::isa<CallInst>(*Inst)) {
+        CallInst &CI = llvm::cast<CallInst>(*Inst);
+        llvm::ImmutableCallSite ICS(&CI);
+        if (!(AA.onlyReadsMemory(ICS)))
+          return false;
+      }
+      if (llvm::isa<InvokeInst>(*Inst)) {
+        InvokeInst &CI = llvm::cast<InvokeInst>(*Inst);
+        llvm::ImmutableCallSite ICS(&CI);
+        if (!(AA.onlyReadsMemory(ICS)))
+          return false;
+      }
+    }
+    return true;
+  }
 
   /// Checks if labeled loop is canonical
   bool checkLoop(tsar::DFNode* Region, VarDecl *Var) {
@@ -355,7 +376,11 @@ private:
     assert(LI && "Last instruction should not be nullptr!");
     if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
       return false;
+    if (!CheckFuncCallsFromBlock(LLoop->getLoopLatch()))
+      return false;
     if (!CheckMemLocsFromBlock(LLoop->getHeader(), ANI, LLoop))
+      return false;
+    if (!CheckFuncCallsFromBlock(LLoop->getHeader()))
       return false;
     return true;
   }
