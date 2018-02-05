@@ -82,11 +82,11 @@ namespace detail {
 /// instantiation and access methods to it
 class Template {
 public:
-  clang::FunctionDecl* getFuncDecl() const {
+  const clang::FunctionDecl* getFuncDecl() const {
     return mFuncDecl;
   }
 
-  void setFuncDecl(clang::FunctionDecl* FD) {
+  void setFuncDecl(const clang::FunctionDecl* FD) {
     mFuncDecl = FD;
     return;
   }
@@ -120,7 +120,7 @@ public:
 
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
-  clang::FunctionDecl* mFuncDecl;
+  const clang::FunctionDecl* mFuncDecl;
   std::map<clang::ParmVarDecl*, std::vector<clang::DeclRefExpr*>> mParmRefs;
   std::vector<clang::ReturnStmt*> mRSs;
 };
@@ -128,9 +128,9 @@ private:
 /// Represents one specific place in user source code where one of specified
 /// functions (for inlining) is called
 struct TemplateInstantiation {
-  clang::FunctionDecl* mFuncDecl;
-  clang::Stmt* mStmt;
-  clang::CallExpr* mCallExpr;
+  const clang::FunctionDecl* mFuncDecl;
+  const clang::Stmt* mStmt;
+  const clang::CallExpr* mCallExpr;
   /// mTemplate == nullptr <-> instantiation is disabled for this call
   Template* mTemplate;
 };
@@ -163,8 +163,6 @@ public:
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
   bool VisitForStmt(clang::ForStmt* FS);
-
-  bool VisitDeclRefExpr(clang::DeclRefExpr* DRE);
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
 
@@ -228,7 +226,7 @@ private:
 
   /// if \p S is declaration statement we shouldn't place braces if
   /// declarations were referenced outside it
-  bool requiresBraces(clang::FunctionDecl* FD, clang::Stmt* S);
+  bool requiresBraces(const clang::FunctionDecl* FD, const clang::Stmt* S);
 
   /// Local matcher to find correct node in AST during construct()
   class : public clang::ast_matchers::MatchFinder::MatchCallback {
@@ -271,53 +269,24 @@ private:
   const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
 
   tsar::TransformationContext* mTransformContext;
-  //tsar::QueryManager* mQueryManager;
 
-  //clang::CompilerInstance& mCompiler;
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
   clang::Rewriter& mRewriter;
-
-  //std::unique_ptr<llvm::LLVMContext> mLLVMContext;
-  //std::unique_ptr<clang::CodeGenerator> mGen;
 
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD;
 
   /// for statements - for detecting call expressions which can be inlined
-  std::vector<clang::Stmt*> mFSs;
+  std::vector<const clang::Stmt*> mFSs;
 
-  std::map<clang::FunctionDecl*, std::set<clang::Type*>> mTypeDecls;
-  std::map<clang::FunctionDecl*, std::set<clang::Type*>> mTypeRefs;
+  std::map<const clang::FunctionDecl*, std::set<std::string>> mIdentifiers;
 
-  std::map<clang::FunctionDecl*, std::set<clang::DeclRefExpr*>> mDeclRefs;
-  std::set<clang::Decl*> mGlobalDecls;
+  std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;
 
-  std::map<clang::FunctionDecl*, ::detail::Template> mTs;
-  std::map<clang::FunctionDecl*, std::vector<::detail::TemplateInstantiation>> mTIs;
+  std::map<const clang::FunctionDecl*, ::detail::Template> mTs;
+  std::map<const clang::FunctionDecl*, std::vector<::detail::TemplateInstantiation>> mTIs;
 };
-
-/*class FInlinerAction : public tsar::ActionBase {
-public:
-FInlinerAction(std::vector<std::string> CL, tsar::QueryManager* QM);
-
-std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
-clang::CompilerInstance& CI, llvm::StringRef InFile);
-
-static std::string createProjectFile(const std::vector<std::string>& sources);
-
-/// reformats content of file \p FID with LLVM style
-bool format(clang::Rewriter& Rewriter, clang::FileID FID) const;
-
-/// overwrites changed files and reformats them for readability
-void EndSourceFileAction();
-
-private:
-static std::vector<std::string> mSources;
-
-clang::CompilerInstance* mCompilerInstance;
-std::unique_ptr<tsar::TransformationContext> mTfmCtx;
-};*/
 
 }
 
