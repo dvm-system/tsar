@@ -685,7 +685,7 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
     return nullptr;
-  for (auto ChainBegin : I->second) {
+  for (auto &ChainBegin : I->second) {
     auto Chain = ChainBegin;
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
       continue;
@@ -717,7 +717,7 @@ AliasTree::insert(const MemoryLocation &Base) {
   auto I = mBases.find(StrippedPtr);
   if (I != mBases.end()) {
     BL = &I->second;
-    for (auto ChainBegin : *BL) {
+    for (auto &ChainBegin : *BL) {
       auto Chain = ChainBegin;
       if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
         continue;
@@ -776,7 +776,7 @@ AliasTree::insert(const MemoryLocation &Base) {
           auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
           ++NumEstimateMemory;
           CT::splicePrev(EM, Chain);
-          Chain = EM; // update start point of this chain in a base list
+          ChainBegin = EM; // update start point of this chain in a base list
           return std::make_tuple(EM, true, AddAmbiguous);
         }
       } while (Prev = Chain, Chain = CT::getNext(Chain));
