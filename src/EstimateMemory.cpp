@@ -742,6 +742,8 @@ AliasTree::insert(const MemoryLocation &Base) {
       bool AddAmbiguous = false;
       switch (isSamePointer(*Chain, Base)) {
       default: llvm_unreachable("Unknown result of alias query!"); break;
+      // TODO(kaniandr@gmail.com): Is it correct to ignore NoAlias? Algorithm
+      // should be accurately explored to understand this case.
       case NoAlias: continue;
       case MustAlias: break;
       case MayAlias:
@@ -758,7 +760,7 @@ AliasTree::insert(const MemoryLocation &Base) {
       // Base into the estimate memory tree which contains location Chain.
       // The following cases lead to building new estimate memory tree:
       // 1. Base and Chain are x.y.z but striped locations are x.y and x.
-      // It is possible due to implementation of strimMemoryLevel() function.
+      // It is possible due to implementation of stripMemoryLevel() function.
       // 2. Size of Base or Chain are greater than getTypeStoreSize(). In this
       // case it is not possible to strip such location. Note, that if both
       // Base and Chain have such problem they can be inserted in a single tree.
@@ -820,8 +822,6 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL);
   DenseSet<const Value *> AccessedMemory;
-  // TODO (kaniandr@gmail.com): implements support for unknown memory access,
-  // for example, in call and invoke instructions.
   auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
       MemoryLocation &&Loc, unsigned Idx, AccessInfo IsRead = AccessInfo::May,
       AccessInfo IsWrite = AccessInfo::May) {
@@ -836,6 +836,10 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // then such memory locations also should be inserted in the alias tree.
   // To avoid destruction of metadata for locations which have been already
   // inserted into the alias tree `AccessedMemory` set is used.
+  //
+  // TODO (kaniandr@gmail.com): `AccessedMemory` does not contain locations
+  // which have been added implicitly. For example, if stripMemoryLevel() has
+  // been called.
   auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](
       const Instruction &I, const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
