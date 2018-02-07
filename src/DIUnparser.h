@@ -25,9 +25,10 @@ namespace tsar {
 /// \brief This class performs unparsing of a value and represents it in
 /// a high-level form.
 ///
+/// Cast operations are not supported because after such operations DIType
+/// of an expression becomes unknown.
+///
 /// TODO (kaniandr@gmail.com): add support for union types, enumerations, etc.
-/// TODO (kaniandr@gmail.com): add support for bitcast, addrspacecast,
-/// inttoptr instructions and other cast operations.
 /// TODO (kaniandr@gmail.com): add support for arithmetical expressions.
 class DIUnparser {
 public:
