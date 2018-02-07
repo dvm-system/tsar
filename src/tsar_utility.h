@@ -159,6 +159,8 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
   case dwarf::DW_TAG_const_type:
   case dwarf::DW_TAG_reference_type:
   case dwarf::DW_TAG_volatile_type:
+  case dwarf::DW_TAG_restrict_type:
+  case dwarf::DW_TAG_rvalue_reference_type:
     return stripDIType(DIDTy->getBaseType());
   }
   return DITy;
