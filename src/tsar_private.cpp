@@ -428,12 +428,19 @@ void PrivateRecognitionPass::checkFirstPrivate(
       if (!isAmbiguousCover(ExitingDefs.MustReach, *Descendant))
         continue;
     } else if (Dptr.is<trait::SecondToLastPrivate>()) {
+      /// TODO (kaniandr@gmail.com): it seams that ExitingDefs should not be
+      /// checked because SecondToLastPrivate location must not be written on
+      /// the last iteration.
       if (!isAmbiguousCover(LatchDefs.MustReach, *Descendant) &&
           !isAmbiguousCover(ExitingDefs.MustReach, *Descendant))
         continue;
     }
     DefLeafs.push_back(Descendant);
   }
+  /// TODO (kaniandr@gmail.com): the same check should be added into reach
+  /// definition and live memory analysis paths to increase precision of
+  /// analysis of explicitly accessed locations which extend some other
+  /// locations.
   if (cover(*mAliasTree, Numbers, *EM, DefLeafs.begin(), DefLeafs.end()))
     return;
   TraitItr->get<TraitImp>() &= FirstPrivate;

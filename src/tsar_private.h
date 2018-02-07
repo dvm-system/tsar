@@ -231,7 +231,7 @@ private:
   /// removes redundant traits which are produced by an estimate memory from
   /// CurrItr. This method also finds for each estimate memory location, which
   /// stored in alias node N, the largest estimate location from `N` which
-  /// covers the it. All parameters of this method (except `N)` are in-out.
+  /// covers it. All parameters of this method (except `N)` are in-out.
   void removeRedundant(const tsar::AliasNode *N, TraitList &Traits,
       TraitList::iterator &BeforeCurrItr, TraitList::iterator &CurrItr);
 
