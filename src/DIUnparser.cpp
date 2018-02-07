@@ -77,7 +77,7 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   } else {
     llvm_unreachable("Unsupported debug type!");
   }
-  mIsDITypeEnd = !isa<DICompositeType>(mDIType);
+  mIsDITypeEnd = !mDIType || !isa<DICompositeType>(mDIType);
 }
 
 bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
