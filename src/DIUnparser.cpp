@@ -123,6 +123,13 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
   if (!Result)
     return false;
   if (GEP->getNumOperands() < 3) {
+    // TODO (kaniandr@gmail.com): Pointers must be defer unparsed.
+    // If `mIsDITypeEnd = true` it means that current `mDIType` is not treated
+    // as array. It may be a scalar type or a pointer without load instruction.
+    // This case is not evaluated, since it seems too rare.
+    // For example, `int N; &N[0]` lead to such situation.
+    if (mIsDITypeEnd)
+      return false;
     assert(!mIsDITypeEnd && "Pointers must be defer unparsed!");
     // It is not known how to match first operands and dimensions, so
     // it will be omitted now. It will be replaced with [?] when number
