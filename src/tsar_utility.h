@@ -150,9 +150,10 @@ inline uint64_t getSize(llvm::DITypeRef DITy) {
 /// For example, const int and int & will be stripped to int, typedef will be
 /// also stripped.
 inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
+  using namespace llvm;
   if (!DITy.resolve() || !isa<llvm::DIDerivedType>(DITy))
     return DITy;
-  auto DIDTy = cast<llvm::DIDerivedType>(DITy);
+  auto DIDTy = cast<DIDerivedType>(DITy);
   switch (DIDTy->getTag()) {
   case dwarf::DW_TAG_typedef:
   case dwarf::DW_TAG_const_type:
