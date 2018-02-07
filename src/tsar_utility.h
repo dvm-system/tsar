@@ -28,6 +28,7 @@ class DIGlobalVariable;
 class DominatorTree;
 class GlobalVariable;
 class DILocalVariable;
+class DIVariable;
 class AllocaInst;
 class Instruction;
 class Use;
@@ -244,6 +245,27 @@ llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
 
 /// Returns a meta information for a local variable or nullptr;
 llvm::DILocalVariable * getMetadata(const llvm::AllocaInst *AI);
+
+/// \brief Returns a meta information for a specified value or nullptr.
+///
+/// \param [in] V Analyzed value.
+/// \param [in] DT If it is specified then llvm.dbg.value will be analyzed if
+/// necessary. Otherwise llvm.dbg.declare and global variables will be
+/// analyzed only.
+/// \param [out] Vars This will contain all variables which associated
+/// with a specified value. For this reason llvm.dbg.value and llvm.dbg.declare
+/// intrinsics will be analyzed. Intrinsics which dominates all uses of `V`
+/// will be only considered. The condition mentioned bellow is also checked.
+/// Let us consider some llvm.dbg.value `I` which dominates all uses of `V`
+/// and associates a variable `Var` with `V`. Paths from `I` to each use of V
+/// will be checked. There should be no other intrinsics which associates `Var`
+/// with some other value on these paths.
+/// \return A variable from `Vars`, llvm.dbg.value for this
+/// variable dominates llvm.dbg.value for other variables from `Vars`. If
+/// there is no such variable, nullptr is returned.
+llvm::DIVariable * findMetadata(const llvm::Value * V,
+  llvm::SmallVectorImpl<llvm::DIVariable *> &Vars,
+  const llvm::DominatorTree *DT = nullptr);
 
 /// \brief This is an implementation of detail::DenseMapPair which supports
 /// access to a first and second value via tag of a type (Pair.get<Tag>()).

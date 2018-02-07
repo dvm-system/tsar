@@ -10,6 +10,7 @@
 
 #include "tsar_utility.h"
 #include <llvm/Config/llvm-config.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/GlobalVariable.h>
@@ -22,6 +23,62 @@
 using namespace llvm;
 
 namespace {
+/// Computes a list of basic blocks which dominates a list of specified uses of
+/// a value `V` and contains some of `llvm.dbg.value` associated with `V`.
+DenseMap<DIVariable *, SmallPtrSet<BasicBlock *, 8>>
+findDomDbgValues(const Value *V, const DominatorTree &DT,
+    const SmallVectorImpl<Instruction *> &Users) {
+  DbgValueList AllDbgValues;
+  FindAllocaDbgValues(AllDbgValues, const_cast<Value *>(V));
+  DenseMap<DIVariable *, SmallPtrSet<BasicBlock *, 8>> Dominators;
+  for (auto *DVI : AllDbgValues) {
+    if (!DVI->getVariable())
+      continue;
+    bool IsDbgDom = true;
+    auto UI = Users.begin(), UE = Users.end();
+    for (; UI != UE; ++UI)
+      if (!DT.dominates(DVI, *UI))
+        break;
+    if (UI != UE)
+      continue;
+    auto Pair = Dominators.try_emplace(DVI->getVariable());
+    Pair.first->second.insert(DVI->getParent());
+  }
+  return Dominators;
+}
+
+/// \brief Determines all basic blocks which contains variables aliases with a
+/// specified one.
+///
+/// Two conditions is going to be checked. At first it means that such block
+/// should contain llvm.dbg.value intrinsic which is associated with a
+/// specified variable `Var` and a register other then `V`.
+/// The second condition is that there is no llvm.dbg.valuse after this
+/// intrinsic in the basic block which is associated with `Var` and `V`.
+SmallPtrSet<BasicBlock *, 16>
+findAliasBlocks(const Value * V, const DIVariable *Var) {
+  SmallPtrSet<BasicBlock *, 16> Aliases;
+  auto *MDV = MetadataAsValue::getIfExists(
+    Var->getContext(), const_cast<DIVariable *>(Var));
+  if (!MDV)
+    return Aliases;
+  for (User *U : MDV->users()) {
+    DbgValueInst *DVI = dyn_cast<DbgValueInst>(U);
+    if (!DVI)
+      continue;
+    auto I = DVI->getIterator(), E = DVI->getParent()->end();
+    for (; I != E; ++I) {
+      if (auto *SuccDVI = dyn_cast<DbgValueInst>(&*I))
+        if (SuccDVI->getValue() == V && SuccDVI->getVariable() == Var) {
+          break;
+        }
+    }
+    if (I == E)
+      Aliases.insert(DVI->getParent());
+  }
+  return Aliases;
+}
+
 Value * cloneChainImpl(Value *From, Instruction *BoundInst, DominatorTree *DT,
     std::size_t BeforeCloneIdx, SmallVectorImpl<Instruction *> &CloneList) {
   assert(From && "Cloned value must not be null!");
@@ -139,5 +196,107 @@ DILocalVariable *getMetadata(const AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(const_cast<AllocaInst *>(AI));
   return DDI ? DDI->getVariable() : nullptr;
+}
+
+DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
+    const DominatorTree *DT) {
+  assert(V && "Value must not be null!");
+  Vars.clear();
+  if (auto AI = dyn_cast<AllocaInst>(V)) {
+    auto DIVar = getMetadata(AI);
+    if (DIVar)
+      Vars.push_back(DIVar);
+    return DIVar;
+  }
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    auto DIVar = getMetadata(GV);
+    if (DIVar)
+      Vars.push_back(DIVar);
+    return DIVar;
+  }
+  if (!DT)
+    return nullptr;
+  SmallVector<Instruction *, 8> Users;
+  for (User *U : const_cast<Value *>(V)->users())
+    Users.push_back(cast<Instruction>(U));
+  auto Dominators = findDomDbgValues(V, *DT, Users);
+  for (auto &VarToDom : Dominators) {
+    auto Var = VarToDom.first;
+    // If Aliases is empty it does not mean that a current variable can be used
+    // because if there are usage of V between two llvm.dbg.value (the first is
+    // associated with some other variable and the second is associated with the
+    // Var) the appropriate basic block will not be inserted into Aliases.
+    auto Aliases = findAliasBlocks(V, Var);
+    // Checks that each definition of a variable `Var` in `VarToDom.second`
+    // reaches each uses of `V` in `Users`.
+    bool IsReached = false;
+    for (auto *I : Users) {
+      auto BB = I->getParent();
+      auto ReverseItr = I->getReverseIterator(), ReverseItrE = BB->rend();
+      for (IsReached = false; ReverseItr != ReverseItrE; ++ReverseItr) {
+        if (auto *DVI = dyn_cast<DbgValueInst>(&*ReverseItr))
+          if (DVI->getVariable() == Var) {
+            if (DVI->getValue() == V)
+              IsReached = true;
+            break;
+          }
+      }
+      if (IsReached)
+        continue;
+      if (ReverseItr != ReverseItrE)
+        break;
+      // A backward traverse of CFG will be performed. It is started in a `BB`.
+      SmallPtrSet<BasicBlock *, 8> VisitedPreds;
+      std::vector<BasicBlock *> Worklist;
+      Worklist.push_back(BB);
+      IsReached = true;
+      while (!Worklist.empty()) {
+        auto WorkBB = Worklist.back();
+        Worklist.pop_back();
+        auto PredItr = pred_begin(WorkBB), PredItrE = pred_end(WorkBB);
+        for (; PredItr != PredItrE; ++PredItr) {
+          if (VisitedPreds.count(*PredItr))
+            continue;
+          if (Aliases.count(*PredItr))
+            break;
+          if (VarToDom.second.count(*PredItr))
+            continue;
+          Worklist.push_back(*PredItr);
+          VisitedPreds.insert(*PredItr);
+        }
+        if (PredItr != PredItrE) {
+          IsReached = false;
+          break;
+        }
+      }
+      if (!IsReached)
+        break;
+    }
+    if (IsReached)
+      Vars.push_back(Var);
+  }
+  auto VarItr = Vars.begin(), VarItrE = Vars.end();
+  for (; VarItr != VarItrE; ++VarItr) {
+    if ([&V, &VarItr, &VarItrE, &Dominators, DT]() {
+      auto VarToDom = Dominators.find(*VarItr);
+      for (auto I = VarItr + 1, E = VarItrE; I != E; ++I)
+        for (auto BB : Dominators.find(*I)->second)
+          for (auto VarBB : VarToDom->second)
+            if (VarBB == BB) {
+              for (auto &Inst : *VarBB)
+                if (auto DVI = dyn_cast<DbgValueInst>(&Inst))
+                  if (DVI->getValue() == V)
+                    if (DVI->getVariable() == *VarItr)
+                      break;
+                    else if (DVI->getVariable() == *I)
+                      return false;
+            } else if (!DT->dominates(VarBB, BB)) {
+              return false;
+            }
+      return true;
+    }())
+      return *VarItr;
+  }
+  return nullptr;
 }
 }
