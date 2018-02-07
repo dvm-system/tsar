@@ -18,6 +18,7 @@
 #include "MemorySet.h"
 
 namespace llvm {
+class DominatorTree;
 class raw_ostream;
 }
 
@@ -209,10 +210,11 @@ public:
   bool operator!=(const LocationDFValue &RHS) const { return !(*this == RHS); }
 
   /// Prints value.
-  void print(llvm::raw_ostream &OS) const;
+  void print(llvm::raw_ostream &OS,
+    const llvm::DominatorTree *DT = nullptr) const;
 
   /// Support for debugging.
-  void dump() const;
+  void dump(const llvm::DominatorTree *DT = nullptr) const;
 
 private:
   Kind mKind;

@@ -16,6 +16,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/Module.h>
@@ -306,13 +307,15 @@ const AliasNode * AliasNode::getParent(const AliasTree &G) const {
 
 namespace {
 #ifndef NDEBUG
-void evaluateMemoryLevelLog(const MemoryLocation &Loc) {
+void evaluateMemoryLevelLog(const MemoryLocation &Loc,
+    const DominatorTree &DT) {
   dbgs() << "[ALIAS TREE]: evaluate memory level ";
-  printLocationSource(dbgs(), Loc);
+  printLocationSource(dbgs(), Loc, &DT);
   dbgs() << "\n";
 }
 
-void updateEMTreeLog(EstimateMemory *EM, bool IsNew, bool AddAmbiguous) {
+void updateEMTreeLog(EstimateMemory *EM,
+    bool IsNew, bool AddAmbiguous, const DominatorTree &DT) {
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   dbgs() << "[ALIAS TREE]: update estimate memory location tree:";
   dbgs() << " IsNew=" << (IsNew ? "true" : "false");
@@ -320,38 +323,39 @@ void updateEMTreeLog(EstimateMemory *EM, bool IsNew, bool AddAmbiguous) {
   dbgs() << " Neighbors={";
   if (auto PrevEM = CT::getPrev(EM))
     printLocationSource(dbgs(),
-      MemoryLocation(PrevEM->front(), PrevEM->getSize()));
+      MemoryLocation(PrevEM->front(), PrevEM->getSize()), &DT);
   else
     dbgs() << "NULL";
   dbgs() << " ";
   if (auto NextEM = CT::getNext(EM))
     printLocationSource(dbgs(),
-      MemoryLocation(NextEM->front(), NextEM->getSize()));
+      MemoryLocation(NextEM->front(), NextEM->getSize()), &DT);
   else
     dbgs() << "NULL";
   dbgs() << "}\n";
 }
 
-void mergeChainBeforeLog(EstimateMemory *EM, EstimateMemory *To) {
+void mergeChainBeforeLog(EstimateMemory *EM, EstimateMemory *To,
+    const DominatorTree &DT) {
   dbgs() << "[ALIAS TREE]: merge location ";
-  printLocationSource(dbgs(), MemoryLocation(EM->front(), EM->getSize()));
+  printLocationSource(dbgs(), MemoryLocation(EM->front(), EM->getSize()), &DT);
   dbgs() << " to the end of ";
   printLocationSource(dbgs(),
-    MemoryLocation(To->front(), To->getSize()));
+    MemoryLocation(To->front(), To->getSize()), &DT);
 }
 
-void mergeChainAfterLog(EstimateMemory *EM) {
+void mergeChainAfterLog(EstimateMemory *EM, const DominatorTree &DT) {
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   dbgs() << ": Neighbors={";
   if (auto PrevEM = CT::getPrev(EM))
     printLocationSource(dbgs(),
-      MemoryLocation(PrevEM->front(), PrevEM->getSize()));
+      MemoryLocation(PrevEM->front(), PrevEM->getSize()), &DT);
   else
     dbgs() << "NULL";
   dbgs() << " ";
   if (auto NextEM = CT::getNext(EM))
     printLocationSource(dbgs(),
-      MemoryLocation(NextEM->front(), NextEM->getSize()));
+      MemoryLocation(NextEM->front(), NextEM->getSize()), &DT);
   else
     dbgs() << "NULL";
   dbgs() << "}\n";
@@ -366,20 +370,20 @@ void AliasTree::add(const MemoryLocation &Loc) {
   MemoryLocation Base(Loc);
   EstimateMemory *PrevChainEnd = nullptr;
   do {
-    DEBUG(evaluateMemoryLevelLog(Base));
+    DEBUG(evaluateMemoryLevelLog(Base, getDomTree()));
     stripToBase(*mDL, Base);
     EstimateMemory *EM;
     bool IsNew, AddAmbiguous;
     std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
     EM->setExplicit(EM->isExplicit() || !PrevChainEnd);
-    DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous));
+    DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous, getDomTree()));
     assert(EM && "New estimate memory must not be null!");
     if (PrevChainEnd && PrevChainEnd != EM) {
       assert((!PrevChainEnd->getParent() || PrevChainEnd->getParent() == EM) &&
         "Inconsistent parent of a node in estimate memory tree!");
-      DEBUG(mergeChainBeforeLog(EM, PrevChainEnd));
+      DEBUG(mergeChainBeforeLog(EM, PrevChainEnd, getDomTree()));
       CT::mergeNext(EM, PrevChainEnd);
-      DEBUG(mergeChainAfterLog(EM));
+      DEBUG(mergeChainAfterLog(EM, getDomTree()));
     }
     if (!IsNew && !AddAmbiguous)
       return;
@@ -799,12 +803,14 @@ AliasTree::insert(const MemoryLocation &Base) {
 char EstimateMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", false, true)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", false, true)
 
 void EstimateMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
+  AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequiredTransitive<AAResultsWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
@@ -816,11 +822,12 @@ FunctionPass * llvm::createEstimateMemoryPass() {
 
 bool EstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
-  mAliasTree = new AliasTree(AA, DL);
+  mAliasTree = new AliasTree(AA, DL, DT);
   DenseSet<const Value *> AccessedMemory;
   auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
       MemoryLocation &&Loc, unsigned Idx, AccessInfo IsRead = AccessInfo::May,

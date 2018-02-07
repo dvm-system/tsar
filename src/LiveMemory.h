@@ -18,6 +18,10 @@
 #include "DFRegionInfo.h"
 #include "tsar_utility.h"
 
+namespace llvm {
+class DominatorTree;
+}
+
 namespace tsar {
 /// \brief Data-flow framework which is used to find live locations
 /// for each data-flow regions: basic blocks, loops, functions, etc.
@@ -32,15 +36,18 @@ public:
     tsar::TaggedDenseMapPair<
       bcl::tagged<DFNode *, DFNode>,
       bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>> LiveMemoryInfo;
-  LiveDFFwk(LiveMemoryInfo &LiveInfo, DefinedMemoryInfo &DefInfo) :
-    mLiveInfo(&LiveInfo), mDefInfo(&DefInfo) {}
+  LiveDFFwk(LiveMemoryInfo &LiveInfo, DefinedMemoryInfo &DefInfo,
+      const llvm::DominatorTree *DT) :
+    mLiveInfo(&LiveInfo), mDefInfo(&DefInfo), mDT(DT) {}
   LiveMemoryInfo & getLiveInfo() noexcept { return *mLiveInfo; }
   const LiveMemoryInfo & getLiveInfo() const noexcept { return *mLiveInfo; }
   DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
   const DefinedMemoryInfo & getDefInfo() const noexcept { return *mDefInfo; }
+  const llvm::DominatorTree * getDomTree() const noexcept { return mDT; }
 private:
   LiveMemoryInfo *mLiveInfo;
   DefinedMemoryInfo *mDefInfo;
+  const llvm::DominatorTree *mDT;
 };
 
 /// This covers IN and OUT value for a live locations analysis.

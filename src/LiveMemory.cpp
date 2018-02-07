@@ -10,6 +10,9 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Debug.h>
+#ifdef DEBUG
+# include <llvm/IR/Dominators.h>
+#endif
 #include "tsar_dbg_output.h"
 #include "DefinedMemory.h"
 #include "LiveMemory.h"
@@ -31,6 +34,12 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
 bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
+  DominatorTree *DT = nullptr;
+  DEBUG(
+    auto DTPass = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
+  if (DTPass)
+    DT = &DTPass->getDomTree();
+  );
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   auto LiveItr = mLiveInfo.insert(
     std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
@@ -52,7 +61,7 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
       MayLives.insert(Loc);
   }
   LS->setOut(std::move(MayLives));
-  LiveDFFwk LiveFwk(mLiveInfo, DefInfo);
+  LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
   solveDataFlowDownward(&LiveFwk, DFF);
   return false;
 }
@@ -113,10 +122,10 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   }
   dbgs() << "IN:\n";
   for (auto &Loc : newIn)
-    (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "OUT:\n";
   for (auto &Loc : V)
-    (printLocationSource(dbgs(), Loc.Ptr), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "[END LIVE]\n";
   );
   if (LS->getIn() != newIn) {

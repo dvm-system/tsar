@@ -45,16 +45,16 @@ bool LocationDFValue::merge(const LocationDFValue &With) {
   return mLocations.merge(With.mLocations);
 }
 
-void LocationDFValue::print(raw_ostream &OS) const {
+void LocationDFValue::print(raw_ostream &OS, const DominatorTree *DT) const {
   if (mKind == KIND_FULL) {
     OS << "whole program memory\n";
     return;
   }
   for (auto &Loc: mLocations) {
-    printLocationSource(OS, Loc.Ptr);
+    printLocationSource(OS, Loc.Ptr, DT);
     OS << " " << *Loc.Ptr << "\n";
   }
 }
 
-void LocationDFValue::dump() const { print(dbgs()); }
+void LocationDFValue::dump(const DominatorTree *DT) const { print(dbgs(), DT); }
 }

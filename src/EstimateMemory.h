@@ -60,6 +60,7 @@
 namespace llvm {
 class EstimateMemoryPass;
 class DataLayout;
+class DominatorTree;
 }
 
 namespace tsar {
@@ -960,8 +961,9 @@ public:
   using size_type = AliasNodePool::size_type;
 
   /// Creates empty alias tree.
-  AliasTree(llvm::AAResults &AA, const llvm::DataLayout &DL) :
-    mAA(&AA), mDL(&DL), mTopLevelNode(new AliasTopNode) {
+  AliasTree(llvm::AAResults &AA,
+      const llvm::DataLayout &DL, const llvm::DominatorTree &DT) :
+    mAA(&AA), mDL(&DL), mDT(&DT), mTopLevelNode(new AliasTopNode) {
     mNodes.push_back(mTopLevelNode);
   }
 
@@ -973,8 +975,11 @@ public:
     }
   }
 
-  /// Return the underlying alias analysis object used by this tree.
-  llvm::AAResults & getAliasAnalysis() const { return *mAA; }
+  /// Returns the underlying alias analysis object used by this tree.
+  llvm::AAResults & getAliasAnalysis() const noexcept { return *mAA; }
+
+  /// Returns a dominator tree used by this alias tree.
+  const llvm::DominatorTree & getDomTree() const noexcept { return *mDT; }
 
   /// Returns root of the alias tree.
   AliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
@@ -1115,6 +1120,7 @@ private:
 
   llvm::AAResults *mAA;
   const llvm::DataLayout *mDL;
+  const llvm::DominatorTree *mDT;
   AliasNodePool mNodes;
   AliasNode *mTopLevelNode;
   tsar::AmbiguousRef::AmbiguousPool mAmbiguousPool;

@@ -24,6 +24,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include "llvm/IR/InstIterator.h"
@@ -53,6 +54,7 @@ STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated")
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
                       "Private Variable Analysis", false, true)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
@@ -596,6 +598,7 @@ DependencyDescriptor PrivateRecognitionPass::toDescriptor(
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<DefinedMemoryPass>();
@@ -613,8 +616,8 @@ public:
     std::string, DependencyDescriptor> TraitToStringMap;
 
   /// Creates the functor.
-  TraitToStringFunctor(TraitToStringMap &Map, llvm::StringRef Offset) :
-    mMap(&Map), mOffset(Offset) {}
+  TraitToStringFunctor(TraitToStringMap &Map, llvm::StringRef Offset,
+    const llvm::DominatorTree &DT) : mMap(&Map), mOffset(Offset), mDT(&DT) {}
 
   /// Stores representation of a trait in a static map as a string.
   template<class Trait> void operator()() {
@@ -627,7 +630,7 @@ public:
           std::is_same<Trait, trait::AddressAccess>::value && !T.is<Trait>())
         continue;
       OS << "<";
-      printLocationSource(OS, T.getMemory()->front());
+      printLocationSource(OS, T.getMemory()->front(), mDT);
       OS << ", ";
       if (T.getMemory()->getSize() == MemoryLocation::UnknownSize)
         OS << "?";
@@ -672,6 +675,7 @@ private:
   TraitToStringMap *mMap;
   AliasTrait *mTS;
   std::string mOffset;
+  const DominatorTree *mDT;
 };
 
 /// Prints a static map from trait to its string representation to a specified
@@ -698,7 +702,8 @@ private:
 void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
   auto &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &RInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  for_each(LpInfo, [this, &OS, &RInfo](Loop *L) {
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  for_each(LpInfo, [this, &OS, &RInfo, &DT](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
     std::string Offset(L->getLoopDepth(), ' ');
     OS << Offset;
@@ -710,7 +715,7 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
     assert(Itr != Info.end() && Itr->get<DependencySet>() &&
       "Privatiability information must be specified!");
     TraitToStringFunctor::TraitToStringMap TraitToStr;
-    TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ");
+    TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ", DT);
     auto ATRoot = Itr->get<DependencySet>()->getAliasTree()->getTopLevelNode();
     for (auto &TS : *Itr->get<DependencySet>()) {
       if (TS.getNode() == ATRoot)

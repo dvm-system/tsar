@@ -40,13 +40,13 @@ template<> struct DOTGraphTraits<AliasTree *> :
       return "Whole Memory";
   }
 
-  std::string getNodeLabel(AliasEstimateNode *N, AliasTree */*G*/) {
+  std::string getNodeLabel(AliasEstimateNode *N, AliasTree *G) {
     std::string Str;
     llvm::raw_string_ostream OS(Str);
     for (auto &EM : *N) {
       if (isSimple()) {
-        printLocationSource(OS,
-          MemoryLocation(EM.front(), EM.getSize(), EM.getAAInfo()));
+        MemoryLocation Loc(EM.front(), EM.getSize(), EM.getAAInfo());
+        printLocationSource(OS, Loc, &G->getDomTree());
         OS << (!EM.isExplicit() ? "*" : "") << ' ';
       } else if (EM.isAmbiguous()) {
         OS << "Ambiguous, size ";

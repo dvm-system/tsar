@@ -18,6 +18,7 @@
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/InstIterator.h>
@@ -33,6 +34,7 @@ using namespace tsar;
 char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
+  DEBUG(INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass));
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
@@ -43,13 +45,16 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
+  const DominatorTree *DT = nullptr;
+  DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  ReachDFFwk ReachDefFwk(AliasTree, TLI, mDefInfo);
+  ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
   solveDataFlowUpward(&ReachDefFwk, DFF);
   return false;
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
+  DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -211,7 +216,8 @@ ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
   mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
 
 #ifndef NDEBUG
-void intializeDefUseSetLog(const DFNode &N, const DefUseSet &DU) {
+void intializeDefUseSetLog(
+    const DFNode &N, const DefUseSet &DU, const DominatorTree *DT) {
   dbgs() << "[DEFUSE] Def/Use locations for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
@@ -223,17 +229,18 @@ void intializeDefUseSetLog(const DFNode &N, const DefUseSet &DU) {
   }
   dbgs() << "Outward exposed must define locations:\n";
   for (auto &Loc : DU.getDefs())
-    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
   dbgs() << "Outward exposed may define locations:\n";
   for (auto &Loc : DU.getMayDefs())
-    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
   dbgs() << "Outward exposed uses:\n";
   for (auto &Loc : DU.getUses())
-    printLocationSource(dbgs(), Loc), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
   dbgs() << "[END DEFUSE]\n";
 };
 
-void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In) {
+void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In,
+    const DominatorTree *DT) {
   dbgs() << "[TRANSFER REACH] Transfer function for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
@@ -245,21 +252,22 @@ void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In) {
   }
   dbgs() << "IN:\n";
   dbgs() << "MUST REACH DEFINITIONS:\n";
-  In.MustReach.dump();
+  In.MustReach.dump(DT);
   dbgs() << "MAY REACH DEFINITIONS:\n";
-  In.MayReach.dump();
+  In.MayReach.dump(DT);
 }
 
-void initializeTransferEndLog(const DefinitionInfo &Out, bool HasChanges) {
+void initializeTransferEndLog(const DefinitionInfo &Out, bool HasChanges,
+    const DominatorTree *DT) {
   dbgs() << "OUT ";
   if (HasChanges)
     dbgs() << "with changes:\n";
   else
     dbgs() << "without changes:\n";
   dbgs() << "MUST REACH DEFINITIONS:\n";
-  Out.MustReach.dump();
+  Out.MustReach.dump(DT);
   dbgs() << "MAY REACH DEFINITIONS:\n";
-  Out.MayReach.dump();
+  Out.MayReach.dump(DT);
   dbgs() << "[END TRANSFER]\n";
 
 }
@@ -360,7 +368,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       }
     );
   }
-  DEBUG(intializeDefUseSetLog(*N, *DU));
+  DEBUG(intializeDefUseSetLog(*N, *DU, DFF->getDomTree()));
 }
 
 
@@ -369,7 +377,7 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null");
-  DEBUG(initializeTransferBeginLog(*N, V));
+  DEBUG(initializeTransferBeginLog(*N, V, DFF->getDomTree()));
   auto I = DFF->getDefInfo().find(N);
   assert(I != DFF->getDefInfo().end() &&
     I->get<ReachSet>() && I->get<DefUseSet>() &&
@@ -380,10 +388,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
     if (RS->getOut().MustReach != RS->getIn().MustReach ||
         RS->getOut().MayReach != RS->getIn().MayReach) {
       RS->setOut(RS->getIn());
-      DEBUG(initializeTransferEndLog(RS->getOut(), true));
+      DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
       return true;
     }
-    DEBUG(initializeTransferEndLog(RS->getOut(), false));
+    DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
     return false;
   }
   auto &DU = I->get<DefUseSet>();
@@ -411,10 +419,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   if (RS->getOut().MustReach != newOut.MustReach ||
     RS->getOut().MayReach != newOut.MayReach) {
     RS->setOut(std::move(newOut));
-    DEBUG(initializeTransferEndLog(RS->getOut(), true));
+    DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
     return true;
   }
-  DEBUG(initializeTransferEndLog(RS->getOut(), false));
+  DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
   return false;
 }
 
@@ -480,5 +488,5 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }
-  DEBUG(intializeDefUseSetLog(*R, *DefUse));
+  DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
 }

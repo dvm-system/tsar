@@ -35,6 +35,7 @@
 #include <llvm/Pass.h>
 
 namespace llvm {
+class DominatorTree;
 class Value;
 class Instruction;
 class StoreInst;
@@ -322,8 +323,8 @@ public:
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
-      DefinedMemoryInfo &DefInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDefInfo(&DefInfo) { }
+      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) { }
 
   /// Returns representation of reach definition analysis results.
   DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
@@ -334,7 +335,11 @@ public:
   /// Returns an alias tree.
   AliasTree & getAliasTree() const noexcept { return *mAliasTree; }
 
+  /// Returns target library information.
   llvm::TargetLibraryInfo & getTLI() const noexcept { return *mTLI; }
+
+  /// Returns dominator tree if it is available or nullptr.
+  const llvm::DominatorTree * getDomTree() const noexcept { return mDT; }
 
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
@@ -343,6 +348,7 @@ public:
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
+  const llvm::DominatorTree *mDT;
   DefinedMemoryInfo *mDefInfo;
 };
 

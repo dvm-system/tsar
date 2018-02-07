@@ -16,6 +16,7 @@
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #endif
 #include <llvm/CodeGen/Passes.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/LegacyPassManagers.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
@@ -68,6 +69,7 @@ class TestPrinterProvider : public FunctionPassProvider<
 }
 #else
 typedef FunctionPassProvider<
+  DominatorTreeWrapperPass,
   BasicAAWrapperPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
@@ -106,8 +108,8 @@ namespace {
 class TraitClausePrinter {
 public:
   /// Creates functor.
-  explicit TraitClausePrinter(
-      const AliasTree *AT, llvm::raw_ostream &OS) : mAliasTree(AT), mOS(OS) {}
+  explicit TraitClausePrinter(const AliasTree *AT, const DominatorTree &DT,
+      llvm::raw_ostream &OS) : mAliasTree(AT), mDT(&DT), mOS(OS) {}
 
   /// \brief Prints an appropriate clause for each trait in the vector.
   ///
@@ -131,7 +133,7 @@ public:
         std::string Str;
         raw_string_ostream TmpOS(Str);
         TmpOS << '<';
-        if (!unparsePrint(T.getMemory()->front(), TmpOS))
+        if (!unparsePrint(TmpOS, T.getMemory()->front(), mDT))
           TmpOS << '?';
         TmpOS << ',';
         if (T.getMemory()->isSized())
@@ -154,6 +156,7 @@ public:
 
 private:
   const AliasTree *mAliasTree;
+  const DominatorTree *mDT;
   raw_ostream &mOS;
 };
 
@@ -188,6 +191,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
     if (F.empty())
       continue;
     auto &Provider = getAnalysis<TestPrinterProvider>(F);
+    auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
     auto &LMP = Provider.get<LoopMatcherPass>();
     auto &LpMatcher = LMP.getMatcher();
     auto FuncDecl = LMP.getFunctionDecl();
@@ -213,8 +217,8 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
           bcl::TraitMapConstructor<AliasTrait, TraitMap>(TS, TM));
       auto *AT = DSItr->get<DependencySet>()->getAliasTree();
       printPragma(Match.get<AST>()->getLocStart(), Rewriter,
-        [&TM, AT](raw_ostream &OS) {
-          TM.for_each(TraitClausePrinter(AT, OS));
+        [&TM, AT, &DT](raw_ostream &OS) {
+          TM.for_each(TraitClausePrinter(AT, DT, OS));
       });
       if (PLoopInfo.find(N) != PLoopInfo.end()) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
