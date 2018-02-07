@@ -462,7 +462,7 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   ImmutableCallSite CS(I);
   if (CS && AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
     return;
-  SmallVector<AliasNode *, 4> Aliases;
+  SmallVector<AliasNode *, 4> UnknownAliases, EstimateAliases;
   auto Children = make_range(
     getTopLevelNode()->child_begin(), getTopLevelNode()->child_end());
   for (auto &Child : Children) {
@@ -470,24 +470,23 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
     if (AR.first)
       if (AR.second == I)
         return;
+      else if (isa<AliasUnknownNode>(Child))
+        UnknownAliases.push_back(&Child);
       else
-        Aliases.push_back(&Child);
+        EstimateAliases.push_back(&Child);
   }
   AliasUnknownNode *Node;
-  if (!Aliases.empty() && isa<AliasUnknownNode>(Aliases.front())) {
-    auto AI = Aliases.begin(), EI = Aliases.end();
+  if (!UnknownAliases.empty()) {
+    auto AI = UnknownAliases.begin(), EI = UnknownAliases.end();
     Node = cast<AliasUnknownNode>(*AI);
-    for (++AI; AI != EI; ++AI, ++NumMergedNode) {
-      assert(isa<AliasUnknownNode>(*AI) &&
-        "Mix of unknown and other nodes is not allowed!");
+    for (++AI; AI != EI; ++AI, ++NumMergedNode)
       Node->mergeNodeIn(**AI, *this);
-    }
   } else {
     Node = make_node<AliasUnknownNode, llvm::Statistic, 2>(
       *getTopLevelNode(), { &NumAliasNode, &NumUnknownNode });
-    for (auto Alias : Aliases)
-      Alias->setParent(*Node, *this);
   }
+  for (auto Alias : EstimateAliases)
+      Alias->setParent(*Node, *this);
   if (Node->empty())
     Node->retain();
   Node->push_back(I), ++NumUnknownMemory;
