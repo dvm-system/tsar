@@ -9,7 +9,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_utility.h"
-#include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Dominators.h>
@@ -172,24 +171,10 @@ bool findNotDom(Instruction *From, Instruction *BoundInst, DominatorTree *DT,
 
 DIGlobalVariable * getMetadata(const GlobalVariable *Var) {
   assert(Var && "Variable must not be null!");
-#if (LLVM_VERSION_MAJOR < 4)
-  const Module *M = Var->getParent();
-  assert(M && "Module must not be null!");
-  NamedMDNode *CompileUnits = M->getNamedMetadata("llvm.dbg.cu");
-  assert(CompileUnits && "Compile units must not be null!");
-  for (MDNode *N : CompileUnits->operands()) {
-    auto *CUNode = cast<DICompileUnit>(N);
-    for (auto *DIVar : CUNode->getGlobalVariables()) {
-      if (DIVar->getVariable() == Var)
-        return DIVar;
-    }
-  }
-#else
   if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(
       Var->getMetadata(LLVMContext::MD_dbg)))
     return DIExpr->getVariable();
   return nullptr;
-#endif
 }
 
 DILocalVariable *getMetadata(const AllocaInst *AI) {
