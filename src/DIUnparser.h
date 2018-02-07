@@ -16,6 +16,7 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 
 namespace llvm {
+class DominatorTree;
 class GEPOperator;
 class raw_ostream;
 class Value;
@@ -33,7 +34,9 @@ namespace tsar {
 class DIUnparser {
 public:
   /// Creates unparser for a specified expression.
-  explicit DIUnparser(const llvm::Value *Expr) noexcept : mExpr(Expr) {
+  explicit DIUnparser(const llvm::Value *Expr,
+      const llvm::DominatorTree *DT = nullptr) noexcept :
+      mExpr(Expr), mDT(DT) {
     assert(Expr && "Memory location must not be null!");
   }
 
@@ -70,6 +73,7 @@ private:
   /// Unparses `getelementptr` instructions, return true on success.
   bool unparse(const llvm::GEPOperator *GEP, llvm::SmallVectorImpl<char> &Str);
 
+  const llvm::DominatorTree *mDT;
   const llvm::Value *mExpr;
   llvm::DITypeRef mDIType;
   const llvm::Value *mLastAddressChange = nullptr;
@@ -78,23 +82,25 @@ private:
 
 /// Unparses the expression and appends result to a specified string,
 /// returns true on success.
-inline bool unparseToString(
-    const llvm::Value *V, llvm::SmallVectorImpl<char> &S) {
-  DIUnparser U(V);
+inline bool unparseToString(llvm::SmallVectorImpl<char> &S,
+    const llvm::Value *V, const llvm::DominatorTree *DT = nullptr) {
+  DIUnparser U(V, DT);
   return U.toString(S);
 }
 
 /// Unparses the expression and prints result to a specified stream
 /// returns true on success.
-inline bool unparsePrint(const llvm::Value *V, llvm::raw_ostream &OS) {
-  DIUnparser U(V);
+inline bool unparsePrint(llvm::raw_ostream &OS, const llvm::Value *V,
+    const llvm::DominatorTree *DT = nullptr) {
+  DIUnparser U(V, DT);
   return U.print(OS);
 }
 
 /// Unparses the expression and prints result to a debug stream,
 /// returns true on success.
-inline bool unparseDump(const llvm::Value *V) {
-  DIUnparser U(V);
+inline bool unparseDump(const llvm::Value *V,
+    const llvm::DominatorTree *DT = nullptr) {
+  DIUnparser U(V, DT);
   return U.dump();
 }
 }

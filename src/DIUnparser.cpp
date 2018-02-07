@@ -77,7 +77,8 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   } else {
     llvm_unreachable("Unsupported debug type!");
   }
-  mIsDITypeEnd = !mDIType || !isa<DICompositeType>(mDIType);
+    mIsDITypeEnd = !mDIType ||
+      !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
 }
 
 bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
@@ -98,17 +99,13 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
     mLastAddressChange = Expr;
   } else {
     mLastAddressChange = Expr;
-    DIVariable *DIVar;
-    if (auto *Var = dyn_cast<const GlobalVariable>(Expr))
-      DIVar = getMetadata(Var);
-    else if (auto *AI = dyn_cast<const AllocaInst>(Expr))
-      DIVar = getMetadata(AI);
-    else
-      return false;
+    SmallVector<DIVariable *, 2> Vars;
+    DIVariable *DIVar = findMetadata(Expr, Vars, mDT);
     if (!DIVar)
       return false;
     mDIType = stripDIType(DIVar->getType());
-    mIsDITypeEnd = !isa<DICompositeType>(mDIType);
+    mIsDITypeEnd =
+      !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
     auto Name = DIVar->getName();
     Str.append(Name.begin(), Name.end());
   }
@@ -146,7 +143,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
     // simple to calculate offset and [?] will be used.
     if (!WasGEPChain) {
       auto Size = Str.size();
-      if (!unparseToString(I.getOperand(), Str)) {
+      if (!unparseToString(Str, I.getOperand(), mDT)) {
         Str.set_size(Size);
         Str.push_back('?');
       }
@@ -190,7 +187,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
         Str.append({ '[','?',']' });
     Str.push_back('[');
     auto Size = Str.size();
-    if (!unparseToString(I.getOperand(), Str)) {
+    if (!unparseToString(Str, I.getOperand(), mDT)) {
       Str.set_size(Size);
       Str.push_back('?');
     }

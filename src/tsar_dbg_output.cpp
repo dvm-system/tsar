@@ -28,17 +28,18 @@
 using namespace llvm;
 
 namespace tsar {
-void printLocationSource(llvm::raw_ostream &O, const Value *Loc) {
+void printLocationSource(llvm::raw_ostream &O, const Value *Loc,
+    const DominatorTree *DT) {
   if (!Loc)
-    O << "<unknown location>";
-  else if (!unparsePrint(Loc, O))
+    O << "?";
+  else if (!unparsePrint(O, Loc, DT))
     Loc->printAsOperand(O, false);
 }
 
-void printLocationSource(
-    llvm::raw_ostream &O, const llvm::MemoryLocation &Loc) {
+void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
+    const DominatorTree *DT) {
   O << "<";
-  printLocationSource(O, Loc.Ptr);
+  printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
   if (Loc.Size == MemoryLocation::UnknownSize)
     O << "?";

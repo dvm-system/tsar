@@ -14,6 +14,7 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 
 namespace llvm {
+class DominatorTree;
 class Function;
 class LoopInfo;
 class MemoryLocation;
@@ -28,7 +29,10 @@ struct DIMemoryLocation;
 /// specified memory location.
 ///
 /// \pre At this moment location can be represented as a sequence of 'load' or
-/// 'getelementptr' instructions ending 'alloca' instruction or global variable.
+/// 'getelementptr' instructions ending 'alloca' instruction or global variable
+/// or other values marked with llvm.dbg.declare or llvm.dbg.value.
+/// Note that `DT` is optional parameters but it is necessary to determine
+/// appropriate llvm.dbg.value instruction.
 /// \par Example
 /// \code
 ///    ...
@@ -41,11 +45,13 @@ struct DIMemoryLocation;
 /// \endcode
 /// If debug information is available the result for
 /// %0 will be p[0] otherwise it will be *(%p = alloca i32*, align 4).
-void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc);
+void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc,
+    const llvm::DominatorTree *DT = nullptr);
 
 /// Prints information available from a source code for the specified memory
 /// location and its size (<location, size>).
-void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc);
+void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
+    const llvm::DominatorTree *DT = nullptr);
 
 /// Prints source level representation (in a specified language 'DWLang')
 /// of a debug level memory location.
