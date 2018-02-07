@@ -53,11 +53,27 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
       mDIType = stripDIType(DICTy->getBaseType());
     }
   } else if (auto DIDTy = dyn_cast<DIDerivedType>(mDIType)) {
-    if (isa<GEPOperator>(mLastAddressChange))
-      Str.append({ '[','?',']' });
-    else if (isa<LoadInst>(mLastAddressChange))
-      Str.append({ '[','0',']' });
     mDIType = stripDIType(DIDTy->getBaseType());
+    // Type may be null in case of void *.
+    auto DICTy = dyn_cast_or_null<DICompositeType>(mDIType);
+    if (isa<GEPOperator>(mLastAddressChange)) {
+      Str.append({ '[','?',']' });
+      if (DICTy && DICTy->getTag() == dwarf::DW_TAG_array_type) {
+        // This is something like a C99 array.
+        Str.append({':', '1', '.', '.'});
+        auto DimsStr = std::to_string(DICTy->getElements().size() + 1);
+        Str.append(DimsStr.begin(), DimsStr.end());
+        mDIType = stripDIType(DIDTy->getBaseType());
+      }
+    } else if (isa<LoadInst>(mLastAddressChange)) {
+      Str.append({ '[','0',']' });
+      if (DICTy && DICTy->getTag() == dwarf::DW_TAG_array_type) {
+        // This is something like a C99 array.
+        for (int I = 0; I < DICTy->getElements().size(); ++I)
+          Str.append({ '[','0',']' });
+        mDIType = stripDIType(DIDTy->getBaseType());
+      }
+    }
   } else {
     llvm_unreachable("Unsupported debug type!");
   }
