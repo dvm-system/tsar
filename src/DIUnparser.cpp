@@ -46,7 +46,7 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
       Str.append({ '[','?',']' });
       auto Dims = DICTy->getElements().size();
       if (Dims > 1) {
-        Str.append({':', '0', '.', '.'});
+        Str.append({':', '1', '.', '.'});
         auto DimsStr = std::to_string(DICTy->getElements().size());
         Str.append(DimsStr.begin(), DimsStr.end());
       }
