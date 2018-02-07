@@ -221,7 +221,6 @@ private:
 
   /// Checks if operands of inductive variable are static
   bool CheckMemLocsFromInstr(Instruction *I, AliasEstimateNode *ANI, Loop *L) {
-    I->dump();
     auto &AT = mAliasTree;
     auto &STR = mSTR;
     bool Result = true;
@@ -254,7 +253,6 @@ private:
   }
   
   bool CheckMemLocsFromBlock(BasicBlock *BB, AliasEstimateNode *ANI, Loop *L) {
-    BB->dump();
     auto &AT = mAliasTree;
     auto &STR = mSTR;
     bool Result = true;
@@ -275,9 +273,7 @@ private:
         // don't know what to do here
       }
     );
-    if (!Result)
-      return false;
-    return true;
+    return Result;
   }
   
   bool CheckFuncCallsFromBlock(BasicBlock *BB) {
@@ -396,77 +392,78 @@ private:
 };
 
 /// returns LoopMatcher that matches loops that can be canonical
-StatementMatcher makeLoopMatcher() {
-  return forStmt(
-      hasLoopInit(eachOf(
-        declStmt(hasSingleDecl(
-          varDecl(hasType(isInteger()))
-          .bind("InitVarName"))),
-        binaryOperator(
-          hasOperatorName("="),
-          hasLHS(declRefExpr(to(
+DeclarationMatcher makeLoopMatcher() {
+  return functionDecl(forEachDescendant(
+      forStmt(
+        hasLoopInit(eachOf(
+          declStmt(hasSingleDecl(
             varDecl(hasType(isInteger()))
-            .bind("InitVarName"))))))),
-      hasIncrement(eachOf(
-        unaryOperator(
-          eachOf(
-            hasOperatorName("++"),
-            hasOperatorName("--")),
-          hasUnaryOperand(declRefExpr(to(
-            varDecl(hasType(isInteger()))
-            .bind("UnIncVarName"))))).bind("UnaryIncr"),
-        binaryOperator(
-          eachOf(
-            hasOperatorName("+="),
-            hasOperatorName("-=")),
-          hasLHS(declRefExpr(to(
-            varDecl(hasType(isInteger()))
-            .bind("BinIncVarName"))))).bind("BinaryIncr"),
-        binaryOperator(
-          hasOperatorName("="),
-          hasLHS(declRefExpr(to(
-            varDecl(hasType(isInteger()))
-            .bind("AssignmentVarName")))),
-          hasRHS(eachOf(
-            binaryOperator(
-              hasOperatorName("+"),
-              eachOf(
+            .bind("InitVarName"))),
+          binaryOperator(
+            hasOperatorName("="),
+            hasLHS(declRefExpr(to(
+              varDecl(hasType(isInteger()))
+              .bind("InitVarName"))))))),
+        hasIncrement(eachOf(
+          unaryOperator(
+            eachOf(
+              hasOperatorName("++"),
+              hasOperatorName("--")),
+            hasUnaryOperand(declRefExpr(to(
+              varDecl(hasType(isInteger()))
+              .bind("UnIncVarName"))))).bind("UnaryIncr"),
+          binaryOperator(
+            eachOf(
+              hasOperatorName("+="),
+              hasOperatorName("-=")),
+            hasLHS(declRefExpr(to(
+              varDecl(hasType(isInteger()))
+              .bind("BinIncVarName"))))).bind("BinaryIncr"),
+          binaryOperator(
+            hasOperatorName("="),
+            hasLHS(declRefExpr(to(
+              varDecl(hasType(isInteger()))
+              .bind("AssignmentVarName")))),
+            hasRHS(eachOf(
+              binaryOperator(
+                hasOperatorName("+"),
+                eachOf(
+                  hasLHS(implicitCastExpr(
+                    hasImplicitDestinationType(isInteger()),
+                    hasSourceExpression(declRefExpr(to(
+                      varDecl(hasType(isInteger()))
+                      .bind("FirstAssignmentVarName")))))),
+                  hasRHS(implicitCastExpr(
+                    hasImplicitDestinationType(isInteger()),
+                    hasSourceExpression(declRefExpr(to(
+                      varDecl(hasType(isInteger()))
+                      .bind("SecondAssignmentVarName")))))))).bind("BinaryIncr"),
+              binaryOperator(
+                hasOperatorName("-"),
                 hasLHS(implicitCastExpr(
                   hasImplicitDestinationType(isInteger()),
                   hasSourceExpression(declRefExpr(to(
                     varDecl(hasType(isInteger()))
-                    .bind("FirstAssignmentVarName")))))),
-                hasRHS(implicitCastExpr(
-                  hasImplicitDestinationType(isInteger()),
-                  hasSourceExpression(declRefExpr(to(
-                    varDecl(hasType(isInteger()))
-                    .bind("SecondAssignmentVarName")))))))).bind("BinaryIncr"),
-            binaryOperator(
-              hasOperatorName("-"),
-              hasLHS(implicitCastExpr(
-                hasImplicitDestinationType(isInteger()),
-                hasSourceExpression(declRefExpr(to(
-                  varDecl(hasType(isInteger()))
-                  .bind("FirstAssignmentVarName"))))))).bind("BinaryIncr")))))),
-      hasCondition(binaryOperator(
-        eachOf(
-          hasOperatorName("<"),
-          hasOperatorName("<="),
-          hasOperatorName("="),
-          hasOperatorName(">="),
-          hasOperatorName(">")),
-        eachOf(
-          hasLHS(implicitCastExpr(
-            hasImplicitDestinationType(isInteger()),
-            hasSourceExpression(declRefExpr(to(
-              varDecl(hasType(isInteger()))
-              .bind("FirstConditionVarName")))))),
-          hasRHS(implicitCastExpr(
-            hasImplicitDestinationType(isInteger()),
-            hasSourceExpression(declRefExpr(to(
-              varDecl(hasType(isInteger()))
-              .bind("SecondConditionVarName")))))))).bind("Condition")))
-  .bind("forLoop");
+                    .bind("FirstAssignmentVarName"))))))).bind("BinaryIncr")))))),
+        hasCondition(binaryOperator(
+          eachOf(
+            hasOperatorName("<"),
+            hasOperatorName("<="),
+            hasOperatorName("="),
+            hasOperatorName(">="),
+            hasOperatorName(">")),
+          eachOf(
+            hasLHS(implicitCastExpr(
+              hasImplicitDestinationType(isInteger()),
+              hasSourceExpression(declRefExpr(to(
+                varDecl(hasType(isInteger()))
+                .bind("FirstConditionVarName")))))),
+            hasRHS(implicitCastExpr(
+              hasImplicitDestinationType(isInteger()),
+              hasSourceExpression(declRefExpr(to(
+                varDecl(hasType(isInteger()))
+                .bind("SecondConditionVarName")))))))).bind("Condition")))
+      .bind("forLoop")));
 }
 }
 
@@ -485,12 +482,16 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
     getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
   auto &ATree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  StatementMatcher LoopMatcher = makeLoopMatcher();
-  MatchFinder Finder;
+  DeclarationMatcher LoopMatcher = makeLoopMatcher();
   CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, DefInfo, MemInfo, ATree,
       TLI, &mCanonicalLoopInfo);
-  Finder.addMatcher(LoopMatcher, &Labeler);
-  Finder.matchAST(FuncDecl->getASTContext());
+  auto &Context = FuncDecl->getASTContext();
+  auto Nodes = match<DeclarationMatcher, Decl>(LoopMatcher, *FuncDecl, Context);
+  while (!Nodes.empty()) {
+    MatchFinder::MatchResult Result(Nodes.back(), &Context);
+    Labeler.run(Result);
+    Nodes.pop_back();
+  }
   return false;
 }
 

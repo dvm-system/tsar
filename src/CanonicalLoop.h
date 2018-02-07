@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 //
 // This file defines classes to identify canonical for-loops in a source code.
+// Canonical Loop Form is described here:
+// http://www.openmp.org/wp-content/uploads/openmp-4.5.pdf#page=62
 //
 //===----------------------------------------------------------------------===//
 
