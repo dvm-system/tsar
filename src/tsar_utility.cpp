@@ -169,7 +169,7 @@ bool findNotDom(Instruction *From, Instruction *BoundInst, DominatorTree *DT,
   return false;
 }
 
-DIGlobalVariable * getMetadata(const GlobalVariable *Var) {
+DIGlobalVariable * findMetadata(const GlobalVariable *Var) {
   assert(Var && "Variable must not be null!");
   if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(
       Var->getMetadata(LLVMContext::MD_dbg)))
@@ -177,7 +177,7 @@ DIGlobalVariable * getMetadata(const GlobalVariable *Var) {
   return nullptr;
 }
 
-DILocalVariable *getMetadata(const AllocaInst *AI) {
+DILocalVariable *findMetadata(const AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(const_cast<AllocaInst *>(AI));
   return DDI ? DDI->getVariable() : nullptr;
@@ -188,13 +188,13 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
   assert(V && "Value must not be null!");
   Vars.clear();
   if (auto AI = dyn_cast<AllocaInst>(V)) {
-    auto DIVar = getMetadata(AI);
+    auto DIVar = findMetadata(AI);
     if (DIVar)
       Vars.push_back(DIVar);
     return DIVar;
   }
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
-    auto DIVar = getMetadata(GV);
+    auto DIVar = findMetadata(GV);
     if (DIVar)
       Vars.push_back(DIVar);
     return DIVar;

@@ -184,7 +184,7 @@ void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
 
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
-  auto MD = getMetadata(&I);
+  auto MD = findMetadata(&I);
   auto Idx = mDIStrings.regItem(&I);
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
@@ -557,7 +557,7 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     auto *Alloca = dyn_cast<AllocaInst>(U->getPointerOperand());
     if (!Alloca)
       continue;
-    auto AllocaMD = getMetadata(Alloca);
+    auto AllocaMD = findMetadata(Alloca);
     if (!AllocaMD || !AllocaMD->isParameter())
       continue;
     DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
@@ -954,7 +954,7 @@ void Instrumentation::regGlobals(Module& M) {
       continue;
     ++RegisteredGLobals;
     auto Idx = mDIStrings.regItem(&(*I));
-    auto *MD = getMetadata(&*I);
+    auto *MD = findMetadata(&*I);
     regValue(&*I, I->getValueType(), MD, Idx, *RetInst, M);
   }
   if (RegisteredGLobals == 0)

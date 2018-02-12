@@ -241,10 +241,10 @@ bool findNotDom(llvm::Instruction *From,
   llvm::SmallVectorImpl<llvm::Use *> &NotDom);
 
 /// Returns a meta information for a global variable or nullptr;
-llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
+llvm::DIGlobalVariable * findMetadata(const llvm::GlobalVariable *Var);
 
 /// Returns a meta information for a local variable or nullptr;
-llvm::DILocalVariable * getMetadata(const llvm::AllocaInst *AI);
+llvm::DILocalVariable * findMetadata(const llvm::AllocaInst *AI);
 
 /// \brief Returns a meta information for a specified value or nullptr.
 ///
