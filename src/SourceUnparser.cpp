@@ -124,32 +124,36 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
       ElSize == 0)
     return unparseAsScalarTy(Offset, IsPositive);
   SmallVector<std::pair<int64_t, int64_t>, 8> Dims;
+  auto pushDimSize = [this, DICTy, Offset, IsPositive, &Dims](unsigned Dim) {
+    auto DInfo = cast<DISubrange>(DICTy->getElements()[Dim]);
+    if (DInfo->getCount() <= 0)
+      if (mLoc.Template) {
+        addUnknownSubscripts(DICTy->getElements().size());
+        return std::make_pair(false, true);
+      } else {
+        return std::make_pair(false, unparseAsScalarTy(Offset, IsPositive));
+      }
+    Dims.push_back(std::make_pair(DInfo->getLowerBound(), DInfo->getCount()));
+    return std::make_pair(true, true);
+  };
   if (mIsForwardDim)
     for (unsigned I = 0, E = DICTy->getElements().size(); I != E; ++I) {
-      auto Dim = cast<DISubrange>(DICTy->getElements()[I]);
-      if (Dim->getCount() <= 0)
-        if (mLoc.Template)
-          return addUnknownSubscripts(E), true;
-        else
-          return unparseAsScalarTy(Offset, IsPositive);
-      Dims.push_back(std::make_pair(Dim->getLowerBound(), Dim->getCount()));
+      auto Tmp = pushDimSize(I);
+      if (!Tmp.first)
+        return Tmp.second;
     }
   else
     for (unsigned I = DICTy->getElements().size() - 1, E = 0; I != E; --I) {
-      auto Dim = cast<DISubrange>(DICTy->getElements()[I]);
-      if (Dim->getCount() <= 0)
-        if (mLoc.Template)
-          return addUnknownSubscripts(E), true;
-        else
-          return unparseAsScalarTy(Offset, IsPositive);
-      Dims.push_back(std::make_pair(Dim->getLowerBound(), Dim->getCount()));
+      auto Tmp = pushDimSize(I);
+      if (!Tmp.first)
+        return Tmp.second;
     }
   mIsAddress = false;
   auto ElIdx = Offset / ElSize;
   Offset -= ElIdx * ElSize;
   updatePriority(TOKEN_SUBSCRIPT_BEGIN, TOKEN_SUBSCRIPT_END);
   mSuffix.push_back(TOKEN_SUBSCRIPT_BEGIN);
-  for (unsigned Dim = 0, DimE = Dims.size(); Dim < Dims.size(); ++Dim) {
+  auto addDim = [this, &Dims, &ElIdx](unsigned Dim, unsigned DimE) {
     unsigned Coeff = 1;
     for (unsigned I = Dim + 1; I < DimE; Coeff *= Dims[I].second, ++I);
     auto DimOffset = ElIdx / Coeff;
@@ -165,8 +169,12 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
       mSuffix.push_back(TOKEN_UCONST);
       mUConsts.push_back(DimOffset);
     }
-    mSuffix.push_back(TOKEN_SEPARATOR);
     ElIdx = ElIdx % Coeff;
+  };
+  addDim(0, Dims.size());
+  for (unsigned Dim = 1, DimE = Dims.size(); Dim < DimE; ++Dim) {
+    mSuffix.push_back(TOKEN_SEPARATOR);
+    addDim(Dim, DimE);
   }
   mSuffix.push_back(TOKEN_SUBSCRIPT_END);
   return unparse(Offset, IsPositive);
