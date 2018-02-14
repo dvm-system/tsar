@@ -38,12 +38,12 @@ STATISTIC(NumUnknownMemory, "Number of unknown memory created");
 namespace tsar {
 Value * stripPointer(const DataLayout &DL, Value *Ptr) {
   assert(Ptr && "Pointer to memory location must not be null!");
-  Ptr = GetUnderlyingObject(Ptr, DL);
+  Ptr = GetUnderlyingObject(Ptr, DL, 0);
   if (auto LI = dyn_cast<LoadInst>(Ptr))
     return stripPointer(DL, LI->getPointerOperand());
   if (Operator::getOpcode(Ptr) == Instruction::IntToPtr) {
     return stripPointer(DL,
-      GetUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), DL));
+      GetUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), DL, 0));
   }
   return Ptr;
 }
