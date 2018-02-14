@@ -16,6 +16,7 @@
 #include "DIMemoryLocation.h"
 #include "tsar_utility.h"
 #include "tsar_pass.h"
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/ilist.h>
@@ -36,6 +37,8 @@ class DIALiasNode;
 class DIAliasTopNode;
 class DIAliasUnknownNode;
 class DIAliasEstimateNode;
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// \brief Checks that two fragments of a variable may overlap.
 ///
@@ -58,13 +61,20 @@ bool mayAliasFragments(
 class DIEstimateMemory :
   public llvm::ilist_node<DIEstimateMemory, llvm::ilist_tag<Alias>> {
 public:
+  enum Flags : uint16_t {
+    NoFlags = 0,
+    Explicit = 1u << 0,
+    Template = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(Template)
+  };
+
   /// Creates a new memory location which is not attached to any alias node.
   static DIEstimateMemory get(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool IsExplicit);
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Returns existent location. Note, it will not be attached to an alias node.
   static llvm::Optional<DIEstimateMemory> getIfExists(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool IsExplicit);
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F);
 
   /// Returns MDNode which represents this estimate memory location.
   llvm::MDNode * getAsMDNode() noexcept { return mMD; }
@@ -82,15 +92,21 @@ public:
   llvm::DIExpression * getExpression();
 
   /// Returns expression that defines a fragment of an underlying variable.
-  const llvm::DIExpression * getExpression() const noexcept;
+  const llvm::DIExpression * getExpression() const;
+
+  /// Returns flags which are specified for an underlying variable.
+  Flags getFlags() const;
+
+  /// Bitwise OR the current flags with the given flags.
+  void setFlags(Flags F);
 
   /// Returns true if this location is explicitly mentioned in a
   /// source code.
-  bool isExplicit() const;
+  bool isExplicit() const { return Explicit & getFlags(); }
 
-  /// Marks this node as explicitly mentioned in a source code if `true` is
-  /// specified.
-  void setExplicit(bool IsExplicit = true);
+  /// Returns true if this is a template which represents a set of memory
+  /// locations (see DIMemoryLocation for details).
+  bool isTemplate() const { return Template & getFlags(); }
 
   /// Returns true if size is known.
   bool isSized() const {
@@ -129,6 +145,9 @@ private:
 
   /// Add this location to a specified node `N` in alias tree.
   void setAliasNode(DIAliasEstimateNode &N) noexcept { mNode = &N; }
+
+  /// Returns number of flag operand of MDNode.
+  unsigned getFlagsOp() const;
 
   llvm::MDNode *mMD;
   DIAliasEstimateNode *mNode;

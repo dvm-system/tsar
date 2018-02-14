@@ -46,7 +46,7 @@ template<> struct DOTGraphTraits<DIAliasTree *> :
     llvm::raw_string_ostream OS(Str);
     for (auto &EM : *N) {
       printDILocationSource(dwarf::DW_LANG_C99,
-        { EM.getVariable(), EM.getExpression() }, OS);
+        { EM.getVariable(), EM.getExpression(), EM.isTemplate() }, OS);
       OS << (!EM.isExplicit() ? "*" : "") << ' ';
     }
     return OS.str();

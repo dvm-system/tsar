@@ -48,23 +48,22 @@ bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
 }
 
 DIEstimateMemory DIEstimateMemory::get(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool IsExplicit) {
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
-  auto *IsExplicitMD = llvm::ConstantAsMetadata::get(IsExplicit ?
-    llvm::ConstantInt::getTrue(Ctx) : llvm::ConstantInt::getFalse(Ctx));
-  return DIEstimateMemory(
-    llvm::MDNode::get(Ctx, { Var, Expr, IsExplicitMD }));
+  auto *FlagMD = llvm::ConstantAsMetadata::get(
+    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
+  return DIEstimateMemory(llvm::MDNode::get(Ctx, { Var, Expr, FlagMD }));
 }
 
 llvm::Optional<DIEstimateMemory>
 DIEstimateMemory::getIfExists(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool IsExplicit) {
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
-  auto *IsExplicitMD = llvm::ConstantAsMetadata::get(IsExplicit ?
-    llvm::ConstantInt::getTrue(Ctx) : llvm::ConstantInt::getFalse(Ctx));
-  auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, IsExplicitMD });
+  auto *FlagMD = llvm::ConstantAsMetadata::get(
+    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
+  auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD });
   if (MD)
     return DIEstimateMemory(MD);
   return None;
@@ -93,7 +92,7 @@ llvm::DIExpression * DIEstimateMemory::getExpression() {
   return nullptr;
 }
 
-const llvm::DIExpression * DIEstimateMemory::getExpression() const noexcept {
+const llvm::DIExpression * DIEstimateMemory::getExpression() const {
   for (unsigned I = 0, EI = mMD->getNumOperands(); I < EI; ++I)
     if (auto *Expr = llvm::dyn_cast<llvm::DIExpression>(mMD->getOperand(I)))
       return Expr;
@@ -101,41 +100,34 @@ const llvm::DIExpression * DIEstimateMemory::getExpression() const noexcept {
   return nullptr;
 }
 
-bool DIEstimateMemory::isExplicit() const {
+unsigned DIEstimateMemory::getFlagsOp() const {
   for (unsigned I = 0, EI = mMD->getNumOperands(); I < EI; ++I) {
     auto &Op = mMD->getOperand(I);
     if (isa<DIVariable>(Op) || isa<DIExpression>(Op))
       continue;
-    auto C = dyn_cast<ConstantAsMetadata>(Op);
-    if (!C)
+    auto CMD = dyn_cast<ConstantAsMetadata>(Op);
+    if (!CMD)
       continue;
-    if (C->getValue() == ConstantInt::getTrue(mMD->getContext()))
-      return true;
-    else if (C->getValue() == ConstantInt::getFalse(mMD->getContext()))
-      return false;
+    if (auto CInt = dyn_cast<ConstantInt>(CMD->getValue()))
+      return I;
   }
   llvm_unreachable("Explicit flag must be specified!");
-  return false;
 }
 
-void DIEstimateMemory::setExplicit(bool IsExplicit) {
+DIEstimateMemory::Flags DIEstimateMemory::getFlags() const {
+  auto CMD = cast<ConstantAsMetadata>(mMD->getOperand(getFlagsOp()));
+  auto CInt = cast<ConstantInt>(CMD->getValue());
+  return static_cast<Flags>(CInt->getZExtValue());
+}
+
+void DIEstimateMemory::setFlags(Flags F) {
+  auto OpIdx = getFlagsOp();
+  auto CMD = cast<ConstantAsMetadata>(mMD->getOperand(OpIdx));
+  auto CInt = cast<ConstantInt>(CMD->getValue());
   auto &Ctx = mMD->getContext();
-  auto IsExplicitConst =
-    IsExplicit ? ConstantInt::getTrue(Ctx) : ConstantInt::getFalse(Ctx);
-  for (unsigned I = 0, EI = mMD->getNumOperands(); I < EI; ++I) {
-    auto &Op = mMD->getOperand(I);
-    if (isa<DIVariable>(Op) || isa<DIExpression>(Op))
-      continue;
-    auto C = dyn_cast<ConstantAsMetadata>(Op);
-    if (!C)
-      continue;
-    if (C->getValue() != ConstantInt::getTrue(mMD->getContext()) &&
-        C->getValue() != ConstantInt::getFalse(mMD->getContext()))
-      continue;
-    auto *IsExplicitMD = ConstantAsMetadata::get(IsExplicitConst);
-    mMD->replaceOperandWith(I, IsExplicitMD);
-    return;
-  }
+  auto *FlagMD = llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+   Type::getInt16Ty(Ctx), static_cast<Flags>(CInt->getZExtValue()) | F));
+    mMD->replaceOperandWith(OpIdx, FlagMD);
 }
 
 namespace {
@@ -183,7 +175,8 @@ public:
     }
     if (mSortedFragments.front()->getNumElements() == 0) {
       mAliasTree->addNewNode(
-        DIEstimateMemory::get(*mContext, mVar, mSortedFragments.front(), true),
+        DIEstimateMemory::get(
+          *mContext, mVar, mSortedFragments.front(), DIEstimateMemory::Explicit),
         *mAliasTree->getTopLevelNode());
       return;
     }
@@ -205,7 +198,8 @@ private:
   void addFragments(DIAliasNode &Parent, unsigned BeginIdx, unsigned EndIdx) {
     for (unsigned I = BeginIdx; I < EndIdx; ++I) {
       mAliasTree->addNewNode(
-        DIEstimateMemory::get(*mContext, mVar, mSortedFragments[I], true),
+        DIEstimateMemory::get(
+          *mContext, mVar, mSortedFragments[I], DIEstimateMemory::Explicit),
         Parent);
     }
   }
@@ -231,7 +225,7 @@ private:
     auto Expr = DIExpression::get(*mContext, {
       dwarf::DW_OP_LLVM_fragment, Offset, Ty->getSizeInBits()});
     auto &EM = mAliasTree->addNewNode(
-      DIEstimateMemory::get(*mContext, mVar, Expr, false), *Parent);
+      DIEstimateMemory::get(*mContext, mVar, Expr), *Parent);
     Parent = EM.getAliasNode();
     switch (Ty->getTag()) {
     default:
