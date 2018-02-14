@@ -47,26 +47,27 @@ bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
 }
 }
 
-DIEstimateMemory DIEstimateMemory::get(llvm::LLVMContext &Ctx,
+std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(llvm::LLVMContext &Ctx,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  return DIEstimateMemory(llvm::MDNode::get(Ctx, { Var, Expr, FlagMD }));
+  auto MD = llvm::MDNode::get(Ctx, { Var, Expr, FlagMD });
+  assert(MD && "Can not create metadata node!");
+  return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(MD));
 }
 
-llvm::Optional<DIEstimateMemory>
+std::unique_ptr<DIEstimateMemory>
 DIEstimateMemory::getIfExists(llvm::LLVMContext &Ctx,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD });
-  if (MD)
-    return DIEstimateMemory(MD);
-  return None;
+  if (auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD }))
+    return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(MD));
+  return nullptr;
 }
 llvm::DIVariable * DIEstimateMemory::getVariable() {
   for (unsigned I = 0, EI = mMD->getNumOperands(); I < EI; ++I)

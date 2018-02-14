@@ -69,12 +69,12 @@ public:
   };
 
   /// Creates a new memory location which is not attached to any alias node.
-  static DIEstimateMemory get(llvm::LLVMContext &Ctx,
+  static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Returns existent location. Note, it will not be attached to an alias node.
-  static llvm::Optional<DIEstimateMemory> getIfExists(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F);
+  static std::unique_ptr<DIEstimateMemory> getIfExists(llvm::LLVMContext &Ctx,
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Returns MDNode which represents this estimate memory location.
   llvm::MDNode * getAsMDNode() noexcept { return mMD; }
@@ -134,7 +134,6 @@ public:
 
 private:
   friend class DIAliasTree;
-  friend class llvm::DenseMapInfo<DIEstimateMemory>;
 
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.
@@ -151,32 +150,6 @@ private:
 
   llvm::MDNode *mMD;
   DIAliasEstimateNode *mNode;
-};
-}
-
-namespace llvm {
-template<> struct DenseMapInfo<tsar::DIEstimateMemory> {
-  static inline tsar::DIEstimateMemory getEmptyKey() {
-    return tsar::DIEstimateMemory(DenseMapInfo<MDNode *>::getEmptyKey());
-  }
-  static inline tsar::DIEstimateMemory getTombstoneKey() {
-    return tsar::DIEstimateMemory(DenseMapInfo<MDNode *>::getTombstoneKey());
-  }
-  static inline unsigned getHashValue(const tsar::DIEstimateMemory &Loc) {
-    return DenseMapInfo<MDNode *>::getHashValue(Loc.getAsMDNode());
-  }
-  static inline bool isEqual(
-      const tsar::DIEstimateMemory &LHS, const tsar::DIEstimateMemory &RHS) {
-    return DenseMapInfo<MDNode *>::
-      isEqual(LHS.getAsMDNode(), RHS.getAsMDNode());
-  }
-  static inline unsigned getHashValue(const llvm::MDNode *Loc) {
-    return DenseMapInfo<MDNode *>::getHashValue(Loc);
-  }
-  static inline bool isEqual(
-      const llvm::MDNode *LHS, const tsar::DIEstimateMemory &RHS) {
-    return DenseMapInfo<MDNode *>:: isEqual(LHS, RHS.getAsMDNode());
-  }
 };
 }
 
@@ -357,7 +330,7 @@ private:
 
 class DIAliasTree {
   /// Set of estimate memory locations.
-  using DIMemorySet = llvm::DenseSet<DIEstimateMemory>;
+  using DIMemorySet = llvm::DenseSet<DIEstimateMemory *>;
 
   /// Pool to store pointers to all alias nodes.
   using AliasNodePool = llvm::ilist<DIAliasNode,
@@ -378,6 +351,11 @@ public:
     mNodes.push_back(mTopLevelNode);
   }
 
+  /// Destroys alias tree.
+  ~DIAliasTree() {
+    for (auto *EM : mFragments)
+      delete EM;
+  }
   /// Returns root of the alias tree.
   DIAliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
 
@@ -404,17 +382,8 @@ public:
 
   /// Creates new node and attaches a specified location to it. The location
   /// must not be previously attached to this alias tree.
-  DIEstimateMemory & addNewNode(const DIEstimateMemory &EM,
-    DIAliasNode &Parent) {
-    auto *N = new DIAliasEstimateNode;
-    mNodes.push_back(N);
-    N->setParent(Parent);
-    return addToNode(EM, *N);
-  }
-
-  /// Creates new node and attaches a specified location to it. The location
-  /// must not be previously attached to this alias tree.
-  DIEstimateMemory & addNewNode(DIEstimateMemory &&EM, DIAliasNode &Parent) {
+  DIEstimateMemory & addNewNode(
+      std::unique_ptr<DIEstimateMemory> &&EM, DIAliasNode &Parent) {
     auto *N = new DIAliasEstimateNode;
     mNodes.push_back(N);
     N->setParent(Parent);
@@ -424,22 +393,12 @@ public:
   /// Attaches a specified location to a specified alias node. The location
   /// must not be previously attached to this alias tree.
   DIEstimateMemory & addToNode(
-    const DIEstimateMemory &EM, DIAliasEstimateNode &N) {
-    auto Pair = mFragments.insert(EM);
+      std::unique_ptr<DIEstimateMemory> &&EM, DIAliasEstimateNode &N) {
+    auto Pair = mFragments.insert(EM.release());
     assert(Pair.second && "Memory location is arleady attached to a node!");
-    Pair.first->setAliasNode(N);
-    N.push_back(*Pair.first);
-    return *Pair.first;
-  }
-
-  /// Attaches a specified location to a specified alias node. The location
-  /// must not be previously attached to this alias tree.
-  DIEstimateMemory & addToNode(DIEstimateMemory &&EM, DIAliasEstimateNode &N) {
-    auto Pair = mFragments.insert(std::move(EM));
-    assert(Pair.second && "Memory location is arleady attached to a node!");
-    Pair.first->setAliasNode(N);
-    N.push_back(*Pair.first);
-    return *Pair.first;
+    (*Pair.first)->setAliasNode(N);
+    N.push_back(**Pair.first);
+    return **Pair.first;
   }
 
   /// \brief This pop up ghostview window and displays the alias tree.
