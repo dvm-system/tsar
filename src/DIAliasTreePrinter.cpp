@@ -37,40 +37,27 @@ template<> struct DOTGraphTraits<DIAliasTree *> :
     return "Alias Tree (Debug)";
   }
 
-  std::string getNodeLabel(DIAliasTopNode */*N*/, DIAliasTree */*G*/) {
-    return "Whole Memory";
-  }
-
-  std::string getNodeLabel(DIAliasEstimateNode *N, DIAliasTree */*G*/) {
-    std::string Str;
-    llvm::raw_string_ostream OS(Str);
-    for (auto &EM : *N) {
-      printDILocationSource(dwarf::DW_LANG_C99,
-        { EM.getVariable(), EM.getExpression(), EM.isTemplate() }, OS);
-      OS << (!EM.isExplicit() ? "*" : "") << ' ';
-    }
-    return OS.str();
-  }
-
-  std::string getNodeLabel(DIAliasUnknownNode *N, DIAliasTree */*G*/) {
-    std::string Str;
-    llvm::raw_string_ostream OS(Str);
-    OS << "Unknown Memory\n";
-    return OS.str();
-  }
-
   std::string getNodeLabel(DIAliasNode *N, DIAliasTree *G) {
+    std::string Str;
+    llvm::raw_string_ostream OS(Str);
     switch (N->getKind()) {
     default:
       llvm_unreachable("Unknown kind of an alias node!");
       break;
-    case DIAliasNode::KIND_TOP:
-      return getNodeLabel(cast<DIAliasTopNode>(N), G);
-    case DIAliasNode::KIND_ESTIMATE:
-      return getNodeLabel(cast<DIAliasEstimateNode>(N), G);
-    case DIAliasNode::KIND_UNKNOWN:
-      return getNodeLabel(cast<DIAliasUnknownNode>(N), G);
+    case DIAliasNode::KIND_TOP:  return "Whole Memory";
+    case DIAliasNode::KIND_ESTIMATE: break;
+    case DIAliasNode::KIND_UNKNOWN: OS << "Unknown Memory\n"; break;
     }
+    auto DWLang = getLanguage(G->getFunction());
+    if (!DWLang) {
+      OS << "Unknown Source Language" << "\n";
+      return OS.str();
+    }
+    for (auto &M : cast<DIAliasMemoryNode>(*N)) {
+      printDILocationSource(*DWLang, M, OS);
+      OS << (!M.isExplicit() ? "*" : "") << ' ';
+    }
+    return OS.str();
   }
 
   static std::string getEdgeAttributes(

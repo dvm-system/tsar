@@ -16,30 +16,50 @@
 #include "DIMemoryLocation.h"
 #include "tsar_utility.h"
 #include "tsar_pass.h"
+#include <tagged.h>
 #include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/ilist.h>
 #include <llvm/ADT/iterator.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/ValueHandle.h>
 #include <llvm/Pass.h>
 
 namespace llvm {
+class DataLayout;
+class DominatorTree;
 class DbgValueInst;
 class Instruction;
+class LLVMContext;
 class MDNode;
+class MemoryLocation;
 class DIVariable;
 class DIExpression;
+template<class Ty> class SmallPtrSetImpl;
+}
+
+namespace std {
+template<class T, class Deleter> class unique_ptr;
 }
 
 namespace tsar {
+class AliasTree;
+class AliasNode;
+class EstimateMemory;
 class DIAliasTree;
-class DIALiasNode;
+class DIAliasNode;
 class DIAliasTopNode;
+class DIAliasMemoryNode;
 class DIAliasUnknownNode;
 class DIAliasEstimateNode;
+class DIMemory;
+class DIEstimateMemory;
+class DIUnknownMemory;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
@@ -53,6 +73,162 @@ LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 bool mayAliasFragments(
   const llvm::DIExpression &LHS, const llvm::DIExpression &RHS);
 
+/// Finds alias nodes which contains memory locations which is bound
+/// to a specified debug memory location.
+void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
+    llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
+
+/// Finds alias nodes which contains memory locations which is bound
+/// to a specified debug memory location.
+void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
+    llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
+
+/// Finds alias nodes which contains memory locations which is bound
+/// to a specified debug memory location.
+void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
+    llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
+
+/// Builds debug memory location for a specified memory location.
+llvm::Optional<DIMemoryLocation> buildDIMemory(
+    const llvm::MemoryLocation &Loc, llvm::LLVMContext &Ctx,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(
+    const EstimateMemory &EM, llvm::LLVMContext &Ctx,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V, llvm::LLVMContext &Ctx);
+
+/// This represents estimate memory location using metadata information.
+class DIMemory :
+    public llvm::ilist_node<DIMemory, llvm::ilist_tag<Alias>> {
+  using BoundValues = llvm::SmallVector<llvm::WeakVH, 2>;
+
+public:
+  /// Kind of memory.
+  enum Kind : uint8_t {
+    FIRST_KIND = 0,
+    KIND_ESTIMATE = FIRST_KIND,
+    KIND_UNKNOWN,
+    LAST_KIND = KIND_UNKNOWN,
+    INVALID_KIND,
+    NUMBER_KIND = INVALID_KIND,
+  };
+
+  /// \brief Represents a match between LLVM values and memory location.
+  ///
+  /// `Corrupted` means that some of values (but not all) bound to the memory
+  /// location have been destroyed during some transformation passes.
+  /// `Destroyed` means that all such values have been destroyed.
+  /// `Empty` means that no values was bound to the memory location.
+  /// `Consistent` means that there is at least one value bound to the memory
+  /// location. It also means that no values have been destroyed.
+  enum Binding : int8_t {
+    Empty = 0,
+    Consistent,
+    Corrupted,
+    Destroyed
+  };
+
+  /// Different bit properties of a memory location.
+  enum Property : uint8_t {
+    NoProperty = 0,
+    Explicit = 1u << 0,
+    LLVM_MARK_AS_BITMASK_ENUM(Explicit)
+  };
+
+  /// This is used to iterate over all values bound to this memory location.
+  using iterator = BoundValues::const_iterator;
+
+  /// This is used to iterate over all values bound to this memory location.
+  using const_iterator = BoundValues::const_iterator;
+
+  /// Creates a copy of a specified memory location. The copy is not attached
+  /// to any alias node. No values are bound to a new location.
+  inline static std::unique_ptr<DIMemory> get(
+    llvm::LLVMContext &Ctx, DIMemory &M);
+
+  /// Destructor.
+  virtual ~DIMemory() = default;
+
+  /// Returns the kind of this memory location.
+  Kind getKind() const noexcept { return mKind; }
+
+  /// Returns properties of this location.
+  Property getProperies() const noexcept { return mProperties; }
+
+  /// Bitwise OR the current properties with the given properties.
+  void setProperties(Property P) { mProperties |= P; }
+
+  /// Returns true if this location is explicitly mentioned in a
+  /// source code.
+  bool isExplicit() const { return Explicit & getProperies(); }
+
+  /// Returns true if this is a template which represents a set of memory
+
+  /// Returns MDNode which represents this estimate memory location.
+  llvm::MDNode * getAsMDNode() noexcept { return mMD; }
+
+  /// Returns MDNode which represents this estimate memory location.
+  const llvm::MDNode * getAsMDNode() const noexcept { return mMD; }
+
+  /// Return true if an alias node has been already specified.
+  bool hasAliasNode() const noexcept { return mNode != nullptr; }
+
+  /// Returns a node in alias graph which contains this location.
+  DIAliasMemoryNode * getAliasNode() noexcept { return mNode; }
+
+  /// Returns a node in alias graph which contains this location.
+  const DIAliasMemoryNode * getAliasNode() const noexcept { return mNode; }
+
+  /// Returns state of a match between LLVM values and this memory location.
+  Binding getBinding() const {
+    if (mValues.empty())
+      return Empty;
+    auto I = mValues.begin(), E = mValues.end();
+    auto B = *I ? Consistent : Destroyed;
+    for (++I; I != E; ++I)
+      if (!*I)
+        B = (B == Destroyed) ? Destroyed : Corrupted;
+    return B;
+  }
+
+  /// Returns iterator that points to the beginning of the bound values list.
+  iterator begin() const { return mValues.begin(); }
+
+  /// Returns iterator that points to the ending of the bound values list.
+  iterator end() const { return mValues.end(); }
+
+  /// Binds a specified value to the estimate memory location.
+  void bindValue(llvm::Value *V) { mValues.push_back(V); }
+
+  /// Binds values from a specified range to the memory location.
+  template<class ItrTy>
+  void bindValue(const ItrTy &I, const ItrTy &E) { mValues.append(I, E); }
+
+protected:
+  /// Creates interface to access information about an memory location,
+  /// which is represented as a metadata.
+  explicit DIMemory(Kind K, llvm::MDNode *MD,
+      DIAliasMemoryNode *N = nullptr) : mKind(K), mMD(MD), mNode (N) {
+    assert(MD && "Metadata must not be null!");
+  }
+
+private:
+  friend class DIAliasTree;
+
+  /// Add this location to a specified node `N` in alias tree.
+  void setAliasNode(DIAliasMemoryNode &N) noexcept { mNode = &N; }
+
+  Kind mKind;
+  Property mProperties = NoProperty;
+  llvm::MDNode *mMD;
+  DIAliasMemoryNode *mNode;
+  llvm::SmallVector<llvm::WeakVH, 1> mValues;
+};
+
 /// \brief This represents estimate memory location using metadata information.
 ///
 /// This class is similar to `EstimateMemory`. However, this is high level
@@ -61,29 +237,34 @@ bool mayAliasFragments(
 ///
 /// The difference between DIMemoryLocation and DIEstimateMemory is that for
 /// the last one a special MDNode is created.
-class DIEstimateMemory :
-  public llvm::ilist_node<DIEstimateMemory, llvm::ilist_tag<Alias>> {
+class DIEstimateMemory : public DIMemory {
 public:
+  /// Set of flags which may be stored in MDNode attached to this location.
   enum Flags : uint16_t {
     NoFlags = 0,
-    Explicit = 1u << 0,
-    Template = 1u << 1,
+    Template = 1u << 0,
     LLVM_MARK_AS_BITMASK_ENUM(Template)
   };
 
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DIMemory *M) {
+    return M->getKind() == KIND_ESTIMATE;
+  }
+
   /// Creates a new memory location which is not attached to any alias node.
   static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Returns existent location. Note, it will not be attached to an alias node.
   static std::unique_ptr<DIEstimateMemory> getIfExists(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
-  /// Returns MDNode which represents this estimate memory location.
-  llvm::MDNode * getAsMDNode() noexcept { return mMD; }
-
-  /// Returns MDNode which represents this estimate memory location.
-  const llvm::MDNode * getAsMDNode() const noexcept { return mMD; }
+  /// Creates a copy of a specified memory location. The copy is not attached
+  /// to any alias node. No values are bound to a new location.
+  static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
+      DIEstimateMemory &EM) {
+    return get(Ctx, EM.getVariable(), EM.getExpression(), EM.getFlags());
+  }
 
   /// Returns underlying variable.
   llvm::DIVariable * getVariable();
@@ -103,12 +284,8 @@ public:
   /// Bitwise OR the current flags with the given flags.
   void setFlags(Flags F);
 
-  /// Returns true if this location is explicitly mentioned in a
-  /// source code.
-  bool isExplicit() const { return Explicit & getFlags(); }
-
-  /// Returns true if this is a template which represents a set of memory
-  /// locations (see DIMemoryLocation for details).
+  /// Returns true if this is a template representation of memory location
+  /// (see DIMemoryLocation for details).
   bool isTemplate() const { return Template & getFlags(); }
 
   /// Returns true if size is known.
@@ -126,60 +303,48 @@ public:
       const_cast<llvm::DIExpression *>(getExpression())).getSize();
   }
 
-  /// Return true if an alias node has been already specified.
-  bool hasAliasNode() const noexcept { return mNode != nullptr; }
-
-  /// Returns a node in alias graph which contains this location.
-  DIAliasEstimateNode * getAliasNode() noexcept { return mNode; }
-
-  /// Returns a node in alias graph which contains this location.
-  const DIAliasEstimateNode * getAliasNode() const noexcept { return mNode; }
-
-  /// \brief Returns true if match between LLVM value and this memory location
-  /// is corrupted.
-  ///
-  /// Checks that some of values binded to the memory location have been
-  /// destroyed during some transformation passes. This also returns true
-  /// if there is no binded values.
-  bool isDestroyed() const {
-    if (mValues.empty())
-      return true;
-    for (auto &VH : mValues)
-      if (!VH)
-        return true;
-    return false;
-  }
-
-  /// Binds a specified value to the estimate memory location.
-  void bindValue(llvm::Value *V) { mValues.push_back(V); }
-
-  /// Binds values from a specified range to the memory location.
-  template<class ItrTy>
-  void bindValue(const ItrTy &I, const ItrTy &E) { mValues.append(I, E); }
-
 private:
-  friend class DIAliasTree;
-
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.
-  explicit DIEstimateMemory(
-      llvm::MDNode *MD, DIAliasEstimateNode *N = nullptr) : mMD(MD), mNode (N) {
-    assert(MD && "Metadata must not be null!");
-  }
-
-  /// Add this location to a specified node `N` in alias tree.
-  void setAliasNode(DIAliasEstimateNode &N) noexcept { mNode = &N; }
+  explicit DIEstimateMemory(llvm::MDNode *MD, DIAliasMemoryNode *N = nullptr) :
+      DIMemory(KIND_ESTIMATE, MD, N) {}
 
   /// Returns number of flag operand of MDNode.
   unsigned getFlagsOp() const;
-
-  llvm::MDNode *mMD;
-  DIAliasEstimateNode *mNode;
-  llvm::SmallVector<llvm::WeakVH, 2> mValues;
 };
+
+///\brief This represents unknown memory location using metadata information.
+///
+/// For example this represents memory accessed in function call.
+class DIUnknownMemory : public DIMemory {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DIMemory *M) {
+    return M->getKind() == KIND_UNKNOWN;
+  }
+
+  /// Creates a copy of a specified memory location. The copy is not attached
+  /// to any alias node. No values are bound to a new location.
+  static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
+    DIUnknownMemory &UM);
+
+  /// Creates unknown memory location from a specified MDNode.
+  static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
+    llvm::MDNode *MD);
+
+private:
+  /// Creates interface to access information about an estimate memory location,
+  /// which is represented as a metadata.
+  explicit DIUnknownMemory(llvm::MDNode *MD, DIAliasMemoryNode *N = nullptr) :
+      DIMemory(KIND_UNKNOWN, MD, N) {}
+};
+
+std::unique_ptr<DIMemory> DIMemory::get(llvm::LLVMContext &Ctx, DIMemory &M) {
+  if (auto *EM = llvm::dyn_cast<DIEstimateMemory>(&M))
+    return DIEstimateMemory::get(Ctx, *EM);
+  return DIUnknownMemory::get(Ctx, llvm::cast<DIUnknownMemory>(M));
 }
 
-namespace tsar {
 /// This represents debug info node in an alias tree which refers
 /// an alias sequence of estimate memory locations.
 class DIAliasNode :
@@ -190,7 +355,7 @@ class DIAliasNode :
   using ChildList = llvm::simple_ilist<DIAliasNode, llvm::ilist_tag<Sibling>>;
 
 public:
-  /// Kind of node.
+  /// Kind of node
   enum Kind : uint8_t {
     FIRST_KIND = 0,
     KIND_TOP = FIRST_KIND,
@@ -207,7 +372,7 @@ public:
   /// This type is used to iterate over all children of this node.
   using const_child_iterator = ChildList::const_iterator;
 
-  ~DIAliasNode() = default;
+  virtual ~DIAliasNode() = default;
 
   DIAliasNode(const DIAliasNode &) = delete;
   DIAliasNode(DIAliasNode &&) = delete;
@@ -216,6 +381,9 @@ public:
 
   /// Returns the kind of this node.
   Kind getKind() const noexcept { return mKind; }
+
+  /// Returns parent of the node.
+  DIAliasNode * getParent() noexcept { return mParent; }
 
   /// Returns parent of the node.
   const DIAliasNode * getParent() const noexcept { return mParent; }
@@ -231,6 +399,12 @@ public:
 
   /// Returns iterator that points to the ending of the children list.
   const_child_iterator child_end() const { return mChildren.end(); }
+
+  /// Returns number of children.
+  std::size_t child_size() const { return mChildren.size(); }
+
+  /// Returns true if this node is a leaf.
+  bool child_empty() const { return mChildren.empty(); }
 
 protected:
   /// Creates an empty node of a specified kind `K`.
@@ -264,14 +438,13 @@ private:
   DIAliasTopNode() : DIAliasNode(KIND_TOP) {}
 };
 
-class DIAliasEstimateNode : public DIAliasNode {
-  using AliasList =
-    llvm::simple_ilist<DIEstimateMemory, llvm::ilist_tag<Alias>>;
+class DIAliasMemoryNode : public DIAliasNode {
+  using AliasList = llvm::simple_ilist<DIMemory, llvm::ilist_tag<Alias>>;
 
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DIAliasNode *N) {
-    return N->getKind() == KIND_ESTIMATE;
+    return N->getKind() == KIND_ESTIMATE || N->getKind() == KIND_UNKNOWN;
   }
 
   /// This type is used to iterate over all alias memory locations in this node.
@@ -297,66 +470,61 @@ public:
     return mAliases.empty();
   }
 
+protected:
+  friend DIAliasTree;
+
+   /// Default constructor.
+  explicit DIAliasMemoryNode(Kind K) : DIAliasNode(K) {
+    assert(K == KIND_ESTIMATE || K == KIND_UNKNOWN &&
+      "Alias memory node must be estimate or unknown only!");
+  }
+
+  /// Inserts new memory location at the end of memory sequence.
+  ///
+  /// \pre Alias estimate node may contain estimate memory locations only.
+  void push_back(DIMemory &M) {
+    assert((!llvm::isa<DIAliasEstimateNode>(this) ||
+      llvm::isa<DIEstimateMemory>(M)) &&
+      "Alias estimate node may contain estimate memory location only!");
+    mAliases.push_back(M);
+  }
+
+private:
+  AliasList mAliases;
+};
+
+class DIAliasEstimateNode : public DIAliasMemoryNode {
+public:
+  /// Methods for support type inquiry through isa, cast, and dyn_cast.
+  static bool classof(const DIAliasNode *N) {
+    return N->getKind() == KIND_ESTIMATE;
+  }
+
 private:
   friend DIAliasTree;
 
   /// Default constructor.
-  DIAliasEstimateNode() : DIAliasNode(KIND_ESTIMATE) {}
-
-  /// Inserts new estimate memory location at the end of memory sequence.
-  void push_back(DIEstimateMemory &EM) { mAliases.push_back(EM); }
-
-  AliasList mAliases;
+  explicit DIAliasEstimateNode() : DIAliasMemoryNode(KIND_ESTIMATE) {}
 };
 
 /// This represents information of accesses to unknown memory.
-class DIAliasUnknownNode : public DIAliasNode {
-  using UnknownList = llvm::SmallPtrSet<llvm::MDNode *, 8>;
-
+class DIAliasUnknownNode : public DIAliasMemoryNode {
 public:
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DIAliasNode *N) {
     return N->getKind() == KIND_UNKNOWN;
   }
 
-  /// This type is used to iterate over all alias memory locations in this node.
-  using iterator = UnknownList::iterator;
-
-  /// This type is used to iterate over all alias memory locations in this node.
-  using const_iterator = UnknownList::const_iterator;
-
-  /// Returns iterator that points to the beginning of the alias list.
-  iterator begin() { return mUnknownInsts.begin(); }
-
-  /// Returns iterator that points to the beginning of the alias list.
-  const_iterator begin() const { return mUnknownInsts.begin(); }
-
-  /// Returns iterator that points to the ending of the alias list.
-  iterator end() { return mUnknownInsts.end(); }
-
-  /// Returns iterator that points to the ending of the alias list.
-  const_iterator end() const { return mUnknownInsts.end(); }
-
-  /// Returns true if the node does not contain memory locations.
-  bool empty() const noexcept(noexcept(std::declval<UnknownList>().empty())) {
-    return mUnknownInsts.empty();
-  }
-
 private:
   friend DIAliasTree;
 
   /// Default constructor.
-  DIAliasUnknownNode() : DIAliasNode(KIND_UNKNOWN) {}
-
-  /// Inserts unknown memory access at the end of unknown memory sequence.
-  void push_back(llvm::MDNode *I) { mUnknownInsts.insert(I); }
-
-  UnknownList mUnknownInsts;
+  explicit DIAliasUnknownNode() : DIAliasMemoryNode(KIND_UNKNOWN) {}
 };
 
 class DIAliasTree {
   /// Set of estimate memory locations.
-  using DIMemorySet = llvm::DenseSet<DIEstimateMemory *>;
+  using DIMemorySet = llvm::DenseSet<DIMemory *>;
 
   /// Pool to store pointers to all alias nodes.
   using AliasNodePool = llvm::ilist<DIAliasNode,
@@ -380,15 +548,19 @@ public:
     llvm::pointee_iterator<DIMemorySet::const_iterator>;
 
   /// Builds alias tree which contains a top node only.
-  explicit DIAliasTree() : mTopLevelNode(new DIAliasTopNode) {
-    mNodes.push_back(mTopLevelNode);
-  }
+  explicit DIAliasTree(llvm::Function &F);
 
   /// Destroys alias tree.
   ~DIAliasTree() {
     for (auto *EM : mFragments)
       delete EM;
   }
+
+  /// Returns function which is associated with the alias tree.
+  llvm::Function & getFunction() noexcept { return *mFunc; }
+
+  /// Returns function which is associated with the alias tree.
+  const llvm::Function & getFunction() const noexcept { return *mFunc; }
 
   /// Returns root of the alias tree.
   DIAliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
@@ -435,23 +607,18 @@ public:
   /// Creates new node and attaches a specified location to it. The location
   /// must not be previously attached to this alias tree.
   DIEstimateMemory & addNewNode(
-      std::unique_ptr<DIEstimateMemory> &&EM, DIAliasNode &Parent) {
-    auto *N = new DIAliasEstimateNode;
-    mNodes.push_back(N);
-    N->setParent(Parent);
-    return addToNode(std::move(EM), *N);
-  }
+    std::unique_ptr<DIEstimateMemory> &&EM, DIAliasNode &Parent);
+
+  /// Creates new node and attaches a specified location to it. The location
+  /// must not be previously attached to this alias tree.
+  DIMemory & addNewUnknownNode(
+    std::unique_ptr<DIMemory> &&M, DIAliasNode &Parent);
 
   /// Attaches a specified location to a specified alias node. The location
   /// must not be previously attached to this alias tree.
-  DIEstimateMemory & addToNode(
-      std::unique_ptr<DIEstimateMemory> &&EM, DIAliasEstimateNode &N) {
-    auto Pair = mFragments.insert(EM.release());
-    assert(Pair.second && "Memory location is arleady attached to a node!");
-    (*Pair.first)->setAliasNode(N);
-    N.push_back(**Pair.first);
-    return **Pair.first;
-  }
+  ///
+  /// \pre Alias estimate node may contain estimate memory locations only.
+  DIMemory & addToNode(std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N);
 
   /// \brief This pop up ghostview window and displays the alias tree.
   ///
@@ -462,6 +629,7 @@ private:
   AliasNodePool mNodes;
   DIAliasNode *mTopLevelNode = nullptr;
   DIMemorySet mFragments;
+  llvm::Function *mFunc;
 };
 }
 
@@ -555,14 +723,14 @@ public:
 
   /// Returns alias tree for the last analyzed function.
   tsar::DIAliasTree & getAliasTree() {
-    assert(mAliasTree && "Alias tree has not been constructed yet!");
-    return *mAliasTree;
+    assert(mDIAliasTree && "Alias tree has not been constructed yet!");
+    return *mDIAliasTree;
   }
 
   /// Returns alias tree for the last analyzed function.
   const tsar::DIAliasTree & getAliasTree() const {
-    assert(mAliasTree && "Alias tree has not been constructed yet!");
-    return *mAliasTree;
+    assert(mDIAliasTree && "Alias tree has not been constructed yet!");
+    return *mDIAliasTree;
   }
 
   /// Build hierarchy of accessed memory for a specified function.
@@ -571,26 +739,8 @@ public:
   /// Specifies a list of analyzes that are necessary for this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-  /// Releases memory.
-  void releaseMemory() override {
-    if (mDIAliasTree) {
-      delete mDIAliasTree;
-      mDIAliasTree = nullptr;
-    }
-    mContext = nullptr;
-  }
-
 private:
-  /// Finds fragments of a variables which are used in a program and does not
-  /// alias each other.
-  ///
-  /// There are two out parameters. Firstly, this is a map from a variable to its
-  /// fragments. Secondly, this is a list of all fragments.
-  void findNoAliasFragments(Function &F,
-      DIFragmentMap &VarToFragment, DIMemorySet &SmallestFragments);
-
   tsar::DIAliasTree *mDIAliasTree = nullptr;
-  LLVMContext *mContext = nullptr;
 };
 }
 #endif//TSAR_DI_ESTIMATE_MEMORY_H

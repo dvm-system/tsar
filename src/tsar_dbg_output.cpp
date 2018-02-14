@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_dbg_output.h"
+#include "DIEstimateMemory.h"
 #include "DIMemoryLocation.h"
 #include "DIUnparser.h"
 #include "tsar_pass.h"
@@ -68,6 +69,21 @@ void printDILocationSource(unsigned DWLang,
   else
     O << Size;
   O << ">";
+}
+
+void printDILocationSource(unsigned DWLang,
+    const DIMemory &Loc, llvm::raw_ostream &O) {
+  auto M = const_cast<DIMemory *>(&Loc);
+  if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
+    printDILocationSource(DWLang,
+      { EM->getVariable(), EM->getExpression(), EM->isTemplate() }, O);
+  } else {
+    auto MD = M->getAsMDNode();
+    if (auto F = dyn_cast<DISubprogram>(MD))
+      O << F->getName() << "()";
+    else
+      O << "<?, ?>";
+  }
 }
 
 void printDIType(raw_ostream &o, const DITypeRef &DITy) {
