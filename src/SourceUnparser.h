@@ -46,6 +46,8 @@ public:
     TOKEN_DEREF,
     TOKEN_IDENTIFIER,
     TOKEN_UCONST,
+    TOKEN_UNKNOWN,
+    TOKEN_SEPARATOR,
     TOKEN_ADD,
     TOKEN_SUB,
     TOKEN_PARENTHESES_LEFT,
@@ -94,9 +96,9 @@ public:
     case TOKEN_ADD: case TOKEN_SUB: return 0;
     case TOKEN_DEREF: case TOKEN_ADDRESS: case TOKEN_CAST_TO_ADDRESS: return 1;
     case TOKEN_SUBSCRIPT_BEGIN: case TOKEN_SUBSCRIPT_END:
-    case TOKEN_FIELD: return 3;
-    case TOKEN_IDENTIFIER: case TOKEN_UCONST: return 4;
-    case TOKEN_PARENTHESES_LEFT: case TOKEN_PARENTHESES_RIGHT: return 5;
+    case TOKEN_SEPARATOR: case TOKEN_FIELD: return 2;
+    case TOKEN_IDENTIFIER: case TOKEN_UCONST: case TOKEN_UNKNOWN: return 3;
+    case TOKEN_PARENTHESES_LEFT: case TOKEN_PARENTHESES_RIGHT: return 4;
     }
   }
 
@@ -146,6 +148,10 @@ private:
     mLastOpPriority = getPriority(Next);
   }
 
+  /// Add a specified number of subscript expressions to already unparsed
+  /// expression.
+  void addUnknownSubscripts(unsigned Dims);
+
   DIMemoryLocation mLoc;
   bool mIsForwardDim;
   TokenList mReversePrefix;
@@ -192,8 +198,8 @@ public:
     if (!unparse())
       return false;
     for (auto T : llvm::make_range(
-        getReversePrefix().rbegin(), getReversePrefix().rend()))
-      appendToken(T, Str);
+         getReversePrefix().rbegin(), getReversePrefix().rend()))
+      appendToken(T, false, Str);
     assert(!getIdentifiers().empty() && "At least one identifier must be set!");
     auto IdentItr = getIdentifiers().begin();
     Str.append(IdentItr->begin(), IdentItr->end()), ++IdentItr;
@@ -204,14 +210,12 @@ public:
         IsSubscript = true, beginSubscript(Str);
       else if (T == TOKEN_SUBSCRIPT_END)
         IsSubscript = false, endSubscript(Str);
-      else if (T == TOKEN_UCONST && IsSubscript)
-        appendSubscript(*(UConstItr++), Str);
       else if (T == TOKEN_IDENTIFIER)
         Str.append(IdentItr->begin(), IdentItr->end()), ++IdentItr;
       else if (T == TOKEN_UCONST)
-        appendUConst(*(UConstItr++), Str);
+        appendUConst(*(UConstItr++), IsSubscript, Str);
       else
-        appendToken(T, Str);
+        appendToken(T, IsSubscript, Str);
     }
     return true;
 }
@@ -235,27 +239,24 @@ private:
   /// This method should be implemented in a child class, it will be called
   /// using CRTP. This method should evaluates all tokens except ones that
   /// have a value (constants, identifiers, subscripts).
-  void appendToken(Token T, llvm::SmallVectorImpl<char> &Str) {
-    static_cast<Unparser *>(this)->appendToken(T, Str);
+  /// If `IsSubscript` is true then subscript expression is unparsed. It is
+  /// called subsequently for each token except constants between
+  /// TOKEN_SUBSCRIPT_BEGIN and TOKEN_SUBSCRIPT_END tokens.
+  void appendToken(
+      Token T, bool IsSubscript, llvm::SmallVectorImpl<char> &Str) {
+    static_cast<Unparser *>(this)->appendToken(T, IsSubscript, Str);
   }
 
   /// \brief Unparses a specified unsigned constant into a character string.
   ///
   /// This method should be implemented in a child class, it will be called
   /// using CRTP.
-  void appendUConst(uint64_t C, llvm::SmallVectorImpl<char> &Str) {
-    static_cast<Unparser *>(this)->appendUConst(C, Str);
-  }
-
-  /// \brief Unparses a specified subscript expression into a character string.
-  ///
-  /// This method is used to unparse subscript expressions. It is called
-  /// subsequently for each constants between TOKEN_SUBSCRIPT_BEGIN and
+  /// If `IsSubscript` is true then subscript expression is unparsed. It is
+  /// called subsequently for each constants between TOKEN_SUBSCRIPT_BEGIN and
   /// TOKEN_SUBSCRIPT_END tokens.
-  /// This method should be implemented in a child class, it will be called
-  /// using CRTP.
-  void appendSubscript(uint64_t C, llvm::SmallVectorImpl<char> &Str) {
-    static_cast<Unparser *>(this)->appendSubscript(C, Str);
+  void appendUConst(
+      uint64_t C, bool IsSubscript, llvm::SmallVectorImpl<char> &Str) {
+    static_cast<Unparser *>(this)->appendUConst(C, IsSubscript, Str);
   }
 
   /// \brief Unparses beginning of subscript expressions.

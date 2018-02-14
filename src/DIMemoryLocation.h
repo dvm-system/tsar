@@ -35,9 +35,23 @@ namespace tsar {
 /// specification. If DW_OP_deref is not used and fragment is not specified than
 /// size of location depends on a variable size and address of the location
 /// starting point.
+///
+/// Location may be marked as a template. It means that all zero offsets
+/// (including implicit) in pointer and array accesses  should be treated
+/// as unknown offsets. Consider an example. Element of an array A
+/// (of integer values) is specified as {DW_OP_LLVM_fragment, 0, 4}. In case of
+/// template location it means any element A[?] instead of A[0] only.
+///
+/// \attention Type casts can not be safely represented as template locations.
+/// For example, (char *)P + ? where P has type 'int' will be unparsed as
+/// P[?] and (char *)P + 1 + ? will be unparsed as (char *)P + 1. Existing of
+/// casts determines if offset and type size is inconsistent. This implies
+/// mentioned shortcomings in case of template offsets which are represented as
+/// zero.
 struct DIMemoryLocation {
   llvm::DIVariable *Var;
   llvm::DIExpression *Expr;
+  bool Template;
 
   /// Determines which memory location is exhibits by a specified instruction.
   static inline DIMemoryLocation get(llvm::DbgValueInst *Inst) {
@@ -58,8 +72,9 @@ struct DIMemoryLocation {
 
   /// Constructs a new memory location. Note, that variable and expression
   /// must not be null).
-  DIMemoryLocation(llvm::DIVariable *Var, llvm::DIExpression *Expr) :
-      Var(Var), Expr(Expr) {
+  DIMemoryLocation(
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool Template = false) :
+      Var(Var), Expr(Expr), Template(Template) {
     // Do not check here that location isValid() because this leads to crash
     // of construction of empty key for in specialization of llvm::DenseMapInfo.
     assert(Var && "Variable must not be null!");

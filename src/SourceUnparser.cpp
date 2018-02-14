@@ -87,18 +87,30 @@ bool SourceUnparserImp::unparseAsPointerTy(uint64_t Offset, bool IsPositive) {
   if (TySize == 0)
     return unparseAsScalarTy(Offset, IsPositive);
   auto ElIdx = Offset / TySize;
-  Offset -= ElIdx * TySize;
-  if (IsPositive) {
-    updatePriority(TOKEN_SUBSCRIPT_BEGIN, TOKEN_SUBSCRIPT_END);
-    mSuffix.append({
-      TOKEN_SUBSCRIPT_BEGIN, TOKEN_UCONST, TOKEN_SUBSCRIPT_END });
+  updatePriority(TOKEN_SUBSCRIPT_BEGIN, TOKEN_SUBSCRIPT_END);
+  mSuffix.push_back(TOKEN_SUBSCRIPT_BEGIN);
+  if (ElIdx == 0 && mLoc.Template) {
+    mSuffix.push_back(TOKEN_UNKNOWN);
   } else {
-    updatePriority(TOKEN_SUB, TOKEN_SUB);
-    mSuffix.append({ TOKEN_SUB, TOKEN_UCONST });
+    if (!IsPositive)
+      mSuffix.push_back(TOKEN_SUB);
+    mSuffix.push_back(TOKEN_UCONST);
+    mUConsts.push_back(ElIdx);
+    Offset -= ElIdx * TySize;
   }
-  mUConsts.push_back(Offset);
+  mSuffix.push_back(TOKEN_SUBSCRIPT_END);
+  // Subscript expression (for example []) has been used, it is not address now.
+  mIsAddress = false;
   return unparse(Offset, IsPositive);
 
+}
+
+void SourceUnparserImp::addUnknownSubscripts(unsigned Dims) {
+  updatePriority(TOKEN_SUBSCRIPT_BEGIN, TOKEN_SUBSCRIPT_END);
+  mSuffix.push_back(TOKEN_SUBSCRIPT_BEGIN);
+  for (unsigned I = 0; I < Dims; ++I)
+    mSuffix.append({ TOKEN_UNKNOWN, TOKEN_SEPARATOR });
+  mSuffix.push_back(TOKEN_SUBSCRIPT_END);
 }
 
 bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
@@ -116,14 +128,20 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
     for (unsigned I = 0, E = DICTy->getElements().size(); I != E; ++I) {
       auto Dim = cast<DISubrange>(DICTy->getElements()[I]);
       if (Dim->getCount() <= 0)
-        return unparseAsScalarTy(Offset, IsPositive);
+        if (mLoc.Template)
+          return addUnknownSubscripts(E), true;
+        else
+          return unparseAsScalarTy(Offset, IsPositive);
       Dims.push_back(std::make_pair(Dim->getLowerBound(), Dim->getCount()));
     }
   else
     for (unsigned I = DICTy->getElements().size() - 1, E = 0; I != E; --I) {
       auto Dim = cast<DISubrange>(DICTy->getElements()[I]);
       if (Dim->getCount() <= 0)
-        return unparseAsScalarTy(Offset, IsPositive);
+        if (mLoc.Template)
+          return addUnknownSubscripts(E), true;
+        else
+          return unparseAsScalarTy(Offset, IsPositive);
       Dims.push_back(std::make_pair(Dim->getLowerBound(), Dim->getCount()));
     }
   mIsAddress = false;
@@ -141,8 +159,13 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
     } else {
       DimOffset += Dims[Dim].first;
     }
-    mSuffix.push_back(TOKEN_UCONST);
-    mUConsts.push_back(DimOffset);
+    if (DimOffset == 0 && mLoc.Template) {
+      mSuffix.push_back(TOKEN_UNKNOWN);
+    } else {
+      mSuffix.push_back(TOKEN_UCONST);
+      mUConsts.push_back(DimOffset);
+    }
+    mSuffix.push_back(TOKEN_SEPARATOR);
     ElIdx = ElIdx % Coeff;
   }
   mSuffix.push_back(TOKEN_SUBSCRIPT_END);

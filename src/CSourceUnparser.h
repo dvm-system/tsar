@@ -25,7 +25,8 @@ public:
 private:
   friend SourceUnparser<CSourceUnparser>;
 
-  void appendToken(Token T, llvm::SmallVectorImpl<char> &Str) {
+  void appendToken(Token T, bool IsSubscript,
+      llvm::SmallVectorImpl<char> &Str) {
     switch (T) {
     default: llvm_unreachable("Unsupported kind of token!"); break;
     case TOKEN_ADDRESS: Str.push_back('&'); break;
@@ -35,25 +36,30 @@ private:
     case TOKEN_ADD: Str.push_back('+'); break;
     case TOKEN_SUB: Str.push_back('-'); break;
     case TOKEN_FIELD: Str.push_back('.'); break;
+    case TOKEN_UNKNOWN: Str.push_back('?'); break;
+    case TOKEN_SEPARATOR:
+      if (IsSubscript)
+        Str.append({ ']', '[' });
+      break;
     case TOKEN_CAST_TO_ADDRESS:
       Str.append({ '(', 'c', 'h', 'a', 'r', '*', ')' }); break;
     }
   }
 
-  void appendUConst(uint64_t C, llvm::SmallVectorImpl<char> &Str) {
+    void appendUConst(
+      uint64_t C, bool IsSubscript, llvm::SmallVectorImpl<char> &Str) {
     llvm::APInt Const(64, C, false);
     Const.toString(Str, 10, false);
   }
 
-  void appendSubscript(uint64_t C, llvm::SmallVectorImpl<char> &Str) {
+
+  void beginSubscript(llvm::SmallVectorImpl<char> &Str) {
     Str.push_back('[');
-    appendUConst(C, Str);
-    Str.push_back(']');
   }
 
-  void beginSubscript(llvm::SmallVectorImpl<char> &Str) {}
-
-  void endSubscript(llvm::SmallVectorImpl<char> &Str) {}
+  void endSubscript(llvm::SmallVectorImpl<char> &Str) {
+    Str.push_back(']');
+  }
 };
 }
 #endif//TSAR_C_SOURCE_UNPARSER_H
