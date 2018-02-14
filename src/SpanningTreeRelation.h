@@ -14,24 +14,27 @@
 
 #include "GraphNumbering.h"
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/Optional.h>
+#include <type_traits>
 
 namespace tsar {
+/// Represents node relation in a tree.
+enum TreeRelation : int8_t {
+  FIRST_TR = 0,
+  TR_ANCESTOR = FIRST_TR,
+  TR_DESCENDANT,
+  TR_EQUAL,
+  TR_UNREACHABLE,
+  LAST_TR = TR_UNREACHABLE,
+  INVALID_TR,
+  NUMBER_TR = INVALID_TR
+};
+
 /// This determine relation between two nodes in a spanning tree.
 template<class GraphType>
 class SpanningTreeRelation {
   using NodeRef = typename llvm::GraphTraits<GraphType>::NodeRef;
 public:
-  /// Represents node relation.
-  enum Relation : int8_t {
-    FIRST_RELATION = 0,
-    RELATION_ANCESTOR = FIRST_RELATION,
-    RELATION_DESCENDANT,
-    RELATION_EQUAL,
-    RELATION_UNREACHABLE,
-    LAST_RELATION = RELATION_UNREACHABLE,
-    INVALID_RELATION,
-    NUMBER_RELATION = INVALID_RELATION
-  };
 
   /// Performs initialization to determine relation of two nodes.
   explicit SpanningTreeRelation(const GraphType &G) {
@@ -39,45 +42,120 @@ public:
   }
 
   /// Determines relation between two nodes in a spanning tree.
-  Relation compare(NodeRef LHS, NodeRef RHS) const {
+  TreeRelation compare(NodeRef LHS, NodeRef RHS) const {
     if (LHS == RHS)
-      return RELATION_EQUAL;
+      return TR_EQUAL;
     auto LeftItr = mNumbering.find(LHS);
     auto RightItr = mNumbering.find(RHS);
+    assert(LeftItr != mNumbering.end() &&
+      "LHS must be a node of a spanning tree!");
+    assert(RightItr != mNumbering.end() &&
+      "RHS must be a node of a spanning tree!");
     if (LeftItr->template get<Preorder>() <
             RightItr->template get<Preorder>() &&
         LeftItr->template get<ReversePostorder>() <
             RightItr->template get<ReversePostorder>())
-      return RELATION_ANCESTOR;
+      return TR_ANCESTOR;
     if (LeftItr->template get<Preorder>() >
             RightItr->template get<Preorder>() &&
       LeftItr->template get<ReversePostorder>() >
             RightItr->template get<ReversePostorder>())
-      return RELATION_DESCENDANT;
-    return RELATION_UNREACHABLE;
+      return TR_DESCENDANT;
+    return TR_UNREACHABLE;
   }
 
   bool isEqual(NodeRef LHS, NodeRef RHS) const {
-    return compare(LHS, RHS) == RELATION_EQUAL;
+    return compare(LHS, RHS) == TR_EQUAL;
   }
 
-  /// Checks whether the 'What' node in ancestor of 'Of' node.
+  /// Checks whether the 'What' node is an ancestor of 'Of' node.
   bool isAncestor(NodeRef What, NodeRef Of) const {
-    return compare(What, Of) == RELATION_ANCESTOR;
+    return compare(What, Of) == TR_ANCESTOR;
   }
 
-  /// Checks whether the 'What' node in descendant of 'Of' node.
+  /// Checks whether the 'What' node is a descendant of 'Of' node.
   bool isDescendant(NodeRef What, NodeRef Of) const {
-    return compare(What, Of) == RELATION_DESCENDANT;
+    return compare(What, Of) == TR_DESCENDANT;
   }
 
   /// Checks whether specified nodes are neither ancestor nor descendant.
   bool isUnreachable(NodeRef LHS, NodeRef RHS) const {
-    return compare(LHS, RHS) == RELATION_UNREACHABLE;
+    return compare(LHS, RHS) == TR_UNREACHABLE;
   }
 
 private:
-  GraphNumbering<typename llvm::GraphTraits<GraphType>::NodeRef> mNumbering;
+  GraphNumbering<NodeRef> mNumbering;
 };
+
+/// \brief Returns a parent of a specified node in a spanning tree of a graph.
+///
+/// \pre llvm::GraphTraits must be available for GraphType and
+/// llvm::Inverse<GraphType>. References to a node of a graph must be
+/// assignable from a reference to a node in an inverse graph.
+/// \return A parent of a specified node.
+template<class GraphType>
+llvm::Optional<
+  typename llvm::GraphTraits<llvm::Inverse<GraphType>>::NodeRef> findParent(
+    typename llvm::GraphTraits<llvm::Inverse<GraphType>>::NodeRef N,
+    const SpanningTreeRelation<GraphType> &STR) {
+  using GT = llvm::GraphTraits<GraphType>;
+  using IGT = llvm::GraphTraits<llvm::Inverse<GraphType>>;
+  using NodeRef = typename IGT::NodeRef;
+  static_assert(std::is_assignable<typename GT::NodeRef, NodeRef>::value ||
+    std::is_convertible<NodeRef, typename GT::NodeRef>::value,
+    "NodeRef of a graph must be assignable from NodeRef of an inverse graph!");
+  for (auto I = IGT::child_begin(N), E = IGT::child_end(N); I != E; ++I) {
+    if (STR.isDescendant(N, *I))
+      return *I;
+  }
+  return None;
+}
+
+/// \brief Finds a lowest common ancestor for specified nodes in
+/// a spanning tree (result is not equal to any node).
+///
+/// \pre
+/// - A spanning tree must contains all nodes from a [BeginItr, EndItr).
+/// - The specified iterator range must not be empty.
+/// - llvm::GraphTraits must be available for GraphType and
+/// llvm::Inverse<GraphType>.
+/// - Reference to a node of a graph must be assignable or convertible from
+/// a reference to a node in an inverse graph.
+/// - Reference to a node of an inverse graph must be assignable or convertible
+/// from dereferenced ItrTy.
+template<class GraphType, class ItrTy>
+llvm::Optional<
+  typename llvm::GraphTraits<llvm::Inverse<GraphType>>::NodeRef> findLCA(
+    const SpanningTreeRelation<GraphType> &STR, ItrTy BeginItr, ItrTy EndItr) {
+  assert(BeginItr != EndItr &&
+    "At least one node must be in a iterator range!");
+  using STRTy = SpanningTreeRelation<GraphType>;
+  using GT = llvm::GraphTraits<GraphType>;
+  using IGT = llvm::GraphTraits<Inverse<GraphType>>;
+  using NodeRef = typename IGT::NodeRef;
+  static_assert(std::is_assignable<typename GT::NodeRef, NodeRef>::value ||
+    std::is_convertible<NodeRef, typename GT::NodeRef>::value,
+    "NodeRef of a graph must be assignable from NodeRef of an inverse graph!");
+  auto Parent = findParent(*BeginItr, STR);
+  if (!Parent.hasValue())
+    return None;
+  NodeRef LCA = *Parent;
+  auto CurrItr = BeginItr;
+  for (++CurrItr; CurrItr != EndItr; ++CurrItr) {
+    auto R = STR.compare(LCA, *CurrItr);
+    for (; R == TR_UNREACHABLE || R == TR_EQUAL;
+           R = STR.compare(LCA, *CurrItr)) {
+      auto Parent = findParent(LCA, STR);
+      if (!Parent.hasValue())
+        return None;
+      LCA = *Parent;
+    }
+    switch (R) {
+    case TR_ANCESTOR: break;
+    case TR_DESCENDANT: LCA = *CurrItr; break;
+    }
+  }
+  return LCA;
+}
 }
 #endif//TSAR_SPANNING_TREE_RELATION_H
