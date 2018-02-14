@@ -20,6 +20,7 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/ilist.h>
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/ValueHandle.h>
@@ -371,6 +372,13 @@ public:
   /// Size of an alias tree.
   using size_type = AliasNodePool::size_type;
 
+  /// This is used to iterate over all estimate memory locations in tree.
+  using memory_iterator = llvm::pointee_iterator<DIMemorySet::iterator>;
+
+  /// This is used to iterate over all estimate memory locations in tree.
+  using memory_const_iterator =
+    llvm::pointee_iterator<DIMemorySet::const_iterator>;
+
   /// Builds alias tree which contains a top node only.
   explicit DIAliasTree() : mTopLevelNode(new DIAliasTopNode) {
     mNodes.push_back(mTopLevelNode);
@@ -381,6 +389,7 @@ public:
     for (auto *EM : mFragments)
       delete EM;
   }
+
   /// Returns root of the alias tree.
   DIAliasNode * getTopLevelNode() noexcept { return mTopLevelNode; }
 
@@ -402,8 +411,26 @@ public:
   /// Returns true if this alias tree is empty.
   bool empty() const { return mNodes.empty(); }
 
-  /// Returns number of nodes, including forwarding.
+  /// Returns number of nodes.
   size_type size() const { return mNodes.size(); }
+
+  /// Returns iterator that points to the beginning of the estimate memory list.
+  memory_iterator memory_begin() { return mFragments.begin(); }
+
+  /// Returns iterator that points to the ending of the estimate memory list.
+  memory_iterator memory_end() { return mFragments.end(); }
+
+  /// Returns iterator that points to the beginning of the estimate memory list.
+  memory_const_iterator memory_begin() const { return mFragments.begin(); }
+
+  /// Returns iterator that points to the ending of the estimate memory list.
+  memory_const_iterator memory_end() const { return mFragments.end(); }
+
+  /// Returns true if there are no estimate memory locations in the tree.
+  bool memory_empty() const { return mFragments.empty(); }
+
+  /// Returns number of estimate memory locations in the tree.
+  size_type memory_size() const { return mFragments.size(); }
 
   /// Creates new node and attaches a specified location to it. The location
   /// must not be previously attached to this alias tree.
@@ -546,9 +573,9 @@ public:
 
   /// Releases memory.
   void releaseMemory() override {
-    if (mAliasTree) {
-      delete mAliasTree;
-      mAliasTree = nullptr;
+    if (mDIAliasTree) {
+      delete mDIAliasTree;
+      mDIAliasTree = nullptr;
     }
     mContext = nullptr;
   }
@@ -562,7 +589,7 @@ private:
   void findNoAliasFragments(Function &F,
       DIFragmentMap &VarToFragment, DIMemorySet &SmallestFragments);
 
-  tsar::DIAliasTree *mAliasTree = nullptr;
+  tsar::DIAliasTree *mDIAliasTree = nullptr;
   LLVMContext *mContext = nullptr;
 };
 }

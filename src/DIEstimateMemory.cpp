@@ -14,6 +14,7 @@
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/InstIterator.h>
+#include <algorithm>
 
 using namespace llvm;
 using namespace tsar;
@@ -374,19 +375,23 @@ FunctionPass * llvm::createDIEstimateMemoryPass() {
 
 bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
-  mContext = &F.getContext();
-  mAliasTree = new DIAliasTree;
+  mDIAliasTree = new DIAliasTree;
   DIFragmentMap VarToFragment;
   DIMemorySet SmallestFragments;
   findNoAliasFragments(F, VarToFragment, SmallestFragments);
-  F.getParent()->dump();
   for (auto &VToF : VarToFragment) {
     if (VToF.get<DIExpression>().empty())
       continue;
-    DIAliasTreeBuilder Builder(mAliasTree, F.getContext(),
+    DIAliasTreeBuilder Builder(mDIAliasTree, F.getContext(),
       VToF.get<DIVariable>(), VToF.get<DIExpression>());
     Builder.buildSubtree();
   }
+  std::vector<Metadata *> MemoryNodes(mDIAliasTree->memory_size());
+  std::transform(mDIAliasTree->memory_begin(), mDIAliasTree->memory_end(),
+    MemoryNodes.begin(), [](DIEstimateMemory &EM) { return EM.getAsMDNode(); });
+  auto AliasTreeMDKind = F.getContext().getMDKindID("alias.tree");
+  auto MD = MDNode::get(F.getContext(), MemoryNodes);
+  F.setMetadata(AliasTreeMDKind, MD);
   return false;
 }
 
