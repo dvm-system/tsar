@@ -52,7 +52,7 @@ findDomDbgValues(const Value *V, const DominatorTree &DT,
 /// Two conditions is going to be checked. At first it means that such block
 /// should contain llvm.dbg.value intrinsic which is associated with a
 /// specified variable `Var` and a register other then `V`.
-/// The second condition is that there is no llvm.dbg.valuse after this
+/// The second condition is that there is no llvm.dbg.values after this
 /// intrinsic in the basic block which is associated with `Var` and `V`.
 SmallPtrSet<BasicBlock *, 16>
 findAliasBlocks(const Value * V, const DIVariable *Var) {
@@ -268,9 +268,11 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
   }
   auto VarItr = Vars.begin(), VarItrE = Vars.end();
   for (; VarItr != VarItrE; ++VarItr) {
-    if ([&V, &VarItr, &VarItrE, &Dominators, DT]() {
+    if ([&V, &Vars, &VarItr, &VarItrE, &Dominators, DT]() {
       auto VarToDom = Dominators.find(*VarItr);
-      for (auto I = VarItr + 1, E = VarItrE; I != E; ++I)
+      for (auto I = Vars.begin(), E = VarItrE; I != E; ++I) {
+        if (I == VarItr)
+          continue;
         for (auto BB : Dominators.find(*I)->second)
           for (auto VarBB : VarToDom->second)
             if (VarBB == BB) {
@@ -284,6 +286,7 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
             } else if (!DT->dominates(VarBB, BB)) {
               return false;
             }
+      }
       return true;
     }())
       return *VarItr;
