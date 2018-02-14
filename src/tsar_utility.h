@@ -11,16 +11,13 @@
 #define TSAR_UTILITY_H
 
 #include <llvm/ADT/iterator.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallPtrSet.h>
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/ADT/SmallString.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Type.h>
-#include <llvm/Support/raw_ostream.h>
 #include <tuple>
 #include <tagged.h>
-#include <vector>
 
 namespace llvm {
 class BasicBlock;
@@ -32,6 +29,7 @@ class DIVariable;
 class AllocaInst;
 class Instruction;
 class Use;
+class Module;
 }
 
 namespace tsar {
@@ -116,6 +114,14 @@ private:
 
 /// Returns argument with a specified number or nullptr.
 llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo);
+
+/// Returns a language for a specified function.
+inline llvm::Optional<unsigned> getLanguage(const llvm::Function &F) {
+  if (auto *MD = F.getSubprogram())
+    if (auto CU = MD->getUnit())
+      return CU->getSourceLanguage();
+  return llvm::None;
+}
 
 /// Returns number of dimensions in a specified type or 0 if it is not an array.
 inline unsigned dimensionsNum(const llvm::Type *Ty) {
