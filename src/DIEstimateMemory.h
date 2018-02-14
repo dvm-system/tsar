@@ -17,10 +17,12 @@
 #include "tsar_utility.h"
 #include "tsar_pass.h"
 #include <llvm/ADT/BitmaskEnum.h>
-#include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/ilist.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/ValueHandle.h>
 #include <llvm/Pass.h>
 
 namespace llvm {
@@ -132,6 +134,28 @@ public:
   /// Returns a node in alias graph which contains this location.
   const DIAliasEstimateNode * getAliasNode() const noexcept { return mNode; }
 
+  /// \brief Returns true if match between LLVM value and this memory location
+  /// is corrupted.
+  ///
+  /// Checks that some of values binded to the memory location have been
+  /// destroyed during some transformation passes. This also returns true
+  /// if there is no binded values.
+  bool isDestroyed() const {
+    if (mValues.empty())
+      return true;
+    for (auto &VH : mValues)
+      if (!VH)
+        return true;
+    return false;
+  }
+
+  /// Binds a specified value to the estimate memory location.
+  void bindValue(llvm::Value *V) { mValues.push_back(V); }
+
+  /// Binds values from a specified range to the memory location.
+  template<class ItrTy>
+  void bindValue(const ItrTy &I, const ItrTy &E) { mValues.append(I, E); }
+
 private:
   friend class DIAliasTree;
 
@@ -150,6 +174,7 @@ private:
 
   llvm::MDNode *mMD;
   DIAliasEstimateNode *mNode;
+  llvm::SmallVector<llvm::WeakVH, 2> mValues;
 };
 }
 
