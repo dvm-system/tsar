@@ -49,9 +49,9 @@ namespace tsar {
 /// mentioned shortcomings in case of template offsets which are represented as
 /// zero.
 struct DIMemoryLocation {
-  llvm::DIVariable *Var;
-  llvm::DIExpression *Expr;
-  bool Template;
+  llvm::DIVariable *Var = nullptr;
+  llvm::DIExpression *Expr = nullptr;
+  bool Template = false;
 
   /// Determines which memory location is exhibits by a specified instruction.
   static inline DIMemoryLocation get(llvm::DbgValueInst *Inst) {
@@ -76,7 +76,7 @@ struct DIMemoryLocation {
     llvm::DIVariable *Var, llvm::DIExpression *Expr, bool Template = false) :
       Var(Var), Expr(Expr), Template(Template) {
     // Do not check here that location isValid() because this leads to crash
-    // of construction of empty key for in specialization of llvm::DenseMapInfo.
+    // of construction of empty key in specialization of llvm::DenseMapInfo.
     assert(Var && "Variable must not be null!");
     assert(Expr && "Expression must not be null!");
   }
@@ -120,18 +120,20 @@ template<> struct DenseMapInfo<tsar::DIMemoryLocation> {
     std::pair<DIVariable *, DIExpression *>>;
   static inline tsar::DIMemoryLocation getEmptyKey() {
     auto Pair = PairInfo::getEmptyKey();
-    return tsar::DIMemoryLocation{ Pair.first, Pair.second };
+    return { Pair.first, Pair.second };
   }
   static inline tsar::DIMemoryLocation getTombstoneKey() {
     auto Pair = PairInfo::getTombstoneKey();
-    return tsar::DIMemoryLocation{ Pair.first, Pair.second };
+    return { Pair.first, Pair.second };
   }
   static inline unsigned getHashValue(const tsar::DIMemoryLocation &Loc) {
     return PairInfo::getHashValue(std::make_pair(Loc.Var, Loc.Expr));
   }
   static inline bool isEqual(
       const tsar::DIMemoryLocation &LHS, const tsar::DIMemoryLocation &RHS) {
-    return LHS.Var == RHS.Var && LHS.Expr == RHS.Expr;
+    return LHS.Var == RHS.Var &&
+      LHS.Expr == RHS.Expr &&
+      LHS.Template == RHS.Template;
   }
 };
 }
