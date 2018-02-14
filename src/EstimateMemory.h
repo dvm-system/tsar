@@ -278,16 +278,52 @@ public:
   }
 
 private:
-  /// Sets a specified node as a next node for this one.
+  /// \brief Sets a specified node as a next node for this one.
+  ///
+  ///  Example, 2->spliceNext(7).
+  ///    0       5            0       5
+  ///   / \     / \          / \     /
+  ///  1   2   6   7   =>   1   7   6
+  ///     / \     / \          /|\
+  ///    3   4   8   9        8 9 2
+  ///                            / \
+  ///                           3   4
   void spliceNext(Chain *N);
 
-  /// Sets a specified node as a next node for this one.
+  /// \brief Sets a specified node as a next node for this one.
+  ///
+  ///  Example, 2->mergeNext(7).
+  ///    0       5            5       0
+  ///   / \     / \          / \     /
+  ///  1   2   6   7        6   7   1
+  ///     / \     / \          /|\
+  ///    3   4   8   9        8 9 2
+  ///                            / \
+  ///                           3   4
   void mergeNext(Chain *N);
 
-  /// Sets a specified node as a previous node for this one.
+  /// \brief Sets a specified node as a previous node for this one.
+  ///
+  ///  Example, 2->splicePrev(7).
+  ///    0       5            0       5
+  ///   / \     / \          / \     /
+  ///  1   2   6   7        1   2   6
+  ///     / \     / \          /|\
+  ///    3   4   8   9        7 3 4
+  ///                        / \
+  ///                       8   9
   void splicePrev(Chain *N);
 
-  /// Sets a specified node as a previous node for this one.
+  /// \brief Sets a specified node as a previous node for this one.
+  ///
+  ///  Example, 2->mergePrev(7).
+  ///    0       5            0       5
+  ///   / \     / \          / \     /
+  ///  1   2   6   7        1   2   6
+  ///     / \     / \          /|\
+  ///    3   4   8   9        7 3 4
+  ///                        / \
+  ///                       8   9
   void mergePrev(Chain *N);
 
   /// Returns a next node.
@@ -1212,6 +1248,8 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::spliceNext(
   if (Chain->getParent() == Next)
     return;
   if (Next) {
+    if (Next->mParent)
+      Next->mParent->mChildren.remove(*Next);
     Next->mParent = Chain->mParent;
     Next->mChildren.push_back(*Chain);
   }
@@ -1244,29 +1282,17 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::splicePrev(
   auto Prev = static_cast<tsar::EstimateMemory *>(N);
   if (Prev && Prev->getParent() == Chain)
     return;
-  for (auto &Child : Chain->mChildren)
-    Child.mParent = Prev;
   if (Prev) {
-    Prev->mChildren.splice(Prev->mChildren.end(), Chain->mChildren);
+    if (Prev->mParent)
+      Prev->mParent->mChildren.remove(*Prev);
     Prev->mParent = Chain;
-    Chain->mChildren.push_back(*Prev);
+    Chain->mChildren.push_front(*Prev);
   }
 }
 
 inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergePrev(
     bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
-  assert(N != this && "A node must not precede itself!");
-  auto Chain = static_cast<tsar::EstimateMemory *>(this);
-  auto Prev = static_cast<tsar::EstimateMemory *>(N);
-  if (Prev && Prev->getParent() == Chain)
-    return;
-  for (auto &Child : Chain->mChildren)
-    Child.mParent = nullptr;
-  if (Prev) {
-    Prev->mParent = Chain;
-    Chain->mChildren.clear();
-    Chain->mChildren.push_back(*Prev);
-  }
+  return splicePrev(N);
 }
 namespace llvm {
 //===----------------------------------------------------------------------===//
