@@ -41,9 +41,12 @@
 #include "tsar_pass.h"
 #include "tsar_utility.h"
 #include <Chain.h>
+#include <convertible_pair.h>
+#include <IteratorDataAdaptor.h>
 #include <trait.h>
 #include <utility.h>
 #include <llvm/ADT/DepthFirstIterator.h>
+#include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/GraphTraits.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/simple_ilist.h>
@@ -1392,6 +1395,77 @@ template<> struct GraphTraits<const tsar::AliasTree *> :
   static std::size_t size(const tsar::AliasTree *AT) { return AT->size(); }
 };
 
+/// GraphTraits specialization for inverse alias tree. Note that in this case
+/// NodeRef is a pair of a pointer to a graph and a pointer to a node.
+template<> struct GraphTraits<Inverse<tsar::AliasTree *>> {
+  using NodeRef =
+    bcl::convertible_pair<tsar::AliasNode *, tsar::AliasTree *>;
+  static NodeRef getEntryNode(Inverse<tsar::AliasTree *> AT) noexcept {
+    return NodeRef(AT.Graph->getTopLevelNode(), AT.Graph);
+  }
+  using nodes_iterator = bcl::IteratorDataAdaptor<
+    GraphTraits<tsar::AliasTree *>::nodes_iterator,
+    tsar::AliasTree *, NodeRef>;
+  static nodes_iterator nodes_begin(Inverse<tsar::AliasTree *> AT) {
+    return nodes_iterator(
+      GraphTraits<tsar::AliasTree *>::nodes_begin(AT.Graph), AT.Graph);
+  }
+  static nodes_iterator nodes_end(Inverse<tsar::AliasTree *> AT) {
+    return nodes_iterator(
+      GraphTraits<tsar::AliasTree *>::nodes_end(AT.Graph), AT.Graph);
+  }
+  static std::size_t size(Inverse<tsar::AliasTree *> AT) {
+    return AT.Graph->size();
+  }
+  using ChildIteratorType = bcl::IteratorDataAdaptor<
+    GraphTraits<tsar::AliasTree *>::ChildIteratorType,
+    tsar::AliasTree *, NodeRef>;
+  static ChildIteratorType child_begin(NodeRef N) {
+    return ChildIteratorType(
+      GraphTraits<tsar::AliasTree *>::ChildIteratorType(
+        tsar::AliasNode::child_iterator(N.first->getParent(*N.second))),
+      N.second);
+  }
+  static ChildIteratorType child_end(NodeRef N) {
+    return N.first->getParent(*N.second) ? ++child_begin(N) : child_begin(N);
+  }
+};
+
+/// GraphTraits specialization for inverse alias tree. Note that in this case
+/// NodeRef is a pair of a pointer to a graph and a pointer to a node.
+template<> struct GraphTraits<Inverse<const tsar::AliasTree *>> {
+  using NodeRef =
+    bcl::convertible_pair<const tsar::AliasNode *, const tsar::AliasTree *>;
+  static NodeRef getEntryNode(Inverse<const tsar::AliasTree *> AT) noexcept {
+    return NodeRef(AT.Graph->getTopLevelNode(), AT.Graph);
+  }
+  using nodes_iterator = bcl::IteratorDataAdaptor<
+    GraphTraits<const tsar::AliasTree *>::nodes_iterator,
+    const tsar::AliasTree *, NodeRef>;
+  static nodes_iterator nodes_begin(Inverse<const tsar::AliasTree *> AT) {
+    return nodes_iterator(
+      GraphTraits<const tsar::AliasTree *>::nodes_begin(AT.Graph), AT.Graph);
+  }
+  static nodes_iterator nodes_end(Inverse<const tsar::AliasTree *> AT) {
+    return nodes_iterator(
+      GraphTraits<const tsar::AliasTree *>::nodes_end(AT.Graph), AT.Graph);
+  }
+  static std::size_t size(Inverse<const tsar::AliasTree *> AT) {
+    return AT.Graph->size();
+  }
+  using ChildIteratorType = bcl::IteratorDataAdaptor<
+    GraphTraits<const tsar::AliasTree *>::ChildIteratorType,
+    const tsar::AliasTree *, NodeRef>;
+  static ChildIteratorType child_begin(NodeRef N) {
+    return ChildIteratorType(
+      GraphTraits<const tsar::AliasTree *>::ChildIteratorType(
+        tsar::AliasNode::const_child_iterator(N.first->getParent(*N.second))),
+      N.second);
+  }
+  static ChildIteratorType child_end(NodeRef N) {
+    return N.first->getParent(*N.second) ? ++child_begin(N) : child_begin(N);
+  }
+};
 
 /// This per-function analysis pass build hierarchy of a whole memory which
 /// is used in an analyzed function.
