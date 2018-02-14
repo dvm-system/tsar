@@ -10,6 +10,7 @@
 #ifndef TSAR_UTILITY_H
 #define TSAR_UTILITY_H
 
+#include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -17,6 +18,7 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Type.h>
 #include <tuple>
+#include <convertible_pair.h>
 #include <tagged.h>
 
 namespace llvm {
@@ -371,6 +373,11 @@ private:
 }
 
 namespace llvm {
+/// This is a specialization of llvm::DenseMapInfo for bcl::convertible_pair.
+template<class FirstTy, class SecondTy>
+class DenseMapInfo<bcl::convertible_pair<FirstTy, SecondTy>> :
+  public DenseMapInfo<std::pair<FirstTy, SecondTy>> {};
+
 /// This allows passes to create callbacks that run when the underlying Value
 /// has RAUW called on it or is destroyed.
 struct  CallbackVHFactory {
