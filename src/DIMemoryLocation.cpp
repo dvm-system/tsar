@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DIMemoryLocation.h"
+#include "tsar_utility.h"
 #include <llvm/ADT/SmallBitVector.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -40,9 +41,9 @@ uint64_t DIMemoryLocation::getSize() const {
     return (Fragment->SizeInBits + 7) / 8;
   if (hasDeref())
     return llvm::MemoryLocation::UnknownSize;
-  if (auto Ty = Var->getType().resolve()) {
+  if (auto Ty = stripDIType(Var->getType()).resolve()) {
     // There is no dereference and size of type is known, so try to determine
-    // size. We should check that last offset does not lead to out of range
+    // size. We should check that the last offset does not lead to out of range
     // memory access.
     SmallVector<uint64_t, 1> Offsets;
     SmallBitVector SignMask;
