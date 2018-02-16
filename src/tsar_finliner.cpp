@@ -478,12 +478,12 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto& TIs : mTIs) {
     for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
       if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
-        decls[TIs.first].insert(ND->getName());
+        decls[TIs.first].insert(ND->getName().str());
       }
     }
     for (auto& decl : TIs.first->decls()) {
       if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
-        decls[TIs.first].insert(ND->getName());
+        decls[TIs.first].insert(ND->getName().str());
       }
     }
   }
@@ -553,10 +553,15 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // logic: just collect all global identifiers for context
   // even if we have same identifiers locally, they will hide global ones
   // these global declarations become unused
+
+  // TODO: for all named decls - get dependencies of underlying types/decls
+  // this should be moved to method which by set of local identifiers returns
+  // _possibly_ referenced global decls
   std::set<std::string> globalIdentifiers;
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
-    std::vector<std::string> tokens = tokenize(getSourceText(getRange(D)), mIdentifierPattern);
-    globalIdentifiers.insert(std::begin(tokens), std::end(tokens));
+    if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
+      globalIdentifiers.insert(ND->getName().str());
+    }
   }
   for (auto T : mTs) {
     std::set<std::string>& identifiers = mIdentifiers[T.first];
@@ -572,11 +577,61 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       tokens = tokenize(clang::QualType(expr->getType().getTypePtrOrNull(), 0).getAsString(), mIdentifierPattern);
       identifiers.insert(std::begin(tokens), std::end(tokens));
     }
+    // intersect local references with global symbols
     std::set<std::string> extIdentifiers;
     std::set_intersection(std::begin(identifiers), std::end(identifiers),
       std::begin(globalIdentifiers), std::end(globalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
+    for (auto& i : identifiers) {
+      std::set<const clang::NamedDecl*> found;
+      for (auto D : Context.getTranslationUnitDecl()->decls()) {
+        if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
+          if (const clang::EnumDecl* ED = clang::dyn_cast<clang::EnumDecl>(ND)) {
+            for (auto D : ED->decls()) {
+              const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D);
+              if (ND->getName().str() == i) {
+                found.insert(ND);
+              }
+            }
+          }
+          if (ND->getName().str() == i) {
+            found.insert(ND);
+          }
+        }
+      }
+      assert(found.size() != 0 && "No corresponding global identifier found");
+      /*for (auto GD : found) {
+        if (clang::isa<clang::EnumDecl>(GD)) {
+          llvm::errs() << getSourceText(getRange(GD)) << ";" << '\n';
+        } else if (const clang::RecordDecl* RD = clang::dyn_cast<clang::RecordDecl>(GD)) {
+          if (RD->getTypeForDecl()->isStructureType()) {
+            llvm::errs() << "struct " << GD->getName().str() << ";" << '\n';
+          } else if (RD->getTypeForDecl()->isUnionType()) {
+            llvm::errs() << "union " << GD->getName().str() << ";" << '\n';
+          } else {
+            assert(false && "Unknown RecordDecl in C program");
+          }
+        } else if (const clang::TypedefDecl* TD = clang::dyn_cast<clang::TypedefDecl>(GD)) {
+          llvm::errs() << getSourceText(getRange(TD)) << ";" << '\n';
+        } else if (const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(GD)) {
+          if (FD->hasBody()) {
+            std::string func(getSourceText(getRange(FD)));
+            std::string body(getSourceText(getRange(FD->getBody())));
+            size_t pos = func.find(body);
+            if (pos != std::string::npos) {
+              llvm::errs() << func.substr(0, pos) << ";" << '\n';
+            } else {
+              llvm::errs() << func << ";" << '\n';
+            }
+          } else {
+            llvm::errs() << getSourceText(getRange(FD)) << ";" << '\n';
+          }
+        } else if (const clang::VarDecl* VD = clang::dyn_cast<clang::VarDecl>(GD)) {
+          llvm::errs() << getSourceText(getRange(VD)) << ";" << '\n';
+        }
+      }*/
+    }
   }
   // info
   [&]() {
