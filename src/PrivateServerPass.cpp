@@ -115,13 +115,24 @@ JSON_OBJECT_PAIR_3(LoopTraits,
   LoopTraits & operator=(LoopTraits &&) = default;
 JSON_OBJECT_END(LoopTraits)
 
+enum class LoopType : short {
+  First = 0,
+  For = First,
+  While,
+  DoWhile,
+  Implicit,
+  Invalid,
+  Number = Invalid
+};
+
 JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_5(MainLoopInfo,
+JSON_OBJECT_PAIR_6(MainLoopInfo,
   ID, unsigned,
   StartLocation, Location,
   EndLocation, Location,
   Traits, LoopTraits,
-  Level, unsigned)
+  Level, unsigned,
+  Type, LoopType)
 
   MainLoopInfo() = default;
   ~MainLoopInfo() = default;
@@ -183,6 +194,39 @@ JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
+
+namespace json {
+/// Specialization of JSON serialization traits for tsar::msg::LoopType type.
+template<> struct Traits<tsar::msg::LoopType> {
+  static bool parse(tsar::msg::LoopType &Dest, json::Lexer &Lex) noexcept {
+    try {
+      auto Value = Lex.discardQuote();
+      auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
+      Dest = llvm::StringSwitch<tsar::msg::LoopType>(Lex.json())
+        .Case("For", tsar::msg::LoopType::For)
+        .Case("While", tsar::msg::LoopType::While)
+        .Case("DoWhile", tsar::msg::LoopType::DoWhile)
+        .Case("Implicit", tsar::msg::LoopType::Implicit)
+        .Default(tsar::msg::LoopType::Invalid);
+    }
+    catch (...) {
+      return false;
+    }
+    return true;
+  }
+  static void unparse(String &JSON, tsar::msg::LoopType Obj) {
+    JSON += '"';
+    switch (Obj) {
+      case tsar::msg::LoopType::For: JSON += "For"; break;
+      case tsar::msg::LoopType::While: JSON += "While"; break;
+      case tsar::msg::LoopType::DoWhile: JSON += "DoWhile"; break;
+      case tsar::msg::LoopType::Implicit: JSON += "Implicit"; break;
+      default: JSON += "Invalid"; break;
+    }
+    JSON += '"';
+  }
+};
+}
 
 using ServerPrivateProvider = FunctionPassProvider<
   BasicAAWrapperPass,
@@ -301,6 +345,18 @@ msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
   auto LocEnd = Ptr->getLocEnd();
   msg::MainLoopInfo Loop;
   Loop[msg::MainLoopInfo::ID] = LocStart.getRawEncoding();
+  if (isa<clang::ForStmt>(Ptr))
+    Loop[msg::MainLoopInfo::Type] = msg::LoopType::For;
+  else if (isa<clang::DoStmt>(Ptr))
+    Loop[msg::MainLoopInfo::Type] = msg::LoopType::DoWhile;
+  else if (isa<clang::WhileStmt>(Ptr))
+    Loop[msg::MainLoopInfo::Type] = msg::LoopType::While;
+  else if (isa<clang::LabelStmt>(Ptr))
+    Loop[msg::MainLoopInfo::Type] = msg::LoopType::Implicit;
+  else
+    Loop[msg::MainLoopInfo::Type] = msg::LoopType::Invalid;
+  assert(Loop[msg::MainLoopInfo::Type] != msg::LoopType::Invalid &&
+    "Unknown loop type");
   Loop[msg::MainLoopInfo::StartLocation][msg::Location::Line] =
     SrcMgr.getExpansionLineNumber(LocStart);
   Loop[msg::MainLoopInfo::StartLocation][msg::Location::Column] =
