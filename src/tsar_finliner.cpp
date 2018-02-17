@@ -33,6 +33,7 @@
 
 
 // TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
+// TODO(jury.zykov@yandex.ru): inline only user-defined functions
 // TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies
 // TODO(jury.zykov@yandex.ru): simple API for inlining
 
@@ -138,18 +139,18 @@ bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
     auto& Provider = getAnalysis<FunctionInlinerProvider>(F);
   }*/
   TfmCtx->release(getFilenameAdjuster());
-  clang::Rewriter Rewrite(SrcMgr, clang::LangOptions());
-  llvm::SmallVector<char, 128> cwd;
-  llvm::sys::fs::current_path(cwd);
-  std::vector<std::string> sources;
+  // clang::tooling can not apply replacements over rewritten sources,
+  // only over original non-modified sources
+  // dump modifications and reload files to apply stylization
+  clang::Rewriter Rewrite(SrcMgr, Rewriter.getLangOpts());
   for (auto I = Rewriter.buffer_begin(), E = Rewriter.buffer_end();
     I != E; ++I) {
     const clang::FileEntry* Entry = SrcMgr.getFileEntryForID(I->first);
     std::string Name = getFilenameAdjuster()(Entry->getName());
-    clang::FileID FID = SrcMgr.createFileID(SrcMgr.getFileManager().getFile(Name),
+    clang::FileID FID = SrcMgr.createFileID(
+      SrcMgr.getFileManager().getFile(Name),
       clang::SourceLocation(), clang::SrcMgr::C_User);
     reformat(Rewrite, FID);
-    llvm::errs() << Name << ':' << " ready for rewriting" << '\n';
   }
   if (Rewrite.overwriteChangedFiles() == false) {
     llvm::errs() << "All changes were successfully saved" << '\n';
@@ -176,29 +177,25 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
     return true;
   }
   mCurrentFD = FD;
-  return true;
-}
-
-bool FInliner::VisitForStmt(clang::ForStmt* FS) {
-  mFSs.push_back(FS);
   // build CFG for function which _possibly_ contains calls of functions
   // which can be inlined
   std::unique_ptr<clang::CFG> CFG = clang::CFG().buildCFG(
-    nullptr, FS, &mContext, clang::CFG::BuildOptions());
+    nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
   assert(CFG.get() != nullptr && ("CFG construction failed for "
     + mCurrentFD->getName()).str().data());
+  auto& TIs = mTIs[mCurrentFD];
   for (auto B : *CFG) {
     for (auto I1 = B->begin(); I1 != B->end(); ++I1) {
       if (llvm::Optional<clang::CFGStmt> CS = I1->getAs<clang::CFGStmt>()) {
         const clang::Stmt* S = CS->getStmt();
-        if (llvm::isa<clang::CallExpr>(S) == true) {
-          const clang::CallExpr* CE = llvm::dyn_cast<clang::CallExpr>(S);
+        if (const clang::CallExpr* CE = clang::dyn_cast<clang::CallExpr>(S)) {
           const clang::FunctionDecl* definition = nullptr;
           CE->getDirectCallee()->hasBody(definition);
           if (definition == nullptr) {
             continue;
           }
           mTs[definition].setFuncDecl(definition);
+          // TODO: generalize code below if possible + refactor
           const clang::Stmt* P = S;
           for (auto I2 = I1 + 1; I2 != B->end(); ++I2) {
             if (llvm::Optional<clang::CFGStmt> CS
@@ -229,6 +226,24 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
               break;
             }
           }
+          // all sections of for-loop are placed in different blocks
+          // initial section is referenced by stmt in successor blocks
+          for (auto& Succ : B->succs()) {
+            const clang::Stmt* S = Succ->getTerminator();
+            if (S != nullptr) {
+              clang::SourceLocation beginS
+                = getLoc(S->getSourceRange().getBegin());
+              clang::SourceLocation endS
+                = getLoc(S->getSourceRange().getEnd());
+              clang::SourceLocation beginP
+                = getLoc(P->getSourceRange().getBegin());
+              clang::SourceLocation endP
+                = getLoc(P->getSourceRange().getEnd());
+              if (beginS <= beginP && endP <= endS) {
+                P = S;
+              }
+            }
+          }
           // don't replace function calls in condition expressions of loops
           S = B->getTerminator();
           if (S != nullptr) {
@@ -255,9 +270,8 @@ bool FInliner::VisitForStmt(clang::ForStmt* FS) {
             continue;
           }
           TemplateInstantiation TI = { mCurrentFD, P, CE, nullptr };
-          if (std::find(std::begin(mTIs[mCurrentFD]),
-            std::end(mTIs[mCurrentFD]), TI) == std::end(mTIs[mCurrentFD])) {
-            mTIs[mCurrentFD].push_back(TI);
+          if (std::find(std::begin(TIs), std::end(TIs), TI) == std::end(TIs)) {
+            TIs.push_back(TI);
           }
         }
       }
@@ -274,9 +288,9 @@ bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
 bool FInliner::VisitExpr(clang::Expr* E) {
   mExprs[mCurrentFD].insert(E);
   // parameter reference
-  if (clang::DeclRefExpr* DRE = llvm::dyn_cast<clang::DeclRefExpr>(E)) {
-    if (llvm::isa<clang::ParmVarDecl>(DRE->getDecl()) == true) {
-      mTs[mCurrentFD].addParmRef(reinterpret_cast<clang::ParmVarDecl*>(DRE->getDecl()), DRE);
+  if (clang::DeclRefExpr* DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
+    if (clang::ParmVarDecl* PVD = clang::dyn_cast<clang::ParmVarDecl>(DRE->getDecl())) {
+      mTs[mCurrentFD].addParmRef(PVD, DRE);
     }
   }
   return true;
@@ -302,15 +316,23 @@ std::vector<std::string> FInliner::construct(
     return join(tokenize(s, pattern), " ");
   });
   tokens.push_back(identifier);
+  // multiple positions can be found in cases like 'unsigned' and 'unsigned int'
+  // which mean same type; since it's part of declaration-specifiers in grammar, it is
+  // guaranteed to be before declared identifier, just choose far position (meaning
+  // choosing longest type string)
+  // optimization: match in reverse order until success
   std::vector<int> counts(tokens.size(), 0);
   swap(llvm::errs(), llvm::nulls());
-  for (int i = tokens.size() - 1; i >= 0; --i) {
+  int i = 0;
+  for (i = tokens.size() - 1; i >= 0; --i) {
     varDeclHandler.initCount();
     std::unique_ptr<clang::ASTUnit> ASTUnit
       = clang::tooling::buildASTFromCode(context + join(tokens, " ") + ";");
     assert(ASTUnit.get() != nullptr && "AST construction failed");
     MatchFinder.matchAST(ASTUnit->getASTContext());
     counts[i] = varDeclHandler.getCount();
+    if (counts[i])
+      break;
     std::swap(tokens[i], tokens[std::max(i - 1, 0)]);
   }
   swap(llvm::errs(), llvm::nulls());
@@ -318,17 +340,6 @@ std::vector<std::string> FInliner::construct(
     [](int arg) -> bool {
     return arg != 0;
   }) != std::end(counts) && "At least one valid position must be found");
-  int max = *std::max_element(std::begin(counts), std::end(counts));
-  assert(std::count_if(std::begin(counts), std::end(counts),
-    [&](int arg) {
-    return arg == max;
-  }) == 1 && "Multiple equivalent variants are found");
-  int position = std::find_if(std::begin(counts), std::end(counts),
-    [&](int arg) -> bool {
-    return arg == max;
-  }) - std::begin(counts);
-  tokens.erase(std::begin(tokens));
-  tokens.insert(std::begin(tokens) + position, identifier);
   return tokens;
 }
 
@@ -461,6 +472,68 @@ std::pair<std::string, std::string> FInliner::compile(
   return {text, identifier};
 }
 
+std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) {
+  std::set<std::string> identifiers;
+  if (const clang::EnumDecl* ED = clang::dyn_cast<clang::EnumDecl>(D)) {
+    identifiers = getIdentifiers(ED);
+  } else if (const clang::RecordDecl* RD = clang::dyn_cast<clang::RecordDecl>(D)) {
+    identifiers = getIdentifiers(RD);
+  } else if (const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(D)) {
+    identifiers = getIdentifiers(FD);
+  } else if (const clang::TypedefDecl* TD = clang::dyn_cast<clang::TypedefDecl>(D)) {
+    identifiers = getIdentifiers(TD);
+  } else if (const clang::VarDecl* VD = clang::dyn_cast<clang::VarDecl>(D)) {
+    identifiers = getIdentifiers(VD);
+  }
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::EnumDecl* ED) {
+  std::set<std::string> identifiers;
+  identifiers.insert(ED->getName().str());
+  for (auto D : ED->decls()) {
+    std::vector<std::string> tokens = tokenize(getSourceText(getRange(D)), mIdentifierPattern);
+    identifiers.insert(std::begin(tokens), std::end(tokens));
+  }
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::RecordDecl* RD) {
+  std::set<std::string> identifiers;
+  identifiers.insert(RD->getName().str());
+  for (auto D : RD->decls()) {
+    std::set<std::string> _identifiers = getIdentifiers(D);
+    identifiers.insert(std::begin(_identifiers), std::end(_identifiers));
+  }
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::FunctionDecl* FD) {
+  std::set<std::string> identifiers;
+  identifiers.insert(FD->getName().str());
+  for (auto D : FD->decls()) {
+    std::set<std::string> _identifiers = getIdentifiers(D);
+    identifiers.insert(std::begin(_identifiers), std::end(_identifiers));
+  }
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::TypedefDecl* TD) {
+  std::set<std::string> identifiers;
+  identifiers.insert(TD->getName().str());
+  std::vector<std::string> tokens = tokenize(TD->getUnderlyingType().getAsString(), mIdentifierPattern);
+  identifiers.insert(std::begin(tokens), std::end(tokens));
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::VarDecl* VD) {
+  std::set<std::string> identifiers;
+  identifiers.insert(VD->getName().str());
+  std::vector<std::string> tokens = tokenize(VD->getType().getAsString(), mIdentifierPattern);
+  identifiers.insert(std::begin(tokens), std::end(tokens));
+  return identifiers;
+}
+
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
   // associate instantiations with templates
@@ -559,22 +632,25 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // _possibly_ referenced global decls
   std::set<std::string> globalIdentifiers;
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
-    if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
-      globalIdentifiers.insert(ND->getName().str());
+    std::set<std::string> identifiers = getIdentifiers(D);
+    globalIdentifiers.insert(std::begin(identifiers), std::end(identifiers));
+  }
+  for (auto it = std::begin(globalIdentifiers); it != std::end(globalIdentifiers);) {
+    if (std::find(std::begin(mKeywords), std::end(mKeywords), *it) != std::end(mKeywords)) {
+      it = globalIdentifiers.erase(it);
+    } else {
+      ++it;
     }
   }
+  llvm::errs() << "global: " << join(globalIdentifiers, " ") << '\n';
   for (auto T : mTs) {
     std::set<std::string>& identifiers = mIdentifiers[T.first];
-    std::accumulate(T.first->decls_begin(), T.first->decls_end(), identifiers,
-      [&](std::set<std::string>& identifiers, const clang::Decl* D) -> std::set<std::string>& {
-      std::vector<std::string> tokens = tokenize(getSourceText(getRange(D)), mIdentifierPattern);
-      identifiers.insert(std::begin(tokens), std::end(tokens));
-      return identifiers;
-    });
+    auto _identifiers = getIdentifiers(T.first);
+    identifiers.insert(std::begin(_identifiers), std::end(_identifiers));
     for (auto expr : mExprs[T.first]) {
       std::vector<std::string> tokens = tokenize(getSourceText(getRange(expr)), mIdentifierPattern);
       identifiers.insert(std::begin(tokens), std::end(tokens));
-      tokens = tokenize(clang::QualType(expr->getType().getTypePtrOrNull(), 0).getAsString(), mIdentifierPattern);
+      tokens = tokenize(expr->getType().getAsString(), mIdentifierPattern);
       identifiers.insert(std::begin(tokens), std::end(tokens));
     }
     // intersect local references with global symbols
@@ -583,19 +659,13 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::begin(globalIdentifiers), std::end(globalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
+    llvm::errs() << T.first->getName().str() << ": external identifiers: " << join(identifiers, " ") << '\n';
     for (auto& i : identifiers) {
       std::set<const clang::NamedDecl*> found;
       for (auto D : Context.getTranslationUnitDecl()->decls()) {
         if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
-          if (const clang::EnumDecl* ED = clang::dyn_cast<clang::EnumDecl>(ND)) {
-            for (auto D : ED->decls()) {
-              const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D);
-              if (ND->getName().str() == i) {
-                found.insert(ND);
-              }
-            }
-          }
-          if (ND->getName().str() == i) {
+          std::set<std::string> identifiers = getIdentifiers(D);
+          if (identifiers.find(i) != std::end(identifiers)) {
             found.insert(ND);
           }
         }
@@ -654,9 +724,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     for (auto& T : mTs) {
       llvm::errs() << ' ' << '"' << T.first->getName() << '"' << '\n';
     }
-    llvm::errs() << '\n';
-    llvm::errs() << "Unused templates (removed) ("
-      << callable.size() << ')' << '\n';
     llvm::errs() << '\n';
     llvm::errs() << "Disabled templates ("
       << std::count_if(std::begin(mTs), std::end(mTs),

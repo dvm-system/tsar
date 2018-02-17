@@ -162,8 +162,6 @@ public:
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
-  bool VisitForStmt(clang::ForStmt* FS);
-
   bool VisitReturnStmt(clang::ReturnStmt* RS);
 
   bool VisitExpr(clang::Expr* E);
@@ -180,6 +178,7 @@ private:
   /// in \p type.
   /// \returns vector of tokens which can be transformed to text string for
   /// insertion into source code
+  /// SLOW!
   std::vector<std::string> construct(
     const std::string& type, const std::string& identifier,
     const std::string& context, std::map<std::string, std::string>& replacements);
@@ -193,6 +192,16 @@ private:
     const ::detail::TemplateInstantiation& TI,
     const std::vector<std::string>& args,
     std::set<std::string>& decls);
+
+  /// mutually recursive functions for getting identifiers from arbitrary nested declarations
+  /// TODO: is it possible to get different declaration type in C99 rather than listed below?
+  /// mb default behaviour like simple tokenization for such cases?
+  std::set<std::string> getIdentifiers(const clang::Decl* D);
+  std::set<std::string> getIdentifiers(const clang::EnumDecl* ED);
+  std::set<std::string> getIdentifiers(const clang::RecordDecl* RD);
+  std::set<std::string> getIdentifiers(const clang::FunctionDecl* FD);
+  std::set<std::string> getIdentifiers(const clang::TypedefDecl* TD);
+  std::set<std::string> getIdentifiers(const clang::VarDecl* VD);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
@@ -234,6 +243,9 @@ private:
     void run(const clang::ast_matchers::MatchFinder::MatchResult& MatchResult) {
       const clang::VarDecl* VD
         = MatchResult.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+      if (!VD) {
+        return;
+      }
       if (VD->getName() == identifier
         && processor(VD->getType().getAsString()) == type) {
         ++count;
