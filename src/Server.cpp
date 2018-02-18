@@ -47,6 +47,7 @@
 #include <llvm/Pass.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <map>
 #include <vector>
 
@@ -113,6 +114,7 @@ public:
       Passes.add(TEP);
     }
     Passes.add(createUnreachableBlockEliminationPass());
+    Passes.add(createPostOrderFunctionAttrsLegacyPass());
     Passes.add(createMemoryMatcherPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());

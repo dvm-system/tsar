@@ -40,6 +40,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/StringSwitch.h>
+#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/CodeGen/Passes.h>
@@ -157,11 +158,26 @@ JSON_OBJECT_ROOT_PAIR_2(LoopTree,
   LoopTree & operator=(LoopTree &&) = default;
 JSON_OBJECT_END(LoopTree)
 
+JSON_OBJECT_BEGIN(FunctionTraits)
+JSON_OBJECT_PAIR(FunctionTraits,
+  Readonly, Analysis)
+
+  FunctionTraits() :
+    JSON_INIT(FunctionTraits, Analysis::No) {}
+  ~FunctionTraits() = default;
+
+  FunctionTraits(const FunctionTraits &) = default;
+  FunctionTraits & operator=(const FunctionTraits &) = default;
+  FunctionTraits(FunctionTraits &&) = default;
+  FunctionTraits & operator=(FunctionTraits &&) = default;
+JSON_OBJECT_END(FunctionTraits)
+
 JSON_OBJECT_BEGIN(MainFuncInfo)
-JSON_OBJECT_PAIR_3(MainFuncInfo,
+JSON_OBJECT_PAIR_4(MainFuncInfo,
   ID, unsigned,
   Name, std::string,
-  Loops, std::vector<MainLoopInfo>)
+  Loops, std::vector<MainLoopInfo>,
+  Traits, FunctionTraits)
 
   MainFuncInfo() = default;
   ~MainFuncInfo() = default;
@@ -192,6 +208,7 @@ JSON_DEFAULT_TRAITS(tsar::msg::, Location)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
+JSON_DEFAULT_TRAITS(tsar::msg::, FunctionTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
 
@@ -234,7 +251,8 @@ using ServerPrivateProvider = FunctionPassProvider<
   TransformationEnginePass,
   LoopMatcherPass,
   DFRegionInfoPass,
-  ClangPerfectLoopPass>;
+  ClangPerfectLoopPass,
+  AAResultsWrapperPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
@@ -243,6 +261,7 @@ INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
@@ -477,18 +496,22 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
   return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
 }
 
-std::string answerFunctionList(llvm::Module &M,
-    tsar::TransformationContext *TfmCtx) {
+std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
+    llvm::Module &M, tsar::TransformationContext *TfmCtx) {
   msg::FunctionList FuncLst;
   typedef msg::MainFuncInfo FuncInfo;
   for (Function &F : M) {
     auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
+    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+    auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
     msg::MainFuncInfo Func;
     Func[FuncInfo::Name] = F.getName();
     Func[FuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
+    if (AA.onlyReadsMemory(&F))
+      Func[FuncInfo::Traits][msg::FunctionTraits::Readonly] = msg::Analysis::Yes;
     FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
@@ -526,7 +549,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     if (Obj->is<msg::LoopTree>())
       return answerLoopTree(this, M, TfmCtx, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())
-      return answerFunctionList(M, TfmCtx);
+      return answerFunctionList(this, M, TfmCtx);
     llvm_unreachable("Unknown request to server!");
   }));
   return false;
