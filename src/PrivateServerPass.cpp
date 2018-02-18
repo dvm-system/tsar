@@ -101,13 +101,12 @@ JSON_OBJECT_PAIR_4(Location,
 JSON_OBJECT_END(Location)
 
 JSON_OBJECT_BEGIN(LoopTraits)
-JSON_OBJECT_PAIR_3(LoopTraits,
+JSON_OBJECT_PAIR_2(LoopTraits,
   IsAnalyzed, Analysis,
-  Perfect, Analysis,
-  Exit, Analysis)
+  Perfect, Analysis)
 
   LoopTraits() :
-    JSON_INIT(LoopTraits, Analysis::No, Analysis::No, Analysis::No) {}
+    JSON_INIT(LoopTraits, Analysis::No, Analysis::No) {}
   ~LoopTraits() = default;
 
   LoopTraits(const LoopTraits &) = default;
@@ -127,11 +126,12 @@ enum class LoopType : short {
 };
 
 JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_6(MainLoopInfo,
+JSON_OBJECT_PAIR_7(MainLoopInfo,
   ID, unsigned,
   StartLocation, Location,
   EndLocation, Location,
   Traits, LoopTraits,
+  Exit, unsigned,
   Level, unsigned,
   Type, LoopType)
 
@@ -364,6 +364,7 @@ msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
   auto LocEnd = Ptr->getLocEnd();
   msg::MainLoopInfo Loop;
   Loop[msg::MainLoopInfo::ID] = LocStart.getRawEncoding();
+  Loop[msg::MainLoopInfo::Exit] = 0;
   if (isa<clang::ForStmt>(Ptr))
     Loop[msg::MainLoopInfo::Type] = msg::LoopType::For;
   else if (isa<clang::DoStmt>(Ptr))
@@ -420,11 +421,9 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
       for (auto BB : Match.get<IR>()->blocks())
-        for (auto &Instr : BB->getInstList()) {
-          ImmutableCallSite CS(&Instr);
-          if (CS)
-            LT[msg::LoopTraits::Exit] = msg::Analysis::Yes;
-        }
+        if (Match.get<IR>()->isLoopExiting(BB))
+          Loop[msg::MainLoopInfo::Exit]++;
+      Loop[msg::MainLoopInfo::Exit]--;
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher)
