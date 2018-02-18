@@ -159,11 +159,12 @@ JSON_OBJECT_ROOT_PAIR_2(LoopTree,
 JSON_OBJECT_END(LoopTree)
 
 JSON_OBJECT_BEGIN(FunctionTraits)
-JSON_OBJECT_PAIR(FunctionTraits,
-  Readonly, Analysis)
+JSON_OBJECT_PAIR_2(FunctionTraits,
+  Readonly, Analysis,
+  NoReturn, Analysis)
 
   FunctionTraits() :
-    JSON_INIT(FunctionTraits, Analysis::No) {}
+    JSON_INIT(FunctionTraits, Analysis::No, Analysis::No) {}
   ~FunctionTraits() = default;
 
   FunctionTraits(const FunctionTraits &) = default;
@@ -509,8 +510,10 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     msg::MainFuncInfo Func;
     Func[FuncInfo::Name] = F.getName();
     Func[FuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
-    if (AA.onlyReadsMemory(&F))
+    if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
       Func[FuncInfo::Traits][msg::FunctionTraits::Readonly] = msg::Analysis::Yes;
+    if (F.hasFnAttribute(Attribute::NoReturn))
+      Func[FuncInfo::Traits][msg::FunctionTraits::NoReturn] = msg::Analysis::Yes;
     FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
