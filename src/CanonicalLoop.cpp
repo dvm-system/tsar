@@ -167,48 +167,42 @@ private:
     return false;
   }
 
+  // Checks if Loc is Def or MayDef in L
   bool CheckMemLoc(MemoryLocation &Loc, Loop *L) {
-    auto LBE = L->block_end();
-    for (auto I = L->block_begin(); I != LBE; ++I) {
-      auto DFN = mRgnInfo->getRegionFor(*I);
-      assert(DFN && "DFNode must not be null!");
-      auto Match = mDefInfo->find(DFN);
-      assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
-          Match->get<DefUseSet>() && "Data-flow value must be specified!");
-      auto &DUS = Match->get<DefUseSet>();
-      if ((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)))
-        return false;
-    }
-    return true;
+    auto DFN = mRgnInfo->getRegionFor(L);
+    assert(DFN && "DFNode must not be null!");
+    auto Match = mDefInfo->find(DFN);
+    assert(Match != mDefInfo->end() && Match->get<DefUseSet>() &&
+        "Data-flow value must be specified!");
+    auto &DUS = Match->get<DefUseSet>();
+    return !((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)));
   }
 
   /// Finds last instruction of block w/ inductive variable
   Instruction* FindLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
     Instruction *LastInstruction = nullptr;
-    auto &AT = mAliasTree;
-    auto &STR = mSTR;
     auto I = BB->rbegin();
     auto InstrEnd = BB->rend();
     while ((I != InstrEnd) && (!(LastInstruction))) {
       bool RequiredInstruction = false;
       for_each_memory(*I, mTLI,
-        [&AT, &STR, &ANI, &RequiredInstruction] (Instruction &I,
-            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EM = AT.find(Loc);
+        [this, &ANI, &RequiredInstruction] (Instruction &I,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
+          auto EM = mAliasTree.find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(AT);
+          auto AN = EM->getAliasNode(mAliasTree);
           assert(AN && "Alias node must not be null!");
-          if ((STR.isEqual(ANI, AN)) && (W != AccessInfo::No)) {
+          if (!mSTR.isUnreachable(ANI, AN) && (W != AccessInfo::No)) {
             RequiredInstruction = true;
           }
         },
-        [&AT, &STR, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
-            AccessInfo) {
-          auto AN = AT.findUnknown(I);
+        [this, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
+            AccessInfo W) {
+          auto AN = mAliasTree.findUnknown(I);
           if (!AN)
             return;
-          if (STR.isEqual(ANI, AN)) {
-            // is it possible and should i do smth in case it is?
+          if (!mSTR.isUnreachable(ANI, AN) && (W != AccessInfo::No)) {
+            RequiredInstruction = true;
           }
         }
       );
@@ -220,23 +214,19 @@ private:
   }
 
   /// Checks if operands of inductive variable are static
-  bool CheckMemLocsFromInstr(Instruction *I, AliasEstimateNode *ANI, Loop *L) {
-    auto &AT = mAliasTree;
-    auto &STR = mSTR;
+  bool CheckMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
     for_each_memory(*I, mTLI,
-      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+      [this, &EMI, &L, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         printLocationSource(dbgs(), Loc);
-        auto EM = AT.find(Loc);
+        auto EM = mAliasTree.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
-        auto AN = EM->getAliasNode(AT);
-        assert(AN && "Alias node must not be null!");
-        if (STR.isEqual(ANI, AN))
+        if (EM == EMI)
           return;
         Result &= CheckMemLoc(Loc, L);
       },
-      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+      [this, &EMI, &L, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
         // don't know what to do here
       }
@@ -244,31 +234,26 @@ private:
     if (!Result)
       return false;
     auto OpE = I->op_end();
-    // guess i should keep instructions which have been processed already
     for (auto J = I->op_begin(); J != OpE; ++J)
       if (auto Instr = llvm::dyn_cast<Instruction>(*J))
-        if (!CheckMemLocsFromInstr(Instr, ANI, L))
+        if (!CheckMemLocsFromInstr(Instr, EMI, L))
           return false;
     return true;
   }
   
-  bool CheckMemLocsFromBlock(BasicBlock *BB, AliasEstimateNode *ANI, Loop *L) {
-    auto &AT = mAliasTree;
-    auto &STR = mSTR;
+  bool CheckMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
     for_each_memory(*BB, mTLI,
-      [this, &AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+      [this, &EMI, &L, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         printLocationSource(dbgs(), Loc);
-        auto EM = AT.find(Loc);
+        auto EM = mAliasTree.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
-        auto AN = EM->getAliasNode(AT);
-        assert(AN && "Alias node must not be null!");
-        if (STR.isEqual(ANI, AN))
+        if (EM == EMI)
           return;
         Result &= CheckMemLoc(Loc, L);
       },
-      [&AT, &STR, &ANI, &L, &Result] (Instruction &Instr,
+      [this, &EMI, &L, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
         // don't know what to do here
       }
@@ -276,19 +261,19 @@ private:
     return Result;
   }
   
+  // ToDo: delete this after the finish of another checks
   bool CheckFuncCallsFromBlock(BasicBlock *BB) {
     BB->dump();
     auto &AA = mAliasTree.getAliasAnalysis();
-    auto InstEnd = BB->end();
-    for (auto Inst = BB->begin(); Inst != InstEnd; ++Inst) {
-      if (llvm::isa<CallInst>(*Inst)) {
-        CallInst &CI = llvm::cast<CallInst>(*Inst);
+    for (auto &Inst : *BB) {
+      if (llvm::isa<CallInst>(Inst)) {
+        CallInst &CI = llvm::cast<CallInst>(Inst);
         llvm::ImmutableCallSite ICS(&CI);
         if (!(AA.onlyReadsMemory(ICS)))
           return false;
       }
-      if (llvm::isa<InvokeInst>(*Inst)) {
-        InvokeInst &CI = llvm::cast<InvokeInst>(*Inst);
+      if (llvm::isa<InvokeInst>(Inst)) {
+        InvokeInst &CI = llvm::cast<InvokeInst>(Inst);
         llvm::ImmutableCallSite ICS(&CI);
         if (!(AA.onlyReadsMemory(ICS)))
           return false;
@@ -304,16 +289,13 @@ private:
       return false;
     }
     auto alloca = MemMatch->get<IR>();
-    if (!((llvm::dyn_cast<llvm::PointerType>
-        (alloca->getType()))->getElementType())->isSized()) {
+    if (!(alloca->getType() && alloca->getType()->isPointerTy())) {
       return false;
     }
     llvm::MemoryLocation MemLoc(alloca, 1);
-    auto &AT = mAliasTree;
-    auto &STR = mSTR;
-    auto EMI = AT.find(MemLoc);
+    auto EMI = mAliasTree.find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
-    auto ANI = EMI->getAliasNode(AT);
+    auto ANI = EMI->getAliasNode(mAliasTree);
     assert(ANI && "Alias node must not be null!");
     tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region);
     assert(DFFor && "DFNode must not be null!");
@@ -333,48 +315,40 @@ private:
         continue;
       if (!(DFFor->getLoop()->isLoopLatch(DFB->getBlock())))
         return false;
-      int Unreachable = 1;
+      int NumOfWrites = 0;
       for_each_memory(*(DFB->getBlock()), mTLI,
-        [&AT, &STR, &ANI, &Unreachable] (Instruction &I,
-            MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EM = AT.find(Loc);
+        [this, &ANI, &NumOfWrites] (Instruction &I,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
+          auto EM = mAliasTree.find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(AT);
+          auto AN = EM->getAliasNode(mAliasTree);
           assert(AN && "Alias node must not be null!");
-          if (Unreachable)
-            if (STR.isEqual(ANI, AN)) {
-              Unreachable = (Unreachable + 1) % 4;
-            } else if (!(STR.isUnreachable(ANI, AN))) {
-              Unreachable = 0;
-            }
+          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+            ++NumOfWrites;
         },
-        [&AT, &STR, &ANI, &Unreachable] (Instruction &I, AccessInfo,
-            AccessInfo) {
-          auto AN = AT.findUnknown(I);
+        [this, &ANI, &NumOfWrites] (Instruction &I, AccessInfo,
+            AccessInfo W) {
+          auto AN = mAliasTree.findUnknown(I);
           if (!AN)
             return;
-          if (Unreachable)
-            if (STR.isEqual(ANI, AN)) {
-              Unreachable = (Unreachable + 1) % 4;
-            } else if (!(STR.isUnreachable(ANI, AN))) {
-              Unreachable = 0;
-            }
+          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+            ++NumOfWrites;
         }
       );
-      if (!Unreachable)
+      if (NumOfWrites != 1)
         return false;
     }
     Instruction *LI = FindLastInstruction(ANI, LLoop->getLoopPreheader());
     assert(LI && "Last instruction should not be nullptr!");
-    if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
+    if (!CheckMemLocsFromInstr(LI, EMI, LLoop))
       return false;
     LI = FindLastInstruction(ANI, LLoop->getLoopLatch());
     assert(LI && "Last instruction should not be nullptr!");
-    if (!CheckMemLocsFromInstr(LI, ANI, LLoop))
+    if (!CheckMemLocsFromInstr(LI, EMI, LLoop))
       return false;
     if (!CheckFuncCallsFromBlock(LLoop->getLoopLatch()))
       return false;
-    if (!CheckMemLocsFromBlock(LLoop->getHeader(), ANI, LLoop))
+    if (!CheckMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
       return false;
     if (!CheckFuncCallsFromBlock(LLoop->getHeader()))
       return false;
