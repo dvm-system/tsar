@@ -213,22 +213,95 @@ private:
     return LastInstruction;
   }
 
-  /// Checks if operands of inductive variable are static
+  /// Checks that possible call from here does not change memory surely 
+  bool CheckFuncCallFromInstruction(Instruction &Inst) {
+    if (llvm::isa<CallInst>(Inst)) {
+      CallInst &CI = llvm::cast<CallInst>(Inst);
+      llvm::ImmutableCallSite ICS(&CI);
+      if (!(mAliasTree.getAliasAnalysis().onlyReadsMemory(ICS)))
+        return false;
+    }
+    if (llvm::isa<InvokeInst>(Inst)) {
+      InvokeInst &CI = llvm::cast<InvokeInst>(Inst);
+      llvm::ImmutableCallSite ICS(&CI);
+      if (!(mAliasTree.getAliasAnalysis().onlyReadsMemory(ICS)))
+        return false;
+    }
+    return true;
+  }
+  
+  bool CheckUnknown(AliasNode *ANI, Loop *L) {
+    for (auto BB = L->block_begin(), LEnd = L->block_end(); BB != LEnd; ++BB) {
+      bool Writes = false;
+      for_each_memory(**BB, mTLI,
+        [this, &ANI, &Writes] (Instruction &Instr,
+            MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
+          if (Writes)
+            return;
+          auto EM = mAliasTree.find(Loc);
+          assert(EM && "Estimate memory location must not be null!");
+          auto AN = EM->getAliasNode(mAliasTree);
+          assert(AN && "Alias node must not be null!");
+          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+            Writes = true;
+        },
+        [this, &ANI, &Writes] (Instruction &Instr, AccessInfo,
+            AccessInfo W) {
+          if (Writes)
+            return;
+          auto AN = mAliasTree.findUnknown(Instr);
+          if (!AN)
+            return;
+          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+            Writes = true;
+        }
+      );
+      if (Writes)
+        return false;
+    }
+    return true;
+  }
+  
+  /// Checks if operands (except inductive variable) of I are static
   bool CheckMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
+    auto LoopDFN = mRgnInfo->getRegionFor(L);
+    assert(LoopDFN && "DFNode must not be null!");
+    auto LoopMatch = mDefInfo->find(LoopDFN);
+    assert(LoopMatch != mDefInfo->end() && LoopMatch->get<ReachSet>() &&
+        LoopMatch->get<DefUseSet>() && "Data-flow value must be specified!");
+    auto &LoopDUS = LoopMatch->get<DefUseSet>();
     for_each_memory(*I, mTLI,
       [this, &EMI, &L, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-        printLocationSource(dbgs(), Loc);
+        if (!Result)
+          return;
         auto EM = mAliasTree.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         if (EM == EMI)
           return;
         Result &= CheckMemLoc(Loc, L);
       },
-      [this, &EMI, &L, &Result] (Instruction &Instr,
+      [this, &L, &LoopDUS, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
-        // don't know what to do here
+        if (!Result)
+          return;
+        if (!CheckFuncCallFromInstruction(Instr)) {
+          Result &= false;
+          return;
+        }
+        if (LoopDUS->hasExplicitUnknown(&Instr)) {
+          Result &= false;
+          return;
+        }
+        auto AN = mAliasTree.findUnknown(Instr);
+        if (!AN)
+          return;
+        for_each_alias(&mAliasTree, AN,
+            [this, &L, &Result](AliasNode *ANI) {
+              Result &= CheckUnknown(ANI, L);
+            }
+        );
       }
     );
     if (!Result)
@@ -241,45 +314,49 @@ private:
     return true;
   }
   
+  /// Checks if operands (except inductive variable) of BB are static
   bool CheckMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
+    auto LoopDFN = mRgnInfo->getRegionFor(L);
+    assert(LoopDFN && "DFNode must not be null!");
+    auto LoopMatch = mDefInfo->find(LoopDFN);
+    assert(LoopMatch != mDefInfo->end() && LoopMatch->get<ReachSet>() &&
+        LoopMatch->get<DefUseSet>() && "Data-flow value must be specified!");
+    auto &LoopDUS = LoopMatch->get<DefUseSet>();
     for_each_memory(*BB, mTLI,
       [this, &EMI, &L, &Result] (Instruction &Instr,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-        printLocationSource(dbgs(), Loc);
+        if (!Result)
+          return;
         auto EM = mAliasTree.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         if (EM == EMI)
           return;
         Result &= CheckMemLoc(Loc, L);
       },
-      [this, &EMI, &L, &Result] (Instruction &Instr,
+      [this, &L, &LoopDUS, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
-        // don't know what to do here
+        if (!Result)
+          return;
+        if (!CheckFuncCallFromInstruction(Instr)) {
+          Result &= false;
+          return;
+        }
+        if (LoopDUS->hasExplicitUnknown(&Instr)) {
+          Result &= false;
+          return;
+        }
+        auto AN = mAliasTree.findUnknown(Instr);
+        if (!AN)
+          return;
+        for_each_alias(&mAliasTree, AN,
+            [this, &L, &Result](AliasNode *ANI) {
+              Result &= CheckUnknown(ANI, L);
+            }
+        );
       }
     );
     return Result;
-  }
-  
-  // ToDo: delete this after the finish of another checks
-  bool CheckFuncCallsFromBlock(BasicBlock *BB) {
-    BB->dump();
-    auto &AA = mAliasTree.getAliasAnalysis();
-    for (auto &Inst : *BB) {
-      if (llvm::isa<CallInst>(Inst)) {
-        CallInst &CI = llvm::cast<CallInst>(Inst);
-        llvm::ImmutableCallSite ICS(&CI);
-        if (!(AA.onlyReadsMemory(ICS)))
-          return false;
-      }
-      if (llvm::isa<InvokeInst>(Inst)) {
-        InvokeInst &CI = llvm::cast<InvokeInst>(Inst);
-        llvm::ImmutableCallSite ICS(&CI);
-        if (!(AA.onlyReadsMemory(ICS)))
-          return false;
-      }
-    }
-    return true;
   }
 
   /// Checks if labeled loop is canonical
@@ -346,11 +423,7 @@ private:
     assert(LI && "Last instruction should not be nullptr!");
     if (!CheckMemLocsFromInstr(LI, EMI, LLoop))
       return false;
-    if (!CheckFuncCallsFromBlock(LLoop->getLoopLatch()))
-      return false;
     if (!CheckMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
-      return false;
-    if (!CheckFuncCallsFromBlock(LLoop->getHeader()))
       return false;
     return true;
   }
