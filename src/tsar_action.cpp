@@ -33,6 +33,7 @@
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
+#include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <memory>
 #include "tsar_action.h"
 #include "tsar_instrumentation.h"
@@ -70,6 +71,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   //}
   // In other cases 'clang' automatically deletes unreachable blocks.
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createPostOrderFunctionAttrsLegacyPass());
 #if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
   Passes.add(createBasicAliasAnalysisPass());
 #else

@@ -23,6 +23,7 @@
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
+#include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <algorithm>
 #include <limits>
 #include <set>
@@ -325,6 +326,7 @@ void TestQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     Passes.add(TEP);
   }
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createPostOrderFunctionAttrsLegacyPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createTestPrinterPass());
   Passes.add(createVerifierPass());
