@@ -33,7 +33,6 @@
 
 
 // TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
-// TODO(jury.zykov@yandex.ru): inline only user-defined functions
 // TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies
 // TODO(jury.zykov@yandex.ru): simple API for inlining
 
@@ -568,6 +567,22 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       ++it;
     }
   }
+  // disable instantiation of/in non-user-defined functions
+  for (auto it = std::begin(mTIs); it != std::end(mTIs); ++it) {
+    if (mSourceManager.getFileCharacteristic(it->first->getLocStart()) != clang::SrcMgr::C_User) {
+      for (auto& TI : it->second) {
+        TI.mTemplate = nullptr;
+      }
+      llvm::errs() << "DISABLED IN: " << it->first->getName() << '\n';
+    }
+  }
+  for (auto it = std::begin(mTs); it != std::end(mTs); ++it) {
+    if (mSourceManager.getFileCharacteristic(it->first->getLocStart())
+      != clang::SrcMgr::C_User) {
+      it->second.setFuncDecl(nullptr);
+      llvm::errs() << "DISABLED OF: " << it->first->getName() << '\n';
+    }
+  }
   // disable instantiation of variadic functions
   for (auto& pair : mTs) {
     if (pair.first->isVariadic() == true) {
@@ -581,7 +596,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     std::set<const clang::FunctionDecl*> callers = { pair.first };
     std::set<const clang::FunctionDecl*> callees;
     for (auto& TIs : pair.second) {
-      if (TIs.mTemplate->getFuncDecl() != nullptr) {
+      if (TIs.mTemplate != nullptr && TIs.mTemplate->getFuncDecl() != nullptr) {
         callees.insert(TIs.mTemplate->getFuncDecl());
       }
     }
@@ -644,6 +659,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
   llvm::errs() << "global: " << join(globalIdentifiers, " ") << '\n';
   for (auto T : mTs) {
+    if (T.second.getFuncDecl() == nullptr) {
+      continue;
+    }
     std::set<std::string>& identifiers = mIdentifiers[T.first];
     auto _identifiers = getIdentifiers(T.first);
     identifiers.insert(std::begin(_identifiers), std::end(_identifiers));
@@ -714,15 +732,19 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       llvm::errs() << ' ' << "in " << '"' << TIs.first->getName()
         << '"' << ':' << '\n';
       for (auto& TI : TIs.second) {
-        llvm::errs() << "  " << '"'
-          << getSourceText(getRange(TI.mCallExpr)) << '"' << '\n';
+        if (TI.mTemplate != nullptr) {
+          llvm::errs() << "  " << '"'
+            << getSourceText(getRange(TI.mCallExpr)) << '"' << '\n';
+        }
       }
       llvm::errs() << '\n';
     }
     llvm::errs() << '\n';
     llvm::errs() << "Total templates:" << '\n';
     for (auto& T : mTs) {
-      llvm::errs() << ' ' << '"' << T.first->getName() << '"' << '\n';
+      if (T.second.getFuncDecl() != nullptr) {
+        llvm::errs() << ' ' << '"' << T.first->getName() << '"' << '\n';
+      }
     }
     llvm::errs() << '\n';
     llvm::errs() << "Disabled templates ("
