@@ -4,7 +4,7 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp tsar_private_c.cpp
   tsar_transformation.cpp tsar_tool.cpp tsar_test.cpp
   tsar_loop_matcher.cpp tsar_memory_matcher.cpp tsar_pragma.cpp
-  DFRegionInfo.cpp DefinedMemory.cpp LiveMemory.cpp PerfectLoop.cpp
+  DFRegionInfo.cpp DefinedMemory.cpp LiveMemory.cpp tsar_inliner.cpp PerfectLoop.cpp
   ASTMergeAction.cpp EstimateMemory.cpp  AliasTreePrinter.cpp DIUnparser.cpp
   FrontendActions.cpp CanonicalLoop.cpp Intrinsics.cpp Instrumentation.cpp
   MetadataUtils.cpp tsar_finliner.cpp)
