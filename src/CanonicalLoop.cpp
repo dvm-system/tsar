@@ -72,9 +72,17 @@ public:
     // We do not want to convert header files!
     if (!FS||!Context->getSourceManager().isWrittenInMainFile(FS->getForLoc()))
       return;
+    const clang::Stmt *Init = Result.Nodes.getNodeAs
+        <clang::Stmt>("LoopInitDecl");
+    if (!Init) {
+      Init = Result.Nodes.getNodeAs<Stmt>("LoopInitAssignment");
+      assert(Init && "Init must not be null!");
+    }
     const VarDecl *InitVar = Result.Nodes.getNodeAs
         <VarDecl>("InitVarName");
     assert(InitVar && "InitVar must not be null!");
+    const clang::Stmt *Increment = Result.Nodes.getNodeAs
+        <clang::Stmt>("LoopIncrAssignment");
     const VarDecl *UnIncVar = Result.Nodes.getNodeAs
         <VarDecl>("UnIncVarName");
     const VarDecl *BinIncVar = Result.Nodes.getNodeAs
@@ -92,7 +100,7 @@ public:
     const VarDecl *FirstConditionVar = Result.Nodes.getNodeAs
         <VarDecl>("FirstConditionVarName");
     const clang::BinaryOperator *Condition = Result.Nodes.getNodeAs
-        <clang::BinaryOperator>("Condition");
+        <clang::BinaryOperator>("LoopCondition");
     assert(Condition && "Condition must not be null!");
     const VarDecl *SecondConditionVar = Result.Nodes.getNodeAs
         <VarDecl>("SecondConditionVarName");
@@ -114,10 +122,13 @@ public:
         (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
       auto Match = mLoopInfo->find<AST>(const_cast<ForStmt*>(FS));
       assert(Match != mLoopInfo->end() && "ForStmt must be specified!");
-      tsar::DFNode* Region = mRgnInfo->getRegionFor(Match->get<IR>());
-      if (checkLoop(Region, const_cast<VarDecl*>
-          (InitVar->getCanonicalDecl()))) {
-        auto PLInfo = mCanonicalLoopInfo->insert(Region);
+      tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
+      tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
+      LInfo->setStmts(Init, Increment, Condition);
+      checkLoop(Region, const_cast<VarDecl*>
+          (InitVar->getCanonicalDecl()), LInfo);
+      auto CLInfo = mCanonicalLoopInfo->insert(LInfo);
+      if (LInfo->isCanonical()) {
         ++NumCanonical;
         return;
       }
@@ -167,8 +178,8 @@ private:
     return false;
   }
 
-  // Checks if Loc is Def or MayDef in L
-  bool CheckMemLoc(MemoryLocation &Loc, Loop *L) {
+  /// Checks if Loc is Def or MayDef in L
+  bool checkMemLoc(MemoryLocation &Loc, Loop *L) {
     auto DFN = mRgnInfo->getRegionFor(L);
     assert(DFN && "DFNode must not be null!");
     auto Match = mDefInfo->find(DFN);
@@ -179,7 +190,7 @@ private:
   }
 
   /// Finds last instruction of block w/ inductive variable
-  Instruction* FindLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
+  Instruction* findLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
     Instruction *LastInstruction = nullptr;
     auto I = BB->rbegin();
     auto InstrEnd = BB->rend();
@@ -212,9 +223,21 @@ private:
     }
     return LastInstruction;
   }
+  
+  Instruction* findCondInstruction(BasicBlock *BB) {
+    Instruction *CondInstruction = nullptr;
+    auto I = BB->rbegin();
+    auto InstrEnd = BB->rend();
+    while ((I != InstrEnd) && (!(CondInstruction))) {
+      if (isa<CmpInst>(*I))
+        CondInstruction = &(*I);
+      ++I;
+    }
+    return CondInstruction;
+  }
 
   /// Checks that possible call from here does not change memory surely 
-  bool CheckFuncCallFromInstruction(Instruction &Inst) {
+  bool checkFuncCallFromInstruction(Instruction &Inst) {
     if (llvm::isa<CallInst>(Inst)) {
       CallInst &CI = llvm::cast<CallInst>(Inst);
       llvm::ImmutableCallSite ICS(&CI);
@@ -229,8 +252,9 @@ private:
     }
     return true;
   }
-  
-  bool CheckUnknown(AliasNode *ANI, Loop *L) {
+
+  /// Checks if Unknown AliasNode is static in L
+  bool checkUnknown(AliasNode *ANI, Loop *L) {
     for (auto BB = L->block_begin(), LEnd = L->block_end(); BB != LEnd; ++BB) {
       bool Writes = false;
       for_each_memory(**BB, mTLI,
@@ -263,7 +287,7 @@ private:
   }
   
   /// Checks if operands (except inductive variable) of I are static
-  bool CheckMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
+  bool checkMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
     auto LoopDFN = mRgnInfo->getRegionFor(L);
     assert(LoopDFN && "DFNode must not be null!");
@@ -280,13 +304,13 @@ private:
         assert(EM && "Estimate memory location must not be null!");
         if (EM == EMI)
           return;
-        Result &= CheckMemLoc(Loc, L);
+        Result &= checkMemLoc(Loc, L);
       },
       [this, &L, &LoopDUS, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
         if (!Result)
           return;
-        if (!CheckFuncCallFromInstruction(Instr)) {
+        if (!checkFuncCallFromInstruction(Instr)) {
           Result &= false;
           return;
         }
@@ -299,7 +323,7 @@ private:
           return;
         for_each_alias(&mAliasTree, AN,
             [this, &L, &Result](AliasNode *ANI) {
-              Result &= CheckUnknown(ANI, L);
+              Result &= checkUnknown(ANI, L);
             }
         );
       }
@@ -309,13 +333,13 @@ private:
     auto OpE = I->op_end();
     for (auto J = I->op_begin(); J != OpE; ++J)
       if (auto Instr = llvm::dyn_cast<Instruction>(*J))
-        if (!CheckMemLocsFromInstr(Instr, EMI, L))
+        if (!checkMemLocsFromInstr(Instr, EMI, L))
           return false;
     return true;
   }
   
   /// Checks if operands (except inductive variable) of BB are static
-  bool CheckMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
+  bool checkMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
     auto LoopDFN = mRgnInfo->getRegionFor(L);
     assert(LoopDFN && "DFNode must not be null!");
@@ -332,13 +356,13 @@ private:
         assert(EM && "Estimate memory location must not be null!");
         if (EM == EMI)
           return;
-        Result &= CheckMemLoc(Loc, L);
+        Result &= checkMemLoc(Loc, L);
       },
       [this, &L, &LoopDUS, &Result] (Instruction &Instr,
           AccessInfo, AccessInfo) {
         if (!Result)
           return;
-        if (!CheckFuncCallFromInstruction(Instr)) {
+        if (!checkFuncCallFromInstruction(Instr)) {
           Result &= false;
           return;
         }
@@ -351,7 +375,7 @@ private:
           return;
         for_each_alias(&mAliasTree, AN,
             [this, &L, &Result](AliasNode *ANI) {
-              Result &= CheckUnknown(ANI, L);
+              Result &= checkUnknown(ANI, L);
             }
         );
       }
@@ -360,14 +384,14 @@ private:
   }
 
   /// Checks if labeled loop is canonical
-  bool checkLoop(tsar::DFNode* Region, VarDecl *Var) {
+  void checkLoop(tsar::DFNode* Region, VarDecl *Var, tsar::LoopInfo *LInfo) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end()) {
-      return false;
+      return;
     }
     auto alloca = MemMatch->get<IR>();
     if (!(alloca->getType() && alloca->getType()->isPointerTy())) {
-      return false;
+      return;
     }
     llvm::MemoryLocation MemLoc(alloca, 1);
     auto EMI = mAliasTree.find(MemLoc);
@@ -377,6 +401,13 @@ private:
     tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region);
     assert(DFFor && "DFNode must not be null!");
     llvm::Loop *LLoop = DFFor->getLoop();
+    Instruction *Init = findLastInstruction(ANI, LLoop->getLoopPreheader());
+    assert(Init && "Init instruction should not be nullptr!");
+    Instruction *Increment = findLastInstruction(ANI, LLoop->getLoopLatch());
+    assert(Increment && "Increment instruction should not be nullptr!");
+    Instruction *Condition = findCondInstruction(LLoop->getHeader());
+    assert(Condition && "Condition instruction should not be nullptr!");
+    LInfo->setInstructions(Init, Increment, Condition);
     auto BlocksEnd = LLoop->block_end();
     for (auto I = LLoop->block_begin(); I != BlocksEnd; ++I) {
       auto DFN = mRgnInfo->getRegionFor(*I);
@@ -391,7 +422,7 @@ private:
       if (!DFB)
         continue;
       if (!(DFFor->getLoop()->isLoopLatch(DFB->getBlock())))
-        return false;
+        return;
       int NumOfWrites = 0;
       for_each_memory(*(DFB->getBlock()), mTLI,
         [this, &ANI, &NumOfWrites] (Instruction &I,
@@ -413,19 +444,15 @@ private:
         }
       );
       if (NumOfWrites != 1)
-        return false;
+        return;
     }
-    Instruction *LI = FindLastInstruction(ANI, LLoop->getLoopPreheader());
-    assert(LI && "Last instruction should not be nullptr!");
-    if (!CheckMemLocsFromInstr(LI, EMI, LLoop))
-      return false;
-    LI = FindLastInstruction(ANI, LLoop->getLoopLatch());
-    assert(LI && "Last instruction should not be nullptr!");
-    if (!CheckMemLocsFromInstr(LI, EMI, LLoop))
-      return false;
-    if (!CheckMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
-      return false;
-    return true;
+    if (!checkMemLocsFromInstr(Init, EMI, LLoop))
+      return;
+    if (!checkMemLocsFromInstr(Increment, EMI, LLoop))
+      return;
+    if (!checkMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
+      return;
+    LInfo->setCanonical();
   }
   
   DFRegionInfo *mRgnInfo;
@@ -445,12 +472,14 @@ DeclarationMatcher makeLoopMatcher() {
         hasLoopInit(eachOf(
           declStmt(hasSingleDecl(
             varDecl(hasType(isInteger()))
-            .bind("InitVarName"))),
+            .bind("InitVarName")))
+          .bind("LoopInitDecl"),
           binaryOperator(
             hasOperatorName("="),
             hasLHS(declRefExpr(to(
               varDecl(hasType(isInteger()))
-              .bind("InitVarName"))))))),
+              .bind("InitVarName")))))
+          .bind("LoopInitAssignment"))),
         hasIncrement(eachOf(
           unaryOperator(
             eachOf(
@@ -491,7 +520,8 @@ DeclarationMatcher makeLoopMatcher() {
                   hasImplicitDestinationType(isInteger()),
                   hasSourceExpression(declRefExpr(to(
                     varDecl(hasType(isInteger()))
-                    .bind("FirstAssignmentVarName"))))))).bind("BinaryIncr")))))),
+                    .bind("FirstAssignmentVarName"))))))).bind("BinaryIncr"))))
+            .bind("LoopIncrAssignment"))),
         hasCondition(binaryOperator(
           eachOf(
             hasOperatorName("<"),
@@ -509,12 +539,13 @@ DeclarationMatcher makeLoopMatcher() {
               hasImplicitDestinationType(isInteger()),
               hasSourceExpression(declRefExpr(to(
                 varDecl(hasType(isInteger()))
-                .bind("SecondConditionVarName")))))))).bind("Condition")))
+                .bind("SecondConditionVarName")))))))).bind("LoopCondition")))
       .bind("forLoop")));
 }
 }
 
 bool CanonicalLoopPass::runOnFunction(Function &F) {
+  releaseMemory();
   auto M = F.getParent();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())

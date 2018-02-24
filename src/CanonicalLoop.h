@@ -19,10 +19,81 @@
 #include <llvm/Pass.h>
 #include <set>
 
+namespace clang {
+class Stmt;
+}
+
+namespace llvm {
+class Instruction;
+}
+
 namespace tsar {
 class DFNode;
-/// Set of canonical loops
-typedef std::set<DFNode *> CanonicalLoopInfo;
+typedef bcl::tagged_pair<
+    bcl::tagged<clang::Stmt *, AST>,
+    bcl::tagged<llvm::Instruction *, IR>> NodeInstruction;
+class LoopInfo {
+public:
+  LoopInfo(DFNode *Node) : mIsCanonical(false), mNode(Node),
+      Initialization(NodeInstruction(nullptr, nullptr)),
+      Increment(NodeInstruction(nullptr, nullptr)),
+      Condition(NodeInstruction(nullptr, nullptr)) {}
+    
+  void setCanonical() { mIsCanonical = true; }
+  void setStmts(const clang::Stmt *Init, const clang::Stmt *Incr,
+      const clang::Stmt *Cond) {
+    Initialization = NodeInstruction(const_cast<clang::Stmt*>(Init),
+        Initialization.second);
+    Increment = NodeInstruction(const_cast<clang::Stmt*>(Incr),
+        Increment.second);
+    Condition = NodeInstruction(const_cast<clang::Stmt*>(Cond),
+        Condition.second);
+  }
+  void setInstructions(llvm::Instruction *Init, llvm::Instruction *Incr,
+      llvm::Instruction *Cond) {
+    Initialization = NodeInstruction(Initialization.first, Init);
+    Increment = NodeInstruction(Increment.first, Incr);
+    Condition = NodeInstruction(Condition.first, Cond);
+  };
+
+  bool isCanonical() { return mIsCanonical; }
+  const bool isCanonical() const { return mIsCanonical; }
+  DFNode * getNode() { return mNode; }
+  const DFNode * getNode() const { return mNode; }
+  NodeInstruction * getInit() { return &Initialization; }
+  const NodeInstruction * getInit() const { return &Initialization; }
+  NodeInstruction * getInc() { return &Increment; }
+  const NodeInstruction * getInc() const { return &Increment; }
+  NodeInstruction * getCond() { return &Condition; }
+  const NodeInstruction * getCond() const { return &Condition; }
+    
+private:
+  bool mIsCanonical;
+  DFNode *mNode;
+  NodeInstruction Initialization, Increment, Condition;
+};
+struct LoopMapInfo {
+  static inline LoopInfo * getEmptyKey() {
+    return llvm::DenseMapInfo<LoopInfo *>::getEmptyKey();
+  }
+  static inline LoopInfo * getTombstoneKey() {
+    return llvm::DenseMapInfo<LoopInfo *>::getTombstoneKey();
+  }
+  static inline unsigned getHashValue(const LoopInfo *Info) {
+    return llvm::DenseMapInfo<DFNode *>::getHashValue(Info->getNode());
+  }
+  static inline unsigned getHashValue(const DFNode *N) {
+    return llvm::DenseMapInfo<DFNode *>::getHashValue(N);
+  }
+  static inline bool isEqual(const LoopInfo *LHS, const LoopInfo *RHS) {
+    return LHS == RHS;
+  }
+  static inline bool isEqual(const DFNode *LHS, const LoopInfo *RHS) {
+    return !isEqual(RHS, getEmptyKey()) && ! isEqual(RHS, getTombstoneKey())
+        && LHS == RHS->getNode();
+  }
+};
+typedef llvm::DenseSet<const LoopInfo *, LoopMapInfo> CanonicalLoopInfo;
 }
 
 namespace llvm {
@@ -39,15 +110,15 @@ public:
   CanonicalLoopPass() : FunctionPass(ID) {
     initializeCanonicalLoopPassPass(*PassRegistry::getPassRegistry());
   }
-
+  
   /// Returns information about loops for an analyzed region.
   tsar::CanonicalLoopInfo & getCanonicalLoopInfo() noexcept {
-      return mCanonicalLoopInfo;
+    return mCanonicalLoopInfo;
   }
 
   /// Returns information about loops for an analyzed region.
   const tsar::CanonicalLoopInfo & getCanonicalLoopInfo() const noexcept {
-      return mCanonicalLoopInfo;
+    return mCanonicalLoopInfo;
   }
   
   /// Determines canonical loops in a specified functions.

@@ -220,11 +220,12 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mImperfectLoopClause; });
       }
-      if (CLoopInfo.find(N) != CLoopInfo.end()) {
+      auto I = CLoopInfo.find_as(N);
+      if ((I != CLoopInfo.end()) && ((**I).isCanonical())) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mCanonicalLoopClause; });
       } else {
-          printPragma(Match.get<AST>()->getLocStart(), Rewriter,
+        printPragma(Match.get<AST>()->getLocStart(), Rewriter,
           [](raw_ostream &OS) { OS << " " << mNonCanonicalLoopClause; });
       }
     }
