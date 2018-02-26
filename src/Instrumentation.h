@@ -8,10 +8,6 @@
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
-  //It's possible to get LoopInfo by Function right in this class,
-  //but in tsar_instrumentation.cpp LoopInfo is already taken in runOnFunction
-  //right before Instrumentation class declaration. So decided to do it
-  //simplier and send it like a constructor parameter. Should I change it?
   Instrumentation(llvm::LoopInfo &LI, Registrator &R, llvm::Function &F);
 
   void visitAllocaInst(llvm::AllocaInst &I);
@@ -28,6 +24,9 @@ private:
 
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them
+  //
+  //NOTE: Instead of template it was possible to overload visitCallSite which 
+  //is for both calls and invokes. Maybe i'll change it later. 
   template<class T>
   void FunctionCallInst(T &I) {
     //not llvm function

@@ -2,6 +2,8 @@
 #include <llvm/IR/IRBuilder.h>
 #include "Instrumentation.h"
 #include "Intrinsics.h"
+#include <sstream>
+#include <iostream>
 
 using namespace llvm;
 using namespace tsar;
@@ -19,37 +21,6 @@ Instrumentation::Instrumentation(LoopInfo &LI, Registrator &R, Function &F)
   visitFunction(F);
 }
 
-void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
-  Function* Fun;
-  //FIXME: this doesn't correctly separate arrays from variables
-  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
-    ->getTypeID();
-  //depending on operand type insert a sapforReadVar or sapforReadArr
-  //consider all pointers as arrays
-  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID){
-    Fun = getDeclaration(I.getModule(), IntrinsicId::read_var);
-  } else {
-    Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
-  }
-  CallInst::Create(Fun, {}, "", &I);
-}
-
-void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
-  Function* Fun;
-  //FIXME: this doesn't correctly separate arrays from variables
-  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
-    ->getTypeID();
-  //depending on operand type insert a sapforWriteVarEnd or sapforWriteArrEnd
-  //consider all pointers as arrays
-  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID) {
-    Fun = getDeclaration(I.getModule(), IntrinsicId::write_var_end);
-  } else {
-    Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
-  }
-  auto Call = CallInst::Create(Fun, {}, "");
-  Call->insertAfter(&I);
-}
-
 //insert call of sapforRegVar(void*, void*) or 
 //sapforRegArr(void*, size_t, void*) after specified alloca instruction.
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
@@ -60,10 +31,8 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto LoadArr = new LoadInst(Pool, "LoadArr", &I);
   auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {RegInt}, "Elem", &I);
   auto DIVar = new LoadInst(Elem, "DIVar", &I);
-  //i hope it's always possible to cast alloca instruction, which is pointer 
-  //to some type, to i8* 
-  auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), 
-    "Addr");
+
+  auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), "Addr");
   cast<Instruction>(Addr)->insertAfter(&I);
   auto TypeId = I.getAllocatedType()->getTypeID();
   //Alloca instruction has isArrayAllocation method, but it looks like it
@@ -115,20 +84,20 @@ void Instrumentation::loopBeginInstr(llvm::Loop const *L,
       //looking for successor which is our Header
       for(unsigned I = 0; I < ExitInstr->getNumSuccessors(); ++I) {
         //create a new BasicBlock between predeccessor and Header
-	//insert a function call there
-	if(ExitInstr->getSuccessor(I) == &Header) {
+        //insert a function call there
+        if(ExitInstr->getSuccessor(I) == &Header) {
           //looks like label "loop_begin" would be
-	  //renamed automatically to make it unique
+          //renamed automatically to make it unique
           auto Block4Insert = BasicBlock::Create(Header.getContext(),
-	   "loop_begin", Header.getParent());
+            "loop_begin", Header.getParent());
           IRBuilder<> Builder(Block4Insert, Block4Insert->end());
           Builder.CreateBr(ExitInstr->getSuccessor(I));
           ExitInstr->setSuccessor(I, Block4Insert);
           Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
-	    (Block4Insert)->begin()));
+            (Block4Insert)->begin()));
           auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_begin);
           auto Call = Builder.CreateCall(Fun);
-	}
+        }
       }
     }
   }
@@ -153,10 +122,10 @@ void Instrumentation::loopEndInstr(llvm::Loop const *L,
           Builder.CreateBr(ExitInstr->getSuccessor(SucNumb));
           ExitInstr->setSuccessor(SucNumb, Block4Insert);
           Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
-	    (Block4Insert)->begin()));
+            (Block4Insert)->begin()));
           auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_end);
           auto Call = Builder.CreateCall(Fun);
-	}
+        }
       }
     }
   }
@@ -195,4 +164,58 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
   }
+}
+
+void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
+  std::stringstream DebugStr;
+  DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
+    "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
+  auto Debug = ConstantDataArray::getString(I.getContext(), DebugStr.str());
+  auto Arg = new GlobalVariable(*I.getModule(), Debug->getType(), true, 
+    GlobalValue::InternalLinkage, Debug);
+  auto Int0 = ConstantInt::get(Type::getInt32Ty(I.getContext()), 0);
+  //there should be a way to put GEP right into call
+  //like: call void @f(i8* getelementptr ...) 
+  //but i have no idea what to put in insertBefore parameter to do this
+  auto Elem = GetElementPtrInst::CreateInBounds(Arg, {Int0, Int0}, "Elem", &I);
+  Function* Fun;
+  //FIXME: this doesn't correctly separate arrays from variables
+  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
+    ->getTypeID();
+  //depending on operand type insert a sapforReadVar or sapforReadArr
+  //consider all pointers as arrays
+  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID){
+    Fun = getDeclaration(I.getModule(), IntrinsicId::read_var);
+  } else {
+    Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
+  }
+  CallInst::Create(Fun, {Elem}, "", &I);
+}
+
+void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
+  std::stringstream DebugStr;
+  //StoreInst::getDebugLoc could return nullptr sometimes. 
+  //Should i instrumentate these cases? 
+  //And if "yes", what to put in debug string? put line=0 for now.
+  DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
+    "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
+    cast<Instruction>(I).getDebugLoc().getLine()) << "**";
+  auto Debug = ConstantDataArray::getString(I.getContext(), DebugStr.str());
+  auto Arg = new GlobalVariable(*I.getModule(), Debug->getType(), true, 
+    GlobalValue::InternalLinkage, Debug);
+  auto Int0 = ConstantInt::get(Type::getInt32Ty(I.getContext()), 0);
+  auto Elem = GetElementPtrInst::CreateInBounds(Arg, {Int0, Int0}, "Elem", &I);
+  Function* Fun;
+  //FIXME: this doesn't correctly separate arrays from variables
+  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
+    ->getTypeID();
+  //depending on operand type insert a sapforWriteVarEnd or sapforWriteArrEnd
+  //consider all pointers as arrays
+  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID) {
+    Fun = getDeclaration(I.getModule(), IntrinsicId::write_var_end);
+  } else {
+    Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
+  }
+  auto Call = CallInst::Create(Fun, {Elem}, "");
+  Call->insertAfter(&I);
 }
