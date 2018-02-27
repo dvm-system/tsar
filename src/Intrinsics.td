@@ -34,7 +34,7 @@ def tsar_di_var_ty : PointerType<tsar_any_ty>;
 def tsar_di_loc_ty : PointerType<tsar_any_ty>;
 def tsar_di_loop_ty : PointerType<tsar_any_ty>;
 def tsar_di_funct_ty : PointerType<tsar_any_ty>;
-def tdar_di_call_ty : PointerType<tsar_any_ty>;
+def tsar_di_call_ty : PointerType<tsar_any_ty>;
 def tsar_addr_ty : PointerType<tsar_any_ty>;
 def tsar_arr_base_ty : PointerType<tsar_any_ty>;
 
@@ -74,16 +74,16 @@ def write_arr_end : Intrinsic<"sapforWriteArrEnd",
                         //tsar_arr_base_ty]>;
 
 def func_begin : Intrinsic<"sapforFuncBegin",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_funct_ty]>;
 
 def func_call_begin : Intrinsic<"sapforFuncCallBegin",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_call_ty]>;
 
 def func_end : Intrinsic<"sapforFuncEnd",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_funct_ty]>;
 
 def func_call_end : Intrinsic<"sapforFuncCallEnd",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_call_ty]>;
 
 def sl_begin : Intrinsic<"sapforSLBegin",
                         tsar_void_ty>;

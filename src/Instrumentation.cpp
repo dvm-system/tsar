@@ -1,5 +1,6 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include "Instrumentation.h"
 #include "Intrinsics.h"
 #include <sstream>
@@ -71,7 +72,18 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
     return;
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
-  CallInst::Create(Fun, {}, "", &I);
+  std::stringstream DebugStr;
+  //It's not clear what to put into return type in debug string
+  //decided to put llvm::Type::TypeID of returned type there 
+  auto F = I.getFunction();
+  DebugStr << "typr=function*file=" << F->getParent()->getSourceFileName() <<
+    "*line1=" << F->getSubprogram()->getLine() << "*line2=" <<
+    (F->getSubprogram()->getLine() + F->getSubprogram()->getScopeLine()) <<
+    "*name1=" << F->getSubprogram()->getName().data() << "*vtype=" <<
+    F->getReturnType()->getTypeID() << "*rank=" <<
+    F->getFunctionType()->getNumParams() << "**";
+  auto DIFunc = prepareStrParam(DebugStr.str(), I);
+  CallInst::Create(Fun, {DIFunc}, "", &I);
 }
 
 void Instrumentation::loopBeginInstr(llvm::Loop const *L,
@@ -159,7 +171,17 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   }
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
   auto Begin = inst_begin(F);
-  CallInst::Create(Fun, {}, "", &(*Begin));
+  std::stringstream DebugStr;
+  //It's not clear what to put into return type in debug string
+  //decided to put llvm::Type::TypeID of returned type there 
+  DebugStr << "typr=function*file=" << F.getParent()->getSourceFileName() <<
+    "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
+    (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
+    "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
+    F.getReturnType()->getTypeID() << "*rank=" <<
+    F.getFunctionType()->getNumParams() << "**";
+  auto DIFunc = prepareStrParam(DebugStr.str(), (*Begin));
+  CallInst::Create(Fun, {DIFunc}, "", &(*Begin));
   //visit all Blocks
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
@@ -170,14 +192,7 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   std::stringstream DebugStr;
   DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
-  auto Debug = ConstantDataArray::getString(I.getContext(), DebugStr.str());
-  auto Arg = new GlobalVariable(*I.getModule(), Debug->getType(), true, 
-    GlobalValue::InternalLinkage, Debug);
-  auto Int0 = ConstantInt::get(Type::getInt32Ty(I.getContext()), 0);
-  //there should be a way to put GEP right into call
-  //like: call void @f(i8* getelementptr ...) 
-  //but i have no idea what to put in insertBefore parameter to do this
-  auto Elem = GetElementPtrInst::CreateInBounds(Arg, {Int0, Int0}, "Elem", &I);
+  auto DILoc = prepareStrParam(DebugStr.str(), I);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -189,7 +204,7 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   } else {
     Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
   }
-  CallInst::Create(Fun, {Elem}, "", &I);
+  CallInst::Create(Fun, {DILoc}, "", &I);
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
@@ -200,11 +215,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
-  auto Debug = ConstantDataArray::getString(I.getContext(), DebugStr.str());
-  auto Arg = new GlobalVariable(*I.getModule(), Debug->getType(), true, 
-    GlobalValue::InternalLinkage, Debug);
-  auto Int0 = ConstantInt::get(Type::getInt32Ty(I.getContext()), 0);
-  auto Elem = GetElementPtrInst::CreateInBounds(Arg, {Int0, Int0}, "Elem", &I);
+  auto DILoc = prepareStrParam(DebugStr.str(), I);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -216,6 +227,19 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   } else {
     Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
   }
-  auto Call = CallInst::Create(Fun, {Elem}, "");
+  auto Call = CallInst::Create(Fun, {DILoc}, "");
   Call->insertAfter(&I);
+}
+
+GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
+  Instruction& I) {
+  auto Debug = llvm::ConstantDataArray::getString(I.getContext(), S);
+  auto Arg = new llvm::GlobalVariable(*I.getModule(), Debug->getType(), true,
+    llvm::GlobalValue::InternalLinkage, Debug);
+  auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(I.getContext()),
+    0);
+  //there should be a way to put GEP right into call
+  //like: call void @f(i8* getelementptr ...) 
+  //but i have no idea what to put in insertBefore parameter to do this
+  return llvm::GetElementPtrInst::CreateInBounds(Arg, {Int0,Int0}, "Elem", &I);
 }

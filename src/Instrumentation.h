@@ -5,6 +5,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include "Intrinsics.h"
 #include "Registrator.h"
+#include <sstream>
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
@@ -37,16 +38,25 @@ private:
     if(getTsarLibFunc(I.getCalledFunction()->getName(), Id)) {
       return;
     }
+    std::stringstream DebugStr;
+    DebugStr << "type=func_call*file=" << I.getModule()->getSourceFileName()
+      << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
+      I.getCalledFunction()->getSubprogram()->getName().data() << "*rank=" << 
+      I.getCalledFunction()->getFunctionType()->getNumParams() << "**";
+    auto DICall = prepareStrParam(DebugStr.str(), I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
-    llvm::CallInst::Create(Fun, {}, "", &I);
+    llvm::CallInst::Create(Fun, {DICall}, "", &I);
     Fun = getDeclaration(I.getModule(), tsar::IntrinsicId::func_call_end);
-    auto Call = llvm::CallInst::Create(Fun, {}, "");
+    auto Call = llvm::CallInst::Create(Fun, {DICall}, "");
     Call->insertAfter(&I);
   }
 
   void loopBeginInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
   void loopIterInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
+
+  llvm::GetElementPtrInst* prepareStrParam(const std::string& S, 
+    llvm::Instruction &I);
 };
 
 #endif // INSTRUMENTATION_H
