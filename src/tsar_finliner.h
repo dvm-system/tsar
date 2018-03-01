@@ -292,6 +292,7 @@ private:
   /// for statements - for detecting call expressions which can be inlined
   std::vector<const clang::Stmt*> mFSs;
 
+  std::set<std::string> mGlobalIdentifiers;
   std::map<const clang::FunctionDecl*, std::set<std::string>> mIdentifiers;
 
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;

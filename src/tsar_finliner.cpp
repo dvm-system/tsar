@@ -31,10 +31,18 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
+// 05.03 TODO(jury.zykov@yandex.ru): handle case when local declarations hide outer (f.e., f1 with declaration 'int s' calls f2 which references outer 'char s[]')
+// (?) two solutions:
+//   conservative: don't inline functions whose references to outer declarations become 'hidden' after inlining
+//   or transformation: as preprocess (pass) - make all functions conform rule 'no hidden outer declarations' (renaming local decls/refs through rewriter)
+// 05.03 TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies (per-node-specific, handle cases with statics and same/different TU)
+// 05.03 TODO(jury.zykov@yandex.ru): VisitFunctionDecl - implement iterative algorithm for max covering statement' lookup instead of current scheme
+// 05.03 TODO(jury.zykov@yandex.ru): ternary ifstmt - rewrite as simple ifstmt (transformation) or disable inlining (conservative)
+// 12.03 TODO(jury.zykov@yandex.ru): getIdentifiers: struct/union/enum, variable, typedef, function - is it complete list of probable outer declarations for C99?
+// 12.03 TODO(jury.zykov@yandex.ru): pragma handler pass for inlining
 
-// TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
-// TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies
-// TODO(jury.zykov@yandex.ru): simple API for inlining
+
+// 26.03 TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
 
 using namespace clang;
 using namespace llvm;
@@ -378,6 +386,7 @@ std::pair<std::string, std::string> FInliner::compile(
       decls.insert(ND->getName());
     }
   }
+  
   for (auto& PVD : TI.mTemplate->getFuncDecl()->parameters()) {
     std::string identifier = addSuffix(PVD->getName(), decls);
     replacements[PVD->getName()] = identifier;
@@ -545,18 +554,17 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       callable.insert(definition);
     }
   }
+  // global identifiers
+  for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
+    if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
+      mGlobalIdentifiers.insert(ND->getName().str());
+    }
+  }
   // identifiers in scope
   std::map<const clang::FunctionDecl*, std::set<std::string>> decls;
   for (auto& TIs : mTIs) {
-    for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
-      if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
-        decls[TIs.first].insert(ND->getName().str());
-      }
-    }
     for (auto& decl : TIs.first->decls()) {
-      if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(decl)) {
-        decls[TIs.first].insert(ND->getName().str());
-      }
+      decls[TIs.first] = getIdentifiers(decl);
     }
   }
   // remove unused templates
@@ -569,18 +577,17 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
   // disable instantiation of/in non-user-defined functions
   for (auto it = std::begin(mTIs); it != std::end(mTIs); ++it) {
-    if (mSourceManager.getFileCharacteristic(it->first->getLocStart()) != clang::SrcMgr::C_User) {
+    if (mSourceManager.getFileCharacteristic(it->first->getLocStart())
+      != clang::SrcMgr::C_User) {
       for (auto& TI : it->second) {
         TI.mTemplate = nullptr;
       }
-      llvm::errs() << "DISABLED IN: " << it->first->getName() << '\n';
     }
   }
   for (auto it = std::begin(mTs); it != std::end(mTs); ++it) {
     if (mSourceManager.getFileCharacteristic(it->first->getLocStart())
       != clang::SrcMgr::C_User) {
       it->second.setFuncDecl(nullptr);
-      llvm::errs() << "DISABLED OF: " << it->first->getName() << '\n';
     }
   }
   // disable instantiation of variadic functions
@@ -641,10 +648,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // logic: just collect all global identifiers for context
   // even if we have same identifiers locally, they will hide global ones
   // these global declarations become unused
-
-  // TODO: for all named decls - get dependencies of underlying types/decls
-  // this should be moved to method which by set of local identifiers returns
-  // _possibly_ referenced global decls
   std::set<std::string> globalIdentifiers;
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
     std::set<std::string> identifiers = getIdentifiers(D);
@@ -657,7 +660,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       ++it;
     }
   }
-  llvm::errs() << "global: " << join(globalIdentifiers, " ") << '\n';
   for (auto T : mTs) {
     if (T.second.getFuncDecl() == nullptr) {
       continue;
@@ -677,7 +679,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::begin(globalIdentifiers), std::end(globalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
-    llvm::errs() << T.first->getName().str() << ": external identifiers: " << join(identifiers, " ") << '\n';
     for (auto& i : identifiers) {
       std::set<const clang::NamedDecl*> found;
       for (auto D : Context.getTranslationUnitDecl()->decls()) {
@@ -689,36 +690,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         }
       }
       assert(found.size() != 0 && "No corresponding global identifier found");
-      /*for (auto GD : found) {
-        if (clang::isa<clang::EnumDecl>(GD)) {
-          llvm::errs() << getSourceText(getRange(GD)) << ";" << '\n';
-        } else if (const clang::RecordDecl* RD = clang::dyn_cast<clang::RecordDecl>(GD)) {
-          if (RD->getTypeForDecl()->isStructureType()) {
-            llvm::errs() << "struct " << GD->getName().str() << ";" << '\n';
-          } else if (RD->getTypeForDecl()->isUnionType()) {
-            llvm::errs() << "union " << GD->getName().str() << ";" << '\n';
-          } else {
-            assert(false && "Unknown RecordDecl in C program");
-          }
-        } else if (const clang::TypedefDecl* TD = clang::dyn_cast<clang::TypedefDecl>(GD)) {
-          llvm::errs() << getSourceText(getRange(TD)) << ";" << '\n';
-        } else if (const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(GD)) {
-          if (FD->hasBody()) {
-            std::string func(getSourceText(getRange(FD)));
-            std::string body(getSourceText(getRange(FD->getBody())));
-            size_t pos = func.find(body);
-            if (pos != std::string::npos) {
-              llvm::errs() << func.substr(0, pos) << ";" << '\n';
-            } else {
-              llvm::errs() << func << ";" << '\n';
-            }
-          } else {
-            llvm::errs() << getSourceText(getRange(FD)) << ";" << '\n';
-          }
-        } else if (const clang::VarDecl* VD = clang::dyn_cast<clang::VarDecl>(GD)) {
-          llvm::errs() << getSourceText(getRange(VD)) << ";" << '\n';
-        }
-      }*/
     }
   }
   // info
@@ -802,7 +773,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
           std::begin(args),
           [&](const clang::Expr* arg) -> std::string {
-          return getSourceText(getRange(arg));
+          return mRewriter.getRewrittenText(getRange(arg));
         });
         fDecls.insert(std::begin(args), std::end(args));
         std::pair<std::string, std::string> text
@@ -872,21 +843,23 @@ void FInliner::swap(T& lhs, T& rhs) const {
 }
 
 std::string FInliner::addSuffix(
-  const std::string& prefix,
-  std::set<std::string>& identifiers) const {
-  int count = 0;
-  std::string identifier(prefix + std::to_string(count++));
+  const std::string& Prefix,
+  std::set<std::string>& LocalIdentifiers) const {
+  int Count = 0;
+  std::set<std::string> Identifiers(LocalIdentifiers);
+  Identifiers.insert(std::begin(mGlobalIdentifiers), std::end(mGlobalIdentifiers));
+  std::string Identifier(Prefix + std::to_string(Count++));
   bool ok = false;
   while (ok == false) {
     ok = true;
-    if (std::find(std::begin(identifiers), std::end(identifiers), identifier)
-      != std::end(identifiers)) {
+    if (std::find(std::begin(Identifiers), std::end(Identifiers), Identifier)
+      != std::end(Identifiers)) {
       ok = false;
-      identifier = prefix + std::to_string(count++);
+      Identifier = Prefix + std::to_string(Count++);
     }
   }
-  identifiers.insert(identifier);
-  return identifier;
+  LocalIdentifiers.insert(Identifier);
+  return Identifier;
 }
 
 std::vector<std::string> FInliner::tokenize(
