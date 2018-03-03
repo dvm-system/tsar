@@ -424,7 +424,6 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       for (auto BB : Match.get<IR>()->blocks())
         if (Match.get<IR>()->isLoopExiting(BB))
           Loop[msg::MainLoopInfo::Exit]++;
-      Loop[msg::MainLoopInfo::Exit]--;
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher)
