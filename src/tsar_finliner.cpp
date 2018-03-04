@@ -36,7 +36,6 @@
 //   conservative: don't inline functions whose references to outer declarations become 'hidden' after inlining
 //   or transformation: as preprocess (pass) - make all functions conform rule 'no hidden outer declarations' (renaming local decls/refs through rewriter)
 // 05.03 TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies (per-node-specific, handle cases with statics and same/different TU)
-// 05.03 TODO(jury.zykov@yandex.ru): VisitFunctionDecl - implement iterative algorithm for max covering statement' lookup instead of current scheme
 // 05.03 TODO(jury.zykov@yandex.ru): ternary ifstmt - rewrite as simple ifstmt (transformation) or disable inlining (conservative)
 // 12.03 TODO(jury.zykov@yandex.ru): getIdentifiers: struct/union/enum, variable, typedef, function - is it complete list of probable outer declarations for C99?
 // 12.03 TODO(jury.zykov@yandex.ru): pragma handler pass for inlining
@@ -186,10 +185,21 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
   mCurrentFD = FD;
   // build CFG for function which _possibly_ contains calls of functions
   // which can be inlined
-  std::unique_ptr<clang::CFG> CFG = clang::CFG().buildCFG(
+  std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
   assert(CFG.get() != nullptr && ("CFG construction failed for "
     + mCurrentFD->getName()).str().data());
+  auto isSubStmt = [this](const clang::Stmt* P, const clang::Stmt* S) -> bool {
+    clang::SourceLocation beginP
+      = getLoc(P->getSourceRange().getBegin());
+    clang::SourceLocation endP
+      = getLoc(P->getSourceRange().getEnd());
+    clang::SourceLocation beginS
+      = getLoc(S->getSourceRange().getBegin());
+    clang::SourceLocation endS
+      = getLoc(S->getSourceRange().getEnd());
+    return beginS <= beginP && endP <= endS;
+  };
   auto& TIs = mTIs[mCurrentFD];
   for (auto B : *CFG) {
     for (auto I1 = B->begin(); I1 != B->end(); ++I1) {
@@ -202,67 +212,46 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
             continue;
           }
           mTs[definition].setFuncDecl(definition);
-          // TODO: generalize code below if possible + refactor
+          auto B(B);
           const clang::Stmt* P = S;
-          for (auto I2 = I1 + 1; I2 != B->end(); ++I2) {
-            if (llvm::Optional<clang::CFGStmt> CS
-              = I2->getAs<clang::CFGStmt>()) {
-              const clang::Stmt* S = CS->getStmt();
-              clang::SourceLocation beginS
-                = getLoc(S->getSourceRange().getBegin());
-              clang::SourceLocation endS
-                = getLoc(S->getSourceRange().getEnd());
-              clang::SourceLocation beginP
-                = getLoc(P->getSourceRange().getBegin());
-              clang::SourceLocation endP
-                = getLoc(P->getSourceRange().getEnd());
-              // in basic block each instruction can both depend or not
-              // on results of previous instructions
-              // we are looking for the last statement which on some dependency
-              // depth references found callExpr
-              if (beginS <= beginP && endP <= endS) {
-                P = S;
+          bool inCondOp = false;
+          while (true) {
+            S = P;
+            for (auto B1 = CFG->begin(); B1 != CFG->end(); ++B1) {
+              for (auto I1 = (*B1)->begin(); I1 != (*B1)->end(); ++I1) {
+                if (llvm::Optional<clang::CFGStmt> CS
+                  = I1->getAs<clang::CFGStmt>()) {
+                  if (isSubStmt(P, CS->getStmt())) {
+                    P = CS->getStmt();
+                    B = *B1;
+                    // check if we are in ternary if
+                    if (clang::isa<clang::ConditionalOperator>(CS->getStmt())) {
+                      inCondOp = true;
+                    }
+                  }
+                }
               }
             }
-          }
-          for (auto& stmtPair :
-            llvm::iterator_range<clang::CFG::synthetic_stmt_iterator>
-            (CFG->synthetic_stmt_begin(), CFG->synthetic_stmt_end())) {
-            if (stmtPair.first == P) {
-              P = stmtPair.second;
+            // all sections of for-loop are placed in different blocks
+            // initial section is referenced by stmt in successor blocks
+            for (auto B1 = CFG->begin(); B1 != CFG->end(); ++B1) {
+              if (const clang::Stmt* S = (*B1)->getTerminator()) {
+                if (isSubStmt(P, S)) {
+                  P = S;
+                }
+              }
+            }
+            if (P == S) {
               break;
             }
           }
-          // all sections of for-loop are placed in different blocks
-          // initial section is referenced by stmt in successor blocks
-          for (auto& Succ : B->succs()) {
-            const clang::Stmt* S = Succ->getTerminator();
-            if (S != nullptr) {
-              clang::SourceLocation beginS
-                = getLoc(S->getSourceRange().getBegin());
-              clang::SourceLocation endS
-                = getLoc(S->getSourceRange().getEnd());
-              clang::SourceLocation beginP
-                = getLoc(P->getSourceRange().getBegin());
-              clang::SourceLocation endP
-                = getLoc(P->getSourceRange().getEnd());
-              if (beginS <= beginP && endP <= endS) {
-                P = S;
-              }
-            }
+          // don't replace function calls in conditional operator (ternary if, ?:)
+          if (inCondOp) {
+            continue;
           }
           // don't replace function calls in condition expressions of loops
-          S = B->getTerminator();
-          if (S != nullptr) {
-            clang::SourceLocation beginS
-              = getLoc(S->getSourceRange().getBegin());
-            clang::SourceLocation endS
-              = getLoc(S->getSourceRange().getEnd());
-            clang::SourceLocation beginP
-              = getLoc(P->getSourceRange().getBegin());
-            clang::SourceLocation endP
-              = getLoc(P->getSourceRange().getEnd());
-            if (beginS <= beginP && endP <= endS) {
+          if (S = B->getTerminator()) {
+            if (isSubStmt(P, S)) {
               if (clang::isa<clang::ForStmt>(S) == true
                 || clang::isa<clang::WhileStmt>(S) == true
                 || clang::isa<clang::DoStmt>(S) == true) {
@@ -275,6 +264,12 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
           // don't replace function calls in the third section of for-loop
           if (B->getLoopTarget() != nullptr) {
             continue;
+          }
+          for (auto& stmtPair : CFG->synthetic_stmts()) {
+            if (stmtPair.first == P) {
+              P = stmtPair.second;
+              break;
+            }
           }
           TemplateInstantiation TI = { mCurrentFD, P, CE, nullptr };
           if (std::find(std::begin(TIs), std::end(TIs), TI) == std::end(TIs)) {
