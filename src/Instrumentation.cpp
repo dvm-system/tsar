@@ -3,23 +3,23 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include "Instrumentation.h"
 #include "Intrinsics.h"
-#include <sstream>
-#include <iostream>
 
 using namespace llvm;
 using namespace tsar;
 
-Instrumentation::Instrumentation(LoopInfo &LI, Registrator &R, Function &F)
-  : mLoopInfo(LI), mRegistrator(R) {
+Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
+  : mInstrPass(I), mLoopInfo(*(new LoopInfo())) {
   //insert extern declaration of DIVarPool if it wasn't declared in this
   //module yet
-  if(!F.getParent()->getGlobalVariable("DIVarPool")) {
-    auto Pool = new GlobalVariable((*F.getParent()), PointerType::getUnqual(Type
-      ::getInt8PtrTy(F.getContext())), false, GlobalValue::LinkageTypes
+  if(!M.getGlobalVariable("DIVarPool")) {
+    auto Pool = new GlobalVariable(M, PointerType::getUnqual(Type
+      ::getInt8PtrTy(M.getContext())), false, GlobalValue::LinkageTypes
       ::ExternalLinkage, nullptr, "DIVarPool", nullptr);
     Pool->setAlignment(4);
   }
-  visitFunction(F);
+  for(auto& F: M) {
+    visitFunction(F);
+  }
 }
 
 //insert call of sapforRegVar(void*, void*) or 
@@ -147,7 +147,7 @@ void Instrumentation::loopIterInstr(llvm::Loop const *L,
   llvm::BasicBlock &Header) {
   auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
   CallInst::Create(Fun, {}, "", Header.getTerminator());
-}
+} 
 
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   if(mLoopInfo.isLoopHeader(&B)) {
@@ -183,6 +183,8 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto DIFunc = prepareStrParam(DebugStr.str(), (*Begin));
   CallInst::Create(Fun, {DIFunc}, "", &(*Begin));
   //visit all Blocks
+  auto& LI = mInstrPass->getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
+  mLoopInfo = std::move(LI);
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
   }

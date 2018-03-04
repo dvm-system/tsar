@@ -5,11 +5,13 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include "Intrinsics.h"
 #include "Registrator.h"
+#include "tsar_instrumentation.h"
 #include <sstream>
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
-  Instrumentation(llvm::LoopInfo &LI, Registrator &R, llvm::Function &F);
+  Instrumentation(llvm::Module& M, llvm::InstrumentationPass* const I);
+  ~Instrumentation() {delete &mLoopInfo;}
 
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
@@ -17,11 +19,11 @@ public:
   void visitCallInst(llvm::CallInst &I);
   void visitInvokeInst(llvm::InvokeInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
-  void visitBasicBlock(llvm::BasicBlock &B);
   void visitFunction(llvm::Function &F);
 private:
+  Registrator mRegistrator;
   llvm::LoopInfo& mLoopInfo;
-  Registrator& mRegistrator;
+  llvm::InstrumentationPass* const mInstrPass;
 
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them
@@ -50,6 +52,11 @@ private:
     auto Call = llvm::CallInst::Create(Fun, {DICall}, "");
     Call->insertAfter(&I);
   }
+
+  //visitBasicBlock depends on LoopInfo which is different for
+  //different Functions. Calling it from wherever except visitFunction
+  //could lead to using unappropriate LoopInfo. So moved it to private.
+  void visitBasicBlock(llvm::BasicBlock &B);
 
   void loopBeginInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header);

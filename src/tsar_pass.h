@@ -111,15 +111,11 @@ void initializePrivateCClassifierPassPass(PassRegistry &Registry);
 /// Creates a pass to access source level transformation enginer.
 ImmutablePass * createTransformationEnginePass();
 
-ImmutablePass * createRegistartionPass();
-
-void initializeRegistrationPassPass(PassRegistry &Registry);
-
 /// Initializes a pass to perform low-level (LLVM IR) instrumentation of program.
 void initializeInstrumentationPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
-FunctionPass * createInstrumentationPass();
+ModulePass * createInstrumentationPass();
 
 /// Initialize a pass to match high-level and low-level loops.
 void initializeLoopMatcherPassPass(PassRegistry &Registry);

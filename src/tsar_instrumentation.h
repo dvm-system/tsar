@@ -21,20 +21,20 @@ namespace tsar {
 namespace llvm {
 class Function;
 
-/// This per-function pass performs instrumentation of LLVM IR.
+/// This per-module pass performs instrumentation of LLVM IR.
 class InstrumentationPass :
-  public FunctionPass, bcl::Uncopyable {
+  public ModulePass, bcl::Uncopyable {
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
 
   /// Default constructor.
-  InstrumentationPass() : FunctionPass(ID) {
+  InstrumentationPass() : ModulePass(ID) {
     initializeInstrumentationPassPass(*PassRegistry::getPassRegistry());
   }
 
-  /// Implements of the per-function instrumentation pass.
-  bool runOnFunction(Function &F) override;
+  /// Implements of the per-module instrumentation pass.
+  bool runOnModule(Module &M) override;
 
   /// \brief Releases allocated memory when it is no longer needed.
   void releaseMemory() override;
