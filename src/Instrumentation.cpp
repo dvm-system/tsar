@@ -3,6 +3,7 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include "Instrumentation.h"
 #include "Intrinsics.h"
+#include <iostream>
 
 using namespace llvm;
 using namespace tsar;
@@ -17,9 +18,36 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
       ::ExternalLinkage, nullptr, "DIVarPool", nullptr);
     Pool->setAlignment(4);
   }
+  const std::string& ModuleName = M.getModuleIdentifier();
+  //insert declaration of pool for debug information
+  const std::string& DbgPoolName = "gSapforDI" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto DbgPool = new GlobalVariable(M, PointerType::getUnqual(Type
+    ::getInt8PtrTy(M.getContext())), false, GlobalValue::LinkageTypes
+    ::ExternalLinkage, nullptr, DbgPoolName, nullptr);
+  DbgPool->setAlignment(4);
+  //create function for debug information initialization
+  const std::string& InitFuncName = "sapforInitDI" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto Type = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+  auto Func = Function::Create(Type, GlobalValue::LinkageTypes::InternalLinkage,
+    InitFuncName, &M);
+  auto NewBlock = BasicBlock::Create(Func->getContext(), "entry", Func);
+  auto Ret = ReturnInst::Create(Func->getContext(), NewBlock);
+  //visit all functions
   for(auto& F: M) {
-    visitFunction(F);
+    //not sapforInitDI function
+    if(F.getSubprogram() != nullptr) {
+      visitFunction(F);
+    }
   }
+  //insert call to allocate debug information pool
+  auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
+  //getting numb of registrated debug strings by the next value returned from
+  //registrator. don't go through function to count inserted calls.
+  auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()), 
+    mRegistrator.regDbgStr());
+  CallInst::Create(Fun, {DbgPool, Idx}, "", &(*inst_begin(Func)));
 }
 
 //insert call of sapforRegVar(void*, void*) or 
@@ -72,18 +100,19 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
     return;
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
-  std::stringstream DebugStr;
+  std::stringstream Debug;
   //It's not clear what to put into return type in debug string
   //decided to put llvm::Type::TypeID of returned type there 
   auto F = I.getFunction();
-  DebugStr << "typr=function*file=" << F->getParent()->getSourceFileName() <<
+  Debug << "typr=function*file=" << F->getParent()->getSourceFileName() <<
     "*line1=" << F->getSubprogram()->getLine() << "*line2=" <<
     (F->getSubprogram()->getLine() + F->getSubprogram()->getScopeLine()) <<
     "*name1=" << F->getSubprogram()->getName().data() << "*vtype=" <<
     F->getReturnType()->getTypeID() << "*rank=" <<
     F->getFunctionType()->getNumParams() << "**";
-  auto DIFunc = prepareStrParam(DebugStr.str(), I);
-  CallInst::Create(Fun, {DIFunc}, "", &I);
+  auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+  auto Call = CallInst::Create(Fun, {DIFunc}, "");
+  Call->insertAfter(DIFunc);
 }
 
 void Instrumentation::loopBeginInstr(llvm::Loop const *L,
@@ -169,32 +198,34 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(getTsarLibFunc(F.getName(), Id)) {
     return;
   }
-  auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
-  auto Begin = inst_begin(F);
-  std::stringstream DebugStr;
-  //It's not clear what to put into return type in debug string
-  //decided to put llvm::Type::TypeID of returned type there 
-  DebugStr << "typr=function*file=" << F.getParent()->getSourceFileName() <<
-    "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
-    (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
-    "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
-    F.getReturnType()->getTypeID() << "*rank=" <<
-    F.getFunctionType()->getNumParams() << "**";
-  auto DIFunc = prepareStrParam(DebugStr.str(), (*Begin));
-  CallInst::Create(Fun, {DIFunc}, "", &(*Begin));
   //visit all Blocks
   auto& LI = mInstrPass->getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
   mLoopInfo = std::move(LI);
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
   }
+  //Insert a call of sapforFuncBegin(void*) in the begginning of the function
+  auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
+  auto Begin = inst_begin(F);
+  std::stringstream Debug;
+  //It's not clear what to put into return type in debug string
+  //decided to put llvm::Type::TypeID of returned type there 
+  Debug << "type=function*file=" << F.getParent()->getSourceFileName() <<
+    "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
+    (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
+    "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
+    F.getReturnType()->getTypeID() << "*rank=" <<
+    F.getFunctionType()->getNumParams() << "**";
+  auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *F.getParent()), *Begin);
+  auto Call = CallInst::Create(Fun, {DIFunc}, "");
+  Call->insertAfter(DIFunc);
 }
 
 void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
-  std::stringstream DebugStr;
-  DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
+  std::stringstream Debug;
+  Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
-  auto DILoc = prepareStrParam(DebugStr.str(), I);
+  auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -206,18 +237,19 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   } else {
     Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
   }
-  CallInst::Create(Fun, {DILoc}, "", &I);
+  auto Call = CallInst::Create(Fun, {DILoc}, "");
+  Call->insertAfter(DILoc);
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
-  std::stringstream DebugStr;
+  std::stringstream Debug;
   //StoreInst::getDebugLoc could return nullptr sometimes. 
   //Should i instrumentate these cases? 
   //And if "yes", what to put in debug string? put line=0 for now.
-  DebugStr << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
+  Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
-  auto DILoc = prepareStrParam(DebugStr.str(), I);
+  auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -233,6 +265,33 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   Call->insertAfter(&I);
 }
 
+//Registrate given debug information by inserting a call of 
+//sapforInitDI(void**, char*). Returns index in pool which is correspond to
+//registrated info.
+unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
+  const std::string& ModuleName = M.getModuleIdentifier();
+  const std::string& InitFuncName = "sapforInitDI" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  const std::string& DbgPoolName = "gSapforDI" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto F = M.getFunction(InitFuncName);
+  if(F != nullptr) {
+    auto& B = F->getEntryBlock();
+    unsigned Val = mRegistrator.regDbgStr();
+    auto Fun4Insert = getDeclaration(&M, IntrinsicId::init_di);
+    auto Pool = M.getGlobalVariable(DbgPoolName);
+    auto Idx = ConstantInt::get(Type::getInt32Ty(M.getContext()), Val);
+    auto LoadArr = new LoadInst(Pool, "LoadArr", &B.back());
+    auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "Elem",
+      B.getTerminator());
+    //auto DI = new LoadInst(Elem, "DI", B.getTerminator());
+    auto Loc = prepareStrParam(S, B.back());
+    CallInst::Create(Fun4Insert, {Elem, Loc}, "", &B.back());
+    return Val;
+  }
+  llvm_unreachable("function was not declared");
+}
+
 GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
   Instruction& I) {
   auto Debug = llvm::ConstantDataArray::getString(I.getContext(), S);
@@ -240,8 +299,20 @@ GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
     llvm::GlobalValue::InternalLinkage, Debug);
   auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(I.getContext()),
     0);
-  //there should be a way to put GEP right into call
-  //like: call void @f(i8* getelementptr ...) 
-  //but i have no idea what to put in insertBefore parameter to do this
   return llvm::GetElementPtrInst::CreateInBounds(Arg, {Int0,Int0}, "Elem", &I);
+}
+
+//Returns element in debug information pool by its index
+LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
+  const std::string& ModuleName = I.getModule()->getModuleIdentifier();
+  const std::string& DbgPoolName = "gSapforDI" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto Pool = I.getModule()->getGlobalVariable(DbgPoolName);
+  auto Idx = ConstantInt::get(Type::getInt32Ty(I.getContext()), Val);
+  auto LoadArr = new LoadInst(Pool, "LoadArr", &I);
+  auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "Elem");
+  Elem->insertAfter(LoadArr);
+  auto DIFunc = new LoadInst(Elem, "DI");
+  DIFunc->insertAfter(Elem);
+  return DIFunc;
 }

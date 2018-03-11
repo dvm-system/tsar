@@ -3,12 +3,14 @@
 
 class Registrator {
 private:
-  unsigned mCounter;
+  unsigned mVarCounter;
+  unsigned mDbgStrCounter;
 public:
-  Registrator(): mCounter(0) {};
-  unsigned regVar() { return mCounter++; }
-  unsigned regArr() { return mCounter++; }
-  unsigned regLoc() { return mCounter++; }
+  Registrator(): mVarCounter(0), mDbgStrCounter(0) {};
+  unsigned regVar() { return mVarCounter++; }
+  unsigned regArr() { return mVarCounter++; }
+  unsigned regLoc() { return mVarCounter++; }
+  unsigned regDbgStr() { return mDbgStrCounter++; }
 };
 
 #endif //REGISTRATOR_H

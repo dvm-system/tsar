@@ -40,12 +40,12 @@ private:
     if(getTsarLibFunc(I.getCalledFunction()->getName(), Id)) {
       return;
     }
-    std::stringstream DebugStr;
-    DebugStr << "type=func_call*file=" << I.getModule()->getSourceFileName()
+    std::stringstream Debug;
+    Debug << "type=func_call*file=" << I.getModule()->getSourceFileName()
       << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
       I.getCalledFunction()->getSubprogram()->getName().data() << "*rank=" << 
       I.getCalledFunction()->getFunctionType()->getNumParams() << "**";
-    auto DICall = prepareStrParam(DebugStr.str(), I);
+    auto DICall = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
     llvm::CallInst::Create(Fun, {DICall}, "", &I);
     Fun = getDeclaration(I.getModule(), tsar::IntrinsicId::func_call_end);
@@ -62,8 +62,10 @@ private:
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
   void loopIterInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
 
+  unsigned regDbgStr(const std::string& S, llvm::Module& M);
   llvm::GetElementPtrInst* prepareStrParam(const std::string& S, 
     llvm::Instruction &I);
+  llvm::LoadInst* getDbgPoolElem(unsigned Val, llvm::Instruction& I); 
 };
 
 #endif // INSTRUMENTATION_H

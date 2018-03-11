@@ -35,8 +35,11 @@ def tsar_di_loc_ty : PointerType<tsar_any_ty>;
 def tsar_di_loop_ty : PointerType<tsar_any_ty>;
 def tsar_di_funct_ty : PointerType<tsar_any_ty>;
 def tsar_di_call_ty : PointerType<tsar_any_ty>;
+def tsar_di_ty : PointerType<PointerType<tsar_any_ty>>;
+def tsar_di_string_ty : PointerType<tsar_any_ty>;
 def tsar_addr_ty : PointerType<tsar_any_ty>;
 def tsar_arr_base_ty : PointerType<tsar_any_ty>;
+def tsar_pool_ptr_ty : PointerType<PointerType<PointerType<tsar_any_ty>>>;
 
 // Define one intrinsic.
 class Intrinsic<string name,
@@ -93,3 +96,11 @@ def sl_end : Intrinsic<"sapforSLEnd",
 
 def sl_iter : Intrinsic<"sapforSLIter",
                         tsar_void_ty>;
+
+def init_di : Intrinsic<"sapforInitDI", 
+                        tsar_void_ty, 
+                        [tsar_di_ty, tsar_di_string_ty]>;
+
+def allocate_pool : Intrinsic<"sapforAllocatePool", 
+                        tsar_void_ty, 
+                        [tsar_pool_ptr_ty, tsar_size_ty]>;
