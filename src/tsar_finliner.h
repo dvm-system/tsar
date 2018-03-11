@@ -193,17 +193,11 @@ private:
     const std::vector<std::string>& args,
     std::set<std::string>& decls);
 
-  /// mutually recursive functions for getting identifiers from arbitrary nested declarations
-  /// TODO: is it possible to get different declaration type in C99 rather than listed below?
-  /// mb default behaviour like simple tokenization for such cases?
-  std::set<std::string> getIdentifiers(const clang::Decl* D);
-  std::set<std::string> getIdentifiers(const clang::EnumDecl* ED);
-  std::set<std::string> getIdentifiers(const clang::RecordDecl* RD);
-  std::set<std::string> getIdentifiers(const clang::FunctionDecl* FD);
-  std::set<std::string> getIdentifiers(const clang::TypedefDecl* TD);
-  std::set<std::string> getIdentifiers(const clang::VarDecl* VD);
-
   std::string getSourceText(const clang::SourceRange& SR) const;
+
+  /// get raw tokens of specific kind (preserves order)
+  std::vector<clang::Token> getRawTokens(const clang::SourceRange& SR,
+    clang::tok::TokenKind TK = clang::tok::raw_identifier) const;
 
   /// T must provide getSourceRange() method
   template<typename T>
@@ -285,6 +279,7 @@ private:
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
   clang::Rewriter& mRewriter;
+  //clang::Preprocessor& mPreprocessor;
 
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD;
