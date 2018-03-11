@@ -29,7 +29,6 @@ namespace llvm {
 class Pass;
 class PassInfo;
 class PassRegistry;
-class CallGraphSCCPass;
 class FunctionPass;
 class ModulePass;
 class ImmutablePass;
@@ -281,7 +280,7 @@ void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
 
 void initializeInterprocAnalysisPassPass(PassRegistry &Registry);
 
-CallGraphSCCPass * createInterprocAnalysisPass();
+ModulePass * createInterprocAnalysisPass();
 }
 
 #endif//TSAR_PASS_H

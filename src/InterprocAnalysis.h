@@ -21,10 +21,10 @@ typedef llvm::DenseMap<llvm::Function *,
 
 namespace llvm {
 class InterprocAnalysisPass :
-    public CallGraphSCCPass, private bcl::Uncopyable {
+    public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
-  InterprocAnalysisPass() : CallGraphSCCPass(ID) {
+  InterprocAnalysisPass() : ModulePass(ID) {
     initializeInterprocAnalysisPassPass(*PassRegistry::getPassRegistry());
   }
   tsar::InterprocAnalysisInfo & getInterprocAnalysisInfo() noexcept {
@@ -34,7 +34,8 @@ public:
       getInterprocAnalysisInfo() const noexcept {
     return mInterprocAnalysisInfo;
   }
-  bool runOnSCC(CallGraphSCC &SCC) override;
+  bool runOnModule(Module &M) override;
+  void runOnSCC(CallGraphSCC &SCC);
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 private:
   tsar::InterprocAnalysisInfo mInterprocAnalysisInfo;

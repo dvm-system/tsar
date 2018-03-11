@@ -4,6 +4,7 @@
 #include <clang/AST/Expr.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/SourceLocation.h>
+#include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <vector>
@@ -17,6 +18,7 @@ INITIALIZE_PASS_BEGIN(InterprocAnalysisPass, "interproc-analysis",
     "Interprocedural Analysis Pass", false, false)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_END(InterprocAnalysisPass, "interproc-analysis",
   "Interprocedural Analysis Pass", false, false)
 
@@ -31,7 +33,20 @@ void getCallExprFromStmtTree(Stmt *S, std::vector<CallExpr *> &VCE) {
 }
 }
 
-bool InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC) {
+bool InterprocAnalysisPass::runOnModule(llvm::Module &M) {
+  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  scc_iterator<CallGraph *> CGSCCIter = scc_begin(&CG);
+  CallGraphSCC CGSCC(CG, &CGSCCIter);
+  while (!CGSCCIter.isAtEnd()) {
+    const std::vector<CallGraphNode *> &VecCGN = *CGSCCIter;
+    CGSCC.initialize(VecCGN);
+    runOnSCC(CGSCC);
+    ++CGSCCIter;
+  }
+  return false;
+}
+
+void InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC) {
   auto &M = SCC.getCallGraph().getModule();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
@@ -61,13 +76,13 @@ bool InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC) {
     }
     mInterprocAnalysisInfo.insert(std::make_pair(F, VecFuncCallee));
   }
-  return false;
 }
 void InterprocAnalysisPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
-  CallGraphSCCPass::getAnalysisUsage(AU);
+  AU.addRequired<CallGraphWrapperPass>();
+  AU.setPreservesAll();
 }
-CallGraphSCCPass *llvm::createInterprocAnalysisPass() {
+ModulePass *llvm::createInterprocAnalysisPass() {
   return new InterprocAnalysisPass();
 }
