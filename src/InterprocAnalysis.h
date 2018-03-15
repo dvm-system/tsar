@@ -1,22 +1,44 @@
 #include "tsar_pass.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <clang/Basic/SourceLocation.h>
 #include <vector>
+#include <set>
 
 namespace {
-struct FuncCallee {
-  llvm::Function *Callee;
-  std::vector<clang::SourceLocation> Locations;
-  FuncCallee(llvm::Function *F) : Callee(F) {}
+const std::set<llvm::Attribute::AttrKind> AndAttrs = {
+    llvm::Attribute::ReadOnly,
+    llvm::Attribute::NoUnwind
+};
+const std::set<llvm::Attribute::AttrKind> OrAttrs = {
+  llvm::Attribute::NoReturn
+};
+
+struct InterprocFuncInfo {
+  InterprocFuncInfo() : isLibFunc(false) {}
+  void addCalleeFunc(
+      llvm::Function *F, std::vector<clang::SourceLocation> VecSL) {
+    mVecCalleeFunc.push_back(std::make_pair(F, VecSL));
+  }
+  void setLibFunc(bool Val) {
+    isLibFunc = Val;
+  }
+  bool getLibFunc() {
+    return isLibFunc;
+  }
+private:
+  bool isLibFunc;
+  std::vector<std::pair<llvm::Function *,
+      std::vector<clang::SourceLocation>>> mVecCalleeFunc;
 };
 }
 
 namespace tsar {
 typedef llvm::DenseMap<llvm::Function *,
-    std::vector<FuncCallee>> InterprocAnalysisInfo;
+    InterprocFuncInfo> InterprocAnalysisInfo;
 }
 
 namespace llvm {
@@ -35,9 +57,9 @@ public:
     return mInterprocAnalysisInfo;
   }
   bool runOnModule(Module &M) override;
-  void runOnSCC(CallGraphSCC &SCC);
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 private:
+  void runOnSCC(CallGraphSCC &SCC, Module &M);
   tsar::InterprocAnalysisInfo mInterprocAnalysisInfo;
 };
 }
