@@ -32,6 +32,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "InterprocAnalysis.h"
 #include "Messages.h"
 #include "tsar_query.h"
 #include "tsar_tool.h"
@@ -116,6 +117,7 @@ public:
     Passes.add(createUnreachableBlockEliminationPass());
     Passes.add(createPostOrderFunctionAttrsLegacyPass());
     Passes.add(createMemoryMatcherPass());
+    Passes.add(createInterprocAnalysisPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
     Passes.run(*M);

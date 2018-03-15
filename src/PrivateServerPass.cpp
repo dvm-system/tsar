@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrivateServerPass.h"
+#include "InterprocAnalysis.h"
 #include "PerfectLoop.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
@@ -159,9 +160,10 @@ JSON_OBJECT_ROOT_PAIR_2(LoopTree,
 JSON_OBJECT_END(LoopTree)
 
 JSON_OBJECT_BEGIN(FunctionTraits)
-JSON_OBJECT_PAIR_2(FunctionTraits,
+JSON_OBJECT_PAIR_3(FunctionTraits,
   Readonly, Analysis,
-  NoReturn, Analysis)
+  NoReturn, Analysis,
+  InOut, Analysis)
 
   FunctionTraits() :
     JSON_INIT(FunctionTraits, Analysis::No, Analysis::No) {}
@@ -272,6 +274,7 @@ INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(InterprocAnalysisPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -500,11 +503,15 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
   msg::FunctionList FuncLst;
   typedef msg::MainFuncInfo FuncInfo;
   for (Function &F : M) {
+    if (F.empty())
+      continue;
     auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
+    auto &IFI = PSP->getAnalysis<InterprocAnalysisPass>().
+      getInterprocAnalysisInfo().find(&F)->second;
     auto FuncDecl = Decl->getAsFunction();
     msg::MainFuncInfo Func;
     Func[FuncInfo::Name] = F.getName();
@@ -513,6 +520,8 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
       Func[FuncInfo::Traits][msg::FunctionTraits::Readonly] = msg::Analysis::Yes;
     if (F.hasFnAttribute(Attribute::NoReturn))
       Func[FuncInfo::Traits][msg::FunctionTraits::NoReturn] = msg::Analysis::Yes;
+    if (IFI.getLibFunc())
+      Func[FuncInfo::Traits][msg::FunctionTraits::InOut] = msg::Analysis::Yes;
     FuncLst[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncLst);
@@ -560,6 +569,7 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<InterprocAnalysisPass>();
   AU.setPreservesAll();
 }
 
