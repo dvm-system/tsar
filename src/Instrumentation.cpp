@@ -1,6 +1,7 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include "tsar_utility.h"
 #include "Instrumentation.h"
 #include "Intrinsics.h"
 #include <iostream>
@@ -10,15 +11,16 @@ using namespace tsar;
 
 Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   : mInstrPass(I), mLoopInfo(*(new LoopInfo())) {
-  //insert extern declaration of DIVarPool if it wasn't declared in this
-  //module yet
-  if(!M.getGlobalVariable("DIVarPool")) {
-    auto Pool = new GlobalVariable(M, PointerType::getUnqual(Type
-      ::getInt8PtrTy(M.getContext())), false, GlobalValue::LinkageTypes
-      ::ExternalLinkage, nullptr, "DIVarPool", nullptr);
-    Pool->setAlignment(4);
-  }
   const std::string& ModuleName = M.getModuleIdentifier();
+  //create function for types registration
+  const std::string& RegTypeFuncName = "RegType" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto RegType = FunctionType::get(Type::getVoidTy(M.getContext()), 
+    {Type::getInt32Ty(M.getContext())}, false);
+  auto RegFunc = Function::Create(RegType, 
+    GlobalValue::LinkageTypes::InternalLinkage, RegTypeFuncName, &M);
+  auto NewBlock = BasicBlock::Create(RegFunc->getContext(), "entry", RegFunc);
+  ReturnInst::Create(RegFunc->getContext(), NewBlock);
   //insert declaration of pool for debug information
   const std::string& DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
@@ -32,8 +34,9 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   auto Type = FunctionType::get(Type::getVoidTy(M.getContext()), false);
   auto Func = Function::Create(Type, GlobalValue::LinkageTypes::InternalLinkage,
     InitFuncName, &M);
-  auto NewBlock = BasicBlock::Create(Func->getContext(), "entry", Func);
-  auto Ret = ReturnInst::Create(Func->getContext(), NewBlock);
+  NewBlock = BasicBlock::Create(Func->getContext(), "entry", Func);
+  ReturnInst::Create(Func->getContext(), NewBlock);
+  regGlobals(M);
   //visit all functions
   for(auto& F: M) {
     //not sapforInitDI function
@@ -46,34 +49,42 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   //getting numb of registrated debug strings by the next value returned from
   //registrator. don't go through function to count inserted calls.
   auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()), 
-    mRegistrator.regDbgStr());
+    mRegistrator.getDbgStrCounter());
   CallInst::Create(Fun, {DbgPool, Idx}, "", &(*inst_begin(Func)));
 }
 
 //insert call of sapforRegVar(void*, void*) or 
 //sapforRegArr(void*, size_t, void*) after specified alloca instruction.
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
-  auto Pool = I.getModule()->getGlobalVariable("DIVarPool");
-  auto RegInt = ConstantInt::get(Type::getInt32Ty(I.getContext()),
-    mRegistrator.regVar());
-  //getting element in DIVarPool with mRegistrator.regVar index
-  auto LoadArr = new LoadInst(Pool, "LoadArr", &I);
-  auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {RegInt}, "Elem", &I);
-  auto DIVar = new LoadInst(Elem, "DIVar", &I);
-
+  //FIXME: need to add functions parameters registration. instrumentation fails
+  // without that. 
+  auto Metadata = getMetadata(&I);
+  if(Metadata == nullptr) 
+    return;
+  unsigned ID = getTypeId(*I.getAllocatedType());
+  std::stringstream Debug;
   auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), "Addr");
   cast<Instruction>(Addr)->insertAfter(&I);
   auto TypeId = I.getAllocatedType()->getTypeID();
   //Alloca instruction has isArrayAllocation method, but it looks like it
   //doesn't work like i wanted it. So checking for array in this way
   if(TypeId == Type::TypeID::ArrayTyID || TypeId == Type::TypeID::PointerTyID){
+    mRegistrator.regArr(Metadata->getName().data(), Metadata->getLine());
+    Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
+      "*line1=" << Metadata->getLine() << "*name1=" << 
+      Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
+    auto DIVar = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
     auto ArrSize = ConstantInt::get(Type::getInt64Ty(I.getContext()),
       I.getAllocatedType()->getArrayNumElements());
-    auto Int0 = ConstantInt::get(Type::getInt32Ty(I.getContext()), 0);
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_arr);
     auto Call = CallInst::Create(Fun, {DIVar, ArrSize, Addr}, "");
     Call->insertAfter(Addr);
   } else {	  
+    mRegistrator.regVar(Metadata->getName().data(), Metadata->getLine());
+    Debug << "type=var_name*file=" << I.getModule()->getSourceFileName() <<
+      "*line1=" << Metadata->getLine() << "*name1=" << 
+      Metadata->getName().data() << "*vtype=" << ID << "**";
+    auto DIVar = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_var);
     auto Call = CallInst::Create(Fun, {DIVar, Addr}, "");
     Call->insertAfter(Addr);
@@ -101,14 +112,12 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
   std::stringstream Debug;
-  //It's not clear what to put into return type in debug string
-  //decided to put llvm::Type::TypeID of returned type there 
   auto F = I.getFunction();
-  Debug << "typr=function*file=" << F->getParent()->getSourceFileName() <<
+  Debug << "type=function*file=" << F->getParent()->getSourceFileName() <<
     "*line1=" << F->getSubprogram()->getLine() << "*line2=" <<
     (F->getSubprogram()->getLine() + F->getSubprogram()->getScopeLine()) <<
     "*name1=" << F->getSubprogram()->getName().data() << "*vtype=" <<
-    F->getReturnType()->getTypeID() << "*rank=" <<
+    getTypeId(*F->getReturnType()) << "*rank=" <<
     F->getFunctionType()->getNumParams() << "**";
   auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   auto Call = CallInst::Create(Fun, {DIFunc}, "");
@@ -204,17 +213,16 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
   }
+  getTypeId(*F.getReturnType());
   //Insert a call of sapforFuncBegin(void*) in the begginning of the function
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
   auto Begin = inst_begin(F);
   std::stringstream Debug;
-  //It's not clear what to put into return type in debug string
-  //decided to put llvm::Type::TypeID of returned type there 
   Debug << "type=function*file=" << F.getParent()->getSourceFileName() <<
     "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
     (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
     "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
-    F.getReturnType()->getTypeID() << "*rank=" <<
+    getTypeId(*F.getReturnType()) << "*rank=" <<
     F.getFunctionType()->getNumParams() << "**";
   auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *F.getParent()), *Begin);
   auto Call = CallInst::Create(Fun, {DIFunc}, "");
@@ -222,10 +230,16 @@ void Instrumentation::visitFunction(llvm::Function &F) {
 }
 
 void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
+  if(!cast<Instruction>(I).getDebugLoc())
+    return;
   std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+  unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
+    ->stripPointerCasts()->getName().data(), I.getFunction()->getSubprogram()
+    ->getLine(), cast<Instruction>(I).getDebugLoc().getLine());
+  auto DIVar = getDbgPoolElem(Idx, *DILoc);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -237,19 +251,22 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   } else {
     Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
   }
-  auto Call = CallInst::Create(Fun, {DILoc}, "");
+  auto Call = CallInst::Create(Fun, {DILoc, DIVar}, "");
   Call->insertAfter(DILoc);
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   std::stringstream Debug;
-  //StoreInst::getDebugLoc could return nullptr sometimes. 
-  //Should i instrumentate these cases? 
-  //And if "yes", what to put in debug string? put line=0 for now.
+  if(!cast<Instruction>(I).getDebugLoc())
+    return;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+  unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
+    ->stripPointerCasts()->getName().data(), I.getFunction()->getSubprogram()
+    ->getLine(), cast<Instruction>(I).getDebugLoc().getLine());
+  auto DIVar = getDbgPoolElem(Idx, *DILoc);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
   auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
@@ -261,7 +278,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   } else {
     Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
   }
-  auto Call = CallInst::Create(Fun, {DILoc}, "");
+  auto Call = CallInst::Create(Fun, {DILoc, DIVar}, "");
   Call->insertAfter(&I);
 }
 
@@ -284,7 +301,6 @@ unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
     auto LoadArr = new LoadInst(Pool, "LoadArr", &B.back());
     auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "Elem",
       B.getTerminator());
-    //auto DI = new LoadInst(Elem, "DI", B.getTerminator());
     auto Loc = prepareStrParam(S, B.back());
     CallInst::Create(Fun4Insert, {Elem, Loc}, "", &B.back());
     return Val;
@@ -315,4 +331,44 @@ LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
   auto DIFunc = new LoadInst(Elem, "DI");
   DIFunc->insertAfter(Elem);
   return DIFunc;
+}
+
+void Instrumentation::regGlobals(Module& M) {
+  for(auto I = M.global_begin(); I != M.global_end(); I++) {
+    unsigned ID = getTypeId(*I->getValueType());
+    auto Metadata = getMetadata(&*I);
+    if(Metadata == nullptr) {
+      return;
+    }
+    std::stringstream Debug;
+    mRegistrator.regVar(Metadata->getName().data(), Metadata->getLine(), true);
+    Debug << "type=var_name*file=" << M.getSourceFileName() <<
+      "*line1=" << Metadata->getLine() << "*name1=" << 
+      Metadata->getName().data() << "*vtype=" << ID << "**";
+    regDbgStr(Debug.str(), M);
+  }
+}
+
+unsigned Instrumentation::getTypeId(const Type& T) {
+  switch(T.getTypeID()) {
+    case(Type::TypeID::VoidTyID): return BaseTypeID::VoidTy;
+    case(Type::TypeID::HalfTyID): return BaseTypeID::HalfTy;
+    case(Type::TypeID::FloatTyID): return BaseTypeID::FloatTy;
+    case(Type::TypeID::DoubleTyID): return BaseTypeID::DoubleTy;
+    case(Type::TypeID::X86_FP80TyID): return BaseTypeID::X86_FP80Ty;
+    case(Type::TypeID::FP128TyID): return BaseTypeID::FP128Ty;
+    case(Type::TypeID::PPC_FP128TyID): return BaseTypeID::PPC_FP128Ty;
+    case(Type::TypeID::LabelTyID): return BaseTypeID::LabelTy;
+    case(Type::TypeID::MetadataTyID): return BaseTypeID::MetadataTy;
+    case(Type::TypeID::X86_MMXTyID): return BaseTypeID::X86_MMXTy;
+    case(Type::TypeID::TokenTyID): return BaseTypeID::TokenTy;
+    case(Type::TypeID::FunctionTyID): return BaseTypeID::FunctionTy;
+    case(Type::TypeID::PointerTyID): return BaseTypeID::PointerTy;
+    case(Type::TypeID::IntegerTyID): 
+      if(cast<IntegerType>(T).getBitWidth() < maxIntBitWidth) {
+        return (BaseTypeID::IntegerTy + cast<IntegerType>(T).getBitWidth() -1);
+      }
+    default: return mRegistrator.regType(&T) + BaseTypeID::IntegerTy +
+      maxIntBitWidth;
+  }
 }

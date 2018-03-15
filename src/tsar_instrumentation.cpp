@@ -32,7 +32,6 @@ INITIALIZE_PASS_END(InstrumentationPass, "instrumentation",
 
 bool InstrumentationPass::runOnModule(Module &M) {
   releaseMemory();
-  //auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   Instrumentation Instr(M, this);
   return true;
 }
