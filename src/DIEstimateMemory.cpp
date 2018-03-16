@@ -62,7 +62,7 @@ bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
 void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
   for (auto &VH : DIEM) {
-    if (!VH)
+    if (!VH || isa<llvm::UndefValue>(VH))
       continue;
     auto EM = AT.find(MemoryLocation(VH, DIEM.getSize()));
     assert(EM && "Estimate memory must be presented in the alias tree!");
@@ -1088,7 +1088,7 @@ void CorruptedMemoryResolver::updateWorkLists(
 
 bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
   for (auto &VH : M) {
-    if (!VH)
+    if (!VH || isa<UndefValue>(VH))
       continue;
     auto EM = mAT->find(MemoryLocation(VH, M.getSize()));
     assert(EM && "Estimate memory must be presented in the alias tree!");
@@ -1109,7 +1109,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
 
 bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
   for (auto &VH : M) {
-    if (!VH)
+    if (!VH || isa<UndefValue>(VH))
       continue;
     auto Cashed = mCashedUnknownMemory.try_emplace(VH);
     if (Cashed.second) {

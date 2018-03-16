@@ -188,9 +188,9 @@ public:
     if (mValues.empty())
       return Empty;
     auto I = mValues.begin(), E = mValues.end();
-    auto B = *I ? Consistent : Destroyed;
+    auto B = (*I && !llvm::isa<llvm::UndefValue>(*I)) ? Consistent : Destroyed;
     for (++I; I != E; ++I)
-      if (!*I)
+      if (!*I || llvm::isa<llvm::UndefValue>(*I))
         B = (B == Destroyed) ? Destroyed : Corrupted;
     return B;
   }
