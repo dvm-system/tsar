@@ -927,7 +927,7 @@ void CorruptedMemoryResolver::promotedBasedHint(NodeInfo &Info) {
       Info.PromotedWL.size() == 1 &&
       Info.PromotedWL.front().Expr->getNumElements() > 0 ) {
     auto Pair = mFragChildOfUnknown.try_emplace(Info.PromotedWL.front());
-    assert(!Pair.second && "Hint must not be inserted yet!");
+    assert(Pair.second && "Hint must not be inserted yet!");
     Item = Pair.first->second = copyToCorrupted(Info.CorruptedWL, nullptr);
     Info.ParentOfUnknown = mAT->getTopLevelNode();
   } else {
