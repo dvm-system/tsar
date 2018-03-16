@@ -949,6 +949,7 @@ void CorruptedMemoryResolver::promotedBasedHint(NodeInfo &Info) {
     for (auto *Node : Info.NodesWL)
       mergeChild(Item, Info.ParentOfUnknown, Node);
   }
+  Info.CorruptedWL.clear();
   Info.Items.clear();
   Info.Items.push_back(Item);
 }
@@ -999,6 +1000,7 @@ void CorruptedMemoryResolver::aliasTreeBasedHint(
   auto NodeItr = Info.NodesWL.begin(), NodeItrE = Info.NodesWL.end();
   for (++NodeItr; NodeItr != NodeItrE; ++NodeItr)
     mergeChild(Item, Info.ParentOfUnknown, *NodeItr);
+  Info.CorruptedWL.clear();
   Info.Items.clear();
   Info.Items.push_back(Item);
 }
@@ -1015,6 +1017,7 @@ void CorruptedMemoryResolver::distinctUnknownHint(NodeInfo &Info) {
     Item = copyToCorrupted(Info.CorruptedWL, nullptr);
     mDistinctUnknown.push_back(Item);
   }
+  Info.CorruptedWL.clear();
   Info.Items.clear();
   Info.Items.push_back(Item);
 }
