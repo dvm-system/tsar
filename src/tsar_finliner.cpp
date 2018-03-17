@@ -127,8 +127,8 @@ inline bool reformat(
   return false;
 }
 
-std::vector<clang::Token> FInliner::getRawTokens(const clang::SourceRange& SR,
-  clang::tok::TokenKind TK) const {
+std::vector<clang::Token> FInliner::getRawTokens(
+    const clang::SourceRange& SR) const {
   // these positions are beginings of tokens
   // should include upper bound to capture last token
   unsigned int Offset = SR.getBegin().getRawEncoding();
@@ -143,7 +143,7 @@ std::vector<clang::Token> FInliner::getRawTokens(const clang::SourceRange& SR,
       mRewriter.getLangOpts(), false)) {
       continue;
     }
-    if (Token.getKind() != TK) {
+    if (Token.getKind() != clang::tok::raw_identifier) {
       continue;
     }
     // avoid duplicates for same token
@@ -392,18 +392,9 @@ std::pair<std::string, std::string> FInliner::compile(
   // effective context construction
   auto init_context = [&]() {
     context = "";
-    auto decls = mContext.getTranslationUnitDecl()->decls();
-    for (auto i : mIdentifiers[TI.mTemplate->getFuncDecl()]) {
-      auto it = std::find_if(std::begin(decls), std::end(decls),
-        [&](const clang::Decl* D) -> bool {
-        if (const clang::NamedDecl* ND = llvm::dyn_cast<clang::NamedDecl>(D)) {
-          return ND->getName().str() == i;
-        } else {
-          return false;
-        }
-      });
-      if (it != std::end(decls)) {
-        context += getSourceText(getRange(*it)) + ";";
+    for (auto i : mExtIdentifiers[TI.mTemplate->getFuncDecl()]) {
+      for (auto decl : mOutermostDecls[i]) {
+        context += getSourceText(getRange(decl)) + ";";
       }
     }
   };
@@ -419,8 +410,6 @@ std::pair<std::string, std::string> FInliner::compile(
     std::string identifier = addSuffix(PVD->getName(), decls);
     replacements[PVD->getName()] = identifier;
     std::vector<std::string> tokens
-      = tokenize(getSourceText(getRange(PVD)), mIdentifierPattern);
-    tokens
       = construct(PVD->getType().getAsString(), identifier, context, replacements);
     context += join(tokens, " ") + ";";
     params.append(join(tokens, " ") + " = " + args[PVD->getFunctionScopeIndex()]
@@ -482,9 +471,6 @@ std::pair<std::string, std::string> FInliner::compile(
     identifier = addSuffix("R", decls);
     init_context();
     std::vector<std::string> tokens
-      = tokenize(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
-        mIdentifierPattern);
-    tokens
       = construct(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
         identifier, context, std::map<std::string, std::string>());
     ret = join(tokens, " ") + ";";
@@ -508,6 +494,62 @@ std::pair<std::string, std::string> FInliner::compile(
   return {text, identifier};
 }
 
+std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
+  std::set<std::string> identifiers;
+  if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(D)) {
+    std::set<std::string> tmp = getIdentifiers(TD);
+    identifiers.insert(std::begin(tmp), std::end(tmp));
+  } else if (const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(D)) {
+    identifiers.insert(FD->getName());
+  } else {
+    for (auto& token : getRawTokens(getRange(D))) {
+      if (std::find(std::begin(mKeywords), std::end(mKeywords), token.getRawIdentifier()) != std::end(mKeywords)) {
+        continue;
+      }
+      if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
+        if (ND->getName() == token.getRawIdentifier()) {
+          identifiers.insert(ND->getName());
+          continue;
+        }
+      }
+      const clang::DeclContext* DC = D->getDeclContext();
+      while (DC) {
+        if (std::find_if(DC->decls_begin(), DC->decls_end(),
+          [&](const clang::Decl* D) -> bool {
+          if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
+            return ND->getName().str() == token.getRawIdentifier().str();
+          } else {
+            return false;
+          }
+        }) != DC->decls_end()) {
+          break;
+        } else {
+          DC = DC->getParent();
+        }
+      }
+      if (DC != nullptr) {
+        identifiers.insert(token.getRawIdentifier());
+      }
+    }
+  }
+  return identifiers;
+}
+
+std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
+  std::set<std::string> identifiers;
+  identifiers.insert(TD->getName());
+  for (auto decl : TD->decls()) {
+    if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(decl)) {
+      std::set<std::string> tmp = getIdentifiers(TD);
+      identifiers.insert(std::begin(tmp), std::end(tmp));
+    } else {
+      std::set<std::string> tmp = getIdentifiers(decl);
+      identifiers.insert(std::begin(tmp), std::end(tmp));
+    }
+  }
+  return identifiers;
+}
+
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
   // associate instantiations with templates
@@ -521,22 +563,22 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
   }
   // global identifiers
+  // possible scopes C99: function, function prototype, file, block
+  // decl contexts C99: TranslationUnitDecl, FunctionDecl, TagDecl, BlockDecl
+  // only TagDecl should be traversed because it doesn't produce own scope
   for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
-    for (auto& token : getRawTokens(getRange(decl))) {
-      //if (!token.getIdentifierInfo()->isKeyword(mRewriter.getLangOpts())) {
-        mGlobalIdentifiers.insert(token.getRawIdentifier());
-      //}
+    std::set<std::string> tmp = getIdentifiers(decl);
+    for (auto identifier : tmp) {
+      mOutermostDecls[identifier].insert(decl);
     }
+    mGlobalIdentifiers.insert(std::begin(tmp), std::end(tmp));
   }
   // identifiers in scope
-  std::map<const clang::FunctionDecl*, std::set<std::string>> decls;
   for (auto& TIs : mTIs) {
     for (auto& decl : TIs.first->decls()) {
-      for (auto& token : getRawTokens(getRange(decl))) {
-        //if (!token.getIdentifierInfo()->isKeyword(mRewriter.getLangOpts())) {
-          decls[TIs.first].insert(token.getRawIdentifier());
-        //}
-      }
+      std::set<std::string> tmp = getIdentifiers(decl);
+      mExtIdentifiers[TIs.first].insert(std::begin(tmp), std::end(tmp));
+      mIntIdentifiers[TIs.first].insert(std::begin(tmp), std::end(tmp));
     }
   }
   // remove unused templates
@@ -620,33 +662,19 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // logic: just collect all global identifiers for context
   // even if we have same identifiers locally, they will hide global ones
   // these global declarations become unused
-  std::set<std::string> globalIdentifiers;
-  for (auto D : Context.getTranslationUnitDecl()->decls()) {
-    for (auto& token : getRawTokens(getRange(D))) {
-      //if (!token.getIdentifierInfo()->isKeyword(mRewriter.getLangOpts())) {
-        globalIdentifiers.insert(token.getRawIdentifier());
-      //}
-    }
-  }
   for (auto T : mTs) {
     if (T.second.getFuncDecl() == nullptr) {
       continue;
     }
-    std::set<std::string>& identifiers = mIdentifiers[T.first];
-    for (auto decl : T.first->decls()) {
-      for (auto& token : getRawTokens(getRange(decl))) {
-        identifiers.insert(token.getRawIdentifier());
-      }
-    }
-    for (auto expr : mExprs[T.first]) {
-      for (auto& token : getRawTokens(getRange(expr))) {
-        identifiers.insert(token.getRawIdentifier());
-      }
+    std::set<std::string>& identifiers = mExtIdentifiers[T.first];
+    for (auto& decl : T.first->decls()) {
+      std::set<std::string> tmp = getIdentifiers(decl);
+      identifiers.insert(std::begin(tmp), std::end(tmp));
     }
     // intersect local references with global symbols
     std::set<std::string> extIdentifiers;
     std::set_intersection(std::begin(identifiers), std::end(identifiers),
-      std::begin(globalIdentifiers), std::end(globalIdentifiers),
+      std::begin(mGlobalIdentifiers), std::end(mGlobalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
     for (auto& i : identifiers) {
@@ -654,6 +682,19 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       assert(mGlobalIdentifiers.find(i) != std::end(mGlobalIdentifiers)
         && "No corresponding global identifier found");
     }
+    // expressions can't be handled the same way as declarations
+    // false positives possible (placeholder variables, etc), just ignore it
+    // during context reconstruction
+    for (auto expr : mExprs[T.first]) {
+      for (auto& token : getRawTokens(getRange(expr))) {
+        identifiers.insert(token.getRawIdentifier());
+      }
+    }
+    extIdentifiers.clear();
+    std::set_intersection(std::begin(identifiers), std::end(identifiers),
+      std::begin(mGlobalIdentifiers), std::end(mGlobalIdentifiers),
+      std::inserter(extIdentifiers, std::end(extIdentifiers)));
+    identifiers.swap(extIdentifiers);
   }
   // info
   [&]() {
@@ -731,7 +772,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
           || TI.mTemplate->getFuncDecl() == nullptr) {
           continue;
         }
-        std::set<std::string>& fDecls = decls[TI.mFuncDecl];
+        std::set<std::string>& fDecls = mIntIdentifiers[TI.mFuncDecl];
         std::vector<std::string> args(TI.mCallExpr->getNumArgs());
         std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
           std::begin(args),

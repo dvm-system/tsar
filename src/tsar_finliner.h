@@ -195,9 +195,11 @@ private:
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
-  /// get raw tokens of specific kind (preserves order)
-  std::vector<clang::Token> getRawTokens(const clang::SourceRange& SR,
-    clang::tok::TokenKind TK = clang::tok::raw_identifier) const;
+  /// get raw tokens (preserves order)
+  std::vector<clang::Token> getRawTokens(const clang::SourceRange& SR) const;
+
+  std::set<std::string> getIdentifiers(const clang::Decl* D) const;
+  std::set<std::string> getIdentifiers(const clang::TagDecl* TD) const;
 
   /// T must provide getSourceRange() method
   template<typename T>
@@ -271,7 +273,7 @@ private:
   const std::vector<std::string> mKeywords = { "register",
     "void", "char", "short", "int", "long", "float", "double",
     "signed", "unsigned", "_Bool", "_Complex", "struct", "union", "enum",
-    "const", "restrict", "volatile" };
+    "typedef", "const", "restrict", "volatile" };
   const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
 
   tsar::TransformationContext* mTransformContext;
@@ -288,7 +290,8 @@ private:
   std::vector<const clang::Stmt*> mFSs;
 
   std::set<std::string> mGlobalIdentifiers;
-  std::map<const clang::FunctionDecl*, std::set<std::string>> mIdentifiers;
+  std::map<const clang::FunctionDecl*, std::set<std::string>> mExtIdentifiers, mIntIdentifiers;
+  std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
 
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;
 
