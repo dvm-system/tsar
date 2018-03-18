@@ -56,10 +56,8 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
 //insert call of sapforRegVar(void*, void*) or 
 //sapforRegArr(void*, size_t, void*) after specified alloca instruction.
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
-  //FIXME: need to add functions parameters registration. instrumentation fails
-  // without that. 
   auto Metadata = getMetadata(&I);
-  if(Metadata == nullptr) 
+  if(Metadata == nullptr)
     return;
   unsigned ID = getTypeId(*I.getAllocatedType());
   std::stringstream Debug;
@@ -69,22 +67,24 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   //Alloca instruction has isArrayAllocation method, but it looks like it
   //doesn't work like i wanted it. So checking for array in this way
   if(TypeId == Type::TypeID::ArrayTyID || TypeId == Type::TypeID::PointerTyID){
-    mRegistrator.regArr(Metadata->getName().data(), Metadata->getLine());
     Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
-    auto DIVar = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+    unsigned Idx = regDbgStr(Debug.str(), *I.getModule());
+    mRegistrator.regArr(&I, Idx);
+    auto DIVar = getDbgPoolElem(Idx, I);
     auto ArrSize = ConstantInt::get(Type::getInt64Ty(I.getContext()),
       I.getAllocatedType()->getArrayNumElements());
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_arr);
     auto Call = CallInst::Create(Fun, {DIVar, ArrSize, Addr}, "");
     Call->insertAfter(Addr);
   } else {	  
-    mRegistrator.regVar(Metadata->getName().data(), Metadata->getLine());
     Debug << "type=var_name*file=" << I.getModule()->getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "**";
-    auto DIVar = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+    unsigned Idx = regDbgStr(Debug.str(), *I.getModule());
+    mRegistrator.regVar(&I, Idx);
+    auto DIVar = getDbgPoolElem(Idx, I);
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_var);
     auto Call = CallInst::Create(Fun, {DIVar, Addr}, "");
     Call->insertAfter(Addr);
@@ -237,8 +237,7 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripPointerCasts()->getName().data(), I.getFunction()->getSubprogram()
-    ->getLine(), cast<Instruction>(I).getDebugLoc().getLine());
+    ->stripPointerCasts());
   auto DIVar = getDbgPoolElem(Idx, *DILoc);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
@@ -264,8 +263,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripPointerCasts()->getName().data(), I.getFunction()->getSubprogram()
-    ->getLine(), cast<Instruction>(I).getDebugLoc().getLine());
+    ->stripPointerCasts());
   auto DIVar = getDbgPoolElem(Idx, *DILoc);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
@@ -338,14 +336,14 @@ void Instrumentation::regGlobals(Module& M) {
     unsigned ID = getTypeId(*I->getValueType());
     auto Metadata = getMetadata(&*I);
     if(Metadata == nullptr) {
-      return;
+      continue;
     }
     std::stringstream Debug;
-    mRegistrator.regVar(Metadata->getName().data(), Metadata->getLine(), true);
     Debug << "type=var_name*file=" << M.getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "**";
-    regDbgStr(Debug.str(), M);
+    unsigned Idx = regDbgStr(Debug.str(), M);
+    mRegistrator.regVar(&(*I), Idx);
   }
 }
 
