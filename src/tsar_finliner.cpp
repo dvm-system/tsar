@@ -336,6 +336,8 @@ std::vector<std::string> FInliner::construct(
   const std::string& type, const std::string& identifier,
   const std::string& context,
   std::map<std::string, std::string>& replacements) {
+  // custom tokenizer is needed because ASTUnit doesn't have
+  // properly setuped Lexer/Rewriter
   const std::string pattern(
     "[(struct|union|enum)\\s+]?" + mIdentifierPattern + "|\\S");
   clang::ast_matchers::MatchFinder MatchFinder;
@@ -365,6 +367,10 @@ std::vector<std::string> FInliner::construct(
     std::unique_ptr<clang::ASTUnit> ASTUnit
       = clang::tooling::buildASTFromCode(context + join(tokens, " ") + ";");
     assert(ASTUnit.get() != nullptr && "AST construction failed");
+    if (ASTUnit->getDiagnostics().hasErrorOccurred()) {
+      std::swap(tokens[i], tokens[std::max(i - 1, 0)]);
+      continue;
+    }
     MatchFinder.matchAST(ASTUnit->getASTContext());
     counts[i] = varDeclHandler.getCount();
     if (counts[i])
@@ -696,6 +702,64 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
   }
+  // if function has external dependencies:
+  //   if external dependencies collide with function where specific instantiation is:
+  //     disable this instantiation (perspective - fix collisions through renaming)
+  //   if atleast one external decl in different file OR atleast one external decl is static:
+  //     disable all instantiations in files except one where function decl is
+  //   else:
+  //     generate forward decls for all external dependencies and insert them before all function decls
+  //       with instantiations
+  // else:
+  //   allow instantiations
+  // note: external dependencies include callees
+  for (auto T : mTs) {
+    if (T.second.getFuncDecl() == nullptr) {
+      continue;
+    }
+    if (mExtIdentifiers[T.first].size() > 0) {
+      bool LocalOnly = false;
+      for (auto identifier : mExtIdentifiers[T.first]) {
+        for (auto decl : mOutermostDecls[identifier]) {
+          // TODO: check internal linkage
+          if (mSourceManager.getFileID(decl->getLocStart())
+            != mSourceManager.getFileID(T.first->getLocStart())) {
+            LocalOnly = true;
+            break;
+          }
+        }
+        if (LocalOnly) {
+          break;
+        }
+      }
+      for (auto TIs : mTIs) {
+        for (auto TI : TIs.second) {
+          if (TI.mTemplate == nullptr || TI.mTemplate->getFuncDecl() != T.first) {
+            continue;
+          }
+          if (LocalOnly && mSourceManager.getFileID(TI.mFuncDecl->getLocStart())
+            == mSourceManager.getFileID(T.first->getLocStart())) {
+            // external decl in different file (#include), disable instantiation in any files except this
+            TI.mTemplate = nullptr;
+            continue;
+          }
+          std::set<std::string> tmp;
+          std::set_intersection(std::begin(mIntIdentifiers[TI.mFuncDecl]), std::end(mIntIdentifiers[TI.mFuncDecl]),
+            std::begin(mExtIdentifiers[T.first]), std::end(mExtIdentifiers[T.first]),
+            std::inserter(tmp, std::end(tmp)));
+          if (tmp.size() > 0) {
+            // potential collision of template external dependencies and target function local declarations
+            // disable instantiation
+            TI.mTemplate = nullptr;
+            continue;
+          }
+        }
+      }
+    } else {
+      // nothing to be done, can be inlined anywhere, doesn't call other functions
+    }
+  }
+
   // info
   [&]() {
     llvm::errs() << '\n';
