@@ -19,6 +19,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/PointerIntPair.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/TinyPtrVector.h>
@@ -103,8 +104,12 @@ public:
       bcl::tagged<llvm::TinyPtrVector<llvm::DIExpression *>, llvm::DIExpression>>>;
 
 private:
-  /// A small set to simplify check whether a memory location is corrupted.
-  using CorruptedSet = llvm::SmallPtrSet<const llvm::MDNode *, 16>;
+  /// \brief A small set to simplify check whether a memory location
+  /// is corrupted.
+  ///
+  /// A bit flag indicates whether some values are bound to the location.
+  using CorruptedSet = llvm::SmallPtrSet<
+    llvm::PointerIntPair<const llvm::MDNode *, 1, bool>, 16>;
 
   /// This is a storage for lists of corrupted locations.
   using CorruptedPool =
@@ -255,9 +260,15 @@ public:
     return mDistinctUnknown.size();
   }
 
-  /// Returns true if a specified memory location is corrupted.
-  bool isCorrupted(const DIMemory &M) const {
-    return mCorruptedSet.count(M.getAsMDNode());
+  /// Returns true if a specified memory location is corrupted
+  /// (first value is true) and whether some values are bound to
+  /// the corrupted location (second value is true).
+  std::pair<bool, bool> isCorrupted(const DIMemory &M) const {
+    if (mCorruptedSet.count({ M.getAsMDNode(), true }))
+      return std::make_pair(true, true);
+    else if (mCorruptedSet.count({ M.getAsMDNode(), false }))
+      return std::make_pair(true, false);
+    else std::make_pair(false, false);
   }
 
   /// Returns already constructed debug memory location for a specified memory.

@@ -400,13 +400,15 @@ public:
   /// Returns iterator that points to the ending of the children list.
   const_child_iterator child_end() const { return mChildren.end(); }
 
-  /// Returns number of children.
+  /// Returns number of children of the node in linear time.
   std::size_t child_size() const { return mChildren.size(); }
 
-  /// Returns true if this node is a leaf.
+  /// Returns true in constant time if this node is a leaf.
   bool child_empty() const { return mChildren.empty(); }
 
 protected:
+  friend class DIAliasMemoryNode;
+
   /// Creates an empty node of a specified kind `K`.
   explicit DIAliasNode(Kind K) : mKind(K) {};
 
@@ -465,9 +467,15 @@ public:
   /// Returns iterator that points to the ending of the alias list.
   const_iterator end() const { return mAliases.end(); }
 
-  /// Returns true if the node does not contain memory locations.
+  /// Returns true if the node does not contain memory locations
+  /// in constant time
   bool empty() const noexcept(noexcept(std::declval<AliasList>().empty())) {
     return mAliases.empty();
+  }
+
+  /// Returns number of memory locations in the node in linear time.
+  size_t size() const noexcept(noexcept(std::declval<AliasList>().size())) {
+    return mAliases.size();
   }
 
 protected:
@@ -487,6 +495,21 @@ protected:
       llvm::isa<DIEstimateMemory>(M)) &&
       "Alias estimate node may contain estimate memory location only!");
     mAliases.push_back(M);
+  }
+
+  /// Removes node from alias tree, never deletes.
+  void remove() {
+    for (auto &Child : mChildren)
+      Child.mParent = mParent;
+    mParent->mChildren.erase(child_iterator(this));
+    mParent->mChildren.splice(mParent->mChildren.end(), mChildren);
+    mParent = nullptr;
+  }
+
+  /// Removes memory location from a node, never deletes.
+  static void remove(DIMemory &M) {
+    if (auto *N = M.getAliasNode())
+      N->mAliases.erase(iterator(M));
   }
 
 private:
@@ -619,6 +642,21 @@ public:
   ///
   /// \pre Alias estimate node may contain estimate memory locations only.
   DIMemory & addToNode(std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N);
+
+  /// \brief Removes specified node from the alias tree and deletes it.
+  ///
+  /// \post All memory locations from a specified node will be deleted. Parent
+  /// for each child of a node `N` will be set to parent of `N`.
+  void erase(DIAliasMemoryNode &N);
+
+  /// \brief Removes specified memory from the alias tree and deletes it. If
+  /// this is a last memory location in a node the whole node will be deleted.
+  ///
+  /// \return A pair of flags. The first flag is `true` if a specified memory
+  /// has been removed successfully. The second flag is `true` is a removed
+  /// memory was the last location in the node and the node has been also
+  /// removed.
+  std::pair<bool, bool> erase(DIMemory &M);
 
   /// \brief This pop up ghostview window and displays the alias tree.
   ///

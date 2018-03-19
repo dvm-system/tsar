@@ -233,10 +233,36 @@ DIMemory & DIAliasTree::addNewUnknownNode(
 DIMemory & DIAliasTree::addToNode(
     std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N) {
   auto Pair = mFragments.insert(M.release());
-  assert(Pair.second && "Memory location is already attached to a node!");
+  assert(Pair.second && !(*Pair.first)->getAliasNode() &&
+    "Memory location is already attached to a node!");
   (*Pair.first)->setAliasNode(N);
   N.push_back(**Pair.first);
   return **Pair.first;
+}
+
+void DIAliasTree::erase(DIAliasMemoryNode &N) {
+  for (auto &M : N) {
+    mFragments.erase(&M);
+    delete &M;
+  }
+  N.remove();
+  mNodes.erase(N);
+}
+
+std::pair<bool, bool> DIAliasTree::erase(DIMemory &M) {
+  auto Itr = mFragments.find(&M);
+  if (Itr == mFragments.end())
+    return std::make_pair(false, false);
+  auto Node = M.getAliasNode();
+  assert(Node && "Alias node must not be null!");
+  DIAliasMemoryNode::remove(M);
+  mFragments.erase(Itr);
+  delete &M;
+  if (Node->empty()) {
+    erase(*Node);
+    return std::make_pair(true, true);
+  }
+  return std::make_pair(true, false);
 }
 
 namespace {
@@ -309,7 +335,7 @@ void addMemoryLog(Function &F, DIMemory &EM) {
 
 /// This is a map from list of corrupted memory locations to an unknown
 /// node in a debug alias tree.
-using CorruptedMap = DenseMap<CorruptedMemoryItem *, DIAliasUnknownNode *>;
+using CorruptedMap = DenseMap<CorruptedMemoryItem *, DIAliasNode *>;
 
 /// \brief Adds an unknown node (if necessary) into the tree and returns it.
 ///
@@ -317,7 +343,7 @@ using CorruptedMap = DenseMap<CorruptedMemoryItem *, DIAliasUnknownNode *>;
 /// will be returned. If a specified parent is unknown node than a new node
 /// will not be created. Memory locations from `Corrupted` will be moved to
 /// the unknown node and `CorruptedNodes` map will be updated.
-DIAliasUnknownNode * addCorruptedNode(
+DIAliasNode * addCorruptedNode(
     DIAliasTree &DIAT, CorruptedMemoryItem *Corrupted, DIAliasNode *DIParent,
     CorruptedMap &CorruptedNodes) {
   assert(Corrupted && "List of corrupted memory location must not be null!");
@@ -339,7 +365,7 @@ DIAliasUnknownNode * addCorruptedNode(
     DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
     DIAT.addToNode(std::move(DIM), cast<DIAliasUnknownNode>(*DIParent));
   }
-  return cast<DIAliasUnknownNode>(DIParent);
+  return DIParent;
 }
 
 /// \brief Traverses alias tree to build its debug version.
@@ -380,7 +406,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), DL, DT);
           DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
         }
-        if (CMR.isCorrupted(*DIM)) {
+        if (CMR.isCorrupted(*DIM).first) {
           DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
@@ -398,7 +424,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext());
           DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
-        if (CMR.isCorrupted(*DIM)) {
+        if (CMR.isCorrupted(*DIM).first) {
           DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
@@ -475,8 +501,9 @@ public:
     DEBUG(dbgs() << "[DI ALIAS TREE]: build subtree for a variable "
       << mVar->getName() << "\n");
     DIAliasNode *Parent = mDIAT->getTopLevelNode();
-    if (auto *Corrupted = mCMR->hasUnknownParent(*mVar))
-      Parent = addCorruptedNode(*mDIAT, Corrupted, Parent, *mCorruptedNodes);
+    if (mCorrupted = mCMR->hasUnknownParent(*mVar))
+      Parent = mCorruptedNode =
+        addCorruptedNode(*mDIAT, mCorrupted, Parent, *mCorruptedNodes);
     auto Ty = stripDIType(mVar->getType()).resolve();
     if (!Ty) {
       addFragments(Parent, 0, mSortedFragments.size());
@@ -496,7 +523,8 @@ public:
       addFragments(Parent, 0, mSortedFragments.size());
       return;
     }
-    evaluateTy(Ty, 0, std::make_pair(0, mSortedFragments.size()), Parent);
+    evaluateTy(DIExpression::get(*mContext, {}),
+      Ty, 0, std::make_pair(0, mSortedFragments.size()), Parent);
   }
 
 private:
@@ -528,6 +556,57 @@ private:
 
   /// \brief Add subtypes of a specified type into the alias tree.
   ///
+  /// A pair of `mVar` and `Expr` will represent a specified type in the tree.
+  /// \pre A specified type `Ty` must full cover a specified fragments
+  /// from range [Fragments.first, Fragments.second).
+  /// Fragments from this range can not cross bounds of this type.
+  void evaluateTy(DIExpression *Expr, DIType *Ty, uint64_t Offset,
+      std::pair<unsigned, unsigned> Fragments, DIAliasNode *Parent) {
+    assert(Expr && "Expression must not be null!");
+    assert(Ty && "Type must not be null!");
+    assert(Parent && "Alias node must not be null!");
+    auto DIMTmp = DIEstimateMemory::get(*mContext, mVar, Expr);
+    auto IsCorrupted = mCMR->isCorrupted(*DIMTmp);
+    if (IsCorrupted.first) {
+      if (!IsCorrupted.second) {
+        DEBUG(dbgs() << "[DI ALIAS TREE]: erase corrupted\n");
+        assert(mCorruptedNode && "Corrupted node must not be null!");
+        for (auto &M : cast<DIAliasUnknownNode>(*mCorruptedNode))
+          if (M.getAsMDNode() == DIMTmp->getAsMDNode()) {
+            --NumCorruptedMemory;
+            isa<DIEstimateMemory>(M) ? --NumEstimateMemory : --NumUnknownMemory;
+            if (mDIAT->erase(M).second) {
+              auto &CN = (*mCorruptedNodes)[mCorrupted];
+              Parent = (CN == Parent) ? CN = mDIAT->getTopLevelNode() : Parent;
+              --NumUnknownNode;
+              --NumAliasNode;
+            }
+            break;
+          }
+        DEBUG(addFragmentLog(DIMTmp->getExpression()));
+        Parent = mDIAT->addNewNode(std::move(DIMTmp), *Parent).getAliasNode();
+      }
+    } else {
+      DEBUG(addFragmentLog(DIMTmp->getExpression()));
+      Parent = mDIAT->addNewNode(std::move(DIMTmp), *Parent).getAliasNode();
+    }
+    switch (Ty->getTag()) {
+    default:
+      addFragments(Parent, Fragments.first, Fragments.second);
+      break;
+    case dwarf::DW_TAG_structure_type:
+    case dwarf::DW_TAG_class_type:
+      evaluateStructureTy(Ty, Offset, Fragments, Parent);
+      break;
+    case dwarf::DW_TAG_array_type:
+      evaluateArrayTy(Ty, Offset, Fragments, Parent);
+      break;
+    }
+  }
+
+
+  /// \brief Add subtypes of a specified type into the alias tree.
+  ///
   /// \pre A specified type `Ty` must full cover a specified fragments
   /// from range [Fragments.first, Fragments.second).
   /// Fragments from this range can not cross bounds of this type.
@@ -545,21 +624,7 @@ private:
     }
     auto Expr = DIExpression::get(*mContext, {
       dwarf::DW_OP_LLVM_fragment, Offset, Ty->getSizeInBits()});
-    auto &EM = mDIAT->addNewNode(
-      DIEstimateMemory::get(*mContext, mVar, Expr), *Parent);
-    Parent = EM.getAliasNode();
-    switch (Ty->getTag()) {
-    default:
-      addFragments(Parent, Fragments.first, Fragments.second);
-      break;
-    case dwarf::DW_TAG_structure_type:
-    case dwarf::DW_TAG_class_type:
-      evaluateStructureTy(Ty, Offset, Fragments, Parent);
-      break;
-    case dwarf::DW_TAG_array_type:
-      evaluateArrayTy(Ty, Offset, Fragments, Parent);
-      break;
-    }
+    evaluateTy(Expr, Ty, Offset, Fragments, Parent);
   }
 
   /// \brief Build coverage of fragments from a specified range
@@ -677,6 +742,8 @@ private:
   CorruptedMap *mCorruptedNodes;
   DIVariable *mVar;
   TinyPtrVector<DIExpression *> mSortedFragments;
+  CorruptedMemoryItem *mCorrupted;
+  DIAliasNode *mCorruptedNode;
 };
 
 /// \brief Returns list of estimate memory locations which should be inserted
@@ -1067,7 +1134,7 @@ void CorruptedMemoryResolver::updateWorkLists(
         } else {
           DEBUG(corruptedFoundLog(M));
           Info.CorruptedWL.push_back(&M);
-          mCorruptedSet.insert(M.getAsMDNode());
+          mCorruptedSet.insert({ M.getAsMDNode(), true });
           // This is rare case, so we do not take care about overheads and
           // remove an expression from a vector.
           auto VToF = mVarToFragments.find(Loc.Var);
@@ -1076,17 +1143,25 @@ void CorruptedMemoryResolver::updateWorkLists(
           VToF->second.erase(ExprItr);
           mSmallestFragments.erase(Loc);
         }
-      } else if (Binding != DIEstimateMemory::Consistent ||
+      } else if (Binding != DIMemory::Consistent ||
           !isSameAfterRebuild(*DIEM)) {
         DEBUG(corruptedFoundLog(M));
         Info.CorruptedWL.push_back(&M);
-        mCorruptedSet.insert(M.getAsMDNode());
+        mCorruptedSet.insert({
+          M.getAsMDNode(),
+          Binding == DIMemory::Empty ||
+            Binding == DIMemory::Destroyed ? false : true
+        });
       }
-    } else if (Binding != DIEstimateMemory::Consistent ||
+    } else if (Binding != DIMemory::Consistent ||
         !isSameAfterRebuild(cast<DIUnknownMemory>(M))) {
       DEBUG(corruptedFoundLog(M));
       Info.CorruptedWL.push_back(&M);
-      mCorruptedSet.insert(M.getAsMDNode());
+      mCorruptedSet.insert({
+        M.getAsMDNode(),
+        Binding == DIMemory::Empty ||
+          Binding == DIMemory::Destroyed ? false : true
+      });
     }
     findBoundAliasNodes(M, *mAT, Info.NodesWL);
   }
