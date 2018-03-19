@@ -1030,7 +1030,13 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
   }
   for (auto *M : WL) {
     ++NumCorruptedMemory;
-    Item->push(DIMemory::get(mFunc->getContext(), *M));
+    auto NewM = DIMemory::get(mFunc->getContext(), *M);
+    for (auto &VH : *M) {
+      if (!VH || isa<UndefValue>(VH))
+        continue;
+      NewM->bindValue(VH);
+    }
+    Item->push(std::move(NewM));
   }
   return Item;
 }
