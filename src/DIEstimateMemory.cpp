@@ -73,9 +73,16 @@ void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
 void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
   for (auto &VH : DIUM) {
-    if (!VH || !isa<Instruction>(*VH))
+    if (!VH || isa<UndefValue>(*VH))
       continue;
-    auto N = AT.findUnknown(cast<Instruction>(*VH));
+    AliasNode *N = nullptr;
+    if (auto Inst = dyn_cast<Instruction>(VH))
+      N = AT.findUnknown(cast<Instruction>(*VH));
+    if (!N) {
+      auto EM = AT.find(MemoryLocation(VH, 0));
+      assert(EM && "Estimate memory must be presented in the alias tree!");
+      N = EM->getAliasNode(AT);
+    }
     assert(N && "Unknown memory must be presented in the alias tree!");
     Nodes.insert(N);
   }
