@@ -69,8 +69,11 @@ public:
   /// Returns target of forwarding.
   CorruptedMemoryItem * getForward() noexcept { return mForward; }
 
-  /// Returns size of this item (non target of forwarding).
+  /// Returns size of this item (not target of forwarding).
   size_type size() const { return mMemory.size(); }
+
+  /// Returns true if this item is empty (non target of forwarding).
+  bool empty() const { return mMemory.empty(); }
 
   /// Extracts memory location from this item (not target of forwarding).
   std::unique_ptr<DIMemory> pop() {
@@ -82,6 +85,13 @@ public:
   /// Appends memory location to this item (not target of forwarding).
   void push(std::unique_ptr<DIMemory> &&M) {
     mMemory.push_back(std::move(M));
+  }
+
+  /// Removes locations with MDNode metadata equal to one of specified values.
+  template<class ItrTy> void erase(ItrTy I, ItrTy E) {
+    for (size_type Idx = size(); Idx > 0; --Idx)
+      if (mMemory[Idx - 1]->getAsMDNode() == *I)
+        mMemory.erase(&mMemory[Idx - 1]);
   }
 private:
   CorruptedList mMemory;
@@ -266,9 +276,9 @@ public:
   std::pair<bool, bool> isCorrupted(const DIMemory &M) const {
     if (mCorruptedSet.count({ M.getAsMDNode(), true }))
       return std::make_pair(true, true);
-    else if (mCorruptedSet.count({ M.getAsMDNode(), false }))
+    if (mCorruptedSet.count({ M.getAsMDNode(), false }))
       return std::make_pair(true, false);
-    else std::make_pair(false, false);
+    return std::make_pair(false, false);
   }
 
   /// Returns already constructed debug memory location for a specified memory.
