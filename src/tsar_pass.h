@@ -66,8 +66,15 @@ void initializeDIEstimateMemoryPassPass(PassRegistry &Registry);
 /// Creates a pass to build hierarchy of accessed memory.
 FunctionPass * createDIEstimateMemoryPass();
 
-/// Initializes storage of alias trees.
-void initializeDIAliasTreeImmutableStoragePass(PassRegistry &Registry);
+/// Initializes storage of debug-level memory environment.
+void initializeDIMemoryEnvironmentStoragePass(PassRegistry &Registry);
+
+/// Creates storage of debug-level memory environment.
+ImmutablePass * createDIMemoryEnvironmentStorage();
+
+/// Initializes wrapper to access debug-level memory environment.
+void initializeDIMemoryEnvironmentWrapperPass(PassRegistry &Registry);
+
 /// Initializes a pass to display alias tree.
 void initializeAliasTreeViewerPass(PassRegistry &Registry);
 

@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "DIEstimateMemory.h"
+#include "DIMemoryEnvironment.h"
+#include "DIMemoryHandle.h"
 #include "CorruptedMemory.h"
 #include "tsar_dbg_output.h"
 #include "EstimateMemory.h"
@@ -97,15 +99,27 @@ void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
 }
 }
 
-std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
-    DIUnknownMemory &UM) {
-  ++NumUnknownMemory;
-  return std::unique_ptr<DIUnknownMemory>(
-    new DIUnknownMemory(UM.getAsMDNode()));
+DIMemory::~DIMemory() {
+  if (hasMemoryHandle())
+    DIMemoryHandleBase::memoryIsDeleted(this);
+}
+
+void DIMemory::replaceAllUsesWith(DIMemory *M) {
+  assert(M && "New memory location must not be null!");
+  assert(this != M && "Old and new memory must be differ!");
+  if (hasMemoryHandle())
+    DIMemoryHandleBase::memoryIsRAUWd(this, M);
 }
 
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
-    llvm::MDNode *MD, Flags F) {
+    DIMemoryEnvironment &Env, DIUnknownMemory &UM) {
+  ++NumUnknownMemory;
+  return std::unique_ptr<DIUnknownMemory>(
+    new DIUnknownMemory(Env, UM.getAsMDNode()));
+}
+
+std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
+    DIMemoryEnvironment &Env, llvm::MDNode *MD, Flags F) {
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   auto NewMD = llvm::MDNode::get(Ctx, { MD, FlagMD });
@@ -113,10 +127,11 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   if (!MD)
     NewMD->replaceOperandWith(0, NewMD);
   ++NumUnknownMemory;
-  return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(NewMD));
+  return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, NewMD));
 }
 
-std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(llvm::LLVMContext &Ctx,
+std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
@@ -125,11 +140,12 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(llvm::LLVMContext &Ctx,
   auto MD = llvm::MDNode::get(Ctx, { Var, Expr, FlagMD });
   assert(MD && "Can not create metadata node!");
   ++NumEstimateMemory;
-  return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(MD));
+  return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(Env, MD));
 }
 
 std::unique_ptr<DIEstimateMemory>
-DIEstimateMemory::getIfExists(llvm::LLVMContext &Ctx,
+DIEstimateMemory::getIfExists(
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
@@ -137,7 +153,7 @@ DIEstimateMemory::getIfExists(llvm::LLVMContext &Ctx,
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   if (auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD })) {
     ++NumEstimateMemory;
-    return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(MD));
+    return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(Env, MD));
   }
   return nullptr;
 }
@@ -225,6 +241,154 @@ const llvm::MDNode * DIUnknownMemory::getMetadata() const {
       return Op;
   llvm_unreachable("MDNode must be specified!");
   return nullptr;
+}
+
+void DIMemoryHandleBase::addToUseList() {
+  assert(mMemory && "Null pointer does not have handles!");
+  auto &Env = mMemory->getEnv();
+  if (mMemory->hasMemoryHandle()) {
+    DIMemoryHandleBase *&Entry = Env[mMemory];
+    assert(mMemory && "Memory does not have any handles?");
+    addToExistingUseList(&Entry);
+    return;
+  }
+  // Ok, it doesn't have any handles yet, so we must insert it into the
+  // DenseMap. However, doing this insertion could cause the DenseMap to
+  // reallocate itself, which would invalidate all of the PrevP pointers that
+  // point into the old table. Handle this by checking for reallocation and
+  // updating the stale pointers only if needed.
+  auto &Handles = Env.getMemoryHandles();
+  const void *OldBucketPtr = Handles.getPointerIntoBucketsArray();
+  DIMemoryHandleBase *&Entry = Handles[mMemory];
+  assert(!Entry && "Memory really did already have handles?");
+  addToExistingUseList(&Entry);
+  mMemory->setHasMemoryHandle(true);
+  if (Handles.isPointerIntoBucketsArray(OldBucketPtr) || Handles.size() == 1)
+    return;
+  // Okay, reallocation did happen. Fix the Prev Pointers.
+  for (auto I = Handles.begin(), E = Handles.end(); I != E; ++I) {
+    assert(I->second && I->first == I->second->mMemory &&
+      "List invariant broken!");
+    I->second->setPrevPtr(&I->second);
+  }
+}
+
+void DIMemoryHandleBase::removeFromUseList() {
+  assert(mMemory && mMemory->hasMemoryHandle() &&
+    "Null pointer does not have handles!");
+  DIMemoryHandleBase **PrevPtr = getPrevPtr();
+  assert(*PrevPtr == this && "List invariant broken");
+  *PrevPtr = mNext;
+  if (mNext) {
+    assert(mNext->getPrevPtr() == &mNext && "List invariant broken!");
+    mNext->setPrevPtr(PrevPtr);
+    return;
+  }
+  // If the mNext pointer was null, then it is possible that this was the last
+  // MemoryHandle watching memory. If so, delete its entry from
+  // the MemoryHandles map.
+  auto &Handles = mMemory->getEnv().getMemoryHandles();
+  if (Handles.isPointerIntoBucketsArray(PrevPtr)) {
+    Handles.erase(mMemory);
+    mMemory->setHasMemoryHandle(false);
+  }
+}
+
+void DIMemoryHandleBase::memoryIsDeleted(DIMemory *M) {
+  assert(M->hasMemoryHandle() &&
+    "Should only be called if DIMemoryHandles present!");
+  DIMemoryHandleBase *Entry = M->getEnv()[M];
+  assert(Entry && "Memory bit set but no entries exist");
+  // We use a local ValueHandleBase as an iterator so that
+  // ValueHandles can add and remove themselves from the list without
+  // breaking our iteration.  This is not really an AssertingVH; we
+  // just have to give ValueHandleBase some kind.
+  for (DIMemoryHandleBase Itr(Assert, *Entry); Entry; Entry = Itr.mNext) {
+    Itr.removeFromUseList();
+    Itr.addToExistingUseListAfter(Entry);
+    assert(Entry->mNext == &Itr && "Loop invariant broken.");
+    switch (Entry->getKind()) {
+    default:
+      llvm_unreachable("Unsupported DIMemoryHandle!");
+    case Assert:
+      break;
+    case Weak:
+      Entry->operator=(nullptr);
+      break;
+    }
+  }
+  if (M->hasMemoryHandle()) {
+#ifndef NDEBUG
+    dbgs() << "While deleting: ";
+    M->getAsMDNode()->dump();
+    if (M->getEnv()[M]->getKind() == Assert)
+      llvm_unreachable("An asserting memory handle still pointed to this memory!");
+#endif
+    llvm_unreachable("All references to M were not removed?");
+  }
+}
+
+void DIMemoryHandleBase::memoryIsRAUWd(DIMemory *Old, DIMemory *New) {
+  assert(Old->hasMemoryHandle() &&
+    "Should only be called if MemoryHandles present!");
+  assert(Old != New && "Changing value into itself!");
+  DIMemoryHandleBase *Entry = Old->getEnv()[Old];
+  assert(Entry && "Memory bit set but no entries exist");
+  // We use a local ValueHandleBase as an iterator so that
+  // ValueHandles can add and remove themselves from the list without
+  // breaking our iteration.  This is not really an AssertingVH; we
+  // just have to give ValueHandleBase some kind.
+  for (DIMemoryHandleBase Itr(Assert, *Entry); Entry; Entry = Itr.mNext) {
+    Itr.removeFromUseList();
+    Itr.addToExistingUseListAfter(Entry);
+    assert(Entry->mNext == &Itr && "Loop invariant broken.");
+    switch (Entry->getKind()) {
+    default:
+      llvm_unreachable("Unsupported DIMemoryHandle!");
+    case Assert:
+      break;
+    case Weak:
+      Entry->operator=(New);
+      break;
+    }
+  }
+#ifndef NDEBUG
+  // If any new weak value handles were added while processing the
+  // list, then complain about it now.
+  if (Old->hasMemoryHandle())
+    for (Entry = Old->getEnv()[Old]; Entry; Entry = Entry->mNext)
+      switch (Entry->getKind()) {
+      case Weak:
+        dbgs() << "After RAUW from ";
+        Old->getAsMDNode()->dump();
+        dbgs() << "to ";
+        New->getAsMDNode()->dump();
+        llvm_unreachable("A weak value handle still pointed to the"
+                         " old value!\n");
+      default:
+        break;
+      }
+#endif
+}
+
+void DIMemoryHandleBase::addToExistingUseList(DIMemoryHandleBase **List) {
+  assert(List && "Handle list must not be null!");
+  mNext = *List;
+  *List = this;
+  setPrevPtr(List);
+  if (mNext) {
+    mNext->setPrevPtr(&mNext);
+    assert(mMemory == mNext->mMemory && "Handle was added to a wrong list!");
+  }
+}
+
+void DIMemoryHandleBase::addToExistingUseListAfter(DIMemoryHandleBase *Node) {
+  assert(Node && "Must insert after existing node!");
+  mNext = Node->mNext;
+  setPrevPtr(&Node->mNext);
+  Node->mNext = this;
+  if (mNext)
+    mNext->setPrevPtr(&mNext);
 }
 
 DIAliasTree::DIAliasTree(llvm::Function &F) :
@@ -405,6 +569,7 @@ DIAliasNode * addCorruptedNode(
 /// is used as a root for new nodes.
 /// \param [in, out] Map from lists of corrupted locations to unknown nodes.
 void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
+    DIMemoryEnvironment &Env,
     const DenseMap<const Value *, int64_t> &RootOffsets,
     CorruptedMemoryResolver &CMR, DIAliasTree &DIAT,
     AliasNode &Parent, DIAliasNode &DIParent, CorruptedMap &Nodes) {
@@ -424,7 +589,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
         }
         std::unique_ptr<DIMemory> DIM;
         if (!(DIM = CMR.popFromCash(&EM))) {
-          DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), DL, DT);
+          DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), Env, DL, DT);
           DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
         }
         if (CMR.isCorrupted(*DIM).first) {
@@ -442,7 +607,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       for (auto Inst : cast<AliasUnknownNode>(Child)) {
         std::unique_ptr<DIMemory> DIM;
         if (!(DIM = CMR.popFromCash(Inst))) {
-          DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext());
+          DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env);
           DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
         if (CMR.isCorrupted(*DIM).first) {
@@ -475,7 +640,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
         DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
       }
     }
-    buildDIAliasTree(DL, DT, RootOffsets, CMR, DIAT, Child, *DIN, Nodes);
+    buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, DIAT, Child, *DIN, Nodes);
   }
 }
 
@@ -493,9 +658,10 @@ public:
   /// Creates a builder of subtree which contains specified fragments of a
   /// variable.
   DIAliasTreeBuilder(DIAliasTree &DIAT, LLVMContext &Ctx,
+      DIMemoryEnvironment &Env,
       CorruptedMemoryResolver &CMR, CorruptedMap &CorruptedNodes,
       DIVariable *Var, const TinyPtrVector<DIExpression *> &Fragments) :
-      mDIAT(&DIAT), mContext(&Ctx),
+      mDIAT(&DIAT), mContext(&Ctx), mEnv(&Env),
       mCMR(&CMR), mCorruptedNodes(&CorruptedNodes),
       mVar(Var), mSortedFragments(Fragments) {
     assert(mDIAT && "Alias tree must not be null!");
@@ -535,7 +701,7 @@ public:
     if (mSortedFragments.front()->getNumElements() == 0) {
       DEBUG(addFragmentLog(mSortedFragments.front()));
       auto &DIM = mDIAT->addNewNode(
-        DIEstimateMemory::get(*mContext, mVar, mSortedFragments.front()),
+        DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments.front()),
         *Parent);
       DIM.setProperties(DIMemory::Explicit);
       return;
@@ -570,7 +736,8 @@ private:
       DEBUG(addFragmentLog(mSortedFragments[I]));
       Parent = addUnknownParentIfNecessary(Parent, mSortedFragments[I]);
       auto &DIM = mDIAT->addNewNode(
-        DIEstimateMemory::get(*mContext, mVar, mSortedFragments[I]), *Parent);
+        DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I]),
+        *Parent);
       DIM.setProperties(DIMemory::Explicit);
     }
   }
@@ -626,7 +793,7 @@ private:
     assert(Expr && "Expression must not be null!");
     assert(Ty && "Type must not be null!");
     assert(Parent && "Alias node must not be null!");
-    auto DIMTmp = DIEstimateMemory::get(*mContext, mVar, Expr);
+    auto DIMTmp = DIEstimateMemory::get(*mContext, *mEnv, mVar, Expr);
     auto IsCorrupted = mCMR->isCorrupted(*DIMTmp);
     if (IsCorrupted.first) {
       if (!IsCorrupted.second) {
@@ -795,6 +962,7 @@ private:
 
   DIAliasTree *mDIAT;
   LLVMContext *mContext;
+  DIMemoryEnvironment *mEnv;
   CorruptedMemoryResolver *mCMR;
   CorruptedMap *mCorruptedNodes;
   DIVariable *mVar;
@@ -1157,7 +1325,7 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
   }
   for (auto *M : WL) {
     ++NumCorruptedMemory;
-    auto NewM = DIMemory::get(mFunc->getContext(), *M);
+    auto NewM = DIMemory::get(mFunc->getContext(), M->getEnv(), *M);
     for (auto &VH : *M) {
       if (!VH || isa<UndefValue>(VH))
         continue;
@@ -1238,7 +1406,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     auto Cashed = mCashedMemory.try_emplace(EM);
     if (Cashed.second) {
       Cashed.first->second =
-        buildDIMemory(*EM, mFunc->getContext(), *mDL, *mDT);
+        buildDIMemory(*EM, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
       DEBUG(buildMemoryLog(
         mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
     }
@@ -1256,7 +1424,8 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
       continue;
     auto Cashed = mCashedUnknownMemory.try_emplace(VH);
     if (Cashed.second) {
-      Cashed.first->second = buildDIMemory(*VH, mFunc->getContext());
+      Cashed.first->second =
+        buildDIMemory(*VH, mFunc->getContext(), M.getEnv());
       DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
@@ -1314,14 +1483,15 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
-    LLVMContext &Ctx, const DataLayout &DL, const DominatorTree &DT) {
+    LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    const DataLayout &DL, const DominatorTree &DT) {
   auto DILoc = buildDIMemory(
     MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
   if (!DILoc)
-    return buildDIMemory(const_cast<Value &>(*EM.front()), Ctx);
+    return buildDIMemory(const_cast<Value &>(*EM.front()), Ctx, Env);
   auto Flags = DILoc->Template ?
     DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
-  auto DIM = DIEstimateMemory::get(Ctx, DILoc->Var, DILoc->Expr, Flags);
+  auto DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags);
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
   DIM->setProperties(Properties);
   for (auto &V : EM) {
@@ -1330,7 +1500,8 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
   return DIM;
 }
 
-std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx) {
+std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
+    DIMemoryEnvironment &Env) {
   CallSite CS(&V);
   auto Callee = !CS ? dyn_cast_or_null<Function>(&V) : dyn_cast<Function>(
       CS.getCalledValue()->stripPointerCasts());
@@ -1339,111 +1510,69 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx) {
   /// metadata.
   MDNode *MD = Callee ? Callee->getSubprogram() : nullptr;
   auto Flags = CS ? DIUnknownMemory::Call : DIUnknownMemory::NoFlags;
-  auto DIM = DIUnknownMemory::get(Ctx, MD, Flags);
+  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Flags);
   DIM->bindValue(&V);
   DIM->setProperties(DIMemory::Explicit);
   return DIM;
 }
 }
 
-namespace llvm {
-/// Storage for debug alias trees for all analyzed functions.
-class DIAliasTreeImmutableStorage :
+namespace {
+/// Storage for debug-level memory and alias trees environment.
+class DIMemoryEnvironmentStorage :
   public ImmutablePass, private bcl::Uncopyable {
-  /// \brief This defines callback that run when underlying function has RAUW
-  /// called on it or destroyed.
-  ///
-  /// This updates map from function to its debug alias tree.
-  class FunctionCallbackVH final : public CallbackVH {
-    DIAliasTreeImmutableStorage *mStorage;
-    void deleted() override {
-      mStorage->erase(cast<Function>(*getValPtr()));
-    }
-    void allUsesReplacedWith(Value *V) override {
-      if (auto F = dyn_cast<Function>(V))
-        mStorage->reset(*F, mStorage->release(cast<Function>(*getValPtr())));
-      else
-        mStorage->erase(cast<Function>(*getValPtr()));
-    }
-  public:
-    FunctionCallbackVH(Value *V, DIAliasTreeImmutableStorage *S = nullptr) :
-      CallbackVH(V), mStorage(S) {}
-    FunctionCallbackVH & operator=(Value *V) {
-      return *this = FunctionCallbackVH(V, mStorage);
-    }
-  };
-
-  struct FunctionCallbackVHDenseMapInfo : public DenseMapInfo<Value *> {};
-
-  /// Map from a function to its debug alias tree.
-  using FunctionToTreeMap =
-    DenseMap<FunctionCallbackVH, std::unique_ptr<DIAliasTree>,
-    FunctionCallbackVHDenseMapInfo>;
-
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
 
   /// Default constructor.
-  DIAliasTreeImmutableStorage() : ImmutablePass(ID) {}
-
-  /// Resets alias tree for a specified function with a specified alias tree
-  /// and returns pointer to a new tree.
-  DIAliasTree * reset(Function &F, std::unique_ptr<DIAliasTree> &&AT) {
-    auto Itr = mTrees.try_emplace(FunctionCallbackVH(&F, this)).first;
-    Itr->second = std::move(AT);
-    return Itr->second.get();
+  DIMemoryEnvironmentStorage() : ImmutablePass(ID) {
+    initializeDIMemoryEnvironmentStoragePass(*PassRegistry::getPassRegistry());
   }
 
-  /// Extracts alias tree for a specified function from storage and returns it.
-  std::unique_ptr<DIAliasTree> release(Function &F) {
-    auto Itr = mTrees.find_as(&F);
-    if (Itr != mTrees.end()) {
-      auto AT = std::move(Itr->second);
-      mTrees.erase(Itr);
-      return AT;
-    }
-    return nullptr;
+  void initializePass() override {
+    getAnalysis<DIMemoryEnvironmentWrapper>().set(mEnv);
   }
 
-  /// Erases alias tree for a specified function from the storage.
-  void erase(Function &F) {
-    auto Itr = mTrees.find_as(&F);
-    if (Itr != mTrees.end())
-      mTrees.erase(Itr);
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<DIMemoryEnvironmentWrapper>();
   }
 
-  /// Returns alias tree for a specified function or nullptr.
-  DIAliasTree * get(Function &F) const {
-    auto Itr = mTrees.find_as(&F);
-    return Itr == mTrees.end() ? nullptr : Itr->second.get();
-  }
+  /// Returns debug-level memory environment.
+  DIMemoryEnvironment & getEnv() noexcept { return mEnv; }
 
-  /// Returns alias tree for a specified function or nullptr.
-  DIAliasTree * operator[](Function &F) const { return get(F); }
+  /// Returns debug-level memory environment.
+  const DIMemoryEnvironment & getEnv() const noexcept { return mEnv; }
 
 private:
-  FunctionToTreeMap mTrees;
+  DIMemoryEnvironment mEnv;
 };
 }
 
-char DIAliasTreeImmutableStorage::ID = 0;
-INITIALIZE_PASS(DIAliasTreeImmutableStorage, "di-estimate-mem-is",
-  "Memory Estimator (Debug, Immutable Storage)", true, true)
+char DIMemoryEnvironmentStorage::ID = 0;
+INITIALIZE_PASS_BEGIN(DIMemoryEnvironmentStorage, "di-mem-is",
+  "Memory Estimator (Debug, Environment Immutable Storage)", true, true)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+INITIALIZE_PASS_END(DIMemoryEnvironmentStorage, "di-mem-is",
+  "Memory Estimator (Debug, Environment Immutable Storage)", true, true)
+
+char DIMemoryEnvironmentWrapper::ID = 0;
+INITIALIZE_PASS(DIMemoryEnvironmentWrapper, "di-mem-iw",
+  "Memory Estimator (Debug, Environment Immutable Wrapper)", true, true)
 
 char DIEstimateMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DIEstimateMemoryPass, "di-estimate-mem",
   "Memory Estimator (Debug)", false, true)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(DIAliasTreeImmutableStorage)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
 INITIALIZE_PASS_END(DIEstimateMemoryPass, "di-estimate-mem",
   "Memory Estimator (Debug)", false, true)
 
 void DIEstimateMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
-  AU.addRequired<DIAliasTreeImmutableStorage>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.setPreservesAll();
 }
 
@@ -1451,14 +1580,23 @@ FunctionPass * llvm::createDIEstimateMemoryPass() {
   return new DIEstimateMemoryPass();
 }
 
+ImmutablePass * llvm::createDIMemoryEnvironmentStorage() {
+  return new DIMemoryEnvironmentStorage();
+}
+
 bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  auto &Storage = getAnalysis<DIAliasTreeImmutableStorage>();
+  auto &EnvWrapper = getAnalysis<DIMemoryEnvironmentWrapper>();
+  if (!EnvWrapper) {
+    mDIAliasTree = nullptr;
+    return false;
+  }
+  auto &Env = *EnvWrapper;
   auto &DL = F.getParent()->getDataLayout();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  CorruptedMemoryResolver CMR(F, &DL, &DT, Storage[F], &AT);
+  CorruptedMemoryResolver CMR(F, &DL, &DT, Env[F], &AT);
   CMR.resolve();
-  mDIAliasTree = Storage.reset(F, make_unique<DIAliasTree>(F));
+  mDIAliasTree = Env.reset(F, make_unique<DIAliasTree>(F));
   CorruptedMap CorruptedNodes;
   DEBUG(dbgs() <<
     "[DI ALIAS TREE]: add distinct unknown nodes for corrupted memory\n");
@@ -1468,7 +1606,7 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   for (auto &VToF : CMR.getFragments()) {
     if (VToF.get<DIExpression>().empty())
       continue;
-    DIAliasTreeBuilder Builder(*mDIAliasTree, F.getContext(),
+    DIAliasTreeBuilder Builder(*mDIAliasTree, F.getContext(), Env,
       CMR, CorruptedNodes, VToF.get<DIVariable>(), VToF.get<DIExpression>());
     Builder.buildSubtree();
   }
@@ -1476,7 +1614,7 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   DEBUG(dbgs() <<
     "[DI ALIAS TREE]: use an existing alias tree to add new nodes\n");
   DEBUG(constantOffsetLog(RootOffsets.begin(), RootOffsets.end(), DT));
-  buildDIAliasTree(DL, DT, RootOffsets, CMR, *mDIAliasTree,
+  buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, *mDIAliasTree,
     *AT.getTopLevelNode(), *mDIAliasTree->getTopLevelNode(), CorruptedNodes);
   std::vector<Metadata *> MemoryNodes(mDIAliasTree->memory_size());
   std::transform(mDIAliasTree->memory_begin(), mDIAliasTree->memory_end(),

@@ -14,6 +14,7 @@
 #define TSAR_DI_ESTIMATE_MEMORY_H
 
 #include "DIMemoryLocation.h"
+#include "DIMemoryEnvironment.h"
 #include "tsar_utility.h"
 #include "tsar_pass.h"
 #include <tagged.h>
@@ -24,6 +25,7 @@
 #include <llvm/ADT/ilist.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/Optional.h>
+#include <llvm/ADT/PointerIntPair.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/IR/IntrinsicInst.h>
@@ -60,6 +62,7 @@ class DIAliasEstimateNode;
 class DIMemory;
 class DIEstimateMemory;
 class DIUnknownMemory;
+class DIMemoryEnvironment;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
@@ -89,17 +92,18 @@ void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
     llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
 
 /// Builds debug memory location for a specified memory location.
-llvm::Optional<DIMemoryLocation> buildDIMemory(
-    const llvm::MemoryLocation &Loc, llvm::LLVMContext &Ctx,
+llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
+    llvm::LLVMContext &Ctx,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
 
 /// Builds debug memory location for a specified memory location.
 std::unique_ptr<DIMemory> buildDIMemory(
-    const EstimateMemory &EM, llvm::LLVMContext &Ctx,
-    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
-
-/// Builds debug memory location for a specified memory location.
-std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V, llvm::LLVMContext &Ctx);
+    llvm::Value &V, llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env);
 
 /// This represents estimate memory location using metadata information.
 class DIMemory :
@@ -148,10 +152,10 @@ public:
   /// Creates a copy of a specified memory location. The copy is not attached
   /// to any alias node. No values are bound to a new location.
   inline static std::unique_ptr<DIMemory> get(
-    llvm::LLVMContext &Ctx, DIMemory &M);
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env, DIMemory &M);
 
   /// Destructor.
-  virtual ~DIMemory() = default;
+  virtual ~DIMemory();
 
   /// Returns the kind of this memory location.
   Kind getKind() const noexcept { return mKind; }
@@ -208,11 +212,21 @@ public:
   template<class ItrTy>
   void bindValue(const ItrTy &I, const ItrTy &E) { mValues.append(I, E); }
 
+  /// Returns `true` if there is memory handle associated with this memory.
+  bool hasMemoryHandle() const {  return mEnv.getInt(); }
+
+  /// Returns debug-level memory environment.
+  DIMemoryEnvironment & getEnv() { return *mEnv.getPointer(); }
+
+  /// Change all uses of this to point to a new memory.
+  void replaceAllUsesWith(DIMemory *M);
+
 protected:
   /// Creates interface to access information about an memory location,
   /// which is represented as a metadata.
-  explicit DIMemory(Kind K, llvm::MDNode *MD,
-      DIAliasMemoryNode *N = nullptr) : mKind(K), mMD(MD), mNode(N) {}
+  explicit DIMemory(DIMemoryEnvironment &Env, Kind K, llvm::MDNode *MD,
+      DIAliasMemoryNode *N = nullptr) :
+    mEnv(&Env, false), mKind(K), mMD(MD), mNode(N) {}
 
   /// Returns flags which are specified for an underlying memory location.
   uint64_t getFlags() const;
@@ -224,12 +238,17 @@ protected:
   void setFlags(uint64_t F);
 
 private:
+  friend class DIMemoryHandleBase;
   friend class DIAliasTree;
 
   /// Add this location to a specified node `N` in alias tree.
   void setAliasNode(DIAliasMemoryNode &N) noexcept { mNode = &N; }
 
+  /// Updates a flag that indicates existence of memory handles.
+  void setHasMemoryHandle(bool Value) { mEnv.setInt(Value); }
+
   Kind mKind;
+  llvm::PointerIntPair<DIMemoryEnvironment *, 1, bool> mEnv;
   Property mProperties = NoProperty;
   llvm::MDNode *mMD;
   DIAliasMemoryNode *mNode;
@@ -259,18 +278,20 @@ public:
   }
 
   /// Creates a new memory location which is not attached to any alias node.
-  static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
+  static std::unique_ptr<DIEstimateMemory> get(
+      llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
       llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Returns existent location. Note, it will not be attached to an alias node.
-  static std::unique_ptr<DIEstimateMemory> getIfExists(llvm::LLVMContext &Ctx,
+  static std::unique_ptr<DIEstimateMemory> getIfExists(
+      llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
       llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Creates a copy of a specified memory location. The copy is not attached
   /// to any alias node. No values are bound to a new location.
   static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
-      DIEstimateMemory &EM) {
-    return get(Ctx, EM.getVariable(), EM.getExpression(), EM.getFlags());
+      DIMemoryEnvironment &Env, DIEstimateMemory &EM) {
+    return get(Ctx, Env, EM.getVariable(), EM.getExpression(), EM.getFlags());
   }
 
   /// Returns underlying variable.
@@ -315,9 +336,8 @@ public:
 private:
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.
-  explicit DIEstimateMemory(llvm::MDNode *MD, DIAliasMemoryNode *N = nullptr) :
-      DIMemory(KIND_ESTIMATE, MD, N) {}
-
+  explicit DIEstimateMemory(DIMemoryEnvironment &Env, llvm::MDNode *MD,
+      DIAliasMemoryNode *N = nullptr) : DIMemory(Env, KIND_ESTIMATE, MD, N) {}
 };
 
 ///\brief This represents unknown memory location using metadata information.
@@ -340,11 +360,11 @@ public:
   /// Creates a copy of a specified memory location. The copy is not attached
   /// to any alias node. No values are bound to a new location.
   static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
-    DIUnknownMemory &UM);
+    DIMemoryEnvironment &Env, DIUnknownMemory &UM);
 
   /// Creates unknown memory location from a specified MDNode.
   static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
-    llvm::MDNode *MD, Flags F = NoFlags);
+    DIMemoryEnvironment &Env, llvm::MDNode *MD, Flags F = NoFlags);
 
   /// Returns underlying metadata.
   llvm::MDNode * getMetadata();
@@ -367,14 +387,15 @@ public:
 private:
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.
-  explicit DIUnknownMemory(llvm::MDNode *MD, DIAliasMemoryNode *N = nullptr) :
-      DIMemory(KIND_UNKNOWN, MD, N) {}
+  explicit DIUnknownMemory(DIMemoryEnvironment &Env, llvm::MDNode *MD,
+      DIAliasMemoryNode *N = nullptr) : DIMemory(Env, KIND_UNKNOWN, MD, N) {}
 };
 
-std::unique_ptr<DIMemory> DIMemory::get(llvm::LLVMContext &Ctx, DIMemory &M) {
+std::unique_ptr<DIMemory> DIMemory::get(llvm::LLVMContext &Ctx,
+    DIMemoryEnvironment &Env, DIMemory &M) {
   if (auto *EM = llvm::dyn_cast<DIEstimateMemory>(&M))
-    return DIEstimateMemory::get(Ctx, *EM);
-  return DIUnknownMemory::get(Ctx, llvm::cast<DIUnknownMemory>(M));
+    return DIEstimateMemory::get(Ctx, Env, *EM);
+  return DIUnknownMemory::get(Ctx, Env, llvm::cast<DIUnknownMemory>(M));
 }
 
 /// This represents debug info node in an alias tree which refers
@@ -791,14 +812,17 @@ public:
     initializeDIEstimateMemoryPassPass(*PassRegistry::getPassRegistry());
   }
 
+  /// Returns true if alias tree has been successfully constructed.
+  bool isConstructed() const noexcept { return mDIAliasTree != nullptr; }
+
   /// Returns alias tree for the last analyzed function.
-  tsar::DIAliasTree & getAliasTree() {
+  tsar::DIAliasTree & getAliasTree() noexcept {
     assert(mDIAliasTree && "Alias tree has not been constructed yet!");
     return *mDIAliasTree;
   }
 
   /// Returns alias tree for the last analyzed function.
-  const tsar::DIAliasTree & getAliasTree() const {
+  const tsar::DIAliasTree & getAliasTree() const noexcept {
     assert(mDIAliasTree && "Alias tree has not been constructed yet!");
     return *mDIAliasTree;
   }
