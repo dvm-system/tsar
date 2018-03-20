@@ -212,9 +212,16 @@ protected:
   /// Creates interface to access information about an memory location,
   /// which is represented as a metadata.
   explicit DIMemory(Kind K, llvm::MDNode *MD,
-      DIAliasMemoryNode *N = nullptr) : mKind(K), mMD(MD), mNode (N) {
-    assert(MD && "Metadata must not be null!");
-  }
+      DIAliasMemoryNode *N = nullptr) : mKind(K), mMD(MD), mNode(N) {}
+
+  /// Returns flags which are specified for an underlying memory location.
+  uint64_t getFlags() const;
+
+  /// Returns number of a flag operand of MDNode.
+  unsigned getFlagsOp() const;
+
+  /// Bitwise OR the current flags with the given flags.
+  void setFlags(uint64_t F);
 
 private:
   friend class DIAliasTree;
@@ -279,10 +286,12 @@ public:
   const llvm::DIExpression * getExpression() const;
 
   /// Returns flags which are specified for an underlying variable.
-  Flags getFlags() const;
+  Flags getFlags() const {
+    return static_cast<Flags>(DIMemory::getFlags());
+  }
 
   /// Bitwise OR the current flags with the given flags.
-  void setFlags(Flags F);
+  void setFlags(Flags F) { DIMemory::setFlags(F); }
 
   /// Returns true if this is a template representation of memory location
   /// (see DIMemoryLocation for details).
@@ -309,8 +318,6 @@ private:
   explicit DIEstimateMemory(llvm::MDNode *MD, DIAliasMemoryNode *N = nullptr) :
       DIMemory(KIND_ESTIMATE, MD, N) {}
 
-  /// Returns number of flag operand of MDNode.
-  unsigned getFlagsOp() const;
 };
 
 ///\brief This represents unknown memory location using metadata information.
@@ -318,6 +325,13 @@ private:
 /// For example this represents memory accessed in function call.
 class DIUnknownMemory : public DIMemory {
 public:
+  /// Set of flags which may be stored in MDNode attached to this location.
+  enum Flags : uint16_t {
+    NoFlags = 0,
+    Call = 1u << 0,
+    LLVM_MARK_AS_BITMASK_ENUM(Call)
+  };
+
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
   static bool classof(const DIMemory *M) {
     return M->getKind() == KIND_UNKNOWN;
@@ -330,7 +344,25 @@ public:
 
   /// Creates unknown memory location from a specified MDNode.
   static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
-    llvm::MDNode *MD);
+    llvm::MDNode *MD, Flags F = NoFlags);
+
+  /// Returns underlying metadata.
+  llvm::MDNode * getMetadata();
+
+  /// Returns underlying metadata.
+  const llvm::MDNode * getMetadata() const;
+
+  /// Returns flags which are specified for an underlying variable.
+  Flags getFlags() const {
+    return static_cast<Flags>(DIMemory::getFlags());
+  }
+
+  /// Bitwise OR the current flags with the given flags.
+  void setFlags(Flags F) { DIMemory::setFlags(F); }
+
+  /// Returns true if this is a representation of memory accessed via a
+  /// function call.
+  bool isCall() const { return Call & getFlags(); }
 
 private:
   /// Creates interface to access information about an estimate memory location,

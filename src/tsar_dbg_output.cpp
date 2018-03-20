@@ -77,11 +77,20 @@ void printDILocationSource(unsigned DWLang,
   if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
     printDILocationSource(DWLang,
       { EM->getVariable(), EM->getExpression(), EM->isTemplate() }, O);
-  } else {
-    auto MD = M->getAsMDNode();
-    if (auto F = dyn_cast<DISubprogram>(MD))
-      O << F->getName() << "()";
+  } else if (auto UM = dyn_cast<DIUnknownMemory>(M)) {
+    auto MD = UM->getMetadata();
+    assert(MD && "MDNode must not be null!");
+    if (UM->isCall())
+      if (MD == UM->getAsMDNode() || !isa<DISubprogram>(MD))
+        O << "?()";
+      else
+        O << cast<DISubprogram>(MD)->getName() << "()";
     else
+      if (MD == UM->getAsMDNode() || !isa<DISubprogram>(MD))
+        O << "<?,?>";
+      else
+        O << "<" << cast<DISubprogram>(MD)->getName() << ",?>";
+  } else {
       O << "<?, ?>";
   }
 }

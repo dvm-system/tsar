@@ -105,15 +105,13 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
 }
 
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
-    llvm::MDNode *MD) {
-  MDNode *NewMD = MD;
-  if (&Ctx != &MD->getContext()) {
-    SmallVector<Metadata *, 8> MDs;
-    for (auto &Op : MD->operands())
-      MDs.push_back(Op);
-    auto NewMD = MDNode::get(Ctx, MDs);
-    assert(NewMD && "Can not create metadata node!");
-  }
+    llvm::MDNode *MD, Flags F) {
+  auto *FlagMD = llvm::ConstantAsMetadata::get(
+    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
+  auto NewMD = llvm::MDNode::get(Ctx, { MD, FlagMD });
+  assert(NewMD && "Can not create metadata node!");
+  if (!MD)
+    NewMD->replaceOperandWith(0, NewMD);
   ++NumUnknownMemory;
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(NewMD));
 }
@@ -180,12 +178,10 @@ const llvm::DIExpression * DIEstimateMemory::getExpression() const {
   return nullptr;
 }
 
-unsigned DIEstimateMemory::getFlagsOp() const {
+unsigned DIMemory::getFlagsOp() const {
   auto MD = getAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
     auto &Op = MD->getOperand(I);
-    if (isa<DIVariable>(Op) || isa<DIExpression>(Op))
-      continue;
     auto CMD = dyn_cast<ConstantAsMetadata>(Op);
     if (!CMD)
       continue;
@@ -195,22 +191,40 @@ unsigned DIEstimateMemory::getFlagsOp() const {
   llvm_unreachable("Explicit flag must be specified!");
 }
 
-DIEstimateMemory::Flags DIEstimateMemory::getFlags() const {
+uint64_t DIMemory::getFlags() const {
   auto MD = getAsMDNode();
   auto CMD = cast<ConstantAsMetadata>(MD->getOperand(getFlagsOp()));
   auto CInt = cast<ConstantInt>(CMD->getValue());
-  return static_cast<Flags>(CInt->getZExtValue());
+  return CInt->getZExtValue();
 }
 
-void DIEstimateMemory::setFlags(Flags F) {
+void DIMemory::setFlags(uint64_t F) {
   auto MD = getAsMDNode();
   auto OpIdx = getFlagsOp();
   auto CMD = cast<ConstantAsMetadata>(MD->getOperand(OpIdx));
   auto CInt = cast<ConstantInt>(CMD->getValue());
   auto &Ctx = MD->getContext();
   auto *FlagMD = llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-   Type::getInt16Ty(Ctx), static_cast<Flags>(CInt->getZExtValue()) | F));
+   Type::getInt64Ty(Ctx), CInt->getZExtValue() | F));
     MD->replaceOperandWith(OpIdx, FlagMD);
+}
+
+llvm::MDNode * DIUnknownMemory::getMetadata() {
+  auto MD = getAsMDNode();
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+    if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
+      return Op;
+  llvm_unreachable("MDNode must be specified!");
+  return nullptr;
+}
+
+const llvm::MDNode * DIUnknownMemory::getMetadata() const {
+  auto MD = getAsMDNode();
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+    if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
+      return Op;
+  llvm_unreachable("MDNode must be specified!");
+  return nullptr;
 }
 
 DIAliasTree::DIAliasTree(llvm::Function &F) :
@@ -1303,16 +1317,11 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
     LLVMContext &Ctx, const DataLayout &DL, const DominatorTree &DT) {
   auto DILoc = buildDIMemory(
     MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
-  std::unique_ptr<DIMemory> DIM;
-  if (DILoc) {
-    auto Flags = DILoc->Template ?
-      DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
-    DIM = DIEstimateMemory::get(Ctx, DILoc->Var, DILoc->Expr, Flags);
-  } else {
-    auto MD = MDNode::get(Ctx, { nullptr });
-    MD->replaceOperandWith(0, MD);
-    DIM = DIUnknownMemory::get(Ctx, MD);
-  }
+  if (!DILoc)
+    return buildDIMemory(const_cast<Value &>(*EM.front()), Ctx);
+  auto Flags = DILoc->Template ?
+    DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+  auto DIM = DIEstimateMemory::get(Ctx, DILoc->Var, DILoc->Expr, Flags);
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
   DIM->setProperties(Properties);
   for (auto &V : EM) {
@@ -1323,22 +1332,14 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
 
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx) {
   CallSite CS(&V);
-  auto Callee = !CS ? nullptr : dyn_cast<Function>(
+  auto Callee = !CS ? dyn_cast_or_null<Function>(&V) : dyn_cast<Function>(
       CS.getCalledValue()->stripPointerCasts());
-  MDNode *MD;
-  if (Callee) {
-    /// TODO (kaniandr@gmail.com): Clang do not add metadata for function
-    /// prototypes. May be some special pass should be added to insert such
-    /// metadata.
-    if (!(MD = Callee->getSubprogram())) {
-      MD = MDNode::get(Ctx, { nullptr });
-      MD->replaceOperandWith(0, MD);
-    }
-  } else {
-    MD = MDNode::get(Ctx, { nullptr });
-    MD->replaceOperandWith(0, MD);
-  }
-  auto DIM = DIUnknownMemory::get(Ctx, MD);
+  /// TODO (kaniandr@gmail.com): Clang do not add metadata for function
+  /// prototypes. May be some special pass should be added to insert such
+  /// metadata.
+  MDNode *MD = Callee ? Callee->getSubprogram() : nullptr;
+  auto Flags = CS ? DIUnknownMemory::Call : DIUnknownMemory::NoFlags;
+  auto DIM = DIUnknownMemory::get(Ctx, MD, Flags);
   DIM->bindValue(&V);
   DIM->setProperties(DIMemory::Explicit);
   return DIM;
