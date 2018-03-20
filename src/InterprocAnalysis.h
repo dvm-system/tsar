@@ -1,44 +1,45 @@
 #include "tsar_pass.h"
 #include <bcl/utility.h>
-#include <llvm/Pass.h>
-#include <llvm/IR/Attributes.h>
-#include <llvm/IR/Function.h>
+#include <clang/AST/Stmt.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
-#include <clang/Basic/SourceLocation.h>
 #include <vector>
 #include <set>
 
-namespace {
-const std::set<llvm::Attribute::AttrKind> AndAttrs = {
-    llvm::Attribute::ReadOnly,
-    llvm::Attribute::NoUnwind
-};
-const std::set<llvm::Attribute::AttrKind> OrAttrs = {
-  llvm::Attribute::NoReturn
-};
-
-struct InterprocFuncInfo {
-  InterprocFuncInfo() : isLibFunc(false) {}
-  void addCalleeFunc(
-      llvm::Function *F, std::vector<clang::SourceLocation> VecSL) {
-    mVecCalleeFunc.push_back(std::make_pair(F, VecSL));
+namespace tsar {
+struct InterprocElemInfo {
+typedef llvm::DenseMap<llvm::Function *,
+    std::vector<clang::SourceLocation>> CalleeFuncLoc;
+  enum Attr {
+    None,
+    LibFunc,
+    NoReturn,
+    EndAttr
+  };
+  InterprocElemInfo() {}
+  void addCalleeFunc(llvm::Function *F,
+      std::vector<clang::SourceLocation> VecSL) {
+    mCalleeFuncLoc.insert(std::make_pair(F, VecSL));
   }
-  void setLibFunc(bool Val) {
-    isLibFunc = Val;
+  CalleeFuncLoc & getCalleeFuncLoc() {
+    return mCalleeFuncLoc;
   }
-  bool getLibFunc() {
-    return isLibFunc;
+  void setAttr(Attr Type) {
+    mAttrs.insert(Type);
+  }
+  bool hasAttr(Attr Type) {
+    return mAttrs.find(Type) != mAttrs.end();
   }
 private:
-  bool isLibFunc;
-  std::vector<std::pair<llvm::Function *,
-      std::vector<clang::SourceLocation>>> mVecCalleeFunc;
+  std::set<Attr> mAttrs;
+  CalleeFuncLoc mCalleeFuncLoc;
 };
 }
 
 namespace tsar {
 typedef llvm::DenseMap<llvm::Function *,
-    InterprocFuncInfo> InterprocAnalysisInfo;
+    InterprocElemInfo> InterprocAnalysisFuncInfo;
+typedef llvm::DenseMap<clang::Stmt *,
+    InterprocElemInfo> InterprocAnalysisLoopInfo;
 }
 
 namespace llvm {
@@ -49,17 +50,25 @@ public:
   InterprocAnalysisPass() : ModulePass(ID) {
     initializeInterprocAnalysisPassPass(*PassRegistry::getPassRegistry());
   }
-  tsar::InterprocAnalysisInfo & getInterprocAnalysisInfo() noexcept {
-    return mInterprocAnalysisInfo;
+  tsar::InterprocAnalysisFuncInfo & getInterprocAnalysisFuncInfo() noexcept {
+    return mInterprocAnalysisFuncInfo;
   }
-  const tsar::InterprocAnalysisInfo &
-      getInterprocAnalysisInfo() const noexcept {
-    return mInterprocAnalysisInfo;
+  tsar::InterprocAnalysisLoopInfo & getInterprocAnalysisLoopInfo() noexcept {
+    return mInterprocAnalysisLoopInfo;
+  }
+  const tsar::InterprocAnalysisFuncInfo &
+      getInterprocAnalysisFuncInfo() const noexcept {
+    return mInterprocAnalysisFuncInfo;
+  }
+  const tsar::InterprocAnalysisLoopInfo &
+      getInterprocAnalysisLoopInfo() const noexcept {
+    return mInterprocAnalysisLoopInfo;
   }
   bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 private:
   void runOnSCC(CallGraphSCC &SCC, Module &M);
-  tsar::InterprocAnalysisInfo mInterprocAnalysisInfo;
+  tsar::InterprocAnalysisFuncInfo mInterprocAnalysisFuncInfo;
+  tsar::InterprocAnalysisLoopInfo mInterprocAnalysisLoopInfo;
 };
 }
