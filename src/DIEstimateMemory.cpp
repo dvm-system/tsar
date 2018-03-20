@@ -1222,6 +1222,23 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
     if (!DIV)
       return None;
   SmallVector<uint64_t, 8> Expr(ReverseExpr.rbegin(), ReverseExpr.rend());
+  if (Expr.empty()) {
+    auto DIE = DIExpression::get(Ctx, Expr);
+    DIMemoryLocation DIL(DIV, DIE, IsTemplate);
+    // If expression is empty and  size can be obtained from a variable than
+    // DW_OP_LLVM_fragment should not be added. If variable will be promoted it
+    // will be represented without this size. So there will be different
+    // locations for the same memory before and after promotion.
+    // Let us consider some examples:
+    // struct P { char X;};
+    //   struct P P1; P1.X => {P1, DIExpression()}
+    // struct S { char Y; struct P Z;};
+    //   sturct S S1; S1.Z.X => {S1, DIExpression(DW_OP_LLVM_fragment, 8, 8)}
+    // struct Q { struct P Z;};
+    //   struct Q Q1; Q1.Z.X => {Q1, DIEspression()}
+    if (DIL.getSize() == Loc.Size)
+      return DIL;
+  }
   if (Loc.Size != MemoryLocation::UnknownSize) {
     uint64_t LastDwarfOp;
     for (size_t I = 0, E = Expr.size(); I < E; ++I) {
@@ -1243,14 +1260,8 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
 
 std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
     LLVMContext &Ctx, const DataLayout &DL, const DominatorTree &DT) {
-  // Do not add size to expression for root. Size can be obtained from variable
-  // type. If variable will be promoted it will be represented without this
-  // size. So there are will be different locations for the same memory before
-  // and after promotion.
-  auto Size = (&EM == EM.getTopLevelParent()) ?
-    MemoryLocation::UnknownSize : EM.getSize();
   auto DILoc = buildDIMemory(
-    MemoryLocation(EM.front(), Size), Ctx, DL, DT);
+    MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
   std::unique_ptr<DIMemory> DIM;
   if (DILoc) {
     auto Flags = DILoc->Template ?
