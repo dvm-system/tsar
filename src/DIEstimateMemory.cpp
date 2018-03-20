@@ -1179,6 +1179,7 @@ void CorruptedMemoryResolver::updateWorkLists(
           continue;
         } else {
           DEBUG(corruptedFoundLog(M));
+          DEBUG(dbgs() << "[DI ALIAS TREE]: safely promoted candidate is discarded\n");
           Info.CorruptedWL.push_back(&M);
           mCorruptedSet.insert({ M.getAsMDNode(), true });
           // This is rare case, so we do not take care about overheads and
@@ -1202,6 +1203,7 @@ void CorruptedMemoryResolver::updateWorkLists(
     } else if (Binding != DIMemory::Consistent ||
         !isSameAfterRebuild(cast<DIUnknownMemory>(M))) {
       DEBUG(corruptedFoundLog(M));
+      DEBUG(dbgs() << "[DI ALIAS TREE]: unknown corrupted is found\n");
       Info.CorruptedWL.push_back(&M);
       mCorruptedSet.insert({
         M.getAsMDNode(),
