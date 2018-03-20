@@ -794,7 +794,8 @@ private:
 /// into a constructed DIAliasTree.
 ///
 /// The following location and their offsets are returned:
-/// - It has a known offset from its root in estimate memory tree.
+/// - It has a known offset from it's root in estimate memory tree.
+/// - It's offset is not zero or it's size is not equal to size of root.
 /// - All descendant locations in estimate memory tree have known offsets from
 /// the root.
 DenseMap<const Value *, int64_t>
@@ -806,14 +807,15 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
     for (auto &EM : *cast<AliasEstimateNode>(AN)) {
       if (!EM.isLeaf())
         continue;
-      auto Root = EM.getTopLevelParent()->front();
+      auto Root = EM.getTopLevelParent();
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
       auto CurrEM = &EM;
-      while (Base == Root && CurrEM->front() != Root) {
+      while (Base == Root->front() && CurrEM->front() != Root->front()) {
         auto PtrTy =
           dyn_cast_or_null<PointerType>(CurrEM->front()->getType());
-        if (!PtrTy || !isa<ArrayType>(PtrTy->getPointerElementType())) {
+        if ((!PtrTy || !isa<ArrayType>(PtrTy->getPointerElementType())) &&
+            (Offset != 0 || CurrEM->getSize() != Root->getSize())) {
           RootOffsets.try_emplace(CurrEM->front(), Offset);
         }
         CurrEM = CurrEM->getParent();
