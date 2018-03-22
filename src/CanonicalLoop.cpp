@@ -123,7 +123,10 @@ public:
       DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
       DEBUG(dbgs() << "\n");
       auto Match = mLoopInfo->find<AST>(For);
-      assert(Match != mLoopInfo->end() && "ForStmt must be specified!");
+      if (Match == mLoopInfo->end()) {
+        ++NumNonCanonical;
+        return;
+      }
       tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
       tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
       LInfo->setStmts(Init, Increment, Condition);
