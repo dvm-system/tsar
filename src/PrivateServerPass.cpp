@@ -193,7 +193,10 @@ JSON_OBJECT_PAIR_4(MainFuncInfo,
 JSON_OBJECT_END(MainFuncInfo)
 
 JSON_OBJECT_BEGIN(FunctionList)
-JSON_OBJECT_ROOT_PAIR(FunctionList,
+JSON_OBJECT_ROOT_PAIR_4(FunctionList,
+  FuncID, unsigned,
+  LoopID, unsigned,
+  Attr, unsigned,
   Functions, std::vector<MainFuncInfo>)
 
   FunctionList() : JSON_INIT_ROOT {}
@@ -204,22 +207,6 @@ JSON_OBJECT_ROOT_PAIR(FunctionList,
   FunctionList(FunctionList &&) = default;
   FunctionList & operator=(FunctionList &&) = default;
 JSON_OBJECT_END(FunctionList)
-
-JSON_OBJECT_BEGIN(CalleeFunc)
-JSON_OBJECT_ROOT_PAIR_4(CalleeFunc,
-  FuncID, unsigned,
-  LoopID, unsigned,
-  Attr, unsigned,
-  Functions, std::vector<MainFuncInfo>)
-
-  CalleeFunc() : JSON_INIT_ROOT {}
-  ~CalleeFunc() override = default;
-
-  CalleeFunc(const CalleeFunc &) = default;
-  CalleeFunc & operator=(const CalleeFunc &) = default;
-  CalleeFunc(CalleeFunc &&) = default;
-  CalleeFunc & operator=(CalleeFunc &&) = default;
-JSON_OBJECT_END(CalleeFunc)
 }
 }
 
@@ -231,7 +218,6 @@ JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
-JSON_DEFAULT_TRAITS(tsar::msg::, CalleeFunc)
 
 namespace json {
 /// Specialization of JSON serialization traits for tsar::msg::LoopType type.
@@ -540,80 +526,81 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
 }
 
 std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx) {
-  msg::FunctionList FuncList;
+    llvm::Module &M, tsar::TransformationContext *TfmCtx,
+    msg::FunctionList FuncList) {
   typedef msg::MainFuncInfo FuncInfo;
-  for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
-    if (!Decl)
-      continue;
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
-    auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
-    auto &IEI = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisFuncInfo().find(&F)->second;
-    auto FuncDecl = Decl->getAsFunction();
-    msg::MainFuncInfo Func;
-    Func[FuncInfo::Name] = F.getName();
-    Func[FuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
-    if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
-      Func[FuncInfo::Traits][msg::FunctionTraits::Readonly] = msg::Analysis::Yes;
-    if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
-      Func[FuncInfo::Traits][msg::FunctionTraits::NoReturn] = msg::Analysis::Yes;
-    if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
-      Func[FuncInfo::Traits][msg::FunctionTraits::InOut] = msg::Analysis::Yes;
-    FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+  if (FuncList[msg::FunctionList::FuncID]) {
+    for (Function &F : M) {
+      if (F.empty())
+        continue;
+      auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+      if (!Decl)
+        continue;
+      auto FuncDecl = Decl->getAsFunction();
+      if (FuncDecl->getLocStart().getRawEncoding() !=
+        FuncList[msg::FunctionList::FuncID])
+        continue;
+      auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+      auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
+      auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
+      auto &IALoopInfo = PSP->getAnalysis<InterprocAnalysisPass>().
+        getInterprocAnalysisLoopInfo();
+      auto &IAFuncInfo = PSP->getAnalysis<InterprocAnalysisPass>().
+        getInterprocAnalysisFuncInfo();
+      tsar::InterprocElemInfo IEI;
+      if (FuncList[msg::FunctionList::LoopID]) {
+        for (auto Match : Matcher)
+          if (Match.first->getLocStart().getRawEncoding() ==
+            FuncList[msg::FunctionList::LoopID])
+            IEI = IALoopInfo.find(Match.first)->second;
+        for (auto Unmatch : Unmatcher)
+          if (Unmatch->getLocStart().getRawEncoding() ==
+            FuncList[msg::FunctionList::LoopID])
+            IEI = IALoopInfo.find(Unmatch)->second;
+      }
+      else {
+        IEI = IAFuncInfo.find(&F)->second;
+      }
+      for (auto MapCF : IEI.getCalleeFuncLoc()) {
+        for (unsigned IdxAttr = 1;
+          IdxAttr < (unsigned)InterprocElemInfo::Attr::EndAttr; IdxAttr++)
+          if ((FuncList[msg::FunctionList::Attr] == IdxAttr) &&
+            IAFuncInfo.find(MapCF.first)->second.
+            hasAttr((InterprocElemInfo::Attr)IdxAttr)) {
+            msg::MainFuncInfo Func;
+            Func[FuncInfo::Name] = MapCF.first->getName();
+            FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+          }
+      }
+    }
+  } else {
+    for (Function &F : M) {
+      if (F.empty())
+        continue;
+      auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+      if (!Decl)
+        continue;
+      auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+      auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
+      auto FuncDecl = Decl->getAsFunction();
+      auto &IEI = PSP->getAnalysis<InterprocAnalysisPass>().
+        getInterprocAnalysisFuncInfo().find(&F)->second;
+      msg::MainFuncInfo Func;
+      Func[FuncInfo::Name] = F.getName();
+      Func[FuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
+      if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
+        Func[FuncInfo::Traits][msg::FunctionTraits::Readonly]
+          = msg::Analysis::Yes;
+      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
+        Func[FuncInfo::Traits][msg::FunctionTraits::NoReturn]
+          = msg::Analysis::Yes;
+      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
+        Func[FuncInfo::Traits][msg::FunctionTraits::InOut]
+          = msg::Analysis::Yes;
+      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+    }
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
-}
-
-std::string answerCalleeFunc(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx,
-    msg::CalleeFunc CalleeFunc) {
-  for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
-    if (!Decl)
-      continue;
-    auto FuncDecl = Decl->getAsFunction();
-    if (FuncDecl->getLocStart().getRawEncoding() !=
-        CalleeFunc[msg::CalleeFunc::FuncID])
-      continue;
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
-    auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
-    auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    auto &IALoopInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-        getInterprocAnalysisLoopInfo();
-    auto &IAFuncInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-        getInterprocAnalysisFuncInfo();
-    tsar::InterprocElemInfo IEI;
-    if (CalleeFunc[msg::CalleeFunc::LoopID]) {
-      for (auto Match : Matcher)
-        if (Match.first->getLocStart().getRawEncoding() ==
-            CalleeFunc[msg::CalleeFunc::LoopID])
-          IEI = IALoopInfo.find(Match.first)->second;
-      for (auto Unmatch : Unmatcher)
-        if (Unmatch->getLocStart().getRawEncoding() ==
-            CalleeFunc[msg::CalleeFunc::LoopID])
-          IEI = IALoopInfo.find(Unmatch)->second;
-    } else {
-      IEI = IAFuncInfo.find(&F)->second;
-    }
-    for (auto MapCF : IEI.getCalleeFuncLoc()) {
-      for (unsigned IdxAttr = 1;
-          IdxAttr < (unsigned)InterprocElemInfo::Attr::EndAttr; IdxAttr++)
-        if ((CalleeFunc[msg::CalleeFunc::Attr] == IdxAttr) &&
-            IAFuncInfo.find(MapCF.first)->second.
-                hasAttr((InterprocElemInfo::Attr)IdxAttr)) {
-          msg::MainFuncInfo Func;
-          Func[msg::MainFuncInfo::Name] = MapCF.first->getName();
-          CalleeFunc[msg::CalleeFunc::Functions].push_back(std::move(Func));
-        }
-    }
-  }
-  return json::Parser<msg::CalleeFunc>::unparseAsObject(CalleeFunc);
 }
 }
 
@@ -640,8 +627,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
       return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
     }
-    json::Parser<msg::Statistic, msg::LoopTree,
-      msg::FunctionList, msg::CalleeFunc> P(Request);
+    json::Parser<msg::Statistic, msg::LoopTree, msg::FunctionList> P(Request);
     auto Obj = P.parse();
     assert(Obj && "Invalid request!");
     if (Obj->is<msg::Statistic>())
@@ -649,9 +635,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     if (Obj->is<msg::LoopTree>())
       return answerLoopTree(this, M, TfmCtx, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())
-      return answerFunctionList(this, M, TfmCtx);
-    if (Obj->is<msg::CalleeFunc>())
-      return answerCalleeFunc(this, M, TfmCtx, Obj->as<msg::CalleeFunc>());
+      return answerFunctionList(this, M, TfmCtx, Obj->as<msg::FunctionList>());
     llvm_unreachable("Unknown request to server!");
   }));
   return false;
