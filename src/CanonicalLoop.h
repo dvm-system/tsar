@@ -125,6 +125,8 @@ public:
   bool runOnFunction(Function &F) override;
   
   void releaseMemory() override {
+    for (auto *LI : mCanonicalLoopInfo)
+      delete LI;
     mCanonicalLoopInfo.clear();
   }
 

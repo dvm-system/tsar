@@ -136,11 +136,16 @@ public:
         return;
       }
       tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
+      assert(Region && "Loop region must not be null!");
+      if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
+        DEBUG(dbgs() << "[CANONICAL LOOP]: Loop is already checked.\n");
+        return;
+      }
       tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
       LInfo->setStmts(Init, Increment, Condition);
+      mCanonicalLoopInfo->insert(LInfo);
       checkLoop(Region, const_cast<VarDecl*>
           (InitVar->getCanonicalDecl()), LInfo);
-      auto CLInfo = mCanonicalLoopInfo->insert(LInfo);
       if (LInfo->isCanonical()) {
         DEBUG(dbgs() << "[CANONICAL LOOP]: Canonical loop found.\n");
         ++NumCanonical;
