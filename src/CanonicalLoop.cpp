@@ -65,12 +65,18 @@ public:
       mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
       mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
 
-  /// This function is called each time LoopMatcher finds appropriate loop
+  /// \brief This function is called each time LoopMatcher finds appropriate
+  /// loop.
+  ///
+  /// The same loop can be visited multiple times.
   virtual void run(const MatchFinder::MatchResult &Result) {
     auto *For = const_cast<ForStmt *>(
       Result.Nodes.getNodeAs<ForStmt>("forLoop"));
     if (!For)
       return;
+    DEBUG(dbgs() << "[CANONICAL LOOP]: Process loop at ");
+    DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
+    DEBUG(dbgs() << "\n");
     const clang::Stmt *Init = Result.Nodes.getNodeAs
         <clang::Stmt>("LoopInitDecl");
     if (!Init) {
@@ -105,6 +111,9 @@ public:
         <VarDecl>("SecondConditionVarName");
     bool CheckCondVar = false;
     bool ReversedCond = false;
+    // Note that at least one variable `FirstConditionVar` or
+    // `SecondConditionVar` is equal to `nullptr`. For details, see
+    // `makeLoopMatcher()` and `eachOf()` matcher.
     if (FirstConditionVar && sameVar(InitVar, FirstConditionVar))
       CheckCondVar = true;
     if (SecondConditionVar && sameVar(InitVar, SecondConditionVar)) {
@@ -119,11 +128,10 @@ public:
         (CheckCondVar &&
         ((UnaryIncr && coherent(UnaryIncr, Condition, ReversedCond)) ||
         (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: Syntactically canonical loop found ");
-      DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
-      DEBUG(dbgs() << "\n");
+      DEBUG(dbgs() << "[CANONICAL LOOP]: Syntactically canonical loop found.\n");
       auto Match = mLoopInfo->find<AST>(For);
       if (Match == mLoopInfo->end()) {
+        DEBUG(dbgs() << "[CANONICAL LOOP]: Unmatched loop found.\n");
         ++NumNonCanonical;
         return;
       }
@@ -134,6 +142,7 @@ public:
           (InitVar->getCanonicalDecl()), LInfo);
       auto CLInfo = mCanonicalLoopInfo->insert(LInfo);
       if (LInfo->isCanonical()) {
+        DEBUG(dbgs() << "[CANONICAL LOOP]: Canonical loop found.\n");
         ++NumCanonical;
         return;
       }
