@@ -67,10 +67,9 @@ public:
 
   /// This function is called each time LoopMatcher finds appropriate loop
   virtual void run(const MatchFinder::MatchResult &Result) {
-    const ForStmt *FS = Result.Nodes.getNodeAs<clang::ForStmt>("forLoop");
-    ASTContext *Context = Result.Context;
-    // We do not want to convert header files!
-    if (!FS||!Context->getSourceManager().isWrittenInMainFile(FS->getForLoc()))
+    auto *For = const_cast<ForStmt *>(
+      Result.Nodes.getNodeAs<ForStmt>("forLoop"));
+    if (!For)
       return;
     const clang::Stmt *Init = Result.Nodes.getNodeAs
         <clang::Stmt>("LoopInitDecl");
@@ -120,7 +119,7 @@ public:
         (CheckCondVar &&
         ((UnaryIncr && coherent(UnaryIncr, Condition, ReversedCond)) ||
         (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
-      auto Match = mLoopInfo->find<AST>(const_cast<ForStmt*>(FS));
+      auto Match = mLoopInfo->find<AST>(For);
       assert(Match != mLoopInfo->end() && "ForStmt must be specified!");
       tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
       tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
