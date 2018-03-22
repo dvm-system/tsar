@@ -167,7 +167,7 @@ JSON_OBJECT_PAIR_3(FunctionTraits,
   InOut, Analysis)
 
   FunctionTraits() :
-    JSON_INIT(FunctionTraits, Analysis::No, Analysis::No) {}
+    JSON_INIT(FunctionTraits, Analysis::No, Analysis::No, Analysis::No) {}
   ~FunctionTraits() = default;
 
   FunctionTraits(const FunctionTraits &) = default;
@@ -408,6 +408,8 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     llvm::Module &M, tsar::TransformationContext *TfmCtx,
     msg::LoopTree LoopTree) {
   for (Function &F : M) {
+    if (F.empty())
+      continue;
     auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
@@ -434,7 +436,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
       auto &IEI = IALoopInfo.find(Match.first)->second;
-      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
+      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       for (auto BB : Match.get<IR>()->blocks())
         if (Match.get<IR>()->isLoopExiting(BB))
@@ -450,7 +452,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       auto Loop = getLoopInfo(Unmatch, SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
       auto &IEI = IALoopInfo.find(Unmatch)->second;
-      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
+      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       auto &CalleeFuncLoc = IEI.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
@@ -594,7 +596,7 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
       if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
         Func[FuncInfo::Traits][msg::FunctionTraits::NoReturn]
           = msg::Analysis::Yes;
-      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
+      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
         Func[FuncInfo::Traits][msg::FunctionTraits::InOut]
           = msg::Analysis::Yes;
       FuncList[msg::FunctionList::Functions].push_back(std::move(Func));

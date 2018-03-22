@@ -5,13 +5,29 @@
 #include <vector>
 #include <set>
 
+namespace {
+static const std::set<std::string> SetInOutFunc = {
+  "clearerr", "ctermid", "dprintf", "fclose", "fdopen", "feof", "ferror",
+  "fflush", "fgetc", "fgetpos", "fgetc", "fgetpos", "fgets", "fileno",
+  "flockfile", "fmemopen", "fopen", "fprintf", "fputc", "fputs", "fread",
+  "freopen", "fscanf", "fseek", "fseeko", "fsetpos", "ftell", "ftello",
+  "ftrylockfile", "funlockfile", "fwrite", "getc", "getchar", "getc_unlocked",
+  "getchar_unlocked", "getdelim", "getline", "gets", "open_memstream",
+  "pclose", "perror", "popen", "printf", "putc", "putchar", "putc_unlocked",
+  "putchar_unlocked", "puts", "remove", "rename", "renameat", "rewind",
+  "scanf", "setbuf", "setvbuf", "snprintf", "sprintf", "sscanf", "tempnam",
+  "tmpfile", "tmpnam", "tmpfile", "tmpnam", "ungetc", "vdprintf", "vfprintf",
+  "vfscanf", "vprintf", "vscanf", "vsprintf", "vsscanf"
+};
+}
+
 namespace tsar {
 struct InterprocElemInfo {
 typedef llvm::DenseMap<llvm::Function *,
     std::vector<clang::SourceLocation>> CalleeFuncLoc;
   enum Attr {
     None,
-    LibFunc,
+    InOutFunc,
     NoReturn,
     EndAttr
   };

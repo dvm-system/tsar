@@ -54,8 +54,6 @@ namespace {
       std::set<Function *> SetCalleeFunc,
       tsar::InterprocElemInfo &IEI) {
     for (auto CalleeFunc : SetCalleeFunc) {
-      if (!CalleeFunc)
-        continue;
       std::vector<SourceLocation> VecSL;
       for (auto CE : VecCallExpr)
         if (CE->getDirectCallee()->getName().equals(CalleeFunc->getName()))
@@ -71,24 +69,12 @@ namespace {
     std::vector<CallExpr *> VecCallExpr;
     std::set<Function *> SetCalleeFunc;
     clang::getStmtTypeFromStmtTree(S, VecCallExpr);
-    for (auto CE : VecCallExpr) {
-      auto DF = CE->getDirectCallee();
-      auto F = M.getFunction(DF->getName());
-      if (!F) {
-        IEI.setAttr(tsar::InterprocElemInfo::Attr::LibFunc);
-        IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
-        continue;
-      }
-      if (!DF->hasBody()) {
-        IEI.setAttr(tsar::InterprocElemInfo::Attr::LibFunc);
-        IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
-      }
-      SetCalleeFunc.insert(F);
-    }
+    for (auto CE : VecCallExpr)
+      SetCalleeFunc.insert(M.getFunction(CE->getDirectCallee()->getName()));
     for (auto CF : SetCalleeFunc) {
       auto E = IAFI.find(CF)->second;
-      if (E.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))
-        IEI.setAttr(tsar::InterprocElemInfo::Attr::LibFunc);
+      if (E.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
+        IEI.setAttr(tsar::InterprocElemInfo::Attr::InOutFunc);
       if (E.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
         IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
     }
@@ -126,13 +112,12 @@ void InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
   LibFunc LibID;
   std::set<Function *> SetSCCFunc;
   std::set<Function *> SetCalleeFunc;
-  bool LibFunc = false;
+  bool InOutFunc = false;
   bool NoReturn = false;
   for (auto CGN : SCC) {
     auto F = CGN->getFunction();
-    if (!F)
-      continue;
-    SetSCCFunc.insert(F);
+    if (F && TfmCtx->getDeclForMangledName(F->getName()))
+      SetSCCFunc.insert(F);
   }
   for (auto CGN : SCC) {
     auto F = CGN->getFunction();
@@ -140,40 +125,37 @@ void InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
       continue;
     for (auto CFGTo : *CGN) {
       auto FTo = CFGTo.second->getFunction();
-      if (SetSCCFunc.find(FTo) == SetSCCFunc.end())
+      if (FTo && SetSCCFunc.find(FTo) == SetSCCFunc.end())
         SetCalleeFunc.insert(FTo);
     }
   }
   for (auto SCCF : SetSCCFunc)
-    if (TLI.getLibFunc(*SCCF, LibID) ||
-        !TfmCtx->getDeclForMangledName(SCCF->getName()) ||
-        !TfmCtx->getDeclForMangledName(SCCF->getName())->hasBody()) {
-      LibFunc = true;
+    if ((TLI.getLibFunc(*SCCF, LibID) &&
+        SetInOutFunc.find(SCCF->getName()) != SetInOutFunc.end()) ||
+        (!TLI.getLibFunc(*SCCF, LibID) && SCCF->empty())) {
+      InOutFunc = true;
       break;
     }
-  if (!LibFunc)
+  if (!InOutFunc)
     for (auto CF : SetCalleeFunc) {
       auto IACF = mInterprocAnalysisFuncInfo.find(CF);
-      if (!CF || TLI.getLibFunc(*CF, LibID) ||
-          (IACF != mInterprocAnalysisFuncInfo.end() &&
-          IACF->second.hasAttr(tsar::InterprocElemInfo::Attr::LibFunc))) {
-        LibFunc = true;
+      if (IACF != mInterprocAnalysisFuncInfo.end() &&
+          IACF->second.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc)) {
+        InOutFunc = true;
         break;
       }
     }
   for (auto SCCF : SetSCCFunc)
     if (SCCF->hasFnAttribute(Attribute::NoReturn) ||
-        !TfmCtx->getDeclForMangledName(SCCF->getName()) ||
-        !TfmCtx->getDeclForMangledName(SCCF->getName())->hasBody()) {
+        (!TLI.getLibFunc(*SCCF, LibID) && SCCF->empty())) {
       NoReturn = true;
       break;
     }
   if (!NoReturn)
     for (auto CF : SetCalleeFunc) {
       auto IACF = mInterprocAnalysisFuncInfo.find(CF);
-      if (!CF || CF->hasFnAttribute(Attribute::NoReturn) ||
-          (IACF != mInterprocAnalysisFuncInfo.end() &&
-          IACF->second.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))) {
+      if (IACF != mInterprocAnalysisFuncInfo.end() &&
+          IACF->second.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn)) {
         NoReturn = true;
         break;
       }
@@ -182,25 +164,31 @@ void InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
     auto F = CGN->getFunction();
     if (!F)
       continue;
+    auto D = TfmCtx->getDeclForMangledName(F->getName());
+    if (!D)
+      continue;
     std::vector<CallExpr *> VecCallExpr;
     std::set<Function *> SetCalleeFunc;
     tsar::InterprocElemInfo IEI;
-    if (LibFunc)
-      IEI.setAttr(tsar::InterprocElemInfo::Attr::LibFunc);
+    if (InOutFunc)
+      IEI.setAttr(tsar::InterprocElemInfo::Attr::InOutFunc);
     if (NoReturn)
       IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
-    auto D = TfmCtx->getDeclForMangledName(F->getName());
-    if (!D || !D->hasBody()) {
-      IEI.setAttr(tsar::InterprocElemInfo::Attr::LibFunc);
-      IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
+    if (F->empty()) {
       mInterprocAnalysisFuncInfo.insert(std::make_pair(F, IEI));
       continue;
     }
     getStmtTypeFromStmtTree<CallExpr>(D->getBody(), VecCallExpr);
     for (auto CFGTo : *CGN)
-      SetCalleeFunc.insert(CFGTo.second->getFunction());
+      if (CFGTo.second->getFunction())
+        SetCalleeFunc.insert(CFGTo.second->getFunction());
     setFuncLoc(VecCallExpr, SetCalleeFunc, IEI);
     mInterprocAnalysisFuncInfo.insert(std::make_pair(F, IEI));
+  }
+  for (auto CGN : SCC) {
+    auto F = CGN->getFunction();
+    if (!F || F->empty())
+      continue;
     auto &LMP = getAnalysis<LoopMatcherPass>(*F);
     auto &Matcher = LMP.getMatcher();
     auto &Unmatcher = LMP.getUnmatchedAST();
