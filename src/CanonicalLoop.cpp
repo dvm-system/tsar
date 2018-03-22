@@ -119,6 +119,9 @@ public:
         (CheckCondVar &&
         ((UnaryIncr && coherent(UnaryIncr, Condition, ReversedCond)) ||
         (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: Syntactically canonical loop found ");
+      DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
+      DEBUG(dbgs() << "\n");
       auto Match = mLoopInfo->find<AST>(For);
       assert(Match != mLoopInfo->end() && "ForStmt must be specified!");
       tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
