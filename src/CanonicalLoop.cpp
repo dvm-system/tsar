@@ -87,6 +87,7 @@ public:
     assert(Region && "Loop region must not be null!");
     if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
       DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
+      --NumNonCanonical;
       return;
     }
     const clang::Expr *Init;
