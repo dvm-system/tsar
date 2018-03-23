@@ -83,8 +83,7 @@ public:
       DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");
       return;
     }
-    auto *Region = mRgnInfo->getRegionFor(Match->get<IR>());
-    assert(Region && "Loop region must not be null!");
+    auto *Region = cast<DFLoop>(mRgnInfo->getRegionFor(Match->get<IR>()));
     if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
       DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
       --NumNonCanonical;
@@ -144,7 +143,7 @@ public:
       return;
     }
     DEBUG(dbgs() << "[CANONICAL LOOP]: syntactically canonical loop found.\n");
-    auto *LI = new CanonicalLoopInfo(cast<DFLoop>(Region), For);
+    auto *LI = new CanonicalLoopInfo(Region, For);
     mCanonicalLoopInfo->insert(LI);
     checkLoop(Region, const_cast<VarDecl*>(InitVar->getCanonicalDecl()), LI);
     if (LI->isCanonical()) {
@@ -440,75 +439,76 @@ private:
   }
 
   /// Checks if labeled loop is canonical
-  void checkLoop(tsar::DFNode* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
+  void checkLoop(tsar::DFLoop* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
-    if (MemMatch == mMemoryMatcher->end()) {
+    if (MemMatch == mMemoryMatcher->end())
       return;
-    }
-    auto alloca = MemMatch->get<IR>();
-    if (!(alloca->getType() && alloca->getType()->isPointerTy())) {
+    auto AI= MemMatch->get<IR>();
+    if (!AI->getType() || !AI->getType()->isPointerTy())
       return;
-    }
-    llvm::MemoryLocation MemLoc(alloca, 1);
+    llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree.find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
     auto ANI = EMI->getAliasNode(mAliasTree);
     assert(ANI && "Alias node must not be null!");
-    tsar::DFLoop* DFFor = llvm::dyn_cast<DFLoop>(Region);
-    assert(DFFor && "DFNode must not be null!");
-    llvm::Loop *LLoop = DFFor->getLoop();
-    Instruction *Init = findLastInstruction(ANI, LLoop->getLoopPreheader());
+    auto *L = Region->getLoop();
+    assert(L && "Loop must not be null!");
+    Instruction *Init = findLastInstruction(ANI, L->getLoopPreheader());
     assert(Init && "Init instruction should not be nullptr!");
-    Instruction *Increment = findLastInstruction(ANI, LLoop->getLoopLatch());
-    assert(Increment && "Increment instruction should not be nullptr!");
-    Instruction *Condition = findCondInstruction(LLoop->getHeader());
+    Instruction *Condition = findCondInstruction(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
     LInfo->setStart(Init);
-    LInfo->setStep(Increment);
     LInfo->setEnd(Condition);
-    auto BlocksEnd = LLoop->block_end();
-    for (auto I = LLoop->block_begin(); I != BlocksEnd; ++I) {
-      auto DFN = mRgnInfo->getRegionFor(*I);
+    auto *LatchBB = L->getLoopLatch();
+    Instruction *Increment = nullptr;
+    for (auto *BB: L->blocks()) {
+      auto DFN = mRgnInfo->getRegionFor(BB);
       assert(DFN && "DFNode must not be null!");
       auto Match = mDefInfo->find(DFN);
       assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
           Match->get<DefUseSet>() && "Data-flow value must be specified!");
       auto &DUS = Match->get<DefUseSet>();
-      if (!((DUS->hasDef(MemLoc)) || (DUS->hasMayDef(MemLoc))))
+      if (!DUS->hasDef(MemLoc) && !DUS->hasMayDef(MemLoc))
         continue;
-      tsar::DFBlock* DFB = llvm::dyn_cast<DFBlock>(DFN);
+      auto *DFB = llvm::dyn_cast<DFBlock>(DFN);
       if (!DFB)
         continue;
-      if (!(DFFor->getLoop()->isLoopLatch(DFB->getBlock())))
+      // Let us check that there is only a single node which contains definition
+      // of induction variable. This node must be a single latch. In case of
+      // multiple latches `LatchBB` will be `nullptr`.
+      if (LatchBB != DFB->getBlock())
         return;
       int NumOfWrites = 0;
-      for_each_memory(*(DFB->getBlock()), mTLI,
-        [this, &ANI, &NumOfWrites] (Instruction &I,
+      for_each_memory(*DFB->getBlock(), mTLI,
+        [this, ANI, &NumOfWrites, &Increment] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
           auto EM = mAliasTree.find(Loc);
           assert(EM && "Estimate memory location must not be null!");
           auto AN = EM->getAliasNode(mAliasTree);
           assert(AN && "Alias node must not be null!");
-          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+          if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No) {
             ++NumOfWrites;
+            Increment = &I;
+          }
         },
         [this, &ANI, &NumOfWrites] (Instruction &I, AccessInfo,
             AccessInfo W) {
           auto AN = mAliasTree.findUnknown(I);
-          if (!AN)
-            return;
-          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
+          assert(AN && "Alias node must not be null!");
+          if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No)
             ++NumOfWrites;
         }
       );
-      if (NumOfWrites != 1)
+      if (!Increment && NumOfWrites != 1)
         return;
     }
-    if (!checkMemLocsFromInstr(Init, EMI, LLoop))
+    if (auto SI = dyn_cast<StoreInst>(Increment))
+      LInfo->setStep(SI->getValueOperand());
+    if (!checkMemLocsFromInstr(Init, EMI, L))
       return;
-    if (!checkMemLocsFromInstr(Increment, EMI, LLoop))
+    if (!checkMemLocsFromInstr(Increment, EMI, L))
       return;
-    if (!checkMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
+    if (!checkMemLocsFromBlock(L->getHeader(), EMI, L))
       return;
     LInfo->markAsCanonical();
   }
