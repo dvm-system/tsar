@@ -233,23 +233,10 @@ private:
       !Increment && LessCondition && ReversedCond;
   }
 
-  /// Checks if Loc is Def or MayDef in L
-  bool checkMemLoc(MemoryLocation &Loc, Loop *L) {
-    auto DFN = mRgnInfo->getRegionFor(L);
-    assert(DFN && "DFNode must not be null!");
-    auto Match = mDefInfo->find(DFN);
-    assert(Match != mDefInfo->end() && Match->get<DefUseSet>() &&
-        "Data-flow value must be specified!");
-    auto &DUS = Match->get<DefUseSet>();
-    return !((DUS->hasDef(Loc)) || (DUS->hasMayDef(Loc)));
-  }
-
-  /// Finds last instruction of block w/ inductive variable
-  Instruction* findLastInstruction(AliasEstimateNode *ANI, BasicBlock *BB) {
-    Instruction *LastInstruction = nullptr;
-    auto I = BB->rbegin();
-    auto InstrEnd = BB->rend();
-    while ((I != InstrEnd) && (!(LastInstruction))) {
+  /// Finds a last instruction in a specified block which writes memory
+  /// from a specified node.
+  Instruction* findLastWrite(AliasEstimateNode *ANI, BasicBlock *BB) {
+    for (auto I = BB->rbegin(), E = BB->rend(); I != E; ++I) {
       bool RequiredInstruction = false;
       for_each_memory(*I, mTLI,
         [this, &ANI, &RequiredInstruction] (Instruction &I,
@@ -258,28 +245,25 @@ private:
           assert(EM && "Estimate memory location must not be null!");
           auto AN = EM->getAliasNode(mAliasTree);
           assert(AN && "Alias node must not be null!");
-          if (!mSTR.isUnreachable(ANI, AN) && (W != AccessInfo::No)) {
-            RequiredInstruction = true;
-          }
+          RequiredInstruction |=
+            !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
         },
         [this, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
             AccessInfo W) {
           auto AN = mAliasTree.findUnknown(I);
-          if (!AN)
-            return;
-          if (!mSTR.isUnreachable(ANI, AN) && (W != AccessInfo::No)) {
-            RequiredInstruction = true;
-          }
+          assert(AN && "Unknown memory must not be null!");
+          RequiredInstruction |=
+            !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
         }
       );
       if (RequiredInstruction)
-        LastInstruction = &(*I);
-      ++I;
+        return &(*I);
     }
-    return LastInstruction;
+    return nullptr;
   }
 
-  Instruction* findCondInstruction(BasicBlock *BB) {
+  /// Returns the last comparison in a specified basic block.
+  Instruction* findLastCmp(BasicBlock *BB) {
     Instruction *CondInstruction = nullptr;
     auto I = BB->rbegin();
     auto InstrEnd = BB->rend();
@@ -291,154 +275,93 @@ private:
     return CondInstruction;
   }
 
-  /// Checks that possible call from here does not change memory surely
-  bool checkFuncCallFromInstruction(Instruction &Inst) {
-    if (llvm::isa<CallInst>(Inst)) {
-      CallInst &CI = llvm::cast<CallInst>(Inst);
-      llvm::ImmutableCallSite ICS(&CI);
-      if (!(mAliasTree.getAliasAnalysis().onlyReadsMemory(ICS)))
-        return false;
-    }
-    if (llvm::isa<InvokeInst>(Inst)) {
-      InvokeInst &CI = llvm::cast<InvokeInst>(Inst);
-      llvm::ImmutableCallSite ICS(&CI);
-      if (!(mAliasTree.getAliasAnalysis().onlyReadsMemory(ICS)))
-        return false;
-    }
-    return true;
+  /// Checks that possible call from here does not write to memory.
+  bool onlyReadsMemory(Instruction &Inst) {
+    ImmutableCallSite CS(&Inst);
+    return CS && mAliasTree.getAliasAnalysis().onlyReadsMemory(CS);
   }
 
-  /// Checks if Unknown AliasNode is static in L
-  bool checkUnknown(AliasNode *ANI, Loop *L) {
-    for (auto BB = L->block_begin(), LEnd = L->block_end(); BB != LEnd; ++BB) {
-      bool Writes = false;
-      for_each_memory(**BB, mTLI,
-        [this, &ANI, &Writes] (Instruction &Instr,
-            MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
-          if (Writes)
-            return;
+  /// \brief Checks whether operands (except inductive variable) of a specified
+  /// instruction are invariant for a specified loop.
+  ///
+  /// \return
+  /// - `true` on success,
+  /// - number of reads from induction variable memory (on success),
+  /// - number of writes to induction variable memory (on success).
+  std::tuple<bool, unsigned, unsigned> isLoopInvariantMemory(
+      DFLoop &DFL, DefUseSet &DUS, EstimateMemory &EMI, Instruction &Inst) {
+    bool Result = true;
+    unsigned InductUseNum = 0, InductDefNum = 0;
+    for_each_memory(Inst, mTLI,
+      [this, &EMI, &DUS, &Result, &InductUseNum, &InductDefNum] (Instruction &,
+          MemoryLocation &&Loc, unsigned, AccessInfo R, AccessInfo W) {
+        if (!Result)
+          return;
+        auto EM = mAliasTree.find(Loc);
+        assert(EM && "Estimate memory location must not be null!");
+        if (!mSTR.isUnreachable(
+             EM->getAliasNode(mAliasTree), EMI.getAliasNode(mAliasTree))) {
+          if (R != AccessInfo::No)
+            ++InductUseNum;
+          if (W != AccessInfo::No)
+            ++InductDefNum;
+          return;
+        }
+        Result &= !(DUS.hasDef(Loc) || DUS.hasMayDef(Loc));
+      },
+      [this, &DFL, &DUS, &Result](Instruction &I, AccessInfo, AccessInfo) {
+        if (!Result)
+          return;
+        if (!onlyReadsMemory(I)) {
+          Result = false;
+          return;
+        }
+        auto AN = mAliasTree.findUnknown(I);
+        for (auto &Loc : DUS.getExplicitAccesses()) {
+          if (!DUS.hasDef(Loc) && !DUS.hasMayDef(Loc))
+            continue;
           auto EM = mAliasTree.find(Loc);
-          assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(mAliasTree);
-          assert(AN && "Alias node must not be null!");
-          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
-            Writes = true;
-        },
-        [this, &ANI, &Writes] (Instruction &Instr, AccessInfo,
-            AccessInfo W) {
-          if (Writes)
+          assert(EM && "Memory location must be presented in alias tree!");
+          if (!mSTR.isUnreachable(EM->getAliasNode(mAliasTree), AN)) {
+            Result = false;
             return;
-          auto AN = mAliasTree.findUnknown(Instr);
-          if (!AN)
+          }
+        }
+        for (auto *Loc : DUS.getExplicitUnknowns()) {
+          if (onlyReadsMemory(*Loc))
+            continue;
+          auto UN = mAliasTree.findUnknown(*Loc);
+          assert(UN &&
+            "Unknown memory location must be presented in alias tree!");
+          if (!mSTR.isUnreachable(UN, AN)) {
+            Result = false;
             return;
-          if (!(mSTR.isUnreachable(ANI, AN)) && (W != AccessInfo::No))
-            Writes = true;
+          }
         }
-      );
-      if (Writes)
-        return false;
-    }
-    return true;
-  }
-
-  /// Checks if operands (except inductive variable) of I are static
-  bool checkMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
-    bool Result = true;
-    auto LoopDFN = mRgnInfo->getRegionFor(L);
-    assert(LoopDFN && "DFNode must not be null!");
-    auto LoopMatch = mDefInfo->find(LoopDFN);
-    assert(LoopMatch != mDefInfo->end() && LoopMatch->get<ReachSet>() &&
-        LoopMatch->get<DefUseSet>() && "Data-flow value must be specified!");
-    auto &LoopDUS = LoopMatch->get<DefUseSet>();
-    for_each_memory(*I, mTLI,
-      [this, &EMI, &L, &Result] (Instruction &Instr,
-          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-        if (!Result)
-          return;
-        auto EM = mAliasTree.find(Loc);
-        assert(EM && "Estimate memory location must not be null!");
-        if (EM == EMI)
-          return;
-        Result &= checkMemLoc(Loc, L);
-      },
-      [this, &L, &LoopDUS, &Result] (Instruction &Instr,
-          AccessInfo, AccessInfo) {
-        if (!Result)
-          return;
-        if (!checkFuncCallFromInstruction(Instr)) {
-          Result &= false;
-          return;
-        }
-        if (LoopDUS->hasExplicitUnknown(&Instr)) {
-          Result &= false;
-          return;
-        }
-        auto AN = mAliasTree.findUnknown(Instr);
-        if (!AN)
-          return;
-        for_each_alias(&mAliasTree, AN,
-            [this, &L, &Result](AliasNode *ANI) {
-              Result &= checkUnknown(ANI, L);
-            }
-        );
+      });
+    std::tuple<bool, unsigned, unsigned> Tuple(
+      Result, InductUseNum, InductDefNum);
+    if (!std::get<0>(Tuple))
+      return Tuple;
+    for (auto &Op : Inst.operands())
+      if (auto I = dyn_cast<Instruction>(Op)) {
+        auto T = isLoopInvariantMemory(DFL, DUS, EMI, *I);
+        std::get<0>(Tuple) &= std::get<0>(T);
+        std::get<1>(Tuple) += std::get<1>(T);
+        std::get<2>(Tuple) += std::get<2>(T);
+        if (!std::get<0>(Tuple))
+          return Tuple;
+      } else if (!isa<ConstantData>(Op)) {
+        std::get<0>(Tuple) = false;
+        return Tuple;
       }
-    );
-    if (!Result)
-      return false;
-    auto OpE = I->op_end();
-    for (auto J = I->op_begin(); J != OpE; ++J)
-      if (auto Instr = llvm::dyn_cast<Instruction>(*J))
-        if (!checkMemLocsFromInstr(Instr, EMI, L))
-          return false;
-    return true;
+    return Tuple;
   }
 
-  /// Checks if operands (except inductive variable) of BB are static
-  bool checkMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
-    bool Result = true;
-    auto LoopDFN = mRgnInfo->getRegionFor(L);
-    assert(LoopDFN && "DFNode must not be null!");
-    auto LoopMatch = mDefInfo->find(LoopDFN);
-    assert(LoopMatch != mDefInfo->end() && LoopMatch->get<ReachSet>() &&
-        LoopMatch->get<DefUseSet>() && "Data-flow value must be specified!");
-    auto &LoopDUS = LoopMatch->get<DefUseSet>();
-    for_each_memory(*BB, mTLI,
-      [this, &EMI, &L, &Result] (Instruction &Instr,
-          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-        if (!Result)
-          return;
-        auto EM = mAliasTree.find(Loc);
-        assert(EM && "Estimate memory location must not be null!");
-        if (EM == EMI)
-          return;
-        Result &= checkMemLoc(Loc, L);
-      },
-      [this, &L, &LoopDUS, &Result] (Instruction &Instr,
-          AccessInfo, AccessInfo) {
-        if (!Result)
-          return;
-        if (!checkFuncCallFromInstruction(Instr)) {
-          Result &= false;
-          return;
-        }
-        if (LoopDUS->hasExplicitUnknown(&Instr)) {
-          Result &= false;
-          return;
-        }
-        auto AN = mAliasTree.findUnknown(Instr);
-        if (!AN)
-          return;
-        for_each_alias(&mAliasTree, AN,
-            [this, &L, &Result](AliasNode *ANI) {
-              Result &= checkUnknown(ANI, L);
-            }
-        );
-      }
-    );
-    return Result;
-  }
-
-  /// Checks if labeled loop is canonical
+  /// \brief Checks that a specified loop is represented in canonical form.
+  ///
+  /// \post The`LInfo` parameter will be updated. Start, end, step will be set
+  /// is possible, and loop will be marked as canonical on success.
   void checkLoop(tsar::DFLoop* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
@@ -453,9 +376,9 @@ private:
     assert(ANI && "Alias node must not be null!");
     auto *L = Region->getLoop();
     assert(L && "Loop must not be null!");
-    Instruction *Init = findLastInstruction(ANI, L->getLoopPreheader());
+    Instruction *Init = findLastWrite(ANI, L->getLoopPreheader());
     assert(Init && "Init instruction should not be nullptr!");
-    Instruction *Condition = findCondInstruction(L->getHeader());
+    Instruction *Condition = findLastCmp(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
     LInfo->setStart(Init);
     LInfo->setEnd(Condition);
@@ -504,11 +427,23 @@ private:
     }
     if (auto SI = dyn_cast<StoreInst>(Increment))
       LInfo->setStep(SI->getValueOperand());
-    if (!checkMemLocsFromInstr(Init, EMI, L))
+    auto LoopDefItr = mDefInfo->find(Region);
+    assert(LoopDefItr != mDefInfo->end() && LoopDefItr->get<DefUseSet>() &&
+     "Data-flow value must be specified!");
+    auto &LoopDUS = LoopDefItr->get<DefUseSet>();
+    bool Result;
+    unsigned InductUseNum, InductDefNum;
+    std::tie(Result, InductUseNum, InductDefNum) =
+      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Init);
+    if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
-    if (!checkMemLocsFromInstr(Increment, EMI, L))
+    std::tie(Result, InductUseNum, InductDefNum) =
+      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Increment);
+    if (!Result || InductDefNum != 1 || InductUseNum > 1)
       return;
-    if (!checkMemLocsFromBlock(L->getHeader(), EMI, L))
+    std::tie(Result, InductUseNum, InductDefNum) =
+      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Condition);
+    if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
     LInfo->markAsCanonical();
   }
@@ -523,7 +458,7 @@ private:
   SpanningTreeRelation<const AliasTree *> mSTR;
 };
 
-/// returns LoopMatcher that matches loops that can be canonical
+/// Returns LoopMatcher that matches loops that can be canonical.
 DeclarationMatcher makeLoopMatcher() {
   return functionDecl(forEachDescendant(
       forStmt(
