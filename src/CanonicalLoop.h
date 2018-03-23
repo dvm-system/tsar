@@ -15,85 +15,116 @@
 
 #include "tsar_pass.h"
 #include "tsar_utility.h"
+#include <tagged.h>
 #include <utility.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/Pass.h>
 #include <set>
 
 namespace clang {
-class Stmt;
+class ForStmt;
 }
 
 namespace llvm {
-class Instruction;
+class Value;
 }
 
 namespace tsar {
+class DFLoop;
 class DFNode;
-typedef bcl::tagged_pair<
-    bcl::tagged<clang::Stmt *, AST>,
-    bcl::tagged<llvm::Instruction *, IR>> NodeInstruction;
-class LoopInfo {
-public:
-  LoopInfo(DFNode *Node) : mIsCanonical(false), mNode(Node),
-      Initialization(NodeInstruction(nullptr, nullptr)),
-      Increment(NodeInstruction(nullptr, nullptr)),
-      Condition(NodeInstruction(nullptr, nullptr)) {}
-    
-  void setCanonical() { mIsCanonical = true; }
-  void setStmts(const clang::Stmt *Init, const clang::Stmt *Incr,
-      const clang::Stmt *Cond) {
-    Initialization = NodeInstruction(const_cast<clang::Stmt*>(Init),
-        Initialization.second);
-    Increment = NodeInstruction(const_cast<clang::Stmt*>(Incr),
-        Increment.second);
-    Condition = NodeInstruction(const_cast<clang::Stmt*>(Cond),
-        Condition.second);
-  }
-  void setInstructions(llvm::Instruction *Init, llvm::Instruction *Incr,
-      llvm::Instruction *Cond) {
-    Initialization = NodeInstruction(Initialization.first, Init);
-    Increment = NodeInstruction(Increment.first, Incr);
-    Condition = NodeInstruction(Condition.first, Cond);
-  };
 
-  bool isCanonical() { return mIsCanonical; }
-  const bool isCanonical() const { return mIsCanonical; }
-  DFNode * getNode() { return mNode; }
-  const DFNode * getNode() const { return mNode; }
-  NodeInstruction * getInit() { return &Initialization; }
-  const NodeInstruction * getInit() const { return &Initialization; }
-  NodeInstruction * getInc() { return &Increment; }
-  const NodeInstruction * getInc() const { return &Increment; }
-  NodeInstruction * getCond() { return &Condition; }
-  const NodeInstruction * getCond() const { return &Condition; }
-    
+///\brief A Loop syntactically written in canonical form.
+///
+/// This loop in a source code has a head like
+/// `for (/*var initialization*/; /*var comparison*/; /*var increment*/)`.
+/// However, some conditions may be semantically violated. To obtain
+/// accurate information CanonicalLoopInfo::isCanonical() should be used.
+class CanonicalLoopInfo : private bcl::Uncopyable {
+public:
+  /// Creates information for a specified syntactically canonical loop.
+  explicit CanonicalLoopInfo(DFLoop *L, clang::ForStmt *For = nullptr) :
+    mLoop(L), mASTLoop(For) {
+    assert(L && "Low-level representation of loop must not be null!");
+  }
+
+  /// Returns true if this loop is semantically canonical.
+  bool isCanonical() const noexcept { return mIsCanonical; }
+
+  /// Marks this syntactically canonical loop as semantically canonical.
+  void markAsCanonical() noexcept { mIsCanonical = true; }
+
+  /// Returns low-level representation of the loop.
+  DFLoop * getLoop() noexcept { return mLoop; }
+
+  /// Returns low-level representation of the loop.
+  const DFLoop * getLoop() const noexcept { return mLoop; }
+
+  /// Returns source-level representation of the loop if available.
+  clang::ForStmt * getASTLoop() noexcept { return mASTLoop; }
+
+  /// Returns source-level representation of the loop if available.
+  const clang::ForStmt * getASTLoop() const noexcept { return mASTLoop; }
+
+  /// Returns induction variable which is specified in a head of the loop.
+  llvm::Value * getInduction() const noexcept { return mInduction; }
+
+  /// Sets induction variable.
+  void setInduction(llvm::Value *I) { mInduction = I; }
+
+  llvm::Value * getStart() const noexcept { return mStart; }
+  llvm::Value * getEnd() const noexcept { return mEnd; }
+  llvm::Value * getStep() const noexcept { return mStep; }
+
+  void setStart(llvm::Value *Start) noexcept { mStart = Start; }
+  void setEnd(llvm::Value *End) noexcept { mEnd = End; }
+  void setStep(llvm::Value *Step) noexcept { mStep = Step; }
+
 private:
-  bool mIsCanonical;
-  DFNode *mNode;
-  NodeInstruction Initialization, Increment, Condition;
+  DFLoop *mLoop;
+  clang::ForStmt *mASTLoop;
+  bool mIsCanonical = false;
+  llvm::Value *mInduction = nullptr;
+  llvm::Value *mStart = nullptr;
+  llvm::Value *mEnd = nullptr;
+  llvm::Value *mStep = nullptr;
 };
-struct LoopMapInfo {
-  static inline LoopInfo * getEmptyKey() {
-    return llvm::DenseMapInfo<LoopInfo *>::getEmptyKey();
+
+/// Replacement of default llvm::DenseMapInfo<CanonicalLoopInfo *>.
+struct CanonicalLoopMapInfo {
+  static inline CanonicalLoopInfo * getEmptyKey() {
+    return llvm::DenseMapInfo<CanonicalLoopInfo *>::getEmptyKey();
   }
-  static inline LoopInfo * getTombstoneKey() {
-    return llvm::DenseMapInfo<LoopInfo *>::getTombstoneKey();
+  static inline CanonicalLoopInfo * getTombstoneKey() {
+    return llvm::DenseMapInfo<CanonicalLoopInfo *>::getTombstoneKey();
   }
-  static inline unsigned getHashValue(const LoopInfo *Info) {
-    return llvm::DenseMapInfo<DFNode *>::getHashValue(Info->getNode());
+  static inline unsigned getHashValue(const CanonicalLoopInfo *LI) {
+    return llvm::DenseMapInfo<const DFNode *>
+      ::getHashValue(reinterpret_cast<const DFNode *>(LI->getLoop()));
   }
   static inline unsigned getHashValue(const DFNode *N) {
-    return llvm::DenseMapInfo<DFNode *>::getHashValue(N);
+    return llvm::DenseMapInfo<const DFNode *>::getHashValue(N);
   }
-  static inline bool isEqual(const LoopInfo *LHS, const LoopInfo *RHS) {
+  static inline bool isEqual(
+    const CanonicalLoopInfo *LHS, const CanonicalLoopInfo *RHS) {
     return LHS == RHS;
   }
-  static inline bool isEqual(const DFNode *LHS, const LoopInfo *RHS) {
-    return !isEqual(RHS, getEmptyKey()) && ! isEqual(RHS, getTombstoneKey())
-        && LHS == RHS->getNode();
+  static inline bool isEqual(
+    const DFNode*LHS, const CanonicalLoopInfo *RHS) {
+    return !isEqual(RHS, getEmptyKey()) && !isEqual(RHS, getTombstoneKey())
+      && LHS == reinterpret_cast<const DFNode *>(RHS->getLoop());
   }
 };
-typedef llvm::DenseSet<const LoopInfo *, LoopMapInfo> CanonicalLoopInfo;
+}
+
+namespace tsar {
+///\brief Set of loops syntactically written in canonical form.
+///
+/// Any loop in a source code is presented in this set if it has header like
+/// `for (/*var initialization*/; /*var comparison*/; /*var increment*/)`.
+/// However, some conditions may be semantically violated. To obtain
+/// accurate information CanonicalLoopInfo::isCanonical() should be used.
+using CanonicalLoopSet =
+llvm::DenseSet<const CanonicalLoopInfo *, CanonicalLoopMapInfo>;
 }
 
 namespace llvm {
@@ -110,20 +141,16 @@ public:
   CanonicalLoopPass() : FunctionPass(ID) {
     initializeCanonicalLoopPassPass(*PassRegistry::getPassRegistry());
   }
-  
-  /// Returns information about loops for an analyzed region.
-  tsar::CanonicalLoopInfo & getCanonicalLoopInfo() noexcept {
+
+  /// Returns information about loops for an analyzed function.
+  const tsar::CanonicalLoopSet & getCanonicalLoopInfo() const noexcept {
     return mCanonicalLoopInfo;
   }
 
-  /// Returns information about loops for an analyzed region.
-  const tsar::CanonicalLoopInfo & getCanonicalLoopInfo() const noexcept {
-    return mCanonicalLoopInfo;
-  }
-  
   /// Determines canonical loops in a specified functions.
   bool runOnFunction(Function &F) override;
-  
+
+  /// Deletes information about analyzed loops.
   void releaseMemory() override {
     for (auto *LI : mCanonicalLoopInfo)
       delete LI;
@@ -134,7 +161,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  tsar::CanonicalLoopInfo mCanonicalLoopInfo;
+  tsar::CanonicalLoopSet mCanonicalLoopInfo;
 };
 }
 #endif// TSAR_CANONICAL_LOOP_H

@@ -60,7 +60,7 @@ public:
   explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
       const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
-      TargetLibraryInfo &TLI, tsar::CanonicalLoopInfo *CLI) :
+      TargetLibraryInfo &TLI, CanonicalLoopSet *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
       mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
       mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
@@ -83,7 +83,7 @@ public:
       DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");
       return;
     }
-    tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
+    auto *Region = mRgnInfo->getRegionFor(Match->get<IR>());
     assert(Region && "Loop region must not be null!");
     if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
       DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
@@ -143,17 +143,13 @@ public:
       return;
     }
     DEBUG(dbgs() << "[CANONICAL LOOP]: syntactically canonical loop found.\n");
-    tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
-    auto *Increment = Result.Nodes.getNodeAs<clang::Stmt>("LoopIncrAssignment");
-    LInfo->setStmts(Init, Increment, Condition);
-    mCanonicalLoopInfo->insert(LInfo);
-    checkLoop(Region, const_cast<VarDecl*>
-        (InitVar->getCanonicalDecl()), LInfo);
-    if (LInfo->isCanonical()) {
+    auto *LI = new CanonicalLoopInfo(cast<DFLoop>(Region), For);
+    mCanonicalLoopInfo->insert(LI);
+    checkLoop(Region, const_cast<VarDecl*>(InitVar->getCanonicalDecl()), LI);
+    if (LI->isCanonical()) {
       DEBUG(dbgs() << "[CANONICAL LOOP]: canonical loop found.\n");
       ++NumCanonical;
       --NumNonCanonical;
-      return;
     }
   }
 
@@ -282,7 +278,7 @@ private:
     }
     return LastInstruction;
   }
-  
+
   Instruction* findCondInstruction(BasicBlock *BB) {
     Instruction *CondInstruction = nullptr;
     auto I = BB->rbegin();
@@ -295,7 +291,7 @@ private:
     return CondInstruction;
   }
 
-  /// Checks that possible call from here does not change memory surely 
+  /// Checks that possible call from here does not change memory surely
   bool checkFuncCallFromInstruction(Instruction &Inst) {
     if (llvm::isa<CallInst>(Inst)) {
       CallInst &CI = llvm::cast<CallInst>(Inst);
@@ -344,7 +340,7 @@ private:
     }
     return true;
   }
-  
+
   /// Checks if operands (except inductive variable) of I are static
   bool checkMemLocsFromInstr(Instruction *I, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
@@ -396,7 +392,7 @@ private:
           return false;
     return true;
   }
-  
+
   /// Checks if operands (except inductive variable) of BB are static
   bool checkMemLocsFromBlock(BasicBlock *BB, EstimateMemory *EMI, Loop *L) {
     bool Result = true;
@@ -443,7 +439,7 @@ private:
   }
 
   /// Checks if labeled loop is canonical
-  void checkLoop(tsar::DFNode* Region, VarDecl *Var, tsar::LoopInfo *LInfo) {
+  void checkLoop(tsar::DFNode* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end()) {
       return;
@@ -466,7 +462,9 @@ private:
     assert(Increment && "Increment instruction should not be nullptr!");
     Instruction *Condition = findCondInstruction(LLoop->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
-    LInfo->setInstructions(Init, Increment, Condition);
+    LInfo->setStart(Init);
+    LInfo->setStep(Increment);
+    LInfo->setEnd(Condition);
     auto BlocksEnd = LLoop->block_end();
     for (auto I = LLoop->block_begin(); I != BlocksEnd; ++I) {
       auto DFN = mRgnInfo->getRegionFor(*I);
@@ -511,16 +509,16 @@ private:
       return;
     if (!checkMemLocsFromBlock(LLoop->getHeader(), EMI, LLoop))
       return;
-    LInfo->setCanonical();
+    LInfo->markAsCanonical();
   }
-  
+
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
   DefinedMemoryInfo *mDefInfo;
   const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
   tsar::AliasTree &mAliasTree;
   TargetLibraryInfo &mTLI;
-  tsar::CanonicalLoopInfo *mCanonicalLoopInfo;
+  CanonicalLoopSet *mCanonicalLoopInfo;
   SpanningTreeRelation<const AliasTree *> mSTR;
 };
 
