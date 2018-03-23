@@ -36,7 +36,7 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "canonical-loop"
 
-STATISTIC(NumCanonical, "Number of canonical  for-loops");
+STATISTIC(NumCanonical, "Number of canonical for-loops");
 STATISTIC(NumNonCanonical, "Number of non-canonical for-loops");
 
 char CanonicalLoopPass::ID = 0;
@@ -69,90 +69,92 @@ public:
   /// loop.
   ///
   /// The same loop can be visited multiple times.
-  virtual void run(const MatchFinder::MatchResult &Result) {
+  virtual void run(const MatchFinder::MatchResult &Result) override {
+    ++NumNonCanonical;
     auto *For = const_cast<ForStmt *>(
       Result.Nodes.getNodeAs<ForStmt>("forLoop"));
     if (!For)
       return;
-    DEBUG(dbgs() << "[CANONICAL LOOP]: Process loop at ");
+    DEBUG(dbgs() << "[CANONICAL LOOP]: process loop at ");
     DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
     DEBUG(dbgs() << "\n");
-    const clang::Stmt *Init = Result.Nodes.getNodeAs
-        <clang::Stmt>("LoopInitDecl");
-    if (!Init) {
-      Init = Result.Nodes.getNodeAs<Stmt>("LoopInitAssignment");
-      assert(Init && "Init must not be null!");
+    auto Match = mLoopInfo->find<AST>(For);
+    if (Match == mLoopInfo->end()) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");
+      return;
     }
-    const VarDecl *InitVar = Result.Nodes.getNodeAs
-        <VarDecl>("InitVarName");
+    tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
+    assert(Region && "Loop region must not be null!");
+    if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
+      return;
+    }
+    const clang::Expr *Init;
+    if(auto *D = Result.Nodes.getNodeAs<clang::DeclStmt>("LoopInitDecl"))
+      Init = cast<clang::VarDecl>(D->getSingleDecl())->getInit();
+    else
+      Init = Result.Nodes.
+        getNodeAs<clang::BinaryOperator>("LoopInitAssignment")->getRHS();
+    if (!Init) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: loop without initialization.\n");
+      return;
+    }
+    auto *InitVar = Result.Nodes.getNodeAs<VarDecl>("InitVarName");
     assert(InitVar && "InitVar must not be null!");
-    const clang::Stmt *Increment = Result.Nodes.getNodeAs
-        <clang::Stmt>("LoopIncrAssignment");
-    const VarDecl *UnIncVar = Result.Nodes.getNodeAs
-        <VarDecl>("UnIncVarName");
-    const VarDecl *BinIncVar = Result.Nodes.getNodeAs
-        <VarDecl>("BinIncVarName");
-    const clang::UnaryOperator *UnaryIncr = Result.Nodes.getNodeAs
-        <clang::UnaryOperator>("UnaryIncr");
-    const clang::BinaryOperator *BinaryIncr = Result.Nodes.getNodeAs
-        <clang::BinaryOperator>("BinaryIncr");
-    const VarDecl *AssignmentVar = Result.Nodes.getNodeAs
-        <VarDecl>("AssignmentVarName");
-    const VarDecl *FirstAssignmentVar = Result.Nodes.getNodeAs
-        <VarDecl>("FirstAssignmentVarName");
-    const VarDecl *SecondAssignmentVar = Result.Nodes.getNodeAs
-        <VarDecl>("SecondAssignmentVarName");
-    const VarDecl *FirstConditionVar = Result.Nodes.getNodeAs
-        <VarDecl>("FirstConditionVarName");
-    const clang::BinaryOperator *Condition = Result.Nodes.getNodeAs
-        <clang::BinaryOperator>("LoopCondition");
-    assert(Condition && "Condition must not be null!");
-    const VarDecl *SecondConditionVar = Result.Nodes.getNodeAs
-        <VarDecl>("SecondConditionVarName");
-    bool CheckCondVar = false;
+    auto *UnIncVar = Result.Nodes.getNodeAs<VarDecl>("UnIncVarName");
+    auto *BinIncVar = Result.Nodes.getNodeAs<VarDecl>("BinIncVarName");
+    auto *AssignmentVar = Result.Nodes.getNodeAs<VarDecl>("AssignmentVarName");
+    auto *FirstAssignmentVar =
+      Result.Nodes.getNodeAs<VarDecl>("FirstAssignmentVarName");
+    auto *SecondAssignmentVar =
+      Result.Nodes.getNodeAs<VarDecl>("SecondAssignmentVarName");
+    if (!(UnIncVar && sameVar(UnIncVar, InitVar) ||
+          BinIncVar && sameVar(BinIncVar, InitVar) ||
+          AssignmentVar && sameVar(AssignmentVar, InitVar) &&
+            (FirstAssignmentVar && sameVar(InitVar, FirstAssignmentVar) ||
+             SecondAssignmentVar && sameVar(InitVar, SecondAssignmentVar))))
+      return;
+    auto *FirstConditionVar =
+      Result.Nodes.getNodeAs<VarDecl>("FirstConditionVarName");
+    auto *SecondConditionVar =
+      Result.Nodes.getNodeAs<VarDecl>("SecondConditionVarName");
     bool ReversedCond = false;
     // Note that at least one variable `FirstConditionVar` or
     // `SecondConditionVar` is equal to `nullptr`. For details, see
     // `makeLoopMatcher()` and `eachOf()` matcher.
-    if (FirstConditionVar && sameVar(InitVar, FirstConditionVar))
-      CheckCondVar = true;
-    if (SecondConditionVar && sameVar(InitVar, SecondConditionVar)) {
-      CheckCondVar = true;
+    if (SecondConditionVar && sameVar(InitVar, SecondConditionVar))
       ReversedCond = true;
+    else if (!(FirstConditionVar && sameVar(InitVar, FirstConditionVar)))
+      return;
+    auto *UnaryIncr =
+      Result.Nodes.getNodeAs<clang::UnaryOperator>("UnaryIncr");
+    auto *BinaryIncr =
+      Result.Nodes.getNodeAs<clang::BinaryOperator>("BinaryIncr");
+    auto *Condition =
+      Result.Nodes.getNodeAs<clang::BinaryOperator>("LoopCondition");
+    assert(Condition && "Condition must not be null!");
+    bool CoherentCond =
+      UnaryIncr && coherent(
+        Init, UnaryIncr, Condition, ReversedCond, Result.Context) ||
+      BinaryIncr && coherent(
+        Init, BinaryIncr, Condition, ReversedCond, Result.Context);
+    if (!CoherentCond) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: condition and increment is not consistent.\n");
+      return;
     }
-    if (((UnIncVar && sameVar(UnIncVar, InitVar)) ||
-        (BinIncVar && sameVar(BinIncVar, InitVar)) ||
-        (AssignmentVar && sameVar(AssignmentVar, InitVar) &&
-        ((FirstAssignmentVar && sameVar(InitVar, FirstAssignmentVar)) ||
-        (SecondAssignmentVar && sameVar(InitVar, SecondAssignmentVar))))) &&
-        (CheckCondVar &&
-        ((UnaryIncr && coherent(UnaryIncr, Condition, ReversedCond)) ||
-        (BinaryIncr && coherent(BinaryIncr, Condition, ReversedCond))))) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: Syntactically canonical loop found.\n");
-      auto Match = mLoopInfo->find<AST>(For);
-      if (Match == mLoopInfo->end()) {
-        DEBUG(dbgs() << "[CANONICAL LOOP]: Unmatched loop found.\n");
-        ++NumNonCanonical;
-        return;
-      }
-      tsar::DFNode *Region = mRgnInfo->getRegionFor(Match->get<IR>());
-      assert(Region && "Loop region must not be null!");
-      if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
-        DEBUG(dbgs() << "[CANONICAL LOOP]: Loop is already checked.\n");
-        return;
-      }
-      tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
-      LInfo->setStmts(Init, Increment, Condition);
-      mCanonicalLoopInfo->insert(LInfo);
-      checkLoop(Region, const_cast<VarDecl*>
-          (InitVar->getCanonicalDecl()), LInfo);
-      if (LInfo->isCanonical()) {
-        DEBUG(dbgs() << "[CANONICAL LOOP]: Canonical loop found.\n");
-        ++NumCanonical;
-        return;
-      }
+    DEBUG(dbgs() << "[CANONICAL LOOP]: syntactically canonical loop found.\n");
+    tsar::LoopInfo *LInfo = new tsar::LoopInfo(Region);
+    auto *Increment = Result.Nodes.getNodeAs<clang::Stmt>("LoopIncrAssignment");
+    LInfo->setStmts(Init, Increment, Condition);
+    mCanonicalLoopInfo->insert(LInfo);
+    checkLoop(Region, const_cast<VarDecl*>
+        (InitVar->getCanonicalDecl()), LInfo);
+    if (LInfo->isCanonical()) {
+      DEBUG(dbgs() << "[CANONICAL LOOP]: canonical loop found.\n");
+      ++NumCanonical;
+      --NumNonCanonical;
+      return;
     }
-    ++NumNonCanonical;
   }
 
 private:
@@ -160,41 +162,79 @@ private:
   bool sameVar(const ValueDecl *First, const ValueDecl *Second) {
     return First->getCanonicalDecl() == Second->getCanonicalDecl();
   }
-  
-  /// Checks coherence of increment and condition
-  bool coherent(const clang::UnaryOperator *Incr,
-      const clang::BinaryOperator *Condition, bool ReversedCond) {
-    bool Increment = false;
-    if (Incr->getOpcodeStr(Incr->getOpcode()) == "++")
-      Increment = true;
-    bool LessCondition = false;
-    if ((Condition->getOpcodeStr(Condition->getOpcode()) == "<") ||
-        (Condition->getOpcodeStr(Condition->getOpcode()) == "<="))
-      LessCondition = true;
-    if (Increment && LessCondition && !(ReversedCond) ||
-        Increment && !(LessCondition) && ReversedCond ||
-        !(Increment) && !(LessCondition) && !(ReversedCond) ||
-        !(Increment) && LessCondition && ReversedCond)
-      return true;
-    return false;
+
+  /// Checks coherence of increment and condition.
+  ///
+  /// Only simple checks are performed. Static analysis can not perform this
+  /// check in general case. However, under the conditions that loop conforms
+  /// other canonical conditions this check is not essential. Otherwise,
+  /// the loop never ends.
+  /// \param [in] Init Initialization expression.
+  /// \param [in] Incr Increment expression.
+  /// \param [in] Condition Condition expression.
+  /// \param [in] ReversedCond This flag specifies whether induction variable
+  /// is presented at the right hand side.
+  /// \return `false` if it is proved that increment and condition
+  /// are conflicted.
+  bool coherent(const clang::Expr *Init, const clang::UnaryOperator *Incr,
+      const clang::BinaryOperator *Condition, bool ReversedCond,
+      ASTContext *Ctx) {
+    bool Increment = Incr->getOpcode() == UO_PostInc ||
+      Incr->getOpcode() == UO_PreInc;
+    bool LessCondition = Condition->getOpcode() == BO_LT ||
+      Condition->getOpcode() == BO_LE;
+    APSInt Start, End;
+    if (Init->isIntegerConstantExpr(Start, *Ctx) &&
+        (ReversedCond ? Condition->getLHS()->isIntegerConstantExpr(End, *Ctx) :
+          Condition->getRHS()->isIntegerConstantExpr(End, *Ctx)))
+      if (Increment && Start >= End || !Increment && Start <= End)
+        return false;
+    return Increment && LessCondition && !ReversedCond ||
+      Increment && !LessCondition && ReversedCond ||
+      !Increment && !LessCondition && !ReversedCond ||
+      !Increment && LessCondition && ReversedCond;
   }
-  
-  bool coherent(const clang::BinaryOperator *Incr,
-      const clang::BinaryOperator *Condition, bool ReversedCond) {
-    bool Increment = false;
-    if ((Incr->getOpcodeStr(Incr->getOpcode()) == "+") ||
-        (Incr->getOpcodeStr(Incr->getOpcode()) == "+="))
-      Increment = true;
-    bool LessCondition = false;
-    if ((Condition->getOpcodeStr(Condition->getOpcode()) == "<") ||
-        (Condition->getOpcodeStr(Condition->getOpcode()) == "<="))
-      LessCondition = true;
-    if (Increment && LessCondition && !(ReversedCond) ||
-        Increment && !(LessCondition) && ReversedCond ||
-        !(Increment) && !(LessCondition) && !(ReversedCond) ||
-        !(Increment) && LessCondition && ReversedCond)
+
+  /// Checks coherence of increment and condition.
+  ///
+  /// Only simple checks are performed. Static analysis can not perform this
+  /// check in general case. However, under the conditions that loop conforms
+  /// other canonical conditions this check is not essential. Otherwise,
+  /// the loop never ends.
+  /// \param [in] Init Initialization expression.
+  /// \param [in] Incr Increment expression.
+  /// \param [in] Condition Condition expression.
+  /// \param [in] ReversedCond This flag specifies whether induction variable
+  /// is presented at the right hand side.
+  /// \return `false` if it is proved that increment and condition
+  /// are conflicted.
+  bool coherent(const clang::Expr *Init, const clang::BinaryOperator *Incr,
+      const clang::BinaryOperator *Condition, bool ReversedCond,
+      ASTContext *Ctx) {
+    APSInt Step;
+    // If step is not constant we can not prove anything.
+    if (!Incr->getRHS()->isIntegerConstantExpr(Step, *Ctx) &&
+        !Incr->getLHS()->isIntegerConstantExpr(Step, *Ctx))
       return true;
-    return false;
+    if (Step.isNonNegative() && !Step.isStrictlyPositive())
+      return false;
+    bool Increment =
+      Step.isStrictlyPositive() &&
+        (Incr->getOpcode() == BO_Add || Incr->getOpcode() == BO_AddAssign) ||
+      Step.isNegative() &&
+        (Incr->getOpcode() == BO_Sub || Incr->getOpcode() == BO_SubAssign);
+    bool LessCondition = Condition->getOpcode() == BO_LT ||
+      Condition->getOpcode() == BO_LE;
+    APSInt Start, End;
+    if (Init->isIntegerConstantExpr(Start, *Ctx) &&
+        (ReversedCond ? Condition->getLHS()->isIntegerConstantExpr(End, *Ctx) :
+          Condition->getRHS()->isIntegerConstantExpr(End, *Ctx)))
+      if (Increment && Start >= End || !Increment && Start <= End)
+        return false;
+    return Increment && LessCondition && !ReversedCond ||
+      Increment && !LessCondition && ReversedCond ||
+      !Increment && !LessCondition && !ReversedCond ||
+      !Increment && LessCondition && ReversedCond;
   }
 
   /// Checks if Loc is Def or MayDef in L
