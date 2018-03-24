@@ -26,6 +26,7 @@ class ForStmt;
 }
 
 namespace llvm {
+class SCEV;
 class Value;
 }
 
@@ -73,11 +74,11 @@ public:
 
   llvm::Value * getStart() const noexcept { return mStart; }
   llvm::Value * getEnd() const noexcept { return mEnd; }
-  llvm::Value * getStep() const noexcept { return mStep; }
+  const llvm::SCEV * getStep() const noexcept { return mStep; }
 
   void setStart(llvm::Value *Start) noexcept { mStart = Start; }
   void setEnd(llvm::Value *End) noexcept { mEnd = End; }
-  void setStep(llvm::Value *Step) noexcept { mStep = Step; }
+  void setStep(const llvm::SCEV *Step) noexcept { mStep = Step; }
 
 private:
   DFLoop *mLoop;
@@ -86,7 +87,7 @@ private:
   llvm::Value *mInduction = nullptr;
   llvm::Value *mStart = nullptr;
   llvm::Value *mEnd = nullptr;
-  llvm::Value *mStep = nullptr;
+  const llvm::SCEV *mStep = nullptr;
 };
 
 /// Replacement of default llvm::DenseMapInfo<CanonicalLoopInfo *>.

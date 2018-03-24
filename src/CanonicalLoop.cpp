@@ -25,6 +25,7 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <typeinfo>
@@ -50,6 +51,7 @@ INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_END(CanonicalLoopPass, "canonical-loop",
   "Canonical Form Loop Analysis", true, true)
 
@@ -61,9 +63,9 @@ public:
   explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
       const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
-      TargetLibraryInfo &TLI, CanonicalLoopSet *CLI) :
+      TargetLibraryInfo &TLI, ScalarEvolution &SE, CanonicalLoopSet *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
-      mAliasTree(AT), mTLI(TLI), mCanonicalLoopInfo(CLI),
+      mAliasTree(AT), mTLI(TLI), mSE(&SE), mCanonicalLoopInfo(CLI),
       mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
 
   /// \brief This function is called each time LoopMatcher finds appropriate
@@ -290,8 +292,9 @@ private:
   /// - number of reads from induction variable memory (on success),
   /// - number of writes to induction variable memory (on success),
   /// - operand at the beginning of def-use chain that does not access
-  /// induction variable or `nullptr`.
-  std::tuple<bool, unsigned, unsigned, Value *> isLoopInvariantMemory(
+  /// induction variable or `nullptr`,
+  /// - instruction accesses this operand or `nullptr`.
+  std::tuple<bool, unsigned, unsigned, Value *, Value *> isLoopInvariantMemory(
       DFLoop &DFL, DefUseSet &DUS, EstimateMemory &EMI, Instruction &Inst) {
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
@@ -346,8 +349,8 @@ private:
           }
         }
       });
-    std::tuple<bool, unsigned, unsigned, Value *> Tuple(
-      Result, InductUseNum, InductDefNum, nullptr);
+    std::tuple<bool, unsigned, unsigned, Value *, Value *> Tuple(
+      Result, InductUseNum, InductDefNum, nullptr, nullptr);
     if (!std::get<0>(Tuple))
       return Tuple;
     bool OpNotAccessInduct = true;
@@ -360,11 +363,17 @@ private:
         std::get<1>(Tuple) += std::get<1>(T);
         std::get<2>(Tuple) += std::get<2>(T);
         OpNotAccessInduct &= (std::get<1>(T) == 0 && std::get<2>(T) == 0);
-        if (std::get<3>(T) != Op && std::get<3>(T) ||
-            std::get<3>(T) == Op && !InductIdx.count(Op.getOperandNo()))
+        if (std::get<3>(T) != Op && std::get<3>(T)) {
           std::get<3>(Tuple) = std::get<3>(T);
+          std::get<4>(Tuple) = std::get<4>(T);
+        }
+        if (std::get<3>(T) == Op && !InductIdx.count(Op.getOperandNo())) {
+          std::get<3>(Tuple) = std::get<3>(T);
+          std::get<4>(Tuple) = &Inst;
+        }
       } else if (isa<ConstantData>(Op)) {
         std::get<3>(Tuple) = Op;
+        std::get<4>(Tuple) = &Inst;
       } else {
         std::get<0>(Tuple) = false;
         return Tuple;
@@ -383,8 +392,10 @@ private:
     if (MemMatch == mMemoryMatcher->end())
       return;
     auto AI= MemMatch->get<IR>();
-    if (!AI->getType() || !AI->getType()->isPointerTy())
+    if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
+    LInfo->setInduction(AI);
+    DEBUG(dbgs() << "[CANONICAL LOOP: induction variable is"; AI->dump());
     llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree.find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
@@ -446,7 +457,8 @@ private:
     bool Result;
     unsigned InductUseNum, InductDefNum;
     Value *Expr;
-    std::tie(Result, InductUseNum, InductDefNum, Expr) =
+    Value *Inst;
+    std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Init);
     if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
@@ -456,17 +468,27 @@ private:
         dbgs() << "[CANONICAL LOOP]: lower bound of induction variable is ";
         Expr->dump();
       });
-    std::tie(Result, InductUseNum, InductDefNum, Expr) =
+    std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Increment);
     if (!Result || InductDefNum != 1 || InductUseNum > 1)
       return;
-    LInfo->setStep(Expr);
+    assert((!Expr || Inst && isa<llvm::BinaryOperator>(Inst) &&
+      (cast<llvm::BinaryOperator>(Inst)->getOpcode() ==
+        llvm::BinaryOperator::Add ||
+      cast<llvm::BinaryOperator>(Inst)->getOpcode() ==
+        llvm::BinaryOperator::Sub)) && "Unknown step value!");
+    if (Expr && isa<llvm::BinaryOperator>(Inst))
+      if (cast<llvm::BinaryOperator>(Inst)->getOpcode() ==
+          llvm::BinaryOperator::Sub)
+        LInfo->setStep(mSE->getNegativeSCEV(mSE->getSCEV(Expr)));
+      else
+        LInfo->setStep(mSE->getSCEV(Expr));
     DEBUG(
-      if (Expr) {
+      if (LInfo->getStep()) {
         dbgs() << "[CANONICAL LOOP]: step of induction variable is ";
-        Expr->dump();
+        LInfo->getStep()->dump();
       });
-    std::tie(Result, InductUseNum, InductDefNum, Expr) =
+    std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Condition);
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
@@ -485,6 +507,7 @@ private:
   const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
   tsar::AliasTree &mAliasTree;
   TargetLibraryInfo &mTLI;
+  ScalarEvolution *mSE;
   CanonicalLoopSet *mCanonicalLoopInfo;
   SpanningTreeRelation<const AliasTree *> mSTR;
 };
@@ -584,9 +607,10 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
     getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
   auto &ATree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   DeclarationMatcher LoopMatcher = makeLoopMatcher();
   CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, DefInfo, MemInfo, ATree,
-      TLI, &mCanonicalLoopInfo);
+      TLI, SE, &mCanonicalLoopInfo);
   auto &Context = FuncDecl->getASTContext();
   auto Nodes = match<DeclarationMatcher, Decl>(LoopMatcher, *FuncDecl, Context);
   while (!Nodes.empty()) {
@@ -605,6 +629,7 @@ void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.setPreservesAll();
 }
 
