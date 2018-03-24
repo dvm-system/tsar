@@ -65,7 +65,7 @@ public:
       TargetLibraryInfo &TLI, ScalarEvolution &SE, CanonicalLoopSet *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
       mAliasTree(&AT), mTLI(&TLI), mSE(&SE), mCanonicalLoopInfo(CLI),
-      mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
+      mSTR(&AT) {}
 
   /// \brief This function is called each time LoopMatcher finds appropriate
   /// loop.
