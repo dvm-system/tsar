@@ -23,6 +23,7 @@
 #include <clang/AST/Stmt.h>
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -287,20 +288,26 @@ private:
   /// \return
   /// - `true` on success,
   /// - number of reads from induction variable memory (on success),
-  /// - number of writes to induction variable memory (on success).
-  std::tuple<bool, unsigned, unsigned> isLoopInvariantMemory(
+  /// - number of writes to induction variable memory (on success),
+  /// - operand at the beginning of def-use chain that does not access
+  /// induction variable or `nullptr`.
+  std::tuple<bool, unsigned, unsigned, Value *> isLoopInvariantMemory(
       DFLoop &DFL, DefUseSet &DUS, EstimateMemory &EMI, Instruction &Inst) {
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
+    SmallSet<unsigned, 2> InductIdx;
     for_each_memory(Inst, mTLI,
-      [this, &EMI, &DUS, &Result, &InductUseNum, &InductDefNum] (Instruction &,
-          MemoryLocation &&Loc, unsigned, AccessInfo R, AccessInfo W) {
+      [this, &EMI, &DUS, &Result, &InductUseNum, &InductDefNum, &InductIdx] (
+          Instruction &, MemoryLocation &&Loc, unsigned Idx,
+          AccessInfo R, AccessInfo W) {
         if (!Result)
           return;
         auto EM = mAliasTree.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         if (!mSTR.isUnreachable(
              EM->getAliasNode(mAliasTree), EMI.getAliasNode(mAliasTree))) {
+          if (R != AccessInfo::No || W != AccessInfo::No)
+            InductIdx.insert(Idx);
           if (R != AccessInfo::No)
             ++InductUseNum;
           if (W != AccessInfo::No)
@@ -339,22 +346,31 @@ private:
           }
         }
       });
-    std::tuple<bool, unsigned, unsigned> Tuple(
-      Result, InductUseNum, InductDefNum);
+    std::tuple<bool, unsigned, unsigned, Value *> Tuple(
+      Result, InductUseNum, InductDefNum, nullptr);
     if (!std::get<0>(Tuple))
       return Tuple;
+    bool OpNotAccessInduct = true;
     for (auto &Op : Inst.operands())
       if (auto I = dyn_cast<Instruction>(Op)) {
         auto T = isLoopInvariantMemory(DFL, DUS, EMI, *I);
         std::get<0>(Tuple) &= std::get<0>(T);
-        std::get<1>(Tuple) += std::get<1>(T);
-        std::get<2>(Tuple) += std::get<2>(T);
         if (!std::get<0>(Tuple))
           return Tuple;
-      } else if (!isa<ConstantData>(Op)) {
+        std::get<1>(Tuple) += std::get<1>(T);
+        std::get<2>(Tuple) += std::get<2>(T);
+        OpNotAccessInduct &= (std::get<1>(T) == 0 && std::get<2>(T) == 0);
+        if (std::get<3>(T) != Op && std::get<3>(T) ||
+            std::get<3>(T) == Op && !InductIdx.count(Op.getOperandNo()))
+          std::get<3>(Tuple) = std::get<3>(T);
+      } else if (isa<ConstantData>(Op)) {
+        std::get<3>(Tuple) = Op;
+      } else {
         std::get<0>(Tuple) = false;
         return Tuple;
       }
+   if (OpNotAccessInduct && InductUseNum == 0 && InductDefNum == 0)
+     std::get<3>(Tuple) = &Inst;
     return Tuple;
   }
 
@@ -380,8 +396,6 @@ private:
     assert(Init && "Init instruction should not be nullptr!");
     Instruction *Condition = findLastCmp(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
-    LInfo->setStart(Init);
-    LInfo->setEnd(Condition);
     auto *LatchBB = L->getLoopLatch();
     Instruction *Increment = nullptr;
     for (auto *BB: L->blocks()) {
@@ -425,26 +439,43 @@ private:
       if (!Increment && NumOfWrites != 1)
         return;
     }
-    if (auto SI = dyn_cast<StoreInst>(Increment))
-      LInfo->setStep(SI->getValueOperand());
     auto LoopDefItr = mDefInfo->find(Region);
     assert(LoopDefItr != mDefInfo->end() && LoopDefItr->get<DefUseSet>() &&
      "Data-flow value must be specified!");
     auto &LoopDUS = LoopDefItr->get<DefUseSet>();
     bool Result;
     unsigned InductUseNum, InductDefNum;
-    std::tie(Result, InductUseNum, InductDefNum) =
+    Value *Expr;
+    std::tie(Result, InductUseNum, InductDefNum, Expr) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Init);
     if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
-    std::tie(Result, InductUseNum, InductDefNum) =
+    LInfo->setStart(Expr);
+    DEBUG(
+      if (Expr) {
+        dbgs() << "[CANONICAL LOOP]: lower bound of induction variable is ";
+        Expr->dump();
+      });
+    std::tie(Result, InductUseNum, InductDefNum, Expr) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Increment);
     if (!Result || InductDefNum != 1 || InductUseNum > 1)
       return;
-    std::tie(Result, InductUseNum, InductDefNum) =
+    LInfo->setStep(Expr);
+    DEBUG(
+      if (Expr) {
+        dbgs() << "[CANONICAL LOOP]: step of induction variable is ";
+        Expr->dump();
+      });
+    std::tie(Result, InductUseNum, InductDefNum, Expr) =
       isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Condition);
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
+    LInfo->setEnd(Expr);
+    DEBUG(
+      if (Expr) {
+        dbgs() << "[CANONICAL LOOP]: upper bound of induction variable is ";
+        Expr->dump();
+      });
     LInfo->markAsCanonical();
   }
 
