@@ -21,14 +21,13 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/ASTMatchers/ASTMatchFinder.h"
+#include <clang/ASTMatchers/ASTMatchers.h>
+#include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
-#include <typeinfo>
 
 using namespace llvm;
 using namespace clang;
@@ -65,7 +64,7 @@ public:
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
       TargetLibraryInfo &TLI, ScalarEvolution &SE, CanonicalLoopSet *CLI) :
       mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
-      mAliasTree(AT), mTLI(TLI), mSE(&SE), mCanonicalLoopInfo(CLI),
+      mAliasTree(&AT), mTLI(&TLI), mSE(&SE), mCanonicalLoopInfo(CLI),
       mSTR(SpanningTreeRelation<const AliasTree *>(&AT)) {}
 
   /// \brief This function is called each time LoopMatcher finds appropriate
@@ -241,19 +240,19 @@ private:
   Instruction* findLastWrite(AliasEstimateNode *ANI, BasicBlock *BB) {
     for (auto I = BB->rbegin(), E = BB->rend(); I != E; ++I) {
       bool RequiredInstruction = false;
-      for_each_memory(*I, mTLI,
+      for_each_memory(*I, *mTLI,
         [this, &ANI, &RequiredInstruction] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
-          auto EM = mAliasTree.find(Loc);
+          auto EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(mAliasTree);
+          auto AN = EM->getAliasNode(*mAliasTree);
           assert(AN && "Alias node must not be null!");
           RequiredInstruction |=
             !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
         },
         [this, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
             AccessInfo W) {
-          auto AN = mAliasTree.findUnknown(I);
+          auto AN = mAliasTree->findUnknown(I);
           assert(AN && "Unknown memory must not be null!");
           RequiredInstruction |=
             !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
@@ -281,7 +280,7 @@ private:
   /// Checks that possible call from here does not write to memory.
   bool onlyReadsMemory(Instruction &Inst) {
     ImmutableCallSite CS(&Inst);
-    return CS && mAliasTree.getAliasAnalysis().onlyReadsMemory(CS);
+    return CS && mAliasTree->getAliasAnalysis().onlyReadsMemory(CS);
   }
 
   /// \brief Checks whether operands (except inductive variable) of a specified
@@ -299,16 +298,16 @@ private:
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
     SmallSet<unsigned, 2> InductIdx;
-    for_each_memory(Inst, mTLI,
+    for_each_memory(Inst, *mTLI,
       [this, &EMI, &DUS, &Result, &InductUseNum, &InductDefNum, &InductIdx] (
           Instruction &, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
         if (!Result)
           return;
-        auto EM = mAliasTree.find(Loc);
+        auto EM = mAliasTree->find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         if (!mSTR.isUnreachable(
-             EM->getAliasNode(mAliasTree), EMI.getAliasNode(mAliasTree))) {
+             EM->getAliasNode(*mAliasTree), EMI.getAliasNode(*mAliasTree))) {
           if (R != AccessInfo::No || W != AccessInfo::No)
             InductIdx.insert(Idx);
           if (R != AccessInfo::No)
@@ -326,13 +325,13 @@ private:
           Result = false;
           return;
         }
-        auto AN = mAliasTree.findUnknown(I);
+        auto AN = mAliasTree->findUnknown(I);
         for (auto &Loc : DUS.getExplicitAccesses()) {
           if (!DUS.hasDef(Loc) && !DUS.hasMayDef(Loc))
             continue;
-          auto EM = mAliasTree.find(Loc);
+          auto EM = mAliasTree->find(Loc);
           assert(EM && "Memory location must be presented in alias tree!");
-          if (!mSTR.isUnreachable(EM->getAliasNode(mAliasTree), AN)) {
+          if (!mSTR.isUnreachable(EM->getAliasNode(*mAliasTree), AN)) {
             Result = false;
             return;
           }
@@ -340,7 +339,7 @@ private:
         for (auto *Loc : DUS.getExplicitUnknowns()) {
           if (onlyReadsMemory(*Loc))
             continue;
-          auto UN = mAliasTree.findUnknown(*Loc);
+          auto UN = mAliasTree->findUnknown(*Loc);
           assert(UN &&
             "Unknown memory location must be presented in alias tree!");
           if (!mSTR.isUnreachable(UN, AN)) {
@@ -397,9 +396,9 @@ private:
     LInfo->setInduction(AI);
     DEBUG(dbgs() << "[CANONICAL LOOP: induction variable is"; AI->dump());
     llvm::MemoryLocation MemLoc(AI, 1);
-    auto EMI = mAliasTree.find(MemLoc);
+    auto EMI = mAliasTree->find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
-    auto ANI = EMI->getAliasNode(mAliasTree);
+    auto ANI = EMI->getAliasNode(*mAliasTree);
     assert(ANI && "Alias node must not be null!");
     auto *L = Region->getLoop();
     assert(L && "Loop must not be null!");
@@ -427,12 +426,12 @@ private:
       if (LatchBB != DFB->getBlock())
         return;
       int NumOfWrites = 0;
-      for_each_memory(*DFB->getBlock(), mTLI,
+      for_each_memory(*DFB->getBlock(), *mTLI,
         [this, ANI, &NumOfWrites, &Increment] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
-          auto EM = mAliasTree.find(Loc);
+          auto EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(mAliasTree);
+          auto AN = EM->getAliasNode(*mAliasTree);
           assert(AN && "Alias node must not be null!");
           if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No) {
             ++NumOfWrites;
@@ -441,7 +440,7 @@ private:
         },
         [this, &ANI, &NumOfWrites] (Instruction &I, AccessInfo,
             AccessInfo W) {
-          auto AN = mAliasTree.findUnknown(I);
+          auto AN = mAliasTree->findUnknown(I);
           assert(AN && "Alias node must not be null!");
           if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No)
             ++NumOfWrites;
@@ -505,8 +504,8 @@ private:
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
   DefinedMemoryInfo *mDefInfo;
   const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
-  tsar::AliasTree &mAliasTree;
-  TargetLibraryInfo &mTLI;
+  tsar::AliasTree *mAliasTree;
+  TargetLibraryInfo *mTLI;
   ScalarEvolution *mSE;
   CanonicalLoopSet *mCanonicalLoopInfo;
   SpanningTreeRelation<const AliasTree *> mSTR;
