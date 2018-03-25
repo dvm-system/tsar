@@ -45,8 +45,22 @@ typedef llvm::DenseMap<llvm::Function *,
   bool hasAttr(Attr Type) {
     return mAttrs.find(Type) != mAttrs.end();
   }
+  void setBreak(std::set<clang::SourceLocation> Break) {
+    mBreakStmt = Break;
+  }
+  std::set<clang::SourceLocation> & getBreak() {
+    return mBreakStmt;
+  }
+  void setReturn(std::set<clang::SourceLocation> Return) {
+    mReturnStmt = Return;
+  }
+  std::set<clang::SourceLocation> & getReturn() {
+    return mReturnStmt;
+  }
 private:
   std::set<Attr> mAttrs;
+  std::set<clang::SourceLocation> mBreakStmt;
+  std::set<clang::SourceLocation> mReturnStmt;
   CalleeFuncLoc mCalleeFuncLoc;
 };
 }

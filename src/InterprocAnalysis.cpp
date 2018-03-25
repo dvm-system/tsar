@@ -39,13 +39,13 @@ INITIALIZE_PASS_END(InterprocAnalysisPass, "interproc-analysis",
 
 namespace clang {
 template<class StmtType>
-void getStmtTypeFromStmtTree(Stmt *S, std::vector<StmtType *> &VCE) {
-  if (!S)
-    return;
+void getStmtTypeFromStmtTree(Stmt *S, std::vector<StmtType *> &VCE,
+    std::set<Stmt::StmtClass> Expt = {}) {
   if (auto A = dyn_cast<StmtType>(S))
     VCE.push_back(A);
   for (Stmt *SChild : S->children())
-    getStmtTypeFromStmtTree(SChild, VCE);
+    if (SChild && Expt.find(SChild->getStmtClass()) == Expt.end())
+      getStmtTypeFromStmtTree(SChild, VCE, Expt);
 }
 }
 
@@ -57,7 +57,7 @@ namespace {
       std::vector<SourceLocation> VecSL;
       for (auto CE : VecCallExpr)
         if (CE->getDirectCallee()->getName().equals(CalleeFunc->getName()))
-          VecSL.push_back(CE->getLocStart());
+          VecSL.push_back(CE->getExprLoc());
       IEI.addCalleeFunc(CalleeFunc, VecSL);
     }
   }
@@ -67,8 +67,17 @@ namespace {
       tsar::InterprocAnalysisLoopInfo &IALI) {
     tsar::InterprocElemInfo IEI;
     std::vector<CallExpr *> VecCallExpr;
+    std::vector<BreakStmt *> VecBreakStmt;
+    std::vector<ReturnStmt *> VecReturnStmt;
     std::set<Function *> SetCalleeFunc;
+    std::set<Stmt::StmtClass> SetLoopStmt = {
+      Stmt::StmtClass::ForStmtClass,
+      Stmt::StmtClass::WhileStmtClass,
+      Stmt::StmtClass::DoStmtClass
+    };
     clang::getStmtTypeFromStmtTree(S, VecCallExpr);
+    clang::getStmtTypeFromStmtTree(S, VecBreakStmt, SetLoopStmt);
+    clang::getStmtTypeFromStmtTree(S, VecReturnStmt);
     for (auto CE : VecCallExpr)
       SetCalleeFunc.insert(M.getFunction(CE->getDirectCallee()->getName()));
     for (auto CF : SetCalleeFunc) {
@@ -77,6 +86,18 @@ namespace {
         IEI.setAttr(tsar::InterprocElemInfo::Attr::InOutFunc);
       if (E.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
         IEI.setAttr(tsar::InterprocElemInfo::Attr::NoReturn);
+    }
+    if (!VecBreakStmt.empty()) {
+      std::set<clang::SourceLocation> VSL;
+      for (auto BS : VecBreakStmt)
+        VSL.insert(BS->getBreakLoc());
+      IEI.setBreak(VSL);
+    }
+    if (!VecReturnStmt.empty()) {
+      std::set<clang::SourceLocation> VSL;
+      for (auto RS : VecReturnStmt)
+        VSL.insert(RS->getReturnLoc());
+      IEI.setReturn(VSL);
     }
     setFuncLoc(VecCallExpr, SetCalleeFunc, IEI);
     IALI.insert(std::make_pair(S, IEI));
@@ -178,7 +199,7 @@ void InterprocAnalysisPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
       mInterprocAnalysisFuncInfo.insert(std::make_pair(F, IEI));
       continue;
     }
-    getStmtTypeFromStmtTree<CallExpr>(D->getBody(), VecCallExpr);
+    getStmtTypeFromStmtTree(D->getBody(), VecCallExpr);
     for (auto CFGTo : *CGN)
       if (CFGTo.second->getFunction())
         SetCalleeFunc.insert(CFGTo.second->getFunction());
