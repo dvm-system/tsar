@@ -19,6 +19,7 @@
 #include <regex>
 #include <map>
 #include <set>
+#include <stack>
 #include <vector>
 #include <type_traits>
 
@@ -361,8 +362,7 @@ std::vector<std::string> FInliner::construct(
   // optimization: match in reverse order until success
   std::vector<int> counts(tokens.size(), 0);
   swap(llvm::errs(), llvm::nulls());
-  int i = 0;
-  for (i = tokens.size() - 1; i >= 0; --i) {
+  for (int i = tokens.size() - 1; i >= 0; --i) {
     varDeclHandler.initCount();
     std::unique_ptr<clang::ASTUnit> ASTUnit
       = clang::tooling::buildASTFromCode(context + join(tokens, " ") + ";");
@@ -385,23 +385,20 @@ std::vector<std::string> FInliner::construct(
   return tokens;
 }
 
-std::pair<std::string, std::string> FInliner::compile(
+std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
   const TemplateInstantiation& TI, const std::vector<std::string>& args,
   std::set<std::string>& decls) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == args.size()
     && "Undefined behavior: incorrect number of arguments specified");
-  clang::Rewriter lRewriter(mSourceManager,
-    mRewriter.getLangOpts());
-  clang::SourceManager& SM = lRewriter.getSourceMgr();
+  clang::Rewriter lRewriter(mSourceManager, mRewriter.getLangOpts());
   std::string params;
   std::string context;
+  std::set<std::string> AllExtRefs(mExtIdentifiers[TI.mTemplate->getFuncDecl()]);
   // effective context construction
   auto init_context = [&]() {
     context = "";
-    for (auto i : mExtIdentifiers[TI.mTemplate->getFuncDecl()]) {
-      for (auto decl : mOutermostDecls[i]) {
-        context += getSourceText(getRange(decl)) + ";";
-      }
+    for (auto decl : mForwardDecls[TI.mTemplate->getFuncDecl()]) {
+      context += getSourceText(getRange(decl)) + ";";
     }
   };
   init_context();
@@ -446,22 +443,26 @@ std::pair<std::string, std::string> FInliner::compile(
         [&](const clang::Expr* arg) -> std::string {
         return lRewriter.getRewrittenText(getRange(arg));
       });
-      std::pair<std::string, std::string> text
+      std::tuple<std::string, std::string, std::set<std::string>> text
         = compile(TI, args, decls);
-      if (text.second.size() == 0) {
-        text.first.insert(std::begin(text.first), '{');
-        lRewriter.ReplaceText(getRange(TI.mStmt), text.first);
+      auto Body = std::get<0>(text);
+      auto Result = std::get<1>(text);
+      auto ExtRefs = std::get<2>(text);
+      AllExtRefs.insert(std::begin(ExtRefs), std::end(ExtRefs));
+      if (Result.size() == 0) {
+        Body.insert(std::begin(Body), '{');
+        lRewriter.ReplaceText(getRange(TI.mStmt), Body);
         lRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
           ";}");
       } else {
         if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
-          text.first.insert(std::begin(text.first), '{');
+          Body.insert(std::begin(Body), '{');
           lRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
             ";}");
         }
-        lRewriter.ReplaceText(getRange(TI.mCallExpr), text.second);
+        lRewriter.ReplaceText(getRange(TI.mCallExpr), Result);
         lRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
-          text.first);
+          Body);
       }
       lRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
         "/* " + getSourceText(getRange(TI.mCallExpr))
@@ -497,7 +498,7 @@ std::pair<std::string, std::string> FInliner::compile(
     + retLab + ":;";
   text.insert(std::begin(text) + 1, std::begin(params), std::end(params));
   text.insert(std::begin(text), std::begin(ret), std::end(ret));
-  return {text, identifier};
+  return {text, identifier, AllExtRefs};
 }
 
 std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
@@ -568,11 +569,36 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       callable.insert(definition);
     }
   }
-  // global identifiers
+  // global declarations (outermost, max enclosed)
   // possible scopes C99: function, function prototype, file, block
   // decl contexts C99: TranslationUnitDecl, FunctionDecl, TagDecl, BlockDecl
   // only TagDecl should be traversed because it doesn't produce own scope
-  for (auto& decl : Context.getTranslationUnitDecl()->decls()) {
+  auto isSubDecl = [this](const clang::Decl* P, const clang::Decl* S) -> bool {
+    clang::SourceLocation beginP
+      = getLoc(P->getSourceRange().getBegin());
+    clang::SourceLocation endP
+      = getLoc(P->getSourceRange().getEnd());
+    clang::SourceLocation beginS
+      = getLoc(S->getSourceRange().getBegin());
+    clang::SourceLocation endS
+      = getLoc(S->getSourceRange().getEnd());
+    return beginS <= beginP && endP <= endS;
+  };
+  std::set<const clang::Decl*> GlobalDecls;
+  for (auto decl : Context.getTranslationUnitDecl()->decls()) {
+    GlobalDecls.insert(decl);
+  }
+  for (auto decl : Context.getTranslationUnitDecl()->decls()) {
+    for (auto it = std::begin(GlobalDecls); it != std::end(GlobalDecls);) {
+      if (*it != decl && isSubDecl(*it, decl)) {
+        it = GlobalDecls.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  // mOutermostDecls - have most outer DeclContext
+  for (auto decl : Context.getTranslationUnitDecl()->decls()) {
     std::set<std::string> tmp = getIdentifiers(decl);
     for (auto identifier : tmp) {
       mOutermostDecls[identifier].insert(decl);
@@ -587,36 +613,14 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       mIntIdentifiers[TIs.first].insert(std::begin(tmp), std::end(tmp));
     }
   }
-  // remove unused templates
-  for (auto it = std::begin(mTs); it != std::end(mTs);) {
-    if (callable.find(it->first) == std::end(callable)) {
-      it = mTs.erase(it);
-    } else {
-      ++it;
+  for (auto& T : mTs) {
+    for (auto& decl : T.first->decls()) {
+      std::set<std::string> tmp = getIdentifiers(decl);
+      mExtIdentifiers[T.first].insert(std::begin(tmp), std::end(tmp));
+      mIntIdentifiers[T.first].insert(std::begin(tmp), std::end(tmp));
     }
   }
-  // disable instantiation of/in non-user-defined functions
-  for (auto it = std::begin(mTIs); it != std::end(mTIs); ++it) {
-    if (mSourceManager.getFileCharacteristic(it->first->getLocStart())
-      != clang::SrcMgr::C_User) {
-      for (auto& TI : it->second) {
-        TI.mTemplate = nullptr;
-      }
-    }
-  }
-  for (auto it = std::begin(mTs); it != std::end(mTs); ++it) {
-    if (mSourceManager.getFileCharacteristic(it->first->getLocStart())
-      != clang::SrcMgr::C_User) {
-      it->second.setFuncDecl(nullptr);
-    }
-  }
-  // disable instantiation of variadic functions
-  for (auto& pair : mTs) {
-    if (pair.first->isVariadic() == true) {
-      pair.second.setFuncDecl(nullptr);
-    }
-  }
-  // disable instantiation of recursive functions
+  // compute recursive functions set
   std::set<const clang::FunctionDecl*> recursive;
   for (auto& pair : mTIs) {
     bool ok = true;
@@ -651,8 +655,22 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       recursive.insert(pair.first);
     }
   }
-  for (auto& FD : recursive) {
-    mTs[FD].setFuncDecl(nullptr);
+
+  // validate source ranges in user files
+  // no one-token declarations exist in C, except labels
+  // TODO: should traverse TagDecls?
+  std::set<const clang::Decl*> BogusDecls;
+  for (auto D : Context.getTranslationUnitDecl()->decls()) {
+    if (D->getLocStart().isValid() && mSourceManager.getFileCharacteristic(D->getLocStart())
+      != clang::SrcMgr::C_User) {
+      // silently skip because we are not going to instantiate functions from standard libraries
+      continue;
+    }
+    auto R = getRange(D);
+    if (R.isValid() && R.getBegin().getRawEncoding() == R.getEnd().getRawEncoding()) {
+      llvm::errs() << "Bogus source range found at " << R.getBegin().printToString(mSourceManager) << '\n';
+      BogusDecls.insert(D);
+    }
   }
 
   // get external dependencies (entities defined in outer scope)
@@ -668,40 +686,172 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // logic: just collect all global identifiers for context
   // even if we have same identifiers locally, they will hide global ones
   // these global declarations become unused
-  for (auto T : mTs) {
-    if (T.second.getFuncDecl() == nullptr) {
-      continue;
-    }
+  for (auto& T : mTs) {
     std::set<std::string>& identifiers = mExtIdentifiers[T.first];
     for (auto& decl : T.first->decls()) {
       std::set<std::string> tmp = getIdentifiers(decl);
       identifiers.insert(std::begin(tmp), std::end(tmp));
     }
-    // intersect local references with global symbols
+    // intersect local external references in decls with global symbols
     std::set<std::string> extIdentifiers;
     std::set_intersection(std::begin(identifiers), std::end(identifiers),
       std::begin(mGlobalIdentifiers), std::end(mGlobalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
-    for (auto& i : identifiers) {
-      std::set<const clang::Decl*> found;
-      assert(mGlobalIdentifiers.find(i) != std::end(mGlobalIdentifiers)
-        && "No corresponding global identifier found");
-    }
-    // expressions can't be handled the same way as declarations
-    // false positives possible (placeholder variables, etc), just ignore it
-    // during context reconstruction
     for (auto expr : mExprs[T.first]) {
       for (auto& token : getRawTokens(getRange(expr))) {
         identifiers.insert(token.getRawIdentifier());
       }
     }
     extIdentifiers.clear();
+    // intersect local external references in exprs with global symbols
     std::set_intersection(std::begin(identifiers), std::end(identifiers),
       std::begin(mGlobalIdentifiers), std::end(mGlobalIdentifiers),
       std::inserter(extIdentifiers, std::end(extIdentifiers)));
     identifiers.swap(extIdentifiers);
   }
+  // mForwardDecls - all referenced external declarations including transitive dependencies
+  for (auto& T : mTs) {
+    std::set<std::string>& identifiers = mExtIdentifiers[T.first];
+    for (auto identifier : identifiers) {
+      for (auto decl : mOutermostDecls[identifier]) {
+        mForwardDecls[T.first].insert(decl);
+        if (const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(decl)) {
+          std::set<const clang::FunctionDecl*> worklist;
+          worklist.insert(FD);
+          while (!worklist.empty()) {
+            auto it = std::begin(worklist);
+            FD = *it;
+            mForwardDecls[T.first].insert(FD);
+            for (auto identifier : identifiers) {
+              for (auto decl : mOutermostDecls[identifier]) {
+                if (*it != FD && (FD = clang::dyn_cast<clang::FunctionDecl>(decl))) {
+                  worklist.insert(FD);
+                } else {
+                  mForwardDecls[T.first].insert(decl);
+                }
+              }
+            }
+            worklist.erase(FD);
+          }
+        }
+      }
+    }
+  }
+
+  // all constraint checkers
+  auto UnusedTemplateChecker = [&](const Template& T) -> std::string {
+    return callable.find(T.getFuncDecl()) == std::end(callable)
+      ? "Unused template for function \"" + T.getFuncDecl()->getName().str() + "\n" : "";
+  };
+  auto UserDefTChecker = [&](const Template& T) -> std::string {
+    std::string Result;
+    if (mSourceManager.getFileCharacteristic(T.getFuncDecl()->getLocStart())
+      != clang::SrcMgr::C_User) {
+      Result += "Non-user defined function \""
+        + T.getFuncDecl()->getName().str() + "\" for instantiation\n";
+    }
+    return Result;
+  };
+  auto UserDefTIChecker = [&](const TemplateInstantiation& TI) -> std::string {
+    std::string Result;
+    if (mSourceManager.getFileCharacteristic(TI.mFuncDecl->getLocStart())
+      != clang::SrcMgr::C_User) {
+      Result += "Non-user defined function \""
+        + TI.mFuncDecl->getName().str() + "\" for instantiating in\n";
+    }
+    return Result;
+  };
+  auto VariadicChecker = [&](const Template& T) -> std::string {
+    return T.getFuncDecl()->isVariadic() ? "Variadic function" : "";
+  };
+  auto RecursiveChecker = [&](const Template& T) -> std::string {
+    return recursive.find(T.getFuncDecl()) != std::end(recursive)
+      ? "Recursive function \"" + T.getFuncDecl()->getNameAsString() + "\"\n" : "";
+  };
+  auto BogusSRChecker = [&](const Template& T) -> std::string {
+    std::string Result;
+    for (auto D : T.getFuncDecl()->decls()) {
+      if (clang::isa<clang::LabelDecl>(D)) {
+        continue;
+      }
+      auto R = getRange(D);
+      if (R.isValid() && R.getBegin().getRawEncoding() == R.getEnd().getRawEncoding()) {
+        Result += "Bogus source range found at " + R.getBegin().printToString(mSourceManager) + "\n";
+        BogusDecls.insert(D);
+        BogusDecls.insert(T.getFuncDecl());
+      }
+    }
+    return Result;
+  };
+  auto BogusSRTransitiveChecker = [&](const Template& T) -> std::string {
+    std::set<const clang::Decl*> tmp;
+    std::set_intersection(std::begin(BogusDecls), std::end(BogusDecls),
+      std::begin(mForwardDecls[T.getFuncDecl()]),
+      std::end(mForwardDecls[T.getFuncDecl()]),
+      std::inserter(tmp, std::end(tmp)));
+    return tmp.size() > 0
+      ? "Transitive dependency on bogus declaration for function \""
+      + T.getFuncDecl()->getNameAsString() + "\"\n" : "";
+  };
+  auto NonlocalExternalDepsChecker = [&](const Template& T) -> std::string {
+    for (auto decl : mForwardDecls[T.getFuncDecl()]) {
+      if (mSourceManager.getFileID(decl->getLocStart())
+        != mSourceManager.getFileID(T.getFuncDecl()->getLocStart())) {
+        return "Reference to nonlocal global declaration in function \"" + T.getFuncDecl()->getNameAsString() + "\"\n";
+      }
+    }
+    return "";
+  };
+  auto StaticExternalDepsChecker = [&](const Template& T) -> std::string {
+    std::string Result;
+    for (auto decl : mForwardDecls[T.getFuncDecl()]) {
+      const clang::VarDecl* VD = clang::dyn_cast<clang::VarDecl>(decl);
+      const clang::FunctionDecl* FD = clang::dyn_cast<clang::FunctionDecl>(decl);
+      if (VD && VD->getStorageClass() == clang::StorageClass::SC_Static) {
+        Result += "Reference to static global declaration \"" + VD->getNameAsString() + "\" in function \"" + T.getFuncDecl()->getNameAsString() + "\"\n";
+      } else if (FD && FD->getStorageClass() == clang::StorageClass::SC_Static) {
+        Result += "Reference to static global declaration \"" + FD->getNameAsString() + "\" in function \"" + T.getFuncDecl()->getNameAsString() + "\"\n";
+      }
+    }
+    return Result;
+  };
+  auto NestedExternalDepsChecker = [&](const Template& T) -> std::string {
+    bool NestedDeps = false;
+    for (auto D : mForwardDecls[T.getFuncDecl()]) {
+      if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(D)) {
+        for (auto D : TD->decls()) {
+          if (clang::isa<clang::TagDecl>(D)) {
+            NestedDeps = true;
+            break;
+          }
+        }
+      }
+      if (GlobalDecls.find(D) == std::end(GlobalDecls)) {
+        NestedDeps = true;
+        break;
+      }
+    }
+    return NestedDeps ? "Reference to nested declaration in function \"" + T.getFuncDecl()->getNameAsString() + "\"\n" : "";
+  };
+  auto ExternalDepsChecker = [&](const TemplateInstantiation& TI) -> std::string {
+    std::string Result = NonlocalExternalDepsChecker(*TI.mTemplate)
+      + StaticExternalDepsChecker(*TI.mTemplate);
+    return Result != "" ? "Unresolvable dependencies in function \"" + TI.mTemplate->getFuncDecl()->getNameAsString() + "\":\n" + Result : "";
+  };
+  auto CollidedIdentifiersChecker = [&](const TemplateInstantiation& TI) -> std::string {
+    std::string Result;
+    std::set<std::string> tmp;
+    std::set_intersection(std::begin(mIntIdentifiers[TI.mFuncDecl]), std::end(mIntIdentifiers[TI.mFuncDecl]),
+      std::begin(mExtIdentifiers[TI.mTemplate->getFuncDecl()]), std::end(mExtIdentifiers[TI.mTemplate->getFuncDecl()]),
+      std::inserter(tmp, std::end(tmp)));
+    if (tmp.size() > 0) {
+      Result += "Potential identifier collision between template \""
+        + TI.mTemplate->getFuncDecl()->getNameAsString() + "\" and instantiation \""
+        + getSourceText(getRange(TI.mCallExpr)) + "\" contexts\n";
+    }
+    return Result;
+  };
   // if function has external dependencies:
   //   if external dependencies collide with function where specific instantiation is:
   //     disable this instantiation (perspective - fix collisions through renaming)
@@ -713,50 +863,48 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // else:
   //   allow instantiations
   // note: external dependencies include callees
-  for (auto T : mTs) {
+  std::function<std::string(const Template&)> TChainChecker[] = {
+    UnusedTemplateChecker,
+    UserDefTChecker,
+    VariadicChecker,
+    RecursiveChecker,
+    BogusSRChecker,
+    BogusSRTransitiveChecker,
+    NestedExternalDepsChecker
+  };
+  for (auto& T : mTs) {
     if (T.second.getFuncDecl() == nullptr) {
       continue;
     }
-    if (mExtIdentifiers[T.first].size() > 0) {
-      bool LocalOnly = false;
-      for (auto identifier : mExtIdentifiers[T.first]) {
-        for (auto decl : mOutermostDecls[identifier]) {
-          // TODO: check internal linkage
-          if (mSourceManager.getFileID(decl->getLocStart())
-            != mSourceManager.getFileID(T.first->getLocStart())) {
-            LocalOnly = true;
-            break;
-          }
-        }
-        if (LocalOnly) {
-          break;
-        }
+    std::string Result;
+    for (auto Checker : TChainChecker) {
+      if (Result != "") break;
+      Result += Checker(T.second);
+    }
+    if (Result != "") {
+      T.second.setFuncDecl(nullptr);
+      llvm::errs() << "Template \"" + T.first->getNameAsString() + "\" disabled due to constraint violations:\n" + Result;
+    }
+  }
+  std::function<std::string(const TemplateInstantiation&)> TIChainChecker[] = {
+    UserDefTIChecker,
+    ExternalDepsChecker,
+    CollidedIdentifiersChecker
+  };
+  for (auto& TIs : mTIs) {
+    for (auto& TI : TIs.second) {
+      if (TI.mTemplate == nullptr) {
+        continue;
       }
-      for (auto TIs : mTIs) {
-        for (auto TI : TIs.second) {
-          if (TI.mTemplate == nullptr || TI.mTemplate->getFuncDecl() != T.first) {
-            continue;
-          }
-          if (LocalOnly && mSourceManager.getFileID(TI.mFuncDecl->getLocStart())
-            == mSourceManager.getFileID(T.first->getLocStart())) {
-            // external decl in different file (#include), disable instantiation in any files except this
-            TI.mTemplate = nullptr;
-            continue;
-          }
-          std::set<std::string> tmp;
-          std::set_intersection(std::begin(mIntIdentifiers[TI.mFuncDecl]), std::end(mIntIdentifiers[TI.mFuncDecl]),
-            std::begin(mExtIdentifiers[T.first]), std::end(mExtIdentifiers[T.first]),
-            std::inserter(tmp, std::end(tmp)));
-          if (tmp.size() > 0) {
-            // potential collision of template external dependencies and target function local declarations
-            // disable instantiation
-            TI.mTemplate = nullptr;
-            continue;
-          }
-        }
+      std::string Result;
+      for (auto Checker : TIChainChecker) {
+        if (Result != "") break;
+        Result += Checker(TI);
       }
-    } else {
-      // nothing to be done, can be inlined anywhere, doesn't call other functions
+      if (Result != "") {
+        TI.mTemplate = nullptr;
+        llvm::errs() << "Template instantiation \"" + getSourceText(getRange(TI.mCallExpr)) + "\" disabled due to constraint violations:\n" + Result;
+      }
     }
   }
 
@@ -844,22 +992,26 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
           return mRewriter.getRewrittenText(getRange(arg));
         });
         fDecls.insert(std::begin(args), std::end(args));
-        std::pair<std::string, std::string> text
+        std::tuple<std::string, std::string, std::set<std::string>> text
           = compile(TI, args, fDecls);
-        if (text.second.size() == 0) {
-          text.first.insert(std::begin(text.first), '{');
-          mRewriter.ReplaceText(getRange(TI.mStmt), text.first);
+        auto Body = std::get<0>(text);
+        auto Result = std::get<1>(text);
+        auto ExtRefs = std::get<2>(text);
+
+        if (Result.size() == 0) {
+          Body.insert(std::begin(Body), '{');
+          mRewriter.ReplaceText(getRange(TI.mStmt), Body);
           mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
             ";}");
         } else {
           if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
-            text.first.insert(std::begin(text.first), '{');
+            Body.insert(std::begin(Body), '{');
             mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
               ";}");
           }
-          mRewriter.ReplaceText(getRange(TI.mCallExpr), text.second);
+          mRewriter.ReplaceText(getRange(TI.mCallExpr), Result);
           mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
-            text.first);
+            Body);
         }
         mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
           "/* " + getSourceText(getRange(TI.mCallExpr))
@@ -872,7 +1024,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
 
 std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
   return clang::Lexer::getSourceText(clang::CharSourceRange::getTokenRange(SR),
-    mContext.getSourceManager(), mContext.getLangOpts());
+    mSourceManager, mContext.getLangOpts());
 }
 
 template<typename T>
@@ -888,11 +1040,11 @@ clang::SourceLocation FInliner::getLoc(clang::SourceLocation SL) const {
 template<typename _Container>
 std::string FInliner::join(
   const _Container& _Cont, const std::string& delimiter) const {
-  return std::accumulate(std::next(std::cbegin(_Cont)), std::cend(_Cont),
+  return _Cont.size() > 0 ? std::accumulate(std::next(std::cbegin(_Cont)), std::cend(_Cont),
     std::string(*std::cbegin(_Cont)),
     [&](const std::string& left, const std::string& right) {
     return left + delimiter + right;
-  });
+  }) : "";
 }
 
 template<typename T>
@@ -980,5 +1132,19 @@ void FunctionInlinerQueryManager::run(llvm::Module* M, TransformationContext* Ct
   }
   Passes.add(createFunctionInlinerPass());
   Passes.run(*M);
+  return;
+}
+
+bool FunctionInlinerQueryManager::beginSourceFile(
+    clang::CompilerInstance& CI, llvm::StringRef File) {
+  auto& PP = CI.getPreprocessor();
+  mIPH = new InlinePragmaHandler();
+  PP.AddPragmaHandler(mIPH);
+  return true;
+}
+
+void InlinePragmaHandler::HandlePragma(clang::Preprocessor& PP,
+  clang::PragmaIntroducerKind Introducer, clang::Token& FirstToken) {
+  PP.CheckEndOfDirective("pragma inline");
   return;
 }

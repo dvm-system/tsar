@@ -24,14 +24,33 @@
 
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
+#include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
+#include <clang/Lex/Pragma.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
 
 namespace tsar {
 
+class InlinePragmaHandler : public clang::PragmaHandler {
+private:
+  /// This set contains locations of each handled pragma.
+  std::set<unsigned> mPragmaLocSet;
+
+public:
+  /// Creates handler.
+  InlinePragmaHandler() : clang::PragmaHandler("inline") {}
+
+  void HandlePragma(clang::Preprocessor& PP,
+    clang::PragmaIntroducerKind Introducer, clang::Token& FirstToken) override;
+};
+
 class FunctionInlinerQueryManager : public QueryManager {
   void run(llvm::Module *M, TransformationContext *Ctx) override;
+  bool beginSourceFile(clang::CompilerInstance& CI, llvm::StringRef File);
+
+private:
+  InlinePragmaHandler* mIPH;
 };
 
 struct FunctionInlineInfo : private bcl::Uncopyable {
@@ -188,7 +207,7 @@ private:
   /// collects all visible and newly created named declarations in \p decls
   /// to avoid later possible collisions.
   /// \returns text of instantiated function body and result identifier
-  std::pair<std::string, std::string> compile(
+  std::tuple<std::string, std::string, std::set<std::string>> compile(
     const ::detail::TemplateInstantiation& TI,
     const std::vector<std::string>& args,
     std::set<std::string>& decls);
@@ -292,6 +311,7 @@ private:
   std::set<std::string> mGlobalIdentifiers;
   std::map<const clang::FunctionDecl*, std::set<std::string>> mExtIdentifiers, mIntIdentifiers;
   std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
+  std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>> mForwardDecls;
 
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;
 
