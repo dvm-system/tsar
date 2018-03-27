@@ -11,8 +11,7 @@
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
   enum BaseTypeID { VoidTy = 0, HalfTy, FloatTy, DoubleTy, X86_FP80Ty, FP128Ty,
-    PPC_FP128Ty, LabelTy, MetadataTy, X86_MMXTy, TokenTy, FunctionTy, 
-    PointerTy, IntegerTy };
+    PPC_FP128Ty, LabelTy, MetadataTy, X86_MMXTy, TokenTy, IntegerTy };
 
   static const unsigned maxIntBitWidth = 64;
 
@@ -71,10 +70,12 @@ private:
   void loopIterInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
 
   unsigned regDbgStr(const std::string& S, llvm::Module& M);
+  void regTypes(llvm::Module& M);
   llvm::GetElementPtrInst* prepareStrParam(const std::string& S, 
     llvm::Instruction &I);
   llvm::LoadInst* getDbgPoolElem(unsigned Val, llvm::Instruction& I); 
   void regGlobals(llvm::Module& M);
+  void regBaseTypes(llvm::Module& M);
 };
 
 #endif // INSTRUMENTATION_H

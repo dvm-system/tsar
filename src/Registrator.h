@@ -51,6 +51,8 @@ public:
       return search->second;
     llvm_unreachable((V->getName().str() + " was not declared").c_str());
   }
+  const std::map<const llvm::Type*, unsigned>& getAllRegistratedTypes()
+  { return mRegTypes; }
 };
 
 #endif //REGISTRATOR_H

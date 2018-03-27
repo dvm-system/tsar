@@ -4,7 +4,8 @@
 #include "tsar_utility.h"
 #include "Instrumentation.h"
 #include "Intrinsics.h"
-#include <iostream>
+#include <map>
+#include <vector>
 
 using namespace llvm;
 using namespace tsar;
@@ -15,12 +16,12 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   //create function for types registration
   const std::string& RegTypeFuncName = "RegType" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  auto RegType = FunctionType::get(Type::getVoidTy(M.getContext()), 
-    {Type::getInt32Ty(M.getContext())}, false);
+  auto RegType = FunctionType::get(Type::getInt64Ty(M.getContext()), 
+    {Type::getInt64Ty(M.getContext())}, false);
   auto RegFunc = Function::Create(RegType, 
     GlobalValue::LinkageTypes::InternalLinkage, RegTypeFuncName, &M);
+  RegFunc->arg_begin()->setName("x");
   auto NewBlock = BasicBlock::Create(RegFunc->getContext(), "entry", RegFunc);
-  ReturnInst::Create(RegFunc->getContext(), NewBlock);
   //insert declaration of pool for debug information
   const std::string& DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
@@ -31,11 +32,15 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   //create function for debug information initialization
   const std::string& InitFuncName = "sapforInitDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  auto Type = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+  auto Type = FunctionType::get(Type::getVoidTy(M.getContext()),
+    {Type::getInt64Ty(M.getContext())}, false);
   auto Func = Function::Create(Type, GlobalValue::LinkageTypes::InternalLinkage,
     InitFuncName, &M);
+  Func->arg_begin()->setName("Offset");
   NewBlock = BasicBlock::Create(Func->getContext(), "entry", Func);
   ReturnInst::Create(Func->getContext(), NewBlock);
+  //registrate basic types and global variables
+  regBaseTypes(M);
   regGlobals(M);
   //visit all functions
   for(auto& F: M) {
@@ -46,11 +51,12 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   }
   //insert call to allocate debug information pool
   auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
-  //getting numb of registrated debug strings by the next value returned from
+  //getting numb of registrated debug strings by the value returned from
   //registrator. don't go through function to count inserted calls.
   auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()), 
     mRegistrator.getDbgStrCounter());
   CallInst::Create(Fun, {DbgPool, Idx}, "", &(*inst_begin(Func)));
+  regTypes(M);
 }
 
 //insert call of sapforRegVar(void*, void*) or 
@@ -66,7 +72,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto TypeId = I.getAllocatedType()->getTypeID();
   //Alloca instruction has isArrayAllocation method, but it looks like it
   //doesn't work like i wanted it. So checking for array in this way
-  if(TypeId == Type::TypeID::ArrayTyID || TypeId == Type::TypeID::PointerTyID){
+  if(TypeId == Type::TypeID::ArrayTyID){
     Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
@@ -263,7 +269,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripPointerCasts());
+    ->stripInBoundsOffsets());
   auto DIVar = getDbgPoolElem(Idx, *DILoc);
   Function* Fun;
   //FIXME: this doesn't correctly separate arrays from variables
@@ -297,13 +303,97 @@ unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
     auto Pool = M.getGlobalVariable(DbgPoolName);
     auto Idx = ConstantInt::get(Type::getInt32Ty(M.getContext()), Val);
     auto LoadArr = new LoadInst(Pool, "LoadArr", &B.back());
-    auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "Elem",
+    auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "DI",
       B.getTerminator());
     auto Loc = prepareStrParam(S, B.back());
-    CallInst::Create(Fun4Insert, {Elem, Loc}, "", &B.back());
+    CallInst::Create(Fun4Insert, {Elem, Loc, &(*F->arg_begin())}, "",
+      &B.back());
     return Val;
   }
-  llvm_unreachable("function was not declared");
+  llvm_unreachable((InitFuncName + " was not declared").c_str());
+}
+
+void Instrumentation::regTypes(Module& M) {
+  const std::string& ModuleName = M.getModuleIdentifier();
+  const std::string& RegFuncName = "RegType" + 
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  auto F = M.getFunction(RegFuncName); // get function for types registration
+  if(F != nullptr) {
+    DataLayout DL(&M);
+    //get all registrated types from registrator. fill vector<llvm::Constant* >
+    //with local types indexes and sizes
+    auto Types = mRegistrator.getAllRegistratedTypes();
+    auto Int64Ty = Type::getInt64Ty(M.getContext());
+    auto Int0 = ConstantInt::get(Int64Ty, 0);
+    std::vector<Constant* > Ids, Sizes;
+    for(auto I: Types) {
+      Ids.push_back(Constant::getIntegerValue(Int64Ty, APInt(64, I.second))); 
+      Sizes.push_back(I.first->isSized() ? Constant::getIntegerValue(Int64Ty,
+	APInt(64, DL.getTypeSizeInBits(const_cast<Type*>(I.first)))) : Int0);
+    }
+    //create global values for idexes and sizes. initialize them with local 
+    //values
+    auto Size = ConstantInt::get(Int64Ty, Types.size());
+    auto ArrayTy = ArrayType::get(Int64Ty, Types.size());
+    auto IdsArray = new GlobalVariable(M, ArrayTy, false,
+      GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
+      Ids), "IdsArray", nullptr);
+    auto SizesArray = new GlobalVariable(M, ArrayTy, false, 
+      GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
+      Sizes), "SizesArray", nullptr);
+    //create a loop to update local indexes to their real values.
+    //
+    //add loop counter to entry block and initialize it with 0
+    //store function parameter
+    auto AI = new AllocaInst(F->arg_begin()->getType(), nullptr, 8, "x.addr",
+      &F->getEntryBlock());
+    auto Counter = new AllocaInst(Int64Ty, nullptr, 8, "i",
+      &F->getEntryBlock());
+    auto SI = new StoreInst(&(*F->arg_begin()), AI, &F->getEntryBlock());
+    auto Set0 = new StoreInst(Int0, Counter, false, 8,
+      &F->getEntryBlock());
+    //create condition, body, increment and end blocks for the loop.
+    auto CondBlock = BasicBlock::Create(M.getContext(), "cond", F);
+    auto BodyBlock = BasicBlock::Create(M.getContext(), "body", F);
+    auto IncBlock = BasicBlock::Create(M.getContext(), "inc", F);
+    auto EndBlock = BasicBlock::Create(M.getContext(), "end", F);
+    //create jumps between loop blocks
+    BranchInst::Create(CondBlock, &F->getEntryBlock());
+    auto LoadCounter = new LoadInst(Counter, "", false, 8, CondBlock);
+    auto Cmp = new ICmpInst(*CondBlock, CmpInst::ICMP_ULT, LoadCounter,
+      Size, "cmp");
+    BranchInst::Create(BodyBlock, EndBlock, Cmp, CondBlock);
+    BranchInst::Create(IncBlock, BodyBlock);
+    BranchInst::Create(CondBlock, IncBlock);
+    //fill body block with corresponding instructions:
+    //IdsArray[i] += x  ;; x - function parameter
+    LoadCounter = new LoadInst(Counter, "", false, 8, &BodyBlock->back());
+    auto Elem = GetElementPtrInst::Create(nullptr, IdsArray, {Int0,
+      LoadCounter}, "arrayidx", &BodyBlock->back());
+    auto LoadArg = new LoadInst(AI, "", false, 8, &BodyBlock->back());
+    auto LoadArg2 = new LoadInst(Elem, "", false, 8, &BodyBlock->back());
+    auto Sum = BinaryOperator::CreateNSW(BinaryOperator::Add, LoadArg,
+      LoadArg2, "", &BodyBlock->back());
+    auto NewElem = new StoreInst(Sum, Elem, false, 8, &BodyBlock->back());
+    //fill increment block with corresponding instructions:
+    //i++
+    LoadCounter = new LoadInst(Counter, "", false, 8, &IncBlock->back());
+    Sum = BinaryOperator::CreateNSW(BinaryOperator::Add, LoadCounter,
+      ConstantInt::get(Int64Ty, 1), "", &IncBlock->back());
+    auto NewCounter = new StoreInst(Sum, Counter, false, 8, &IncBlock->back());
+    //insert call of sapforDeclTypes(i64, i64*, i64*) to the end block
+    auto Fun4Insert = getDeclaration(&M, IntrinsicId::decl_types);
+    auto IdsArrayElem = GetElementPtrInst::Create(nullptr, IdsArray,
+      {Int0, Int0}, "Ids", EndBlock);
+    auto SizesArrayElem = GetElementPtrInst::Create(nullptr, SizesArray,
+      {Int0, Int0}, "Sizes", EndBlock);
+    CallInst::Create(Fun4Insert, {Size, IdsArrayElem, SizesArrayElem}, "",
+      EndBlock);
+    //return numb of regitrated types
+    ReturnInst::Create(F->getContext(), Size, EndBlock);
+    return;
+  }
+  llvm_unreachable((RegFuncName + " was not declared").c_str());
 }
 
 GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
@@ -313,7 +403,7 @@ GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
     llvm::GlobalValue::InternalLinkage, Debug);
   auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(I.getContext()),
     0);
-  return llvm::GetElementPtrInst::CreateInBounds(Arg, {Int0,Int0}, "Elem", &I);
+  return llvm::GetElementPtrInst::CreateInBounds(Arg, {Int0,Int0}, "DIString", &I);
 }
 
 //Returns element in debug information pool by its index
@@ -347,6 +437,26 @@ void Instrumentation::regGlobals(Module& M) {
   }
 }
 
+void Instrumentation::regBaseTypes(Module &M) {
+  mRegistrator.regType(Type::getVoidTy(M.getContext()));
+  mRegistrator.regType(Type::getHalfTy(M.getContext()));
+  mRegistrator.regType(Type::getFloatTy(M.getContext()));
+  mRegistrator.regType(Type::getDoubleTy(M.getContext()));
+  mRegistrator.regType(Type::getX86_FP80Ty(M.getContext()));
+  mRegistrator.regType(Type::getFP128Ty(M.getContext()));
+  mRegistrator.regType(Type::getPPC_FP128Ty(M.getContext()));
+  mRegistrator.regType(Type::getLabelTy(M.getContext()));
+  mRegistrator.regType(Type::getMetadataTy(M.getContext()));
+  mRegistrator.regType(Type::getX86_MMXTy(M.getContext()));
+  mRegistrator.regType(Type::getTokenTy(M.getContext()));
+  //have problems with pointer and function types
+  //need to put some special registration for them. 
+  //don't registrate them as base types now
+  for(unsigned i = 1; i <= maxIntBitWidth; ++i) {
+    mRegistrator.regType(Type::getIntNTy(M.getContext(), i));
+  }
+}
+
 unsigned Instrumentation::getTypeId(const Type& T) {
   switch(T.getTypeID()) {
     case(Type::TypeID::VoidTyID): return BaseTypeID::VoidTy;
@@ -360,10 +470,10 @@ unsigned Instrumentation::getTypeId(const Type& T) {
     case(Type::TypeID::MetadataTyID): return BaseTypeID::MetadataTy;
     case(Type::TypeID::X86_MMXTyID): return BaseTypeID::X86_MMXTy;
     case(Type::TypeID::TokenTyID): return BaseTypeID::TokenTy;
-    case(Type::TypeID::FunctionTyID): return BaseTypeID::FunctionTy;
-    case(Type::TypeID::PointerTyID): return BaseTypeID::PointerTy;
+    //case(Type::TypeID::FunctionTyID): return BaseTypeID::FunctionTy;
+    //case(Type::TypeID::PointerTyID): return BaseTypeID::PointerTy;
     case(Type::TypeID::IntegerTyID): 
-      if(cast<IntegerType>(T).getBitWidth() < maxIntBitWidth) {
+      if(cast<IntegerType>(T).getBitWidth() <= maxIntBitWidth) {
         return (BaseTypeID::IntegerTy + cast<IntegerType>(T).getBitWidth() -1);
       }
     default: return mRegistrator.regType(&T) + BaseTypeID::IntegerTy +
