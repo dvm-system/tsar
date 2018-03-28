@@ -243,21 +243,27 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripPointerCasts());
+    ->stripInBoundsOffsets());
   auto DIVar = getDbgPoolElem(Idx, *DILoc);
+  auto Addr = new BitCastInst(I.getPointerOperand(),
+    Type::getInt8PtrTy(I.getContext()), "Addr");
+  cast<Instruction>(Addr)->insertAfter(DILoc);
   Function* Fun;
-  //FIXME: this doesn't correctly separate arrays from variables
-  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
-    ->getTypeID();
+  auto TypeID =  I.getPointerOperand()->stripInBoundsOffsets()->getType()
+    ->getPointerElementType()->getTypeID();
   //depending on operand type insert a sapforReadVar or sapforReadArr
-  //consider all pointers as arrays
-  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID){
-    Fun = getDeclaration(I.getModule(), IntrinsicId::read_var);
-  } else {
+  if(TypeID == Type::TypeID::ArrayTyID){
     Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
+    auto ArrBase =new BitCastInst(I.getPointerOperand()->stripInBoundsOffsets(),
+      Type::getInt8PtrTy(I.getContext()), "ArrBase");
+    cast<Instruction>(ArrBase)->insertAfter(Addr);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrBase}, "");
+    Call->insertAfter(ArrBase);
+  } else {
+    Fun = getDeclaration(I.getModule(), IntrinsicId::read_var);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "");
+    Call->insertAfter(Addr);
   }
-  auto Call = CallInst::Create(Fun, {DILoc, DIVar}, "");
-  Call->insertAfter(DILoc);
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
@@ -270,20 +276,24 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
   unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
     ->stripInBoundsOffsets());
-  auto DIVar = getDbgPoolElem(Idx, *DILoc);
+  auto DIVar = getDbgPoolElem(Idx, I);
+  auto Addr = new BitCastInst(I.getPointerOperand(),
+    Type::getInt8PtrTy(I.getContext()), "Addr", &I);
   Function* Fun;
-  //FIXME: this doesn't correctly separate arrays from variables
-  auto TypeID =  I.getPointerOperand()->getType()->getPointerElementType()
-    ->getTypeID();
+  auto TypeID =  I.getPointerOperand()->stripInBoundsOffsets()->getType()
+    ->getPointerElementType()->getTypeID();
   //depending on operand type insert a sapforWriteVarEnd or sapforWriteArrEnd
-  //consider all pointers as arrays
-  if(TypeID != Type::TypeID::PointerTyID && TypeID != Type::TypeID::ArrayTyID) {
+  if(TypeID != Type::TypeID::ArrayTyID) {
     Fun = getDeclaration(I.getModule(), IntrinsicId::write_var_end);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "");
+    Call->insertAfter(&I);
   } else {
+    auto ArrBase =new BitCastInst(I.getPointerOperand()->stripInBoundsOffsets(),
+      Type::getInt8PtrTy(I.getContext()), "ArrBase", &I);
     Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrBase}, "");
+    Call->insertAfter(&I);
   }
-  auto Call = CallInst::Create(Fun, {DILoc, DIVar}, "");
-  Call->insertAfter(&I);
 }
 
 //Registrate given debug information by inserting a call of 

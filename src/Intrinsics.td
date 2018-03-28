@@ -59,23 +59,19 @@ def reg_arr : Intrinsic<"sapforRegArr",
                         tsar_void_ty,
                         [tsar_di_var_ty, tsar_size_ty, tsar_addr_ty]>;
 
-def read_var : Intrinsic<"sapforReadVar",
-                        tsar_void_ty, [tsar_di_loc_ty, tsar_di_var_ty]>;
-                        //[tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty]>;
+def read_var : Intrinsic<"sapforReadVar", tsar_void_ty,
+                        [tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty]>;
 
-def read_arr : Intrinsic<"sapforReadArr",
-                        tsar_void_ty, [tsar_di_loc_ty, tsar_di_var_ty]>;
-                        //[tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty, 
-                        //tsar_arr_base_ty]>;
+def read_arr : Intrinsic<"sapforReadArr", tsar_void_ty,
+                        [tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty, 
+                        tsar_arr_base_ty]>;
 
-def write_var_end : Intrinsic<"sapforWriteVarEnd",
-                        tsar_void_ty, [tsar_di_loc_ty, tsar_di_var_ty]>;
-                        //[tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty]>;
+def write_var_end : Intrinsic<"sapforWriteVarEnd", tsar_void_ty,
+                        [tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty]>;
 
-def write_arr_end : Intrinsic<"sapforWriteArrEnd",
-                        tsar_void_ty, [tsar_di_loc_ty, tsar_di_var_ty]>;
-                        //[tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty, 
-                        //tsar_arr_base_ty]>;
+def write_arr_end : Intrinsic<"sapforWriteArrEnd", tsar_void_ty,
+                        [tsar_di_loc_ty, tsar_addr_ty, tsar_di_var_ty, 
+                        tsar_arr_base_ty]>;
 
 def func_begin : Intrinsic<"sapforFuncBegin",
                         tsar_void_ty, [tsar_di_funct_ty]>;
