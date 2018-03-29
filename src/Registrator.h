@@ -13,6 +13,8 @@ private:
   std::map<const llvm::Type*, unsigned> mRegTypes;
   //all of the registered variables with their indexes
   std::map<const llvm::Value*, unsigned> mRegVars;
+  //all of the registered functions
+  std::map<const llvm::Function*, unsigned> mRegFuncs;
 public:
   Registrator():  mDbgStrCounter(0), mTypesCounter(0) {};
   //registrate variable with given debug index. if this variable was already
@@ -33,6 +35,15 @@ public:
     mRegVars[V] = Idx;
     return Idx;
   }
+  //registrate function with given debug index. if this function was already
+  //registrated returns its index in debug pool  
+  unsigned regFunc(const llvm::Function* F, unsigned Idx) {
+    auto search = mRegFuncs.find(F);
+    if(search != mRegFuncs.end())
+      return search->second;
+    mRegFuncs[F] = Idx;
+    return Idx;
+  }
   unsigned regDbgStr() { return mDbgStrCounter++; }
   unsigned getDbgStrCounter() { return mDbgStrCounter; }
   //registrate new type if it was not registrated yet. returns type index. 
@@ -50,6 +61,13 @@ public:
     if(search != mRegVars.end())
       return search->second;
     llvm_unreachable((V->getName().str() + " was not declared").c_str());
+  }
+  //returns index in debug pool for given function
+  unsigned getFuncDbgIndex(const llvm::Function* F)  {
+    auto search = mRegFuncs.find(F);
+    if(search != mRegFuncs.end())
+      return search->second;
+    llvm_unreachable((F->getName().str() + " was not declared").c_str());
   }
   const std::map<const llvm::Type*, unsigned>& getAllRegistratedTypes()
   { return mRegTypes; }

@@ -6,6 +6,7 @@
 #include "Intrinsics.h"
 #include <map>
 #include <vector>
+#include <iostream>
 
 using namespace llvm;
 using namespace tsar;
@@ -117,15 +118,8 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
     return;
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
-  std::stringstream Debug;
-  auto F = I.getFunction();
-  Debug << "type=function*file=" << F->getParent()->getSourceFileName() <<
-    "*line1=" << F->getSubprogram()->getLine() << "*line2=" <<
-    (F->getSubprogram()->getLine() + F->getSubprogram()->getScopeLine()) <<
-    "*name1=" << F->getSubprogram()->getName().data() << "*vtype=" <<
-    getTypeId(*F->getReturnType()) << "*rank=" <<
-    F->getFunctionType()->getNumParams() << "**";
-  auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+  unsigned Idx = mRegistrator.getFuncDbgIndex(I.getFunction());
+  auto DIFunc = getDbgPoolElem(Idx, I);
   auto Call = CallInst::Create(Fun, {DIFunc}, "");
   Call->insertAfter(DIFunc);
 }
@@ -213,16 +207,8 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(getTsarLibFunc(F.getName(), Id)) {
     return;
   }
-  //visit all Blocks
-  auto& LI = mInstrPass->getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
-  mLoopInfo = std::move(LI);
-  for(auto &I : F.getBasicBlockList()) {
-    visitBasicBlock(I);
-  }
+  //registrate debug information for function
   getTypeId(*F.getReturnType());
-  //Insert a call of sapforFuncBegin(void*) in the begginning of the function
-  auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
-  auto Begin = inst_begin(F);
   std::stringstream Debug;
   Debug << "type=function*file=" << F.getParent()->getSourceFileName() <<
     "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
@@ -230,7 +216,18 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
     getTypeId(*F.getReturnType()) << "*rank=" <<
     F.getFunctionType()->getNumParams() << "**";
-  auto DIFunc = getDbgPoolElem(regDbgStr(Debug.str(), *F.getParent()), *Begin);
+  unsigned Idx = regDbgStr(Debug.str(), *F.getParent());
+  mRegistrator.regFunc(&F, Idx);
+  //visit all Blocks
+  auto& LI = mInstrPass->getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
+  mLoopInfo = std::move(LI);
+  for(auto &I : F.getBasicBlockList()) {
+    visitBasicBlock(I);
+  }
+  //Insert a call of sapforFuncBegin(void*) in the begginning of the function
+  auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
+  auto Begin = inst_begin(F);
+  auto DIFunc = getDbgPoolElem(Idx, *Begin);
   auto Call = CallInst::Create(Fun, {DIFunc}, "");
   Call->insertAfter(DIFunc);
 }
@@ -267,9 +264,30 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
-  std::stringstream Debug;
+  // instrumentate stores for function formal parameters in special way
+  if(Argument::classof(I.getValueOperand()) &&
+    AllocaInst::classof(I.getPointerOperand())) {
+    auto Idx = mRegistrator.getFuncDbgIndex(cast<Argument>(I.getValueOperand())
+      ->getParent());
+    auto DIFunc = getDbgPoolElem(Idx, I);
+    auto Addr = new BitCastInst(I.getPointerOperand(),
+      Type::getInt8PtrTy(I.getContext()), "Addr", &I);
+    auto Position = ConstantInt::get(Type::getInt64Ty(I.getContext()),
+      cast<Argument>(I.getValueOperand())->getArgNo()); 
+    if(cast<AllocaInst>(I.getPointerOperand())->isArrayAllocation()) {
+      auto ArrSize = cast<AllocaInst>(I.getPointerOperand())->getArraySize();
+      auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_dummy_arr);
+      auto Call = CallInst::Create(Fun, {DIFunc, ArrSize, Addr, Position}, "");
+      Call->insertAfter(&I);
+    } else {
+      auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_dummy_var);
+      auto Call = CallInst::Create(Fun, {DIFunc, Addr, Position}, "");
+      Call->insertAfter(&I);
+    }
+  } 
   if(!cast<Instruction>(I).getDebugLoc())
     return;
+  std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
