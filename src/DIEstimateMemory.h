@@ -91,20 +91,6 @@ void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
 void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
     llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
 
-/// Builds debug memory location for a specified memory location.
-llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
-    llvm::LLVMContext &Ctx,
-    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
-
-/// Builds debug memory location for a specified memory location.
-std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
-    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
-
-/// Builds debug memory location for a specified memory location.
-std::unique_ptr<DIMemory> buildDIMemory(
-    llvm::Value &V, llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env);
-
 /// This represents estimate memory location using metadata information.
 class DIMemory :
     public llvm::ilist_node<DIMemory, llvm::ilist_tag<Alias>> {
@@ -255,6 +241,21 @@ private:
   llvm::SmallVector<llvm::WeakVH, 1> mValues;
 };
 
+/// Builds debug memory location for a specified memory location.
+llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
+    llvm::LLVMContext &Ctx,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    DIMemory::Property = DIMemory::Explicit);
+
 /// \brief This represents estimate memory location using metadata information.
 ///
 /// This class is similar to `EstimateMemory`. However, this is high level
@@ -371,6 +372,12 @@ public:
 
   /// Returns underlying metadata.
   const llvm::MDNode * getMetadata() const;
+
+  /// \brief Returns true if this is a distinct memory.
+  ///
+  /// This means that this location is always unique. The same location
+  /// can not be obtained after rebuild.
+  bool isDistinct() const { return getAsMDNode() == getMetadata(); }
 
   /// Returns flags which are specified for an underlying variable.
   Flags getFlags() const {

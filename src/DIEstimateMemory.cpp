@@ -1419,13 +1419,15 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
 }
 
 bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
+  if (M.isDistinct())
+    return false;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
     auto Cashed = mCashedUnknownMemory.try_emplace(VH);
     if (Cashed.second) {
       Cashed.first->second =
-        buildDIMemory(*VH, mFunc->getContext(), M.getEnv());
+        buildDIMemory(*VH, mFunc->getContext(), M.getEnv(), M.getProperies());
       DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
@@ -1487,21 +1489,25 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
     const DataLayout &DL, const DominatorTree &DT) {
   auto DILoc = buildDIMemory(
     MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
-  if (!DILoc)
-    return buildDIMemory(const_cast<Value &>(*EM.front()), Ctx, Env);
-  auto Flags = DILoc->Template ?
-    DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
-  auto DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags);
+  std::unique_ptr<DIMemory> DIM;
+  auto VItr = EM.begin();
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
-  DIM->setProperties(Properties);
-  for (auto &V : EM) {
-    DIM->bindValue(const_cast<Value *>(V));
+  if (!DILoc) {
+    DIM = buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, Properties);
+    ++VItr;
+  } else {
+    auto Flags = DILoc->Template ?
+      DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+    DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags);
   }
+  DIM->setProperties(Properties);
+  for (auto EItr = EM.end(); VItr != EItr; ++VItr)
+    DIM->bindValue(const_cast<Value *>(*VItr));
   return DIM;
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
-    DIMemoryEnvironment &Env) {
+    DIMemoryEnvironment &Env, DIMemory::Property P) {
   CallSite CS(&V);
   auto Callee = !CS ? dyn_cast_or_null<Function>(&V) : dyn_cast<Function>(
       CS.getCalledValue()->stripPointerCasts());
@@ -1512,7 +1518,7 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
   auto Flags = CS ? DIUnknownMemory::Call : DIUnknownMemory::NoFlags;
   auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Flags);
   DIM->bindValue(&V);
-  DIM->setProperties(DIMemory::Explicit);
+  DIM->setProperties(P);
   return DIM;
 }
 }
