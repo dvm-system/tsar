@@ -365,13 +365,18 @@ public:
 
   /// Creates unknown memory location from a specified MDNode.
   static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, llvm::MDNode *MD, Flags F = NoFlags);
+    DIMemoryEnvironment &Env, llvm::MDNode *MD, llvm::DILocation *Loc,
+    Flags F = NoFlags);
 
   /// Returns underlying metadata.
   llvm::MDNode * getMetadata();
 
   /// Returns underlying metadata.
   const llvm::MDNode * getMetadata() const;
+
+  /// Returns location in a source code which defines this memory if location
+  /// is specified.
+  llvm::DebugLoc getDebugLoc() const;
 
   /// \brief Returns true if this is a distinct memory.
   ///
@@ -395,7 +400,7 @@ private:
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.
   explicit DIUnknownMemory(DIMemoryEnvironment &Env, llvm::MDNode *MD,
-      DIAliasMemoryNode *N = nullptr) : DIMemory(Env, KIND_UNKNOWN, MD, N) {}
+    DIAliasMemoryNode *N = nullptr) : DIMemory(Env, KIND_UNKNOWN, MD, N) {}
 };
 
 std::unique_ptr<DIMemory> DIMemory::get(llvm::LLVMContext &Ctx,

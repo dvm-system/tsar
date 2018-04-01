@@ -78,18 +78,21 @@ void printDILocationSource(unsigned DWLang,
     printDILocationSource(DWLang,
       { EM->getVariable(), EM->getExpression(), EM->isTemplate() }, O);
   } else if (auto UM = dyn_cast<DIUnknownMemory>(M)) {
+    auto DbgLoc = UM->getDebugLoc();
     auto MD = UM->getMetadata();
     assert(MD && "MDNode must not be null!");
     if (UM->isCall())
-      if (MD == UM->getAsMDNode() || !isa<DISubprogram>(MD))
+      if (!isa<DISubprogram>(MD))
         O << "?()";
       else
         O << cast<DISubprogram>(MD)->getName() << "()";
     else
-      if (MD == UM->getAsMDNode() || !isa<DISubprogram>(MD))
+      if (!isa<DISubprogram>(MD))
         O << "<?,?>";
       else
         O << "<" << cast<DISubprogram>(MD)->getName() << ",?>";
+    if (DbgLoc)
+      O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
   } else {
       O << "<?, ?>";
   }

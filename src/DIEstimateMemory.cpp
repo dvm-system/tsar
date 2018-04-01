@@ -127,15 +127,24 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
 }
 
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, llvm::MDNode *MD, Flags F) {
+    DIMemoryEnvironment &Env, MDNode *MD, DILocation *Loc, Flags F) {
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  auto NewMD = llvm::MDNode::get(Ctx, { MD, FlagMD });
+  auto NewMD = Loc ? llvm::MDNode::get(Ctx, { MD, FlagMD, Loc }) :
+    llvm::MDNode::get(Ctx, { MD, FlagMD });
   assert(NewMD && "Can not create metadata node!");
   if (!MD)
     NewMD->replaceOperandWith(0, NewMD);
   ++NumUnknownMemory;
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, NewMD));
+}
+
+llvm::DebugLoc DIUnknownMemory::getDebugLoc() const {
+  auto MD = getAsMDNode();
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+    if (auto *Loc = llvm::dyn_cast<llvm::DILocation>(MD->getOperand(I)))
+      return Loc;
+  return DebugLoc();
 }
 
 std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
@@ -235,18 +244,24 @@ void DIMemory::setFlags(uint64_t F) {
 
 llvm::MDNode * DIUnknownMemory::getMetadata() {
   auto MD = getAsMDNode();
-  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
+    if (isa<DILocation>(MD->getOperand(I)))
+      continue;
     if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
       return Op;
+  }
   llvm_unreachable("MDNode must be specified!");
   return nullptr;
 }
 
 const llvm::MDNode * DIUnknownMemory::getMetadata() const {
   auto MD = getAsMDNode();
-  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
+    if (isa<DILocation>(MD->getOperand(I)))
+      continue;
     if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
       return Op;
+  }
   llvm_unreachable("MDNode must be specified!");
   return nullptr;
 }
@@ -1526,8 +1541,9 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
   /// prototypes. May be some special pass should be added to insert such
   /// metadata.
   MDNode *MD = Callee ? Callee->getSubprogram() : nullptr;
+  DILocation *Loc = CS ? CS->getDebugLoc().get() : nullptr;
   auto Flags = CS ? DIUnknownMemory::Call : DIUnknownMemory::NoFlags;
-  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Flags);
+  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, Flags);
   DIM->bindValue(&V);
   DIM->setProperties(P);
   return DIM;
