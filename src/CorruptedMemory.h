@@ -13,6 +13,7 @@
 
 #include "tsar_data_flow.h"
 #include "DIEstimateMemory.h"
+#include "DIMemoryHandle.h"
 #include "EstimateMemory.h"
 #include "SpanningTreeRelation.h"
 #include "tsar_dbg_output.h"
@@ -102,7 +103,8 @@ private:
 /// memory locations.
 class CorruptedMemoryResolver {
   /// Set of memory locations.
-  using DIMemorySet = llvm::DenseSet<tsar::DIMemoryLocation>;
+  using DIMemorySet =
+    llvm::DenseMap<tsar::DIMemoryLocation, AssertingDIMemoryHandle<DIMemory>>;
 
 public:
   /// Map from a variable to its fragments.
@@ -301,6 +303,13 @@ public:
     return M;
   }
 
+  /// Returns memory location which has represented a specified promoted
+  /// location before promotion.
+  DIMemory * beforePromotion(const DIMemoryLocation &Loc) {
+    auto Itr = mSmallestFragments.find(Loc);
+    return (Itr != mSmallestFragments.end()) ? Itr->second : nullptr;
+  }
+
   /// Determines insertion hints for nodes containing promoted and corrupted
   /// memory locations.
   void resolve();
@@ -422,7 +431,7 @@ private:
     llvm::dbgs() << "[DI ALIAS TREE]: safely promoted candidates ";
     for (auto &Loc : mSmallestFragments)
       printDILocationSource(
-        *getLanguage(*mFunc), Loc, llvm::dbgs()), llvm::dbgs() << " ";
+        *getLanguage(*mFunc), Loc.first, llvm::dbgs()), llvm::dbgs() << " ";
     llvm::dbgs() << "\n";
   }
 

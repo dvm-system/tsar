@@ -726,6 +726,9 @@ public:
       auto &DIM = mDIAT->addNewNode(
         DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments.front()),
         *Parent);
+      if (auto M = mCMR->beforePromotion(
+            DIMemoryLocation(mVar, mSortedFragments.front())))
+        M->replaceAllUsesWith(&DIM);
       DIM.setProperties(DIMemory::Explicit);
       return;
     }
@@ -761,6 +764,9 @@ private:
       auto &DIM = mDIAT->addNewNode(
         DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I]),
         *Parent);
+      if (auto M = mCMR->beforePromotion(
+            DIMemoryLocation(mVar, mSortedFragments[I])))
+        M->replaceAllUsesWith(&DIM);
       DIM.setProperties(DIMemory::Explicit);
     }
   }
@@ -1133,7 +1139,7 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
     }
     auto VarFragments = mVarToFragments.try_emplace(Loc.Var, Loc.Expr);
     if (VarFragments.second) {
-      mSmallestFragments.insert(std::move(Loc));
+      mSmallestFragments.try_emplace(std::move(Loc), nullptr);
       continue;
     }
     // Empty list of fragments means that this variable should be ignore due
@@ -1154,7 +1160,7 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
     }())
       continue;
     VarFragments.first->get<DIExpression>().push_back(Loc.Expr);
-    mSmallestFragments.insert(std::move(Loc));
+    mSmallestFragments.try_emplace(std::move(Loc), nullptr);
   }
 }
 
@@ -1357,6 +1363,7 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
         continue;
       NewM->bindValue(VH);
     }
+    M->replaceAllUsesWith(NewM.get());
     Item->push(std::move(NewM));
   }
   return Item;
@@ -1380,10 +1387,12 @@ void CorruptedMemoryResolver::updateWorkLists(
     if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
       DIMemoryLocation Loc(
         DIEM->getVariable(), DIEM->getExpression(), DIEM->isTemplate());
-      if (mSmallestFragments.count(Loc)) {
+      auto FragmentItr = mSmallestFragments.find(Loc);
+      if (FragmentItr != mSmallestFragments.end()) {
         if (Binding == DIMemory::Destroyed ||
             Binding == DIMemory::Empty) {
           Info.PromotedWL.push_back(Loc);
+          FragmentItr->second = DIEM;
           continue;
         } else {
           DEBUG(corruptedFoundLog(M));
@@ -1424,6 +1433,9 @@ void CorruptedMemoryResolver::updateWorkLists(
 }
 
 bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
+  assert(M.getBinding() == DIMemory::Consistent &&
+    "Inconsistent memory is always corrupted and can not be the same after rebuild!");
+  DIMemory *RAUWd = nullptr;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
@@ -1440,13 +1452,21 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
+    assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
+      "Different estimate memory locations produces the same debug-level memory!");
+    RAUWd = Cashed.first->second.get();
   }
+  assert(RAUWd && "Must not be null for consistent memory location!");
+  M.replaceAllUsesWith(RAUWd);
   return true;
 }
 
 bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
+  assert(M.getBinding() == DIMemory::Consistent &&
+    "Inconsistent memory is always corrupted and can not be the same after rebuild!");
   if (M.isDistinct())
     return false;
+  DIMemory *RAUWd = nullptr;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
@@ -1460,7 +1480,12 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
     DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
+    assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
+      "Different estimate memory locations produces the same debug-level memory!");
+    RAUWd = Cashed.first->second.get();
   }
+  assert(RAUWd && "Must not be null for consistent memory location!");
+  M.replaceAllUsesWith(RAUWd);
   return true;
 }
 
@@ -1620,40 +1645,44 @@ ImmutablePass * llvm::createDIMemoryEnvironmentStorage() {
 bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &EnvWrapper = getAnalysis<DIMemoryEnvironmentWrapper>();
-  if (!EnvWrapper) {
-    mDIAliasTree = nullptr;
+  mDIAliasTree = nullptr;
+  if (!EnvWrapper)
     return false;
-  }
   auto &Env = *EnvWrapper;
   auto &DL = F.getParent()->getDataLayout();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  CorruptedMemoryResolver CMR(F, &DL, &DT, Env[F], &AT);
-  CMR.resolve();
-  mDIAliasTree = Env.reset(F, make_unique<DIAliasTree>(F));
-  CorruptedMap CorruptedNodes;
-  DEBUG(dbgs() <<
-    "[DI ALIAS TREE]: add distinct unknown nodes for corrupted memory\n");
-  for (size_t Idx = 0,IdxE = CMR.distinctUnknownNum(); Idx < IdxE; ++Idx)
-    addCorruptedNode(*mDIAliasTree, CMR.distinctUnknown(Idx),
-      mDIAliasTree->getTopLevelNode(), CorruptedNodes);
-  for (auto &VToF : CMR.getFragments()) {
-    if (VToF.get<DIExpression>().empty())
-      continue;
-    DIAliasTreeBuilder Builder(*mDIAliasTree, F.getContext(), Env,
-      CMR, CorruptedNodes, VToF.get<DIVariable>(), VToF.get<DIExpression>());
-    Builder.buildSubtree();
+  auto NewDIAT = make_unique<DIAliasTree>(F);
+  {
+    // This scope is necessary to drop of memory asserting handles in CMR
+    // before previous alias tree destruction.
+    CorruptedMemoryResolver CMR(F, &DL, &DT, Env[F], &AT);
+    CMR.resolve();
+    CorruptedMap CorruptedNodes;
+    DEBUG(dbgs() <<
+      "[DI ALIAS TREE]: add distinct unknown nodes for corrupted memory\n");
+    for (size_t Idx = 0, IdxE = CMR.distinctUnknownNum(); Idx < IdxE; ++Idx)
+      addCorruptedNode(*NewDIAT, CMR.distinctUnknown(Idx),
+        NewDIAT->getTopLevelNode(), CorruptedNodes);
+    for (auto &VToF : CMR.getFragments()) {
+      if (VToF.get<DIExpression>().empty())
+        continue;
+      DIAliasTreeBuilder Builder(*NewDIAT, F.getContext(), Env,
+        CMR, CorruptedNodes, VToF.get<DIVariable>(), VToF.get<DIExpression>());
+      Builder.buildSubtree();
+    }
+    auto RootOffsets = findLocationToInsert(AT, DL);
+    DEBUG(dbgs() <<
+      "[DI ALIAS TREE]: use an existing alias tree to add new nodes\n");
+    DEBUG(constantOffsetLog(RootOffsets.begin(), RootOffsets.end(), DT));
+    buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, *NewDIAT,
+      *AT.getTopLevelNode(), *NewDIAT->getTopLevelNode(), CorruptedNodes);
   }
-  auto RootOffsets = findLocationToInsert(AT, DL);
-  DEBUG(dbgs() <<
-    "[DI ALIAS TREE]: use an existing alias tree to add new nodes\n");
-  DEBUG(constantOffsetLog(RootOffsets.begin(), RootOffsets.end(), DT));
-  buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, *mDIAliasTree,
-    *AT.getTopLevelNode(), *mDIAliasTree->getTopLevelNode(), CorruptedNodes);
-  std::vector<Metadata *> MemoryNodes(mDIAliasTree->memory_size());
-  std::transform(mDIAliasTree->memory_begin(), mDIAliasTree->memory_end(),
+  std::vector<Metadata *> MemoryNodes(NewDIAT->memory_size());
+  std::transform(NewDIAT->memory_begin(), NewDIAT->memory_end(),
     MemoryNodes.begin(), [](DIMemory &EM) { return EM.getAsMDNode(); });
   auto AliasTreeMDKind = F.getContext().getMDKindID("alias.tree");
   auto MD = MDNode::get(F.getContext(), MemoryNodes);
   F.setMetadata(AliasTreeMDKind, MD);
+  mDIAliasTree = Env.reset(F, std::move(NewDIAT));
   return false;
 }
