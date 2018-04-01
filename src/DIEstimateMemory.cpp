@@ -67,7 +67,10 @@ void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     if (!VH || isa<llvm::UndefValue>(VH))
       continue;
     auto EM = AT.find(MemoryLocation(VH, DIEM.getSize()));
-    assert(EM && "Estimate memory must be presented in the alias tree!");
+    // Memory becomes unused after transformation and does not presented in
+    // the alias tree.
+    if (!EM)
+      continue;
     Nodes.insert(EM->getAliasNode(AT));
   }
 }
@@ -82,8 +85,13 @@ void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
       N = AT.findUnknown(cast<Instruction>(*VH));
     if (!N) {
       auto EM = AT.find(MemoryLocation(VH, 0));
-      assert(EM && "Estimate memory must be presented in the alias tree!");
-      N = EM->getAliasNode(AT);
+      // Memory becomes unused after transformation and does not presented in
+      // the alias tree.
+      if (!EM)
+        continue;
+      // We use this conservative assumption because the real size of memory
+      // is unknown.
+      N = AT.getTopLevelNode();
     }
     assert(N && "Unknown memory must be presented in the alias tree!");
     Nodes.insert(N);
@@ -1257,9 +1265,11 @@ void CorruptedMemoryResolver::aliasTreeBasedHint(
     using NodeItr = bcl::IteratorDataAdaptor<
       SmallPtrSetImpl<AliasNode *>::iterator,
       AliasTree *, GraphTraits<Inverse<AliasTree *>>::NodeRef>;
-    AliasNode *LCA = *findLCA(AliasSTR,
-      NodeItr{ Info.NodesWL.begin(), mAT },
-      NodeItr{ Info.NodesWL.end(), mAT });
+    AliasNode *LCA = Info.NodesWL.count(mAT->getTopLevelNode()) ?
+      mAT->getTopLevelNode() :
+      *findLCA(AliasSTR,
+        NodeItr{ Info.NodesWL.begin(), mAT },
+        NodeItr{ Info.NodesWL.end(), mAT });
     if (Info.ParentOfUnknown) {
       switch (AliasSTR.compare(Info.ParentOfUnknown, LCA)) {
       default:
@@ -1286,8 +1296,9 @@ void CorruptedMemoryResolver::aliasTreeBasedHint(
     Item = copyToCorrupted(Info.CorruptedWL, *Info.Items.begin());
   } else {
     auto P = *Info.NodesWL.begin();
-    while(P->getParent(*mAT) != Info.ParentOfUnknown)
-      P = P->getParent(*mAT);
+    if (P != mAT->getTopLevelNode())
+      while(P->getParent(*mAT) != Info.ParentOfUnknown)
+        P = P->getParent(*mAT);
     auto Pair = mChildOfUnknown.try_emplace(P);
     Item = Pair.first->second = copyToCorrupted(
         Info.CorruptedWL, Pair.second ? nullptr : Pair.first->second);

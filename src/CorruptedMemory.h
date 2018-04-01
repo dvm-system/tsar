@@ -372,7 +372,8 @@ private:
   /// a child of P to list To.
   void mergeChild(CorruptedMemoryItem *To, AliasNode *P, AliasNode *N) {
     auto Parent = N;
-    for (; Parent->getParent(*mAT) != P; Parent = Parent->getParent(*mAT));
+    if (Parent != mAT->getTopLevelNode())
+      for (; Parent->getParent(*mAT) != P; Parent = Parent->getParent(*mAT));
     merge(To, Parent);
   }
 
