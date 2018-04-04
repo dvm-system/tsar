@@ -57,10 +57,17 @@ typedef llvm::DenseMap<llvm::Function *,
   std::set<clang::SourceLocation> & getReturn() {
     return mReturnStmt;
   }
+  void setGoto(std::set<clang::SourceLocation> Goto) {
+    mGotoStmt = Goto;
+  }
+  std::set<clang::SourceLocation> & getGoto() {
+    return mGotoStmt;
+  }
 private:
   std::set<Attr> mAttrs;
   std::set<clang::SourceLocation> mBreakStmt;
   std::set<clang::SourceLocation> mReturnStmt;
+  std::set<clang::SourceLocation> mGotoStmt;
   CalleeFuncLoc mCalleeFuncLoc;
 };
 }

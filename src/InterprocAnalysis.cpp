@@ -69,6 +69,7 @@ namespace {
     std::vector<CallExpr *> VecCallExpr;
     std::vector<BreakStmt *> VecBreakStmt;
     std::vector<ReturnStmt *> VecReturnStmt;
+    std::vector<GotoStmt *> VecGotoStmt;
     std::set<Function *> SetCalleeFunc;
     std::set<Stmt::StmtClass> SetLoopStmt = {
       Stmt::StmtClass::ForStmtClass,
@@ -78,6 +79,7 @@ namespace {
     clang::getStmtTypeFromStmtTree(S, VecCallExpr);
     clang::getStmtTypeFromStmtTree(S, VecBreakStmt, SetLoopStmt);
     clang::getStmtTypeFromStmtTree(S, VecReturnStmt);
+    clang::getStmtTypeFromStmtTree(S, VecGotoStmt);
     for (auto CE : VecCallExpr)
       SetCalleeFunc.insert(M.getFunction(CE->getDirectCallee()->getName()));
     for (auto CF : SetCalleeFunc) {
@@ -98,6 +100,14 @@ namespace {
       for (auto RS : VecReturnStmt)
         VSL.insert(RS->getReturnLoc());
       IEI.setReturn(VSL);
+    }
+    if (!VecGotoStmt.empty()) {
+      std::set<clang::SourceLocation> VSL;
+      for (auto GS : VecGotoStmt)
+        if (GS->getLabel()->getLocation() < S->getLocStart() ||
+            S->getLocEnd() < GS->getLabel()->getLocation())
+          VSL.insert(GS->getGotoLoc());
+      IEI.setGoto(VSL);
     }
     setFuncLoc(VecCallExpr, SetCalleeFunc, IEI);
     IALI.insert(std::make_pair(S, IEI));
