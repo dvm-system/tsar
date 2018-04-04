@@ -382,8 +382,15 @@ std::string answerStatistic(llvm::PrivateServerPass * const PSP,
   Stat[msg::Statistic::Variables].insert(
     std::make_pair(msg::Analysis::No, MMP->UnmatchedAST.size()));
   std::pair<unsigned, unsigned> Loops(0, 0);
+  auto &SrcMgr = TfmCtx->getContext().getSourceManager();
   for (Function &F : M) {
     if (F.empty())
+      continue;
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    if (!Decl)
+      continue;
+    if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
+        != clang::SrcMgr::C_User)
       continue;
     ++Stat[msg::Statistic::Functions];
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
@@ -565,6 +572,9 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     if (!Decl)
       continue;
     auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+    if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
+        != clang::SrcMgr::C_User)
+      continue;
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
@@ -637,6 +647,15 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::Name] = "return";
           for (auto Loc : IEI.getReturn())
+            Func[msg::CalleeFuncInfo::Locations].
+                push_back(getLocation(Loc, SrcMgr));
+          CalleeFuncList[msg::CalleeFuncList::Functions].
+              push_back(std::move(Func));
+        }
+        if (!IEI.getGoto().empty()) {
+          msg::CalleeFuncInfo Func;
+          Func[msg::CalleeFuncInfo::Name] = "goto";
+          for (auto Loc : IEI.getGoto())
             Func[msg::CalleeFuncInfo::Locations].
                 push_back(getLocation(Loc, SrcMgr));
           CalleeFuncList[msg::CalleeFuncList::Functions].
