@@ -137,11 +137,22 @@ public:
     return mRSs;
   }
 
+  bool isSingleReturn() const {
+    return mIsSingleReturn;
+  }
+
+  void setSingleReturn(bool isSingleReturn) {
+    mIsSingleReturn = isSingleReturn;
+    return;
+  }
+
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
   const clang::FunctionDecl* mFuncDecl;
   std::map<clang::ParmVarDecl*, std::vector<clang::DeclRefExpr*>> mParmRefs;
   std::vector<clang::ReturnStmt*> mRSs;
+
+  bool mIsSingleReturn;
 };
 
 /// Represents one specific place in user source code where one of specified

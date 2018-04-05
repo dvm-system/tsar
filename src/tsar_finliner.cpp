@@ -222,8 +222,10 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
   // which can be inlined
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
+  //CFG->dump(mContext.getLangOpts(), true);
   assert(CFG.get() != nullptr && ("CFG construction failed for "
     + mCurrentFD->getName()).str().data());
+  mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
   auto isSubStmt = [this](const clang::Stmt* P, const clang::Stmt* S) -> bool {
     clang::SourceLocation beginP
       = getLoc(P->getSourceRange().getBegin());
@@ -482,20 +484,27 @@ std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
         identifier, context, std::map<std::string, std::string>());
     ret = join(tokens, " ") + ";";
     for (auto& RS : returnStmts) {
-      std::string text = "{" + identifier + " = "
-        + lRewriter.getRewrittenText(getRange(RS->getRetValue()))
-        + ";goto " + retLab + ";}";
+      std::string text = identifier + " = "
+        + lRewriter.getRewrittenText(getRange(RS->getRetValue())) + ";";
+      if (!TI.mTemplate->isSingleReturn()) {
+        text += "goto " + retLab + ";";
+        text = "{" + text + "}";
+      }
       lRewriter.ReplaceText(getRange(RS), text);
     }
     lRewriter.ReplaceText(getRange(TI.mCallExpr), identifier);
   } else {
-    for (auto& RS : returnStmts) {
-      lRewriter.ReplaceText(getRange(RS), "goto " + retLab);
+    if (!TI.mTemplate->isSingleReturn()) {
+      for (auto& RS : returnStmts) {
+        lRewriter.ReplaceText(getRange(RS), "goto " + retLab);
+      }
     }
   }
   std::string text = lRewriter.getRewrittenText(
-    getRange(TI.mTemplate->getFuncDecl()->getBody()))
-    + retLab + ":;";
+    getRange(TI.mTemplate->getFuncDecl()->getBody()));
+  if (!TI.mTemplate->isSingleReturn()) {
+    text += retLab + ":;";
+  }
   text.insert(std::begin(text) + 1, std::begin(params), std::end(params));
   text.insert(std::begin(text), std::begin(ret), std::end(ret));
   return {text, identifier, AllExtRefs};
