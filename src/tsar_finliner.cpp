@@ -225,7 +225,42 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
   //CFG->dump(mContext.getLangOpts(), true);
   assert(CFG.get() != nullptr && ("CFG construction failed for "
     + mCurrentFD->getName()).str().data());
+  
+  auto isPred = [this](const clang::CFGBlock* BL, const clang::CFGBlock* BR) -> bool {
+    for (auto B : BR->preds()) {
+      if (B == BL) {
+        return true;
+      }
+    }
+    return false;
+  };
+  std::set<const clang::CFGBlock*> reachableBlocks;
+  reachableBlocks.insert(&CFG->getEntry());
+  bool changed = true;
+  while (changed) {
+    auto newReachableBlocks(reachableBlocks);
+    for (auto RB : reachableBlocks) {
+      for (auto B : *CFG) {
+        if (isPred(RB, B)) {
+          newReachableBlocks.insert(B);
+        }
+      }
+    }
+    reachableBlocks.swap(newReachableBlocks);
+    changed = reachableBlocks != newReachableBlocks;
+  }
+  for (auto B : *CFG) {
+    if (reachableBlocks.find(B) == std::end(reachableBlocks)) {
+      for (auto I : *B) {
+        if (llvm::Optional<clang::CFGStmt> CS = I.getAs<clang::CFGStmt>()) {
+          mUnreachableStmts[mCurrentFD].insert(CS->getStmt());
+        }
+      }
+    }
+  }
   mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
+  mTs[mCurrentFD].setFuncDecl(mCurrentFD);
+
   auto isSubStmt = [this](const clang::Stmt* P, const clang::Stmt* S) -> bool {
     clang::SourceLocation beginP
       = getLoc(P->getSourceRange().getBegin());
@@ -249,8 +284,21 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
             continue;
           }
           mTs[definition].setFuncDecl(definition);
-          auto B(B);
           const clang::Stmt* P = S;
+          for (auto I2 = I1 + 1; I2 != B->end(); ++I2) {
+            if (llvm::Optional<clang::CFGStmt> CS = I2->getAs<clang::CFGStmt>()) {
+              if (isSubStmt(P, CS->getStmt())) {
+                P = CS->getStmt();
+              }
+            }
+          }
+          for (auto B : B->succs()) {
+            if (S = B->getTerminator()) {
+              if (clang::isa<clang::ForStmt>(S) && isSubStmt(P, S)) {
+                P = S;
+              }
+            }
+          }
           bool inCondOp = false;
           while (true) {
             S = P;
@@ -260,21 +308,11 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
                   = I1->getAs<clang::CFGStmt>()) {
                   if (isSubStmt(P, CS->getStmt())) {
                     P = CS->getStmt();
-                    B = *B1;
                     // check if we are in ternary if
                     if (clang::isa<clang::ConditionalOperator>(CS->getStmt())) {
                       inCondOp = true;
                     }
                   }
-                }
-              }
-            }
-            // all sections of for-loop are placed in different blocks
-            // initial section is referenced by stmt in successor blocks
-            for (auto B1 = CFG->begin(); B1 != CFG->end(); ++B1) {
-              if (const clang::Stmt* S = (*B1)->getTerminator()) {
-                if (isSubStmt(P, S)) {
-                  P = S;
                 }
               }
             }
@@ -387,15 +425,44 @@ std::vector<std::string> FInliner::construct(
   return tokens;
 }
 
-std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
+std::pair<std::string, std::string> FInliner::compile(
   const TemplateInstantiation& TI, const std::vector<std::string>& args,
   std::set<std::string>& decls) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == args.size()
     && "Undefined behavior: incorrect number of arguments specified");
-  clang::Rewriter lRewriter(mSourceManager, mRewriter.getLangOpts());
+  // smart buffer
+  std::string canvas(getSourceText(getRange(TI.mTemplate->getFuncDecl()->getBody())));
+  std::vector<unsigned int> mapping(canvas.size());
+  std::iota(std::begin(mapping), std::end(mapping), 0);
+  unsigned int base = getRange(TI.mTemplate->getFuncDecl()->getBody()).getBegin().getRawEncoding();
+  auto get = [&](const clang::SourceRange& SR) -> std::string {
+    unsigned int begin = mapping[SR.getBegin().getRawEncoding() - base];
+    unsigned int end = mapping[SR.getBegin().getRawEncoding() + getSourceText(SR).size() - base];
+    return canvas.substr(begin, end - begin);
+  };
+  auto update = [&](const clang::SourceRange& SR, std::string value) -> void {
+    unsigned int mbegin = SR.getBegin().getRawEncoding() - base;
+    unsigned int mend = SR.getBegin().getRawEncoding() + getSourceText(SR).size() - base;
+    unsigned int begin = mapping[mbegin];
+    unsigned int end = mapping[mend];
+    if (end - begin == value.size()) {
+      canvas.replace(begin, end - begin, value);
+    } else if (end - begin < value.size()) {
+      for (auto i = mend; i < mapping.size(); ++i) {
+        mapping[i] += value.size() - (end - begin);
+      }
+      canvas.replace(begin, end - begin, value);
+    } else {
+      for (auto i = mend; i < mapping.size(); ++i) {
+        mapping[i] -= (end - begin) - value.size();
+      }
+      canvas.replace(begin, end - begin, value);
+    }
+    return;
+  };
+
   std::string params;
   std::string context;
-  std::set<std::string> AllExtRefs(mExtIdentifiers[TI.mTemplate->getFuncDecl()]);
   // effective context construction
   auto init_context = [&]() {
     context = "";
@@ -424,7 +491,7 @@ std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
       parameterReferences.insert(std::end(parameterReferences), getRange(DRE));
     }
     for (auto& SR : parameterReferences) {
-      lRewriter.ReplaceText(SR, identifier);
+      update(SR, identifier);
     }
   }
 
@@ -439,43 +506,46 @@ std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
         || TI.mTemplate->getFuncDecl() == nullptr) {
         continue;
       }
+      if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
+        != std::end(mUnreachableStmts[TI.mFuncDecl])) {
+        continue;
+      }
       std::vector<std::string> args(TI.mCallExpr->getNumArgs());
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
         std::begin(args),
         [&](const clang::Expr* arg) -> std::string {
-        return lRewriter.getRewrittenText(getRange(arg));
+        return get(getRange(arg));
       });
-      std::tuple<std::string, std::string, std::set<std::string>> text
+      std::pair<std::string, std::string> text
         = compile(TI, args, decls);
-      auto Body = std::get<0>(text);
-      auto Result = std::get<1>(text);
-      auto ExtRefs = std::get<2>(text);
-      AllExtRefs.insert(std::begin(ExtRefs), std::end(ExtRefs));
-      if (Result.size() == 0) {
-        Body.insert(std::begin(Body), '{');
-        lRewriter.ReplaceText(getRange(TI.mStmt), Body);
-        lRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
-          ";}");
+      if (text.second.size() == 0) {
+        text.first = "{" + text.first + ";}";
       } else {
-        if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
-          Body.insert(std::begin(Body), '{');
-          lRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
-            ";}");
-        }
-        lRewriter.ReplaceText(getRange(TI.mCallExpr), Result);
-        lRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
-          Body);
+        update(getRange(TI.mCallExpr), text.second);
+        text.first += get(getRange(TI.mStmt));
+        text.first = requiresBraces(TI.mFuncDecl, TI.mStmt) ? "{" + text.first + ";}" : text.first;
       }
-      lRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
-        "/* " + getSourceText(getRange(TI.mCallExpr))
-        + " is inlined below */\n");
+      update(getRange(TI.mStmt), "/* " + get(getRange(TI.mCallExpr))
+        + " is inlined below */\n" + text.first);
     }
   }
+
+  std::set<const clang::ReturnStmt*> retStmts(TI.mTemplate->getRetStmts());
+  std::set<const clang::ReturnStmt*> unreachableRetStmts;
+  std::set<const clang::ReturnStmt*> reachableRetStmts;
+  for (auto S : mUnreachableStmts[TI.mTemplate->getFuncDecl()]) {
+    if (const clang::ReturnStmt* RS = clang::dyn_cast<clang::ReturnStmt>(S)) {
+      unreachableRetStmts.insert(RS);
+    }
+  }
+  std::set_difference(std::begin(retStmts), std::end(retStmts),
+    std::begin(unreachableRetStmts), std::end(unreachableRetStmts),
+    std::inserter(reachableRetStmts, std::end(reachableRetStmts)));
+  bool isSingleReturn = TI.mTemplate->isSingleReturn() && reachableRetStmts.size() < 2;
 
   std::string identifier;
   std::string ret;
   std::string retLab = addSuffix("L", decls);
-  std::vector<clang::ReturnStmt*> returnStmts = TI.mTemplate->getRetStmts();
   if (TI.mTemplate->getFuncDecl()->getReturnType()->isVoidType() == false) {
     identifier = addSuffix("R", decls);
     init_context();
@@ -483,31 +553,29 @@ std::tuple<std::string, std::string, std::set<std::string>> FInliner::compile(
       = construct(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
         identifier, context, std::map<std::string, std::string>());
     ret = join(tokens, " ") + ";";
-    for (auto& RS : returnStmts) {
-      std::string text = identifier + " = "
-        + lRewriter.getRewrittenText(getRange(RS->getRetValue())) + ";";
-      if (!TI.mTemplate->isSingleReturn()) {
+    for (auto& RS : reachableRetStmts) {
+      std::string text = identifier + " = " + get(getRange(RS->getRetValue())) + ";";
+      if (!isSingleReturn) {
         text += "goto " + retLab + ";";
         text = "{" + text + "}";
       }
-      lRewriter.ReplaceText(getRange(RS), text);
+      update(getRange(RS), text);
     }
-    lRewriter.ReplaceText(getRange(TI.mCallExpr), identifier);
   } else {
-    if (!TI.mTemplate->isSingleReturn()) {
-      for (auto& RS : returnStmts) {
-        lRewriter.ReplaceText(getRange(RS), "goto " + retLab);
-      }
+    std::string s(isSingleReturn ? "" : ("goto " + retLab));
+    for (auto& RS : reachableRetStmts) {
+      update(getRange(RS), s);
     }
   }
-  std::string text = lRewriter.getRewrittenText(
-    getRange(TI.mTemplate->getFuncDecl()->getBody()));
-  if (!TI.mTemplate->isSingleReturn()) {
-    text += retLab + ":;";
+  for (auto RS : unreachableRetStmts) {
+    update(getRange(RS), "\n#if 0\n" + get(getRange(RS)) +"\n#endif\n");
   }
-  text.insert(std::begin(text) + 1, std::begin(params), std::end(params));
-  text.insert(std::begin(text), std::begin(ret), std::end(ret));
-  return {text, identifier, AllExtRefs};
+  if (!isSingleReturn) {
+    canvas += retLab + ":;";
+  }
+  canvas.insert(std::begin(canvas) + 1, std::begin(params), std::end(params));
+  canvas.insert(std::begin(canvas), std::begin(ret), std::end(ret));
+  return {canvas, identifier};
 }
 
 std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
@@ -751,7 +819,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // all constraint checkers
   auto UnusedTemplateChecker = [&](const Template& T) -> std::string {
     return callable.find(T.getFuncDecl()) == std::end(callable)
-      ? "Unused template for function \"" + T.getFuncDecl()->getName().str() + "\n" : "";
+      ? "Unused template for function \"" + T.getFuncDecl()->getName().str() + "\"\n" : "";
   };
   auto UserDefTChecker = [&](const Template& T) -> std::string {
     std::string Result;
@@ -985,9 +1053,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto& TIs : mTIs) {
     auto pr = [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
       -> bool {
-      return lhs.first == TIs.first;
+      return TIs.first == lhs.first && lhs.second.getFuncDecl() == nullptr;
     };
-    if (std::find_if(std::begin(mTs), std::end(mTs), pr) == std::end(mTs)) {
+    if (std::find_if(std::begin(mTs), std::end(mTs), pr) != std::end(mTs)) {
       for (auto& TI : TIs.second) {
         if (TI.mTemplate == nullptr
           || TI.mTemplate->getFuncDecl() == nullptr) {
@@ -1001,30 +1069,18 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
           return mRewriter.getRewrittenText(getRange(arg));
         });
         fDecls.insert(std::begin(args), std::end(args));
-        std::tuple<std::string, std::string, std::set<std::string>> text
+        std::pair<std::string, std::string> text
           = compile(TI, args, fDecls);
-        auto Body = std::get<0>(text);
-        auto Result = std::get<1>(text);
-        auto ExtRefs = std::get<2>(text);
-
-        if (Result.size() == 0) {
-          Body.insert(std::begin(Body), '{');
-          mRewriter.ReplaceText(getRange(TI.mStmt), Body);
-          mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
-            ";}");
+        if (text.second.size() == 0) {
+          text.first = "{" + text.first + ";}";
         } else {
-          if (requiresBraces(TI.mFuncDecl, TI.mStmt) == true) {
-            Body.insert(std::begin(Body), '{');
-            mRewriter.InsertTextAfterToken(getRange(TI.mStmt).getEnd(),
-              ";}");
-          }
-          mRewriter.ReplaceText(getRange(TI.mCallExpr), Result);
-          mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
-            Body);
+          mRewriter.ReplaceText(getRange(TI.mCallExpr), text.second);
+          text.first += mRewriter.getRewrittenText(getRange(TI.mStmt));
+          text.first = requiresBraces(TI.mFuncDecl, TI.mStmt) ? "{" + text.first + ";}" : text.first;
         }
-        mRewriter.InsertTextBefore(getRange(TI.mStmt).getBegin(),
+        mRewriter.ReplaceText(getRange(TI.mStmt),
           "/* " + getSourceText(getRange(TI.mCallExpr))
-          + " is inlined below */\n");
+          + " is inlined below */\n" + text.first);
       }
     }
   }

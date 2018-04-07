@@ -110,30 +110,30 @@ public:
     return;
   }
 
-  void addParmRef(clang::ParmVarDecl* PVD, clang::DeclRefExpr* DRE) {
+  void addParmRef(const clang::ParmVarDecl* PVD, const clang::DeclRefExpr* DRE) {
     mParmRefs[PVD].push_back(DRE);
     return;
   }
 
-  std::vector<clang::DeclRefExpr*> getParmRefs(clang::ParmVarDecl* PVD) const {
-    auto pr = [PVD](const std::pair<clang::ParmVarDecl*,
-      std::vector<clang::DeclRefExpr*>>&lhs) -> bool {
+  std::vector<const clang::DeclRefExpr*> getParmRefs(const clang::ParmVarDecl* PVD) const {
+    auto pr = [PVD](const std::pair<const clang::ParmVarDecl*,
+      std::vector<const clang::DeclRefExpr*>>&lhs) -> bool {
       return lhs.first == PVD;
     };
     if (std::find_if(std::begin(mParmRefs), std::end(mParmRefs), pr)
       == std::end(mParmRefs)) {
-      return std::vector<clang::DeclRefExpr*>();
+      return std::vector<const clang::DeclRefExpr*>();
     } else {
       return mParmRefs.at(PVD);
     }
   }
 
-  void addRetStmt(clang::ReturnStmt* RS) {
-    mRSs.push_back(RS);
+  void addRetStmt(const clang::ReturnStmt* RS) {
+    mRSs.insert(RS);
     return;
   }
 
-  std::vector<clang::ReturnStmt*> getRetStmts() const {
+  std::set<const clang::ReturnStmt*> getRetStmts() const {
     return mRSs;
   }
 
@@ -149,8 +149,8 @@ public:
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
   const clang::FunctionDecl* mFuncDecl;
-  std::map<clang::ParmVarDecl*, std::vector<clang::DeclRefExpr*>> mParmRefs;
-  std::vector<clang::ReturnStmt*> mRSs;
+  std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>> mParmRefs;
+  std::set<const clang::ReturnStmt*> mRSs;
 
   bool mIsSingleReturn;
 };
@@ -218,7 +218,7 @@ private:
   /// collects all visible and newly created named declarations in \p decls
   /// to avoid later possible collisions.
   /// \returns text of instantiated function body and result identifier
-  std::tuple<std::string, std::string, std::set<std::string>> compile(
+  std::pair<std::string, std::string> compile(
     const ::detail::TemplateInstantiation& TI,
     const std::vector<std::string>& args,
     std::set<std::string>& decls);
@@ -323,7 +323,7 @@ private:
   std::map<const clang::FunctionDecl*, std::set<std::string>> mExtIdentifiers, mIntIdentifiers;
   std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
   std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>> mForwardDecls;
-
+  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>> mUnreachableStmts;
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;
 
   std::map<const clang::FunctionDecl*, ::detail::Template> mTs;
