@@ -59,7 +59,8 @@ struct FunctionInlineInfo : private bcl::Uncopyable {
 }
 
 namespace llvm {
-using FunctionInlinerImmutableWrapper = AnalysisWrapperPass<tsar::FunctionInlineInfo>;
+using FunctionInlinerImmutableWrapper
+  = AnalysisWrapperPass<tsar::FunctionInlineInfo>;
 
 class FunctionInlinerImmutableStorage :
   public ImmutablePass, private bcl::Uncopyable {
@@ -110,17 +111,19 @@ public:
     return;
   }
 
-  void addParmRef(const clang::ParmVarDecl* PVD, const clang::DeclRefExpr* DRE) {
+  void addParmRef(const clang::ParmVarDecl* PVD,
+    const clang::DeclRefExpr* DRE) {
     mParmRefs[PVD].push_back(DRE);
     return;
   }
 
-  std::vector<const clang::DeclRefExpr*> getParmRefs(const clang::ParmVarDecl* PVD) const {
-    auto pr = [PVD](const std::pair<const clang::ParmVarDecl*,
+  std::vector<const clang::DeclRefExpr*> getParmRefs(
+    const clang::ParmVarDecl* PVD) const {
+    auto isPVDRef = [PVD](const std::pair<const clang::ParmVarDecl*,
       std::vector<const clang::DeclRefExpr*>>&lhs) -> bool {
       return lhs.first == PVD;
     };
-    if (std::find_if(std::begin(mParmRefs), std::end(mParmRefs), pr)
+    if (std::find_if(std::begin(mParmRefs), std::end(mParmRefs), isPVDRef)
       == std::end(mParmRefs)) {
       return std::vector<const clang::DeclRefExpr*>();
     } else {
@@ -149,7 +152,8 @@ public:
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
   const clang::FunctionDecl* mFuncDecl;
-  std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>> mParmRefs;
+  std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>>
+    mParmRefs;
   std::set<const clang::ReturnStmt*> mRSs;
 
   bool mIsSingleReturn;
@@ -201,33 +205,36 @@ public:
   void HandleTranslationUnit(clang::ASTContext& Context);
 
 private:
-  /// Constructs correct language declaration of \p identifier with \p type
+  /// Constructs correct language declaration of \p Identifier with \p Type
   /// Uses bruteforce with linear complexity dependent on number of tokens
-  /// in \p type where token is non-whitespace character or special sequence.
-  /// \p context is a string containing declarations used in case of referencing
-  /// in \p type.
+  /// in \p Type where token is non-whitespace character or special sequence.
+  /// \p Context is a string containing declarations used in case of referencing
+  /// in \p Type.
   /// \returns vector of tokens which can be transformed to text string for
   /// insertion into source code
   /// SLOW!
   std::vector<std::string> construct(
-    const std::string& type, const std::string& identifier,
-    const std::string& context, std::map<std::string, std::string>& replacements);
+    const std::string& Type, const std::string& Identifier,
+    const std::string& Context,
+    std::map<std::string, std::string>& Replacements);
 
-  /// Does instantiation of \p TI using \p args generating non-collidable
+  /// Does instantiation of \p TI using \p Args generating non-collidable
   /// identifiers/labels if necessary. Since instantiation is recursive,
-  /// collects all visible and newly created named declarations in \p decls
+  /// collects all visible and newly created named declarations in \p Decls
   /// to avoid later possible collisions.
   /// \returns text of instantiated function body and result identifier
   std::pair<std::string, std::string> compile(
     const ::detail::TemplateInstantiation& TI,
-    const std::vector<std::string>& args,
-    std::set<std::string>& decls);
+    const std::vector<std::string>& Args,
+    std::set<std::string>& Decls);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
   /// get raw tokens (preserves order)
   std::vector<clang::Token> getRawTokens(const clang::SourceRange& SR) const;
 
+  /// get all identifiers which have declarations (names only)
+  /// traverses tag declarations
   std::set<std::string> getIdentifiers(const clang::Decl* D) const;
   std::set<std::string> getIdentifiers(const clang::TagDecl* TD) const;
 
@@ -272,32 +279,32 @@ private:
       if (!VD) {
         return;
       }
-      if (VD->getName() == identifier
-        && processor(VD->getType().getAsString()) == type) {
-        ++count;
+      if (VD->getName() == mIdentifier
+        && mProcessor(VD->getType().getAsString()) == mType) {
+        ++mCount;
       }
       return;
     }
-    void setParameters(const std::string& type, const std::string& identifier,
-      const std::function<std::string(const std::string&)>& processor) {
-      this->type = type;
-      this->identifier = identifier;
-      this->processor = processor;
+    void setParameters(const std::string& Type, const std::string& Identifier,
+      const std::function<std::string(const std::string&)>& Processor) {
+      mType = Type;
+      mIdentifier = Identifier;
+      mProcessor = Processor;
       return;
     }
     int getCount(void) const {
-      return count;
+      return mCount;
     }
     void initCount(void) {
-      this->count = 0;
+      mCount = 0;
       return;
     }
   private:
-    std::string type;
-    std::string identifier;
-    std::function<std::string(const std::string&)> processor;
-    int count;
-  } varDeclHandler;
+    std::string mType;
+    std::string mIdentifier;
+    std::function<std::string(const std::string&)> mProcessor;
+    int mCount;
+  } VarDeclHandler;
 
   // [C99 6.7.2, 6.7.3]
   const std::vector<std::string> mKeywords = { "register",
@@ -311,7 +318,6 @@ private:
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
   clang::Rewriter& mRewriter;
-  //clang::Preprocessor& mPreprocessor;
 
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD;
@@ -319,15 +325,37 @@ private:
   /// for statements - for detecting call expressions which can be inlined
   std::vector<const clang::Stmt*> mFSs;
 
+  /// globally declared names
   std::set<std::string> mGlobalIdentifiers;
-  std::map<const clang::FunctionDecl*, std::set<std::string>> mExtIdentifiers, mIntIdentifiers;
-  std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
-  std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>> mForwardDecls;
-  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>> mUnreachableStmts;
-  std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>> mExprs;
 
+  /// local/global referenced names per function
+  std::map<const clang::FunctionDecl*, std::set<std::string>>
+    mExtIdentifiers, mIntIdentifiers;
+
+  /// declarations with null parent DeclContext
+  /// to get all potential declarations of specific name
+  std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
+
+  /// external declarations per function
+  std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>>
+    mForwardDecls;
+
+  /// unreachable statements per function
+  /// (currently only returns are later analyzed)
+  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
+    mUnreachableStmts;
+
+  /// all expressions found in specific functions
+  std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>>
+    mExprs;
+
+  /// template mapping
   std::map<const clang::FunctionDecl*, ::detail::Template> mTs;
-  std::map<const clang::FunctionDecl*, std::vector<::detail::TemplateInstantiation>> mTIs;
+
+  /// template instantiations' mapping
+  std::map<const clang::FunctionDecl*,
+    std::vector<::detail::TemplateInstantiation>> mTIs;
+
 };
 
 }
