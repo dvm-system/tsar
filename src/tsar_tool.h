@@ -69,6 +69,7 @@ private:
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
   bool mEmitAST;
   bool mMergeAST;
+  bool mMergeSrc;
   bool mPrintAST;
   bool mDumpAST;
   bool mEmitLLVM;

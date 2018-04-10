@@ -12,6 +12,8 @@
 #include "ASTMergeAction.h"
 #include "tsar_exception.h"
 #include "tsar_finliner.h"
+#include "tsar_pragma.h"
+#include "tsar_pragma_action.h"
 #include "tsar_query.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
@@ -56,6 +58,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> EmitAST;
   llvm::cl::opt<bool> MergeAST;
   llvm::cl::alias MergeASTA;
+  llvm::cl::opt<bool> MergeSrc;
   llvm::cl::opt<std::string> Output;
   llvm::cl::opt<std::string> Language;
 
@@ -93,6 +96,8 @@ Options::Options() :
   MergeAST("merge-ast", cl::cat(CompileCategory),
     cl::desc("Merge Clang AST for source inputs before analysis")),
   MergeASTA("m", cl::aliasopt(MergeAST), cl::desc("Alias for -merge-ast")),
+  MergeSrc("merge-src", cl::cat(CompileCategory),
+    cl::desc("Merge source inputs before analysis")),
   Output("o", cl::cat(CompileCategory), cl::value_desc("file"),
     cl::desc("Write output to <file>"), cl::Prefix),
   Language("x", cl::cat(CompileCategory), cl::value_desc("language"),
@@ -207,6 +212,8 @@ void Tool::storeCLOptions() {
   mEmitAST = addIfSet(Options::get().EmitAST);
   mMergeAST = mEmitAST ?
     addIfSet(Options::get().MergeAST) : Options::get().MergeAST;
+  mMergeSrc = mMergeAST
+    ? addIfSet(Options::get().MergeSrc) : Options::get().MergeSrc;
   mPrintAST = addIfSet(Options::get().PrintAST);
   mDumpAST = addIfSet(Options::get().DumpAST);
   for (auto PI : Options::get().OutputPasses)
@@ -214,7 +221,8 @@ void Tool::storeCLOptions() {
   mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mTest = addIfSet(Options::get().Test);
-  mInline = addIfSet(Options::get().Inline);
+  mInline = (mMergeSrc || mMergeAST)
+    ? Options::get().Inline : addIfSet(Options::get().Inline);
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
   if (IncompatibleOpts.size() > 1) {
@@ -262,8 +270,9 @@ int Tool::run(QueryManager *QM) {
   // Evaluation of Clang AST files by this tool leads an error,
   // so these sources should be excluded.
   ClangTool EmitPCHTool(*mCompilations, NoASTSources);
-  EmitPCHTool.appendArgumentsAdjuster(
-    [&SourcesToMerge, this](
+  if (!mMergeSrc) {
+    EmitPCHTool.appendArgumentsAdjuster(
+      [&SourcesToMerge, this](
         const CommandLineArguments &CL, StringRef Filename) {
       CommandLineArguments Adjusted;
       for (std::size_t I = 0; I < CL.size(); ++I) {
@@ -285,7 +294,8 @@ int Tool::run(QueryManager *QM) {
         SourcesToMerge.push_back(mOutputFilename);
       }
       return Adjusted;
-  });
+    });
+  }
   if (mEmitAST) {
     if (!mOutputFilename.empty() && NoASTSources.size() > 1) {
       errs() << "WARNING: The -o (output filename) option is ignored when "
@@ -304,8 +314,35 @@ int Tool::run(QueryManager *QM) {
   // analysis. AST files will be stored in SourcesToMerge collection.
   // If an input file already contains Clang AST it will be pushed into
   // the SourcesToMerge collection only.
-  if (mMergeAST)
-    EmitPCHTool.run(newFrontendActionFactory<GeneratePCHAction>().get());
+  std::vector<std::unique_ptr<PragmaHandler>> Handlers;
+  Handlers.push_back(std::make_unique<AnalysisPragmaHandler>());
+  if (mMergeAST) {
+    EmitPCHTool.run(
+      newPragmaActionFactory<GeneratePCHAction, GenPCHPragmaAction>
+      (std::move(Handlers)).get());
+  }
+  if (mMergeSrc) {
+    EmitPCHTool.run(
+      newPragmaActionFactory<PragmaAction>(std::move(Handlers)).get());
+    if (SourcesToMerge.size() > 1) {
+      errs() << "ERROR: -merge-src option can be used only with "
+                "source files.\n";
+      return 0;
+    }
+    const char projectFile[]{".proj.c"};
+    std::error_code ec;
+    llvm::raw_fd_ostream out(projectFile, ec, llvm::sys::fs::OpenFlags::F_Text);
+    if (out.has_error() == true) {
+      errs() << "ERROR: failed to merge sources to " << projectFile << ".\n";
+      return 0;
+    }
+    for (auto& Source : mSources) {
+      out << "#include \"" << Source << "\"\n";
+    }
+    out.close();
+    mSources.clear();
+    mSources.push_back(projectFile);
+  }
   if (!QM) {
     if (mEmitLLVM)
       QM = getEmitLLVMQM();
