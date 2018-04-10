@@ -1,15 +1,104 @@
+//===- tsar_instrumentation.cpp - TSAR Instrumentation Engine ---*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// This file implements LLVM IR level instrumentation engine.
+//
+//===----------------------------------------------------------------------===//
+//
+#include <llvm/ADT/Statistic.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+
 #include "tsar_utility.h"
 #include "Instrumentation.h"
 #include "Intrinsics.h"
+#include "CanonicalLoop.h"
+#include "DFRegionInfo.h"
+#include "tsar_instrumentation.h"
+#include "tsar_memory_matcher.h"
+#include "tsar_transformation.h"
+#include "tsar_pass_provider.h"
+
 #include <map>
 #include <vector>
 #include <iostream>
 
 using namespace llvm;
 using namespace tsar;
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "instrumentation"
+
+typedef FunctionPassProvider<
+  TransformationEnginePass,
+  DFRegionInfoPass,
+  LoopInfoWrapperPass,
+  CanonicalLoopPass,
+  MemoryMatcherImmutableWrapper> InstrumentationPassProvider;
+
+STATISTIC(NumInstLoop, "Number of instrumented loops");
+
+INITIALIZE_PROVIDER_BEGIN(InstrumentationPassProvider, "instrumentation-provider",
+  "Instrumentation Provider")
+INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PROVIDER_END(InstrumentationPassProvider, "instrumentation-provider",
+  "Instrumentation Provider")
+
+char InstrumentationPass::ID = 0;
+INITIALIZE_PASS_BEGIN(InstrumentationPass, "instrumentation",
+  "LLVM IR Instrumentation", false, false)
+//INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+//INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
+INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+//INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_END(InstrumentationPass, "instrumentation",
+  "LLVM IR Instrumentation", false, false)
+
+
+bool InstrumentationPass::runOnModule(Module &M) {
+  releaseMemory();
+  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  //std::cout << "here : " << (TfmCtx == nullptr) << std::endl;
+  InstrumentationPassProvider::initialize<TransformationEnginePass>(
+    [&M, &TfmCtx](TransformationEnginePass &TEP) {
+      TEP.setContext(M, TfmCtx);
+  });
+  auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
+  InstrumentationPassProvider::initialize<MemoryMatcherImmutableWrapper>(
+    [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
+      Wrapper.set(*MMWrapper);
+  });
+  Instrumentation Instr(M, this);
+  return true;
+}
+
+void InstrumentationPass::releaseMemory() {}
+
+void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  //AU.addRequired<LoopInfoWrapperPass>();
+  //AU.addRequired<DFRegionInfoPass>();
+  AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<InstrumentationPassProvider>();
+  AU.addRequired<MemoryMatcherImmutableWrapper>();
+  //AU.addRequired<CanonicalLoopPass>();
+}
+
+ModulePass * llvm::createInstrumentationPass() {
+  return new InstrumentationPass();
+}
 
 Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   : mInstrPass(I), mLoopInfo(*(new LoopInfo())) {
@@ -190,6 +279,10 @@ void Instrumentation::loopIterInstr(llvm::Loop const *L,
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   if(mLoopInfo.isLoopHeader(&B)) {
     auto Loop = mLoopInfo.getLoopFor(&B);
+    auto Region = mRegionInfo->getRegionFor(Loop);
+    auto CanonLoop = mCanonicalLoop->find_as(Region);
+    if(CanonLoop != mCanonicalLoop->end()) {
+    }
     loopBeginInstr(Loop, B);
     loopEndInstr(Loop, B);
     loopIterInstr(Loop, B);
@@ -218,9 +311,14 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     F.getFunctionType()->getNumParams() << "**";
   unsigned Idx = regDbgStr(Debug.str(), *F.getParent());
   mRegistrator.regFunc(&F, Idx);
-  //visit all Blocks
-  auto& LI = mInstrPass->getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
+  auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
+  auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
+  mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
   mLoopInfo = std::move(LI);
+  auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+  mCanonicalLoop = &CLI;
+
+  //visit all Blocks
   for(auto &I : F.getBasicBlockList()) {
     visitBasicBlock(I);
   }

@@ -109,9 +109,16 @@ void EmitLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
   Passes.run(*M);
 }
 
-void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
+void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
+  if (Ctx) {
+    auto TEP = static_cast<TransformationEnginePass *>(
+      createTransformationEnginePass());
+    TEP->setContext(*M, Ctx);
+    Passes.add(TEP);
+  }
+  Passes.add(createMemoryMatcherPass());
   Passes.add(createInstrumentationPass());
   Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
   Passes.run(*M);

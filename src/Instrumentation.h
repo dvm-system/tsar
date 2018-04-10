@@ -6,6 +6,8 @@
 #include "Intrinsics.h"
 #include "Registrator.h"
 #include "tsar_instrumentation.h"
+#include "CanonicalLoop.h"
+#include "DFRegionInfo.h"
 #include <sstream>
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
@@ -16,7 +18,7 @@ public:
   static const unsigned maxIntBitWidth = 64;
 
   Instrumentation(llvm::Module& M, llvm::InstrumentationPass* const I);
-  ~Instrumentation() {delete &mLoopInfo;}
+  ~Instrumentation() {delete &mLoopInfo; delete &mRegionInfo;}
 
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
@@ -30,6 +32,8 @@ public:
 private:
   Registrator mRegistrator;
   llvm::LoopInfo& mLoopInfo;
+  llvm::DFRegionInfo* mRegionInfo;
+  tsar::CanonicalLoopSet* mCanonicalLoop;
   llvm::InstrumentationPass* const mInstrPass;
 
   //visitCallInst and visiInvokeInst have completely the same code
