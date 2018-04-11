@@ -11,10 +11,10 @@
 #ifndef TSAR_PRAGMA_ACTION_H
 #define TSAR_PRAGMA_ACTION_H
 
+#include "tsar_pragma_transform.h"
 #include "FrontendActions.h"
 
 #include <clang/Frontend/FrontendActions.h>
-#include <clang/Lex/Pragma.h>
 #include <clang/Tooling/Tooling.h>
 
 namespace tsar {
@@ -22,11 +22,11 @@ namespace tsar {
 /// This action is used to setup pragma handlers.
 class PragmaAction : public clang::PreprocessOnlyAction {
 private:
-  std::vector<std::unique_ptr<clang::PragmaHandler>>& mPragmaHandlers;
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
   clang::Preprocessor* mPP;
 public:
   PragmaAction(
-    std::vector<std::unique_ptr<clang::PragmaHandler>>& PragmaHandlers)
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& PragmaHandlers)
     : mPragmaHandlers(PragmaHandlers) {}
 
   bool BeginSourceFileAction(clang::CompilerInstance& CI,
@@ -38,11 +38,11 @@ public:
 /// This action is used to setup pragma handlers.
 class GenPCHPragmaAction : public PublicWrapperFrontendAction {
 private:
-  std::vector<std::unique_ptr<clang::PragmaHandler>>& mPragmaHandlers;
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
   clang::Preprocessor* mPP;
 public:
   GenPCHPragmaAction(std::unique_ptr<clang::FrontendAction> WrappedAction,
-    std::vector<std::unique_ptr<clang::PragmaHandler>>& PragmaHandlers)
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& PragmaHandlers)
     : PublicWrapperFrontendAction(WrappedAction.release()),
     mPragmaHandlers(PragmaHandlers) {}
 
@@ -55,39 +55,39 @@ public:
 /// Creates an analysis/transformations actions factory.
 template <class ActionTy, class FirstTy>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
-newPragmaActionFactory(FirstTy First) {
+newPragmaActionFactory(FirstTy& First) {
   class PragmaActionFactory : public clang::tooling::FrontendActionFactory {
   public:
-    PragmaActionFactory(FirstTy F) :
-      mFirst(std::move(F)) {}
+    PragmaActionFactory(FirstTy& F) :
+      mFirst(F) {}
     clang::FrontendAction *create() override {
       return new ActionTy(mFirst);
     }
   private:
-    FirstTy mFirst;
+    FirstTy& mFirst;
   };
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new PragmaActionFactory(std::move(First)));
+    new PragmaActionFactory(First));
 }
 
 /// Creates an analysis/transformations actions factory with adaptor.
 template <class ActionTy, class AdaptorTy, class AdaptorArgTy>
   std::unique_ptr<clang::tooling::FrontendActionFactory>
-  newPragmaActionFactory(AdaptorArgTy AdaptorArg) {
+  newPragmaActionFactory(AdaptorArgTy& AdaptorArg) {
   class PragmaActionFactory : public clang::tooling::FrontendActionFactory {
   public:
-    PragmaActionFactory(AdaptorArgTy A) :
-      mAdaptorArg(std::move(A)) {}
+    PragmaActionFactory(AdaptorArgTy& A) :
+      mAdaptorArg(A) {}
     clang::FrontendAction *create() override {
       std::unique_ptr<clang::FrontendAction> Action(
         new ActionTy());
       return new AdaptorTy(std::move(Action), mAdaptorArg);
     }
   private:
-    AdaptorArgTy mAdaptorArg;
+    AdaptorArgTy& mAdaptorArg;
   };
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new PragmaActionFactory(std::move(AdaptorArg)));
+    new PragmaActionFactory(AdaptorArg));
 }
 
 }

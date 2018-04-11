@@ -29,6 +29,7 @@
 #include <clang/Analysis/CFG.h>
 #include <clang/Format/Format.h>
 #include <clang/Lex/Preprocessor.h>
+#include <clang/Lex/Token.h>
 #include <llvm/IR/LegacyPassManagers.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/Path.h>
@@ -82,8 +83,14 @@ INITIALIZE_PASS_BEGIN(FunctionInlinerPass, "function-inliner",
 INITIALIZE_PASS_END(FunctionInlinerPass, "function-inliner",
   "Function Inliner", false, false)
 
-ModulePass* llvm::createFunctionInlinerPass() {
-  return new FunctionInlinerPass();
+ModulePass* createFunctionInlinerPass() {
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> Handlers;
+  return new FunctionInlinerPass(Handlers);
+}
+
+ModulePass* createFunctionInlinerPass(
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers) {
+  return new FunctionInlinerPass(Handlers);
 }
 
 void FunctionInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
@@ -173,7 +180,7 @@ bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
   auto& Context = TfmCtx->getContext();
   auto& Rewriter = TfmCtx->getRewriter();
   auto& SrcMgr = Rewriter.getSourceMgr();
-  FInliner Inliner(TfmCtx);
+  FInliner Inliner(TfmCtx, mPragmaHandlers);
   Inliner.HandleTranslationUnit(Context);
   /*for (Function& F : M) {
     if (F.empty())
@@ -377,6 +384,18 @@ bool FInliner::VisitExpr(clang::Expr* E) {
   return true;
 }
 
+bool FInliner::VisitCompoundStmt(clang::CompoundStmt* CS) {
+  auto Loc = clang::SourceLocation::getFromRawEncoding(
+    mSourceManager.getFileOffset(CS->getLocStart()));
+  for (auto& PH : mPragmaHandlers) {
+    if (PH->isPragma(Loc)) {
+      mInlineStmts[mCurrentFD].insert(CS);
+      break;
+    }
+  }
+  return true;
+}
+
 std::vector<std::string> FInliner::construct(
   const std::string& Type, const std::string& Identifier,
   const std::string& Context,
@@ -520,6 +539,11 @@ std::pair<std::string, std::string> FInliner::compile(
         || TI.mTemplate->getFuncDecl() == nullptr) {
         continue;
       }
+      if (MatchedTIs.size() > 0) {
+        if (MatchedTIs.find(&TI) == std::end(MatchedTIs)) {
+          continue;
+        }
+      }
       if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
         != std::end(mUnreachableStmts[TI.mFuncDecl])) {
         continue;
@@ -530,7 +554,8 @@ std::pair<std::string, std::string> FInliner::compile(
         [&](const clang::Expr* Arg) -> std::string {
         return get(getRange(Arg));
       });
-      std::pair<std::string, std::string> Text = compile(TI, Args, Decls);
+      auto Text = compile(TI, Args, Decls);
+      auto CallExpr = getSourceText(getRange(TI.mCallExpr));
       if (Text.second.size() == 0) {
         Text.first = "{" + Text.first + ";}";
       } else {
@@ -539,7 +564,7 @@ std::pair<std::string, std::string> FInliner::compile(
         Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
           ? "{" + Text.first + ";}" : Text.first;
       }
-      update(getRange(TI.mStmt), "/* " + get(getRange(TI.mCallExpr))
+      update(getRange(TI.mStmt), "/* " + CallExpr
         + " is inlined below */\n" + Text.first);
     }
   }
@@ -658,6 +683,7 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
+  //Context.getTranslationUnitDecl()->decls_begin();
   // associate instantiations with templates
   std::set<const clang::FunctionDecl*> Callable;
   for (auto& TIs : mTIs) {
@@ -666,6 +692,38 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       TI.mCallExpr->getDirectCallee()->hasBody(Definition);
       TI.mTemplate = &mTs.at(Definition);
       Callable.insert(Definition);
+    }
+  }
+  // match pragmas and calls
+  for (auto& TIs : mTIs) {
+    if (mInlineStmts[TIs.first].size() > 0) {
+      // handle only correct pragmas
+      //assert(mInlineStmts[TIs.first].size() <= TIs.second.size());
+      for (auto S : mInlineStmts[TIs.first]) {
+        auto Pos = S->getLocStart().getRawEncoding()
+          + getSourceText(getRange(S)).size();
+        auto Loc = clang::SourceLocation::getFromRawEncoding(Pos);
+        clang::Token Token;
+        clang::Lexer::getRawToken(Loc, Token, mSourceManager,
+          mRewriter.getLangOpts(), true);
+        bool Found = false;
+        for (auto& TI : TIs.second) {
+          if (TI.mStmt->getLocStart() == Token.getLocation()) {
+            Found = true;
+            MatchedTIs.insert(&TI);
+          }
+        }
+        if (!Found) {
+          auto Loc = S->getLocStart();
+          auto FID = mSourceManager.getFileID(Loc);
+          auto Filename = mSourceManager.getFilename(Loc);
+          auto Offset = mSourceManager.getFileOffset(Loc);
+          auto LineNum = mSourceManager.getLineNumber(FID, Offset);
+          auto ColumnNum = mSourceManager.getColumnNumber(FID, Offset);
+          llvm::dbgs() << "Unmatched #pragma at " << Filename << ':'
+            << LineNum << ':' << ColumnNum << ", ignored" << '\n';
+        }
+      }
     }
   }
   // global declarations (outermost, max enclosed)
@@ -742,7 +800,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         std::set<const clang::FunctionDecl*> NewCallees;
         for (auto& Caller : Callees) {
           for (auto& TI : mTIs[Caller]) {
-            if (TI.mTemplate->getFuncDecl() != nullptr) {
+            if (TI.mTemplate != nullptr
+              && TI.mTemplate->getFuncDecl() != nullptr) {
               NewCallees.insert(TI.mTemplate->getFuncDecl());
             }
           }
@@ -1146,18 +1205,23 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto& TIs : mTIs) {
     // unusable functions are those which are not instantiated
     // meaning they are on top of call hierarchy
-    auto isUnusable
+    auto isOnTop
       = [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
       -> bool {
       return TIs.first == lhs.first && lhs.second.getFuncDecl() == nullptr;
     };
-    if (std::find_if(std::begin(mTs), std::end(mTs), isUnusable)
+    if (std::find_if(std::begin(mTs), std::end(mTs), isOnTop)
       != std::end(mTs)) {
       bool PCHeader = false;
       for (auto& TI : TIs.second) {
         if (TI.mTemplate == nullptr
           || TI.mTemplate->getFuncDecl() == nullptr) {
           continue;
+        }
+        if (MatchedTIs.size() > 0) {
+          if (MatchedTIs.find(&TI) == std::end(MatchedTIs)) {
+            continue;
+          }
         }
         if (!PCHeader) {
           // strong correlation with ExternalDepsChecker
@@ -1203,6 +1267,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         });
         LocalDecls.insert(std::begin(Args), std::end(Args));
         auto Text = compile(TI, Args, LocalDecls);
+        auto CallExpr = getSourceText(getRange(TI.mCallExpr));
         if (Text.second.size() == 0) {
           Text.first = "{" + Text.first + ";}";
         } else {
@@ -1212,8 +1277,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
             ? "{" + Text.first + ";}" : Text.first;
         }
         mRewriter.ReplaceText(getRange(TI.mStmt),
-          "/* " + getSourceText(getRange(TI.mCallExpr))
-          + " is inlined below */\n" + Text.first);
+          "/* " + CallExpr + " is inlined below */\n" + Text.first);
       }
     }
   }
@@ -1333,21 +1397,7 @@ void FunctionInlinerQueryManager::run(llvm::Module* M,
     TEP->setContext(*M, Ctx);
     Passes.add(TEP);
   }
-  Passes.add(createFunctionInlinerPass());
+  Passes.add(createFunctionInlinerPass(mPragmaHandlers));
   Passes.run(*M);
-  return;
-}
-
-bool FunctionInlinerQueryManager::beginSourceFile(
-    clang::CompilerInstance& CI, llvm::StringRef File) {
-  auto& PP = CI.getPreprocessor();
-  mIPH = new InlinePragmaHandler();
-  PP.AddPragmaHandler(mIPH);
-  return true;
-}
-
-void InlinePragmaHandler::HandlePragma(clang::Preprocessor& PP,
-  clang::PragmaIntroducerKind Introducer, clang::Token& FirstToken) {
-  PP.CheckEndOfDirective("pragma inline");
   return;
 }

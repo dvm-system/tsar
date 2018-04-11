@@ -16,6 +16,7 @@
 
 #include "AnalysisWrapperPass.h"
 #include "tsar_pass.h"
+#include "tsar_pragma_transform.h"
 #include "tsar_query.h"
 #include "tsar_action.h"
 #include "tsar_transformation.h"
@@ -26,31 +27,19 @@
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
-#include <clang/Lex/Pragma.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
 
+
 namespace tsar {
-
-class InlinePragmaHandler : public clang::PragmaHandler {
-private:
-  /// This set contains locations of each handled pragma.
-  std::set<unsigned> mPragmaLocSet;
-
-public:
-  /// Creates handler.
-  InlinePragmaHandler() : clang::PragmaHandler("inline") {}
-
-  void HandlePragma(clang::Preprocessor& PP,
-    clang::PragmaIntroducerKind Introducer, clang::Token& FirstToken) override;
-};
 
 class FunctionInlinerQueryManager : public QueryManager {
   void run(llvm::Module *M, TransformationContext *Ctx) override;
-  bool beginSourceFile(clang::CompilerInstance& CI, llvm::StringRef File);
-
-private:
-  InlinePragmaHandler* mIPH;
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
+public:
+  FunctionInlinerQueryManager(
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
+    : mPragmaHandlers(Handlers) {}
 };
 
 struct FunctionInlineInfo : private bcl::Uncopyable {
@@ -83,10 +72,18 @@ private:
 
 class FunctionInlinerPass :
   public ModulePass, private bcl::Uncopyable {
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
 public:
   static char ID;
 
-  FunctionInlinerPass() : ModulePass(ID) {
+  FunctionInlinerPass() : ModulePass(ID),
+    mPragmaHandlers(std::vector<std::unique_ptr<clang::SPFPragmaHandler>>()) {
+    initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  FunctionInlinerPass(
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
+    : mPragmaHandlers(Handlers), ModulePass(ID) {
     initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
   }
 
@@ -188,10 +185,12 @@ class FInliner :
   public clang::RecursiveASTVisitor<FInliner>,
   public clang::ASTConsumer {
 public:
-  explicit FInliner(tsar::TransformationContext* TfmCtx)
+  explicit FInliner(tsar::TransformationContext* TfmCtx,
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
     mRewriter(TfmCtx->getRewriter()),
-    mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {
+    mSourceManager(TfmCtx->getRewriter().getSourceMgr()),
+    mPragmaHandlers(Handlers) {
   }
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
@@ -199,6 +198,8 @@ public:
   bool VisitReturnStmt(clang::ReturnStmt* RS);
 
   bool VisitExpr(clang::Expr* E);
+
+  bool VisitCompoundStmt(clang::CompoundStmt* CS);
 
   /// Traverses AST, collects necessary information using overriden methods above
   /// and applies it to source code using private methods below
@@ -315,6 +316,13 @@ private:
 
   tsar::TransformationContext* mTransformContext;
 
+  /// pragma handlers, forwarded from Tool (which owns handlers)
+  /// only knowledge needed is node type pragmas are converted to
+  /// FIXME: should it be part of TransformCtx?
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
+  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
+    mInlineStmts;
+
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
   clang::Rewriter& mRewriter;
@@ -355,6 +363,10 @@ private:
   /// template instantiations' mapping
   std::map<const clang::FunctionDecl*,
     std::vector<::detail::TemplateInstantiation>> mTIs;
+
+  /// if not empty, only contained TIs will be instantiated, otherwise all
+  /// all checkers should be passed
+  std::set<const ::detail::TemplateInstantiation*> MatchedTIs;
 
 };
 

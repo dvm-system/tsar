@@ -11,10 +11,11 @@
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
 #include "tsar_exception.h"
+#include "tsar_query.h"
 #include "tsar_finliner.h"
 #include "tsar_pragma.h"
 #include "tsar_pragma_action.h"
-#include "tsar_query.h"
+#include "tsar_pragma_transform.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
 #include <clang/Frontend/FrontendActions.h>
@@ -254,8 +255,9 @@ inline static TestQueryManager * getTestQM() {
   return &QM;
 }
 
-inline static FunctionInlinerQueryManager * getInlineQM() {
-  static FunctionInlinerQueryManager QM;
+inline static FunctionInlinerQueryManager * getInlineQM(
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers) {
+  static FunctionInlinerQueryManager QM(Handlers);
   return &QM;
 }
 
@@ -314,16 +316,15 @@ int Tool::run(QueryManager *QM) {
   // analysis. AST files will be stored in SourcesToMerge collection.
   // If an input file already contains Clang AST it will be pushed into
   // the SourcesToMerge collection only.
-  std::vector<std::unique_ptr<PragmaHandler>> Handlers;
-  Handlers.push_back(std::make_unique<AnalysisPragmaHandler>());
+  std::vector<std::unique_ptr<SPFPragmaHandler>> Handlers;
+  //Handlers.push_back(std::make_unique<AnalysisPragmaHandler>());
+  Handlers.push_back(std::make_unique<TransformPragmaHandler>());
   if (mMergeAST) {
     EmitPCHTool.run(
       newPragmaActionFactory<GeneratePCHAction, GenPCHPragmaAction>
-      (std::move(Handlers)).get());
+      (Handlers).get());
   }
   if (mMergeSrc) {
-    EmitPCHTool.run(
-      newPragmaActionFactory<PragmaAction>(std::move(Handlers)).get());
     if (SourcesToMerge.size() > 1) {
       errs() << "ERROR: -merge-src option can be used only with "
                 "source files.\n";
@@ -342,6 +343,10 @@ int Tool::run(QueryManager *QM) {
     out.close();
     mSources.clear();
     mSources.push_back(projectFile);
+    ClangTool EmitPCHTool(*mCompilations, mSources);
+    EmitPCHTool.run(
+      newPragmaActionFactory<PragmaAction>
+      (Handlers).get());
   }
   if (!QM) {
     if (mEmitLLVM)
@@ -351,7 +356,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else if (mInline)
-      QM = getInlineQM();
+      QM = getInlineQM(Handlers);
     else
       QM = getDefaultQM(mOutputPasses);
   }
