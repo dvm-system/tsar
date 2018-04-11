@@ -92,14 +92,15 @@ def reg_dummy_arr : Intrinsic<"sapforRegDummyArr", tsar_void_ty,
 def func_call_end : Intrinsic<"sapforFuncCallEnd",
                         tsar_void_ty, [tsar_di_call_ty]>;
 
-def sl_begin : Intrinsic<"sapforSLBegin",
-                        tsar_void_ty>;
+def sl_begin : Intrinsic<"sapforSLBegin", tsar_void_ty,
+                        [tsar_di_loop_ty, tsar_size_ty, tsar_size_ty,
+                        tsar_size_ty]>;
 
 def sl_end : Intrinsic<"sapforSLEnd",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_loop_ty]>;
 
 def sl_iter : Intrinsic<"sapforSLIter",
-                        tsar_void_ty>;
+                        tsar_void_ty, [tsar_di_loop_ty, tsar_addr_ty]>;
 
 def init_di : Intrinsic<"sapforInitDI", 
                         tsar_void_ty, 

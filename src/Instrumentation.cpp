@@ -15,6 +15,7 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 #include "tsar_utility.h"
 #include "Instrumentation.h"
@@ -28,7 +29,6 @@
 
 #include <map>
 #include <vector>
-#include <iostream>
 
 using namespace llvm;
 using namespace tsar;
@@ -71,7 +71,6 @@ INITIALIZE_PASS_END(InstrumentationPass, "instrumentation",
 bool InstrumentationPass::runOnModule(Module &M) {
   releaseMemory();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  //std::cout << "here : " << (TfmCtx == nullptr) << std::endl;
   InstrumentationPassProvider::initialize<TransformationEnginePass>(
     [&M, &TfmCtx](TransformationEnginePass &TEP) {
       TEP.setContext(M, TfmCtx);
@@ -213,8 +212,8 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
   Call->insertAfter(DIFunc);
 }
 
-void Instrumentation::loopBeginInstr(llvm::Loop const *L,
-  llvm::BasicBlock &Header){
+void Instrumentation::loopBeginInstr(llvm::Loop *L,
+  llvm::BasicBlock &Header, unsigned Idx){
   //looking through all possible loop predeccessors
   for(auto it = pred_begin(&Header), et = pred_end(&Header); it != et; ++it) {
     BasicBlock* Predeccessor = *it;
@@ -225,17 +224,40 @@ void Instrumentation::loopBeginInstr(llvm::Loop const *L,
         //create a new BasicBlock between predeccessor and Header
         //insert a function call there
         if(ExitInstr->getSuccessor(I) == &Header) {
-          //looks like label "loop_begin" would be
-          //renamed automatically to make it unique
           auto Block4Insert = BasicBlock::Create(Header.getContext(),
             "loop_begin", Header.getParent());
           IRBuilder<> Builder(Block4Insert, Block4Insert->end());
           Builder.CreateBr(ExitInstr->getSuccessor(I));
           ExitInstr->setSuccessor(I, Block4Insert);
-          Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
-            (Block4Insert)->begin()));
+          auto DILoop = getDbgPoolElem(Idx, *Block4Insert->begin());
+          auto Region = mRegionInfo->getRegionFor(L);
+          auto CanonLoop = mCanonicalLoop->find_as(Region);
+	  ConstantInt *First = nullptr, *Last = nullptr, *Step = nullptr;
+          if(CanonLoop != mCanonicalLoop->end() && (*CanonLoop)->isCanonical()){
+	    //I don't know what is lying under llvm::Value returned from
+	    //getStart/getEnd, but looks like it casts to ConstantInt correctly.
+	    if(isa<ConstantInt>((*CanonLoop)->getStart()))
+              First = cast<ConstantInt>((*CanonLoop)->getStart());
+	    if(isa<ConstantInt>((*CanonLoop)->getEnd()))
+	      Last = cast<ConstantInt>((*CanonLoop)->getEnd());
+	    if(isa<SCEVConstant>((*CanonLoop)->getStep()))
+	      Step = cast<SCEVConstant>((*CanonLoop)->getStep())->getValue();
+          }
+	  //First, Last and Step should be i64. Seems that CanonLoop pass
+	  //returns them as i32. So this changes i32 to i64
+          First = (First == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()),First->getSExtValue());
+          Last = (Last == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()), Last->getSExtValue());
+          Step = (Step == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
+	    .getContext()), Step->getSExtValue());
+          Builder.SetInsertPoint(Block4Insert->getTerminator());
+	  //void sapforSLBegin(void*, long, long, long)
           auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_begin);
-          auto Call = Builder.CreateCall(Fun);
+          auto Call = Builder.CreateCall(Fun, {DILoop, First, Last, Step});
         }
       }
     }
@@ -243,9 +265,9 @@ void Instrumentation::loopBeginInstr(llvm::Loop const *L,
 }
 
 void Instrumentation::loopEndInstr(llvm::Loop const *L,
-  llvm::BasicBlock &Header) {
+  llvm::BasicBlock &Header, unsigned Idx) {
   //Creating a node between inside/outside blocks of the loop. Then insert
-  //call of tsarSLEnd() in this node.
+  //call of sapforSLEnd() in this node.
   SmallVector<BasicBlock*, 8> ExitBlocks;
   SmallVector<BasicBlock*, 8> ExitingBlocks;
   L->getExitBlocks(ExitBlocks);
@@ -260,32 +282,48 @@ void Instrumentation::loopEndInstr(llvm::Loop const *L,
           IRBuilder<> Builder(Block4Insert, Block4Insert->end());
           Builder.CreateBr(ExitInstr->getSuccessor(SucNumb));
           ExitInstr->setSuccessor(SucNumb, Block4Insert);
-          Builder.SetInsertPoint(&(*const_cast<BasicBlock *>
-            (Block4Insert)->begin()));
+          auto DILoop = getDbgPoolElem(Idx, *Block4Insert->begin());
+          Builder.SetInsertPoint(Block4Insert->getTerminator());
+	  //void sapforSLEnd(void*)
           auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_end);
-          auto Call = Builder.CreateCall(Fun);
+          auto Call = Builder.CreateCall(Fun, {DILoop});
         }
       }
     }
   }
 }
 
-void Instrumentation::loopIterInstr(llvm::Loop const *L,
-  llvm::BasicBlock &Header) {
-  auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
-  CallInst::Create(Fun, {}, "", Header.getTerminator());
+void Instrumentation::loopIterInstr(llvm::Loop *L,
+  llvm::BasicBlock &Header, unsigned Idx) {
+  auto Region = mRegionInfo->getRegionFor(L);
+  auto CanonLoop = mCanonicalLoop->find_as(Region);
+  //instrumentate iterations only in canonical loops.
+  if(CanonLoop != mCanonicalLoop->end() && (*CanonLoop)->isCanonical()){
+    auto Induction = (*CanonLoop)->getInduction();
+    auto Addr = new BitCastInst(Induction,
+      Type::getInt8PtrTy(Header.getContext()), "Addr", Header.getTerminator());
+    auto DILoop = getDbgPoolElem(Idx, *Header.getTerminator());
+    //void sapforSLIter(void*, void*)
+    auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
+    CallInst::Create(Fun, {DILoop, Addr}, "", Header.getTerminator());
+  }
 } 
 
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   if(mLoopInfo.isLoopHeader(&B)) {
     auto Loop = mLoopInfo.getLoopFor(&B);
-    auto Region = mRegionInfo->getRegionFor(Loop);
+    std::stringstream Debug;
+    Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
+      "*line1=" << Loop->getLocRange().getStart().getLine() << "*line2=" <<
+      Loop->getLocRange().getEnd().getLine() << "**";
+    unsigned Idx = regDbgStr(Debug.str(), *B.getModule());
+    /*auto Region = mRegionInfo->getRegionFor(Loop);
     auto CanonLoop = mCanonicalLoop->find_as(Region);
     if(CanonLoop != mCanonicalLoop->end()) {
-    }
-    loopBeginInstr(Loop, B);
-    loopEndInstr(Loop, B);
-    loopIterInstr(Loop, B);
+    }*/
+    loopBeginInstr(Loop, B, Idx);
+    loopEndInstr(Loop, B, Idx);
+    loopIterInstr(Loop, B, Idx);
   }
   //visit all Instructions
   for(auto& I : B){
@@ -300,6 +338,13 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(getTsarLibFunc(F.getName(), Id)) {
     return;
   }
+  //get analysis informaion from passes for visited function
+  auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
+  auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
+  mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
+  mLoopInfo = std::move(LI);
+  auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+  mCanonicalLoop = &CLI;
   //registrate debug information for function
   getTypeId(*F.getReturnType());
   std::stringstream Debug;
@@ -311,12 +356,6 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     F.getFunctionType()->getNumParams() << "**";
   unsigned Idx = regDbgStr(Debug.str(), *F.getParent());
   mRegistrator.regFunc(&F, Idx);
-  auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
-  auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
-  mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
-  mLoopInfo = std::move(LI);
-  auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
-  mCanonicalLoop = &CLI;
 
   //visit all Blocks
   for(auto &I : F.getBasicBlockList()) {

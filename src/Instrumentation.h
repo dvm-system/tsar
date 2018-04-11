@@ -69,9 +69,9 @@ private:
   //could lead to using unappropriate LoopInfo. So moved it to private.
   void visitBasicBlock(llvm::BasicBlock &B);
 
-  void loopBeginInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
-  void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
-  void loopIterInstr(llvm::Loop const *L, llvm::BasicBlock& Header);
+  void loopBeginInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
+  void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
+  void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
   unsigned regDbgStr(const std::string& S, llvm::Module& M);
   void regTypes(llvm::Module& M);
