@@ -58,12 +58,9 @@ INITIALIZE_PROVIDER_END(InstrumentationPassProvider, "instrumentation-provider",
 char InstrumentationPass::ID = 0;
 INITIALIZE_PASS_BEGIN(InstrumentationPass, "instrumentation",
   "LLVM IR Instrumentation", false, false)
-//INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-//INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_END(InstrumentationPass, "instrumentation",
   "LLVM IR Instrumentation", false, false)
 
@@ -87,12 +84,9 @@ bool InstrumentationPass::runOnModule(Module &M) {
 void InstrumentationPass::releaseMemory() {}
 
 void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  //AU.addRequired<LoopInfoWrapperPass>();
-  //AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<InstrumentationPassProvider>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
-  //AU.addRequired<CanonicalLoopPass>();
 }
 
 ModulePass * llvm::createInstrumentationPass() {
@@ -112,8 +106,12 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   RegFunc->arg_begin()->setName("x");
   auto NewBlock = BasicBlock::Create(RegFunc->getContext(), "entry", RegFunc);
   //insert declaration of pool for debug information
-  const std::string& DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  //variables names in C can't contain '.'
+  for(auto& J : DbgPoolName)
+    if(J == '.')
+      J = '_';
   auto DbgPool = new GlobalVariable(M, PointerType::getUnqual(Type
     ::getInt8PtrTy(M.getContext())), false, GlobalValue::LinkageTypes
     ::ExternalLinkage, nullptr, DbgPoolName, nullptr);
@@ -133,7 +131,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   regGlobals(M);
   //visit all functions
   for(auto& F: M) {
-    //not sapforInitDI function
+    //not sapforInitDI or RegType function
     if(F.getSubprogram() != nullptr) {
       visitFunction(F);
     }
@@ -146,6 +144,8 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
     mRegistrator.getDbgStrCounter());
   CallInst::Create(Fun, {DbgPool, Idx}, "", &(*inst_begin(Func)));
   regTypes(M);
+  if(M.getFunction("main") != nullptr)
+    instrumentateMain(M);
 }
 
 //insert call of sapforRegVar(void*, void*) or 
@@ -458,8 +458,12 @@ unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
   const std::string& ModuleName = M.getModuleIdentifier();
   const std::string& InitFuncName = "sapforInitDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  const std::string& DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  //variables names in C can't contain '.'
+  for(auto& J : DbgPoolName)
+    if(J == '.')
+      J = '_';
   auto F = M.getFunction(InitFuncName);
   if(F != nullptr) {
     auto& B = F->getEntryBlock();
@@ -574,8 +578,12 @@ GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
 //Returns element in debug information pool by its index
 LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
   const std::string& ModuleName = I.getModule()->getModuleIdentifier();
-  const std::string& DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
+  //variables names in C can't contain '.'
+  for(auto& J : DbgPoolName)
+    if(J == '.')
+      J = '_';
   auto Pool = I.getModule()->getGlobalVariable(DbgPoolName);
   auto Idx = ConstantInt::get(Type::getInt32Ty(I.getContext()), Val);
   auto LoadArr = new LoadInst(Pool, "LoadArr", &I);
@@ -644,4 +652,18 @@ unsigned Instrumentation::getTypeId(const Type& T) {
     default: return mRegistrator.regType(&T) + BaseTypeID::IntegerTy +
       maxIntBitWidth;
   }
+}
+
+void Instrumentation::instrumentateMain(Module& M) {
+  const std::string& ModuleName = M.getModuleIdentifier();
+  auto MainFunc = M.getFunction("main"), RegFunc = M.getFunction("RegType" +
+    ModuleName.substr(ModuleName.find_last_of("/\\")+1)), InitFunc =
+    M.getFunction("sapforInitDI" + ModuleName.substr(ModuleName
+    .find_last_of("/\\")+1));
+  if(MainFunc == nullptr || RegFunc == nullptr || InitFunc == nullptr)
+    return;
+  auto& B = MainFunc->getEntryBlock();
+  auto Int0 = llvm::ConstantInt::get(Type::getInt64Ty(M.getContext()), 0);
+  CallInst::Create(RegFunc, {Int0}, "", &(*B.begin()));
+  CallInst::Create(InitFunc, {Int0}, "", &(*B.begin()));
 }

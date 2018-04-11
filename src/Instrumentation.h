@@ -80,6 +80,7 @@ private:
   llvm::LoadInst* getDbgPoolElem(unsigned Val, llvm::Instruction& I); 
   void regGlobals(llvm::Module& M);
   void regBaseTypes(llvm::Module& M);
+  void instrumentateMain(llvm::Module& M); 
 };
 
 #endif // INSTRUMENTATION_H
