@@ -37,7 +37,7 @@ void TransformPragmaHandler::HandlePragma(
   std::copy(mTokenList.begin(), mTokenList.end(), TokenArray);
   PP.EnterTokenStream(TokenArray, mTOkenList.size(), false, true);
 #else
-  PP.EnterTokenStream(mTokenList, true);
+  PP.EnterTokenStream(mTokenList, false);
 #endif
 }
 

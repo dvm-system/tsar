@@ -35,17 +35,6 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
-// 05.03 TODO(jury.zykov@yandex.ru): handle case when local declarations hide outer (f.e., f1 with declaration 'int s' calls f2 which references outer 'char s[]')
-// (?) two solutions:
-//   conservative: don't inline functions whose references to outer declarations become 'hidden' after inlining
-//   or transformation: as preprocess (pass) - make all functions conform rule 'no hidden outer declarations' (renaming local decls/refs through rewriter)
-// renaming requires preprocessor (for mapping from source locs to IdentifierInfo, which can be later matched with NamedDecl, thus giving correct mapping
-// of _all_ identifier references, which AST lacks of)
-// getRawToken doesn't fill IdentifierInfo in raw lexer mode
-// 05.03 TODO(jury.zykov@yandex.ru): gen forward declarations for external dependencies (per-node-specific, handle cases with statics and same/different TU)
-// 05.03 TODO(jury.zykov@yandex.ru): ternary ifstmt - rewrite as simple ifstmt (transformation) or disable inlining (conservative) - currently conservative
-// 12.03 TODO(jury.zykov@yandex.ru): pragma handler pass for inlining
-
 
 // 26.03 TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
 
@@ -141,27 +130,29 @@ std::vector<clang::Token> FInliner::getRawTokens(
   // these positions are beginings of tokens
   // should include upper bound to capture last token
   unsigned int Offset = SR.getBegin().getRawEncoding();
-  unsigned int Length = SR.getEnd().getRawEncoding();
+  unsigned int Length = Offset
+    + (getSourceText(SR).size() > 0 ? getSourceText(SR).size() - 1 : 0);
   std::vector<clang::Token> Tokens;
-  for (unsigned int Pos = Offset; Pos <= Length; ++Pos) {
+  for (unsigned int Pos = Offset; Pos <= Length;) {
     clang::SourceLocation Loc;
     clang::Token Token;
     Loc = clang::Lexer::GetBeginningOfToken(Loc.getFromRawEncoding(Pos),
       mSourceManager, mRewriter.getLangOpts());
     if (clang::Lexer::getRawToken(Loc, Token, mSourceManager,
       mRewriter.getLangOpts(), false)) {
+      ++Pos;
       continue;
     }
     if (Token.getKind() != clang::tok::raw_identifier) {
+      Pos += std::max(1u, (Token.isAnnotation() ? 1u : Token.getLength()));
       continue;
     }
     // avoid duplicates for same token
-    if (!Tokens.empty()
-      && Tokens[Tokens.size() - 1].getLocation() == Token.getLocation()) {
-      continue;
-    } else {
+    if (Tokens.empty()
+      || Tokens[Tokens.size() - 1].getLocation() != Token.getLocation()) {
       Tokens.push_back(Token);
     }
+    Pos += Token.getLength();
   }
   return Tokens;
 }
@@ -330,7 +321,8 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
               break;
             }
           }
-          // don't replace function calls in conditional operator (ternary if, ?:)
+          // don't replace function calls in conditional operator (ternary if,
+          // ?:)
           if (inCondOp) {
             continue;
           }
@@ -419,9 +411,9 @@ std::vector<std::string> FInliner::construct(
   });
   Tokens.push_back(Identifier);
   // multiple positions can be found in cases like 'unsigned' and 'unsigned int'
-  // which mean same type; since it's part of declaration-specifiers in grammar, it is
-  // guaranteed to be before declared identifier, just choose far position (meaning
-  // choosing longest type string)
+  // which mean same type; since it's part of declaration-specifiers in grammar,
+  // it is guaranteed to be before declared identifier, just choose far position
+  // (meaning choosing longest type string)
   // optimization: match in reverse order until success
   std::vector<int> Counts(Tokens.size(), 0);
   swap(llvm::errs(), llvm::nulls());
@@ -630,13 +622,24 @@ std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
     = clang::dyn_cast<clang::FunctionDecl>(D)) {
     Identifiers.insert(FD->getName());
   } else {
+    auto DC = D->getDeclContext();
+    std::map<const clang::DeclContext*, std::set<std::string>> DCIdentifiers;
+    while (DC) {
+      for (auto D : DC->decls()) {
+        if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
+          DCIdentifiers[DC].insert(ND->getName());
+        }
+      }
+      DC = DC->getParent();
+    }
     for (auto& T : getRawTokens(getRange(D))) {
-      if (std::find(std::begin(mKeywords), std::end(mKeywords),
-        T.getRawIdentifier()) != std::end(mKeywords)) {
+      auto RawIdentifier = T.getRawIdentifier();
+      if (std::find(std::begin(mKeywords), std::end(mKeywords), RawIdentifier)
+        != std::end(mKeywords)) {
         continue;
       }
       if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
-        if (ND->getName() == T.getRawIdentifier()) {
+        if (ND->getName() == RawIdentifier) {
           Identifiers.insert(ND->getName());
           continue;
         }
@@ -644,22 +647,15 @@ std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
       // match token with outer scopes' declarations
       const clang::DeclContext* DC = D->getDeclContext();
       while (DC) {
-        if (std::find_if(DC->decls_begin(), DC->decls_end(),
-          [&](const clang::Decl* D) -> bool {
-          if (const clang::NamedDecl* ND
-            = clang::dyn_cast<clang::NamedDecl>(D)) {
-            return ND->getName().str() == T.getRawIdentifier().str();
-          } else {
-            return false;
-          }
-        }) != DC->decls_end()) {
+        if (DCIdentifiers[DC].find(RawIdentifier)
+          != std::end(DCIdentifiers[DC])) {
           break;
         } else {
           DC = DC->getParent();
         }
       }
       if (DC != nullptr) {
-        Identifiers.insert(T.getRawIdentifier());
+        Identifiers.insert(RawIdentifier);
       }
     }
   }
@@ -670,13 +666,8 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
   std::set<std::string> Identifiers;
   Identifiers.insert(TD->getName());
   for (auto D : TD->decls()) {
-    if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(D)) {
-      std::set<std::string> Tmp(getIdentifiers(TD));
-      Identifiers.insert(std::begin(Tmp), std::end(Tmp));
-    } else {
-      std::set<std::string> Tmp(getIdentifiers(D));
-      Identifiers.insert(std::begin(Tmp), std::end(Tmp));
-    }
+    std::set<std::string> Tmp(getIdentifiers(D));
+    Identifiers.insert(std::begin(Tmp), std::end(Tmp));
   }
   return Identifiers;
 }
@@ -745,9 +736,15 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
     GlobalDecls.insert(D);
   }
+  std::map<const clang::Decl*, std::set<const clang::Decl*>> NestedDecls;
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
     for (auto it = std::begin(GlobalDecls); it != std::end(GlobalDecls);) {
       if (*it != D && isSubDecl(*it, D)) {
+        // strong correlation with ExternalDepsChecker
+        // allow only vardecl groups
+        if (D->getKind() != (*it)->getKind()) {
+          NestedDecls[D].insert(*it);
+        }
         it = GlobalDecls.erase(it);
       } else {
         ++it;
@@ -822,7 +819,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     if (D->getLocStart().isValid()
       && mSourceManager.getFileCharacteristic(D->getLocStart())
       != clang::SrcMgr::C_User) {
-      // silently skip because we are not going to instantiate functions from standard libraries
+      // silently skip because we are not going to instantiate functions from
+      // standard libraries
       continue;
     }
     auto R = getRange(D);
@@ -849,10 +847,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // these global declarations become unused
   for (auto& T : mTs) {
     std::set<std::string>& Identifiers = mExtIdentifiers[T.first];
-    for (auto D : T.first->decls()) {
-      std::set<std::string> Tmp = getIdentifiers(D);
-      Identifiers.insert(std::begin(Tmp), std::end(Tmp));
-    }
     // intersect local external references in decls with global symbols
     std::set<std::string> ExtIdentifiers;
     std::set_intersection(std::begin(Identifiers), std::end(Identifiers),
@@ -871,7 +865,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::inserter(ExtIdentifiers, std::end(ExtIdentifiers)));
     Identifiers.swap(ExtIdentifiers);
   }
-  // mForwardDecls - all referenced external declarations including transitive dependencies
+  // mForwardDecls - all referenced external declarations including transitive
+  // dependencies
   for (auto& T : mTs) {
     std::set<std::string>& Identifiers = mExtIdentifiers[T.first];
     for (auto Identifier : Identifiers) {
@@ -1014,32 +1009,29 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   };*/
   auto NestedExternalDepsChecker = [&](const Template& T) -> std::string {
     bool NestedDeps = false;
-    const clang::TagDecl* NestedTD = nullptr;
+    const clang::Decl* NestedD = nullptr;
     for (auto D : mForwardDecls[T.getFuncDecl()]) {
-      if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(D)) {
-        for (auto D : TD->decls()) {
-          if (clang::isa<clang::TagDecl>(D)) {
-            NestedDeps = true;
-            NestedTD = TD;
-            break;
-          }
-        }
-      }
-      if (GlobalDecls.find(D) == std::end(GlobalDecls)) {
+      // strong correlation with ExternalDepsChecker
+      // nested structs/unions are disallowed as forward declarations below
+      if (!NestedDecls[D].empty()) {
         NestedDeps = true;
+        NestedD = D;
         break;
       }
     }
     return NestedDeps ? "Reference to nested declaration in function \""
       + T.getFuncDecl()->getName().str() + "\"\n" : "";
   };
+  // note: external dependencies include callees
   auto ExternalDepsChecker = [&](const TemplateInstantiation& TI)
     -> std::string {
     std::string Result;
     std::set<const clang::Decl*> AtLocVisibleDecls;
     for (auto T : mTs) {
-      if (T.first->getLocStart().getRawEncoding() <= TI.mTemplate->getFuncDecl()->getLocStart().getRawEncoding()) {
-        AtLocVisibleDecls.insert(std::begin(mForwardDecls[T.first]), std::end(mForwardDecls[T.first]));
+      if (T.first->getLocStart().getRawEncoding()
+        <= TI.mTemplate->getFuncDecl()->getLocStart().getRawEncoding()) {
+        AtLocVisibleDecls.insert(std::begin(mForwardDecls[T.first]),
+          std::end(mForwardDecls[T.first]));
       }
     }
     std::set<const clang::Decl*> NonSharedDecls;
@@ -1076,17 +1068,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
     return Result;
   };
-  // if function has external dependencies:
-  //   if external dependencies collide with function where specific instantiation is:
-  //     disable this instantiation (perspective - fix collisions through renaming)
-  //   if atleast one external decl in different file OR atleast one external decl is static:
-  //     disable all instantiations in files except one where function decl is
-  //   else:
-  //     generate forward decls for all external dependencies and insert them before all function decls
-  //       with instantiations
-  // else:
-  //   allow instantiations
-  // note: external dependencies include callees
   std::function<std::string(const Template&)> TChainChecker[] = {
     UnusedTemplateChecker,
     UserDefTChecker,
