@@ -36,7 +36,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 
-// 26.03 TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
+// 14.04 TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
 
 using namespace clang;
 using namespace llvm;
@@ -1027,18 +1027,24 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     -> std::string {
     std::string Result;
     std::set<const clang::Decl*> AtLocVisibleDecls;
+    // find external deps of preceding templates in same file
+    // these decls are guaranteed to be visible for instantiation
     for (auto T : mTs) {
-      if (T.first->getLocStart().getRawEncoding()
-        <= TI.mTemplate->getFuncDecl()->getLocStart().getRawEncoding()) {
+      auto SourceLoc = TI.mFuncDecl->getLocStart();
+      auto TargetLoc = T.first->getLocStart();
+      if (mSourceManager.getFileID(SourceLoc)
+        == mSourceManager.getFileID(TargetLoc)
+        && TargetLoc.getRawEncoding() <= SourceLoc.getRawEncoding()) {
         AtLocVisibleDecls.insert(std::begin(mForwardDecls[T.first]),
           std::end(mForwardDecls[T.first]));
       }
     }
     std::set<const clang::Decl*> NonSharedDecls;
-    std::set_difference(std::begin(mForwardDecls[TI.mFuncDecl]),
-      std::end(mForwardDecls[TI.mFuncDecl]),
+    std::set_difference(std::begin(mForwardDecls[TI.mTemplate->getFuncDecl()]),
+      std::end(mForwardDecls[TI.mTemplate->getFuncDecl()]),
       std::begin(AtLocVisibleDecls), std::end(AtLocVisibleDecls),
       std::inserter(NonSharedDecls, std::end(NonSharedDecls)));
+    // function/var/typedef decls can be duplicated, if they are not definitions
     unsigned int unresolvedDeps
       = std::count_if(std::begin(NonSharedDecls), std::end(NonSharedDecls),
         [&](const clang::Decl* D) -> bool {
@@ -1193,7 +1199,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     };
     if (std::find_if(std::begin(mTs), std::end(mTs), isOnTop)
       != std::end(mTs)) {
-      bool PCHeader = false;
+      bool PCHeader = true;  // seems ExternalDepsChecker filters such cases out
       for (auto& TI : TIs.second) {
         if (TI.mTemplate == nullptr
           || TI.mTemplate->getFuncDecl() == nullptr) {
