@@ -161,13 +161,15 @@ JSON_OBJECT_ROOT_PAIR_2(LoopTree,
 JSON_OBJECT_END(LoopTree)
 
 JSON_OBJECT_BEGIN(FunctionTraits)
-JSON_OBJECT_PAIR_3(FunctionTraits,
+JSON_OBJECT_PAIR_4(FunctionTraits,
   Readonly, Analysis,
   NoReturn, Analysis,
-  InOut, Analysis)
+  InOut, Analysis,
+  Loops, Analysis)
 
   FunctionTraits() :
-    JSON_INIT(FunctionTraits, Analysis::No, Analysis::No, Analysis::No) {}
+    JSON_INIT(FunctionTraits,
+      Analysis::No, Analysis::No, Analysis::No, Analysis::No) {}
   ~FunctionTraits() = default;
 
   FunctionTraits(const FunctionTraits &) = default;
@@ -576,6 +578,7 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
         != clang::SrcMgr::C_User)
       continue;
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+    auto &LMP = Provider.get<LoopMatcherPass>();
     auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
     auto &IEI = PSP->getAnalysis<InterprocAnalysisPass>().
@@ -595,6 +598,9 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
         = msg::Analysis::Yes;
     if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::InOut]
+        = msg::Analysis::Yes;
+    if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
+      Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::Loops]
         = msg::Analysis::Yes;
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
