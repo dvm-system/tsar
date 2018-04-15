@@ -12,7 +12,8 @@ set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   NoMacroAssert.cpp DILoopRetriever.cpp DIMemoryLocation.cpp
   SourceUnparser.cpp SourceUnparserUtils.cpp DIEstimateMemory.cpp
   DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp RenameLocal.cpp
-  DeadDeclsElimination.cpp DIGlobalRetriever.cpp InterprocAnalysis.cpp)
+  DeadDeclsElimination.cpp DIGlobalRetriever.cpp InterprocAttr.cpp
+  CalleeProcLocation.cpp)
 if(MSVC_IDE)
   source_group(src FILES ${TSAR_SOURCES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)

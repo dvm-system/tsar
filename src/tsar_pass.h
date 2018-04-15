@@ -278,9 +278,13 @@ FunctionPass * createClangDeadDeclsElimination();
 /// Initializes a pass to perform elimination of dead declarations.
 void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
 
-void initializeInterprocAnalysisPassPass(PassRegistry &Registry);
+void initializeCalleeProcLocationPassPass(PassRegistry &Registry);
 
-ModulePass * createInterprocAnalysisPass();
+ModulePass * createCalleeProcLocationPass();
+
+void initializeInterprocAttrPassPass(PassRegistry &Registry);
+
+ModulePass * createInterprocAttrPass();
 }
 
 #endif//TSAR_PASS_H

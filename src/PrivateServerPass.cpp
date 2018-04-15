@@ -23,7 +23,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrivateServerPass.h"
-#include "InterprocAnalysis.h"
+#include "CalleeProcLocation.h"
+#include "InterprocAttr.h"
 #include "PerfectLoop.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
@@ -312,7 +313,8 @@ INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(InterprocAnalysisPass)
+INITIALIZE_PASS_DEPENDENCY(CalleeProcLocationPass)
+INITIALIZE_PASS_DEPENDENCY(InterprocAttrPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -462,39 +464,45 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().
       getPerfectLoopInfo();
-    auto &IALoopInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisLoopInfo();
-    auto &IAFuncInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisFuncInfo();
+    auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+      getLoopCalleeProcInfo();
+    auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+      getFuncCalleeProcInfo();
+    auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
+      getInterprocAttrLoopInfo();
+    auto &IAFuncInfo = PSP->getAnalysis<InterprocAttrPass>().
+      getInterprocAttrFuncInfo();
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::Yes;
       if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
-      auto &IEI = IALoopInfo.find(Match.first)->second;
-      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
+      auto &CPL = LoopCPInfo.find(Match.first)->second;
+      auto &IA = IALoopInfo.find(Match.first)->second;
+      if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       for (auto BB : Match.get<IR>()->blocks())
         if (Match.get<IR>()->isLoopExiting(BB))
           Loop[msg::MainLoopInfo::Exit]++;
-      auto &CalleeFuncLoc = IEI.getCalleeFuncLoc();
+      auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
         if (IAFuncInfo.find(CFL.first)->second.
-            hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
+            hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
           Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher) {
       auto Loop = getLoopInfo(Unmatch, SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
-      auto &IEI = IALoopInfo.find(Unmatch)->second;
-      if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
+      auto &CPL = LoopCPInfo.find(Unmatch)->second;
+      auto &IA = IALoopInfo.find(Unmatch)->second;
+      if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
-      auto &CalleeFuncLoc = IEI.getCalleeFuncLoc();
+      auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
         if (IAFuncInfo.find(CFL.first)->second.
-            hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
+            hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
           Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
@@ -581,8 +589,8 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     auto &LMP = Provider.get<LoopMatcherPass>();
     auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
-    auto &IEI = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisFuncInfo().find(&F)->second;
+    auto &IA = PSP->getAnalysis<InterprocAttrPass>().
+        getInterprocAttrFuncInfo().find(&F)->second;
     msg::MainFuncInfo Func;
     Func[msg::MainFuncInfo::Name] = F.getName();
     Func[msg::MainFuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
@@ -593,10 +601,10 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::Readonly]
         = msg::Analysis::Yes;
-    if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::NoReturn))
+    if (IA.hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::NoReturn]
         = msg::Analysis::Yes;
-    if (IEI.hasAttr(tsar::InterprocElemInfo::Attr::InOutFunc))
+    if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::InOut]
         = msg::Analysis::Yes;
     if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
@@ -624,44 +632,53 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
     auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    auto &IALoopInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisLoopInfo();
-    auto &IAFuncInfo = PSP->getAnalysis<InterprocAnalysisPass>().
-      getInterprocAnalysisFuncInfo();
-    tsar::InterprocElemInfo IEI;
+    auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+        getLoopCalleeProcInfo();
+    auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+        getFuncCalleeProcInfo();
+    auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
+        getInterprocAttrLoopInfo();
+    auto &IAFuncInfo = PSP->getAnalysis<InterprocAttrPass>().
+        getInterprocAttrFuncInfo();
+    tsar::CalleeProcLocation CPL;
+    tsar::InterprocAttrs IA;
     if (CalleeFuncList[msg::CalleeFuncList::LoopID]) {
       for (auto Match : Matcher)
         if (Match.first->getLocStart().getRawEncoding() ==
-            CalleeFuncList[msg::CalleeFuncList::LoopID])
-          IEI = IALoopInfo.find(Match.first)->second;
+            CalleeFuncList[msg::CalleeFuncList::LoopID]) {
+          CPL = LoopCPInfo.find(Match.first)->second;
+          IA = IALoopInfo.find(Match.first)->second;
+        }
       for (auto Unmatch : Unmatcher)
         if (Unmatch->getLocStart().getRawEncoding() ==
-            CalleeFuncList[msg::CalleeFuncList::LoopID])
-          IEI = IALoopInfo.find(Unmatch)->second;
+            CalleeFuncList[msg::CalleeFuncList::LoopID]) {
+          CPL = LoopCPInfo.find(Unmatch)->second;
+          IA = IALoopInfo.find(Unmatch)->second;
+        }
       if (CalleeFuncList[msg::CalleeFuncList::Attr] ==
-          (unsigned)tsar::InterprocElemInfo::Attr::NoReturn) {
-        if (!IEI.getBreak().empty()) {
+          (unsigned)tsar::InterprocAttrs::Attr::NoReturn) {
+        if (!CPL.getBreak().empty()) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::Name] = "break";
-          for (auto Loc : IEI.getBreak())
+          for (auto Loc : CPL.getBreak())
             Func[msg::CalleeFuncInfo::Locations].
                 push_back(getLocation(Loc, SrcMgr));
           CalleeFuncList[msg::CalleeFuncList::Functions].
               push_back(std::move(Func));
         }
-        if (!IEI.getReturn().empty()) {
+        if (!CPL.getReturn().empty()) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::Name] = "return";
-          for (auto Loc : IEI.getReturn())
+          for (auto Loc : CPL.getReturn())
             Func[msg::CalleeFuncInfo::Locations].
                 push_back(getLocation(Loc, SrcMgr));
           CalleeFuncList[msg::CalleeFuncList::Functions].
               push_back(std::move(Func));
         }
-        if (!IEI.getGoto().empty()) {
+        if (!CPL.getGoto().empty()) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::Name] = "goto";
-          for (auto Loc : IEI.getGoto())
+          for (auto Loc : CPL.getGoto())
             Func[msg::CalleeFuncInfo::Locations].
                 push_back(getLocation(Loc, SrcMgr));
           CalleeFuncList[msg::CalleeFuncList::Functions].
@@ -669,14 +686,15 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
         }
       }
     } else {
-      IEI = IAFuncInfo.find(&F)->second;
+      CPL = FuncCPInfo.find(&F)->second;
+      IA = IAFuncInfo.find(&F)->second;
     }
-    for (auto MapCF : IEI.getCalleeFuncLoc()) {
+    for (auto MapCF : CPL.getCalleeFuncLoc()) {
       for (unsigned IdxAttr = 1;
-          IdxAttr < (unsigned)InterprocElemInfo::Attr::EndAttr; IdxAttr++)
+          IdxAttr < (unsigned)InterprocAttrs::Attr::EndAttr; IdxAttr++)
         if ((CalleeFuncList[msg::CalleeFuncList::Attr] == IdxAttr) &&
             IAFuncInfo.find(MapCF.first)->second.
-                hasAttr((InterprocElemInfo::Attr)IdxAttr)) {
+                hasAttr((InterprocAttrs::Attr)IdxAttr)) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::ID] = std::to_string(
               MapCF.second[0].getRawEncoding());
@@ -738,7 +756,8 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
-  AU.addRequired<InterprocAnalysisPass>();
+  AU.addRequired<CalleeProcLocationPass>();
+  AU.addRequired<InterprocAttrPass>();
   AU.setPreservesAll();
 }
 
