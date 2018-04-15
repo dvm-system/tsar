@@ -157,10 +157,13 @@ void initializeCanonicalLoopPassPass(PassRegistry &Registry);
 /// Creates a pass to determine canonical for-loops in a source code.
 FunctionPass * createCanonicalLoopPass();
 
-void initializeFunctionInlinerImmutableStoragePass(PassRegistry &Registry);
-void initializeFunctionInlinerImmutableWrapperPass(PassRegistry &Registry);
-void initializeFunctionInlinerPassPass(PassRegistry &Registry);
-ModulePass * createFunctionInlinerPass();
+void initializeFunctionInlinerImmutableStoragePass(PassRegistry& Registry);
+void initializeFunctionInlinerImmutableWrapperPass(PassRegistry& Registry);
+void initializeFunctionInlinerPassPass(PassRegistry& Registry);
+//ModulePass * createFunctionInlinerPass(
+//  std::vector<std::unique_ptr<PragmaHandler>>& Handlers);
+
+void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }
 
 #endif//TSAR_PASS_H

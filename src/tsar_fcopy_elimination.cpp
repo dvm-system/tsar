@@ -1,3 +1,14 @@
+//tsar_fcopy_propagation.cpp - Frontend Copy Propagation (clang) --*- C++ -*-=//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// This file implements methods necessary for source-level copy propagation.
+///
+//===----------------------------------------------------------------------===//
+
 
 #include "tsar_fcopy_elimination.h"
 #include "tsar_transformation.h"
@@ -11,10 +22,12 @@
 #include <clang/Lex/Lexer.h>
 #include <llvm/Support/Debug.h>
 
-#include <iterator>
 #include <map>
 #include <set>
 #include <vector>
+
+// FIXME: only propagates and eliminates copies, dead code elimination
+// should be done for meaningless stmts
 
 using namespace clang;
 using namespace llvm;
@@ -35,7 +48,12 @@ bool DeclRefVisitor::VisitDeclRefExpr(clang::DeclRefExpr* DRE) {
   return true;
 }
 
-const clang::Expr* getRHS(const clang::Stmt* S) {
+bool DeclRefVisitor::VisitUnaryOperator(clang::UnaryOperator* UO) {
+  mUnaryOps.insert(UO);
+  return true;
+}
+
+static const clang::Expr* getRHS(const clang::Stmt* S) {
   const clang::Expr* E;
   if (auto BO = dyn_cast<BinaryOperator>(S)) {
     E = BO->getRHS();
@@ -54,12 +72,7 @@ const clang::Stmt* CopyEliminationPass::isRedefined(const clang::ValueDecl* LHS,
       if (auto BO = dyn_cast<BinaryOperator>(CS->getStmt())) {
         if (BO->isAssignmentOp()) {
           auto SLHS = dyn_cast<DeclRefExpr>(BO->getLHS()->IgnoreParens());
-          auto Tokens = getRawTokens(getRange(BO->getRHS()));
           if (SLHS) {
-            if (Tokens.size() == 1
-              && SLHS->getDecl()->getName() == Tokens[0].getRawIdentifier()) {
-              continue;
-            }
             if (SLHS->getDecl() == LHS || SLHS->getDecl() == RHS) {
               return CS->getStmt();
             }
@@ -104,6 +117,8 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
   std::vector<std::map<const clang::ValueDecl*, std::set<const clang::Stmt*>>>
     Kill(CFG->getNumBlockIDs());
   std::map<const clang::ValueDecl*, std::set<const clang::Stmt*>> CopyStmts;
+  std::map<const clang::ValueDecl*, std::set<const clang::DeclRefExpr*>> Redefs;
+  // copy statements - those which have immediate identifier in RHS
   for (auto B : *CFG) {
     auto& GenB = Gen[B->getBlockID()];
     auto& KillB = Kill[B->getBlockID()];
@@ -117,16 +132,21 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
               // this variable is killed
               KillB[LHS->getDecl()];
               GenB.erase(LHS->getDecl());
+              Redefs[LHS->getDecl()].insert(LHS);
             }
             if (BO->getOpcode() == BO_Assign) {
               // only check that RHS has one token (identifier)
+              // and hasn't any unary ops
+              DeclRefVisitor DRVisitor;
+              DRVisitor.TraverseBinaryOperator(
+                const_cast<clang::BinaryOperator*>(BO));
+              auto UnaryOps = DRVisitor.getUnaryOps();
               auto Tokens = getRawTokens(getRange(BO->getRHS()));
-              if (LHS && Tokens.size() == 1) {
-                // ignore dead assignments
-                if (LHS->getDecl()->getName() != Tokens[0].getRawIdentifier()) {
-                  CopyStmts[LHS->getDecl()].insert(CS->getStmt());
-                  GenB[LHS->getDecl()] = CS->getStmt();
-                }
+              auto Text = getSourceText(getRange(BO->getRHS()));
+              if (LHS && UnaryOps.empty() && Tokens.size() == 1
+                && Text == Tokens[0].getRawIdentifier()) {
+                CopyStmts[LHS->getDecl()].insert(CS->getStmt());
+                GenB[LHS->getDecl()] = CS->getStmt();
               }
             }
           }
@@ -137,7 +157,8 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
               auto Tokens = getRawTokens(getRange(VD->getInit()));
               if (Tokens.size() == 1) {
                 DeclRefVisitor DRVisitor;
-                DRVisitor.TraverseDeclStmt(const_cast<DeclStmt*>(DS));
+                DRVisitor.TraverseDeclStmt(const_cast<clang::DeclStmt*>(DS));
+                auto UnaryOps = DRVisitor.getUnaryOps();
                 auto DeclRefs = DRVisitor.getDeclRefs();
                 auto TokenReferenced
                   = [&](const std::pair<const clang::ValueDecl*,
@@ -148,12 +169,23 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
                 assert(std::find_if(std::begin(DeclRefs), std::end(DeclRefs),
                   TokenReferenced) != std::end(DeclRefs)
                   && "Raw identifier: found in source, not found in AST");
-                // ignore dead assignments
-                if (VD->getName() != Tokens[0].getRawIdentifier()) {
+                auto Text = getSourceText(getRange(VD->getInit()));
+                if (UnaryOps.empty() && Text == Tokens[0].getRawIdentifier()) {
                   CopyStmts[VD].insert(CS->getStmt());
                   GenB[VD] = CS->getStmt();
                 }
               } 
+            }
+          }
+        } else if (auto UO = dyn_cast<UnaryOperator>(CS->getStmt())) {
+          if (UO->isIncrementDecrementOp()) {
+            auto LHS = dyn_cast<DeclRefExpr>(UO->getSubExpr());
+            if (LHS) {
+              // assignment to LHS, add to Kill so we know that
+              // this variable is killed
+              KillB[LHS->getDecl()];
+              GenB.erase(LHS->getDecl());
+              Redefs[LHS->getDecl()].insert(LHS);
             }
           }
         }
@@ -202,6 +234,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     }
   }
   
+  DEBUG(
   for (auto B : *CFG) {
     B->dump();
     llvm::dbgs() << "GEN(B" << B->getBlockID() << "):" << '\n';
@@ -216,16 +249,17 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       for (auto S : KillB.second) {
         llvm::dbgs() << "    " << getSourceText(getRange(S)) << '\n';
       }
-    } 
+    }
   }
+  );
 
-  std::vector<std::map<const clang::ValueDecl*, std::set<const clang::Stmt*>>>
-    In(CFG->getNumBlockIDs());
-  std::vector<std::map<const clang::ValueDecl*, std::set<const clang::Stmt*>>>
-    Out(CFG->getNumBlockIDs());
+  mIn = std::vector<std::map<const clang::ValueDecl*,
+    std::set<const clang::Stmt*>>>(CFG->getNumBlockIDs());
+  mOut = std::vector<std::map<const clang::ValueDecl*,
+    std::set<const clang::Stmt*>>>(CFG->getNumBlockIDs());
   for (auto B : *CFG) {
     if (B->getBlockID() != CFG->getEntry().getBlockID()) {
-      Out[B->getBlockID()] = CopyStmts;
+      mOut[B->getBlockID()] = CopyStmts;
     }
   }
   bool Changed = true;
@@ -237,12 +271,15 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       }
       auto& GenB = Gen[B->getBlockID()];
       auto& KillB = Kill[B->getBlockID()];
-      auto& InB = In[B->getBlockID()];
-      auto& OutB = Out[B->getBlockID()];
+      auto& InB = mIn[B->getBlockID()];
+      auto& OutB = mOut[B->getBlockID()];
 
       auto NewInB = CopyStmts;
       for (auto PB : B->preds()) {
-        for (auto& OutB : Out[PB->getBlockID()]) {
+        if (!PB) {
+          continue;
+        }
+        for (auto& OutB : mOut[PB->getBlockID()]) {
           if (NewInB.find(OutB.first) != std::end(NewInB)) {
             std::set<const clang::Stmt*> Intersection;
             std::set_intersection(
@@ -257,8 +294,8 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
           }
         }
         for (auto it = std::begin(NewInB); it != std::end(NewInB);) {
-          if (Out[PB->getBlockID()].find(it->first)
-            == std::end(Out[PB->getBlockID()])) {
+          if (mOut[PB->getBlockID()].find(it->first)
+            == std::end(mOut[PB->getBlockID()])) {
             it = NewInB.erase(it);
           } else {
             ++it;
@@ -295,11 +332,12 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     }
   }
   
+  DEBUG(
   for (auto B : *CFG) {
     B->dump();
     llvm::dbgs() << "GEN(B" << B->getBlockID() << "):" << '\n';
     llvm::dbgs() << "IN(B" << B->getBlockID() << "):" << '\n';
-    for (auto& InB : In[B->getBlockID()]) {
+    for (auto& InB : mIn[B->getBlockID()]) {
       llvm::dbgs() << "  " << InB.first << ' ' << InB.first->getName() << ':'
         << '\n';
       for (auto S : InB.second) {
@@ -307,7 +345,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       }
     }
     llvm::dbgs() << "OUT:" << '\n';
-    for (auto& OutB : Out[B->getBlockID()]) {
+    for (auto& OutB : mOut[B->getBlockID()]) {
       llvm::dbgs() << "  " << OutB.first << ' ' << OutB.first->getName() << ':'
         << '\n';
       for (auto S : OutB.second) {
@@ -315,19 +353,20 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       }
     }
   }
+  );
 
-  auto getBlocks = [&](const clang::ValueDecl* LHS, const clang::Stmt* S) {
+  auto getBlocksWithIn = [&](const clang::ValueDecl* LHS, const clang::Stmt* S) {
     std::set<unsigned int> Blocks;
-    for (unsigned int i = 0; i < In.size(); ++i) {
-      if (In[i].find(LHS) != std::end(In[i])) {
-        if (In[i][LHS].find(S) != std::end(In[i][LHS])) {
+    for (unsigned int i = 0; i < mIn.size(); ++i) {
+      if (mIn[i].find(LHS) != std::end(mIn[i])) {
+        if (mIn[i][LHS].find(S) != std::end(mIn[i][LHS])) {
           Blocks.insert(i);
         }
       }
     }
     return Blocks;
   };
-  auto getBlock = [&](const clang::Stmt* S) -> CFGBlock* {
+  auto getStmtBlock = [&](const clang::Stmt* S) -> CFGBlock* {
     for (auto B : *CFG) {
       for (auto I : *B) {
         if (auto CS = I.getAs<CFGStmt>()) {
@@ -340,6 +379,34 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     assert("Statement not found in CFG");
     return nullptr;
   };
+  auto rewriteRange = [&](const clang::ValueDecl* LHS,
+    const clang::ValueDecl* RHS, clang::CFGBlock::iterator B,
+    clang::CFGBlock::iterator E) {
+    std::map<const clang::ValueDecl*, std::set<const clang::DeclRefExpr*>>
+      RewrittenDecls;
+    auto RedefStmt = isRedefined(LHS, RHS, B, E);
+    for (auto I = B; I != E; ++I) {
+      if (auto CS = I->getAs<CFGStmt>()) {
+        if (CS->getStmt() == RedefStmt) {
+          break;
+        }
+        DeclRefVisitor DRVisitor;
+        DRVisitor.TraverseStmt(const_cast<Stmt*>(CS->getStmt()));
+        auto DeclRefs = DRVisitor.getDeclRefs()[LHS];
+        RewrittenDecls[LHS].insert(std::begin(DeclRefs),
+          std::end(DeclRefs));
+        for (auto DRE : DeclRefs) {
+          // rewrite DRE with RHS
+          DEBUG(
+          llvm::dbgs() << getSourceText(getRange(CS->getStmt())) << ':'
+            << LHS->getName() << " -> " << RHS->getName() << '\n';
+          );
+          mRewriter->ReplaceText(getRange(DRE), RHS->getName());
+        }
+      }
+    }
+    return RewrittenDecls;
+  };
 
   std::map<const clang::ValueDecl*, std::set<const clang::DeclRefExpr*>>
     RewrittenDecls;
@@ -350,7 +417,6 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     auto LHS = CopyStmt.first;
     auto VDCopyStmts = CopyStmt.second;
     for (auto S : VDCopyStmts) {
-      llvm::errs() << "\nCopy Stmt " << getSourceText(getRange(S)) << '\n';
       auto Tokens = getRawTokens(getRange(getRHS(S)));
       assert(Tokens.size() == 1);
       DeclRefVisitor DRVisitor;
@@ -367,67 +433,54 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       assert(it != std::end(DeclRefs)
         && "Raw identifier: found in source, not found in AST");
       auto RHS = it->first;
-      auto BlockIDs = getBlocks(LHS, S);
-      llvm::errs() << "Block IDs " << BlockIDs.size() << '\n';
+      // handle blocks reached by this copy stmt
+      auto BlockIDs = getBlocksWithIn(LHS, S);
       for (auto B : *CFG) {
         if (BlockIDs.find(B->getBlockID()) == std::end(BlockIDs)) {
           continue;
         }
-        auto RedefStmt = isRedefined(LHS, RHS, B->begin(), B->end());
-        for (auto I : *B) {
-          if (auto CS = I.getAs<CFGStmt>()) {
-            if (CS->getStmt() == RedefStmt) {
-              break;
-            }
-            DeclRefVisitor DRVisitor;
-            DRVisitor.TraverseStmt(const_cast<Stmt*>(CS->getStmt()));
-            auto DeclRefs = DRVisitor.getDeclRefs()[LHS];
-            RewrittenDecls[LHS].insert(std::begin(DeclRefs),
-              std::end(DeclRefs));
-            for (auto DRE : DeclRefs) {
-              // rewrite DRE with RHS
-              mRewriter->ReplaceText(getRange(DRE), RHS->getName());
-              llvm::dbgs() << getSourceText(getRange(CS->getStmt())) << ':'
-                << LHS->getName() << " -> " << RHS->getName() << '\n';
-            }
-          }
+        auto BlockRewrittenDecls = rewriteRange(LHS, RHS, B->begin(), B->end());
+        for (auto& Decl : BlockRewrittenDecls) {
+          RewrittenDecls[Decl.first].insert(std::begin(Decl.second),
+            std::end(Decl.second));
         }
       }
-      auto B = getBlock(S);
-      auto RedefStmt = isRedefined(LHS, RHS, B->begin(), B->end());
-      llvm::errs() << "My Block " << B->getBlockID() << '\n';
-      llvm::errs() << "Redef Stmt " << (RedefStmt ? getSourceText(getRange(RedefStmt)) : "(null)") << '\n';
+      // handle block containing this copy stmt
+      auto B = getStmtBlock(S);
       for (auto I = B->begin(); I != B->end(); ++I) {
         if (auto CS = I->getAs<CFGStmt>()) {
-          if (CS->getStmt() != RedefStmt) {
+          if (CS->getStmt() != S) {
             continue;
           } else {
-            ++I;
-            RedefStmt = isRedefined(LHS, RHS, I, B->end());
-            for (; I != B->end(); ++I) {
-              if (auto CS = I->getAs<CFGStmt>()) {
-                if (CS->getStmt() == RedefStmt) {
-                  break;
-                }
-                DeclRefVisitor DRVisitor;
-                DRVisitor.TraverseStmt(const_cast<Stmt*>(CS->getStmt()));
-                auto DeclRefs = DRVisitor.getDeclRefs()[LHS];
-                RewrittenDecls[LHS].insert(std::begin(DeclRefs),
-                  std::end(DeclRefs));
-                for (auto DRE : DeclRefs) {
-                  // rewrite DRE with RHS
-                  mRewriter->ReplaceText(getRange(DRE), RHS->getName());
-                  llvm::dbgs() << getSourceText(getRange(CS->getStmt())) << ':'
-                    << LHS->getName() << " -> " << RHS->getName() << '\n';
-                }
-              }
+            auto BlockRewrittenDecls = rewriteRange(LHS, RHS, I + 1, B->end());
+            for (auto& Decl : BlockRewrittenDecls) {
+              RewrittenDecls[Decl.first].insert(std::begin(Decl.second),
+                std::end(Decl.second));
             }
-            if (I == B->end()) {
-              break;
-            }
+            break;
           }
         }
       }
+    }
+  }
+  for (auto& Decl : RewrittenDecls) {
+    auto DeclRefs = AllDeclRefs[Decl.first];
+    auto& DeclRedefs = Redefs[Decl.first];
+    auto& RewrittenRefs = Decl.second;
+    std::set<const clang::DeclRefExpr*> Difference;
+    std::set_difference(std::begin(DeclRefs), std::end(DeclRefs),
+      std::begin(DeclRedefs), std::end(DeclRedefs),
+      std::inserter(Difference, std::end(Difference)));
+    Difference.swap(DeclRefs);
+    Difference.clear();
+    std::set_difference(std::begin(DeclRefs), std::end(DeclRefs),
+      std::begin(RewrittenRefs), std::end(RewrittenRefs),
+      std::inserter(Difference, std::end(Difference)));
+    if (Difference.empty()) {
+      DEBUG(
+      llvm::dbgs() << getSourceText(getRange(Decl.first)) << " : "
+        << Decl.first->getName() << " can be omitted" << '\n';
+      );
     }
   }
   return false;

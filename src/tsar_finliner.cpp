@@ -35,8 +35,7 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 
-
-// 14.04 TODO(jury.zykov@yandex.ru): copy propagation/elimination pass
+// FIXME: ASTImporter can break mapping node->source (VLAs, etc)
 
 using namespace clang;
 using namespace llvm;
@@ -988,7 +987,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
     return "";
   };*/
-  /*auto StaticExternalDepsChecker = [&](const Template& T) -> std::string {
+  auto StaticExternalDepsChecker = [&](const Template& T) -> std::string {
     std::string Result;
     for (auto D : mForwardDecls[T.getFuncDecl()]) {
       const clang::VarDecl* VD = clang::dyn_cast<clang::VarDecl>(D);
@@ -1006,7 +1005,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       }
     }
     return Result;
-  };*/
+  };
   auto NestedExternalDepsChecker = [&](const Template& T) -> std::string {
     bool NestedDeps = false;
     const clang::Decl* NestedD = nullptr;
@@ -1025,7 +1024,10 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // note: external dependencies include callees
   auto ExternalDepsChecker = [&](const TemplateInstantiation& TI)
     -> std::string {
-    std::string Result;
+    std::string Result = StaticExternalDepsChecker(*TI.mTemplate);
+    if (Result != "") {
+      return Result;
+    }
     std::set<const clang::Decl*> AtLocVisibleDecls;
     // find external deps of preceding templates in same file
     // these decls are guaranteed to be visible for instantiation
