@@ -52,15 +52,33 @@ using PrivateInfo =
 namespace detail {
 enum TraitId : unsigned long long;
 class TraitImp;
+class DependenceImp;
 }
 }
 
 namespace llvm {
+class DataLayout;
+class Dependence;
+class DependenceInfo;
 class Loop;
+class TargetLibraryInfo;
+class ScalarEvolution;
 
 /// This pass determines locations which can be privatized.
 class PrivateRecognitionPass :
     public FunctionPass, private bcl::Uncopyable {
+  /// Set of loop-carried dependencies.
+  using DependenceMap = DenseMap<
+    const tsar::EstimateMemory *, std::unique_ptr<tsar::detail::DependenceImp>,
+    DenseMapInfo<const tsar::EstimateMemory *>,
+    tsar::TaggedDenseMapPair<
+      bcl::tagged<
+        const tsar::EstimateMemory *,
+        tsar::EstimateMemory>,
+      bcl::tagged<
+        std::unique_ptr<tsar::detail::DependenceImp>,
+        tsar::detail::DependenceImp>>>;
+
   /// \brief Map from memory location to traits.
   ///
   /// Note, that usage of DenseSet instead of DenseMap in this case may
@@ -138,6 +156,10 @@ public:
     mDefInfo = nullptr;
     mLiveInfo = nullptr;
     mAliasTree = nullptr;
+    mDepInfo = nullptr;
+    mDL = nullptr;
+    mTLI = nullptr;
+    mSE = nullptr;
   }
 
   /// Specifies a list of analyzes  that are necessary for this pass.
@@ -148,6 +170,15 @@ public:
   void print(raw_ostream &OS, const Module *M) const override;
 
 private:
+  /// Uses dependence analysis pass to collect loop-carried dependencies in
+  /// a specified loop.
+  void collectDependencies(Loop *L, DependenceMap &Deps);
+
+  /// Update collection `Deps` of loop-carried dependencies in a specified loop.
+  void insertDependence(const Dependence &Dep,
+    const MemoryLocation &Src, const MemoryLocation Dst,
+    tsar::trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps);
+
   /// \brief Implements recognition of privatizable locations.
   ///
   /// Privatizability analysis is performed in two steps. Firstly,
@@ -171,8 +202,9 @@ private:
   /// parameters.
   void resolveAccesses(const tsar::DFNode *LatchNode,
     const tsar::DFNode *ExitNode, const tsar::DefUseSet &DefUse,
-    const tsar::LiveSet &LS, TraitMap &ExplicitAccesses,
-    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits);
+    const tsar::LiveSet &LS, const DependenceMap &Deps,
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
+    AliasMap &NodeTraits);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
   void resolvePointers(const tsar::DefUseSet &DefUse,
@@ -296,6 +328,10 @@ private:
   const tsar::DefinedMemoryInfo *mDefInfo = nullptr;
   const tsar::LiveMemoryInfo *mLiveInfo = nullptr;
   const tsar::AliasTree *mAliasTree = nullptr;
+  DependenceInfo *mDepInfo = nullptr;
+  const DataLayout *mDL = nullptr;
+  TargetLibraryInfo *mTLI = nullptr;
+  ScalarEvolution *mSE = nullptr;
 };
 }
 #endif//TSAR_PRIVATE_H
