@@ -478,6 +478,7 @@ void PrivateRecognitionPass::removeRedundant(
   auto Current = CurrItr->get<EstimateMemory>();
   for (++I; I != E;) {
     if (Current == I->get<EstimateMemory>()) {
+      I->get<TraitImp>() &= CurrItr->get<TraitImp>();
       CurrItr = Traits.erase_after(BeforeCurrItr);
       return;
     }
