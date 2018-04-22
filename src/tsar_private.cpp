@@ -103,16 +103,17 @@ namespace detail {
 /// part of memory locations is read-only and other part is last private a union
 /// is last private and first private (for details see resolve... methods).
 enum TraitId : unsigned long long {
-  NoAccess = 1111111_b,
-  Readonly = 1111011_b,
-  Shared = 1111001_b,
-  Private = 0111111_b,
-  FirstPrivate = 0111011_b,
-  SecondToLastPrivate = 0101111_b,
-  LastPrivate = 0011111_b,
-  DynamicPrivate = 0001111_b,
-  Dependency = 0000001_b,
-  AddressAccess = 1111110_b,
+  NoAccess = 11111111_b,
+  Readonly = 11110111_b,
+  Shared = 11110011_b,
+  Private = 01111111_b,
+  FirstPrivate = 01110111_b,
+  SecondToLastPrivate = 01011111_b,
+  LastPrivate = 00111111_b,
+  DynamicPrivate = 00011111_b,
+  Dependency = 00000011_b,
+  AddressAccess = 11111101_b,
+  HeaderAccess = 11111110_b,
 };
 
 constexpr inline TraitId operator&(TraitId LHS, TraitId RHS) noexcept {
@@ -131,7 +132,18 @@ constexpr inline TraitId operator~(TraitId What) noexcept {
     ~static_cast<std::underlying_type<TraitId>::type>(What) & NoAccess);
 }
 
-/// Internal representation of traits of some memory location (see .cpp file).
+/// Drops bits which identifies single-bit traits.
+static inline TraitId dropUnitFlag(TraitId T) noexcept {
+  return T | ~AddressAccess | ~HeaderAccess;
+}
+
+/// Drops a single bit which identifies shared trait (shared becomes read-only).
+static inline TraitId dropSharedFlag(TraitId T) noexcept {
+  return T | ~(~Readonly | Shared);
+}
+
+
+/// Internal representation of traits of memory locations.
 class TraitImp {
 public:
   TraitImp() = default;
@@ -151,11 +163,8 @@ public:
 private:
   std::underlying_type<TraitId>::type mId = NoAccess;
 };
-}
-}
 
-namespace tsar {
-namespace detail {
+/// Internal representation of loop-carried dependencies.
 class DependenceImp {
   friend class UpdateFunctor;
   friend class DumpFunctor;
@@ -164,14 +173,14 @@ public:
   using Descriptor =
     bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output>;
 
-  void update(
-    Descriptor Dptr, trait::Dependence::Flag F, const SCEV * Dist) {
+  void update(Descriptor Dptr, trait::Dependence::Flag F, const SCEV * Dist) {
     Dptr.for_each(UpdateFunctor{ this, F, Dist });
   }
-
+  void update(DependenceImp &Dep) {
+    Dep.mDptr.for_each(UpdateDepFunctor{ this, &Dep });
+  }
   void print(raw_ostream &OS) { mDptr.for_each(DumpFunctor{ this, OS }); }
   void dump() { print(dbgs()); }
-
 private:
   struct UpdateFunctor {
     template<class Trait> void operator()() {
@@ -188,11 +197,24 @@ private:
     trait::Dependence::Flag mFlag;
     const SCEV *mDist;
   };
-
+  struct UpdateDepFunctor {
+    template<class Trait> void operator()() {
+      mDep->mDptr.set<Trait>();
+      mDep->mFlags.get<Trait>() |= mSrc->mFlags.get<Trait>();
+      if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance))
+        mDep->mDists.get<Trait>().insert(
+          mSrc->mDists.get<Trait>().begin(), mSrc->mDists.get<Trait>().end());
+      else
+        mDep->mDists.get<Trait>().clear();
+    }
+    DependenceImp *mDep;
+    DependenceImp *mSrc;
+  };
   struct DumpFunctor {
     template<class Trait> void operator()() {
       mOS << "{" << Trait::toString();
-      mOS << ", flags=" << mDep->mFlags.get<Trait>();
+      mOS << ", flags=";
+      bcl::bitPrint(mDep->mFlags.get<Trait>(), mOS);
       mOS << ", distance={";
       for (const SCEV *D : mDep->mDists.get<Trait>()) {
         mOS << " ";
@@ -203,7 +225,6 @@ private:
     DependenceImp *mDep;
     raw_ostream &mOS;
   };
-
   Descriptor mDptr;
   bcl::tagged_tuple<
     bcl::tagged<Distances, trait::Flow>,
@@ -216,6 +237,46 @@ private:
 };
 }
 }
+
+/// Inserts or updates information about dependencies in a specified map.
+template<class MapTy>
+static inline void insert(const EstimateMemory *EM,
+    DependenceImp::Descriptor &Dptr, trait::Dependence::Flag F,
+    const SCEV *Dist, MapTy &Deps) {
+  assert(EM && "Estimate memory location must not be null!");
+  auto Itr = Deps.try_emplace(EM, nullptr).first;
+  if (!Itr->get<DependenceImp>())
+    Itr->get<DependenceImp>().reset(new DependenceImp);
+  Itr->get<DependenceImp>()->update(Dptr, F, Dist);
+  DEBUG(
+    dbgs() << "[PRIVATE]: update dependence kind of ";
+    printLocationSource(dbgs(), MemoryLocation(EM->front(), EM->getSize()));
+    dbgs() << " to ";
+    Itr->get<DependenceImp>()->print(dbgs());
+    dbgs() << "\n");
+}
+
+static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
+  if (const LoadInst *LI = dyn_cast<LoadInst>(I)) {
+    if (LI->isUnordered())
+      return MemoryLocation::get(LI);
+  } else if (const StoreInst *SI = dyn_cast<StoreInst>(I)) {
+    if (SI->isUnordered())
+      return MemoryLocation::get(SI);
+  }
+  return MemoryLocation();
+}
+
+#ifndef NDEBUG
+static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
+  dbgs() << "[PRIVATE]: update traits of ";
+  printLocationSource(
+    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
+  dbgs() << " to ";
+  bcl::bitPrint(T, dbgs());
+  dbgs() << "\n";
+}
+#endif
 
 void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
@@ -286,34 +347,10 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
   else
     Dptr.set<trait::Flow, trait::Anti>();
   auto Dist = Dep.getDistance(L.getLoopDepth());
-  auto insert = [this, &Dptr, Dist, Flag, &Deps](const MemoryLocation &Loc) {
-    auto EM = mAliasTree->find(Loc);
-    assert(EM && "Estimate memory location must not be null!");
-    auto Itr = Deps.try_emplace(EM, nullptr).first;
-    if (!Itr->get<DependenceImp>())
-      Itr->get<DependenceImp>().reset(new DependenceImp);
-    Itr->get<DependenceImp>()->update(
-      Dptr, trait::Dependence::LoadStoreCause | Flag, Dist);
-    DEBUG(
-      dbgs() << "[PRIVATE]: update dependence kind of ";
-      printLocationSource(dbgs(), MemoryLocation(EM->front(), EM->getSize()));
-      dbgs() << " to ";
-      Itr->get<DependenceImp>()->print(dbgs());
-      dbgs() << "\n");
-  };
-  insert(Src);
-  insert(Dst);
-}
-
-static MemoryLocation getLoadOrStoreLocation(Instruction *I) {
-  if (const LoadInst *LI = dyn_cast<LoadInst>(I)) {
-    if (LI->isUnordered())
-      return MemoryLocation::get(LI);
-  } else if (const StoreInst *SI = dyn_cast<StoreInst>(I)) {
-    if (SI->isUnordered())
-      return MemoryLocation::get(SI);
-  }
-  return MemoryLocation();
+  insert(mAliasTree->find(Src),
+    Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
+  insert(mAliasTree->find(Dst),
+    Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
 }
 
 void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
@@ -348,19 +385,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
             return;
           if (AA.getModRefInfo(*DstItr, Loc) == MRI_NoModRef)
             return;
-          auto EM = mAliasTree->find(Loc);
-          assert(EM && "Estimate memory location must not be null!");
-          auto Itr = Deps.try_emplace(EM, nullptr).first;
-          if (!Itr->get<DependenceImp>())
-            Itr->get<DependenceImp>().reset(new DependenceImp);
-          Itr->get<DependenceImp>()->update(Dptr, Flag, nullptr);
-          DEBUG(
-            dbgs() << "[PRIVATE]: update dependence kind of ";
-            printLocationSource(
-              dbgs(), MemoryLocation{EM->front(), EM->getSize()});
-            dbgs() << " to ";
-            Itr->get<DependenceImp>()->print(dbgs());
-            dbgs() << "\n");
+          insert(mAliasTree->find(Loc), Dptr, Flag, nullptr, Deps);
         };
         auto stab = [](Instruction &, AccessInfo, AccessInfo) {};
         for_each_memory(**SrcItr, *mTLI, insertUnknownDep, stab);
@@ -392,17 +417,6 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
     }
   }
 }
-
-#ifndef NDEBUG
-static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
-  dbgs() << "[PRIVATE]: update traits of ";
-  printLocationSource(
-    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
-  dbgs() << " to ";
-  bcl::bitPrint(T, dbgs());
-  dbgs() << "\n";
-}
-#endif
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     const DFNode *ExitNode, const tsar::DefUseSet &DefUse,
@@ -492,16 +506,16 @@ void PrivateRecognitionPass::resolvePointers(
       auto LocTraits = ExplicitAccesses.find(EM);
       assert(LocTraits != ExplicitAccesses.end() &&
         "Traits of location must be initialized!");
-      if ((*LocTraits->get<TraitImp>() | ~AddressAccess) == Private ||
-          (*LocTraits->get<TraitImp>() | ~AddressAccess) == Readonly ||
-          (*LocTraits->get<TraitImp>() | ~AddressAccess) == Shared)
+      if (dropSharedFlag(dropUnitFlag(*LocTraits->get<TraitImp>())) == Private ||
+          dropUnitFlag(*LocTraits->get<TraitImp>()) == Readonly ||
+          dropUnitFlag(*LocTraits->get<TraitImp>()) == Shared)
         continue;
       const EstimateMemory *Ptr = mAliasTree->find(MemoryLocation::get(LI));
       assert(Ptr && "Estimate memory location must not be null!");
       auto PtrTraits = ExplicitAccesses.find(Ptr);
       assert(PtrTraits != ExplicitAccesses.end() &&
         "Traits of location must be initialized!");
-      if ((*PtrTraits->get<TraitImp>() | ~AddressAccess) == Readonly)
+      if (dropUnitFlag(*PtrTraits->get<TraitImp>()) == Readonly)
         continue;
       // Location can not be declared as copy in or copy out without
       // additional analysis because we do not know which memory must
@@ -743,7 +757,7 @@ void PrivateRecognitionPass::storeResults(
       checkFirstPrivate(Numbers, R, EMI, *NodeTraitItr);
       auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
       if (ExplicitItr != ExplicitAccesses.end() &&
-          (*ExplicitItr->second | ~AddressAccess) != NoAccess &&
+          dropUnitFlag(*ExplicitItr->second) != NoAccess &&
           EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
         NodeTraitItr->set<trait::ExplicitAccess>();
       NodeTraitItr->insert(
@@ -766,7 +780,7 @@ void PrivateRecognitionPass::storeResults(
     checkFirstPrivate(Numbers, R, EMI, Dptr);
     auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
     if (ExplicitItr != ExplicitAccesses.end() &&
-        (*ExplicitItr->get<TraitImp>() | ~AddressAccess) != NoAccess &&
+        dropUnitFlag(*ExplicitItr->get<TraitImp>()) != NoAccess &&
         EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
@@ -779,7 +793,7 @@ void PrivateRecognitionPass::storeResults(
     auto Dptr = toDescriptor(U.get<TraitImp>(), 0);
     auto ExplicitItr = ExplicitUnknowns.find(U.get<Instruction>());
     if (ExplicitItr != ExplicitUnknowns.end() &&
-        (*ExplicitItr->get<TraitImp>() | ~AddressAccess) != NoAccess &&
+        dropUnitFlag(*ExplicitItr->get<TraitImp>()) != NoAccess &&
         ExplicitItr->get<AliasNode>() == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
@@ -788,8 +802,8 @@ void PrivateRecognitionPass::storeResults(
       UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
   CombinedTrait &=
-    (CombinedTrait | ~AddressAccess) == Readonly ? Readonly :
-      (CombinedTrait | ~AddressAccess) == Shared ? Shared : Dependency;
+    dropUnitFlag(CombinedTrait) == Readonly ? Readonly :
+      dropUnitFlag(CombinedTrait) == Shared ? Shared : Dependency;
   if (NodeTraitItr->is<trait::ExplicitAccess>()) {
     *NodeTraitItr = toDescriptor(CombinedTrait, NodeTraitItr->count());
     NodeTraitItr->set<trait::ExplicitAccess>();
@@ -805,12 +819,12 @@ DependencyDescriptor PrivateRecognitionPass::toDescriptor(
     Dptr.set<trait::AddressAccess>();
     NumAddressAccess += TraitNumber;
   }
-  if ((T | ~AddressAccess) == Dependency) {
+  if (dropUnitFlag(T) == Dependency) {
     Dptr.set<trait::Flow, trait::Anti, trait::Output>();
     NumDeps += TraitNumber;
     return Dptr;
   }
-  switch (T | ~(~Readonly | Shared) | ~AddressAccess) {
+  switch (dropUnitFlag(dropSharedFlag(T))) {
   default:
     llvm_unreachable("Unknown type of memory location dependency!");
     break;
