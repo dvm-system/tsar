@@ -146,6 +146,14 @@ void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
+    DEBUG(
+      dbgs() << "[PRIVATE]: analyze "; L->getLoop()->dump();
+      if (DebugLoc DbgLoc = L->getLoop()->getStartLoc()) {
+        dbgs() << " at ";
+        DbgLoc.print(dbgs());
+      }
+      dbgs() << "\n";
+    );
     auto PrivInfo = mPrivates.insert(
       std::make_pair(L, llvm::make_unique<DependencySet>(*mAliasTree)));
     auto DefItr = mDefInfo->find(L);
@@ -172,6 +180,18 @@ void PrivateRecognitionPass::resolveCandidats(
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
     resolveCandidats(Numbers, *I);
 }
+
+
+#ifndef NDEBUG
+static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
+  dbgs() << "[PRIVATE]: update traits of ";
+  printLocationSource(
+    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
+  dbgs() << " to ";
+  bcl::bitPrint(T, dbgs());
+  dbgs() << "\n";
+}
+#endif
 
 void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     const DFNode *ExitNode, const tsar::DefUseSet &DefUse,
@@ -232,6 +252,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     } else {
       CurrTraits &= Shared;
     }
+    DEBUG(updateTraitsLog(Base, CurrTraits));
   }
   for (const auto &Unknown : DefUse.getExplicitUnknowns()) {
     const auto N = mAliasTree->findUnknown(Unknown);
