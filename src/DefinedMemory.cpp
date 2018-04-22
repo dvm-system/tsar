@@ -170,7 +170,7 @@ public:
         if (this->mDU.hasDef(ALoc))
           continue;
         auto AR = aliasRelation(this->mAA, this->mDL, mLoc, ALoc);
-        if (AR.template is<trait::CoverAlias>())
+        if (AR.template is<trait::CoverAlias, trait::CoincideAlias>())
           addMust(ALoc);
         else
           addMay(ALoc);
@@ -323,12 +323,24 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
         stripToBase(DL, Loc);
-        DU->addExplicitAccess(Loc);
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
+        auto &AA = AT.getAliasAnalysis();
+        /// List of ambiguous pointers contains only one pointer for each set
+        /// of must alias locations. So, it is not guaranteed that Loc is
+        /// presented in this list. If it is not presented there than it will
+        /// not be presented in MustDefs, MayDefs and Uses. Some other location
+        /// which must alias Loc will be presented there. Hence, it is
+        /// necessary to add other location which must alias Loc in the list
+        /// of explicit accesses.
+        for (auto *APtr : *EM) {
+          MemoryLocation ALoc(APtr, EM->getSize(), EM->getAAInfo());
+          auto AR = aliasRelation(AA, DL, Loc, ALoc);
+          if (AR.template is<trait::CoincideAlias>())
+            DU->addExplicitAccess(ALoc);
+        }
         auto AN = EM->getAliasNode(AT);
         assert(AN && "Alias node must not be null!");
-        auto &AA = AT.getAliasAnalysis();
         ImmutableCallSite CS(&I);
         if (CS) {
           switch (AA.getArgModRefInfo(CS, Idx)) {
