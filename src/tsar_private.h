@@ -249,12 +249,14 @@ private:
   /// their traits which is explicitly accessed in a loop.
   /// \param [in, out] NodeTraits Utility list of traits for all nodes in
   /// the alias tree.
+  /// \param [in, out] Deps List of loop-carried dependencies. This improves
+  /// classification of data dependencies.
   /// \param [out] DS Representation of traits of a currently evaluated loop.
   void propagateTraits(
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
     const tsar::DFRegion &R,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits, tsar::DependencySet &DS);
+    AliasMap &NodeTraits, DependenceMap &Deps, tsar::DependencySet &DS);
 
   /// \brief This removes redundant traits from a list.
   ///
@@ -265,7 +267,8 @@ private:
   /// stored in alias node N, the largest estimate location from `N` which
   /// covers it. All parameters of this method (except `N)` are in-out.
   void removeRedundant(const tsar::AliasNode *N, TraitList &Traits,
-      TraitList::iterator &BeforeCurrItr, TraitList::iterator &CurrItr);
+      TraitList::iterator &BeforeCurrItr, TraitList::iterator &CurrItr,
+      DependenceMap &Deps);
 
   /// \brief Checks whether an estimate memory location should be first private
   /// and stores appropriate traits if necessary.
@@ -301,7 +304,8 @@ private:
   /// their traits which is explicitly accessed in a loop.
   /// \param [in] ExplicitUnknowns List of unknown memory locations and
   /// their traits which is explicitly accessed in a loop.
-  /// \param [in, out] TraitPair Internal representation of traits of estimate
+  /// \param [in] Deps Description of loop-carried dependencies.
+  /// \param [in, out] Traits Internal representation of traits of estimate
   /// memory from alias node 'N' which are explicitly accessed in a loop.
   /// This traits will be safely combined and trait for the whole node 'N' will
   /// be obtained.
@@ -311,7 +315,8 @@ private:
      const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
      const tsar::DFRegion &R, const tsar::AliasNode &N,
      const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
-     const TraitPair &Traits, tsar::DependencySet &DS);
+     const DependenceMap &Deps, const TraitPair &Traits,
+     tsar::DependencySet &DS);
 
   /// \brief Converts internal representation of a trait to a dependency
   /// descriptor.
@@ -321,7 +326,7 @@ private:
   /// can be used to take into account all traits. It also can be set to 0
   /// if a specified trait should not be counted.
   tsar::DependencyDescriptor toDescriptor(const tsar::detail::TraitImp &T,
-    unsigned TraitNumber);
+   unsigned TraitNumber);
 
 private:
   tsar::PrivateInfo mPrivates;

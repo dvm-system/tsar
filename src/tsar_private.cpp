@@ -142,7 +142,6 @@ static inline TraitId dropSharedFlag(TraitId T) noexcept {
   return T | ~(~Readonly | Shared);
 }
 
-
 /// Internal representation of traits of memory locations.
 class TraitImp {
 public:
@@ -166,22 +165,66 @@ private:
 
 /// Internal representation of loop-carried dependencies.
 class DependenceImp {
-  friend class UpdateFunctor;
-  friend class DumpFunctor;
+  friend struct UpdateFunctor;
+  friend struct DumpFunctor;
+  friend struct SummarizeFunctor;
+
 public:
   using Distances = SmallPtrSet<const SCEV *, 4>;
   using Descriptor =
     bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output>;
 
+  /// \brief This functor summarize information about dependencies and stores
+  /// summary in set of traits mSet.
+  ///
+  /// The one of the actions to be performed in calculation of maximum and
+  /// minimum distances.
+  template<class TraitSet>
+  struct SummarizeFunctor {
+    template<class Trait> void operator()() {
+      trait::Dependence::DistanceRange Dist(nullptr, nullptr);
+      SmallVector<const SCEV *, 4> MaxOps(mDep->mDists.get<Trait>().size());
+      SmallVector<const SCEV *, 4> MinOps(mDep->mDists.get<Trait>().size());
+      if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
+        std::size_t Idx = 0;
+        for (auto D : mDep->mDists.get<Trait>()) {
+          MaxOps[Idx] = mSE->getSMaxExpr(mSE->getNegativeSCEV(D), D);
+          MinOps[Idx] = mSE->getNotSCEV(MaxOps[Idx]);
+          ++Idx;
+        }
+        Dist.first = mSE->getNotSCEV(mSE->getUMaxExpr(MinOps));
+        Dist.second = mSE->getUMaxExpr(MaxOps);
+      }
+      mSet->set(new Trait(mDep->mFlags.get<Trait>(), Dist));
+    }
+    DependenceImp *mDep;
+    TraitSet *mSet;
+    ScalarEvolution *mSE;
+  };
+
+  /// Returns descriptor.
+  const Descriptor & get() const noexcept { return mDptr; }
+
+  /// Uses specified descriptor, flags, and distance to update
+  /// information about dependencies (see UpdateFunctor for details).
   void update(Descriptor Dptr, trait::Dependence::Flag F, const SCEV * Dist) {
     Dptr.for_each(UpdateFunctor{ this, F, Dist });
   }
+
+  /// Uses specified dependence description to update underlying
+  /// information about dependencies (see UpdateFunctor for details).
   void update(DependenceImp &Dep) {
     Dep.mDptr.for_each(UpdateDepFunctor{ this, &Dep });
   }
+
+  /// Print information about dependencies.
   void print(raw_ostream &OS) { mDptr.for_each(DumpFunctor{ this, OS }); }
-  void dump() { print(dbgs()); }
+
+  /// Print information about dependencies.
+  void dump() { print(dbgs()); dbgs() << "\n"; }
+
 private:
+  /// This functor updates specified dependence description mDep.
   struct UpdateFunctor {
     template<class Trait> void operator()() {
       mDep->mDptr.set<Trait>();
@@ -197,6 +240,8 @@ private:
     trait::Dependence::Flag mFlag;
     const SCEV *mDist;
   };
+
+  /// This functor updates specified dependence description mDep.
   struct UpdateDepFunctor {
     template<class Trait> void operator()() {
       mDep->mDptr.set<Trait>();
@@ -210,6 +255,8 @@ private:
     DependenceImp *mDep;
     DependenceImp *mSrc;
   };
+
+  /// Print information about dependencies.
   struct DumpFunctor {
     template<class Trait> void operator()() {
       mOS << "{" << Trait::toString();
@@ -225,6 +272,7 @@ private:
     DependenceImp *mDep;
     raw_ostream &mOS;
   };
+
   Descriptor mDptr;
   bcl::tagged_tuple<
     bcl::tagged<Distances, trait::Flow>,
@@ -238,9 +286,44 @@ private:
 }
 }
 
+#ifndef NDEBUG
+static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
+  dbgs() << "[PRIVATE]: update traits of ";
+  printLocationSource(
+    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
+  dbgs() << " to ";
+  bcl::bitPrint(T, dbgs());
+  dbgs() << "\n";
+}
+
+static void updateDependenceLog(const EstimateMemory &EM, DependenceImp &Dep) {
+  dbgs() << "[PRIVATE]: update dependence kind of ";
+  printLocationSource(
+    dbgs(), MemoryLocation(EM.front(), EM.getSize(), EM.getAAInfo()));
+  dbgs() << " to ";
+  Dep.print(dbgs());
+  dbgs() << "\n";
+}
+
+template<class TraitList>
+static void removeRedundantLog(TraitList &TL, StringRef Prefix) {
+  dbgs() << "[PRIVATE]: " << Prefix << " remove redundant: ";
+  for (auto CurrItr = TL.begin(); CurrItr != TL.end(); ++CurrItr) {
+    printLocationSource(dbgs(),
+      MemoryLocation(
+        CurrItr->get<EstimateMemory>()->front(),
+        CurrItr->get<EstimateMemory>()->getSize(),
+        CurrItr->get<EstimateMemory>()->getAAInfo()));
+    dbgs() << " ";
+  }
+  dbgs() << "\n";
+}
+#endif
+
+
 /// Inserts or updates information about dependencies in a specified map.
 template<class MapTy>
-static inline void insert(const EstimateMemory *EM,
+static inline void updateDependence(const EstimateMemory *EM,
     DependenceImp::Descriptor &Dptr, trait::Dependence::Flag F,
     const SCEV *Dist, MapTy &Deps) {
   assert(EM && "Estimate memory location must not be null!");
@@ -248,12 +331,37 @@ static inline void insert(const EstimateMemory *EM,
   if (!Itr->get<DependenceImp>())
     Itr->get<DependenceImp>().reset(new DependenceImp);
   Itr->get<DependenceImp>()->update(Dptr, F, Dist);
-  DEBUG(
-    dbgs() << "[PRIVATE]: update dependence kind of ";
-    printLocationSource(dbgs(), MemoryLocation(EM->front(), EM->getSize()));
-    dbgs() << " to ";
-    Itr->get<DependenceImp>()->print(dbgs());
-    dbgs() << "\n");
+  DEBUG(updateDependenceLog(*EM, *Itr->get<DependenceImp>()));
+}
+
+/// Merges descriptions of loop-carried dependencies and stores result in
+/// a specified map.
+///
+/// Description of dependence carried by `To` location will be updated. If it
+/// does not exist than it will be created. Privitizable variables are also
+/// treated as loop-carried dependencies.
+/// If `ToTrait` is `Dependency` or `From` is located in `Deps` than record for
+/// `EM` will be inserted into `Deps` even if it did not exist before.
+template<class MapTy>
+static inline void mergeDependence(const EstimateMemory *To, TraitId ToTrait,
+    const EstimateMemory *From, MapTy &Deps) {
+  assert(To && "Estimate memory must not be null!");
+  assert(From && "Estimate memory must not be null!");
+  auto FromItr = Deps.find(From);
+  DependenceImp *FromDep = nullptr;
+  if (FromItr != Deps.end()) {
+    FromDep = FromItr->get<DependenceImp>().get();
+    assert(FromDep &&
+      "Location is stored in dependence map without dependence description!");
+  } else if (dropUnitFlag(ToTrait) != Dependency) {
+    return;
+  }
+  auto ToItr = Deps.try_emplace(To, nullptr).first;
+  if (!ToItr->get<DependenceImp>())
+    ToItr->get<DependenceImp>().reset(new DependenceImp);
+  if (FromDep)
+    ToItr->get<DependenceImp>()->update(*FromDep);
+  DEBUG(updateDependenceLog(*To, *ToItr->get<DependenceImp>()));
 }
 
 static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
@@ -266,17 +374,6 @@ static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
   }
   return MemoryLocation();
 }
-
-#ifndef NDEBUG
-static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
-  dbgs() << "[PRIVATE]: update traits of ";
-  printLocationSource(
-    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
-  dbgs() << " to ";
-  bcl::bitPrint(T, dbgs());
-  dbgs() << "\n";
-}
-#endif
 
 void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
@@ -313,7 +410,7 @@ void PrivateRecognitionPass::resolveCandidats(
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
-      *PrivInfo.first->get<DependencySet>());
+      Deps, *PrivInfo.first->get<DependencySet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
     resolveCandidats(Numbers, *I);
@@ -347,9 +444,9 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
   else
     Dptr.set<trait::Flow, trait::Anti>();
   auto Dist = Dep.getDistance(L.getLoopDepth());
-  insert(mAliasTree->find(Src),
+  updateDependence(mAliasTree->find(Src),
     Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
-  insert(mAliasTree->find(Dst),
+  updateDependence(mAliasTree->find(Dst),
     Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
 }
 
@@ -385,7 +482,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
             return;
           if (AA.getModRefInfo(*DstItr, Loc) == MRI_NoModRef)
             return;
-          insert(mAliasTree->find(Loc), Dptr, Flag, nullptr, Deps);
+          updateDependence(mAliasTree->find(Loc), Dptr, Flag, nullptr, Deps);
         };
         auto stab = [](Instruction &, AccessInfo, AccessInfo) {};
         for_each_memory(**SrcItr, *mTLI, insertUnknownDep, stab);
@@ -582,7 +679,8 @@ void PrivateRecognitionPass::propagateTraits(
     const tsar::GraphNumbering<const AliasNode *> &Numbers,
     const tsar::DFRegion &R,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits, DependencySet &DS) {
+    AliasMap &NodeTraits, DependenceMap &Deps, DependencySet &DS) {
+  DEBUG(dbgs() << "[PRIVATE]: propagate traits\n");
   std::stack<TraitPair> ChildTraits;
   auto *Prev = mAliasTree->getTopLevelNode();
   // Such initialization of Prev is sufficient for the first iteration, then
@@ -604,9 +702,13 @@ void PrivateRecognitionPass::propagateTraits(
             NTItr->get<TraitList>().push_front(std::move(EMToT));
           } else {
             auto EA = ExplicitAccesses.find(Parent);
-            if (EA != ExplicitAccesses.end())
+            if (EA != ExplicitAccesses.end()) {
               *EA->get<TraitImp>() &= EMToT.get<TraitImp>();
-            else
+              mergeDependence(Parent, *EA->get<TraitImp>(),
+                EMToT.get<EstimateMemory>(), Deps);
+            } else
+              mergeDependence(Parent, EMToT.get<TraitImp>(),
+                EMToT.get<EstimateMemory>(), Deps);
               NTItr->get<TraitList>().push_front(
                 std::make_pair(Parent, std::move(EMToT.get<TraitImp>())));
           }
@@ -616,16 +718,19 @@ void PrivateRecognitionPass::propagateTraits(
       }
     }
     auto &TL = NTItr->get<TraitList>();
+    DEBUG(removeRedundantLog(TL, "before"));
     for (auto BI = TL.before_begin(), I = TL.begin(), E = TL.end(); I != E;)
-      removeRedundant(N, NTItr->get<TraitList>(), BI, I);
+      removeRedundant(N, NTItr->get<TraitList>(), BI, I, Deps);
+    DEBUG(removeRedundantLog(TL, "after"));
     TraitPair NT(&NTItr->get<TraitList>(), &NTItr->get<UnknownList>());
-    storeResults(Numbers, R, *N, ExplicitAccesses, ExplicitUnknowns, NT, DS);
+    storeResults(
+      Numbers, R, *N, ExplicitAccesses, ExplicitUnknowns, Deps, NT, DS);
     ChildTraits.push(std::move(NT));
     Prev = N;
   }
   std::vector<const AliasNode *> Coverage;
   explicitAccessCoverage(DS, *mAliasTree, Coverage);
-  // All descendant nodes for nodes in `Coverage` accessed some part of
+  // All descendant nodes for nodes in `Coverage` access some part of
   // explicitly accessed memory. The conservativeness of analysis implies
   // that memory accesses from this nodes arise loop carried dependencies.
   for (auto *N : Coverage)
@@ -700,11 +805,33 @@ void PrivateRecognitionPass::checkFirstPrivate(
 }
 
 void PrivateRecognitionPass::removeRedundant(
-    const AliasNode *N, TraitList &Traits,
-    TraitList::iterator &BeforeCurrItr, TraitList::iterator &CurrItr) {
+    const AliasNode *N, TraitList &Traits, TraitList::iterator &BeforeCurrItr,
+    TraitList::iterator &CurrItr, DependenceMap &Deps) {
   assert(CurrItr != Traits.end() && "Iterator must be valid!");
   auto BeforeI = CurrItr, I = CurrItr, E = Traits.end();
   auto Current = CurrItr->get<EstimateMemory>();
+  // It is necessary to find the largest estimate location which covers
+  // the current one and is associated with the currently analyzed node `N`.
+  // Note, that if current location is not stored in `N` it means that this
+  // locations is stored in one of proper descendant of `N`. It also means
+  // that proper ancestors of the location in estimate tree is stored in
+  // proper ancestors of `N` (see propagateTraits()) and the current locations
+  // should not be analyzed.
+  // This search is performed before a redundancy test is executed for the
+  // current location, because it also may produce redundancy.
+  if (Current->getAliasNode(*mAliasTree) == N) {
+    while (Current->getParent() &&
+      Current->getParent()->getAliasNode(*mAliasTree) == N)
+      Current = Current->getParent();
+    // It is not necessary to execute a conjunction of traits here. If Current
+    // is not explicitly accessed in the loop then there are no traits and
+    // conjunction will change nothing. However, if Current is explicitly
+    // accessed it is presented in a TraitList as a separate item and will be
+    // processed separately.
+    mergeDependence(Current, CurrItr->get<TraitImp>(),
+      CurrItr->get<EstimateMemory>(), Deps);
+    CurrItr->get<EstimateMemory>() = Current;
+  }
   for (++I; I != E;) {
     if (Current == I->get<EstimateMemory>()) {
       I->get<TraitImp>() &= CurrItr->get<TraitImp>();
@@ -714,28 +841,19 @@ void PrivateRecognitionPass::removeRedundant(
     auto Ancestor = ancestor(Current, I->get<EstimateMemory>());
     if (Ancestor == I->get<EstimateMemory>()) {
       I->get<TraitImp>() &= CurrItr->get<TraitImp>();
+      mergeDependence(
+        I->get<EstimateMemory>(), I->get<TraitImp>(), Current, Deps);
       CurrItr = Traits.erase_after(BeforeCurrItr);
       return;
     }
     if (Ancestor == Current) {
       CurrItr->get<TraitImp>() &= I->get<TraitImp>();
+      mergeDependence(
+        Current, CurrItr->get<TraitImp>(), I->get<EstimateMemory>(), Deps);
       I = Traits.erase_after(BeforeI);
     } else {
       ++BeforeI; ++I;
     }
-  }
-  // Now, it is necessary to find the largest estimate location which covers
-  // the current one and is associated with the currently analyzed node `N`.
-  // Note, that if current location is not stored in `N` it means that this
-  // locations is stored in one of proper descendant of `N`. It also means
-  // that proper ancestors of the location in estimate tree is stored in
-  // proper ancestors of `N` (see propagateTraits()) and the current locations
-  // should not be analyzed.
-  if (Current->getAliasNode(*mAliasTree) == N) {
-    while (Current->getParent() &&
-      Current->getParent()->getAliasNode(*mAliasTree) == N)
-      Current = Current->getParent();
-    CurrItr->get<EstimateMemory>() = Current;
   }
   ++BeforeCurrItr; ++CurrItr;
 }
@@ -744,8 +862,30 @@ void PrivateRecognitionPass::storeResults(
     const GraphNumbering<const tsar::AliasNode *> &Numbers,
     const DFRegion &R, const AliasNode &N,
     const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
-    const TraitPair &Traits, DependencySet &DS) {
+    const DependenceMap &Deps, const TraitPair &Traits, DependencySet &DS) {
   assert(DS.find(&N) == DS.end() && "Results must not be already stored!");
+  auto storeDepIfNeed = [this, &Deps](TraitList::iterator EMI,
+      AliasTrait::iterator EMTraitItr) {
+    auto EMToDep = Deps.find(EMI->get<EstimateMemory>());
+    assert(EMToDep != Deps.end() &&
+      "Dependence must be presented in the map!");
+    auto Dep = EMToDep->get<DependenceImp>().get();
+    Dep->get().for_each(DependenceImp::SummarizeFunctor<LocationTraitSet>{
+      Dep, &*EMTraitItr, mSE});
+    DEBUG(
+      dbgs() << "[PRIVATE]: summarize dependence for ";
+      printLocationSource(dbgs(), MemoryLocation(
+        EMI->get<EstimateMemory>()->front(),
+        EMI->get<EstimateMemory>()->getSize(),
+        EMI->get<EstimateMemory>()->getAAInfo()));
+      dbgs() << " ";
+      bcl::TraitKey I(1);
+      Dep->print(dbgs());
+      dbgs() << " to ";
+      EMTraitItr->print(dbgs());
+      dbgs() << "\n";
+    );
+  };
   DependencySet::iterator NodeTraitItr;
   auto EMI = Traits.get<TraitList>()->begin();
   auto EME = Traits.get<TraitList>()->end();
@@ -760,8 +900,13 @@ void PrivateRecognitionPass::storeResults(
           dropUnitFlag(*ExplicitItr->second) != NoAccess &&
           EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
         NodeTraitItr->set<trait::ExplicitAccess>();
-      NodeTraitItr->insert(
-        EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr));
+      bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
+      auto EMTraitItr = NodeTraitItr->insert(
+        EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr)).first;
+      if (dropUnitFlag(EMI->get<TraitImp>()) == Dependency) {
+        storeDepIfNeed(EMI, EMTraitItr);
+        *NodeTraitItr = *EMTraitItr;
+      }
       return;
     }
   } else if (!Traits.get<UnknownList>()->empty()) {
@@ -774,6 +919,7 @@ void PrivateRecognitionPass::storeResults(
   // memory trees. So only three types of combined results are possible:
   // read-only, shared or dependency.
   TraitImp CombinedTrait;
+  DependenceImp::Descriptor CombinedDepDptr;
   for (; EMI != EME; ++EMI) {
     CombinedTrait &= EMI->get<TraitImp>();
     auto Dptr = toDescriptor(EMI->get<TraitImp>(), 0);
@@ -785,8 +931,13 @@ void PrivateRecognitionPass::storeResults(
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
     }
-    NodeTraitItr->insert(
-      EstimateMemoryTrait(EMI->get<EstimateMemory>(), std::move(Dptr)));
+    bcl::trait::unset<DependenceImp::Descriptor>(Dptr);
+    auto EMTraitItr = NodeTraitItr->insert(
+      EstimateMemoryTrait(EMI->get<EstimateMemory>(), std::move(Dptr))).first;
+    if (dropUnitFlag(EMI->get<TraitImp>()) == Dependency) {
+      storeDepIfNeed(EMI, EMTraitItr);
+      bcl::trait::set(*EMTraitItr, CombinedDepDptr);
+    }
   }
   for (auto &U : *Traits.get<UnknownList>()) {
     CombinedTrait &= U.get<TraitImp>();
@@ -798,6 +949,8 @@ void PrivateRecognitionPass::storeResults(
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
     }
+    if (dropUnitFlag(U.get<TraitImp>()) == Dependency)
+      bcl::trait::set<DependenceImp::Descriptor>(CombinedDepDptr);
     NodeTraitItr->insert(
       UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
@@ -806,10 +959,16 @@ void PrivateRecognitionPass::storeResults(
       dropUnitFlag(CombinedTrait) == Shared ? Shared : Dependency;
   if (NodeTraitItr->is<trait::ExplicitAccess>()) {
     *NodeTraitItr = toDescriptor(CombinedTrait, NodeTraitItr->count());
-    NodeTraitItr->set<trait::ExplicitAccess>();
+      bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
+      bcl::trait::set(CombinedDepDptr, *NodeTraitItr);
+      NodeTraitItr->set<trait::ExplicitAccess>();
   } else {
     *NodeTraitItr = toDescriptor(CombinedTrait, NodeTraitItr->count());
+     bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
+     bcl::trait::set(CombinedDepDptr, *NodeTraitItr);
   }
+  DEBUG(dbgs() << "[PRIVATE]: set combined trait to ";
+    NodeTraitItr->print(dbgs()); dbgs() << "\n";);
 }
 
 DependencyDescriptor PrivateRecognitionPass::toDescriptor(
@@ -902,7 +1061,9 @@ public:
         OS << "?";
       else
         OS << T.getMemory()->getSize();
-      OS << "> ";
+      OS << ">";
+      traitToStr(T.get<Trait>(), OS);
+      OS << " ";
     }
     for (auto T : make_range(mTS->unknown_begin(), mTS->unknown_end())) {
       if (!std::is_same<Trait, trait::AddressAccess>::value &&
@@ -922,6 +1083,24 @@ public:
     }
     OS << "\n";
   }
+
+  /// Prints description of a trait into a specified stream.
+  void traitToStr(trait::Dependence *Dep, raw_string_ostream &OS) {
+    if (!Dep)
+      return;
+    if (!Dep->getDistance().first && !Dep->getDistance().second)
+      return;
+    OS << ":[";
+    if (Dep->getDistance().first)
+      Dep->getDistance().first->print(OS);
+    OS << ",";
+    if (Dep->getDistance().second)
+      Dep->getDistance().second->print(OS);
+    OS << "]";
+  }
+
+  /// Prints description of a trait into a specified stream.
+  void traitToStr(void *Dep, raw_string_ostream &OS) {}
 
   /// Returns a static trait map.
   TraitToStringMap & getStringMap() { return *mMap; }

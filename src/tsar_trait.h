@@ -11,6 +11,7 @@
 #define TSAR_MEMORY_TRAIT_H
 
 #include <trait.h>
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -18,6 +19,7 @@
 
 namespace llvm {
 class Instruction;
+class SCEV;
 }
 
 namespace tsar {
@@ -26,23 +28,29 @@ class AliasTree;
 class EstimateMemory;
 class ExplicitAccseeCoverage;
 
+/// Definition of methods that identifies a trait.
+#define TSAR_TRAIT_DECL_STRING(name_, string_) \
+static llvm::StringRef toString() { \
+  static std::string Str(string_); \
+  return Str; \
+} \
+static std::string & name() { \
+  static std::string Str(#name_); \
+  return Str; \
+}
+
 /// Declaration of a trait recognized by analyzer.
 #define TSAR_TRAIT_DECL(name_, string_) \
 struct name_ { \
-  static llvm::StringRef toString() { \
-    static std::string Str(string_); \
-    return Str; \
-  } \
-  static std::string & name() { \
-    static std::string Str(#name_); \
-    return Str; \
-  } \
+  TSAR_TRAIT_DECL_STRING(name_, string_) \
 };
 
 namespace trait {
 TSAR_TRAIT_DECL(AddressAccess, "address access")
 TSAR_TRAIT_DECL(ExplicitAccess, "explicit access")
+TSAR_TRAIT_DECL(HeaderAccess, "header access")
 TSAR_TRAIT_DECL(NoAccess, "no access")
+TSAR_TRAIT_DECL(Readonly, "read only")
 TSAR_TRAIT_DECL(Shared, "shared")
 TSAR_TRAIT_DECL(Private, "private")
 TSAR_TRAIT_DECL(FirstPrivate, "first private")
@@ -50,8 +58,127 @@ TSAR_TRAIT_DECL(SecondToLastPrivate, "second to last private")
 TSAR_TRAIT_DECL(LastPrivate, "last private")
 TSAR_TRAIT_DECL(DynamicPrivate, "dynamic private")
 TSAR_TRAIT_DECL(Reduction, "reduction")
-TSAR_TRAIT_DECL(Dependency, "dependency")
 TSAR_TRAIT_DECL(Induction, "induction")
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
+/// Description of a loop-carried dependence.
+class Dependence {
+public:
+  TSAR_TRAIT_DECL_STRING(Dependence, "dependence")
+
+  /// This represents lowest and highest distances.
+  using DistanceRange = std::pair<const llvm::SCEV *, const llvm::SCEV *>;
+
+  /// List of available bitwise properties.
+  enum Flag : uint8_t {
+    No = 0,
+    /// There is no assurance in existence of a dependence.
+    May = 1 << 0,
+    /// At least one of dependence causes is load/store to a memory.
+    LoadStoreCause = 1u << 1,
+    /// At least one of dependence causes is call of a function.
+    CallCause = 1u << 2,
+    /// At least one of dependence causes is unknown instruction which accesses
+    /// a memory.
+    UnknownCause = 1u << 3,
+    /// Header of a loop contains accesses to the memory which
+    /// causes a dependence.
+    HeaderAccess = 1u << 4,
+    /// Distance is unknown.
+    UnknownDistance = 1u << 5,
+    LLVM_MARK_AS_BITMASK_ENUM(UnknownDistance)
+  };
+
+  /// Creates dependence and set its properties to `F`.
+  /// Distances will not be set.
+  explicit Dependence(Flag F) :
+    mFlags(F | UnknownDistance), mDistance(nullptr, nullptr) {}
+
+  /// Creates dependence and set its distances and properties.
+  /// `UnknownDistance` flag will be updated according to specified distances.
+  Dependence(Flag F, DistanceRange Dist) : mFlags(F), mDistance(Dist) {
+    if (Dist.first && Dist.second)
+      mFlags &= ~UnknownDistance;
+    else
+      mFlags |= UnknownDistance;
+  }
+
+  /// Returns bitwise properties.
+  Flag getFlags() const noexcept { return mFlags; }
+
+  /// Returns true if there is no assurance in existence of a dependence.
+  bool isMay() const noexcept { return mFlags & May; }
+
+  /// Returns true if at least one of dependence causes is load/store
+  /// instruction.
+  bool isLoadStore() const noexcept { return mFlags & LoadStoreCause; }
+
+
+  /// Returns true if all dependence causes are load/store instructions.
+  bool isLoadStoreOnly() const noexcept {
+    return (mFlags & possibleCauses()) == LoadStoreCause;
+  }
+
+  /// Returns true if at least one of dependence causes is call instruction.
+  bool isCall() const noexcept { return mFlags & CallCause; }
+
+
+  /// Returns true if all dependence causes are call instructions.
+  bool isCallOnly() const noexcept {
+    return (mFlags & possibleCauses()) == CallCause;
+  }
+
+  /// Returns true if at least one of dependence causes is unknown access to
+  /// a memory.
+  bool isUnknown() const noexcept { return mFlags & UnknownCause; }
+
+  /// Returns true if all dependence causes are unknown accesses to a memory.
+  bool isUnknownOnly() const noexcept {
+    return (mFlags & possibleCauses()) == UnknownCause;
+  }
+
+
+  /// Returns true if the header of a loop contains accesses to the memory which
+  /// causes a dependence.
+  bool isHeaderAccess() const noexcept { return mFlags & HeaderAccess; }
+
+  /// Returns true if both the lowest and highest distances are known.
+  bool isKnownDistance() const noexcept { return !(mFlags & UnknownDistance); }
+
+  /// Return distances.
+  DistanceRange getDistance() const noexcept {
+    assert(mDistance.first && mDistance.second || (mFlags & UnknownDistance) &&
+      "Distance is marked as known but it is not specified!");
+    return mDistance;
+  }
+
+private:
+  static Flag possibleCauses() noexcept {
+    return LoadStoreCause & CallCause & UnknownCause;
+  }
+
+  DistanceRange mDistance;
+  Flag mFlags;
+};
+
+struct Flow : public Dependence {
+  TSAR_TRAIT_DECL_STRING(Flow, "flow")
+  explicit Flow(Flag F) : Dependence(F) {}
+  Flow(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
+};
+
+struct Anti : public Dependence {
+  TSAR_TRAIT_DECL_STRING(Anti, "anti")
+  explicit Anti(Flag F) : Dependence(F) {}
+  Anti(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
+};
+
+struct Output : public Dependence {
+  TSAR_TRAIT_DECL_STRING(Output, "output")
+  explicit Output(Flag F) : Dependence(F) {}
+  Output(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
+};
 }
 
 #undef TSAR_TRAIT_DECL
@@ -63,14 +190,16 @@ TSAR_TRAIT_DECL(Induction, "induction")
 /// - is it a location which is not accessed in a region
 /// - is it a location which is explicitly accessed in a region
 /// - is it a location address of which is evaluated;
-/// - is it private location;
+/// - is it a private location;
 /// - is it a last private location;
 /// - is it a second to last private location;
 /// - is it a dynamic private location;
 /// - is it a first private location;
+/// - is it a read-only location;
 /// - is it a shared location;
-/// - is it a location that caused dependency.
+/// - is it a location that caused dependence;
 /// - is it a loop induction location;
+/// - is it a location which is accessed in a loop header.
 ///
 /// If location is not accessed in a region it will be marked as 'no access'
 /// only if it has some other traits, otherwise it can be omitted in a list
@@ -110,20 +239,25 @@ TSAR_TRAIT_DECL(Induction, "induction")
 /// where the last definition of an location have been executed. Such locations
 /// will be stored as dynamic private locations collection.
 using DependencyDescriptor = bcl::TraitDescriptor<
-  trait::AddressAccess, trait::ExplicitAccess,
-  bcl::TraitAlternative<trait::NoAccess, trait::Shared, trait::Private,
-  trait::Reduction, trait::Dependency, trait::Induction,
-  bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate>,
-  bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate>,
-  bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate>>>;
+  trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess,
+  bcl::TraitAlternative<
+    trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
+    bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
+    bcl::TraitUnion<trait::Private, trait::Shared>,
+    bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate, trait::Shared>,
+    bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate, trait::Shared>,
+    bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate, trait::Shared>>>;
+
+using LocationTraitSet = bcl::TraitSet<DependencyDescriptor,
+  llvm::SmallDenseMap<bcl::TraitKey, void *, 2>>;
 
 /// \brief This is a set of traits for a memory location.
 ///
 /// In general this class represents traits of locations which has been
 /// collected by an external structure, so it is not possible to modify
 /// this locations.
-template<class MemoryTy>
-class LocationTrait : public DependencyDescriptor {
+template<class MemoryTy, class BaseTy>
+class LocationTrait : public BaseTy {
 public:
   /// Creates set of traits.
   explicit LocationTrait(MemoryTy Loc) : mLoc(Loc) {
@@ -132,25 +266,25 @@ public:
 
   /// Creates set of traits.
   LocationTrait(MemoryTy Loc, const DependencyDescriptor &Dptr) :
-    DependencyDescriptor(Dptr), mLoc(Loc) {
+    BaseTy(Dptr), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Creates set of traits.
   LocationTrait(MemoryTy Loc, DependencyDescriptor &&Dptr) :
-    DependencyDescriptor(std::move(Dptr)), mLoc(Loc) {
+    BaseTy(std::move(Dptr)), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Assigns dependency descriptor to this set of traits.
   LocationTrait & operator=(const DependencyDescriptor &Dptr) noexcept {
-    DependencyDescriptor::operator=(Dptr);
+    BaseTy::operator=(Dptr);
     return *this;
   }
 
   /// Assigns dependency descriptor to this set traits.
   LocationTrait & operator=(DependencyDescriptor &&Dptr) noexcept {
-    DependencyDescriptor::operator=(std::move(Dptr));
+    BaseTy::operator=(std::move(Dptr));
     return *this;
   }
 
@@ -162,35 +296,38 @@ private:
 };
 
 /// A set of traits of estimate memory locations.
-using EstimateMemoryTrait = LocationTrait<const tsar::EstimateMemory *>;
+using EstimateMemoryTrait =
+  LocationTrait<const EstimateMemory *, LocationTraitSet>;
 
 /// A set of traits of unknown memory locations.
-using UnknownMemoryTrait = LocationTrait<const llvm::Instruction *>;
+using UnknownMemoryTrait =
+  LocationTrait<const llvm::Instruction *, DependencyDescriptor>;
 }
 
 namespace llvm {
 /// This provides DenseMapInfo for LocationTrait.
-template<class MemoryTy>
-struct DenseMapInfo<tsar::LocationTrait<MemoryTy>> {
-  static inline tsar::LocationTrait<MemoryTy> getEmptyKey() {
-    return tsar::LocationTrait<MemoryTy>(
+template<class MemoryTy, class BaseTy>
+struct DenseMapInfo<tsar::LocationTrait<MemoryTy, BaseTy>> {
+  static inline tsar::LocationTrait<MemoryTy, BaseTy> getEmptyKey() {
+    return tsar::LocationTrait<MemoryTy, BaseTy>(
       DenseMapInfo<MemoryTy>::getEmptyKey());
   }
-  static inline tsar::LocationTrait<MemoryTy> getTombstoneKey() {
-    return tsar::LocationTrait<MemoryTy>(
+  static inline tsar::LocationTrait<MemoryTy, BaseTy> getTombstoneKey() {
+    return tsar::LocationTrait<MemoryTy, BaseTy>(
       DenseMapInfo<MemoryTy>::getTombstoneKey());
   }
-  static unsigned getHashValue(const tsar::LocationTrait<MemoryTy> &Val) {
+  static unsigned getHashValue(
+      const tsar::LocationTrait<MemoryTy, BaseTy> &Val) {
     return DenseMapInfo<MemoryTy>::getHashValue(Val.getMemory());
   }
   static unsigned getHashValue(MemoryTy Val) {
     return DenseMapInfo<MemoryTy>::getHashValue(Val);
   }
-  static bool isEqual(const tsar::LocationTrait<MemoryTy> &LHS,
-      const tsar::LocationTrait<MemoryTy> &RHS) {
+  static bool isEqual(const tsar::LocationTrait<MemoryTy, BaseTy> &LHS,
+      const tsar::LocationTrait<MemoryTy, BaseTy> &RHS) {
     return LHS.getMemory() == RHS.getMemory(); }
   static bool isEqual(MemoryTy LHS,
-      const tsar::LocationTrait<MemoryTy> &RHS) {
+      const tsar::LocationTrait<MemoryTy, BaseTy> &RHS) {
     return LHS == RHS.getMemory();
   }
 };
@@ -210,8 +347,8 @@ namespace tsar {
 /// be associated in some of descendant alias nodes of the current one.
 class AliasTrait : public DependencyDescriptor, private bcl::Uncopyable {
   /// List of explicitly accessed estimate memory locations and their traits.
-  using AccessTraits = llvm::DenseSet<EstimateMemoryTrait>;
-  
+  using AccessTraits = llvm::SmallDenseSet<EstimateMemoryTrait, 1>;
+
   /// List of explicitly accessed unknown memory locations and their traits.
   using UnknownTraits = llvm::DenseSet<UnknownMemoryTrait>;
 
@@ -351,7 +488,7 @@ public:
 
   /// Returns number of explicitly accessed unknown locations.
   size_type unknown_count() const { return mUnknowns.size(); }
-  
+
   /// Returns true if there are no explicitly accessed estimate locations.
   bool empty() const { return mAccesses.empty(); }
 
