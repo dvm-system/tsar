@@ -205,11 +205,19 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
   // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
   // If `V` is a declaration of a function then call of this function will
   // be a `ConstantExpr`. May be some other cases exist.
-  for (User *U : const_cast<Value *>(V)->users())
+  for (User *U : const_cast<Value *>(V)->users()) {
+    if (auto Phi = dyn_cast<PHINode>(U)) {
+      if (auto I = dyn_cast<Instruction>(const_cast<Value *>(V)))
+        if (auto BB = I->getParent()) {
+          Users.push_back(&BB->back());
+          continue;
+        }
+    }
     if (auto I = dyn_cast<Instruction>(U))
       Users.push_back(I);
     else
       return nullptr;
+  }
   auto Dominators = findDomDbgValues(V, *DT, Users);
   for (auto &VarToDom : Dominators) {
     auto Var = VarToDom.first;
