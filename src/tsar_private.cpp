@@ -54,6 +54,7 @@ STATISTIC(NumDeps, "Number of unsorted dependencies found");
 STATISTIC(NumReadonly, "Number of read-only locations found");
 STATISTIC(NumShared, "Number of shared locations found");
 STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated");
+STATISTIC(NumHeaderAccess, "Number of traits caused by memory accesses in a loop header");
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
@@ -375,6 +376,31 @@ static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
   return MemoryLocation();
 }
 
+void PrivateRecognitionPass::collectHeaderAccesses(Loop *L,
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns) {
+  assert(L && "Loop must not be null!");
+  for (auto &I : *L->getHeader()) {
+    if (!I.mayReadOrWriteMemory())
+      continue;
+    for_each_memory(I, *mTLI,
+      [this, &ExplicitAccesses](Instruction &, MemoryLocation &&Loc,
+          unsigned, AccessInfo, AccessInfo) {
+        auto *EM = mAliasTree->find(Loc);
+        assert(EM && "Estimate memory location must not be null!");
+        auto Itr = ExplicitAccesses.find(EM);
+        assert(Itr != ExplicitAccesses.end() &&
+          "Explicitly accessed memory must be stored in a list of explicit accesses!");
+        *Itr->get<TraitImp>() &= HeaderAccess;
+      },
+      [this, &ExplicitUnknowns](Instruction &I, AccessInfo, AccessInfo) {
+        auto Itr = ExplicitUnknowns.find(&I);
+        assert(Itr != ExplicitUnknowns.end() &&
+          "Explicitly accessed memory must be stored in a list of explicit accesses!");
+        *Itr->get<TraitImp>() &= HeaderAccess;
+      });
+  }
+}
+
 void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
   assert(R && "Region must not be null!");
@@ -407,6 +433,7 @@ void PrivateRecognitionPass::resolveCandidats(
     resolveAccesses(R->getLatchNode(), R->getExitNode(),
       *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps,
       ExplicitAccesses, ExplicitUnknowns, NodeTraits);
+    collectHeaderAccesses(L->getLoop(), ExplicitAccesses, ExplicitUnknowns);
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
@@ -461,16 +488,14 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
     if (!(**SrcItr).mayReadOrWriteMemory())
       continue;
     auto Src = getLoadOrStoreLocation(*SrcItr);
-    auto HeaderAccess = ((**SrcItr).getParent() == L->getHeader()) ?
-      trait::Dependence::HeaderAccess : trait::Dependence::No;
     if (!Src.Ptr) {
       ImmutableCallSite SrcCS(*SrcItr);
       for (auto DstItr = SrcItr; DstItr != EndItr; ++DstItr) {
         if (!(**DstItr).mayReadOrWriteMemory())
           continue;
         ImmutableCallSite DstCS(*DstItr);
-        trait::Dependence::Flag Flag = HeaderAccess |
-          trait::Dependence::May | trait::Dependence::UnknownDistance |
+        trait::Dependence::Flag Flag = trait::Dependence::May |
+          trait::Dependence::UnknownDistance |
           (!SrcCS && !DstCS ? trait::Dependence::CallCause :
             trait::Dependence::UnknownCause);
         DependenceImp::Descriptor Dptr;
@@ -508,7 +533,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
           // independent dependencies. This method returns `may` instead of
           // `must`. This means that if it returns `true` than dependency
           // may be loop-carried or may arise inside a single iteration.
-          insertDependence(*D, Src, Dst, HeaderAccess, *L, Deps);
+          insertDependence(*D, Src, Dst, trait::Dependence::No, *L, Deps);
         }
       }
     }
@@ -977,6 +1002,10 @@ DependencyDescriptor PrivateRecognitionPass::toDescriptor(
   if (!(T & ~AddressAccess)) {
     Dptr.set<trait::AddressAccess>();
     NumAddressAccess += TraitNumber;
+  }
+  if (!(T & ~HeaderAccess)) {
+    Dptr.set<trait::HeaderAccess>();
+    NumHeaderAccess += TraitNumber;
   }
   if (dropUnitFlag(T) == Dependency) {
     Dptr.set<trait::Flow, trait::Anti, trait::Output>();

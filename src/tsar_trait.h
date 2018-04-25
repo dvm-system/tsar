@@ -82,11 +82,8 @@ public:
     /// At least one of dependence causes is unknown instruction which accesses
     /// a memory.
     UnknownCause = 1u << 3,
-    /// Header of a loop contains accesses to the memory which
-    /// causes a dependence.
-    HeaderAccess = 1u << 4,
     /// Distance is unknown.
-    UnknownDistance = 1u << 5,
+    UnknownDistance = 1u << 4,
     LLVM_MARK_AS_BITMASK_ENUM(UnknownDistance)
   };
 
@@ -137,11 +134,6 @@ public:
   bool isUnknownOnly() const noexcept {
     return (mFlags & possibleCauses()) == UnknownCause;
   }
-
-
-  /// Returns true if the header of a loop contains accesses to the memory which
-  /// causes a dependence.
-  bool isHeaderAccess() const noexcept { return mFlags & HeaderAccess; }
 
   /// Returns true if both the lowest and highest distances are known.
   bool isKnownDistance() const noexcept { return !(mFlags & UnknownDistance); }

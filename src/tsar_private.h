@@ -196,6 +196,11 @@ private:
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
     tsar::DFRegion *R);
 
+  /// Set HeaderAccess trait for memory locations explicitly accessed in a
+  /// loop header.
+  void collectHeaderAccesses(Loop *L,
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns);
+
   /// \brief Evaluates explicitly accessed variables in a loop.
   ///
   /// Preliminary results will be stored in ExplicitAccesses and NodeTraits
