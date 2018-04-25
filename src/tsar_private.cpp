@@ -994,6 +994,26 @@ void PrivateRecognitionPass::storeResults(
   }
   DEBUG(dbgs() << "[PRIVATE]: set combined trait to ";
     NodeTraitItr->print(dbgs()); dbgs() << "\n";);
+  /// Due to conservativeness of analysis type of dependencies must be the
+  /// same for all locations in the node.
+  /// Let us consider an example.
+  /// for (...) X[...] = Y[...];
+  /// Analysis can not be performed accurately if X and Y may alias.
+  /// Dependence analysis pass tests the following pairs of accesses:
+  /// W(X)-W(X), W(X)-R(Y), R(Y)-R(Y) (W means 'write' and R means 'read').
+  /// So, if X produces 'output' dependence there is no way to understand that
+  /// Y is also produced 'output' dependence (due to memory overlapping). Then
+  /// it is necessary to iterate over all accessed locations and to update their
+  /// traits.
+  for (auto &T : *NodeTraitItr) {
+    bcl::trait::set(CombinedDepDptr, T);
+    DEBUG(
+      dbgs() << "[PRIVATE]: conservatively update trait of ";
+      printLocationSource(dbgs(), MemoryLocation(T.getMemory()->front(),
+        T.getMemory()->getSize(), T.getMemory()->getAAInfo()));
+      dbgs() << " to "; T.get().print(dbgs()); dbgs() << "\n";
+    );
+  }
 }
 
 DependencyDescriptor PrivateRecognitionPass::toDescriptor(
