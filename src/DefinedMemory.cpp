@@ -322,7 +322,6 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     for_each_memory(I, DFF->getTLI(),
       [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
-        stripToBase(DL, Loc);
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         auto &AA = AT.getAliasAnalysis();
