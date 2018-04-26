@@ -1,0 +1,569 @@
+called sapforAllocatePool
+Size = 21
+
+called sapforInitDI
+DIString = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+
+called sapforInitDI
+DIString = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+
+called sapforInitDI
+DIString = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforInitDI
+DIString = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=7**
+
+called sapforInitDI
+DIString = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=10*line2=21*name1=main*vtype=42*rank=0**
+
+called sapforInitDI
+DIString = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforInitDI
+DIString = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14**
+
+called sapforInitDI
+DIString = type=func_call*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14*name1=f1*rank=1**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforInitDI
+DIString = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforDeclTypes
+Num = 76
+
+it = 0 ids = 0 size = 0
+it = 1 ids = 7 size = 0
+it = 2 ids = 1 size = 16
+it = 3 ids = 2 size = 32
+it = 4 ids = 3 size = 64
+it = 5 ids = 8 size = 0
+it = 6 ids = 10 size = 0
+it = 7 ids = 4 size = 80
+it = 8 ids = 5 size = 128
+it = 9 ids = 6 size = 128
+it = 10 ids = 9 size = 64
+it = 11 ids = 11 size = 1
+it = 12 ids = 18 size = 8
+it = 13 ids = 26 size = 16
+it = 14 ids = 42 size = 32
+it = 15 ids = 74 size = 64
+it = 16 ids = 75 size = 64
+it = 17 ids = 12 size = 2
+it = 18 ids = 13 size = 3
+it = 19 ids = 14 size = 4
+it = 20 ids = 15 size = 5
+it = 21 ids = 16 size = 6
+it = 22 ids = 17 size = 7
+it = 23 ids = 19 size = 9
+it = 24 ids = 20 size = 10
+it = 25 ids = 21 size = 11
+it = 26 ids = 22 size = 12
+it = 27 ids = 23 size = 13
+it = 28 ids = 24 size = 14
+it = 29 ids = 25 size = 15
+it = 30 ids = 27 size = 17
+it = 31 ids = 28 size = 18
+it = 32 ids = 29 size = 19
+it = 33 ids = 30 size = 20
+it = 34 ids = 31 size = 21
+it = 35 ids = 32 size = 22
+it = 36 ids = 33 size = 23
+it = 37 ids = 34 size = 24
+it = 38 ids = 35 size = 25
+it = 39 ids = 36 size = 26
+it = 40 ids = 37 size = 27
+it = 41 ids = 38 size = 28
+it = 42 ids = 39 size = 29
+it = 43 ids = 40 size = 30
+it = 44 ids = 41 size = 31
+it = 45 ids = 43 size = 33
+it = 46 ids = 44 size = 34
+it = 47 ids = 45 size = 35
+it = 48 ids = 46 size = 36
+it = 49 ids = 47 size = 37
+it = 50 ids = 48 size = 38
+it = 51 ids = 49 size = 39
+it = 52 ids = 50 size = 40
+it = 53 ids = 51 size = 41
+it = 54 ids = 52 size = 42
+it = 55 ids = 53 size = 43
+it = 56 ids = 54 size = 44
+it = 57 ids = 55 size = 45
+it = 58 ids = 56 size = 46
+it = 59 ids = 57 size = 47
+it = 60 ids = 58 size = 48
+it = 61 ids = 59 size = 49
+it = 62 ids = 60 size = 50
+it = 63 ids = 61 size = 51
+it = 64 ids = 62 size = 52
+it = 65 ids = 63 size = 53
+it = 66 ids = 64 size = 54
+it = 67 ids = 65 size = 55
+it = 68 ids = 66 size = 56
+it = 69 ids = 67 size = 57
+it = 70 ids = 68 size = 58
+it = 71 ids = 69 size = 59
+it = 72 ids = 70 size = 60
+it = 73 ids = 71 size = 61
+it = 74 ids = 72 size = 62
+it = 75 ids = 73 size = 63
+
+called sapforFuncBegin
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=10*line2=21*name1=main*vtype=42*rank=0**
+
+called sapforRegVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforSLBegin
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+First = 1 Last = 3, Step = 1
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14**
+
+called sapforFuncCallBegin
+DiCall = type=func_call*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14*name1=f1*rank=1**
+
+called sapforFuncBegin
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+
+called sapforRegVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+
+called sapforRegVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+
+called sapforRegDummyVar
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+ Position = 0
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLBegin
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+First = 5 Last = 0, Step = -1
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforSLEnd
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=7**
+
+called sapforFuncEnd
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+
+called sapforFuncCallEnd
+DiCall = type=func_call*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14*name1=f1*rank=1**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14**
+
+called sapforFuncCallBegin
+DiCall = type=func_call*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14*name1=f1*rank=1**
+
+called sapforFuncBegin
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+
+called sapforRegVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+
+called sapforRegVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+
+called sapforRegDummyVar
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+ Position = 0
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLBegin
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+First = 5 Last = 0, Step = -1
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=5**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=3*name1=y*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforSLEnd
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=4*line2=6**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*name1=x*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=7**
+
+called sapforFuncEnd
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=1*line2=3*name1=f1*vtype=42*rank=1**
+
+called sapforFuncCallEnd
+DiCall = type=func_call*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=14*name1=f1*rank=1**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforWriteVarEnd
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforReadVar
+DiVar = type=var_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=12*name1=i*vtype=42**
+DiLoc = type=file_name*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13**
+
+called sapforSLIter
+DILoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+
+called sapforSLEnd
+DiLoop = type=seqloop*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=13*line2=15**
+
+called sapforFuncEnd
+DiFunc = type=function*file=/usr/home/Andrey/prj/sapfor/analyzers/tsar/trunk/test/instrumentation/main.c*line1=10*line2=21*name1=main*vtype=42*rank=0**
+
