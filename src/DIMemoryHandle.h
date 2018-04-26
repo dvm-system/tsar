@@ -202,7 +202,7 @@ public:
     DIMemoryHandleBase(Assert, RHS) {}
 #else
   AssertingDIMemoryHandle() : mPtr(nullptr) {}
-  AssertingDIMemoryHandle(MemoryTy *P) : mPtr(getAsValue(P)) {}
+  AssertingDIMemoryHandle(MemoryTy *P) : mPtr(getAsMemory(P)) {}
 #endif
 
   operator MemoryTy * () const { return getMemoryPtr(); }
@@ -230,7 +230,7 @@ private:
 #else
   DIMemory *mPtr;
   DIMemory *getRawMemoryPtr() const { return mPtr; }
-  void setRawValPtr(DIMemory *P) { mPtr = P; }
+  void setRawMemoryPtr(DIMemory *P) { mPtr = P; }
 #endif
   // Convert a ValueTy*, which may be const, to the raw Value*.
   static DIMemory * getAsMemory(DIMemory *M) { return M; }

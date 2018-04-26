@@ -66,7 +66,7 @@ bool unparsePrint(unsigned DWLang,
   return false;
 }
 
-bool tsar::unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
+bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
   switch (DWLang) {
   case dwarf::DW_LANG_C:
   case dwarf::DW_LANG_C89:

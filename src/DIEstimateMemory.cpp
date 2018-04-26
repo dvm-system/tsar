@@ -1614,7 +1614,7 @@ INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
 INITIALIZE_PASS_END(DIMemoryEnvironmentStorage, "di-mem-is",
   "Memory Estimator (Debug, Environment Immutable Storage)", true, true)
 
-char DIMemoryEnvironmentWrapper::ID = 0;
+template<> char DIMemoryEnvironmentWrapper::ID = 0;
 INITIALIZE_PASS(DIMemoryEnvironmentWrapper, "di-mem-iw",
   "Memory Estimator (Debug, Environment Immutable Wrapper)", true, true)
 

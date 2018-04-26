@@ -108,7 +108,7 @@ llvm::Optional<
     if (STR.isDescendant(N, *I))
       return *I;
   }
-  return None;
+  return llvm::None;
 }
 
 /// \brief Finds a lowest common ancestor for specified nodes in
@@ -131,14 +131,14 @@ llvm::Optional<
     "At least one node must be in a iterator range!");
   using STRTy = SpanningTreeRelation<GraphType>;
   using GT = llvm::GraphTraits<GraphType>;
-  using IGT = llvm::GraphTraits<Inverse<GraphType>>;
+  using IGT = llvm::GraphTraits<llvm::Inverse<GraphType>>;
   using NodeRef = typename IGT::NodeRef;
   static_assert(std::is_assignable<typename GT::NodeRef, NodeRef>::value ||
     std::is_convertible<NodeRef, typename GT::NodeRef>::value,
     "NodeRef of a graph must be assignable from NodeRef of an inverse graph!");
   auto Parent = findParent(*BeginItr, STR);
   if (!Parent.hasValue())
-    return None;
+    return llvm::None;
   NodeRef LCA = *Parent;
   auto CurrItr = BeginItr;
   for (++CurrItr; CurrItr != EndItr; ++CurrItr) {
@@ -147,7 +147,7 @@ llvm::Optional<
            R = STR.compare(LCA, *CurrItr)) {
       auto Parent = findParent(LCA, STR);
       if (!Parent.hasValue())
-        return None;
+        return llvm::None;
       LCA = *Parent;
     }
     switch (R) {

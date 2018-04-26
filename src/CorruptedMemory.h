@@ -474,7 +474,7 @@ private:
 }
 
 namespace llvm {
-template<> struct llvm::GraphTraits<tsar::CorruptedMemoryItem *> {
+template<> struct GraphTraits<tsar::CorruptedMemoryItem *> {
   using NodeRef = tsar::CorruptedMemoryItem *;
   static NodeRef getEntryNode(NodeRef I) noexcept { return I; }
   using ChildIteratorType = tsar::CorruptedMemoryItem::succ_iterator;

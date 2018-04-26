@@ -223,7 +223,7 @@ public:
   /// Unparses the expression and prints result to a specified stream
   /// returns true on success.
   bool print(llvm::raw_ostream &OS) {
-    SmallString<64> Str;
+    llvm::SmallString<64> Str;
     return toString(Str) ? OS << Str, true : false;
   }
 
