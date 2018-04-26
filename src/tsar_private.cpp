@@ -312,9 +312,9 @@ static void removeRedundantLog(TraitList &TL, StringRef Prefix) {
   for (auto CurrItr = TL.begin(); CurrItr != TL.end(); ++CurrItr) {
     printLocationSource(dbgs(),
       MemoryLocation(
-        CurrItr->get<EstimateMemory>()->front(),
-        CurrItr->get<EstimateMemory>()->getSize(),
-        CurrItr->get<EstimateMemory>()->getAAInfo()));
+        CurrItr->template get<EstimateMemory>()->front(),
+        CurrItr->template get<EstimateMemory>()->getSize(),
+        CurrItr->template get<EstimateMemory>()->getAAInfo()));
     dbgs() << " ";
   }
   dbgs() << "\n";
@@ -329,10 +329,10 @@ static inline void updateDependence(const EstimateMemory *EM,
     const SCEV *Dist, MapTy &Deps) {
   assert(EM && "Estimate memory location must not be null!");
   auto Itr = Deps.try_emplace(EM, nullptr).first;
-  if (!Itr->get<DependenceImp>())
-    Itr->get<DependenceImp>().reset(new DependenceImp);
-  Itr->get<DependenceImp>()->update(Dptr, F, Dist);
-  DEBUG(updateDependenceLog(*EM, *Itr->get<DependenceImp>()));
+  if (!Itr->template get<DependenceImp>())
+    Itr->template get<DependenceImp>().reset(new DependenceImp);
+  Itr->template get<DependenceImp>()->update(Dptr, F, Dist);
+  DEBUG(updateDependenceLog(*EM, *Itr->template get<DependenceImp>()));
 }
 
 /// Merges descriptions of loop-carried dependencies and stores result in
@@ -351,18 +351,18 @@ static inline void mergeDependence(const EstimateMemory *To, TraitId ToTrait,
   auto FromItr = Deps.find(From);
   DependenceImp *FromDep = nullptr;
   if (FromItr != Deps.end()) {
-    FromDep = FromItr->get<DependenceImp>().get();
+    FromDep = FromItr->template get<DependenceImp>().get();
     assert(FromDep &&
       "Location is stored in dependence map without dependence description!");
   } else if (dropUnitFlag(ToTrait) != Dependency) {
     return;
   }
   auto ToItr = Deps.try_emplace(To, nullptr).first;
-  if (!ToItr->get<DependenceImp>())
-    ToItr->get<DependenceImp>().reset(new DependenceImp);
+  if (!ToItr->template get<DependenceImp>())
+    ToItr->template get<DependenceImp>().reset(new DependenceImp);
   if (FromDep)
-    ToItr->get<DependenceImp>()->update(*FromDep);
-  DEBUG(updateDependenceLog(*To, *ToItr->get<DependenceImp>()));
+    ToItr->template get<DependenceImp>()->update(*FromDep);
+  DEBUG(updateDependenceLog(*To, *ToItr->template get<DependenceImp>()));
 }
 
 static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
