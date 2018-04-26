@@ -1120,6 +1120,19 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
     auto Loc = DIMemoryLocation::get(&I);
     if (mSmallestFragments.count(Loc))
       continue;
+    // Ignore expressions other than empty or fragment. Such expressions may
+    // be created after some transform passes when llvm.dbg.declare is
+    // replaced with llvm.dbg.value.
+    if (Loc.Expr->getNumElements() != 0 && Loc.Expr->getNumElements() != 3 ||
+        Loc.Expr->getFragmentInfo()) {
+      auto VarFragments = mVarToFragments.find(Loc.Var);
+      if (VarFragments == mVarToFragments.end())
+        continue;
+      for (auto *EraseExpr : VarFragments->get<DIExpression>())
+        mSmallestFragments.erase(DIMemoryLocation{ Loc.Var, EraseExpr });
+      VarFragments->get<DIExpression>().clear();
+      continue;
+    }
     if (auto *V = MetadataAsValue::getIfExists(I.getContext(), Loc.Var)) {
       // If llvm.dbg.declare exists it means that alloca has not been fully
       // promoted to registers, so we can not analyze it here due to
