@@ -896,7 +896,7 @@ void PrivateRecognitionPass::storeResults(
     assert(EMToDep != Deps.end() &&
       "Dependence must be presented in the map!");
     auto Dep = EMToDep->get<DependenceImp>().get();
-    Dep->get().for_each(DependenceImp::SummarizeFunctor<LocationTraitSet>{
+    Dep->get().for_each(DependenceImp::SummarizeFunctor<MemoryTraitSet>{
       Dep, &*EMTraitItr, mSE});
     DEBUG(
       dbgs() << "[PRIVATE]: summarize dependence for ";

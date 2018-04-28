@@ -61,14 +61,14 @@ private:
 }
 
 /// Correspondence between memory traits and their IR-level descriptions.
-using LocationTraitTaggeds = bcl::TypeList<
+using MemoryTraitTaggeds = bcl::TypeList<
   bcl::tagged<trait::IRDependence, trait::Flow>,
   bcl::tagged<trait::IRDependence, trait::Anti>,
   bcl::tagged<trait::IRDependence, trait::Output>>;
 
 /// Set of descriptions of IR-level memory traits.
-using LocationTraitSet = bcl::TraitSet<MemoryDescriptor,
-  llvm::SmallDenseMap<bcl::TraitKey, void *, 2>, LocationTraitTaggeds>;
+using MemoryTraitSet = bcl::TraitSet<MemoryDescriptor,
+  llvm::SmallDenseMap<bcl::TraitKey, void *, 2>, MemoryTraitTaggeds>;
 
 /// \brief This is a set of traits for a memory location.
 ///
@@ -76,33 +76,33 @@ using LocationTraitSet = bcl::TraitSet<MemoryDescriptor,
 /// collected by an external structure, so it is not possible to modify
 /// this locations.
 template<class MemoryTy, class BaseTy>
-class LocationTrait : public BaseTy {
+class MemoryTrait : public BaseTy {
 public:
   /// Creates set of traits.
-  explicit LocationTrait(MemoryTy Loc) : mLoc(Loc) {
+  explicit MemoryTrait(MemoryTy Loc) : mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Creates set of traits.
-  LocationTrait(MemoryTy Loc, const MemoryDescriptor &Dptr) :
+  MemoryTrait(MemoryTy Loc, const MemoryDescriptor &Dptr) :
     BaseTy(Dptr), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Creates set of traits.
-  LocationTrait(MemoryTy Loc, MemoryDescriptor &&Dptr) :
+  MemoryTrait(MemoryTy Loc, MemoryDescriptor &&Dptr) :
     BaseTy(std::move(Dptr)), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Assigns dependency descriptor to this set of traits.
-  LocationTrait & operator=(const MemoryDescriptor &Dptr) noexcept {
+  MemoryTrait & operator=(const MemoryDescriptor &Dptr) noexcept {
     BaseTy::operator=(Dptr);
     return *this;
   }
 
   /// Assigns dependency descriptor to this set traits.
-  LocationTrait & operator=(MemoryDescriptor &&Dptr) noexcept {
+  MemoryTrait & operator=(MemoryDescriptor &&Dptr) noexcept {
     BaseTy::operator=(std::move(Dptr));
     return *this;
   }
@@ -116,37 +116,37 @@ private:
 
 /// A set of traits of estimate memory locations.
 using EstimateMemoryTrait =
-  LocationTrait<const EstimateMemory *, LocationTraitSet>;
+  MemoryTrait<const EstimateMemory *, MemoryTraitSet>;
 
 /// A set of traits of unknown memory locations.
 using UnknownMemoryTrait =
-  LocationTrait<const llvm::Instruction *, MemoryDescriptor>;
+  MemoryTrait<const llvm::Instruction *, MemoryDescriptor>;
 }
 
 namespace llvm {
-/// This provides DenseMapInfo for LocationTrait.
+/// This provides DenseMapInfo for MemoryTrait.
 template<class MemoryTy, class BaseTy>
-struct DenseMapInfo<tsar::LocationTrait<MemoryTy, BaseTy>> {
-  static inline tsar::LocationTrait<MemoryTy, BaseTy> getEmptyKey() {
-    return tsar::LocationTrait<MemoryTy, BaseTy>(
+struct DenseMapInfo<tsar::MemoryTrait<MemoryTy, BaseTy>> {
+  static inline tsar::MemoryTrait<MemoryTy, BaseTy> getEmptyKey() {
+    return tsar::MemoryTrait<MemoryTy, BaseTy>(
       DenseMapInfo<MemoryTy>::getEmptyKey());
   }
-  static inline tsar::LocationTrait<MemoryTy, BaseTy> getTombstoneKey() {
-    return tsar::LocationTrait<MemoryTy, BaseTy>(
+  static inline tsar::MemoryTrait<MemoryTy, BaseTy> getTombstoneKey() {
+    return tsar::MemoryTrait<MemoryTy, BaseTy>(
       DenseMapInfo<MemoryTy>::getTombstoneKey());
   }
   static unsigned getHashValue(
-      const tsar::LocationTrait<MemoryTy, BaseTy> &Val) {
+      const tsar::MemoryTrait<MemoryTy, BaseTy> &Val) {
     return DenseMapInfo<MemoryTy>::getHashValue(Val.getMemory());
   }
   static unsigned getHashValue(MemoryTy Val) {
     return DenseMapInfo<MemoryTy>::getHashValue(Val);
   }
-  static bool isEqual(const tsar::LocationTrait<MemoryTy, BaseTy> &LHS,
-      const tsar::LocationTrait<MemoryTy, BaseTy> &RHS) {
+  static bool isEqual(const tsar::MemoryTrait<MemoryTy, BaseTy> &LHS,
+      const tsar::MemoryTrait<MemoryTy, BaseTy> &RHS) {
     return LHS.getMemory() == RHS.getMemory(); }
   static bool isEqual(MemoryTy LHS,
-      const tsar::LocationTrait<MemoryTy, BaseTy> &RHS) {
+      const tsar::MemoryTrait<MemoryTy, BaseTy> &RHS) {
     return LHS == RHS.getMemory();
   }
 };
