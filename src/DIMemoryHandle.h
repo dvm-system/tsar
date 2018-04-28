@@ -26,6 +26,7 @@ class DIMemoryHandleBase {
 protected:
   enum Kind {
     Assert,
+    Callback,
     Weak
   };
 public:
@@ -277,6 +278,52 @@ struct isPodLike<tsar::AssertingDIMemoryHandle<T> > {
 #else
   static const bool value = false;
 #endif
+};
+}
+
+namespace tsar {
+/// \brief DIMemory handle with callbacks on RAUW and destruction.
+///
+/// This is a memory handle that allows subclasses to define callbacks that run
+/// when the underlying DIMemory has RAUW called on it or is destroyed. This
+/// class can be used as the key of a map, as long as the user takes it out of
+/// the map before calling setMemoryPtr() (since the map has to rearrange itself
+/// when the pointer changes).
+/// Unlike DIMemoryHandleBase, this class has a vtable.
+class CallbackDIMemoryHandle: public DIMemoryHandleBase {
+  virtual void anchor();
+protected:
+  ~CallbackDIMemoryHandle() = default;
+  CallbackDIMemoryHandle(const CallbackDIMemoryHandle &) = default;
+  CallbackDIMemoryHandle & operator=(const CallbackDIMemoryHandle &) = default;
+
+  void setMemoryPtr(DIMemory *P) {
+    DIMemoryHandleBase::operator=(P);
+  }
+
+public:
+  CallbackDIMemoryHandle() : DIMemoryHandleBase(Callback) {}
+  CallbackDIMemoryHandle(DIMemory *P) : DIMemoryHandleBase(Callback, P) {}
+
+  operator DIMemory * () const {
+    return getMemoryPtr();
+  }
+
+  /// \brief Callback for memory destruction.
+  ///
+  /// Called when this->getMemoryPtr() is destroyed, inside ~DIMemory(), so you
+  /// may call any non-virtual DIMemory method on getMemoryPtr(), but no
+  /// subclass methods.
+  ///
+  /// All implementations must remove the reference from this object to the
+  /// DIMemory that's being destroyed.
+  virtual void deleted() { setMemoryPtr(nullptr); }
+
+  /// \brief Callback for DIMemory RAUW.
+  ///
+  /// Called when this->getMemoryPtr()->replaceAllUsesWith() is called,
+  /// before any of the uses have actually been replaced.
+  virtual void allUsesReplacedWith(DIMemory *) {}
 };
 }
 #endif//TSAR_DI_MEMORY_HANDLE_H
