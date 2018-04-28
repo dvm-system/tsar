@@ -16,7 +16,6 @@
 
 namespace tsar {
 class DIMemory;
-template<typename From> struct simplify_type;
 
 /// \brief This is the common base class of metadata-level memory handles.
 ///
@@ -70,6 +69,7 @@ public:
     mMemory = RHS.mMemory;
     if (isValid(mMemory))
       addToExistingUseList(RHS.getPrevPtr());
+    return mMemory;
   }
 
   DIMemory * operator->() const { return mMemory; }
@@ -155,6 +155,8 @@ public:
 }
 
 namespace llvm {
+template<typename From> struct simplify_type;
+
 // Specialize simplify_type to allow WeakVH to participate in
 // dyn_cast, isa, etc.
 template<> struct simplify_type<tsar::WeakDIMemoryHandle> {
