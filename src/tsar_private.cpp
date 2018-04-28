@@ -183,7 +183,7 @@ public:
   template<class TraitSet>
   struct SummarizeFunctor {
     template<class Trait> void operator()() {
-      trait::Dependence::DistanceRange Dist(nullptr, nullptr);
+      trait::IRDependence::DistanceRange Dist(nullptr, nullptr);
       SmallVector<const SCEV *, 4> MaxOps(mDep->mDists.get<Trait>().size());
       SmallVector<const SCEV *, 4> MinOps(mDep->mDists.get<Trait>().size());
       if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
@@ -196,7 +196,8 @@ public:
         Dist.first = mSE->getNotSCEV(mSE->getUMaxExpr(MinOps));
         Dist.second = mSE->getUMaxExpr(MaxOps);
       }
-      mSet->set(new Trait(mDep->mFlags.get<Trait>(), Dist));
+      mSet->template set<Trait>(
+        new trait::IRDependence(mDep->mFlags.get<Trait>(), Dist));
     }
     DependenceImp *mDep;
     TraitSet *mSet;
@@ -770,7 +771,7 @@ void PrivateRecognitionPass::propagateTraits(
 void PrivateRecognitionPass::checkFirstPrivate(
     const GraphNumbering<const AliasNode *> &Numbers,
     const DFRegion &R,
-    const TraitList::iterator &TraitItr, DependencyDescriptor &Dptr) {
+    const TraitList::iterator &TraitItr, MemoryDescriptor &Dptr) {
   if (Dptr.is<trait::FirstPrivate>() ||
       !Dptr.is<trait::LastPrivate>() && !Dptr.is<trait::SecondToLastPrivate>())
     return;
@@ -915,7 +916,7 @@ void PrivateRecognitionPass::storeResults(
   auto EMI = Traits.get<TraitList>()->begin();
   auto EME = Traits.get<TraitList>()->end();
   if (!Traits.get<TraitList>()->empty()) {
-    NodeTraitItr = DS.insert(&N, DependencyDescriptor()).first;
+    NodeTraitItr = DS.insert(&N, MemoryDescriptor()).first;
     auto SecondEM = Traits.get<TraitList>()->begin(); ++SecondEM;
     if (Traits.get<UnknownList>()->empty() && SecondEM == EME) {
       *NodeTraitItr = toDescriptor(EMI->get<TraitImp>(), 1);
@@ -935,7 +936,7 @@ void PrivateRecognitionPass::storeResults(
       return;
     }
   } else if (!Traits.get<UnknownList>()->empty()) {
-    NodeTraitItr = DS.insert(&N, DependencyDescriptor()).first;
+    NodeTraitItr = DS.insert(&N, MemoryDescriptor()).first;
   } else {
     return;
   }
@@ -1016,9 +1017,9 @@ void PrivateRecognitionPass::storeResults(
   }
 }
 
-DependencyDescriptor PrivateRecognitionPass::toDescriptor(
+MemoryDescriptor PrivateRecognitionPass::toDescriptor(
     const TraitImp &T, unsigned TraitNumber) {
-  DependencyDescriptor Dptr;
+  MemoryDescriptor Dptr;
   if (!(T & ~AddressAccess)) {
     Dptr.set<trait::AddressAccess>();
     NumAddressAccess += TraitNumber;
@@ -1087,7 +1088,7 @@ class TraitToStringFunctor {
 public:
   /// Static map from trait to its string representation.
   typedef bcl::StaticTraitMap<
-    std::string, DependencyDescriptor> TraitToStringMap;
+    std::string, MemoryDescriptor> TraitToStringMap;
 
   /// Creates the functor.
   TraitToStringFunctor(TraitToStringMap &Map, llvm::StringRef Offset,
@@ -1134,7 +1135,7 @@ public:
   }
 
   /// Prints description of a trait into a specified stream.
-  void traitToStr(trait::Dependence *Dep, raw_string_ostream &OS) {
+  void traitToStr(trait::IRDependence *Dep, raw_string_ostream &OS) {
     if (!Dep)
       return;
     if (!Dep->getDistance().first && !Dep->getDistance().second)

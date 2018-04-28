@@ -4,14 +4,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines traits which could be recognized by the analyzer.
+// This file defines IR-level traits of memory locations which could be
+// recognized by the analyzer.
 //
 //===----------------------------------------------------------------------===//
-#ifndef TSAR_MEMORY_TRAIT_H
-#define TSAR_MEMORY_TRAIT_H
+#ifndef TSAR_IR_MEMORY_TRAIT_H
+#define TSAR_IR_MEMORY_TRAIT_H
 
-#include <trait.h>
-#include <llvm/ADT/BitmaskEnum.h>
+#include "MemoryTrait.h"
+#include <cell.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -28,220 +29,46 @@ class AliasTree;
 class EstimateMemory;
 class ExplicitAccseeCoverage;
 
-/// Definition of methods that identifies a trait.
-#define TSAR_TRAIT_DECL_STRING(name_, string_) \
-static llvm::StringRef toString() { \
-  static std::string Str(string_); \
-  return Str; \
-} \
-static std::string & name() { \
-  static std::string Str(#name_); \
-  return Str; \
-}
-
-/// Declaration of a trait recognized by analyzer.
-#define TSAR_TRAIT_DECL(name_, string_) \
-struct name_ { \
-  TSAR_TRAIT_DECL_STRING(name_, string_) \
-};
-
 namespace trait {
-TSAR_TRAIT_DECL(AddressAccess, "address access")
-TSAR_TRAIT_DECL(ExplicitAccess, "explicit access")
-TSAR_TRAIT_DECL(HeaderAccess, "header access")
-TSAR_TRAIT_DECL(NoAccess, "no access")
-TSAR_TRAIT_DECL(Readonly, "read only")
-TSAR_TRAIT_DECL(Shared, "shared")
-TSAR_TRAIT_DECL(Private, "private")
-TSAR_TRAIT_DECL(FirstPrivate, "first private")
-TSAR_TRAIT_DECL(SecondToLastPrivate, "second to last private")
-TSAR_TRAIT_DECL(LastPrivate, "last private")
-TSAR_TRAIT_DECL(DynamicPrivate, "dynamic private")
-TSAR_TRAIT_DECL(Reduction, "reduction")
-TSAR_TRAIT_DECL(Induction, "induction")
-
-LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
-
-/// Description of a loop-carried dependence.
-class Dependence {
+/// IR-level description of a loop-carried dependence.
+class IRDependence : public Dependence {
 public:
-  TSAR_TRAIT_DECL_STRING(Dependence, "dependence")
-
   /// This represents lowest and highest distances.
   using DistanceRange = std::pair<const llvm::SCEV *, const llvm::SCEV *>;
 
-  /// List of available bitwise properties.
-  enum Flag : uint8_t {
-    No = 0,
-    /// There is no assurance in existence of a dependence.
-    May = 1 << 0,
-    /// At least one of dependence causes is load/store to a memory.
-    LoadStoreCause = 1u << 1,
-    /// At least one of dependence causes is call of a function.
-    CallCause = 1u << 2,
-    /// At least one of dependence causes is unknown instruction which accesses
-    /// a memory.
-    UnknownCause = 1u << 3,
-    /// Distance is unknown.
-    UnknownDistance = 1u << 4,
-    LLVM_MARK_AS_BITMASK_ENUM(UnknownDistance)
-  };
-
   /// Creates dependence and set its properties to `F`.
   /// Distances will not be set.
-  explicit Dependence(Flag F) :
-    mFlags(F | UnknownDistance), mDistance(nullptr, nullptr) {}
+  explicit IRDependence(Flag F) :
+    Dependence(F | UnknownDistance), mDistance(nullptr, nullptr) {}
 
   /// Creates dependence and set its distances and properties.
   /// `UnknownDistance` flag will be updated according to specified distances.
-  Dependence(Flag F, DistanceRange Dist) : mFlags(F), mDistance(Dist) {
-    if (Dist.first && Dist.second)
-      mFlags &= ~UnknownDistance;
-    else
-      mFlags |= UnknownDistance;
-  }
-
-  /// Returns bitwise properties.
-  Flag getFlags() const noexcept { return mFlags; }
-
-  /// Returns true if there is no assurance in existence of a dependence.
-  bool isMay() const noexcept { return mFlags & May; }
-
-  /// Returns true if at least one of dependence causes is load/store
-  /// instruction.
-  bool isLoadStore() const noexcept { return mFlags & LoadStoreCause; }
-
-
-  /// Returns true if all dependence causes are load/store instructions.
-  bool isLoadStoreOnly() const noexcept {
-    return (mFlags & possibleCauses()) == LoadStoreCause;
-  }
-
-  /// Returns true if at least one of dependence causes is call instruction.
-  bool isCall() const noexcept { return mFlags & CallCause; }
-
-
-  /// Returns true if all dependence causes are call instructions.
-  bool isCallOnly() const noexcept {
-    return (mFlags & possibleCauses()) == CallCause;
-  }
-
-  /// Returns true if at least one of dependence causes is unknown access to
-  /// a memory.
-  bool isUnknown() const noexcept { return mFlags & UnknownCause; }
-
-  /// Returns true if all dependence causes are unknown accesses to a memory.
-  bool isUnknownOnly() const noexcept {
-    return (mFlags & possibleCauses()) == UnknownCause;
-  }
-
-  /// Returns true if both the lowest and highest distances are known.
-  bool isKnownDistance() const noexcept { return !(mFlags & UnknownDistance); }
+  IRDependence(Flag F, DistanceRange Dist) :
+    Dependence((Dist.first && Dist.second) ?
+      F & ~UnknownDistance : F | UnknownDistance), mDistance(Dist) { }
 
   /// Return distances.
   DistanceRange getDistance() const noexcept {
-    assert(mDistance.first && mDistance.second || (mFlags & UnknownDistance) &&
+    assert(mDistance.first && mDistance.second ||
+      (getFlags() & UnknownDistance) &&
       "Distance is marked as known but it is not specified!");
     return mDistance;
   }
 
 private:
-  static Flag possibleCauses() noexcept {
-    return LoadStoreCause & CallCause & UnknownCause;
-  }
-
   DistanceRange mDistance;
-  Flag mFlags;
-};
-
-struct Flow : public Dependence {
-  TSAR_TRAIT_DECL_STRING(Flow, "flow")
-  explicit Flow(Flag F) : Dependence(F) {}
-  Flow(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
-};
-
-struct Anti : public Dependence {
-  TSAR_TRAIT_DECL_STRING(Anti, "anti")
-  explicit Anti(Flag F) : Dependence(F) {}
-  Anti(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
-};
-
-struct Output : public Dependence {
-  TSAR_TRAIT_DECL_STRING(Output, "output")
-  explicit Output(Flag F) : Dependence(F) {}
-  Output(Flag F, DistanceRange Dist) : Dependence(F, Dist) {}
 };
 }
 
-#undef TSAR_TRAIT_DECL
+/// Correspondence between memory traits and their IR-level descriptions.
+using LocationTraitTaggeds = bcl::TypeList<
+  bcl::tagged<trait::IRDependence, trait::Flow>,
+  bcl::tagged<trait::IRDependence, trait::Anti>,
+  bcl::tagged<trait::IRDependence, trait::Output>>;
 
-/// \brief This represents list of traits for a memory location which can be
-/// recognized by analyzer.
-///
-/// The following information is available:
-/// - is it a location which is not accessed in a region
-/// - is it a location which is explicitly accessed in a region
-/// - is it a location address of which is evaluated;
-/// - is it a private location;
-/// - is it a last private location;
-/// - is it a second to last private location;
-/// - is it a dynamic private location;
-/// - is it a first private location;
-/// - is it a read-only location;
-/// - is it a shared location;
-/// - is it a location that caused dependence;
-/// - is it a loop induction location;
-/// - is it a location which is accessed in a loop header.
-///
-/// If location is not accessed in a region it will be marked as 'no access'
-/// only if it has some other traits, otherwise it can be omitted in a list
-/// of region traits.
-///
-/// Location is accessed in a region implicitly if descendant of it in an
-/// estimate memory tree will be accessed explicitly. If some other location is
-/// accessed due to alias with such location it is not treated.
-///
-/// Calculation of a last private variables differs depending on internal
-/// representation of a loop. There are two type of representations.
-/// -# The first type has a following pattern:
-/// \code
-/// iter: if (...) goto exit;
-///           ...
-///         goto iter;
-/// exit:
-/// \endcode
-/// For example, representation of a for-loop refers to this type.
-/// The candidates for last private variables associated with the for-loop
-/// will be stored as second to last privates locations, because
-/// the last definition of these locations is executed on the second to the last
-/// loop iteration (on the last iteration the loop condition
-/// check is executed only).
-/// -# The second type has a following pattern:
-/// \code
-/// iter:
-///           ...
-///       if (...) goto exit; else goto iter;
-/// exit:
-/// \endcode
-/// For example, representation of a do-while-loop refers to this type.
-/// In this case the candidates for last private variables
-/// will be stored as last privates locations.
-///
-/// In some cases it is impossible to determine in static an iteration
-/// where the last definition of an location have been executed. Such locations
-/// will be stored as dynamic private locations collection.
-using DependencyDescriptor = bcl::TraitDescriptor<
-  trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess,
-  bcl::TraitAlternative<
-    trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
-    bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
-    bcl::TraitUnion<trait::Private, trait::Shared>,
-    bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate, trait::Shared>,
-    bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate, trait::Shared>,
-    bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate, trait::Shared>>>;
-
-using LocationTraitSet = bcl::TraitSet<DependencyDescriptor,
-  llvm::SmallDenseMap<bcl::TraitKey, void *, 2>>;
+/// Set of descriptions of IR-level memory traits.
+using LocationTraitSet = bcl::TraitSet<MemoryDescriptor,
+  llvm::SmallDenseMap<bcl::TraitKey, void *, 2>, LocationTraitTaggeds>;
 
 /// \brief This is a set of traits for a memory location.
 ///
@@ -257,25 +84,25 @@ public:
   }
 
   /// Creates set of traits.
-  LocationTrait(MemoryTy Loc, const DependencyDescriptor &Dptr) :
+  LocationTrait(MemoryTy Loc, const MemoryDescriptor &Dptr) :
     BaseTy(Dptr), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Creates set of traits.
-  LocationTrait(MemoryTy Loc, DependencyDescriptor &&Dptr) :
+  LocationTrait(MemoryTy Loc, MemoryDescriptor &&Dptr) :
     BaseTy(std::move(Dptr)), mLoc(Loc) {
     assert(Loc && "Location must not be null!");
   }
 
   /// Assigns dependency descriptor to this set of traits.
-  LocationTrait & operator=(const DependencyDescriptor &Dptr) noexcept {
+  LocationTrait & operator=(const MemoryDescriptor &Dptr) noexcept {
     BaseTy::operator=(Dptr);
     return *this;
   }
 
   /// Assigns dependency descriptor to this set traits.
-  LocationTrait & operator=(DependencyDescriptor &&Dptr) noexcept {
+  LocationTrait & operator=(MemoryDescriptor &&Dptr) noexcept {
     BaseTy::operator=(std::move(Dptr));
     return *this;
   }
@@ -293,7 +120,7 @@ using EstimateMemoryTrait =
 
 /// A set of traits of unknown memory locations.
 using UnknownMemoryTrait =
-  LocationTrait<const llvm::Instruction *, DependencyDescriptor>;
+  LocationTrait<const llvm::Instruction *, MemoryDescriptor>;
 }
 
 namespace llvm {
@@ -337,7 +164,7 @@ namespace tsar {
 /// each such location. Conservative combination of these traits leads to
 /// the proposed traits of a node. Nodes that explicitly accessed locations may
 /// be associated in some of descendant alias nodes of the current one.
-class AliasTrait : public DependencyDescriptor, private bcl::Uncopyable {
+class AliasTrait : public MemoryDescriptor, private bcl::Uncopyable {
   /// List of explicitly accessed estimate memory locations and their traits.
   using AccessTraits = llvm::SmallDenseSet<EstimateMemoryTrait, 1>;
 
@@ -366,26 +193,26 @@ public:
   }
 
   /// Creates representation of traits.
-  AliasTrait(const AliasNode *N, const DependencyDescriptor &Dptr) :
-    DependencyDescriptor(Dptr), mNode(N) {
+  AliasTrait(const AliasNode *N, const MemoryDescriptor &Dptr) :
+    MemoryDescriptor(Dptr), mNode(N) {
     assert(N && "Alias node must not be null!");
   }
 
   /// Creates representation of traits.
-  AliasTrait(const AliasNode *N, DependencyDescriptor &&Dptr) :
-    DependencyDescriptor(std::move(Dptr)), mNode(N) {
+  AliasTrait(const AliasNode *N, MemoryDescriptor &&Dptr) :
+    MemoryDescriptor(std::move(Dptr)), mNode(N) {
     assert(N && "Alias node must not be null!");
   }
 
   /// Assigns dependency descriptor to this set of traits.
-  AliasTrait & operator=(const DependencyDescriptor &Dptr) noexcept {
-    DependencyDescriptor::operator=(Dptr);
+  AliasTrait & operator=(const MemoryDescriptor &Dptr) noexcept {
+    MemoryDescriptor::operator=(Dptr);
     return *this;
   }
 
   /// Assigns dependency descriptor to this set of traits.
-  AliasTrait & operator=(DependencyDescriptor &&Dptr) noexcept {
-    DependencyDescriptor::operator=(std::move(Dptr));
+  AliasTrait & operator=(MemoryDescriptor &&Dptr) noexcept {
+    MemoryDescriptor::operator=(std::move(Dptr));
     return *this;
   }
 
@@ -593,7 +420,7 @@ public:
 
   /// Inserts traits of a specified alias node.
   std::pair<iterator, bool> insert(
-      const AliasNode *N, const DependencyDescriptor &Dptr) {
+      const AliasNode *N, const MemoryDescriptor &Dptr) {
     auto Pair = mTraits.insert(
       std::make_pair(N, llvm::make_unique<AliasTrait>(N, Dptr)));
     return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
@@ -601,7 +428,7 @@ public:
 
   /// Inserts traits of a specified alias node.
   std::pair<iterator, bool> insert(
-      const AliasNode *N, DependencyDescriptor &&Dptr) {
+      const AliasNode *N, MemoryDescriptor &&Dptr) {
     auto Pair = mTraits.insert(
       std::make_pair(N, llvm::make_unique<AliasTrait>(N, std::move(Dptr))));
     return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
@@ -624,4 +451,4 @@ private:
   const AliasTree *mAliasTree;
 };
 }
-#endif//TSAR_MEMORY_TRAIT_H
+#endif//TSAR_IR_MEMORY_TRAIT_H

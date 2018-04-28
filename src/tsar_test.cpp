@@ -210,7 +210,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       assert(DSItr != PrivateInfo.end() && DSItr->get<DependencySet>() &&
         "Privatiability information must be specified!");
       typedef bcl::StaticTraitMap<
-        std::vector<AliasTrait *>, DependencyDescriptor> TraitMap;
+        std::vector<AliasTrait *>, MemoryDescriptor> TraitMap;
       TraitMap TM;
       for (auto &TS : *DSItr->get<DependencySet>())
         TS.for_each(

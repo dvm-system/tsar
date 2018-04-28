@@ -296,7 +296,7 @@ private:
   void checkFirstPrivate(
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
     const tsar::DFRegion &R,
-    const TraitList::iterator &TraitItr, tsar::DependencyDescriptor &Dptr);
+    const TraitList::iterator &TraitItr, tsar::MemoryDescriptor &Dptr);
 
   /// \brief This store results of analysis of a loop into a dependency set.
   ///
@@ -330,7 +330,7 @@ private:
   /// traits. If different locations has the same traits TraitNumber parameter
   /// can be used to take into account all traits. It also can be set to 0
   /// if a specified trait should not be counted.
-  tsar::DependencyDescriptor toDescriptor(const tsar::detail::TraitImp &T,
+  tsar::MemoryDescriptor toDescriptor(const tsar::detail::TraitImp &T,
    unsigned TraitNumber);
 
 private:
