@@ -193,19 +193,19 @@ char AliasTreeOnlyViewer::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP(AliasTreeViewer, "view-em",
   "View alias tree of a function", true, true,
-  DefaultQueryManager::getPassRegistry())
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 INITIALIZE_PASS_IN_GROUP(AliasTreeOnlyViewer, "view-em-only",
   "View alias tree of a function (alias summary only)", true, true,
-  DefaultQueryManager::getPassRegistry())
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 INITIALIZE_PASS_IN_GROUP(AliasTreePrinter, "dot-em",
   "Print alias tree to 'dot' file", true, true,
-  DefaultQueryManager::getPassRegistry())
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 INITIALIZE_PASS_IN_GROUP(AliasTreeOnlyPrinter, "dot-em-only",
   "Print alias tree to 'dot' file (alias summary only)", true, true,
-  DefaultQueryManager::getPassRegistry())
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createAliasTreeViewerPass() {
   return new AliasTreeViewer();

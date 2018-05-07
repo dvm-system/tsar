@@ -8,11 +8,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Config/llvm-config.h>
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-#else
-#include <llvm/Analysis/BasicAliasAnalysis.h>
-#endif
+#include "tsar_action.h"
+#include "Instrumentation.h"
+#include "tsar_query.h"
+#include "tsar_pass.h"
+#include "tsar_transformation.h"
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/ASTConsumer.h>
 #include <clang/AST/ASTContext.h>
@@ -21,7 +21,15 @@
 #include <clang/Frontend/FrontendDiagnostic.h>
 #include <clang/Sema/Sema.h>
 #include <clang/Serialization/ASTReader.h>
+#include <llvm/Config/llvm-config.h>
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/Analysis/CFLAndersAliasAnalysis.h>
+#include <llvm/Analysis/CFLSteensAliasAnalysis.h>
+#include <llvm/Analysis/GlobalsModRef.h>
 #include <llvm/Analysis/Passes.h>
+#include <llvm/Analysis/ScalarEvolutionAliasAnalysis.h>
+#include <llvm/Analysis/ScopedNoAliasAA.h>
+#include <llvm/Analysis/TypeBasedAliasAnalysis.h>
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/IRPrintingPasses.h>
@@ -34,18 +42,33 @@
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
+#include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
+#include <llvm/Transforms/Scalar.h>
 #include <memory>
-#include "tsar_action.h"
-#include "Instrumentation.h"
-#include "tsar_query.h"
-#include "tsar_pass.h"
-#include "tsar_transformation.h"
 
 using namespace clang;
 using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
+
+void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
+    llvm::legacy::PassManager &Passes) {
+  assert(P->getPotentialPassManagerType() == PMT_FunctionPassManager &&
+    "Results of function passes can be printed at this moment only!");
+  // PassInfo should be obtained before a pass is added into a pass manager
+  // because in some cases pass manager delete this pass. After that pointer
+  // becomes invalid. For example, the reason is existence of the same pass in
+  // a pass sequence.
+  if (PrintResult) {
+    auto PI = PassRegistry::getPassRegistry()->getPassInfo(P->getPassID());
+    Passes.add(P);
+    Passes.add(createFunctionPassPrinter(PI, errs()));
+    return;
+  }
+  Passes.add(P);
+};
 
 void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   assert(M && "Module must not be null!");
@@ -56,6 +79,30 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     TEP->setContext(*M, Ctx);
     Passes.add(TEP);
   }
+  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
+  auto addInitialAliasAanalysis = [&Passes]() {
+    Passes.add(createCFLSteensAAWrapperPass());
+    Passes.add(createCFLAndersAAWrapperPass());
+    Passes.add(createTypeBasedAAWrapperPass());
+    Passes.add(createScopedNoAliasAAWrapperPass());
+  };
+  auto addPrint = [&Passes, this](ProcessingStep CurrentStep) {
+    if (CurrentStep & mPrintSteps)
+      for (auto PI : mPrintPasses)
+        Passes.add(createFunctionPassPrinter(PI, errs()));
+  };
+  auto addOutput = [&Passes, this]() {
+    for (auto PI : mOutputPasses) {
+      if (!PI->getNormalCtor()) {
+        /// TODO (kainadnr@gmail.com): add a name of executable before
+        /// diagnostic.
+        errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
+        continue;
+      }
+      Passes.add(PI->getNormalCtor()());
+    }
+  };
+  addInitialAliasAanalysis();
   // The 'unreachableblockelim' pass is necessary because implementation
   // of data-flow analysis relies on suggestion that control-flow graph does
   // not contain unreachable basic blocks.
@@ -72,27 +119,48 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   //}
   // In other cases 'clang' automatically deletes unreachable blocks.
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createInferFunctionAttrsLegacyPass());
   Passes.add(createPostOrderFunctionAttrsLegacyPass());
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-  Passes.add(createBasicAliasAnalysisPass());
-#else
-  Passes.add(createBasicAAWrapperPass());
-#endif
-  auto PRP = createPrivateRecognitionPass();
-  Passes.add(PRP);
-  Passes.add(createFunctionPassPrinter(
-    PassRegistry::getPassRegistry()->getPassInfo(PRP->getPassID()), errs()));
-  if (Ctx)
-    Passes.add(createPrivateCClassifierPass());
+  Passes.add(createReversePostOrderFunctionAttrsPass());
+  Passes.add(createStripDeadPrototypesPass());
+  Passes.add(createGlobalDCEPass());
+  Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createDILoopRetrieverPass());
+  Passes.add(createDIMemoryEnvironmentStorage());
+  // Preliminary analysis of privatizable variables. This analysis is necessary
+  // to prevent lost of result of optimized values. The memory promotion
+  // may remove some variables with attached source-level debug information.
+  // Consider an example: int *P, X; P = &X; for (...) { *P = 0; X = 1; }
+  // Memory promotion removes P, so X will be recognized as private variable.
+  // However in the original program data-dependency exists because different
+  // pointers refer the same memory.
+  Passes.add(createPrivateRecognitionPass());
+  addPrint(BeforeTfmAnalysis);
+  addOutput();
+  // Perform SROA in repeat variable privatization. After that reduction and
+  // induction recognition will be performed. Flow/anti/output dependencies
+  // also analyses.
+  Passes.add(createCFGSimplificationPass());
+  Passes.add(createInstructionCombiningPass());
+  Passes.add(createSROAPass());
+  Passes.add(createEarlyCSEPass());
+  Passes.add(createCFGSimplificationPass());
+  // This is necessary to combine multiple GEPs into a single GEP. This allows
+  // dependency analysis works without delinearization.
+  Passes.add(createInstructionCombiningPass());
+  Passes.add(createSCEVAAWrapperPass());
+  Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createPrivateRecognitionPass());
+  addPrint(AfterSroaAnalysis);
+  addOutput();
+  // Perform loop rotation to enable reduction recognition if for-loops.
+  Passes.add(createLoopRotatePass());
+  Passes.add(createCFGSimplificationPass());
+  Passes.add(createInstructionCombiningPass());
+  Passes.add(createPrivateRecognitionPass());
+  addPrint(AfterLoopRotateAnalysis);
+  addOutput();
   Passes.add(createVerifierPass());
-  for (auto PI : mOutputPasses) {
-    if (!PI->getNormalCtor()) {
-      /// TODO (kainadnr@gmail.com): add a name of executable before diagnostic.
-      errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
-      continue;
-    }
-    Passes.add(PI->getNormalCtor()());
-  }
   Passes.run(*M);
 }
 

@@ -12,6 +12,7 @@
 #define TSAR_DBG_OUTPUT_H
 
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DebugLoc.h>
 
 namespace llvm {
 class DominatorTree;
@@ -78,7 +79,26 @@ void printDIVariable(llvm::raw_ostream &o, llvm:: DIVariable *DIVar);
 ///
 /// \param [in] LI Information about natural loops identified
 /// by the LoopInfor pass.
-void printLoops(llvm::raw_ostream &o, const llvm::LoopInfo &LI);
+/// param [in] FilenameOnly If it is true only name of a file will be printed.
+void printLoops(llvm::raw_ostream &OS, const llvm::LoopInfo &LI,
+  bool FilenameOnly = false);
+
+/// Returns name of a file or full path to a file for a specified location.
+/// If `FilenameOnly` is true only name of a file will be returned.
+inline llvm::StringRef getFile(llvm::DebugLoc Loc, bool FilenameOnly = false) {
+  auto *Scope = llvm::cast<llvm::DIScope>(Loc.getScope());
+  auto Filename = Scope->getFilename();
+  if (FilenameOnly) {
+    Filename.consume_front(Scope->getDirectory());
+    Filename = Filename.ltrim("/\\");
+  }
+  return Filename;
+}
+
+/// This is similar to default DebugLoc::print() method, however, an output
+/// depends on `FilenameOnly` parameter.
+/// If `FilenameOnly` is true only name of a file will be printed.
+void print(llvm::raw_ostream &OS, llvm::DebugLoc Loc, bool FilenameOnly = false);
 }
 
 #endif//TSAR_DBG_OUTPUT_H

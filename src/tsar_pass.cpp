@@ -16,6 +16,7 @@
 using namespace llvm;
 
 void llvm::initializeTSAR(PassRegistry &Registry) {
+  initializeGlobalOptionsImmutableWrapperPass(Registry);
   initializeDFRegionInfoPassPass(Registry);
   initializeDefinedMemoryPassPass(Registry);
   initializeLiveMemoryPassPass(Registry);
@@ -46,6 +47,11 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   // Initialize necessary LLVM passes.
   initializeUnreachableBlockElimLegacyPassPass(Registry);
   initializeCanonicalLoopPassPass(Registry);
+  initializePromoteLegacyPassPass(Registry);
+  initializeLoopRotateLegacyPassPass(Registry);
+  initializeEarlyCSELegacyPassPass(Registry);
+  initializeLoopSimplifyCFGLegacyPassPass(Registry);
+  initializeSROALegacyPassPass(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {

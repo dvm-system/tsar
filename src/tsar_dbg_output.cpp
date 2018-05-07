@@ -121,21 +121,37 @@ void printDIVariable(raw_ostream &o, DIVariable *DIVar) {
 }
 
 namespace {
-void printLoops(llvm::raw_ostream &o, const Twine &Offset,
+void printLoops(llvm::raw_ostream &OS, bool FilenameOnly, const Twine &Offset,
                 LoopInfo::reverse_iterator ReverseI,
                 LoopInfo::reverse_iterator ReverseEI) {
   for (; ReverseI != ReverseEI; --ReverseEI) {
-    (Offset + "- ").print(o);
-    DebugLoc loc = (*ReverseI)->getStartLoc();
-    loc.print(o);
-    o << "\n";
-    printLoops(o, Offset + "\t", (*ReverseI)->rbegin(), (*ReverseI)->rend());
+    (Offset + "- ").print(OS);
+    DebugLoc Loc = (*ReverseI)->getStartLoc();
+    print(OS, Loc, FilenameOnly);
+    OS << "\n";
+    printLoops(OS, FilenameOnly, Offset + "\t",
+      (*ReverseI)->rbegin(), (*ReverseI)->rend());
   }
 }
 }
 
-void printLoops(llvm::raw_ostream &o, const LoopInfo &LI) {
-  printLoops(o, "", LI.rbegin(), LI.rend());
+void printLoops(llvm::raw_ostream &o, const LoopInfo &LI, bool FilenameOnly) {
+  printLoops(o, FilenameOnly, "", LI.rbegin(), LI.rend());
+}
+
+void print(llvm::raw_ostream &OS, llvm::DebugLoc Loc, bool FilenameOnly) {
+  if (!Loc)
+    return;
+  OS << getFile(Loc, FilenameOnly);
+  OS << ':' << Loc.getLine();
+  if (Loc.getCol() != 0)
+    OS << ':' << Loc.getCol();
+
+  if (llvm::DebugLoc InlinedAtDL = Loc.getInlinedAt()) {
+    OS << " @[ ";
+    print(OS, InlinedAtDL, FilenameOnly);
+    OS << " ]";
+  }
 }
 }
 
@@ -165,6 +181,9 @@ public:
   StringRef getPassName() const override { return mPassName; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    auto *P = mPassToPrint->getNormalCtor()();
+    P->getAnalysisUsage(AU);
+    delete P;
     AU.addRequiredID(mPassToPrint->getTypeInfo());
     AU.setPreservesAll();
   }

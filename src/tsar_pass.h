@@ -22,6 +22,7 @@ class RedirectIO;
 
 namespace tsar {
 struct ASTImportInfo;
+struct GlobalOptions;
 }
 
 namespace llvm {
@@ -35,6 +36,14 @@ class raw_ostream;
 
 /// Initializes all passes developed for TSAR project
 void initializeTSAR(PassRegistry &Registry);
+
+/// Initializes a pass to access global command line options.
+void initializeGlobalOptionsImmutableWrapperPass(PassRegistry &Registry);
+
+/// Creates a pass to access global command line options and
+/// associates it with a specified list of options.
+ImmutablePass * createGlobalOptionsImmutableWrapper(
+  const tsar::GlobalOptions *Options);
 
 /// Initializes a pass to builde hierarchy of data-flow regions.
 void initializeDFRegionInfoPassPass(PassRegistry &Registry);

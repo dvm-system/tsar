@@ -18,6 +18,7 @@
 #include "MemoryCoverage.h"
 #include "MemoryTraitUtils.h"
 #include "MemoryAccessUtils.h"
+#include "tsar_query.h"
 #include "tsar_utility.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/PostOrderIterator.h>
@@ -57,8 +58,9 @@ STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated")
 STATISTIC(NumHeaderAccess, "Number of traits caused by memory accesses in a loop header");
 
 char PrivateRecognitionPass::ID = 0;
-INITIALIZE_PASS_BEGIN(PrivateRecognitionPass, "private",
-                      "Private Variable Analysis", false, true)
+INITIALIZE_PASS_IN_GROUP_BEGIN(PrivateRecognitionPass, "private",
+  "Private Variable Analysis", false, true,
+  DefaultQueryManager::PrintPassGroup::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
@@ -68,8 +70,9 @@ INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
-INITIALIZE_PASS_END(PrivateRecognitionPass, "private",
-                    "Private Variable Analysis", false, true)
+INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
+  "Private Variable Analysis", false, true,
+  DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();

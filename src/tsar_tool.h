@@ -16,14 +16,17 @@
 #ifndef TSAR_TOOL_H
 #define TSAR_TOOL_H
 
-#include <clang/Tooling/Tooling.h>
-#include <llvm/Support/CommandLine.h>
+#include <clang/Tooling/CompilationDatabase.h>
+#include <llvm/ADT/SmallVector.h>
 #include <string>
 #include <vector>
 #include <utility.h>
 
 namespace llvm {
 class PassInfo;
+namespace cl {
+class Option;
+}
 }
 
 namespace tsar {
@@ -33,6 +36,7 @@ class QueryManager;
 ///
 /// It is possible to use Options and QueryManager to configure it.
 class Tool : private bcl::Uncopyable {
+  using OptionList = llvm::SmallVector<llvm::cl::Option *, 8>;
 public:
   /// \brief Creates analyzer according to the specified command line.
   ///
@@ -61,11 +65,28 @@ private:
   /// - The parsed command line to compile all sources will be stored in
   /// mCommandLine.
   /// - Each flag will be stored in a member associated with it.
+  /// - Options which should be accessed from different places,
+  /// will be stored in GlobalOptions structure.
+  ///
+  /// TODO (kaniandr@gmail.com): disallow multiple creation of Tool objects
   void storeCLOptions();
+
+  /// \brief Store command line options that determine information
+  /// to be printed.
+  ///
+  /// \post
+  /// - If some of such options are set it will be added to `IncompatibleOpts`
+  /// list. Note, that only one option will be added to this list.
+  /// - If some of such options are set `mPrint` flag will be set to `true`.
+  ///
+  void storePrintOptions(OptionList &IncompatibleOpts);
 
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
   std::vector<const llvm::PassInfo *> mOutputPasses;
+  std::vector<const llvm::PassInfo *> mPrintPasses;
+  ///Bit set of steps that should be printed.
+  uint8_t mPrintSteps = 0;
   const llvm::PassInfo * mTfmPass;
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
   bool mEmitAST;
@@ -77,6 +98,7 @@ private:
   bool mNoFormat;
   bool mCheck;
   bool mTest;
+  bool mPrint;
   std::string mOutputFilename;
   std::string mLanguage;
   std::string mOutputSuffix;

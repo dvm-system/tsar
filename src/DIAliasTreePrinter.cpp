@@ -104,12 +104,12 @@ char DIAliasTreeViewer::ID = 0;
 }
 
 INITIALIZE_PASS_IN_GROUP(DIAliasTreeViewer, "view-em-di",
-  "View metadata-level alias tree of a function", true, true
-  DefaultQueryManager::getPassRegistry())
+  "View metadata-level alias tree of a function", true, true,
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 INITIALIZE_PASS_IN_GROUP(DIAliasTreePrinter, "dot-em-di",
-  "Print metadata-level alias tree to 'dot' file", true, true
-  DefaultQueryManager::getPassRegistry())
+  "Print metadata-level alias tree to 'dot' file", true, true,
+  DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createDIAliasTreeViewerPass() {
   return new DIAliasTreeViewer();

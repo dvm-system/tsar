@@ -8,8 +8,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar_tool.h"
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
+#include "GlobalOptions.h"
 #include "tsar_exception.h"
 #include "tsar_finliner.h"
 #include "tsar_pragma.h"
@@ -17,10 +19,12 @@
 #include "tsar_test.h"
 #include "tsar_tool.h"
 #include <clang/Frontend/FrontendActions.h>
+#include <clang/Tooling/Tooling.h>
 #include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/CommandLine.h>
 
 using namespace clang;
 using namespace clang::tooling;
@@ -59,7 +63,8 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::list<const llvm::PassInfo*, bool,
     llvm::FilteredPassNameParser<
-      PassFromGroupFilter<DefaultQueryManager>>> OutputPasses;
+      PassFromGroupFilter<DefaultQueryManager,
+        DefaultQueryManager::OutputPassGroup>>> OutputPasses;
 
   llvm::cl::opt<const llvm::PassInfo *, false,
     llvm::FilteredPassNameParser<
@@ -82,6 +87,13 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> PrintAST;
   llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
+  llvm::cl::opt<bool> PrintAll;
+  llvm::cl::list<const PassInfo *, bool,
+    llvm::FilteredPassNameParser<
+      PassFromGroupFilter<DefaultQueryManager,
+        DefaultQueryManager::PrintPassGroup>>> PrintOnly;
+  llvm::cl::list<unsigned> PrintStep;
+  llvm::cl::opt<bool> PrintFilename;
   llvm::cl::opt<bool> Test;
 
   llvm::cl::OptionCategory AnalysisCategory;
@@ -134,6 +146,14 @@ Options::Options() :
     cl::desc("Build ASTs and then debug dump them")),
   TimeReport("ftime-report", cl::cat(DebugCategory),
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
+  PrintAll("print-all", cl::cat(DebugCategory),
+    cl::desc("Print all available results")),
+  PrintOnly("print-only", cl::cat(DebugCategory), cl::CommaSeparated,
+    cl::desc("Print results for specified passes (comma separated list of passes)")),
+  PrintStep("print-step", cl::cat(DebugCategory), cl::CommaSeparated,
+    cl::desc("Print results for a specified processing steps (comma separated list of steps)")),
+  PrintFilename("print-filename", cl::cat(DebugCategory),
+    cl::desc("Print only names of files instead of full paths")),
   Test("test", cl::cat(DebugCategory),
     cl::desc("Insert results of analysis to a source file")),
   AnalysisCategory("Analysis options"),
@@ -218,6 +238,83 @@ Tool::Tool(int Argc, const char **Argv) {
   cl::PrintOptionValues();
 }
 
+inline static GlobalOptions * getGlobalOptions() {
+  static GlobalOptions Options;
+  return &Options;
+}
+
+inline static QueryManager * getDefaultQM(
+    const DefaultQueryManager::PassList &OutputPasses,
+    const DefaultQueryManager::PassList &PrintPasses,
+    const DefaultQueryManager::ProcessingStep PrintSteps) {
+  static DefaultQueryManager QM(getGlobalOptions(),
+    OutputPasses, PrintPasses, PrintSteps);
+  return &QM;
+}
+
+inline static EmitLLVMQueryManager * getEmitLLVMQM() {
+  static EmitLLVMQueryManager QM;
+  return &QM;
+}
+
+inline static InstrLLVMQueryManager * getInstrLLVMQM() {
+  static InstrLLVMQueryManager QM;
+  return &QM;
+}
+
+inline static TestQueryManager * getTestQM() {
+  static TestQueryManager QM;
+  return &QM;
+}
+
+inline static TransformationQueryManager * getTransformationQM(
+    const llvm::PassInfo *TfmPass, StringRef OutputSuffix, bool NoFormat) {
+  static TransformationQueryManager QM(TfmPass, OutputSuffix, NoFormat);
+  return &QM;
+}
+
+inline static CheckQueryManager * getCheckQM() {
+  static CheckQueryManager QM;
+  return &QM;
+}
+
+void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
+  mPrintPasses = Options::get().PrintOnly;
+  if (!mPrintPasses.empty()) {
+    mPrint = true;
+    cl::Option &O = Options::get().PrintOnly;
+    IncompatibleOpts.push_back(&O);
+  } else if (Options::get().PrintAll) {
+    mPrint = true;
+    IncompatibleOpts.push_back(&Options::get().PrintAll);
+    mPrintPasses.insert(mPrintPasses.begin(),
+      DefaultQueryManager::PrintPassGroup::getPassRegistry().begin(),
+      DefaultQueryManager::PrintPassGroup::getPassRegistry().end());
+  }
+  getGlobalOptions()->PrintFilenameOnly = Options::get().PrintFilename;
+  if (getGlobalOptions()->PrintFilenameOnly && !mPrint)
+    errs() << "WARNING: The -print-filename option is ignored when "
+      "passes to be printed are not set.\n";
+  if (Options::get().PrintStep.empty()) {
+    mPrintSteps = DefaultQueryManager::allSteps();
+  } else {
+    if (!mPrint)
+      errs() << "WARNING: The -print-step option is ignored when "
+        "passes to be printed are not set.\n";
+    mPrintSteps = DefaultQueryManager::InitialStep;
+    for (auto Step : Options::get().PrintStep) {
+      if (Step > DefaultQueryManager::numberOfSteps()) {
+        Options::get().PrintStep.error(
+          "error - exceeded the number of available steps (maximum number is" +
+          Twine((unsigned)DefaultQueryManager::numberOfSteps()) + ")");
+        exit(1);
+      }
+      mPrintSteps |= 1u << (Step - 1);
+    }
+  }
+
+}
+
 void Tool::storeCLOptions() {
   mSources = Options::get().Sources;
   mCommandLine.emplace_back("-g");
@@ -236,7 +333,7 @@ void Tool::storeCLOptions() {
     mCommandLine.push_back("-D" + Macro);
   mCompilations = std::unique_ptr<CompilationDatabase>(
     new FixedCompilationDatabase(".", mCommandLine));
-  SmallVector<cl::Option *, 8> IncompatibleOpts;
+  OptionList IncompatibleOpts;
   auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
     if (O)
       IncompatibleOpts.push_back(&O);
@@ -264,13 +361,13 @@ void Tool::storeCLOptions() {
     addLLIfSet(Options::get().MergeAST);
   mPrintAST = addLLIfSet(addIfSet(Options::get().PrintAST));
   mDumpAST = addLLIfSet(addIfSet(Options::get().DumpAST));
-  for (auto PI : Options::get().OutputPasses)
-    mOutputPasses.push_back(PI);
-  mEmitLLVM = addLLIfSet(addIfSet(Options::get().EmitLLVM));
+  mOutputPasses = Options::get().OutputPasses;
+  mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mCheck = addLLIfSet(Options::get().Check);
   mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
+  storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
   mNoFormat = addIfSetIf(Options::get().NoFormat, !mTfmPass);
   mOutputSuffix = Options::get().OutputSuffix;
@@ -299,37 +396,6 @@ void Tool::storeCLOptions() {
       exit(1);
     }
   }
-}
-
-inline static QueryManager * getDefaultQM(
-    const DefaultQueryManager::PassList &OutputPasses) {
-  static DefaultQueryManager QM(OutputPasses);
-  return &QM;
-}
-inline static EmitLLVMQueryManager * getEmitLLVMQM() {
-  static EmitLLVMQueryManager QM;
-  return &QM;
-}
-
-inline static InstrLLVMQueryManager * getInstrLLVMQM() {
-  static InstrLLVMQueryManager QM;
-  return &QM;
-}
-
-inline static TestQueryManager * getTestQM() {
-  static TestQueryManager QM;
-  return &QM;
-}
-
-inline static TransformationQueryManager * getTransformationQM(
-    const llvm::PassInfo *TfmPass, StringRef OutputSuffix, bool NoFormat) {
-  static TransformationQueryManager QM(TfmPass, OutputSuffix, NoFormat);
-  return &QM;
-}
-
-inline static CheckQueryManager * getCheckQM() {
-  static CheckQueryManager QM;
-  return &QM;
 }
 
 int Tool::run(QueryManager *QM) {
@@ -412,7 +478,8 @@ int Tool::run(QueryManager *QM) {
     else if (mCheck)
       QM = getCheckQM();
     else
-      QM = getDefaultQM(mOutputPasses);
+      QM = getDefaultQM(mOutputPasses, mPrintPasses,
+        (DefaultQueryManager::ProcessingStep)mPrintSteps);
   }
   auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {
@@ -448,3 +515,11 @@ int Tool::run(QueryManager *QM) {
     1 : 0;
 }
 
+char GlobalOptionsImmutableWrapper::ID = 0;
+INITIALIZE_PASS(GlobalOptionsImmutableWrapper, "global-options",
+  "Global Command Line Options Accessor", true, true)
+
+ImmutablePass * llvm::createGlobalOptionsImmutableWrapper(
+    const GlobalOptions *Options) {
+  return new GlobalOptionsImmutableWrapper(Options);
+}
