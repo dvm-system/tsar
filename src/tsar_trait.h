@@ -1,4 +1,4 @@
-//===--- tsar_trait.h ------ Analyzable Traits ------------------*- C++ -*-===//
+//===--- tsar_trait.h ----- Memory Analyzable Trait -------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -12,11 +12,8 @@
 #define TSAR_IR_MEMORY_TRAIT_H
 
 #include "MemoryTrait.h"
-#include <cell.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
-#include <llvm/ADT/SmallPtrSet.h>
-#include <llvm/ADT/StringRef.h>
 
 namespace llvm {
 class Instruction;
