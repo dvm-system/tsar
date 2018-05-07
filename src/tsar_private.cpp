@@ -13,6 +13,7 @@
 #include "DefinedMemory.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
+#include "GlobalOptions.h"
 #include "tsar_graph.h"
 #include "LiveMemory.h"
 #include "MemoryCoverage.h"
@@ -1073,6 +1074,7 @@ MemoryDescriptor PrivateRecognitionPass::toDescriptor(
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<DFRegionInfoPass>();
@@ -1201,11 +1203,13 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
   auto &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &RInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  for_each(LpInfo, [this, &OS, &RInfo, &DT](Loop *L) {
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  for_each(LpInfo, [this, &OS, &RInfo, &DT, &GlobalOpts](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
     std::string Offset(L->getLoopDepth(), ' ');
     OS << Offset;
-    Loc.print(OS);
+    OS << "loop at depth " << L->getLoopDepth() << " ";
+    tsar::print(OS, Loc, GlobalOpts.PrintFilenameOnly);
     OS << "\n";
     auto N = RInfo.getRegionFor(L);
     auto &Info = getPrivateInfo();
