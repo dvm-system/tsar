@@ -18,7 +18,7 @@ public:
   static const unsigned maxIntBitWidth = 64;
 
   Instrumentation(llvm::Module& M, llvm::InstrumentationPass* const I);
-  ~Instrumentation() {delete &mLoopInfo; delete &mRegionInfo;}
+  ~Instrumentation() = default;
 
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
@@ -31,9 +31,9 @@ public:
   unsigned getTypeId(const llvm::Type& T);
 private:
   Registrator mRegistrator;
-  llvm::LoopInfo& mLoopInfo;
-  llvm::DFRegionInfo* mRegionInfo;
-  tsar::CanonicalLoopSet* mCanonicalLoop;
+  llvm::LoopInfo* mLoopInfo = nullptr;
+  llvm::DFRegionInfo* mRegionInfo = nullptr;
+  tsar::CanonicalLoopSet* mCanonicalLoop = nullptr;
   llvm::InstrumentationPass* const mInstrPass;
 
   //visitCallInst and visiInvokeInst have completely the same code

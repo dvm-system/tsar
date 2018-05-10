@@ -94,7 +94,7 @@ ModulePass * llvm::createInstrumentationPass() {
 }
 
 Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
-  : mInstrPass(I), mLoopInfo(*(new LoopInfo())) {
+  : mInstrPass(I) {
   const std::string& ModuleName = M.getModuleIdentifier();
   //create function for types registration
   const std::string& RegTypeFuncName = "RegType" + 
@@ -310,9 +310,11 @@ void Instrumentation::loopIterInstr(llvm::Loop *L,
 } 
 
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
-  if(mLoopInfo.isLoopHeader(&B)) {
-    auto Loop = mLoopInfo.getLoopFor(&B);
+  if(mLoopInfo->isLoopHeader(&B)) {
+    auto Loop = mLoopInfo->getLoopFor(&B);
     std::stringstream Debug;
+    /// TODO (kaniandr@gmail.com): Sometimes DebugLoc may be null.
+    /// This case should be processed separatly, otherwise assertion occurs.
     Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
       "*line1=" << Loop->getLocRange().getStart().getLine() << "*line2=" <<
       Loop->getLocRange().getEnd().getLine() << "**";
@@ -342,7 +344,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
   auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
   mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
-  mLoopInfo = std::move(LI);
+  mLoopInfo = &LI;
   auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   mCanonicalLoop = &CLI;
   //registrate debug information for function
