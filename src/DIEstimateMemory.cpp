@@ -1584,7 +1584,7 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
   auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, Flags);
   DIM->bindValue(&V);
   DIM->setProperties(P);
-  return DIM;
+  return std::move(DIM);
 }
 }
 
