@@ -128,7 +128,11 @@ void InterprocAttrPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
       auto IACF = mInterprocAttrFuncInfo.find(CF);
       if (IACF != mInterprocAttrFuncInfo.end() &&
           IACF->second.hasAttr(tsar::InterprocAttrs::Attr::NoReturn)) {
-        NoReturn = true;
+        for (auto SCCF : SetSCCFunc)
+          if (SetInOutFunc.find(SCCF->getName()) == SetInOutFunc.end()) {
+            NoReturn = true;
+            break;
+          }
         break;
       }
     }

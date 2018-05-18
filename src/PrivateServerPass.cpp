@@ -24,29 +24,20 @@
 
 #include "PrivateServerPass.h"
 #include "CalleeProcLocation.h"
-#include "InterprocAttr.h"
-#include "PerfectLoop.h"
-#include "DFRegionInfo.h"
+#include "CanonicalLoop.h"
 #include "EstimateMemory.h"
+#include "InterprocAttr.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"
 #include "Messages.h"
 #include "tsar_pass_provider.h"
+#include "PerfectLoop.h"
 #include "tsar_private.h"
-#include "tsar_trait.h"
 #include "tsar_transformation.h"
-#include <bcl/cell.h>
 #include <bcl/IntrusiveConnection.h>
-#include <bcl/Json.h>
 #include <bcl/RedirectIO.h>
 #include <clang/AST/ASTContext.h>
-#include <clang/AST/Stmt.h>
-#include <llvm/ADT/StringSwitch.h>
-#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
-#include <llvm/Analysis/Passes.h>
-#include <llvm/CodeGen/Passes.h>
-#include <llvm/IR/Module.h>
 #include <llvm/Support/Path.h>
 
 using namespace llvm;
@@ -103,10 +94,11 @@ JSON_OBJECT_PAIR_4(Location,
 JSON_OBJECT_END(Location)
 
 JSON_OBJECT_BEGIN(LoopTraits)
-JSON_OBJECT_PAIR_3(LoopTraits,
+JSON_OBJECT_PAIR_4(LoopTraits,
   IsAnalyzed, Analysis,
   Perfect, Analysis,
-  InOut, Analysis)
+  InOut, Analysis,
+  Canonical, Analysis)
 
   LoopTraits() :
     JSON_INIT(LoopTraits, Analysis::No, Analysis::No) {}
@@ -294,6 +286,8 @@ using ServerPrivateProvider = FunctionPassProvider<
   LoopMatcherPass,
   DFRegionInfoPass,
   ClangPerfectLoopPass,
+  CanonicalLoopPass,
+  MemoryMatcherImmutableWrapper,
   AAResultsWrapperPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
@@ -303,6 +297,8 @@ INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
@@ -464,6 +460,8 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
     auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().
       getPerfectLoopInfo();
+    auto &CLoopInfo = Provider.get<CanonicalLoopPass>().
+      getCanonicalLoopInfo();
     auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
       getLoopCalleeProcInfo();
     auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
@@ -476,6 +474,9 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::Yes;
+      auto CI = CLoopInfo.find_as(RegionInfo.getRegionFor(Match.get<IR>()));
+      if (CI != CLoopInfo.end() && (**CI).isCanonical())
+        LT[msg::LoopTraits::Canonical] = msg::Analysis::Yes;
       if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
       auto &CPL = LoopCPInfo.find(Match.first)->second;
@@ -726,6 +727,11 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
   ServerPrivateProvider::initialize<TransformationEnginePass>(
     [&M, &TfmCtx](TransformationEnginePass &TEP) {
       TEP.setContext(M, TfmCtx);
+  });
+  auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
+  ServerPrivateProvider::initialize<MemoryMatcherImmutableWrapper>(
+      [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
+    Wrapper.set(*MMWrapper);
   });
   while (mConnection->answer(
       [this, &M, &TfmCtx](const std::string &Request) -> std::string {
