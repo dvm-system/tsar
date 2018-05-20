@@ -24,7 +24,8 @@
 #    $REMOTE_REPO_NAME.
 # 5. Enable necessary compiler (source $REMOTE_COMPILER_PATH).
 # 6. Use make and specified number of jobs ($BUILD_JOB_NUM) to build project.
-# 7. Install analyzer at a specified path $REMOTE_INSTALL_PATH.
+# 7. Install analyzer at a specified path $REMOTE_INSTALL_PATH or use
+#    make install/fast if this path is empty.
 # 8. Reset the index and working tree and discard all obtained changes in the
 #    working tree of IDB and TSAR repositories (git reset --hard).
 # 9. Disconnect from remote system.
@@ -90,4 +91,8 @@ SOURCE_REMOTE_COMPILER=""
 if [ -n "$REMOTE_COMPILER_PATH" ]; then
   SOURCE_REMOTE_COMPILER="source $REMOTE_COMPILER_PATH;"
 fi
-ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $IDB_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git rebase $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git rebase $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; cp $REMOTE_BUILD_PATH/tsar/tsar $REMOTE_INSTALL_PATH; cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $IDB_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH^"
+INSTALL="make install/fast;"
+if [ -n "$REMOTE_INSTALL_PATH" ]; then
+  INSTALL="cp $REMOTE_BUILD_PATH/tsar/tsar $REMOTE_INSTALL_PATH;"
+fi
+ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $IDB_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git rebase $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git rebase $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; $INSTALL cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $IDB_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH^"
