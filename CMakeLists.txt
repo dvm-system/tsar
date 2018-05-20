@@ -124,32 +124,31 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     set(TSAR_PATCH_SUBVERSION_OPTIONS "")
     set(TSAR_PATCH_IGNORE "IGNORE")
     set(TSAR_PATCH_COMMAND "")
+    set(LLVM_EXECUTABLE_DIR "bin")
+    if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
+      if(NOT("${CMAKE_GENERATOR}" STREQUAL "Unix Makefiles"))
+        set(LLVM_EXECUTABLE_DIR "${LLVM_EXECUTABLE_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}")
+      endif()
+    else()
+      if(NOT("${CMAKE_GENERATOR}" STREQUAL "Unix Makefiles"))
+        set(LLVM_EXECUTABLE_DIR "\${CMAKE_INSTALL_CONFIG_NAME}/${LLVM_EXECUTABLE_DIR}")
+      endif()
+    endif()
+    set(LLVM_EXECUTABLE_DIR "${LLVM_BINARY_DIR}/${LLVM_EXECUTABLE_DIR}")
     if(BUILD_CLANG)
       if(BUILD_TSAR AND (${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
         message(FATAL_ERROR "Simultaneous build of TSAR and CLANG avaliable only if LLVM version is greater than 3.4.2 ")
       endif()
       add_custom_target(CLANG_BUILD ALL)
       add_dependencies(CLANG_BUILD clang)
-      if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
+      install(PROGRAMS
+        "${LLVM_EXECUTABLE_DIR}/clang${CMAKE_EXECUTABLE_SUFFIX}"
+        "${LLVM_EXECUTABLE_DIR}/clang++${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
+      if(NOT WIN32)
         install(PROGRAMS
-          "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang${CMAKE_EXECUTABLE_SUFFIX}"
-          "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang++${CMAKE_EXECUTABLE_SUFFIX}"
+          "${LLVM_EXECUTABLE_DIR}/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}${CMAKE_EXECUTABLE_SUFFIX}"
           DESTINATION bin)
-        if(NOT WIN32)
-	  install(PROGRAMS
-	    "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}${CMAKE_EXECUTABLE_SUFFIX}"
-	    DESTINATION bin)
-	endif()
-      else()
-        install(PROGRAMS
-          "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/clang${CMAKE_EXECUTABLE_SUFFIX}"
-          "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/clang++${CMAKE_EXECUTABLE_SUFFIX}"
-          DESTINATION bin)
-        if(NOT WIN32)
-	  install(PROGRAMS
-	    "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}${CMAKE_EXECUTABLE_SUFFIX}"
-	    DESTINATION bin)
-	endif()
       endif()
     endif()
     if(BUILD_OPT)
@@ -158,15 +157,9 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
       endif()
       add_custom_target(OPT_BUILD ALL)
       add_dependencies(OPT_BUILD opt)
-      if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
-        install(PROGRAMS
-          "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/opt${CMAKE_EXECUTABLE_SUFFIX}"
-          DESTINATION bin)
-      else()
-        install(PROGRAMS
-          "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/opt${CMAKE_EXECUTABLE_SUFFIX}"
-          DESTINATION bin)
-      endif()
+      install(PROGRAMS
+        "${LLVM_EXECUTABLE_DIR}/opt${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
     endif()
     if(BUILD_LLC)
       if(BUILD_TSAR AND (${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5"))
@@ -174,15 +167,9 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
       endif()
       add_custom_target(LLC_BUILD ALL)
       add_dependencies(LLC_BUILD llc)
-      if(${LLVM_PACKAGE_VERSION} VERSION_LESS "3.5")
-        install(PROGRAMS
-          "${LLVM_BINARY_DIR}/bin/\${CMAKE_INSTALL_CONFIG_NAME}/llc${CMAKE_EXECUTABLE_SUFFIX}"
-          DESTINATION bin)
-      else()
-        install(PROGRAMS
-          "${LLVM_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/bin/llc${CMAKE_EXECUTABLE_SUFFIX}"
-          DESTINATION bin)
-      endif()
+      install(PROGRAMS
+        "${LLVM_EXECUTABLE_DIR}/llc${CMAKE_EXECUTABLE_SUFFIX}"
+        DESTINATION bin)
     endif()
   endif(PACKAGE_LLVM)
   set(TSAR_PATCH_REVERSE "")
