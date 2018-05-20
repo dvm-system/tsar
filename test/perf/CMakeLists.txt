@@ -1,0 +1,7 @@
+include_directories(${PROJECT_BINARY_DIR} ${PROJECT_SOURCE_DIR})
+add_executable(tsar-map-perf Map.cpp)
+add_dependencies(tsar-map-perf tsar)
+add_definitions("-D${PROJECT_NAME}_PROJECT" "-D${PROJECT_NAME}_CONFIG")
+target_link_libraries(tsar-map-perf ${LLVM_LIBS})
+set_target_properties(tsar-map-perf PROPERTIES FOLDER "Tsar performance")
+install(TARGETS tsar-map-perf RUNTIME DESTINATION bin)
