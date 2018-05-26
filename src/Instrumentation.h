@@ -9,6 +9,7 @@
 #include "CanonicalLoop.h"
 #include "DFRegionInfo.h"
 #include <sstream>
+#include <iostream>
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
@@ -54,7 +55,7 @@ private:
     std::stringstream Debug;
     Debug << "type=func_call*file=" << I.getModule()->getSourceFileName()
       << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
-      I.getCalledFunction()->getSubprogram()->getName().data() << "*rank=" << 
+      I.getCalledFunction()->getName().str() << "*rank=" << 
       I.getCalledFunction()->getFunctionType()->getNumParams() << "**";
     auto DICall = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);

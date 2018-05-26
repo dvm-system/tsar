@@ -152,7 +152,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
 //sapforRegArr(void*, size_t, void*) after specified alloca instruction.
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto Metadata = getMetadata(&I);
-  if(Metadata == nullptr)
+  if(Metadata == nullptr) 
     return;
   unsigned ID = getTypeId(*I.getAllocatedType());
   std::stringstream Debug;
@@ -300,24 +300,27 @@ void Instrumentation::loopIterInstr(llvm::Loop *L,
   //instrumentate iterations only in canonical loops.
   if(CanonLoop != mCanonicalLoop->end() && (*CanonLoop)->isCanonical()){
     auto Induction = (*CanonLoop)->getInduction();
+    auto& InsertBefore = Header.front();
     auto Addr = new BitCastInst(Induction,
-      Type::getInt8PtrTy(Header.getContext()), "Addr", Header.getTerminator());
-    auto DILoop = getDbgPoolElem(Idx, *Header.getTerminator());
+      Type::getInt8PtrTy(Header.getContext()), "Addr", &InsertBefore);
+    auto DILoop = getDbgPoolElem(Idx, InsertBefore);
     //void sapforSLIter(void*, void*)
     auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
-    CallInst::Create(Fun, {DILoop, Addr}, "", Header.getTerminator());
+    CallInst::Create(Fun, {DILoop, Addr}, "", &InsertBefore);
   }
 } 
 
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   if(mLoopInfo->isLoopHeader(&B)) {
     auto Loop = mLoopInfo->getLoopFor(&B);
+    unsigned Start = Loop->getStartLoc()->getLine(), End = 0;
+    //every loop has start but some could have undefined end (e.g. loops with
+    //breaks). Leave End parameter as 0 in that cases.
+    if(Loop->getLocRange())
+      End = Loop->getLocRange().getEnd().getLine();
     std::stringstream Debug;
-    /// TODO (kaniandr@gmail.com): Sometimes DebugLoc may be null.
-    /// This case should be processed separatly, otherwise assertion occurs.
     Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
-      "*line1=" << Loop->getLocRange().getStart().getLine() << "*line2=" <<
-      Loop->getLocRange().getEnd().getLine() << "**";
+      "*line1=" << Start << "*line2=" << End << "**";
     unsigned Idx = regDbgStr(Debug.str(), *B.getModule());
     /*auto Region = mRegionInfo->getRegionFor(Loop);
     auto CanonLoop = mCanonicalLoop->find_as(Region);
@@ -372,8 +375,10 @@ void Instrumentation::visitFunction(llvm::Function &F) {
 }
 
 void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
-  if(!cast<Instruction>(I).getDebugLoc())
+  if(!cast<Instruction>(I).getDebugLoc() ||
+    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata()) {
     return;
+  }
   std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
@@ -424,7 +429,8 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
       Call->insertAfter(&I);
     }
   } 
-  if(!cast<Instruction>(I).getDebugLoc())
+  if(!cast<Instruction>(I).getDebugLoc() ||
+    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata()) 
     return;
   std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
