@@ -343,6 +343,9 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(getTsarLibFunc(F.getName(), Id)) {
     return;
   }
+  if(F.getLinkage() == Function::LinkOnceAnyLinkage ||
+     F.getLinkage() == Function::LinkOnceODRLinkage)
+    F.setLinkage(Function::InternalLinkage);
   //get analysis informaion from passes for visited function
   auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
   auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
