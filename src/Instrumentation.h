@@ -45,18 +45,21 @@ private:
   template<class T>
   void FunctionCallInst(T &I) {
     //not llvm function
-    if(I.getCalledFunction()->isIntrinsic())
+    auto Callee =
+      llvm::dyn_cast<llvm::Function>(I.getCalledValue()->stripPointerCasts());
+    // TODO (kaniandr@gmail.com): print warrning in case of Callee == nullptr.
+    if(!Callee || Callee->isIntrinsic())
       return;
     //not tsar function
     tsar::IntrinsicId Id;
-    if(getTsarLibFunc(I.getCalledFunction()->getName(), Id)) {
+    if(getTsarLibFunc(Callee->getName(), Id)) {
       return;
     }
     std::stringstream Debug;
     Debug << "type=func_call*file=" << I.getModule()->getSourceFileName()
       << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
-      I.getCalledFunction()->getName().str() << "*rank=" << 
-      I.getCalledFunction()->getFunctionType()->getNumParams() << "**";
+      Callee->getName().str() << "*rank=" <<
+      Callee->getFunctionType()->getNumParams() << "**";
     auto DICall = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
     llvm::CallInst::Create(Fun, {DICall}, "", &I);
