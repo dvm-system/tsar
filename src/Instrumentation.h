@@ -4,14 +4,27 @@
 #include <llvm/IR/InstVisitor.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include "Intrinsics.h"
-#include "Registrator.h"
+#include "ItemRegister.h"
 #include "tsar_instrumentation.h"
 #include "CanonicalLoop.h"
 #include "DFRegionInfo.h"
 #include <sstream>
 #include <iostream>
 
+namespace llvm {
+class AllocaInst;
+class GlobalVariable;
+class Function;
+class Loop;
+class DILocation;
+}
+
+namespace tsar {
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
+  using TypeRegister = ItemRegister<llvm::Type *>;
+  using CtxStringRegister = ItemRegister<
+    llvm::AllocaInst *, llvm::GlobalVariable *, llvm::Instruction *,
+    llvm::Function *, llvm::Loop *, llvm::DILocation *>;
 public:
   static const unsigned maxIntBitWidth = 64;
 
@@ -25,10 +38,8 @@ public:
   void visitInvokeInst(llvm::InvokeInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
-  
-  unsigned getTypeId(const llvm::Type& T);
+
 private:
-  Registrator mRegistrator;
   llvm::LoopInfo* mLoopInfo = nullptr;
   llvm::DFRegionInfo* mRegionInfo = nullptr;
   tsar::CanonicalLoopSet* mCanonicalLoop = nullptr;
@@ -57,7 +68,9 @@ private:
       << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
       Callee->getName().str() << "*rank=" <<
       Callee->getFunctionType()->getNumParams() << "**";
-    auto DICall = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
+    auto CallIdx = mCtxStrings.regItem<llvm::Instruction *>(&I);
+    regDbgStr(Debug.str(), *I.getModule(), CallIdx);
+    auto DICall = getDbgPoolElem(CallIdx, I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
     llvm::CallInst::Create(Fun, {DICall}, "", &I);
     Fun = getDeclaration(I.getModule(), tsar::IntrinsicId::func_call_end);
@@ -78,9 +91,13 @@ private:
   void regTypes(llvm::Module& M);
   llvm::GetElementPtrInst* prepareStrParam(const std::string& S, 
     llvm::Instruction &I);
-  llvm::LoadInst* getDbgPoolElem(unsigned Val, llvm::Instruction& I); 
+  llvm::LoadInst* getDbgPoolElem(
+    CtxStringRegister::IdTy Val, llvm::Instruction& I);
   void regGlobals(llvm::Module& M);
   void instrumentateMain(llvm::Module& M); 
+
+  TypeRegister mTypes;
+  CtxStringRegister mCtxStrings;
 };
 
 #endif // INSTRUMENTATION_H

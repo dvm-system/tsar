@@ -139,8 +139,8 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
   //getting numb of registrated debug strings by the value returned from
   //registrator. don't go through function to count inserted calls.
-  auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()), 
-    mRegistrator.getDbgStrCounter());
+  auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()),
+    mCtxStrings.numberOfIDs());
   CallInst::Create(Fun, {DbgPool, Idx}, "", &(*inst_begin(Func)));
   regTypes(M);
   if(M.getFunction("main") != nullptr)
@@ -153,7 +153,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto Metadata = getMetadata(&I);
   if(Metadata == nullptr) 
     return;
-  unsigned ID = mRegistrator.regType(I.getAllocatedType());
+  unsigned ID = mTypes.regItem(I.getAllocatedType());
   std::stringstream Debug;
   auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), "Addr");
   cast<Instruction>(Addr)->insertAfter(&I);
@@ -164,8 +164,8 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
     Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
-    unsigned Idx = regDbgStr(Debug.str(), *I.getModule());
-    mRegistrator.regArr(&I, Idx);
+    auto Idx = mCtxStrings.regItem(&I);
+    regDbgStr(Debug.str(), *I.getModule(), Idx);
     auto DIVar = getDbgPoolElem(Idx, I);
     auto ArrSize = ConstantInt::get(Type::getInt64Ty(I.getContext()),
       I.getAllocatedType()->getArrayNumElements());
@@ -176,8 +176,8 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
     Debug << "type=var_name*file=" << I.getModule()->getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "**";
-    unsigned Idx = regDbgStr(Debug.str(), *I.getModule());
-    mRegistrator.regVar(&I, Idx);
+    auto Idx = mCtxStrings.regItem(&I);
+    regDbgStr(Debug.str(), *I.getModule(), Idx);
     auto DIVar = getDbgPoolElem(Idx, I);
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_var);
     auto Call = CallInst::Create(Fun, {DIVar, Addr}, "");
@@ -205,7 +205,7 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
     return;
   }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
-  unsigned Idx = mRegistrator.getFuncDbgIndex(I.getFunction());
+  unsigned Idx = mCtxStrings[I.getFunction()];
   auto DIFunc = getDbgPoolElem(Idx, I);
   auto Call = CallInst::Create(Fun, {DIFunc}, "");
   Call->insertAfter(DIFunc);
@@ -320,7 +320,8 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
     std::stringstream Debug;
     Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
       "*line1=" << Start << "*line2=" << End << "**";
-    unsigned Idx = regDbgStr(Debug.str(), *B.getModule());
+    auto Idx = mCtxStrings.regItem(Loop);
+    regDbgStr(Debug.str(), *B.getModule(), Idx);
     /*auto Region = mRegionInfo->getRegionFor(Loop);
     auto CanonLoop = mCanonicalLoop->find_as(Region);
     if(CanonLoop != mCanonicalLoop->end()) {
@@ -358,10 +359,10 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
     (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
     "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
-    mRegistrator.regType(F.getReturnType()) << "*rank=" <<
+    mTypes.regItem(F.getReturnType()) << "*rank=" <<
     F.getFunctionType()->getNumParams() << "**";
-  unsigned Idx = regDbgStr(Debug.str(), *F.getParent());
-  mRegistrator.regFunc(&F, Idx);
+  auto Idx = mCtxStrings.regItem(&F);
+  regDbgStr(Debug.str(), *F.getParent(), Idx);
 
   //visit all Blocks
   for(auto &I : F.getBasicBlockList()) {
@@ -383,10 +384,16 @@ void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
   std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
-  auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
-  unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripInBoundsOffsets());
-  auto DIVar = getDbgPoolElem(Idx, *DILoc);
+  auto DbgLocIdx = mCtxStrings.regItem(I.getDebugLoc().get());
+  regDbgStr(Debug.str(), *I.getModule(), DbgLocIdx);
+  auto DILoc = getDbgPoolElem(DbgLocIdx, I);
+  auto Ptr = I.getPointerOperand()->stripInBoundsOffsets();
+  CtxStringRegister::IdTy OpIdx = 0;
+  if (isa<AllocaInst>(Ptr))
+    OpIdx = mCtxStrings[cast<AllocaInst>(Ptr)];
+  else
+    OpIdx = mCtxStrings[cast<GlobalVariable>(Ptr)];
+  auto DIVar = getDbgPoolElem(OpIdx, *DILoc);
   auto Addr = new BitCastInst(I.getPointerOperand(),
     Type::getInt8PtrTy(I.getContext()), "Addr");
   cast<Instruction>(Addr)->insertAfter(DILoc);
@@ -412,8 +419,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   // instrumentate stores for function formal parameters in special way
   if(Argument::classof(I.getValueOperand()) &&
     AllocaInst::classof(I.getPointerOperand())) {
-    auto Idx = mRegistrator.getFuncDbgIndex(cast<Argument>(I.getValueOperand())
-      ->getParent());
+    auto Idx = mCtxStrings[cast<Argument>(I.getValueOperand())->getParent()];
     auto DIFunc = getDbgPoolElem(Idx, I);
     auto Addr = new BitCastInst(I.getPointerOperand(),
       Type::getInt8PtrTy(I.getContext()), "Addr", &I);
@@ -437,10 +443,16 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
     "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
     cast<Instruction>(I).getDebugLoc().getLine()) << "**";
-  auto DILoc = getDbgPoolElem(regDbgStr(Debug.str(), *I.getModule()), I);
-  unsigned Idx = mRegistrator.getVarDbgIndex(I.getPointerOperand()
-    ->stripInBoundsOffsets());
-  auto DIVar = getDbgPoolElem(Idx, I);
+  auto DbgLocIdx = mCtxStrings.regItem(I.getDebugLoc().get());
+  regDbgStr(Debug.str(), *I.getModule(), DbgLocIdx);
+  auto DILoc = getDbgPoolElem(DbgLocIdx, I);
+  auto Ptr = I.getPointerOperand()->stripInBoundsOffsets();
+  CtxStringRegister::IdTy OpIdx = 0;
+  if (isa<AllocaInst>(Ptr))
+    OpIdx = mCtxStrings[cast<AllocaInst>(Ptr)];
+  else
+    OpIdx = mCtxStrings[cast<GlobalVariable>(Ptr)];
+  auto DIVar = getDbgPoolElem(OpIdx, I);
   auto Addr = new BitCastInst(I.getPointerOperand(),
     Type::getInt8PtrTy(I.getContext()), "Addr", &I);
   Function* Fun;
@@ -463,7 +475,8 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
 //Registrate given debug information by inserting a call of 
 //sapforInitDI(void**, char*). Returns index in pool which is correspond to
 //registrated info.
-unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
+unsigned Instrumentation::regDbgStr(const std::string& S, Module& M,
+    CtxStringRegister::IdTy Idx) {
   const std::string& ModuleName = M.getModuleIdentifier();
   const std::string& InitFuncName = "sapforInitDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
@@ -476,17 +489,16 @@ unsigned Instrumentation::regDbgStr(const std::string& S, Module& M) {
   auto F = M.getFunction(InitFuncName);
   if(F != nullptr) {
     auto& B = F->getEntryBlock();
-    unsigned Val = mRegistrator.regDbgStr();
     auto Fun4Insert = getDeclaration(&M, IntrinsicId::init_di);
     auto Pool = M.getGlobalVariable(DbgPoolName);
-    auto Idx = ConstantInt::get(Type::getInt32Ty(M.getContext()), Val);
+    auto IdxV = ConstantInt::get(Type::getInt32Ty(M.getContext()), Idx);
     auto LoadArr = new LoadInst(Pool, "LoadArr", &B.back());
-    auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, {Idx}, "DI",
+    auto Elem = GetElementPtrInst::Create(nullptr, LoadArr, { IdxV }, "DI",
       B.getTerminator());
     auto Loc = prepareStrParam(S, B.back());
     CallInst::Create(Fun4Insert, {Elem, Loc, &(*F->arg_begin())}, "",
       &B.back());
-    return Val;
+    return Idx;
   }
   llvm_unreachable((InitFuncName + " was not declared").c_str());
 }
@@ -500,7 +512,7 @@ void Instrumentation::regTypes(Module& M) {
     DataLayout DL(&M);
     // Get all registered types and fill std::vector<llvm::Constant*>
     // with local indexes and sizes of these types.
-    auto &Types = mRegistrator.getTypes();
+    auto &Types = mTypes.getRegister<llvm::Type *>();
     auto Int64Ty = Type::getInt64Ty(M.getContext());
     auto Int0 = ConstantInt::get(Int64Ty, 0);
     std::vector<Constant* > Ids, Sizes;
@@ -585,7 +597,8 @@ GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
 }
 
 //Returns element in debug information pool by its index
-LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
+LoadInst* Instrumentation::getDbgPoolElem(
+    CtxStringRegister::IdTy Val, Instruction& I) {
   const std::string& ModuleName = I.getModule()->getModuleIdentifier();
   std::string DbgPoolName = "gSapforDI" + 
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
@@ -605,7 +618,7 @@ LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
 
 void Instrumentation::regGlobals(Module& M) {
   for(auto I = M.global_begin(); I != M.global_end(); I++) {
-    unsigned ID = mRegistrator.regType(I->getValueType());
+    unsigned ID = mTypes.regItem(I->getValueType());
     auto Metadata = getMetadata(&*I);
     if(Metadata == nullptr) {
       continue;
@@ -614,8 +627,8 @@ void Instrumentation::regGlobals(Module& M) {
     Debug << "type=var_name*file=" << M.getSourceFileName() <<
       "*line1=" << Metadata->getLine() << "*name1=" << 
       Metadata->getName().data() << "*vtype=" << ID << "**";
-    unsigned Idx = regDbgStr(Debug.str(), M);
-    mRegistrator.regVar(&(*I), Idx);
+    auto Idx = mCtxStrings.regItem(&(*I));
+    regDbgStr(Debug.str(), M, Idx);
   }
 }
 
