@@ -13,9 +13,6 @@
 
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
-  enum BaseTypeID { VoidTy = 0, HalfTy, FloatTy, DoubleTy, X86_FP80Ty, FP128Ty,
-    PPC_FP128Ty, LabelTy, MetadataTy, X86_MMXTy, TokenTy, IntegerTy };
-
   static const unsigned maxIntBitWidth = 64;
 
   Instrumentation(llvm::Module& M, llvm::InstrumentationPass* const I);
@@ -83,7 +80,6 @@ private:
     llvm::Instruction &I);
   llvm::LoadInst* getDbgPoolElem(unsigned Val, llvm::Instruction& I); 
   void regGlobals(llvm::Module& M);
-  void regBaseTypes(llvm::Module& M);
   void instrumentateMain(llvm::Module& M); 
 };
 

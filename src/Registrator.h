@@ -1,22 +1,36 @@
 #ifndef REGISTRATOR_H
 #define REGISTRATOR_H
 
+#include "tsar_utility.h"
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/Type.h>
 #include <map>
 #include <vector>
 
 class Registrator {
+public:
+  /// Identifier of an item.
+  using IdTy = uint64_t;
+
+  /// This establishes correspondence between a type and its identifier.
+  using Types = llvm::DenseMap<const llvm::Type *, IdTy,
+    llvm::DenseMapInfo<const llvm::Type *>,
+    tsar::TaggedDenseMapPair<
+      bcl::tagged<const llvm::Type *, llvm::Type>,
+      bcl::tagged<IdTy, IdTy>>>;
+
 private:
   unsigned mDbgStrCounter;
-  unsigned mTypesCounter;
-  //all of the registered types with their indexes
-  std::map<const llvm::Type*, unsigned> mRegTypes;
   //all of the registered variables with their indexes
   std::map<const llvm::Value*, unsigned> mRegVars;
   //all of the registered functions
   std::map<const llvm::Function*, unsigned> mRegFuncs;
 public:
-  Registrator():  mDbgStrCounter(0), mTypesCounter(0) {};
+  Registrator():  mDbgStrCounter(0) {};
+
+  /// Returns number of IDs that have been registered.
+  IdTy numberOfIDs() const noexcept { return mIdNum; }
+
   //registrate variable with given debug index. if this variable was already
   //registrated returns its index in debug pool  
   unsigned regVar(const llvm::Value* V, unsigned Idx) {
@@ -46,15 +60,22 @@ public:
   }
   unsigned regDbgStr() { return mDbgStrCounter++; }
   unsigned getDbgStrCounter() { return mDbgStrCounter; }
-  //registrate new type if it was not registrated yet. returns type index. 
-  unsigned regType(const llvm::Type* T) {
-    auto search = mRegTypes.find(T);
-    if(search != mRegTypes.end())
-      return search->second;
-    unsigned Idx = mTypesCounter++;
-    mRegTypes[T] = Idx;
-    return Idx;
+
+  /// Registers a new type if it has not been registered yet and
+  /// returns its ID.
+  unsigned regType(const llvm::Type *T) {
+    assert(T && "Type must not be null!");
+    auto Pair = mRegTypes.try_emplace(T, mIdNum);
+    if (Pair.second)
+      ++mIdNum;
+    return Pair.first->get<IdTy>();
   }
+
+  /// Returns all types that have been registered.
+  const Types & getTypes() const noexcept {
+    return mRegTypes;
+  }
+
   //returns index in debug pool for given variable
   unsigned getVarDbgIndex(const llvm::Value* V)  {
     auto search = mRegVars.find(V);
@@ -69,8 +90,11 @@ public:
       return search->second;
     llvm_unreachable((F->getName().str() + " was not declared").c_str());
   }
-  const std::map<const llvm::Type*, unsigned>& getAllRegistratedTypes()
-  { return mRegTypes; }
+
+private:
+  /// Number of used IDs.
+  IdTy mIdNum = 0;
+  Types mRegTypes;
 };
 
 #endif //REGISTRATOR_H

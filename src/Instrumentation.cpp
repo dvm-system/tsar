@@ -127,7 +127,6 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   NewBlock = BasicBlock::Create(Func->getContext(), "entry", Func);
   ReturnInst::Create(Func->getContext(), NewBlock);
   //registrate basic types and global variables
-  regBaseTypes(M);
   regGlobals(M);
   //visit all functions
   for(auto& F: M) {
@@ -154,7 +153,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto Metadata = getMetadata(&I);
   if(Metadata == nullptr) 
     return;
-  unsigned ID = getTypeId(*I.getAllocatedType());
+  unsigned ID = mRegistrator.regType(I.getAllocatedType());
   std::stringstream Debug;
   auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), "Addr");
   cast<Instruction>(Addr)->insertAfter(&I);
@@ -354,13 +353,12 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   mCanonicalLoop = &CLI;
   //registrate debug information for function
-  getTypeId(*F.getReturnType());
   std::stringstream Debug;
   Debug << "type=function*file=" << F.getParent()->getSourceFileName() <<
     "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
     (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
     "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
-    getTypeId(*F.getReturnType()) << "*rank=" <<
+    mRegistrator.regType(F.getReturnType()) << "*rank=" <<
     F.getFunctionType()->getNumParams() << "**";
   unsigned Idx = regDbgStr(Debug.str(), *F.getParent());
   mRegistrator.regFunc(&F, Idx);
@@ -500,9 +498,9 @@ void Instrumentation::regTypes(Module& M) {
   auto F = M.getFunction(RegFuncName); // get function for types registration
   if(F != nullptr) {
     DataLayout DL(&M);
-    //get all registrated types from registrator. fill vector<llvm::Constant* >
-    //with local types indexes and sizes
-    auto Types = mRegistrator.getAllRegistratedTypes();
+    // Get all registered types and fill std::vector<llvm::Constant*>
+    // with local indexes and sizes of these types.
+    auto &Types = mRegistrator.getTypes();
     auto Int64Ty = Type::getInt64Ty(M.getContext());
     auto Int0 = ConstantInt::get(Int64Ty, 0);
     std::vector<Constant* > Ids, Sizes;
@@ -607,7 +605,7 @@ LoadInst* Instrumentation::getDbgPoolElem(unsigned Val, Instruction& I) {
 
 void Instrumentation::regGlobals(Module& M) {
   for(auto I = M.global_begin(); I != M.global_end(); I++) {
-    unsigned ID = getTypeId(*I->getValueType());
+    unsigned ID = mRegistrator.regType(I->getValueType());
     auto Metadata = getMetadata(&*I);
     if(Metadata == nullptr) {
       continue;
@@ -618,50 +616,6 @@ void Instrumentation::regGlobals(Module& M) {
       Metadata->getName().data() << "*vtype=" << ID << "**";
     unsigned Idx = regDbgStr(Debug.str(), M);
     mRegistrator.regVar(&(*I), Idx);
-  }
-}
-
-void Instrumentation::regBaseTypes(Module &M) {
-  mRegistrator.regType(Type::getVoidTy(M.getContext()));
-  mRegistrator.regType(Type::getHalfTy(M.getContext()));
-  mRegistrator.regType(Type::getFloatTy(M.getContext()));
-  mRegistrator.regType(Type::getDoubleTy(M.getContext()));
-  mRegistrator.regType(Type::getX86_FP80Ty(M.getContext()));
-  mRegistrator.regType(Type::getFP128Ty(M.getContext()));
-  mRegistrator.regType(Type::getPPC_FP128Ty(M.getContext()));
-  mRegistrator.regType(Type::getLabelTy(M.getContext()));
-  mRegistrator.regType(Type::getMetadataTy(M.getContext()));
-  mRegistrator.regType(Type::getX86_MMXTy(M.getContext()));
-  mRegistrator.regType(Type::getTokenTy(M.getContext()));
-  //have problems with pointer and function types
-  //need to put some special registration for them. 
-  //don't registrate them as base types now
-  for(unsigned i = 1; i <= maxIntBitWidth; ++i) {
-    mRegistrator.regType(Type::getIntNTy(M.getContext(), i));
-  }
-}
-
-unsigned Instrumentation::getTypeId(const Type& T) {
-  switch(T.getTypeID()) {
-    case(Type::TypeID::VoidTyID): return BaseTypeID::VoidTy;
-    case(Type::TypeID::HalfTyID): return BaseTypeID::HalfTy;
-    case(Type::TypeID::FloatTyID): return BaseTypeID::FloatTy;
-    case(Type::TypeID::DoubleTyID): return BaseTypeID::DoubleTy;
-    case(Type::TypeID::X86_FP80TyID): return BaseTypeID::X86_FP80Ty;
-    case(Type::TypeID::FP128TyID): return BaseTypeID::FP128Ty;
-    case(Type::TypeID::PPC_FP128TyID): return BaseTypeID::PPC_FP128Ty;
-    case(Type::TypeID::LabelTyID): return BaseTypeID::LabelTy;
-    case(Type::TypeID::MetadataTyID): return BaseTypeID::MetadataTy;
-    case(Type::TypeID::X86_MMXTyID): return BaseTypeID::X86_MMXTy;
-    case(Type::TypeID::TokenTyID): return BaseTypeID::TokenTy;
-    //case(Type::TypeID::FunctionTyID): return BaseTypeID::FunctionTy;
-    //case(Type::TypeID::PointerTyID): return BaseTypeID::PointerTy;
-    case(Type::TypeID::IntegerTyID): 
-      if(cast<IntegerType>(T).getBitWidth() <= maxIntBitWidth) {
-        return (BaseTypeID::IntegerTy + cast<IntegerType>(T).getBitWidth() -1);
-      }
-    default: return mRegistrator.regType(&T) + BaseTypeID::IntegerTy +
-      maxIntBitWidth;
   }
 }
 
