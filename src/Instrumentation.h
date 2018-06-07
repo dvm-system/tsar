@@ -48,8 +48,8 @@ private:
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them
   //
-  //NOTE: Instead of template it was possible to overload visitCallSite which 
-  //is for both calls and invokes. Maybe i'll change it later. 
+  //NOTE: Instead of template it was possible to overload visitCallSite which
+  //is for both calls and invokes. Maybe i'll change it later.
   template<class T>
   void FunctionCallInst(T &I) {
     //not llvm function
@@ -65,7 +65,7 @@ private:
     }
     std::stringstream Debug;
     Debug << "type=func_call*file=" << I.getModule()->getSourceFileName()
-      << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" << 
+      << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" <<
       Callee->getName().str() << "*rank=" <<
       Callee->getFunctionType()->getNumParams() << "**";
     auto CallIdx = mCtxStrings.regItem<llvm::Instruction *>(&I);
@@ -87,17 +87,19 @@ private:
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
   void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
-  unsigned regDbgStr(const std::string& S, llvm::Module& M);
+  unsigned regDbgStr(const std::string& S, llvm::Module& M,
+    CtxStringRegister::IdTy Idx);
   void regTypes(llvm::Module& M);
-  llvm::GetElementPtrInst* prepareStrParam(const std::string& S, 
+  llvm::GetElementPtrInst* prepareStrParam(const std::string& S,
     llvm::Instruction &I);
   llvm::LoadInst* getDbgPoolElem(
     CtxStringRegister::IdTy Val, llvm::Instruction& I);
   void regGlobals(llvm::Module& M);
-  void instrumentateMain(llvm::Module& M); 
+  void instrumentateMain(llvm::Module& M);
 
   TypeRegister mTypes;
   CtxStringRegister mCtxStrings;
 };
+}
 
 #endif // INSTRUMENTATION_H

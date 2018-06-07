@@ -97,16 +97,16 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   : mInstrPass(I) {
   const std::string& ModuleName = M.getModuleIdentifier();
   //create function for types registration
-  const std::string& RegTypeFuncName = "RegType" + 
+  const std::string& RegTypeFuncName = "RegType" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  auto RegType = FunctionType::get(Type::getInt64Ty(M.getContext()), 
+  auto RegType = FunctionType::get(Type::getInt64Ty(M.getContext()),
     {Type::getInt64Ty(M.getContext())}, false);
-  auto RegFunc = Function::Create(RegType, 
+  auto RegFunc = Function::Create(RegType,
     GlobalValue::LinkageTypes::InternalLinkage, RegTypeFuncName, &M);
   RegFunc->arg_begin()->setName("x");
   auto NewBlock = BasicBlock::Create(RegFunc->getContext(), "entry", RegFunc);
   //insert declaration of pool for debug information
-  std::string DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
   //variables names in C can't contain '.'
   for(auto& J : DbgPoolName)
@@ -117,7 +117,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
     ::ExternalLinkage, nullptr, DbgPoolName, nullptr);
   DbgPool->setAlignment(4);
   //create function for debug information initialization
-  const std::string& InitFuncName = "sapforInitDI" + 
+  const std::string& InitFuncName = "sapforInitDI" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
   auto Type = FunctionType::get(Type::getVoidTy(M.getContext()),
     {Type::getInt64Ty(M.getContext())}, false);
@@ -147,11 +147,11 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
     instrumentateMain(M);
 }
 
-//insert call of sapforRegVar(void*, void*) or 
+//insert call of sapforRegVar(void*, void*) or
 //sapforRegArr(void*, size_t, void*) after specified alloca instruction.
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto Metadata = getMetadata(&I);
-  if(Metadata == nullptr) 
+  if(Metadata == nullptr)
     return;
   unsigned ID = mTypes.regItem(I.getAllocatedType());
   std::stringstream Debug;
@@ -162,7 +162,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   //doesn't work like i wanted it. So checking for array in this way
   if(TypeId == Type::TypeID::ArrayTyID){
     Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" << 
+      "*line1=" << Metadata->getLine() << "*name1=" <<
       Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
     auto Idx = mCtxStrings.regItem(&I);
     regDbgStr(Debug.str(), *I.getModule(), Idx);
@@ -172,9 +172,9 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
     auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_arr);
     auto Call = CallInst::Create(Fun, {DIVar, ArrSize, Addr}, "");
     Call->insertAfter(Addr);
-  } else {	  
+  } else {
     Debug << "type=var_name*file=" << I.getModule()->getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" << 
+      "*line1=" << Metadata->getLine() << "*name1=" <<
       Metadata->getName().data() << "*vtype=" << ID << "**";
     auto Idx = mCtxStrings.regItem(&I);
     regDbgStr(Debug.str(), *I.getModule(), Idx);
@@ -307,7 +307,7 @@ void Instrumentation::loopIterInstr(llvm::Loop *L,
     auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
     CallInst::Create(Fun, {DILoop, Addr}, "", &InsertBefore);
   }
-} 
+}
 
 void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   if(mLoopInfo->isLoopHeader(&B)) {
@@ -424,7 +424,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     auto Addr = new BitCastInst(I.getPointerOperand(),
       Type::getInt8PtrTy(I.getContext()), "Addr", &I);
     auto Position = ConstantInt::get(Type::getInt64Ty(I.getContext()),
-      cast<Argument>(I.getValueOperand())->getArgNo()); 
+      cast<Argument>(I.getValueOperand())->getArgNo());
     if(cast<AllocaInst>(I.getPointerOperand())->isArrayAllocation()) {
       auto ArrSize = cast<AllocaInst>(I.getPointerOperand())->getArraySize();
       auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_dummy_arr);
@@ -435,9 +435,9 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
       auto Call = CallInst::Create(Fun, {DIFunc, Addr, Position}, "");
       Call->insertAfter(&I);
     }
-  } 
+  }
   if(!cast<Instruction>(I).getDebugLoc() ||
-    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata()) 
+    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata())
     return;
   std::stringstream Debug;
   Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
@@ -472,15 +472,15 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   }
 }
 
-//Registrate given debug information by inserting a call of 
+//Registrate given debug information by inserting a call of
 //sapforInitDI(void**, char*). Returns index in pool which is correspond to
 //registrated info.
 unsigned Instrumentation::regDbgStr(const std::string& S, Module& M,
     CtxStringRegister::IdTy Idx) {
   const std::string& ModuleName = M.getModuleIdentifier();
-  const std::string& InitFuncName = "sapforInitDI" + 
+  const std::string& InitFuncName = "sapforInitDI" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  std::string DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
   //variables names in C can't contain '.'
   for(auto& J : DbgPoolName)
@@ -505,7 +505,7 @@ unsigned Instrumentation::regDbgStr(const std::string& S, Module& M,
 
 void Instrumentation::regTypes(Module& M) {
   const std::string& ModuleName = M.getModuleIdentifier();
-  const std::string& RegFuncName = "RegType" + 
+  const std::string& RegFuncName = "RegType" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
   auto F = M.getFunction(RegFuncName); // get function for types registration
   if(F != nullptr) {
@@ -517,18 +517,18 @@ void Instrumentation::regTypes(Module& M) {
     auto Int0 = ConstantInt::get(Int64Ty, 0);
     std::vector<Constant* > Ids, Sizes;
     for(auto I: Types) {
-      Ids.push_back(Constant::getIntegerValue(Int64Ty, APInt(64, I.second))); 
+      Ids.push_back(Constant::getIntegerValue(Int64Ty, APInt(64, I.second)));
       Sizes.push_back(I.first->isSized() ? Constant::getIntegerValue(Int64Ty,
 	APInt(64, DL.getTypeSizeInBits(const_cast<Type*>(I.first)))) : Int0);
     }
-    //create global values for idexes and sizes. initialize them with local 
+    //create global values for idexes and sizes. initialize them with local
     //values
     auto Size = ConstantInt::get(Int64Ty, Types.size());
     auto ArrayTy = ArrayType::get(Int64Ty, Types.size());
     auto IdsArray = new GlobalVariable(M, ArrayTy, false,
       GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
       Ids), "IdsArray", nullptr);
-    auto SizesArray = new GlobalVariable(M, ArrayTy, false, 
+    auto SizesArray = new GlobalVariable(M, ArrayTy, false,
       GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
       Sizes), "SizesArray", nullptr);
     //create a loop to update local indexes to their real values.
@@ -600,7 +600,7 @@ GetElementPtrInst* Instrumentation::prepareStrParam(const std::string& S,
 LoadInst* Instrumentation::getDbgPoolElem(
     CtxStringRegister::IdTy Val, Instruction& I) {
   const std::string& ModuleName = I.getModule()->getModuleIdentifier();
-  std::string DbgPoolName = "gSapforDI" + 
+  std::string DbgPoolName = "gSapforDI" +
     ModuleName.substr(ModuleName.find_last_of("/\\")+1);
   //variables names in C can't contain '.'
   for(auto& J : DbgPoolName)
@@ -625,7 +625,7 @@ void Instrumentation::regGlobals(Module& M) {
     }
     std::stringstream Debug;
     Debug << "type=var_name*file=" << M.getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" << 
+      "*line1=" << Metadata->getLine() << "*name1=" <<
       Metadata->getName().data() << "*vtype=" << ID << "**";
     auto Idx = mCtxStrings.regItem(&(*I));
     regDbgStr(Debug.str(), M, Idx);
