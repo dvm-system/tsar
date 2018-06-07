@@ -1,6 +1,7 @@
 #ifndef INSTRUMENTATION_H
 #define INSTRUMENTATION_H
 
+#include <llvm/ADT/StringRef.h>
 #include <llvm/IR/InstVisitor.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include "Intrinsics.h"
@@ -22,7 +23,7 @@ class DILocation;
 namespace tsar {
 class Instrumentation :public llvm::InstVisitor<Instrumentation> {
   using TypeRegister = ItemRegister<llvm::Type *>;
-  using CtxStringRegister = ItemRegister<
+  using DIStringRegister = ItemRegister<
     llvm::AllocaInst *, llvm::GlobalVariable *, llvm::Instruction *,
     llvm::Function *, llvm::Loop *, llvm::DILocation *>;
 public:
@@ -68,9 +69,9 @@ private:
       << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" <<
       Callee->getName().str() << "*rank=" <<
       Callee->getFunctionType()->getNumParams() << "**";
-    auto CallIdx = mCtxStrings.regItem<llvm::Instruction *>(&I);
-    regDbgStr(Debug.str(), *I.getModule(), CallIdx);
-    auto DICall = getDbgPoolElem(CallIdx, I);
+    auto CallIdx = mDIStrings.regItem<llvm::Instruction *>(&I);
+    createInitDICall(Debug.str(), CallIdx, *I.getModule());
+    auto DICall = createPointerToDI(CallIdx, I);
     auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
     llvm::CallInst::Create(Fun, {DICall}, "", &I);
     Fun = getDeclaration(I.getModule(), tsar::IntrinsicId::func_call_end);
@@ -87,18 +88,33 @@ private:
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
   void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
-  unsigned regDbgStr(const std::string& S, llvm::Module& M,
-    CtxStringRegister::IdTy Idx);
   void regTypes(llvm::Module& M);
-  llvm::GetElementPtrInst* prepareStrParam(const std::string& S,
-    llvm::Instruction &I);
-  llvm::LoadInst* getDbgPoolElem(
-    CtxStringRegister::IdTy Val, llvm::Instruction& I);
   void regGlobals(llvm::Module& M);
   void instrumentateMain(llvm::Module& M);
 
+  /// \brief Inserts a call of sapforInitDI(...) and registers a specified
+  /// metadata string.
+  ///
+  /// \param [in] Str Metadata string that should be registered.
+  /// \param [in] Idx Index of metadata which corresponds to the string
+  /// in the pool.
+  /// \param [in,out] M Module which is being processed.
+  void createInitDICall(const llvm::Twine &Str, DIStringRegister::IdTy Idx,
+    llvm::Module &M);
+
+  /// Creates a global array of characters and returns GEP to access this array.
+  llvm::GetElementPtrInst * createDIStringPtr(llvm::StringRef Str,
+    llvm::Instruction &InsertBefore);
+
+
+  /// Returns description of metadata with a specified index in the pool.
+  llvm::LoadInst* createPointerToDI(
+    DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore);
+
   TypeRegister mTypes;
-  CtxStringRegister mCtxStrings;
+  DIStringRegister mDIStrings;
+  llvm::GlobalVariable *mDIPool = nullptr;
+  llvm::Function *mInitDIAll = nullptr;
 };
 }
 

@@ -1,8 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void** gSapforDImain_c;
-
 void sapforRegVar(void* DIVar, void* Addr) {
   printf("called sapforRegVar\n");	
   printf("DiVar = %s\n\n", DIVar);
