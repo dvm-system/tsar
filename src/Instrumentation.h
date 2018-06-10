@@ -89,8 +89,14 @@ private:
   void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
   void regTypes(llvm::Module& M);
-  void regGlobals(llvm::Module& M);
   void instrumentateMain(llvm::Module& M);
+
+  /// \brief Register global variables.
+  ///
+  /// This function registers a metadata string for each global variables.
+  /// A separate function to register all globals (call of sapforRegVar())
+  /// will be also created.
+  void regGlobals(llvm::Module& M);
 
   /// \brief Inserts a call of sapforInitDI(...) and registers a specified
   /// metadata string.
@@ -102,10 +108,12 @@ private:
   void createInitDICall(const llvm::Twine &Str, DIStringRegister::IdTy Idx,
     llvm::Module &M);
 
-  /// Creates a global array of characters and returns GEP to access this array.
+  /// \brief Creates a global array of characters and returns GEP to access
+  /// this array.
+  ///
+  /// \post A new global array will be stored in mDIStringSet.
   llvm::GetElementPtrInst * createDIStringPtr(llvm::StringRef Str,
     llvm::Instruction &InsertBefore);
-
 
   /// Returns description of metadata with a specified index in the pool.
   llvm::LoadInst* createPointerToDI(
@@ -115,6 +123,7 @@ private:
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;
+  llvm::DenseSet<llvm::GlobalVariable *> mDIStringSet;
 };
 }
 

@@ -573,6 +573,7 @@ GetElementPtrInst* Instrumentation::createDIStringPtr(
   auto Data = llvm::ConstantDataArray::getString(Ctx, Str);
   auto Var = new llvm::GlobalVariable(
     M, Data->getType(), true, GlobalValue::InternalLinkage, Data);
+  mDIStringSet.insert(Var);
   auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 0);
   return GetElementPtrInst::CreateInBounds(
     Var, { Int0,Int0 }, "distring", &InsertBefore);
@@ -591,18 +592,34 @@ LoadInst* Instrumentation::createPointerToDI(
 }
 
 void Instrumentation::regGlobals(Module& M) {
-  for(auto I = M.global_begin(); I != M.global_end(); I++) {
-    unsigned ID = mTypes.regItem(I->getValueType());
-    auto Metadata = getMetadata(&*I);
-    if(Metadata == nullptr) {
+  auto &Ctx = M.getContext();
+  auto FuncType = FunctionType::get(Type::getVoidTy(Ctx), false);
+  auto RegGlobalFunc = Function::Create(FuncType,
+    GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.global", &M);
+  auto *EntryBB = BasicBlock::Create(Ctx, "entry", RegGlobalFunc);
+  auto *RetInst = ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
+  for (auto I = M.global_begin(), EI = M.global_end(); I != EI; ++I) {
+    if (mDIStringSet.count(&*I) || mDIPool == &*I)
       continue;
-    }
-    std::stringstream Debug;
-    Debug << "type=var_name*file=" << M.getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" <<
-      Metadata->getName().data() << "*vtype=" << ID << "**";
     auto Idx = mDIStrings.regItem(&(*I));
-    createInitDICall(Debug.str(), Idx, M);
+    auto *MD = getMetadata(&*I);
+    auto DeclStr = MD ? (Twine("line1=") + Twine(MD->getLine()) + "*" +
+      "name1=" + MD->getName() + "*").str() : std::string("");
+    auto GlobalTy = I->getValueType();
+    unsigned TypeId = mTypes.regItem(GlobalTy);
+    auto Rank = dimensionsNum(GlobalTy);
+    auto TypeStr = Rank == 0 ? (Twine("var_name") + "*").str() :
+      (Twine("arr_name") + "*" + "rank=" + Twine(Rank)).str();
+    createInitDICall(
+      Twine("type=") + TypeStr + "*" +
+      "file=" + M.getSourceFileName() + "*" +
+      "vtype=" + Twine(TypeId) + "*" + DeclStr + "**",
+      Idx, M);
+    auto DIVar = createPointerToDI(Idx, *RetInst);
+    auto RegVar = getDeclaration(&M, IntrinsicId::reg_var);
+    auto VarAddr = new BitCastInst(
+      &*I, Type::getInt8PtrTy(Ctx), I->getName() + ".addr", RetInst);
+   CallInst::Create(RegVar, { DIVar, VarAddr }, "", RetInst);
   }
 }
 
@@ -610,10 +627,13 @@ void Instrumentation::instrumentateMain(Module& M) {
   const std::string& ModuleName = M.getModuleIdentifier();
   auto MainFunc = M.getFunction("main"), RegFunc = M.getFunction("RegType" +
     ModuleName.substr(ModuleName.find_last_of("/\\") + 1));
-  if(MainFunc == nullptr || RegFunc == nullptr || mInitDIAll == nullptr)
+  auto RegGlobalFunc = M.getFunction("sapfor.register.global");
+  if(MainFunc == nullptr || RegFunc == nullptr || mInitDIAll == nullptr ||
+     RegGlobalFunc == nullptr)
     return;
   auto& B = MainFunc->getEntryBlock();
   auto Int0 = llvm::ConstantInt::get(Type::getInt64Ty(M.getContext()), 0);
   CallInst::Create(RegFunc, {Int0}, "", &(*B.begin()));
+  CallInst::Create(RegGlobalFunc, "", &B.front());
   CallInst::Create(mInitDIAll, {Int0}, "", &(*B.begin()));
 }
