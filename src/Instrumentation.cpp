@@ -94,7 +94,7 @@ ModulePass * llvm::createInstrumentationPass() {
 }
 
 Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
-  : mInstrPass(I) {
+  : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
   const std::string& ModuleName = M.getModuleIdentifier();
   //create function for types registration
   const std::string& RegTypeFuncName = "RegType" +
@@ -118,7 +118,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   mInitDIAll->arg_begin()->setName("Offset");
   NewBlock = BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
   ReturnInst::Create(mInitDIAll->getContext(), NewBlock);
-  //registrate basic types and global variables
+  reserveIncompleteDIStrings(M);
   regGlobals(M);
   //visit all functions
   for(auto& F: M) {
@@ -139,42 +139,19 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
     instrumentateMain(M);
 }
 
-//insert call of sapforRegVar(void*, void*) or
-//sapforRegArr(void*, size_t, void*) after specified alloca instruction.
+void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
+  auto DbgLocIdx = DIStringRegister::indexOfItemType<DILocation *>();
+  createInitDICall(
+    Twine("type=") + "file_name" + "*" +
+    "file=" + M.getSourceFileName() + "*" + "*", DbgLocIdx);
+}
+
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
-  auto Metadata = getMetadata(&I);
-  if(Metadata == nullptr)
-    return;
-  unsigned ID = mTypes.regItem(I.getAllocatedType());
-  std::stringstream Debug;
-  auto Addr = new BitCastInst(&I, Type::getInt8PtrTy(I.getContext()), "Addr");
-  cast<Instruction>(Addr)->insertAfter(&I);
-  auto TypeId = I.getAllocatedType()->getTypeID();
-  //Alloca instruction has isArrayAllocation method, but it looks like it
-  //doesn't work like i wanted it. So checking for array in this way
-  if(TypeId == Type::TypeID::ArrayTyID){
-    Debug << "type=arr_name*file=" << I.getModule()->getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" <<
-      Metadata->getName().data() << "*vtype=" << ID << "*rank=1**";
-    auto Idx = mDIStrings.regItem(&I);
-    createInitDICall(Debug.str(), Idx, *I.getModule());
-    auto DIVar = createPointerToDI(Idx, I);
-    auto ArrSize = ConstantInt::get(Type::getInt64Ty(I.getContext()),
-      I.getAllocatedType()->getArrayNumElements());
-    auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_arr);
-    auto Call = CallInst::Create(Fun, {DIVar, ArrSize, Addr}, "");
-    Call->insertAfter(Addr);
-  } else {
-    Debug << "type=var_name*file=" << I.getModule()->getSourceFileName() <<
-      "*line1=" << Metadata->getLine() << "*name1=" <<
-      Metadata->getName().data() << "*vtype=" << ID << "**";
-    auto Idx = mDIStrings.regItem(&I);
-    createInitDICall(Debug.str(), Idx, *I.getModule());
-    auto DIVar = createPointerToDI(Idx, I);
-    auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_var);
-    auto Call = CallInst::Create(Fun, {DIVar, Addr}, "");
-    Call->insertAfter(Addr);
-  }
+  auto MD = getMetadata(&I);
+  auto Idx = mDIStrings.regItem(&I);
+  BasicBlock::iterator InsertBefore(I);
+  ++InsertBefore;
+  regValue(&I, I.getAllocatedType(), MD, Idx, *InsertBefore, *I.getModule());
 }
 
 void Instrumentation::visitCallInst(llvm::CallInst &I) {
@@ -313,7 +290,7 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
     Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
       "*line1=" << Start << "*line2=" << End << "**";
     auto Idx = mDIStrings.regItem(Loop);
-    createInitDICall(Debug.str(), Idx, *B.getModule());
+    createInitDICall(Debug.str(), Idx);
     /*auto Region = mRegionInfo->getRegionFor(Loop);
     auto CanonLoop = mCanonicalLoop->find_as(Region);
     if(CanonLoop != mCanonicalLoop->end()) {
@@ -354,7 +331,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
     mTypes.regItem(F.getReturnType()) << "*rank=" <<
     F.getFunctionType()->getNumParams() << "**";
   auto Idx = mDIStrings.regItem(&F);
-  createInitDICall(Debug.str(), Idx, *F.getParent());
+  createInitDICall(Debug.str(), Idx);
 
   //visit all Blocks
   for(auto &I : F.getBasicBlockList()) {
@@ -368,46 +345,52 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   Call->insertAfter(DIFunc);
 }
 
-void Instrumentation::visitLoadInst(llvm::LoadInst &I) {
-  if(!cast<Instruction>(I).getDebugLoc() ||
-    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata()) {
-    return;
-  }
-  std::stringstream Debug;
-  Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
-    "*line1=" << cast<Instruction>(I).getDebugLoc().getLine() << "**";
-  auto DbgLocIdx = mDIStrings.regItem(I.getDebugLoc().get());
-  createInitDICall(Debug.str(), DbgLocIdx, *I.getModule());
-  auto DILoc = createPointerToDI(DbgLocIdx, I);
-  auto Ptr = I.getPointerOperand()->stripInBoundsOffsets();
+std::tuple<Value *, Value *, Value *, Value *>
+Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
+    Instruction &InsertBefore) {
+  auto BasePtr = Ptr->stripInBoundsOffsets();
   DIStringRegister::IdTy OpIdx = 0;
-  if (isa<AllocaInst>(Ptr))
-    OpIdx = mDIStrings[cast<AllocaInst>(Ptr)];
-  else
-    OpIdx = mDIStrings[cast<GlobalVariable>(Ptr)];
-  auto DIVar = createPointerToDI(OpIdx, *DILoc);
-  auto Addr = new BitCastInst(I.getPointerOperand(),
-    Type::getInt8PtrTy(I.getContext()), "Addr");
-  cast<Instruction>(Addr)->insertAfter(DILoc);
-  Function* Fun;
-  auto TypeID =  I.getPointerOperand()->stripInBoundsOffsets()->getType()
-    ->getPointerElementType()->getTypeID();
-  //depending on operand type insert a sapforReadVar or sapforReadArr
-  if(TypeID == Type::TypeID::ArrayTyID){
-    Fun = getDeclaration(I.getModule(), IntrinsicId::read_arr);
-    auto ArrBase =new BitCastInst(I.getPointerOperand()->stripInBoundsOffsets(),
-      Type::getInt8PtrTy(I.getContext()), "ArrBase");
-    cast<Instruction>(ArrBase)->insertAfter(Addr);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrBase}, "");
-    Call->insertAfter(ArrBase);
+  if (auto AI = dyn_cast<AllocaInst>(BasePtr)) {
+    OpIdx = mDIStrings[AI];
+  } else if (auto GV = dyn_cast<GlobalVariable>(BasePtr)) {
+    OpIdx = mDIStrings[GV];
   } else {
-    Fun = getDeclaration(I.getModule(), IntrinsicId::read_var);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "");
-    Call->insertAfter(Addr);
+    OpIdx = mDIStrings.regItem(BasePtr);
+    regValue(BasePtr, BasePtr->getType(), nullptr, OpIdx, InsertBefore,
+      *InsertBefore.getModule());
+  }
+  auto DbgLocIdx = regDebugLoc(DbgLoc);
+  auto DILoc = createPointerToDI(DbgLocIdx, InsertBefore);
+  auto Addr = new BitCastInst(Ptr,
+    Type::getInt8PtrTy(InsertBefore.getContext()), "addr", &InsertBefore);
+  auto DIVar = createPointerToDI(OpIdx, *DILoc);
+  auto BasePtrTy = cast_or_null<PointerType>(BasePtr->getType());
+  llvm::Value *ArrayBase =
+    (BasePtrTy && isa<ArrayType>(BasePtrTy->getElementType())) ?
+      new BitCastInst(BasePtr, Type::getInt8PtrTy(InsertBefore.getContext()),
+        BasePtr->getName() + ".arraybase", &InsertBefore) : nullptr;
+  return std::make_tuple(DILoc, Addr, DIVar, ArrayBase);
+}
+
+void Instrumentation::visitLoadInst(LoadInst &I) {
+  if (mIgnoreMemoryAccess.count(&I))
+    return;
+  auto *M = I.getModule();
+  llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
+  std::tie(DILoc, Addr, DIVar, ArrayBase) =
+    regMemoryAccessArgs(I.getPointerOperand(), I.getDebugLoc(), I);
+  if (ArrayBase) {
+    auto *Fun = getDeclaration(M, IntrinsicId::read_arr);
+    CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
+  } else {
+    auto *Fun = getDeclaration(M, IntrinsicId::read_var);
+    CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &I);
   }
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
+  if (mIgnoreMemoryAccess.count(&I))
+    return;
   // instrumentate stores for function formal parameters in special way
   if(Argument::classof(I.getValueOperand()) &&
     AllocaInst::classof(I.getPointerOperand())) {
@@ -428,39 +411,20 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
       Call->insertAfter(&I);
     }
   }
-  if(!cast<Instruction>(I).getDebugLoc() ||
-    !I.getPointerOperand()->stripInBoundsOffsets()->isUsedByMetadata())
+  BasicBlock::iterator InsertBefore(I);
+  ++InsertBefore;
+  auto *M = I.getModule();
+  llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
+  std::tie(DILoc, Addr, DIVar, ArrayBase) =
+    regMemoryAccessArgs(I.getPointerOperand(), I.getDebugLoc(), *InsertBefore);
+  if (!Addr)
     return;
-  std::stringstream Debug;
-  Debug << "type=file_name*file=" << I.getModule()->getSourceFileName() <<
-    "*line1=" << (!cast<Instruction>(I).getDebugLoc() ? 0 :
-    cast<Instruction>(I).getDebugLoc().getLine()) << "**";
-  auto DbgLocIdx = mDIStrings.regItem(I.getDebugLoc().get());
-  createInitDICall(Debug.str(), DbgLocIdx, *I.getModule());
-  auto DILoc = createPointerToDI(DbgLocIdx, I);
-  auto Ptr = I.getPointerOperand()->stripInBoundsOffsets();
-  DIStringRegister::IdTy OpIdx = 0;
-  if (isa<AllocaInst>(Ptr))
-    OpIdx = mDIStrings[cast<AllocaInst>(Ptr)];
-  else
-    OpIdx = mDIStrings[cast<GlobalVariable>(Ptr)];
-  auto DIVar = createPointerToDI(OpIdx, I);
-  auto Addr = new BitCastInst(I.getPointerOperand(),
-    Type::getInt8PtrTy(I.getContext()), "Addr", &I);
-  Function* Fun;
-  auto TypeID =  I.getPointerOperand()->stripInBoundsOffsets()->getType()
-    ->getPointerElementType()->getTypeID();
-  //depending on operand type insert a sapforWriteVarEnd or sapforWriteArrEnd
-  if(TypeID != Type::TypeID::ArrayTyID) {
-    Fun = getDeclaration(I.getModule(), IntrinsicId::write_var_end);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "");
-    Call->insertAfter(&I);
+  if (ArrayBase) {
+    auto *Fun = getDeclaration(M, IntrinsicId::write_arr_end);
+    CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &*InsertBefore);
   } else {
-    auto ArrBase =new BitCastInst(I.getPointerOperand()->stripInBoundsOffsets(),
-      Type::getInt8PtrTy(I.getContext()), "ArrBase", &I);
-    Fun = getDeclaration(I.getModule(), IntrinsicId::write_arr_end);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrBase}, "");
-    Call->insertAfter(&I);
+    auto *Fun = getDeclaration(M, IntrinsicId::write_var_end);
+    CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &*InsertBefore);
   }
 }
 
@@ -548,15 +512,16 @@ void Instrumentation::regTypes(Module& M) {
 }
 
 void Instrumentation::createInitDICall(const llvm::Twine &Str,
-    DIStringRegister::IdTy Idx, Module &M) {
+    DIStringRegister::IdTy Idx) {
   assert(mDIPool && "Pool of metadata strings must not be null!");
   assert(mInitDIAll &&
     "Metadata strings initialization function must not be null!");
   auto &BB = mInitDIAll->getEntryBlock();
   auto *T = BB.getTerminator();
   assert(T && "Terminator must not be null!");
-  auto InitDIFunc = getDeclaration(&M, IntrinsicId::init_di);
-  auto IdxV = ConstantInt::get(Type::getInt64Ty(M.getContext()), Idx);
+  auto *M = mInitDIAll->getParent();
+  auto InitDIFunc = getDeclaration(M, IntrinsicId::init_di);
+  auto IdxV = ConstantInt::get(Type::getInt64Ty(M->getContext()), Idx);
   auto DIPoolPtr = new LoadInst(mDIPool, "dipool", T);
   auto GEP =
     GetElementPtrInst::Create(nullptr, DIPoolPtr, { IdxV }, "arrayidx", T);
@@ -584,11 +549,58 @@ LoadInst* Instrumentation::createPointerToDI(
   auto &Ctx = InsertBefore.getContext();
   auto IdxV = ConstantInt::get(Type::getInt64Ty(Ctx), Idx);
   auto DIPoolPtr = new LoadInst(mDIPool, "dipool", &InsertBefore);
+  mIgnoreMemoryAccess.insert(DIPoolPtr);
   auto GEP = GetElementPtrInst::Create(nullptr, DIPoolPtr, {IdxV}, "arrayidx");
   GEP->insertAfter(DIPoolPtr);
+  GEP->setIsInBounds(true);
   auto DI = new LoadInst(GEP, "di");
+  mIgnoreMemoryAccess.insert(DI);
   DI->insertAfter(GEP);
   return DI;
+}
+
+auto Instrumentation::regDebugLoc(
+    const DebugLoc &DbgLoc) -> DIStringRegister::IdTy {
+  assert(mDIPool && "Pool of metadata strings must not be null!");
+  assert(mInitDIAll &&
+    "Metadata strings initialization function must not be null!");
+  // We use reserved index if source location is unknown.
+  if (!DbgLoc)
+    return DIStringRegister::indexOfItemType<DILocation *>();
+  auto DbgLocIdx = mDIStrings.regItem(DbgLoc.get());
+  createInitDICall(
+    Twine("type=") + "file_name" + "*" +
+    "line1=" + Twine(DbgLoc.getLine()) + "*" +
+    "col1=" + Twine(DbgLoc.getCol()) + "*", DbgLocIdx);
+  return DbgLocIdx;
+}
+
+void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
+    DIStringRegister::IdTy Idx,  Instruction &InsertBefore, Module &M) {
+  auto DeclStr = MD ? (Twine("line1=") + Twine(MD->getLine()) + "*" +
+    "name1=" + MD->getName() + "*").str() : std::string("");
+  unsigned TypeId = mTypes.regItem(T);
+  unsigned Rank;
+  uint64_t ArraySize;
+  std::tie(Rank, ArraySize) = arraySize(T);
+  auto TypeStr = Rank == 0 ? (Twine("var_name") + "*").str() :
+    (Twine("arr_name") + "*" + "rank=" + Twine(Rank)).str();
+  createInitDICall(
+    Twine("type=") + TypeStr + "*" +
+    "file=" + M.getSourceFileName() + "*" +
+    "vtype=" + Twine(TypeId) + "*" + DeclStr + "*",
+    Idx);
+  auto DIVar = createPointerToDI(Idx, InsertBefore);
+  auto VarAddr = new BitCastInst(V,
+    Type::getInt8PtrTy(M.getContext()), V->getName() + ".addr", &InsertBefore);
+  if (Rank != 0) {
+    auto Size = ConstantInt::get(Type::getInt64Ty(M.getContext()), ArraySize);
+    auto Fun = getDeclaration(&M, IntrinsicId::reg_arr);
+    CallInst::Create(Fun, { DIVar, Size, VarAddr }, "", &InsertBefore);
+  } else {
+    auto Fun = getDeclaration(&M, IntrinsicId::reg_var);
+   CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
+  }
 }
 
 void Instrumentation::regGlobals(Module& M) {
@@ -603,23 +615,7 @@ void Instrumentation::regGlobals(Module& M) {
       continue;
     auto Idx = mDIStrings.regItem(&(*I));
     auto *MD = getMetadata(&*I);
-    auto DeclStr = MD ? (Twine("line1=") + Twine(MD->getLine()) + "*" +
-      "name1=" + MD->getName() + "*").str() : std::string("");
-    auto GlobalTy = I->getValueType();
-    unsigned TypeId = mTypes.regItem(GlobalTy);
-    auto Rank = dimensionsNum(GlobalTy);
-    auto TypeStr = Rank == 0 ? (Twine("var_name") + "*").str() :
-      (Twine("arr_name") + "*" + "rank=" + Twine(Rank)).str();
-    createInitDICall(
-      Twine("type=") + TypeStr + "*" +
-      "file=" + M.getSourceFileName() + "*" +
-      "vtype=" + Twine(TypeId) + "*" + DeclStr + "**",
-      Idx, M);
-    auto DIVar = createPointerToDI(Idx, *RetInst);
-    auto RegVar = getDeclaration(&M, IntrinsicId::reg_var);
-    auto VarAddr = new BitCastInst(
-      &*I, Type::getInt8PtrTy(Ctx), I->getName() + ".addr", RetInst);
-   CallInst::Create(RegVar, { DIVar, VarAddr }, "", RetInst);
+    regValue(&*I, I->getValueType(), MD, Idx, *RetInst, M);
   }
 }
 

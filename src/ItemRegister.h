@@ -58,6 +58,16 @@ private:
     RegisterConstructor, Tys...>::Type;
 
 public:
+  /// Returns number of possible item types.
+  static IdTy numberOfItemTypes() noexcept { return sizeof...(Tys); }
+
+  /// Returns index of a specified type in the list of item types.
+  template<class Ty>
+  static IdTy indexOfItemType() noexcept { return bcl::index_of<Ty, Tys...>(); }
+
+  /// Creates a register. The first item will have a specified ID.
+  explicit ItemRegister(IdTy FirstId = 0) noexcept : mIdNum(FirstId) {}
+
   /// Registers a new item if it has not been registered yet and
   /// returns its ID.
   template<class Ty>
