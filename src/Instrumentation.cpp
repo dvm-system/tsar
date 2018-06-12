@@ -101,24 +101,21 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
     GlobalValue::LinkageTypes::ExternalLinkage,
     ConstantPointerNull::get(DIPoolTy), "sapfor.di.pool", nullptr);
   mDIPool->setAlignment(4);
+  mDIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   //create function for debug information initialization
   auto Type = FunctionType::get(Type::getVoidTy(M.getContext()),
     {Type::getInt64Ty(M.getContext())}, false);
   mInitDIAll = Function::Create(
     Type, GlobalValue::LinkageTypes::InternalLinkage, "sapfor.init.di.all", &M);
+  mInitDIAll->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   mInitDIAll->arg_begin()->setName("Offset");
   auto EntryBB =
     BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
   ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   reserveIncompleteDIStrings(M);
   regGlobals(M);
-  //visit all functions
-  for(auto& F: M) {
-    //not sapforInitDI or RegType function
-    if(F.getSubprogram() != nullptr) {
-      visitFunction(F);
-    }
-  }
+  for(auto &F: M)
+    visitFunction(F);
   //insert call to allocate debug information pool
   auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
   //getting numb of registrated debug strings by the value returned from
@@ -298,12 +295,23 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
 }
 
 void Instrumentation::visitFunction(llvm::Function &F) {
-  if(F.isIntrinsic())
-    return;
-  IntrinsicId Id;
-  if(getTsarLibFunc(F.getName(), Id)) {
+  IntrinsicId InstrLibId;
+  if (getTsarLibFunc(F.getName(), InstrLibId)) {
+    F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
     return;
   }
+  if (F.empty() || F.getMetadata("sapfor.da"))
+    return;
+  // TODO (kaniandr@gmail.com): temporary ignore functions without debug
+  // information.
+  if (!F.getSubprogram())
+    return;
+  // Change linkage for inline functions, to avoid merge of a function which
+  // should not be instrumented with this function. For example, call of
+  // a function which has been instrumented from dynamic analyzer may produce
+  // infinite loop. The other example, is call of some system functions before
+  // call of main (sprintf... in case of Microsoft implementation of STD). In
+  // this case pool of metadata is not allocated yet.
   if(F.getLinkage() == Function::LinkOnceAnyLinkage ||
      F.getLinkage() == Function::LinkOnceODRLinkage)
     F.setLinkage(Function::InternalLinkage);
@@ -340,6 +348,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
 std::tuple<Value *, Value *, Value *, Value *>
 Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
     Instruction &InsertBefore) {
+  auto &Ctx = InsertBefore.getContext();
   auto BasePtr = Ptr->stripInBoundsOffsets();
   DIStringRegister::IdTy OpIdx = 0;
   if (auto AI = dyn_cast<AllocaInst>(BasePtr)) {
@@ -354,18 +363,22 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
   auto DbgLocIdx = regDebugLoc(DbgLoc);
   auto DILoc = createPointerToDI(DbgLocIdx, InsertBefore);
   auto Addr = new BitCastInst(Ptr,
-    Type::getInt8PtrTy(InsertBefore.getContext()), "addr", &InsertBefore);
+    Type::getInt8PtrTy(Ctx), "addr", &InsertBefore);
+  auto *MD = MDNode::get(Ctx, {});
+  Addr->setMetadata("sapfor.da", MD);
   auto DIVar = createPointerToDI(OpIdx, *DILoc);
   auto BasePtrTy = cast_or_null<PointerType>(BasePtr->getType());
-  llvm::Value *ArrayBase =
+  llvm::Instruction *ArrayBase =
     (BasePtrTy && isa<ArrayType>(BasePtrTy->getElementType())) ?
-      new BitCastInst(BasePtr, Type::getInt8PtrTy(InsertBefore.getContext()),
+      new BitCastInst(BasePtr, Type::getInt8PtrTy(Ctx),
         BasePtr->getName() + ".arraybase", &InsertBefore) : nullptr;
+  if (ArrayBase)
+   ArrayBase->setMetadata("sapfor.da", MD);
   return std::make_tuple(DILoc, Addr, DIVar, ArrayBase);
 }
 
 void Instrumentation::visitLoadInst(LoadInst &I) {
-  if (mIgnoreMemoryAccess.count(&I))
+  if (I.getMetadata("sapfor.da"))
     return;
   auto *M = I.getModule();
   llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
@@ -373,15 +386,17 @@ void Instrumentation::visitLoadInst(LoadInst &I) {
     regMemoryAccessArgs(I.getPointerOperand(), I.getDebugLoc(), I);
   if (ArrayBase) {
     auto *Fun = getDeclaration(M, IntrinsicId::read_arr);
-    CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
+    Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
   } else {
     auto *Fun = getDeclaration(M, IntrinsicId::read_var);
-    CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &I);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &I);
+    Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
   }
 }
 
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
-  if (mIgnoreMemoryAccess.count(&I))
+  if (I.getMetadata("sapfor.da"))
     return;
   // instrumentate stores for function formal parameters in special way
   if(Argument::classof(I.getValueOperand()) &&
@@ -413,10 +428,13 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     return;
   if (ArrayBase) {
     auto *Fun = getDeclaration(M, IntrinsicId::write_arr_end);
-    CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &*InsertBefore);
+    auto Call = CallInst::Create(Fun, { DILoc, Addr, DIVar, ArrayBase }, "");
+    Call->insertBefore(&*InsertBefore);
+    Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
   } else {
     auto *Fun = getDeclaration(M, IntrinsicId::write_var_end);
-    CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &*InsertBefore);
+    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &*InsertBefore);
+    Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
   }
 }
 
@@ -445,14 +463,17 @@ void Instrumentation::regTypes(Module& M) {
   auto IdsArray = new GlobalVariable(M, ArrayTy, false,
     GlobalValue::LinkageTypes::InternalLinkage,
     ConstantArray::get(ArrayTy, Ids), "sapfor.type.ids", nullptr);
+  IdsArray->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto SizesArray = new GlobalVariable(M, ArrayTy, false,
     GlobalValue::LinkageTypes::InternalLinkage,
     ConstantArray::get(ArrayTy, Sizes), "sapfor.type.sizes", nullptr);
+  SizesArray->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   // Create function to update local indexes of types.
   auto FuncType =
     FunctionType::get(Type::getInt64Ty(Ctx), { Int64Ty }, false);
   auto RegTypeFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.type", &M);
+  RegTypeFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto EntryBB = BasicBlock::Create(Ctx, "entry", RegTypeFunc);
   auto *StartId = &*RegTypeFunc->arg_begin();
   StartId->setName("startid");
@@ -505,7 +526,7 @@ GetElementPtrInst* Instrumentation::createDIStringPtr(
   auto Data = llvm::ConstantDataArray::getString(Ctx, Str);
   auto Var = new llvm::GlobalVariable(
     M, Data->getType(), true, GlobalValue::InternalLinkage, Data);
-  mDIStringSet.insert(Var);
+  Var->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 0);
   return GetElementPtrInst::CreateInBounds(
     Var, { Int0,Int0 }, "distring", &InsertBefore);
@@ -514,14 +535,16 @@ GetElementPtrInst* Instrumentation::createDIStringPtr(
 LoadInst* Instrumentation::createPointerToDI(
     DIStringRegister::IdTy Idx, Instruction& InsertBefore) {
   auto &Ctx = InsertBefore.getContext();
+  auto *MD = MDNode::get(Ctx, {});
   auto IdxV = ConstantInt::get(Type::getInt64Ty(Ctx), Idx);
   auto DIPoolPtr = new LoadInst(mDIPool, "dipool", &InsertBefore);
-  mIgnoreMemoryAccess.insert(DIPoolPtr);
+  DIPoolPtr->setMetadata("sapfor.da", MD);
   auto GEP = GetElementPtrInst::Create(nullptr, DIPoolPtr, {IdxV}, "arrayidx");
+  GEP->setMetadata("sapfor.da", MD);
   GEP->insertAfter(DIPoolPtr);
   GEP->setIsInBounds(true);
   auto DI = new LoadInst(GEP, "di");
-  mIgnoreMemoryAccess.insert(DI);
+  DI->setMetadata("sapfor.da", MD);
   DI->insertAfter(GEP);
   return DI;
 }
@@ -560,14 +583,17 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
   auto DIVar = createPointerToDI(Idx, InsertBefore);
   auto VarAddr = new BitCastInst(V,
     Type::getInt8PtrTy(M.getContext()), V->getName() + ".addr", &InsertBefore);
+  VarAddr->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  CallInst *Call = nullptr;
   if (Rank != 0) {
     auto Size = ConstantInt::get(Type::getInt64Ty(M.getContext()), ArraySize);
     auto Fun = getDeclaration(&M, IntrinsicId::reg_arr);
-    CallInst::Create(Fun, { DIVar, Size, VarAddr }, "", &InsertBefore);
+    Call = CallInst::Create(Fun, { DIVar, Size, VarAddr }, "", &InsertBefore);
   } else {
     auto Fun = getDeclaration(&M, IntrinsicId::reg_var);
-   CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
+   Call = CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
   }
+  Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
 }
 
 void Instrumentation::regGlobals(Module& M) {
@@ -575,11 +601,12 @@ void Instrumentation::regGlobals(Module& M) {
   auto FuncType = FunctionType::get(Type::getVoidTy(Ctx), false);
   auto RegGlobalFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.global", &M);
+  RegGlobalFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto *EntryBB = BasicBlock::Create(Ctx, "entry", RegGlobalFunc);
   auto *RetInst = ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   DIStringRegister::IdTy RegisteredGLobals = 0;
   for (auto I = M.global_begin(), EI = M.global_end(); I != EI; ++I) {
-    if (mDIStringSet.count(&*I) || mDIPool == &*I)
+    if (I->getMetadata("sapfor.da"))
       continue;
     ++RegisteredGLobals;
     auto Idx = mDIStrings.regItem(&(*I));
@@ -594,11 +621,16 @@ void Instrumentation::instrumentateMain(Module& M) {
   auto MainFunc = M.getFunction("main");
   if(!MainFunc || !mInitDIAll)
     return;
-  auto& B = MainFunc->getEntryBlock();
+  auto &BB = MainFunc->getEntryBlock();
   auto Int0 = llvm::ConstantInt::get(Type::getInt64Ty(M.getContext()), 0);
-  if (auto *RegTypeFunc = M.getFunction("sapfor.register.type"))
-    CallInst::Create(RegTypeFunc, {Int0}, "", &(*B.begin()));
-  if (auto *RegGlobalFunc = M.getFunction("sapfor.register.global"))
-    CallInst::Create(RegGlobalFunc, "", &B.front());
-  CallInst::Create(mInitDIAll, {Int0}, "", &(*B.begin()));
+  if (auto *RegTypeFunc = M.getFunction("sapfor.register.type")) {
+    auto Call = CallInst::Create(RegTypeFunc, { Int0 }, "", &BB.front());
+    Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  }
+  if (auto *RegGlobalFunc = M.getFunction("sapfor.register.global")) {
+    auto Call = CallInst::Create(RegGlobalFunc, "", &BB.front());
+    Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  }
+  auto Call = CallInst::Create(mInitDIAll, {Int0}, "", &BB.front());
+  Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
 }

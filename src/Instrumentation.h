@@ -157,7 +157,7 @@ private:
   /// \brief Creates a global array of characters and returns GEP to access
   /// this array.
   ///
-  /// \post A new global array will be stored in mDIStringSet.
+  /// Global metadata string will be marked with "sapfor.da" metadata.
   llvm::GetElementPtrInst * createDIStringPtr(llvm::StringRef Str,
     llvm::Instruction &InsertBefore);
 
@@ -172,8 +172,6 @@ private:
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;
-  llvm::DenseSet<llvm::GlobalVariable *> mDIStringSet;
-  llvm::DenseSet<llvm::Instruction *> mIgnoreMemoryAccess;
 };
 }
 
