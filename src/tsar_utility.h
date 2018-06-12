@@ -31,13 +31,13 @@ inline unsigned dimensionsNum(const llvm::Type *Ty) {
   return Dims;
 }
 
-/// Returns number of dimensions and elements in a specified type or 0,0 it it
+/// Returns number of dimensions and elements in a specified type or 0,1 if it
 /// is not an array type.
 inline std::pair<unsigned, uint64_t> arraySize(const llvm::Type *Ty) {
   unsigned Dims = 0;
-  uint64_t NumElements = 0;
+  uint64_t NumElements = 1;
   for (; Ty->isArrayTy(); Ty = Ty->getArrayElementType(), ++Dims)
-    NumElements += llvm::cast<llvm::ArrayType>(Ty)->getArrayNumElements();
+    NumElements *= llvm::cast<llvm::ArrayType>(Ty)->getArrayNumElements();
   return std::make_pair(Dims, NumElements);
 
 }
