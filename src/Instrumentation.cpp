@@ -22,7 +22,6 @@
 #include "Intrinsics.h"
 #include "CanonicalLoop.h"
 #include "DFRegionInfo.h"
-#include "tsar_instrumentation.h"
 #include "tsar_memory_matcher.h"
 #include "tsar_transformation.h"
 #include "tsar_pass_provider.h"
@@ -93,7 +92,7 @@ ModulePass * llvm::createInstrumentationPass() {
   return new InstrumentationPass();
 }
 
-Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
+Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
   : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
   const std::string& ModuleName = M.getModuleIdentifier();
   auto DIPoolTy = PointerType::getUnqual(Type::getInt8PtrTy(M.getContext()));
@@ -114,8 +113,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   reserveIncompleteDIStrings(M);
   regGlobals(M);
-  for(auto &F: M)
-    visitFunction(F);
+  visit(M.begin(), M.end());
   //insert call to allocate debug information pool
   auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
   //getting numb of registrated debug strings by the value returned from
@@ -154,19 +152,11 @@ void Instrumentation::visitInvokeInst(llvm::InvokeInst &I) {
 }
 
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
-  //not llvm function
-  if(I.getFunction()->isIntrinsic())
-    return;
-  //not tsar instrumentation function
-  IntrinsicId Id;
-  if(getTsarLibFunc(I.getFunction()->getName().data(), Id)) {
-    return;
-  }
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
   unsigned Idx = mDIStrings[I.getFunction()];
   auto DIFunc = createPointerToDI(Idx, I);
-  auto Call = CallInst::Create(Fun, {DIFunc}, "");
-  Call->insertAfter(DIFunc);
+  auto Call = CallInst::Create(Fun, {DIFunc}, "", &I);
+  Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
 }
 
 void Instrumentation::loopBeginInstr(llvm::Loop *L,
@@ -294,7 +284,7 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
   }
 }
 
-void Instrumentation::visitFunction(llvm::Function &F) {
+void Instrumentation::visit(Function &F) {
   IntrinsicId InstrLibId;
   if (getTsarLibFunc(F.getName(), InstrLibId)) {
     F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
@@ -302,10 +292,11 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   }
   if (F.empty() || F.getMetadata("sapfor.da"))
     return;
-  // TODO (kaniandr@gmail.com): temporary ignore functions without debug
-  // information.
-  if (!F.getSubprogram())
-    return;
+  visitFunction(F);
+  visit(F.begin(), F.end());
+}
+
+void Instrumentation::visitFunction(llvm::Function &F) {
   // Change linkage for inline functions, to avoid merge of a function which
   // should not be instrumented with this function. For example, call of
   // a function which has been instrumented from dynamic analyzer may produce
@@ -315,34 +306,27 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(F.getLinkage() == Function::LinkOnceAnyLinkage ||
      F.getLinkage() == Function::LinkOnceODRLinkage)
     F.setLinkage(Function::InternalLinkage);
-  //get analysis informaion from passes for visited function
-  auto& Provider = mInstrPass->template getAnalysis<InstrumentationPassProvider>(F);
-  auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
+  auto &Provider = mInstrPass->getAnalysis<InstrumentationPassProvider>(F);
+  mLoopInfo = &Provider.get<LoopInfoWrapperPass>().getLoopInfo();
   mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
-  mLoopInfo = &LI;
-  auto CLI  = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
-  mCanonicalLoop = &CLI;
-  //registrate debug information for function
-  std::stringstream Debug;
-  Debug << "type=function*file=" << F.getParent()->getSourceFileName() <<
-    "*line1=" << F.getSubprogram()->getLine() << "*line2=" <<
-    (F.getSubprogram()->getLine() + F.getSubprogram()->getScopeLine()) <<
-    "*name1=" << F.getSubprogram()->getName().data() << "*vtype=" <<
-    mTypes.regItem(F.getReturnType()) << "*rank=" <<
-    F.getFunctionType()->getNumParams() << "**";
+  mCanonicalLoop = &Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+  auto *M = F.getParent();
+  auto *MD = F.getSubprogram();
+  auto DeclStr = !MD ? Twine("name1=") + F.getName() + "*" :
+    "line1=" + Twine(MD->getLine()) + "*" + "name1=" + MD->getName() + "*";
   auto Idx = mDIStrings.regItem(&F);
-  createInitDICall(Debug.str(), Idx);
-
-  //visit all Blocks
-  for(auto &I : F.getBasicBlockList()) {
-    visitBasicBlock(I);
-  }
-  //Insert a call of sapforFuncBegin(void*) in the begginning of the function
+  auto ReturnTypeId = mTypes.regItem(F.getReturnType());
+  assert(F.getFunctionType() && "Function must have a type!");
+  createInitDICall(Twine("type=") + "function" + "*" +
+    "file=" + M->getSourceFileName() + "*" +
+    "vtype=" + Twine(ReturnTypeId) + "*" +
+    "rank=" + Twine(F.getFunctionType()->getNumParams()) + "*" +
+    DeclStr + "*", Idx);
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
-  auto Begin = inst_begin(F);
-  auto DIFunc = createPointerToDI(Idx, *Begin);
-  auto Call = CallInst::Create(Fun, {DIFunc}, "");
-  Call->insertAfter(DIFunc);
+  auto &FirstInst = *inst_begin(F);
+  auto DIFunc = createPointerToDI(Idx, FirstInst);
+  auto Call = CallInst::Create(Fun, {DIFunc}, "", &FirstInst);
+  Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
 }
 
 std::tuple<Value *, Value *, Value *, Value *>

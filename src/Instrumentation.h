@@ -25,7 +25,8 @@ class Value;
 }
 
 namespace tsar {
-class Instrumentation :public llvm::InstVisitor<Instrumentation> {
+class Instrumentation : public llvm::InstVisitor<Instrumentation> {
+  using Base = llvm::InstVisitor<Instrumentation>;
   using TypeRegister = ItemRegister<llvm::Type *>;
   using DIStringRegister = ItemRegister<
     llvm::AllocaInst *, llvm::GlobalVariable *, llvm::Instruction *,
@@ -33,10 +34,14 @@ class Instrumentation :public llvm::InstVisitor<Instrumentation> {
 public:
   static const unsigned maxIntBitWidth = 64;
 
-  Instrumentation(llvm::Module& M, llvm::InstrumentationPass* const I);
+  Instrumentation(llvm::Module& M, llvm::InstrumentationPass* I);
   ~Instrumentation() = default;
 
-  /// Registers local variables (see regValue() for details).
+  using Base::visit;
+
+  /// Visit function if it should be processed only.
+  void visit(llvm::Function &F);
+
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
   void visitStoreInst(llvm::StoreInst &I);
@@ -44,12 +49,9 @@ public:
   void visitInvokeInst(llvm::InvokeInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
+  void visitBasicBlock(llvm::BasicBlock &B);
 
 private:
-  llvm::LoopInfo* mLoopInfo = nullptr;
-  llvm::DFRegionInfo* mRegionInfo = nullptr;
-  tsar::CanonicalLoopSet* mCanonicalLoop = nullptr;
-  llvm::InstrumentationPass* const mInstrPass;
 
   //visitCallInst and visiInvokeInst have completely the same code
   //so template for them
@@ -84,10 +86,6 @@ private:
     Call->insertAfter(&I);
   }
 
-  //visitBasicBlock depends on LoopInfo which is different for
-  //different Functions. Calling it from wherever except visitFunction
-  //could lead to using unappropriate LoopInfo. So moved it to private.
-  void visitBasicBlock(llvm::BasicBlock &B);
 
   void loopBeginInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
@@ -168,10 +166,16 @@ private:
   llvm::LoadInst* createPointerToDI(
     DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore);
 
+  llvm::InstrumentationPass *mInstrPass;
+
   TypeRegister mTypes;
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;
+
+  llvm::LoopInfo* mLoopInfo = nullptr;
+  llvm::DFRegionInfo* mRegionInfo = nullptr;
+  const CanonicalLoopSet* mCanonicalLoop = nullptr;
 };
 }
 
