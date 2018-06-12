@@ -93,7 +93,6 @@ private:
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
   void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
-  void regTypes(llvm::Module& M);
   void instrumentateMain(llvm::Module& M);
 
   /// Reserves some metadata string for object which have not enough
@@ -138,6 +137,9 @@ private:
   /// will be also created.
   void regGlobals(llvm::Module& M);
 
+  /// Registers types which are used in a specified module.
+  void regTypes(llvm::Module& M);
+
   /// Registers a metadata string for a specified location. If this location is
   /// nullptr, than previously reserved string is used. The function returns
   /// index of the metadata string.
@@ -166,7 +168,7 @@ private:
   llvm::LoadInst* createPointerToDI(
     DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore);
 
-    TypeRegister mTypes;
+  TypeRegister mTypes;
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;

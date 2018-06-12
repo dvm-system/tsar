@@ -96,15 +96,6 @@ ModulePass * llvm::createInstrumentationPass() {
 Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
   const std::string& ModuleName = M.getModuleIdentifier();
-  //create function for types registration
-  const std::string& RegTypeFuncName = "RegType" +
-    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  auto RegType = FunctionType::get(Type::getInt64Ty(M.getContext()),
-    {Type::getInt64Ty(M.getContext())}, false);
-  auto RegFunc = Function::Create(RegType,
-    GlobalValue::LinkageTypes::InternalLinkage, RegTypeFuncName, &M);
-  RegFunc->arg_begin()->setName("x");
-  auto NewBlock = BasicBlock::Create(RegFunc->getContext(), "entry", RegFunc);
   auto DIPoolTy = PointerType::getUnqual(Type::getInt8PtrTy(M.getContext()));
   mDIPool = new GlobalVariable(M, DIPoolTy, false,
     GlobalValue::LinkageTypes::ExternalLinkage,
@@ -116,8 +107,9 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass* const I)
   mInitDIAll = Function::Create(
     Type, GlobalValue::LinkageTypes::InternalLinkage, "sapfor.init.di.all", &M);
   mInitDIAll->arg_begin()->setName("Offset");
-  NewBlock = BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
-  ReturnInst::Create(mInitDIAll->getContext(), NewBlock);
+  auto EntryBB =
+    BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
+  ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   reserveIncompleteDIStrings(M);
   regGlobals(M);
   //visit all functions
@@ -429,86 +421,61 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
 }
 
 void Instrumentation::regTypes(Module& M) {
-  const std::string& ModuleName = M.getModuleIdentifier();
-  const std::string& RegFuncName = "RegType" +
-    ModuleName.substr(ModuleName.find_last_of("/\\")+1);
-  auto F = M.getFunction(RegFuncName); // get function for types registration
-  if(F != nullptr) {
-    DataLayout DL(&M);
-    // Get all registered types and fill std::vector<llvm::Constant*>
-    // with local indexes and sizes of these types.
-    auto &Types = mTypes.getRegister<llvm::Type *>();
-    auto Int64Ty = Type::getInt64Ty(M.getContext());
-    auto Int0 = ConstantInt::get(Int64Ty, 0);
-    std::vector<Constant* > Ids, Sizes;
-    for(auto I: Types) {
-      Ids.push_back(Constant::getIntegerValue(Int64Ty, APInt(64, I.second)));
-      Sizes.push_back(I.first->isSized() ? Constant::getIntegerValue(Int64Ty,
-	APInt(64, DL.getTypeSizeInBits(const_cast<Type*>(I.first)))) : Int0);
-    }
-    //create global values for idexes and sizes. initialize them with local
-    //values
-    auto Size = ConstantInt::get(Int64Ty, Types.size());
-    auto ArrayTy = ArrayType::get(Int64Ty, Types.size());
-    auto IdsArray = new GlobalVariable(M, ArrayTy, false,
-      GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
-      Ids), "IdsArray", nullptr);
-    auto SizesArray = new GlobalVariable(M, ArrayTy, false,
-      GlobalValue::LinkageTypes::ExternalLinkage, ConstantArray::get(ArrayTy,
-      Sizes), "SizesArray", nullptr);
-    //create a loop to update local indexes to their real values.
-    //
-    //add loop counter to entry block and initialize it with 0
-    //store function parameter
-    auto AI = new AllocaInst(F->arg_begin()->getType(), nullptr, 8, "x.addr",
-      &F->getEntryBlock());
-    auto Counter = new AllocaInst(Int64Ty, nullptr, 8, "i",
-      &F->getEntryBlock());
-    auto SI = new StoreInst(&(*F->arg_begin()), AI, &F->getEntryBlock());
-    auto Set0 = new StoreInst(Int0, Counter, false, 8,
-      &F->getEntryBlock());
-    //create condition, body, increment and end blocks for the loop.
-    auto CondBlock = BasicBlock::Create(M.getContext(), "cond", F);
-    auto BodyBlock = BasicBlock::Create(M.getContext(), "body", F);
-    auto IncBlock = BasicBlock::Create(M.getContext(), "inc", F);
-    auto EndBlock = BasicBlock::Create(M.getContext(), "end", F);
-    //create jumps between loop blocks
-    BranchInst::Create(CondBlock, &F->getEntryBlock());
-    auto LoadCounter = new LoadInst(Counter, "", false, 8, CondBlock);
-    auto Cmp = new ICmpInst(*CondBlock, CmpInst::ICMP_ULT, LoadCounter,
-      Size, "cmp");
-    BranchInst::Create(BodyBlock, EndBlock, Cmp, CondBlock);
-    BranchInst::Create(IncBlock, BodyBlock);
-    BranchInst::Create(CondBlock, IncBlock);
-    //fill body block with corresponding instructions:
-    //IdsArray[i] += x  ;; x - function parameter
-    LoadCounter = new LoadInst(Counter, "", false, 8, &BodyBlock->back());
-    auto Elem = GetElementPtrInst::Create(nullptr, IdsArray, {Int0,
-      LoadCounter}, "arrayidx", &BodyBlock->back());
-    auto LoadArg = new LoadInst(AI, "", false, 8, &BodyBlock->back());
-    auto LoadArg2 = new LoadInst(Elem, "", false, 8, &BodyBlock->back());
-    auto Sum = BinaryOperator::CreateNSW(BinaryOperator::Add, LoadArg,
-      LoadArg2, "", &BodyBlock->back());
-    auto NewElem = new StoreInst(Sum, Elem, false, 8, &BodyBlock->back());
-    //fill increment block with corresponding instructions:
-    //i++
-    LoadCounter = new LoadInst(Counter, "", false, 8, &IncBlock->back());
-    Sum = BinaryOperator::CreateNSW(BinaryOperator::Add, LoadCounter,
-      ConstantInt::get(Int64Ty, 1), "", &IncBlock->back());
-    auto NewCounter = new StoreInst(Sum, Counter, false, 8, &IncBlock->back());
-    //insert call of sapforDeclTypes(i64, i64*, i64*) to the end block
-    auto Fun4Insert = getDeclaration(&M, IntrinsicId::decl_types);
-    auto IdsArrayElem = GetElementPtrInst::Create(nullptr, IdsArray,
-      {Int0, Int0}, "Ids", EndBlock);
-    auto SizesArrayElem = GetElementPtrInst::Create(nullptr, SizesArray,
-      {Int0, Int0}, "Sizes", EndBlock);
-    CallInst::Create(Fun4Insert, {Size, IdsArrayElem, SizesArrayElem}, "",
-      EndBlock);
-    //return numb of regitrated types
-    ReturnInst::Create(F->getContext(), Size, EndBlock);
+  if (mTypes.numberOfIDs() == 0)
     return;
+  auto &Ctx = M.getContext();
+  // Get all registered types and fill std::vector<llvm::Constant*>
+  // with local indexes and sizes of these types.
+  auto &Types = mTypes.getRegister<llvm::Type *>();
+  auto *Int64Ty = Type::getInt64Ty(Ctx);
+  auto *Int0 = ConstantInt::get(Int64Ty, 0);
+  std::vector<Constant* > Ids, Sizes;
+  auto &DL = M.getDataLayout();
+  for(auto &Pair: Types) {
+    auto *TypeId = Constant::getIntegerValue(Int64Ty,
+      APInt(64, Pair.get<TypeRegister::IdTy>()));
+    Ids.push_back(TypeId);
+    auto *TypeSize = Pair.get<Type *>()->isSized() ?
+      Constant::getIntegerValue(Int64Ty,
+        APInt(64, DL.getTypeSizeInBits(Pair.get<Type *>()))) : Int0;
+    Sizes.push_back(TypeSize);
   }
-  llvm_unreachable((RegFuncName + " was not declared").c_str());
+  // Create global values for IDs and sizes. initialize them with local values.
+  auto ArrayTy = ArrayType::get(Int64Ty, Types.size());
+  auto IdsArray = new GlobalVariable(M, ArrayTy, false,
+    GlobalValue::LinkageTypes::InternalLinkage,
+    ConstantArray::get(ArrayTy, Ids), "sapfor.type.ids", nullptr);
+  auto SizesArray = new GlobalVariable(M, ArrayTy, false,
+    GlobalValue::LinkageTypes::InternalLinkage,
+    ConstantArray::get(ArrayTy, Sizes), "sapfor.type.sizes", nullptr);
+  // Create function to update local indexes of types.
+  auto FuncType =
+    FunctionType::get(Type::getInt64Ty(Ctx), { Int64Ty }, false);
+  auto RegTypeFunc = Function::Create(FuncType,
+    GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.type", &M);
+  auto EntryBB = BasicBlock::Create(Ctx, "entry", RegTypeFunc);
+  auto *StartId = &*RegTypeFunc->arg_begin();
+  StartId->setName("startid");
+  // Create loop to update indexes: NewTypeId = StartId + LocalTypId;
+  auto *LoopBB = BasicBlock::Create(Ctx, "loop", RegTypeFunc);
+  BranchInst::Create(LoopBB, EntryBB);
+  auto *Counter = PHINode::Create(Int64Ty, 0, "typeidx", LoopBB);
+  Counter->addIncoming(Int0, EntryBB);
+  auto *GEP = GetElementPtrInst::Create(
+    nullptr, IdsArray, { Int0, Counter }, "arrayidx", LoopBB);
+  auto *LocalTypeId = new LoadInst(GEP, "typeid", false, 0, LoopBB);
+  auto Add = BinaryOperator::CreateNUW(
+    BinaryOperator::Add, LocalTypeId, StartId, "add", LoopBB);
+  new StoreInst(Add, GEP, false, 0, LoopBB);
+  auto Inc = BinaryOperator::CreateNUW(BinaryOperator::Add, Counter,
+    ConstantInt::get(Int64Ty, 1), "inc", LoopBB);
+  Counter->addIncoming(Inc, LoopBB);
+  auto *Size = ConstantInt::get(Int64Ty, Types.size());
+  auto *Cmp = new ICmpInst(*LoopBB, CmpInst::ICMP_ULT, Inc, Size, "cmp");
+  auto *EndBB = BasicBlock::Create(M.getContext(), "end", RegTypeFunc);
+  BranchInst::Create(LoopBB, EndBB, Cmp, LoopBB);
+  // Return number of registered types.
+  ReturnInst::Create(Ctx, Size, EndBB);
 }
 
 void Instrumentation::createInitDICall(const llvm::Twine &Str,
@@ -610,26 +577,28 @@ void Instrumentation::regGlobals(Module& M) {
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.global", &M);
   auto *EntryBB = BasicBlock::Create(Ctx, "entry", RegGlobalFunc);
   auto *RetInst = ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
+  DIStringRegister::IdTy RegisteredGLobals = 0;
   for (auto I = M.global_begin(), EI = M.global_end(); I != EI; ++I) {
     if (mDIStringSet.count(&*I) || mDIPool == &*I)
       continue;
+    ++RegisteredGLobals;
     auto Idx = mDIStrings.regItem(&(*I));
     auto *MD = getMetadata(&*I);
     regValue(&*I, I->getValueType(), MD, Idx, *RetInst, M);
   }
+  if (RegisteredGLobals == 0)
+    RegGlobalFunc->eraseFromParent();
 }
 
 void Instrumentation::instrumentateMain(Module& M) {
-  const std::string& ModuleName = M.getModuleIdentifier();
-  auto MainFunc = M.getFunction("main"), RegFunc = M.getFunction("RegType" +
-    ModuleName.substr(ModuleName.find_last_of("/\\") + 1));
-  auto RegGlobalFunc = M.getFunction("sapfor.register.global");
-  if(MainFunc == nullptr || RegFunc == nullptr || mInitDIAll == nullptr ||
-     RegGlobalFunc == nullptr)
+  auto MainFunc = M.getFunction("main");
+  if(!MainFunc || !mInitDIAll)
     return;
   auto& B = MainFunc->getEntryBlock();
   auto Int0 = llvm::ConstantInt::get(Type::getInt64Ty(M.getContext()), 0);
-  CallInst::Create(RegFunc, {Int0}, "", &(*B.begin()));
-  CallInst::Create(RegGlobalFunc, "", &B.front());
+  if (auto *RegTypeFunc = M.getFunction("sapfor.register.type"))
+    CallInst::Create(RegTypeFunc, {Int0}, "", &(*B.begin()));
+  if (auto *RegGlobalFunc = M.getFunction("sapfor.register.global"))
+    CallInst::Create(RegGlobalFunc, "", &B.front());
   CallInst::Create(mInitDIAll, {Int0}, "", &(*B.begin()));
 }
