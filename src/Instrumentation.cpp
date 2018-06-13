@@ -135,6 +135,7 @@ void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
 }
 
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
+  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto MD = getMetadata(&I);
   auto Idx = mDIStrings.regItem(&I);
   BasicBlock::iterator InsertBefore(I);
@@ -143,6 +144,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
 }
 
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
+  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
   unsigned Idx = mDIStrings[I.getFunction()];
   auto DIFunc = createPointerToDI(Idx, I);
@@ -341,6 +343,7 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
     FuncIdx = mDIStrings.regItem(CS.getCalledValue());
   }
   auto *Inst = CS.getInstruction();
+  DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
   auto DbgLocIdx = regDebugLoc(Inst->getDebugLoc());
   auto DILoc = createPointerToDI(DbgLocIdx, *Inst);
   auto DIFunc = createPointerToDI(FuncIdx, *Inst);
@@ -390,6 +393,7 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
 void Instrumentation::visitLoadInst(LoadInst &I) {
   if (I.getMetadata("sapfor.da"))
     return;
+  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto *M = I.getModule();
   llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
   std::tie(DILoc, Addr, DIVar, ArrayBase) =
@@ -408,6 +412,7 @@ void Instrumentation::visitLoadInst(LoadInst &I) {
 void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   if (I.getMetadata("sapfor.da"))
     return;
+  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   // instrumentate stores for function formal parameters in special way
   if(Argument::classof(I.getValueOperand()) &&
     AllocaInst::classof(I.getPointerOperand())) {
