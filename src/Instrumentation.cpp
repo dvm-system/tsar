@@ -541,7 +541,7 @@ auto Instrumentation::regDebugLoc(
   createInitDICall(
     Twine("type=") + "file_name" + "*" +
     "line1=" + Twine(DbgLoc.getLine()) + "*" +
-    "col1=" + Twine(DbgLoc.getCol()) + "*", DbgLocIdx);
+    "col1=" + Twine(DbgLoc.getCol()) + "*" + "*", DbgLocIdx);
   return DbgLocIdx;
 }
 
