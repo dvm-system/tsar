@@ -620,7 +620,7 @@ void Instrumentation::regFunctions(Module& M) {
     switch (F.getIntrinsicID()) {
     case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
     case llvm::Intrinsic::assume:
-      return;
+      continue;
     }
     auto Idx = mDIStrings.regItem(&F);
     regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),
