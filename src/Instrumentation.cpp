@@ -278,10 +278,6 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
     loopEndInstr(Loop, B, Idx);
     loopIterInstr(Loop, B, Idx);
   }
-  //visit all Instructions
-  for(auto& I : B){
-    visit(I);
-  }
 }
 
 void Instrumentation::visit(Function &F) {
