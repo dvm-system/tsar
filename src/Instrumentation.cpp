@@ -274,6 +274,9 @@ void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
 }
 
 void Instrumentation::visit(Function &F) {
+  // Some functions have not been marked with "sapfor.da" yet. For example,
+  // functions which have been created after registration of all functions.
+  // So, we set this property here.
   IntrinsicId InstrLibId;
   if (getTsarLibFunc(F.getName(), InstrLibId)) {
     F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
@@ -335,8 +338,12 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
   if (auto *Callee = llvm::dyn_cast<llvm::Function>(
         CS.getCalledValue()->stripPointerCasts())) {
     IntrinsicId LibId;
-    // Do not check for 'sapfor.da' metadata because it may not be set yet.
-    if(getTsarLibFunc(Callee->getName(), LibId))
+    // Do not check for 'sapfor.da' metadata only because it may not be set
+    // for some functions of dynamic analyzer yet. However, it is necessary to
+    // check for 'sapfor.da' to ignore some internal utility functions which
+    // have been created.
+    if(Callee->getMetadata("sapfor.da") ||
+       getTsarLibFunc(Callee->getName(), LibId))
       return;
     FuncIdx = mDIStrings[Callee];
   } else {
@@ -613,6 +620,11 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
 
 void Instrumentation::regFunctions(Module& M) {
   for (auto &F : M) {
+    IntrinsicId LibId;
+    if (getTsarLibFunc(F.getName(), LibId)) {
+      F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
+      continue;
+    }
     if (F.getMetadata("sapfor.da"))
       continue;
     /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
