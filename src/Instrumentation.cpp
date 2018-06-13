@@ -554,9 +554,9 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
   uint64_t ArraySize;
   std::tie(Rank, ArraySize) = arraySize(T);
   auto TypeStr = Rank == 0 ? (Twine("var_name") + "*").str() :
-    (Twine("arr_name") + "*" + "rank=" + Twine(Rank)).str();
+    (Twine("arr_name") + "*" + "rank=" + Twine(Rank) + "*").str();
   createInitDICall(
-    Twine("type=") + TypeStr + "*" +
+    Twine("type=") + TypeStr +
     "file=" + M.getSourceFileName() + "*" +
     "vtype=" + Twine(TypeId) + "*" + DeclStr + "*",
     Idx);
