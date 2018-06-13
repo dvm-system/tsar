@@ -33,8 +33,7 @@ class PointerType<Type elty> : Type<Pointer> {
 def tsar_di_var_ty : PointerType<tsar_any_ty>;
 def tsar_di_loc_ty : PointerType<tsar_any_ty>;
 def tsar_di_loop_ty : PointerType<tsar_any_ty>;
-def tsar_di_funct_ty : PointerType<tsar_any_ty>;
-def tsar_di_call_ty : PointerType<tsar_any_ty>;
+def tsar_di_func_ty : PointerType<tsar_any_ty>;
 def tsar_di_ty : PointerType<PointerType<tsar_any_ty>>;
 def tsar_di_string_ty : PointerType<tsar_any_ty>;
 def tsar_addr_ty : PointerType<tsar_any_ty>;
@@ -74,23 +73,23 @@ def write_arr_end : Intrinsic<"sapforWriteArrEnd", tsar_void_ty,
                         tsar_arr_base_ty]>;
 
 def func_begin : Intrinsic<"sapforFuncBegin",
-                        tsar_void_ty, [tsar_di_funct_ty]>;
+                        tsar_void_ty, [tsar_di_func_ty]>;
 
 def func_end : Intrinsic<"sapforFuncEnd",
-                        tsar_void_ty, [tsar_di_funct_ty]>;
+                        tsar_void_ty, [tsar_di_func_ty]>;
 
 def reg_dummy_var : Intrinsic<"sapforRegDummyVar", tsar_void_ty,
-                        [tsar_di_funct_ty, tsar_addr_ty, tsar_position_ty]>;
+                        [tsar_di_func_ty, tsar_addr_ty, tsar_position_ty]>;
 
 def reg_dummy_arr : Intrinsic<"sapforRegDummyArr", tsar_void_ty,
-                        [tsar_di_funct_ty, tsar_size_ty, tsar_addr_ty,
+                        [tsar_di_func_ty, tsar_size_ty, tsar_addr_ty,
                         tsar_position_ty]>;
 
 def func_call_begin : Intrinsic<"sapforFuncCallBegin",
-                        tsar_void_ty, [tsar_di_call_ty]>;
+                        tsar_void_ty, [tsar_di_loc_ty, tsar_di_func_ty]>;
 
 def func_call_end : Intrinsic<"sapforFuncCallEnd",
-                        tsar_void_ty, [tsar_di_call_ty]>;
+                        tsar_void_ty, [tsar_di_func_ty]>;
 
 def sl_begin : Intrinsic<"sapforSLBegin", tsar_void_ty,
                         [tsar_di_loop_ty, tsar_size_ty, tsar_size_ty,

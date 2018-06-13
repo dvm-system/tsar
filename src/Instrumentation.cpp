@@ -112,6 +112,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
     BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
   ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   reserveIncompleteDIStrings(M);
+  regFunctions(M);
   regGlobals(M);
   visit(M.begin(), M.end());
   //insert call to allocate debug information pool
@@ -139,16 +140,6 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
   regValue(&I, I.getAllocatedType(), MD, Idx, *InsertBefore, *I.getModule());
-}
-
-void Instrumentation::visitCallInst(llvm::CallInst &I) {
-  //using template method
-  FunctionCallInst(I);
-}
-
-void Instrumentation::visitInvokeInst(llvm::InvokeInst &I) {
-  //using template method
-  FunctionCallInst(I);
 }
 
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
@@ -292,6 +283,20 @@ void Instrumentation::visit(Function &F) {
   visit(F.begin(), F.end());
 }
 
+void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
+  DISubprogram *MD, DIStringRegister::IdTy Idx, Module &M) {
+  std::string DeclStr = !MD ? F.getName().empty() ? std::string("") :
+    (Twine("name1=") + F.getName() + "*").str() :
+    ("line1=" + Twine(MD->getLine()) + "*" +
+      "name1=" + MD->getName() + "*").str();
+  auto ReturnTypeId = mTypes.regItem(ReturnTy);
+  createInitDICall(Twine("type=") + "function" + "*" +
+    "file=" + M.getSourceFileName() + "*" +
+    "vtype=" + Twine(ReturnTypeId) + "*" +
+    "rank=" + Twine(Rank) + "*" +
+    DeclStr + "*", Idx);
+}
+
 void Instrumentation::visitFunction(llvm::Function &F) {
   // Change linkage for inline functions, to avoid merge of a function which
   // should not be instrumented with this function. For example, call of
@@ -308,21 +313,46 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   mCanonicalLoop = &Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   auto *M = F.getParent();
   auto *MD = F.getSubprogram();
-  auto DeclStr = !MD ? Twine("name1=") + F.getName() + "*" :
-    "line1=" + Twine(MD->getLine()) + "*" + "name1=" + MD->getName() + "*";
-  auto Idx = mDIStrings.regItem(&F);
-  auto ReturnTypeId = mTypes.regItem(F.getReturnType());
-  assert(F.getFunctionType() && "Function must have a type!");
-  createInitDICall(Twine("type=") + "function" + "*" +
-    "file=" + M->getSourceFileName() + "*" +
-    "vtype=" + Twine(ReturnTypeId) + "*" +
-    "rank=" + Twine(F.getFunctionType()->getNumParams()) + "*" +
-    DeclStr + "*", Idx);
+  auto Idx = mDIStrings[&F];
   auto Fun = getDeclaration(F.getParent(), IntrinsicId::func_begin);
   auto &FirstInst = *inst_begin(F);
   auto DIFunc = createPointerToDI(Idx, FirstInst);
   auto Call = CallInst::Create(Fun, {DIFunc}, "", &FirstInst);
   Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
+}
+
+void Instrumentation::visitCallSite(llvm::CallSite CS) {
+  /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
+  /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
+  switch (CS.getIntrinsicID()) {
+  case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
+  case llvm::Intrinsic::assume:
+    return;
+  }
+  DIStringRegister::IdTy FuncIdx = 0;
+  if (auto *Callee = llvm::dyn_cast<llvm::Function>(
+        CS.getCalledValue()->stripPointerCasts())) {
+    IntrinsicId LibId;
+    // Do not check for 'sapfor.da' metadata because it may not be set yet.
+    if(getTsarLibFunc(Callee->getName(), LibId))
+      return;
+    FuncIdx = mDIStrings[Callee];
+  } else {
+    FuncIdx = mDIStrings.regItem(CS.getCalledValue());
+  }
+  auto *Inst = CS.getInstruction();
+  auto DbgLocIdx = regDebugLoc(Inst->getDebugLoc());
+  auto DILoc = createPointerToDI(DbgLocIdx, *Inst);
+  auto DIFunc = createPointerToDI(FuncIdx, *Inst);
+  auto *M = Inst->getModule();
+  auto Fun = getDeclaration(M, tsar::IntrinsicId::func_call_begin);
+  auto CallBegin = llvm::CallInst::Create(Fun, {DILoc, DIFunc}, "", Inst);
+  auto InstrMD = MDNode::get(M->getContext(), {});
+  CallBegin->setMetadata("sapfor.da", InstrMD);
+  Fun = getDeclaration(M, tsar::IntrinsicId::func_call_end);
+  auto CallEnd = llvm::CallInst::Create(Fun, {DIFunc}, "");
+  CallEnd->insertAfter(Inst);
+  CallBegin->setMetadata("sapfor.da", InstrMD);
 }
 
 std::tuple<Value *, Value *, Value *, Value *>
@@ -574,6 +604,23 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
    Call = CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
   }
   Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+}
+
+void Instrumentation::regFunctions(Module& M) {
+  for (auto &F : M) {
+    if (F.getMetadata("sapfor.da"))
+      continue;
+    /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
+    /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
+    switch (F.getIntrinsicID()) {
+    case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
+    case llvm::Intrinsic::assume:
+      return;
+    }
+    auto Idx = mDIStrings.regItem(&F);
+    regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),
+      F.getSubprogram(), Idx, M);
+  }
 }
 
 void Instrumentation::regGlobals(Module& M) {

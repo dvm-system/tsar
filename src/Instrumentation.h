@@ -45,48 +45,12 @@ public:
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
   void visitStoreInst(llvm::StoreInst &I);
-  void visitCallInst(llvm::CallInst &I);
-  void visitInvokeInst(llvm::InvokeInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
   void visitBasicBlock(llvm::BasicBlock &B);
+  void visitCallSite(llvm::CallSite CS);
 
 private:
-
-  //visitCallInst and visiInvokeInst have completely the same code
-  //so template for them
-  //
-  //NOTE: Instead of template it was possible to overload visitCallSite which
-  //is for both calls and invokes. Maybe i'll change it later.
-  template<class T>
-  void FunctionCallInst(T &I) {
-    //not llvm function
-    auto Callee =
-      llvm::dyn_cast<llvm::Function>(I.getCalledValue()->stripPointerCasts());
-    // TODO (kaniandr@gmail.com): print warrning in case of Callee == nullptr.
-    if(!Callee || Callee->isIntrinsic())
-      return;
-    //not tsar function
-    tsar::IntrinsicId Id;
-    if(getTsarLibFunc(Callee->getName(), Id)) {
-      return;
-    }
-    std::stringstream Debug;
-    Debug << "type=func_call*file=" << I.getModule()->getSourceFileName()
-      << "*line1=" << I.getDebugLoc()->getLine() << "*name1=" <<
-      Callee->getName().str() << "*rank=" <<
-      Callee->getFunctionType()->getNumParams() << "**";
-    auto CallIdx = mDIStrings.regItem<llvm::Instruction *>(&I);
-    createInitDICall(Debug.str(), CallIdx);
-    auto DICall = createPointerToDI(CallIdx, I);
-    auto Fun = getDeclaration(I.getModule(),tsar::IntrinsicId::func_call_begin);
-    llvm::CallInst::Create(Fun, {DICall}, "", &I);
-    Fun = getDeclaration(I.getModule(), tsar::IntrinsicId::func_call_end);
-    auto Call = llvm::CallInst::Create(Fun, {DICall}, "");
-    Call->insertAfter(&I);
-  }
-
-
   void loopBeginInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
   void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
   void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
@@ -96,6 +60,17 @@ private:
   /// Reserves some metadata string for object which have not enough
   /// information.
   void reserveIncompleteDIStrings(llvm::Module &M);
+
+  /// \brief Registers metadata string for a specified function `F`.
+  ///
+  /// Metadata parameter `MD` is optional. If it is `nullptr` information
+  /// which is available from LLVM IR will be only used to construct a
+  /// metadata string.
+  ///
+  /// A specified value `F` may not be a function, for example if a pointer is
+  /// used in a call instruction.
+  void regFunction(llvm::Value &F, llvm::Type *ReturnTy, unsigned Rank,
+    llvm::DISubprogram *MD, DIStringRegister::IdTy Idx, llvm::Module &M);
 
   /// \brief Returns parameter for sapforRegVar(...) or sapforRegArr(...)
   /// functions.
@@ -127,6 +102,10 @@ private:
   void regValue(llvm::Value *V, llvm::Type *T, llvm::DIVariable *MD,
     DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore,
     llvm::Module &M);
+
+  /// Registers a metadata string for each declared function (except functions
+  /// which are marked with 'sapfor.da' metadata).
+  void regFunctions(llvm::Module &M);
 
   /// \brief Registers global variables.
   ///
