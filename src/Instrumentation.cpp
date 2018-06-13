@@ -290,6 +290,8 @@ void Instrumentation::visit(Function &F) {
 
 void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
   DISubprogram *MD, DIStringRegister::IdTy Idx, Module &M) {
+  DEBUG(dbgs() << "[INSTR]: register function ";
+    F.printAsOperand(dbgs()); dbgs() << "\n");
   std::string DeclStr = !MD ? F.getName().empty() ? std::string("") :
     (Twine("name1=") + F.getName() + "*").str() :
     ("line1=" + Twine(MD->getLine()) + "*" +
@@ -589,6 +591,9 @@ auto Instrumentation::regDebugLoc(
 
 void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
     DIStringRegister::IdTy Idx,  Instruction &InsertBefore, Module &M) {
+  assert(V && "Variable must not be null!");
+  DEBUG(dbgs() << "[INSTR]: register variable ";
+    V->printAsOperand(dbgs()); dbgs() << "\n");
   auto DeclStr = MD ? (Twine("line1=") + Twine(MD->getLine()) + "*" +
     "name1=" + MD->getName() + "*").str() : std::string("");
   unsigned TypeId = mTypes.regItem(T);
