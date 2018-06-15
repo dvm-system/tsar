@@ -21,7 +21,7 @@
 #include "tsar_df_graph.h"
 #include "tsar_pass.h"
 
-namespace llvm {
+namespace tsar {
 /// \brief Builds hierarchy of regions for the specified region level.
 ///
 /// To obtain the whole constructed hierarchy it is necessary to use
@@ -83,7 +83,9 @@ private:
   tsar::DFNode *mTopLevelRegion = nullptr;
   BBToNodeMap mBBToNode;
 };
+}
 
+namespace llvm {
 /// This pass buildes hierarchy of data-flow regions.
 class DFRegionInfoPass :
   public FunctionPass, private bcl::Uncopyable {
@@ -97,10 +99,10 @@ public:
   }
 
   /// Returns hierarcy of region for the last analyzed function
-  DFRegionInfo & getRegionInfo() { return mRegionInfo; }
+  tsar::DFRegionInfo & getRegionInfo() { return mRegionInfo; }
 
   /// Returns hierarcy of region for the last analyzed function
-  const DFRegionInfo & getRegionInfo() const { return mRegionInfo; }
+  const tsar::DFRegionInfo & getRegionInfo() const { return mRegionInfo; }
 
   /// Treats all loops in a function as regions and build the region hierarchy.
   bool runOnFunction(Function &F) override;
@@ -112,7 +114,7 @@ public:
   void releaseMemory() override { mRegionInfo.releaseMemory(); }
 
 private:
-  DFRegionInfo mRegionInfo;
+  tsar::DFRegionInfo mRegionInfo;
 };
 }
 #endif//TSAR_DF_REGION_PASS_H
