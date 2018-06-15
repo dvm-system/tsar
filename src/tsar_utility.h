@@ -11,16 +11,21 @@
 #define TSAR_UTILITY_H
 
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Type.h>
 #include <tuple>
 #include <tagged.h>
 
 namespace llvm {
+class BasicBlock;
 class DIGlobalVariable;
+class DominatorTree;
 class GlobalVariable;
 class DILocalVariable;
 class AllocaInst;
+class Instruction;
+class Use;
 }
 
 namespace tsar {
@@ -86,6 +91,40 @@ Function for_each(const llvm::LoopInfo &LI, Function F) {
   detail::for_each(LI.rbegin(), LI.rend(), F);
   return std::move(F);
 }
+
+/// \brief Clone chain of instruction.
+///
+/// All clones instruction will be pushed to the `CloneList`. If some of
+/// instructions can not be cloned the `CloneList` will not be updated.
+/// Clones will not be inserted into IR. The lowest clone sill be the first
+/// instruction which is pushed into the `CloneList`.
+///
+/// If `BoundInst` and `DT` is `nullptr` the full use-def chain will be cloned
+/// (except Phi-nodes and alloca instructions). In case of Phi-nodes this method
+/// returns false (cloning is impossible). The lowest instruction in the cloned
+/// chain is `From`. If `BoundInst` and `DT` is specified instructions which
+/// dominate BoundInst will not be cloned.
+///
+/// \return `true` on success, if instructions should not be cloned this
+/// function also returns `true`.
+bool cloneChain(llvm::Instruction *From,
+  llvm::SmallVectorImpl<llvm::Instruction *> &CloneList,
+  llvm::Instruction *BoundInst = nullptr, llvm::DominatorTree *DT = nullptr);
+
+/// \brief Traverses chains of operands of `From` instruction and performs a
+/// a search for operands which do not dominate a specified `BoundInstr`.
+///
+/// This method if helpful when some instruction is cloned. Insertion
+/// of a clone into IR should be performed accurately. Because operands must be
+/// calculated before their uses. This functions can be used to determine
+/// operands that should be fixed (for example, also cloned).
+///
+/// \return `true` if `From` does not dominate `BoundInst` (in this case NotDom
+/// will be empty), otherwise return `false` (`NotDom` will contain all
+/// instructions which have been found).
+bool findNotDom(llvm::Instruction *From,
+  llvm::Instruction *BoundInst, llvm::DominatorTree *DT,
+  llvm::SmallVectorImpl<llvm::Use *> &NotDom);
 
 /// Returns a meta information for a global variable or nullptr;
 llvm::DIGlobalVariable * getMetadata(const llvm::GlobalVariable *Var);
