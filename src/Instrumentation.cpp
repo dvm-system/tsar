@@ -6,19 +6,21 @@
 //
 //===----------------------------------------------------------------------===//
 //
+#include "Instrumentation.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ScalarEvolutionExpander.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 
 #include "tsar_utility.h"
-#include "Instrumentation.h"
 #include "Intrinsics.h"
 #include "CanonicalLoop.h"
 #include "DFRegionInfo.h"
@@ -40,7 +42,9 @@ typedef FunctionPassProvider<
   DFRegionInfoPass,
   LoopInfoWrapperPass,
   CanonicalLoopPass,
-  MemoryMatcherImmutableWrapper> InstrumentationPassProvider;
+  MemoryMatcherImmutableWrapper,
+  ScalarEvolutionWrapperPass,
+  DominatorTreeWrapperPass> InstrumentationPassProvider;
 
 STATISTIC(NumInstLoop, "Number of instrumented loops");
 
@@ -51,6 +55,8 @@ INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PROVIDER_END(InstrumentationPassProvider, "instrumentation-provider",
   "Instrumentation Provider")
 
@@ -152,125 +158,272 @@ void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
   Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
 }
 
-void Instrumentation::loopBeginInstr(llvm::Loop *L,
-  llvm::BasicBlock &Header, unsigned Idx){
-  //looking through all possible loop predeccessors
-  for(auto it = pred_begin(&Header), et = pred_end(&Header); it != et; ++it) {
-    BasicBlock* Predeccessor = *it;
-    if(!L->contains(Predeccessor)) {
-      auto ExitInstr = Predeccessor->getTerminator();
-      //looking for successor which is our Header
-      for(unsigned I = 0; I < ExitInstr->getNumSuccessors(); ++I) {
-        //create a new BasicBlock between predeccessor and Header
-        //insert a function call there
-        if(ExitInstr->getSuccessor(I) == &Header) {
-          auto Block4Insert = BasicBlock::Create(Header.getContext(),
-            "loop_begin", Header.getParent());
-          IRBuilder<> Builder(Block4Insert, Block4Insert->end());
-          Builder.CreateBr(ExitInstr->getSuccessor(I));
-          ExitInstr->setSuccessor(I, Block4Insert);
-          auto DILoop = createPointerToDI(Idx, *Block4Insert->begin());
-          auto Region = mRegionInfo->getRegionFor(L);
-          auto CanonLoop = mCanonicalLoop->find_as(Region);
-	  ConstantInt *First = nullptr, *Last = nullptr, *Step = nullptr;
-          if(CanonLoop != mCanonicalLoop->end() && (*CanonLoop)->isCanonical()){
-	    //I don't know what is lying under llvm::Value returned from
-	    //getStart/getEnd, but looks like it casts to ConstantInt correctly.
-	    if(isa<ConstantInt>((*CanonLoop)->getStart()))
-              First = cast<ConstantInt>((*CanonLoop)->getStart());
-	    if(isa<ConstantInt>((*CanonLoop)->getEnd()))
-	      Last = cast<ConstantInt>((*CanonLoop)->getEnd());
-	    if(isa<SCEVConstant>((*CanonLoop)->getStep()))
-	      Step = cast<SCEVConstant>((*CanonLoop)->getStep())->getValue();
-          }
-	  //First, Last and Step should be i64. Seems that CanonLoop pass
-	  //returns them as i32. So this changes i32 to i64
-          First = (First == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()),First->getSExtValue());
-          Last = (Last == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()), Last->getSExtValue());
-          Step = (Step == nullptr) ? ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()), 0) : ConstantInt::get(Type::getInt64Ty(Header
-	    .getContext()), Step->getSExtValue());
-          Builder.SetInsertPoint(Block4Insert->getTerminator());
-	  //void sapforSLBegin(void*, long, long, long)
-          auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_begin);
-          auto Call = Builder.CreateCall(Fun, {DILoop, First, Last, Step});
-        }
+std::tuple<Value *, Value *, Value *, bool>
+Instrumentation::computeLoopBounds(Loop &L, IntegerType &IntTy,
+    ScalarEvolution &SE, DominatorTree &DT,
+    DFRegionInfo &RI, const CanonicalLoopSet &CS) {
+  auto *Region = RI.getRegionFor(&L);
+  assert(Region && "Region must not be null!");
+  auto CanonItr = CS.find_as(Region);
+  if (CanonItr == CS.end())
+    return std::make_tuple(nullptr, nullptr, nullptr, false);
+  auto *Header = L.getHeader();
+  auto *End = (*CanonItr)->getEnd();
+  if (!End)
+    return std::make_tuple(nullptr, nullptr, nullptr, false);
+  auto *EndTy = End->getType();
+  if (!EndTy || !EndTy->isIntegerTy() ||
+      EndTy->getIntegerBitWidth() > IntTy.getBitWidth())
+    return std::make_tuple(nullptr, nullptr, nullptr, false);
+  bool Signed = false;
+  bool Unsigned = false;
+  for (auto *U : End->users())
+    if (auto *Cmp = dyn_cast<CmpInst>(U)) {
+      Signed |= Cmp->isSigned();
+      Unsigned |= Cmp->isUnsigned();
+    }
+  // Is sign known?
+  if (Signed == Unsigned)
+    return std::make_tuple(nullptr, nullptr, nullptr, false);
+  auto InstrMD = MDNode::get(Header->getContext(), {});
+  assert(L.getLoopPreheader() && "For-loop must have a preheader!");
+  auto &InsertBefore = L.getLoopPreheader()->back();
+  // Compute start if possible.
+  auto *Start = (*CanonItr)->getStart();
+  if (Start) {
+    auto StartTy = Start->getType();
+    if (StartTy && StartTy->isIntegerTy()) {
+      if (StartTy->getIntegerBitWidth() > IntTy.getBitWidth()) {
+        Start = nullptr;
+      } else if (StartTy->getIntegerBitWidth() < IntTy.getBitWidth()) {
+        Start = CastInst::Create(Signed ? Instruction::SExt : Instruction::ZExt,
+          Start, &IntTy, "loop.start", &InsertBefore);
+        cast<Instruction>(Start)->setMetadata("sapfor.da", InstrMD);
       }
     }
   }
+  // It is unsafe to compute step and end bound if for-loop is not canonical.
+  // In this case step and end bound may depend on the loop iteration.
+  if (!(*CanonItr)->isCanonical())
+    return std::make_tuple(Start, nullptr, nullptr, Signed);
+  // Compute end if possible.
+  if (isa<Instruction>(End)) {
+    SmallVector<Instruction *, 8> EndClone;
+    if (!cloneChain(cast<Instruction>(End), EndClone, &InsertBefore, &DT)) {
+      End = nullptr;
+    } else {
+      for (auto I = EndClone.rbegin(), EI = EndClone.rend(); I != EI; ++I) {
+        (*I)->insertBefore(&InsertBefore);
+        (*I)->setMetadata("sapfor.da", InstrMD);
+      }
+      if (!EndClone.empty())
+        End = EndClone.front();
+    }
+  }
+  if (End && EndTy->getIntegerBitWidth() < IntTy.getBitWidth()) {
+    End = CastInst::Create(Signed ? Instruction::SExt : Instruction::ZExt,
+      End, &IntTy, "loop.end", &InsertBefore);
+    cast<Instruction>(End)->setMetadata("sapfor.da", InstrMD);
+  }
+  auto Step = computeSCEV(
+    (*CanonItr)->getStep(), IntTy, Signed, SE, DT, InsertBefore);
+  return std::make_tuple(Start, End, Step, Signed);
 }
 
-void Instrumentation::loopEndInstr(llvm::Loop const *L,
-  llvm::BasicBlock &Header, unsigned Idx) {
-  //Creating a node between inside/outside blocks of the loop. Then insert
-  //call of sapforSLEnd() in this node.
-  SmallVector<BasicBlock*, 8> ExitBlocks;
-  SmallVector<BasicBlock*, 8> ExitingBlocks;
-  L->getExitBlocks(ExitBlocks);
-  L->getExitingBlocks(ExitingBlocks);
-  for(auto Exiting: ExitingBlocks) {
-    auto ExitInstr = Exiting->getTerminator();
-    for(unsigned SucNumb = 0; SucNumb<ExitInstr->getNumSuccessors(); ++SucNumb){
-      for(auto Exit : ExitBlocks) {
-        if(Exiting->getTerminator()->getSuccessor(SucNumb) == Exit) {
-          auto Block4Insert = BasicBlock::Create(Header.getContext(),
-            "loop_exit", Header.getParent());
-          IRBuilder<> Builder(Block4Insert, Block4Insert->end());
-          Builder.CreateBr(ExitInstr->getSuccessor(SucNumb));
-          ExitInstr->setSuccessor(SucNumb, Block4Insert);
-          auto DILoop = createPointerToDI(Idx, *Block4Insert->begin());
-          Builder.SetInsertPoint(Block4Insert->getTerminator());
-	  //void sapforSLEnd(void*)
-          auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_end);
-          auto Call = Builder.CreateCall(Fun, {DILoop});
+Value * Instrumentation::computeSCEV(const SCEV *ExprSCEV,
+    IntegerType &IntTy, bool Signed, ScalarEvolution &SE, DominatorTree &DT,
+    Instruction &InsertBefore) {
+  if (!ExprSCEV)
+    return nullptr;
+  auto *ExprTy = ExprSCEV->getType();
+  if (!ExprTy || !ExprTy->isIntegerTy() ||
+      ExprTy->getIntegerBitWidth() > IntTy.getBitWidth())
+    return nullptr;
+  auto InstrMD = MDNode::get(InsertBefore.getContext(), {});
+  if (ExprTy->getIntegerBitWidth() < IntTy.getBitWidth())
+    ExprSCEV = Signed ? SE.getSignExtendExpr(ExprSCEV, &IntTy) :
+      SE.getZeroExtendExpr(ExprSCEV, &IntTy);
+  SCEVExpander Exp(SE, InsertBefore.getModule()->getDataLayout(), "");
+  auto Expr = Exp.expandCodeFor(ExprSCEV, &IntTy, &InsertBefore);
+  SmallVector<Use *, 4> ExprNotDom;
+  if (auto ExprInst = dyn_cast<Instruction>(Expr)) {
+    if (findNotDom(ExprInst, &InsertBefore, &DT, ExprNotDom)) {
+      SmallVector<Instruction *, 8> ExprClone;
+      if (!cloneChain(ExprInst, ExprClone, &InsertBefore, &DT))
+        return nullptr;
+      for (auto I = ExprClone.rbegin(), EI = ExprClone.rend(); I != EI; ++I) {
+        (*I)->insertBefore(cast<Instruction>(&InsertBefore));
+        (*I)->setMetadata("sapfor.da", InstrMD);
+      }
+      if (!ExprClone.empty())
+        Expr = ExprClone.front();
+    } else {
+      setMDForDeadInstructions(ExprInst);
+      for (auto *Op : ExprNotDom) {
+        SmallVector<Instruction *, 8> ExprClone;
+        if (!cloneChain(cast<Instruction>(Op), ExprClone, &InsertBefore, &DT)) {
+          deleteDeadInstructions(ExprInst);
+          return nullptr;
         }
+        for (auto I = ExprClone.rbegin(), EI = ExprClone.rend(); I != EI; ++I) {
+          (*I)->insertBefore(cast<Instruction>(Op->getUser()));
+          (*I)->setMetadata("sapfor.da", InstrMD);
+        }
+        Op->getUser()->setOperand(Op->getOperandNo(), ExprClone.front());
       }
     }
   }
+  return Expr;
 }
 
-void Instrumentation::loopIterInstr(llvm::Loop *L,
-  llvm::BasicBlock &Header, unsigned Idx) {
-  auto Region = mRegionInfo->getRegionFor(L);
-  auto CanonLoop = mCanonicalLoop->find_as(Region);
-  //instrumentate iterations only in canonical loops.
-  if(CanonLoop != mCanonicalLoop->end() && (*CanonLoop)->isCanonical()){
-    auto Induction = (*CanonLoop)->getInduction();
-    auto& InsertBefore = Header.front();
-    auto Addr = new BitCastInst(Induction,
-      Type::getInt8PtrTy(Header.getContext()), "Addr", &InsertBefore);
-    auto DILoop = createPointerToDI(Idx, InsertBefore);
-    //void sapforSLIter(void*, void*)
-    auto Fun = getDeclaration(Header.getModule(), IntrinsicId::sl_iter);
-    CallInst::Create(Fun, {DILoop, Addr}, "", &InsertBefore);
+void Instrumentation::deleteDeadInstructions(Instruction *From) {
+  if (!From->use_empty())
+    return;
+  for (unsigned OpIdx = 0, OpIdxE = From->getNumOperands();
+       OpIdx != OpIdxE; ++OpIdx) {
+    Value *OpV = From->getOperand(OpIdx);
+    From->setOperand(OpIdx, nullptr);
+    if (auto *I = dyn_cast<Instruction>(OpV))
+      deleteDeadInstructions(I);
   }
+  From->eraseFromParent();
 }
 
-void Instrumentation::visitBasicBlock(llvm::BasicBlock &B) {
-  if(mLoopInfo->isLoopHeader(&B)) {
-    auto Loop = mLoopInfo->getLoopFor(&B);
-    unsigned Start = Loop->getStartLoc()->getLine(), End = 0;
-    //every loop has start but some could have undefined end (e.g. loops with
-    //breaks). Leave End parameter as 0 in that cases.
-    if(Loop->getLocRange())
-      End = Loop->getLocRange().getEnd().getLine();
-    std::stringstream Debug;
-    Debug << "type=seqloop*file=" << B.getModule()->getSourceFileName() <<
-      "*line1=" << Start << "*line2=" << End << "**";
-    auto Idx = mDIStrings.regItem(Loop);
-    createInitDICall(Debug.str(), Idx);
-    /*auto Region = mRegionInfo->getRegionFor(Loop);
-    auto CanonLoop = mCanonicalLoop->find_as(Region);
-    if(CanonLoop != mCanonicalLoop->end()) {
-    }*/
-    loopBeginInstr(Loop, B, Idx);
-    loopEndInstr(Loop, B, Idx);
-    loopIterInstr(Loop, B, Idx);
+void Instrumentation::setMDForDeadInstructions(llvm::Instruction *From) {
+  if (!From->use_empty())
+    return;
+  From->setMetadata("sapfor.da", MDNode::get(From->getContext(), {}));
+  for (auto &Op : From->operands())
+    if (auto I = dyn_cast<Instruction>(&Op))
+      setMDForSingleUseInstructions(I);
+}
+
+void Instrumentation::setMDForSingleUseInstructions(Instruction *From) {
+  if (From->getNumUses() != 1)
+    return;
+  From->setMetadata("sapfor.da", MDNode::get(From->getContext(), {}));
+  for (auto &Op : From->operands())
+    if (auto I = dyn_cast<Instruction>(&Op))
+      setMDForSingleUseInstructions(I);
+}
+
+void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
+    ScalarEvolution &SE, DominatorTree &DT,
+    DFRegionInfo &RI, const CanonicalLoopSet &CS) {
+  auto *Header = L->getHeader();
+  auto InstrMD = MDNode::get(Header->getContext(), {});
+  Instruction *InsertBefore = nullptr;
+  Value *Start = nullptr, *End = nullptr, *Step = nullptr;
+  bool Signed = false;
+  auto *Int64Ty = Type::getInt64Ty(Header->getContext());
+  if (auto Preheader = L->getLoopPreheader()) {
+    InsertBefore = Preheader->getTerminator();
+    std::tie(Start, End, Step, Signed) =
+      computeLoopBounds(*L, *Int64Ty, SE, DT, RI, CS);
+  } else {
+    auto *NewBB = BasicBlock::Create(Header->getContext(),
+      "preheader", Header->getParent(), Header);
+    InsertBefore = BranchInst::Create(Header, NewBB);
+    InsertBefore->setMetadata("sapfor.da", InstrMD);
+    for (auto *PredBB : predecessors(Header)) {
+      if (L->contains(PredBB))
+        continue;
+      auto *PredBranch = PredBB->getTerminator();
+      for (unsigned SuccIdx = 0, SuccIdxE = PredBranch->getNumSuccessors();
+           SuccIdx < SuccIdxE; ++SuccIdx)
+        if (PredBranch->getSuccessor(SuccIdx) ==  Header)
+          PredBranch->setSuccessor(SuccIdx, NewBB);
+    }
   }
+  auto DbgLoc = L->getLocRange();
+  std::string StartLoc = DbgLoc.getStart() ?
+    ("line1=" + Twine(DbgLoc.getStart().getLine()) + "*" +
+      "col1=" + Twine(DbgLoc.getStart().getCol()) + "*").str() :
+    std::string("");
+  std::string EndLoc = DbgLoc.getEnd() ?
+    ("line1=" + Twine(DbgLoc.getEnd().getLine()) + "*" +
+      "col1=" + Twine(DbgLoc.getEnd().getCol()) + "*").str() :
+    std::string("");
+  LoopBoundKind BoundFlag = LoopBoundIsUnknown;
+  BoundFlag |= Start ? LoopStartIsKnown : LoopBoundIsUnknown;
+  BoundFlag |= End ? LoopEndIsKnown : LoopBoundIsUnknown;
+  BoundFlag |= Step ? LoopStepIsKnown : LoopBoundIsUnknown;
+  BoundFlag |= !Signed ? LoopBoundUnsigned : LoopBoundIsUnknown;
+  createInitDICall(
+    Twine("type=") + "seqloop" + "*" +
+    "file=" + Header->getModule()->getSourceFileName() + "*" +
+    "bounds=" + Twine(BoundFlag) + "*" +
+    StartLoc + EndLoc + "*", DILoopIdx);
+  auto *DILoop = createPointerToDI(DILoopIdx, *InsertBefore);
+  Start = Start ? Start : ConstantInt::get(Int64Ty, 0);
+  End = End ? End : ConstantInt::get(Int64Ty, 0);
+  Step = Step ? Step : ConstantInt::get(Int64Ty, 0);
+  auto Fun = getDeclaration(Header->getModule(), IntrinsicId::sl_begin);
+  auto Call = CallInst::Create(
+    Fun, {DILoop, Start, End, Step}, "", InsertBefore);
+  Call->setMetadata("sapfor.da", InstrMD);
+}
+
+void Instrumentation::loopEndInstr(Loop *L, DIStringRegister::IdTy DILoopIdx) {
+  assert(L && "Loop must not be null!");
+  auto *Header = L->getHeader();
+  auto InstrMD = MDNode::get(Header->getContext(), {});
+  for (auto *BB : L->blocks())
+    for (auto *SuccBB : successors(BB)) {
+      if (L->contains(SuccBB))
+        continue;
+      auto *ExitBB = BasicBlock::Create(Header->getContext(),
+        SuccBB->getName(), Header->getParent(), SuccBB);
+      auto *InsertBefore = BranchInst::Create(SuccBB, ExitBB);
+      InsertBefore->setMetadata("sapfor.da", InstrMD);
+      auto *ExitingBranch = BB->getTerminator();
+      for (unsigned SuccIdx = 0, SuccIdxE = ExitingBranch->getNumSuccessors();
+           SuccIdx < SuccIdxE; ++SuccIdx) {
+        if (ExitingBranch->getSuccessor(SuccIdx) == SuccBB)
+          ExitingBranch->setSuccessor(SuccIdx, ExitBB);
+      }
+      auto DILoop = createPointerToDI(DILoopIdx, *InsertBefore);
+      auto Fun = getDeclaration(Header->getModule(), IntrinsicId::sl_end);
+      auto Call = CallInst::Create(Fun, {DILoop}, "", InsertBefore);
+      Call->setMetadata("sapfor.da", InstrMD);
+    }
+}
+
+void Instrumentation::loopIterInstr(Loop *L, DIStringRegister::IdTy DILoopIdx) {
+  assert(L && "Loop must not be null!");
+  auto *Header = L->getHeader();
+  auto InstrMD = MDNode::get(Header->getContext(), {});
+  auto &InsertBefore = *Header->getFirstInsertionPt();
+  auto *Int64Ty = Type::getInt64Ty(Header->getContext());
+  auto *CountPHI = PHINode::Create(Int64Ty, 0, "loop.count", &Header->front());
+  CountPHI->setMetadata("sapfor.da", InstrMD);
+  auto *Int1 = ConstantInt::get(Int64Ty, 1);
+  assert(L->getLoopPreheader() &&
+    "Preheader must be already created if it did not exist!");
+  CountPHI->addIncoming(Int1, L->getLoopPreheader());
+  auto *Inc = BinaryOperator::CreateNUW(BinaryOperator::Add, CountPHI,
+    ConstantInt::get(Int64Ty, 1), "inc", &InsertBefore);
+  Inc->setMetadata("sapfor.da", InstrMD);
+  SmallVector<BasicBlock *, 4> Latches;
+  L->getLoopLatches(Latches);
+  for (auto *Latch : Latches)
+    CountPHI->addIncoming(Inc, Latch);
+  auto *DILoop = createPointerToDI(DILoopIdx, *Inc);
+  auto Fun = getDeclaration(Header->getModule(), IntrinsicId::sl_iter);
+  auto *Call = CallInst::Create(Fun, {DILoop, CountPHI}, "", Inc);
+  Call->setMetadata("sapfor.da", InstrMD);
+}
+
+void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
+    llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
+    DFRegionInfo &RI, const CanonicalLoopSet &CS) {
+  for_each(LI, [this, &SE, &DT, &RI, &CS](Loop *L) {
+    DEBUG(dbgs() << "[INSTR]: process loop "; L->print(dbgs()); dbgs() << "\n");
+    auto Idx = mDIStrings.regItem(L);
+    loopBeginInstr(L, Idx, SE, DT, RI, CS);
+    loopEndInstr(L, Idx);
+    loopIterInstr(L, Idx);
+  });
 }
 
 void Instrumentation::visit(Function &F) {
@@ -314,10 +467,6 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   if(F.getLinkage() == Function::LinkOnceAnyLinkage ||
      F.getLinkage() == Function::LinkOnceODRLinkage)
     F.setLinkage(Function::InternalLinkage);
-  auto &Provider = mInstrPass->getAnalysis<InstrumentationPassProvider>(F);
-  mLoopInfo = &Provider.get<LoopInfoWrapperPass>().getLoopInfo();
-  mRegionInfo = &Provider.get<DFRegionInfoPass>().getRegionInfo();
-  mCanonicalLoop = &Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   auto *M = F.getParent();
   auto *MD = F.getSubprogram();
   auto Idx = mDIStrings[&F];
@@ -326,6 +475,13 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto DIFunc = createPointerToDI(Idx, FirstInst);
   auto Call = CallInst::Create(Fun, {DIFunc}, "", &FirstInst);
   Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
+  auto &Provider = mInstrPass->getAnalysis<InstrumentationPassProvider>(F);
+  auto &LoopInfo = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
+  auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
+  auto &CanonicalLoop = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+  auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
+  auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
+  regLoops(F, LoopInfo, SE, DT, RegionInfo, CanonicalLoop);
 }
 
 void Instrumentation::visitCallSite(llvm::CallSite CS) {

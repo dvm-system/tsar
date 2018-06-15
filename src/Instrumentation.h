@@ -1,6 +1,7 @@
 #ifndef INSTRUMENTATION_H
 #define INSTRUMENTATION_H
 
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/InstVisitor.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -22,15 +23,33 @@ class Function;
 class Loop;
 class Type;
 class Value;
+class SCEV;
+
+class LoopInfo;
+class DominatorTree;
+class ScalarEvolution;
 }
 
 namespace tsar {
+class DFRegionInfo;
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
 class Instrumentation : public llvm::InstVisitor<Instrumentation> {
   using Base = llvm::InstVisitor<Instrumentation>;
   using TypeRegister = ItemRegister<llvm::Type *>;
   using DIStringRegister = ItemRegister<
     llvm::AllocaInst *, llvm::GlobalVariable *, llvm::Instruction *,
     llvm::Function *, llvm::Loop *, llvm::DILocation *, llvm::Value *>;
+
+  enum LoopBoundKind : short {
+    LoopBoundIsUnknown = 0,
+    LoopStartIsKnown = 1u << 0,
+    LoopEndIsKnown = 1u << 1,
+    LoopStepIsKnown = 1u << 2,
+    LoopBoundUnsigned = 1u << 3,
+    LLVM_MARK_AS_BITMASK_ENUM(LoopBoundUnsigned)
+  };
 public:
   static const unsigned maxIntBitWidth = 64;
 
@@ -47,13 +66,9 @@ public:
   void visitStoreInst(llvm::StoreInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
-  void visitBasicBlock(llvm::BasicBlock &B);
   void visitCallSite(llvm::CallSite CS);
 
 private:
-  void loopBeginInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
-  void loopEndInstr(llvm::Loop const *L, llvm::BasicBlock& Header, unsigned);
-  void loopIterInstr(llvm::Loop *L, llvm::BasicBlock& Header, unsigned);
 
   void instrumentateMain(llvm::Module& M);
 
@@ -81,8 +96,8 @@ private:
   /// - metadata string for accessed memory,
   /// - address of array base (in case of array access) or nullptr.
   std::tuple<llvm::Value *, llvm::Value *, llvm::Value *, llvm::Value *>
-  regMemoryAccessArgs(llvm::Value *Ptr, const llvm::DebugLoc &DbgLoc,
-    llvm::Instruction &InsertBefore);
+    regMemoryAccessArgs(llvm::Value *Ptr, const llvm::DebugLoc &DbgLoc,
+      llvm::Instruction &InsertBefore);
 
   /// \brief Registers a metadata string and a variable.
   ///
@@ -145,16 +160,70 @@ private:
   llvm::LoadInst* createPointerToDI(
     DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore);
 
-  llvm::InstrumentationPass *mInstrPass;
+  /// \brief Creates instructions to compute a specified SCEV if possible.
+  ///
+  /// \pref DominatorTree (mDT) and ScalarEvoultion (mSE) must not be null.
+  /// \post
+  /// - Created instructions will be safely inserted before `InsertBefore`.
+  /// - The result should have a specified integer type `IntTy`.
+  /// - The result should be signed if `Signed` is `true`.
+  /// - All new instructions will be marked with 'sapfor.da' metadata.
+  llvm::Value * computeSCEV(const llvm::SCEV *ExprSCEV,
+    llvm::IntegerType &IntTy, bool Signed,
+    llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
+    llvm::Instruction &InsertBefore);
 
+  /// Registers all loops in a specified function
+  void regLoops(llvm::Function &F, llvm::LoopInfo &LI,
+    llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
+    DFRegionInfo &RI, const CanonicalLoopSet &CS);
+
+  /// Registers metadata string which describes a loop and inserts call of
+  /// sapforSLBegin() function.
+  void loopBeginInstr(llvm::Loop *L, DIStringRegister::IdTy DILoopIdx,
+    llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
+    DFRegionInfo &RI, const CanonicalLoopSet &CS);
+
+  /// This function creates a new basic block between exiting and exit blocks
+  /// and inserts call of sapforSLEnd() in this new block.
+  void loopEndInstr(llvm::Loop *L, DIStringRegister::IdTy DILoopIdx);
+
+  /// \brief Add counter to determine number of current loop iteration.
+  ///
+  /// A start value of the counter is 1. The counter is an argument for
+  /// sapforSIter() function. Note, that this counter has not been presented in
+  /// a source code.
+  void loopIterInstr(llvm::Loop *L, DIStringRegister::IdTy DILoopIdx);
+
+  /// \brief Creates instructions to compute bounds and step of canonical loop.
+  ///
+  /// \return <start,end,step,signed> tuple, if some of values can not be
+  /// computed (for example a loop is not in canonical form) return `nullptr`.
+  /// \post Instructions to compute values will be inserted before terminator
+  /// of a loop preheader.
+  std::tuple<llvm::Value *, llvm::Value *, llvm::Value *, bool>
+    computeLoopBounds(llvm::Loop &L, llvm::IntegerType &IntTy,
+      llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
+      DFRegionInfo &RI, const CanonicalLoopSet &CS);
+
+  /// Recursively delete instruction with empty list of uses (for all deleted
+  /// instructions a parent must be specified).
+  void deleteDeadInstructions(llvm::Instruction *From);
+
+  /// Recursively set "sapfor.da" metadata for a specified instruction `From`
+  /// and its operands, if `Form` has no uses (while each operand has a single
+  /// use).
+  void setMDForDeadInstructions(llvm::Instruction *From);
+
+  /// Recursively set "sapfor.da" metadata for a specified instruction 'From'
+  /// and its operands, it each of 'Form' and the operands has single use.
+  void setMDForSingleUseInstructions(llvm::Instruction *From);
+
+  llvm::InstrumentationPass *mInstrPass = nullptr;
   TypeRegister mTypes;
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;
-
-  llvm::LoopInfo* mLoopInfo = nullptr;
-  llvm::DFRegionInfo* mRegionInfo = nullptr;
-  const CanonicalLoopSet* mCanonicalLoop = nullptr;
 };
 }
 
