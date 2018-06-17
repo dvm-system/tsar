@@ -98,6 +98,28 @@ ModulePass * llvm::createInstrumentationPass() {
   return new InstrumentationPass();
 }
 
+void static addNameDAMetadata(Function &F, StringRef FuncKind) {
+  assert(F.getParent() && "Function must be inserted into a module!");
+  auto FuncKindMD = MDString::get(F.getContext(),  FuncKind);
+  auto *FuncRefMD = ValueAsMetadata::get(&F);
+  auto FuncMD = MDNode::get(F.getContext(), {   FuncKindMD, FuncRefMD });
+  F.setMetadata("sapfor.da", FuncMD);
+  auto NamedMD = F.getParent()->getOrInsertNamedMetadata("sapfor.da");
+  NamedMD->addOperand(FuncMD);
+}
+
+Function * tsar::createEmptyInitDI(Module &M, Type &IdTy) {
+  auto &Ctx = M.getContext();
+  auto FuncType = FunctionType::get(Type::getVoidTy(Ctx), { &IdTy }, false);
+  auto Func = Function::Create(FuncType,
+    GlobalValue::LinkageTypes::InternalLinkage, "sapfor.init.di", &M);
+  addNameDAMetadata(*Func, "sapfor.init.di");
+  Func->arg_begin()->setName("startid");
+  auto EntryBB = BasicBlock::Create(Ctx, "entry", Func);
+  ReturnInst::Create(Ctx, EntryBB);
+  return Func;
+}
+
 Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
   : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
   const std::string& ModuleName = M.getModuleIdentifier();
@@ -107,16 +129,7 @@ Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
     ConstantPointerNull::get(DIPoolTy), "sapfor.di.pool", nullptr);
   mDIPool->setAlignment(4);
   mDIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
-  //create function for debug information initialization
-  auto Type = FunctionType::get(Type::getVoidTy(M.getContext()),
-    {Type::getInt64Ty(M.getContext())}, false);
-  mInitDIAll = Function::Create(
-    Type, GlobalValue::LinkageTypes::InternalLinkage, "sapfor.init.di.all", &M);
-  mInitDIAll->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
-  mInitDIAll->arg_begin()->setName("Offset");
-  auto EntryBB =
-    BasicBlock::Create(mInitDIAll->getContext(), "entry", mInitDIAll);
-  ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
+  mInitDIAll = createEmptyInitDI(M, *Type::getInt64Ty(M.getContext()));
   reserveIncompleteDIStrings(M);
   regFunctions(M);
   regGlobals(M);
@@ -674,6 +687,7 @@ void Instrumentation::regTypes(Module& M) {
     FunctionType::get(Type::getInt64Ty(Ctx), { Int64Ty }, false);
   auto RegTypeFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.type", &M);
+  addNameDAMetadata(*RegTypeFunc, "sapfor.register.type");
   RegTypeFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto EntryBB = BasicBlock::Create(Ctx, "entry", RegTypeFunc);
   auto *StartId = &*RegTypeFunc->arg_begin();
@@ -827,7 +841,6 @@ void Instrumentation::regGlobals(Module& M) {
   auto FuncType = FunctionType::get(Type::getVoidTy(Ctx), false);
   auto RegGlobalFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.global", &M);
-  RegGlobalFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto *EntryBB = BasicBlock::Create(Ctx, "entry", RegGlobalFunc);
   auto *RetInst = ReturnInst::Create(mInitDIAll->getContext(), EntryBB);
   DIStringRegister::IdTy RegisteredGLobals = 0;
@@ -841,6 +854,8 @@ void Instrumentation::regGlobals(Module& M) {
   }
   if (RegisteredGLobals == 0)
     RegGlobalFunc->eraseFromParent();
+  else
+    addNameDAMetadata(*RegGlobalFunc, "sapfor.register.global");
 }
 
 void Instrumentation::instrumentateMain(Module& M) {

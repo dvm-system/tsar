@@ -35,6 +35,15 @@ class DFRegionInfo;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
+/// Creates an empty "sapfor.init.di" function instruction to initialize all
+/// metadata strings which is necessary for instrumentation.
+///
+/// The entry block of this function will contain only `ret` instruction.
+/// This function will be marked with 'sapfor.da' metadata. This metadata
+/// will be also inserted into the named 'sapfor.da' metadata of a specified
+/// module.
+llvm::Function * createEmptyInitDI(llvm::Module &M, llvm::Type &IdTy);
+
 class Instrumentation : public llvm::InstVisitor<Instrumentation> {
   using Base = llvm::InstVisitor<Instrumentation>;
   using TypeRegister = ItemRegister<llvm::Type *>;
