@@ -475,6 +475,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto DIFunc = createPointerToDI(Idx, FirstInst);
   auto Call = CallInst::Create(Fun, {DIFunc}, "", &FirstInst);
   Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
+  regArgs(F, DIFunc);
   auto &Provider = mInstrPass->getAnalysis<InstrumentationPassProvider>(F);
   auto &LoopInfo = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
   auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
@@ -482,6 +483,46 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
   auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
   regLoops(F, LoopInfo, SE, DT, RegionInfo, CanonicalLoop);
+}
+
+void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
+  auto InstrMD = MDNode::get(F.getContext(), {});
+  auto *BytePtrTy = Type::getInt8PtrTy(F.getContext());
+  auto *SizeTy = Type::getInt64Ty(F.getContext());
+  for (auto &Arg : F.args()) {
+    if (Arg.getNumUses() != 1)
+      continue;
+    auto *U = dyn_cast<StoreInst>(*Arg.user_begin());
+    if (!U)
+      continue;
+    auto *Alloca = dyn_cast<AllocaInst>(U->getPointerOperand());
+    if (!Alloca)
+      continue;
+    auto AllocaMD = getMetadata(Alloca);
+    if (!AllocaMD || !AllocaMD->isParameter())
+      continue;
+    DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
+      dbgs() << " as argument "; Arg.print(dbgs());
+      dbgs() << " with no " << Arg.getArgNo() << "\n");
+    auto AllocaAddr =
+      new BitCastInst(Alloca, BytePtrTy, Alloca->getName() + ".addr", U);
+    AllocaAddr->setMetadata("sapfor.da", InstrMD);
+    auto Pos = ConstantInt::get(SizeTy, Arg.getArgNo());
+    unsigned Rank;
+    uint64_t ArraySize;
+    std::tie(Rank, ArraySize) = arraySize(Alloca->getAllocatedType());
+    CallInst *Call = nullptr;
+    if (Rank != 0) {
+      auto *Size = ConstantInt::get(SizeTy, ArraySize);
+      auto *Fun = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_arr);
+      Call = CallInst::Create(Fun, { DIFunc, Size, AllocaAddr, Pos }, "");
+    } else {
+      auto *Fun = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_var);
+      Call = CallInst::Create(Fun, { DIFunc, AllocaAddr, Pos }, "");
+    }
+    Call->insertBefore(U);
+    Call->setMetadata("sapfor.da", InstrMD);
+  }
 }
 
 void Instrumentation::visitCallSite(llvm::CallSite CS) {
@@ -578,26 +619,6 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   if (I.getMetadata("sapfor.da"))
     return;
   DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
-  // instrumentate stores for function formal parameters in special way
-  if(Argument::classof(I.getValueOperand()) &&
-    AllocaInst::classof(I.getPointerOperand())) {
-    auto Idx = mDIStrings[cast<Argument>(I.getValueOperand())->getParent()];
-    auto DIFunc = createPointerToDI(Idx, I);
-    auto Addr = new BitCastInst(I.getPointerOperand(),
-      Type::getInt8PtrTy(I.getContext()), "Addr", &I);
-    auto Position = ConstantInt::get(Type::getInt64Ty(I.getContext()),
-      cast<Argument>(I.getValueOperand())->getArgNo());
-    if(cast<AllocaInst>(I.getPointerOperand())->isArrayAllocation()) {
-      auto ArrSize = cast<AllocaInst>(I.getPointerOperand())->getArraySize();
-      auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_dummy_arr);
-      auto Call = CallInst::Create(Fun, {DIFunc, ArrSize, Addr, Position}, "");
-      Call->insertAfter(&I);
-    } else {
-      auto Fun = getDeclaration(I.getModule(), IntrinsicId::reg_dummy_var);
-      auto Call = CallInst::Create(Fun, {DIFunc, Addr, Position}, "");
-      Call->insertAfter(&I);
-    }
-  }
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
   auto *M = I.getModule();

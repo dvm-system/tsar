@@ -87,6 +87,10 @@ private:
   void regFunction(llvm::Value &F, llvm::Type *ReturnTy, unsigned Rank,
     llvm::DISubprogram *MD, DIStringRegister::IdTy Idx, llvm::Module &M);
 
+  /// Registers arguments of a specified function which have not be promoted
+  /// to registers.
+  void regArgs(llvm::Function &F, llvm::LoadInst *DIFunc);
+
   /// \brief Returns parameter for sapforRegVar(...) or sapforRegArr(...)
   /// functions.
   ///
