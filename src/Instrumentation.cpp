@@ -714,6 +714,12 @@ void Instrumentation::regTypes(Module& M) {
   auto *Cmp = new ICmpInst(*LoopBB, CmpInst::ICMP_ULT, Inc, Size, "cmp");
   auto *EndBB = BasicBlock::Create(M.getContext(), "end", RegTypeFunc);
   BranchInst::Create(LoopBB, EndBB, Cmp, LoopBB);
+  auto *DeclTypeFunc = getDeclaration(&M, IntrinsicId::decl_types);
+  auto *IdsArg = GetElementPtrInst::Create(nullptr, IdsArray,
+    { Int0, Int0 }, "ids", EndBB);
+  auto *SizesArg = GetElementPtrInst::Create(nullptr, SizesArray,
+    { Int0, Int0 }, "sizes", EndBB);
+  CallInst::Create(DeclTypeFunc, { Size, IdsArg, SizesArg }, "", EndBB);
   ReturnInst::Create(Ctx, EndBB);
 }
 
