@@ -7,11 +7,13 @@
 //===----------------------------------------------------------------------===//
 //
 #include "Instrumentation.h"
+#include "MetadataUtils.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolutionExpander.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
+#include "llvm/IR/DiagnosticInfo.h"
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
@@ -98,52 +100,53 @@ ModulePass * llvm::createInstrumentationPass() {
   return new InstrumentationPass();
 }
 
-void static addNameDAMetadata(Function &F, StringRef FuncKind) {
-  assert(F.getParent() && "Function must be inserted into a module!");
-  auto FuncKindMD = MDString::get(F.getContext(),  FuncKind);
-  auto *FuncRefMD = ValueAsMetadata::get(&F);
-  auto FuncMD = MDNode::get(F.getContext(), {   FuncKindMD, FuncRefMD });
-  F.setMetadata("sapfor.da", FuncMD);
-  auto NamedMD = F.getParent()->getOrInsertNamedMetadata("sapfor.da");
-  NamedMD->addOperand(FuncMD);
-}
-
 Function * tsar::createEmptyInitDI(Module &M, Type &IdTy) {
   auto &Ctx = M.getContext();
   auto FuncType = FunctionType::get(Type::getVoidTy(Ctx), { &IdTy }, false);
   auto Func = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.init.di", &M);
-  addNameDAMetadata(*Func, "sapfor.init.di");
+  addNameDAMetadata(*Func, "sapfor.da", "sapfor.init.di");
   Func->arg_begin()->setName("startid");
   auto EntryBB = BasicBlock::Create(Ctx, "entry", Func);
   ReturnInst::Create(Ctx, EntryBB);
   return Func;
 }
 
-Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
-  : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
-  const std::string& ModuleName = M.getModuleIdentifier();
-  auto DIPoolTy = PointerType::getUnqual(Type::getInt8PtrTy(M.getContext()));
-  mDIPool = new GlobalVariable(M, DIPoolTy, false,
+GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
+  auto *DIPoolTy = PointerType::getUnqual(Type::getInt8PtrTy(M.getContext()));
+  if (auto *DIPool = M.getNamedValue("sapfor.di.pool")) {
+    if (isa<GlobalVariable>(DIPool) && DIPool->getValueType() == DIPoolTy &&
+        cast<GlobalVariable>(DIPool)->getMetadata("sapfor.da"))
+      return cast<GlobalVariable>(DIPool);
+    return nullptr;
+  }
+  auto DIPool = new GlobalVariable(M, DIPoolTy, false,
     GlobalValue::LinkageTypes::ExternalLinkage,
     ConstantPointerNull::get(DIPoolTy), "sapfor.di.pool", nullptr);
-  mDIPool->setAlignment(4);
-  mDIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
-  mInitDIAll = createEmptyInitDI(M, *Type::getInt64Ty(M.getContext()));
+  assert(DIPool->getName() == "sapfor.di.pool" &&
+    "Unable to crate a metadata pool!");
+  DIPool->setAlignment(4);
+  DIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  return DIPool;
+}
+
+Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
+  : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
+  auto &Ctx = M.getContext();
+  mDIPool = getOrCreateDIPool(M);
+  auto IdTy = Type::getInt64Ty(Ctx);
+  mInitDIAll = createEmptyInitDI(M, *IdTy);
   reserveIncompleteDIStrings(M);
   regFunctions(M);
   regGlobals(M);
   visit(M.begin(), M.end());
-  //insert call to allocate debug information pool
-  auto Fun = getDeclaration(&M, IntrinsicId::allocate_pool);
-  //getting numb of registrated debug strings by the value returned from
-  //registrator. don't go through function to count inserted calls.
-  auto Idx = ConstantInt::get(Type::getInt64Ty(M.getContext()),
-    mDIStrings.numberOfIDs());
-  CallInst::Create(Fun, { mDIPool, Idx}, "", &(*inst_begin(mInitDIAll)));
   regTypes(M);
-  if(M.getFunction("main") != nullptr)
-    instrumentateMain(M);
+  auto PoolSize = ConstantInt::get(IdTy,
+    APInt(IdTy->getBitWidth(), mDIStrings.numberOfIDs()));
+  addNameDAMetadata(*mDIPool, "sapfor.da", "sapfor.di.pool",
+    { ConstantAsMetadata::get(PoolSize) });
+  if (auto EntryPoint = M.getFunction("main"))
+    visitEntryPoint(*EntryPoint, { &M });
 }
 
 void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
@@ -684,10 +687,12 @@ void Instrumentation::regTypes(Module& M) {
   SizesArray->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   // Create function to update local indexes of types.
   auto FuncType =
-    FunctionType::get(Type::getInt64Ty(Ctx), { Int64Ty }, false);
+    FunctionType::get(Type::getVoidTy(Ctx), { Int64Ty }, false);
   auto RegTypeFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.type", &M);
-  addNameDAMetadata(*RegTypeFunc, "sapfor.register.type");
+  auto *Size = ConstantInt::get(Int64Ty, Types.size());
+  addNameDAMetadata(*RegTypeFunc, "sapfor.da", "sapfor.register.type",
+    {ConstantAsMetadata::get(Size)});
   RegTypeFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto EntryBB = BasicBlock::Create(Ctx, "entry", RegTypeFunc);
   auto *StartId = &*RegTypeFunc->arg_begin();
@@ -706,12 +711,10 @@ void Instrumentation::regTypes(Module& M) {
   auto Inc = BinaryOperator::CreateNUW(BinaryOperator::Add, Counter,
     ConstantInt::get(Int64Ty, 1), "inc", LoopBB);
   Counter->addIncoming(Inc, LoopBB);
-  auto *Size = ConstantInt::get(Int64Ty, Types.size());
   auto *Cmp = new ICmpInst(*LoopBB, CmpInst::ICMP_ULT, Inc, Size, "cmp");
   auto *EndBB = BasicBlock::Create(M.getContext(), "end", RegTypeFunc);
   BranchInst::Create(LoopBB, EndBB, Cmp, LoopBB);
-  // Return number of registered types.
-  ReturnInst::Create(Ctx, Size, EndBB);
+  ReturnInst::Create(Ctx, EndBB);
 }
 
 void Instrumentation::createInitDICall(const llvm::Twine &Str,
@@ -855,23 +858,131 @@ void Instrumentation::regGlobals(Module& M) {
   if (RegisteredGLobals == 0)
     RegGlobalFunc->eraseFromParent();
   else
-    addNameDAMetadata(*RegGlobalFunc, "sapfor.register.global");
+    addNameDAMetadata(*RegGlobalFunc, "sapfor.da", "sapfor.register.global");
 }
 
-void Instrumentation::instrumentateMain(Module& M) {
-  auto MainFunc = M.getFunction("main");
-  if(!MainFunc || !mInitDIAll)
-    return;
-  auto &BB = MainFunc->getEntryBlock();
-  auto Int0 = llvm::ConstantInt::get(Type::getInt64Ty(M.getContext()), 0);
-  if (auto *RegTypeFunc = M.getFunction("sapfor.register.type")) {
-    auto Call = CallInst::Create(RegTypeFunc, { Int0 }, "", &BB.front());
-    Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+/// Find available suffix for a specified name of a global object to resolve
+/// conflicts between names in a specified module.
+static Optional<unsigned> findAvailableSuffix(Module &M, unsigned MinSuffix,
+    StringRef Name) {
+  while (M.getNamedValue((Name + Twine(MinSuffix)).str())) {
+    ++MinSuffix;
+    if (MinSuffix == std::numeric_limits<unsigned>::max())
+      return None;
   }
-  if (auto *RegGlobalFunc = M.getFunction("sapfor.register.global")) {
-    auto Call = CallInst::Create(RegGlobalFunc, "", &BB.front());
-    Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  return MinSuffix;
+}
+
+/// Find available suffix for a specified name of a global object to resolve
+/// conflicts between names in a specified modules.
+static Optional<unsigned> findAvailableSuffix(Module &M, unsigned MinSuffix,
+    StringRef Name, ArrayRef<Module *> Modules) {
+  auto Suffix = findAvailableSuffix(M, MinSuffix, Name);
+  if (!Suffix)
+    return None;
+  for (auto *OtherM : Modules) {
+    if (OtherM == &M)
+      continue;
+    Suffix = findAvailableSuffix(*OtherM, *Suffix, Name);
+    if (!Suffix)
+      return None;
   }
-  auto Call = CallInst::Create(mInitDIAll, {Int0}, "", &BB.front());
-  Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+  return Suffix;
+}
+
+void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
+  DEBUG(dbgs() << "[INSTR]: process entry point ";
+    Entry.printAsOperand(dbgs()); dbgs() << "\n");
+  // Erase all existent initialization functions from the modules and remember
+  // index of metadata operand which points to the removed function.
+  DenseMap<Module *, unsigned> InitMDToFuncOp;
+  for (auto *M : Modules)
+    if (auto OpIdx = eraseFromParent(*M, "sapfor.da", "sapfor.init.module"))
+      InitMDToFuncOp.try_emplace(M, *OpIdx);
+  Optional<unsigned> Suffix = 0;
+  std::vector<unsigned> InitSuffixes;
+  auto IdTy = Type::getInt64Ty(Entry.getContext());
+  APInt PoolSize(IdTy->getBitWidth(), 0);
+  for (auto *M: Modules) {
+    DEBUG(dbgs() << "[INSTR]: initialize module "
+      << M->getSourceFileName() << "\n");
+    auto NamedMD = M->getNamedMetadata("sapfor.da");
+    if (!NamedMD) {
+      M->getContext().diagnose(DiagnosticInfoInlineAsm(
+        Twine("ignore ") + M->getSourceFileName() + " due to instrumentation "
+        "is not available", DS_Warning));
+      continue;
+    }
+    Suffix = findAvailableSuffix(*M, *Suffix, "sapfor.init.module", Modules);
+    if (!Suffix)
+      report_fatal_error(Twine("unable to initialize instrumentation for ") +
+        M->getSourceFileName() + ": can not generate unique name"
+        "of external function");
+    InitSuffixes.push_back(*Suffix);
+    // Now, we create a function to initialize instrumentation.
+    auto IdTy = Type::getInt64Ty(M->getContext());
+    auto InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
+    auto InitFunc = Function::Create(InitFuncTy, GlobalValue::ExternalLinkage,
+      "sapfor.init.module" + Twine(*Suffix), M);
+    assert(InitFunc->getName() == ("sapfor.init.module" + Twine(*Suffix)).str()
+      && "Unable to initialized instrumentation for a module!");
+    InitFunc->arg_begin()->setName("startid");
+    auto BB = BasicBlock::Create(M->getContext(), "entry", InitFunc);
+    auto NamedOpItr = InitMDToFuncOp.find(M);
+    if (NamedOpItr == InitMDToFuncOp.end()) {
+      addNameDAMetadata(*InitFunc, "sapfor.da", "sapfor.init.module");
+    } else {
+      auto InitMD = getMDOfKind(*NamedMD, "sapfor.init.module");
+      InitFunc->setMetadata("sapfor.da", InitMD);
+      InitMD->replaceOperandWith(NamedOpItr->second,
+        ValueAsMetadata::get(InitFunc));
+    }
+    auto *DIPoolMD = getMDOfKind(*NamedMD, "sapfor.di.pool");
+    if (!DIPoolMD || !extractMD<GlobalVariable>(*DIPoolMD).first ||
+         !extractMD<ConstantInt>(*DIPoolMD).first)
+      report_fatal_error(Twine("'sapfor.di.pool' is not available for ") +
+        M->getSourceFileName());
+    PoolSize += extractMD<ConstantInt>(*DIPoolMD).first->getValue();
+    auto *InitDIMD = getMDOfKind(*NamedMD, "sapfor.init.di");
+    if (!InitDIMD || !extractMD<Function>(*InitDIMD).first)
+      report_fatal_error(Twine("'sapfor.init.di' is not available for ") +
+        M->getSourceFileName());
+    auto *InitDIFunc = extractMD<Function>(*InitDIMD).first;
+    CallInst::Create(InitDIFunc, { &*InitFunc->arg_begin() }, "", BB);
+    auto *RegTyMD = getMDOfKind(*NamedMD, "sapfor.register.type");
+    if (!RegTyMD || !extractMD<Function>(*RegTyMD).first ||
+        !extractMD<ConstantInt>(*RegTyMD).first)
+      report_fatal_error(Twine("'sapfor.register.type' is not available for ") +
+        M->getSourceFileName());
+    auto *RegTyFunc = extractMD<Function>(*RegTyMD).first;
+    CallInst::Create(RegTyFunc, { &*InitFunc->arg_begin() }, "", BB);
+    if (auto *RegGlobalMD = getMDOfKind(*NamedMD, "sapfor.register.global"))
+      if (auto *RegGlobalFunc = extractMD<Function>(*RegGlobalMD).first)
+        CallInst::Create(RegGlobalFunc, {}, "", BB);
+      else
+        report_fatal_error(
+          Twine("'sapfor.register.global' is not available for ") +
+          M->getSourceFileName());
+    auto FreeId =
+      BinaryOperator::CreateNUW(BinaryOperator::Add, &*InitFunc->arg_begin(),
+        extractMD<ConstantInt>(*RegTyMD).first, "add", BB);
+    ReturnInst::Create(M->getContext(), FreeId, BB);
+  }
+  auto *EntryM = Entry.getParent();
+  assert(EntryM && "Entry point must be in a module!");
+  auto *InsertBefore = &Entry.getEntryBlock().front();
+  auto AllocatPoolFunc = getDeclaration(EntryM, IntrinsicId::allocate_pool);
+  auto PoolSizeV = ConstantInt::get(IdTy, PoolSize);
+  auto *DIPool = getOrCreateDIPool(*EntryM);
+  if (!DIPool)
+    report_fatal_error(Twine("'sapfor.di.pool' is not available for ") +
+      EntryM->getSourceFileName());
+  CallInst::Create(AllocatPoolFunc, { DIPool, PoolSizeV}, "", InsertBefore);
+  auto *InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
+  Value *FreeId = llvm::ConstantInt::get(IdTy, 0);
+  for (auto Suffix : InitSuffixes) {
+    auto *InitFunc = EntryM->getOrInsertFunction(
+      ("sapfor.init.module" + Twine(Suffix)).str(), InitFuncTy);
+    FreeId = CallInst::Create(InitFunc, {FreeId}, "freeid", InsertBefore);
+  }
 }

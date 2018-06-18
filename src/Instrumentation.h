@@ -1,7 +1,9 @@
 #ifndef INSTRUMENTATION_H
 #define INSTRUMENTATION_H
 
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/InstVisitor.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -16,6 +18,7 @@
 namespace llvm {
 class AllocaInst;
 class DebugLoc;
+class Metadata;
 class DILocation;
 class DIVariable;
 class GlobalVariable;
@@ -35,14 +38,34 @@ class DFRegionInfo;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
-/// Creates an empty "sapfor.init.di" function instruction to initialize all
-/// metadata strings which is necessary for instrumentation.
+/// \brief Creates an empty "sapfor.init.di" function instruction to initialize
+/// all metadata strings which is necessary for instrumentation.
 ///
 /// The entry block of this function will contain only `ret` instruction.
 /// This function will be marked with 'sapfor.da' metadata. This metadata
 /// will be also inserted into the named 'sapfor.da' metadata of a specified
 /// module.
 llvm::Function * createEmptyInitDI(llvm::Module &M, llvm::Type &IdTy);
+
+/// \brief Returns external variable which refers to a "sapfor.di.pool" in
+/// a specified module.
+///
+/// \return This function returns 'nullptr', if a global value with the
+/// 'sapfor.di.pool' name already exists and it can not be used as a pool.
+llvm::GlobalVariable *getOrCreateDIPool(llvm::Module &M);
+
+/// \brief Processes a specified entry point.
+///
+/// This function performs instrumentation of a specified entry point.
+/// This functions allocates a pool to store metadata strings of each
+/// specified module and calls functions to initialize metadata strings,
+/// types, global objects for each module.
+/// \pre
+/// - An external pool must be declared in each module (see getOrCreateDIPool).
+/// - Named metadata for each module must contain description of objects
+/// that should be initialized (see addNamedDAMetadata).
+void visitEntryPoint(llvm::Function &Entry,
+  llvm::ArrayRef<llvm::Module *> Modules);
 
 class Instrumentation : public llvm::InstVisitor<Instrumentation> {
   using Base = llvm::InstVisitor<Instrumentation>;
@@ -78,9 +101,6 @@ public:
   void visitCallSite(llvm::CallSite CS);
 
 private:
-
-  void instrumentateMain(llvm::Module& M);
-
   /// Reserves some metadata string for object which have not enough
   /// information.
   void reserveIncompleteDIStrings(llvm::Module &M);
