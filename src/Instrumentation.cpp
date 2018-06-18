@@ -1,56 +1,54 @@
-//===- tsar_instrumentation.cpp - TSAR Instrumentation Engine ---*- C++ -*-===//
+//===- Istrumentation.cpp -- LLVM IR Instrumentation Engine -----*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// This file implements LLVM IR level instrumentation engine.
-//
 //===----------------------------------------------------------------------===//
 //
+// This file implements methods to perform IR-level instrumentation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Instrumentation.h"
+#include "DFRegionInfo.h"
+#include "CanonicalLoop.h"
+#include "Intrinsics.h"
+#include "tsar_memory_matcher.h"
 #include "MetadataUtils.h"
+#include "tsar_pass_provider.h"
+#include "tsar_transformation.h"
+#include "tsar_utility.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpander.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
 #include "llvm/IR/DiagnosticInfo.h"
 #include <llvm/IR/Dominators.h>
-#include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/Analysis/ScalarEvolution.h>
-
-#include "tsar_utility.h"
-#include "Intrinsics.h"
-#include "CanonicalLoop.h"
-#include "DFRegionInfo.h"
-#include "tsar_memory_matcher.h"
-#include "tsar_transformation.h"
-#include "tsar_pass_provider.h"
-
-#include <map>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <vector>
 
 using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "instrumentation"
+#define DEBUG_TYPE "instr-llvm"
 
-typedef FunctionPassProvider<
+using InstrumentationPassProvider = FunctionPassProvider<
   TransformationEnginePass,
   DFRegionInfoPass,
   LoopInfoWrapperPass,
   CanonicalLoopPass,
   MemoryMatcherImmutableWrapper,
   ScalarEvolutionWrapperPass,
-  DominatorTreeWrapperPass> InstrumentationPassProvider;
+  DominatorTreeWrapperPass>;
 
 STATISTIC(NumInstLoop, "Number of instrumented loops");
 
-INITIALIZE_PROVIDER_BEGIN(InstrumentationPassProvider, "instrumentation-provider",
+INITIALIZE_PROVIDER_BEGIN(InstrumentationPassProvider, "instr-llvm-provider",
   "Instrumentation Provider")
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
@@ -59,18 +57,17 @@ INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PROVIDER_END(InstrumentationPassProvider, "instrumentation-provider",
+INITIALIZE_PROVIDER_END(InstrumentationPassProvider, "instr-llvm-provider",
   "Instrumentation Provider")
 
 char InstrumentationPass::ID = 0;
-INITIALIZE_PASS_BEGIN(InstrumentationPass, "instrumentation",
+INITIALIZE_PASS_BEGIN(InstrumentationPass, "instr-llvm",
   "LLVM IR Instrumentation", false, false)
 INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_END(InstrumentationPass, "instrumentation",
+INITIALIZE_PASS_END(InstrumentationPass, "instr-llvm",
   "LLVM IR Instrumentation", false, false)
-
 
 bool InstrumentationPass::runOnModule(Module &M) {
   releaseMemory();
@@ -87,8 +84,6 @@ bool InstrumentationPass::runOnModule(Module &M) {
   Instrumentation Instr(M, this);
   return true;
 }
-
-void InstrumentationPass::releaseMemory() {}
 
 void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
@@ -434,7 +429,7 @@ void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
     llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
     DFRegionInfo &RI, const CanonicalLoopSet &CS) {
   for_each(LI, [this, &SE, &DT, &RI, &CS](Loop *L) {
-    DEBUG(dbgs() << "[INSTR]: process loop "; L->print(dbgs()); dbgs() << "\n");
+    DEBUG(dbgs()<<"[INSTR]: process loop " << L->getHeader()->getName() <<"\n");
     auto Idx = mDIStrings.regItem(L);
     loopBeginInstr(L, Idx, SE, DT, RI, CS);
     loopEndInstr(L, Idx);
@@ -474,6 +469,8 @@ void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
 }
 
 void Instrumentation::visitFunction(llvm::Function &F) {
+  DEBUG(dbgs() << "[INSTR]: process function ";
+    F.printAsOperand(dbgs()); dbgs() << "\n");
   // Change linkage for inline functions, to avoid merge of a function which
   // should not be instrumented with this function. For example, call of
   // a function which has been instrumented from dynamic analyzer may produce

@@ -1,36 +1,48 @@
-#ifndef INSTRUMENTATION_H
-#define INSTRUMENTATION_H
+//===--- Instrumentation.h - LLVM IR Instrumentation Engine -----*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+//===----------------------------------------------------------------------===//
+//
+// This file define functionality to perform IR-level instrumentation.
+//
+//===----------------------------------------------------------------------===//
 
+#ifndef TSAR_INSTRUMENTATION_H
+#define TSAR_INSTRUMENTATION_H
+
+#include "CanonicalLoop.h"
+#include "ItemRegister.h"
+#include "tsar_pass.h"
+#include <utility.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/InstVisitor.h>
-#include <llvm/Analysis/LoopInfo.h>
-#include "Intrinsics.h"
-#include "ItemRegister.h"
-#include "tsar_instrumentation.h"
-#include "CanonicalLoop.h"
-#include "DFRegionInfo.h"
-#include <sstream>
-#include <iostream>
+#include <llvm/Pass.h>
 
 namespace llvm {
-class AllocaInst;
-class DebugLoc;
-class Metadata;
-class DILocation;
-class DIVariable;
-class GlobalVariable;
-class Function;
-class Loop;
-class Type;
-class Value;
-class SCEV;
-
-class LoopInfo;
-class DominatorTree;
 class ScalarEvolution;
+
+/// This per-module pass performs instrumentation of LLVM IR.
+class InstrumentationPass :
+  public ModulePass, bcl::Uncopyable {
+public:
+  /// Pass identification, replacement for typeid.
+  static char ID;
+
+  /// Default constructor.
+  InstrumentationPass() : ModulePass(ID) {
+    initializeInstrumentationPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  /// Implements the per-module instrumentation pass.
+  bool runOnModule(Module &M) override;
+
+  /// Set analysis information that is necessary to run this pass.
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+};
 }
 
 namespace tsar {
@@ -260,4 +272,4 @@ private:
 };
 }
 
-#endif // INSTRUMENTATION_H
+#endif//TSAR_INSTRUMENTATION_H

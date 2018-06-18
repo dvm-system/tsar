@@ -36,7 +36,7 @@
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <memory>
 #include "tsar_action.h"
-#include "tsar_instrumentation.h"
+#include "Instrumentation.h"
 #include "tsar_query.h"
 #include "tsar_pass.h"
 #include "tsar_transformation.h"
