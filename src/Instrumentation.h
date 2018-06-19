@@ -79,6 +79,9 @@ llvm::GlobalVariable *getOrCreateDIPool(llvm::Module &M);
 void visitEntryPoint(llvm::Function &Entry,
   llvm::ArrayRef<llvm::Module *> Modules);
 
+/// Returns type of identifier which is used while instrumentation is performed.
+llvm::Type *getInstrIdType(llvm::LLVMContext &Ctx);
+
 class Instrumentation : public llvm::InstVisitor<Instrumentation> {
   using Base = llvm::InstVisitor<Instrumentation>;
   using TypeRegister = ItemRegister<llvm::Type *>;

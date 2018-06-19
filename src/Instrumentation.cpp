@@ -139,21 +139,30 @@ GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
   return DIPool;
 }
 
+Type * tsar::getInstrIdType(LLVMContext &Ctx) {
+  auto InitDIFuncTy = getType(Ctx, IntrinsicId::init_di);
+  assert(InitDIFuncTy->getNumParams() > 2 &&
+    "Intrinsic 'init_di' must has at least 3 arguments!");
+  return InitDIFuncTy->getParamType(2);
+}
+
 void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
   mInstrPass = &IP;
   mDIStrings.clear(DIStringRegister::numberOfItemTypes());
   mTypes.clear();
   auto &Ctx = M.getContext();
   mDIPool = getOrCreateDIPool(M);
-  auto IdTy = Type::getInt64Ty(Ctx);
+  auto IdTy = getInstrIdType(Ctx);
+  assert(IdTy && "Offset type must not be null!");
   mInitDIAll = createEmptyInitDI(M, *IdTy);
   reserveIncompleteDIStrings(M);
   regFunctions(M);
   regGlobals(M);
   visit(M.begin(), M.end());
   regTypes(M);
+  auto Int64Ty = Type::getInt64Ty(M.getContext());
   auto PoolSize = ConstantInt::get(IdTy,
-    APInt(IdTy->getBitWidth(), mDIStrings.numberOfIDs()));
+    APInt(Int64Ty->getBitWidth(), mDIStrings.numberOfIDs()));
   addNameDAMetadata(*mDIPool, "sapfor.da", "sapfor.di.pool",
     { ConstantAsMetadata::get(PoolSize) });
   NumVariable += NumScalar + NumArray;
@@ -346,11 +355,19 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   Instruction *InsertBefore = nullptr;
   Value *Start = nullptr, *End = nullptr, *Step = nullptr;
   bool Signed = false;
-  auto *Int64Ty = Type::getInt64Ty(Header->getContext());
+  auto SLBeginFunc = getDeclaration(Header->getModule(), IntrinsicId::sl_begin);
+  auto SLBeginFuncTy = SLBeginFunc->getFunctionType();
+  assert(SLBeginFuncTy->getNumParams() > 3 && "Too few arguments!");
+  auto *SizeTy = dyn_cast<IntegerType>(SLBeginFuncTy->getParamType(1));
+  assert(SizeTy && "Bound expression must has an integer type!");
+  assert(SLBeginFuncTy->getParamType(2) == SizeTy &&
+    "Loop bound expressions have different types!");
+  assert(SLBeginFuncTy->getParamType(3) == SizeTy &&
+    "Loop bound expressions have different types!");
   if (auto Preheader = L->getLoopPreheader()) {
     InsertBefore = Preheader->getTerminator();
     std::tie(Start, End, Step, Signed) =
-      computeLoopBounds(*L, *Int64Ty, SE, DT, RI, CS);
+      computeLoopBounds(*L, *SizeTy, SE, DT, RI, CS);
   } else {
     auto *NewBB = BasicBlock::Create(Header->getContext(),
       "preheader", Header->getParent(), Header);
@@ -386,12 +403,11 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
     "bounds=" + Twine(BoundFlag) + "*" +
     StartLoc + EndLoc + "*", DILoopIdx);
   auto *DILoop = createPointerToDI(DILoopIdx, *InsertBefore);
-  Start = Start ? Start : ConstantInt::get(Int64Ty, 0);
-  End = End ? End : ConstantInt::get(Int64Ty, 0);
-  Step = Step ? Step : ConstantInt::get(Int64Ty, 0);
-  auto Fun = getDeclaration(Header->getModule(), IntrinsicId::sl_begin);
+  Start = Start ? Start : ConstantInt::get(SizeTy, 0);
+  End = End ? End : ConstantInt::get(SizeTy, 0);
+  Step = Step ? Step : ConstantInt::get(SizeTy, 0);
   auto Call = CallInst::Create(
-    Fun, {DILoop, Start, End, Step}, "", InsertBefore);
+    SLBeginFunc, {DILoop, Start, End, Step}, "", InsertBefore);
   Call->setMetadata("sapfor.da", InstrMD);
 }
 
@@ -526,7 +542,6 @@ void Instrumentation::visitFunction(llvm::Function &F) {
 void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
   auto InstrMD = MDNode::get(F.getContext(), {});
   auto *BytePtrTy = Type::getInt8PtrTy(F.getContext());
-  auto *SizeTy = Type::getInt64Ty(F.getContext());
   for (auto &Arg : F.args()) {
     if (Arg.getNumUses() != 1)
       continue;
@@ -545,18 +560,23 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     auto AllocaAddr =
       new BitCastInst(Alloca, BytePtrTy, Alloca->getName() + ".addr", U);
     AllocaAddr->setMetadata("sapfor.da", InstrMD);
-    auto Pos = ConstantInt::get(SizeTy, Arg.getArgNo());
     unsigned Rank;
     uint64_t ArraySize;
     std::tie(Rank, ArraySize) = arraySize(Alloca->getAllocatedType());
     CallInst *Call = nullptr;
     if (Rank != 0) {
-      auto *Size = ConstantInt::get(SizeTy, ArraySize);
-      auto *Fun = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_arr);
-      Call = CallInst::Create(Fun, { DIFunc, Size, AllocaAddr, Pos }, "");
+      auto Func = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_arr);
+      auto FuncTy = Func->getFunctionType();
+      assert(FuncTy->getNumParams() > 3 && "Too few arguments!");
+      auto Size = ConstantInt::get(FuncTy->getParamType(1), ArraySize);
+      auto Pos = ConstantInt::get(FuncTy->getParamType(3), Arg.getArgNo());
+      Call = CallInst::Create(Func, { DIFunc, Size, AllocaAddr, Pos }, "");
     } else {
-      auto *Fun = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_var);
-      Call = CallInst::Create(Fun, { DIFunc, AllocaAddr, Pos }, "");
+      auto Func = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_var);
+      auto FuncTy = Func->getFunctionType();
+      assert(FuncTy->getNumParams() > 2 && "Too few arguments!");
+      auto Pos = ConstantInt::get(FuncTy->getParamType(2), Arg.getArgNo());
+      Call = CallInst::Create(Func, { DIFunc, AllocaAddr, Pos }, "");
     }
     Call->insertBefore(U);
     Call->setMetadata("sapfor.da", InstrMD);
@@ -719,21 +739,22 @@ void Instrumentation::regTypes(Module& M) {
   // Get all registered types and fill std::vector<llvm::Constant*>
   // with local indexes and sizes of these types.
   auto &Types = mTypes.getRegister<llvm::Type *>();
-  auto *Int64Ty = Type::getInt64Ty(Ctx);
-  auto *Int0 = ConstantInt::get(Int64Ty, 0);
+  auto *DeclTypeFunc = getDeclaration(&M, IntrinsicId::decl_types);
+  auto *SizeTy = DeclTypeFunc->getFunctionType()->getParamType(0);
+  auto *Int0 = ConstantInt::get(SizeTy, 0);
   std::vector<Constant* > Ids, Sizes;
   auto &DL = M.getDataLayout();
   for(auto &Pair: Types) {
-    auto *TypeId = Constant::getIntegerValue(Int64Ty,
+    auto *TypeId = Constant::getIntegerValue(SizeTy,
       APInt(64, Pair.get<TypeRegister::IdTy>()));
     Ids.push_back(TypeId);
     auto *TypeSize = Pair.get<Type *>()->isSized() ?
-      Constant::getIntegerValue(Int64Ty,
+      Constant::getIntegerValue(SizeTy,
         APInt(64, DL.getTypeSizeInBits(Pair.get<Type *>()))) : Int0;
     Sizes.push_back(TypeSize);
   }
   // Create global values for IDs and sizes. initialize them with local values.
-  auto ArrayTy = ArrayType::get(Int64Ty, Types.size());
+  auto ArrayTy = ArrayType::get(SizeTy, Types.size());
   auto IdsArray = new GlobalVariable(M, ArrayTy, false,
     GlobalValue::LinkageTypes::InternalLinkage,
     ConstantArray::get(ArrayTy, Ids), "sapfor.type.ids", nullptr);
@@ -744,10 +765,10 @@ void Instrumentation::regTypes(Module& M) {
   SizesArray->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   // Create function to update local indexes of types.
   auto FuncType =
-    FunctionType::get(Type::getVoidTy(Ctx), { Int64Ty }, false);
+    FunctionType::get(Type::getVoidTy(Ctx), { SizeTy }, false);
   auto RegTypeFunc = Function::Create(FuncType,
     GlobalValue::LinkageTypes::InternalLinkage, "sapfor.register.type", &M);
-  auto *Size = ConstantInt::get(Int64Ty, Types.size());
+  auto *Size = ConstantInt::get(SizeTy, Types.size());
   addNameDAMetadata(*RegTypeFunc, "sapfor.da", "sapfor.register.type",
     {ConstantAsMetadata::get(Size)});
   RegTypeFunc->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
@@ -757,7 +778,7 @@ void Instrumentation::regTypes(Module& M) {
   // Create loop to update indexes: NewTypeId = StartId + LocalTypId;
   auto *LoopBB = BasicBlock::Create(Ctx, "loop", RegTypeFunc);
   BranchInst::Create(LoopBB, EntryBB);
-  auto *Counter = PHINode::Create(Int64Ty, 0, "typeidx", LoopBB);
+  auto *Counter = PHINode::Create(SizeTy, 0, "typeidx", LoopBB);
   Counter->addIncoming(Int0, EntryBB);
   auto *GEP = GetElementPtrInst::Create(
     nullptr, IdsArray, { Int0, Counter }, "arrayidx", LoopBB);
@@ -766,12 +787,11 @@ void Instrumentation::regTypes(Module& M) {
     BinaryOperator::Add, LocalTypeId, StartId, "add", LoopBB);
   new StoreInst(Add, GEP, false, 0, LoopBB);
   auto Inc = BinaryOperator::CreateNUW(BinaryOperator::Add, Counter,
-    ConstantInt::get(Int64Ty, 1), "inc", LoopBB);
+    ConstantInt::get(SizeTy, 1), "inc", LoopBB);
   Counter->addIncoming(Inc, LoopBB);
   auto *Cmp = new ICmpInst(*LoopBB, CmpInst::ICMP_ULT, Inc, Size, "cmp");
   auto *EndBB = BasicBlock::Create(M.getContext(), "end", RegTypeFunc);
   BranchInst::Create(LoopBB, EndBB, Cmp, LoopBB);
-  auto *DeclTypeFunc = getDeclaration(&M, IntrinsicId::decl_types);
   auto *IdsArg = GetElementPtrInst::Create(nullptr, IdsArray,
     { Int0, Int0 }, "ids", EndBB);
   auto *SizesArg = GetElementPtrInst::Create(nullptr, SizesArray,
@@ -871,13 +891,15 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
   VarAddr->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   CallInst *Call = nullptr;
   if (Rank != 0) {
-    auto Size = ConstantInt::get(Type::getInt64Ty(M.getContext()), ArraySize);
-    auto Fun = getDeclaration(&M, IntrinsicId::reg_arr);
-    Call = CallInst::Create(Fun, { DIVar, Size, VarAddr }, "", &InsertBefore);
+    auto Func = getDeclaration(&M, IntrinsicId::reg_arr);
+    auto FuncTy = Func->getFunctionType();
+    assert(FuncTy->getNumParams() > 2 && "Too few arguments!");
+    auto Size = ConstantInt::get(FuncTy->getParamType(1), ArraySize);
+    Call = CallInst::Create(Func, { DIVar, Size, VarAddr }, "", &InsertBefore);
     ++NumArray;
   } else {
-    auto Fun = getDeclaration(&M, IntrinsicId::reg_var);
-   Call = CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
+    auto Func = getDeclaration(&M, IntrinsicId::reg_var);
+   Call = CallInst::Create(Func, { DIVar, VarAddr }, "", &InsertBefore);
    ++NumScalar;
   }
   Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
@@ -967,8 +989,8 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
       InitMDToFuncOp.try_emplace(M, *OpIdx);
   Optional<unsigned> Suffix = 0;
   std::vector<unsigned> InitSuffixes;
-  auto IdTy = Type::getInt64Ty(Entry.getContext());
-  APInt PoolSize(IdTy->getBitWidth(), 0);
+  auto PoolSizeTy = Type::getInt64Ty(Entry.getContext());
+  APInt PoolSize(PoolSizeTy->getBitWidth(), 0);
   for (auto *M: Modules) {
     DEBUG(dbgs() << "[INSTR]: initialize module "
       << M->getSourceFileName() << "\n");
@@ -986,7 +1008,7 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
         "of external function");
     InitSuffixes.push_back(*Suffix);
     // Now, we create a function to initialize instrumentation.
-    auto IdTy = Type::getInt64Ty(M->getContext());
+    auto IdTy = getInstrIdType(M->getContext());
     auto InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
     auto InitFunc = Function::Create(InitFuncTy, GlobalValue::ExternalLinkage,
       "sapfor.init.module" + Twine(*Suffix), M);
@@ -1038,12 +1060,13 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
   assert(EntryM && "Entry point must be in a module!");
   auto *InsertBefore = &Entry.getEntryBlock().front();
   auto AllocatPoolFunc = getDeclaration(EntryM, IntrinsicId::allocate_pool);
-  auto PoolSizeV = ConstantInt::get(IdTy, PoolSize);
+  auto PoolSizeV = ConstantInt::get(PoolSizeTy, PoolSize);
   auto *DIPool = getOrCreateDIPool(*EntryM);
   if (!DIPool)
     report_fatal_error(Twine("'sapfor.di.pool' is not available for ") +
       EntryM->getSourceFileName());
   CallInst::Create(AllocatPoolFunc, { DIPool, PoolSizeV}, "", InsertBefore);
+  auto IdTy = getInstrIdType(Entry.getContext());
   auto *InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
   Value *FreeId = llvm::ConstantInt::get(IdTy, 0);
   for (auto Suffix : InitSuffixes) {

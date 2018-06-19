@@ -58,6 +58,13 @@ Value * cloneChainImpl(Value *From, Instruction *BoundInst, DominatorTree *DT,
 }
 
 namespace tsar {
+llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo) {
+  auto ArgItr = F.arg_begin();
+  auto ArgItrE = F.arg_end();
+  for (std::size_t I = 0; ArgItr != ArgItrE && I <= ArgNo; ++I, ++ArgItr);
+  return ArgItr != ArgItrE ? &*ArgItr : nullptr;
+}
+
 bool cloneChain(Instruction *From,
     SmallVectorImpl<Instruction *> &CloneList,
     Instruction *BoundInst, DominatorTree *DT) {

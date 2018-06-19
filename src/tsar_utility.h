@@ -29,6 +29,9 @@ class Use;
 }
 
 namespace tsar {
+/// Returns argument with a specified number or nullptr.
+llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo);
+
 /// Returns number of dimensions in a specified type or 0 if it is not an array.
 inline unsigned dimensionsNum(const llvm::Type *Ty) {
   unsigned Dims = 0;
