@@ -95,16 +95,18 @@ class Instrumentation : public llvm::InstVisitor<Instrumentation> {
     LLVM_MARK_AS_BITMASK_ENUM(LoopBoundUnsigned)
   };
 public:
-  static const unsigned maxIntBitWidth = 64;
-
-  Instrumentation(llvm::Module& M, llvm::InstrumentationPass* I);
-  ~Instrumentation() = default;
+  /// Processes a specified module.
+  static void visit(llvm::Module &M, llvm::InstrumentationPass &IP) {
+    Instrumentation Visitor;
+    Visitor.visitModule(M, IP);
+  }
 
   using Base::visit;
 
   /// Visit function if it should be processed only.
   void visit(llvm::Function &F);
 
+  void visitModule(llvm::Module &M, llvm::InstrumentationPass &IP);
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
   void visitStoreInst(llvm::StoreInst &I);

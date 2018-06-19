@@ -57,6 +57,13 @@ private:
   using RegisterMap =  typename bcl::StaticMapConstructor<
     RegisterConstructor, Tys...>::Type;
 
+  struct ClearFunctor {
+    template<class CellTy> void operator()(CellTy *C) {
+      using CellKey = typename CellTy::CellKey;
+      C->template value<CellKey>().clear();
+    }
+  };
+
 public:
   /// Returns number of possible item types.
   static IdTy numberOfItemTypes() noexcept { return sizeof...(Tys); }
@@ -105,6 +112,12 @@ public:
   /// Returns ID for a specified item. The item must be already registered.
   template<class Ty>
   IdTy operator[](const Ty &Item) const { return getID(Item); }
+
+  /// Removes all registered items and sets the first available ID to `FirstId`.
+  void clear(IdTy FirstId = 0) {
+    mRegisters.for_each(ClearFunctor());
+    mIdNum = FirstId;
+  }
 
 private:
   /// Number of used IDs.

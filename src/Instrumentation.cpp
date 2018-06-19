@@ -81,7 +81,7 @@ bool InstrumentationPass::runOnModule(Module &M) {
     [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
       Wrapper.set(*MMWrapper);
   });
-  Instrumentation Instr(M, this);
+  Instrumentation::visit(M, *this);
   return true;
 }
 
@@ -125,8 +125,10 @@ GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
   return DIPool;
 }
 
-Instrumentation::Instrumentation(Module &M, InstrumentationPass *I)
-  : mInstrPass(I), mDIStrings(DIStringRegister::numberOfItemTypes()) {
+void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
+  mInstrPass = &IP;
+  mDIStrings.clear(DIStringRegister::numberOfItemTypes());
+  mTypes.clear();
   auto &Ctx = M.getContext();
   mDIPool = getOrCreateDIPool(M);
   auto IdTy = Type::getInt64Ty(Ctx);
