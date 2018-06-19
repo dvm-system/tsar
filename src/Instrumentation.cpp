@@ -46,7 +46,21 @@ using InstrumentationPassProvider = FunctionPassProvider<
   ScalarEvolutionWrapperPass,
   DominatorTreeWrapperPass>;
 
-STATISTIC(NumInstLoop, "Number of instrumented loops");
+STATISTIC(NumFunction, "Number of functions");
+STATISTIC(NumFunctionVisited, "Number of processed functions");
+STATISTIC(NumLoop, "Number of processed loops");
+STATISTIC(NumType, "Number of registered types");
+STATISTIC(NumVariable, "Number of registered variables");
+STATISTIC(NumScalar, "Number of registered scalar variables");
+STATISTIC(NumArray, "Number of registered arrays");
+STATISTIC(NumCall, "Number of registered calls");
+STATISTIC(NumMemoryAccesses, "Number of registered memory accesses");
+STATISTIC(NumLoad, "Number of registered loads from the memory");
+STATISTIC(NumLoadScalar, "Number of registered loads from scalars");
+STATISTIC(NumLoadArray, "Number of registered loads from arrays");
+STATISTIC(NumStore, "Number of registered stores to the memory");
+STATISTIC(NumStoreScalar, "Number of registered stores to scalars");
+STATISTIC(NumStoreArray, "Number of registered stores to arrays");
 
 INITIALIZE_PROVIDER_BEGIN(InstrumentationPassProvider, "instr-llvm-provider",
   "Instrumentation Provider")
@@ -142,6 +156,10 @@ void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
     APInt(IdTy->getBitWidth(), mDIStrings.numberOfIDs()));
   addNameDAMetadata(*mDIPool, "sapfor.da", "sapfor.di.pool",
     { ConstantAsMetadata::get(PoolSize) });
+  NumVariable += NumScalar + NumArray;
+  NumLoad += NumLoadScalar + NumLoadArray;
+  NumStore += NumStore + NumStoreArray;
+  NumMemoryAccesses += NumLoad + NumStore;
   if (auto EntryPoint = M.getFunction("main"))
     visitEntryPoint(*EntryPoint, { &M });
 }
@@ -436,6 +454,7 @@ void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
     loopBeginInstr(L, Idx, SE, DT, RI, CS);
     loopEndInstr(L, Idx);
     loopIterInstr(L, Idx);
+    ++NumLoop;
   });
 }
 
@@ -448,7 +467,10 @@ void Instrumentation::visit(Function &F) {
     F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
     return;
   }
-  if (F.empty() || F.getMetadata("sapfor.da"))
+  if (F.getMetadata("sapfor.da"))
+    return;
+  ++NumFunction;
+  if (F.empty())
     return;
   visitFunction(F);
   visit(F.begin(), F.end());
@@ -489,6 +511,7 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto &FirstInst = *inst_begin(F);
   auto DIFunc = createPointerToDI(Idx, FirstInst);
   auto Call = CallInst::Create(Fun, {DIFunc}, "", &FirstInst);
+  ++NumFunctionVisited;
   Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
   regArgs(F, DIFunc);
   auto &Provider = mInstrPass->getAnalysis<InstrumentationPassProvider>(F);
@@ -577,6 +600,7 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
   auto CallEnd = llvm::CallInst::Create(Fun, {DIFunc}, "");
   CallEnd->insertAfter(Inst);
   CallBegin->setMetadata("sapfor.da", InstrMD);
+  ++NumCall;
 }
 
 std::tuple<Value *, Value *, Value *, Value *>
@@ -623,10 +647,12 @@ void Instrumentation::visitLoadInst(LoadInst &I) {
     auto *Fun = getDeclaration(M, IntrinsicId::read_arr);
     auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
     Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
+    ++NumLoadArray;
   } else {
     auto *Fun = getDeclaration(M, IntrinsicId::read_var);
     auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &I);
     Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
+    ++NumLoadScalar;
   }
 }
 
@@ -647,10 +673,12 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     auto Call = CallInst::Create(Fun, { DILoc, Addr, DIVar, ArrayBase }, "");
     Call->insertBefore(&*InsertBefore);
     Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
+    ++NumStoreArray;
   } else {
     auto *Fun = getDeclaration(M, IntrinsicId::write_var_end);
     auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &*InsertBefore);
     Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
+    ++NumStoreScalar;
   }
 }
 
@@ -720,6 +748,7 @@ void Instrumentation::regTypes(Module& M) {
     { Int0, Int0 }, "sizes", EndBB);
   CallInst::Create(DeclTypeFunc, { Size, IdsArg, SizesArg }, "", EndBB);
   ReturnInst::Create(Ctx, EndBB);
+  NumType += Ids.size();
 }
 
 void Instrumentation::createInitDICall(const llvm::Twine &Str,
@@ -815,9 +844,11 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
     auto Size = ConstantInt::get(Type::getInt64Ty(M.getContext()), ArraySize);
     auto Fun = getDeclaration(&M, IntrinsicId::reg_arr);
     Call = CallInst::Create(Fun, { DIVar, Size, VarAddr }, "", &InsertBefore);
+    ++NumArray;
   } else {
     auto Fun = getDeclaration(&M, IntrinsicId::reg_var);
    Call = CallInst::Create(Fun, { DIVar, VarAddr }, "", &InsertBefore);
+   ++NumScalar;
   }
   Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
 }
