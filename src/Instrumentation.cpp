@@ -635,14 +635,26 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
   return std::make_tuple(DILoc, Addr, DIVar, ArrayBase);
 }
 
-void Instrumentation::visitLoadInst(LoadInst &I) {
+void Instrumentation::visitInstruction(Instruction &I) {
+  if (I.mayReadOrWriteMemory()) {
+    SmallString<64> IStr;
+    raw_svector_ostream OS(IStr);
+    I.print(OS);
+    auto M = I.getModule();
+    I.getContext().diagnose(DiagnosticInfoInlineAsm(
+      Twine("unsupported RW instruction ") + OS.str() + " in " +
+        M->getSourceFileName(), DS_Warning));
+  }
+}
+
+void Instrumentation::regReadMemory(Instruction &I, Value &Ptr) {
   if (I.getMetadata("sapfor.da"))
     return;
   DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto *M = I.getModule();
   llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
   std::tie(DILoc, Addr, DIVar, ArrayBase) =
-    regMemoryAccessArgs(I.getPointerOperand(), I.getDebugLoc(), I);
+    regMemoryAccessArgs(&Ptr, I.getDebugLoc(), I);
   if (ArrayBase) {
     auto *Fun = getDeclaration(M, IntrinsicId::read_arr);
     auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
@@ -656,7 +668,7 @@ void Instrumentation::visitLoadInst(LoadInst &I) {
   }
 }
 
-void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
+void Instrumentation::regWriteMemory(Instruction &I, Value &Ptr) {
   if (I.getMetadata("sapfor.da"))
     return;
   DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
@@ -665,7 +677,7 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
   auto *M = I.getModule();
   llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
   std::tie(DILoc, Addr, DIVar, ArrayBase) =
-    regMemoryAccessArgs(I.getPointerOperand(), I.getDebugLoc(), *InsertBefore);
+    regMemoryAccessArgs(&Ptr, I.getDebugLoc(), *InsertBefore);
   if (!Addr)
     return;
   if (ArrayBase) {
@@ -680,6 +692,24 @@ void Instrumentation::visitStoreInst(llvm::StoreInst &I) {
     Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
     ++NumStoreScalar;
   }
+}
+
+void Instrumentation::visitLoadInst(LoadInst &I) {
+  regReadMemory(I, *I.getPointerOperand());
+}
+
+void Instrumentation::visitStoreInst(StoreInst &I) {
+  regWriteMemory(I, *I.getPointerOperand());
+}
+
+void Instrumentation::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I) {
+  regReadMemory(I, *I.getPointerOperand());
+  regWriteMemory(I, *I.getPointerOperand());
+}
+
+void Instrumentation::visitAtomicRMWInst(AtomicRMWInst &I) {
+  regReadMemory(I, *I.getPointerOperand());
+  regWriteMemory(I, *I.getPointerOperand());
 }
 
 void Instrumentation::regTypes(Module& M) {

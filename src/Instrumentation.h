@@ -107,14 +107,20 @@ public:
   void visit(llvm::Function &F);
 
   void visitModule(llvm::Module &M, llvm::InstrumentationPass &IP);
+  void visitInstruction(llvm::Instruction &I);
   void visitAllocaInst(llvm::AllocaInst &I);
   void visitLoadInst(llvm::LoadInst &I);
   void visitStoreInst(llvm::StoreInst &I);
+  void visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I);
+  void visitAtomicRMWInst(llvm::AtomicRMWInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
   void visitCallSite(llvm::CallSite CS);
 
 private:
+  void regReadMemory(llvm::Instruction &I, llvm::Value &Ptr);
+  void regWriteMemory(llvm::Instruction &I, llvm::Value &Ptr);
+
   /// Reserves some metadata string for object which have not enough
   /// information.
   void reserveIncompleteDIStrings(llvm::Module &M);
