@@ -1061,13 +1061,16 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
   auto *EntryM = Entry.getParent();
   assert(EntryM && "Entry point must be in a module!");
   auto *InsertBefore = &Entry.getEntryBlock().front();
-  auto AllocatPoolFunc = getDeclaration(EntryM, IntrinsicId::allocate_pool);
+  auto AllocatePoolFunc = getDeclaration(EntryM, IntrinsicId::allocate_pool);
   auto PoolSizeV = ConstantInt::get(PoolSizeTy, PoolSize);
   auto *DIPool = getOrCreateDIPool(*EntryM);
   if (!DIPool)
     report_fatal_error(Twine("'sapfor.di.pool' is not available for ") +
       EntryM->getSourceFileName());
-  CallInst::Create(AllocatPoolFunc, { DIPool, PoolSizeV}, "", InsertBefore);
+  auto CallAPF =
+    CallInst::Create(AllocatePoolFunc, { DIPool, PoolSizeV}, "", InsertBefore);
+  auto InstrMD = MDNode::get(EntryM->getContext(), {});
+  CallAPF->setMetadata("sapfor.da", InstrMD);
   auto IdTy = getInstrIdType(Entry.getContext());
   auto *InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
   Value *FreeId = llvm::ConstantInt::get(IdTy, 0);
@@ -1075,5 +1078,6 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
     auto *InitFunc = EntryM->getOrInsertFunction(
       ("sapfor.init.module" + Twine(Suffix)).str(), InitFuncTy);
     FreeId = CallInst::Create(InitFunc, {FreeId}, "freeid", InsertBefore);
+    cast<CallInst>(FreeId)->setMetadata("sapfor.da", InstrMD);
   }
 }
