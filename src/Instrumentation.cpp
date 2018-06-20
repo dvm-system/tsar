@@ -96,6 +96,10 @@ bool InstrumentationPass::runOnModule(Module &M) {
       Wrapper.set(*MMWrapper);
   });
   Instrumentation::visit(M, *this);
+  if (auto EntryPoint = M.getFunction("main"))
+    visitEntryPoint(*EntryPoint, { &M });
+  else
+    M.getContext().diagnose(DiagnosticInfoInlineAsm("entry point is not found"));
   return true;
 }
 
@@ -169,8 +173,6 @@ void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
   NumLoad += NumLoadScalar + NumLoadArray;
   NumStore += NumStore + NumStoreArray;
   NumMemoryAccesses += NumLoad + NumStore;
-  if (auto EntryPoint = M.getFunction("main"))
-    visitEntryPoint(*EntryPoint, { &M });
 }
 
 void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
