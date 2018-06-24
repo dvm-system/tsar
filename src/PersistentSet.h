@@ -31,6 +31,7 @@ class PersistentSet {
   /// This is a persistent bucket which holds list of persistent
   /// references to this bucket alongside with a value.
   class PersistentBucket {
+  public:
     struct ValueWrapper final :
       public PersistentValueWrapper<
         PersistentSet,
@@ -50,8 +51,8 @@ class PersistentSet {
       return static_cast<ValueWrapper &>(SelfRef.wrapper());
     }
     const ValueWrapper & getSecond() const {
-      SelfRef.PersistentBucket = this;
-      return static_cast<ValueWrapper *>(SelfRef.wrapper());
+      SelfRef.PersistentBucket = const_cast<PersistentBucket *>(this);
+      return static_cast<const ValueWrapper &>(SelfRef.wrapper());
     }
 
     ValueT & getBucket() noexcept { return Value; }
@@ -150,7 +151,7 @@ public:
   /// getHashValue(LookupKeyT) and isEqual(LookupKeyT, KeyT) for each key
   /// type used.
   template<class LookupKeyT>
-  const_iterator find_as(const LookupKeyT &Key) {
+  const_iterator find_as(const LookupKeyT &Key) const {
     return const_iterator(mMap.find_as(Key));
   }
 

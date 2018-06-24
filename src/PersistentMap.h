@@ -111,8 +111,8 @@ class PersistentMap {
     /// Returns wrapper which stores user-defined value and a list
     /// of persistent references.
     const ValueWrapper & getSecond() const {
-      SelfRef.PersistentBucket = this;
-      return static_cast<ValueWrapper *>(SelfRef.wrapper());
+      SelfRef.PersistentBucket = const_cast<PersistentBucket *>(this);
+      return static_cast<const ValueWrapper &>(SelfRef.wrapper());
     }
 
     /// Returns a user-defined bucket.
@@ -216,7 +216,7 @@ public:
   /// getHashValue(LookupKeyT) and isEqual(LookupKeyT, KeyT) for each key
   /// type used.
   template<class LookupKeyT>
-  const_iterator find_as(const LookupKeyT &Key) {
+  const_iterator find_as(const LookupKeyT &Key) const {
     return const_iterator(mMap.find_as(Key));
   }
 
