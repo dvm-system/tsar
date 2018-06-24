@@ -70,7 +70,7 @@ class PersistentMap {
       using ListT = typename BaseT::ListT;
 
       static inline ValueT * value(const ValueWrapper *Wrapper) {
-        auto Bucket = ImplT::persistent(Wrapper)->getBucket();
+        auto &Bucket = ImplT::persistent(Wrapper)->getBucket();
         return &Bucket.getSecond();
       }
       template<class... Ts> ValueWrapper(Ts &&... Args) {
