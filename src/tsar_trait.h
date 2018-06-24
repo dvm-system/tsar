@@ -105,51 +105,30 @@ public:
   }
 
   /// Returns memory location.
-  MemoryTy getMemory() const { return mLoc; }
+  MemoryTy getMemory() const noexcept { return mLoc; }
+
+
+  /// These methods are necessary to use this class as bucket type in a map.
+  MemoryTy & getFirst() noexcept { return mLoc; }
+  const MemoryTy & getFirst() const noexcept { return mLoc; }
+  BaseTy & getSecond() noexcept { return *this; }
+  const BaseTy & getSecond() const noexcept { return *this; }
 
 private:
   MemoryTy mLoc;
 };
 
-/// A set of traits of estimate memory locations.
+/// \brief A set of traits of estimate memory locations.
+///
+/// Note, that an object of `EsimateMemoryTrait` can not be copied (it can be
+/// moved only), because `bcl::TraitSet` supports 'move' operations only.
 using EstimateMemoryTrait =
   MemoryTrait<const EstimateMemory *, MemoryTraitSet>;
 
 /// A set of traits of unknown memory locations.
 using UnknownMemoryTrait =
   MemoryTrait<const llvm::Instruction *, MemoryDescriptor>;
-}
 
-namespace llvm {
-/// This provides DenseMapInfo for MemoryTrait.
-template<class MemoryTy, class BaseTy>
-struct DenseMapInfo<tsar::MemoryTrait<MemoryTy, BaseTy>> {
-  static inline tsar::MemoryTrait<MemoryTy, BaseTy> getEmptyKey() {
-    return tsar::MemoryTrait<MemoryTy, BaseTy>(
-      DenseMapInfo<MemoryTy>::getEmptyKey());
-  }
-  static inline tsar::MemoryTrait<MemoryTy, BaseTy> getTombstoneKey() {
-    return tsar::MemoryTrait<MemoryTy, BaseTy>(
-      DenseMapInfo<MemoryTy>::getTombstoneKey());
-  }
-  static unsigned getHashValue(
-      const tsar::MemoryTrait<MemoryTy, BaseTy> &Val) {
-    return DenseMapInfo<MemoryTy>::getHashValue(Val.getMemory());
-  }
-  static unsigned getHashValue(MemoryTy Val) {
-    return DenseMapInfo<MemoryTy>::getHashValue(Val);
-  }
-  static bool isEqual(const tsar::MemoryTrait<MemoryTy, BaseTy> &LHS,
-      const tsar::MemoryTrait<MemoryTy, BaseTy> &RHS) {
-    return LHS.getMemory() == RHS.getMemory(); }
-  static bool isEqual(MemoryTy LHS,
-      const tsar::MemoryTrait<MemoryTy, BaseTy> &RHS) {
-    return LHS == RHS.getMemory();
-  }
-};
-}
-
-namespace tsar {
 /// \brief This is a set of traits for an alias node.
 ///
 /// In general this class represents traits of alias nodes which has been
@@ -160,13 +139,17 @@ namespace tsar {
 /// or covers some of explicitly accessed locations. There are also traits of
 /// each such location. Conservative combination of these traits leads to
 /// the proposed traits of a node. Nodes that explicitly accessed locations may
-/// be associated in some of descendant alias nodes of the current one.
+/// be associated with some of descendant alias nodes of the current one.
 class AliasTrait : public MemoryDescriptor, private bcl::Uncopyable {
   /// List of explicitly accessed estimate memory locations and their traits.
-  using AccessTraits = llvm::SmallDenseSet<EstimateMemoryTrait, 1>;
+  using AccessTraits = llvm::SmallDenseMap<
+    const EstimateMemory *, MemoryTraitSet, 1,
+    llvm::DenseMapInfo<const EstimateMemory *>, EstimateMemoryTrait>;
 
   /// List of explicitly accessed unknown memory locations and their traits.
-  using UnknownTraits = llvm::DenseSet<UnknownMemoryTrait>;
+  using UnknownTraits = llvm::DenseMap<
+    const llvm::Instruction *, MemoryDescriptor,
+    llvm::DenseMapInfo<const llvm::Instruction *>, UnknownMemoryTrait>;
 
 public:
   /// This class used to iterate over traits of different estimate locations.
@@ -218,26 +201,22 @@ public:
 
   /// Adds traits of an explicitly accessed location, returns false if
   /// such location already exists. Its traits will not be updated.
-  std::pair<iterator, bool> insert(const EstimateMemoryTrait &LT) {
-    return mAccesses.insert(LT);
-  }
-
-  /// Adds traits of an explicitly accessed location, returns false if
-  /// such location already exists. Its traits will not be updated.
   std::pair<iterator, bool> insert(EstimateMemoryTrait &&LT) {
-    return mAccesses.insert(std::move(LT));
+    return mAccesses.try_emplace(
+      std::move(LT.getFirst()), std::move(LT.getSecond()));
   }
 
   /// Adds traits of an explicitly accessed location, returns false if
   /// such location already exists. Its traits will not be updated.
   std::pair<unknown_iterator, bool> insert(const UnknownMemoryTrait &LT) {
-    return mUnknowns.insert(LT);
+    return mUnknowns.insert(std::make_pair(LT.getFirst(), LT.getSecond()));
   }
 
   /// Adds traits of an explicitly accessed location, returns false if
   /// such location already exists. Its traits will not be updated.
   std::pair<unknown_iterator, bool> insert(UnknownMemoryTrait &&LT) {
-    return mUnknowns.insert(std::move(LT));
+    return mUnknowns.try_emplace(
+      std::move(LT.getFirst()), std::move(LT.getSecond()));
   }
 
   /// Returns iterator that points to the beginning of the list of
@@ -276,27 +255,27 @@ public:
   /// explicitly accessed.
   iterator find(const EstimateMemory *EM) {
     assert(EM && "Estimate memory must not be null!");
-    return mAccesses.find_as(EM);
+    return mAccesses.find(EM);
   }
 
   /// Returns traits of a specified estimate memory location if it is
   /// explicitly accessed.
   const_iterator find(const EstimateMemory *EM) const {
     assert(EM && "Estimate memory must not be null!");
-    return mAccesses.find_as(EM);
+    return mAccesses.find(EM);
   }
 
   /// Returns traits of a specified unknown memory location if it is
   /// explicitly accessed.
   unknown_iterator find(const llvm::Instruction *Inst) {
     assert(Inst && "Unknown memory must not be null!");
-    return mUnknowns.find_as(Inst);
+    return mUnknowns.find(Inst);
   }
   /// Returns traits of a specified unknown memory location if it is
   /// explicitly accessed.
   const_unknown_iterator find(const llvm::Instruction *Inst) const {
     assert(Inst && "Unknown memory must not be null!");
-    return mUnknowns.find_as(Inst);
+    return mUnknowns.find(Inst);
   }
 
   /// Returns number of explicitly accessed estimate locations.
@@ -312,16 +291,16 @@ public:
   bool unknown_empty() const { return mUnknowns.empty(); }
 
   /// Removes an explicitly accessed location from the list.
-  bool erase(const EstimateMemory *EM) {
-    auto I = find(EM);
-    return I != end() ? mAccesses.erase(I), true : false;
-  }
+  bool erase(const EstimateMemory *EM) { return mAccesses.erase(EM); }
 
   /// Removes an explicitly accessed location from the list.
-  bool erase(const llvm::Instruction *Inst) {
-    auto I = find(Inst);
-    return I != unknown_end() ? mUnknowns.erase(I), true : false;
-  }
+  void erase(iterator I) { mAccesses.erase(I); }
+
+  /// Removes an explicitly accessed location from the list.
+  bool erase(const llvm::Instruction *Inst) { return mUnknowns.erase(Inst); }
+
+  /// Removes an explicitly accessed location from the list.
+  void erase(unknown_iterator I) { mUnknowns.erase(I); }
 
   /// Removes all explicitly accessed estimate locations from the list.
   void clear() { mAccesses.clear(); }
