@@ -16,6 +16,10 @@
 #include <assert.h>
 #include <type_traits>
 
+namespace llvm {
+template<class T> struct DenseMapInfo;
+}
+
 namespace tsar {
 template<class PersistentT, class MapT> class PersistentIteratorC;
 template<class PersistentT, class MapT> struct PersistentValueWrapper;
@@ -101,34 +105,50 @@ private:
 template<class PersistentT, class MapT>
 class PersistentIteratorC {
   friend struct PersistentValueWrapper<PersistentT, MapT>;
-  using PersistentBucket = typename MapT::value_type;
+  friend struct llvm::DenseMapInfo<PersistentIteratorC>;
   using NotPersistentIteratorC = NotPersistentIterator<true, PersistentT, MapT>;
+protected:
+  using PersistentBucket = typename MapT::value_type;
 public:
   using value_type = typename NotPersistentIteratorC::value_type;
   using pointer = typename NotPersistentIteratorC::pointer;
   using reference = typename NotPersistentIteratorC::reference;
 
-  PersistentIteratorC() = default;
+  PersistentIteratorC(PersistentBucket *Ptr = nullptr) :
+    mPtr(Ptr), mNext(nullptr), mPrev(&mNext) {
+    // Note, mPrev is set to &mNext to enable remove from list in case of
+    // invalid iterator.
+  }
 
   ~PersistentIteratorC() {
     // It is necessary to call removeFromList() hear, however it should be
     // called under condition. If PersistentBucket has been already destroyed
-    // it set mPtr to nullptr. This prevents access to destroyed memory.
-    if (mPtr)
+    // it set mPrev to &mNext. This prevents access to destroyed memory.
+    // Do not use mPtr == nullptr condition because mPtr is not null for
+    // tombstone iterators (see llvm::DenseMapInfo<PersistentIteratorC>).
+    if (isValid())
       removeFromList();
   }
 
   PersistentIteratorC(const PersistentIteratorC &Itr) :
     mPtr(Itr.mPtr) {
-    addToList();
+    if (Itr)
+      addToList();
+    else
+      invalidate();
   }
 
   PersistentIteratorC(PersistentIteratorC &&Itr) : mPtr(Itr.mPtr) {
-    addToList();
-    Itr.removeFromList();
+    if (Itr) {
+      addToList();
+      Itr.removeFromList();
+    } else {
+      invalidate();
+    }
   }
 
   /// Creates persistent iterator which points to a specified bucket.
+  /// Note, that source iterator should not be result of end().
   template<bool IsConst>
   PersistentIteratorC(
     const NotPersistentIterator<IsConst, PersistentT, MapT> &Itr) :
@@ -137,19 +157,28 @@ public:
   }
 
   PersistentIteratorC & operator=(const PersistentIteratorC &Itr) {
-    mPtr = Itr.mPtr;
-    addToList();
+    if (Itr) {
+      mPtr = Itr.mPtr;
+      addToList();
+    } else {
+      invalidate();
+    }
     return *this;
   }
 
   PersistentIteratorC & operator=(PersistentIteratorC &&Itr) {
-    mPtr = Itr.mPtr;
-    addToList();
-    Itr.removeFromList();
+    if (Itr) {
+      mPtr = Itr.mPtr;
+      addToList();
+      Itr.removeFromList();
+    } else {
+      invalidate();
+    }
     return *this;
   }
 
   /// Updates persistent iterator. So, it will be point to a specified bucket.
+  /// Note, that source iterator should not be result of end().
   template<bool IsConst>
   PersistentIteratorC & operator=(
     const NotPersistentIterator<IsConst, PersistentT, MapT> &Itr) {
@@ -159,26 +188,29 @@ public:
   }
 
   reference operator*() const {
-    assert(mPtr && "Persistent reference to a bucket must not be null!");
+    assert(isValid() && "Dereference of invalid persistent iterator!");
     return mPtr->getBucket();
   }
 
   pointer operator->() const { return &operator*(); }
 
   bool operator==(const PersistentIteratorC &RHS) const {
-    assert(mPtr && "Persistent reference to a bucket must not be null!");
     return mPtr == RHS.mPtr;
   }
 
   bool operator!=(const PersistentIteratorC &RHS) const {
-    assert(mPtr && "Persistent reference to a bucket must not be null!");
     return mPtr != RHS.mPtr;
   }
 
+  bool isValid() const noexcept { return mPrev != &mNext; }
+  operator bool () const noexcept { return isValid(); }
+
 protected:
-  PersistentBucket *mPtr = nullptr;
+  PersistentBucket *mPtr;
 
 private:
+  void invalidate() noexcept { mPrev = &mNext; }
+
   void addToList() {
     assert(mPtr && "Persistent reference to a bucket must not be null!");
     PersistentIteratorC **List = mPtr->getPersistentList();
@@ -192,17 +224,17 @@ private:
   }
 
   void removeFromList() {
-    mPtr = nullptr;
-    assert(*mPrev == this && "List invariant broken");
     *mPrev = mNext;
     if (mNext) {
       assert(mNext->mPrev == &mNext && "List invariant broken!");
       mNext->mPrev = mPrev;
     }
+    // Set invariant for nullptr, empty and tombstone iterators.
+    invalidate();
   }
 
-  PersistentIteratorC **mPrev = nullptr;
-  PersistentIteratorC *mNext = nullptr;
+  PersistentIteratorC *mNext;
+  PersistentIteratorC **mPrev;
 };
 
 /// This is persistent iterator which remains valid when insertion occurs.
@@ -213,12 +245,13 @@ template<class PersistentT, class MapT>
 class PersistentIterator : public PersistentIteratorC<PersistentT, MapT> {
   using Base = PersistentIteratorC<PersistentT, MapT>;
   using NotPersistentIteratorT = NotPersistentIterator<false, PersistentT, MapT>;
+  using PersistentBucket = typename Base::PersistentBucket;
 public:
   using value_type = typename NotPersistentIteratorT::value_type;
   using pointer = typename NotPersistentIteratorT::pointer;
   using reference = typename NotPersistentIteratorT::reference;
 
-  PersistentIterator() = default;
+  PersistentIterator(PersistentBucket *Ptr = nullptr) : Base(Ptr) {}
   PersistentIterator(const PersistentIterator &) = default;
   PersistentIterator(PersistentIterator &&) = default;
   ~PersistentIterator() = default;
@@ -226,16 +259,18 @@ public:
   PersistentIterator & operator=(PersistentIterator &&) = default;
 
   /// Creates persistent iterator which points to a specified bucket.
+  /// Note, that source iterator should not be result of end().
   PersistentIterator(const NotPersistentIteratorT &Itr) : Base(Itr) {};
 
   /// Updates persistent iterator. So, it will be point to a specified bucket.
+  /// Note, that source iterator should not be result of end().
   PersistentIterator & operator=(const NotPersistentIteratorT &Itr) {
     Base::operator=(Itr);
     return *this;
   }
 
   reference operator*() const {
-    assert(Base::mPtr && "Persistent reference to a bucket must not be null!");
+    assert(Base::isValid() && "Dereference of invalid persistent iterator!");
     return Base::mPtr->getBucket();
   }
   pointer operator->() const { return &operator*(); }
