@@ -399,9 +399,12 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   BoundFlag |= End ? LoopEndIsKnown : LoopBoundIsUnknown;
   BoundFlag |= Step ? LoopStepIsKnown : LoopBoundIsUnknown;
   BoundFlag |= !Signed ? LoopBoundUnsigned : LoopBoundIsUnknown;
+  auto MDFunc = Header->getParent()->getSubprogram();
+  auto Filename = MDFunc ? MDFunc->getFilename() :
+    StringRef(Header->getModule()->getSourceFileName());
   createInitDICall(
     Twine("type=") + "seqloop" + "*" +
-    "file=" + Header->getModule()->getSourceFileName() + "*" +
+    "file=" + Filename + "*" +
     "bounds=" + Twine(BoundFlag) + "*" +
     StartLoc + EndLoc + "*", DILoopIdx);
   auto *DILoop = createPointerToDI(DILoopIdx, *InsertBefore);
@@ -502,9 +505,10 @@ void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
     (Twine("name1=") + F.getName() + "*").str() :
     ("line1=" + Twine(MD->getLine()) + "*" +
       "name1=" + MD->getName() + "*").str();
+  auto Filename = MD ? MD->getFilename() : StringRef(M.getSourceFileName());
   auto ReturnTypeId = mTypes.regItem(ReturnTy);
   createInitDICall(Twine("type=") + "function" + "*" +
-    "file=" + M.getSourceFileName() + "*" +
+    "file=" + Filename + "*" +
     "vtype=" + Twine(ReturnTypeId) + "*" +
     "rank=" + Twine(Rank) + "*" +
     DeclStr + "*", Idx);
@@ -663,9 +667,13 @@ void Instrumentation::visitInstruction(Instruction &I) {
     raw_svector_ostream OS(IStr);
     I.print(OS);
     auto M = I.getModule();
-    I.getContext().diagnose(DiagnosticInfoInlineAsm(
-      Twine("unsupported RW instruction ") + OS.str() + " in " +
-        M->getSourceFileName(), DS_Warning));
+    auto Func = I.getFunction();
+    assert(Func && "Function must not be null!");
+    auto MD = Func->getSubprogram();
+    auto Filename = MD ? MD->getFilename() : StringRef(M->getSourceFileName());
+    I.getContext().diagnose(DiagnosticInfoInlineAsm(I,
+      Twine("unsupported RW instruction ") + OS.str() + " in " + Filename,
+      DS_Warning));
   }
 }
 
@@ -862,10 +870,13 @@ auto Instrumentation::regDebugLoc(
   if (!DbgLoc)
     return DIStringRegister::indexOfItemType<DILocation *>();
   auto DbgLocIdx = mDIStrings.regItem(DbgLoc.get());
+  auto *Scope = cast<DIScope>(DbgLoc->getScope());
+  std::string ColStr = !DbgLoc.getCol() ? std::string("") :
+    ("col1=" + Twine(DbgLoc.getCol()) + "*").str();
   createInitDICall(
     Twine("type=") + "file_name" + "*" +
-    "line1=" + Twine(DbgLoc.getLine()) + "*" +
-    "col1=" + Twine(DbgLoc.getCol()) + "*" + "*", DbgLocIdx);
+    "file=" + Scope->getFilename() + "*" +
+    "line1=" + Twine(DbgLoc.getLine()) + "*" + ColStr + "*", DbgLocIdx);
   return DbgLocIdx;
 }
 
@@ -874,8 +885,10 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
   assert(V && "Variable must not be null!");
   DEBUG(dbgs() << "[INSTR]: register variable ";
     V->printAsOperand(dbgs()); dbgs() << "\n");
-  auto DeclStr = MD ? (Twine("line1=") + Twine(MD->getLine()) + "*" +
-    "name1=" + MD->getName() + "*").str() : std::string("");
+  auto DeclStr = MD ? (Twine("file=") + MD->getFilename() + "*" +
+    "line1=" + Twine(MD->getLine()) + "*" +
+      "name1=" + MD->getName() + "*").str() :
+    (Twine("file=") + M.getSourceFileName() + "*").str();
   unsigned TypeId = mTypes.regItem(T);
   unsigned Rank;
   uint64_t ArraySize;
@@ -884,7 +897,6 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
     (Twine("arr_name") + "*" + "rank=" + Twine(Rank) + "*").str();
   createInitDICall(
     Twine("type=") + TypeStr +
-    "file=" + M.getSourceFileName() + "*" +
     "vtype=" + Twine(TypeId) + "*" + DeclStr + "*",
     Idx);
   auto DIVar = createPointerToDI(Idx, InsertBefore);
