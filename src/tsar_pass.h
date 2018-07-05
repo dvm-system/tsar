@@ -227,6 +227,10 @@ void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
 /// Creates a pass to determine perfect for-loops in a source code.
 FunctionPass * createClangPerfectLoopPass();
 
+void initializeArraySubscriptDelinearizePassPass(PassRegistry &Registry);
+
+FunctionPass * createArraySubscriptDelinearizePass();
+
 /// Initializes a pass to determine canonical for-loops in a source code.
 void initializeCanonicalLoopPassPass(PassRegistry &Registry);
 

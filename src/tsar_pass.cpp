@@ -37,6 +37,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeClangCFTraitsPassPass(Registry);
   initializeTestPrinterPassPass(Registry);
   initializeLoopAttributesDeductionPassPass(Registry);
+  initializeArraySubscriptDelinearizePassPass(Registry);
   // Initialize LLVM-level transformation passes.
   initializeDILoopRetrieverPassPass(Registry);
   initializeDIGlobalRetrieverPassPass(Registry);
