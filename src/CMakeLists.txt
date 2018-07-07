@@ -21,17 +21,16 @@ if(MSVC_IDE)
   source_group(src FILES ${TSAR_EXECUTABLES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
   source_group(src FILES ${TSAR_HEADERS})
-  source_group(base FILES ${BASE_HEADERS})
+  source_group(bcl FILES ${BCL_CORE_HEADERS})
   source_group(patches FILES ${TSAR_PATCHES})
 endif()
 if (TSAR_SHARED)
-  add_library(tsar SHARED
-    ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
+  add_library(tsar SHARED ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${TSAR_PATCHES})
   add_definitions("-DBCL_EXPORTING")
 else()
-  add_executable(tsar
-    ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${BASE_HEADERS} ${TSAR_PATCHES})
+  add_executable(tsar ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${TSAR_PATCHES})
 endif()
+include(tsar-tablegen)
 tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
   SOURCE DiagnosticKinds.td
   TARGET DiagnosticKinds)
@@ -48,7 +47,7 @@ if(NOT PACKAGE_LLVM)
   add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
 add_definitions("-D${PROJECT_NAME}_PROJECT" "-D${PROJECT_NAME}_CONFIG")
-target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS})
+target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 install(TARGETS tsar
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION bin)

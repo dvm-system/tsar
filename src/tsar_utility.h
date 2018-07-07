@@ -18,8 +18,8 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Type.h>
 #include <tuple>
-#include <convertible_pair.h>
-#include <tagged.h>
+#include <bcl/convertible_pair.h>
+#include <bcl/tagged.h>
 
 namespace llvm {
 class BasicBlock;

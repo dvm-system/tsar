@@ -12,8 +12,8 @@
 #define TSAR_CLANG_FORMAT_PASS_H
 
 #include "tsar_pass.h"
+#include <bcl/utility.h>
 #include <llvm/Pass.h>
-#include <utility.h>
 
 namespace llvm {
 class Module;

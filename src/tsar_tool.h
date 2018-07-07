@@ -20,7 +20,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <string>
 #include <vector>
-#include <utility.h>
+#include <bcl/utility.h>
 
 namespace llvm {
 class PassInfo;

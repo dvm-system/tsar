@@ -38,7 +38,7 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
-#include <utility.h>
+#include <bcl/utility.h>
 
 using namespace llvm;
 using namespace tsar;

@@ -16,10 +16,10 @@
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Path.h>
-#include <cell.h>
-#include <IntrusiveConnection.h>
-#include <Json.h>
-#include <RedirectIO.h>
+#include <bcl/cell.h>
+#include <bcl/IntrusiveConnection.h>
+#include <bcl/Json.h>
+#include <bcl/RedirectIO.h>
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"

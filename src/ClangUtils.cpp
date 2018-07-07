@@ -10,6 +10,7 @@
 
 #include "ClangUtils.h"
 #include "tsar_utility.h"
+#include <bcl/utility.h>
 #include <clang/Analysis/CFG.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
@@ -21,7 +22,6 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
-#include <utility.h>
 #include <numeric>
 #include <regex>
 

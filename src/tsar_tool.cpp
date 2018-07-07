@@ -9,10 +9,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_tool.h"
+#include "tsar_config.h"
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
 #include "GlobalOptions.h"
-#include "tsar_exception.h"
 #include "tsar_finliner.h"
 #include "tsar_pragma.h"
 #include "tsar_query.h"
@@ -87,6 +87,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> PrintAST;
   llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
+
   llvm::cl::opt<bool> PrintAll;
   llvm::cl::list<const PassInfo *, bool,
     llvm::FilteredPassNameParser<
@@ -207,8 +208,8 @@ Options::Options() :
 
 void Options::printVersion() {
   raw_ostream &OS = outs();
-  OS << TSAR::Acronym::Data() + " (" + TSAR::URL::Data() + "):\n";
-  OS << "  " << TSAR::Version::Field() + " " + TSAR::Version::Data() << "\n";
+  OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
+  OS << "  version " << TSAR_VERSION_STRING << "\n";
 #ifndef __OPTIMIZE__
   OS << "  DEBUG build";
 #else
@@ -226,7 +227,7 @@ void Options::printVersion() {
 Tool::Tool(int Argc, const char **Argv) {
   assert(Argv && "List of command line arguments must not be null!");
   Options::get(); // At first, initialize command line options.
-  std::string Descr = TSAR::Title::Data() + "(" + TSAR::Acronym::Data() + ")";
+  std::string Descr = std::string(TSAR_DESCRIPTION) + "(TSAR)";
   // Passes should be initialized previously then command line options are
   // parsed, due to initialize list of available passes.
   initializeTSAR(*PassRegistry::getPassRegistry());
@@ -312,6 +313,7 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
       mPrintSteps |= 1u << (Step - 1);
     }
   }
+
 }
 
 void Tool::storeCLOptions() {

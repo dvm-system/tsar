@@ -11,7 +11,7 @@
 #include "tsar_loop_matcher.h"
 #include "tsar_matcher.h"
 #include "tsar_transformation.h"
-#include <transparent_queue.h>
+#include <bcl/transparent_queue.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>

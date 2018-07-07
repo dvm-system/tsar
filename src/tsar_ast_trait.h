@@ -14,8 +14,8 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/ADT/STLExtras.h>
-#include <trait.h>
-#include <utility.h>
+#include <bcl/trait.h>
+#include <bcl/utility.h>
 
 namespace clang {
 class VarDecl;

@@ -23,8 +23,8 @@
 #include "tsar_data_flow.h"
 #include "DFRegionInfo.h"
 #include "tsar_utility.h"
-#include <tagged.h>
-#include <utility.h>
+#include <bcl/tagged.h>
+#include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>

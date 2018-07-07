@@ -15,7 +15,7 @@
 #define TSAR_GLOBAL_OPTIONS_H
 
 #include "tsar_pass.h"
-#include <utility.h>
+#include <bcl/utility.h>
 #include <llvm/Pass.h>
 
 namespace tsar {

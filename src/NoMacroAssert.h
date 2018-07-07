@@ -18,11 +18,11 @@
 #include "tsar_pass.h"
 #include "tsar_pragma.h"
 #include "SourceLocationTraverse.h"
+#include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/Pass.h>
-#include <utility.h>
 
 namespace tsar {
 namespace detail {

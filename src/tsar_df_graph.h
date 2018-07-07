@@ -24,8 +24,7 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <vector>
-#include <utility.h>
-#include <declaration.h>
+#include <bcl/utility.h>
 #include "tsar_data_flow.h"
 #include "tsar_graph.h"
 

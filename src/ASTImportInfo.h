@@ -15,7 +15,7 @@
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
-#include <utility.h>
+#include <bcl/utility.h>
 #include <vector>
 
 namespace clang {

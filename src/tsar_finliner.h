@@ -14,6 +14,7 @@
 
 #include "GlobalInfoExtractor.h"
 #include "tsar_pass.h"
+#include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/TypeLoc.h>
 #include <llvm/ADT/BitmaskEnum.h>
@@ -21,7 +22,6 @@
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/Pass.h>
-#include <utility.h>
 #include <memory>
 #include <vector>
 

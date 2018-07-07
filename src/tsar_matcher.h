@@ -15,7 +15,7 @@
 
 #include "tsar_bimap.h"
 #include "tsar_utility.h"
-#include <transparent_queue.h>
+#include <bcl/transparent_queue.h>
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/Statistic.h>

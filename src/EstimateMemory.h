@@ -40,11 +40,11 @@
 #include "tsar_df_graph.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
-#include <Chain.h>
-#include <convertible_pair.h>
-#include <IteratorDataAdaptor.h>
-#include <trait.h>
-#include <utility.h>
+#include <bcl/Chain.h>
+#include <bcl/convertible_pair.h>
+#include <bcl/IteratorDataAdaptor.h>
+#include <bcl/trait.h>
+#include <bcl/utility.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/GraphTraits.h>

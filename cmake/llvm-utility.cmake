@@ -36,10 +36,42 @@ function(sapfor_download_llvm)
       execute_process(COMMAND ${Subversion_SVN_EXECUTABLE}
         up ${CLANG_SOURCE_DIR} RESULT_VARIABLE LLVM_ERROR)
     endif()
-  endif()    
+  endif()
   if(LLVM_ERROR)
    message(FATAL_ERROR "${LLVM_STATUS} - error")
   else()
    message(STATUS "${LLVM_STATUS} - done")
   endif()
 endfunction(sapfor_download_llvm)
+
+# Install LLVM executables such as clang, opt, llc and symlinks.
+# This macro also generates convinient targets *_BUILD to build this executables
+# according to options BUILD_*.
+macro(sapfor_install_llvm)
+  if(BUILD_CLANG)
+    if(NOT CLANG_LINKS_TO_INSTALL)
+      set(CLANG_LINKS_TO_INSTALL
+        "$<TARGET_FILE_DIR:clang>/clang++${CMAKE_EXECUTABLE_SUFFIX}"
+        "$<TARGET_FILE_DIR:clang>/clang-cl${CMAKE_EXECUTABLE_SUFFIX}"
+        "$<TARGET_FILE_DIR:clang>/clang-cpp${CMAKE_EXECUTABLE_SUFFIX}")
+      if (WIN32)
+        list(APPEND CLANG_LINKS_TO_INSTALL
+        "$<TARGET_FILE_DIR:clang>/../msbuild-bin/cl${CMAKE_EXECUTABLE_SUFFIX}")
+      endif()
+    endif()
+    add_custom_target(CLANG_BUILD ALL)
+    add_dependencies(CLANG_BUILD clang)
+    install(PROGRAMS $<TARGET_FILE:clang> ${CLANG_LINKS_TO_INSTALL}
+      DESTINATION bin)
+  endif()
+  if(BUILD_OPT)
+    add_custom_target(OPT_BUILD ALL)
+    add_dependencies(OPT_BUILD opt)
+    install(PROGRAMS $<TARGET_FILE:opt> DESTINATION bin)
+  endif()
+  if(BUILD_LLC)
+    add_custom_target(LLC_BUILD ALL)
+    add_dependencies(LLC_BUILD llc)
+    install(PROGRAMS $<TARGET_FILE:llc> DESTINATION bin)
+  endif()
+endmacro(sapfor_install_llvm)

@@ -86,9 +86,9 @@
 #include <array>
 #include <vector>
 #include <string>
-#include <cell.h>
-#include <Diagnostic.h>
-#include <Json.h>
+#include <bcl/cell.h>
+#include <bcl/Diagnostic.h>
+#include <bcl/Json.h>
 
 /// Specifies identifier of a message (provides the name() method).
 #define MSG_NAME(Name) \

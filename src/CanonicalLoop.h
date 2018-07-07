@@ -15,8 +15,8 @@
 
 #include "tsar_pass.h"
 #include "tsar_utility.h"
-#include <tagged.h>
-#include <utility.h>
+#include <bcl/tagged.h>
+#include <bcl/utility.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/Pass.h>
 #include <set>

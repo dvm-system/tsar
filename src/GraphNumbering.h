@@ -13,7 +13,7 @@
 #define TSAR_GRAPH_NUMBERING_H
 
 #include "tsar_utility.h"
-#include <tagged.h>
+#include <bcl/tagged.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/SmallPtrSet.h>
 

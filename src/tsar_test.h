@@ -16,7 +16,7 @@
 #define TSAR_TEST_H
 
 #include <llvm/Pass.h>
-#include <utility.h>
+#include <bcl/utility.h>
 #include "tsar_query.h"
 #include "tsar_pass.h"
 

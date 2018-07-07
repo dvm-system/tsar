@@ -15,7 +15,7 @@
 #include "tsar_dbg_output.h"
 #include "EstimateMemory.h"
 #include "SpanningTreeRelation.h"
-#include <IteratorDataAdaptor.h>
+#include <bcl/IteratorDataAdaptor.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/PointerSumType.h>
 #include <llvm/ADT/Statistic.h>

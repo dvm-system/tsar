@@ -12,7 +12,7 @@
 #ifndef TSAR_MEMORY_TRAIT_H
 #define TSAR_MEMORY_TRAIT_H
 
-#include <trait.h>
+#include <bcl/trait.h>
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/StringRef.h>
 

@@ -12,7 +12,7 @@
 #define TSAR_ESTIMATE_MEMORY_UTILS_H
 
 #include "KnownFunctionTraits.h"
-#include <trait.h>
+#include <bcl/trait.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/CallSite.h>

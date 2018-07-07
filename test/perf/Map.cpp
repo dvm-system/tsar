@@ -230,7 +230,7 @@ void run(std::size_t Size,
 #endif
   outs() << "\n";
   outs() << "  LLVM version " << LLVM_VERSION_STRING << "\n";
-  outs() << "  TSAR version " << TSAR_VERSION << "\n";
+  outs() << "  TSAR version " << TSAR_VERSION_STRING << "\n";
   outs() << "  size of data " << Size << "\n";
   outs() << "  key size " << sizeof(KeyT) << "\n";
   outs() << "  value size " << sizeof(ValueT) << "\n";

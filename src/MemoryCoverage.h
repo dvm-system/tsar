@@ -14,7 +14,7 @@
 
 #include "EstimateMemory.h"
 #include "GraphNumbering.h"
-#include <tagged.h>
+#include <bcl/tagged.h>
 #include <llvm/ADT/iterator.h>
 #include <map>
 #include <tuple>
