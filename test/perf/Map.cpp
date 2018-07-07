@@ -162,10 +162,11 @@ ACCUMULATE_TIME(accumulate_second, find_second)
 
 void run(std::size_t Size,
     unsigned MaxIter = 5, unsigned AccumulateMaxIter = 10) {
-  TimeT EmplaceSM, TryEmplacePM, TryEmplacePMP, TryEmplaceDM, EmplaceSUM,
-    EmplaceBM;
-  TimeT EraseSM, ErasePM, ErasePMP, EraseDM, EraseSUM, EraseBM;
-  TimeT FindSM, FindPM, FindPMP, FindDM, FindSUM, FindBM;
+  TimeT EmplaceSM(0), TryEmplacePM(0), TryEmplacePMP(0), TryEmplaceDM(0),
+    EmplaceSUM(0), EmplaceBM(0);
+  TimeT EraseSM(0), ErasePM(0), ErasePMP(0), EraseDM(0),
+    EraseSUM(0), EraseBM(0);
+  TimeT FindSM(0), FindPM(0), FindPMP(0), FindDM(0), FindSUM(0), FindBM(0);
   AccumulateDataT Sum{ 0 }, SumSM{ 0 }, SumPM{ 0 }, SumPMP{ 0 }, SumDM{ 0 };
   AccumulateDataT SumSUM{ 0 }, SumBM{ 0 };
   auto Data = initializeDataSet(Size);
