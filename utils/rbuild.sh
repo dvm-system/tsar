@@ -14,12 +14,12 @@
 # - make (on remote system to build project)
 #
 # The following scenario is supported:
-# 1. Commit all changes in current branches of IDB and TSAR repositories
+# 1. Commit all changes in current branches of BCL and TSAR repositories
 #    to a remote repository with name $REMOTE_REPO_NAME in a force way
 #    (git add -all, git commit, git push -f).
 # 2. Use ssh to establish connection with a remote system:
 #    ssh $REMOTE_HOST -p$REMOTE_PORT
-# 3. Stash all changes on a remote local copy of IDB and TSAR repositories.
+# 3. Stash all changes on a remote local copy of BCL and TSAR repositories.
 # 4. Reapply commits on top of remote repository (git rebase) with name
 #    $REMOTE_REPO_NAME.
 # 5. Enable necessary compiler (source $REMOTE_COMPILER_PATH).
@@ -27,7 +27,7 @@
 # 7. Install analyzer at a specified path $REMOTE_INSTALL_PATH or use
 #    make install/fast if this path is empty.
 # 8. Reset the index and working tree and discard all obtained changes in the
-#    working tree of IDB and TSAR repositories (git reset --hard).
+#    working tree of BCL and TSAR repositories (git reset --hard).
 # 9. Disconnect from remote system.
 #
 # The following preliminary configurations should be manually made:
@@ -53,27 +53,27 @@ REMOTE_COMPILER_PATH=""
 #===------------------------------------------------------------------------===#
 
 TSAR_REMOTE_REPO="$SAPFOR_REMOTE_REPO/analyzers/tsar/trunk"
-IDB_REMOTE_REPO="$SAPFOR_REMOTE_REPO/idb/trunk"
+BCL_REMOTE_REPO="$SAPFOR_REMOTE_REPO/bcl"
 
 SCRIPT_PATH="`dirname \"$0\"`"
 SCRIPT_PATH="`(cd \"$SCRIPT_PATH\" && pwd )`"
 
 SAPFOR_PATH="$SCRIPT_PATH\..\..\..\.."
 TSAR_PATH="$SAPFOR_PATH\analyzers\tsar\trunk"
-IDB_PATH="$SAPFOR_PATH\idb\trunk"
+BCL_PATH="$SAPFOR_PATH\bcl"
 
 SAPFOR_PATH="`(cd \"$SAPFOR_PATH\" && pwd )`"
 TSAR_PATH="`(cd \"$TSAR_PATH\" && pwd )`"
-IDB_PATH="`(cd \"$IDB_PATH\" && pwd )`"
+BCL_PATH="`(cd \"$BCL_PATH\" && pwd )`"
 
-# Commit all changes in IDB working tree.
-cd $IDB_PATH
-CURRENT_IDB_BRANCH="`git rev-parse --abbrev-ref HEAD`"
+# Commit all changes in BCL working tree.
+cd $BCL_PATH
+CURRENT_BCL_BRANCH="`git rev-parse --abbrev-ref HEAD`"
 echo "This is stab to perform commit if there is no other changes." > $REMOTE_REPO_NAME.stab
 git add --all
 git commit -m "Prepare to build."
-git push $REMOTE_REPO_NAME $CURRENT_IDB_BRANCH -f
-git reset $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH^
+git push $REMOTE_REPO_NAME $CURRENT_BCL_BRANCH -f
+git reset $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH^
 rm $REMOTE_REPO_NAME.stab
 
 # Commit all changes in TSAR working tree.
@@ -95,4 +95,4 @@ INSTALL="make install/fast;"
 if [ -n "$REMOTE_INSTALL_PATH" ]; then
   INSTALL="cp $REMOTE_BUILD_PATH/tsar/tsar $REMOTE_INSTALL_PATH;"
 fi
-ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $IDB_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git rebase $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git rebase $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; $INSTALL cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $IDB_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_IDB_BRANCH^"
+ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $BCL_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_BCL_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; $INSTALL cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $BCL_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH^"
