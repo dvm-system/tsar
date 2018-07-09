@@ -4,7 +4,7 @@ project(TSAR VERSION 0.1 LANGUAGES CXX)
 set(TSAR_DESCRIPTION "Traits Static Analyzer")
 set(TSAR_HOMEPAGE_URL "https://bitbucket.org/dvm-system/tsar")
 
-find_package(BCL 3.0 REQUIRED)
+find_package(BCL 3.0 REQUIRED CONFIG)
 find_package(APC CONFIG QUIET)
 if(NOT APC_FOUND)
   message(WARNING "Configuration without APC: APC package not found.")
