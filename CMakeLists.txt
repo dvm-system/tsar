@@ -5,6 +5,10 @@ set(TSAR_DESCRIPTION "Traits Static Analyzer")
 set(TSAR_HOMEPAGE_URL "https://bitbucket.org/dvm-system/tsar")
 
 find_package(BCL 3.0 REQUIRED)
+find_package(APC CONFIG QUIET)
+if(NOT APC_FOUND)
+  message(WARNING "Configuration without APC: APC package not found.")
+endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
 
