@@ -73,9 +73,9 @@ APC_REMOTE_REPO="$SAPFOR_REMOTE_REPO/.."
 SCRIPT_PATH="`dirname \"$0\"`"
 SCRIPT_PATH="`(cd \"$SCRIPT_PATH\" && pwd )`"
 
-SAPFOR_PATH="$SCRIPT_PATH\..\..\..\.."
-TSAR_PATH="$SAPFOR_PATH\analyzers\tsar\trunk"
-BCL_PATH="$SAPFOR_PATH\bcl"
+SAPFOR_PATH="$SCRIPT_PATH/../../../.."
+TSAR_PATH="$SAPFOR_PATH/analyzers/tsar/trunk"
+BCL_PATH="$SAPFOR_PATH/bcl"
 APC_PATH="$SAPFOR_PATH/.."
 
 SAPFOR_PATH="`(cd \"$SAPFOR_PATH\" && pwd )`"
