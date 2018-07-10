@@ -33,8 +33,8 @@
 #    (git add -all, git commit, git push -f).
 # 2. Use ssh to establish connection with a remote system:
 #    ssh $REMOTE_HOST -p$REMOTE_PORT
-# 3. Stash all changes on a remote local copy of BCL and TSAR repositories.
-# 4. Reapply commits on top of remote repository (git rebase) with name
+# 3. Stash all changes on a remote local copy of BCL, APC and TSAR repositories.
+# 4. Reapply commits on top of remote repository (git reset --hard) with name
 #    $REMOTE_REPO_NAME.
 # 5. Enable necessary compiler (source $REMOTE_COMPILER_PATH).
 # 6. Use make and specified number of jobs ($BUILD_JOB_NUM) to build project.
@@ -68,6 +68,7 @@ REMOTE_COMPILER_PATH=""
 
 TSAR_REMOTE_REPO="$SAPFOR_REMOTE_REPO/analyzers/tsar/trunk"
 BCL_REMOTE_REPO="$SAPFOR_REMOTE_REPO/bcl"
+APC_REMOTE_REPO="$SAPFOR_REMOTE_REPO/.."
 
 SCRIPT_PATH="`dirname \"$0\"`"
 SCRIPT_PATH="`(cd \"$SCRIPT_PATH\" && pwd )`"
@@ -75,10 +76,12 @@ SCRIPT_PATH="`(cd \"$SCRIPT_PATH\" && pwd )`"
 SAPFOR_PATH="$SCRIPT_PATH\..\..\..\.."
 TSAR_PATH="$SAPFOR_PATH\analyzers\tsar\trunk"
 BCL_PATH="$SAPFOR_PATH\bcl"
+APC_PATH="$SAPFOR_PATH/.."
 
 SAPFOR_PATH="`(cd \"$SAPFOR_PATH\" && pwd )`"
 TSAR_PATH="`(cd \"$TSAR_PATH\" && pwd )`"
 BCL_PATH="`(cd \"$BCL_PATH\" && pwd )`"
+APC_PATH="`(cd \"$APC_PATH\" && pwd )`"
 
 # Commit all changes in BCL working tree.
 cd $BCL_PATH
@@ -100,6 +103,16 @@ git push $REMOTE_REPO_NAME $CURRENT_TSAR_BRANCH -f
 git reset $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^
 rm $REMOTE_REPO_NAME.stab
 
+# Commit all changes in APC working tree.
+cd $APC_PATH
+CURRENT_APC_BRANCH="`git rev-parse --abbrev-ref HEAD`"
+echo "This is stab to perform commit if there is no other changes." > $REMOTE_REPO_NAME.stab
+git add --all
+git commit -m "Prepare to build."
+git push $REMOTE_REPO_NAME $CURRENT_APC_BRANCH -f
+git reset $REMOTE_REPO_NAME/$CURRENT_APC_BRANCH^
+rm $REMOTE_REPO_NAME.stab
+
 # Connect and build.
 SOURCE_REMOTE_COMPILER=""
 if [ -n "$REMOTE_COMPILER_PATH" ]; then
@@ -109,4 +122,4 @@ INSTALL="make install/fast;"
 if [ -n "$REMOTE_INSTALL_PATH" ]; then
   INSTALL="cp $REMOTE_BUILD_PATH/tsar/tsar $REMOTE_INSTALL_PATH;"
 fi
-ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $BCL_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_BCL_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; $INSTALL cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $BCL_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH^"
+ssh $REMOTE_HOST -p$REMOTE_PORT -t "cd $BCL_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_BCL_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH; cd $APC_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_APC_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_APC_BRANCH; cd $TSAR_REMOTE_REPO; git fetch $REMOTE_REPO_NAME; git stash; git checkout $CURRENT_TSAR_BRANCH; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH; cd $REMOTE_BUILD_PATH; $SOURCE_REMOTE_COMPILER make -j$BUILD_JOB_NUM; $INSTALL cd $TSAR_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_TSAR_BRANCH^; cd $BCL_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_BCL_BRANCH^; cd $APC_REMOTE_REPO; git reset --hard $REMOTE_REPO_NAME/$CURRENT_APC_BRANCH^"
