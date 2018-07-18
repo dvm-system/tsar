@@ -49,7 +49,7 @@ char FunctionInlinerImmutableStorage::ID = 0;
 INITIALIZE_PASS(FunctionInlinerImmutableStorage, "function-inliner-is",
   "Function Inliner (Immutable Storage)", true, true)
 
-char FunctionInlinerImmutableWrapper::ID = 0;
+template<> char FunctionInlinerImmutableWrapper::ID = 0;
 INITIALIZE_PASS(FunctionInlinerImmutableWrapper, "function-inliner-iw",
   "Function Inliner (Immutable Wrapper)", true, true)
 
@@ -202,13 +202,15 @@ bool operator<=(
   return LSL < RSL || LSL == RSL;
 }
 
+namespace std {
 template<>
-struct std::less<clang::SourceRange> {
+struct less<clang::SourceRange> {
   bool operator()(clang::SourceRange LSR, clang::SourceRange RSR) {
     return LSR.getBegin() == RSR.getBegin()
       ? LSR.getEnd() < RSR.getEnd() : LSR.getBegin() < RSR.getBegin();
   }
 };
+}
 
 bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
   if (FD->isThisDeclarationADefinition() == false) {
