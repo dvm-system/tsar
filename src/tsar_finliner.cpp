@@ -1292,8 +1292,8 @@ template<typename _Container>
 std::string FInliner::join(
   const _Container& _Cont, const std::string& delimiter) const {
   return _Cont.size() > 0
-    ? std::accumulate(std::next(std::cbegin(_Cont)), std::cend(_Cont),
-    std::string(*std::cbegin(_Cont)),
+    ? std::accumulate(std::next(std::begin(_Cont)), std::end(_Cont),
+    std::string(*std::begin(_Cont)),
     [&](const std::string& left, const std::string& right) {
     return left + delimiter + right;
   }) : "";
