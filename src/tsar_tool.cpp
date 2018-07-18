@@ -250,8 +250,8 @@ inline static TestQueryManager * getTestQM() {
 }
 
 inline static FunctionInlinerQueryManager * getInlineQM(
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers) {
-  static FunctionInlinerQueryManager QM(Handlers);
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> &&Handlers) {
+  static FunctionInlinerQueryManager QM(std::move(Handlers));
   return &QM;
 }
 
@@ -310,7 +310,7 @@ int Tool::run(QueryManager *QM) {
   // the SourcesToMerge collection only.
   std::vector<std::unique_ptr<SPFPragmaHandler>> Handlers;
   //Handlers.push_back(std::make_unique<AnalysisPragmaHandler>());
-  Handlers.push_back(std::make_unique<TransformPragmaHandler>());
+  Handlers.push_back(make_unique<TransformPragmaHandler>());
   if (mMergeAST) {
     EmitPCHTool.run(
       newPragmaActionFactory<GeneratePCHAction, GenPCHPragmaAction>
@@ -324,7 +324,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else if (mInline)
-      QM = getInlineQM(Handlers);
+      QM = getInlineQM(std::move(Handlers));
     else
       QM = getDefaultQM(mOutputPasses);
   }

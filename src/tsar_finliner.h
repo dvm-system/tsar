@@ -35,11 +35,11 @@ namespace tsar {
 
 class FunctionInlinerQueryManager : public QueryManager {
   void run(llvm::Module *M, TransformationContext *Ctx) override;
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> mPragmaHandlers;
 public:
   FunctionInlinerQueryManager(
-    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
-    : mPragmaHandlers(Handlers) {}
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers)
+    : mPragmaHandlers(std::move(Handlers)) {}
 };
 
 struct FunctionInlineInfo : private bcl::Uncopyable {
@@ -72,18 +72,17 @@ private:
 
 class FunctionInlinerPass :
   public ModulePass, private bcl::Uncopyable {
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> mPragmaHandlers;
 public:
   static char ID;
 
-  FunctionInlinerPass() : ModulePass(ID),
-    mPragmaHandlers(std::vector<std::unique_ptr<clang::SPFPragmaHandler>>()) {
+  FunctionInlinerPass() : ModulePass(ID) {
     initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
   }
 
   FunctionInlinerPass(
-    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
-    : mPragmaHandlers(Handlers), ModulePass(ID) {
+    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers)
+    : mPragmaHandlers(std::move(Handlers)), ModulePass(ID) {
     initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
   }
 

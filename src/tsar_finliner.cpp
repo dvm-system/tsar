@@ -72,13 +72,12 @@ INITIALIZE_PASS_END(FunctionInlinerPass, "function-inliner",
   "Function Inliner", false, false)
 
 ModulePass* createFunctionInlinerPass() {
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> Handlers;
-  return new FunctionInlinerPass(Handlers);
+  return new FunctionInlinerPass();
 }
 
 ModulePass* createFunctionInlinerPass(
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers) {
-  return new FunctionInlinerPass(Handlers);
+  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers) {
+  return new FunctionInlinerPass(std::move(Handlers));
 }
 
 void FunctionInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
@@ -581,9 +580,10 @@ std::pair<std::string, std::string> FInliner::compile(
     isSingleReturn = ReachableRetStmts.size() < 2;
     Identifier = addSuffix("R", Decls);
     initContext();
+    std::map<std::string, std::string> Replacements;
     auto Tokens
       = construct(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
-        Identifier, Context, std::map<std::string, std::string>());
+        Identifier, Context, Replacements);
     RetStmt = join(Tokens, " ") + ";";
     for (auto& RS : ReachableRetStmts) {
       auto Text = Identifier + " = " + get(getRange(RS->getRetValue())) + ";";
@@ -616,7 +616,7 @@ std::pair<std::string, std::string> FInliner::compile(
 std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
   std::set<std::string> Identifiers;
   if (const clang::TagDecl* TD = clang::dyn_cast<clang::TagDecl>(D)) {
-    Identifiers.swap(getIdentifiers(TD));
+    Identifiers = std::move(getIdentifiers(TD));
   } else if (const clang::FunctionDecl* FD
     = clang::dyn_cast<clang::FunctionDecl>(D)) {
     Identifiers.insert(FD->getName());
@@ -1386,7 +1386,7 @@ void FunctionInlinerQueryManager::run(llvm::Module* M,
     TEP->setContext(*M, Ctx);
     Passes.add(TEP);
   }
-  Passes.add(createFunctionInlinerPass(mPragmaHandlers));
+  Passes.add(createFunctionInlinerPass(std::move(mPragmaHandlers)));
   Passes.run(*M);
   return;
 }
