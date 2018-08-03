@@ -8,216 +8,240 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clang/AST/Decl.h>
-#include <clang/AST/Stmt.h>
-#include <clang/Lex/Preprocessor.h>
-#include <llvm/ADT/StringSwitch.h>
-#include <llvm/Config/llvm-config.h>
-#include <llvm/IR/Instructions.h>
 #include "tsar_pragma.h"
+#include "ClauseVisitor.h"
+#include <clang/AST/Expr.h>
 
+using namespace clang;
 using namespace llvm;
 using namespace tsar;
 
-namespace clang {
-void AnalysisPragmaHandler::HandlePragma(
-    Preprocessor &PP, PragmaIntroducerKind, Token &FirstToken) {
-  mTokenList.clear();
-  AddToken(tok::l_brace, FirstToken.getLocation(), 1);
-  mPragmaLocSet.insert(FirstToken.getLocation().getRawEncoding());
-  Token Tok;
-  PP.LexNonComment(Tok);
-  do {
-    if (!ConsumeClause(PP, Tok))
-      return;
-  } while (Tok.isNot(tok::eod));
-  AddToken(tok::r_brace, Tok.getLocation(), 1);
-#if (LLVM_VERSION_MAJOR < 4)
-  Token *TokenArray = new Token[mTokenList.size()];
-  std::copy(mTokenList.begin(), mTokenList.end(), TokenArray);
-  PP.EnterTokenStream(TokenArray, mTOkenList.size(), false, true);
-#else
-  PP.EnterTokenStream(mTokenList, false);
-#endif
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "pragma-handler"
+
+namespace {
+std::pair<StringRef, CompoundStmt::body_iterator>
+traversePragmaName(Stmt &S) {
+  auto CS = dyn_cast<CompoundStmt>(&S);
+  if (!CS)
+    return std::make_pair(StringRef(), nullptr);
+  auto CurrStmt = CS->body_begin();
+  if (CurrStmt == CS->body_end())
+    return std::make_pair(StringRef(), nullptr);
+  auto Cast = dyn_cast<ImplicitCastExpr>(*CurrStmt);
+  if (!Cast)
+    return std::make_pair(StringRef(), nullptr);
+  auto Literal = dyn_cast<clang::StringLiteral>(*Cast->child_begin());
+  if (!Literal)
+    return std::make_pair(StringRef(), nullptr);
+  ++CurrStmt;
+  return std::make_pair(Literal->getString(), CurrStmt);
 }
 
-inline void AnalysisPragmaHandler::AddToken(
-    tok::TokenKind K, SourceLocation Loc, unsigned Len) {
+inline void AddToken(tok::TokenKind K, SourceLocation Loc, unsigned Len,
+    SmallVectorImpl<Token> &TokenList) {
   Token Tok;
   Tok.startToken();
   Tok.setKind(K);
   Tok.setLocation(Loc);
   Tok.setLength(Len);
-  mTokenList.push_back(Tok);
+  TokenList.push_back(Tok);
 }
 
-void AnalysisPragmaHandler::AddClauseName(Preprocessor &PP, Token &Tok) {
-  assert(Tok.is(tok::identifier) && "Token must be an identifier!");
-  Token ClauseTok;
-  ClauseTok.startToken();
-  ClauseTok.setKind(tok::string_literal);
-  SmallString<16> Name;
-  raw_svector_ostream OS(Name);
-  OS << '\"' << Tok.getIdentifierInfo()->getName() << '\"';
-  PP.CreateString(
-    OS.str(), ClauseTok, Tok.getLocation(), Tok.getLocation());
-  mTokenList.push_back(ClauseTok);
+inline void AddStringToken(StringRef Str, SourceLocation Loc, Preprocessor &PP,
+    SmallVectorImpl<Token> &TokenList) {
+  Token Tok;
+  Tok.startToken();
+  Tok.setKind(tok::string_literal);
+  PP.CreateString(("\"" + Str + "\"").str(), Tok, Loc, Loc);
+  TokenList.push_back(Tok);
 }
 
-bool AnalysisPragmaHandler::ConsumeClause(Preprocessor &PP, Token &Tok) {
-  if (Tok.isNot(tok::identifier)) {
-    PP.Diag(Tok.getLocation(), diag::err_expected) << "clause name";
-    return false;
+template<class ReplacementT>
+class DefaultClauseVisitor :
+  public ClauseVisitor<ReplacementT, DefaultClauseVisitor<ReplacementT>> {
+  using BaseT = ClauseVisitor<ReplacementT, DefaultClauseVisitor<ReplacementT>>;
+public:
+  /// Creates visitor.
+  DefaultClauseVisitor(clang::Preprocessor &PP, ReplacementT &Replacement) :
+    BaseT(PP, Replacement) {}
+
+  using BaseT::getReplacement;
+  using BaseT::getLevelKind;
+
+  void visitEK_Anchor(Token &Tok) {
+    if (getLevelKind() == ClauseExpr::EK_One)
+      AddToken(tok::r_brace, Tok.getLocation(), 1, getReplacement());
   }
-  CheckClauseName CheckName(Tok.getIdentifierInfo()->getName());
-  ASTDependencyDescriptor::for_each_available(CheckName);
-  if (!CheckName.IsValid()) {
-    unsigned DiagId = PP.getDiagnostics().getCustomDiagID(
-      DiagnosticsEngine::Error, "unknown clause '%0'");
-    PP.Diag(Tok.getLocation(), DiagId) << Tok.getIdentifierInfo()->getName();
-    return false;
+
+  void visitEK_One(Token &Tok) {
+    AddToken(tok::l_brace, Tok.getLocation(), 1, getReplacement());
   }
-  AddClauseName(PP, Tok);
-  PP.LexNonComment(Tok);
-  if (Tok.isNot(tok::l_paren)) {
-    PP.Diag(Tok.getLocation(), diag::err_expected) << "'('";
-    return false;
+
+  /// Assumes that a current token is an identifier and append to replacement
+  /// something similar to `(void)(sizeof((void)(A)))` (for identifier `A`).
+  void visitEK_Identifier(Token &Tok) {
+    assert(Tok.is(tok::identifier) && "Token must be an identifier!");
+    // Each identifier 'I' will be replace by (void)(sizeof((void)(I))).
+    // This construction is necessary to disable warnings for unused expressions
+    // (cast to void) and to disable generation of LLVM IR for it (sizeof).
+    // Cast to void inside 'sizeof' operator is necessary in case of variable
+    // length array:
+    // int N;
+    // double A[N];
+    // (void)(sizeof(A)) // This produces LLVM IR which computes size in dynamic.
+    // (void)(sizeof((void)(A))) // This does not produce LLVM IR.
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_sizeof, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    getReplacement().push_back(Tok);
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
   }
-  AddToken(tok::comma, Tok.getLocation(), 1);
-  PP.LexNonComment(Tok);
-  if (!ConsumeIdentifierList(PP, Tok))
-    return false;
-  if (Tok.isNot(tok::r_paren)) {
-    PP.Diag(Tok.getLocation(), diag::err_expected) << "')'";
-    return false;
-  }
-  AddToken(tok::semi, Tok.getLocation(), 1);
-  PP.LexNonComment(Tok);
-  return true;
+};
 }
 
-bool AnalysisPragmaHandler::ConsumeIdentifierList(Preprocessor &PP, Token &Tok) {
-  if (Tok.isNot(tok::identifier)) {
-    PP.Diag(Tok.getLocation(), diag::err_expected) << "identifier";
-    return false;
+namespace tsar {
+tok::TokenKind getTokenKind(ClauseExpr EK) noexcept {
+  switch (EK) {
+  default:
+    llvm_unreachable("There is no appropriate token for clause expression!");
+    return clang::tok::unknown;
+#define KIND(EK, IsSignle, ClangTok) \
+  case ClauseExpr::EK: return clang::tok::ClangTok;
+#define GET_CLAUSE_EXPR_KINDS
+#include "Directives.gen"
+#undef GET_CLAUSE_EXPR_KINDS
+#undef KIND
   }
-  // Each identifier 'I' will be replace by (void)(sizeof((void)(I))).
-  // This construction is necessary to disable warnings for unused expressions
-  // (cast to void) and to disable generation of LLVM IR for it (sizeof).
-  // Cast to void inside 'sizeof' operator is necessary in case of variable
-  // length array:
-  // int N;
-  // double A[N];
-  // (void)(sizeof(A)) // This produces LLVM IR which computes size in dynamic.
-  // (void)(sizeof((void)(A))) // This does not produce LLVM IR.
-  AddToken(tok::l_paren, Tok.getLocation(), 1);
-  AddToken(tok::kw_void, Tok.getLocation(), 1);
-  AddToken(tok::r_paren, Tok.getLocation(), 1);
-  AddToken(tok::l_paren, Tok.getLocation(), 1);
-  AddToken(tok::kw_sizeof, Tok.getLocation(), 1);
-  AddToken(tok::l_paren, Tok.getLocation(), 1);
-  AddToken(tok::l_paren, Tok.getLocation(), 1);
-  AddToken(tok::kw_void, Tok.getLocation(), 1);
-  AddToken(tok::r_paren, Tok.getLocation(), 1);
-  AddToken(tok::l_paren, Tok.getLocation(), 1);
-  mTokenList.push_back(Tok);
-  AddToken(tok::r_paren, Tok.getLocation(), 1);
-  AddToken(tok::r_paren, Tok.getLocation(), 1);
-  AddToken(tok::r_paren, Tok.getLocation(), 1);
-  PP.LexNonComment(Tok);
-  if (Tok.is(tok::comma)) {
-    mTokenList.push_back(Tok);
-    PP.LexNonComment(Tok);
-    return ConsumeIdentifierList(PP, Tok);
-  }
-  return true;
 }
 
-void AnalysisPragmaVisitor::VisitCompoundStmt(CompoundStmt *S) {
-  SourceLocation Loc = S->getLocStart();
-  if (!mHandler->isPragma(S))
+Pragma::Pragma(Stmt &S) : mStmt(&S) {
+  auto PragmaBody = traversePragmaName(S);
+  if (!getTsarDirectiveNamespace(PragmaBody.first, mNamespaceId) ||
+    PragmaBody.second == cast<CompoundStmt>(S).body_end())
     return;
-  for (auto I = S->body_begin(), EI = S->body_end(); I != EI; ++I) {
-    SmallVector<VarDecl *, 16> ClauseVars;
-    HandleClause(S, ClauseVars);
+  auto DirectiveBody = traversePragmaName(**PragmaBody.second);
+  if (!getTsarDirective(mNamespaceId, DirectiveBody.first, mDirectiveId))
+    return;
+  mDirective = cast<CompoundStmt>(*PragmaBody.second);
+  mClauseBegin = DirectiveBody.second;
+}
+
+Pragma::Clause Pragma::clause(clause_iterator I) {
+  auto Tmp = traversePragmaName(**I);
+  return Clause(Tmp.first, Tmp.second,
+    Tmp.second ? cast<CompoundStmt>(*I)->body_end() : nullptr);
+}
+
+void PragmaNamespaceReplacer::HandlePragma(
+  Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  mTokenQueue.clear();
+  auto NamespaceLoc = FirstToken.getLocation();
+  PP.LexUnexpandedToken(FirstToken);
+  StringRef DirectiveName = FirstToken.getIdentifierInfo()->getName();
+  if (FirstToken.is(tok::identifier)) {
+    DirectiveName = FirstToken.getIdentifierInfo()->getName();
+  } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
+    DirectiveName = KW;
+  } else {
+    PP.Diag(FirstToken, diag::err_expected) << "name of directive";
+    return;
+  }
+  DirectiveId Id;
+  if (!getTsarDirective(mNamespaceId, DirectiveName, Id)) {
+    toDiag(PP.getDiagnostics(), FirstToken.getLocation(),
+      diag::err_unknown_directive) << getName() << DirectiveName;
+    return;
+  }
+  PragmaHandler *Handler = FindHandler(DirectiveName, false);
+  if (!Handler) {
+    PP.Diag(FirstToken, diag::warn_pragma_ignored);
+    return;
+  }
+  AddToken(tok::l_brace, NamespaceLoc, 1, mTokenQueue);
+  AddStringToken(getName(), NamespaceLoc, PP, mTokenQueue);
+  AddToken(tok::semi, NamespaceLoc, 1, mTokenQueue);
+  Handler->HandlePragma(PP, Introducer, FirstToken);
+  // Replace pragma only if all tokens have been processed.
+  if (FirstToken.is(tok::eod)) {
+    AddToken(tok::r_brace, FirstToken.getLocation(), 1, mTokenQueue);
+    PP.EnterTokenStream(mTokenQueue, false);
+  } else {
+    // It seems that call of `PP.CommitBacktrackedTokens()` in clause handlers
+    // prevents preprocessor from calling of DiscardUntilEndOfDirective().
+    // So, in case of errors in pragma syntax the lexer will read tokens
+    // inside pragma instead of tokens after tok::eod. Hence, we manually
+    // discards all tokens until the end of directive.
+    do {
+      PP.LexUnexpandedToken(FirstToken);
+      assert(FirstToken.isNot(tok::eof) &&
+        "EOF seen while discarding directive tokens");
+    } while (FirstToken.isNot(tok::eod));
   }
 }
 
-void AnalysisPragmaVisitor::VisitForStmt(ForStmt * S) {
-  auto *DS = new ASTDependencySet;
-  for (auto &Pair : mDeclToDptr)
-    DS->insert(cast<VarDecl>(Pair.first), Pair.second);
-  mPrivates.insert(std::make_pair(S, DS));
-  mDeclToDptr.clear();
-}
-
-void AnalysisPragmaVisitor::HandleClause(
-    Stmt *S, SmallVectorImpl<VarDecl *> &Vars) {
-  assert(S && "Statement must not be null!");
-  assert(!isa<BinaryOperator>(S) ||
-    cast<BinaryOperator>(S)->getOpcode() == BO_Comma &&
-    "Unexpected binary operator in clause!");
-  if (!isa<BinaryOperator>(S)) {
-    HandleClauseName(S, Vars);
+void PragmaReplacer::HandlePragma(
+    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  assert(mParent && "Parent handler must not be null!");
+  auto DirectiveLoc = FirstToken.getLocation();
+  AddToken(tok::l_brace, DirectiveLoc, 1, getReplacement());
+  AddStringToken(getName(), DirectiveLoc, PP, getReplacement());
+  AddToken(tok::semi, DirectiveLoc, 1, getReplacement());
+  PP.LexUnexpandedToken(FirstToken);
+  while (FirstToken.isNot(tok::eod)) {
+    StringRef ClauseName;
+    if (FirstToken.is(tok::identifier)) {
+      ClauseName = FirstToken.getIdentifierInfo()->getName();
+    } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
+      ClauseName = KW;
+    } else {
+      PP.Diag(FirstToken, diag::err_expected) << "name of clause";
+      return;
+    }
+    ClauseId Id;
+    if (!getTsarClause(mDirectiveId, ClauseName, Id)) {
+      toDiag(PP.getDiagnostics(), FirstToken.getLocation(),
+        diag::err_unknown_clause) << getName() << ClauseName;
+      return;
+    }
+    auto *ClauseHandler = FindHandler(ClauseName, false);
+    if (!ClauseHandler) {
+      PP.Diag(FirstToken, diag::warn_pragma_ignored);
+      return;
+    }
+    ClauseHandler->HandlePragma(PP, Introducer, FirstToken);
+    assert(!PP.isBacktrackEnabled() &&
+      "Did you forget to call CommitBacktrackedTokens() or Backtrack()?");
+    PP.LexUnexpandedToken(FirstToken);
   }
-  auto CommapOp = cast<BinaryOperator>(S);
-  Stmt *RHS = CommapOp->getRHS();
-  // Skip cast to void.
-  assert(isa<CastExpr>(RHS) &&
-    cast<CastExpr>(RHS)->getCastKind() == CK_ToVoid &&
-    "It must be cast to void!");
-  RHS = *RHS->child_begin();
-  // Skip parents: (...).
-  assert(isa<ParenExpr>(RHS) && "It must be a parethesized expression!");
-  RHS = *RHS->child_begin();
-  // Skip sizeof.
-  assert(isa<UnaryExprOrTypeTraitExpr>(RHS) &&
-    cast<UnaryExprOrTypeTraitExpr>(RHS)->getKind() == UETT_SizeOf &&
-    "It must be a sizeof expression!");
-  RHS = *RHS->child_begin();
-  // Skip parents: (...).
-  assert(isa<ParenExpr>(RHS) && "It must be a parethesized expression!");
-  RHS = *RHS->child_begin();
-  // Skip cast to void.
-  assert(isa<CastExpr>(RHS) &&
-    cast<CastExpr>(RHS)->getCastKind() == CK_ToVoid &&
-    "It must be cast to void!");
-  RHS = *RHS->child_begin();
-  // Skip implicit cast if it is exist. In case of expressions in a #pragma, for
-  // example I + 1, there is no implicit cast.
-  if (isa<ImplicitCastExpr>(RHS))
-    RHS = *RHS->child_begin();
-  // Skip parents: (...).
-  assert(isa<ParenExpr>(RHS) && "It must be a parethesized expression!");
-  RHS = *RHS->child_begin();
-  // TODO (kaniandr@gamil.com) : At this moment only reference to a variable
-  // can be placed into a #pragma. May be for some reasons more complex
-  // expressions should be supported, for example to specify dependency length.
-  assert(isa<DeclRefExpr>(RHS) &&
-    "It must be a reference to a declared variable!");
-  auto DeclRef = cast<DeclRefExpr>(RHS);
-  assert(isa<VarDecl>(DeclRef->getDecl()) &&
-    "It must be variable declaration!");
-  auto Var= cast<VarDecl>(DeclRef->getDecl());
-  Vars.push_back(Var);
-  HandleClause(CommapOp->getLHS(), Vars);
+  AddToken(tok::r_brace, FirstToken.getLocation(), 1, getReplacement());
 }
 
-void AnalysisPragmaVisitor::HandleClauseName(
-  Stmt *S, clang::SmallVectorImpl<VarDecl *> &Vars) {
-  assert(S && "Statement must not be null!");
-  assert(isa<CastExpr>(S) &&
-    cast<CastExpr>(S)->getCastKind() == CK_ArrayToPointerDecay &&
-    "It must be cast from array to pointer!");
-  auto RHS = *S->child_begin();
-  assert(isa<StringLiteral>(RHS) && "Clause name must be a string literal!");
-  auto Str = cast<StringLiteral>(RHS);
-  ASTDependencyDescriptor::for_each_available(
-    SetTraitForDecl(Str->getBytes(), Vars, mDeclToDptr));
+void ClauseReplacer::HandlePragma(
+    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  auto ClauseLoc = FirstToken.getLocation();
+  AddToken(tok::l_brace, ClauseLoc, 1, getReplacement());
+  AddStringToken(getName(), ClauseLoc, PP, getReplacement());
+  AddToken(tok::semi, ClauseLoc, 1, getReplacement());
+  HandleBody(PP, Introducer, FirstToken);
+  AddToken(tok::r_brace, ClauseLoc, 1, getReplacement());
 }
 
-void AnalysisPragmaVisitor::SanitizeIR(const DeclRefExpr *Ref) {
-  assert(Ref && "Reference to a variable must not be null!");
-  auto ASTLoc = Ref->getLocation();
+void ClauseReplacer::HandleBody(
+    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  DEBUG(dbgs() << "[PRAGMA HANDLER]: process body of '" << getName() << "'\n");
+  const auto Prototype = ClausePrototype::get(mClauseId);
+  DefaultClauseVisitor<ReplacementT> CV(PP, getReplacement());
+  CV.visitBody(Prototype.begin(), Prototype.end());
 }
 }

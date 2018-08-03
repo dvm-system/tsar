@@ -25,3 +25,6 @@ def err_import : Error<"unable to import">;
 def warn_import_typedef : Warning<"import of typedef declaration is partially supported">;
 def warn_import_variable_array : Warning<"import of variable-length array is partially supported">;
 def warn_import_case : Warning<"import of case statement is partially supported">;
+
+def err_unknown_directive : Error<"namespace '%0' does not contain directive '%1'">;
+def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
