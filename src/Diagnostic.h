@@ -33,20 +33,7 @@ namespace tsar {
 ///
 /// Built-in (TSAR and Clang) and custom diagnostics may be used
 clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
-    clang::SourceLocation Loc, unsigned int DiagId) {
-  switch (DiagId) {
-  default: return Diags.Report(Loc, DiagId);
-#define DIAG(ENUM,LEVEL,DESC) \
-  case clang::diag::ENUM: \
-    { \
-      unsigned CustomId = Diags.getCustomDiagID( \
-        clang::DiagnosticsEngine::LEVEL, DESC); \
-      return Diags.Report(Loc, CustomId); \
-    }
-#include "DiagnosticKinds.inc"
-#undef DIAG
-  }
-}
+    clang::SourceLocation Loc, unsigned int DiagId);
 
 /// \brief Issue the message to the client.
 ///
@@ -55,19 +42,6 @@ clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
 ///
 /// Built-in (TSAR and Clang) and custom diagnostics may be used
 clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
-    unsigned int DiagId) {
-  switch (DiagId) {
-  default: return Diags.Report(DiagId);
-#define DIAG(ENUM,LEVEL,DESC) \
-  case clang::diag::ENUM: \
-    { \
-      unsigned CustomId = Diags.getCustomDiagID( \
-        clang::DiagnosticsEngine::LEVEL, DESC); \
-      return Diags.Report(CustomId); \
-    }
-#include "DiagnosticKinds.inc"
-#undef DIAG
-  }
-}
+    unsigned int DiagId);
 }
 #endif//TSAR_DIAGNOSTIC_H
