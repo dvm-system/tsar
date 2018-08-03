@@ -14,6 +14,7 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 
 using namespace llvm;
@@ -21,6 +22,7 @@ using namespace llvm;
 enum ActionType {
   GenTSARDiagsDefs,
   GenTSARIntrinsicsDefs,
+  GenTSARDirectivesDefs,
 };
 
 namespace {
@@ -28,6 +30,8 @@ namespace {
   Action(cl::desc("Action to perform:"),
          cl::values(clEnumValN(GenTSARDiagsDefs, "gen-tsar-diags-defs",
                                "Generate TSAR diagnostics definitions")),
+         cl::values(clEnumValN(GenTSARDirectivesDefs, "gen-tsar-directives-defs",
+                               "Generate TSAR directives definitions")),
          cl::values(clEnumValN(GenTSARIntrinsicsDefs,"gen-tsar-intrinsics-defs",
                                "Generate TSAR intrinsics definitions")));
 
@@ -36,6 +40,157 @@ void GenFileHeader(raw_ostream &OS) {
 //===- Automatically TableGen'erated file, do not edit!----------*- C++ -*-===//\
 \n\n";
 }
+
+//===----------------------------------------------------------------------===//
+// Generate TSAR directives definitions.
+//===----------------------------------------------------------------------===//
+
+void GenExprKindList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// List of expression kinds of clause parameters\n";
+  OS << "// #define KIND(EK, IsSingle, ClangTok) ... \n";
+  OS << "#ifdef GET_CLAUSE_EXPR_KINDS\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("ExprKind")) {
+    OS << "  KIND(" << Rec->getName()
+      << ", " << (Rec->getValueAsBit("IsSingle") ? "true" : "false")
+      << ", " << Rec->getValueAsString("ClangTok")
+      << ")\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenNamespaceIdList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Enum values for Directive IDs\n";
+  OS << "#ifdef GET_NAMESPACE_ENUM_VALUES\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Namespace")) {
+    OS << "  " << Rec->getName() << ",";
+    OS << "                // " << Rec->getValueAsString("Name") << "\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenDirectiveIdList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Enum values for Directive IDs\n";
+  OS << "#ifdef GET_DIRECTIVE_ENUM_VALUES\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Directive")) {
+    OS << "  " << Rec->getName() << ",";
+    Record *Parent = Rec->getValueAsDef("Parent");
+    OS << "                // " << Parent->getValueAsString("Name") << " ";
+    OS << Rec->getValueAsString("Name") << "\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenClauseIdList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Enum values for Clause IDs\n";
+  OS << "#ifdef GET_CLAUSE_ENUM_VALUES\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Clause")) {
+    OS << "  " << Rec->getName() << ",";
+    Record *Parent = Rec->getValueAsDef("Parent");
+    OS << "                // " << Parent->getValueAsString("Name") << " ";
+    OS << Rec->getValueAsString("Name") << "\n";
+  }
+  OS << "#endif\n\n";
+}
+
+unsigned GenExprDescription(raw_ostream &OS, Record *Rec) {
+  unsigned Size = 1;
+  OS << " CLAUSE_EXPR(" << Rec->getValueAsDef("Kind")->getName() << ")";
+  if (Rec->getValueAsDef("Kind")->getValueAsBit("IsSingle"))
+    return Size;
+  for (Record *Child : Rec->getValueAsListOfDefs("ExprList")) {
+    Size += GenExprDescription(OS, Child);
+  }
+  auto Anchor = Rec->getRecords().getDef("Anchor"); 
+  OS << " CLAUSE_EXPR(" << Anchor->getValueAsDef("Kind")->getName() << ")";
+  return Size + 1;
+}
+
+void GenClausePrototypeList(raw_ostream &OS, RecordKeeper &Records,
+    SmallVectorImpl<unsigned> &Offsets) {
+  OS << "// Clause Offset[ID] to prototype table\n";
+  OS << "#ifdef GET_CLAUSE_PROTOTYPE_TABLE\n";
+  unsigned Offset = 0;
+  for (Record *Rec : Records.getAllDerivedDefinitions("Clause")) {
+    Offsets.push_back(Offset);
+    OS << "  // Prototype for " << Rec->getValueAsString("Name") << "\n";
+    for (auto Param : Rec->getValueAsListOfDefs("ExprList")) {
+      OS << " ";
+      Offset += GenExprDescription(OS, Param);
+      OS << "\n";
+    }
+  }
+  Offsets.push_back(Offset);
+  OS << "#endif\n\n";
+}
+
+void GenClauseOffsetList(raw_ostream &OS, RecordKeeper &Records) {
+  SmallVector<unsigned, 32> Offsets;
+  GenClausePrototypeList(OS, Records, Offsets);
+  OS << "// Clause ID to Offset (in prototype table) table\n";
+  OS << "#ifdef GET_CLAUSE_PROTOTYPE_OFFSET_TABLE\n";
+  for (unsigned I = 0; I < Offsets.size() - 1; ++I)
+    OS << "  PROTOTYPE(" << Offsets[I] << ',' << Offsets[I+1] << ")\n";
+  OS << "#endif\n\n";
+}
+
+void GenNamespaceNameList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Namespace ID to name table\n";
+  OS << "#ifdef GET_NAMESPACE_NAME_TABLE\n";
+  OS << "// Note that entry #0 is the invalid namespace!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Namespace")) {
+    OS << "  \"";
+    OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenDirectiveNameList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Directive ID to name table\n";
+  OS << "#ifdef GET_DIRECTIVE_NAME_TABLE\n";
+  OS << "// Note that entry #0 is the invalid directive!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Directive")) {
+    OS << "  \"";
+    OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenClauseNameList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Clause ID to name table\n";
+  OS << "#ifdef GET_CLAUSE_NAME_TABLE\n";
+  OS << "// Note that entry #0 is the invalid clause!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Clause")) {
+    OS << "  \"";
+    OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenDirectiveNamespaceList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Directive ID to parent Namespace ID table\n";
+  OS << "#ifdef GET_DIRECTIVE_NAMESPACE_TABLE\n";
+  OS << "// Note that entry #0 is the invalid directive!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Directive")) {
+    Record *Parent = Rec->getValueAsDef("Parent");
+    OS << "  NAMESPACE(" << Parent->getName() << ")\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenClauseDirectiveList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Clause ID to parent Directive ID table\n";
+  OS << "#ifdef GET_CLAUSE_DIRECTIVE_TABLE\n";
+  OS << "// Note that entry #0 is the invalid clause!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Clause")) {
+    Record *Parent = Rec->getValueAsDef("Parent");
+    OS << "  DIRECTIVE(" << Parent->getName() << ")\n";
+  }
+  OS << "#endif\n\n";
+}
+
+//===----------------------------------------------------------------------===//
+// Generate TSAR intrinsics definitions.
+//===----------------------------------------------------------------------===//
 
 void GenTypeKindList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "// Enum values for type kinds of intrinsic parameters\n";
@@ -101,7 +256,7 @@ void GenIntrinsicOffsetList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "#ifdef GET_INTRINSIC_PROTOTYPE_OFFSET_TABLE\n";
   for (unsigned I = 0; I < Offsets.size() - 1; ++I)
     OS << "  PROTOTYPE(" << Offsets[I] << ',' << Offsets[I+1] << ")\n";
-  OS << "#endif\n";
+  OS << "#endif\n\n";
 }
 
 bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
@@ -121,6 +276,18 @@ bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
     GenIntrinsicIdList(OS, Records);
     GenIntrinsicNameList(OS, Records);
     GenIntrinsicOffsetList(OS, Records);
+    break;
+  case GenTSARDirectivesDefs:
+    GenExprKindList(OS, Records);
+    GenNamespaceIdList(OS, Records);
+    GenDirectiveIdList(OS, Records);
+    GenClauseIdList(OS, Records);
+    GenNamespaceNameList(OS, Records);
+    GenDirectiveNameList(OS, Records);
+    GenClauseNameList(OS, Records);
+    GenClauseDirectiveList(OS, Records);
+    GenDirectiveNamespaceList(OS, Records);
+    GenClauseOffsetList(OS, Records);
     break;
   }
   return false;

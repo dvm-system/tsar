@@ -8,7 +8,8 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   ASTMergeAction.cpp EstimateMemory.cpp  AliasTreePrinter.cpp DIUnparser.cpp
   FrontendActions.cpp CanonicalLoop.cpp Intrinsics.cpp Instrumentation.cpp
   MetadataUtils.cpp tsar_finliner.cpp tsar_fcopy_elimination.cpp
-  tsar_pragma_action.cpp tsar_pragma_transform.cpp Diagnostic.cpp)
+  tsar_pragma_action.cpp tsar_pragma_transform.cpp Diagnostic.cpp
+  Directives.cpp)
 if (TSAR_SHARED)
   set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
 else()
@@ -35,7 +36,10 @@ tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
 tsar_tablegen(Intrinsics.gen -gen-tsar-intrinsics-defs
   SOURCE Intrinsics.td
   TARGET IntrinsicsGen)
-add_dependencies(tsar DiagnosticKinds IntrinsicsGen)
+tsar_tablegen(Directives.gen -gen-tsar-directives-defs
+  SOURCE Directives.td
+  TARGET DirectivesGen)
+add_dependencies(tsar DiagnosticKinds IntrinsicsGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
