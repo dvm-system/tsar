@@ -10,6 +10,7 @@
 #ifndef TSAR_UTILITY_H
 #define TSAR_UTILITY_H
 
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -29,6 +30,32 @@ class Use;
 }
 
 namespace tsar {
+/// \brief An iterator type that allows iterating over the pointers via some
+/// other iterator.
+///
+/// The typical usage of this is to expose a type that iterates over Ts, but
+/// which is implemented with some iterator over some wrapper of T*s
+/// \code
+///   typedef wrapped_pointer_iterator<
+///     std::vector<std::unique_ptr<T>>::iterator> iterator;
+/// \endcode
+template <class WrappedIteratorT,
+          class T = decltype(&**std::declval<WrappedIteratorT>())>
+class wrapped_pointer_iterator : public llvm::iterator_adaptor_base<
+  wrapped_pointer_iterator<WrappedIteratorT>, WrappedIteratorT,
+    class std::iterator_traits<WrappedIteratorT>::iterator_category, T> {
+public:
+  wrapped_pointer_iterator() = default;
+  template<class ItrT> wrapped_pointer_iterator(ItrT &&I) :
+    wrapped_pointer_iterator::iterator_adaptor_base(std::forward<ItrT &&>(I)) {}
+
+  T & operator*() { return Ptr = &**this->I; }
+  const T & operator*() const { return Ptr = &**this->I; }
+
+private:
+  mutable T Ptr;
+};
+
 /// Returns argument with a specified number or nullptr.
 llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo);
 
