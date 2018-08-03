@@ -28,3 +28,4 @@ def warn_import_case : Warning<"import of case statement is partially supported"
 
 def err_unknown_directive : Error<"namespace '%0' does not contain directive '%1'">;
 def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
+def warn_unmatched_directive : Warning<"unmatched directive ignored">;

@@ -704,16 +704,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
             MatchedTIs.insert(&TI);
           }
         }
-        if (!Found) {
-          auto Loc = S->getLocStart();
-          auto FID = mSourceManager.getFileID(Loc);
-          auto Filename = mSourceManager.getFilename(Loc);
-          auto Offset = mSourceManager.getFileOffset(Loc);
-          auto LineNum = mSourceManager.getLineNumber(FID, Offset);
-          auto ColumnNum = mSourceManager.getColumnNumber(FID, Offset);
-          llvm::dbgs() << "Unmatched #pragma at " << Filename << ':'
-            << LineNum << ':' << ColumnNum << ", ignored" << '\n';
-        }
+        if (!Found)
+          toDiag(mSourceManager.getDiagnostics(), S->getLocStart(),
+            diag::warn_unmatched_directive);
       }
     }
   }
