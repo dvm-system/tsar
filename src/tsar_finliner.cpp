@@ -11,7 +11,9 @@
 
 
 #include "tsar_finliner.h"
+#include "Diagnostic.h"
 #include "tsar_pass_provider.h"
+#include "tsar_pragma.h"
 #include "tsar_transformation.h"
 
 #include <algorithm>
@@ -73,11 +75,6 @@ INITIALIZE_PASS_END(FunctionInlinerPass, "function-inliner",
 
 ModulePass* createFunctionInlinerPass() {
   return new FunctionInlinerPass();
-}
-
-ModulePass* createFunctionInlinerPass(
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers) {
-  return new FunctionInlinerPass(std::move(Handlers));
 }
 
 void FunctionInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
@@ -169,7 +166,7 @@ bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
   auto& Context = TfmCtx->getContext();
   auto& Rewriter = TfmCtx->getRewriter();
   auto& SrcMgr = Rewriter.getSourceMgr();
-  FInliner Inliner(TfmCtx, mPragmaHandlers);
+  FInliner Inliner(TfmCtx);
   Inliner.HandleTranslationUnit(Context);
   /*for (Function& F : M) {
     if (F.empty())
@@ -377,13 +374,15 @@ bool FInliner::VisitExpr(clang::Expr* E) {
 }
 
 bool FInliner::VisitCompoundStmt(clang::CompoundStmt* CS) {
-  auto Loc = clang::SourceLocation::getFromRawEncoding(
-    mSourceManager.getFileOffset(CS->getLocStart()));
-  for (auto& PH : mPragmaHandlers) {
-    if (PH->isPragma(Loc)) {
+  Pragma P(*CS);
+  if (!P || P.getDirectiveId() != DirectiveId::Transform)
+    return true;
+  for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
+    ClauseId Id;
+    if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), Id))
+      continue;
+    if (Id == ClauseId::Inline)
       mInlineStmts[mCurrentFD].insert(CS);
-      break;
-    }
   }
   return true;
 }
@@ -1388,7 +1387,7 @@ void FunctionInlinerQueryManager::run(llvm::Module* M,
     TEP->setContext(*M, Ctx);
     Passes.add(TEP);
   }
-  Passes.add(createFunctionInlinerPass(std::move(mPragmaHandlers)));
+  Passes.add(createFunctionInlinerPass());
   Passes.run(*M);
   return;
 }

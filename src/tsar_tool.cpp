@@ -11,11 +11,9 @@
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
 #include "tsar_exception.h"
-#include "tsar_query.h"
 #include "tsar_finliner.h"
 #include "tsar_pragma.h"
-#include "tsar_pragma_action.h"
-#include "tsar_pragma_transform.h"
+#include "tsar_query.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
 #include <clang/Frontend/FrontendActions.h>
@@ -189,6 +187,7 @@ Tool::Tool(int Argc, const char **Argv) {
 void Tool::storeCLOptions() {
   mSources = Options::get().Sources;
   mCommandLine.emplace_back("-g");
+  mCommandLine.emplace_back("-Wunknown-pragmas");
   if (!Options::get().LanguageStd.empty())
     mCommandLine.push_back("-std=" + Options::get().LanguageStd);
   if (Options::get().TimeReport)
@@ -249,9 +248,8 @@ inline static TestQueryManager * getTestQM() {
   return &QM;
 }
 
-inline static FunctionInlinerQueryManager * getInlineQM(
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> &&Handlers) {
-  static FunctionInlinerQueryManager QM(std::move(Handlers));
+inline static FunctionInlinerQueryManager * getInlineQM() {
+  static FunctionInlinerQueryManager QM;
   return &QM;
 }
 
@@ -308,13 +306,9 @@ int Tool::run(QueryManager *QM) {
   // analysis. AST files will be stored in SourcesToMerge collection.
   // If an input file already contains Clang AST it will be pushed into
   // the SourcesToMerge collection only.
-  std::vector<std::unique_ptr<SPFPragmaHandler>> Handlers;
-  //Handlers.push_back(std::make_unique<AnalysisPragmaHandler>());
-  Handlers.push_back(make_unique<TransformPragmaHandler>());
   if (mMergeAST) {
     EmitPCHTool.run(
-      newPragmaActionFactory<GeneratePCHAction, GenPCHPragmaAction>
-      (Handlers).get());
+      newFrontendActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!QM) {
     if (mEmitLLVM)
@@ -324,7 +318,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else if (mInline)
-      QM = getInlineQM(std::move(Handlers));
+      QM = getInlineQM();
     else
       QM = getDefaultQM(mOutputPasses);
   }
@@ -342,10 +336,12 @@ int Tool::run(QueryManager *QM) {
   }
   ClangTool CTool(*mCompilations, mSources);
   if (mDumpAST)
-    return CTool.run(newFrontendActionFactory<tsar::ASTDumpAction>().get());
+    return CTool.run(newFrontendActionFactory<
+      tsar::ASTDumpAction, tsar::GenPCHPragmaAction>().get());
   if (mPrintAST)
-    return CTool.run(newFrontendActionFactory<tsar::ASTPrintAction>().get());
-  return CTool.run(newAnalysisActionFactory<MainAction>(
+    return CTool.run(newFrontendActionFactory<
+      tsar::ASTPrintAction, tsar::GenPCHPragmaAction>().get());
+  return CTool.run(newAnalysisActionFactory<MainAction, GenPCHPragmaAction>(
     mCommandLine, QM).get());
 }
 

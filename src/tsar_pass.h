@@ -160,8 +160,6 @@ FunctionPass * createCanonicalLoopPass();
 void initializeFunctionInlinerImmutableStoragePass(PassRegistry& Registry);
 void initializeFunctionInlinerImmutableWrapperPass(PassRegistry& Registry);
 void initializeFunctionInlinerPassPass(PassRegistry& Registry);
-//ModulePass * createFunctionInlinerPass(
-//  std::vector<std::unique_ptr<PragmaHandler>>& Handlers);
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }

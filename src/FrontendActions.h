@@ -50,5 +50,22 @@ protected:
   std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
 };
+
+class PragmaNamespaceReplacer;
+
+/// This action wraps other action and setups pragma handlers.
+class GenPCHPragmaAction : public PublicWrapperFrontendAction {
+public:
+  GenPCHPragmaAction(std::unique_ptr<clang::FrontendAction> WrappedAction)
+    : PublicWrapperFrontendAction(WrappedAction.release()) {}
+  ~GenPCHPragmaAction();
+
+  bool BeginSourceFileAction(clang::CompilerInstance& CI,
+    llvm::StringRef Filename) override;
+  void EndSourceFileAction() override;
+private:
+  llvm::SmallVector<PragmaNamespaceReplacer *, 1> mNamespaces;
+  clang::Preprocessor* mPP = nullptr;
+};
 }
 #endif//TSAR_FRONTEND_ACTIONS_H

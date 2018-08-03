@@ -82,6 +82,27 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second) {
 }
 
 /// Creates an analysis/transformations actions factory with adaptor.
+template <class ActionTy, class AdaptorTy, class FirstTy, class SecondTy>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
+newAnalysisActionFactory(FirstTy First, SecondTy Second) {
+  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
+  public:
+    AnalysisActionFactory(FirstTy F, SecondTy S) :
+      mFirst(std::move(F)), mSecond(std::move(S)) {}
+    clang::FrontendAction *create() override {
+      std::unique_ptr<clang::FrontendAction> Action(
+        new ActionTy(mFirst, mSecond));
+      return new AdaptorTy(std::move(Action));
+    }
+  private:
+    FirstTy mFirst;
+    SecondTy mSecond;
+  };
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
+    new AnalysisActionFactory(std::move(First), std::move(Second)));
+}
+
+/// Creates an analysis/transformations actions factory with adaptor.
 template <class ActionTy, class AdaptorTy,
           class FirstTy, class SecondTy, class AdaptorArgTy>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
@@ -107,6 +128,23 @@ newAnalysisActionFactory(
 }
 }
 namespace clang {
+/// Creates an frontend actions factory with adaptor.
+template <class ActionTy, class AdaptorTy>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
+newFrontendActionFactory() {
+  class SimpleFrontendActionFactory :
+    public clang::tooling::FrontendActionFactory {
+  public:
+    SimpleFrontendActionFactory() {}
+    clang::FrontendAction *create() override {
+      std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
+      return new AdaptorTy(std::move(Action));
+    }
+  };
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
+    new SimpleFrontendActionFactory());
+}
+
 /// Creates an frontend actions factory with adaptor.
 template <class ActionTy, class AdaptorTy, class AdaptorArgTy>
 std::unique_ptr<clang::tooling::FrontendActionFactory>

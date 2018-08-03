@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// This file declares classes and methods necessary for function source-level 
+/// This file declares classes and methods necessary for function source-level
 /// inlining.
 ///
 //===----------------------------------------------------------------------===//
@@ -16,7 +16,6 @@
 
 #include "AnalysisWrapperPass.h"
 #include "tsar_pass.h"
-#include "tsar_pragma_transform.h"
 #include "tsar_query.h"
 #include "tsar_action.h"
 #include "tsar_transformation.h"
@@ -34,12 +33,8 @@
 namespace tsar {
 
 class FunctionInlinerQueryManager : public QueryManager {
-  void run(llvm::Module *M, TransformationContext *Ctx) override;
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> mPragmaHandlers;
 public:
-  FunctionInlinerQueryManager(
-    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers)
-    : mPragmaHandlers(std::move(Handlers)) {}
+  void run(llvm::Module *M, TransformationContext *Ctx) override;
 };
 
 struct FunctionInlineInfo : private bcl::Uncopyable {
@@ -72,22 +67,12 @@ private:
 
 class FunctionInlinerPass :
   public ModulePass, private bcl::Uncopyable {
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>> mPragmaHandlers;
 public:
   static char ID;
-
   FunctionInlinerPass() : ModulePass(ID) {
     initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
   }
-
-  FunctionInlinerPass(
-    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>&& Handlers)
-    : mPragmaHandlers(std::move(Handlers)), ModulePass(ID) {
-    initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
-  }
-
   bool runOnModule(llvm::Module& M) override;
-
   void getAnalysisUsage(AnalysisUsage& AU) const override;
 };
 }
@@ -184,13 +169,10 @@ class FInliner :
   public clang::RecursiveASTVisitor<FInliner>,
   public clang::ASTConsumer {
 public:
-  explicit FInliner(tsar::TransformationContext* TfmCtx,
-    std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& Handlers)
+  explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
     mRewriter(TfmCtx->getRewriter()),
-    mSourceManager(TfmCtx->getRewriter().getSourceMgr()),
-    mPragmaHandlers(Handlers) {
-  }
+    mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
@@ -315,10 +297,6 @@ private:
 
   tsar::TransformationContext* mTransformContext;
 
-  /// pragma handlers, forwarded from Tool (which owns handlers)
-  /// only knowledge needed is node type pragmas are converted to
-  /// FIXME: should it be part of TransformCtx?
-  std::vector<std::unique_ptr<clang::SPFPragmaHandler>>& mPragmaHandlers;
   std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
     mInlineStmts;
 
