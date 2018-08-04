@@ -373,16 +373,26 @@ bool FInliner::VisitExpr(clang::Expr* E) {
   return true;
 }
 
-bool FInliner::VisitCompoundStmt(clang::CompoundStmt* CS) {
+bool FInliner::VisitStmt(Stmt *S) {
+  if (mActiveClause) {
+    mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
+    mActiveClause = nullptr;
+  }
+  return RecursiveASTVisitor::VisitStmt(S);
+}
+
+bool FInliner::TraverseCompoundStmt(CompoundStmt *CS) {
   Pragma P(*CS);
-  if (!P || P.getDirectiveId() != DirectiveId::Transform)
+  if (!P)
+    return RecursiveASTVisitor::TraverseCompoundStmt(CS);
+  if (P.getDirectiveId() != DirectiveId::Transform)
     return true;
   for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
     ClauseId Id;
     if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), Id))
       continue;
     if (Id == ClauseId::Inline)
-      mInlineStmts[mCurrentFD].insert(CS);
+      mActiveClause = *CI;
   }
   return true;
 }
@@ -674,6 +684,9 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
+  if (mActiveClause)
+    toDiag(mSourceManager.getDiagnostics(), mActiveClause->getLocStart(),
+      diag::warn_unexpected_directive);
   //Context.getTranslationUnitDecl()->decls_begin();
   // associate instantiations with templates
   std::set<const clang::FunctionDecl*> Callable;
@@ -687,26 +700,19 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
   // match pragmas and calls
   for (auto& TIs : mTIs) {
-    if (mInlineStmts[TIs.first].size() > 0) {
-      // handle only correct pragmas
-      //assert(mInlineStmts[TIs.first].size() <= TIs.second.size());
-      for (auto S : mInlineStmts[TIs.first]) {
-        auto Pos = S->getLocStart().getRawEncoding()
-          + getSourceText(getRange(S)).size();
-        auto Loc = clang::SourceLocation::getFromRawEncoding(Pos);
-        clang::Token Token;
-        clang::Lexer::getRawToken(Loc, Token, mSourceManager,
-          mRewriter.getLangOpts(), true);
-        bool Found = false;
-        for (auto& TI : TIs.second) {
-          if (TI.mStmt->getLocStart() == Token.getLocation()) {
-            Found = true;
-            MatchedTIs.insert(&TI);
-          }
-        }
-        if (!Found)
-          toDiag(mSourceManager.getDiagnostics(), S->getLocStart(),
-            diag::warn_unmatched_directive);
+    auto &CurrFDInline = mInlineStmts[TIs.first];
+    if (CurrFDInline.empty())
+      continue;
+    for (auto &CToS : CurrFDInline) {
+      auto I = std::find_if(TIs.second.begin(), TIs.second.end(),
+        [&CToS](TemplateInstantiation &TI) { return TI.mStmt == CToS.Stmt; });
+      if (I != TIs.second.end()) {
+        MatchedTIs.insert(&*I);
+      } else {
+        toDiag(mSourceManager.getDiagnostics(), CToS.Clause->getLocStart(),
+          diag::warn_unexpected_directive);
+        toDiag(mSourceManager.getDiagnostics(), CToS.Stmt->getLocStart(),
+          diag::remark_only_call_inline);
       }
     }
   }

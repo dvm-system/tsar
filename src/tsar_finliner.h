@@ -166,13 +166,28 @@ namespace tsar {
 /// (through Rewriter API). Note that the only result of its work - modified
 /// Rewriter (buffer) object inside passed Transformation Context.
 class FInliner :
-  public clang::RecursiveASTVisitor<FInliner>,
-  public clang::ASTConsumer {
+    public clang::RecursiveASTVisitor<FInliner>,
+    public clang::ASTConsumer {
+  /// This represents clause attached to a statement.
+  struct ClauseToStmt {
+    ClauseToStmt(const clang::Stmt *C, const clang::Stmt *S) :
+      Clause(C), Stmt(S) {}
+    const clang::Stmt *Clause;
+    const clang::Stmt *Stmt;
+  };
+
+  /// This is a list of statements (for each function) which is marked
+  /// with `inline` clause.
+  using InlineQuery =
+    llvm::DenseMap<const clang::FunctionDecl*, std::vector<ClauseToStmt>>;
+
 public:
   explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
     mRewriter(TfmCtx->getRewriter()),
     mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
+
+  bool VisitStmt(clang::Stmt *S);
 
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
@@ -180,7 +195,7 @@ public:
 
   bool VisitExpr(clang::Expr* E);
 
-  bool VisitCompoundStmt(clang::CompoundStmt* CS);
+  bool TraverseCompoundStmt(clang::CompoundStmt *CS);
 
   /// Traverses AST, collects necessary information using overriden methods above
   /// and applies it to source code using private methods below
@@ -297,8 +312,8 @@ private:
 
   tsar::TransformationContext* mTransformContext;
 
-  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
-    mInlineStmts;
+  InlineQuery mInlineStmts;
+  clang::Stmt *mActiveClause = nullptr;
 
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
