@@ -11,6 +11,7 @@
 
 
 #include "tsar_finliner.h"
+#include "ClangUtils.h"
 #include "Diagnostic.h"
 #include "tsar_pass_provider.h"
 #include "tsar_pragma.h"
@@ -220,41 +221,13 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
   assert(CFG.get() != nullptr && ("CFG construction failed for "
     + mCurrentFD->getName()).str().data());
-  
-  // get unreachable blocks for later return statements exclusion
-  auto isPred = [](const clang::CFGBlock* BL, const clang::CFGBlock* BR)     
-    -> bool {
-    for (auto B : BR->preds()) {
-      if (B == BL) {
-        return true;
-      }
-    }
-    return false;
-  };
-  std::set<const clang::CFGBlock*> ReachableBlocks;
-  ReachableBlocks.insert(&CFG->getEntry());
-  bool Changed = true;
-  while (Changed) {
-    auto NewReachableBlocks(ReachableBlocks);
-    for (auto RB : ReachableBlocks) {
-      for (auto B : *CFG) {
-        if (isPred(RB, B)) {
-          NewReachableBlocks.insert(B);
-        }
-      }
-    }
-    ReachableBlocks.swap(NewReachableBlocks);
-    Changed = ReachableBlocks != NewReachableBlocks;
-  }
-  for (auto B : *CFG) {
-    if (ReachableBlocks.find(B) == std::end(ReachableBlocks)) {
-      for (auto I : *B) {
-        if (llvm::Optional<clang::CFGStmt> CS = I.getAs<clang::CFGStmt>()) {
-          mUnreachableStmts[mCurrentFD].insert(CS->getStmt());
-        }
-      }
-    }
-  }
+  llvm::SmallPtrSet<clang::CFGBlock *, 8> UB;
+  unreachableBlocks(*CFG, UB);
+  auto &UnreachableStmts = mUnreachableStmts[mCurrentFD];
+  for (auto *BB : UB)
+    for (auto &I : *BB)
+      if (auto CS = I.getAs<clang::CFGStmt>())
+          UnreachableStmts.insert(CS->getStmt());
   mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
   mTs[mCurrentFD].setFuncDecl(mCurrentFD);
 
