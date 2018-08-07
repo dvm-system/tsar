@@ -194,12 +194,6 @@ bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
   return false;
 }
 
-
-bool operator<=(
-  const clang::SourceLocation& LSL, const clang::SourceLocation& RSL) {
-  return LSL < RSL || LSL == RSL;
-}
-
 namespace std {
 template<>
 struct less<clang::SourceRange> {
@@ -208,6 +202,18 @@ struct less<clang::SourceRange> {
       ? LSR.getEnd() < RSR.getEnd() : LSR.getBegin() < RSR.getBegin();
   }
 };
+}
+
+namespace {
+#ifdef DEBUG
+void printLocLog(const SourceManager &SM, SourceRange R) {
+  dbgs() << "[";
+  R.getBegin().dump(SM);
+  dbgs() << ",";
+  R.getEnd().dump(SM);
+  dbgs() << "]";
+}
+#endif
 }
 
 bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
@@ -230,100 +236,126 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
           UnreachableStmts.insert(CS->getStmt());
   mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
   mTs[mCurrentFD].setFuncDecl(mCurrentFD);
-
-  auto isSubStmt = [this](const clang::Stmt* P, const clang::Stmt* S) -> bool {
-    clang::SourceLocation BeginP
-      = getLoc(P->getSourceRange().getBegin());
-    clang::SourceLocation EndP
-      = getLoc(P->getSourceRange().getEnd());
-    clang::SourceLocation BeginS
-      = getLoc(S->getSourceRange().getBegin());
-    clang::SourceLocation EndS
-      = getLoc(S->getSourceRange().getEnd());
-    return BeginS <= BeginP && EndP <= EndS;
+  auto isSubStmt = [this](const Stmt* SubS, const Stmt* S, bool &IsInvalid) {
+    DEBUG(
+      dbgs() << "[INLINE]: check sub-statement ";
+      printLocLog(mSourceManager, getRange(SubS)); dbgs() << " of ";
+      printLocLog(mSourceManager, getRange(S)); dbgs() << "\n");
+    return isSubRange(mSourceManager, getRange(SubS), getRange(S), &IsInvalid);
   };
   auto& TIs = mTIs[mCurrentFD];
   for (auto B : *CFG) {
-    for (auto I1 = B->begin(); I1 != B->end(); ++I1) {
-      if (llvm::Optional<clang::CFGStmt> CS = I1->getAs<clang::CFGStmt>()) {
-        const clang::Stmt* S = CS->getStmt();
-        if (const clang::CallExpr* CE = clang::dyn_cast<clang::CallExpr>(S)) {
-          const clang::FunctionDecl* Definition = nullptr;
-          CE->getDirectCallee()->hasBody(Definition);
-          if (Definition == nullptr) {
+    for (auto I = B->begin(), EI = B->end(); I != EI; ++I) {
+      auto CfgStmt = I->getAs<CFGStmt>();
+      if (!CfgStmt)
+        continue;
+      const auto *Call = dyn_cast<CallExpr>(CfgStmt->getStmt());
+      if (!Call)
+        continue;
+      const FunctionDecl* Definition = nullptr;
+      Call->getDirectCallee()->hasBody(Definition);
+      if (Definition == nullptr) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline_no_body);
+        continue;
+      }
+      mTs[Definition].setFuncDecl(Definition);
+      const Stmt* Parent = Call;
+      bool IsInvalid = false;
+      for (auto TailI = I + 1; TailI != EI; ++TailI)
+        if (auto CS = TailI->getAs<CFGStmt>())
+          if (isSubStmt(Parent, CS->getStmt(), IsInvalid))
+            Parent = CS->getStmt();
+          else if (IsInvalid)
+            break;
+      if (IsInvalid) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline);
+        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
+          diag::remark_no_parent_stmt);
+        continue;
+      }
+      for (auto Succ : B->succs())
+        if (auto S = Succ->getTerminator())
+          if (isa<ForStmt>(S) && isSubStmt(Parent, S, IsInvalid))
+            Parent = S;
+          else if (IsInvalid)
+            break;
+      if (IsInvalid) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline);
+        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
+          diag::remark_no_parent_stmt);
+        continue;
+      }
+      bool inCondOp = false;
+      while (true) {
+        auto S = Parent;
+        for (auto *B : *CFG) {
+          for (auto &I : *B) {
+            if (auto CS = I.getAs<CFGStmt>())
+              if (isSubStmt(Parent, CS->getStmt(), IsInvalid)) {
+                Parent = CS->getStmt();
+                // Check if we are in ternary if.
+                if (isa<ConditionalOperator>(CS->getStmt()))
+                  inCondOp = true;
+              } else if (IsInvalid) {
+                break;
+              }
+          }
+          if (IsInvalid)
+            break;
+        }
+        if (Parent == S || IsInvalid)
+          break;
+      }
+      if (IsInvalid) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline);
+        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
+          diag::remark_no_parent_stmt);
+        continue;
+      }
+      // Don't replace function calls in conditional operator (ternary if, ?:).
+      if (inCondOp) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline_in_ternary);
+        continue;
+      }
+      // Don't replace function calls in condition expressions of loops.
+      if (auto S = B->getTerminator()) {
+        if (isSubStmt(Parent, S, IsInvalid)) {
+          if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S)) {
+            toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+              diag::warn_disable_inline_in_loop_cond);
             continue;
+          } else {
+            Parent = S;
           }
-          mTs[Definition].setFuncDecl(Definition);
-          const clang::Stmt* P = S;
-          for (auto I2 = I1 + 1; I2 != B->end(); ++I2) {
-            if (llvm::Optional<clang::CFGStmt> CS
-              = I2->getAs<clang::CFGStmt>()) {
-              if (isSubStmt(P, CS->getStmt())) {
-                P = CS->getStmt();
-              }
-            }
-          }
-          for (auto B : B->succs()) {
-            if (S = B->getTerminator()) {
-              if (clang::isa<clang::ForStmt>(S) && isSubStmt(P, S)) {
-                P = S;
-              }
-            }
-          }
-          bool inCondOp = false;
-          while (true) {
-            S = P;
-            for (auto B1 = CFG->begin(); B1 != CFG->end(); ++B1) {
-              for (auto I1 = (*B1)->begin(); I1 != (*B1)->end(); ++I1) {
-                if (llvm::Optional<clang::CFGStmt> CS
-                  = I1->getAs<clang::CFGStmt>()) {
-                  if (isSubStmt(P, CS->getStmt())) {
-                    P = CS->getStmt();
-                    // check if we are in ternary if
-                    if (clang::isa<clang::ConditionalOperator>(CS->getStmt())) {
-                      inCondOp = true;
-                    }
-                  }
-                }
-              }
-            }
-            if (P == S) {
-              break;
-            }
-          }
-          // don't replace function calls in conditional operator (ternary if,
-          // ?:)
-          if (inCondOp) {
-            continue;
-          }
-          // don't replace function calls in condition expressions of loops
-          if (S = B->getTerminator()) {
-            if (isSubStmt(P, S)) {
-              if (clang::isa<clang::ForStmt>(S) == true
-                || clang::isa<clang::WhileStmt>(S) == true
-                || clang::isa<clang::DoStmt>(S) == true) {
-                continue;
-              } else {
-                P = S;
-              }
-            }
-          }
-          // don't replace function calls in the third section of for-loop
-          if (B->getLoopTarget() != nullptr) {
-            continue;
-          }
-          for (auto& stmtPair : CFG->synthetic_stmts()) {
-            if (stmtPair.first == P) {
-              P = stmtPair.second;
-              break;
-            }
-          }
-          TemplateInstantiation TI = { mCurrentFD, P, CE, nullptr };
-          if (std::find(std::begin(TIs), std::end(TIs), TI) == std::end(TIs)) {
-            TIs.push_back(TI);
-          }
+        } else if (IsInvalid) {
+          toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+            diag::warn_disable_inline);
+          toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
+            diag::remark_no_parent_stmt);
+          continue;
         }
       }
+      // Don't replace function calls in the third section of for-loop
+      if (B->getLoopTarget()) {
+        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline_in_for_inc);
+        continue;
+      }
+      for (auto &StmtPair : CFG->synthetic_stmts())
+        if (StmtPair.first == Parent) {
+          Parent = StmtPair.second;
+          break;
+        }
+      DEBUG(dbgs() << "[INLINE]: statement with call in range";
+        printLocLog(mSourceManager, getRange(Parent)); dbgs() << "\n");
+      TemplateInstantiation TI = { mCurrentFD, Parent, Call, nullptr };
+      if (std::find(std::begin(TIs), std::end(TIs), TI) == std::end(TIs))
+        TIs.push_back(TI);
     }
   }
   return true;
@@ -1251,10 +1283,9 @@ std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
     mSourceManager, mContext.getLangOpts());
 }
 
-template<typename T>
-clang::SourceRange FInliner::getRange(T* node) const {
-  return{ mSourceManager.getFileLoc(node->getSourceRange().getBegin()),
-    mSourceManager.getFileLoc(node->getSourceRange().getEnd()) };
+template<class T>
+clang::SourceRange FInliner::getRange(T *Node) const {
+  return getFileRange(mSourceManager, Node->getSourceRange());
 }
 
 clang::SourceLocation FInliner::getLoc(clang::SourceLocation SL) const {

@@ -235,9 +235,9 @@ private:
   std::set<std::string> getIdentifiers(const clang::Decl* D) const;
   std::set<std::string> getIdentifiers(const clang::TagDecl* TD) const;
 
-  /// T must provide getSourceRange() method
-  template<typename T>
-  clang::SourceRange getRange(T* node) const;
+  /// Returns source range for a specified node.
+  /// Note, T must provide getSourceRange() method
+  template<class T> clang::SourceRange getRange(T *Node) const;
 
   clang::SourceLocation getLoc(clang::SourceLocation SL) const;
 
