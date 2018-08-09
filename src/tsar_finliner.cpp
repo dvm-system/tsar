@@ -231,8 +231,9 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
     for (auto &I : *BB)
       if (auto CS = I.getAs<clang::CFGStmt>())
           UnreachableStmts.insert(CS->getStmt());
-  mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
-  mTs[mCurrentFD].setFuncDecl(mCurrentFD);
+  auto &Ts = mTs[mCurrentFD];
+  Ts.setSingleReturn(!(CFG->getExit().pred_size() > 1));
+  Ts.setFuncDecl(mCurrentFD);
   return true;
 }
 
@@ -407,7 +408,9 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   ClauseI->setIsUsed();
-  mTIs[mCurrentFD].push_back({ mCurrentFD, StmtWithCall, Call, nullptr });
+  auto &TI = mTIs[mCurrentFD];
+  auto &CalleeTs = mTs[Definition];
+  TI.push_back({ mCurrentFD, StmtWithCall, Call, &CalleeTs });
   return true;
 }
 
@@ -698,10 +701,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   std::set<const clang::FunctionDecl*> Callable;
   for (auto& TIs : mTIs) {
     for (auto& TI : TIs.second) {
-      const clang::FunctionDecl* Definition = nullptr;
-      TI.mCallExpr->getDirectCallee()->hasBody(Definition);
-      TI.mTemplate = &mTs.at(Definition);
-      Callable.insert(Definition);
+      assert(TI.mTemplate && TI.mTemplate->getFuncDecl() &&
+        "Function definition must not be null!");
+      Callable.insert(TI.mTemplate->getFuncDecl());
     }
   }
   // global declarations (outermost, max enclosed)
