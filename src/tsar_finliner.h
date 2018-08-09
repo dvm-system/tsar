@@ -419,11 +419,6 @@ private:
   /// template instantiations' mapping
   std::map<const clang::FunctionDecl*,
     std::vector<::detail::TemplateInstantiation>> mTIs;
-
-  /// if not empty, only contained TIs will be instantiated, otherwise all
-  /// all checkers should be passed
-  std::set<const ::detail::TemplateInstantiation*> MatchedTIs;
-
 };
 
 }

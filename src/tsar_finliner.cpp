@@ -554,11 +554,6 @@ std::pair<std::string, std::string> FInliner::compile(
         || TI.mTemplate->getFuncDecl() == nullptr) {
         continue;
       }
-      if (MatchedTIs.size() > 0) {
-        if (MatchedTIs.find(&TI) == std::end(MatchedTIs)) {
-          continue;
-        }
-      }
       if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
         != std::end(mUnreachableStmts[TI.mFuncDecl])) {
         continue;
@@ -707,18 +702,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       TI.mCallExpr->getDirectCallee()->hasBody(Definition);
       TI.mTemplate = &mTs.at(Definition);
       Callable.insert(Definition);
-    }
-  }
-  // match pragmas and calls
-  for (auto& TIs : mTIs) {
-    auto &CurrFDInline = mInlineStmts[TIs.first];
-    if (CurrFDInline.empty())
-      continue;
-    for (auto &CToS : CurrFDInline) {
-      auto I = std::find_if(TIs.second.begin(), TIs.second.end(),
-        [&CToS](TemplateInstantiation &TI) { return TI.mStmt == CToS.Stmt; });
-      if (I != TIs.second.end())
-        MatchedTIs.insert(&*I);
     }
   }
   // global declarations (outermost, max enclosed)
@@ -1211,11 +1194,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         if (TI.mTemplate == nullptr
           || TI.mTemplate->getFuncDecl() == nullptr) {
           continue;
-        }
-        if (MatchedTIs.size() > 0) {
-          if (MatchedTIs.find(&TI) == std::end(MatchedTIs)) {
-            continue;
-          }
         }
         if (!PCHeader) {
           // strong correlation with ExternalDepsChecker
