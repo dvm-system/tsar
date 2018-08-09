@@ -30,12 +30,12 @@ def err_unknown_directive : Error<"namespace '%0' does not contain directive '%1
 def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
 
 def warn_unexpected_directive : Warning<"unexpected directive ignored">;
-def remark_only_call_inline : Remark<"only call expressions can be inlined">;
+def remark_inline_no_call : Remark<"no call suitable for inline is found">;
 
 def warn_disable_inline_no_body : Warning<"disable inline expansion for function without definition">;
 def warn_disable_inline_in_ternary : Warning<"disable inline expansion in conditional operator">;
 def warn_disable_inline_in_loop_cond : Warning<"disable inline expansion in conditional expression of loop">;
 def warn_disable_inline_in_for_inc : Warning<"disable inline expansion in the third section of for-loop">;
 
-def warn_disable_inline : Warning<"disable inline expansion	">;
-def remark_no_parent_stmt : Remark<"unable to determine parent statement">;
+def warn_disable_inline : Warning<"disable inline expansion">;
+def remark_inline_macro_prevent : Remark<"macro prevent inlining">;

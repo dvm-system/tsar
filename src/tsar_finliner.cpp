@@ -217,12 +217,9 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
 }
 
 bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
-  if (FD->isThisDeclarationADefinition() == false) {
+  if (!FD->isThisDeclarationADefinition())
     return true;
-  }
   mCurrentFD = FD;
-  // build CFG for function which _possibly_ contains calls of functions
-  // which can be inlined
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
   assert(CFG.get() != nullptr && ("CFG construction failed for "
@@ -236,128 +233,6 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
           UnreachableStmts.insert(CS->getStmt());
   mTs[mCurrentFD].setSingleReturn(!(CFG->getExit().pred_size() > 1));
   mTs[mCurrentFD].setFuncDecl(mCurrentFD);
-  auto isSubStmt = [this](const Stmt* SubS, const Stmt* S, bool &IsInvalid) {
-    DEBUG(
-      dbgs() << "[INLINE]: check sub-statement ";
-      printLocLog(mSourceManager, getRange(SubS)); dbgs() << " of ";
-      printLocLog(mSourceManager, getRange(S)); dbgs() << "\n");
-    return isSubRange(mSourceManager, getRange(SubS), getRange(S), &IsInvalid);
-  };
-  auto& TIs = mTIs[mCurrentFD];
-  for (auto B : *CFG) {
-    for (auto I = B->begin(), EI = B->end(); I != EI; ++I) {
-      auto CfgStmt = I->getAs<CFGStmt>();
-      if (!CfgStmt)
-        continue;
-      const auto *Call = dyn_cast<CallExpr>(CfgStmt->getStmt());
-      if (!Call)
-        continue;
-      const FunctionDecl* Definition = nullptr;
-      Call->getDirectCallee()->hasBody(Definition);
-      if (Definition == nullptr) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline_no_body);
-        continue;
-      }
-      mTs[Definition].setFuncDecl(Definition);
-      const Stmt* Parent = Call;
-      bool IsInvalid = false;
-      for (auto TailI = I + 1; TailI != EI; ++TailI)
-        if (auto CS = TailI->getAs<CFGStmt>())
-          if (isSubStmt(Parent, CS->getStmt(), IsInvalid))
-            Parent = CS->getStmt();
-          else if (IsInvalid)
-            break;
-      if (IsInvalid) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline);
-        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
-          diag::remark_no_parent_stmt);
-        continue;
-      }
-      for (auto Succ : B->succs())
-        if (auto S = Succ->getTerminator())
-          if (isa<ForStmt>(S) && isSubStmt(Parent, S, IsInvalid))
-            Parent = S;
-          else if (IsInvalid)
-            break;
-      if (IsInvalid) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline);
-        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
-          diag::remark_no_parent_stmt);
-        continue;
-      }
-      bool inCondOp = false;
-      while (true) {
-        auto S = Parent;
-        for (auto *B : *CFG) {
-          for (auto &I : *B) {
-            if (auto CS = I.getAs<CFGStmt>())
-              if (isSubStmt(Parent, CS->getStmt(), IsInvalid)) {
-                Parent = CS->getStmt();
-                // Check if we are in ternary if.
-                if (isa<ConditionalOperator>(CS->getStmt()))
-                  inCondOp = true;
-              } else if (IsInvalid) {
-                break;
-              }
-          }
-          if (IsInvalid)
-            break;
-        }
-        if (Parent == S || IsInvalid)
-          break;
-      }
-      if (IsInvalid) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline);
-        toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
-          diag::remark_no_parent_stmt);
-        continue;
-      }
-      // Don't replace function calls in conditional operator (ternary if, ?:).
-      if (inCondOp) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline_in_ternary);
-        continue;
-      }
-      // Don't replace function calls in condition expressions of loops.
-      if (auto S = B->getTerminator()) {
-        if (isSubStmt(Parent, S, IsInvalid)) {
-          if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S)) {
-            toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-              diag::warn_disable_inline_in_loop_cond);
-            continue;
-          } else {
-            Parent = S;
-          }
-        } else if (IsInvalid) {
-          toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-            diag::warn_disable_inline);
-          toDiag(mSourceManager.getDiagnostics(), Parent->getLocStart(),
-            diag::remark_no_parent_stmt);
-          continue;
-        }
-      }
-      // Don't replace function calls in the third section of for-loop
-      if (B->getLoopTarget()) {
-        toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
-          diag::warn_disable_inline_in_for_inc);
-        continue;
-      }
-      for (auto &StmtPair : CFG->synthetic_stmts())
-        if (StmtPair.first == Parent) {
-          Parent = StmtPair.second;
-          break;
-        }
-      DEBUG(dbgs() << "[INLINE]: statement with call in range";
-        printLocLog(mSourceManager, getRange(Parent)); dbgs() << "\n");
-      TemplateInstantiation TI = { mCurrentFD, Parent, Call, nullptr };
-      if (std::find(std::begin(TIs), std::end(TIs), TI) == std::end(TIs))
-        TIs.push_back(TI);
-    }
-  }
   return true;
 }
 
@@ -378,27 +253,161 @@ bool FInliner::VisitExpr(clang::Expr* E) {
   return true;
 }
 
-bool FInliner::VisitStmt(Stmt *S) {
-  if (mActiveClause) {
-    mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
-    mActiveClause = nullptr;
+bool FInliner::TraverseStmt(clang::Stmt *S) {
+  if (!S)
+    return RecursiveASTVisitor::TraverseStmt(S);
+  Pragma P(*S);
+  if (P) {
+    if (P.getDirectiveId() != DirectiveId::Transform)
+      return true;
+    for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
+      ClauseId Id;
+      if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), Id))
+        continue;
+      if (Id == ClauseId::Inline)
+        mActiveClause = { *CI, true, false };
+    }
+    return true;
   }
-  return RecursiveASTVisitor::VisitStmt(S);
+  /// Find root of subtree located in macro.
+  if (!mStmtInMacro &&
+      (S->getLocStart().isMacroID() || S->getLocEnd().isMacroID()))
+    mStmtInMacro = S;
+  if (mActiveClause) {
+    mScopes.push_back(mActiveClause);
+    mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
+    mActiveClause = { nullptr, false, false };
+  }
+  mScopes.emplace_back(S);
+  auto Res = RecursiveASTVisitor::TraverseStmt(S);
+  mScopes.pop_back();
+  if (!mScopes.empty() && mScopes.back().isClause()) {
+    if (!mScopes.back().isUsed()) {
+      toDiag(mSourceManager.getDiagnostics(), mScopes.back()->getLocStart(),
+        diag::warn_unexpected_directive);
+      toDiag(mSourceManager.getDiagnostics(), S->getLocStart(),
+        diag::remark_inline_no_call);
+    }
+    mScopes.pop_back();
+  }
+  // Disable clause at the end of compound statement, body of loop, etc.
+  // #pragma ...
+  // }
+  // <stmt>, pragma should not mark <stmt>
+  if (mActiveClause) {
+    toDiag(mSourceManager.getDiagnostics(), mActiveClause->getLocStart(),
+      diag::warn_unexpected_directive);
+    mActiveClause.reset();
+  }
+  return Res;
 }
 
-bool FInliner::TraverseCompoundStmt(CompoundStmt *CS) {
-  Pragma P(*CS);
-  if (!P)
-    return RecursiveASTVisitor::TraverseCompoundStmt(CS);
-  if (P.getDirectiveId() != DirectiveId::Transform)
-    return true;
-  for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
-    ClauseId Id;
-    if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), Id))
-      continue;
-    if (Id == ClauseId::Inline)
-      mActiveClause = *CI;
+bool FInliner::TraverseCallExpr(CallExpr *Call) {
+  DEBUG(dbgs() << "[INLINE]: traverse call expression\n"; Call->dump());
+  auto InlineInMacro = mStmtInMacro;
+  mStmtInMacro =
+    (Call->getLocStart().isMacroID() || Call->getLocEnd().isMacroID()) ?
+    Call : nullptr;
+  if (!RecursiveASTVisitor::TraverseCallExpr(Call))
+    return false;
+  std::swap(InlineInMacro, mStmtInMacro);
+  if (!mStmtInMacro)
+    mStmtInMacro = InlineInMacro;
+  assert(!mScopes.empty() && "At least one parent statement must exist!");
+  auto ScopeI = mScopes.rbegin(), ScopeE = mScopes.rend();
+  clang::Stmt *StmtWithCall = Call;
+  auto ClauseI = mScopes.rend();
+  bool InCondOp = false, InLoopCond = false, InForInc = false;
+  for (; ScopeI != ScopeE; StmtWithCall = *(ScopeI++)) {
+    if (ScopeI->isClause()) {
+      ClauseI = ScopeI;
+      break;
+    }
+    if (isa<ConditionalOperator>(*ScopeI)) {
+      InCondOp = true;
+    } else if (auto For = dyn_cast<ForStmt>(*ScopeI)) {
+      // Check that #pragma is set before loop.
+      if (For->getBody() != StmtWithCall && (ScopeI + 1)->isClause())
+        ClauseI = ScopeI + 1;
+      InLoopCond = (For->getCond() == StmtWithCall);
+      InForInc = (For->getInc() == StmtWithCall);
+      // In case of call inside for-loop initialization, the body of function
+      // should be inserted before for-loop.
+      if (For->getInit() == StmtWithCall)
+        StmtWithCall = For;
+      break;
+    } else if (auto While = dyn_cast<WhileStmt>(*ScopeI)) {
+      // Check that #pragma is set before loop.
+      if (While->getBody() != StmtWithCall && (ScopeI + 1)->isClause())
+        ClauseI = ScopeI + 1;
+      InLoopCond = (While->getCond() == StmtWithCall);
+      break;
+    } else if (auto Do = dyn_cast<DoStmt>(*ScopeI)) {
+      // Check that #pragma is set before loop.
+      if (Do->getBody() != StmtWithCall && (ScopeI + 1)->isClause())
+        ClauseI = ScopeI + 1;
+      InLoopCond = (Do->getCond() == StmtWithCall);
+      break;
+    } else if (auto If = dyn_cast<IfStmt>(*ScopeI)) {
+      // Check that #pragma is set before `if`.
+      if (If->getThen() != StmtWithCall && If->getElse() != StmtWithCall &&
+          (ScopeI + 1)->isClause())
+        ClauseI = ScopeI + 1;
+      // In case of call inside condition, the body of function
+      // should be inserted before `if`.
+      if (If->getCond() == StmtWithCall)
+        StmtWithCall = If;
+      break;
+    } else if (isa<CompoundStmt>(*ScopeI) ||
+               isa<CaseStmt>(*ScopeI) || isa<DefaultStmt>(*ScopeI)) {
+      break;
+    }
   }
+  DEBUG(dbgs() << "[INLINE]: statement with call\n"; StmtWithCall->dump());
+  if (ClauseI == mScopes.rend()) {
+    for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
+      if (!I->isClause() || !isa<CompoundStmt>(*PrevI))
+        continue;
+      ClauseI = I;
+      break;
+    }
+    if (ClauseI == mScopes.rend()) {
+      DEBUG(dbgs() << "[INLINE]: clause not found\n");
+      return true;
+    }
+  }
+  DEBUG(dbgs() << "[INLINE]: clause found\n"; (*ClauseI)->dump());
+  const FunctionDecl* Definition = nullptr;
+  Call->getDirectCallee()->hasBody(Definition);
+  if (!Definition) {
+    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_no_body);
+    return true;
+  }
+  if (InlineInMacro) {
+    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline);
+    toDiag(mSourceManager.getDiagnostics(), InlineInMacro->getLocStart(),
+      diag::remark_inline_macro_prevent);
+    return true;
+  }
+  if (InCondOp) {
+    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_in_ternary);
+    return true;
+  }
+  if (InLoopCond) {
+    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_in_loop_cond);
+    return true;
+  }
+  if (InForInc) {
+    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_in_for_inc);
+    return true;
+  }
+  ClauseI->setIsUsed();
+  mTIs[mCurrentFD].push_back({ mCurrentFD, StmtWithCall, Call, nullptr });
   return true;
 }
 
@@ -689,9 +698,6 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
-  if (mActiveClause)
-    toDiag(mSourceManager.getDiagnostics(), mActiveClause->getLocStart(),
-      diag::warn_unexpected_directive);
   //Context.getTranslationUnitDecl()->decls_begin();
   // associate instantiations with templates
   std::set<const clang::FunctionDecl*> Callable;
@@ -711,14 +717,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     for (auto &CToS : CurrFDInline) {
       auto I = std::find_if(TIs.second.begin(), TIs.second.end(),
         [&CToS](TemplateInstantiation &TI) { return TI.mStmt == CToS.Stmt; });
-      if (I != TIs.second.end()) {
+      if (I != TIs.second.end())
         MatchedTIs.insert(&*I);
-      } else {
-        toDiag(mSourceManager.getDiagnostics(), CToS.Clause->getLocStart(),
-          diag::warn_unexpected_directive);
-        toDiag(mSourceManager.getDiagnostics(), CToS.Stmt->getLocStart(),
-          diag::remark_only_call_inline);
-      }
     }
   }
   // global declarations (outermost, max enclosed)

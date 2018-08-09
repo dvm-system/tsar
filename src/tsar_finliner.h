@@ -28,6 +28,7 @@
 #include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/IR/Module.h>
+#include <llvm/ADT/PointerIntPair.h>
 
 
 namespace tsar {
@@ -157,11 +158,64 @@ inline bool operator==(
     && lhs.mCallExpr == rhs.mCallExpr
     && lhs.mTemplate == rhs.mTemplate;
 }
-
 }
 
 namespace tsar {
+namespace detail {
+/// Represents a scope which is defined by a statement or a clause.
+class ScopeInfo {
+public:
+  ScopeInfo(clang::Stmt *S = nullptr, bool IsClause = false,
+    bool IsUsed = true) : mInfo{ {S, IsClause}, IsUsed } {}
 
+  operator clang::Stmt * () { return mInfo.getPointer().getPointer(); }
+  operator const clang::Stmt * () const {
+    return mInfo.getPointer().getPointer();
+  }
+
+  clang::Stmt * getStmt() { return *this; }
+  const clang::Stmt * getStmt() const { return *this; }
+
+  clang::Stmt & operator*() { return *getStmt(); }
+  const clang::Stmt & operator*() const { return *getStmt(); }
+  clang::Stmt * operator->() { return getStmt(); }
+  const clang::Stmt * operator->() const { return getStmt(); }
+
+  bool isClause() const { return mInfo.getPointer().getInt(); }
+  void setIsClause(bool IsClause = true) { mInfo.getPointer().setInt(IsClause); }
+
+  bool isUsed() const { return mInfo.getInt(); }
+  void setIsUsed(bool IsUsed = true) { mInfo.setInt(IsUsed); }
+
+  void reset() { *this = ScopeInfo(); }
+
+private:
+  llvm::PointerIntPair<
+    llvm::PointerIntPair<clang::Stmt *, 1, bool>, 1, bool> mInfo;
+};
+}
+}
+
+namespace llvm {
+template<typename From> struct simplify_type;
+
+// Specialize simplify_type to allow WeakVH to participate in
+// dyn_cast, isa, etc.
+template<> struct simplify_type<tsar::detail::ScopeInfo> {
+  using SimpleType = clang::Stmt *;
+  static SimpleType getSimplifiedValue(tsar::detail::ScopeInfo &Info) {
+    return Info;
+  }
+};
+template<> struct simplify_type<const tsar::detail::ScopeInfo> {
+  using SimpleType = const clang::Stmt *;
+  static SimpleType getSimplifiedValue(const tsar::detail::ScopeInfo &Info) {
+    return Info;
+  }
+};
+}
+
+namespace tsar {
 /// This class provides both AST traversing and source code buffer modification
 /// (through Rewriter API). Note that the only result of its work - modified
 /// Rewriter (buffer) object inside passed Transformation Context.
@@ -187,15 +241,15 @@ public:
     mRewriter(TfmCtx->getRewriter()),
     mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
 
-  bool VisitStmt(clang::Stmt *S);
-
   bool VisitFunctionDecl(clang::FunctionDecl* FD);
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
 
   bool VisitExpr(clang::Expr* E);
 
-  bool TraverseCompoundStmt(clang::CompoundStmt *CS);
+  bool TraverseStmt(clang::Stmt *S);
+
+  bool TraverseCallExpr(clang::CallExpr *Call);
 
   /// Traverses AST, collects necessary information using overriden methods above
   /// and applies it to source code using private methods below
@@ -313,7 +367,17 @@ private:
   tsar::TransformationContext* mTransformContext;
 
   InlineQuery mInlineStmts;
-  clang::Stmt *mActiveClause = nullptr;
+
+  /// This is a stack of scopes with a function definition at the bottom.
+  /// Note, that pragma is also considered as a scope.
+  std::vector<detail::ScopeInfo> mScopes;
+
+  /// The last visited clause.
+  detail::ScopeInfo mActiveClause;
+
+  /// Root of subtree which contains currently visited statement and which
+  /// is located in macro.
+  clang::Stmt *mStmtInMacro = nullptr;
 
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
