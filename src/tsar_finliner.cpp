@@ -216,9 +216,9 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
 #endif
 }
 
-bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
+bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   if (!FD->isThisDeclarationADefinition())
-    return true;
+    return RecursiveASTVisitor::TraverseFunctionDecl(FD);
   mCurrentFD = FD;
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
@@ -234,7 +234,9 @@ bool FInliner::VisitFunctionDecl(clang::FunctionDecl* FD) {
   auto &Ts = mTs[mCurrentFD];
   Ts.setSingleReturn(!(CFG->getExit().pred_size() > 1));
   Ts.setFuncDecl(mCurrentFD);
-  return true;
+  auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
+  mCurrentFD = nullptr;
+  return Res;
 }
 
 bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {

@@ -241,11 +241,11 @@ public:
     mRewriter(TfmCtx->getRewriter()),
     mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
 
-  bool VisitFunctionDecl(clang::FunctionDecl* FD);
-
   bool VisitReturnStmt(clang::ReturnStmt* RS);
 
   bool VisitExpr(clang::Expr* E);
+
+  bool TraverseFunctionDecl(clang::FunctionDecl *FD);
 
   bool TraverseStmt(clang::Stmt *S);
 
@@ -384,7 +384,7 @@ private:
   clang::Rewriter& mRewriter;
 
   /// last seen function decl (with body we are currently in)
-  clang::FunctionDecl* mCurrentFD;
+  clang::FunctionDecl* mCurrentFD = nullptr;
 
   /// for statements - for detecting call expressions which can be inlined
   std::vector<const clang::Stmt*> mFSs;
