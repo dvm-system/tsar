@@ -569,33 +569,36 @@ std::pair<std::string, std::string> FInliner::compile(
   };
   if (std::find_if(std::begin(mTIs), std::end(mTIs), hasActiveTIs)
     != std::end(mTIs)) {
-    for (auto& TI : mTIs[SrcFD]) {
-      if (TI.mTemplate == nullptr
-        || TI.mTemplate->getFuncDecl() == nullptr) {
-        continue;
+    auto I = mTIs.find(SrcFD);
+    if (I != mTIs.end()) {
+      for (auto& TI : I->second) {
+        if (TI.mTemplate == nullptr
+          || TI.mTemplate->getFuncDecl() == nullptr) {
+          continue;
+        }
+        if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
+          != std::end(mUnreachableStmts[TI.mFuncDecl])) {
+          continue;
+        }
+        std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
+        std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
+          std::begin(Args),
+          [&](const clang::Expr* Arg) -> std::string {
+          return get(getRange(Arg));
+        });
+        auto Text = compile(TI, Args, Decls);
+        auto CallExpr = getSourceText(getRange(TI.mCallExpr));
+        if (Text.second.size() == 0) {
+          Text.first = "{" + Text.first + ";}";
+        } else {
+          update(getRange(TI.mCallExpr), Text.second);
+          Text.first += get(getRange(TI.mStmt));
+          Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
+            ? "{" + Text.first + ";}" : Text.first;
+        }
+        update(getRange(TI.mStmt), "/* " + CallExpr
+          + " is inlined below */\n" + Text.first);
       }
-      if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
-        != std::end(mUnreachableStmts[TI.mFuncDecl])) {
-        continue;
-      }
-      std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
-      std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
-        std::begin(Args),
-        [&](const clang::Expr* Arg) -> std::string {
-        return get(getRange(Arg));
-      });
-      auto Text = compile(TI, Args, Decls);
-      auto CallExpr = getSourceText(getRange(TI.mCallExpr));
-      if (Text.second.size() == 0) {
-        Text.first = "{" + Text.first + ";}";
-      } else {
-        update(getRange(TI.mCallExpr), Text.second);
-        Text.first += get(getRange(TI.mStmt));
-        Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
-          ? "{" + Text.first + ";}" : Text.first;
-      }
-      update(getRange(TI.mStmt), "/* " + CallExpr
-        + " is inlined below */\n" + Text.first);
     }
   }
 
