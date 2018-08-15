@@ -131,14 +131,21 @@ public:
     return;
   }
 
+  bool isMacroInDecl() const noexcept { return mMacroInDecl; }
+  const clang::Stmt * getMacroInDecl() { return mMacroInDecl; }
+  void setMacroInDecl(const clang::Stmt *S) noexcept { mMacroInDecl = S; }
+
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
-  const clang::FunctionDecl* mFuncDecl;
+  const clang::FunctionDecl* mFuncDecl = nullptr;
   std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>>
     mParmRefs;
   std::set<const clang::ReturnStmt*> mRSs;
 
-  bool mIsSingleReturn;
+  bool mIsSingleReturn = false;
+
+  /// The first statement inside function definition which is located in macro.
+  const clang::Stmt * mMacroInDecl = nullptr;
 };
 
 /// Represents one specific place in user source code where one of specified

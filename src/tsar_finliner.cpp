@@ -272,10 +272,25 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
     }
     return true;
   }
-  /// Find root of subtree located in macro.
-  if (!mStmtInMacro &&
-      (S->getLocStart().isMacroID() || S->getLocEnd().isMacroID()))
-    mStmtInMacro = S;
+  if (S->getLocStart().isMacroID() || S->getLocEnd().isMacroID()) {
+    mTs[mCurrentFD].setMacroInDecl(S);
+    /// Find root of subtree located in macro.
+    if (!mStmtInMacro)
+      mStmtInMacro = S;
+  } else if (auto Op = dyn_cast<BinaryOperator>(S)) {
+    if (Op->getOperatorLoc().isMacroID()) {
+      mTs[mCurrentFD].setMacroInDecl(S);
+      if (!mStmtInMacro)
+        mStmtInMacro = S;
+    }
+  } else if (auto Str = dyn_cast<clang::StringLiteral>(S)) {
+    for (auto &Loc : make_range(Str->tokloc_begin(), Str->tokloc_end()))
+      if (Loc.isMacroID()) {
+        mTs[mCurrentFD].setMacroInDecl(S);
+      if (!mStmtInMacro)
+        mStmtInMacro = S;
+      }
+  }
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
     mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
@@ -912,6 +927,11 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       ? "Unused template for function \"" + T.getFuncDecl()->getName().str()
       + "\"\n" : "";
   };
+  auto MacroInDeclChecker = [&](const Template &T) {
+    return T.isMacroInDecl()
+      ? "Macro in function definition\"" + T.getFuncDecl()->getName().str()
+      + "\"\n" : "";
+  };
   auto UserDefTChecker = [&](const Template& T) -> std::string {
     std::string Result;
     if (mSourceManager.getFileCharacteristic(T.getFuncDecl()->getLocStart())
@@ -1070,6 +1090,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   };
   std::function<std::string(const Template&)> TChainChecker[] = {
     UnusedTemplateChecker,
+    MacroInDeclChecker,
     UserDefTChecker,
     VariadicChecker,
     RecursiveChecker,
