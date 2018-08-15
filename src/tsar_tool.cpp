@@ -294,7 +294,8 @@ int Tool::run(QueryManager *QM) {
                 "generating multiple output files.\n";
       mOutputFilename.clear();
     }
-    return EmitPCHTool.run(newFrontendActionFactory<GeneratePCHAction>().get());
+    return EmitPCHTool.run(
+      newFrontendActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!mOutputFilename.empty())
     errs() << "WARNING: The -o (output filename) option is ignored when "
