@@ -711,6 +711,33 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
   return Identifiers;
 }
 
+DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
+  DenseSet<const clang::FunctionDecl*> Recursive;
+  for (auto &TIs : mTIs) {
+    DenseSet<const clang::FunctionDecl*> Callees;
+    for (auto &TIs : TIs.second)
+      if (TIs.mTemplate && TIs.mTemplate->getFuncDecl())
+        Callees.insert(TIs.mTemplate->getFuncDecl());
+    while (!Callees.empty()) {
+      if (Callees.count(TIs.first)) {
+        Recursive.insert(TIs.first);
+        break;
+      }
+      DenseSet<const clang::FunctionDecl *> NewCallees;
+      for (auto Caller : Callees) {
+        auto I = mTIs.find(Caller);
+        if (I == mTIs.end())
+          continue;
+        for (auto &TI : I->second)
+          if (TI.mTemplate && TI.mTemplate->getFuncDecl())
+            NewCallees.insert(TI.mTemplate->getFuncDecl());
+      }
+      Callees.swap(NewCallees);
+    }
+  }
+  return Recursive;
+}
+
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   TraverseDecl(Context.getTranslationUnitDecl());
   //Context.getTranslationUnitDecl()->decls_begin();
@@ -778,42 +805,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::set<std::string> Tmp(getIdentifiers(D));
       mExtIdentifiers[T.first].insert(std::begin(Tmp), std::end(Tmp));
       mIntIdentifiers[T.first].insert(std::begin(Tmp), std::end(Tmp));
-    }
-  }
-  // compute recursive functions set
-  std::set<const clang::FunctionDecl*> Recursive;
-  for (auto& TIs : mTIs) {
-    bool OK = true;
-    std::set<const clang::FunctionDecl*> Callers = {TIs.first};
-    std::set<const clang::FunctionDecl*> Callees;
-    for (auto& TIs : TIs.second) {
-      if (TIs.mTemplate != nullptr && TIs.mTemplate->getFuncDecl() != nullptr) {
-        Callees.insert(TIs.mTemplate->getFuncDecl());
-      }
-    }
-    while (OK == true && Callees.size() != 0) {
-      std::set<const clang::FunctionDecl*> Intersection;
-      std::set_intersection(std::begin(Callers), std::end(Callers),
-        std::begin(Callees), std::end(Callees),
-        std::inserter(Intersection, std::end(Intersection)));
-      if (Intersection.size() != 0) {
-        OK = false;
-        break;
-      } else {
-        std::set<const clang::FunctionDecl*> NewCallees;
-        for (auto& Caller : Callees) {
-          for (auto& TI : mTIs[Caller]) {
-            if (TI.mTemplate != nullptr
-              && TI.mTemplate->getFuncDecl() != nullptr) {
-              NewCallees.insert(TI.mTemplate->getFuncDecl());
-            }
-          }
-        }
-        Callees.swap(NewCallees);
-      }
-    }
-    if (OK == false) {
-      Recursive.insert(TIs.first);
     }
   }
 
@@ -953,7 +944,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   auto VariadicChecker = [&](const Template& T) -> std::string {
     return T.getFuncDecl()->isVariadic() ? "Variadic function" : "";
   };
-  auto RecursiveChecker = [&](const Template& T) -> std::string {
+  auto Recursive = findRecursion();
+  auto RecursiveChecker = [&Recursive](const Template& T) -> std::string {
     return Recursive.find(T.getFuncDecl()) != std::end(Recursive)
       ? "Recursive function \"" + T.getFuncDecl()->getNameAsString()
       + "\"\n" : "";

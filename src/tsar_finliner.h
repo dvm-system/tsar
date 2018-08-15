@@ -263,6 +263,11 @@ public:
   void HandleTranslationUnit(clang::ASTContext& Context);
 
 private:
+  /// Finds functions which should be inlined and which produces recursion.
+  /// Note, that functions which are not marked for inlining will be ignored
+  /// in this search.
+  llvm::DenseSet<const clang::FunctionDecl *> findRecursion() const;
+
   /// Constructs correct language declaration of \p Identifier with \p Type
   /// Uses bruteforce with linear complexity dependent on number of tokens
   /// in \p Type where token is non-whitespace character or special sequence.
