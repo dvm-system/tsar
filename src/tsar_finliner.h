@@ -131,9 +131,9 @@ public:
     return;
   }
 
-  bool isMacroInDecl() const noexcept { return mMacroInDecl; }
-  const clang::Stmt * getMacroInDecl() { return mMacroInDecl; }
-  void setMacroInDecl(const clang::Stmt *S) noexcept { mMacroInDecl = S; }
+  bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
+  clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
+  void setMacroInDecl(clang::SourceLocation Loc) { mMacroInDecl = Loc; }
 
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
@@ -144,8 +144,9 @@ private:
 
   bool mIsSingleReturn = false;
 
-  /// The first statement inside function definition which is located in macro.
-  const clang::Stmt * mMacroInDecl = nullptr;
+  /// The first statement or declaration inside function definition
+  /// which is located in macro.
+  clang::SourceLocation mMacroInDecl;
 };
 
 /// Represents one specific place in user source code where one of specified
@@ -254,6 +255,8 @@ public:
 
   bool TraverseFunctionDecl(clang::FunctionDecl *FD);
 
+  bool TraverseDecl(clang::Decl *D);
+
   bool TraverseStmt(clang::Stmt *S);
 
   bool TraverseCallExpr(clang::CallExpr *Call);
@@ -263,6 +266,9 @@ public:
   void HandleTranslationUnit(clang::ASTContext& Context);
 
 private:
+  /// Remember specified location as a macro expansion location.
+  void rememberMacroLoc(clang::SourceLocation Loc);
+
   /// Finds functions which should be inlined and which produces recursion.
   /// Note, that functions which are not marked for inlining will be ignored
   /// in this search.
@@ -387,9 +393,9 @@ private:
   /// The last visited clause.
   detail::ScopeInfo mActiveClause;
 
-  /// Root of subtree which contains currently visited statement and which
-  /// is located in macro.
-  clang::Stmt *mStmtInMacro = nullptr;
+  /// Root of subtree which contains currently visited statement
+  /// (or declaration) and which is located in macro.
+  clang::SourceLocation mStmtInMacro;
 
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;

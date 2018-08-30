@@ -216,6 +216,14 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
 #endif
 }
 
+void FInliner::rememberMacroLoc(SourceLocation Loc) {
+  assert(Loc.isValid() && Loc.isMacroID() && "Location must be in macro!");
+  mTs[mCurrentFD].setMacroInDecl(Loc);
+  /// Find root of subtree located in macro.
+  if (mStmtInMacro.isInvalid())
+    mStmtInMacro = Loc;
+}
+
 bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   if (!FD->isThisDeclarationADefinition())
     return RecursiveASTVisitor::TraverseFunctionDecl(FD);
@@ -256,6 +264,18 @@ bool FInliner::VisitExpr(clang::Expr* E) {
   return true;
 }
 
+bool FInliner::TraverseDecl(Decl *D) {
+  if (isa<TranslationUnitDecl>(D))
+    return RecursiveASTVisitor::TraverseDecl(D);
+  if (D->getLocStart().isMacroID())
+    rememberMacroLoc(D->getLocStart());
+  else if (D->getLocEnd().isMacroID())
+    rememberMacroLoc(D->getLocEnd());
+  else if (D->getLocation().isMacroID())
+    rememberMacroLoc(D->getLocation());
+  return RecursiveASTVisitor::TraverseDecl(D);
+}
+
 bool FInliner::TraverseStmt(clang::Stmt *S) {
   if (!S)
     return RecursiveASTVisitor::TraverseStmt(S);
@@ -272,24 +292,17 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
     }
     return true;
   }
-  if (S->getLocStart().isMacroID() || S->getLocEnd().isMacroID()) {
-    mTs[mCurrentFD].setMacroInDecl(S);
-    /// Find root of subtree located in macro.
-    if (!mStmtInMacro)
-      mStmtInMacro = S;
-  } else if (auto Op = dyn_cast<BinaryOperator>(S)) {
-    if (Op->getOperatorLoc().isMacroID()) {
-      mTs[mCurrentFD].setMacroInDecl(S);
-      if (!mStmtInMacro)
-        mStmtInMacro = S;
-    }
+  if (S->getLocStart().isMacroID()) {
+    rememberMacroLoc(S->getLocStart());
+  } else if (S->getLocEnd().isMacroID()) {
+    rememberMacroLoc(S->getLocEnd());
+  } else if (auto E = dyn_cast<Expr>(S)) {
+    if (E->getExprLoc().isMacroID())
+      rememberMacroLoc(E->getExprLoc());
   } else if (auto Str = dyn_cast<clang::StringLiteral>(S)) {
     for (auto &Loc : make_range(Str->tokloc_begin(), Str->tokloc_end()))
-      if (Loc.isMacroID()) {
-        mTs[mCurrentFD].setMacroInDecl(S);
-      if (!mStmtInMacro)
-        mStmtInMacro = S;
-      }
+      if (Loc.isMacroID())
+        rememberMacroLoc(Loc);
   }
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
@@ -323,13 +336,12 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
 bool FInliner::TraverseCallExpr(CallExpr *Call) {
   DEBUG(dbgs() << "[INLINE]: traverse call expression\n"; Call->dump());
   auto InlineInMacro = mStmtInMacro;
-  mStmtInMacro =
-    (Call->getLocStart().isMacroID() || Call->getLocEnd().isMacroID()) ?
-    Call : nullptr;
+  mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
+    Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
   if (!RecursiveASTVisitor::TraverseCallExpr(Call))
     return false;
   std::swap(InlineInMacro, mStmtInMacro);
-  if (!mStmtInMacro)
+  if (mStmtInMacro.isInvalid())
     mStmtInMacro = InlineInMacro;
   assert(!mScopes.empty() && "At least one parent statement must exist!");
   auto ScopeI = mScopes.rbegin(), ScopeE = mScopes.rend();
@@ -402,10 +414,10 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
       diag::warn_disable_inline_no_body);
     return true;
   }
-  if (InlineInMacro) {
+  if (InlineInMacro.isValid()) {
     toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
-    toDiag(mSourceManager.getDiagnostics(), InlineInMacro->getLocStart(),
+    toDiag(mSourceManager.getDiagnostics(), InlineInMacro,
       diag::remark_inline_macro_prevent);
     return true;
   }
