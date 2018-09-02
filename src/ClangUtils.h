@@ -13,6 +13,9 @@
 
 #include <clang/Basic/SourceLocation.h>
 #include <clang/Basic/SourceManager.h>
+#include <clang/Lex/Token.h>
+#include <llvm/ADT/StringMap.h>
+#include <vector>
 
 namespace llvm {
 template <typename PtrType> class SmallPtrSetImpl;
@@ -21,6 +24,8 @@ template <typename PtrType> class SmallPtrSetImpl;
 namespace clang {
 class CFG;
 class CFGBlock;
+class LangOptions;
+class MemoryBuffer;
 class SourceManager;
 }
 
@@ -28,6 +33,48 @@ namespace tsar {
 /// Finds unreachable basic blocks for a specified CFG.
 void unreachableBlocks(clang::CFG &Cfg,
   llvm::SmallPtrSetImpl<clang::CFGBlock *> &Blocks);
+
+/// Relex tokens in a specified range.
+class LocalLexer {
+public:
+  using LexedTokens = std::vector<clang::Token>;
+
+  /// Initializes lexer to relex tokens in a specified range `SR`.
+  LocalLexer(clang::SourceRange SR,
+    const clang::SourceManager &SM, const clang::LangOptions &LangOpts);
+
+  /// Lex a token, returns `false` on success and `true` otherwise
+  bool LexFromRawLexer(clang::Token &Tok);
+
+  const clang::SourceManager & getSourceManager() const noexcept { return mSM; }
+  const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
+  clang::SourceRange getSourceRange() const { return mSR; }
+
+  /// Returns list of already lexed tokens.
+  const LexedTokens & getLexedTokens() const noexcept { return mTokens; }
+
+private:
+  clang::SourceRange mSR;
+  const clang::LangOptions &mLangOpts;
+  const clang::SourceManager &mSM;
+  std::size_t mLength;
+  unsigned mCurrentPos;
+  LexedTokens mTokens;
+};
+
+/// Returns list of clang::tok::raw_identifier tokens inside a specified range.
+std::vector<clang::Token> getRawIdentifiers(clang::SourceRange SR,
+  const clang::SourceManager &SM, const clang::LangOptions &LangOpts);
+
+/// Searches #define and #include directives in a specified file.
+///
+/// The results are two maps from a macro/file name to the location of
+/// this name in an appropriate #define/#include directive.
+void getRawMacrosAndIncludes(
+  clang::FileID FID, const llvm::MemoryBuffer *InputBuffer,
+  const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
+  llvm::StringMap<clang::SourceLocation> &Macros,
+  llvm::StringMap<clang::SourceLocation> &Includes);
 
 /// Returns range of expansion locations.
 inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,

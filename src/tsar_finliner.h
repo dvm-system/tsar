@@ -23,6 +23,7 @@
 #include <set>
 
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/AST/TypeLoc.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
@@ -133,7 +134,14 @@ public:
 
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
-  void setMacroInDecl(clang::SourceLocation Loc) { mMacroInDecl = Loc; }
+  clang::SourceLocation getMacroSpellingHint() const {
+    return mMacroSpellingHint;
+  }
+  void setMacroInDecl(clang::SourceLocation Loc,
+      clang::SourceLocation SpellingHint = clang::SourceLocation()) {
+    mMacroInDecl = Loc;
+    mMacroSpellingHint = SpellingHint;
+  }
 
 private:
   /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
@@ -147,6 +155,7 @@ private:
   /// The first statement or declaration inside function definition
   /// which is located in macro.
   clang::SourceLocation mMacroInDecl;
+  clang::SourceLocation mMacroSpellingHint;
 };
 
 /// Represents one specific place in user source code where one of specified
@@ -250,12 +259,12 @@ public:
     mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
-
   bool VisitExpr(clang::Expr* E);
+  bool VisitDeclRefExpr(clang::DeclRefExpr *DRE);
+  bool VisitTypeLoc(clang::TypeLoc TL);
+  bool VisitDecl(clang::Decl *D);
 
   bool TraverseFunctionDecl(clang::FunctionDecl *FD);
-
-  bool TraverseDecl(clang::Decl *D);
 
   bool TraverseStmt(clang::Stmt *S);
 
@@ -266,7 +275,7 @@ public:
   void HandleTranslationUnit(clang::ASTContext& Context);
 
 private:
-  /// Remember specified location as a macro expansion location.
+  /// Collects information of a macro in current location.
   void rememberMacroLoc(clang::SourceLocation Loc);
 
   /// Finds functions which should be inlined and which produces recursion.
@@ -298,9 +307,6 @@ private:
     std::set<std::string>& Decls);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
-
-  /// get raw tokens (preserves order)
-  std::vector<clang::Token> getRawTokens(const clang::SourceRange& SR) const;
 
   /// get all identifiers which have declarations (names only)
   /// traverses tag declarations
@@ -414,9 +420,6 @@ private:
   std::map<const clang::FunctionDecl*, std::set<std::string>>
     mExtIdentifiers, mIntIdentifiers;
 
-  /// declarations with null parent DeclContext
-  /// to get all potential declarations of specific name
-  std::map<std::string, std::set<const clang::Decl*>> mOutermostDecls;
 
   /// external declarations per function
   std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>>

@@ -13,8 +13,10 @@
 #include "tsar_finliner.h"
 #include "ClangUtils.h"
 #include "Diagnostic.h"
+#include "GlobalInfoExtractor.h"
 #include "tsar_pass_provider.h"
 #include "tsar_pragma.h"
+#include "SourceLocationTraverse.h"
 #include "tsar_transformation.h"
 
 #include <algorithm>
@@ -121,38 +123,6 @@ inline bool reformat(
   return false;
 }
 
-std::vector<clang::Token> FInliner::getRawTokens(
-    const clang::SourceRange& SR) const {
-  // these positions are beginings of tokens
-  // should include upper bound to capture last token
-  unsigned int Offset = SR.getBegin().getRawEncoding();
-  unsigned int Length = Offset
-    + (getSourceText(SR).size() > 0 ? getSourceText(SR).size() - 1 : 0);
-  std::vector<clang::Token> Tokens;
-  for (unsigned int Pos = Offset; Pos <= Length;) {
-    clang::SourceLocation Loc;
-    clang::Token Token;
-    Loc = clang::Lexer::GetBeginningOfToken(Loc.getFromRawEncoding(Pos),
-      mSourceManager, mRewriter.getLangOpts());
-    if (clang::Lexer::getRawToken(Loc, Token, mSourceManager,
-      mRewriter.getLangOpts(), false)) {
-      ++Pos;
-      continue;
-    }
-    if (Token.getKind() != clang::tok::raw_identifier) {
-      Pos += std::max(1u, (Token.isAnnotation() ? 1u : Token.getLength()));
-      continue;
-    }
-    // avoid duplicates for same token
-    if (Tokens.empty()
-      || Tokens[Tokens.size() - 1].getLocation() != Token.getLocation()) {
-      Tokens.push_back(Token);
-    }
-    Pos += Token.getLength();
-  }
-  return Tokens;
-}
-
 bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
@@ -217,11 +187,12 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
 }
 
 void FInliner::rememberMacroLoc(SourceLocation Loc) {
-  assert(Loc.isValid() && Loc.isMacroID() && "Location must be in macro!");
+  if (Loc.isInvalid() || !Loc.isMacroID())
+    return;
   mTs[mCurrentFD].setMacroInDecl(Loc);
   /// Find root of subtree located in macro.
   if (mStmtInMacro.isInvalid())
-    mStmtInMacro = Loc;
+   mStmtInMacro = Loc;
 }
 
 bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
@@ -249,31 +220,32 @@ bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
 
 bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
   mTs[mCurrentFD].addRetStmt(RS);
-  return true;
+  return RecursiveASTVisitor::VisitReturnStmt(RS);
 }
 
 bool FInliner::VisitExpr(clang::Expr* E) {
   mExprs[mCurrentFD].insert(E);
-  // parameter reference
-  if (clang::DeclRefExpr* DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
-    if (clang::ParmVarDecl* PVD
-      = clang::dyn_cast<clang::ParmVarDecl>(DRE->getDecl())) {
-      mTs[mCurrentFD].addParmRef(PVD, DRE);
-    }
-  }
-  return true;
+  return RecursiveASTVisitor::VisitExpr(E);
 }
 
-bool FInliner::TraverseDecl(Decl *D) {
-  if (isa<TranslationUnitDecl>(D))
-    return RecursiveASTVisitor::TraverseDecl(D);
-  if (D->getLocStart().isMacroID())
-    rememberMacroLoc(D->getLocStart());
-  else if (D->getLocEnd().isMacroID())
-    rememberMacroLoc(D->getLocEnd());
-  else if (D->getLocation().isMacroID())
-    rememberMacroLoc(D->getLocation());
-  return RecursiveASTVisitor::TraverseDecl(D);
+bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
+  // same for MemberExpr, MemberLoc == ExprLoc
+  if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
+    mTs[mCurrentFD].addParmRef(PVD, DRE);
+  DRE->getDecl();
+  return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
+}
+
+bool FInliner::VisitDecl(Decl *D) {
+  traverseSourceLocation(D,
+    [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
+  return RecursiveASTVisitor::VisitDecl(D);
+}
+
+bool FInliner::VisitTypeLoc(TypeLoc TL) {
+  traverseSourceLocation(TL,
+    [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
+  return RecursiveASTVisitor::VisitTypeLoc(TL);
 }
 
 bool FInliner::TraverseStmt(clang::Stmt *S) {
@@ -292,18 +264,8 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
     }
     return true;
   }
-  if (S->getLocStart().isMacroID()) {
-    rememberMacroLoc(S->getLocStart());
-  } else if (S->getLocEnd().isMacroID()) {
-    rememberMacroLoc(S->getLocEnd());
-  } else if (auto E = dyn_cast<Expr>(S)) {
-    if (E->getExprLoc().isMacroID())
-      rememberMacroLoc(E->getExprLoc());
-  } else if (auto Str = dyn_cast<clang::StringLiteral>(S)) {
-    for (auto &Loc : make_range(Str->tokloc_begin(), Str->tokloc_end()))
-      if (Loc.isMacroID())
-        rememberMacroLoc(Loc);
-  }
+  traverseSourceLocation(S,
+    [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
     mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
@@ -686,7 +648,8 @@ std::set<std::string> FInliner::getIdentifiers(const clang::Decl* D) const {
       }
       DC = DC->getParent();
     }
-    for (auto& T : getRawTokens(getRange(D))) {
+    for (auto& T : getRawIdentifiers(
+        getRange(D), mSourceManager, mRewriter.getLangOpts())) {
       auto RawIdentifier = T.getRawIdentifier();
       if (std::find(std::begin(mKeywords), std::end(mKeywords), RawIdentifier)
         != std::end(mKeywords)) {
@@ -754,8 +717,55 @@ DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
 }
 
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
+  GlobalInfoExtractor GIE(Context.getSourceManager(), Context.getLangOpts());
+  GIE.TraverseDecl(Context.getTranslationUnitDecl());
+  StringMap<SourceLocation> RawMacros, RawIncludes;
+  for (auto &File : GIE.getFiles())
+    getRawMacrosAndIncludes(File.second, File.first,
+      mSourceManager, Context.getLangOpts(), RawMacros, RawIncludes);
+  for (auto &Include : RawIncludes) {
+    if (!GIE.getIncludeLocs().count(Include.second.getRawEncoding())) {
+      toDiag(mSourceManager.getDiagnostics(), Include.second,
+        diag::warn_disable_inline_include);
+      return;
+    }
+  }
   TraverseDecl(Context.getTranslationUnitDecl());
   //Context.getTranslationUnitDecl()->decls_begin();
+  for (auto &T : mTs) {
+    if (T.second.isMacroInDecl())
+      continue;
+    if (mSourceManager.getFileCharacteristic(T.first->getLocStart()) !=
+      clang::SrcMgr::C_User)
+      continue;
+    auto &FD = ForwardDecls[T.first];
+    auto &EI = ExternalIds[T.first];
+    SourceLocation LastMacro;
+    LocalLexer Lex(T.first->getSourceRange(),
+      Context.getSourceManager(), Context.getLangOpts());
+    while (true) {
+      Token Tok;
+      if (Lex.LexFromRawLexer(Tok))
+        break;
+      if (Tok.is(tok::hash) && Tok.isAtStartOfLine()) {
+        auto MacroLoc = Tok.getLocation();
+        Lex.LexFromRawLexer(Tok);
+        if (Tok.getRawIdentifier() != "pragma")
+          T.second.setMacroInDecl(LastMacro);
+        continue;
+      }
+      if (Tok.isNot(tok::raw_identifier))
+        continue;
+      if (!GIE.getExpansionLocs().count(Tok.getLocation().getRawEncoding())) {
+        // If location has not been visited it is necessary to conservatively
+        // check that it does not contain usage of a macro.
+        auto MacroItr = RawMacros.find(Tok.getRawIdentifier());
+        if (MacroItr != RawMacros.end())
+          T.second.setMacroInDecl(Tok.getLocation(), MacroItr->second);
+      }
+    }
+  }
+
   // associate instantiations with templates
   std::set<const clang::FunctionDecl*> Callable;
   for (auto& TIs : mTIs) {
@@ -799,11 +809,15 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       }
     }
   }
-  // mOutermostDecls - have most outer DeclContext
+  /// declarations with null parent DeclContext
+  /// to get all potential declarations of specific name
+  std::map<std::string, std::set<const clang::Decl*>> OutermostDecls;
+
+  // OutermostDecls - have most outer DeclContext
   for (auto D : Context.getTranslationUnitDecl()->decls()) {
     std::set<std::string> Tmp(getIdentifiers(D));
     for (auto Identifier : Tmp) {
-      mOutermostDecls[Identifier].insert(D);
+      OutermostDecls[Identifier].insert(D);
     }
     mGlobalIdentifiers.insert(std::begin(Tmp), std::end(Tmp));
   }
@@ -866,7 +880,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       std::inserter(ExtIdentifiers, std::end(ExtIdentifiers)));
     Identifiers.swap(ExtIdentifiers);
     for (auto E : mExprs[T.first]) {
-      for (auto T : getRawTokens(getRange(E))) {
+      for (auto T : getRawIdentifiers(
+          getRange(E), mSourceManager, mRewriter.getLangOpts())) {
         Identifiers.insert(T.getRawIdentifier());
       }
     }
@@ -882,7 +897,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto& T : mTs) {
     std::set<std::string>& Identifiers = mExtIdentifiers[T.first];
     for (auto Identifier : Identifiers) {
-      for (auto D : mOutermostDecls[Identifier]) {
+      for (auto D : OutermostDecls[Identifier]) {
         mForwardDecls[T.first].insert(D);
         if (const clang::FunctionDecl* FD
           = clang::dyn_cast<clang::FunctionDecl>(D)) {
@@ -893,7 +908,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
             FD = *it;
             mForwardDecls[T.first].insert(FD);
             for (auto Identifier : Identifiers) {
-              for (auto D : mOutermostDecls[Identifier]) {
+              for (auto D : OutermostDecls[Identifier]) {
                 if (*it != FD
                   && (FD = clang::dyn_cast<clang::FunctionDecl>(D))) {
                   Worklist.insert(FD);
@@ -934,6 +949,15 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       + "\"\n" : "";
   };
   auto MacroInDeclChecker = [&](const Template &T) {
+    if (T.isMacroInDecl()) {
+      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline);
+      toDiag(mSourceManager.getDiagnostics(), T.getMacroInDecl(),
+        diag::remark_inline_macro_prevent);
+      if (T.getMacroSpellingHint().isValid())
+        toDiag(mSourceManager.getDiagnostics(), T.getMacroSpellingHint(),
+          diag::note_expanded_from_here);
+    }
     return T.isMacroInDecl()
       ? "Macro in function definition\"" + T.getFuncDecl()->getName().str()
       + "\"\n" : "";

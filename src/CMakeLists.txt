@@ -8,7 +8,7 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   ASTMergeAction.cpp EstimateMemory.cpp  AliasTreePrinter.cpp DIUnparser.cpp
   FrontendActions.cpp CanonicalLoop.cpp Intrinsics.cpp Instrumentation.cpp
   MetadataUtils.cpp tsar_finliner.cpp tsar_fcopy_elimination.cpp Diagnostic.cpp
-  Directives.cpp ClangUtils.cpp)
+  Directives.cpp ClangUtils.cpp GlobalInfoExtractor.cpp)
 if (TSAR_SHARED)
   set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
 else()
@@ -46,6 +46,6 @@ if(NOT PACKAGE_LLVM)
 endif()
 add_definitions("-D${PROJECT_NAME}_PROJECT" "-D${PROJECT_NAME}_CONFIG")
 target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS})
-install(TARGETS tsar 
+install(TARGETS tsar
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION bin)

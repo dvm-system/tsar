@@ -32,6 +32,7 @@ def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
 def warn_unexpected_directive : Warning<"unexpected directive ignored">;
 def remark_inline_no_call : Remark<"no call suitable for inline is found">;
 
+def warn_disable_inline_include : Warning<"include of not parsed file prevents inline expansion">;
 def warn_disable_inline_no_body : Warning<"disable inline expansion for function without definition">;
 def warn_disable_inline_in_ternary : Warning<"disable inline expansion in conditional operator">;
 def warn_disable_inline_in_loop_cond : Warning<"disable inline expansion in conditional expression of loop">;
@@ -39,3 +40,9 @@ def warn_disable_inline_in_for_inc : Warning<"disable inline expansion in the th
 
 def warn_disable_inline : Warning<"disable inline expansion">;
 def remark_inline_macro_prevent : Remark<"macro prevent inlining">;
+def note_inline_unresolvable_extern_dep : Note<"unresolvable external dependence prevents inlining">;
+def note_inline_static_extern_dep : Note<"refernece to static external dependence prevents inlining">;
+def note_inline_inline_extern_dep : Note<"reference to inline external dependence prevents inlining">;
+def note_inline_hidden_extern_dep : Note<"hidden external dependence prevents inlining">;
+def note_decl_hide : Note<"declration hides other declaration">;
+def note_expanded_from_here : Note<"expanded from here">;
