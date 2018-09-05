@@ -196,8 +196,10 @@ void FInliner::rememberMacroLoc(SourceLocation Loc) {
 }
 
 bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
+  // Do not visit functions without body to avoid implicitly created templates
+  // after call of mTs[CurrentFD] method.
   if (!FD->isThisDeclarationADefinition())
-    return RecursiveASTVisitor::TraverseFunctionDecl(FD);
+    return true;
   mCurrentFD = FD;
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
@@ -210,9 +212,10 @@ bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
     for (auto &I : *BB)
       if (auto CS = I.getAs<clang::CFGStmt>())
           UnreachableStmts.insert(CS->getStmt());
-  auto &Ts = mTs[mCurrentFD];
+  auto &Ts = mTs.emplace(std::piecewise_construct,
+    std::forward_as_tuple(mCurrentFD),
+    std::forward_as_tuple(mCurrentFD)).first->second;
   Ts.setSingleReturn(!(CFG->getExit().pred_size() > 1));
-  Ts.setFuncDecl(mCurrentFD);
   auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
   mCurrentFD = nullptr;
   return Res;
@@ -279,7 +282,7 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
       toDiag(mSourceManager.getDiagnostics(), mScopes.back()->getLocStart(),
         diag::warn_unexpected_directive);
       toDiag(mSourceManager.getDiagnostics(), S->getLocStart(),
-        diag::remark_inline_no_call);
+        diag::note_inline_no_call);
     }
     mScopes.pop_back();
   }
@@ -380,7 +383,7 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
     toDiag(mSourceManager.getDiagnostics(), InlineInMacro,
-      diag::remark_inline_macro_prevent);
+      diag::note_inline_macro_prevent);
     return true;
   }
   if (InCondOp) {
@@ -401,6 +404,7 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   ClauseI->setIsUsed();
   auto &TI = mTIs[mCurrentFD];
   auto &CalleeTs = mTs[Definition];
+  CalleeTs.setNeedToInline(true);
   TI.push_back({ mCurrentFD, StmtWithCall, Call, &CalleeTs });
   return true;
 }
@@ -547,7 +551,7 @@ std::pair<std::string, std::string> FInliner::compile(
     if (I != mTIs.end()) {
       for (auto& TI : I->second) {
         if (TI.mTemplate == nullptr
-          || TI.mTemplate->getFuncDecl() == nullptr) {
+          || !TI.mTemplate->isNeedToInline()) {
           continue;
         }
         if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
@@ -725,6 +729,70 @@ DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
   return Recursive;
 }
 
+void FInliner::checkTemplates(
+    const SmallVectorImpl<TemplateChecker> &Checkers) {
+  for (auto& T : mTs) {
+    if (!T.second.isNeedToInline())
+      continue;
+    for (auto &Checker : Checkers)
+      if (!Checker(T.second)) {
+        T.second.setNeedToInline(false);
+        break;
+      }
+  }
+}
+
+auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
+  SmallVector<TemplateChecker, 8> Checkers;
+  // Checks that a function is defined by the user.
+  Checkers.push_back([this](const Template &T) {
+    if (mSourceManager.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
+        SrcMgr::C_User) {
+      DEBUG(dbgs() << "[INLINE]: non-user defined function '" <<
+        T.getFuncDecl()->getName() << "' for instantiation\n");
+      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline_system);
+      return false;
+    }
+    return true;
+  });
+  // Checks that there are no macro in a function definition and that macro
+  // does not contain function definition.
+  Checkers.push_back([this](const Template &T) {
+    if (T.isMacroInDecl()) {
+      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline);
+      toDiag(mSourceManager.getDiagnostics(), T.getMacroInDecl(),
+        diag::note_inline_macro_prevent);
+      if (T.getMacroSpellingHint().isValid())
+        toDiag(mSourceManager.getDiagnostics(), T.getMacroSpellingHint(),
+          diag::note_expanded_from_here);
+      return false;
+    }
+    return true;
+  });
+  /// Checks that a specified function is not a variadic.
+  Checkers.push_back([this](const Template &T) {
+    if (T.getFuncDecl()->isVariadic()) {
+      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline_variadic);
+      return false;
+    }
+    return true;
+  });
+  /// Checks that a specified function does not contain recursion.
+  Checkers.push_back([this](const Template &T) {
+    static auto Recursive = findRecursion();
+    if (Recursive.count(T.getFuncDecl())) {
+      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline_recursive);
+      return false;
+    }
+    return true;
+  });
+  return Checkers;
+}
+
 void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   GlobalInfoExtractor GIE(Context.getSourceManager(), Context.getLangOpts());
   GIE.TraverseDecl(Context.getTranslationUnitDecl());
@@ -774,16 +842,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       }
     }
   }
+  checkTemplates(getTemplateCheckers());
 
-  // associate instantiations with templates
-  std::set<const clang::FunctionDecl*> Callable;
-  for (auto& TIs : mTIs) {
-    for (auto& TI : TIs.second) {
-      assert(TI.mTemplate && TI.mTemplate->getFuncDecl() &&
-        "Function definition must not be null!");
-      Callable.insert(TI.mTemplate->getFuncDecl());
-    }
-  }
   // global declarations (outermost, max enclosed)
   // possible scopes C99: function, function prototype, file, block
   // decl contexts C99: TranslationUnitDecl, FunctionDecl, TagDecl, BlockDecl
@@ -952,34 +1012,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
 
   // all constraint checkers
-  auto UnusedTemplateChecker = [&](const Template& T) -> std::string {
-    return Callable.find(T.getFuncDecl()) == std::end(Callable)
-      ? "Unused template for function \"" + T.getFuncDecl()->getName().str()
-      + "\"\n" : "";
-  };
-  auto MacroInDeclChecker = [&](const Template &T) {
-    if (T.isMacroInDecl()) {
-      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
-        diag::warn_disable_inline);
-      toDiag(mSourceManager.getDiagnostics(), T.getMacroInDecl(),
-        diag::remark_inline_macro_prevent);
-      if (T.getMacroSpellingHint().isValid())
-        toDiag(mSourceManager.getDiagnostics(), T.getMacroSpellingHint(),
-          diag::note_expanded_from_here);
-    }
-    return T.isMacroInDecl()
-      ? "Macro in function definition\"" + T.getFuncDecl()->getName().str()
-      + "\"\n" : "";
-  };
-  auto UserDefTChecker = [&](const Template& T) -> std::string {
-    std::string Result;
-    if (mSourceManager.getFileCharacteristic(T.getFuncDecl()->getLocStart())
-      != clang::SrcMgr::C_User) {
-      Result += "Non-user defined function \""
-        + T.getFuncDecl()->getName().str() + "\" for instantiation\n";
-    }
-    return Result;
-  };
   auto UserDefTIChecker = [&](const TemplateInstantiation& TI) -> std::string {
     std::string Result;
     if (mSourceManager.getFileCharacteristic(TI.mFuncDecl->getLocStart())
@@ -988,46 +1020,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         + TI.mFuncDecl->getName().str() + "\" for instantiating in\n";
     }
     return Result;
-  };
-  auto VariadicChecker = [&](const Template& T) -> std::string {
-    return T.getFuncDecl()->isVariadic() ? "Variadic function" : "";
-  };
-  auto Recursive = findRecursion();
-  auto RecursiveChecker = [&Recursive](const Template& T) -> std::string {
-    return Recursive.find(T.getFuncDecl()) != std::end(Recursive)
-      ? "Recursive function \"" + T.getFuncDecl()->getNameAsString()
-      + "\"\n" : "";
-  };
-  auto BogusSRChecker = [&](const Template& T) -> std::string {
-    std::string Result;
-    for (auto D : T.getFuncDecl()->decls()) {
-      if (clang::isa<clang::LabelDecl>(D)) {
-        continue;
-      }
-      if (mSourceManager.getFileCharacteristic(D->getLocStart())
-        != clang::SrcMgr::C_User) {
-        continue;
-      }
-      auto R = getRange(D);
-      if (R.isValid()
-        && R.getBegin().getRawEncoding() == R.getEnd().getRawEncoding()) {
-        Result += "Bogus source range found at "
-          + R.getBegin().printToString(mSourceManager) + "\n";
-        BogusDecls.insert(D);
-        BogusDecls.insert(T.getFuncDecl());
-      }
-    }
-    return Result;
-  };
-  auto BogusSRTransitiveChecker = [&](const Template& T) -> std::string {
-    std::set<const clang::Decl*> Intersection;
-    std::set_intersection(std::begin(BogusDecls), std::end(BogusDecls),
-      std::begin(mForwardDecls[T.getFuncDecl()]),
-      std::end(mForwardDecls[T.getFuncDecl()]),
-      std::inserter(Intersection, std::end(Intersection)));
-    return Intersection.size() > 0
-      ? "Transitive dependency on bogus declaration for function \""
-      + T.getFuncDecl()->getNameAsString() + "\"\n" : "";
   };
   /*auto NonlocalExternalDepsChecker = [&](const Template& T) -> std::string {
     for (auto D : mForwardDecls[T.getFuncDecl()]) {
@@ -1057,21 +1049,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       }
     }
     return Result;
-  };
-  auto NestedExternalDepsChecker = [&](const Template& T) -> std::string {
-    bool NestedDeps = false;
-    const clang::Decl* NestedD = nullptr;
-    for (auto D : mForwardDecls[T.getFuncDecl()]) {
-      // strong correlation with ExternalDepsChecker
-      // nested structs/unions are disallowed as forward declarations below
-      if (!NestedDecls[D].empty()) {
-        NestedDeps = true;
-        NestedD = D;
-        break;
-      }
-    }
-    return NestedDeps ? "Reference to nested declaration in function \""
-      + T.getFuncDecl()->getName().str() + "\"\n" : "";
   };
   // note: external dependencies include callees
   auto ExternalDepsChecker = [&](const TemplateInstantiation& TI)
@@ -1128,31 +1105,6 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
     return Result;
   };
-  std::function<std::string(const Template&)> TChainChecker[] = {
-    UnusedTemplateChecker,
-    MacroInDeclChecker,
-    UserDefTChecker,
-    VariadicChecker,
-    RecursiveChecker,
-    NestedExternalDepsChecker//,
-    //BogusSRChecker,
-    //BogusSRTransitiveChecker
-  };
-  for (auto& T : mTs) {
-    if (T.second.getFuncDecl() == nullptr) {
-      continue;
-    }
-    std::string Result;
-    for (auto Checker : TChainChecker) {
-      if (Result != "") break;
-      Result += Checker(T.second);
-    }
-    if (Result != "") {
-      T.second.setFuncDecl(nullptr);
-      llvm::dbgs() << "Template \"" + T.first->getNameAsString()
-        + "\" disabled due to constraint violations:\n" + Result;
-    }
-  }
   std::function<std::string(const TemplateInstantiation&)> TIChainChecker[] = {
     UserDefTIChecker,
     ExternalDepsChecker,
@@ -1160,7 +1112,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   };
   for (auto& TIs : mTIs) {
     for (auto& TI : TIs.second) {
-      if (TI.mTemplate == nullptr || TI.mTemplate->getFuncDecl() == nullptr) {
+      if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline()) {
         continue;
       }
       std::string Result;
@@ -1198,7 +1150,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     llvm::dbgs() << '\n';
     llvm::dbgs() << "Total templates:" << '\n';
     for (auto& T : mTs) {
-      if (T.second.getFuncDecl() != nullptr) {
+      if (T.second.isNeedToInline()) {
         llvm::dbgs() << ' ' << '"' << T.first->getName() << '"' << '\n';
       }
     }
@@ -1207,10 +1159,10 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       << std::count_if(std::begin(mTs), std::end(mTs),
         [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
         -> bool {
-      return lhs.second.getFuncDecl() == nullptr;
+      return !lhs.second.isNeedToInline();
     }) << "):" << '\n';
     for (auto& T : mTs) {
-      if (T.second.getFuncDecl() == nullptr) {
+      if (!T.second.isNeedToInline()) {
         llvm::dbgs() << ' ' << '"' << T.first->getName() << '"' << '\n';
       }
     }
@@ -1233,7 +1185,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       llvm::dbgs() << ' ' << "in " << '"' << TIs.first->getName()
         << '"' << ':' << '\n';
       for (auto& TI : TIs.second) {
-        if (TI.mTemplate == nullptr || TI.mTemplate->getFuncDecl() == nullptr) {
+        if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline()) {
           llvm::dbgs() << "  " << '"'
             << getSourceText(getRange(TI.mCallExpr)) << '"' << '\n';
         }
@@ -1250,14 +1202,14 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     auto isOnTop
       = [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
       -> bool {
-      return TIs.first == lhs.first && lhs.second.getFuncDecl() == nullptr;
+      return TIs.first == lhs.first && lhs.second.isNeedToInline();
     };
     if (std::find_if(std::begin(mTs), std::end(mTs), isOnTop)
       != std::end(mTs)) {
       bool PCHeader = true;  // seems ExternalDepsChecker filters such cases out
       for (auto& TI : TIs.second) {
         if (TI.mTemplate == nullptr
-          || TI.mTemplate->getFuncDecl() == nullptr) {
+          || !TI.mTemplate->isNeedToInline()) {
           continue;
         }
         if (!PCHeader) {

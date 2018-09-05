@@ -81,27 +81,35 @@ public:
 
 namespace detail {
 
-/// Contains information required for correct and complete function body
-/// instantiation and access methods to it
+/// Contains general information which describes a function.
 class Template {
 public:
-  const clang::FunctionDecl* getFuncDecl() const {
-    return mFuncDecl;
+
+  /// Attention, do not use nullptr to initialize template. We use this default
+  /// parameter value for convenient access to the template using
+  /// std::map::operator[]. Template must already exist in the map.
+  explicit Template(const clang::FunctionDecl *FD = nullptr) :
+    mFunc{ { FD, false }, false } {
+    assert(FD && "Function declaration must not be null!");
   }
 
-  void setFuncDecl(const clang::FunctionDecl* FD) {
-    mFuncDecl = FD;
-    return;
+  const clang::FunctionDecl *getFuncDecl() const {
+    return mFunc.getPointer().getPointer();
   }
+
+  void setNeedToInline(bool IsNeed) { mFunc.setInt(IsNeed); }
+  bool isNeedToInline() const { mFunc.getInt(); }
+
+  bool isSingleReturn() const { return mFunc.getPointer().getInt(); }
+  void setSingleReturn(bool IsSingle) { mFunc.getPointer().setInt(IsSingle); }
 
   void addParmRef(const clang::ParmVarDecl* PVD,
-    const clang::DeclRefExpr* DRE) {
+      const clang::DeclRefExpr* DRE) {
     mParmRefs[PVD].push_back(DRE);
-    return;
   }
 
   std::vector<const clang::DeclRefExpr*> getParmRefs(
-    const clang::ParmVarDecl* PVD) const {
+      const clang::ParmVarDecl* PVD) const {
     auto isPVDRef = [PVD](const std::pair<const clang::ParmVarDecl*,
       std::vector<const clang::DeclRefExpr*>>&lhs) -> bool {
       return lhs.first == PVD;
@@ -114,23 +122,11 @@ public:
     }
   }
 
-  void addRetStmt(const clang::ReturnStmt* RS) {
-    mRSs.insert(RS);
-    return;
-  }
+  void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
+  std::set<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
 
-  std::set<const clang::ReturnStmt*> getRetStmts() const {
-    return mRSs;
-  }
 
-  bool isSingleReturn() const {
-    return mIsSingleReturn;
-  }
 
-  void setSingleReturn(bool isSingleReturn) {
-    mIsSingleReturn = isSingleReturn;
-    return;
-  }
 
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
@@ -144,17 +140,20 @@ public:
   }
 
 private:
-  /// mFuncDecl == nullptr <-> instantiation is disabled for all calls
-  const clang::FunctionDecl* mFuncDecl = nullptr;
   std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>>
     mParmRefs;
   std::set<const clang::ReturnStmt*> mRSs;
 
-  bool mIsSingleReturn = false;
+  /// This is { { FunctionDecl, IsSingleReturn }, IsNeedToInline }.
+  llvm::PointerIntPair<
+    llvm::PointerIntPair<const clang::FunctionDecl *, 1, bool>, 1, bool> mFunc;
 
-  /// The first statement or declaration inside function definition
+  /// One of statements or declarations inside function definition
   /// which is located in macro.
   clang::SourceLocation mMacroInDecl;
+
+  /// If macro was found after manual raw relexing of sources and it does not
+  /// mentioned in AST, this location points to it definition.
   clang::SourceLocation mMacroSpellingHint;
 };
 
@@ -252,6 +251,9 @@ class FInliner :
   using InlineQuery =
     llvm::DenseMap<const clang::FunctionDecl*, std::vector<ClauseToStmt>>;
 
+  /// Prototype of a function which check whether a function can be inlined.
+  using TemplateChecker = std::function<bool(const ::detail::Template &)>;
+
 public:
   explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
@@ -282,6 +284,12 @@ private:
   /// Note, that functions which are not marked for inlining will be ignored
   /// in this search.
   llvm::DenseSet<const clang::FunctionDecl *> findRecursion() const;
+
+  /// Determines templates which can be inlined, print diagnostics, sets
+  /// isNeedToInline() to `false` if a function can not be inlined.
+  void checkTemplates(const llvm::SmallVectorImpl<TemplateChecker> &Checkers);
+
+  llvm::SmallVector<TemplateChecker, 8> getTemplateCheckers() const;
 
   /// Constructs correct language declaration of \p Identifier with \p Type
   /// Uses bruteforce with linear complexity dependent on number of tokens
