@@ -692,23 +692,32 @@ std::set<std::string> FInliner::getIdentifiers(const clang::TagDecl* TD) const {
 DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
   DenseSet<const clang::FunctionDecl*> Recursive;
   for (auto &TIs : mTIs) {
-    DenseSet<const clang::FunctionDecl*> Callees;
+    if (Recursive.count(TIs.first))
+      continue;
+    DenseSet<const clang::FunctionDecl *> Callers = { TIs.first };
+    DenseSet<const clang::FunctionDecl *> Callees;
+    auto isStepRecursion = [&Callers, &Callees, &Recursive]() {
+      for (auto Caller : Callers)
+        if (Callees.count(Caller)) {
+          Recursive.insert(Caller);
+          return true;
+        }
+    };
     for (auto &TIs : TIs.second)
-      if (TIs.mTemplate && TIs.mTemplate->getFuncDecl())
+      if (TIs.mTemplate && TIs.mTemplate->isNeedToInline())
         Callees.insert(TIs.mTemplate->getFuncDecl());
-    while (!Callees.empty()) {
-      if (Callees.count(TIs.first)) {
-        Recursive.insert(TIs.first);
-        break;
-      }
+    while (!Callees.empty() && !isStepRecursion()) {
       DenseSet<const clang::FunctionDecl *> NewCallees;
       for (auto Caller : Callees) {
         auto I = mTIs.find(Caller);
         if (I == mTIs.end())
           continue;
+        bool NeedToAdd = false;
         for (auto &TI : I->second)
-          if (TI.mTemplate && TI.mTemplate->getFuncDecl())
+          if (NeedToAdd = (TI.mTemplate && TI.mTemplate->isNeedToInline()))
             NewCallees.insert(TI.mTemplate->getFuncDecl());
+        if (NeedToAdd)
+          Callers.insert(Caller);
       }
       Callees.swap(NewCallees);
     }
