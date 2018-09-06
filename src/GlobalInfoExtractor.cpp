@@ -50,7 +50,7 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
   if (!mOutermostDecl) {
     mOutermostDecl = D;
     if (auto ND = dyn_cast<NamedDecl>(D)) {
-      mOutermostDecls.try_emplace(ND, mOutermostDecl);
+      mOutermostDecls[ND->getName()].emplace_back(ND, mOutermostDecl);
       DEBUG(log());
     }
     auto Res = RecursiveASTVisitor::TraverseDecl(D);
@@ -58,7 +58,8 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
     return Res;
   }
   if (!mLangOpts.CPlusPlus && isa<TagDecl>(mOutermostDecl) && isa<TagDecl>(D)) {
-    mOutermostDecls.try_emplace(cast<NamedDecl>(D), mOutermostDecl);
+    auto ND = cast<NamedDecl>(D);
+    mOutermostDecls[ND->getName()].emplace_back(ND, mOutermostDecl);
     DEBUG(log());
   }
   return RecursiveASTVisitor::TraverseDecl(D);
