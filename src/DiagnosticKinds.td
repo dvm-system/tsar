@@ -42,7 +42,7 @@ def warn_disable_inline_variadic : Warning<"disable inline expansion of variadic
 def warn_disable_inline_recursive : Warning<"disable inline expansion of recursive function">;
 
 def warn_disable_inline : Warning<"disable inline expansion">;
-def note_inline_macro_prevent : Remark<"macro prevent inlining">;
+def note_inline_macro_prevent : Note<"macro prevent inlining">;
 def note_inline_unresolvable_extern_dep : Note<"unresolvable external dependence prevents inlining">;
 def note_inline_static_extern_dep : Note<"refernece to static external dependence prevents inlining">;
 def note_inline_inline_extern_dep : Note<"reference to inline external dependence prevents inlining">;

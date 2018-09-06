@@ -18,19 +18,20 @@
 #include "tsar_pass.h"
 #include "tsar_query.h"
 #include "tsar_action.h"
+#include "GlobalInfoExtractor.h"
+#include "NamedDeclMapInfo.h"
 #include "tsar_transformation.h"
 
 #include <set>
-
+#include <llvm/ADT/BitmaskEnum.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/TypeLoc.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
+#include <llvm/ADT/StringSet.h>
 #include <llvm/IR/Module.h>
-#include <llvm/ADT/PointerIntPair.h>
-
 
 namespace tsar {
 
@@ -80,28 +81,45 @@ public:
 }
 
 namespace detail {
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// Contains general information which describes a function.
 class Template {
+  enum Flags : uint8_t {
+    DefaultFlags = 0,
+    IsNeedToInline = 1u << 0,
+    IsSingleReturn = 1u << 1,
+    IsKnownMayForwardDecls = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(IsKnownMayForwardDecls)
+  };
 public:
+  /// Set of declarations, name is used to build hash.
+  using DeclSet = llvm::DenseSet<
+    const tsar::GlobalInfoExtractor::OutermostDecl *,
+    tsar::GlobalInfoExtractor::OutermostDeclNameMapInfo>;
+
+  /// Set of references to identifiers in a memory buffer which is associated
+  /// with a file that contains this function.
+  using RawIdentifiers = llvm::StringSet<>;
 
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
   /// std::map::operator[]. Template must already exist in the map.
-  explicit Template(const clang::FunctionDecl *FD = nullptr) :
-    mFunc{ { FD, false }, false } {
+  explicit Template(const clang::FunctionDecl *FD = nullptr) : mFuncDecl(FD) {
     assert(FD && "Function declaration must not be null!");
   }
 
-  const clang::FunctionDecl *getFuncDecl() const {
-    return mFunc.getPointer().getPointer();
-  }
+  const clang::FunctionDecl *getFuncDecl() const { return mFuncDecl; }
 
-  void setNeedToInline(bool IsNeed) { mFunc.setInt(IsNeed); }
-  bool isNeedToInline() const { mFunc.getInt(); }
+  bool isNeedToInline() const { return mFlags & IsNeedToInline; }
+  void setNeedToInline() { mFlags |= IsNeedToInline; }
+  void disableInline() { mFlags &= ~IsNeedToInline; }
 
-  bool isSingleReturn() const { return mFunc.getPointer().getInt(); }
-  void setSingleReturn(bool IsSingle) { mFunc.getPointer().setInt(IsSingle); }
+  bool isSingleReturn() const { return mFlags & IsSingleReturn; }
+  void setSingleReturn() { mFlags |= IsSingleReturn; }
+
+  bool isKnownMayForwardDecls() const { return mFlags & IsKnownMayForwardDecls;}
+  void setKnownMayForwardDecls() { mFlags |= IsKnownMayForwardDecls; }
 
   void addParmRef(const clang::ParmVarDecl* PVD,
       const clang::DeclRefExpr* DRE) {
@@ -125,8 +143,21 @@ public:
   void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
   std::set<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
 
+  void addForwardDecl(const tsar::GlobalInfoExtractor::OutermostDecl *D) {
+    mForwardDecls.insert(D);
+  }
+  const DeclSet & getForwardDecls() const noexcept { return mForwardDecls; }
 
+  void addMayForwardDecl(const tsar::GlobalInfoExtractor::OutermostDecl *D) {
+    mMayForwardDecls.insert(D);
+  }
+  const DeclSet & getMayForwardDecls() const noexcept {
+    assert(isKnownMayForwardDecls() && "May forward declarations is unknown!");
+    return mMayForwardDecls;
+  }
 
+  void addRawId(StringRef Id) { mIds.insert(Id); }
+  const RawIdentifiers & getRawIds() const noexcept { return mIds; }
 
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
@@ -144,9 +175,9 @@ private:
     mParmRefs;
   std::set<const clang::ReturnStmt*> mRSs;
 
-  /// This is { { FunctionDecl, IsSingleReturn }, IsNeedToInline }.
-  llvm::PointerIntPair<
-    llvm::PointerIntPair<const clang::FunctionDecl *, 1, bool>, 1, bool> mFunc;
+  const clang::FunctionDecl *mFuncDecl = nullptr;
+
+  Flags mFlags = DefaultFlags;
 
   /// One of statements or declarations inside function definition
   /// which is located in macro.
@@ -155,6 +186,10 @@ private:
   /// If macro was found after manual raw relexing of sources and it does not
   /// mentioned in AST, this location points to it definition.
   clang::SourceLocation mMacroSpellingHint;
+
+  DeclSet mForwardDecls;
+  DeclSet mMayForwardDecls;
+  RawIdentifiers mIds;
 };
 
 /// Represents one specific place in user source code where one of specified
@@ -251,19 +286,27 @@ class FInliner :
   using InlineQuery =
     llvm::DenseMap<const clang::FunctionDecl*, std::vector<ClauseToStmt>>;
 
-  /// Prototype of a function which check whether a function can be inlined.
+  /// Prototype of a function which checks whether a function can be inlined.
   using TemplateChecker = std::function<bool(const ::detail::Template &)>;
 
+  /// Prototype of a function which checks whether a function call
+  /// can be inlined.
+  using TemplateInstantiationChecker =
+    std::function<bool(const ::detail::TemplateInstantiation &)>;
 public:
   explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
     mRewriter(TfmCtx->getRewriter()),
-    mSourceManager(TfmCtx->getRewriter().getSourceMgr()) {}
+    mSourceManager(TfmCtx->getRewriter().getSourceMgr()),
+    mGIE(TfmCtx->getContext().getSourceManager(),
+      TfmCtx->getContext().getLangOpts()){}
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
   bool VisitExpr(clang::Expr* E);
   bool VisitDeclRefExpr(clang::DeclRefExpr *DRE);
   bool VisitTypeLoc(clang::TypeLoc TL);
+  bool VisitTagTypeLoc(clang::TagTypeLoc TTL);
+  bool VisitTypedefTypeLoc(clang::TypedefTypeLoc TTL);
   bool VisitDecl(clang::Decl *D);
 
   bool TraverseFunctionDecl(clang::FunctionDecl *FD);
@@ -291,6 +334,14 @@ private:
 
   llvm::SmallVector<TemplateChecker, 8> getTemplateCheckers() const;
 
+  /// Determines template instantiations (calls) which can be inlined,
+  /// print diagnostics.
+  void checkTemplateInstantiations(
+    const llvm::SmallVectorImpl<TemplateInstantiationChecker> &Checkers);
+
+  llvm::SmallVector<TemplateInstantiationChecker, 8>
+    getTemplatInstantiationeCheckers() const;
+
   /// Constructs correct language declaration of \p Identifier with \p Type
   /// Uses bruteforce with linear complexity dependent on number of tokens
   /// in \p Type where token is non-whitespace character or special sequence.
@@ -316,16 +367,9 @@ private:
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
-  /// get all identifiers which have declarations (names only)
-  /// traverses tag declarations
-  std::set<std::string> getIdentifiers(const clang::Decl* D) const;
-  std::set<std::string> getIdentifiers(const clang::TagDecl* TD) const;
-
   /// Returns source range for a specified node.
   /// Note, T must provide getSourceRange() method
   template<class T> clang::SourceRange getRange(T *Node) const;
-
-  clang::SourceLocation getLoc(clang::SourceLocation SL) const;
 
   /// Merges \p _Cont of tokens to string using \p delimiter between each pair
   /// of tokens.
@@ -389,14 +433,12 @@ private:
     int mCount;
   } VarDeclHandler;
 
-  // [C99 6.7.2, 6.7.3]
-  const std::vector<std::string> mKeywords = { "register",
-    "void", "char", "short", "int", "long", "float", "double",
-    "signed", "unsigned", "_Bool", "_Complex", "struct", "union", "enum",
-    "typedef", "const", "restrict", "volatile" };
   const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
 
   tsar::TransformationContext* mTransformContext;
+
+  /// Visitor to collect global information about a translation unit.
+  GlobalInfoExtractor mGIE;
 
   InlineQuery mInlineStmts;
 
@@ -411,6 +453,10 @@ private:
   /// (or declaration) and which is located in macro.
   clang::SourceLocation mStmtInMacro;
 
+  /// Set of raw locations which contains reference to some declarations which
+  /// are used in the last traversed function.
+  GlobalInfoExtractor::RawLocationSet mDeclRefLoc;
+
   clang::ASTContext& mContext;
   clang::SourceManager& mSourceManager;
   clang::Rewriter& mRewriter;
@@ -418,20 +464,8 @@ private:
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD = nullptr;
 
-  /// for statements - for detecting call expressions which can be inlined
-  std::vector<const clang::Stmt*> mFSs;
-
-  /// globally declared names
-  std::set<std::string> mGlobalIdentifiers;
-
-  /// local/global referenced names per function
-  std::map<const clang::FunctionDecl*, std::set<std::string>>
-    mExtIdentifiers, mIntIdentifiers;
-
-
-  /// external declarations per function
-  std::map<const clang::FunctionDecl*, std::set<const clang::Decl*>>
-    mForwardDecls;
+  /// All global identifiers mentioned in the translation unit.
+  llvm::StringSet<> mGlobalIdentifiers;
 
   /// unreachable statements per function
   /// (currently only returns are later analyzed)

@@ -85,15 +85,19 @@ void tsar::getRawMacrosAndIncludes(
     clang::FileID FID, const llvm::MemoryBuffer *InputBuffer,
     const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
     llvm::StringMap<clang::SourceLocation> &Macros,
-    llvm::StringMap<clang::SourceLocation> &Includes) {
+    llvm::StringMap<clang::SourceLocation> &Includes,
+    llvm::StringSet<> &Ids) {
   Lexer L(FID, InputBuffer, SM, LangOpts);
   while (true) {
     Token Tok;
     L.LexFromRawLexer(Tok);
     if (Tok.is(tok::eof))
       break;
-    if (!Tok.is(tok::hash) || !Tok.isAtStartOfLine())
+    if (!Tok.is(tok::hash) || !Tok.isAtStartOfLine()) {
+      if (Tok.is(tok::raw_identifier))
+        Ids.insert(Tok.getRawIdentifier());
       continue;
+    }
     L.LexFromRawLexer(Tok);
     if (!Tok.is(tok::raw_identifier))
       continue;

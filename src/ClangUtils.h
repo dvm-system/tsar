@@ -15,6 +15,7 @@
 #include <clang/Basic/SourceManager.h>
 #include <clang/Lex/Token.h>
 #include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/StringSet.h>
 #include <vector>
 
 namespace llvm {
@@ -66,15 +67,21 @@ private:
 std::vector<clang::Token> getRawIdentifiers(clang::SourceRange SR,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts);
 
-/// Searches #define and #include directives in a specified file.
+/// \brief Searches #define and #include directives in a specified file
+/// and collects all identifiers.
 ///
 /// The results are two maps from a macro/file name to the location of
-/// this name in an appropriate #define/#include directive.
+/// this name in an appropriate #define/#include directive and a set of all
+/// lexed identifiers.
+///
+/// Note, that if there are several macro definitions with the same name
+/// (or includes of the same file), then only the first one will be remembered.
 void getRawMacrosAndIncludes(
   clang::FileID FID, const llvm::MemoryBuffer *InputBuffer,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
   llvm::StringMap<clang::SourceLocation> &Macros,
-  llvm::StringMap<clang::SourceLocation> &Includes);
+  llvm::StringMap<clang::SourceLocation> &Includes,
+  llvm::StringSet<> &Ids);
 
 /// Returns range of expansion locations.
 inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,
