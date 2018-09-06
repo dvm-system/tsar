@@ -1205,7 +1205,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     auto isOnTop
       = [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
       -> bool {
-      return TIs.first == lhs.first && lhs.second.isNeedToInline();
+      return TIs.first == lhs.first && !lhs.second.isNeedToInline();
     };
     if (std::find_if(std::begin(mTs), std::end(mTs), isOnTop)
       != std::end(mTs)) {
