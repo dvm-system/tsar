@@ -403,7 +403,10 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   }
   ClauseI->setIsUsed();
   auto &TI = mTIs[mCurrentFD];
-  auto &CalleeTs = mTs[Definition];
+  // Template may not exist yet if forward declaration of a function is used.
+  auto &CalleeTs = mTs.emplace(std::piecewise_construct,
+    std::forward_as_tuple(Definition),
+    std::forward_as_tuple(Definition)).first->second;
   CalleeTs.setNeedToInline(true);
   TI.push_back({ mCurrentFD, StmtWithCall, Call, &CalleeTs });
   return true;
