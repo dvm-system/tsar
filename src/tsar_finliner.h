@@ -273,6 +273,7 @@ namespace tsar {
 class FInliner :
     public clang::RecursiveASTVisitor<FInliner>,
     public clang::ASTConsumer {
+
   /// This represents clause attached to a statement.
   struct ClauseToStmt {
     ClauseToStmt(const clang::Stmt *C, const clang::Stmt *S) :
@@ -294,6 +295,13 @@ class FInliner :
   using TemplateInstantiationChecker =
     std::function<bool(const ::detail::TemplateInstantiation &)>;
 public:
+  /// Map from function declaration to its template.
+  using TemplateMap = std::map<const clang::FunctionDecl*, ::detail::Template>;
+
+  /// Map from function declarations to the list of calls from its body.
+  using TemplateInstantiationMap = std::map<const clang::FunctionDecl*,
+    std::vector<::detail::TemplateInstantiation>>;
+
   explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
     mRewriter(TfmCtx->getRewriter()),
@@ -476,12 +484,9 @@ private:
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>>
     mExprs;
 
-  /// template mapping
-  std::map<const clang::FunctionDecl*, ::detail::Template> mTs;
 
-  /// template instantiations' mapping
-  std::map<const clang::FunctionDecl*,
-    std::vector<::detail::TemplateInstantiation>> mTIs;
+  TemplateMap mTs;
+  TemplateInstantiationMap mTIs;
 };
 
 }

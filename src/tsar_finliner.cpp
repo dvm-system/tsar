@@ -183,6 +183,45 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
   R.getEnd().dump(SM);
   dbgs() << "]";
 }
+
+void templatesInfoLog(const FInliner::TemplateMap &Ts,
+    const FInliner::TemplateInstantiationMap &TIs,
+    const SourceManager &SM, const LangOptions &LangOpts) {
+  auto sourceText = [&SM, &LangOpts](const Stmt *S) {
+    auto SR = getExpansionRange(SM, S->getSourceRange());
+    return Lexer::getSourceText(
+      CharSourceRange::getTokenRange(SR), SM, LangOpts);
+  };
+  llvm::dbgs() << "[INLINE]: enabled templates (" <<
+    std::count_if(std::begin(Ts), std::end(Ts),
+      [](const std::pair<const clang::FunctionDecl*, Template> &LHS) {
+        return LHS.second.isNeedToInline();
+      }) << "):\n";
+  for (auto &T : Ts)
+    if (T.second.isNeedToInline())
+      llvm::dbgs() << " '" << T.first->getName() << "'";
+  llvm::dbgs() << '\n';
+  llvm::dbgs() << "[INLINE]: disabled templates (" <<
+    std::count_if(std::begin(Ts), std::end(Ts),
+      [](const std::pair<const clang::FunctionDecl*, Template> &LHS) {
+        return !LHS.second.isNeedToInline();
+      }) << "):\n";
+  for (auto &T : Ts)
+    if (!T.second.isNeedToInline())
+      llvm::dbgs() << " '" << T.first->getName() << "'";
+  llvm::dbgs() << '\n';
+  llvm::dbgs() << "[INLINE]: total template instantiations:\n";
+  for (auto &TIs : TIs) {
+    if (TIs.second.empty())
+      continue;
+    llvm::dbgs() << " in '" << TIs.first->getName() << "':\n";
+    for (auto &TI : TIs.second) {
+      llvm::dbgs() << "  '" << sourceText(TI.mCallExpr) << "' at ";
+      TI.mCallExpr->getLocStart().dump(SM);
+      dbgs() << "\n";
+    }
+  }
+}
 #endif
 }
 
@@ -341,7 +380,9 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
 }
 
 bool FInliner::TraverseCallExpr(CallExpr *Call) {
-  DEBUG(dbgs() << "[INLINE]: traverse call expression\n"; Call->dump());
+  DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
+    getSourceText(getRange(Call)) << "' at ";
+    Call->getLocStart().dump(mSourceManager); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
   mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
     Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
@@ -400,7 +441,9 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
       break;
     }
   }
-  DEBUG(dbgs() << "[INLINE]: statement with call\n"; StmtWithCall->dump());
+  DEBUG(dbgs() << "[INLINE]: statement with call '" <<
+    getSourceText(getRange(StmtWithCall)) << "' at ";
+    StmtWithCall->getLocStart().dump(mSourceManager); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
       if (!I->isClause() || !isa<CompoundStmt>(*PrevI))
@@ -413,7 +456,9 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
       return true;
     }
   }
-  DEBUG(dbgs() << "[INLINE]: clause found\n"; (*ClauseI)->dump());
+  DEBUG(dbgs() << "[INLINE]: clause found '" <<
+    getSourceText(getRange(ClauseI->getStmt())) << "' at ";
+    (*ClauseI)->getLocStart().dump(mSourceManager); dbgs() << "\n");
   const FunctionDecl* Definition = nullptr;
   Call->getDirectCallee()->hasBody(Definition);
   if (!Definition) {
@@ -967,7 +1012,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
               << "'\n");
             DEBUG(dbgs() << "[INLINE]: reference to '" <<
               D.getDescendant()->getName() << "' in '" << T.first->getName() <<
-              "' at "; Tok.getLocation().dump(mSourceManager));
+              "' at "; Tok.getLocation().dump(mSourceManager); dbgs() << "\n");
             }
           }
         }
@@ -976,73 +1021,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
   checkTemplates(getTemplateCheckers());
   checkTemplateInstantiations(getTemplatInstantiationeCheckers());
-
-  // info
-  [&]() {
-    llvm::dbgs() << '\n';
-    llvm::dbgs() << "Total template instantiations:" << '\n';
-    for (auto& TIs : mTIs) {
-      if (TIs.second.size() == 0) {
-        continue;
-      }
-      llvm::dbgs() << ' ' << "in " << '"' << TIs.first->getName()
-        << '"' << ':' << '\n';
-      for (auto& TI : TIs.second) {
-        if (TI.mTemplate != nullptr) {
-          llvm::dbgs() << "  " << '"'
-            << getSourceText(getRange(TI.mCallExpr)) << '"' << '\n';
-        }
-      }
-      llvm::dbgs() << '\n';
-    }
-    llvm::dbgs() << '\n';
-    llvm::dbgs() << "Total templates:" << '\n';
-    for (auto& T : mTs) {
-      if (T.second.isNeedToInline()) {
-        llvm::dbgs() << ' ' << '"' << T.first->getName() << '"' << '\n';
-      }
-    }
-    llvm::dbgs() << '\n';
-    llvm::dbgs() << "Disabled templates ("
-      << std::count_if(std::begin(mTs), std::end(mTs),
-        [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
-        -> bool {
-      return !lhs.second.isNeedToInline();
-    }) << "):" << '\n';
-    for (auto& T : mTs) {
-      if (!T.second.isNeedToInline()) {
-        llvm::dbgs() << ' ' << '"' << T.first->getName() << '"' << '\n';
-      }
-    }
-    llvm::dbgs() << '\n';
-    llvm::dbgs() << "Disabled template instantiations: ("
-      << [&]() -> size_t {
-      size_t s = 0;
-      for (auto& TI : mTIs) {
-        s += std::count_if(std::begin(TI.second), std::end(TI.second),
-          [&](const TemplateInstantiation& lhs) -> bool {
-          return lhs.mTemplate == nullptr;
-        });
-      }
-      return s;
-    }() << "):" << '\n';
-    for (auto& TIs : mTIs) {
-      if (TIs.second.size() == 0) {
-        continue;
-      }
-      llvm::dbgs() << ' ' << "in " << '"' << TIs.first->getName()
-        << '"' << ':' << '\n';
-      for (auto& TI : TIs.second) {
-        if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline()) {
-          llvm::dbgs() << "  " << '"'
-            << getSourceText(getRange(TI.mCallExpr)) << '"' << '\n';
-        }
-      }
-      llvm::dbgs() << '\n';
-    }
-    llvm::dbgs() << '\n';
-  }();
-
+  DEBUG(templatesInfoLog(mTs, mTIs, mSourceManager, Context.getLangOpts()));
   // recursive instantiation
   for (auto& TIs : mTIs) {
     // unusable functions are those which are not instantiated
