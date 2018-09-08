@@ -128,7 +128,8 @@ public:
   /// declarations.
   ///
   /// List contains multiple declarations in case of static declarations from
-  /// different files with the same name.
+  /// different files with the same name. It also contains multiple declarations
+  /// in case of declarations with empty name.
   using OutermostDeclMap = llvm::StringMap<llvm::SmallVector<OutermostDecl, 1>>;
 
   /// Creates extractor.

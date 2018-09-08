@@ -925,8 +925,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto &Id : RawMacros)
     mGlobalIdentifiers.insert(Id.getKey());
   for (auto &Ds : mGIE.getOutermostDecls())
-    for (auto &D : Ds.getValue())
-    mGlobalIdentifiers.insert(D.getDescendant()->getName());
+    if (!Ds.getKey().empty())
+      mGlobalIdentifiers.insert(Ds.getKey());
   // We check that all includes are mentioned in AST. For example, if there is
   // an include which contains macros only and this macros do not used then
   // there is no FileID for this include. Hence, it has not been parsed
