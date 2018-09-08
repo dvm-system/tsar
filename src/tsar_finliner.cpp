@@ -31,6 +31,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/DeclLookups.h>
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Analysis/CallGraph.h>
 #include <clang/Analysis/CFG.h>
 #include <clang/Format/Format.h>
 #include <clang/Lex/Preprocessor.h>
@@ -39,6 +40,7 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/ADT/PostOrderIterator.h>
 
 // FIXME: ASTImporter can break mapping node->source (VLAs, etc)
 
@@ -1022,49 +1024,42 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   checkTemplates(getTemplateCheckers());
   checkTemplateInstantiations(getTemplatInstantiationeCheckers());
   DEBUG(templatesInfoLog(mTs, mTIs, mSourceManager, Context.getLangOpts()));
-  // recursive instantiation
-  for (auto& TIs : mTIs) {
-    // unusable functions are those which are not instantiated
-    // meaning they are on top of call hierarchy
-    auto isOnTop
-      = [&](const std::pair<const clang::FunctionDecl*, Template>& lhs)
-      -> bool {
-      return TIs.first == lhs.first && !lhs.second.isNeedToInline();
-    };
-    if (std::find_if(std::begin(mTs), std::end(mTs), isOnTop)
-      != std::end(mTs)) {
-      bool PCHeader = true;  // seems ExternalDepsChecker filters such cases out
-      for (auto& TI : TIs.second) {
-        if (TI.mTemplate == nullptr
-          || !TI.mTemplate->isNeedToInline()) {
-          continue;
-        }
-        std::set<std::string> LocalDecls;
-        for (auto &Id : mTs[TI.mFuncDecl].getRawIds())
-          LocalDecls.insert(Id.getKey().str());
-        std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
-        std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
-          std::begin(Args),
-          [&](const clang::Expr* Arg) -> std::string {
-          return mRewriter.getRewrittenText(getRange(Arg));
-        });
-        LocalDecls.insert(std::begin(Args), std::end(Args));
-        auto Text = compile(TI, Args, LocalDecls);
-        auto CallExpr = getSourceText(getRange(TI.mCallExpr));
-        if (Text.second.size() == 0) {
-          Text.first = "{" + Text.first + ";}";
-        } else {
-          mRewriter.ReplaceText(getRange(TI.mCallExpr), Text.second);
-          Text.first += mRewriter.getRewrittenText(getRange(TI.mStmt));
-          Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
-            ? "{" + Text.first + ";}" : Text.first;
-        }
-        mRewriter.ReplaceText(getRange(TI.mStmt),
-          "/* " + CallExpr + " is inlined below */\n" + Text.first);
+  CallGraph CG;
+  CG.TraverseDecl(Context.getTranslationUnitDecl());
+  ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
+  for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
+    if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
+      continue;
+    auto CallsItr = mTIs.find(cast<FunctionDecl>((*I)->getDecl()));
+    if (CallsItr == mTIs.end())
+      continue;
+    for (auto &TI : CallsItr->second) {
+      if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline())
+        continue;
+      std::set<std::string> LocalDecls;
+      for (auto &Id : mTs[TI.mFuncDecl].getRawIds())
+        LocalDecls.insert(Id.getKey().str());
+      std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
+      std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
+        std::begin(Args),
+        [&](const clang::Expr* Arg) -> std::string {
+        return mRewriter.getRewrittenText(getRange(Arg));
+      });
+      LocalDecls.insert(std::begin(Args), std::end(Args));
+      auto Text = compile(TI, Args, LocalDecls);
+      auto CallExpr = getSourceText(getRange(TI.mCallExpr));
+      if (Text.second.size() == 0) {
+        Text.first = "{" + Text.first + ";}";
+      } else {
+        mRewriter.ReplaceText(getRange(TI.mCallExpr), Text.second);
+        Text.first += mRewriter.getRewrittenText(getRange(TI.mStmt));
+        Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
+          ? "{" + Text.first + ";}" : Text.first;
       }
+      mRewriter.ReplaceText(getRange(TI.mStmt),
+        "/* " + CallExpr + " is inlined below */\n" + Text.first);
     }
   }
-  return;
 }
 
 std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
