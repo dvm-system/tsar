@@ -558,8 +558,7 @@ std::vector<std::string> FInliner::construct(
 }
 
 std::pair<std::string, std::string> FInliner::compile(
-  const TemplateInstantiation& TI, const std::vector<std::string>& Args,
-  std::set<std::string>& Decls) {
+  const TemplateInstantiation& TI, const std::vector<std::string>& Args) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
   auto SrcFD = TI.mTemplate->getFuncDecl();
@@ -606,17 +605,10 @@ std::pair<std::string, std::string> FInliner::compile(
     }
   };
   initContext();
-  // update Decls set with local names to avoid collisions on deeper levels
-  Decls.insert(std::begin(Args), std::end(Args));
-  for (auto D : SrcFD->decls()) {
-    if (const clang::NamedDecl* ND = clang::dyn_cast<clang::NamedDecl>(D)) {
-      Decls.insert(ND->getName());
-    }
-  }
   // prepare formal parameters' assignments
   std::map<std::string, std::string> Replacements;
   for (auto& PVD : SrcFD->parameters()) {
-    std::string Identifier = addSuffix(PVD->getName(), Decls);
+    std::string Identifier = addSuffix(PVD->getName());
     Replacements[PVD->getName()] = Identifier;
     std::vector<std::string> Tokens = construct(PVD->getType().getAsString(),
       Identifier, Context, Replacements);
@@ -656,7 +648,7 @@ std::pair<std::string, std::string> FInliner::compile(
           [&](const clang::Expr* Arg) -> std::string {
           return get(getRange(Arg));
         });
-        auto Text = compile(TI, Args, Decls);
+        auto Text = compile(TI, Args);
         auto CallExpr = getSourceText(getRange(TI.mCallExpr));
         if (Text.second.size() == 0) {
           Text.first = "{" + Text.first + ";}";
@@ -688,10 +680,10 @@ std::pair<std::string, std::string> FInliner::compile(
 
   std::string Identifier;
   std::string RetStmt;
-  std::string RetLab = addSuffix("L", Decls);
+  std::string RetLab = addSuffix("L");
   if (SrcFD->getReturnType()->isVoidType() == false) {
     isSingleReturn = ReachableRetStmts.size() < 2;
-    Identifier = addSuffix("R", Decls);
+    Identifier = addSuffix("R");
     initContext();
     std::map<std::string, std::string> Replacements;
     auto Tokens
@@ -922,13 +914,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto &File : mGIE.getFiles()) {
     StringSet<> TmpRawIds;
     getRawMacrosAndIncludes(File.second, File.first, mSourceManager,
-      Context.getLangOpts(), RawMacros, RawIncludes, TmpRawIds);
+      Context.getLangOpts(), RawMacros, RawIncludes, mIdentifiers);
   }
-  for (auto &Id : RawMacros)
-    mGlobalIdentifiers.insert(Id.getKey());
-  for (auto &Ds : mGIE.getOutermostDecls())
-    if (!Ds.getKey().empty())
-      mGlobalIdentifiers.insert(Ds.getKey());
   // We check that all includes are mentioned in AST. For example, if there is
   // an include which contains macros only and this macros do not used then
   // there is no FileID for this include. Hence, it has not been parsed
@@ -962,15 +949,10 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       if (mSourceManager.getFileCharacteristic(T.first->getLocStart()) !=
           clang::SrcMgr::C_User)
         continue;
+      if (T.second.isMacroInDecl())
+        continue;
       LocalLexer Lex(T.first->getSourceRange(),
         Context.getSourceManager(), Context.getLangOpts());
-      if (T.second.isMacroInDecl()) {
-        Token Tok;
-        while (!Lex.LexFromRawLexer(Tok))
-          if (Tok.is(tok::raw_identifier))
-            T.second.addRawId(Tok.getRawIdentifier());
-        continue;
-      }
       T.second.setKnownMayForwardDecls();
       SourceLocation LastMacro;
       while (true) {
@@ -1036,17 +1018,13 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     for (auto &TI : CallsItr->second) {
       if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline())
         continue;
-      std::set<std::string> LocalDecls;
-      for (auto &Id : mTs[TI.mFuncDecl].getRawIds())
-        LocalDecls.insert(Id.getKey().str());
       std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
         std::begin(Args),
         [&](const clang::Expr* Arg) -> std::string {
         return mRewriter.getRewrittenText(getRange(Arg));
       });
-      LocalDecls.insert(std::begin(Args), std::end(Args));
-      auto Text = compile(TI, Args, LocalDecls);
+      auto Text = compile(TI, Args);
       auto CallExpr = getSourceText(getRange(TI.mCallExpr));
       if (Text.second.size() == 0) {
         Text.first = "{" + Text.first + ";}";
@@ -1098,25 +1076,12 @@ void FInliner::swap(T& LObj, T& RObj) const {
   return;
 }
 
-std::string FInliner::addSuffix(
-  const std::string& Prefix,
-  std::set<std::string>& LocalIdentifiers) const {
-  int Count = 0;
-  std::set<std::string> Identifiers(LocalIdentifiers);
-  for (auto &Id : mGlobalIdentifiers)
-    Identifiers.insert(Id.getKey().str());
-  std::string Identifier(Prefix + std::to_string(Count++));
-  bool OK = false;
-  while (OK == false) {
-    OK = true;
-    if (std::find(std::begin(Identifiers), std::end(Identifiers), Identifier)
-      != std::end(Identifiers)) {
-      OK = false;
-      Identifier = Prefix + std::to_string(Count++);
-    }
-  }
-  LocalIdentifiers.insert(Identifier);
-  return Identifier;
+std::string FInliner::addSuffix(StringRef Prefix) {
+  std::string Id;
+  for (unsigned Count = 0;
+    mIdentifiers.count(Id = (Prefix + Twine(Count)).str()); ++Count);
+  mIdentifiers.insert(Id);
+  return Id;
 }
 
 std::vector<std::string> FInliner::tokenize(

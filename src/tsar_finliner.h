@@ -98,10 +98,6 @@ public:
     const tsar::GlobalInfoExtractor::OutermostDecl *,
     tsar::GlobalInfoExtractor::OutermostDeclNameMapInfo>;
 
-  /// Set of references to identifiers in a memory buffer which is associated
-  /// with a file that contains this function.
-  using RawIdentifiers = llvm::StringSet<>;
-
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
   /// std::map::operator[]. Template must already exist in the map.
@@ -156,9 +152,6 @@ public:
     return mMayForwardDecls;
   }
 
-  void addRawId(StringRef Id) { mIds.insert(Id); }
-  const RawIdentifiers & getRawIds() const noexcept { return mIds; }
-
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
   clang::SourceLocation getMacroSpellingHint() const {
@@ -189,7 +182,6 @@ private:
 
   DeclSet mForwardDecls;
   DeclSet mMayForwardDecls;
-  RawIdentifiers mIds;
 };
 
 /// Represents one specific place in user source code where one of specified
@@ -370,8 +362,7 @@ private:
   /// \returns text of instantiated function body and result identifier
   std::pair<std::string, std::string> compile(
     const ::detail::TemplateInstantiation& TI,
-    const std::vector<std::string>& Args,
-    std::set<std::string>& Decls);
+    const std::vector<std::string>& Args);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
@@ -392,11 +383,11 @@ private:
   template<typename T>
   void swap(T& lhs, T& rhs) const;
 
-  /// Appends numeric suffix to the end of \p prefix, avoids collision using
-  /// \p identifiers
-  /// \returns new identifier (which is already inserted into identifiers)
-  std::string addSuffix(
-    const std::string& prefix, std::set<std::string>& identifiers) const;
+  /// Appends numeric suffix to the end of a specified identifier `Prefix`,
+  /// avoids collision using set of identifiers available in a translation unit.
+  ///
+  /// \return New identifier which is already inserted into mIdentifiers.
+  std::string addSuffix(llvm::StringRef Prefix);
 
   /// Splits string \p s into tokens using pattern \p p
   std::vector<std::string> tokenize(std::string s, std::string p) const;
@@ -472,8 +463,15 @@ private:
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD = nullptr;
 
-  /// All global identifiers mentioned in the translation unit.
-  llvm::StringSet<> mGlobalIdentifiers;
+  /// \brief All identifiers (global and local) mentioned in a translation unit.
+  ///
+  /// These identifiers is used to prevent conflicts when new identifiers
+  /// are added to the source code. It is convenient to avoid intersection with
+  /// all available identifiers (including the local ones). For example,
+  /// if chain of calls should be inlnined in a function, it is necessary to
+  /// check that all new identifiers do not hide forward declarations of all
+  /// functions in this chain.
+  llvm::StringSet<> mIdentifiers;
 
   /// unreachable statements per function
   /// (currently only returns are later analyzed)
