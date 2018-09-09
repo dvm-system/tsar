@@ -558,7 +558,9 @@ std::vector<std::string> FInliner::construct(
 }
 
 std::pair<std::string, std::string> FInliner::compile(
-  const TemplateInstantiation& TI, const std::vector<std::string>& Args) {
+    const TemplateInstantiation &TI, const std::vector<std::string> &Args,
+    const SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
+    InlineStackImpl &CallStack) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
   auto SrcFD = TI.mTemplate->getFuncDecl();
@@ -624,43 +626,35 @@ std::pair<std::string, std::string> FInliner::compile(
     }
   }
 
-  // recursively instantiate templates callable by this template
-  auto hasActiveTIs = [&](const std::pair<const clang::FunctionDecl*,
-    std::vector<TemplateInstantiation>>& RTI) -> bool {
-    return TI.mTemplate != nullptr && RTI.first == SrcFD;
-  };
-  if (std::find_if(std::begin(mTIs), std::end(mTIs), hasActiveTIs)
-    != std::end(mTIs)) {
-    auto I = mTIs.find(SrcFD);
-    if (I != mTIs.end()) {
-      for (auto& TI : I->second) {
-        if (TI.mTemplate == nullptr
-          || !TI.mTemplate->isNeedToInline()) {
-          continue;
-        }
-        if (mUnreachableStmts[TI.mFuncDecl].find(TI.mStmt)
-          != std::end(mUnreachableStmts[TI.mFuncDecl])) {
-          continue;
-        }
-        std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
-        std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
-          std::begin(Args),
-          [&](const clang::Expr* Arg) -> std::string {
-          return get(getRange(Arg));
-        });
-        auto Text = compile(TI, Args);
-        auto CallExpr = getSourceText(getRange(TI.mCallExpr));
-        if (Text.second.size() == 0) {
-          Text.first = "{" + Text.first + ";}";
-        } else {
-          update(getRange(TI.mCallExpr), Text.second);
-          Text.first += get(getRange(TI.mStmt));
-          Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
-            ? "{" + Text.first + ";}" : Text.first;
-        }
-        update(getRange(TI.mStmt), "/* " + CallExpr
-          + " is inlined below */\n" + Text.first);
+  auto CallsItr = mTIs.find(SrcFD);
+  if (CallsItr != mTIs.end()) {
+    for (auto &CallTI : CallsItr->second) {
+      /// TODO (kaniandr@gmail.com): print warning in case of unreachable
+      /// statements.
+      if (mUnreachableStmts[CallTI.mFuncDecl].count(CallTI.mStmt))
+        continue;
+      if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
+        continue;
+      std::vector<std::string> Args(CallTI.mCallExpr->getNumArgs());
+      std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
+        std::begin(Args),
+        [&](const clang::Expr* Arg) -> std::string {
+        return get(getRange(Arg));
+      });
+      CallStack.push_back(&CallTI);
+      auto Text = compile(CallTI, Args, TICheckers, CallStack);
+      CallStack.pop_back();
+      auto CallExpr = getSourceText(getRange(CallTI.mCallExpr));
+      if (Text.second.size() == 0) {
+        Text.first = "{" + Text.first + ";}";
+      } else {
+        update(getRange(CallTI.mCallExpr), Text.second);
+        Text.first += get(getRange(CallTI.mStmt));
+        Text.first = requiresBraces(CallTI.mFuncDecl, CallTI.mStmt)
+          ? "{" + Text.first + ";}" : Text.first;
       }
+      update(getRange(CallTI.mStmt), "/* " + CallExpr
+        + " is inlined below */\n" + Text.first);
     }
   }
 
@@ -818,51 +812,54 @@ auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
   return Checkers;
 }
 
-void FInliner::checkTemplateInstantiations(
+bool FInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
+    const InlineStackImpl &CallStack,
     const SmallVectorImpl<TemplateInstantiationChecker> &Checkers) {
-  for (auto& TIs : mTIs)
-    for (auto& TI : TIs.second) {
-      if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline())
-        continue;
-      for (auto &Checker : Checkers)
-        if (!Checker(TI)) {
-          TI.mTemplate = nullptr;
-          break;
-      }
-    }
+  assert(TI.mTemplate && "Template must not be null!");
+  if (!TI.mTemplate->isNeedToInline())
+    return false;
+  for (auto &Checker : Checkers)
+    if (!Checker(TI, CallStack))
+      return false;
+  return true;
 }
 
-auto FInliner::getTemplatInstantiationeCheckers() const
+auto FInliner::getTemplatInstantiationCheckers() const
     -> SmallVector<TemplateInstantiationChecker, 8> {
   SmallVector<TemplateInstantiationChecker, 8> Checkers;
   // Checks that external dependencies are available at the call location.
-  Checkers.push_back([this](const TemplateInstantiation &TI) {
-    auto &CallerT = mTs.find(TI.mFuncDecl)->second;
-    auto CallerLoc =
-      mSourceManager.getDecomposedExpansionLoc(TI.mFuncDecl->getLocStart());
-    auto checkFD = [this, &TI, &CallerT, &CallerLoc](
+  Checkers.push_back([this](const TemplateInstantiation &TI,
+      const InlineStackImpl &CallStack) {
+    assert(CallStack.back()->mTemplate->getFuncDecl() == TI.mFuncDecl &&
+      "Function as the top of stack should make a call which is checked!");
+    for (auto &Caller : CallStack) {
+      auto *CallerT = Caller->mTemplate;
+      auto CallerLoc = mSourceManager.getDecomposedExpansionLoc(
+        CallerT->getFuncDecl()->getLocStart());
+      auto checkFD = [this, &TI, CallerT, &CallerLoc](
         const GlobalInfoExtractor::OutermostDecl *FD) {
-      if (CallerT.getForwardDecls().count(FD))
-        return true;
-      auto FDLoc = mSourceManager.getDecomposedExpansionLoc(
-        FD->getRoot()->getLocEnd());
-      while (FDLoc.first.isValid() && FDLoc.first != CallerLoc.first)
-        FDLoc = mSourceManager.getDecomposedIncludedLoc(FDLoc.first);
-      if (FDLoc.first.isValid() && FDLoc.second < CallerLoc.second)
-        return true;
-      toDiag(mSourceManager.getDiagnostics(), TI.mCallExpr->getLocStart(),
-        diag::warn_disable_inline);
-      toDiag(mSourceManager.getDiagnostics(),
-        FD->getDescendant()->getLocation(),
-        diag::note_inline_unresolvable_extern_dep);
-      return false;
-    };
-    for (auto FD : TI.mTemplate->getForwardDecls())
-      if (!checkFD(FD))
+        if (CallerT->getForwardDecls().count(FD))
+          return true;
+        auto FDLoc = mSourceManager.getDecomposedExpansionLoc(
+          FD->getRoot()->getLocEnd());
+        while (FDLoc.first.isValid() && FDLoc.first != CallerLoc.first)
+          FDLoc = mSourceManager.getDecomposedIncludedLoc(FDLoc.first);
+        if (FDLoc.first.isValid() && FDLoc.second < CallerLoc.second)
+          return true;
+        toDiag(mSourceManager.getDiagnostics(), TI.mCallExpr->getLocStart(),
+          diag::warn_disable_inline);
+        toDiag(mSourceManager.getDiagnostics(),
+          FD->getDescendant()->getLocation(),
+          diag::note_inline_unresolvable_extern_dep);
         return false;
-    for (auto FD : TI.mTemplate->getMayForwardDecls())
-      if (!checkFD(FD))
-        return false;
+      };
+      for (auto FD : TI.mTemplate->getForwardDecls())
+        if (!checkFD(FD))
+          return false;
+      for (auto FD : TI.mTemplate->getMayForwardDecls())
+        if (!checkFD(FD))
+          return false;
+    }
     return true;
   });
   // Checks collision between local declarations of caller and global
@@ -872,7 +869,10 @@ auto FInliner::getTemplatInstantiationeCheckers() const
   // int X;
   // void f() { X = 5; }
   // void f1() { int X; f(); }
-  Checkers.push_back([this](const TemplateInstantiation &TI) {
+  Checkers.push_back([this](const TemplateInstantiation &TI,
+      const InlineStackImpl &CallStack) {
+    assert(CallStack.back()->mTemplate->getFuncDecl() == TI.mFuncDecl &&
+      "Function as the top of stack should make a call which is checked!");
     auto FDs = TI.mTemplate->getForwardDecls();
     if (FDs.empty())
       return true;
@@ -883,8 +883,12 @@ auto FInliner::getTemplatInstantiationeCheckers() const
     auto checkCollision = [this, &TI](
         const Decl *D, const ::detail::Template::DeclSet &FDs) {
       if (auto ND = dyn_cast<NamedDecl>(D)) {
-        auto HiddenItr = FDs.find_as(ND);
-        if (HiddenItr != FDs.end()) {
+        // Do not use ND in find_as() because it checks that a declaration in
+        // the set equals to ND. However, we want to check that there is no local
+        // declaration which differs from forward declaration but has the same
+        // name.
+        auto HiddenItr = FDs.find_as(ND->getName());
+        if (HiddenItr != FDs.end() && ND != (*HiddenItr)->getDescendant()) {
           toDiag(mSourceManager.getDiagnostics(), TI.mCallExpr->getLocStart(),
             diag::warn_disable_inline);
           toDiag(mSourceManager.getDiagnostics(),
@@ -897,11 +901,13 @@ auto FInliner::getTemplatInstantiationeCheckers() const
       }
       return true;
     };
-    for (auto D : TI.mFuncDecl->decls()) {
-      if (!checkCollision(D, TI.mTemplate->getForwardDecls()))
-        return false;
-      if (!checkCollision(D, TI.mTemplate->getMayForwardDecls()))
-        return false;
+    for (auto *Caller : CallStack) {
+      for (auto D : Caller->mTemplate->getFuncDecl()->decls()) {
+        if (!checkCollision(D, TI.mTemplate->getForwardDecls()))
+          return false;
+        if (!checkCollision(D, TI.mTemplate->getMayForwardDecls()))
+          return false;
+      }
     }
     return true;
   });
@@ -1004,19 +1010,25 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
   }
   checkTemplates(getTemplateCheckers());
-  checkTemplateInstantiations(getTemplatInstantiationeCheckers());
   DEBUG(templatesInfoLog(mTs, mTIs, mSourceManager, Context.getLangOpts()));
   CallGraph CG;
   CG.TraverseDecl(Context.getTranslationUnitDecl());
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
+  auto TICheckers = getTemplatInstantiationCheckers();
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
     if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
       continue;
     auto CallsItr = mTIs.find(cast<FunctionDecl>((*I)->getDecl()));
     if (CallsItr == mTIs.end())
       continue;
+    SmallVector<const TemplateInstantiation *, 8> CallStack;
+    // We create a bogus template instantiation to identify a root of call graph
+    // subtree which should be inlined.
+    TemplateInstantiation BogusTI =
+      { nullptr, nullptr, nullptr, &mTs[CallsItr->first] };
+    CallStack.push_back(&BogusTI);
     for (auto &TI : CallsItr->second) {
-      if (TI.mTemplate == nullptr || !TI.mTemplate->isNeedToInline())
+      if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
         continue;
       std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
@@ -1024,7 +1036,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
         [&](const clang::Expr* Arg) -> std::string {
         return mRewriter.getRewrittenText(getRange(Arg));
       });
-      auto Text = compile(TI, Args);
+      CallStack.push_back(&TI);
+      auto Text = compile(TI, Args, TICheckers, CallStack);
+      CallStack.pop_back();
       auto CallExpr = getSourceText(getRange(TI.mCallExpr));
       if (Text.second.size() == 0) {
         Text.first = "{" + Text.first + ";}";

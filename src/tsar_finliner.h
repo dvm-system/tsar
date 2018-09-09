@@ -282,10 +282,19 @@ class FInliner :
   /// Prototype of a function which checks whether a function can be inlined.
   using TemplateChecker = std::function<bool(const ::detail::Template &)>;
 
-  /// Prototype of a function which checks whether a function call
-  /// can be inlined.
+  /// Chain of calls that should be inlined.
+  using InlineStackImpl =
+    llvm::SmallVectorImpl<const ::detail::TemplateInstantiation *>;
+
+  /// \brief Prototype of a function which checks whether a specified function
+  /// call can be inlined to a function at the bottom of a specified stack.
+  ///
+  /// Note, that to represent a function at the bottom of stack bogus template
+  /// instantiation may be used. It contains only mTemplate field, other fields
+  /// may be null.
   using TemplateInstantiationChecker =
-    std::function<bool(const ::detail::TemplateInstantiation &)>;
+    std::function<bool(const ::detail::TemplateInstantiation &,
+      const InlineStackImpl &)>;
 public:
   /// Map from function declaration to its template.
   using TemplateMap = std::map<const clang::FunctionDecl*, ::detail::Template>;
@@ -332,15 +341,18 @@ private:
   /// isNeedToInline() to `false` if a function can not be inlined.
   void checkTemplates(const llvm::SmallVectorImpl<TemplateChecker> &Checkers);
 
+  /// Returns list of checkers.
   llvm::SmallVector<TemplateChecker, 8> getTemplateCheckers() const;
 
-  /// Determines template instantiations (calls) which can be inlined,
-  /// print diagnostics.
-  void checkTemplateInstantiations(
+  /// Check is it possible to inline a specified call at the top of a specified
+  /// call stack, return true on success, print diagnostics.
+  bool checkTemplateInstantiation(::detail::TemplateInstantiation &TI,
+    const InlineStackImpl &CallStack,
     const llvm::SmallVectorImpl<TemplateInstantiationChecker> &Checkers);
 
+  /// Returns list of checkers.
   llvm::SmallVector<TemplateInstantiationChecker, 8>
-    getTemplatInstantiationeCheckers() const;
+    getTemplatInstantiationCheckers() const;
 
   /// Constructs correct language declaration of \p Identifier with \p Type
   /// Uses bruteforce with linear complexity dependent on number of tokens
@@ -355,14 +367,23 @@ private:
     const std::string& Context,
     std::map<std::string, std::string>& Replacements);
 
-  /// Does instantiation of \p TI using \p Args generating non-collidable
-  /// identifiers/labels if necessary. Since instantiation is recursive,
-  /// collects all visible and newly created named declarations in \p Decls
-  /// to avoid later possible collisions.
-  /// \returns text of instantiated function body and result identifier
+  /// \brief Does instantiation of TI.
+  ///
+  /// \param [in] TI Description of a call which should be inlined.
+  /// \param [in] Args List of actual parameters.
+  /// \param [in] TICheckers List of call checkers.
+  /// \param [in, out] CallStack Stack of calls with a root (may be bogus)
+  /// of call graph subtree which should be inlined. This function may change
+  /// `CallStack` internally, however, after the call it will be in the
+  /// initial state (before call).
+  /// \post This method generates generating non-collidable identifiers/labels
+  /// if necessary and update mIdentifiers set.
+  /// \return Text of instantiated function body and result identifier.
   std::pair<std::string, std::string> compile(
-    const ::detail::TemplateInstantiation& TI,
-    const std::vector<std::string>& Args);
+    const ::detail::TemplateInstantiation &TI,
+    const std::vector<std::string> &Args,
+    const llvm::SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
+    InlineStackImpl &CallStack);
 
   std::string getSourceText(const clang::SourceRange& SR) const;
 
@@ -481,7 +502,6 @@ private:
   /// all expressions found in specific functions
   std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>>
     mExprs;
-
 
   TemplateMap mTs;
   TemplateInstantiationMap mTIs;
