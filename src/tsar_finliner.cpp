@@ -564,38 +564,8 @@ std::pair<std::string, std::string> FInliner::compile(
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
   auto SrcFD = TI.mTemplate->getFuncDecl();
-  // smart buffer
-  std::string Canvas(getSourceText(getRange(SrcFD)));
-  std::vector<unsigned int> Mapping(Canvas.size() + 1);
-  std::iota(std::begin(Mapping), std::end(Mapping), 0);
-  unsigned int base = getRange(SrcFD).getBegin().getRawEncoding();
-  auto get = [&](const clang::SourceRange& SR) -> std::string {
-    unsigned int OrigBegin = SR.getBegin().getRawEncoding() - base;
-    unsigned int Begin = Mapping[OrigBegin];
-    unsigned int End = Mapping[OrigBegin + getSourceText(SR).size()];
-    return Canvas.substr(Begin, End - Begin);
-  };
-  auto update = [&](const clang::SourceRange& SR, std::string NewStr) -> void {
-    unsigned int OrigBegin = SR.getBegin().getRawEncoding() - base;
-    unsigned int OrigEnd = OrigBegin + getSourceText(SR).size();
-    unsigned int Begin = Mapping[OrigBegin];
-    unsigned int End = Mapping[OrigEnd];
-    if (End - Begin == NewStr.size()) {
-      Canvas.replace(Begin, End - Begin, NewStr);
-    } else if (End - Begin < NewStr.size()) {
-      for (auto i = OrigEnd; i < Mapping.size(); ++i) {
-        Mapping[i] += NewStr.size() - (End - Begin);
-      }
-      Canvas.replace(Begin, End - Begin, NewStr);
-    } else {
-      for (auto i = OrigEnd; i < Mapping.size(); ++i) {
-        Mapping[i] -= (End - Begin) - NewStr.size();
-      }
-      Canvas.replace(Begin, End - Begin, NewStr);
-    }
-    return;
-  };
-
+  ExternalRewriter Canvas(getRange(SrcFD),
+    mContext.getSourceManager(), mContext.getLangOpts());
   std::string Params;
   std::string Context;
   // effective context construction
@@ -622,7 +592,8 @@ std::pair<std::string, std::string> FInliner::compile(
       ParmRefs.insert(std::end(ParmRefs), getRange(DRE));
     }
     for (auto& SR : ParmRefs) {
-      update(SR, Identifier);
+      bool Res = Canvas.ReplaceText(SR, Identifier);
+      assert(!Res && "Can not replace text in an external buffer!");
     }
   }
 
@@ -639,7 +610,7 @@ std::pair<std::string, std::string> FInliner::compile(
       std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
         std::begin(Args),
         [&](const clang::Expr* Arg) -> std::string {
-        return get(getRange(Arg));
+        return Canvas.getRewrittenText(getRange(Arg));
       });
       CallStack.push_back(&CallTI);
       auto Text = compile(CallTI, Args, TICheckers, CallStack);
@@ -648,13 +619,15 @@ std::pair<std::string, std::string> FInliner::compile(
       if (Text.second.size() == 0) {
         Text.first = "{" + Text.first + ";}";
       } else {
-        update(getRange(CallTI.mCallExpr), Text.second);
-        Text.first += get(getRange(CallTI.mStmt));
+        bool Res = Canvas.ReplaceText(getRange(CallTI.mCallExpr), Text.second);
+        assert(!Res && "Can not replace text in an external buffer!");
+        Text.first += Canvas.getRewrittenText(getRange(CallTI.mStmt));
         Text.first = requiresBraces(CallTI.mFuncDecl, CallTI.mStmt)
           ? "{" + Text.first + ";}" : Text.first;
       }
-      update(getRange(CallTI.mStmt), "/* " + CallExpr
+      bool Res = Canvas.ReplaceText(getRange(CallTI.mStmt), "/* " + CallExpr
         + " is inlined below */\n" + Text.first);
+      assert(!Res && "Can not replace text in an external buffer!");
     }
   }
 
@@ -685,31 +658,37 @@ std::pair<std::string, std::string> FInliner::compile(
         Identifier, Context, Replacements);
     RetStmt = join(Tokens, " ") + ";";
     for (auto& RS : ReachableRetStmts) {
-      auto Text = Identifier + " = " + get(getRange(RS->getRetValue())) + ";";
+      auto Text = (Identifier + " = " +
+        Canvas.getRewrittenText(getRange(RS->getRetValue())) + ";").str();
       if (!isSingleReturn) {
         Text += "goto " + RetLab + ";";
         Text = "{" + Text + "}";
       }
-      update(getRange(RS), Text);
+      bool Res = Canvas.ReplaceText(getRange(RS), Text);
+      assert(!Res && "Can not replace text in an external buffer!");
     }
   } else {
     isSingleReturn = TI.mTemplate->isSingleReturn();
     std::string RetStmt(isSingleReturn ? "" : ("goto " + RetLab));
     for (auto& RS : ReachableRetStmts) {
-      update(getRange(RS), RetStmt);
+      bool Res = Canvas.ReplaceText(getRange(RS), RetStmt);
+      assert(!Res && "Can not replace text in an external buffer!");
     }
   }
   // macro-deactivate unreachable returns
   for (auto RS : UnreachableRetStmts) {
-    update(getRange(RS), "\n#if 0\n" + get(getRange(RS)) +"\n#endif\n");
+    bool Res = Canvas.ReplaceText(
+      getRange(RS), ("\n#if 0\n" +
+      Canvas.getRewrittenText(getRange(RS)) +"\n#endif\n").str());
+    assert(!Res && "Can not replace text in an external buffer!");
   }
-  Canvas = get(getRange(SrcFD->getBody()));
+  std::string Text = Canvas.getRewrittenText(getRange(SrcFD->getBody()));
   if (!isSingleReturn) {
-    Canvas += RetLab + ":;";
+    Text += RetLab + ":;";
   }
-  Canvas.insert(std::begin(Canvas) + 1, std::begin(Params), std::end(Params));
-  Canvas.insert(std::begin(Canvas), std::begin(RetStmt), std::end(RetStmt));
-  return {Canvas, Identifier};
+  Text.insert(std::begin(Text) + 1, std::begin(Params), std::end(Params));
+  Text.insert(std::begin(Text), std::begin(RetStmt), std::end(RetStmt));
+  return { Text, Identifier };
 }
 
 DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {

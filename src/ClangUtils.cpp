@@ -14,6 +14,7 @@
 #include <clang/Lex/Lexer.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
+#include <numeric>
 
 using namespace clang;
 using namespace llvm;
@@ -122,4 +123,46 @@ void tsar::getRawMacrosAndIncludes(
       Includes.try_emplace(IncludeName, Loc);
     }
   }
+}
+
+ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
+    const LangOptions &LangOpts) : mSR(SR), mSM(SM), mLangOpts(LangOpts),
+  mBuffer(
+    Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM, LangOpts)),
+  mMapping(mBuffer.size() + 1) {
+  std::iota(std::begin(mMapping), std::end(mMapping), 0);
+}
+
+bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
+  if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
+    return true;
+  unsigned Base = mSR.getBegin().getRawEncoding();
+  unsigned OrigBegin = SR.getBegin().getRawEncoding() - Base;
+  auto ReplacedText =
+    Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
+  unsigned OrigEnd = OrigBegin + ReplacedText.size();
+  unsigned Begin = mMapping[OrigBegin];
+  unsigned End = mMapping[OrigEnd];
+  auto NewStrSize = NewStr.size();
+  if (End - Begin < NewStr.size()) {
+    for (std::size_t I = OrigEnd, EI = NewStrSize; I < EI; ++I)
+      mMapping[I] += NewStrSize - (End - Begin);
+  } else {
+    for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
+      mMapping[I] -= (End - Begin) - NewStrSize;
+  }
+  mBuffer.replace(Begin, End - Begin, NewStr);
+  return false;
+}
+
+StringRef ExternalRewriter::getRewrittenText(clang::SourceRange SR) {
+  if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
+    return StringRef();
+  unsigned Base = mSR.getBegin().getRawEncoding();
+  unsigned OrigBegin = SR.getBegin().getRawEncoding() - Base;
+  unsigned Begin = mMapping[OrigBegin];
+  auto Text =
+    Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
+  unsigned End = mMapping[OrigBegin + Text.size()];
+  return StringRef(mBuffer.data() + Begin, End - Begin);
 }

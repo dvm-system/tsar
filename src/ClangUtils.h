@@ -83,6 +83,42 @@ void getRawMacrosAndIncludes(
   llvm::StringMap<clang::SourceLocation> &Includes,
   llvm::StringSet<> &Ids);
 
+/// This is similar to clang::Rewriter, however this class enables to rewrite
+/// some copy of input buffer.
+class ExternalRewriter {
+public:
+  /// Creates rewriter to update copy of source text in a specified range.
+  ExternalRewriter(clang::SourceRange SR, const clang::SourceManager &SM,
+    const clang::LangOptions &LangOpts);
+
+  /// Replaces a range of characters in the buffer with a new string, return
+  /// `false` on success and `true` in case of errors.
+  bool ReplaceText(clang::SourceRange SR, clang::StringRef NewStr);
+
+  /// \brief Returns the rewritten form of the text in the specified range
+  /// inside the initial one (getSourceRange()).
+  ///
+  //  If the start of a specified range and the star of the initial range are
+  /// in different buffers, this returns an empty string.
+  clang::StringRef getRewrittenText(clang::SourceRange SR);
+
+  /// Returns initial range which is rewritten by this rewriter.
+  clang::SourceRange getSourceRange() const { return mSR; }
+
+  /// Returns current state of the text in the initial range.
+  clang::StringRef getBuffer() const { return mBuffer; }
+
+  const clang::SourceManager & getSourceManager() const noexcept { return mSM; }
+  const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
+
+private:
+  clang::SourceRange mSR;
+  const clang::SourceManager &mSM;
+  const clang::LangOptions &mLangOpts;
+  std::string mBuffer;
+  std::vector<std::size_t> mMapping;
+};
+
 /// Returns range of expansion locations.
 inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,
     clang::SourceRange Range) {
