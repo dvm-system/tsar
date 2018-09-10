@@ -679,7 +679,7 @@ std::pair<std::string, std::string> FInliner::compile(
       assert(!Res && "Can not replace text in an external buffer!");
     }
   } else {
-    isSingleReturn = TI.mTemplate->isSingleReturn();
+    isSingleReturn = ReachableRetStmts.size() < 2;
     std::string RetStmt(isSingleReturn ? "" : ("goto " + RetLab));
     for (auto& RS : ReachableRetStmts) {
       bool Res = Canvas.ReplaceText(getFileRange(RS), RetStmt);
