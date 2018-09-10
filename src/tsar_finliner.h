@@ -179,20 +179,59 @@ private:
 /// Represents one specific place in user source code where one of specified
 /// functions (for inlining) is called
 struct TemplateInstantiation {
+  TemplateInstantiation() = delete;
+  enum Flags : uint8_t {
+    DefaultFlags = 0,
+    IsNeedBraces = 1u << 0,
+    LLVM_MARK_AS_BITMASK_ENUM(IsNeedBraces)
+  };
   const clang::FunctionDecl* mFuncDecl;
   const clang::Stmt* mStmt;
   const clang::CallExpr* mCallExpr;
-  /// mTemplate == nullptr <-> instantiation is disabled for this call
-  Template* mTemplate;
+  const Template* mTemplate;
+  Flags mFlags;
 };
 
-inline bool operator==(
-  const TemplateInstantiation& lhs, const TemplateInstantiation& rhs) {
-  return lhs.mFuncDecl == rhs.mFuncDecl
-    && lhs.mStmt == rhs.mStmt
-    && lhs.mCallExpr == rhs.mCallExpr
-    && lhs.mTemplate == rhs.mTemplate;
+inline bool operator==(const TemplateInstantiation &LHS,
+    const TemplateInstantiation &RHS) noexcept {
+  return LHS.mFuncDecl == RHS.mFuncDecl
+    && LHS.mStmt == RHS.mStmt
+    && LHS.mCallExpr == RHS.mCallExpr
+    && LHS.mTemplate == RHS.mTemplate;
 }
+}
+namespace llvm {
+template<> struct DenseMapInfo<::detail::TemplateInstantiation> {
+  static inline ::detail::TemplateInstantiation getEmptyKey() {
+    return ::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
+      nullptr, ::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline ::detail::TemplateInstantiation getTombstoneKey() {
+    return ::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
+      nullptr, ::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline unsigned getHashValue(
+      const ::detail::TemplateInstantiation &TI) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
+  }
+  static inline unsigned getHashValue(const clang::CallExpr *Call) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
+  }
+  static inline bool isEqual(const ::detail::TemplateInstantiation &LHS,
+      const ::detail::TemplateInstantiation &RHS) noexcept {
+    return LHS == RHS;
+  }
+  static inline bool isEqual(const clang::CallExpr *Call,
+      const ::detail::TemplateInstantiation &RHS) noexcept {
+    return RHS.mCallExpr == Call;
+  }
+};
 }
 
 namespace tsar {
@@ -293,7 +332,7 @@ public:
 
   /// Map from function declarations to the list of calls from its body.
   using TemplateInstantiationMap = std::map<const clang::FunctionDecl*,
-    std::vector<::detail::TemplateInstantiation>>;
+    llvm::DenseSet<::detail::TemplateInstantiation>>;
 
   explicit FInliner(tsar::TransformationContext* TfmCtx)
     : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
@@ -303,7 +342,6 @@ public:
       TfmCtx->getContext().getLangOpts()){}
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
-  bool VisitExpr(clang::Expr* E);
   bool VisitDeclRefExpr(clang::DeclRefExpr *DRE);
   bool VisitTypeLoc(clang::TypeLoc TL);
   bool VisitTagTypeLoc(clang::TagTypeLoc TTL);
@@ -406,10 +444,6 @@ private:
   /// Splits string \p s into tokens using pattern \p p
   std::vector<std::string> tokenize(std::string s, std::string p) const;
 
-  /// if \p S is declaration statement we shouldn't place braces if
-  /// declarations were referenced outside it
-  bool requiresBraces(const clang::FunctionDecl* FD, const clang::Stmt* S);
-
   /// Local matcher to find correct node in AST during construct()
   class : public clang::ast_matchers::MatchFinder::MatchCallback {
   public:
@@ -491,10 +525,6 @@ private:
   /// (currently only returns are later analyzed)
   std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
     mUnreachableStmts;
-
-  /// all expressions found in specific functions
-  std::map<const clang::FunctionDecl*, std::set<const clang::Expr*>>
-    mExprs;
 
   TemplateMap mTs;
   TemplateInstantiationMap mTIs;

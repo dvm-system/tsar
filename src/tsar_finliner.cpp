@@ -268,11 +268,6 @@ bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
   return RecursiveASTVisitor::VisitReturnStmt(RS);
 }
 
-bool FInliner::VisitExpr(clang::Expr* E) {
-  mExprs[mCurrentFD].insert(E);
-  return RecursiveASTVisitor::VisitExpr(E);
-}
-
 bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
     mTs[mCurrentFD].addParmRef(PVD, DRE);
@@ -390,6 +385,11 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
   if (!RecursiveASTVisitor::TraverseCallExpr(Call))
     return false;
+  auto &TIs = mTIs[mCurrentFD];
+  // Some calls may be visited multiple times.
+  // For example, struct A A1 = { .X = f() };
+  if (TIs.find_as(Call) != TIs.end())
+    return true;
   std::swap(InlineInMacro, mStmtInMacro);
   if (mStmtInMacro.isInvalid())
     mStmtInMacro = InlineInMacro;
@@ -443,9 +443,21 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
       break;
     }
   }
+  assert(ScopeI != ScopeE &&
+    "Is compound statement which is function body lost?");
+  auto ParentI = (*ScopeI == StmtWithCall) ? ScopeI + 1 : ScopeI;
+  for (; ParentI->isClause() && ParentI != ScopeE; ++ParentI);
+  assert(ParentI != ScopeE &&
+    "Is compound statement which is function body lost?");
+  // If statement with call is not inside a compound statement braces should be
+  // added after inlining: if(...) f(); -> if (...) { /* inlined f() */ }
+  bool IsNeedBraces = !isa<CompoundStmt>(*ParentI);
   DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getFileRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSourceManager); dbgs() << "\n");
+  DEBUG(dbgs() << "[INLINE]: parent statement '" <<
+    getSourceText(getFileRange(ParentI->getStmt())) << "' at ";
+    (*ParentI)->getLocStart().dump(mSourceManager); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
       if (!I->isClause() || !isa<CompoundStmt>(*PrevI))
@@ -491,13 +503,15 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   ClauseI->setIsUsed();
-  auto &TI = mTIs[mCurrentFD];
   // Template may not exist yet if forward declaration of a function is used.
   auto &CalleeT = mTs.emplace(std::piecewise_construct,
     std::forward_as_tuple(Definition),
     std::forward_as_tuple(Definition)).first->second;
   CalleeT.setNeedToInline();
-  TI.push_back({ mCurrentFD, StmtWithCall, Call, &CalleeT });
+  auto Flags = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
+    TemplateInstantiation::DefaultFlags;
+  TIs.insert(
+    TemplateInstantiation{ mCurrentFD, StmtWithCall, Call, &CalleeT, Flags });
   return true;
 }
 
@@ -613,16 +627,14 @@ std::pair<std::string, std::string> FInliner::compile(
       auto Text = compile(CallTI, Args, TICheckers, CallStack);
       CallStack.pop_back();
       auto CallExpr = getSourceText(getFileRange(CallTI.mCallExpr));
-      if (Text.second.size() == 0) {
-        Text.first = "{" + Text.first + ";}";
-      } else {
+      if (!Text.second.empty()) {
         bool Res = Canvas.ReplaceText(
           getFileRange(CallTI.mCallExpr), Text.second);
         assert(!Res && "Can not replace text in an external buffer!");
         Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
-        Text.first = requiresBraces(CallTI.mFuncDecl, CallTI.mStmt)
-          ? "{" + Text.first + ";}" : Text.first;
       }
+      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
+        Text.first = "{" + Text.first + ";}";
       bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       assert(!Res && "Can not replace text in an external buffer!");
@@ -1000,8 +1012,8 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     SmallVector<const TemplateInstantiation *, 8> CallStack;
     // We create a bogus template instantiation to identify a root of call graph
     // subtree which should be inlined.
-    TemplateInstantiation BogusTI =
-      { nullptr, nullptr, nullptr, &mTs[CallsItr->first] };
+    TemplateInstantiation BogusTI { nullptr, nullptr, nullptr,
+      &mTs[CallsItr->first], TemplateInstantiation::DefaultFlags };
     CallStack.push_back(&BogusTI);
     for (auto &TI : CallsItr->second) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
@@ -1015,14 +1027,12 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       auto Text = compile(TI, Args, TICheckers, CallStack);
       CallStack.pop_back();
       auto CallExpr = getSourceText(getFileRange(TI.mCallExpr));
-      if (Text.second.empty()) {
-        Text.first = "{" + Text.first + ";}";
-      } else {
+      if (!Text.second.empty()) {
         mRewriter.ReplaceText(getFileRange(TI.mCallExpr), Text.second);
         Text.first += mRewriter.getRewrittenText(getFileRange(TI.mStmt));
-        Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
-          ? "{" + Text.first + ";}" : Text.first;
       }
+      if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
+        Text.first = "{" + Text.first + ";}";
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
     }
@@ -1082,35 +1092,6 @@ std::vector<std::string> FInliner::tokenize(
     Tokens.push_back(sm.str());
   }
   return Tokens;
-}
-
-bool FInliner::requiresBraces(const clang::FunctionDecl* FD,
-  const clang::Stmt* S) {
-  if (const clang::DeclStmt* DS = clang::dyn_cast<clang::DeclStmt>(S)) {
-    std::set<const clang::Decl*> Decls(DS->decl_begin(), DS->decl_end());
-    std::set<const clang::Expr*> Refs;
-    std::copy_if(std::begin(mExprs[FD]), std::end(mExprs[FD]),
-      std::inserter(Refs, std::begin(Refs)),
-      [&](const clang::Expr* arg) -> bool {
-      if (const clang::DeclRefExpr* DRE
-        = llvm::dyn_cast<clang::DeclRefExpr>(arg)) {
-        return std::find(std::begin(Decls), std::end(Decls),
-          DRE->getFoundDecl()) != std::end(Decls);
-      } else {
-        return false;
-      }
-    });
-    for (auto E : Refs) {
-      if (getFileRange(DS).getBegin().getRawEncoding()
-        <= getFileRange(E).getBegin().getRawEncoding()
-        && getFileRange(E).getEnd().getRawEncoding()
-        <= getFileRange(DS).getEnd().getRawEncoding()) {
-        Refs.erase(E);
-      }
-    }
-    return Refs.size() == 0;
-  }
-  return true;
 }
 
 // for debug
