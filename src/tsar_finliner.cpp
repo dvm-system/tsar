@@ -383,7 +383,7 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
 
 bool FInliner::TraverseCallExpr(CallExpr *Call) {
   DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
-    getSourceText(getRange(Call)) << "' at ";
+    getSourceText(getFileRange(Call)) << "' at ";
     Call->getLocStart().dump(mSourceManager); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
   mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
@@ -444,7 +444,7 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     }
   }
   DEBUG(dbgs() << "[INLINE]: statement with call '" <<
-    getSourceText(getRange(StmtWithCall)) << "' at ";
+    getSourceText(getFileRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSourceManager); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
@@ -459,7 +459,7 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
     }
   }
   DEBUG(dbgs() << "[INLINE]: clause found '" <<
-    getSourceText(getRange(ClauseI->getStmt())) << "' at ";
+    getSourceText(getFileRange(ClauseI->getStmt())) << "' at ";
     (*ClauseI)->getLocStart().dump(mSourceManager); dbgs() << "\n");
   const FunctionDecl* Definition = nullptr;
   Call->getDirectCallee()->hasBody(Definition);
@@ -558,28 +558,26 @@ std::vector<std::string> FInliner::construct(
 }
 
 std::pair<std::string, std::string> FInliner::compile(
-    const TemplateInstantiation &TI, const std::vector<std::string> &Args,
+    const TemplateInstantiation &TI, ArrayRef<std::string> Args,
     const SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
     InlineStackImpl &CallStack) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
-  auto SrcFD = TI.mTemplate->getFuncDecl();
-  ExternalRewriter Canvas(getRange(SrcFD),
+  auto CalleeFD = TI.mTemplate->getFuncDecl();
+  ExternalRewriter Canvas(getFileRange(CalleeFD),
     mContext.getSourceManager(), mContext.getLangOpts());
-  std::string Params;
   std::string Context;
-  // effective context construction
-  auto initContext = [&]() {
-    Context = "";
-    //context = getSourceText(getRange(mContext.getTranslationUnitDecl()));
-    for (auto D : mTs[SrcFD].getForwardDecls()) {
-      Context += getSourceText(getRange(D->getRoot())) + ";";
-    }
+  // Initialize context to enable usage of tooling::buildASTFromCode function.
+  auto initContext = [this, &Context, &TI]() {
+    Context.clear();
+    for (auto D : TI.mTemplate->getForwardDecls())
+      Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
   };
+  // Prepare formal parameters' assignments.
   initContext();
-  // prepare formal parameters' assignments
+  std::string Params;
   std::map<std::string, std::string> Replacements;
-  for (auto& PVD : SrcFD->parameters()) {
+  for (auto& PVD : CalleeFD->parameters()) {
     std::string Identifier = addSuffix(PVD->getName());
     Replacements[PVD->getName()] = Identifier;
     std::vector<std::string> Tokens = construct(PVD->getType().getAsString(),
@@ -588,16 +586,16 @@ std::pair<std::string, std::string> FInliner::compile(
     Params.append(join(Tokens, " ") + " = " + Args[PVD->getFunctionScopeIndex()]
       + ";");
     std::set<clang::SourceRange, std::less<clang::SourceRange>> ParmRefs;
-    for (auto DRE : TI.mTemplate->getParmRefs(PVD)) {
-      ParmRefs.insert(std::end(ParmRefs), getRange(DRE));
-    }
+    for (auto DRE : TI.mTemplate->getParmRefs(PVD))
+      ParmRefs.insert(std::end(ParmRefs), getFileRange(DRE));
     for (auto& SR : ParmRefs) {
       bool Res = Canvas.ReplaceText(SR, Identifier);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
-
-  auto CallsItr = mTIs.find(SrcFD);
+  // Now, we recursively inline all marked calls from the current function and
+  // we also update external buffer. Note that we do not change input buffer.
+  auto CallsItr = mTIs.find(CalleeFD);
   if (CallsItr != mTIs.end()) {
     for (auto &CallTI : CallsItr->second) {
       /// TODO (kaniandr@gmail.com): print warning in case of unreachable
@@ -606,35 +604,34 @@ std::pair<std::string, std::string> FInliner::compile(
         continue;
       if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
         continue;
-      std::vector<std::string> Args(CallTI.mCallExpr->getNumArgs());
+      SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());
       std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
-        std::begin(Args),
-        [&](const clang::Expr* Arg) -> std::string {
-        return Canvas.getRewrittenText(getRange(Arg));
+        std::begin(Args), [this, &Canvas](const clang::Expr* Arg) {
+          return Canvas.getRewrittenText(getFileRange(Arg));
       });
       CallStack.push_back(&CallTI);
       auto Text = compile(CallTI, Args, TICheckers, CallStack);
       CallStack.pop_back();
-      auto CallExpr = getSourceText(getRange(CallTI.mCallExpr));
+      auto CallExpr = getSourceText(getFileRange(CallTI.mCallExpr));
       if (Text.second.size() == 0) {
         Text.first = "{" + Text.first + ";}";
       } else {
-        bool Res = Canvas.ReplaceText(getRange(CallTI.mCallExpr), Text.second);
+        bool Res = Canvas.ReplaceText(
+          getFileRange(CallTI.mCallExpr), Text.second);
         assert(!Res && "Can not replace text in an external buffer!");
-        Text.first += Canvas.getRewrittenText(getRange(CallTI.mStmt));
+        Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
         Text.first = requiresBraces(CallTI.mFuncDecl, CallTI.mStmt)
           ? "{" + Text.first + ";}" : Text.first;
       }
-      bool Res = Canvas.ReplaceText(getRange(CallTI.mStmt), "/* " + CallExpr
-        + " is inlined below */\n" + Text.first);
+      bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
+        ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
-
   std::set<const clang::ReturnStmt*> RetStmts(TI.mTemplate->getRetStmts());
   std::set<const clang::ReturnStmt*> UnreachableRetStmts;
   std::set<const clang::ReturnStmt*> ReachableRetStmts;
-  for (auto S : mUnreachableStmts[SrcFD]) {
+  for (auto S : mUnreachableStmts[CalleeFD]) {
     if (const clang::ReturnStmt* RS = clang::dyn_cast<clang::ReturnStmt>(S)) {
       UnreachableRetStmts.insert(RS);
     }
@@ -648,7 +645,7 @@ std::pair<std::string, std::string> FInliner::compile(
   std::string Identifier;
   std::string RetStmt;
   std::string RetLab = addSuffix("L");
-  if (SrcFD->getReturnType()->isVoidType() == false) {
+  if (CalleeFD->getReturnType()->isVoidType() == false) {
     isSingleReturn = ReachableRetStmts.size() < 2;
     Identifier = addSuffix("R");
     initContext();
@@ -659,30 +656,30 @@ std::pair<std::string, std::string> FInliner::compile(
     RetStmt = join(Tokens, " ") + ";";
     for (auto& RS : ReachableRetStmts) {
       auto Text = (Identifier + " = " +
-        Canvas.getRewrittenText(getRange(RS->getRetValue())) + ";").str();
+        Canvas.getRewrittenText(getFileRange(RS->getRetValue())) + ";").str();
       if (!isSingleReturn) {
         Text += "goto " + RetLab + ";";
         Text = "{" + Text + "}";
       }
-      bool Res = Canvas.ReplaceText(getRange(RS), Text);
+      bool Res = Canvas.ReplaceText(getFileRange(RS), Text);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   } else {
     isSingleReturn = TI.mTemplate->isSingleReturn();
     std::string RetStmt(isSingleReturn ? "" : ("goto " + RetLab));
     for (auto& RS : ReachableRetStmts) {
-      bool Res = Canvas.ReplaceText(getRange(RS), RetStmt);
+      bool Res = Canvas.ReplaceText(getFileRange(RS), RetStmt);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
   // macro-deactivate unreachable returns
   for (auto RS : UnreachableRetStmts) {
     bool Res = Canvas.ReplaceText(
-      getRange(RS), ("\n#if 0\n" +
-      Canvas.getRewrittenText(getRange(RS)) +"\n#endif\n").str());
+      getFileRange(RS), ("\n#if 0\n" +
+      Canvas.getRewrittenText(getFileRange(RS)) +"\n#endif\n").str());
     assert(!Res && "Can not replace text in an external buffer!");
   }
-  std::string Text = Canvas.getRewrittenText(getRange(SrcFD->getBody()));
+  std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
   if (!isSingleReturn) {
     Text += RetLab + ":;";
   }
@@ -1009,38 +1006,37 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     for (auto &TI : CallsItr->second) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
         continue;
-      std::vector<std::string> Args(TI.mCallExpr->getNumArgs());
+      SmallVector<std::string, 8> Args(TI.mCallExpr->getNumArgs());
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
-        std::begin(Args),
-        [&](const clang::Expr* Arg) -> std::string {
-        return mRewriter.getRewrittenText(getRange(Arg));
+        std::begin(Args), [this](const clang::Expr* Arg) {
+          return mRewriter.getRewrittenText(getFileRange(Arg));
       });
       CallStack.push_back(&TI);
       auto Text = compile(TI, Args, TICheckers, CallStack);
       CallStack.pop_back();
-      auto CallExpr = getSourceText(getRange(TI.mCallExpr));
-      if (Text.second.size() == 0) {
+      auto CallExpr = getSourceText(getFileRange(TI.mCallExpr));
+      if (Text.second.empty()) {
         Text.first = "{" + Text.first + ";}";
       } else {
-        mRewriter.ReplaceText(getRange(TI.mCallExpr), Text.second);
-        Text.first += mRewriter.getRewrittenText(getRange(TI.mStmt));
+        mRewriter.ReplaceText(getFileRange(TI.mCallExpr), Text.second);
+        Text.first += mRewriter.getRewrittenText(getFileRange(TI.mStmt));
         Text.first = requiresBraces(TI.mFuncDecl, TI.mStmt)
           ? "{" + Text.first + ";}" : Text.first;
       }
-      mRewriter.ReplaceText(getRange(TI.mStmt),
-        "/* " + CallExpr + " is inlined below */\n" + Text.first);
+      mRewriter.ReplaceText(getFileRange(TI.mStmt),
+        ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
     }
   }
 }
 
-std::string FInliner::getSourceText(const clang::SourceRange& SR) const {
-  return clang::Lexer::getSourceText(clang::CharSourceRange::getTokenRange(SR),
-    mSourceManager, mContext.getLangOpts());
+StringRef FInliner::getSourceText(const clang::SourceRange& SR) const {
+  return Lexer::getSourceText(CharSourceRange::getTokenRange(SR),
+    mContext.getSourceManager(), mContext.getLangOpts());
 }
 
 template<class T>
-clang::SourceRange FInliner::getRange(T *Node) const {
-  return getFileRange(mSourceManager, Node->getSourceRange());
+clang::SourceRange FInliner::getFileRange(T *Node) const {
+  return tsar::getFileRange(mSourceManager, Node->getSourceRange());
 }
 
 template<typename _Container>
@@ -1105,10 +1101,10 @@ bool FInliner::requiresBraces(const clang::FunctionDecl* FD,
       }
     });
     for (auto E : Refs) {
-      if (getRange(DS).getBegin().getRawEncoding()
-        <= getRange(E).getBegin().getRawEncoding()
-        && getRange(E).getEnd().getRawEncoding()
-        <= getRange(DS).getEnd().getRawEncoding()) {
+      if (getFileRange(DS).getBegin().getRawEncoding()
+        <= getFileRange(E).getBegin().getRawEncoding()
+        && getFileRange(E).getEnd().getRawEncoding()
+        <= getFileRange(DS).getEnd().getRawEncoding()) {
         Refs.erase(E);
       }
     }

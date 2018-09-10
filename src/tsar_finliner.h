@@ -98,6 +98,9 @@ public:
     const tsar::GlobalInfoExtractor::OutermostDecl *,
     tsar::GlobalInfoExtractor::OutermostDeclNameMapInfo>;
 
+  /// List of reference to a declaration.
+  using DeclRefList = std::vector<const clang::DeclRefExpr *>;
+
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
   /// std::map::operator[]. Template must already exist in the map.
@@ -121,19 +124,8 @@ public:
       const clang::DeclRefExpr* DRE) {
     mParmRefs[PVD].push_back(DRE);
   }
-
-  std::vector<const clang::DeclRefExpr*> getParmRefs(
-      const clang::ParmVarDecl* PVD) const {
-    auto isPVDRef = [PVD](const std::pair<const clang::ParmVarDecl*,
-      std::vector<const clang::DeclRefExpr*>>&lhs) -> bool {
-      return lhs.first == PVD;
-    };
-    if (std::find_if(std::begin(mParmRefs), std::end(mParmRefs), isPVDRef)
-      == std::end(mParmRefs)) {
-      return std::vector<const clang::DeclRefExpr*>();
-    } else {
-      return mParmRefs.at(PVD);
-    }
+  const DeclRefList & getParmRefs(const clang::ParmVarDecl* PVD) const {
+    return mParmRefs[PVD];
   }
 
   void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
@@ -164,8 +156,8 @@ public:
   }
 
 private:
-  std::map<const clang::ParmVarDecl*, std::vector<const clang::DeclRefExpr*>>
-    mParmRefs;
+  mutable llvm::DenseMap<const clang::ParmVarDecl*, DeclRefList> mParmRefs;
+
   std::set<const clang::ReturnStmt*> mRSs;
 
   const clang::FunctionDecl *mFuncDecl = nullptr;
@@ -381,15 +373,16 @@ private:
   /// \return Text of instantiated function body and result identifier.
   std::pair<std::string, std::string> compile(
     const ::detail::TemplateInstantiation &TI,
-    const std::vector<std::string> &Args,
+    llvm::ArrayRef<std::string> Args,
     const llvm::SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
     InlineStackImpl &CallStack);
 
-  std::string getSourceText(const clang::SourceRange& SR) const;
+  /// Returns source text at a specified range.
+  llvm::StringRef getSourceText(const clang::SourceRange& SR) const;
 
-  /// Returns source range for a specified node.
-  /// Note, T must provide getSourceRange() method
-  template<class T> clang::SourceRange getRange(T *Node) const;
+  /// Returns source range for a specified node, `T` must provide
+  /// `getSourceRange()` method.
+  template<class T> clang::SourceRange getFileRange(T *Node) const;
 
   /// Merges \p _Cont of tokens to string using \p delimiter between each pair
   /// of tokens.
