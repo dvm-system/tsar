@@ -632,9 +632,11 @@ std::pair<std::string, std::string> FInliner::compile(
           getFileRange(CallTI.mCallExpr), Text.second);
         assert(!Res && "Can not replace text in an external buffer!");
         Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
+        // We will rewrite CallTI.mStmt without final ';'.
+        Text.first += ';';
+        if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
+          Text.first = "{" + Text.first + "}";
       }
-      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
-        Text.first = "{" + Text.first + ";}";
       bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       assert(!Res && "Can not replace text in an external buffer!");
@@ -692,9 +694,8 @@ std::pair<std::string, std::string> FInliner::compile(
     assert(!Res && "Can not replace text in an external buffer!");
   }
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
-  if (!isSingleReturn) {
-    Text += RetLab + ":;";
-  }
+  if (!isSingleReturn)
+    Text.insert(Text.size() - 1, RetLab + ":;");
   Text.insert(std::begin(Text) + 1, std::begin(Params), std::end(Params));
   Text.insert(std::begin(Text), std::begin(RetStmt), std::end(RetStmt));
   return { Text, Identifier };
@@ -1030,9 +1031,11 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
       if (!Text.second.empty()) {
         mRewriter.ReplaceText(getFileRange(TI.mCallExpr), Text.second);
         Text.first += mRewriter.getRewrittenText(getFileRange(TI.mStmt));
+        // We will rewrite CallTI.mStmt without final ';'.
+        Text.first += ';';
+        if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
+          Text.first = "{" + Text.first + "}";
       }
-      if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
-        Text.first = "{" + Text.first + ";}";
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
     }
