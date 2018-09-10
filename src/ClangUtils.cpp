@@ -144,10 +144,10 @@ bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
   unsigned Begin = mMapping[OrigBegin];
   unsigned End = mMapping[OrigEnd];
   auto NewStrSize = NewStr.size();
-  if (End - Begin < NewStr.size()) {
-    for (std::size_t I = OrigEnd, EI = NewStrSize; I < EI; ++I)
+  if (End - Begin < NewStrSize) {
+    for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] += NewStrSize - (End - Begin);
-  } else {
+  } else if (End - Begin > NewStrSize) {
     for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] -= (End - Begin) - NewStrSize;
   }
