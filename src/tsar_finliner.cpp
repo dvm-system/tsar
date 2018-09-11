@@ -248,16 +248,13 @@ bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
     + mCurrentFD->getName()).str().data());
   llvm::SmallPtrSet<clang::CFGBlock *, 8> UB;
   unreachableBlocks(*CFG, UB);
-  auto &UnreachableStmts = mUnreachableStmts[mCurrentFD];
-  for (auto *BB : UB)
-    for (auto &I : *BB)
-      if (auto CS = I.getAs<clang::CFGStmt>())
-          UnreachableStmts.insert(CS->getStmt());
   auto &T = mTs.emplace(std::piecewise_construct,
     std::forward_as_tuple(mCurrentFD),
     std::forward_as_tuple(mCurrentFD)).first->second;
-  if (CFG->getExit().pred_size() <= 1)
-    T.setSingleReturn();
+  for (auto *BB : UB)
+    for (auto &I : *BB)
+      if (auto CS = I.getAs<clang::CFGStmt>())
+          T.addUnreachableStmt(CS->getStmt());
   auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
   mCurrentFD = nullptr;
   return Res;
@@ -347,6 +344,19 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
   }
   traverseSourceLocation(S,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
+  if (!mScopes.empty()) {
+    auto ParentI = mScopes.rbegin(), ParentEI = mScopes.rend();
+    for (; ParentI->isClause(); ++ParentI) {
+      assert(ParentI + 1 != ParentEI &&
+        "At least one parent which is not a pragma must exist!");
+    }
+    if (ParentI + 1 == ParentEI) {
+      DEBUG(dbgs() << "[INLINE]: last statement for '" <<
+        mCurrentFD->getName() << "' found at ";
+      S->getLocStart().dump(mSourceManager); dbgs() << "\n");
+      mTs[mCurrentFD].setLastStmt(S);
+    }
+  }
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
     mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
@@ -614,7 +624,7 @@ std::pair<std::string, std::string> FInliner::compile(
     for (auto &CallTI : CallsItr->second) {
       /// TODO (kaniandr@gmail.com): print warning in case of unreachable
       /// statements.
-      if (mUnreachableStmts[CallTI.mFuncDecl].count(CallTI.mStmt))
+      if (TI.mTemplate->getUnreachableStmts().count(CallTI.mStmt))
         continue;
       if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
         continue;
@@ -642,63 +652,55 @@ std::pair<std::string, std::string> FInliner::compile(
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
-  std::set<const clang::ReturnStmt*> RetStmts(TI.mTemplate->getRetStmts());
-  std::set<const clang::ReturnStmt*> UnreachableRetStmts;
-  std::set<const clang::ReturnStmt*> ReachableRetStmts;
-  for (auto S : mUnreachableStmts[CalleeFD]) {
-    if (const clang::ReturnStmt* RS = clang::dyn_cast<clang::ReturnStmt>(S)) {
-      UnreachableRetStmts.insert(RS);
-    }
-  }
-  std::set_difference(std::begin(RetStmts), std::end(RetStmts),
-    std::begin(UnreachableRetStmts), std::end(UnreachableRetStmts),
-    std::inserter(ReachableRetStmts, std::end(ReachableRetStmts)));
-  // for void functions one return can be implicit
-  bool isSingleReturn = false;
-
-  std::string Identifier;
-  std::string RetStmt;
+  SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
+  for (auto *S : TI.mTemplate->getRetStmts())
+    if (TI.mTemplate->getUnreachableStmts().count(S))
+      UnreachableRetStmts.push_back(S);
+    else
+      ReachableRetStmts.push_back(S);
+  bool IsNeedLabel = false;
+  std::string RetId;
+  std::string RetIdDeclStmt;
   std::string RetLab = addSuffix("L");
-  if (CalleeFD->getReturnType()->isVoidType() == false) {
-    isSingleReturn = ReachableRetStmts.size() < 2;
-    Identifier = addSuffix("R");
+  if (!CalleeFD->getReturnType()->isVoidType()) {
+    RetId = addSuffix("R");
     initContext();
     std::map<std::string, std::string> Replacements;
-    auto Tokens
-      = construct(TI.mTemplate->getFuncDecl()->getReturnType().getAsString(),
-        Identifier, Context, Replacements);
-    RetStmt = join(Tokens, " ") + ";";
-    for (auto& RS : ReachableRetStmts) {
-      auto Text = (Identifier + " = " +
+    auto RetTy = TI.mTemplate->getFuncDecl()->getReturnType();
+    auto Tokens = construct(RetTy.getAsString(), RetId, Context, Replacements);
+    RetIdDeclStmt = join(Tokens, " ") + ";";
+    for (auto *RS : ReachableRetStmts) {
+      auto Text = (RetId + " = " +
         Canvas.getRewrittenText(getFileRange(RS->getRetValue())) + ";").str();
-      if (!isSingleReturn) {
+      if (RS != TI.mTemplate->getLastStmt()) {
+        IsNeedLabel = true;
         Text += "goto " + RetLab + ";";
-        Text = "{" + Text + "}";
+        Text = "{ " + Text + " }";
       }
       bool Res = Canvas.ReplaceText(getFileRange(RS), Text);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   } else {
-    isSingleReturn = ReachableRetStmts.size() < 2;
-    std::string RetStmt(isSingleReturn ? "" : ("goto " + RetLab));
-    for (auto& RS : ReachableRetStmts) {
+    std::string RetStmt("goto " + RetLab);
+    for (auto *RS : ReachableRetStmts) {
+      if (RS == TI.mTemplate->getLastStmt())
+        continue;
+      IsNeedLabel = true;
       bool Res = Canvas.ReplaceText(getFileRange(RS), RetStmt);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
-  // macro-deactivate unreachable returns
+  /// TODO (kaniandr@gmail.com) : add warning for removed unreachable returns.
   for (auto RS : UnreachableRetStmts) {
-    bool Res = Canvas.ReplaceText(
-      getFileRange(RS), ("\n#if 0\n" +
-      Canvas.getRewrittenText(getFileRange(RS)) +"\n#endif\n").str());
+    bool Res = Canvas.ReplaceText(getFileRange(RS), "");
     assert(!Res && "Can not replace text in an external buffer!");
   }
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
-  if (!isSingleReturn)
+  if (IsNeedLabel)
     Text.insert(Text.size() - 1, RetLab + ":;");
-  Text.insert(std::begin(Text) + 1, std::begin(Params), std::end(Params));
-  Text.insert(std::begin(Text), std::begin(RetStmt), std::end(RetStmt));
-  return { Text, Identifier };
+  Text.insert(Text.begin() + 1, Params.begin(), Params.end());
+  Text.insert(Text.begin(), RetIdDeclStmt.begin(), RetIdDeclStmt.end());
+  return { Text, RetId };
 }
 
 DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {

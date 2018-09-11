@@ -88,8 +88,7 @@ class Template {
   enum Flags : uint8_t {
     DefaultFlags = 0,
     IsNeedToInline = 1u << 0,
-    IsSingleReturn = 1u << 1,
-    IsKnownMayForwardDecls = 1u << 2,
+    IsKnownMayForwardDecls = 1u << 1,
     LLVM_MARK_AS_BITMASK_ENUM(IsKnownMayForwardDecls)
   };
 public:
@@ -100,6 +99,9 @@ public:
 
   /// List of reference to a declaration.
   using DeclRefList = std::vector<const clang::DeclRefExpr *>;
+
+  /// Set of statements.
+  using StmtSet = llvm::DenseSet<const clang::Stmt *>;
 
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
@@ -113,9 +115,6 @@ public:
   bool isNeedToInline() const { return mFlags & IsNeedToInline; }
   void setNeedToInline() { mFlags |= IsNeedToInline; }
   void disableInline() { mFlags &= ~IsNeedToInline; }
-
-  bool isSingleReturn() const { return mFlags & IsSingleReturn; }
-  void setSingleReturn() { mFlags |= IsSingleReturn; }
 
   bool isKnownMayForwardDecls() const { return mFlags & IsKnownMayForwardDecls;}
   void setKnownMayForwardDecls() { mFlags |= IsKnownMayForwardDecls; }
@@ -131,10 +130,16 @@ public:
   void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
   std::set<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
 
+  void setLastStmt(const clang::Stmt *S) noexcept { mLastStmt = S; }
+  const clang::Stmt * getLastStmt() const noexcept { return mLastStmt; }
+
   void addForwardDecl(const tsar::GlobalInfoExtractor::OutermostDecl *D) {
     mForwardDecls.insert(D);
   }
   const DeclSet & getForwardDecls() const noexcept { return mForwardDecls; }
+
+  void addUnreachableStmt(const clang::Stmt *S) { mUnreachable.insert(S); }
+  const StmtSet & getUnreachableStmts() const noexcept { return mUnreachable; }
 
   void addMayForwardDecl(const tsar::GlobalInfoExtractor::OutermostDecl *D) {
     mMayForwardDecls.insert(D);
@@ -157,12 +162,12 @@ public:
 
 private:
   mutable llvm::DenseMap<const clang::ParmVarDecl*, DeclRefList> mParmRefs;
-
   std::set<const clang::ReturnStmt*> mRSs;
-
   const clang::FunctionDecl *mFuncDecl = nullptr;
-
   Flags mFlags = DefaultFlags;
+
+  /// The last statement at the top level of a function body.
+  const clang::Stmt *mLastStmt = nullptr;
 
   /// One of statements or declarations inside function definition
   /// which is located in macro.
@@ -174,6 +179,7 @@ private:
 
   DeclSet mForwardDecls;
   DeclSet mMayForwardDecls;
+  StmtSet mUnreachable;
 };
 
 /// Represents one specific place in user source code where one of specified
@@ -520,11 +526,6 @@ private:
   /// check that all new identifiers do not hide forward declarations of all
   /// functions in this chain.
   llvm::StringSet<> mIdentifiers;
-
-  /// unreachable statements per function
-  /// (currently only returns are later analyzed)
-  std::map<const clang::FunctionDecl*, std::set<const clang::Stmt*>>
-    mUnreachableStmts;
 
   TemplateMap mTs;
   TemplateInstantiationMap mTIs;
