@@ -267,20 +267,7 @@ namespace tsar {
 /// Performs inline expansion, processes calls which is marked with `inline`
 /// clause, print warnings on errors. Do not write changes to file, change
 /// memory buffer only (a specified clang::Rewriter is used).
-class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner>{
-  /// This represents clause attached to a statement.
-  struct ClauseToStmt {
-    ClauseToStmt(const clang::Stmt *C, const clang::Stmt *S) :
-      Clause(C), Stmt(S) {}
-    const clang::Stmt *Clause;
-    const clang::Stmt *Stmt;
-  };
-
-  /// This is a list of statements (for each function) which is marked
-  /// with `inline` clause.
-  using InlineQuery =
-    llvm::DenseMap<const clang::FunctionDecl*, std::vector<ClauseToStmt>>;
-
+class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner> {
   /// Prototype of a function which checks whether a function can be inlined.
   using TemplateChecker = std::function<bool(const detail::Template &)>;
 
@@ -392,8 +379,6 @@ private:
 
   /// Visitor to collect global information about a translation unit.
   GlobalInfoExtractor mGIE;
-
-  InlineQuery mInlineStmts;
 
   /// This is a stack of scopes with a function definition at the bottom.
   /// Note, that pragma is also considered as a scope.

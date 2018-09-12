@@ -328,7 +328,6 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   }
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
-    mInlineStmts[mCurrentT->getFuncDecl()].emplace_back(mActiveClause, S);
     mActiveClause = { nullptr, false, false };
   }
   mScopes.emplace_back(S);
