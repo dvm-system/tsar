@@ -119,6 +119,46 @@ private:
   std::vector<std::size_t> mMapping;
 };
 
+  /// \brief Constructs correct language declaration of a specified
+  /// identifier `Id` with a specified type `Type`.
+  ///
+  /// Uses bruteforce with linear complexity dependent on number of tokens
+  /// in `Type` where token is non-whitespace character or special sequence.
+  /// \param [in] Context This is a string containing declarations used in case
+  /// of referencing in `Type`.
+  /// \param [in] Replacements Map from tokens to a their new values. The tokens
+  /// will be replaced with the new values before the function constructs a new
+  /// declarations.
+  /// \return Vector of tokens which can be transformed to text string for
+  /// insertion into source code.
+  /// \attention This method does not allocate memory for strings in the result.
+  /// References to substrings of parameters is used. So the result will be
+  /// valid while references to parameters is valid.
+  ///
+  /// SLOW!
+std::vector<llvm::StringRef> buildDeclStringRef(llvm::StringRef Type,
+  llvm::StringRef Id, llvm::StringRef Context,
+  const llvm::StringMap<std::string> &Replacements);
+
+/// \brief Constructs correct language declaration of a specified
+/// identifier `Id` with a specified type `Type`.
+///
+/// \tparam TokenT Type of a token which should be implicitly constructible from
+/// llvm::StringRef.
+/// \note For details see buildDeclStringRef().
+/// \return Vector of tokens which can be transformed to text string for
+/// insertion into source code.
+template<class TokenT>
+std::vector<TokenT> buildDecl(llvm::StringRef Type,
+    llvm::StringRef Id, llvm::StringRef Context,
+    const llvm::StringMap<std::string> &Replacements) {
+  std::vector<TokenT> Out;
+  auto Tokens = buildDeclStringRef(Type, Id, Context, Replacements);
+  for (auto T : Tokens)
+    Out.emplace_back(T);
+  return Out;
+}
+
 /// Returns range of expansion locations.
 inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,
     clang::SourceRange Range) {

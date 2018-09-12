@@ -13,10 +13,13 @@
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Type.h>
+#include <llvm/Support/raw_ostream.h>
 #include <tuple>
 #include <tagged.h>
+#include <vector>
 
 namespace llvm {
 class BasicBlock;
@@ -30,6 +33,35 @@ class Use;
 }
 
 namespace tsar {
+/// Merges elements from a specified range using a specified delimiter, put
+/// result to a specified buffer and returns reference to it.
+template<class ItrT>
+llvm::StringRef join(ItrT I, ItrT EI, llvm::StringRef Delimiter,
+    llvm::SmallVectorImpl<char> &Out) {
+  llvm::raw_svector_ostream OS(Out);
+  OS << *I;
+  for (++I; I != EI; ++I)
+    OS <<  Delimiter << *I;
+  return llvm::StringRef(Out.data(), Out.size());
+}
+
+/// Merges elements from a specified range using a specified delimiter.
+template<class ItrT>
+std::string join(ItrT I, ItrT EI, llvm::StringRef Delimiter) {
+  llvm::SmallString<256> Out;
+  return join(I, EI, Delimiter, Out);
+}
+
+/// \brief Splits a specified string into tokens according to a specified
+/// pattern.
+///
+/// See std::regex for syntax of a pattern string. Note, that this function
+/// does not allocate memory for the result. This means that result vector
+/// contains references to substrings of a specified string `Str` and the
+/// vector will be valid only while `Str` is valid.
+std::vector<llvm::StringRef> tokenize(
+  llvm::StringRef Str, llvm::StringRef Pattern);
+
 /// \brief An iterator type that allows iterating over the pointers via some
 /// other iterator.
 ///

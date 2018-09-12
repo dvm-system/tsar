@@ -9,12 +9,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangUtils.h"
+#include "tsar_utility.h"
 #include <clang/Analysis/CFG.h>
+#include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
+#include <clang/Frontend/ASTUnit.h>
 #include <clang/Lex/Lexer.h>
+#include <clang/Tooling/Tooling.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
+#include <utility.h>
 #include <numeric>
+#include <regex>
 
 using namespace clang;
 using namespace llvm;
@@ -165,4 +171,84 @@ StringRef ExternalRewriter::getRewrittenText(clang::SourceRange SR) {
     Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
   unsigned End = mMapping[OrigBegin + Text.size()];
   return StringRef(mBuffer.data() + Begin, End - Begin);
+}
+
+namespace {
+/// \brief This matcher searches for a declaration with a specified name and
+/// a specified type. It uses a specified function to preprocess a string
+/// representation of a declaration type before comparison with a specified
+/// type.
+///
+/// Note, this class does not allocate memory to store strings which are
+/// specified in a constructor. So, this reference must be valid while
+/// this class is used.
+class VarDeclSearch : public ast_matchers::MatchFinder::MatchCallback {
+public:
+  using ProcessorT =
+    std::function<StringRef(StringRef, SmallVectorImpl<char> &)>;
+
+  VarDeclSearch(StringRef Type, StringRef Id, const ProcessorT &P) :
+    mType(Type), mId(Id), mProcessor(P) {}
+
+  void run(const ast_matchers::MatchFinder::MatchResult &MR) {
+    auto *VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+    if (!VD)
+      return;
+    mIsFound = (VD->getName() == mId &&
+      mProcessor(VD->getType().getAsString(), mBuffer) == mType);
+  }
+
+  bool isFound() const noexcept { return mIsFound; }
+
+private:
+  StringRef mType;
+  StringRef mId;
+  ProcessorT mProcessor;
+  bool mIsFound = false;
+  SmallString<32> mBuffer;
+};
+}
+
+std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
+    llvm::StringRef Id, llvm::StringRef Context,
+    const llvm::StringMap<std::string> &Replacements) {
+  // Custom tokenizer is needed because ASTUnit doesn't have properly
+  // setuped Lexer/Rewriter.
+  static constexpr const char * Pattern =
+    "[(struct|union|enum)\\s+]?[[:alpha:]_]\\w*|\\d+|\\S";
+  auto Tokens = tokenize(Type, Pattern);
+  for (auto &T : Tokens) {
+    auto Itr = Replacements.find(T);
+    if (Itr != Replacements.end())
+      T = Itr->getValue();
+  }
+  VarDeclSearch Search(Type, Id, [](StringRef Str, SmallVectorImpl<char> &Out) {
+      auto Tokens = tokenize(Str, Pattern);
+      return join(Tokens.begin(), Tokens.end(), " ", Out);
+  });
+  ast_matchers::MatchFinder MatchFinder;
+  MatchFinder.addMatcher(ast_matchers::varDecl().bind("varDecl"), &Search);
+  Tokens.push_back(Id);
+  // Let us find a valid position for identifier in a variable declaration.
+  // Multiple positions can be found in cases like 'unsigned' and 'unsigned int'
+  // which mean same type. Since it's part of declaration-specifiers in grammar,
+  // it is guaranteed to be before declared identifier, just choose far position
+  // (meaning choosing longest type string).
+  // Optimization: match in reverse order until success.
+  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  for (std::size_t Pos = Tokens.size() - 1; Pos >= 0; --Pos) {
+    SmallString<128> DeclStr;
+    std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
+      Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
+    assert(Unit && "AST construction failed");
+    // AST can be correctly parsed even with errors.
+    // So, we ignore all and just try to find our node.
+    MatchFinder.matchAST(Unit->getASTContext());
+    if (Search.isFound())
+      break;
+    assert(Pos > 0 && "At least one valid position must be found!");
+    std::swap(Tokens[Pos], Tokens[Pos - 1]);
+  }
+  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  return Tokens;
 }

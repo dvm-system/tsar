@@ -17,6 +17,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/Transforms/Utils/Local.h>
+#include <regex>
 
 using namespace llvm;
 
@@ -58,6 +59,18 @@ Value * cloneChainImpl(Value *From, Instruction *BoundInst, DominatorTree *DT,
 }
 
 namespace tsar {
+std::vector<StringRef> tokenize(StringRef Str, StringRef Pattern) {
+  std::vector<StringRef> Tokens;
+  std::regex Rgx(Pattern.data());
+  std::cmatch Cm;
+  if (!std::regex_search(Str.data(), Cm, Rgx))
+    return Tokens;
+  Tokens.emplace_back(Cm[0].first, Cm[0].length());
+  while (std::regex_search(Cm[0].second, Cm, Rgx))
+    Tokens.emplace_back(Cm[0].first, Cm[0].length());
+  return Tokens;
+}
+
 llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo) {
   auto ArgItr = F.arg_begin();
   auto ArgItrE = F.arg_end();

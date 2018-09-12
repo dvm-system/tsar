@@ -390,19 +390,6 @@ private:
   llvm::SmallVector<TemplateInstantiationChecker, 8>
     getTemplatInstantiationCheckers() const;
 
-  /// Constructs correct language declaration of \p Identifier with \p Type
-  /// Uses bruteforce with linear complexity dependent on number of tokens
-  /// in \p Type where token is non-whitespace character or special sequence.
-  /// \p Context is a string containing declarations used in case of referencing
-  /// in \p Type.
-  /// \returns vector of tokens which can be transformed to text string for
-  /// insertion into source code
-  /// SLOW!
-  std::vector<std::string> construct(
-    const std::string& Type, const std::string& Identifier,
-    const std::string& Context,
-    std::map<std::string, std::string>& Replacements);
-
   /// \brief Does instantiation of TI.
   ///
   /// \param [in] TI Description of a call which should be inlined.
@@ -428,65 +415,11 @@ private:
   /// `getSourceRange()` method.
   template<class T> clang::SourceRange getFileRange(T *Node) const;
 
-  /// Merges \p _Cont of tokens to string using \p delimiter between each pair
-  /// of tokens.
-  template<typename _Container>
-  std::string join(const _Container& _Cont, const std::string& delimiter) const;
-
-  /// Exchanges contents of passed objects - useful if specified objects haven't
-  /// necessary operators available (e.g. private operator=, etc).
-  /// Used only for turning off llvm::errs() during bruteforce in construct() -
-  /// each variant is attempted for parsing into correct AST (only one variant
-  /// gives correct AST) with multiple warnings and errors.
-  template<typename T>
-  void swap(T& lhs, T& rhs) const;
-
   /// Appends numeric suffix to the end of a specified identifier `Prefix`,
   /// avoids collision using set of identifiers available in a translation unit.
   ///
   /// \return New identifier which is already inserted into mIdentifiers.
   std::string addSuffix(llvm::StringRef Prefix);
-
-  /// Splits string \p s into tokens using pattern \p p
-  std::vector<std::string> tokenize(std::string s, std::string p) const;
-
-  /// Local matcher to find correct node in AST during construct()
-  class : public clang::ast_matchers::MatchFinder::MatchCallback {
-  public:
-    void run(const clang::ast_matchers::MatchFinder::MatchResult& MatchResult) {
-      const clang::VarDecl* VD
-        = MatchResult.Nodes.getNodeAs<clang::VarDecl>("varDecl");
-      if (!VD) {
-        return;
-      }
-      if (VD->getName() == mIdentifier
-        && mProcessor(VD->getType().getAsString()) == mType) {
-        ++mCount;
-      }
-      return;
-    }
-    void setParameters(const std::string& Type, const std::string& Identifier,
-      const std::function<std::string(const std::string&)>& Processor) {
-      mType = Type;
-      mIdentifier = Identifier;
-      mProcessor = Processor;
-      return;
-    }
-    int getCount(void) const {
-      return mCount;
-    }
-    void initCount(void) {
-      mCount = 0;
-      return;
-    }
-  private:
-    std::string mType;
-    std::string mIdentifier;
-    std::function<std::string(const std::string&)> mProcessor;
-    int mCount;
-  } VarDeclHandler;
-
-  const std::string mIdentifierPattern = "[[:alpha:]_]\\w*";
 
   tsar::TransformationContext* mTransformContext;
 

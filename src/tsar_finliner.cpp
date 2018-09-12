@@ -18,6 +18,7 @@
 #include "tsar_pragma.h"
 #include "SourceLocationTraverse.h"
 #include "tsar_transformation.h"
+#include "tsar_utility.h"
 
 #include <algorithm>
 #include <numeric>
@@ -525,62 +526,6 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   return true;
 }
 
-std::vector<std::string> FInliner::construct(
-  const std::string& Type, const std::string& Identifier,
-  const std::string& Context,
-  std::map<std::string, std::string>& Replacements) {
-  // custom tokenizer is needed because ASTUnit doesn't have
-  // properly setuped Lexer/Rewriter
-  const std::string TokenPattern(
-    "[(struct|union|enum)\\s+]?" + mIdentifierPattern + "|\\d+|\\S");
-  clang::ast_matchers::MatchFinder MatchFinder;
-  MatchFinder.addMatcher(clang::ast_matchers::varDecl().bind("varDecl"),
-    &VarDeclHandler);
-  std::vector<std::string> Tokens = tokenize(Type, TokenPattern);
-  for (auto& T : Tokens) {
-    if (Replacements.find(T) != std::end(Replacements)) {
-      T = Replacements[T];
-    }
-  }
-  VarDeclHandler.setParameters(join(Tokens, " "), Identifier,
-    [&](const std::string& Line) -> std::string {
-    return join(tokenize(Line, TokenPattern), " ");
-  });
-  Tokens.push_back(Identifier);
-  // multiple positions can be found in cases like 'unsigned' and 'unsigned int'
-  // which mean same type; since it's part of declaration-specifiers in grammar,
-  // it is guaranteed to be before declared identifier, just choose far position
-  // (meaning choosing longest type string)
-  // optimization: match in reverse order until success
-  std::vector<int> Counts(Tokens.size(), 0);
-  swap(llvm::errs(), llvm::nulls());
-  for (int Pos = Tokens.size() - 1; Pos >= 0; --Pos) {
-    VarDeclHandler.initCount();
-    std::unique_ptr<clang::ASTUnit> ASTUnit
-      = clang::tooling::buildASTFromCode(Context + join(Tokens, " ") + ";");
-    assert(ASTUnit.get() != nullptr && "AST construction failed");
-    /*
-    if (ASTUnit->getDiagnostics().hasErrorOccurred()) {
-      std::swap(tokens[i], tokens[std::max(i - 1, 0)]);
-      continue;
-    }
-    */
-    // AST can be correctly parsed even with errors
-    // ignore all, just try to find our node
-    MatchFinder.matchAST(ASTUnit->getASTContext());
-    Counts[Pos] = VarDeclHandler.getCount();
-    if (Counts[Pos])
-      break;
-    std::swap(Tokens[Pos], Tokens[std::max(Pos - 1, 0)]);
-  }
-  swap(llvm::errs(), llvm::nulls());
-  assert(std::find_if(std::begin(Counts), std::end(Counts),
-    [](int Count) -> bool {
-    return Count != 0;
-  }) != std::end(Counts) && "At least one valid position must be found");
-  return Tokens;
-}
-
 std::pair<std::string, std::string> FInliner::compile(
     const TemplateInstantiation &TI, ArrayRef<std::string> Args,
     const SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
@@ -600,15 +545,15 @@ std::pair<std::string, std::string> FInliner::compile(
   // Prepare formal parameters' assignments.
   initContext();
   std::string Params;
-  std::map<std::string, std::string> Replacements;
+  StringMap<std::string> Replacements;
   for (auto& PVD : CalleeFD->parameters()) {
     std::string Identifier = addSuffix(PVD->getName());
     Replacements[PVD->getName()] = Identifier;
-    std::vector<std::string> Tokens = construct(PVD->getType().getAsString(),
-      Identifier, Context, Replacements);
-    Context += join(Tokens, " ") + ";";
-    Params.append(join(Tokens, " ") + " = " + Args[PVD->getFunctionScopeIndex()]
-      + ";");
+    auto DeclT = PVD->getType().getAsString();
+    auto Tokens = buildDeclStringRef(DeclT, Identifier, Context, Replacements);
+    SmallString<128> DeclStr;
+    Context += join(Tokens.begin(), Tokens.end(), " ", DeclStr); Context += ";";
+    Params += (DeclStr + " = " + Args[PVD->getFunctionScopeIndex()] + ";").str();
     std::set<clang::SourceRange, std::less<clang::SourceRange>> ParmRefs;
     for (auto DRE : TI.mTemplate->getParmRefs(PVD))
       ParmRefs.insert(std::end(ParmRefs), getFileRange(DRE));
@@ -660,15 +605,17 @@ std::pair<std::string, std::string> FInliner::compile(
       ReachableRetStmts.push_back(S);
   bool IsNeedLabel = false;
   std::string RetId;
-  std::string RetIdDeclStmt;
+  SmallString<128> RetIdDeclStmt;
   std::string RetLab = addSuffix("L");
   if (!CalleeFD->getReturnType()->isVoidType()) {
     RetId = addSuffix("R");
     initContext();
-    std::map<std::string, std::string> Replacements;
-    auto RetTy = TI.mTemplate->getFuncDecl()->getReturnType();
-    auto Tokens = construct(RetTy.getAsString(), RetId, Context, Replacements);
-    RetIdDeclStmt = join(Tokens, " ") + ";";
+    StringMap<std::string> Replacements;
+    auto RetTy = TI.mTemplate->getFuncDecl()->getReturnType().getAsString();
+    auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
+    SmallString<128> DeclStr;
+    join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
+    RetIdDeclStmt += ";";
     for (auto *RS : ReachableRetStmts) {
       auto Text = (RetId + " = " +
         Canvas.getRewrittenText(getFileRange(RS->getRetValue())) + ";").str();
@@ -1054,49 +1001,12 @@ clang::SourceRange FInliner::getFileRange(T *Node) const {
   return tsar::getFileRange(mSourceManager, Node->getSourceRange());
 }
 
-template<typename _Container>
-std::string FInliner::join(
-  const _Container& _Cont, const std::string& delimiter) const {
-  return _Cont.size() > 0
-    ? std::accumulate(std::next(std::begin(_Cont)), std::end(_Cont),
-    std::string(*std::begin(_Cont)),
-    [&](const std::string& left, const std::string& right) {
-    return left + delimiter + right;
-  }) : "";
-}
-
-template<typename T>
-void FInliner::swap(T& LObj, T& RObj) const {
-  if (&LObj == &RObj) {
-    return;
-  }
-  char* Tmp = nullptr;
-  const int Size = sizeof(T) / sizeof(*Tmp);
-  Tmp = new char[Size];
-  std::memcpy(Tmp, &LObj, Size);
-  std::memcpy(&LObj, &RObj, Size);
-  std::memcpy(&RObj, Tmp, Size);
-  delete[] Tmp;
-  return;
-}
-
 std::string FInliner::addSuffix(StringRef Prefix) {
   std::string Id;
   for (unsigned Count = 0;
     mIdentifiers.count(Id = (Prefix + Twine(Count)).str()); ++Count);
   mIdentifiers.insert(Id);
   return Id;
-}
-
-std::vector<std::string> FInliner::tokenize(
-  std::string String, std::string Pattern) const {
-  std::vector<std::string> Tokens;
-  std::regex rgx(Pattern);
-  std::smatch sm;
-  for (; std::regex_search(String, sm, rgx) == true; String = sm.suffix()) {
-    Tokens.push_back(sm.str());
-  }
-  return Tokens;
 }
 
 // for debug
