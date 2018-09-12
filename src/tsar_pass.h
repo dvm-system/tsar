@@ -157,9 +157,11 @@ void initializeCanonicalLoopPassPass(PassRegistry &Registry);
 /// Creates a pass to determine canonical for-loops in a source code.
 FunctionPass * createCanonicalLoopPass();
 
-void initializeFunctionInlinerImmutableStoragePass(PassRegistry& Registry);
-void initializeFunctionInlinerImmutableWrapperPass(PassRegistry& Registry);
-void initializeFunctionInlinerPassPass(PassRegistry& Registry);
+/// Initializes a pass to perform source-level inline expansion using Clang.
+void initializeClangInlinerPassPass(PassRegistry& Registry);
+
+/// Creates a pass to perform source-level inline expansion using Clang.
+llvm::ModulePass *createClangInlinerPass();
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }

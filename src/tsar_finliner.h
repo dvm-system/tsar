@@ -1,84 +1,56 @@
-//===--- tsar_finliner.h - Frontend Inliner (clang) -------------*- C++ -*-===//
+//===--- tsar_finliner.h - Source-level Inliner (Clang) ---------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
 //===----------------------------------------------------------------------===//
-///
-/// \file
-/// This file declares classes and methods necessary for function source-level
-/// inlining.
-///
+//
+// This file declares classes and methods necessary for function source-level
+// inlining.
+//
 //===----------------------------------------------------------------------===//
 
+#ifndef TSAR_CLANG_INLINER_H
+#define TSAR_CLANG_INLINER_H
 
-#ifndef TSAR_FUNCTION_INLINER_H
-#define TSAR_FUNCTION_INLINER_H
-
-#include "AnalysisWrapperPass.h"
+#include "GlobalInfoExtractor.h"
 #include "tsar_pass.h"
 #include "tsar_query.h"
-#include "tsar_action.h"
-#include "GlobalInfoExtractor.h"
-#include "NamedDeclMapInfo.h"
-#include "tsar_transformation.h"
-
-#include <set>
-#include <llvm/ADT/BitmaskEnum.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/TypeLoc.h>
-#include <clang/ASTMatchers/ASTMatchFinder.h>
-#include <clang/Frontend/CompilerInstance.h>
-#include <clang/Lex/Lexer.h>
-#include <clang/Rewrite/Core/Rewriter.h>
+#include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/StringSet.h>
-#include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
+#include <utility.h>
+#include <map>
+#include <vector>
+
+namespace clang {
+class Rewriter;
+}
+
+namespace llvm {
+class Module;
+
+/// Performs source-level inline expansion.
+class ClangInlinerPass : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+  ClangInlinerPass() : ModulePass(ID) {
+    initializeClangInlinerPassPass(*PassRegistry::getPassRegistry());
+  }
+  bool runOnModule(llvm::Module &M) override;
+  void getAnalysisUsage(AnalysisUsage& AU) const override;
+};
+}
 
 namespace tsar {
+class TransformationContext;
 
 class FunctionInlinerQueryManager : public QueryManager {
 public:
   void run(llvm::Module *M, TransformationContext *Ctx) override;
 };
-
-struct FunctionInlineInfo : private bcl::Uncopyable {
-  // place data for further passes
-};
-}
-
-namespace llvm {
-using FunctionInlinerImmutableWrapper
-  = AnalysisWrapperPass<tsar::FunctionInlineInfo>;
-
-class FunctionInlinerImmutableStorage :
-  public ImmutablePass, private bcl::Uncopyable {
-public:
-  static char ID;
-
-  FunctionInlinerImmutableStorage() : ImmutablePass(ID) {}
-
-  const tsar::FunctionInlineInfo& getFunctionInlineInfo() const noexcept {
-    return mFunctionInlineInfo;
-  }
-
-  tsar::FunctionInlineInfo& getFunctionInlineInfo() noexcept {
-    return mFunctionInlineInfo;
-  }
-
-private:
-  tsar::FunctionInlineInfo mFunctionInlineInfo;
-};
-
-class FunctionInlinerPass :
-  public ModulePass, private bcl::Uncopyable {
-public:
-  static char ID;
-  FunctionInlinerPass() : ModulePass(ID) {
-    initializeFunctionInlinerPassPass(*PassRegistry::getPassRegistry());
-  }
-  bool runOnModule(llvm::Module& M) override;
-  void getAnalysisUsage(AnalysisUsage& AU) const override;
-};
-}
 
 namespace detail {
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
@@ -128,7 +100,7 @@ public:
   }
 
   void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
-  std::set<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
+  llvm::DenseSet<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
 
   void setLastStmt(const clang::Stmt *S) noexcept { mLastStmt = S; }
   const clang::Stmt * getLastStmt() const noexcept { return mLastStmt; }
@@ -161,10 +133,10 @@ public:
   }
 
 private:
-  mutable llvm::DenseMap<const clang::ParmVarDecl*, DeclRefList> mParmRefs;
-  std::set<const clang::ReturnStmt*> mRSs;
   const clang::FunctionDecl *mFuncDecl = nullptr;
   Flags mFlags = DefaultFlags;
+  mutable llvm::DenseMap<const clang::ParmVarDecl*, DeclRefList> mParmRefs;
+  llvm::DenseSet<const clang::ReturnStmt*> mRSs;
 
   /// The last statement at the top level of a function body.
   const clang::Stmt *mLastStmt = nullptr;
@@ -205,43 +177,7 @@ inline bool operator==(const TemplateInstantiation &LHS,
     && LHS.mCallExpr == RHS.mCallExpr
     && LHS.mTemplate == RHS.mTemplate;
 }
-}
-namespace llvm {
-template<> struct DenseMapInfo<::detail::TemplateInstantiation> {
-  static inline ::detail::TemplateInstantiation getEmptyKey() {
-    return ::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
-      nullptr, ::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline ::detail::TemplateInstantiation getTombstoneKey() {
-    return ::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
-      nullptr, ::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline unsigned getHashValue(
-      const ::detail::TemplateInstantiation &TI) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
-  }
-  static inline unsigned getHashValue(const clang::CallExpr *Call) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
-  }
-  static inline bool isEqual(const ::detail::TemplateInstantiation &LHS,
-      const ::detail::TemplateInstantiation &RHS) noexcept {
-    return LHS == RHS;
-  }
-  static inline bool isEqual(const clang::CallExpr *Call,
-      const ::detail::TemplateInstantiation &RHS) noexcept {
-    return RHS.mCallExpr == Call;
-  }
-};
-}
 
-namespace tsar {
-namespace detail {
 /// Represents a scope which is defined by a statement or a clause.
 class ScopeInfo {
 public:
@@ -262,7 +198,7 @@ public:
   const clang::Stmt * operator->() const { return getStmt(); }
 
   bool isClause() const { return mInfo.getPointer().getInt(); }
-  void setIsClause(bool IsClause = true) { mInfo.getPointer().setInt(IsClause); }
+  void setIsClause(bool IsClause = true) { mInfo.getPointer().setInt(IsClause);}
 
   bool isUsed() const { return mInfo.getInt(); }
   void setIsUsed(bool IsUsed = true) { mInfo.setInt(IsUsed); }
@@ -277,6 +213,38 @@ private:
 }
 
 namespace llvm {
+template<> struct DenseMapInfo<tsar::detail::TemplateInstantiation> {
+  static inline tsar::detail::TemplateInstantiation getEmptyKey() {
+    return tsar::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
+      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline tsar::detail::TemplateInstantiation getTombstoneKey() {
+    return tsar::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
+      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline unsigned getHashValue(
+      const tsar::detail::TemplateInstantiation &TI) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
+  }
+  static inline unsigned getHashValue(const clang::CallExpr *Call) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
+  }
+  static inline bool isEqual(const tsar::detail::TemplateInstantiation &LHS,
+      const tsar::detail::TemplateInstantiation &RHS) noexcept {
+    return LHS == RHS;
+  }
+  static inline bool isEqual(const clang::CallExpr *Call,
+      const tsar::detail::TemplateInstantiation &RHS) noexcept {
+    return RHS.mCallExpr == Call;
+  }
+};
+
 template<typename From> struct simplify_type;
 
 // Specialize simplify_type to allow WeakVH to participate in
@@ -296,13 +264,10 @@ template<> struct simplify_type<const tsar::detail::ScopeInfo> {
 }
 
 namespace tsar {
-/// This class provides both AST traversing and source code buffer modification
-/// (through Rewriter API). Note that the only result of its work - modified
-/// Rewriter (buffer) object inside passed Transformation Context.
-class FInliner :
-    public clang::RecursiveASTVisitor<FInliner>,
-    public clang::ASTConsumer {
-
+/// Performs inline expansion, processes calls which is marked with `inline`
+/// clause, print warnings on errors. Do not write changes to file, change
+/// memory buffer only (a specified clang::Rewriter is used).
+class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner>{
   /// This represents clause attached to a statement.
   struct ClauseToStmt {
     ClauseToStmt(const clang::Stmt *C, const clang::Stmt *S) :
@@ -317,11 +282,11 @@ class FInliner :
     llvm::DenseMap<const clang::FunctionDecl*, std::vector<ClauseToStmt>>;
 
   /// Prototype of a function which checks whether a function can be inlined.
-  using TemplateChecker = std::function<bool(const ::detail::Template &)>;
+  using TemplateChecker = std::function<bool(const detail::Template &)>;
 
   /// Chain of calls that should be inlined.
   using InlineStackImpl =
-    llvm::SmallVectorImpl<const ::detail::TemplateInstantiation *>;
+    llvm::SmallVectorImpl<const detail::TemplateInstantiation *>;
 
   /// \brief Prototype of a function which checks whether a specified function
   /// call can be inlined to a function at the bottom of a specified stack.
@@ -330,22 +295,26 @@ class FInliner :
   /// instantiation may be used. It contains only mTemplate field, other fields
   /// may be null.
   using TemplateInstantiationChecker =
-    std::function<bool(const ::detail::TemplateInstantiation &,
+    std::function<bool(const detail::TemplateInstantiation &,
       const InlineStackImpl &)>;
 public:
   /// Map from function declaration to its template.
-  using TemplateMap = std::map<const clang::FunctionDecl*, ::detail::Template>;
+  using TemplateMap = std::map<const clang::FunctionDecl*, detail::Template>;
 
   /// Map from function declarations to the list of calls from its body.
   using TemplateInstantiationMap = std::map<const clang::FunctionDecl*,
-    llvm::DenseSet<::detail::TemplateInstantiation>>;
+    llvm::DenseSet<detail::TemplateInstantiation>>;
 
-  explicit FInliner(tsar::TransformationContext* TfmCtx)
-    : mTransformContext(TfmCtx), mContext(TfmCtx->getContext()),
-    mRewriter(TfmCtx->getRewriter()),
-    mSourceManager(TfmCtx->getRewriter().getSourceMgr()),
-    mGIE(TfmCtx->getContext().getSourceManager(),
-      TfmCtx->getContext().getLangOpts()){}
+  explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context)
+    : mRewriter(Rewriter), mContext(Context),
+    mSrcMgr(Context.getSourceManager()), mLangOpts(Context.getLangOpts()),
+    mGIE(Context.getSourceManager(), Context.getLangOpts()) {}
+
+  clang::Rewriter & getRewriter() noexcept { return mRewriter; }
+  clang::ASTContext & getContext() noexcept { return mContext; }
+
+  /// Performs inline expansion.
+  void HandleTranslationUnit();
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
   bool VisitDeclRefExpr(clang::DeclRefExpr *DRE);
@@ -355,14 +324,8 @@ public:
   bool VisitDecl(clang::Decl *D);
 
   bool TraverseFunctionDecl(clang::FunctionDecl *FD);
-
   bool TraverseStmt(clang::Stmt *S);
-
   bool TraverseCallExpr(clang::CallExpr *Call);
-
-  /// Traverses AST, collects necessary information using overriden methods above
-  /// and applies it to source code using private methods below
-  void HandleTranslationUnit(clang::ASTContext& Context);
 
 private:
   /// Collects information of a macro in current location.
@@ -382,7 +345,7 @@ private:
 
   /// Check is it possible to inline a specified call at the top of a specified
   /// call stack, return true on success, print diagnostics.
-  bool checkTemplateInstantiation(::detail::TemplateInstantiation &TI,
+  bool checkTemplateInstantiation(detail::TemplateInstantiation &TI,
     const InlineStackImpl &CallStack,
     const llvm::SmallVectorImpl<TemplateInstantiationChecker> &Checkers);
 
@@ -403,7 +366,7 @@ private:
   /// if necessary and update mIdentifiers set.
   /// \return Text of instantiated function body and result identifier.
   std::pair<std::string, std::string> compile(
-    const ::detail::TemplateInstantiation &TI,
+    const detail::TemplateInstantiation &TI,
     llvm::ArrayRef<std::string> Args,
     const llvm::SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
     InlineStackImpl &CallStack);
@@ -422,7 +385,10 @@ private:
   /// mIdentifiers.
   void addSuffix(llvm::StringRef Prefix, llvm::SmallVectorImpl<char> &Out);
 
-  tsar::TransformationContext* mTransformContext;
+  clang::Rewriter &mRewriter;
+  clang::ASTContext &mContext;
+  const clang::SourceManager &mSrcMgr;
+  const clang::LangOptions &mLangOpts;
 
   /// Visitor to collect global information about a translation unit.
   GlobalInfoExtractor mGIE;
@@ -444,10 +410,6 @@ private:
   /// are used in the last traversed function.
   GlobalInfoExtractor::RawLocationSet mDeclRefLoc;
 
-  clang::ASTContext& mContext;
-  clang::SourceManager& mSourceManager;
-  clang::Rewriter& mRewriter;
-
   /// last seen function decl (with body we are currently in)
   clang::FunctionDecl* mCurrentFD = nullptr;
 
@@ -464,7 +426,5 @@ private:
   TemplateMap mTs;
   TemplateInstantiationMap mTIs;
 };
-
 }
-
-#endif//TSAR_FUNCTION_INLINER_H
+#endif//TSAR_CLANG_INLINER_H

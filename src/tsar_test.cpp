@@ -33,7 +33,6 @@
 #include "DefinedMemory.h"
 #include "DIUnparser.h"
 #include "EstimateMemory.h"
-#include "tsar_finliner.h"
 #include "tsar_fcopy_elimination.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"

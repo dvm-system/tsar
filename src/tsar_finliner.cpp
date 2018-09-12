@@ -1,91 +1,69 @@
-//===--- tsar_finliner.cpp - Frontend Inliner (clang) -----------*- C++ -*-===//
+//===--- tsar_finliner.cpp - Source-level Inliner (Clang) -------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
 //===----------------------------------------------------------------------===//
-///
-/// \file
-/// This file implements methods necessary for function source-level inlining.
-///
+//
+// This file implements methods necessary for function source-level inlining.
+//
+// TODO (kaniander@gmail.com): ASTImporter can break mapping
+//   node->source (VLAs, etc) (comments from Jury Zykov).
 //===----------------------------------------------------------------------===//
-
 
 #include "tsar_finliner.h"
 #include "ClangUtils.h"
 #include "Diagnostic.h"
-#include "GlobalInfoExtractor.h"
-#include "tsar_pass_provider.h"
 #include "tsar_pragma.h"
 #include "SourceLocationTraverse.h"
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
-
-#include <algorithm>
-#include <numeric>
-#include <regex>
-#include <map>
-#include <set>
-#include <stack>
-#include <vector>
-#include <type_traits>
-
 #include <clang/AST/ASTContext.h>
-#include <clang/AST/DeclLookups.h>
-#include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Analysis/CallGraph.h>
 #include <clang/Analysis/CFG.h>
 #include <clang/Format/Format.h>
-#include <clang/Lex/Preprocessor.h>
-#include <clang/Lex/Token.h>
-#include <llvm/IR/LegacyPassManagers.h>
+#include <clang/Lex/Lexer.h>
+#include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/ADT/PostOrderIterator.h>
-
-// FIXME: ASTImporter can break mapping node->source (VLAs, etc)
+#include <algorithm>
+#include <set>
 
 using namespace clang;
 using namespace llvm;
 using namespace tsar;
-using namespace ::detail;
+using namespace tsar::detail;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "function-inliner"
+#define DEBUG_TYPE "clang-inliner"
 
-char FunctionInlinerImmutableStorage::ID = 0;
-INITIALIZE_PASS(FunctionInlinerImmutableStorage, "function-inliner-is",
-  "Function Inliner (Immutable Storage)", true, true)
-
-template<> char FunctionInlinerImmutableWrapper::ID = 0;
-INITIALIZE_PASS(FunctionInlinerImmutableWrapper, "function-inliner-iw",
-  "Function Inliner (Immutable Wrapper)", true, true)
-
-typedef FunctionPassProvider<
-  TransformationEnginePass
-> FunctionInlinerProvider;
-
-INITIALIZE_PROVIDER_BEGIN(FunctionInlinerProvider, "function-inliner-provider",
-  "Function Inliner Data Provider")
+char ClangInlinerPass::ID = 0;
+INITIALIZE_PASS_BEGIN(ClangInlinerPass, "clang-inliner",
+  "Source-level Inliner (Clang)", false, false)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PROVIDER_END(FunctionInlinerProvider, "function-inliner-provider",
-  "Function Inliner Data Provider")
+INITIALIZE_PASS_END(ClangInlinerPass, "clang-inliner",
+  "Source-level Inliner (Clang)", false, false)
 
-char FunctionInlinerPass::ID = 0;
-INITIALIZE_PASS_BEGIN(FunctionInlinerPass, "function-inliner",
-  "Function Inliner", false, false)
-  INITIALIZE_PASS_DEPENDENCY(FunctionInlinerProvider)
-  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(FunctionInlinerPass, "function-inliner",
-  "Function Inliner", false, false)
+ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
 
-ModulePass* createFunctionInlinerPass() {
-  return new FunctionInlinerPass();
+void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
+  AU.addRequired<TransformationEnginePass>();
+  AU.setPreservesAll();
 }
 
-void FunctionInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
-  AU.addRequired<FunctionInlinerProvider>();
-  AU.addRequired<TransformationEnginePass>();
+void FunctionInlinerQueryManager::run(llvm::Module *M,
+    TransformationContext* Ctx) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (Ctx) {
+    auto TEP = static_cast<TransformationEnginePass *>(
+      createTransformationEnginePass());
+    TEP->setContext(*M, Ctx);
+    Passes.add(TEP);
+  }
+  Passes.add(createClangInlinerPass());
+  Passes.run(*M);
 }
 
 inline FilenameAdjuster getFilenameAdjuster() {
@@ -126,27 +104,18 @@ inline bool reformat(
   return false;
 }
 
-bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
+bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     errs() << "error: can not transform sources for the module "
       << M.getName() << "\n";
     return false;
   }
-  FunctionInlinerProvider::initialize<TransformationEnginePass>(
-    [&M, &TfmCtx](TransformationEnginePass& TEP) {
-    TEP.setContext(M, TfmCtx);
-  });
-  auto& Context = TfmCtx->getContext();
-  auto& Rewriter = TfmCtx->getRewriter();
-  auto& SrcMgr = Rewriter.getSourceMgr();
-  FInliner Inliner(TfmCtx);
-  Inliner.HandleTranslationUnit(Context);
-  /*for (Function& F : M) {
-    if (F.empty())
-      continue;
-    auto& Provider = getAnalysis<FunctionInlinerProvider>(F);
-  }*/
+  auto &Context = TfmCtx->getContext();
+  auto &Rewriter = TfmCtx->getRewriter();
+  auto &SrcMgr = Rewriter.getSourceMgr();
+  ClangInliner Inliner(Rewriter, Context);
+  Inliner.HandleTranslationUnit();
   TfmCtx->release(getFilenameAdjuster());
   // clang::tooling can not apply replacements over rewritten sources,
   // only over original non-modified sources
@@ -161,9 +130,7 @@ bool FunctionInlinerPass::runOnModule(llvm::Module& M) {
       clang::SourceLocation(), clang::SrcMgr::C_User);
     reformat(Rewrite, FID);
   }
-  if (Rewrite.overwriteChangedFiles() == false) {
-    llvm::outs() << "All changes were successfully saved" << '\n';
-  }
+  Rewrite.overwriteChangedFiles();
   return false;
 }
 
@@ -187,8 +154,8 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
   dbgs() << "]";
 }
 
-void templatesInfoLog(const FInliner::TemplateMap &Ts,
-    const FInliner::TemplateInstantiationMap &TIs,
+void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
+    const ClangInliner::TemplateInstantiationMap &TIs,
     const SourceManager &SM, const LangOptions &LangOpts) {
   auto sourceText = [&SM, &LangOpts](const Stmt *S) {
     auto SR = getExpansionRange(SM, S->getSourceRange());
@@ -228,7 +195,7 @@ void templatesInfoLog(const FInliner::TemplateMap &Ts,
 #endif
 }
 
-void FInliner::rememberMacroLoc(SourceLocation Loc) {
+void ClangInliner::rememberMacroLoc(SourceLocation Loc) {
   if (Loc.isInvalid() || !Loc.isMacroID())
     return;
   mTs[mCurrentFD].setMacroInDecl(Loc);
@@ -237,7 +204,7 @@ void FInliner::rememberMacroLoc(SourceLocation Loc) {
    mStmtInMacro = Loc;
 }
 
-bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
+bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   // Do not visit functions without body to avoid implicitly created templates
   // after call of mTs[CurrentFD] method.
   if (!FD->isThisDeclarationADefinition())
@@ -261,12 +228,12 @@ bool FInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   return Res;
 }
 
-bool FInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
+bool ClangInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
   mTs[mCurrentFD].addRetStmt(RS);
   return RecursiveASTVisitor::VisitReturnStmt(RS);
 }
 
-bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
+bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
     mTs[mCurrentFD].addParmRef(PVD, DRE);
   auto ND = DRE->getFoundDecl();
@@ -277,25 +244,25 @@ bool FInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   }
   DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
     mCurrentFD->getName() << "' at ";
-    DRE->getLocation().dump(mSourceManager);  dbgs() << "\n");
+    DRE->getLocation().dump(mSrcMgr);  dbgs() << "\n");
   mDeclRefLoc.insert(
-    mSourceManager.getExpansionLoc(DRE->getLocation()).getRawEncoding());
+    mSrcMgr.getExpansionLoc(DRE->getLocation()).getRawEncoding());
   return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
 }
 
-bool FInliner::VisitDecl(Decl *D) {
+bool ClangInliner::VisitDecl(Decl *D) {
   traverseSourceLocation(D,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
   return RecursiveASTVisitor::VisitDecl(D);
 }
 
-bool FInliner::VisitTypeLoc(TypeLoc TL) {
+bool ClangInliner::VisitTypeLoc(TypeLoc TL) {
   traverseSourceLocation(TL,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
   return RecursiveASTVisitor::VisitTypeLoc(TL);
 }
 
-bool FInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
+bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getDecl())) {
     if (auto OD = mGIE.findOutermostDecl(ND)) {
       DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
@@ -304,14 +271,14 @@ bool FInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
     }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentFD->getName() << "' at ";
-      TTL.getNameLoc().dump(mSourceManager);  dbgs() << "\n");
+      TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
-      mSourceManager.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
+      mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
   }
   return RecursiveASTVisitor::VisitTagTypeLoc(TTL);
 }
 
-bool FInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
+bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getTypedefNameDecl())) {
     if (auto OD = mGIE.findOutermostDecl(ND)) {
       DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
@@ -320,14 +287,14 @@ bool FInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
     }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentFD->getName() << "' at ";
-      TTL.getNameLoc().dump(mSourceManager);  dbgs() << "\n");
+      TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
-      mSourceManager.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
+      mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
   }
   return RecursiveASTVisitor::VisitTypedefTypeLoc(TTL);
 }
 
-bool FInliner::TraverseStmt(clang::Stmt *S) {
+bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   if (!S)
     return RecursiveASTVisitor::TraverseStmt(S);
   Pragma P(*S);
@@ -368,9 +335,9 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
   mScopes.pop_back();
   if (!mScopes.empty() && mScopes.back().isClause()) {
     if (!mScopes.back().isUsed()) {
-      toDiag(mSourceManager.getDiagnostics(), mScopes.back()->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mScopes.back()->getLocStart(),
         diag::warn_unexpected_directive);
-      toDiag(mSourceManager.getDiagnostics(), S->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
         diag::note_inline_no_call);
     }
     mScopes.pop_back();
@@ -380,17 +347,17 @@ bool FInliner::TraverseStmt(clang::Stmt *S) {
   // }
   // <stmt>, pragma should not mark <stmt>
   if (mActiveClause) {
-    toDiag(mSourceManager.getDiagnostics(), mActiveClause->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
       diag::warn_unexpected_directive);
     mActiveClause.reset();
   }
   return Res;
 }
 
-bool FInliner::TraverseCallExpr(CallExpr *Call) {
+bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
     getSourceText(getFileRange(Call)) << "' at ";
-    Call->getLocStart().dump(mSourceManager); dbgs() << "\n");
+    Call->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
   mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
     Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
@@ -465,10 +432,10 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   bool IsNeedBraces = !isa<CompoundStmt>(*ParentI);
   DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getFileRange(StmtWithCall)) << "' at ";
-    StmtWithCall->getLocStart().dump(mSourceManager); dbgs() << "\n");
+    StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   DEBUG(dbgs() << "[INLINE]: parent statement '" <<
     getSourceText(getFileRange(ParentI->getStmt())) << "' at ";
-    (*ParentI)->getLocStart().dump(mSourceManager); dbgs() << "\n");
+    (*ParentI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
       if (!I->isClause() || !isa<CompoundStmt>(*PrevI))
@@ -483,33 +450,33 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   }
   DEBUG(dbgs() << "[INLINE]: clause found '" <<
     getSourceText(getFileRange(ClauseI->getStmt())) << "' at ";
-    (*ClauseI)->getLocStart().dump(mSourceManager); dbgs() << "\n");
+    (*ClauseI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   const FunctionDecl* Definition = nullptr;
   Call->getDirectCallee()->hasBody(Definition);
   if (!Definition) {
-    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_no_body);
     return true;
   }
   if (InlineInMacro.isValid()) {
-    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
-    toDiag(mSourceManager.getDiagnostics(), InlineInMacro,
+    toDiag(mSrcMgr.getDiagnostics(), InlineInMacro,
       diag::note_inline_macro_prevent);
     return true;
   }
   if (InCondOp) {
-    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_in_ternary);
     return true;
   }
   if (InLoopCond) {
-    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_in_loop_cond);
     return true;
   }
   if (InForInc) {
-    toDiag(mSourceManager.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_in_for_inc);
     return true;
   }
@@ -526,15 +493,14 @@ bool FInliner::TraverseCallExpr(CallExpr *Call) {
   return true;
 }
 
-std::pair<std::string, std::string> FInliner::compile(
+std::pair<std::string, std::string> ClangInliner::compile(
     const TemplateInstantiation &TI, ArrayRef<std::string> Args,
     const SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
     InlineStackImpl &CallStack) {
   assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
   auto CalleeFD = TI.mTemplate->getFuncDecl();
-  ExternalRewriter Canvas(getFileRange(CalleeFD),
-    mContext.getSourceManager(), mContext.getLangOpts());
+  ExternalRewriter Canvas(getFileRange(CalleeFD), mSrcMgr, mLangOpts);
   std::string Context;
   // Initialize context to enable usage of tooling::buildASTFromCode function.
   auto initContext = [this, &Context, &TI]() {
@@ -656,7 +622,7 @@ std::pair<std::string, std::string> FInliner::compile(
   return { Text, RetId.str() };
 }
 
-DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
+DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
   DenseSet<const clang::FunctionDecl*> Recursive;
   for (auto &TIs : mTIs) {
     if (Recursive.count(TIs.first))
@@ -692,7 +658,7 @@ DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
   return Recursive;
 }
 
-void FInliner::checkTemplates(
+void ClangInliner::checkTemplates(
     const SmallVectorImpl<TemplateChecker> &Checkers) {
   for (auto& T : mTs) {
     if (!T.second.isNeedToInline())
@@ -705,15 +671,16 @@ void FInliner::checkTemplates(
   }
 }
 
-auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
+auto ClangInliner::getTemplateCheckers() const
+    -> SmallVector<TemplateChecker, 8> {
   SmallVector<TemplateChecker, 8> Checkers;
   // Checks that a function is defined by the user.
   Checkers.push_back([this](const Template &T) {
-    if (mSourceManager.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
+    if (mSrcMgr.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
         SrcMgr::C_User) {
       DEBUG(dbgs() << "[INLINE]: non-user defined function '" <<
         T.getFuncDecl()->getName() << "' for instantiation\n");
-      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline_system);
       return false;
     }
@@ -723,12 +690,12 @@ auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
   // does not contain function definition.
   Checkers.push_back([this](const Template &T) {
     if (T.isMacroInDecl()) {
-      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline);
-      toDiag(mSourceManager.getDiagnostics(), T.getMacroInDecl(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getMacroInDecl(),
         diag::note_inline_macro_prevent);
       if (T.getMacroSpellingHint().isValid())
-        toDiag(mSourceManager.getDiagnostics(), T.getMacroSpellingHint(),
+        toDiag(mSrcMgr.getDiagnostics(), T.getMacroSpellingHint(),
           diag::note_expanded_from_here);
       return false;
     }
@@ -737,7 +704,7 @@ auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
   /// Checks that a specified function is not a variadic.
   Checkers.push_back([this](const Template &T) {
     if (T.getFuncDecl()->isVariadic()) {
-      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline_variadic);
       return false;
     }
@@ -747,7 +714,7 @@ auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
   Checkers.push_back([this](const Template &T) {
     static auto Recursive = findRecursion();
     if (Recursive.count(T.getFuncDecl())) {
-      toDiag(mSourceManager.getDiagnostics(), T.getFuncDecl()->getLocation(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline_recursive);
       return false;
     }
@@ -756,7 +723,7 @@ auto FInliner::getTemplateCheckers() const -> SmallVector<TemplateChecker, 8> {
   return Checkers;
 }
 
-bool FInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
+bool ClangInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
     const InlineStackImpl &CallStack,
     const SmallVectorImpl<TemplateInstantiationChecker> &Checkers) {
   assert(TI.mTemplate && "Template must not be null!");
@@ -768,7 +735,7 @@ bool FInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
   return true;
 }
 
-auto FInliner::getTemplatInstantiationCheckers() const
+auto ClangInliner::getTemplatInstantiationCheckers() const
     -> SmallVector<TemplateInstantiationChecker, 8> {
   SmallVector<TemplateInstantiationChecker, 8> Checkers;
   // Checks that external dependencies are available at the call location.
@@ -778,21 +745,21 @@ auto FInliner::getTemplatInstantiationCheckers() const
       "Function as the top of stack should make a call which is checked!");
     for (auto &Caller : CallStack) {
       auto *CallerT = Caller->mTemplate;
-      auto CallerLoc = mSourceManager.getDecomposedExpansionLoc(
+      auto CallerLoc = mSrcMgr.getDecomposedExpansionLoc(
         CallerT->getFuncDecl()->getLocStart());
       auto checkFD = [this, &TI, CallerT, &CallerLoc](
         const GlobalInfoExtractor::OutermostDecl *FD) {
         if (CallerT->getForwardDecls().count(FD))
           return true;
-        auto FDLoc = mSourceManager.getDecomposedExpansionLoc(
+        auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(
           FD->getRoot()->getLocEnd());
         while (FDLoc.first.isValid() && FDLoc.first != CallerLoc.first)
-          FDLoc = mSourceManager.getDecomposedIncludedLoc(FDLoc.first);
+          FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
         if (FDLoc.first.isValid() && FDLoc.second < CallerLoc.second)
           return true;
-        toDiag(mSourceManager.getDiagnostics(), TI.mCallExpr->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
           diag::warn_disable_inline);
-        toDiag(mSourceManager.getDiagnostics(),
+        toDiag(mSrcMgr.getDiagnostics(),
           FD->getDescendant()->getLocation(),
           diag::note_inline_unresolvable_extern_dep);
         return false;
@@ -825,20 +792,20 @@ auto FInliner::getTemplatInstantiationCheckers() const
     /// with the same name. We should make this conservative search
     /// more accurate.
     auto checkCollision = [this, &TI](
-        const Decl *D, const ::detail::Template::DeclSet &FDs) {
+        const Decl *D, const Template::DeclSet &FDs) {
       if (auto ND = dyn_cast<NamedDecl>(D)) {
         // Do not use ND in find_as() because it checks that a declaration in
-        // the set equals to ND. However, we want to check that there is no local
-        // declaration which differs from forward declaration but has the same
-        // name.
+        // the set equals to ND. However, we want to check that there is
+        // no local declaration which differs from forward declaration but
+        // has the same name.
         auto HiddenItr = FDs.find_as(ND->getName());
         if (HiddenItr != FDs.end() && ND != (*HiddenItr)->getDescendant()) {
-          toDiag(mSourceManager.getDiagnostics(), TI.mCallExpr->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
             diag::warn_disable_inline);
-          toDiag(mSourceManager.getDiagnostics(),
+          toDiag(mSrcMgr.getDiagnostics(),
             (*HiddenItr)->getDescendant()->getLocation(),
             diag::note_inline_hidden_extern_dep);
-          toDiag(mSourceManager.getDiagnostics(), D->getLocation(),
+          toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
             diag::note_decl_hide);
           return false;
         }
@@ -858,13 +825,13 @@ auto FInliner::getTemplatInstantiationCheckers() const
   return Checkers;
 }
 
-void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
-  mGIE.TraverseDecl(Context.getTranslationUnitDecl());
+void ClangInliner::HandleTranslationUnit() {
+  mGIE.TraverseDecl(mContext.getTranslationUnitDecl());
   StringMap<SourceLocation> RawMacros, RawIncludes;
   for (auto &File : mGIE.getFiles()) {
     StringSet<> TmpRawIds;
-    getRawMacrosAndIncludes(File.second, File.first, mSourceManager,
-      Context.getLangOpts(), RawMacros, RawIncludes, mIdentifiers);
+    getRawMacrosAndIncludes(File.second, File.first, mSrcMgr, mLangOpts,
+      RawMacros, RawIncludes, mIdentifiers);
   }
   // We check that all includes are mentioned in AST. For example, if there is
   // an include which contains macros only and this macros do not used then
@@ -874,11 +841,11 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   for (auto &Include : RawIncludes) {
     // Do not check system files, because the may contains only macros which
     // are never used.
-    if (mSourceManager.getFileCharacteristic(Include.second) !=
+    if (mSrcMgr.getFileCharacteristic(Include.second) !=
         SrcMgr::C_User)
       continue;
     if (!mGIE.getIncludeLocs().count(Include.second.getRawEncoding())) {
-      toDiag(mSourceManager.getDiagnostics(), Include.second,
+      toDiag(mSrcMgr.getDiagnostics(), Include.second,
         diag::warn_disable_inline_include);
       return;
     }
@@ -890,19 +857,18 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   // we conservatively assume dependence from this declaration.
   // We also collects all raw identifiers mentioned in the body of each
   // user-defined function.
-  for (auto *D : Context.getTranslationUnitDecl()->decls()) {
+  for (auto *D : mContext.getTranslationUnitDecl()->decls()) {
     if (!isa<FunctionDecl>(D))
       continue;
     mDeclRefLoc.clear();
     TraverseDecl(D);
     for (auto &T : mTs) {
-      if (mSourceManager.getFileCharacteristic(T.first->getLocStart()) !=
+      if (mSrcMgr.getFileCharacteristic(T.first->getLocStart()) !=
           clang::SrcMgr::C_User)
         continue;
       if (T.second.isMacroInDecl())
         continue;
-      LocalLexer Lex(T.first->getSourceRange(),
-        Context.getSourceManager(), Context.getLangOpts());
+      LocalLexer Lex(T.first->getSourceRange(), mSrcMgr, mLangOpts);
       T.second.setKnownMayForwardDecls();
       SourceLocation LastMacro;
       while (true) {
@@ -946,7 +912,7 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
               << "'\n");
             DEBUG(dbgs() << "[INLINE]: reference to '" <<
               D.getDescendant()->getName() << "' in '" << T.first->getName() <<
-              "' at "; Tok.getLocation().dump(mSourceManager); dbgs() << "\n");
+              "' at "; Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
             }
           }
         }
@@ -954,9 +920,9 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
     }
   }
   checkTemplates(getTemplateCheckers());
-  DEBUG(templatesInfoLog(mTs, mTIs, mSourceManager, Context.getLangOpts()));
+  DEBUG(templatesInfoLog(mTs, mTIs, mSrcMgr, mLangOpts));
   CallGraph CG;
-  CG.TraverseDecl(Context.getTranslationUnitDecl());
+  CG.TraverseDecl(mContext.getTranslationUnitDecl());
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
   auto TICheckers = getTemplatInstantiationCheckers();
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
@@ -997,34 +963,18 @@ void FInliner::HandleTranslationUnit(clang::ASTContext& Context) {
   }
 }
 
-StringRef FInliner::getSourceText(const clang::SourceRange& SR) const {
-  return Lexer::getSourceText(CharSourceRange::getTokenRange(SR),
-    mContext.getSourceManager(), mContext.getLangOpts());
+StringRef ClangInliner::getSourceText(const clang::SourceRange& SR) const {
+  return Lexer::getSourceText(
+    CharSourceRange::getTokenRange(SR), mSrcMgr, mLangOpts);
 }
 
 template<class T>
-clang::SourceRange FInliner::getFileRange(T *Node) const {
-  return tsar::getFileRange(mSourceManager, Node->getSourceRange());
+clang::SourceRange ClangInliner::getFileRange(T *Node) const {
+  return tsar::getFileRange(mSrcMgr, Node->getSourceRange());
 }
 
-void FInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {
+void ClangInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {
   for (unsigned Count = 0;
     mIdentifiers.count((Prefix + Twine(Count)).toStringRef(Out)); ++Count);
   mIdentifiers.insert(StringRef(Out.data(), Out.size()));
-}
-
-// for debug
-void FunctionInlinerQueryManager::run(llvm::Module* M,
-  TransformationContext* Ctx) {
-  assert(M && "Module must not be null!");
-  legacy::PassManager Passes;
-  if (Ctx) {
-    auto TEP = static_cast<TransformationEnginePass *>(
-      createTransformationEnginePass());
-    TEP->setContext(*M, Ctx);
-    Passes.add(TEP);
-  }
-  Passes.add(createFunctionInlinerPass());
-  Passes.run(*M);
-  return;
 }
