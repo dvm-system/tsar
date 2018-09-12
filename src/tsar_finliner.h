@@ -22,7 +22,7 @@
 #include <llvm/ADT/StringSet.h>
 #include <llvm/Pass.h>
 #include <utility.h>
-#include <map>
+#include <memory>
 #include <vector>
 
 namespace clang {
@@ -51,10 +51,76 @@ class FunctionInlinerQueryManager : public QueryManager {
 public:
   void run(llvm::Module *M, TransformationContext *Ctx) override;
 };
+}
 
+namespace tsar {
 namespace detail {
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
+class Template;
+
+/// Represents one specific place in user source code where one of specified
+/// functions (for inlining) is called.
+struct TemplateInstantiation {
+  TemplateInstantiation() = delete;
+  enum Flags : uint8_t {
+    DefaultFlags = 0,
+    IsNeedBraces = 1u << 0,
+    LLVM_MARK_AS_BITMASK_ENUM(IsNeedBraces)
+  };
+  const Template *mCaller;
+  const clang::Stmt* mStmt;
+  const clang::CallExpr* mCallExpr;
+  const Template* mCallee;
+  Flags mFlags;
+};
+
+inline bool operator==(const TemplateInstantiation &LHS,
+    const TemplateInstantiation &RHS) noexcept {
+  return LHS.mCaller == RHS.mCaller
+    && LHS.mStmt == RHS.mStmt
+    && LHS.mCallExpr == RHS.mCallExpr
+    && LHS.mCallee == RHS.mCallee;
+}
+}
+}
+
+namespace llvm {
+template<> struct DenseMapInfo<tsar::detail::TemplateInstantiation> {
+  static inline tsar::detail::TemplateInstantiation getEmptyKey() {
+    return tsar::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
+      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline tsar::detail::TemplateInstantiation getTombstoneKey() {
+    return tsar::detail::TemplateInstantiation{
+      nullptr, nullptr,
+      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
+      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
+    };
+  }
+  static inline unsigned getHashValue(
+      const tsar::detail::TemplateInstantiation &TI) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
+  }
+  static inline unsigned getHashValue(const clang::CallExpr *Call) {
+    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
+  }
+  static inline bool isEqual(const tsar::detail::TemplateInstantiation &LHS,
+      const tsar::detail::TemplateInstantiation &RHS) noexcept {
+    return LHS == RHS;
+  }
+  static inline bool isEqual(const clang::CallExpr *Call,
+      const tsar::detail::TemplateInstantiation &RHS) noexcept {
+    return RHS.mCallExpr == Call;
+  }
+};
+}
+
+namespace tsar {
+namespace detail {
 /// Contains general information which describes a function.
 class Template {
   enum Flags : uint8_t {
@@ -74,6 +140,9 @@ public:
 
   /// Set of statements.
   using StmtSet = llvm::DenseSet<const clang::Stmt *>;
+
+  /// Set of calls from the current function.
+  using CallSet =  llvm::DenseSet<TemplateInstantiation>;
 
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
@@ -121,6 +190,11 @@ public:
     return mMayForwardDecls;
   }
 
+  std::pair<CallSet::iterator, bool> addCall(TemplateInstantiation &&TI) {
+    return mCalls.insert(std::move(TI));
+  }
+  const CallSet & getCalls() const noexcept { return mCalls; }
+
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
   clang::SourceLocation getMacroSpellingHint() const {
@@ -152,31 +226,8 @@ private:
   DeclSet mForwardDecls;
   DeclSet mMayForwardDecls;
   StmtSet mUnreachable;
+  CallSet mCalls;
 };
-
-/// Represents one specific place in user source code where one of specified
-/// functions (for inlining) is called.
-struct TemplateInstantiation {
-  TemplateInstantiation() = delete;
-  enum Flags : uint8_t {
-    DefaultFlags = 0,
-    IsNeedBraces = 1u << 0,
-    LLVM_MARK_AS_BITMASK_ENUM(IsNeedBraces)
-  };
-  const Template *mCaller;
-  const clang::Stmt* mStmt;
-  const clang::CallExpr* mCallExpr;
-  const Template* mCallee;
-  Flags mFlags;
-};
-
-inline bool operator==(const TemplateInstantiation &LHS,
-    const TemplateInstantiation &RHS) noexcept {
-  return LHS.mCaller == RHS.mCaller
-    && LHS.mStmt == RHS.mStmt
-    && LHS.mCallExpr == RHS.mCallExpr
-    && LHS.mCallee == RHS.mCallee;
-}
 
 /// Represents a scope which is defined by a statement or a clause.
 class ScopeInfo {
@@ -213,38 +264,6 @@ private:
 }
 
 namespace llvm {
-template<> struct DenseMapInfo<tsar::detail::TemplateInstantiation> {
-  static inline tsar::detail::TemplateInstantiation getEmptyKey() {
-    return tsar::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
-      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline tsar::detail::TemplateInstantiation getTombstoneKey() {
-    return tsar::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
-      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline unsigned getHashValue(
-      const tsar::detail::TemplateInstantiation &TI) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
-  }
-  static inline unsigned getHashValue(const clang::CallExpr *Call) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
-  }
-  static inline bool isEqual(const tsar::detail::TemplateInstantiation &LHS,
-      const tsar::detail::TemplateInstantiation &RHS) noexcept {
-    return LHS == RHS;
-  }
-  static inline bool isEqual(const clang::CallExpr *Call,
-      const tsar::detail::TemplateInstantiation &RHS) noexcept {
-    return RHS.mCallExpr == Call;
-  }
-};
-
 template<typename From> struct simplify_type;
 
 // Specialize simplify_type to allow WeakVH to participate in
@@ -286,11 +305,8 @@ class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner> {
       const InlineStackImpl &)>;
 public:
   /// Map from function declaration to its template.
-  using TemplateMap = std::map<const clang::FunctionDecl*, detail::Template>;
-
-  /// Map from function declarations to the list of calls from its body.
-  using TemplateInstantiationMap = std::map<const clang::FunctionDecl*,
-    llvm::DenseSet<detail::TemplateInstantiation>>;
+  using TemplateMap = llvm::DenseMap<
+    const clang::FunctionDecl*, std::unique_ptr<detail::Template>>;
 
   explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context)
     : mRewriter(Rewriter), mContext(Context),
@@ -332,7 +348,7 @@ private:
 
   /// Check is it possible to inline a specified call at the top of a specified
   /// call stack, return true on success, print diagnostics.
-  bool checkTemplateInstantiation(detail::TemplateInstantiation &TI,
+  bool checkTemplateInstantiation(const detail::TemplateInstantiation &TI,
     const InlineStackImpl &CallStack,
     const llvm::SmallVectorImpl<TemplateInstantiationChecker> &Checkers);
 
@@ -403,13 +419,12 @@ private:
   /// These identifiers is used to prevent conflicts when new identifiers
   /// are added to the source code. It is convenient to avoid intersection with
   /// all available identifiers (including the local ones). For example,
-  /// if chain of calls should be inlnined in a function, it is necessary to
+  /// if chain of calls should be inlined in a function, it is necessary to
   /// check that all new identifiers do not hide forward declarations of all
   /// functions in this chain.
   llvm::StringSet<> mIdentifiers;
 
   TemplateMap mTs;
-  TemplateInstantiationMap mTIs;
 };
 }
 #endif//TSAR_CLANG_INLINER_H

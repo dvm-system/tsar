@@ -155,7 +155,6 @@ void printLocLog(const SourceManager &SM, SourceRange R) {
 }
 
 void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
-    const ClangInliner::TemplateInstantiationMap &TIs,
     const SourceManager &SM, const LangOptions &LangOpts) {
   auto sourceText = [&SM, &LangOpts](const Stmt *S) {
     auto SR = getExpansionRange(SM, S->getSourceRange());
@@ -164,28 +163,30 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
   };
   llvm::dbgs() << "[INLINE]: enabled templates (" <<
     std::count_if(std::begin(Ts), std::end(Ts),
-      [](const std::pair<const clang::FunctionDecl*, Template> &LHS) {
-        return LHS.second.isNeedToInline();
+      [](const std::pair<
+        const clang::FunctionDecl*, std::unique_ptr<Template>> &LHS) {
+        return LHS.second->isNeedToInline();
       }) << "):\n";
   for (auto &T : Ts)
-    if (T.second.isNeedToInline())
+    if (T.second->isNeedToInline())
       llvm::dbgs() << " '" << T.first->getName() << "'";
   llvm::dbgs() << '\n';
   llvm::dbgs() << "[INLINE]: disabled templates (" <<
     std::count_if(std::begin(Ts), std::end(Ts),
-      [](const std::pair<const clang::FunctionDecl*, Template> &LHS) {
-        return !LHS.second.isNeedToInline();
+      [](const std::pair<
+        const clang::FunctionDecl*, std::unique_ptr<Template>> &LHS) {
+        return !LHS.second->isNeedToInline();
       }) << "):\n";
   for (auto &T : Ts)
-    if (!T.second.isNeedToInline())
+    if (!T.second->isNeedToInline())
       llvm::dbgs() << " '" << T.first->getName() << "'";
   llvm::dbgs() << '\n';
   llvm::dbgs() << "[INLINE]: total template instantiations:\n";
-  for (auto &TIs : TIs) {
-    if (TIs.second.empty())
+  for (auto &T : Ts) {
+    if (T.second->getCalls().empty())
       continue;
-    llvm::dbgs() << " in '" << TIs.first->getName() << "':\n";
-    for (auto &TI : TIs.second) {
+    llvm::dbgs() << " in '" << T.first->getName() << "':\n";
+    for (auto &TI : T.second->getCalls()) {
       llvm::dbgs() << "  '" << sourceText(TI.mCallExpr) << "' at ";
       TI.mCallExpr->getLocStart().dump(SM);
       dbgs() << "\n";
@@ -205,8 +206,6 @@ void ClangInliner::rememberMacroLoc(SourceLocation Loc) {
 }
 
 bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
-  // Do not visit functions without body to avoid implicitly created templates
-  // after call of mTs[FD] method.
   if (!FD->isThisDeclarationADefinition())
     return true;
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
@@ -215,9 +214,10 @@ bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
     + FD->getName()).str().data());
   llvm::SmallPtrSet<clang::CFGBlock *, 8> UB;
   unreachableBlocks(*CFG, UB);
-  mCurrentT = &mTs.emplace(std::piecewise_construct,
-    std::forward_as_tuple(FD),
-    std::forward_as_tuple(FD)).first->second;
+  auto &NewT = mTs.try_emplace(FD).first->second;
+  if (!NewT)
+    NewT = llvm::make_unique<Template>(FD);
+  mCurrentT = NewT.get();
   for (auto *BB : UB)
     for (auto &I : *BB)
       if (auto CS = I.getAs<clang::CFGStmt>())
@@ -363,10 +363,9 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
   if (!RecursiveASTVisitor::TraverseCallExpr(Call))
     return false;
-  auto &TIs = mTIs[mCurrentT->getFuncDecl()];
   // Some calls may be visited multiple times.
   // For example, struct A A1 = { .X = f() };
-  if (TIs.find_as(Call) != TIs.end())
+  if (mCurrentT->getCalls().find_as(Call) != mCurrentT->getCalls().end())
     return true;
   std::swap(InlineInMacro, mStmtInMacro);
   if (mStmtInMacro.isInvalid())
@@ -486,14 +485,14 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   // Template may not exist yet if forward declaration of a function is used.
-  auto &CalleeT = mTs.emplace(std::piecewise_construct,
-    std::forward_as_tuple(Definition),
-    std::forward_as_tuple(Definition)).first->second;
-  CalleeT.setNeedToInline();
-  auto Flags = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
+  auto &CalleeT = mTs.try_emplace(Definition).first->second;
+  if (!CalleeT)
+    CalleeT = llvm::make_unique<Template>(Definition);
+  CalleeT->setNeedToInline();
+  auto F = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
     TemplateInstantiation::DefaultFlags;
-  TIs.insert(
-    TemplateInstantiation{ mCurrentT, StmtWithCall, Call, &CalleeT, Flags });
+  mCurrentT->addCall(
+    TemplateInstantiation{ mCurrentT, StmtWithCall, Call, CalleeT.get(), F });
   return true;
 }
 
@@ -535,38 +534,35 @@ std::pair<std::string, std::string> ClangInliner::compile(
   }
   // Now, we recursively inline all marked calls from the current function and
   // we also update external buffer. Note that we do not change input buffer.
-  auto CallsItr = mTIs.find(CalleeFD);
-  if (CallsItr != mTIs.end()) {
-    for (auto &CallTI : CallsItr->second) {
-      /// TODO (kaniandr@gmail.com): print warning in case of unreachable
-      /// statements.
-      if (TI.mCallee->getUnreachableStmts().count(CallTI.mStmt))
-        continue;
-      if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
-        continue;
-      SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());
-      std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
-        std::begin(Args), [this, &Canvas](const clang::Expr* Arg) {
-          return Canvas.getRewrittenText(getFileRange(Arg));
-      });
-      CallStack.push_back(&CallTI);
-      auto Text = compile(CallTI, Args, TICheckers, CallStack);
-      CallStack.pop_back();
-      auto CallExpr = getSourceText(getFileRange(CallTI.mCallExpr));
-      if (!Text.second.empty()) {
-        bool Res = Canvas.ReplaceText(
-          getFileRange(CallTI.mCallExpr), Text.second);
-        assert(!Res && "Can not replace text in an external buffer!");
-        Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
-        // We will rewrite CallTI.mStmt without final ';'.
-        Text.first += ';';
-        if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
-          Text.first = "{" + Text.first + "}";
-      }
-      bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
-        ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+  for (auto &CallTI : TI.mCallee->getCalls()) {
+    /// TODO (kaniandr@gmail.com): print warning in case of unreachable
+    /// statements.
+    if (TI.mCallee->getUnreachableStmts().count(CallTI.mStmt))
+      continue;
+    if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
+      continue;
+    SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());
+    std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
+      std::begin(Args), [this, &Canvas](const clang::Expr* Arg) {
+        return Canvas.getRewrittenText(getFileRange(Arg));
+    });
+    CallStack.push_back(&CallTI);
+    auto Text = compile(CallTI, Args, TICheckers, CallStack);
+    CallStack.pop_back();
+    auto CallExpr = getSourceText(getFileRange(CallTI.mCallExpr));
+    if (!Text.second.empty()) {
+      bool Res = Canvas.ReplaceText(
+        getFileRange(CallTI.mCallExpr), Text.second);
       assert(!Res && "Can not replace text in an external buffer!");
+      Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
+      // We will rewrite CallTI.mStmt without final ';'.
+      Text.first += ';';
+      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
+        Text.first = "{" + Text.first + "}";
     }
+    bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
+      ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+    assert(!Res && "Can not replace text in an external buffer!");
   }
   SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
   for (auto *S : TI.mCallee->getRetStmts())
@@ -628,10 +624,10 @@ std::pair<std::string, std::string> ClangInliner::compile(
 
 DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
   DenseSet<const clang::FunctionDecl*> Recursive;
-  for (auto &TIs : mTIs) {
-    if (Recursive.count(TIs.first))
+  for (auto &T : mTs) {
+    if (Recursive.count(T.first))
       continue;
-    DenseSet<const clang::FunctionDecl *> Callers = { TIs.first };
+    DenseSet<const clang::FunctionDecl *> Callers = { T.first };
     DenseSet<const clang::FunctionDecl *> Callees;
     auto isStepRecursion = [&Callers, &Callees, &Recursive]() {
       for (auto Caller : Callers)
@@ -640,17 +636,15 @@ DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
           return true;
         }
     };
-    for (auto &TIs : TIs.second)
+    for (auto &TIs : T.second->getCalls())
       if (TIs.mCallee && TIs.mCallee->isNeedToInline())
         Callees.insert(TIs.mCallee->getFuncDecl());
     while (!Callees.empty() && !isStepRecursion()) {
       DenseSet<const clang::FunctionDecl *> NewCallees;
       for (auto Caller : Callees) {
-        auto I = mTIs.find(Caller);
-        if (I == mTIs.end())
-          continue;
+        auto I = mTs.find(Caller);
         bool NeedToAdd = false;
-        for (auto &TI : I->second)
+        for (auto &TI : I->second->getCalls())
           if (NeedToAdd = (TI.mCallee && TI.mCallee->isNeedToInline()))
             NewCallees.insert(TI.mCallee->getFuncDecl());
         if (NeedToAdd)
@@ -665,11 +659,11 @@ DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
 void ClangInliner::checkTemplates(
     const SmallVectorImpl<TemplateChecker> &Checkers) {
   for (auto& T : mTs) {
-    if (!T.second.isNeedToInline())
+    if (!T.second->isNeedToInline())
       continue;
     for (auto &Checker : Checkers)
-      if (!Checker(T.second)) {
-        T.second.disableInline();
+      if (!Checker(*T.second)) {
+        T.second->disableInline();
         break;
       }
   }
@@ -727,7 +721,7 @@ auto ClangInliner::getTemplateCheckers() const
   return Checkers;
 }
 
-bool ClangInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
+bool ClangInliner::checkTemplateInstantiation(const TemplateInstantiation &TI,
     const InlineStackImpl &CallStack,
     const SmallVectorImpl<TemplateInstantiationChecker> &Checkers) {
   assert(TI.mCallee && "Template must not be null!");
@@ -871,10 +865,10 @@ void ClangInliner::HandleTranslationUnit() {
       if (mSrcMgr.getFileCharacteristic(T.first->getLocStart()) !=
           clang::SrcMgr::C_User)
         continue;
-      if (T.second.isMacroInDecl())
+      if (T.second->isMacroInDecl())
         continue;
       LocalLexer Lex(T.first->getSourceRange(), mSrcMgr, mLangOpts);
-      T.second.setKnownMayForwardDecls();
+      T.second->setKnownMayForwardDecls();
       SourceLocation LastMacro;
       while (true) {
         Token Tok;
@@ -884,7 +878,7 @@ void ClangInliner::HandleTranslationUnit() {
           auto MacroLoc = Tok.getLocation();
           Lex.LexFromRawLexer(Tok);
           if (Tok.getRawIdentifier() != "pragma")
-            T.second.setMacroInDecl(LastMacro);
+            T.second->setMacroInDecl(LastMacro);
           continue;
         }
         if (Tok.isNot(tok::raw_identifier))
@@ -901,7 +895,7 @@ void ClangInliner::HandleTranslationUnit() {
         // possible to inline f().
         auto MacroItr = RawMacros.find(Tok.getRawIdentifier());
         if (MacroItr != RawMacros.end())
-          T.second.setMacroInDecl(Tok.getLocation(), MacroItr->second);
+          T.second->setMacroInDecl(Tok.getLocation(), MacroItr->second);
         if (Tok.getRawIdentifier() == T.first->getName())
           continue;
         if (!mDeclRefLoc.count(Tok.getLocation().getRawEncoding())) {
@@ -911,7 +905,7 @@ void ClangInliner::HandleTranslationUnit() {
           auto GlobalItr = mGIE.getOutermostDecls().find(Tok.getRawIdentifier());
           if (GlobalItr != mGIE.getOutermostDecls().end()) {
             for (auto &D : GlobalItr->second) {
-              T.second.addMayForwardDecl(&D);
+              T.second->addMayForwardDecl(&D);
             DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
               T.first->getName() << "' found '" << D.getDescendant()->getName()
               << "'\n");
@@ -925,7 +919,7 @@ void ClangInliner::HandleTranslationUnit() {
     }
   }
   checkTemplates(getTemplateCheckers());
-  DEBUG(templatesInfoLog(mTs, mTIs, mSrcMgr, mLangOpts));
+  DEBUG(templatesInfoLog(mTs, mSrcMgr, mLangOpts));
   CallGraph CG;
   CG.TraverseDecl(mContext.getTranslationUnitDecl());
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
@@ -933,16 +927,16 @@ void ClangInliner::HandleTranslationUnit() {
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
     if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
       continue;
-    auto CallsItr = mTIs.find(cast<FunctionDecl>((*I)->getDecl()));
-    if (CallsItr == mTIs.end())
+    auto CallsItr = mTs.find(cast<FunctionDecl>((*I)->getDecl()));
+    if (CallsItr == mTs.end() || CallsItr->second->getCalls().empty())
       continue;
     SmallVector<const TemplateInstantiation *, 8> CallStack;
     // We create a bogus template instantiation to identify a root of call graph
     // subtree which should be inlined.
     TemplateInstantiation BogusTI { nullptr, nullptr, nullptr,
-      &mTs[CallsItr->first], TemplateInstantiation::DefaultFlags };
+      mTs[CallsItr->first].get(), TemplateInstantiation::DefaultFlags };
     CallStack.push_back(&BogusTI);
-    for (auto &TI : CallsItr->second) {
+    for (auto &TI : CallsItr->second->getCalls()) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
         continue;
       SmallVector<std::string, 8> Args(TI.mCallExpr->getNumArgs());
