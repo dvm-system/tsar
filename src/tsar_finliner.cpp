@@ -547,8 +547,9 @@ std::pair<std::string, std::string> FInliner::compile(
   std::string Params;
   StringMap<std::string> Replacements;
   for (auto& PVD : CalleeFD->parameters()) {
-    std::string Identifier = addSuffix(PVD->getName());
-    Replacements[PVD->getName()] = Identifier;
+    SmallString<32> Identifier;
+    addSuffix(PVD->getName(), Identifier);
+    Replacements[PVD->getName()] = Identifier.str();
     auto DeclT = PVD->getType().getAsString();
     auto Tokens = buildDeclStringRef(DeclT, Identifier, Context, Replacements);
     SmallString<128> DeclStr;
@@ -604,31 +605,36 @@ std::pair<std::string, std::string> FInliner::compile(
     else
       ReachableRetStmts.push_back(S);
   bool IsNeedLabel = false;
-  std::string RetId;
   SmallString<128> RetIdDeclStmt;
-  std::string RetLab = addSuffix("L");
+  SmallString<8> RetId, RetLab;
+  addSuffix("L", RetLab);
   if (!CalleeFD->getReturnType()->isVoidType()) {
-    RetId = addSuffix("R");
+    addSuffix("R", RetId);
     initContext();
     StringMap<std::string> Replacements;
     auto RetTy = TI.mTemplate->getFuncDecl()->getReturnType().getAsString();
     auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
-    SmallString<128> DeclStr;
     join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
     RetIdDeclStmt += ";";
     for (auto *RS : ReachableRetStmts) {
-      auto Text = (RetId + " = " +
-        Canvas.getRewrittenText(getFileRange(RS->getRetValue())) + ";").str();
-      if (RS != TI.mTemplate->getLastStmt()) {
+      SmallString<256> Text;
+      raw_svector_ostream TextOS(Text);
+      auto RetValue = Canvas.getRewrittenText(getFileRange(RS->getRetValue()));
+      if (RS == TI.mTemplate->getLastStmt()) {
+        TextOS << RetId << " = " << RetValue << ";";
+      } else {
         IsNeedLabel = true;
-        Text += "goto " + RetLab + ";";
-        Text = "{ " + Text + " }";
+        TextOS << "{";
+        TextOS << RetId << " = " << RetValue << ";";
+        TextOS << "goto " << RetLab << ";";
+        TextOS << "}";
       }
       bool Res = Canvas.ReplaceText(getFileRange(RS), Text);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   } else {
-    std::string RetStmt("goto " + RetLab);
+    SmallString<16> RetStmt;
+    ("goto " + RetLab).toVector(RetStmt);
     for (auto *RS : ReachableRetStmts) {
       if (RS == TI.mTemplate->getLastStmt())
         continue;
@@ -644,10 +650,10 @@ std::pair<std::string, std::string> FInliner::compile(
   }
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
   if (IsNeedLabel)
-    Text.insert(Text.size() - 1, RetLab + ":;");
+    Text.insert(Text.size() - 1, (RetLab + ":;").str());
   Text.insert(Text.begin() + 1, Params.begin(), Params.end());
   Text.insert(Text.begin(), RetIdDeclStmt.begin(), RetIdDeclStmt.end());
-  return { Text, RetId };
+  return { Text, RetId.str() };
 }
 
 DenseSet<const clang::FunctionDecl *> FInliner::findRecursion() const {
@@ -1001,12 +1007,10 @@ clang::SourceRange FInliner::getFileRange(T *Node) const {
   return tsar::getFileRange(mSourceManager, Node->getSourceRange());
 }
 
-std::string FInliner::addSuffix(StringRef Prefix) {
-  std::string Id;
+void FInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {
   for (unsigned Count = 0;
-    mIdentifiers.count(Id = (Prefix + Twine(Count)).str()); ++Count);
-  mIdentifiers.insert(Id);
-  return Id;
+    mIdentifiers.count((Prefix + Twine(Count)).toStringRef(Out)); ++Count);
+  mIdentifiers.insert(StringRef(Out.data(), Out.size()));
 }
 
 // for debug

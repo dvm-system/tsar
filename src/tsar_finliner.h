@@ -418,8 +418,9 @@ private:
   /// Appends numeric suffix to the end of a specified identifier `Prefix`,
   /// avoids collision using set of identifiers available in a translation unit.
   ///
-  /// \return New identifier which is already inserted into mIdentifiers.
-  std::string addSuffix(llvm::StringRef Prefix);
+  /// \param [out] Out New identifier which is already inserted into
+  /// mIdentifiers.
+  void addSuffix(llvm::StringRef Prefix, llvm::SmallVectorImpl<char> &Out);
 
   tsar::TransformationContext* mTransformContext;
 
