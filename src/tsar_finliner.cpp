@@ -493,8 +493,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   auto Flags = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
     TemplateInstantiation::DefaultFlags;
   TIs.insert(
-    TemplateInstantiation{ mCurrentT->getFuncDecl(),
-      StmtWithCall, Call, &CalleeT, Flags });
+    TemplateInstantiation{ mCurrentT, StmtWithCall, Call, &CalleeT, Flags });
   return true;
 }
 
@@ -502,15 +501,15 @@ std::pair<std::string, std::string> ClangInliner::compile(
     const TemplateInstantiation &TI, ArrayRef<std::string> Args,
     const SmallVectorImpl<TemplateInstantiationChecker> &TICheckers,
     InlineStackImpl &CallStack) {
-  assert(TI.mTemplate->getFuncDecl()->getNumParams() == Args.size()
+  assert(TI.mCallee->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
-  auto CalleeFD = TI.mTemplate->getFuncDecl();
+  auto CalleeFD = TI.mCallee->getFuncDecl();
   ExternalRewriter Canvas(getFileRange(CalleeFD), mSrcMgr, mLangOpts);
   std::string Context;
   // Initialize context to enable usage of tooling::buildASTFromCode function.
   auto initContext = [this, &Context, &TI]() {
     Context.clear();
-    for (auto D : TI.mTemplate->getForwardDecls())
+    for (auto D : TI.mCallee->getForwardDecls())
       Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
   };
   // Prepare formal parameters' assignments.
@@ -527,7 +526,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     Context += join(Tokens.begin(), Tokens.end(), " ", DeclStr); Context += ";";
     Params += (DeclStr + " = " + Args[PVD->getFunctionScopeIndex()] + ";").str();
     std::set<clang::SourceRange, std::less<clang::SourceRange>> ParmRefs;
-    for (auto DRE : TI.mTemplate->getParmRefs(PVD))
+    for (auto DRE : TI.mCallee->getParmRefs(PVD))
       ParmRefs.insert(std::end(ParmRefs), getFileRange(DRE));
     for (auto& SR : ParmRefs) {
       bool Res = Canvas.ReplaceText(SR, Identifier);
@@ -541,7 +540,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     for (auto &CallTI : CallsItr->second) {
       /// TODO (kaniandr@gmail.com): print warning in case of unreachable
       /// statements.
-      if (TI.mTemplate->getUnreachableStmts().count(CallTI.mStmt))
+      if (TI.mCallee->getUnreachableStmts().count(CallTI.mStmt))
         continue;
       if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
         continue;
@@ -570,8 +569,8 @@ std::pair<std::string, std::string> ClangInliner::compile(
     }
   }
   SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
-  for (auto *S : TI.mTemplate->getRetStmts())
-    if (TI.mTemplate->getUnreachableStmts().count(S))
+  for (auto *S : TI.mCallee->getRetStmts())
+    if (TI.mCallee->getUnreachableStmts().count(S))
       UnreachableRetStmts.push_back(S);
     else
       ReachableRetStmts.push_back(S);
@@ -583,7 +582,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     addSuffix("R", RetId);
     initContext();
     StringMap<std::string> Replacements;
-    auto RetTy = TI.mTemplate->getFuncDecl()->getReturnType().getAsString();
+    auto RetTy = TI.mCallee->getFuncDecl()->getReturnType().getAsString();
     auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
     join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
     RetIdDeclStmt += ";";
@@ -591,7 +590,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
       SmallString<256> Text;
       raw_svector_ostream TextOS(Text);
       auto RetValue = Canvas.getRewrittenText(getFileRange(RS->getRetValue()));
-      if (RS == TI.mTemplate->getLastStmt()) {
+      if (RS == TI.mCallee->getLastStmt()) {
         TextOS << RetId << " = " << RetValue << ";";
       } else {
         IsNeedLabel = true;
@@ -607,7 +606,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     SmallString<16> RetStmt;
     ("goto " + RetLab).toVector(RetStmt);
     for (auto *RS : ReachableRetStmts) {
-      if (RS == TI.mTemplate->getLastStmt())
+      if (RS == TI.mCallee->getLastStmt())
         continue;
       IsNeedLabel = true;
       bool Res = Canvas.ReplaceText(getFileRange(RS), RetStmt);
@@ -642,8 +641,8 @@ DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
         }
     };
     for (auto &TIs : TIs.second)
-      if (TIs.mTemplate && TIs.mTemplate->isNeedToInline())
-        Callees.insert(TIs.mTemplate->getFuncDecl());
+      if (TIs.mCallee && TIs.mCallee->isNeedToInline())
+        Callees.insert(TIs.mCallee->getFuncDecl());
     while (!Callees.empty() && !isStepRecursion()) {
       DenseSet<const clang::FunctionDecl *> NewCallees;
       for (auto Caller : Callees) {
@@ -652,8 +651,8 @@ DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
           continue;
         bool NeedToAdd = false;
         for (auto &TI : I->second)
-          if (NeedToAdd = (TI.mTemplate && TI.mTemplate->isNeedToInline()))
-            NewCallees.insert(TI.mTemplate->getFuncDecl());
+          if (NeedToAdd = (TI.mCallee && TI.mCallee->isNeedToInline()))
+            NewCallees.insert(TI.mCallee->getFuncDecl());
         if (NeedToAdd)
           Callers.insert(Caller);
       }
@@ -731,8 +730,8 @@ auto ClangInliner::getTemplateCheckers() const
 bool ClangInliner::checkTemplateInstantiation(TemplateInstantiation &TI,
     const InlineStackImpl &CallStack,
     const SmallVectorImpl<TemplateInstantiationChecker> &Checkers) {
-  assert(TI.mTemplate && "Template must not be null!");
-  if (!TI.mTemplate->isNeedToInline())
+  assert(TI.mCallee && "Template must not be null!");
+  if (!TI.mCallee->isNeedToInline())
     return false;
   for (auto &Checker : Checkers)
     if (!Checker(TI, CallStack))
@@ -746,10 +745,10 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
   // Checks that external dependencies are available at the call location.
   Checkers.push_back([this](const TemplateInstantiation &TI,
       const InlineStackImpl &CallStack) {
-    assert(CallStack.back()->mTemplate->getFuncDecl() == TI.mFuncDecl &&
+    assert(CallStack.back()->mCallee == TI.mCaller &&
       "Function as the top of stack should make a call which is checked!");
     for (auto &Caller : CallStack) {
-      auto *CallerT = Caller->mTemplate;
+      auto *CallerT = Caller->mCallee;
       auto CallerLoc = mSrcMgr.getDecomposedExpansionLoc(
         CallerT->getFuncDecl()->getLocStart());
       auto checkFD = [this, &TI, CallerT, &CallerLoc](
@@ -769,10 +768,10 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
           diag::note_inline_unresolvable_extern_dep);
         return false;
       };
-      for (auto FD : TI.mTemplate->getForwardDecls())
+      for (auto FD : TI.mCallee->getForwardDecls())
         if (!checkFD(FD))
           return false;
-      for (auto FD : TI.mTemplate->getMayForwardDecls())
+      for (auto FD : TI.mCallee->getMayForwardDecls())
         if (!checkFD(FD))
           return false;
     }
@@ -787,9 +786,9 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
   // void f1() { int X; f(); }
   Checkers.push_back([this](const TemplateInstantiation &TI,
       const InlineStackImpl &CallStack) {
-    assert(CallStack.back()->mTemplate->getFuncDecl() == TI.mFuncDecl &&
+    assert(CallStack.back()->mCallee == TI.mCaller &&
       "Function as the top of stack should make a call which is checked!");
-    auto FDs = TI.mTemplate->getForwardDecls();
+    auto FDs = TI.mCallee->getForwardDecls();
     if (FDs.empty())
       return true;
     /// TODO (kaniandr@gmail.com): we do not check declaration context of the
@@ -818,10 +817,10 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
       return true;
     };
     for (auto *Caller : CallStack) {
-      for (auto D : Caller->mTemplate->getFuncDecl()->decls()) {
-        if (!checkCollision(D, TI.mTemplate->getForwardDecls()))
+      for (auto D : Caller->mCallee->getFuncDecl()->decls()) {
+        if (!checkCollision(D, TI.mCallee->getForwardDecls()))
           return false;
-        if (!checkCollision(D, TI.mTemplate->getMayForwardDecls()))
+        if (!checkCollision(D, TI.mCallee->getMayForwardDecls()))
           return false;
       }
     }

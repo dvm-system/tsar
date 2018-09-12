@@ -155,7 +155,7 @@ private:
 };
 
 /// Represents one specific place in user source code where one of specified
-/// functions (for inlining) is called
+/// functions (for inlining) is called.
 struct TemplateInstantiation {
   TemplateInstantiation() = delete;
   enum Flags : uint8_t {
@@ -163,19 +163,19 @@ struct TemplateInstantiation {
     IsNeedBraces = 1u << 0,
     LLVM_MARK_AS_BITMASK_ENUM(IsNeedBraces)
   };
-  const clang::FunctionDecl* mFuncDecl;
+  const Template *mCaller;
   const clang::Stmt* mStmt;
   const clang::CallExpr* mCallExpr;
-  const Template* mTemplate;
+  const Template* mCallee;
   Flags mFlags;
 };
 
 inline bool operator==(const TemplateInstantiation &LHS,
     const TemplateInstantiation &RHS) noexcept {
-  return LHS.mFuncDecl == RHS.mFuncDecl
+  return LHS.mCaller == RHS.mCaller
     && LHS.mStmt == RHS.mStmt
     && LHS.mCallExpr == RHS.mCallExpr
-    && LHS.mTemplate == RHS.mTemplate;
+    && LHS.mCallee == RHS.mCallee;
 }
 
 /// Represents a scope which is defined by a statement or a clause.
@@ -279,7 +279,7 @@ class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner> {
   /// call can be inlined to a function at the bottom of a specified stack.
   ///
   /// Note, that to represent a function at the bottom of stack bogus template
-  /// instantiation may be used. It contains only mTemplate field, other fields
+  /// instantiation may be used. It contains only mCallee field, other fields
   /// may be null.
   using TemplateInstantiationChecker =
     std::function<bool(const detail::TemplateInstantiation &,
