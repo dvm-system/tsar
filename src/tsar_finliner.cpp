@@ -451,6 +451,11 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   DEBUG(dbgs() << "[INLINE]: clause found '" <<
     getSourceText(getFileRange(ClauseI->getStmt())) << "' at ";
     (*ClauseI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+  // We mark this clause here, however checks bellow may disable inline
+  // expansion of the current call. It seems the we should not diagnose the
+  // clause as unused in this case. We only diagnose that some calls can not be
+  // inlined (may be all calls).
+  ClauseI->setIsUsed();
   const FunctionDecl* Definition = nullptr;
   Call->getDirectCallee()->hasBody(Definition);
   if (!Definition) {
@@ -480,7 +485,6 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       diag::warn_disable_inline_in_for_inc);
     return true;
   }
-  ClauseI->setIsUsed();
   // Template may not exist yet if forward declaration of a function is used.
   auto &CalleeT = mTs.emplace(std::piecewise_construct,
     std::forward_as_tuple(Definition),
