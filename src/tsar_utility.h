@@ -55,10 +55,17 @@ std::string join(ItrT I, ItrT EI, llvm::StringRef Delimiter) {
 /// \brief Splits a specified string into tokens according to a specified
 /// pattern.
 ///
-/// See std::regex for syntax of a pattern string. Note, that this function
-/// does not allocate memory for the result. This means that result vector
-/// contains references to substrings of a specified string `Str` and the
-/// vector will be valid only while `Str` is valid.
+/// See std::regex for syntax of a pattern string. If there are successful
+/// sub-matches, each of them becomes a token. Otherwise, the whole matching
+/// sequence becomes a token.
+/// For example, in case of `(struct)\s` pattern and `struct A` string, `struct`
+/// is a token (the whole matching sequence is `struct `). However, in case of
+/// `struct\s` pattern `strcut ` is a token.
+///
+/// \attention Note, that this function does not allocate memory for the result.
+/// This means that result vector contains references to substrings of
+/// a specified string `Str` and the vector will be valid only while
+/// `Str` is valid.
 std::vector<llvm::StringRef> tokenize(
   llvm::StringRef Str, llvm::StringRef Pattern);
 

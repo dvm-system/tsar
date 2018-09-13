@@ -225,7 +225,7 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   // Custom tokenizer is needed because ASTUnit doesn't have properly
   // setuped Lexer/Rewriter.
   static constexpr const char * Pattern =
-    "[(struct|union|enum)\\s+]?[[:alpha:]_]\\w*|\\d+|\\S";
+    "(struct|union|enum)\\s+|[[:alpha:]_]\\w*|\\d+|\\S";
   auto Tokens = tokenize(Type, Pattern);
   for (auto &T : Tokens) {
     auto Itr = Replacements.find(T);

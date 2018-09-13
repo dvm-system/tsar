@@ -65,9 +65,24 @@ std::vector<StringRef> tokenize(StringRef Str, StringRef Pattern) {
   std::cmatch Cm;
   if (!std::regex_search(Str.data(), Cm, Rgx))
     return Tokens;
-  Tokens.emplace_back(Cm[0].first, Cm[0].length());
-  while (std::regex_search(Cm[0].second, Cm, Rgx))
+  bool HasSubMatch = false;
+  for (std::size_t I = 1; I < Cm.size(); ++I)
+    if (Cm[I].matched) {
+      HasSubMatch = true;
+      Tokens.emplace_back(Cm[I].first, Cm[I].length());
+    }
+  if (!HasSubMatch)
     Tokens.emplace_back(Cm[0].first, Cm[0].length());
+  while (std::regex_search(Cm[0].second, Cm, Rgx)) {
+    bool HasSubMatch = false;
+    for (std::size_t I = 1; I < Cm.size(); ++I)
+      if (Cm[I].matched) {
+        HasSubMatch = true;
+        Tokens.emplace_back(Cm[I].first, Cm[I].length());
+      }
+    if (!HasSubMatch)
+      Tokens.emplace_back(Cm[0].first, Cm[0].length());
+  }
   return Tokens;
 }
 
