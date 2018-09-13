@@ -614,10 +614,14 @@ std::pair<std::string, std::string> ClangInliner::compile(
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
-  /// TODO (kaniandr@gmail.com) : add warning for removed unreachable returns.
+  if (!UnreachableRetStmts.empty())
+    toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+      diag::remark_inline);
   for (auto RS : UnreachableRetStmts) {
     bool Res = Canvas.ReplaceText(getFileRange(RS), "");
     assert(!Res && "Can not replace text in an external buffer!");
+    toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS).getBegin(),
+      diag::remark_remove_unreachable);
   }
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
   if (IsNeedLabel)

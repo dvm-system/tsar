@@ -49,5 +49,8 @@ def note_inline_static_extern_dep : Note<"refernece to static external dependenc
 def note_inline_inline_extern_dep : Note<"reference to inline external dependence prevents inlining">;
 def note_inline_hidden_extern_dep : Note<"hidden external dependence prevents inlining">;
 
+def remark_inline : Remark<"inline expansion of function call">;
+def remark_remove_unreachable : Remark<"remove unreachable code">;
+
 def note_decl_hide : Note<"declration hides other declaration">;
 def note_expanded_from_here : Note<"expanded from here">;
