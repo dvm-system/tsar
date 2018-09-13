@@ -29,9 +29,10 @@ traversePragmaName(Stmt &S) {
   if (CurrStmt == CS->body_end())
     return std::make_pair(StringRef(), nullptr);
   auto Cast = dyn_cast<ImplicitCastExpr>(*CurrStmt);
-  if (!Cast)
-    return std::make_pair(StringRef(), nullptr);
-  auto Literal = dyn_cast<clang::StringLiteral>(*Cast->child_begin());
+  // In case of C there will be ImplicitCastExpr, however in case of C++ it
+  // will be omitted.
+  auto LiteralStmt = Cast ? *Cast->child_begin() : *CurrStmt;
+  auto Literal = dyn_cast<clang::StringLiteral>(LiteralStmt);
   if (!Literal)
     return std::make_pair(StringRef(), nullptr);
   ++CurrStmt;
