@@ -32,6 +32,8 @@ def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
 def warn_unexpected_directive : Warning<"unexpected directive ignored">;
 def note_inline_no_call : Remark<"no call suitable for inline is found">;
 
+def warn_inline_support_cpp : Warning<"inline expansion in C++ sources is not fully supported">;
+
 def warn_disable_inline_include : Warning<"include of not parsed file prevents inline expansion">;
 def warn_disable_inline_no_body : Warning<"disable inline expansion for function without definition">;
 def warn_disable_inline_in_ternary : Warning<"disable inline expansion in conditional operator">;

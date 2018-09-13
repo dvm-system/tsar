@@ -114,6 +114,8 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto &Context = TfmCtx->getContext();
   auto &Rewriter = TfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
+  if (Context.getLangOpts().CPlusPlus)
+    toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
   ClangInliner Inliner(Rewriter, Context);
   Inliner.HandleTranslationUnit();
   TfmCtx->release(getFilenameAdjuster());
