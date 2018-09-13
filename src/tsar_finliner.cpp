@@ -434,8 +434,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getFileRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
-  DEBUG(dbgs() << "[INLINE]: parent statement '" <<
-    getSourceText(getFileRange(ParentI->getStmt())) << "' at ";
+  DEBUG(dbgs() << "[INLINE]: parent statement at ";
     (*ParentI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
