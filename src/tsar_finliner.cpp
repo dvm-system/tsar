@@ -563,6 +563,10 @@ std::pair<std::string, std::string> ClangInliner::compile(
     bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
       ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
     assert(!Res && "Can not replace text in an external buffer!");
+    Token SemiTok;
+    if (!getRawTokenAfter(mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()),
+          mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+      Canvas.RemoveText(SemiTok.getLocation());
   }
   SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
   for (auto *S : TI.mCallee->getRetStmts())
@@ -958,6 +962,10 @@ void ClangInliner::HandleTranslationUnit() {
       }
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+      Token SemiTok;
+      if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
+            mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+        mRewriter.RemoveText(SemiTok.getLocation());
     }
   }
 }

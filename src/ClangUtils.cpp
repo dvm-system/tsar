@@ -131,6 +131,16 @@ void tsar::getRawMacrosAndIncludes(
   }
 }
 
+bool tsar::getRawTokenAfter(SourceLocation Loc, const SourceManager &SM,
+    const LangOptions &LangOpts, Token &Tok) {
+  auto AfterTokenLoc = Lexer::getLocForEndOfToken(Loc, 0, SM, LangOpts);
+  if (AfterTokenLoc.isInvalid())
+    return true;
+  if (!Lexer::getRawToken(AfterTokenLoc, Tok, SM, LangOpts, true) &&
+      Tok.getLocation().isValid())
+    return false;
+}
+
 ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
     const LangOptions &LangOpts) : mSR(SR), mSM(SM), mLangOpts(LangOpts),
   mBuffer(

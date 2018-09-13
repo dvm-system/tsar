@@ -83,6 +83,11 @@ void getRawMacrosAndIncludes(
   llvm::StringMap<clang::SourceLocation> &Includes,
   llvm::StringSet<> &Ids);
 
+/// Relex token after the token at a specified location, returns true in case
+/// of errors.
+bool getRawTokenAfter(clang::SourceLocation Loc, const clang::SourceManager &SM,
+  const clang::LangOptions &LangOpts, clang::Token &Tok);
+
 /// This is similar to clang::Rewriter, however this class enables to rewrite
 /// some copy of input buffer.
 class ExternalRewriter {
@@ -94,6 +99,9 @@ public:
   /// Replaces a range of characters in the buffer with a new string, return
   /// `false` on success and `true` in case of errors.
   bool ReplaceText(clang::SourceRange SR, clang::StringRef NewStr);
+
+  /// Removes a rang of characters in the buffer, return `false` on success.
+  bool RemoveText(clang::SourceRange SR) { return ReplaceText(SR, ""); }
 
   /// \brief Returns the rewritten form of the text in the specified range
   /// inside the initial one (getSourceRange()).
