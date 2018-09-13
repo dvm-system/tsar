@@ -1,6 +1,6 @@
 // Define the diagnostic levels.
 class DiagLevel;
-def Ignore    : DiagLevel;
+def Ignored    : DiagLevel;
 def Note      : DiagLevel;
 def Remark    : DiagLevel;
 def Warning   : DiagLevel;
@@ -13,7 +13,7 @@ class Diagnostic<string text, DiagLevel DL> {
   DiagLevel      Level = DL;
 }
 
-class Ignore<string str>    : Diagnostic<str, Ignore>;
+class Ignored<string str>   : Diagnostic<str, Ignored>;
 class Note<string str>      : Diagnostic<str, Note>;
 class Remark<string str>    : Diagnostic<str, Remark>;
 class Warning<string str>   : Diagnostic<str, Warning>;
