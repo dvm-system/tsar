@@ -455,6 +455,11 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   // clause as unused in this case. We only diagnose that some calls can not be
   // inlined (may be all calls).
   ClauseI->setIsUsed();
+  if (mCurrentT->getUnreachableStmts().count(Call)) {
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_unreachable);
+    return true;
+  }
   const FunctionDecl* Definition = nullptr;
   Call->getDirectCallee()->hasBody(Definition);
   if (!Definition) {
@@ -535,10 +540,6 @@ std::pair<std::string, std::string> ClangInliner::compile(
   // Now, we recursively inline all marked calls from the current function and
   // we also update external buffer. Note that we do not change input buffer.
   for (auto &CallTI : TI.mCallee->getCalls()) {
-    /// TODO (kaniandr@gmail.com): print warning in case of unreachable
-    /// statements.
-    if (TI.mCallee->getUnreachableStmts().count(CallTI.mStmt))
-      continue;
     if (!checkTemplateInstantiation(CallTI, CallStack, TICheckers))
       continue;
     SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());

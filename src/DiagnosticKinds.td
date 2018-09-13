@@ -40,6 +40,7 @@ def warn_disable_inline_in_for_inc : Warning<"disable inline expansion in the th
 def warn_disable_inline_system : Warning<"disable inline expansion of non-user defined function">;
 def warn_disable_inline_variadic : Warning<"disable inline expansion of variadic function">;
 def warn_disable_inline_recursive : Warning<"disable inline expansion of recursive function">;
+def warn_disable_inline_unreachable : Warning<"disable inline expansion of unreachable call">;
 
 def warn_disable_inline : Warning<"disable inline expansion">;
 def note_inline_macro_prevent : Note<"macro prevent inlining">;
@@ -47,5 +48,6 @@ def note_inline_unresolvable_extern_dep : Note<"unresolvable external dependence
 def note_inline_static_extern_dep : Note<"refernece to static external dependence prevents inlining">;
 def note_inline_inline_extern_dep : Note<"reference to inline external dependence prevents inlining">;
 def note_inline_hidden_extern_dep : Note<"hidden external dependence prevents inlining">;
+
 def note_decl_hide : Note<"declration hides other declaration">;
 def note_expanded_from_here : Note<"expanded from here">;
