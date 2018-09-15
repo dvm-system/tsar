@@ -61,6 +61,9 @@ template<class ReplacementT, class VisitorT> class ClauseVisitor {
     /// body of the complex expression `EK_ZeroOrMore`):
     /// - ReplacementIdx is a position of the first token in <replacement of B>.
     size_type ReplacementIdx;
+
+    /// The last read token.
+    clang::Token Tok;
   };
 
   /// Stack of levels.
@@ -91,35 +94,36 @@ public:
 
   /// \brief Processes body of a clause according to a prototype [I, EI).
   ///
-  /// \pre The next lexed token is a first token of the clause body.
-  void visitBody(iterator I, iterator EI) {
+  /// \pre
+  ///   - The next lexed token is a first token of the clause body.
+  ///   - On success, `Tok` is a last token in clause body.
+  void visitBody(iterator I, iterator EI, clang::Token &Tok) {
     assert(mExprStack.empty() && "Expression level stack must be empty!");
 #ifdef DEBUG
     auto StartI = I;
 #endif
     mPP.EnableBacktrackAtThisPos();
-    clang::Token Tok;
     for (; I != EI; ++I) {
       DEBUG(processPrototypeLog(StartI, I));
       switch (*I) {
       case ClauseExpr::EK_One:
-        push(I);
+        push(I, Tok);
         static_cast<VisitorT *>(this)->visitEK_One(Tok);
         break;
       case ClauseExpr::EK_ZeroOrMore:
-        push(I);
+        push(I, Tok);
         static_cast<VisitorT *>(this)->visitEK_ZeroOrMore(Tok);
         break;
       case ClauseExpr::EK_ZeroOrOne:
-        push(I);
+        push(I, Tok);
         static_cast<VisitorT *>(this)->visitEK_ZeroOrOne(Tok);
         break;
       case ClauseExpr::EK_OneOrMore:
         static_cast<VisitorT *>(this)->visitEK_OneOrMore(Tok);
-        push(I);
+        push(I, Tok);
         break;
       case ClauseExpr::EK_OneOf:
-        push(I);
+        push(I, Tok);
         static_cast<VisitorT *>(this)->visitEK_OneOf(Tok);
         break;
       case ClauseExpr::EK_Anchor:
@@ -141,7 +145,7 @@ public:
             mPP.RevertCachedTokens(1);
             DEBUG(llvm::dbgs() << "[PRAGMA HANDLER]: revert 'tok::eod'\n");
           } else {
-            Backup = backtrack(I, EI);
+            Backup = backtrack(I, EI, Tok);
           }
           if (Backup == EI) {
             assert(mExprStack.empty() &&
@@ -192,9 +196,9 @@ public:
 
 private:
   /// Pushes expression level on the top of stack.
-  void push(iterator I) {
+  void push(iterator I, clang::Token &Tok) {
     assert(!isSingle(*I) && "Expression must be complex!");
-    mExprStack.push_back({ {I, false}, mReplacement.size() });
+    mExprStack.push_back({ {I, false}, mReplacement.size(), Tok });
     mPP.EnableBacktrackAtThisPos();
   }
 
@@ -255,13 +259,14 @@ private:
   /// \post This method removes tail from Replacement and extracts levels from
   /// ExprStack which correspond to erroneously processed token stream.
   /// Position of lexer will be updated using PP.Backtrack().
-  iterator backtrack(iterator I, iterator EI) {
+  iterator backtrack(iterator I, iterator EI, clang::Token &Tok) {
     while (!mExprStack.empty()) {
       auto &Level = mExprStack.back();
       switch (*Level.Occurrence.getPointer()) {
       case ClauseExpr::EK_OneOf: // try next item in the list of variants
         mPP.Backtrack();
         if (*(I + 1) == ClauseExpr::EK_Anchor) {
+          Tok = Level.Tok;
           mExprStack.pop_back();
           continue;
         }
@@ -269,6 +274,7 @@ private:
         return I;
       case ClauseExpr::EK_One:
         I = findAnchor(I, EI);
+        Tok = Level.Tok;
         mExprStack.pop_back();
         mPP.Backtrack();
         continue;
@@ -282,12 +288,14 @@ private:
           break;
         } else {
           mPP.Backtrack();
+          Tok = Level.Tok;
           mExprStack.pop_back();
           continue;
         }
       }
       mReplacement.resize(Level.ReplacementIdx);
       mPP.Backtrack();
+      Tok = Level.Tok;
       mExprStack.pop_back();
       return I;
     }

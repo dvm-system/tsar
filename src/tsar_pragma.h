@@ -227,8 +227,11 @@ protected:
   /// \brief Handles body of the clause.
   ///
   /// For example, in case of `... inducition(I) ...`  the body will be `(I)`.
-  /// However, `FirstTok` will be name of clause `induction`.
-  /// \post Lexer points to the last successfully processed token.
+  /// \pre `FirstTok` is a clause name, for the mentioned example,
+  /// `FirstTok` will be name of clause `induction`.
+  /// \post
+  /// - Lexer points to the last successfully processed token.
+  /// - On success, `FirstTok` is a last token in clause body.
   virtual void HandleBody(clang::Preprocessor &PP,
     clang::PragmaIntroducerKind Introducer, clang::Token &FirstTok);
 

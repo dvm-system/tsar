@@ -71,12 +71,17 @@ public:
   using BaseT::getLevelKind;
 
   void visitEK_Anchor(Token &Tok) {
-    if (getLevelKind() == ClauseExpr::EK_One)
+    if (getLevelKind() == ClauseExpr::EK_One) {
+      auto End = Tok.getLocation();
+      if (Tok.getLength() > 0)
+        End = End.getLocWithOffset(Tok.getLength() - 1);
       AddToken(tok::r_brace, Tok.getLocation(), 1, getReplacement());
+    }
   }
 
   void visitEK_One(Token &Tok) {
-    AddToken(tok::l_brace, Tok.getLocation(), 1, getReplacement());
+    auto End = Tok.getLocation().getLocWithOffset(Tok.getLength());
+    AddToken(tok::l_brace, End, 1, getReplacement());
   }
 
   /// Assumes that a current token is an identifier and append to replacement
@@ -235,7 +240,10 @@ void ClauseReplacer::HandlePragma(
   AddStringToken(getName(), ClauseLoc, PP, getReplacement());
   AddToken(tok::semi, ClauseLoc, 1, getReplacement());
   HandleBody(PP, Introducer, FirstToken);
-  AddToken(tok::r_brace, ClauseLoc, 1, getReplacement());
+  auto End = FirstToken.getLocation();
+  if (FirstToken.getLength() > 0)
+    End = End.getLocWithOffset(FirstToken.getLength() - 1);
+  AddToken(tok::r_brace, End, 1, getReplacement());
 }
 
 void ClauseReplacer::HandleBody(
@@ -243,6 +251,6 @@ void ClauseReplacer::HandleBody(
   DEBUG(dbgs() << "[PRAGMA HANDLER]: process body of '" << getName() << "'\n");
   const auto Prototype = ClausePrototype::get(mClauseId);
   DefaultClauseVisitor<ReplacementT> CV(PP, getReplacement());
-  CV.visitBody(Prototype.begin(), Prototype.end());
+  CV.visitBody(Prototype.begin(), Prototype.end(), FirstToken);
 }
 }
