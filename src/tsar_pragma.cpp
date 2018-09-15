@@ -9,8 +9,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_pragma.h"
+#include "ClangUtils.h"
 #include "ClauseVisitor.h"
 #include <clang/AST/Expr.h>
+#include <clang/Rewrite/Core/Rewriter.h>
 
 using namespace clang;
 using namespace llvm;
@@ -147,6 +149,63 @@ Pragma::Clause Pragma::clause(clause_iterator I) {
   auto Tmp = traversePragmaName(**I);
   return Clause(Tmp.first, Tmp.second,
     Tmp.second ? cast<CompoundStmt>(*I)->body_end() : nullptr);
+}
+
+bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
+  if (!P || P.getDirectiveId() != getParent(Id))
+    return false;
+  for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
+    ClauseId CId;
+    if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), CId))
+      continue;
+    if (CId == Id)
+      Clauses.push_back(*CI);
+  }
+  return !Clauses.empty();
+}
+
+bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses,
+    const SourceManager &SM, const LangOptions &LangOpts,
+    SmallVectorImpl<SourceRange> &ToRemove) {
+  assert(P && "Pragma must be valid!");
+  SourceLocation PStart = P.getNamespace()->getLocStart();
+  SourceLocation PEnd = P.getNamespace()->getLocEnd();
+  if (PStart.isInvalid())
+    return false;
+  if (PStart.isFileID()) {
+    if (Clauses.size() == P.clause_size())
+      ToRemove.emplace_back(getStartOfLine(PStart, SM), PEnd);
+    else
+      for (auto C : Clauses)
+        ToRemove.push_back(C->getSourceRange());
+    return true;
+  }
+  Token Tok;
+  auto PStartExp = SM.getExpansionLoc(PStart);
+  if (Lexer::getRawToken(PStartExp, Tok, SM, LangOpts) ||
+      Tok.isNot(tok::raw_identifier) || Tok.getRawIdentifier() != "_Pragma")
+    return false;
+  if (Clauses.size() == P.clause_size()) {
+    ToRemove.push_back(SM.getExpansionRange({ PStart, PEnd }));
+  } else {
+    // We obtain positions of pragma and clause in a scratch buffer and
+    // calculates offset from the beginning of _Pragma(...) directive.
+    // Then we add this offset to expansion location to obtain location of
+    // a clause in the source code.
+    auto PSpelling = SM.getSpellingLoc(PStart).getRawEncoding();
+    for (auto C : Clauses) {
+      auto CSpellingS = SM.getSpellingLoc(C->getLocStart()).getRawEncoding();
+      auto CSpellingE = SM.getSpellingLoc(C->getLocEnd()).getRawEncoding();
+      // Offset of clause start from `spf` in _Pragma("spf ...
+      auto OffsetS = CSpellingS - PSpelling;
+      // Offset of clause end from `spf` in _Pragma("spf ...
+      auto OffsetE = CSpellingE - PSpelling;
+      ToRemove.emplace_back(
+        PStartExp.getLocWithOffset(OffsetS + 8), // ' ' before clause name
+        PStartExp.getLocWithOffset(OffsetE + 9)); // end of clause
+    }
+  }
+  return true;
 }
 
 void PragmaNamespaceReplacer::HandlePragma(

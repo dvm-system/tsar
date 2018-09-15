@@ -25,6 +25,14 @@
 #include <clang/Lex/Token.h>
 #include <llvm/ADT/SmallVector.h>
 
+namespace clang {
+class Rewriter;
+}
+
+namespace llvm {
+template<class T> class SmallVectorImpl;
+}
+
 namespace tsar {
 /// Description of a directive.
 class Pragma {
@@ -85,6 +93,28 @@ private:
   clang::CompoundStmt *mDirective = nullptr;
   clause_iterator mClauseBegin;
 };
+
+/// \brief Find all occurrences of a specified clause in a specified pragma.
+///
+/// \return `false` if a specified statement is not a pragma or clause is not
+/// found.
+bool findClause(Pragma &P, ClauseId Id,
+  llvm::SmallVectorImpl<clang::Stmt *> &Clauses);
+
+/// \brief Collects source ranges to removes all clauses from a specified list.
+///
+/// \pre A specified pragma `P` contains all clauses from a specified list
+/// `Clauses`.
+/// \return `false` if clauses can not be removed.
+/// \post If pragma is in macro it can not be removed. If there are no other
+/// clauses in the pragma `P` except clauses from the list `Clauses` the whole
+/// pragma can be removed. So, the range of this pragma will be stored.
+///
+/// TODO (kaniandr@gmail.com): check this for Microsoft-like pragmas.
+bool pragmaRangeToRemove(const Pragma &P,
+  const llvm::SmallVectorImpl<clang::Stmt *> &Clauses,
+  const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
+  llvm::SmallVectorImpl<clang::SourceRange> &ToRemove);
 
 /// \brief Replaces directive namespace with string literal.
 ///
