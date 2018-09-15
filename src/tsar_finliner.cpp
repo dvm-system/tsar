@@ -988,6 +988,7 @@ clang::SourceRange ClangInliner::getFileRange(T *Node) const {
 
 void ClangInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {
   for (unsigned Count = 0;
-    mIdentifiers.count((Prefix + Twine(Count)).toStringRef(Out)); ++Count);
+    mIdentifiers.count((Prefix + Twine(Count)).toStringRef(Out));
+    ++Count, Out.clear());
   mIdentifiers.insert(StringRef(Out.data(), Out.size()));
 }
