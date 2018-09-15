@@ -100,8 +100,12 @@ public:
   /// `false` on success and `true` in case of errors.
   bool ReplaceText(clang::SourceRange SR, clang::StringRef NewStr);
 
-  /// Removes a rang of characters in the buffer, return `false` on success.
-  bool RemoveText(clang::SourceRange SR) { return ReplaceText(SR, ""); }
+  /// \brief Removes a rang of characters in the buffer, return `false`
+  /// on success.
+  ///
+  /// If `RemoveLineIfEmpty` is `true` and removing of a specified range leads
+  /// to an empty line, then this line will be removed.
+  bool RemoveText(clang::SourceRange SR, bool RemoveLineIfEmpty = false);
 
   /// \brief Returns the rewritten form of the text in the specified range
   /// inside the initial one (getSourceRange()).
@@ -120,6 +124,15 @@ public:
   const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
 
 private:
+  void ReplaceText(unsigned OrigBegin, std::size_t Length,
+    clang::StringRef NewStr);
+
+  unsigned ComputeOrigOffset(clang::SourceLocation Loc) const {
+    unsigned Base = mSR.getBegin().getRawEncoding();
+    unsigned OrigBegin = Loc.getRawEncoding() - Base;
+    return OrigBegin;
+  }
+
   clang::SourceRange mSR;
   const clang::SourceManager &mSM;
   const clang::LangOptions &mLangOpts;

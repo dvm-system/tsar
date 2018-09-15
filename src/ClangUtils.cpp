@@ -152,13 +152,20 @@ ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
 bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
   if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
     return true;
-  unsigned Base = mSR.getBegin().getRawEncoding();
-  unsigned OrigBegin = SR.getBegin().getRawEncoding() - Base;
-  auto ReplacedText =
-    Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
-  unsigned OrigEnd = OrigBegin + ReplacedText.size();
-  unsigned Begin = mMapping[OrigBegin];
-  unsigned End = mMapping[OrigEnd];
+  bool IsInvalid = false;
+  auto ReplacedText = Lexer::getSourceText(
+    CharSourceRange::getTokenRange(SR), mSM, mLangOpts, &IsInvalid);
+  if (IsInvalid)
+    return true;
+  ReplaceText(ComputeOrigOffset(SR.getBegin()), ReplacedText.size(), NewStr);
+  return false;
+}
+
+void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
+    StringRef NewStr) {
+  auto OrigEnd = OrigBegin + Length;
+  auto Begin = mMapping[OrigBegin];
+  auto End = mMapping[OrigEnd];
   auto NewStrSize = NewStr.size();
   if (End - Begin < NewStrSize) {
     for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
@@ -168,14 +175,63 @@ bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
       mMapping[I] -= (End - Begin) - NewStrSize;
   }
   mBuffer.replace(Begin, End - Begin, NewStr);
+}
+
+bool ExternalRewriter::RemoveText(SourceRange SR, bool RemoveLineIfEmpty) {
+  if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
+    return true;
+  bool IsInvalid;
+  auto ReplacedText = Lexer::getSourceText(
+    CharSourceRange::getTokenRange(SR), mSM, mLangOpts, &IsInvalid);
+  if (IsInvalid)
+    return true;
+  unsigned RemoveOffset = ComputeOrigOffset(SR.getBegin());
+  std::size_t RemoveLength = ReplacedText.size();
+  if (RemoveLineIfEmpty) {
+    std::pair<FileID, unsigned> BeginInfo = mSM.getDecomposedLoc(SR.getBegin());
+    StringRef Buffer = mSM.getBufferData(BeginInfo.first);
+    // Now we check that the line with start of a removed range contains only
+    // whitespaces before the start of the range.
+    SourceLocation LineStart = getStartOfLine(SR.getBegin(), mSM);
+    std::pair<FileID, unsigned> LineInfo = mSM.getDecomposedLoc(LineStart);
+    const char *Ptr = Buffer.begin() + LineInfo.second;
+    const char *EndPtr = Buffer.begin() + BeginInfo.second;
+    bool IsEmpty = true;
+    for (; Ptr < EndPtr; ++Ptr) {
+      if (!isWhitespace(*Ptr)) {
+        IsEmpty = false;
+        break;
+      }
+    }
+    // If ok, we should check whether not whitespace characters exist after a
+    // specified range.
+    if (IsEmpty) {
+      // Do not use SR.getEnd() to calculate position after the replaced text,
+      // because it may point at the last character in this text or after the
+      // last character.
+      Ptr = Buffer.begin() + BeginInfo.second + ReplacedText.size();
+      EndPtr = Buffer.end();
+      std::size_t LineEndOffset = 0;
+      for (; Ptr < EndPtr; ++Ptr, ++LineEndOffset) {
+        if (isHorizontalWhitespace(*Ptr) || *Ptr == '\r')
+          continue;
+        if (*Ptr == '\n') {
+          RemoveOffset = ComputeOrigOffset(LineStart);
+          RemoveLength += BeginInfo.second - LineInfo.second + LineEndOffset + 1;
+        }
+        break;
+      }
+    }
+  }
+  ReplaceText(RemoveOffset, RemoveLength, "");
   return false;
 }
+
 
 StringRef ExternalRewriter::getRewrittenText(clang::SourceRange SR) {
   if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
     return StringRef();
-  unsigned Base = mSR.getBegin().getRawEncoding();
-  unsigned OrigBegin = SR.getBegin().getRawEncoding() - Base;
+  unsigned OrigBegin = ComputeOrigOffset(SR.getBegin());
   unsigned Begin = mMapping[OrigBegin];
   auto Text =
     Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
