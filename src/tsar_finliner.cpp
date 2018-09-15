@@ -880,7 +880,6 @@ void ClangInliner::HandleTranslationUnit() {
         continue;
       LocalLexer Lex(T.first->getSourceRange(), mSrcMgr, mLangOpts);
       T.second->setKnownMayForwardDecls();
-      SourceLocation LastMacro;
       while (true) {
         Token Tok;
         if (Lex.LexFromRawLexer(Tok))
@@ -889,7 +888,7 @@ void ClangInliner::HandleTranslationUnit() {
           auto MacroLoc = Tok.getLocation();
           Lex.LexFromRawLexer(Tok);
           if (Tok.getRawIdentifier() != "pragma")
-            T.second->setMacroInDecl(LastMacro);
+            T.second->setMacroInDecl(MacroLoc);
           continue;
         }
         if (Tok.isNot(tok::raw_identifier))
