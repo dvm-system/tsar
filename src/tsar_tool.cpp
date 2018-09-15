@@ -201,22 +201,29 @@ void Tool::storeCLOptions() {
   mCompilations = std::unique_ptr<CompilationDatabase>(
     new FixedCompilationDatabase(".", mCommandLine));
   SmallVector<cl::Option *, 8> IncompatibleOpts;
-  auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> bool {
+  auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
     if (O)
       IncompatibleOpts.push_back(&O);
     return O;
   };
-  mEmitAST = addIfSet(Options::get().EmitAST);
+  SmallVector<cl::Option *, 8> LLIncompatibleOpts;
+  auto addLLIfSet = [&LLIncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
+    if (O)
+      LLIncompatibleOpts.push_back(&O);
+    return O;
+  };
+  mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?
-    addIfSet(Options::get().MergeAST) : Options::get().MergeAST;
-  mPrintAST = addIfSet(Options::get().PrintAST);
-  mDumpAST = addIfSet(Options::get().DumpAST);
+    addLLIfSet(addIfSet(Options::get().MergeAST)) :
+    addLLIfSet(Options::get().MergeAST);
+  mPrintAST = addLLIfSet(addIfSet(Options::get().PrintAST));
+  mDumpAST = addLLIfSet(addIfSet(Options::get().DumpAST));
   for (auto PI : Options::get().OutputPasses)
     mOutputPasses.push_back(PI);
-  mEmitLLVM = addIfSet(Options::get().EmitLLVM);
+  mEmitLLVM = addLLIfSet(addIfSet(Options::get().EmitLLVM));
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mTest = addIfSet(Options::get().Test);
-  mInline = addIfSet(Options::get().Inline);
+  mInline = addLLIfSet(addIfSet(Options::get().Inline));
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
   if (IncompatibleOpts.size() > 1) {
@@ -225,6 +232,18 @@ void Tool::storeCLOptions() {
       Msg.append(" -").append(IncompatibleOpts[1]->ArgStr);
     IncompatibleOpts[0]->error(Msg);
     exit(1);
+  }
+  // Now, we check that there are no options which are incompatible with .ll
+  // source file (if such file exists in the command line).
+  if (mLanguage.empty() && !LLIncompatibleOpts.empty()) {
+    auto LLSrcItr = std::find_if(mSources.begin(), mSources.end(),
+      [](StringRef Src) {return sys::path::extension(Src) == ".ll"; });
+    if (LLSrcItr != mSources.end()) {
+      std::string Msg();
+      LLIncompatibleOpts[0]->error(
+        Twine("error - this option is incompatible with ") + *LLSrcItr);
+      exit(1);
+    }
   }
 }
 
@@ -256,11 +275,19 @@ inline static FunctionInlinerQueryManager * getInlineQM() {
 int Tool::run(QueryManager *QM) {
   std::vector<std::string> NoASTSources;
   std::vector<std::string> SourcesToMerge;
-  for (auto &Src : mSources)
+  std::vector<std::string> LLSources;
+  std::vector<std::string> NoLLSources;
+  bool IsLLVMSources = false;
+  for (auto &Src : mSources) {
+    if (mLanguage != "ast" && sys::path::extension(Src) == ".ll")
+      LLSources.push_back(Src);
+    else
+      NoLLSources.push_back(Src);
     if (mLanguage != "ast" && sys::path::extension(Src) != ".ast")
       NoASTSources.push_back(Src);
     else
       SourcesToMerge.push_back(Src);
+  }
   // Evaluation of Clang AST files by this tool leads an error,
   // so these sources should be excluded.
   ClangTool EmitPCHTool(*mCompilations, NoASTSources);
@@ -335,14 +362,18 @@ int Tool::run(QueryManager *QM) {
     return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
       mCommandLine, QM, SourcesToMerge).get());
   }
-  ClangTool CTool(*mCompilations, mSources);
+  ClangTool CTool(*mCompilations, NoLLSources);
   if (mDumpAST)
     return CTool.run(newFrontendActionFactory<
       tsar::ASTDumpAction, tsar::GenPCHPragmaAction>().get());
   if (mPrintAST)
     return CTool.run(newFrontendActionFactory<
       tsar::ASTPrintAction, tsar::GenPCHPragmaAction>().get());
-  return CTool.run(newAnalysisActionFactory<MainAction, GenPCHPragmaAction>(
-    mCommandLine, QM).get());
+  // Do not search pragmas in .ll file to avoid internal assertion fails.
+  ClangTool CLLTool(*mCompilations, LLSources);
+  return
+    CTool.run(newAnalysisActionFactory<MainAction, GenPCHPragmaAction>(
+      mCommandLine, QM).get()) ||
+    CLLTool.run(newAnalysisActionFactory<MainAction>(mCommandLine, QM).get()) ?
+    1 : 0;
 }
-
