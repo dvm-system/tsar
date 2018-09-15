@@ -167,6 +167,18 @@ std::vector<TokenT> buildDecl(llvm::StringRef Type,
   return Out;
 }
 
+/// Returns location of the beginning of a line which contains a specified
+/// location.
+inline clang::SourceLocation getStartOfLine(clang::SourceLocation Loc,
+    const clang::SourceManager &SM) {
+  bool IsInvalid;
+  unsigned Col = SM.getPresumedColumnNumber(Loc, &IsInvalid);
+  if (IsInvalid)
+    return clang::SourceLocation();
+  return clang::SourceLocation::getFromRawEncoding(
+    Loc.getRawEncoding() + 1 - Col);
+}
+
 /// Returns range of expansion locations.
 inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,
     clang::SourceRange Range) {
