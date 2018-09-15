@@ -109,6 +109,18 @@ protected:
 class InstrLLVMQueryManager : public EmitLLVMQueryManager {
   void run(llvm::Module *M, tsar::TransformationContext *) override;
 };
+
+/// This performs a specified source-level transformation.
+class TransformationQueryManager : public QueryManager {
+public:
+  explicit TransformationQueryManager(const llvm::PassInfo *TfmPass) :
+    mTfmPass(TfmPass) {}
+
+  void run(llvm::Module *M, TransformationContext *Ctx) override;
+
+private:
+  const llvm::PassInfo *mTfmPass;
+};
 }
 
 #endif//TSAR_QUERY_H

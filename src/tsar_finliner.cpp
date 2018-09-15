@@ -37,13 +37,13 @@ using namespace tsar;
 using namespace tsar::detail;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-inliner"
+#define DEBUG_TYPE "clang-inline"
 
 char ClangInlinerPass::ID = 0;
-INITIALIZE_PASS_BEGIN(ClangInlinerPass, "clang-inliner",
+INITIALIZE_PASS_BEGIN(ClangInlinerPass, "clang-inline",
   "Source-level Inliner (Clang)", false, false)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(ClangInlinerPass, "clang-inliner",
+INITIALIZE_PASS_END(ClangInlinerPass, "clang-inline",
   "Source-level Inliner (Clang)", false, false)
 
 ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
@@ -51,21 +51,6 @@ ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
 void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.setPreservesAll();
-}
-
-void FunctionInlinerQueryManager::run(llvm::Module *M,
-    TransformationContext* Ctx) {
-  assert(M && "Module must not be null!");
-  legacy::PassManager Passes;
-  if (Ctx) {
-    auto TEP = static_cast<TransformationEnginePass *>(
-      createTransformationEnginePass());
-    TEP->setContext(*M, Ctx);
-    Passes.add(TEP);
-  }
-  Passes.add(createClangInlinerPass());
-  Passes.add(createClangFormatPass());
-  Passes.run(*M);
 }
 
 inline FilenameAdjuster getFilenameAdjuster() {
@@ -80,8 +65,8 @@ inline FilenameAdjuster getFilenameAdjuster() {
 bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    errs() << "error: can not transform sources for the module "
-      << M.getName() << "\n";
+    M.getContext().emitError("can not transform sources"
+        ": transformation context is not available");
     return false;
   }
   auto &Context = TfmCtx->getContext();

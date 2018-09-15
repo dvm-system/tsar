@@ -32,6 +32,8 @@ extern const char gAllowedOutputPassArgs[] = "\
   -view-em -view-em-only\
   -dot-em -dot-em-only";
 
+extern const char gAllowedTfmPassArgs[] = "-clang-inline";
+
 /// Represents possible options for TSAR.
 struct Options : private bcl::Uncopyable {
   /// This is a version printer for TSAR.
@@ -48,6 +50,10 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::list<const llvm::PassInfo*, bool,
     llvm::FilteredPassNameParser<
     llvm::PassArgFilter<gAllowedOutputPassArgs>>> OutputPasses;
+
+  llvm::cl::opt<const llvm::PassInfo *, false,
+    llvm::FilteredPassNameParser<
+    llvm::PassArgFilter<gAllowedTfmPassArgs>>> TfmPass;
 
   llvm::cl::OptionCategory CompileCategory;
   llvm::cl::list<std::string> Includes;
@@ -66,7 +72,6 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
   llvm::cl::opt<bool> Test;
-  llvm::cl::opt<bool> Inline;
 private:
   /// Default constructor.
   ///
@@ -79,6 +84,7 @@ private:
 Options::Options() :
   Sources(cl::Positional, cl::desc("<source0> [... <sourceN>]"),
     cl::OneOrMore),
+  TfmPass(cl::desc("Transformations available (one at a time):")),
   OutputPasses(cl::desc("Analysis available:")),
   CompileCategory("Compilation options"),
   Includes("I", cl::cat(CompileCategory), cl::value_desc("path"),
@@ -109,9 +115,7 @@ Options::Options() :
   TimeReport("ftime-report", cl::cat(DebugCategory),
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
-    cl::desc("Insert results of analysis to a source file")),
-  Inline("inline", cl::cat(DebugCategory),
-    cl::desc("Dump inlined versions of source files")) {
+    cl::desc("Insert results of analysis to a source file")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
@@ -212,6 +216,10 @@ void Tool::storeCLOptions() {
       LLIncompatibleOpts.push_back(&O);
     return O;
   };
+  if (mTfmPass = Options::get().TfmPass) {
+    LLIncompatibleOpts.push_back(&Options::get().TfmPass);
+    IncompatibleOpts.push_back(&Options::get().TfmPass);
+  }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?
     addLLIfSet(addIfSet(Options::get().MergeAST)) :
@@ -223,7 +231,6 @@ void Tool::storeCLOptions() {
   mEmitLLVM = addLLIfSet(addIfSet(Options::get().EmitLLVM));
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mTest = addIfSet(Options::get().Test);
-  mInline = addLLIfSet(addIfSet(Options::get().Inline));
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
   if (IncompatibleOpts.size() > 1) {
@@ -267,8 +274,9 @@ inline static TestQueryManager * getTestQM() {
   return &QM;
 }
 
-inline static FunctionInlinerQueryManager * getInlineQM() {
-  static FunctionInlinerQueryManager QM;
+inline static TransformationQueryManager * getTransformationQM(
+    const llvm::PassInfo *TfmPass) {
+  static TransformationQueryManager QM(TfmPass);
   return &QM;
 }
 
@@ -345,8 +353,8 @@ int Tool::run(QueryManager *QM) {
       QM = getInstrLLVMQM();
     else if (mTest)
       QM = getTestQM();
-    else if (mInline)
-      QM = getInlineQM();
+    else if (mTfmPass)
+      QM = getTransformationQM(mTfmPass);
     else
       QM = getDefaultQM(mOutputPasses);
   }

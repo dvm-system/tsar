@@ -66,6 +66,7 @@ private:
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
   std::vector<const llvm::PassInfo *> mOutputPasses;
+  const llvm::PassInfo * mTfmPass;
   std::unique_ptr<clang::tooling::CompilationDatabase> mCompilations;
   bool mEmitAST;
   bool mMergeAST;
@@ -74,7 +75,6 @@ private:
   bool mEmitLLVM;
   bool mInstrLLVM;
   bool mTest;
-  bool mInline;
   std::string mOutputFilename;
   std::string mLanguage;
 };

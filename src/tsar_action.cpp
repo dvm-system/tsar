@@ -31,6 +31,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Pass.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
@@ -121,6 +122,26 @@ void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createMemoryMatcherPass());
   Passes.add(createInstrumentationPass());
   Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
+  Passes.run(*M);
+}
+
+void TransformationQueryManager::run(llvm::Module *M,
+    TransformationContext* Ctx) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (!Ctx)
+    report_fatal_error("transformation context is not available");
+  auto TEP = static_cast<TransformationEnginePass *>(
+    createTransformationEnginePass());
+  TEP->setContext(*M, Ctx);
+  Passes.add(TEP);
+  Passes.add(createUnreachableBlockEliminationPass());
+  if (!mTfmPass->getNormalCtor()) {
+    M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
+    return;
+  }
+  Passes.add(mTfmPass->getNormalCtor()());
+  Passes.add(createClangFormatPass());
   Passes.run(*M);
 }
 

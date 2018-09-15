@@ -14,7 +14,6 @@
 
 #include "GlobalInfoExtractor.h"
 #include "tsar_pass.h"
-#include "tsar_query.h"
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/TypeLoc.h>
 #include <llvm/ADT/BitmaskEnum.h>
@@ -42,15 +41,6 @@ public:
   }
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(AnalysisUsage& AU) const override;
-};
-}
-
-namespace tsar {
-class TransformationContext;
-
-class FunctionInlinerQueryManager : public QueryManager {
-public:
-  void run(llvm::Module *M, TransformationContext *Ctx) override;
 };
 }
 
