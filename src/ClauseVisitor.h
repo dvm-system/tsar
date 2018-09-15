@@ -86,7 +86,7 @@ public:
   /// Returns true if the body of the current complex expression has been
   /// successfully visited at least once.
   bool isLevelOccured() const {
-    return mExprStack.empty() ? false : *mExprStack.back().getInt();
+    return mExprStack.empty() ? false : mExprStack.back().Occurrence.getInt();
   }
 
   /// \brief Processes body of a clause according to a prototype [I, EI).
