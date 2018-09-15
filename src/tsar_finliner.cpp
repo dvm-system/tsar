@@ -300,19 +300,18 @@ bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
 bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   if (!S)
     return RecursiveASTVisitor::TraverseStmt(S);
+  SmallVector<Stmt *, 1> Clauses;
   Pragma P(*S);
-  if (P) {
-    if (P.getDirectiveId() != DirectiveId::Transform)
-      return true;
-    for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
-      ClauseId Id;
-      if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), Id))
-        continue;
-      if (Id == ClauseId::Inline)
-        mActiveClause = { *CI, true, false };
-    }
+  if (findClause(P, ClauseId::Inline, Clauses)) {
+    mActiveClause = { Clauses.front(), true, false };
+    if (!pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
+        mCurrentT->getToRemove()))
+      toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+        diag::warn_remove_directive_in_macro);
     return true;
   }
+  if (P)
+    return true;
   traverseSourceLocation(S,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
   if (!mScopes.empty()) {
@@ -568,7 +567,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     Token SemiTok;
     if (!getRawTokenAfter(mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
-      Canvas.RemoveText(SemiTok.getLocation());
+      Canvas.RemoveText(SemiTok.getLocation(), true);
   }
   SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
   for (auto *S : TI.mCallee->getRetStmts())
@@ -624,6 +623,8 @@ std::pair<std::string, std::string> ClangInliner::compile(
     toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS).getBegin(),
       diag::remark_remove_unreachable);
   }
+    for (auto SR : TI.mCallee->getToRemove())
+      Canvas.RemoveText(SR, true) ;
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
   if (IsNeedLabel)
     Text.insert(Text.size() - 1, (RetLab + ":;").str());
@@ -934,12 +935,19 @@ void ClangInliner::HandleTranslationUnit() {
   CG.TraverseDecl(mContext.getTranslationUnitDecl());
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
   auto TICheckers = getTemplatInstantiationCheckers();
+  Rewriter::RewriteOptions RemoveEmptyLine;
+  RemoveEmptyLine.RemoveLineIfEmpty = true;
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
     if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
       continue;
     auto CallsItr = mTs.find(cast<FunctionDecl>((*I)->getDecl()));
-    if (CallsItr == mTs.end() || CallsItr->second->getCalls().empty())
+    if (CallsItr == mTs.end())
       continue;
+    if (CallsItr->second->getCalls().empty()) {
+      for (auto SR : CallsItr->second->getToRemove())
+        mRewriter.RemoveText(SR, RemoveEmptyLine);
+      continue;
+    }
     SmallVector<const TemplateInstantiation *, 8> CallStack;
     // We create a bogus template instantiation to identify a root of call graph
     // subtree which should be inlined.
@@ -971,8 +979,10 @@ void ClangInliner::HandleTranslationUnit() {
       Token SemiTok;
       if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
             mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
-        mRewriter.RemoveText(SemiTok.getLocation());
+        mRewriter.RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
     }
+    for (auto SR : CallsItr->second->getToRemove())
+      mRewriter.RemoveText(SR, RemoveEmptyLine);
   }
 }
 

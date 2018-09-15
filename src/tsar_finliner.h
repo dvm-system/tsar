@@ -144,6 +144,9 @@ public:
   /// Set of calls from the current function.
   using CallSet =  llvm::DenseSet<TemplateInstantiation>;
 
+  /// List of source ranges.
+  using RangeList = llvm::SmallVector<clang::SourceRange, 8>;
+
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
   /// std::map::operator[]. Template must already exist in the map.
@@ -206,6 +209,12 @@ public:
     mMacroSpellingHint = SpellingHint;
   }
 
+  /// \brief Returns source ranges which should be removed from a source code.
+  ///
+  /// For example, it may be a the whole #pragma or clause inside a pragma.
+  RangeList & getToRemove() noexcept { return mToRemove; }
+  const RangeList & getToRemove() const noexcept { return mToRemove; }
+
 private:
   const clang::FunctionDecl *mFuncDecl = nullptr;
   Flags mFlags = DefaultFlags;
@@ -227,6 +236,7 @@ private:
   DeclSet mMayForwardDecls;
   StmtSet mUnreachable;
   CallSet mCalls;
+  RangeList mToRemove;
 };
 
 /// Represents a scope which is defined by a statement or a clause.

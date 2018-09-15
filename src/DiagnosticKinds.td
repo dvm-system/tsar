@@ -29,6 +29,7 @@ def warn_import_case : Warning<"import of case statement is partially supported"
 def err_unknown_directive : Error<"namespace '%0' does not contain directive '%1'">;
 def err_unknown_clause : Error<"directive '%0' does not contain clause '%1'">;
 
+def warn_remove_directive_in_macro : Warning<"unable to remove directive in macro">;
 def warn_unexpected_directive : Warning<"unexpected directive ignored">;
 def note_inline_no_call : Remark<"no call suitable for inline is found">;
 
