@@ -19,6 +19,7 @@
 #include <clang/AST/TypeLoc.h>
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/DenseMapInfo.h>
+#include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/Pass.h>
 #include <utility.h>
@@ -433,6 +434,9 @@ private:
   /// check that all new identifiers do not hide forward declarations of all
   /// functions in this chain.
   llvm::StringSet<> mIdentifiers;
+
+  /// All macros mentioned in a translation unit.
+  llvm::StringMap<clang::SourceLocation> mRawMacros;
 
   TemplateMap mTs;
 };

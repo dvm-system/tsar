@@ -474,6 +474,42 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       diag::note_inline_macro_prevent);
     return true;
   }
+  // Now, we search macro definitions in the call expression.
+  // f(
+  //   #include ...
+  // );
+  // We also search for raw macros which locations have not been visited.
+  LocalLexer Lex(Call->getSourceRange(), mSrcMgr, mLangOpts);
+  while (true) {
+    Token Tok;
+    if (Lex.LexFromRawLexer(Tok))
+      break;
+    if (Tok.is(tok::hash) && Tok.isAtStartOfLine()) {
+      auto MacroLoc = Tok.getLocation();
+      Lex.LexFromRawLexer(Tok);
+      if (Tok.getRawIdentifier() != "pragma") {
+        toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+          diag::warn_disable_inline);
+        toDiag(mSrcMgr.getDiagnostics(), MacroLoc,
+          diag::note_inline_macro_prevent);
+        return true;
+      }
+    }
+    if (Tok.isNot(tok::raw_identifier))
+      continue;
+    if (mDeclRefLoc.count(Tok.getLocation().getRawEncoding()))
+      continue;
+    auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
+    if (MacroItr == mRawMacros.end())
+      continue;
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline);
+    toDiag(mSrcMgr.getDiagnostics(), Tok.getLocation(),
+      diag::note_inline_macro_prevent);
+    toDiag(mSrcMgr.getDiagnostics(), MacroItr->second,
+      diag::note_expanded_from_here);
+    return true;
+  }
   if (InCondOp) {
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_in_ternary);
@@ -836,11 +872,11 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
 
 void ClangInliner::HandleTranslationUnit() {
   mGIE.TraverseDecl(mContext.getTranslationUnitDecl());
-  StringMap<SourceLocation> RawMacros, RawIncludes;
+  StringMap<SourceLocation> RawIncludes;
   for (auto &File : mGIE.getFiles()) {
     StringSet<> TmpRawIds;
     getRawMacrosAndIncludes(File.second, File.first, mSrcMgr, mLangOpts,
-      RawMacros, RawIncludes, mIdentifiers);
+      mRawMacros, RawIncludes, mIdentifiers);
   }
   // We check that all includes are mentioned in AST. For example, if there is
   // an include which contains macros only and this macros do not used then
@@ -903,8 +939,8 @@ void ClangInliner::HandleTranslationUnit() {
         // void f1() { f(); }
         // In this case `X` will be a macro after inlining of f(), so it is not
         // possible to inline f().
-        auto MacroItr = RawMacros.find(Tok.getRawIdentifier());
-        if (MacroItr != RawMacros.end())
+        auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
+        if (MacroItr != mRawMacros.end())
           T.second->setMacroInDecl(Tok.getLocation(), MacroItr->second);
         if (Tok.getRawIdentifier() == T.first->getName())
           continue;
