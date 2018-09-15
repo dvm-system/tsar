@@ -394,7 +394,7 @@ private:
     if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
     LInfo->setInduction(AI);
-    DEBUG(dbgs() << "[CANONICAL LOOP: induction variable is"; AI->dump());
+    DEBUG(dbgs() << "[CANONICAL LOOP]: induction variable is"; AI->dump());
     llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree->find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
