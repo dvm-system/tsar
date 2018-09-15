@@ -32,6 +32,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeTestPrinterPassPass(Registry);
   initializeClangPerfectLoopPassPass(Registry);
   initializeClangInlinerPassPass(Registry);
+  initializeClangFormatPassPass(Registry);
   initializeCopyEliminationPassPass(Registry);
   // Initialize necessary LLVM passes.
   initializeUnreachableBlockElimLegacyPassPass(Registry);

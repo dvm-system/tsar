@@ -163,6 +163,12 @@ void initializeClangInlinerPassPass(PassRegistry& Registry);
 /// Creates a pass to perform source-level inline expansion using Clang.
 llvm::ModulePass *createClangInlinerPass();
 
+/// Initializes a pass to reformat sources after transformation using Clang.
+void initializeClangFormatPassPass(PassRegistry& Registry);
+
+/// Creates a pass to reformat sources after transformation using Clang.
+llvm::ModulePass *createClangFormatPass();
+
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }
 

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_finliner.h"
+#include "ClangFormatPass.h"
 #include "ClangUtils.h"
 #include "Diagnostic.h"
 #include "tsar_pragma.h"
@@ -63,6 +64,7 @@ void FunctionInlinerQueryManager::run(llvm::Module *M,
     Passes.add(TEP);
   }
   Passes.add(createClangInlinerPass());
+  Passes.add(createClangFormatPass());
   Passes.run(*M);
 }
 
@@ -73,35 +75,6 @@ inline FilenameAdjuster getFilenameAdjuster() {
       Path, ".inl" + llvm::sys::path::extension(Path));
     return Path.str();
   };
-}
-
-inline bool reformat(
-  clang::Rewriter& Rewriter, clang::FileID FID) {
-  clang::SourceManager& SM = Rewriter.getSourceMgr();
-  llvm::MemoryBuffer* Code = SM.getBuffer(FID);
-  if (Code->getBufferSize() == 0)
-    return false;
-  unsigned int Offset = SM.getFileOffset(SM.getLocForStartOfFile(FID));
-  unsigned int Length = SM.getFileOffset(SM.getLocForEndOfFile(FID)) - Offset;
-  std::vector<clang::tooling::Range> Ranges({
-    clang::tooling::Range(Offset, Length) });
-  clang::format::FormatStyle FormatStyle
-    = clang::format::getStyle("LLVM", "", "LLVM");
-  clang::tooling::Replacements Replaces = clang::format::sortIncludes(
-    FormatStyle, Code->getBuffer(), Ranges,
-    SM.getFileEntryForID(FID)->getName());
-  llvm::Expected<std::string> ChangedCode
-    = clang::tooling::applyAllReplacements(Code->getBuffer(), Replaces);
-  assert(bool(ChangedCode) == true && "Failed to apply replacements");
-  for (const auto& R : Replaces) {
-    Ranges.push_back({ R.getOffset(), R.getLength() });
-  }
-  clang::tooling::Replacements FormatChanges = clang::format::reformat(
-    FormatStyle, ChangedCode.get(), Ranges,
-    SM.getFileEntryForID(FID)->getName());
-  Replaces = Replaces.merge(FormatChanges);
-  clang::tooling::applyAllReplacements(Replaces, Rewriter);
-  return false;
 }
 
 bool ClangInlinerPass::runOnModule(llvm::Module& M) {
@@ -119,20 +92,6 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   ClangInliner Inliner(Rewriter, Context);
   Inliner.HandleTranslationUnit();
   TfmCtx->release(getFilenameAdjuster());
-  // clang::tooling can not apply replacements over rewritten sources,
-  // only over original non-modified sources
-  // dump modifications and reload files to apply stylization
-  clang::Rewriter Rewrite(SrcMgr, Rewriter.getLangOpts());
-  for (auto I = Rewriter.buffer_begin(), E = Rewriter.buffer_end();
-    I != E; ++I) {
-    const clang::FileEntry* Entry = SrcMgr.getFileEntryForID(I->first);
-    std::string Name = getFilenameAdjuster()(Entry->getName());
-    clang::FileID FID = SrcMgr.createFileID(
-      SrcMgr.getFileManager().getFile(Name),
-      clang::SourceLocation(), clang::SrcMgr::C_User);
-    reformat(Rewrite, FID);
-  }
-  Rewrite.overwriteChangedFiles();
   return false;
 }
 
