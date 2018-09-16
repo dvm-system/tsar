@@ -18,12 +18,8 @@
 namespace llvm {
 class Module;
 
-/// \brief This pass tries to reformat sources which have been transformed by
+/// This pass tries to reformat sources which have been transformed by
 /// previous passes.
-///
-/// clang::tooling can not apply replacements over rewritten sources, they can
-/// be applied only over original non-modified sources. So, modifications
-/// should be written to files by previous passes.
 class ClangFormatPass : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;

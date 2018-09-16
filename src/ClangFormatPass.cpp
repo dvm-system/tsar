@@ -9,11 +9,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangFormatPass.h"
+#include "ClangUtils.h"
 #include "Diagnostic.h"
 #include "tsar_transformation.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/SourceManager.h>
-#include <clang/Format/Format.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/IR/Module.h>
@@ -21,8 +21,6 @@
 #include <vector>
 
 using namespace clang;
-using namespace clang::format;
-using namespace clang::tooling;
 using namespace llvm;
 using namespace tsar;
 
@@ -43,42 +41,6 @@ void ClangFormatPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.setPreservesAll();
 }
 
-static inline FilenameAdjuster getFilenameAdjuster() {
-  return [](llvm::StringRef Filename) -> std::string {
-    SmallString<128> Path = Filename;
-    sys::path::replace_extension(
-      Path, ".inl" + sys::path::extension(Path));
-    return Path.str();
-  };
-}
-
-static void reformat(Rewriter &FormatRewriter, FileID FID) {
-  auto &SM = FormatRewriter.getSourceMgr();
-  llvm::MemoryBuffer* Code = SM.getBuffer(FID);
-  if (Code->getBufferSize() == 0)
-    return;
-  StringRef Buffer = Code->getBuffer();
-  StringRef FName = SM.getFileEntryForID(FID)->getName();
-  unsigned Offset = SM.getFileOffset(SM.getLocForStartOfFile(FID));
-  unsigned Length = SM.getFileOffset(SM.getLocForEndOfFile(FID)) - Offset;
-  std::vector<Range> Ranges({ Range(Offset, Length) });
-  FormatStyle Style = format::getStyle("LLVM", "", "LLVM");
-  Replacements Replaces = sortIncludes(Style, Code->getBuffer(), Ranges, FName);
-  auto ChangedCode = applyAllReplacements(Code->getBuffer(), Replaces);
-  if (!ChangedCode)
-    toDiag(SM.getDiagnostics(), SM.getLocForStartOfFile(FID),
-      diag::warn_reformat_include);
-  else
-    Buffer = ChangedCode.get();
-  for (const auto &R : Replaces)
-    Ranges.emplace_back(R.getOffset(), R.getLength());
-  Replacements FormatChanges = reformat(Style, Buffer, Ranges, FName);
-  Replaces = Replaces.merge(FormatChanges);
-  if (!applyAllReplacements(Replaces, FormatRewriter))
-    toDiag(SM.getDiagnostics(), SM.getLocForStartOfFile(FID),
-      diag::warn_reformat);
-}
-
 bool ClangFormatPass::runOnModule(llvm::Module& M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
@@ -89,15 +51,37 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
   auto &TfmRewriter = TfmCtx->getRewriter();
   auto &SrcMgr = TfmRewriter.getSourceMgr();
   auto &LangOpts = TfmRewriter.getLangOpts();
+  auto &Diags = SrcMgr.getDiagnostics();
   Rewriter FormatRewriter(SrcMgr, LangOpts);
+#ifdef DEBUG
+  StringSet<> TransformedFiles;
+#endif
   for (auto &Buffer :
       make_range(TfmRewriter.buffer_begin(), TfmRewriter.buffer_end())) {
+    auto StartLoc = SrcMgr.getLocForStartOfFile(Buffer.first);
+    if (SrcMgr.getFileCharacteristic(StartLoc) != clang::SrcMgr::C_User) {
+      toDiag(Diags, StartLoc, diag::err_transform_system);
+      continue;
+    }
     auto *OrigFile = SrcMgr.getFileEntryForID(Buffer.first);
-    auto FID = SrcMgr.createFileID(
-      SrcMgr.getFileManager().getFile(getFilenameAdjuster()(OrigFile->getName())),
-      SourceLocation(), clang::SrcMgr::C_User);
-    reformat(FormatRewriter, FID);
+    assert(TransformedFiles.insert(OrigFile->getName()).second &&
+      "Multiple rewriter buffers for the same file does not allowed!");
+    std::error_code Err = sys::fs::copy_file(OrigFile->getName(),
+      getBackupFilenameAdjuster()(OrigFile->getName()));
+    if (Err) {
+      toDiag(Diags, StartLoc, diag::err_backup_file);
+      toDiag(Diags, StartLoc, diag::note_not_transform);
+      continue;
+    }
+    auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
+    std::string TfmSrc = TfmRewriter.getRewrittenText({ StartLoc,  EndLoc });
+    auto ReformatSrc = reformat(TfmSrc, OrigFile->getName());
+    if (!ReformatSrc) {
+      toDiag(Diags, StartLoc, diag::warn_reformat);
+      continue;
+    }
+    TfmRewriter.ReplaceText({ StartLoc, EndLoc }, ReformatSrc.get());
   }
-  FormatRewriter.overwriteChangedFiles();
+  TfmCtx->release(getPureFilenameAdjuster());
   return false;
 }

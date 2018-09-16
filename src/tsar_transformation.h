@@ -45,6 +45,14 @@ inline FilenameAdjuster getPureFilenameAdjuster() {
 /// the countdown begins again and the files will be overwritten.
 FilenameAdjuster getDumpFilenameAdjuster();
 
+/// Returns a filename adjuster which generates the following name:
+/// name.extension -> name.extension.orig
+inline FilenameAdjuster getBackupFilenameAdjuster() {
+  return [](llvm::StringRef Filename) -> std::string {
+    return (Filename + ".orig").str();
+  };
+}
+
 /// \brief A wrapper for a file stream that atomically overwrites the target.
 ///
 /// Creates a file output stream for a temporary file in the constructor,
@@ -151,6 +159,10 @@ public:
   /// have been successfully saved.
   std::pair<std::string, bool> release(
     const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const;
+
+  /// Save all changes in a specified buffer to disk (in file with a specified
+  /// name), emits diagnostic messages in case of error.
+  void release(llvm::StringRef Filename, const clang::RewriteBuffer &Buffer);
 
   /// \brief Resets existence configuration of transformation engine.
   ///

@@ -21,12 +21,10 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/Analysis/CallGraph.h>
 #include <clang/Analysis/CFG.h>
-#include <clang/Format/Format.h>
 #include <clang/Lex/Lexer.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/Debug.h>
-#include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 #include <algorithm>
 #include <set>
@@ -53,15 +51,6 @@ void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.setPreservesAll();
 }
 
-inline FilenameAdjuster getFilenameAdjuster() {
-  return [](llvm::StringRef Filename) -> std::string {
-    llvm::SmallString<128> Path = Filename;
-    llvm::sys::path::replace_extension(
-      Path, ".inl" + llvm::sys::path::extension(Path));
-    return Path.str();
-  };
-}
-
 bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
@@ -76,7 +65,6 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
     toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
   ClangInliner Inliner(Rewriter, Context);
   Inliner.HandleTranslationUnit();
-  TfmCtx->release(getFilenameAdjuster());
   return false;
 }
 

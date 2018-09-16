@@ -16,6 +16,7 @@
 #include <clang/Lex/Token.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringSet.h>
+#include <llvm/Support/Error.h>
 #include <vector>
 
 namespace llvm {
@@ -179,6 +180,10 @@ std::vector<TokenT> buildDecl(llvm::StringRef Type,
     Out.emplace_back(T);
   return Out;
 }
+
+/// Reformat a given range of code from a specified file.
+llvm::Expected<std::string> reformat(llvm::StringRef Code,
+  llvm::StringRef Fliename);
 
 /// Returns location of the beginning of a line which contains a specified
 /// location.

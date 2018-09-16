@@ -13,6 +13,7 @@
 #include <clang/Analysis/CFG.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
+#include <clang/Format/Format.h>
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Tooling/Tooling.h>
@@ -227,7 +228,6 @@ bool ExternalRewriter::RemoveText(SourceRange SR, bool RemoveLineIfEmpty) {
   return false;
 }
 
-
 StringRef ExternalRewriter::getRewrittenText(clang::SourceRange SR) {
   if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
     return StringRef();
@@ -317,4 +317,21 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   }
   bcl::swapMemory(llvm::errs(), llvm::nulls());
   return Tokens;
+}
+
+Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
+  using namespace clang::format;
+  using namespace clang::tooling;
+  std::vector<Range> Ranges({ Range(0, TfmSrc.size()) });
+  FormatStyle Style = format::getStyle("LLVM", "", "LLVM");
+  // TODO (kaniadnr@gmail.com): it seams that sortInclude() removes adjacent
+  // includes with the same name. In the following case:
+  //   #include "file.h"
+  //   #include "file.h"
+  // the result will be
+  //    #include "file.h"
+  // So, we disable call of sortInclude() at this moment.
+  // Replacements Replaces = sortIncludes(Style, TfmSrc, Ranges, Filename);
+  Replacements FormatChanges = reformat(Style, TfmSrc, Ranges, Filename);
+  return applyAllReplacements(TfmSrc, FormatChanges);
 }

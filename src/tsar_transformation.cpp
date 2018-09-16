@@ -164,3 +164,12 @@ std::pair<std::string, bool> TransformationContext::release(
   }
   return std::make_pair(std::move(MainFile), AllWritten);
 }
+
+void TransformationContext::release(StringRef Filename,
+    const RewriteBuffer &Buffer) {
+  DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();
+  std::unique_ptr<llvm::raw_fd_ostream> OS;
+  AtomicallyMovedFile File(Diagnostics, Filename);
+  if (File.hasStream())
+    Buffer.write(File.getStream());
+}
