@@ -50,6 +50,7 @@ def warn_disable_inline_variadic : Warning<"disable inline expansion of variadic
 def warn_disable_inline_recursive : Warning<"disable inline expansion of recursive function">;
 def warn_disable_inline_unreachable : Warning<"disable inline expansion of unreachable call">;
 def warn_disable_inline_in_logic_rhs : Warning<"disable inline expansion in right hand side of logical operator">;
+def warn_disable_inline_in_include : Warning<"disable inline expansion in header file">;
 
 def warn_disable_inline : Warning<"disable inline expansion">;
 def note_inline_macro_prevent : Note<"macro prevent inlining">;

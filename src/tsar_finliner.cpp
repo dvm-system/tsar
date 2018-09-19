@@ -748,6 +748,26 @@ bool ClangInliner::checkTemplateInstantiation(const TemplateInstantiation &TI,
 auto ClangInliner::getTemplatInstantiationCheckers() const
     -> SmallVector<TemplateInstantiationChecker, 8> {
   SmallVector<TemplateInstantiationChecker, 8> Checkers;
+  // Disables inline expansion into #include files.
+  Checkers.push_back([this](const TemplateInstantiation &TI,
+      const InlineStackImpl &CallStack) {
+    assert(CallStack.back()->mCallee == TI.mCaller &&
+      "Function at the top of stack should make a call which is checked!");
+    // We already made the check earlier.
+    if (CallStack.size() > 1)
+      return true;
+    auto StartLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getLocStart());
+    auto EndLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getLocEnd());
+    assert(StartLoc.first == EndLoc.first &&
+      "Statements which starts and ends in different files must be already discarded!");
+    if (mSrcMgr.getDecomposedIncludedLoc(StartLoc.first).first.isValid() ||
+        mSrcMgr.getDecomposedIncludedLoc(EndLoc.first).first.isValid()) {
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+        diag::warn_disable_inline_in_include);
+      return false;
+    }
+    return true;
+  });
   // Checks that external dependencies are available at the call location.
   Checkers.push_back([this](const TemplateInstantiation &TI,
       const InlineStackImpl &CallStack) {
