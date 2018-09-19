@@ -772,35 +772,45 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
   Checkers.push_back([this](const TemplateInstantiation &TI,
       const InlineStackImpl &CallStack) {
     assert(CallStack.back()->mCallee == TI.mCaller &&
-      "Function as the top of stack should make a call which is checked!");
-    for (auto &Caller : CallStack) {
-      auto *CallerT = Caller->mCallee;
-      auto CallerLoc = mSrcMgr.getDecomposedExpansionLoc(
-        CallerT->getFuncDecl()->getLocStart());
-      auto checkFD = [this, &TI, CallerT, &CallerLoc](
+      "Function at the top of stack should make a call which is checked!");
+    auto isInAnyForwardDecls = [&CallStack](
+      const GlobalInfoExtractor::OutermostDecl *FD) {
+      for (auto *Caller : CallStack)
+        if (Caller->mCallee->getForwardDecls().count(FD))
+          return true;
+      return false;
+    };
+    auto isInAvailableForwardDecl = [this](std::pair<FileID, unsigned> Bound,
         const GlobalInfoExtractor::OutermostDecl *FD) {
-        if (CallerT->getForwardDecls().count(FD))
-          return true;
-        auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(
-          FD->getRoot()->getLocEnd());
-        while (FDLoc.first.isValid() && FDLoc.first != CallerLoc.first)
-          FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
-        if (FDLoc.first.isValid() && FDLoc.second < CallerLoc.second)
-          return true;
-        toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
-          diag::warn_disable_inline);
-        toDiag(mSrcMgr.getDiagnostics(),
-          FD->getDescendant()->getLocation(),
-          diag::note_inline_unresolvable_extern_dep);
+      auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(
+        FD->getRoot()->getLocEnd());
+      while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
+        FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
+      if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
+        return true;
+      return false;
+    };
+    auto checkFD = [this, &TI, &isInAnyForwardDecls, &isInAvailableForwardDecl](
+        std::pair<FileID, unsigned> Bound,
+        const GlobalInfoExtractor::OutermostDecl *FD) {
+      if (isInAnyForwardDecls(FD))
+        return true;
+      if (isInAvailableForwardDecl(Bound, FD))
+        return true;
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+        diag::warn_disable_inline);
+      toDiag(mSrcMgr.getDiagnostics(), FD->getDescendant()->getLocation(),
+        diag::note_inline_unresolvable_extern_dep);
+      return false;
+    };
+    auto TargetFuncStart = mSrcMgr.getDecomposedExpansionLoc(
+      CallStack.front()->mCallee->getFuncDecl()->getLocStart());
+    for (auto FD : TI.mCallee->getForwardDecls())
+      if (!checkFD(TargetFuncStart, FD))
         return false;
-      };
-      for (auto FD : TI.mCallee->getForwardDecls())
-        if (!checkFD(FD))
-          return false;
-      for (auto FD : TI.mCallee->getMayForwardDecls())
-        if (!checkFD(FD))
-          return false;
-    }
+    for (auto FD : TI.mCallee->getMayForwardDecls())
+      if (!checkFD(TargetFuncStart, FD))
+        return false;
     return true;
   });
   // Checks collision between local declarations of caller and global
