@@ -411,7 +411,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   //   #include ...
   // );
   // We also search for raw macros which locations have not been visited.
-  LocalLexer Lex(Call->getSourceRange(), mSrcMgr, mLangOpts);
+  LocalLexer Lex(StmtWithCall->getSourceRange(), mSrcMgr, mLangOpts);
   while (true) {
     Token Tok;
     if (Lex.LexFromRawLexer(Tok))
