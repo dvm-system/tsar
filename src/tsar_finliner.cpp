@@ -308,6 +308,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   clang::Stmt *StmtWithCall = Call;
   auto ClauseI = mScopes.rend();
   bool InCondOp = false, InLoopCond = false, InForInc = false;
+  bool InLogicRHS = false;
   for (; ScopeI != ScopeE; StmtWithCall = *(ScopeI++)) {
     if (ScopeI->isClause()) {
       ClauseI = ScopeI;
@@ -348,6 +349,9 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       if (If->getCond() == StmtWithCall)
         StmtWithCall = If;
       break;
+    } else if (auto BO = dyn_cast<clang::BinaryOperator > (*ScopeI)) {
+      if (BO->getRHS() == *(ScopeI - 1))
+        InLogicRHS = BO->isLogicalOp() || BO->isBitwiseOp();
     } else if (isa<CompoundStmt>(*ScopeI) ||
                isa<CaseStmt>(*ScopeI) || isa<DefaultStmt>(*ScopeI)) {
       break;
@@ -455,6 +459,11 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   if (InForInc) {
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_in_for_inc);
+    return true;
+  }
+  if (InLogicRHS) {
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline_in_logic_rhs);
     return true;
   }
   // Template may not exist yet if forward declaration of a function is used.
