@@ -36,6 +36,10 @@ INITIALIZE_PASS_END(ClangFormatPass, "clang-format",
 
 ModulePass* llvm::createClangFormatPass() { return new ClangFormatPass(); }
 
+ModulePass* llvm::createClangFormatPass(StringRef OutputSuffix, bool NoFormat) {
+  return new ClangFormatPass(OutputSuffix, NoFormat);
+}
+
 void ClangFormatPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.setPreservesAll();
@@ -52,6 +56,13 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
   auto &SrcMgr = TfmRewriter.getSourceMgr();
   auto &LangOpts = TfmRewriter.getLangOpts();
   auto &Diags = SrcMgr.getDiagnostics();
+  auto Adjuster = mOutputSuffix.empty() ? getPureFilenameAdjuster() :
+    [this](llvm::StringRef Filename) -> std::string {
+      SmallString<128> Path = Filename;
+      sys::path::replace_extension(Path,
+        "." + mOutputSuffix + sys::path::extension(Path));
+    return Path.str();
+  };
   Rewriter FormatRewriter(SrcMgr, LangOpts);
 #ifdef DEBUG
   StringSet<> TransformedFiles;
@@ -66,22 +77,28 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
     auto *OrigFile = SrcMgr.getFileEntryForID(Buffer.first);
     assert(TransformedFiles.insert(OrigFile->getName()).second &&
       "Multiple rewriter buffers for the same file does not allowed!");
-    std::error_code Err = sys::fs::copy_file(OrigFile->getName(),
-      getBackupFilenameAdjuster()(OrigFile->getName()));
-    if (Err) {
-      toDiag(Diags, StartLoc, diag::err_backup_file);
-      toDiag(Diags, StartLoc, diag::note_not_transform);
-      continue;
+    // Backup original files if they will be overwritten due to empty output
+    // suffix.
+    if (mOutputSuffix.empty()) {
+      std::error_code Err = sys::fs::copy_file(OrigFile->getName(),
+        getBackupFilenameAdjuster()(OrigFile->getName()));
+      if (Err) {
+        toDiag(Diags, StartLoc, diag::err_backup_file);
+        toDiag(Diags, StartLoc, diag::note_not_transform);
+        continue;
+      }
     }
-    auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
-    std::string TfmSrc = TfmRewriter.getRewrittenText({ StartLoc,  EndLoc });
-    auto ReformatSrc = reformat(TfmSrc, OrigFile->getName());
-    if (!ReformatSrc) {
-      toDiag(Diags, StartLoc, diag::warn_reformat);
-      continue;
+    if (!mNoFormat) {
+      auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
+      std::string TfmSrc = TfmRewriter.getRewrittenText({ StartLoc,  EndLoc });
+      auto ReformatSrc = reformat(TfmSrc, Adjuster(OrigFile->getName()));
+      if (!ReformatSrc) {
+        toDiag(Diags, StartLoc, diag::warn_reformat);
+        continue;
+      }
+      TfmRewriter.ReplaceText({ StartLoc, EndLoc }, ReformatSrc.get());
     }
-    TfmRewriter.ReplaceText({ StartLoc, EndLoc }, ReformatSrc.get());
   }
-  TfmCtx->release(getPureFilenameAdjuster());
+  TfmCtx->release(Adjuster);
   return false;
 }

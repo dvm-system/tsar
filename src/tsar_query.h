@@ -113,13 +113,16 @@ class InstrLLVMQueryManager : public EmitLLVMQueryManager {
 /// This performs a specified source-level transformation.
 class TransformationQueryManager : public QueryManager {
 public:
-  explicit TransformationQueryManager(const llvm::PassInfo *TfmPass) :
-    mTfmPass(TfmPass) {}
+  explicit TransformationQueryManager(const llvm::PassInfo *TfmPass,
+    llvm::StringRef OutputSuffix = "", bool NoFormat = false) :
+    mTfmPass(TfmPass), mOutputSuffix(OutputSuffix), mNoFormat(NoFormat) {}
 
   void run(llvm::Module *M, TransformationContext *Ctx) override;
 
 private:
   const llvm::PassInfo *mTfmPass;
+  std::string mOutputSuffix;
+  bool mNoFormat;
 };
 }
 

@@ -74,9 +74,11 @@ private:
   bool mDumpAST;
   bool mEmitLLVM;
   bool mInstrLLVM;
+  bool mNoFormat;
   bool mTest;
   std::string mOutputFilename;
   std::string mLanguage;
+  std::string mOutputSuffix;
 };
 }
 #endif//TSAR_TOOL_H

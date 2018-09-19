@@ -13,6 +13,8 @@
 #ifndef TSAR_PASS_H
 #define TSAR_PASS_H
 
+#include <llvm/ADT/StringRef.h>
+
 namespace bcl {
 class IntrusiveConnection;
 class RedirectIO;
@@ -168,6 +170,10 @@ void initializeClangFormatPassPass(PassRegistry& Registry);
 
 /// Creates a pass to reformat sources after transformation using Clang.
 llvm::ModulePass *createClangFormatPass();
+
+/// Creates a pass to reformat sources after transformation using Clang.
+llvm::ModulePass* createClangFormatPass(
+  llvm::StringRef OutputSuffix, bool NoFormat);
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }

@@ -72,6 +72,10 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> DumpAST;
   llvm::cl::opt<bool> TimeReport;
   llvm::cl::opt<bool> Test;
+
+  llvm::cl::OptionCategory TfmCategory;
+  llvm::cl::opt<bool> NoFormat;
+  llvm::cl::opt<std::string> OutputSuffix;
 private:
   /// Default constructor.
   ///
@@ -115,7 +119,12 @@ Options::Options() :
   TimeReport("ftime-report", cl::cat(DebugCategory),
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
-    cl::desc("Insert results of analysis to a source file")) {
+    cl::desc("Insert results of analysis to a source file")),
+  TfmCategory("Transformation options"),
+  NoFormat("no-format", cl::cat(TfmCategory),
+    cl::desc("Disable format of transformed sources")),
+  OutputSuffix("output-suffix", cl::cat(TfmCategory), cl::value_desc("suffix"),
+    cl::desc("Filename suffix (between name and extension) for transformed sources")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
@@ -210,6 +219,12 @@ void Tool::storeCLOptions() {
       IncompatibleOpts.push_back(&O);
     return O;
   };
+  auto addIfSetIf = [&IncompatibleOpts](cl::opt<bool> &O, bool Predicat)
+      -> cl::opt<bool> & {
+    if (O && Predicat)
+      IncompatibleOpts.push_back(&O);
+    return O;
+  };
   SmallVector<cl::Option *, 8> LLIncompatibleOpts;
   auto addLLIfSet = [&LLIncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
     if (O)
@@ -233,6 +248,12 @@ void Tool::storeCLOptions() {
   mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
+  mNoFormat = addIfSetIf(Options::get().NoFormat, !mTfmPass);
+  mOutputSuffix = Options::get().OutputSuffix;
+  if (!mTfmPass && !mOutputSuffix.empty()) {
+    IncompatibleOpts.push_back(&Options::get().OutputSuffix);
+    LLIncompatibleOpts.push_back(&Options::get().OutputSuffix);
+  }
   if (IncompatibleOpts.size() > 1) {
     std::string Msg("error - this option is incompatible with");
     for (unsigned I = 1; I < IncompatibleOpts.size(); ++I)
@@ -275,8 +296,8 @@ inline static TestQueryManager * getTestQM() {
 }
 
 inline static TransformationQueryManager * getTransformationQM(
-    const llvm::PassInfo *TfmPass) {
-  static TransformationQueryManager QM(TfmPass);
+    const llvm::PassInfo *TfmPass, StringRef OutputSuffix, bool NoFormat) {
+  static TransformationQueryManager QM(TfmPass, OutputSuffix, NoFormat);
   return &QM;
 }
 
@@ -354,7 +375,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else if (mTfmPass)
-      QM = getTransformationQM(mTfmPass);
+      QM = getTransformationQM(mTfmPass, mOutputSuffix, mNoFormat);
     else
       QM = getDefaultQM(mOutputPasses);
   }

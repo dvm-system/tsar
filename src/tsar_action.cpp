@@ -141,7 +141,7 @@ void TransformationQueryManager::run(llvm::Module *M,
     return;
   }
   Passes.add(mTfmPass->getNormalCtor()());
-  Passes.add(createClangFormatPass());
+  Passes.add(createClangFormatPass(mOutputSuffix, mNoFormat));
   Passes.run(*M);
 }
 
