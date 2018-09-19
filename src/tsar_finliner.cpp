@@ -410,6 +410,15 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       diag::note_inline_macro_prevent);
     return true;
   }
+  if (mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getLocStart()).first !=
+      mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getLocEnd()).first) {
+    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+      diag::warn_disable_inline);
+    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getLocStart(),
+      diag::note_source_range_not_single_file);
+    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getLocEnd(),
+      diag::note_end_location);
+  }
   // Now, we search macro definitions in the call expression.
   // f(
   //   #include ...
@@ -660,6 +669,21 @@ void ClangInliner::checkTemplates(
 auto ClangInliner::getTemplateCheckers() const
     -> SmallVector<TemplateChecker, 8> {
   SmallVector<TemplateChecker, 8> Checkers;
+  // Checks that start and end of function definition are located at the same
+  // file.
+  Checkers.push_back([this](const Template &T) {
+    auto SR = mSrcMgr.getExpansionRange(T.getFuncDecl()->getSourceRange());
+    if (!mSrcMgr.isWrittenInSameFile(SR.getBegin(), SR.getEnd())) {
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
+        diag::warn_disable_inline);
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocStart(),
+        diag::note_source_range_not_single_file);
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocEnd(),
+        diag::note_end_location);
+      return false;
+    }
+    return true;
+  });
   // Checks that a function is defined by the user.
   Checkers.push_back([this](const Template &T) {
     if (mSrcMgr.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
@@ -843,6 +867,8 @@ void ClangInliner::HandleTranslationUnit() {
   // we conservatively assume dependence from this declaration.
   // We also collects all raw identifiers mentioned in the body of each
   // user-defined function.
+  // We also ignores functions with macro in body or functions whith bounds in
+  // different files.
   for (auto *D : mContext.getTranslationUnitDecl()->decls()) {
     if (!isa<FunctionDecl>(D))
       continue;
@@ -855,7 +881,10 @@ void ClangInliner::HandleTranslationUnit() {
         continue;
       if (T.second->isMacroInDecl())
         continue;
-      LocalLexer Lex(T.first->getSourceRange(), mSrcMgr, mLangOpts);
+      auto ExpRange = mSrcMgr.getExpansionRange(T.first->getSourceRange());
+      if (!mSrcMgr.isWrittenInSameFile(ExpRange.getBegin(), ExpRange.getEnd()))
+        continue;
+      LocalLexer Lex(ExpRange, mSrcMgr, mLangOpts);
       T.second->setKnownMayForwardDecls();
       while (true) {
         Token Tok;
