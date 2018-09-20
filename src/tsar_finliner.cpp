@@ -186,6 +186,13 @@ bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
 bool ClangInliner::VisitDecl(Decl *D) {
   traverseSourceLocation(D,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
+  if (auto ND = dyn_cast<NamedDecl>(D)) {
+    DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
+      mCurrentT->getFuncDecl()->getName() << "' at ";
+      ND->getLocation().dump(mSrcMgr);  dbgs() << "\n");
+    mDeclRefLoc.insert(
+      mSrcMgr.getExpansionLoc(ND->getLocation()).getRawEncoding());
+  }
   return RecursiveASTVisitor::VisitDecl(D);
 }
 
