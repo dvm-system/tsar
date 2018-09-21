@@ -410,8 +410,8 @@ private:
   /// are used in the last traversed function.
   GlobalInfoExtractor::RawLocationSet mDeclRefLoc;
 
-  /// last seen function decl (with body we are currently in)
-  clang::FunctionDecl* mCurrentFD = nullptr;
+  /// Last seen function (with body we are currently in).
+  detail::Template *mCurrentT = nullptr;
 
   /// \brief All identifiers (global and local) mentioned in a translation unit.
   ///

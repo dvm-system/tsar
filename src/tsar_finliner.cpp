@@ -198,7 +198,7 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
 void ClangInliner::rememberMacroLoc(SourceLocation Loc) {
   if (Loc.isInvalid() || !Loc.isMacroID())
     return;
-  mTs[mCurrentFD].setMacroInDecl(Loc);
+  mCurrentT->setMacroInDecl(Loc);
   /// Find root of subtree located in macro.
   if (mStmtInMacro.isInvalid())
    mStmtInMacro = Loc;
@@ -206,44 +206,43 @@ void ClangInliner::rememberMacroLoc(SourceLocation Loc) {
 
 bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   // Do not visit functions without body to avoid implicitly created templates
-  // after call of mTs[CurrentFD] method.
+  // after call of mTs[FD] method.
   if (!FD->isThisDeclarationADefinition())
     return true;
-  mCurrentFD = FD;
   std::unique_ptr<clang::CFG> CFG = clang::CFG::buildCFG(
     nullptr, FD->getBody(), &mContext, clang::CFG::BuildOptions());
   assert(CFG.get() != nullptr && ("CFG construction failed for "
-    + mCurrentFD->getName()).str().data());
+    + FD->getName()).str().data());
   llvm::SmallPtrSet<clang::CFGBlock *, 8> UB;
   unreachableBlocks(*CFG, UB);
-  auto &T = mTs.emplace(std::piecewise_construct,
-    std::forward_as_tuple(mCurrentFD),
-    std::forward_as_tuple(mCurrentFD)).first->second;
+  mCurrentT = &mTs.emplace(std::piecewise_construct,
+    std::forward_as_tuple(FD),
+    std::forward_as_tuple(FD)).first->second;
   for (auto *BB : UB)
     for (auto &I : *BB)
       if (auto CS = I.getAs<clang::CFGStmt>())
-          T.addUnreachableStmt(CS->getStmt());
+          mCurrentT->addUnreachableStmt(CS->getStmt());
   auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
-  mCurrentFD = nullptr;
   return Res;
 }
 
 bool ClangInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
-  mTs[mCurrentFD].addRetStmt(RS);
+  mCurrentT->addRetStmt(RS);
   return RecursiveASTVisitor::VisitReturnStmt(RS);
 }
 
 bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
-    mTs[mCurrentFD].addParmRef(PVD, DRE);
+    mCurrentT->addParmRef(PVD, DRE);
   auto ND = DRE->getFoundDecl();
   if (auto OD = mGIE.findOutermostDecl(ND)) {
     DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-      mCurrentFD->getName() << "' found '" << ND->getName() << "'\n");
-    mTs[mCurrentFD].addForwardDecl(OD);
+      mCurrentT->getFuncDecl()->getName() <<
+      "' found '" << ND->getName() << "'\n");
+    mCurrentT->addForwardDecl(OD);
   }
   DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
-    mCurrentFD->getName() << "' at ";
+    mCurrentT->getFuncDecl()->getName() << "' at ";
     DRE->getLocation().dump(mSrcMgr);  dbgs() << "\n");
   mDeclRefLoc.insert(
     mSrcMgr.getExpansionLoc(DRE->getLocation()).getRawEncoding());
@@ -266,11 +265,12 @@ bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getDecl())) {
     if (auto OD = mGIE.findOutermostDecl(ND)) {
       DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-        mCurrentFD->getName() << "' found '" << ND->getName() << "'\n");
-      mTs[mCurrentFD].addForwardDecl(OD);
+        mCurrentT->getFuncDecl()->getName() <<
+        "' found '" << ND->getName() << "'\n");
+      mCurrentT->addForwardDecl(OD);
     }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
-      mCurrentFD->getName() << "' at ";
+      mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
       mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
@@ -282,11 +282,12 @@ bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getTypedefNameDecl())) {
     if (auto OD = mGIE.findOutermostDecl(ND)) {
       DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-        mCurrentFD->getName() << "' found '" << ND->getName() << "'\n");
-      mTs[mCurrentFD].addForwardDecl(OD);
+        mCurrentT->getFuncDecl()->getName() <<
+        "' found '" << ND->getName() << "'\n");
+      mCurrentT->addForwardDecl(OD);
     }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
-      mCurrentFD->getName() << "' at ";
+      mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
       mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
@@ -320,14 +321,14 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
     }
     if (ParentI + 1 == ParentEI) {
       DEBUG(dbgs() << "[INLINE]: last statement for '" <<
-        mCurrentFD->getName() << "' found at ";
-      S->getLocStart().dump(mSourceManager); dbgs() << "\n");
-      mTs[mCurrentFD].setLastStmt(S);
+        mCurrentT->getFuncDecl()->getName() << "' found at ";
+      S->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+      mCurrentT->setLastStmt(S);
     }
   }
   if (mActiveClause) {
     mScopes.push_back(mActiveClause);
-    mInlineStmts[mCurrentFD].emplace_back(mActiveClause, S);
+    mInlineStmts[mCurrentT->getFuncDecl()].emplace_back(mActiveClause, S);
     mActiveClause = { nullptr, false, false };
   }
   mScopes.emplace_back(S);
@@ -363,7 +364,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
   if (!RecursiveASTVisitor::TraverseCallExpr(Call))
     return false;
-  auto &TIs = mTIs[mCurrentFD];
+  auto &TIs = mTIs[mCurrentT->getFuncDecl()];
   // Some calls may be visited multiple times.
   // For example, struct A A1 = { .X = f() };
   if (TIs.find_as(Call) != TIs.end())
@@ -489,7 +490,8 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   auto Flags = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
     TemplateInstantiation::DefaultFlags;
   TIs.insert(
-    TemplateInstantiation{ mCurrentFD, StmtWithCall, Call, &CalleeT, Flags });
+    TemplateInstantiation{ mCurrentT->getFuncDecl(),
+      StmtWithCall, Call, &CalleeT, Flags });
   return true;
 }
 
@@ -861,6 +863,7 @@ void ClangInliner::HandleTranslationUnit() {
     if (!isa<FunctionDecl>(D))
       continue;
     mDeclRefLoc.clear();
+    mCurrentT = nullptr;
     TraverseDecl(D);
     for (auto &T : mTs) {
       if (mSrcMgr.getFileCharacteristic(T.first->getLocStart()) !=
