@@ -95,11 +95,8 @@ namespace tsar {
     std::size_t size() const;
     bool empty() const;
 
-    //const Element * findElement(llvm::Value *Ptr) const;
     Element * getElement(std::size_t Idx);
 
-    //void emplace_back();
-    //void erase(int);
     void pushBack(const Element &);
     void pushBack(Element &&);
     void emplaceBack(llvm::Value *Ptr, const ExprList &Subscript, bool isValid = true);
@@ -117,12 +114,17 @@ namespace tsar {
 
     llvm::Value * getBase() const;
 
-    bool isValid;
+    bool isValid() const;
+
+    void setValid(bool Valid);
 
   private:
     llvm::Value *mBasePtr;
     ExprList mDims;
     std::vector<Element> mElements;
+
+    bool mIsArrayValid;
+
   };
 
   std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
@@ -176,54 +178,6 @@ private:
 };
 }
 
-//class Subscript {
-//public:
-//
-//  Subscript(const llvm::SCEV *Expr) :
-//    mExpr(Expr),
-//    mIsCoefficientsCounted(false) {}
-//
-//  std::pair<const llvm::SCEV *, const llvm::SCEV *> get—oefficients(llvm::ScalarEvolution &SE);
-//
-//  bool isConst(llvm::ScalarEvolution &SE);
-//
-//  const llvm::SCEV* getSCEV() {
-//    return mExpr;
-//  }
-//
-//  void setSCEV(const llvm::SCEV *Expr) {
-//    mExpr = Expr;
-//    mIsCoefficientsCounted = false;
-//  }
-//
-//private:
-//  std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEVMulExpr(const llvm::SCEVMulExpr *MulExpr,
-//    llvm::ScalarEvolution &SE);
-//
-//  std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(const llvm::SCEV *Expr,
-//    llvm::ScalarEvolution &SE);
-//
-//  const llvm::SCEV *mExpr;
-//  std::pair<const llvm::SCEV *, const llvm::SCEV *> m—oefficients;
-//  bool mIsCoefficientsCounted;
-//};
-//
-//struct ArrayAccess {
-//  llvm::SmallVector<Subscript, 3> mSubscripts;
-//  llvm::Instruction *mAccessInstruction;
-//};
-//
-//struct Array {
-//  //EstimateMemory *mArray;
-//  Array(llvm::Value *Root) :
-//    mRoot(Root) {}
-//
-//  llvm::Value *mRoot;
-//  llvm::SmallVector<const llvm::SCEV *, 3> mDims;
-//  llvm::SmallVector<ArrayAccess, 3> mAccesses;
-//};
-
-
 namespace llvm {
 class ArraySubscriptDelinearizePass :
   public FunctionPass, private bcl::Uncopyable {
@@ -248,13 +202,7 @@ public:
     return mDelinearizeInfo;
   }
 
-  /*const SmallVectorImpl<tsar::Array> & getAnalyzedArrays() const noexcept { return mAnalyzedArrays; }
-
-  const ArraySubscriptDelinearizeInfo & getDelinearizedSubscripts() const noexcept { return mDelinearizedSubscripts; }*/
-
 private:
-  /*ArraySubscriptDelinearizeInfo mDelinearizedSubscripts;
-  SmallVector<tsar::Array, 3> mAnalyzedArrays;*/
   DelinearizeInfo mDelinearizeInfo;
 };
 }

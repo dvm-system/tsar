@@ -1054,16 +1054,6 @@ void findGeps(Instruction *I, SmallVectorImpl<GetElementPtrInst *> &Geps) {
       }
     }
   } while (CurrentInst);
-  /*while (hasGepOperand(CurrentInst)) {
-    bool isGepInOperands = false;
-    for (unsigned int i = 0; i < CurrentInst->getNumOperands(); ++i) {
-      if (auto *Gep = dyn_cast<GetElementPtrInst>(CurrentInst->getOperand(i))) {
-
-        break;
-      }
-      if (!is)
-    }
-  }*/
   std::reverse(Geps.begin(), Geps.end());
   DEBUG(
     dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]GEPS size: " << Geps.size() << "\n";
@@ -1091,21 +1081,6 @@ void findLLVMIdxs(Instruction *I, SmallVectorImpl<GetElementPtrInst *> &Geps,
     }
   }
 }
-
-
-//std::pair<const SCEV *, const SCEV *> Subscript::get—oefficients(ScalarEvolution &SE) {
-//  if (!mIsCoefficientsCounted) {
-//    m—oefficients = findCoefficientsInSCEV(mExpr, SE);
-//    mIsCoefficientsCounted = true;
-//  }
-//  return m—oefficients;
-//}
-//
-//bool Subscript::isConst(ScalarEvolution &SE) {
-//  get—oefficients(SE);
-//  return isa<SCEVConstant>(m—oefficients.first)
-//    && isa<SCEVConstant>(m—oefficients.second);
-//}
 
 const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions, 
   ScalarEvolution &SE) {
