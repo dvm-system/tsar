@@ -254,24 +254,26 @@ public:
     std::function<StringRef(StringRef, SmallVectorImpl<char> &)>;
 
   VarDeclSearch(StringRef Type, StringRef Id, const ProcessorT &P) :
-    mType(Type), mId(Id), mProcessor(P) {}
+    mId(Id), mProcessor(P) {
+    mProcessor(Type, mType);
+  }
 
   void run(const ast_matchers::MatchFinder::MatchResult &MR) {
     auto *VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
     if (!VD)
       return;
-    mIsFound = (VD->getName() == mId &&
-      mProcessor(VD->getType().getAsString(), mBuffer) == mType);
+    SmallString<32> Buffer;
+    mIsFound |= (VD->getName() == mId &&
+      mProcessor(VD->getType().getAsString(), Buffer) == mType);
   }
 
   bool isFound() const noexcept { return mIsFound; }
 
 private:
-  StringRef mType;
+  SmallString<32> mType;
   StringRef mId;
   ProcessorT mProcessor;
   bool mIsFound = false;
-  SmallString<32> mBuffer;
 };
 }
 
