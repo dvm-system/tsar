@@ -935,60 +935,64 @@ void ClangInliner::HandleTranslationUnit() {
     mDeclRefLoc.clear();
     mCurrentT = nullptr;
     TraverseDecl(D);
-    for (auto &T : mTs) {
-      if (mSrcMgr.getFileCharacteristic(T.first->getLocStart()) !=
-          clang::SrcMgr::C_User)
+    // Some declarations may be ignored, and mCurrentT will be null.
+    // For example, forward declarations which are not definitions are ignored.
+    if (!mCurrentT)
+      continue;
+    if (mSrcMgr.getFileCharacteristic(mCurrentT->getFuncDecl()->getLocStart())
+        != clang::SrcMgr::C_User)
+      continue;
+    if (mCurrentT->isMacroInDecl())
+      continue;
+    auto ExpRange =
+      mSrcMgr.getExpansionRange(mCurrentT->getFuncDecl()->getSourceRange());
+    if (!mSrcMgr.isWrittenInSameFile(ExpRange.getBegin(), ExpRange.getEnd()))
+      continue;
+    LocalLexer Lex(ExpRange, mSrcMgr, mLangOpts);
+    mCurrentT->setKnownMayForwardDecls();
+    while (true) {
+      Token Tok;
+      if (Lex.LexFromRawLexer(Tok))
+        break;
+      if (Tok.is(tok::hash) && Tok.isAtStartOfLine()) {
+        auto MacroLoc = Tok.getLocation();
+        Lex.LexFromRawLexer(Tok);
+        if (Tok.getRawIdentifier() != "pragma")
+          mCurrentT->setMacroInDecl(MacroLoc);
         continue;
-      if (T.second->isMacroInDecl())
+      }
+      if (Tok.isNot(tok::raw_identifier))
         continue;
-      auto ExpRange = mSrcMgr.getExpansionRange(T.first->getSourceRange());
-      if (!mSrcMgr.isWrittenInSameFile(ExpRange.getBegin(), ExpRange.getEnd()))
+      // We conservatively check that function does not contain any macro
+      // names available in translation unit. If this function should be
+      // inlined we should check that after inlining some of local identifiers
+      // will not be a macro. So, the mentioned conservative check simplifies
+      // this check.
+      // void f() { ... X ... }
+      // #define X ...
+      // void f1() { f(); }
+      // In this case `X` will be a macro after inlining of f(), so it is not
+      // possible to inline f().
+      auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
+      if (MacroItr != mRawMacros.end())
+        mCurrentT->setMacroInDecl(Tok.getLocation(), MacroItr->second);
+      if (Tok.getRawIdentifier() == mCurrentT->getFuncDecl()->getName())
         continue;
-      LocalLexer Lex(ExpRange, mSrcMgr, mLangOpts);
-      T.second->setKnownMayForwardDecls();
-      while (true) {
-        Token Tok;
-        if (Lex.LexFromRawLexer(Tok))
-          break;
-        if (Tok.is(tok::hash) && Tok.isAtStartOfLine()) {
-          auto MacroLoc = Tok.getLocation();
-          Lex.LexFromRawLexer(Tok);
-          if (Tok.getRawIdentifier() != "pragma")
-            T.second->setMacroInDecl(MacroLoc);
-          continue;
-        }
-        if (Tok.isNot(tok::raw_identifier))
-          continue;
-        // We conservatively check that function does not contain any macro
-        // names available in translation unit. If this function should be
-        // inlined we should check that after inlining some of local identifiers
-        // will not be a macro. So, the mentioned conservative check simplifies
-        // this check.
-        // void f() { ... X ... }
-        // #define X ...
-        // void f1() { f(); }
-        // In this case `X` will be a macro after inlining of f(), so it is not
-        // possible to inline f().
-        auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
-        if (MacroItr != mRawMacros.end())
-          T.second->setMacroInDecl(Tok.getLocation(), MacroItr->second);
-        if (Tok.getRawIdentifier() == T.first->getName())
-          continue;
-        if (!mDeclRefLoc.count(Tok.getLocation().getRawEncoding())) {
-          // If declaration at this location has not been found previously it is
-          // necessary to conservatively check that it does not produce external
-          // dependence.
-          auto GlobalItr = mGIE.getOutermostDecls().find(Tok.getRawIdentifier());
-          if (GlobalItr != mGIE.getOutermostDecls().end()) {
-            for (auto &D : GlobalItr->second) {
-              T.second->addMayForwardDecl(&D);
-            DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
-              T.first->getName() << "' found '" << D.getDescendant()->getName()
-              << "'\n");
-            DEBUG(dbgs() << "[INLINE]: reference to '" <<
-              D.getDescendant()->getName() << "' in '" << T.first->getName() <<
-              "' at "; Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
-            }
+      if (!mDeclRefLoc.count(Tok.getLocation().getRawEncoding())) {
+        // If declaration at this location has not been found previously it is
+        // necessary to conservatively check that it does not produce external
+        // dependence.
+        auto GlobalItr = mGIE.getOutermostDecls().find(Tok.getRawIdentifier());
+        if (GlobalItr != mGIE.getOutermostDecls().end()) {
+          for (auto &D : GlobalItr->second) {
+            mCurrentT->addMayForwardDecl(&D);
+          DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
+            mCurrentT->getFuncDecl()->getName() << "' found '" <<
+            D.getDescendant()->getName() << "'\n");
+          DEBUG(dbgs() << "[INLINE]: reference to '" <<
+            D.getDescendant()->getName() << "' in '" <<
+            mCurrentT->getFuncDecl()->getName() << "' at ";
+            Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
           }
         }
       }
