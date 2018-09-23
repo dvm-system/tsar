@@ -138,6 +138,12 @@ public:
   /// List of source ranges.
   using RangeList = llvm::SmallVector<clang::SourceRange, 8>;
 
+  /// \brief List of return statements.
+  ///
+  /// The value is true if to replace the statement with multiple statements
+  /// it is necessary to add braces `{` ... `}`.
+  using ReturnStmts = llvm::DenseMap<const clang::ReturnStmt *, bool>;
+
   /// Attention, do not use nullptr to initialize template. We use this default
   /// parameter value for convenient access to the template using
   /// std::map::operator[]. Template must already exist in the map.
@@ -162,8 +168,10 @@ public:
     return mParmRefs[PVD];
   }
 
-  void addRetStmt(const clang::ReturnStmt* RS) { mRSs.insert(RS); }
-  llvm::DenseSet<const clang::ReturnStmt*> getRetStmts() const { return mRSs; }
+  void addRetStmt(const clang::ReturnStmt* RS, bool IsNeedBraces = true) {
+    mRSs.try_emplace(RS, IsNeedBraces).first->second |= IsNeedBraces;
+  }
+  const ReturnStmts & getRetStmts() const { return mRSs; }
 
   void setLastStmt(const clang::Stmt *S) noexcept { mLastStmt = S; }
   const clang::Stmt * getLastStmt() const noexcept { return mLastStmt; }
@@ -210,7 +218,7 @@ private:
   const clang::FunctionDecl *mFuncDecl = nullptr;
   Flags mFlags = DefaultFlags;
   mutable llvm::DenseMap<const clang::ParmVarDecl*, DeclRefList> mParmRefs;
-  llvm::DenseSet<const clang::ReturnStmt*> mRSs;
+  ReturnStmts mRSs;
 
   /// The last statement at the top level of a function body.
   const clang::Stmt *mLastStmt = nullptr;

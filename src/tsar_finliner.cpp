@@ -161,7 +161,14 @@ bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
 }
 
 bool ClangInliner::VisitReturnStmt(clang::ReturnStmt* RS) {
-  mCurrentT->addRetStmt(RS);
+  auto ParentI = mScopes.rbegin(), ParentEI = mScopes.rend();
+  assert(ParentI != ParentEI &&
+    "At least one parent which is not a pragma must exist!");
+  for (; ParentI->isClause(); ++ParentI) {
+    assert(ParentI + 1 != ParentEI &&
+      "At least one parent which is not a pragma must exist!");
+  }
+  mCurrentT->addRetStmt(RS, !isa<CompoundStmt>(*ParentI));
   return RecursiveASTVisitor::VisitReturnStmt(RS);
 }
 
@@ -562,9 +569,10 @@ std::pair<std::string, std::string> ClangInliner::compile(
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
       Canvas.RemoveText(SemiTok.getLocation(), true);
   }
-  SmallVector<const ReturnStmt *, 8> UnreachableRetStmts, ReachableRetStmts;
-  for (auto *S : TI.mCallee->getRetStmts())
-    if (TI.mCallee->getUnreachableStmts().count(S))
+  SmallVector<Template::ReturnStmts::value_type, 8> UnreachableRetStmts;
+  SmallVector<Template::ReturnStmts::value_type, 8> ReachableRetStmts;
+  for (auto &S : TI.mCallee->getRetStmts())
+    if (TI.mCallee->getUnreachableStmts().count(S.first))
       UnreachableRetStmts.push_back(S);
     else
       ReachableRetStmts.push_back(S);
@@ -580,40 +588,55 @@ std::pair<std::string, std::string> ClangInliner::compile(
     auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
     join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
     RetIdDeclStmt += ";";
-    for (auto *RS : ReachableRetStmts) {
+    for (auto &RS : ReachableRetStmts) {
       SmallString<256> Text;
       raw_svector_ostream TextOS(Text);
-      auto RetValue = Canvas.getRewrittenText(getFileRange(RS->getRetValue()));
-      if (RS == TI.mCallee->getLastStmt()) {
+      auto RetValue =
+        Canvas.getRewrittenText(getFileRange(RS.first->getRetValue()));
+      if (RS.first == TI.mCallee->getLastStmt()) {
         TextOS << RetId << " = " << RetValue << ";";
       } else {
         IsNeedLabel = true;
-        TextOS << "{";
+        if (RS.second)
+          TextOS << "{";
         TextOS << RetId << " = " << RetValue << ";";
         TextOS << "goto " << RetLab << ";";
-        TextOS << "}";
+        if (RS.second)
+          TextOS << "}";
       }
-      bool Res = Canvas.ReplaceText(getFileRange(RS), Text);
+      bool Res = Canvas.ReplaceText(getFileRange(RS.first), Text);
       assert(!Res && "Can not replace text in an external buffer!");
+      Token SemiTok;
+      if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+          mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+        Canvas.RemoveText(SemiTok.getLocation(), true);
     }
   } else {
     SmallString<16> RetStmt;
     ("goto " + RetLab).toVector(RetStmt);
-    for (auto *RS : ReachableRetStmts) {
-      if (RS == TI.mCallee->getLastStmt())
+    for (auto &RS : ReachableRetStmts) {
+      if (RS.first == TI.mCallee->getLastStmt())
         continue;
       IsNeedLabel = true;
-      bool Res = Canvas.ReplaceText(getFileRange(RS), RetStmt);
+      bool Res = Canvas.ReplaceText(getFileRange(RS.first), RetStmt);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
   if (!UnreachableRetStmts.empty())
     toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
       diag::remark_inline);
-  for (auto RS : UnreachableRetStmts) {
-    bool Res = Canvas.ReplaceText(getFileRange(RS), "");
+  for (auto &RS : UnreachableRetStmts) {
+    bool Res = Canvas.ReplaceText(getFileRange(RS.first), "");
     assert(!Res && "Can not replace text in an external buffer!");
-    toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS).getBegin(),
+    if (!RS.second) {
+      // If braces is not needed we can remover ending `;`.
+      // if (...) return; => IsNeedBraces == true => do not remove `;`.
+      Token SemiTok;
+      if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+          mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+        Canvas.RemoveText(SemiTok.getLocation(), true);
+    }
+    toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS.first).getBegin(),
       diag::remark_remove_unreachable);
   }
     for (auto SR : TI.mCallee->getToRemove())
