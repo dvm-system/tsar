@@ -995,7 +995,10 @@ void ClangInliner::HandleTranslationUnit() {
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
     if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
       continue;
-    auto CallsItr = mTs.find(cast<FunctionDecl>((*I)->getDecl()));
+    const auto *Definition = cast<FunctionDecl>((*I)->getDecl());
+    if (!Definition->hasBody(Definition))
+      continue;
+    auto CallsItr = mTs.find(Definition);
     if (CallsItr == mTs.end())
       continue;
     if (CallsItr->second->getCalls().empty()) {
