@@ -14,6 +14,7 @@
 #include "EstimateMemory.h"
 #include "tsar_dbg_output.h"
 #include "tsar_pass.h"
+#include "tsar_query.h"
 #include <llvm/Analysis/DOTGraphTraitsPass.h>
 #include <llvm/IR/CallSite.h>
 #include <llvm/Support/GraphWriter.h>
@@ -190,17 +191,21 @@ struct AliasTreeOnlyViewer :
 char AliasTreeOnlyViewer::ID = 0;
 }
 
-INITIALIZE_PASS(AliasTreeViewer, "view-em",
-  "View alias tree of a function", true, true)
+INITIALIZE_PASS_IN_GROUP(AliasTreeViewer, "view-em",
+  "View alias tree of a function", true, true,
+  DefaultQueryManager::getPassRegistry())
 
-INITIALIZE_PASS(AliasTreeOnlyViewer, "view-em-only",
-  "View alias tree of a function (alias summary only)", true, true)
+INITIALIZE_PASS_IN_GROUP(AliasTreeOnlyViewer, "view-em-only",
+  "View alias tree of a function (alias summary only)", true, true,
+  DefaultQueryManager::getPassRegistry())
 
-INITIALIZE_PASS(AliasTreePrinter, "dot-em",
-  "Print alias tree to 'dot' file", true, true)
+INITIALIZE_PASS_IN_GROUP(AliasTreePrinter, "dot-em",
+  "Print alias tree to 'dot' file", true, true,
+  DefaultQueryManager::getPassRegistry())
 
-INITIALIZE_PASS(AliasTreeOnlyPrinter, "dot-em-only",
-  "Print alias tree to 'dot' file (alias summary only)", true, true)
+INITIALIZE_PASS_IN_GROUP(AliasTreeOnlyPrinter, "dot-em-only",
+  "Print alias tree to 'dot' file (alias summary only)", true, true,
+  DefaultQueryManager::getPassRegistry())
 
 FunctionPass * llvm::createAliasTreeViewerPass() {
   return new AliasTreeViewer();

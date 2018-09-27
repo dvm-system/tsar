@@ -67,6 +67,12 @@ public:
   /// List of passes.
   typedef std::vector<const llvm::PassInfo *> PassList;
 
+  /// Returns a list of initialized output passes.
+  static PassGroupRegistry & getPassRegistry() noexcept {
+    static PassGroupRegistry Passes;
+    return Passes;
+  }
+
   /// Creates query manager.
   ///
   /// \param [in] OutputPasses This specifies passes that should be run to
@@ -114,6 +120,12 @@ class InstrLLVMQueryManager : public EmitLLVMQueryManager {
 /// This performs a specified source-level transformation.
 class TransformationQueryManager : public QueryManager {
 public:
+  /// Returns a list of initialized transformations.
+  static PassGroupRegistry & getPassRegistry() noexcept {
+    static PassGroupRegistry Passes;
+    return Passes;
+  }
+
   explicit TransformationQueryManager(const llvm::PassInfo *TfmPass,
     llvm::StringRef OutputSuffix = "", bool NoFormat = false) :
     mTfmPass(TfmPass), mOutputSuffix(OutputSuffix), mNoFormat(NoFormat) {}
@@ -130,7 +142,7 @@ private:
 class CheckQueryManager : public QueryManager {
 public:
   /// Returns a list of initialized checkers.
-  static PassGroupRegistry & getCheckers() noexcept {
+  static PassGroupRegistry & getPassRegistry() noexcept {
     static PassGroupRegistry Passes;
     return Passes;
   }

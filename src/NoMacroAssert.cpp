@@ -35,10 +35,10 @@ using namespace tsar;
 
 char ClangNoMacroAssert::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangNoMacroAssert, "clang-nomacro-assert",
-  "No Macro Assert (Clang)", false, false, CheckQueryManager::getCheckers())
+  "No Macro Assert (Clang)", false, false, CheckQueryManager::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_IN_GROUP_END(ClangNoMacroAssert, "clang-nomacro-assert",
-  "No Macro Assert (Clang)", false, false, CheckQueryManager::getCheckers())
+  "No Macro Assert (Clang)", false, false, CheckQueryManager::getPassRegistry())
 
 FunctionPass * llvm::createClangNoMacroAssert(bool *IsInvalid) {
   return new ClangNoMacroAssert(IsInvalid);

@@ -156,7 +156,7 @@ void CheckQueryManager::run(llvm::Module *M, TransformationContext* Ctx) {
   TEP->setContext(*M, Ctx);
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());
-  for (auto *PI : getCheckers()) {
+  for (auto *PI : getPassRegistry()) {
     if (!PI->getNormalCtor()) {
       M->getContext().emitError("cannot create pass " + PI->getPassName());
       continue;

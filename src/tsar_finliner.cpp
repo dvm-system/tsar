@@ -15,6 +15,7 @@
 #include "ClangUtils.h"
 #include "Diagnostic.h"
 #include "tsar_pragma.h"
+#include "tsar_query.h"
 #include "SourceLocationTraverse.h"
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
@@ -38,11 +39,13 @@ using namespace tsar::detail;
 #define DEBUG_TYPE "clang-inline"
 
 char ClangInlinerPass::ID = 0;
-INITIALIZE_PASS_BEGIN(ClangInlinerPass, "clang-inline",
-  "Source-level Inliner (Clang)", false, false)
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangInlinerPass, "clang-inline",
+  "Source-level Inliner (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(ClangInlinerPass, "clang-inline",
-  "Source-level Inliner (Clang)", false, false)
+INITIALIZE_PASS_IN_GROUP_END(ClangInlinerPass, "clang-inline",
+  "Source-level Inliner (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
 
 ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
 

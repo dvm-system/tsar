@@ -28,11 +28,21 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
-extern const char gAllowedOutputPassArgs[] = "\
-  -view-em -view-em-only\
-  -dot-em -dot-em-only";
+template<class PassGroupT>
+struct PassGroupRegistryFilterTraits {
+  static inline const PassGroupRegistry & getPassRegistry() {
+    return PassGroupT::getPassRegistry();
+  }
+};
 
-extern const char gAllowedTfmPassArgs[] = "-clang-inline";
+template<class PassGroupT,
+  class Traits = PassGroupRegistryFilterTraits<PassGroupT>>
+class PassFromGroupFilter {
+public:
+  bool operator()(const PassInfo &P) const {
+    return Traits::getPassRegistry().exist(P);
+  }
+};
 
 /// Represents possible options for TSAR.
 struct Options : private bcl::Uncopyable {
@@ -49,11 +59,11 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::list<const llvm::PassInfo*, bool,
     llvm::FilteredPassNameParser<
-    llvm::PassArgFilter<gAllowedOutputPassArgs>>> OutputPasses;
+      PassFromGroupFilter<DefaultQueryManager>>> OutputPasses;
 
   llvm::cl::opt<const llvm::PassInfo *, false,
     llvm::FilteredPassNameParser<
-    llvm::PassArgFilter<gAllowedTfmPassArgs>>> TfmPass;
+      PassFromGroupFilter<TransformationQueryManager>>> TfmPass;
 
   llvm::cl::OptionCategory CompileCategory;
   llvm::cl::list<std::string> Includes;
