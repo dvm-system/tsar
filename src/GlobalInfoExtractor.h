@@ -38,8 +38,8 @@ public:
   /// Set of raw encodings for clang::SourceLocation.
   using RawLocationSet = llvm::DenseSet<unsigned>;
 
-  /// Map from file content to one of file IDs.
-  using FileMap = llvm::DenseMap<const llvm::MemoryBuffer *, clang::FileID>;
+  /// Set of files.
+  using FileSet = llvm::DenseSet<const clang::FileEntry *>;
 
   /// Represents outermost parent (Root) of a global declaration (Descendant).
   ///
@@ -155,7 +155,7 @@ public:
   /// appropriate locations in AST or if some locations have not been visited.
   /// For example, a file will be omitted if it contains only macros
   /// which are never used.
-  const FileMap & getFiles() const noexcept { return mFiles; }
+  const FileSet & getFiles() const noexcept { return mFiles; }
 
   /// Returns a map from a name of global declaration to the list
   /// of global declarations with this name.
@@ -199,7 +199,7 @@ private:
   const clang::SourceManager &mSM;
   const clang::LangOptions &mLangOpts;
 
-  FileMap mFiles;
+  FileSet mFiles;
   RawLocationSet mVisitedExpLocs;
   RawLocationSet mVisitedIncludeLocs;
   OutermostDeclMap mOutermostDecls;

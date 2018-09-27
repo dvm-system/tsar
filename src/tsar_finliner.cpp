@@ -897,28 +897,25 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
 
 void ClangInliner::HandleTranslationUnit() {
   mGIE.TraverseDecl(mContext.getTranslationUnitDecl());
-  StringMap<SourceLocation> RawIncludes;
-  for (auto &File : mGIE.getFiles()) {
-    StringSet<> TmpRawIds;
-    getRawMacrosAndIncludes(File.second, File.first, mSrcMgr, mLangOpts,
+  for (auto *File : mGIE.getFiles()) {
+    StringMap<SourceLocation> RawIncludes;
+    const llvm::MemoryBuffer *Buffer =
+      const_cast<SourceManager &>(mSrcMgr).getMemoryBufferForFile(File);
+    FileID FID = mSrcMgr.translateFile(File);
+    getRawMacrosAndIncludes(FID, Buffer, mSrcMgr, mLangOpts,
       mRawMacros, RawIncludes, mIdentifiers);
-  }
-  // We check that all includes are mentioned in AST. For example, if there is
-  // an include which contains macros only and this macros do not used then
-  // there is no FileID for this include. Hence, it has not been parsed
-  // by getRawMacrosAndIncludes() function and some macro names are lost.
-  // The lost macro names potentially leads to transformation errors.
-  for (auto &Include : RawIncludes) {
-    // Do not check system files, because the may contains only macros which
-    // are never used.
-    if (mSrcMgr.getFileCharacteristic(Include.second) !=
-        SrcMgr::C_User)
-      continue;
-    if (!mGIE.getIncludeLocs().count(Include.second.getRawEncoding())) {
-      toDiag(mSrcMgr.getDiagnostics(), Include.second,
-        diag::warn_disable_inline_include);
-      return;
-    }
+    // We should check that all includes are mentioned in AST.
+    // For example, if there is an include which contains macros only and
+    // this macros do not used then there is no FileID for this include.
+    // Hence, it has not been parsed by getRawMacrosAndIncludes() function and
+    // some macro names are lost. The lost macro names potentially leads to
+    // transformation errors.
+    //
+    // However, it is not possible to establish correspondence between #include
+    // directives and available file entries due to complexity of the search of
+    // files that should be included. So, we disable this check. Instead we
+    // add `#pragma spf assert nomacro` before the body of inlined function to
+    // perform the check using the analyzer at the next time.
   }
   // We perform conservative search of external dependencies and macros for
   // each function. Functions from system library will be ignored. If there is
@@ -1043,8 +1040,11 @@ void ClangInliner::HandleTranslationUnit() {
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           Text.first = "{" + Text.first + "}";
       }
+      SmallString<64> NoMacroPragma;
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
-        ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+        ("/* " + CallExpr + " is inlined below */\n" +
+          getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma) +
+            Text.first).str());
       Token SemiTok;
       if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
             mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))

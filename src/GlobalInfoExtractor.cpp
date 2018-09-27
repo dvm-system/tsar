@@ -71,11 +71,11 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     // because it seems that dereference of nullptr may occur in getBuffer()
     // (getFile().getContentCash() may return nullptr). It seems that there is
     // an error in getBuffer() method.
-    if (mSM.getFileEntryForID(FID)) {
-      bool F = mFiles.try_emplace(mSM.getBuffer(FID), FID).second;
-      if (F) {
-        DEBUG(dbgs() << "[GLOBAL INFO]: visited file "
-          << mSM.getFileEntryForID(FID)->getName() << "\n");
+    if (auto Entry = mSM.getFileEntryForID(FID)) {
+      auto Info = mFiles.insert(Entry);
+      if (Info.second) {
+        DEBUG(dbgs() << "[GLOBAL INFO]: visited file " << Entry->getName() <<
+          " with " << mSM.getNumCreatedFIDsForFileID(FID) <<" FIDs\n");
       }
     }
     auto IncLoc = mSM.getIncludeLoc(FID);
