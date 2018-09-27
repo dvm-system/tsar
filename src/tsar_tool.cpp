@@ -74,6 +74,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> Test;
 
   llvm::cl::OptionCategory TfmCategory;
+  llvm::cl::OptionCategory TransformCategory;
   llvm::cl::opt<bool> NoFormat;
   llvm::cl::opt<std::string> OutputSuffix;
 private:
@@ -120,16 +121,16 @@ Options::Options() :
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
     cl::desc("Insert results of analysis to a source file")),
-  TfmCategory("Transformation options"),
-  NoFormat("no-format", cl::cat(TfmCategory),
+  TransformCategory("Transformation options"),
+  NoFormat("no-format", cl::cat(TransformCategory),
     cl::desc("Disable format of transformed sources")),
-  OutputSuffix("output-suffix", cl::cat(TfmCategory), cl::value_desc("suffix"),
+  OutputSuffix("output-suffix", cl::cat(TransformCategory), cl::value_desc("suffix"),
     cl::desc("Filename suffix (between name and extension) for transformed sources")) {
   StringMap<cl::Option*> &Opts = cl::getRegisteredOptions();
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
   static cl::alias HelpA("h", cl::aliasopt(*Help), cl::desc("Alias for -help"));
-#ifndef NDEBUG
+#ifdef DEBUG
   // Debug options are not available if LLVM has been built in release mode.
   if (Opts.count("debug") == 1) {
     auto Debug = Opts["debug"];
@@ -161,6 +162,7 @@ Options::Options() :
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
   Categories.push_back(&DebugCategory);
+  Categories.push_back(&TransformCategory);
   cl::HideUnrelatedOptions(Categories);
 }
 
