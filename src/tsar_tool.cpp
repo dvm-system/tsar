@@ -284,7 +284,9 @@ void Tool::storeCLOptions() {
   // source file (if such file exists in the command line).
   if (mLanguage.empty() && !LLIncompatibleOpts.empty()) {
     auto LLSrcItr = std::find_if(mSources.begin(), mSources.end(),
-      [](StringRef Src) {return sys::path::extension(Src) == ".ll"; });
+      [](StringRef Src) {
+        return FrontendOptions::getInputKindForExtension(
+          sys::path::extension(Src)) == IK_LLVM_IR; });
     if (LLSrcItr != mSources.end()) {
       std::string Msg();
       LLIncompatibleOpts[0]->error(
@@ -332,11 +334,13 @@ int Tool::run(QueryManager *QM) {
   std::vector<std::string> NoLLSources;
   bool IsLLVMSources = false;
   for (auto &Src : mSources) {
-    if (mLanguage != "ast" && sys::path::extension(Src) == ".ll")
+    auto InputKind =
+      FrontendOptions::getInputKindForExtension(sys::path::extension(Src));
+    if (mLanguage != "ast" && InputKind == IK_LLVM_IR)
       LLSources.push_back(Src);
     else
       NoLLSources.push_back(Src);
-    if (mLanguage != "ast" && sys::path::extension(Src) != ".ast")
+    if (mLanguage != "ast" && InputKind != IK_AST)
       NoASTSources.push_back(Src);
     else
       SourcesToMerge.push_back(Src);
