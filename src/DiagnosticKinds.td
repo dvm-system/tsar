@@ -65,3 +65,6 @@ def note_decl_hide : Note<"declration hides other declaration">;
 def note_expanded_from_here : Note<"expanded from here">;
 def note_source_range_not_single_file : Note<"bounds of source range located in different files">;
 def note_end_location : Note<"end is here">;
+
+def err_assert : Error<"assert violation">;
+def note_assert_no_macro : Note<"macro found">;

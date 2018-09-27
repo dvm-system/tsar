@@ -61,6 +61,7 @@ class Directive<string name, Namespace parent = Spf> {
 
 def Analysis   : Directive<"analysis">;
 def Transform  : Directive<"transform">;
+def Assert     : Directive<"assert">;
 
 // Define one clause.
 class Clause<string name, Directive parent, list<Expr> expr_list = []> {
@@ -80,4 +81,5 @@ def Private : Clause<"private", Analysis,
 
 def Induction : Clause<"induction", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
-  
+
+def AssertNoMacro : Clause<"nomacro", Assert>;

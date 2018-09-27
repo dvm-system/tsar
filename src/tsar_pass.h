@@ -175,6 +175,14 @@ llvm::ModulePass *createClangFormatPass();
 llvm::ModulePass* createClangFormatPass(
   llvm::StringRef OutputSuffix, bool NoFormat);
 
+/// Initializes pass to check absence of a macro in source ranges which
+/// are marked with `assert nomacro` directive.
+void initializeClangNoMacroAssertPass(PassRegistry& Registry);
+
+/// Initializes pass to check absence of a macro in source ranges which
+/// are marked with `assert nomacro` directive.
+llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
+
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }
 
