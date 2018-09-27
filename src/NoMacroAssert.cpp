@@ -81,6 +81,7 @@ public:
       auto ExpRange =
         mSrcMgr.getExpansionRange(S->getSourceRange());
       if (!mSrcMgr.isWrittenInSameFile(ExpRange.getBegin(), ExpRange.getEnd())) {
+        mIsInvalid = true;
         toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
           diag::err_assert);
         toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
@@ -100,6 +101,7 @@ public:
           if (Id == "define" || Id == "undef" ||
               Id == "ifdef" || Id == "ifndef")
             Lex.LexFromRawLexer(Tok);
+          mIsInvalid = true;
           toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
             diag::err_assert);
           toDiag(mSrcMgr.getDiagnostics(), MacroLoc,
@@ -107,6 +109,7 @@ public:
         } else if (Tok.is(tok::raw_identifier) &&
             !mVisitedLocs.count(Tok.getLocation().getRawEncoding()) &&
             mRawMacros.count(Tok.getRawIdentifier())) {
+          mIsInvalid = true;
           toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
             diag::err_assert);
           toDiag(mSrcMgr.getDiagnostics(), Tok.getLocation(),
@@ -137,6 +140,7 @@ private:
           mSrcMgr.getExpansionLoc(Loc).getRawEncoding()).second)
       return;
     if (Loc.isValid() && Loc.isMacroID()) {
+      mIsInvalid = true;
       toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
         diag::err_assert);
       toDiag(mSrcMgr.getDiagnostics(), Loc, diag::note_assert_no_macro);
