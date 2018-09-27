@@ -10,8 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "GlobalInfoExtractor.h"
+#include "ClangUtils.h"
 #include "SourceLocationTraverse.h"
+#include "tsar_transformation.h"
 #include <clang/Basic/SourceManager.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 
 #ifdef DEBUG
@@ -23,7 +26,48 @@ using namespace clang;
 using namespace llvm;
 using namespace tsar;
 
-#define DEBUG_TYPE "ast-global-info"
+#define DEBUG_TYPE "clang-global-info"
+
+char ClangGlobalInfoPass::ID = 0;
+INITIALIZE_PASS_BEGIN(ClangGlobalInfoPass, "clang-global-info",
+  "Source-level Globals Information (Clang)", false, false)
+  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_END(ClangGlobalInfoPass, "clang-global-info",
+  "Source-level Globals Information (Clang)", false, false)
+
+llvm::ModulePass * llvm::createClangGlobalInfoPass() {
+  return new ClangGlobalInfoPass;
+}
+
+void ClangGlobalInfoPass::getAnalysisUsage(AnalysisUsage& AU) const {
+  AU.addRequired<TransformationEnginePass>();
+  AU.setPreservesAll();
+}
+
+bool ClangGlobalInfoPass::runOnModule(llvm::Module &M) {
+  releaseMemory();
+  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!TfmCtx || !TfmCtx->hasInstance()) {
+    M.getContext().emitError("can not transform sources"
+        ": transformation context is not available");
+    return false;
+  }
+  auto &Context = TfmCtx->getContext();
+  auto &Rewriter = TfmCtx->getRewriter();
+  auto &SrcMgr = Rewriter.getSourceMgr();
+  auto &LangOpts = Rewriter.getLangOpts();
+  mGIE = make_unique<GlobalInfoExtractor>(SrcMgr, LangOpts);
+  mGIE->TraverseDecl(Context.getTranslationUnitDecl());
+  for (auto *File : mGIE->getFiles()) {
+    StringMap<SourceLocation> RawIncludes;
+    const llvm::MemoryBuffer *Buffer =
+      const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFile(File);
+    FileID FID = SrcMgr.translateFile(File);
+    getRawMacrosAndIncludes(FID, Buffer, SrcMgr, LangOpts,
+      mRawInfo.Macros, mRawInfo.Includes, mRawInfo.Identifiers);
+  }
+  return false;
+}
 
 bool GlobalInfoExtractor::VisitStmt(Stmt *S) {
   traverseSourceLocation(S, [this](SourceLocation Loc) { visitLoc(Loc); });

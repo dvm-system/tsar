@@ -183,6 +183,12 @@ void initializeClangNoMacroAssertPass(PassRegistry& Registry);
 /// are marked with `assert nomacro` directive.
 llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
 
+/// Initializes a pass which collects information about source-level globals.
+void initializeClangGlobalInfoPassPass(PassRegistry &Registry);
+
+/// Creates a pass which collects information about source-level globals.
+llvm::ModulePass * createClangGlobalInfoPass();
+
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }
 

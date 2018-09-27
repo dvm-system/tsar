@@ -37,6 +37,7 @@ char ClangNoMacroAssert::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangNoMacroAssert, "clang-nomacro-assert",
   "No Macro Assert (Clang)", false, false, CheckQueryManager::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+  INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangNoMacroAssert, "clang-nomacro-assert",
   "No Macro Assert (Clang)", false, false, CheckQueryManager::getPassRegistry())
 
@@ -46,6 +47,7 @@ FunctionPass * llvm::createClangNoMacroAssert(bool *IsInvalid) {
 
 void ClangNoMacroAssert::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
@@ -143,7 +145,7 @@ private:
 
   const SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
-  const StringMap<SourceLocation> mRawMacros;
+  const StringMap<SourceLocation> &mRawMacros;
   clang::Stmt *mActiveClause = nullptr;
   clang::Stmt *mRootToCheck = nullptr;
   bool mIsInvalid = false;
@@ -164,19 +166,8 @@ bool ClangNoMacroAssert::runOnFunction(Function &F) {
   auto &SrcMgr = TfmCtx->getContext().getSourceManager();
   auto &LangOpts = TfmCtx->getContext().getLangOpts();
   auto *Unit = TfmCtx->getContext().getTranslationUnitDecl();
-  GlobalInfoExtractor GIE(SrcMgr, LangOpts);
-  GIE.TraverseDecl(Unit);
-  StringMap<SourceLocation> RawMacros;
-  for (auto *File : GIE.getFiles()) {
-    StringMap<SourceLocation> RawIncludes;
-    StringSet<> RawIds;
-    const llvm::MemoryBuffer *Buffer =
-      const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFile(File);
-    FileID FID = SrcMgr.translateFile(File);
-    getRawMacrosAndIncludes(FID, Buffer, SrcMgr, LangOpts,
-      RawMacros, RawIncludes, RawIds);
-  }
-  NoMacroChecker Checker(SrcMgr, LangOpts, RawMacros);
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  NoMacroChecker Checker(SrcMgr, LangOpts, GIP.getRawInfo().Macros);
   Checker.TraverseDecl(Unit);
   if (mIsInvalid)
     *mIsInvalid = Checker.isInvalid();

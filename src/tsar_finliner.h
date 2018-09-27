@@ -317,15 +317,18 @@ public:
   using TemplateMap = llvm::DenseMap<
     const clang::FunctionDecl*, std::unique_ptr<detail::Template>>;
 
-  explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context)
-    : mRewriter(Rewriter), mContext(Context),
+  explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context,
+      const GlobalInfoExtractor &GIE,
+      llvm::ClangGlobalInfoPass::RawInfo &RawInfo) :
+    mRewriter(Rewriter), mContext(Context),
     mSrcMgr(Context.getSourceManager()), mLangOpts(Context.getLangOpts()),
-    mGIE(Context.getSourceManager(), Context.getLangOpts()) {}
+    mGIE(GIE), mRawInfo(RawInfo) {}
 
   clang::Rewriter & getRewriter() noexcept { return mRewriter; }
   clang::ASTContext & getContext() noexcept { return mContext; }
 
-  /// Performs inline expansion.
+  /// Performs inline expansion. Note, this function updates list of raw
+  /// identifiers (in RawInfo) if it is necessary to create a new one.
   void HandleTranslationUnit();
 
   bool VisitReturnStmt(clang::ReturnStmt* RS);
@@ -403,7 +406,20 @@ private:
   const clang::LangOptions &mLangOpts;
 
   /// Visitor to collect global information about a translation unit.
-  GlobalInfoExtractor mGIE;
+  const GlobalInfoExtractor &mGIE;
+
+
+  /// \brief Raw information about objects in a source code.
+  ///
+  /// The raw identifiers is used to prevent conflicts when new identifiers
+  /// are added to the source code. It is convenient to avoid intersection with
+  /// all available identifiers (including the local ones). For example,
+  /// if chain of calls should be inlined in a function, it is necessary to
+  /// check that all new identifiers do not hide forward declarations of all
+  /// functions in this chain.
+  ///
+  /// We update list of raw identifiers if it is necessary to create a new one.
+  llvm::ClangGlobalInfoPass::RawInfo &mRawInfo;
 
   /// This is a stack of scopes with a function definition at the bottom.
   /// Note, that pragma is also considered as a scope.
@@ -422,19 +438,6 @@ private:
 
   /// Last seen function (with body we are currently in).
   detail::Template *mCurrentT = nullptr;
-
-  /// \brief All identifiers (global and local) mentioned in a translation unit.
-  ///
-  /// These identifiers is used to prevent conflicts when new identifiers
-  /// are added to the source code. It is convenient to avoid intersection with
-  /// all available identifiers (including the local ones). For example,
-  /// if chain of calls should be inlined in a function, it is necessary to
-  /// check that all new identifiers do not hide forward declarations of all
-  /// functions in this chain.
-  llvm::StringSet<> mIdentifiers;
-
-  /// All macros mentioned in a translation unit.
-  llvm::StringMap<clang::SourceLocation> mRawMacros;
 
   TemplateMap mTs;
 };

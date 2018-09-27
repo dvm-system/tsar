@@ -24,7 +24,6 @@
 #include <clang/Analysis/CFG.h>
 #include <clang/Lex/Lexer.h>
 #include <llvm/ADT/PostOrderIterator.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <algorithm>
@@ -42,6 +41,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(ClangInlinerPass, "clang-inline",
   "Source-level Inliner (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+  INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangInlinerPass, "clang-inline",
   "Source-level Inliner (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
@@ -50,6 +50,7 @@ ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
 
 void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
@@ -65,7 +66,8 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto &SrcMgr = Rewriter.getSourceMgr();
   if (Context.getLangOpts().CPlusPlus)
     toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
-  ClangInliner Inliner(Rewriter, Context);
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  ClangInliner Inliner(Rewriter, Context, GIP.getGlobalInfo(), GIP.getRawInfo());
   Inliner.HandleTranslationUnit();
   return false;
 }
@@ -450,8 +452,8 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       continue;
     if (mDeclRefLoc.count(Tok.getLocation().getRawEncoding()))
       continue;
-    auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
-    if (MacroItr == mRawMacros.end())
+    auto MacroItr = mRawInfo.Macros.find(Tok.getRawIdentifier());
+    if (MacroItr == mRawInfo.Macros.end())
       continue;
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
@@ -889,27 +891,6 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
 }
 
 void ClangInliner::HandleTranslationUnit() {
-  mGIE.TraverseDecl(mContext.getTranslationUnitDecl());
-  for (auto *File : mGIE.getFiles()) {
-    StringMap<SourceLocation> RawIncludes;
-    const llvm::MemoryBuffer *Buffer =
-      const_cast<SourceManager &>(mSrcMgr).getMemoryBufferForFile(File);
-    FileID FID = mSrcMgr.translateFile(File);
-    getRawMacrosAndIncludes(FID, Buffer, mSrcMgr, mLangOpts,
-      mRawMacros, RawIncludes, mIdentifiers);
-    // We should check that all includes are mentioned in AST.
-    // For example, if there is an include which contains macros only and
-    // this macros do not used then there is no FileID for this include.
-    // Hence, it has not been parsed by getRawMacrosAndIncludes() function and
-    // some macro names are lost. The lost macro names potentially leads to
-    // transformation errors.
-    //
-    // However, it is not possible to establish correspondence between #include
-    // directives and available file entries due to complexity of the search of
-    // files that should be included. So, we disable this check. Instead we
-    // add `#pragma spf assert nomacro` before the body of inlined function to
-    // perform the check using the analyzer at the next time.
-  }
   // We perform conservative search of external dependencies and macros for
   // each function. Functions from system library will be ignored. If there is
   // a global declaration with a name equal to an identifier and location of
@@ -963,8 +944,8 @@ void ClangInliner::HandleTranslationUnit() {
       // void f1() { f(); }
       // In this case `X` will be a macro after inlining of f(), so it is not
       // possible to inline f().
-      auto MacroItr = mRawMacros.find(Tok.getRawIdentifier());
-      if (MacroItr != mRawMacros.end())
+      auto MacroItr = mRawInfo.Macros.find(Tok.getRawIdentifier());
+      if (MacroItr != mRawInfo.Macros.end())
         mCurrentT->setMacroInDecl(Tok.getLocation(), MacroItr->second);
       if (Tok.getRawIdentifier() == mCurrentT->getFuncDecl()->getName())
         continue;
@@ -1010,6 +991,7 @@ void ClangInliner::HandleTranslationUnit() {
         mRewriter.RemoveText(SR, RemoveEmptyLine);
       continue;
     }
+    DEBUG(dbgs() << "[INLINE]: inline calls from '" << Definition->getName() << "'\n");
     SmallVector<const TemplateInstantiation *, 8> CallStack;
     // We create a bogus template instantiation to identify a root of call graph
     // subtree which should be inlined.
@@ -1036,6 +1018,18 @@ void ClangInliner::HandleTranslationUnit() {
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           Text.first = "{" + Text.first + "}";
       }
+      // We should check that all includes are mentioned in AST.
+      // For example, if there is an include which contains macros only and
+      // this macros do not used then there is no FileID for this include.
+      // Hence, it has not been parsed by getRawMacrosAndIncludes() function and
+      // some macro names are lost. The lost macro names potentially leads to
+      // transformation errors.
+      //
+      // However, it is not possible to establish correspondence between #include
+      // directives and available file entries due to complexity of the search
+      // of files that should be included. So, we disable this check. Instead we
+      // add `#pragma spf assert nomacro` before the body of inlined function to
+      // perform the check using the analyzer at the next time.
       SmallString<64> NoMacroPragma;
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" +
@@ -1063,7 +1057,7 @@ clang::SourceRange ClangInliner::getFileRange(T *Node) const {
 
 void ClangInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {
   for (unsigned Count = 0;
-    mIdentifiers.count((Prefix + Twine(Count)).toStringRef(Out));
+    mRawInfo.Identifiers.count((Prefix + Twine(Count)).toStringRef(Out));
     ++Count, Out.clear());
-  mIdentifiers.insert(StringRef(Out.data(), Out.size()));
+  mRawInfo.Identifiers.insert(StringRef(Out.data(), Out.size()));
 }

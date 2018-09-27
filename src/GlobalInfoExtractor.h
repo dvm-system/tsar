@@ -13,12 +13,17 @@
 #ifndef TSAR_GLOBAL_INFO_EXTRACTOR_H
 #define TSAR_GLOBAL_INFO_EXTRACTOR_H
 
+#include "tsar_pass.h"
+#include <utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/StringSet.h>
+#include <llvm/Pass.h>
+#include <memory>
 
 namespace clang {
 class SourceManager;
@@ -207,6 +212,59 @@ private:
   /// Outermost declaration (its parent in AST is a translation unit) which
   /// is traversed at this moment.
   clang::Decl *mOutermostDecl = nullptr;
+};
+}
+
+namespace llvm {
+class Module;
+
+/// This pass collects global information about a translation unit.
+class ClangGlobalInfoPass : public ModulePass, private bcl::Uncopyable {
+public:
+  /// Raw objects in a source code.
+  struct RawInfo {
+    StringMap<clang::SourceLocation> Macros;
+    StringMap<clang::SourceLocation> Includes;
+    StringSet<> Identifiers;
+  };
+
+  static char ID;
+
+  ClangGlobalInfoPass() : ModulePass(ID) {
+    initializeClangGlobalInfoPassPass(*PassRegistry::getPassRegistry());
+  }
+  ~ClangGlobalInfoPass() { releaseMemory(); }
+
+  bool runOnModule(llvm::Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+  void releaseMemory() override {
+    mGIE.reset();
+    mRawInfo.Macros.clear();
+    mRawInfo.Includes.clear();
+    mRawInfo.Identifiers.clear();
+  }
+
+  /// Returns information about global objects which are presented in AST.
+  const tsar::GlobalInfoExtractor & getGlobalInfo() const noexcept {
+    return *mGIE;
+  }
+
+  ///\brief Returns raw information about objects in a source code.
+  ///
+  /// Note, that if there are several macro definitions with the same name
+  /// (or includes of the same file), then only the first one will be remembered.
+  RawInfo & getRawInfo() noexcept { return mRawInfo; }
+
+  ///\brief Returns raw information about objects in a source code.
+  ///
+  /// Note, that if there are several macro definitions with the same name
+  /// (or includes of the same file), then only the first one will be remembered.
+  const RawInfo & getRawInfo() const noexcept { return mRawInfo; }
+
+private:
+  std::unique_ptr<tsar::GlobalInfoExtractor> mGIE;
+  RawInfo mRawInfo;
 };
 }
 #endif//TSAR_GLOBAL_INFO_EXTRACTOR_H
