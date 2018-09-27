@@ -11,16 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "NoMacroAssert.h"
-#include "ClangUtils.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
 #include "tsar_query.h"
 #include "PassGroupRegistry.h"
-#include "tsar_pragma.h"
-#include "SourceLocationTraverse.h"
 #include "tsar_transformation.h"
-#include <clang/AST/RecursiveASTVisitor.h>
-#include <clang/AST/Stmt.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -73,87 +68,59 @@ public:
     if (P)
       return true;
     if (mActiveClause) {
-      mRootToCheck = !mRootToCheck ? S : mRootToCheck;
-      traverseSourceLocation(S, [this](SourceLocation Loc) { checkLoc(Loc); });
-    }
-    bool Res = RecursiveASTVisitor::TraverseStmt(S);
-    if (mRootToCheck == S) {
-      auto ExpRange =
-        mSrcMgr.getExpansionRange(S->getSourceRange());
-      if (!mSrcMgr.isWrittenInSameFile(ExpRange.getBegin(), ExpRange.getEnd())) {
-        mIsInvalid = true;
-        toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
-          diag::err_assert);
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
-          diag::note_source_range_not_single_file);
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocEnd(),
-          diag::note_end_location);
-      }
-      LocalLexer Lex(ExpRange, mSrcMgr, mLangOpts);
-      Token Tok;
-      while (!Lex.LexFromRawLexer(Tok)) {
-        if (Tok.is(tok::hash) && Tok.isAtStartOfLine()) {
-          auto MacroLoc = Tok.getLocation();
-          Lex.LexFromRawLexer(Tok);
-          StringRef Id = Tok.getRawIdentifier();
-          if (Id == "pragma")
-            continue;
-          if (Id == "define" || Id == "undef" ||
-              Id == "ifdef" || Id == "ifndef")
-            Lex.LexFromRawLexer(Tok);
-          mIsInvalid = true;
-          toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
-            diag::err_assert);
-          toDiag(mSrcMgr.getDiagnostics(), MacroLoc,
-            diag::note_assert_no_macro);
-        } else if (Tok.is(tok::raw_identifier) &&
-            !mVisitedLocs.count(Tok.getLocation().getRawEncoding()) &&
-            mRawMacros.count(Tok.getRawIdentifier())) {
-          mIsInvalid = true;
-          toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
-            diag::err_assert);
-          toDiag(mSrcMgr.getDiagnostics(), Tok.getLocation(),
-            diag::note_assert_no_macro);
-        }
-      }
-      mRootToCheck = nullptr;
+      checkNode(S);
       mActiveClause = nullptr;
+      return true;
     }
-    return Res;
+    return RecursiveASTVisitor::TraverseStmt(S);
   }
 
-  bool VisitDecl(Decl *D) {
-    if (mActiveClause)
-      traverseSourceLocation(D, [this](SourceLocation Loc) { checkLoc(Loc); });
-    return true;
+  bool TraverseDecl(Decl *D) {
+    if (mActiveClause) {
+      checkNode(D);
+      mActiveClause = nullptr;
+      return true;
+    }
+    return RecursiveASTVisitor::TraverseDecl(D);
   }
 
   bool VisitiTypeLoc(TypeLoc T) {
-    if (mActiveClause)
-      traverseSourceLocation(T, [this](SourceLocation Loc) { checkLoc(Loc); });
-    return true;
+    if (mActiveClause) {
+      checkNode(T);
+      mActiveClause = nullptr;
+      return true;
+    }
+    return RecursiveASTVisitor::TraverseTypeLoc(T);
   }
 
 private:
-  void checkLoc(SourceLocation Loc) {
-    if (!mVisitedLocs.insert(
-          mSrcMgr.getExpansionLoc(Loc).getRawEncoding()).second)
-      return;
-    if (Loc.isValid() && Loc.isMacroID()) {
+  template<class T> void checkNode(T Node) {
+    auto MacroVisitor = [this](SourceLocation Loc) {
       mIsInvalid = true;
       toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
         diag::err_assert);
-      toDiag(mSrcMgr.getDiagnostics(), Loc, diag::note_assert_no_macro);
+      toDiag(mSrcMgr.getDiagnostics(), Loc,
+        diag::note_assert_no_macro);
+    };
+    if (!for_each_macro(Node, mSrcMgr, mLangOpts, mRawMacros, MacroVisitor)) {
+      mIsInvalid = true;
+      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+        diag::err_assert);
+      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getLocStart(),
+        diag::note_source_range_not_single_file);
+      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getLocEnd(),
+        diag::note_end_location);
     }
   }
+
+  template<class T> T * getPointer(T *Ptr) noexcept { return Ptr; }
+  TypeLoc * getPointer(TypeLoc &TL) noexcept { return &TL; }
 
   const SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   const StringMap<SourceLocation> &mRawMacros;
   clang::Stmt *mActiveClause = nullptr;
-  clang::Stmt *mRootToCheck = nullptr;
   bool mIsInvalid = false;
-  GlobalInfoExtractor::RawLocationSet mVisitedLocs;
 };
 }
 
