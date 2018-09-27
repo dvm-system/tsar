@@ -28,7 +28,6 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <algorithm>
-#include <set>
 
 using namespace clang;
 using namespace llvm;
@@ -69,16 +68,6 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   ClangInliner Inliner(Rewriter, Context);
   Inliner.HandleTranslationUnit();
   return false;
-}
-
-namespace std {
-template<>
-struct less<clang::SourceRange> {
-  bool operator()(clang::SourceRange LSR, clang::SourceRange RSR) {
-    return LSR.getBegin() == RSR.getBegin()
-      ? LSR.getEnd() < RSR.getEnd() : LSR.getBegin() < RSR.getBegin();
-  }
-};
 }
 
 namespace {
@@ -532,11 +521,8 @@ std::pair<std::string, std::string> ClangInliner::compile(
     SmallString<128> DeclStr;
     Context += join(Tokens.begin(), Tokens.end(), " ", DeclStr); Context += ";";
     Params += (DeclStr + " = " + Args[PVD->getFunctionScopeIndex()] + ";").str();
-    std::set<clang::SourceRange, std::less<clang::SourceRange>> ParmRefs;
-    for (auto DRE : TI.mCallee->getParmRefs(PVD))
-      ParmRefs.insert(std::end(ParmRefs), getFileRange(DRE));
-    for (auto& SR : ParmRefs) {
-      bool Res = Canvas.ReplaceText(SR, Identifier);
+    for (auto DRE : TI.mCallee->getParmRefs(PVD)) {
+      bool Res = Canvas.ReplaceText(getFileRange(DRE), Identifier);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
