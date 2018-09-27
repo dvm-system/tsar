@@ -512,6 +512,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
   initContext();
   std::string Params;
   StringMap<std::string> Replacements;
+  std::size_t ParamIdx = 0;
   for (auto& PVD : CalleeFD->parameters()) {
     SmallString<32> Identifier;
     addSuffix(PVD->getName(), Identifier);
@@ -520,7 +521,10 @@ std::pair<std::string, std::string> ClangInliner::compile(
     auto Tokens = buildDeclStringRef(DeclT, Identifier, Context, Replacements);
     SmallString<128> DeclStr;
     Context += join(Tokens.begin(), Tokens.end(), " ", DeclStr); Context += ";";
-    Params += (DeclStr + " = " + Args[PVD->getFunctionScopeIndex()] + ";").str();
+    /// TODO (kaniandr@gmail.com): we use ParamIdx instead of method
+    /// PVD->getFunctionScopeIndex() because it may return incorrect value.
+    /// Seems that AST merge action may break parameters numbering.
+    Params += (DeclStr + " = " + Args[ParamIdx++] + ";").str();
     for (auto DRE : TI.mCallee->getParmRefs(PVD)) {
       bool Res = Canvas.ReplaceText(getFileRange(DRE), Identifier);
       assert(!Res && "Can not replace text in an external buffer!");
