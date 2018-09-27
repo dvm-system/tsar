@@ -50,6 +50,8 @@ void tsar::unreachableBlocks(clang::CFG &Cfg,
 LocalLexer::LocalLexer(SourceRange SR,
     const SourceManager &SM, const LangOptions &LangOpts) :
   mSR(SR), mSM(SM), mLangOpts(LangOpts) {
+  assert(mSM.isWrittenInSameFile(mSR.getBegin(), mSR.getEnd()) &&
+    "Start and end of the range must be from the same buffer!");
   mCurrentPos = SR.getBegin().getRawEncoding();
   auto SourceText =
     Lexer::getSourceText(CharSourceRange::getTokenRange(mSR), mSM, mLangOpts);
