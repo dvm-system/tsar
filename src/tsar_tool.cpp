@@ -75,6 +75,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::alias MergeASTA;
   llvm::cl::opt<std::string> Output;
   llvm::cl::opt<std::string> Language;
+  llvm::cl::opt<bool> Verbose;
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
@@ -122,6 +123,8 @@ Options::Options() :
   Language("x", cl::cat(CompileCategory), cl::value_desc("language"),
     cl::desc("Treat subsequent input files as having type <language>"),
     cl::Prefix),
+  Verbose("v", cl::cat(CompileCategory),
+    cl::desc("Show commands to run and use verbose output")),
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
@@ -219,6 +222,8 @@ void Tool::storeCLOptions() {
   mSources = Options::get().Sources;
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-Wunknown-pragmas");
+  if (Options::get().Verbose)
+    mCommandLine.emplace_back("-v");
   if (!Options::get().LanguageStd.empty())
     mCommandLine.push_back("-std=" + Options::get().LanguageStd);
   if (Options::get().TimeReport)
