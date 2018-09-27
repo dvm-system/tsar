@@ -20,13 +20,13 @@ class PassInfo;
 namespace tsar {
 /// Group of passes, which stores already allocated and registered PassInfo.
 class PassGroupRegistry {
-  using PassList = std::vector<llvm::PassInfo *>;
+  using PassList = std::vector<const llvm::PassInfo *>;
 
 public:
   using iterator = PassList::iterator;
   using const_iterator = PassList::const_iterator;
 
-  void add(llvm::PassInfo *PI) { mPasses.push_back(PI); }
+  void add(const llvm::PassInfo &PI) { mPasses.push_back(&PI); }
 
   iterator begin() { return mPasses.begin();}
   iterator end() { return mPasses.end(); }
@@ -34,17 +34,32 @@ public:
   const_iterator begin() const { return mPasses.begin();}
   const_iterator end() const { return mPasses.end(); }
 
-  bool exist(llvm::PassInfo *PI) const {
+  bool exist(const llvm::PassInfo &PI) const {
     for (auto *InListPI : mPasses)
-      if (InListPI == PI)
+      if (InListPI == &PI)
         return true;
     return false;
   }
 
 private:
-  std::vector<llvm::PassInfo *> mPasses;
+  PassList mPasses;
 };
 }
+
+#define INITIALIZE_PASS_IN_GROUP(passName, arg, name, cfg, analysis, groupRegistry) \
+  static void *initialize##passName##PassOnce(PassRegistry &Registry) {        \
+    PassInfo *PI = new PassInfo(                                               \
+        name, arg, &passName::ID,                                              \
+        PassInfo::NormalCtor_t(callDefaultCtor<passName>), cfg, analysis);     \
+    groupRegistry.add(*PI);                                                    \
+    Registry.registerPass(*PI, true);                                          \
+    return PI;                                                                 \
+  }                                                                            \
+  LLVM_DEFINE_ONCE_FLAG(Initialize##passName##PassFlag);                       \
+  void llvm::initialize##passName##Pass(PassRegistry &Registry) {              \
+    llvm::call_once(Initialize##passName##PassFlag,                            \
+                    initialize##passName##PassOnce, std::ref(Registry));       \
+  }
 
 #define INITIALIZE_PASS_IN_GROUP_BEGIN(passName, arg, name, cfg, analysis, groupRegistry) \
   static void *initialize##passName##PassOnce(PassRegistry &Registry) {
@@ -53,8 +68,8 @@ private:
   PassInfo *PI = new PassInfo(                                                 \
       name, arg, &passName::ID,                                                \
       PassInfo::NormalCtor_t(callDefaultCtor<passName>), cfg, analysis);       \
+  groupRegistry.add(*PI);                                                      \
   Registry.registerPass(*PI, true);                                            \
-  groupRegistry.add(PI);                                                       \
   return PI;                                                                   \
   }                                                                            \
   LLVM_DEFINE_ONCE_FLAG(Initialize##passName##PassFlag);                       \
