@@ -19,6 +19,7 @@
 #ifndef TSAR_SOURCE_LOCATION_TRAVERSE_H
 #define TSAR_SOURCE_LOCATION_TRAVERSE_H
 
+#include <clang/AST/Attr.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/Expr.h>
 #include <clang/AST/Stmt.h>
