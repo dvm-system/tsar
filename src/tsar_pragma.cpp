@@ -208,6 +208,26 @@ bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses
   return true;
 }
 
+llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,
+    clang::PragmaIntroducerKind PIK) {
+  assert(ClauseId::NotClause < Id && Id < ClauseId::NumClauses &&
+    "Invalid identifier of a clause!");
+  DirectiveId DID = getParent(Id);
+  DirectiveNamespaceId NID = getParent(DID);
+  llvm::raw_svector_ostream OS(Out);
+  switch (PIK) {
+  case PIK_HashPragma: OS << "#pragma "; break;
+  case PIK__Pragma: OS << "_Pragma(\""; break;
+  case PIK___pragma: OS << "__pragma(\""; break;
+  }
+  OS << getName(NID) << " " << getName(DID) << " " << getName(Id);
+  switch (PIK) {
+  case PIK__Pragma: case PIK___pragma: OS << "\")"; break;
+  }
+  OS << "\n";
+  return StringRef(Out.data(), Out.size());
+}
+
 void PragmaNamespaceReplacer::HandlePragma(
   Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
   mTokenQueue.clear();

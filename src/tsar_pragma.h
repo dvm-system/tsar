@@ -116,6 +116,10 @@ bool pragmaRangeToRemove(const Pragma &P,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
   llvm::SmallVectorImpl<clang::SourceRange> &ToRemove);
 
+/// Constructs a string representation of a pragma according to introducer kind.
+llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,
+  clang::PragmaIntroducerKind PIK = clang::PIK_HashPragma);
+
 /// \brief Replaces directive namespace with string literal.
 ///
 /// This handler replaces name of `#pragma <name> ...` with `{ "<name>"; ... }`
