@@ -73,7 +73,9 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> TimeReport;
   llvm::cl::opt<bool> Test;
 
-  llvm::cl::OptionCategory TfmCategory;
+  llvm::cl::OptionCategory AnalysisCategory;
+  llvm::cl::opt<bool> Check;
+
   llvm::cl::OptionCategory TransformCategory;
   llvm::cl::opt<bool> NoFormat;
   llvm::cl::opt<std::string> OutputSuffix;
@@ -121,6 +123,9 @@ Options::Options() :
     cl::desc("Print some statistics about the time consumed by each pass when it finishes")),
   Test("test", cl::cat(DebugCategory),
     cl::desc("Insert results of analysis to a source file")),
+  AnalysisCategory("Analysis options"),
+  Check("check", cl::cat(AnalysisCategory),
+    cl::desc("Check user-defined properties")),
   TransformCategory("Transformation options"),
   NoFormat("no-format", cl::cat(TransformCategory),
     cl::desc("Disable format of transformed sources")),
@@ -162,6 +167,7 @@ Options::Options() :
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
   Categories.push_back(&DebugCategory);
+  Categories.push_back(&AnalysisCategory);
   Categories.push_back(&TransformCategory);
   cl::HideUnrelatedOptions(Categories);
 }
@@ -247,6 +253,7 @@ void Tool::storeCLOptions() {
     mOutputPasses.push_back(PI);
   mEmitLLVM = addLLIfSet(addIfSet(Options::get().EmitLLVM));
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
+  mCheck = addLLIfSet(Options::get().Check);
   mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
   mLanguage = Options::get().Language;
@@ -300,6 +307,11 @@ inline static TestQueryManager * getTestQM() {
 inline static TransformationQueryManager * getTransformationQM(
     const llvm::PassInfo *TfmPass, StringRef OutputSuffix, bool NoFormat) {
   static TransformationQueryManager QM(TfmPass, OutputSuffix, NoFormat);
+  return &QM;
+}
+
+inline static CheckQueryManager * getCheckQM() {
+  static CheckQueryManager QM;
   return &QM;
 }
 
@@ -378,6 +390,8 @@ int Tool::run(QueryManager *QM) {
       QM = getTestQM();
     else if (mTfmPass)
       QM = getTransformationQM(mTfmPass, mOutputSuffix, mNoFormat);
+    else if (mCheck)
+      QM = getCheckQM();
     else
       QM = getDefaultQM(mOutputPasses);
   }

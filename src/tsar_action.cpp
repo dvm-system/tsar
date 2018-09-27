@@ -142,6 +142,28 @@ void TransformationQueryManager::run(llvm::Module *M,
   }
   Passes.add(mTfmPass->getNormalCtor()());
   Passes.add(createClangFormatPass(mOutputSuffix, mNoFormat));
+  Passes.add(createVerifierPass());
+  Passes.run(*M);
+}
+
+void CheckQueryManager::run(llvm::Module *M, TransformationContext* Ctx) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (!Ctx)
+    report_fatal_error("transformation context is not available");
+  auto TEP = static_cast<TransformationEnginePass *>(
+    createTransformationEnginePass());
+  TEP->setContext(*M, Ctx);
+  Passes.add(TEP);
+  Passes.add(createUnreachableBlockEliminationPass());
+  for (auto *PI : getCheckers()) {
+    if (!PI->getNormalCtor()) {
+      M->getContext().emitError("cannot create pass " + PI->getPassName());
+      continue;
+    }
+    Passes.add(PI->getNormalCtor()());
+  }
+  Passes.add(createVerifierPass());
   Passes.run(*M);
 }
 

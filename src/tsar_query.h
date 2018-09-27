@@ -12,6 +12,7 @@
 #ifndef TSAR_QUERY_H
 #define TSAR_QUERY_H
 
+#include "PassGroupRegistry.h"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Config/llvm-config.h>
 #include <vector>
@@ -123,6 +124,20 @@ private:
   const llvm::PassInfo *mTfmPass;
   std::string mOutputSuffix;
   bool mNoFormat;
+};
+
+/// This performs a check of user-define properties.
+class CheckQueryManager : public QueryManager {
+public:
+  /// Returns a list of initialized checkers.
+  static PassGroupRegistry & getCheckers() noexcept {
+    static PassGroupRegistry Passes;
+    return Passes;
+  }
+
+  CheckQueryManager() = default;
+
+  void run(llvm::Module *M, TransformationContext *Ctx) override;
 };
 }
 

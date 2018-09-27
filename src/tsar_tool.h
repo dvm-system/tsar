@@ -75,6 +75,7 @@ private:
   bool mEmitLLVM;
   bool mInstrLLVM;
   bool mNoFormat;
+  bool mCheck;
   bool mTest;
   std::string mOutputFilename;
   std::string mLanguage;
