@@ -12,6 +12,7 @@
 
 #include "tsar_fcopy_elimination.h"
 #include "tsar_transformation.h"
+#include "tsar_query.h"
 
 #include <clang/Analysis/CFG.h>
 #include <clang/AST/ASTContext.h>
@@ -34,14 +35,16 @@ using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "copy-elimination"
+#define DEBUG_TYPE "clang-copy-elimination"
 
 char CopyEliminationPass::ID = 0;
-INITIALIZE_PASS_BEGIN(CopyEliminationPass, "copy-elimination",
-  "Copy elimination", false, false)
+INITIALIZE_PASS_IN_GROUP_BEGIN(CopyEliminationPass, "clang-copy-elimination",
+  "Source-level copy elimination (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(CopyEliminationPass, "copy-elimination",
-    "Copy elimination", false, false)
+INITIALIZE_PASS_IN_GROUP_END(CopyEliminationPass, "clang-copy-elimination",
+  "Source-level copy elimination (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
 
 bool DeclRefVisitor::VisitDeclRefExpr(clang::DeclRefExpr* DRE) {
   mDeclRefs[DRE->getDecl()].insert(DRE);
@@ -174,7 +177,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
                   CopyStmts[VD].insert(CS->getStmt());
                   GenB[VD] = CS->getStmt();
                 }
-              } 
+              }
             }
           }
         } else if (auto UO = dyn_cast<UnaryOperator>(CS->getStmt())) {
@@ -233,7 +236,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       }
     }
   }
-  
+
   DEBUG(
   for (auto B : *CFG) {
     B->dump();
@@ -331,7 +334,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       }
     }
   }
-  
+
   DEBUG(
   for (auto B : *CFG) {
     B->dump();
