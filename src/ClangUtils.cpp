@@ -19,6 +19,8 @@
 #include <clang/Tooling/Tooling.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <utility.h>
 #include <numeric>
 #include <regex>
@@ -26,6 +28,9 @@
 using namespace clang;
 using namespace llvm;
 using namespace tsar;
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "clang-utils"
 
 void tsar::unreachableBlocks(clang::CFG &Cfg,
     llvm::SmallPtrSetImpl<clang::CFGBlock *> &Blocks) {
@@ -267,9 +272,20 @@ public:
     SmallString<32> Buffer;
     mIsFound |= (VD->getName() == mId &&
       mProcessor(VD->getType().getAsString(), Buffer) == mType);
+    DEBUG({
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      dbgs() << "[BUILD DECLARATION]: candidate type '" << Buffer << "'\n";
+      dbgs() << "[BUILD DECLARATION]: candidate id '" << VD->getName() << "'\n";
+      if (isFound())
+        dbgs() << "[BUILD DECLARATION]: successful build\n";
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
+    });
   }
 
   bool isFound() const noexcept { return mIsFound; }
+
+  StringRef getType() const { return mType; }
+  StringRef getId() const { return mId; }
 
 private:
   SmallString<32> mType;
@@ -299,6 +315,9 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   ast_matchers::MatchFinder MatchFinder;
   MatchFinder.addMatcher(ast_matchers::varDecl().bind("varDecl"), &Search);
   Tokens.push_back(Id);
+  DEBUG(dbgs() << "[BUILD DECLARATION]: context '" << Context << "'\n");
+  DEBUG(dbgs() << "[BUILD DECLARATION]: type '" << Search.getType() << "'\n");
+  DEBUG(dbgs() << "[BUILD DECLARATION]: id '" << Search.getId() << "'\n");
   // Let us find a valid position for identifier in a variable declaration.
   // Multiple positions can be found in cases like 'unsigned' and 'unsigned int'
   // which mean same type. Since it's part of declaration-specifiers in grammar,
@@ -310,6 +329,14 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     SmallString<128> DeclStr;
     std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
       Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
+    DEBUG({
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      SmallString<128> DeclStr;
+      dbgs() << "[BUILD DECLARATION]: possible declaration with token at " <<
+        Pos << " position '" <<
+        join(Tokens.begin(), Tokens.end(), " ", DeclStr) << "'\n";
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
+    });
     assert(Unit && "AST construction failed");
     // AST can be correctly parsed even with errors.
     // So, we ignore all and just try to find our node.
