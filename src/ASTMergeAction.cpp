@@ -8,8 +8,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Diagnostic.h"
 #include "ASTMergeAction.h"
+#include "ASTImportInfo.h"
+#include "Diagnostic.h"
+#include "tsar_pass.h"
+#include "SourceLocationTraverse.h"
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>
@@ -133,7 +136,7 @@ public:
     for (unsigned I = 0; I < NumDecls; ++I) {
       if (mInternalFuncs.count(Decls[I])) {
         // Conflicts for internal functions from the current unit are ignored.
-        // This conflicts occur because ASTImporter all names similar to
+        // This conflicts occur because ASTImporter treats all names similar to
         // name of internal function as a conflict (even for function
         // definitions).
         mLastConflict = Decls[I];
@@ -162,6 +165,39 @@ public:
 private:
   SmallPtrSet<Decl *, 8> mInternalFuncs;
   Decl *mLastConflict = nullptr;
+};
+
+/// This is implementation of ASTImporter stores some information about
+/// import process in an specified external storage.
+class ExtendedImporter : public GeneralImporter {
+public:
+  ExtendedImporter(ASTContext &ToContext, FileManager &ToFileManager,
+      ASTContext &FromContext, FileManager &FromFileManager,
+      bool MinimalImport, ASTImportInfo &Out) :
+    GeneralImporter(ToContext, ToFileManager, FromContext, FromFileManager,
+      MinimalImport), mOut(Out) {}
+
+  Decl *Imported(Decl *From, Decl *To) override {
+    To = GeneralImporter::Imported(From, To);
+    SmallVector<SourceLocation, 4> FromLocs, ToLocs;
+    traverseSourceLocation(From,
+      [&FromLocs](SourceLocation Loc) { FromLocs.push_back(Loc); });
+    traverseSourceLocation(To,
+      [&ToLocs](SourceLocation Loc) { ToLocs.push_back(Loc); });
+    assert(FromLocs.size() == ToLocs.size() &&
+      "Different lists of known locations for the source and the result of import!");
+    for (std::size_t I = 0, EI = ToLocs.size(); I < EI; ++I) {
+      auto ToLoc = Import(FromLocs[I]);
+      if (ToLoc != ToLocs[I] && !mImportedLocs.count(ToLoc.getRawEncoding())) {
+        mOut.RedeclLocs[ToLocs[I].getRawEncoding()].push_back(ToLoc);
+        mImportedLocs.insert(ToLoc.getRawEncoding());
+      }
+    }
+    return To;
+  }
+private:
+  ASTImportInfo &mOut;
+  DenseSet<unsigned> mImportedLocs;
 };
 
 std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
@@ -201,7 +237,8 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
       if (!ToV->isFileVarDecl() && ToV->isUsed())
         ToTentative->setIsUsed();
       TentativeDefinitions.push_back(ToTentative);
-      return std::make_pair(FromV, ToTentative);
+      ToTentative->setPreviousDecl(ToV);
+      ToV = ToTentative;
     }
     break;
   }
@@ -246,6 +283,21 @@ void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
   Finder.matchAST(Unit.getASTContext());
 }
 
+ASTImporter * ASTMergeAction::newImporter(
+    ASTContext &ToContext, FileManager &ToFileManager,
+    ASTContext &FromContext, FileManager &FromFileManager, bool MinimalImport) {
+  return new GeneralImporter(ToContext, ToFileManager,
+    FromContext, FromFileManager, MinimalImport);
+}
+
+ASTImporter * ASTMergeActionWithInfo::newImporter(
+    ASTContext &ToContext, FileManager &ToFileManager,
+    ASTContext &FromContext, FileManager &FromFileManager, bool MinimalImport) {
+  mImportInfo->WasImport = true;
+  return new ExtendedImporter(ToContext, ToFileManager,
+    FromContext, FromFileManager, MinimalImport, *mImportInfo);
+}
+
 void ASTMergeAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   CI.getDiagnostics().getClient()->BeginSourceFile(
@@ -277,10 +329,11 @@ void ASTMergeAction::ExecuteAction() {
         Diags, CI.getFileSystemOpts(), false);
     if (!Unit)
       continue;
-    GeneralImporter Importer(CI.getASTContext(), CI.getFileManager(),
-      Unit->getASTContext(), Unit->getFileManager(), /*MinimalImport=*/false);
+    std::unique_ptr<ASTImporter> Importer(
+      newImporter(CI.getASTContext(), CI.getFileManager(),
+        Unit->getASTContext(), Unit->getFileManager(), /*MinimalImport=*/false));
     TranslationUnitDecl *TU = Unit->getASTContext().getTranslationUnitDecl();
-    PrepareToImport(*Unit, CI.getDiagnostics(), Importer);
+    PrepareToImport(*Unit, CI.getDiagnostics(), *Importer);
     for (auto *D : TU->decls()) {
       // Don't re-import __va_list_tag, __builtin_va_list.
       if (const auto *ND = dyn_cast<NamedDecl>(D))
@@ -289,9 +342,9 @@ void ASTMergeAction::ExecuteAction() {
             continue;
       Decl *ToD = nullptr;
       if (auto *F = dyn_cast<FunctionDecl>(D)) {
-        std::tie(D, ToD) = ImportFunctionDecl(F, Importer);
+        std::tie(D, ToD) = ImportFunctionDecl(F, *Importer);
       } else if (auto *V = dyn_cast<VarDecl>(D)) {
-        std::tie(D, ToD) = ImportVarDecl(V, Importer, TentativeDefinitions);
+        std::tie(D, ToD) = ImportVarDecl(V, *Importer, TentativeDefinitions);
       } else {
         /// TODO (kaniandr@gmail.com): This is a hack which is necessary due to
         /// implementation of import of `TypeSourceInfo` is unfinished.
@@ -308,11 +361,11 @@ void ASTMergeAction::ExecuteAction() {
             auto Stash = Typedef->getTypeSourceInfo()->getType();
             Typedef->getTypeSourceInfo()->overrideType(
               Typedef->getUnderlyingType());
-            toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+            toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
               diag::warn_import_typedef);
           }
         }
-        ToD = Importer.Import(D);
+        ToD = Importer->Import(D);
       }
       if (ToD) {
         DeclGroupRef DGR(ToD);
@@ -321,13 +374,13 @@ void ASTMergeAction::ExecuteAction() {
       }
       // Report errors.
       if (auto *ND = dyn_cast<NamedDecl>(D)) {
-        if (auto ImportedName = Importer.Import(ND->getDeclName())) {
-          toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+        if (auto ImportedName = Importer->Import(ND->getDeclName())) {
+          toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
             diag::err_import_named) << ImportedName;
           continue;
         }
       }
-      toDiag(CI.getDiagnostics(), Importer.Import(D->getLocation()),
+      toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
         diag::err_import);
     }
   }
@@ -364,4 +417,14 @@ ASTMergeAction::ASTMergeAction(
     clang::ArrayRef<std::string> ASTFiles) :
   PublicWrapperFrontendAction(WrappedAction.release()),
   mASTFiles(ASTFiles.begin(), ASTFiles.end()) {}
+}
+
+INITIALIZE_PASS(ImmutableASTImportInfoPass, "clang-import-info",
+  "AST Import Immutable Information (Clang)", false, false)
+
+char ImmutableASTImportInfoPass::ID = 0;
+
+ImmutablePass * llvm::createImmutableASTImportInfoPass(
+    const ASTImportInfo &Info) {
+  return new ImmutableASTImportInfoPass(&Info);
 }

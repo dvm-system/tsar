@@ -20,6 +20,10 @@ class IntrusiveConnection;
 class RedirectIO;
 }
 
+namespace tsar {
+struct ASTImportInfo;
+}
+
 namespace llvm {
 class PassInfo;
 class PassRegistry;
@@ -188,6 +192,13 @@ void initializeClangGlobalInfoPassPass(PassRegistry &Registry);
 
 /// Creates a pass which collects information about source-level globals.
 llvm::ModulePass * createClangGlobalInfoPass();
+
+/// Initializes a pass to obtain access to the import process information.
+void initializeImmutableASTImportInfoPassPass(PassRegistry &Registry);
+
+/// Creates a pass to obtain access to the import process information.
+llvm::ImmutablePass * createImmutableASTImportInfoPass(
+  const tsar::ASTImportInfo &Info);
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 }

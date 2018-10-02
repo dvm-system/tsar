@@ -14,6 +14,8 @@
 #define TSAR_AST_MERGE_ACTION_H
 
 #include "FrontendActions.h"
+#include <clang/Basic/SourceLocation.h>
+#include <llvm/ADT/DenseMap.h>
 #include <vector>
 
 namespace clang {
@@ -45,7 +47,12 @@ protected:
     clang::StringRef Filename) override;
   void ExecuteAction() override;
 
-private:
+  /// Allocates new importer.
+  virtual clang::ASTImporter * newImporter(
+    clang::ASTContext &ToContext, clang::FileManager &ToFileManager,
+    clang::ASTContext &FromContext, clang::FileManager &FromFileManager,
+    bool MinimalImport);
+
   /// Imports variable declaration, tentative definitions will be stored in
   /// a specified collection.
   std::pair<clang::Decl *, clang::Decl *> ImportVarDecl(
@@ -64,6 +71,32 @@ private:
     clang::ASTImporter &Importer) const;
 
   std::vector<std::string> mASTFiles;
+};
+
+struct ASTImportInfo;
+
+/// Frontend action adapter that merges ASTs together and store some
+/// information about the import process in a specified external storage.
+class ASTMergeActionWithInfo : public ASTMergeAction {
+public:
+  /// Creates adapter for a specified action, this adapter merge all
+  /// files from a specified set and store some information about the import
+  /// process in a specified external storage.
+  ASTMergeActionWithInfo(std::unique_ptr<clang::FrontendAction> WrappedAction,
+      clang::ArrayRef<std::string> ASTFiles, ASTImportInfo *Out) :
+    ASTMergeAction(std::move(WrappedAction), ASTFiles), mImportInfo(Out) {
+    assert(mImportInfo && "External storage must not be null!");
+  }
+
+protected:
+  /// Allocates new importer.
+  virtual clang::ASTImporter * newImporter(
+    clang::ASTContext &ToContext, clang::FileManager &ToFileManager,
+    clang::ASTContext &FromContext, clang::FileManager &FromFileManager,
+    bool MinimalImport) override;
+
+private:
+  ASTImportInfo *mImportInfo;
 };
 }
 #endif//TSAR_AST_MERGE_ACTION_H
