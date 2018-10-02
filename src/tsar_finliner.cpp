@@ -946,22 +946,25 @@ void ClangInliner::HandleTranslationUnit() {
       }
       if (Tok.isNot(tok::raw_identifier))
         continue;
-      // We conservatively check that function does not contain any macro
-      // names available in translation unit. If this function should be
-      // inlined we should check that after inlining some of local identifiers
-      // will not be a macro. So, the mentioned conservative check simplifies
-      // this check.
-      // void f() { ... X ... }
-      // #define X ...
-      // void f1() { f(); }
-      // In this case `X` will be a macro after inlining of f(), so it is not
-      // possible to inline f().
-      auto MacroItr = mRawInfo.Macros.find(Tok.getRawIdentifier());
-      if (MacroItr != mRawInfo.Macros.end())
-        mCurrentT->setMacroInDecl(Tok.getLocation(), MacroItr->second);
-      if (Tok.getRawIdentifier() == mCurrentT->getFuncDecl()->getName())
-        continue;
       if (!mDeclRefLoc.count(Tok.getLocation().getRawEncoding())) {
+        // We conservatively check that function does not contain any macro
+        // names available in translation unit. If this function should be
+        // inlined we should check that after inlining some of local identifiers
+        // will not be a macro.
+        // Example:
+        //   void f() { ... X ... }
+        //   #define X ...
+        //   void f1() { f(); }
+        // In this case `X` will be a macro after inlining of f(), so it is not
+        // possible to inline f().
+        // For this check it is necessary to process all locations (instead of
+        // only not visited). However, such check is too conservative and
+        // can be done after transformation (`assert nomacro` can be used).
+        auto MacroItr = mRawInfo.Macros.find(Tok.getRawIdentifier());
+        if (MacroItr != mRawInfo.Macros.end())
+          mCurrentT->setMacroInDecl(Tok.getLocation(), MacroItr->second);
+        if (Tok.getRawIdentifier() == mCurrentT->getFuncDecl()->getName())
+          continue;
         // If declaration at this location has not been found previously it is
         // necessary to conservatively check that it does not produce external
         // dependence.
