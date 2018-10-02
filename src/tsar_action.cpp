@@ -134,6 +134,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   auto TEP = static_cast<TransformationEnginePass *>(
     createTransformationEnginePass());
   TEP->setContext(*M, Ctx);
+  Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());
   if (!mTfmPass->getNormalCtor()) {

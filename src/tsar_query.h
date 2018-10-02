@@ -13,6 +13,7 @@
 #define TSAR_QUERY_H
 
 #include "PassGroupRegistry.h"
+#include "ASTImportInfo.h"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Config/llvm-config.h>
 #include <vector>
@@ -58,6 +59,10 @@ public:
   /// \attention Neither module nor transformation context is not going to be
   /// taken under control.
   virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx) = 0;
+
+  /// Initializes external storage to access information about import process
+  /// if necessary.
+  virtual ASTImportInfo * initializeImportInfo() { return nullptr; }
 };
 
 /// This specify default pass sequence, which can be configured by command line
@@ -132,10 +137,13 @@ public:
 
   void run(llvm::Module *M, TransformationContext *Ctx) override;
 
+  ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
+
 private:
   const llvm::PassInfo *mTfmPass;
   std::string mOutputSuffix;
   bool mNoFormat;
+  ASTImportInfo mImportInfo;
 };
 
 /// This performs a check of user-define properties.

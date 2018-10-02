@@ -414,6 +414,7 @@ int Tool::run(QueryManager *QM) {
     else
       QM = getDefaultQM(mOutputPasses);
   }
+  auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {
     ClangTool CTool(*mCompilations, SourcesToMerge.back());
     SourcesToMerge.pop_back();
@@ -423,8 +424,13 @@ int Tool::run(QueryManager *QM) {
     if (mPrintAST)
       return CTool.run(newFrontendActionFactory<
         tsar::ASTPrintAction, tsar::ASTMergeAction>(SourcesToMerge).get());
-    return CTool.run(newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
-      mCommandLine, QM, SourcesToMerge).get());
+    if (!ImportInfoStorage)
+      return CTool.run(
+        newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
+          mCommandLine, QM, SourcesToMerge).get());
+    return CTool.run(
+      newAnalysisActionFactory<MainAction, ASTMergeActionWithInfo>(
+      mCommandLine, QM, SourcesToMerge, ImportInfoStorage).get());
   }
   ClangTool CTool(*mCompilations, NoLLSources);
   if (mDumpAST)

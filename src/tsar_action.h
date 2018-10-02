@@ -126,6 +126,35 @@ newAnalysisActionFactory(
     new AnalysisActionFactory(
       std::move(First), std::move(Second), std::move(AdaptorArg)));
 }
+
+/// Creates an analysis/transformations actions factory with adaptor.
+template <class ActionTy, class AdaptorTy,
+          class FirstTy, class SecondTy,
+          class AdaptorFirstTy, class AdaptorSecondTy>
+std::unique_ptr<clang::tooling::FrontendActionFactory>
+newAnalysisActionFactory(FirstTy First, SecondTy Second,
+    AdaptorFirstTy AdaptorFirst, AdaptorSecondTy AdaptorSecond) {
+  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
+  public:
+    AnalysisActionFactory(FirstTy F, SecondTy S,
+        AdaptorFirstTy AF, AdaptorSecondTy AS) :
+      mFirst(std::move(F)), mSecond(std::move(S)),
+      mAdaptorFirst(std::move(AF)), mAdaptorSecond(std::move(AS)) {}
+    clang::FrontendAction *create() override {
+      std::unique_ptr<clang::FrontendAction> Action(
+        new ActionTy(mFirst, mSecond));
+      return new AdaptorTy(std::move(Action), mAdaptorFirst, mAdaptorSecond);
+    }
+  private:
+    FirstTy mFirst;
+    SecondTy mSecond;
+    AdaptorFirstTy mAdaptorFirst;
+    AdaptorSecondTy mAdaptorSecond;
+  };
+  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
+    new AnalysisActionFactory(std::move(First), std::move(Second),
+      std::move(AdaptorFirst), std::move(AdaptorSecond)));
+}
 }
 namespace clang {
 /// Creates an frontend actions factory with adaptor.
