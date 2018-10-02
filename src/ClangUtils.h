@@ -152,7 +152,7 @@ private:
   /// will be replaced with the new values before the function constructs a new
   /// declarations.
   /// \return Vector of tokens which can be transformed to text string for
-  /// insertion into source code.
+  /// insertion into source code or an empty vector in case of errors.
   /// \attention This method does not allocate memory for strings in the result.
   /// References to substrings of parameters is used. So the result will be
   /// valid while references to parameters is valid.

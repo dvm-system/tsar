@@ -318,6 +318,8 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   DEBUG(dbgs() << "[BUILD DECLARATION]: context '" << Context << "'\n");
   DEBUG(dbgs() << "[BUILD DECLARATION]: type '" << Search.getType() << "'\n");
   DEBUG(dbgs() << "[BUILD DECLARATION]: id '" << Search.getId() << "'\n");
+  if (Tokens.size() < 2)
+    return std::vector<StringRef>();
   // Let us find a valid position for identifier in a variable declaration.
   // Multiple positions can be found in cases like 'unsigned' and 'unsigned int'
   // which mean same type. Since it's part of declaration-specifiers in grammar,
@@ -325,7 +327,7 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   // (meaning choosing longest type string).
   // Optimization: match in reverse order until success.
   bcl::swapMemory(llvm::errs(), llvm::nulls());
-  for (std::size_t Pos = Tokens.size() - 1; Pos >= 0; --Pos) {
+  for (std::size_t Pos = Tokens.size() - 1; ; --Pos) {
     SmallString<128> DeclStr;
     std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
       Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
@@ -343,7 +345,8 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     MatchFinder.matchAST(Unit->getASTContext());
     if (Search.isFound())
       break;
-    assert(Pos > 0 && "At least one valid position must be found!");
+    if (Pos == 0)
+      return std::vector<StringRef>();
     std::swap(Tokens[Pos], Tokens[Pos - 1]);
   }
   bcl::swapMemory(llvm::errs(), llvm::nulls());
