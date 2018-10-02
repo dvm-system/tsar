@@ -305,14 +305,13 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
     for (auto Step : Options::get().PrintStep) {
       if (Step > DefaultQueryManager::numberOfSteps()) {
         Options::get().PrintStep.error(
-          "error - exceeded the number of available steps (maximum number is" +
+          "error - exceeded the number of available steps (maximum number is " +
           Twine((unsigned)DefaultQueryManager::numberOfSteps()) + ")");
         exit(1);
       }
       mPrintSteps |= 1u << (Step - 1);
     }
   }
-
 }
 
 void Tool::storeCLOptions() {
