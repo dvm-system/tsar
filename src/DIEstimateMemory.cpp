@@ -322,10 +322,10 @@ void DIMemoryHandleBase::memoryIsDeleted(DIMemory *M) {
     "Should only be called if DIMemoryHandles present!");
   DIMemoryHandleBase *Entry = M->getEnv()[M];
   assert(Entry && "Memory bit set but no entries exist");
-  // We use a local ValueHandleBase as an iterator so that
-  // ValueHandles can add and remove themselves from the list without
-  // breaking our iteration.  This is not really an AssertingVH; we
-  // just have to give ValueHandleBase some kind.
+  // We use a local DIMemoryHandleBase as an iterator so that
+  // DIMemoryHandles can add and remove themselves from the list without
+  // breaking our iteration. This is not really an AssertingDIMemoryHandle; we
+  // just have to give DIMemoryHandleBase some kind.
   for (DIMemoryHandleBase Itr(Assert, *Entry); Entry; Entry = Itr.mNext) {
     Itr.removeFromUseList();
     Itr.addToExistingUseListAfter(Entry);
@@ -337,6 +337,9 @@ void DIMemoryHandleBase::memoryIsDeleted(DIMemory *M) {
       break;
     case Weak:
       Entry->operator=(nullptr);
+      break;
+    case Callback:
+      static_cast<CallbackDIMemoryHandle *>(Entry)->deleted();
       break;
     }
   }
@@ -357,10 +360,10 @@ void DIMemoryHandleBase::memoryIsRAUWd(DIMemory *Old, DIMemory *New) {
   assert(Old != New && "Changing value into itself!");
   DIMemoryHandleBase *Entry = Old->getEnv()[Old];
   assert(Entry && "Memory bit set but no entries exist");
-  // We use a local ValueHandleBase as an iterator so that
-  // ValueHandles can add and remove themselves from the list without
-  // breaking our iteration.  This is not really an AssertingVH; we
-  // just have to give ValueHandleBase some kind.
+  // We use a local DIMemoryHandleBase as an iterator so that
+  // DIMemoryHandles can add and remove themselves from the list without
+  // breaking our iteration.  This is not really an AssertingDIMemoryHandle; we
+  // just have to give DIMemoryHandleBase some kind.
   for (DIMemoryHandleBase Itr(Assert, *Entry); Entry; Entry = Itr.mNext) {
     Itr.removeFromUseList();
     Itr.addToExistingUseListAfter(Entry);
@@ -372,6 +375,9 @@ void DIMemoryHandleBase::memoryIsRAUWd(DIMemory *Old, DIMemory *New) {
       break;
     case Weak:
       Entry->operator=(New);
+      break;
+    case Callback:
+      static_cast<CallbackDIMemoryHandle *>(Entry)->allUsesReplacedWith(New);
       break;
     }
   }
@@ -1699,3 +1705,6 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   mDIAliasTree = Env.reset(F, std::move(NewDIAT));
   return false;
 }
+
+// Pin the vtable to this file.
+void CallbackDIMemoryHandle::anchor() {}
