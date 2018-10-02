@@ -818,12 +818,13 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
     };
     auto isInAvailableForwardDecl = [this](std::pair<FileID, unsigned> Bound,
         const GlobalInfoExtractor::OutermostDecl *FD) {
-      auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(
-        FD->getRoot()->getLocEnd());
-      while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
-        FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
-      if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
-        return true;
+      for (auto *Redecl : FD->getRoot()->redecls()) {
+        auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(Redecl->getLocEnd());
+        while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
+          FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
+        if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
+          return true;
+      }
       return false;
     };
     auto checkFD = [this, &TI, &isInAnyForwardDecls, &isInAvailableForwardDecl](
