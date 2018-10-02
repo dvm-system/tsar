@@ -509,6 +509,8 @@ std::pair<std::string, std::string> ClangInliner::compile(
     Context.clear();
     for (auto D : TI.mCallee->getForwardDecls())
       Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
+    for (auto D : TI.mCallee->getMayForwardDecls())
+      Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
   };
   // Prepare formal parameters' assignments.
   initContext();
