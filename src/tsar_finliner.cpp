@@ -170,12 +170,7 @@ bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   if (auto PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
     mCurrentT->addParmRef(PVD, DRE);
   auto ND = DRE->getFoundDecl();
-  if (auto OD = mGIE.findOutermostDecl(ND)) {
-    DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-      mCurrentT->getFuncDecl()->getName() <<
-      "' found '" << ND->getName() << "'\n");
-    mCurrentT->addForwardDecl(OD);
-  }
+  visitNamedDecl(ND);
   DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
     mCurrentT->getFuncDecl()->getName() << "' at ";
     DRE->getLocation().dump(mSrcMgr);  dbgs() << "\n");
@@ -203,14 +198,13 @@ bool ClangInliner::VisitTypeLoc(TypeLoc TL) {
   return RecursiveASTVisitor::VisitTypeLoc(TL);
 }
 
+bool ClangInliner::VisitTagType(TagType *TT) {
+  visitNamedDecl(TT->getDecl());
+  return RecursiveASTVisitor::VisitTagType(TT);
+}
+
 bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getDecl())) {
-    if (auto OD = mGIE.findOutermostDecl(ND)) {
-      DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-        mCurrentT->getFuncDecl()->getName() <<
-        "' found '" << ND->getName() << "'\n");
-      mCurrentT->addForwardDecl(OD);
-    }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
@@ -220,14 +214,29 @@ bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
   return RecursiveASTVisitor::VisitTagTypeLoc(TTL);
 }
 
+bool ClangInliner::VisitTypedefType(clang::TypedefType *TT) {
+  visitNamedDecl(TT->getDecl());
+  return RecursiveASTVisitor::VisitTypedefType(TT);
+}
+
+void ClangInliner::visitNamedDecl(clang::NamedDecl *ND) {
+  // We want to search dependence using a pointer to declaration. So,
+  // use the first redeclaration and store the same pointers for all
+  // redeclarations.
+  assert((!mGIE.findOutermostDecl(ND) ||
+    mGIE.findOutermostDecl(cast<NamedDecl>(*ND->redecls_begin()))) &&
+    "Seems that redeclaration is not presented in AST");
+  ND = cast<NamedDecl>(*ND->redecls_begin());
+  if (auto OD = mGIE.findOutermostDecl(ND)) {
+    DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
+      mCurrentT->getFuncDecl()->getName() <<
+      "' found '" << ND->getName() << "'\n");
+    mCurrentT->addForwardDecl(OD);
+  }
+}
+
 bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getTypedefNameDecl())) {
-    if (auto OD = mGIE.findOutermostDecl(ND)) {
-      DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
-        mCurrentT->getFuncDecl()->getName() <<
-        "' found '" << ND->getName() << "'\n");
-      mCurrentT->addForwardDecl(OD);
-    }
     DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
@@ -958,14 +967,22 @@ void ClangInliner::HandleTranslationUnit() {
         auto GlobalItr = mGIE.getOutermostDecls().find(Tok.getRawIdentifier());
         if (GlobalItr != mGIE.getOutermostDecls().end()) {
           for (auto &D : GlobalItr->second) {
-            mCurrentT->addMayForwardDecl(&D);
-          DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
-            mCurrentT->getFuncDecl()->getName() << "' found '" <<
-            D.getDescendant()->getName() << "'\n");
-          DEBUG(dbgs() << "[INLINE]: reference to '" <<
-            D.getDescendant()->getName() << "' in '" <<
-            mCurrentT->getFuncDecl()->getName() << "' at ";
-            Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
+            // We want to serch dependence using a pointer to declaration. So,
+            // use the first redeclaration and store the same pointers for all
+            // redeclarations.
+            auto *ND = cast<NamedDecl>(*D.getDescendant()->redecls_begin());
+            auto *OD = mGIE.findOutermostDecl(ND);
+            assert(OD && "Seems that redeclaration is not presented in AST");
+            if (mCurrentT->getForwardDecls().count(OD))
+              continue;
+            mCurrentT->addMayForwardDecl(OD);
+            DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
+              mCurrentT->getFuncDecl()->getName() << "' found '" <<
+              D.getDescendant()->getName() << "'\n");
+            DEBUG(dbgs() << "[INLINE]: reference to '" <<
+              D.getDescendant()->getName() << "' in '" <<
+              mCurrentT->getFuncDecl()->getName() << "' at ";
+              Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
           }
         }
       }

@@ -334,7 +334,9 @@ public:
   bool VisitReturnStmt(clang::ReturnStmt* RS);
   bool VisitDeclRefExpr(clang::DeclRefExpr *DRE);
   bool VisitTypeLoc(clang::TypeLoc TL);
+  bool VisitTagType(clang::TagType *TT);
   bool VisitTagTypeLoc(clang::TagTypeLoc TTL);
+  bool VisitTypedefType(clang::TypedefType *TT);
   bool VisitTypedefTypeLoc(clang::TypedefTypeLoc TTL);
   bool VisitDecl(clang::Decl *D);
 
@@ -343,6 +345,10 @@ public:
   bool TraverseCallExpr(clang::CallExpr *Call);
 
 private:
+  /// General method which visits clang::NamedDecl available from clang::Type
+  /// and clang::DeclRefExpr.
+  void visitNamedDecl(clang::NamedDecl *ND);
+
   /// Collects information of a macro in current location.
   void rememberMacroLoc(clang::SourceLocation Loc);
 
