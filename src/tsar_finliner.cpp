@@ -539,6 +539,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     Replacements[PVD->getName()] = Identifier.str();
     auto DeclT = PVD->getType().getAsString();
     auto Tokens = buildDeclStringRef(DeclT, Identifier, Context, Replacements);
+    assert(!Tokens.empty() && "Unable to build parameter declaration!");
     SmallString<128> DeclStr;
     Context += join(Tokens.begin(), Tokens.end(), " ", DeclStr); Context += ";";
     /// TODO (kaniandr@gmail.com): we use ParamIdx instead of method
@@ -599,6 +600,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     StringMap<std::string> Replacements;
     auto RetTy = TI.mCallee->getFuncDecl()->getReturnType().getAsString();
     auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
+    assert(!Tokens.empty() && "Unable to build return value declaration!");
     join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
     RetIdDeclStmt += ";";
     for (auto &RS : ReachableRetStmts) {
