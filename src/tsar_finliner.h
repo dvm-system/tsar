@@ -292,6 +292,8 @@ template<> struct simplify_type<const tsar::detail::ScopeInfo> {
 }
 
 namespace tsar {
+struct ASTImportInfo;
+
 /// Performs inline expansion, processes calls which is marked with `inline`
 /// clause, print warnings on errors. Do not write changes to file, change
 /// memory buffer only (a specified clang::Rewriter is used).
@@ -319,10 +321,11 @@ public:
 
   explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context,
       const GlobalInfoExtractor &GIE,
-      llvm::ClangGlobalInfoPass::RawInfo &RawInfo) :
+      llvm::ClangGlobalInfoPass::RawInfo &RawInfo,
+      const ASTImportInfo &ImportInfo) :
     mRewriter(Rewriter), mContext(Context),
     mSrcMgr(Context.getSourceManager()), mLangOpts(Context.getLangOpts()),
-    mGIE(GIE), mRawInfo(RawInfo) {}
+    mGIE(GIE), mRawInfo(RawInfo), mImportInfo(ImportInfo) {}
 
   clang::Rewriter & getRewriter() noexcept { return mRewriter; }
   clang::ASTContext & getContext() noexcept { return mContext; }
@@ -414,6 +417,8 @@ private:
   /// Visitor to collect global information about a translation unit.
   const GlobalInfoExtractor &mGIE;
 
+  /// Summary of the import process.
+  const ASTImportInfo &mImportInfo;
 
   /// \brief Raw information about objects in a source code.
   ///

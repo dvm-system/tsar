@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_finliner.h"
+#include "ASTImportInfo.h"
 #include "ClangFormatPass.h"
 #include "ClangUtils.h"
 #include "Diagnostic.h"
@@ -40,6 +41,7 @@ char ClangInlinerPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangInlinerPass, "clang-inline",
   "Source-level Inliner (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
+  INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangInlinerPass, "clang-inline",
@@ -51,6 +53,7 @@ ModulePass* llvm::createClangInlinerPass() { return new ClangInlinerPass(); }
 void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
+  AU.addUsedIfAvailable<ImmutableASTImportInfoPass>();
   AU.setPreservesAll();
 }
 
@@ -67,7 +70,11 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   if (Context.getLangOpts().CPlusPlus)
     toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangInliner Inliner(Rewriter, Context, GIP.getGlobalInfo(), GIP.getRawInfo());
+  const ASTImportInfo ImportStub, *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
+  ClangInliner Inliner(Rewriter, Context,
+    GIP.getGlobalInfo(), GIP.getRawInfo(), *ImportInfo);
   Inliner.HandleTranslationUnit();
   return false;
 }
@@ -824,6 +831,21 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
           FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
         if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
           return true;
+        /// Importer merges imported external declarations to the existing one:
+        /// Import(FileID of From) != FileID of To
+        /// So, it is not possible to find include which makes the From location
+        /// visible at some point. Therefore we use additional information about
+        /// import process (if it is available).
+        auto RedeclLocItr =
+          mImportInfo.RedeclLocs.find(Redecl->getLocEnd().getRawEncoding());
+        if (RedeclLocItr != mImportInfo.RedeclLocs.end())
+          for (auto RedeclLoc : RedeclLocItr->second) {
+            auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(RedeclLoc);
+            while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
+              FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
+            if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
+              return true;
+          }
       }
       return false;
     };
