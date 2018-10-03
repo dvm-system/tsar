@@ -70,7 +70,8 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   if (Context.getLangOpts().CPlusPlus)
     toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  const ASTImportInfo ImportStub, *ImportInfo = &ImportStub;
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
   ClangInliner Inliner(Rewriter, Context,
