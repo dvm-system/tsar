@@ -677,6 +677,7 @@ DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
           Recursive.insert(Caller);
           return true;
         }
+      return false;
     };
     for (auto &TIs : T.second->getCalls())
       if (TIs.mCallee && TIs.mCallee->isNeedToInline())
