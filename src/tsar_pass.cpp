@@ -30,7 +30,6 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeDIAliasTreePrinterPass(Registry);
   initializePrivateRecognitionPassPass(Registry);
   initializeTransformationEnginePassPass(Registry);
-  initializePrivateCClassifierPassPass(Registry);
   initializeInstrumentationPassPass(Registry);
   initializeLoopMatcherPassPass(Registry);
   initializeTestPrinterPassPass(Registry);

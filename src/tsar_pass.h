@@ -145,12 +145,6 @@ FunctionPass * createFetchPromotePrivatePass();
 /// Initializes a pass to access source level transformation enginer.
 void initializeTransformationEnginePassPass(PassRegistry &Registry);
 
-/// Creates a pass to make more precise analysis of for-loops in C sources.
-FunctionPass * createPrivateCClassifierPass();
-
-/// Initializes a pass to make more precise analysis of for-loops in C sources.
-void initializePrivateCClassifierPassPass(PassRegistry &Registry);
-
 /// Creates a pass to access source level transformation enginer.
 ImmutablePass * createTransformationEnginePass();
 
