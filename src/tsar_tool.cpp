@@ -18,6 +18,9 @@
 #include "tsar_query.h"
 #include "tsar_test.h"
 #include "tsar_tool.h"
+#ifdef APC_FOUND
+# include <apc/apc-config.h>
+#endif
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/Tooling.h>
 #include <llvm/IR/LegacyPassNameParser.h>
@@ -210,6 +213,15 @@ void Options::printVersion() {
   raw_ostream &OS = outs();
   OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
   OS << "  version " << TSAR_VERSION_STRING << "\n";
+#ifdef APC_FOUND
+  OS << "  with APC (" << APC_HOMEPAGE_URL << "):\n";
+  OS << "    version " << APC_VERSION_STRING << "\n";
+  OS << "    language ";
+# ifdef APC_C
+  OS << "C";
+# endif
+  OS << "\n";
+#endif
 #ifndef __OPTIMIZE__
   OS << "  DEBUG build";
 #else
@@ -222,6 +234,7 @@ void Options::printVersion() {
   OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
   std::string CPU = sys::getHostCPUName();
   OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
+
 }
 
 Tool::Tool(int Argc, const char **Argv) {
