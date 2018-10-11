@@ -14,8 +14,6 @@
 #include "DFRegionInfo.h"
 #include "UselessVariables.h"
 #include <clang/AST/Decl.h>
-#include <clang/AST/Stmt.h>
-
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/Statistic.h>
@@ -23,6 +21,7 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/Module.h>
+
 
 
 #include "tsar_transformation.h"
@@ -43,6 +42,7 @@ using namespace clang;
 
 char ClangUselessVariablesPass::ID = 0;
 
+
 INITIALIZE_PASS_BEGIN(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_END(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
@@ -56,34 +56,73 @@ public:
 
   bool VisitVarDecl(VarDecl *D)
   {
+
     pDecls_.insert(D);
+
     return true;    
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *D)
   {
+
     //сделать нормальное приведение типов
+    //что лучше использоавть getdecl или getfounddecl?
     pDecls_.erase(   (VarDecl*)(D->getFoundDecl())   );
+    //if(D != NULL)
+    //  std::cout << "decl ref name = " /*<< ((VarDecl*)(D))->getNameAsString()*/ << "    " <<(long)((VarDecl*)(D->getDecl())) << std::endl;
     return true;
   }
+
+  bool VisitDeclStmt(DeclStmt *S)
+  {
+    //std::cout << "Decl statement:  " << S->isSingleDecl() << std::endl;
+
+    auto group = S->getDeclGroup();
+
+    if(S->isSingleDecl())
+    {
+      //сделать нормальное приведение типов
+      //auto d = (VarDecl*)(S->getSingleDecl());
+      //std::cout << "visit decl stmt:   " << pDecls_.count(d) << std::endl;
+    }
+    else
+    {
+      //Добавить warning, когда нашлось множественное объявление
+      for(auto i = group.begin(); i != group.end(); i++)
+      {
+        bool res = pDecls_.erase(  (VarDecl*)(*i)  );
+        //std::cout << "group var decl   " << (long)(*i) << " " << res << std::endl;
+      }
+    }
+
+    return true;
+  }
+
+  bool VisitIfStmt(IfStmt *S)
+  {
+    //std::cout << "IfStmt" << std::endl;
+    auto D = S->getConditionVariable();
+    if(D != NULL)
+      pDecls_.erase(D);
+    return true;
+  }
+
 
   void DelVarsFromCode(clang::Rewriter &mRewriter)
   {
     for(auto i = pDecls_.begin(); i != pDecls_.end(); i++)
     {
-      std::cout << "Del decl:  " << (*i)->getNameAsString() << std::endl;
+      //std::cout << "Del decl:  " << (*i)->getNameAsString() << std::endl;
 
-      std::cout << "check decl :  " << (*i)->isLocalVarDecl() << std::endl;
-      std::cout << "check param :  " << (*i)->isLocalVarDeclOrParm() << std::endl;
-
-
-      //добавить проерку единичной инициализации через traversestmt
+      //std::cout << "check decl :  " << (*i)->isLocalVarDecl() << std::endl;
+      //std::cout << "check param :  " << (*i)->isLocalVarDeclOrParm() << std::endl;
+      
+      if(((*i)->isLocalVarDecl() == 0) && ((*i)->isLocalVarDeclOrParm() == 1))
+        pDecls_.erase(i);
       //попробовать проверку через location
 
-      //добавить проверку таких ситуаций
-      //if(int x = 0)
 
-      
+      //спросить про двойное выполнение visitvardecl and visitvardeclref
     }
 
 
@@ -94,7 +133,7 @@ public:
 
     //after using this function clang delete declarations
     // but add some strange pragmas 
-    mRewriter.overwriteChangedFiles();
+    //mRewriter.overwriteChangedFiles();
 
   }
 
@@ -104,14 +143,17 @@ public:
   {
     for(auto i = pDecls_.begin(); i != pDecls_.end(); i++)
     {
-      std::cout << "DenseSet:  " << (*i)->getNameAsString() << std::endl;
+      std::cout << "DenseSet:  " << (*i)->getNameAsString() << "  " << (long)(*i) <<std::endl;
     }
+
 
   }
 
 
 private:
+
   DenseSet<VarDecl*>pDecls_;
+
 };
 }
 
@@ -130,22 +172,28 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   DeclVisitor Visitor;
   Visitor.TraverseDecl(FuncDecl);
 
-  Visitor.TraverseStmt(FuncDecl);
+
+  //Visitor.TraverseStmt(FuncDecl);
+
+  //Visitor.TraverseStmt(FuncDecl->getBody());
+
 
 
   //Visitor.print_decls();
 
   std::cout << "######### usless Useless Variables" << std::endl;
-  Visitor.print_decls();
+  //Visitor.print_decls();
 
   
 
   Visitor.DelVarsFromCode(TfmCtx->getRewriter());
+
   return false;
 }
 
 void ClangUselessVariablesPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
+
   AU.setPreservesAll();
 }
 
