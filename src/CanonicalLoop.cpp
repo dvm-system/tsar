@@ -554,14 +554,42 @@ DeclarationMatcher makeLoopMatcher() {
               varDecl(hasType(isInteger()))
               .bind("AssignmentVarName")))),
             hasRHS(eachOf(
+              implicitCastExpr(
+                hasImplicitDestinationType(isInteger()),
+                hasSourceExpression(eachOf(
+                  binaryOperator(
+                    hasOperatorName("+"),
+                    eachOf(
+                      hasLHS(implicitCastExpr(
+                        hasSourceExpression(implicitCastExpr(
+                          hasSourceExpression(declRefExpr(to(
+                            varDecl(hasType(isInteger()))
+                            .bind("FirstAssignmentVarName")))))))),
+                      hasRHS(implicitCastExpr(
+                        hasSourceExpression(implicitCastExpr(
+                          hasSourceExpression(declRefExpr(to(
+                            varDecl(hasType(isInteger()))
+                            .bind("SecondAssignmentVarName")))))))))).bind("BinaryIncr"),
+                  binaryOperator(
+                    hasOperatorName("-"),
+                    hasLHS(implicitCastExpr(
+                      hasSourceExpression(implicitCastExpr(
+                        hasSourceExpression(declRefExpr(to(
+                          varDecl(hasType(isInteger()))
+                          .bind("FirstAssignmentVarName"))))))))).bind("BinaryIncr")))),
               binaryOperator(
                 hasOperatorName("+"),
                 eachOf(
                   hasLHS(implicitCastExpr(
                     hasImplicitDestinationType(isInteger()),
-                    hasSourceExpression(declRefExpr(to(
-                      varDecl(hasType(isInteger()))
-                      .bind("FirstAssignmentVarName")))))),
+                      hasSourceExpression(eachOf(
+                        declRefExpr(to(
+                          varDecl(hasType(isInteger()))
+                          .bind("FirstAssignmentVarName"))),
+                        implicitCastExpr(
+                          hasSourceExpression(declRefExpr(to(
+                            varDecl(hasType(isInteger()))
+                            .bind("FirstAssignmentVarName"))))))))),
                   hasRHS(implicitCastExpr(
                     hasImplicitDestinationType(isInteger()),
                     hasSourceExpression(declRefExpr(to(
