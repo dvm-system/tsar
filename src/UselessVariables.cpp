@@ -23,7 +23,7 @@
 #include <llvm/IR/Module.h>
 
 
-
+#include "tsar_query.h"
 #include "tsar_transformation.h"
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/ADT/DenseSet.h>
@@ -38,14 +38,25 @@
 using namespace llvm;
 using namespace clang;
 
-
+using namespace tsar;
 
 char ClangUselessVariablesPass::ID = 0;
 
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangUselessVariablesPass, "clang-useless-vars",
+  "search usless vars (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
 
-INITIALIZE_PASS_BEGIN(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
+
+//INITIALIZE_PASS_BEGIN(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_END(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
+//INITIALIZE_PASS_END(ClangUselessVariablesPass, "useless-vars", "Searching of useless vars", true, true)
+
+
+INITIALIZE_PASS_IN_GROUP_END(ClangUselessVariablesPass, "clang-useless-vars",
+  "search usless vars (Clang)", false, false,
+  TransformationQueryManager::getPassRegistry())
+
+
 
 namespace {
 /// This visits and analyzes all for-loops in a source code.
