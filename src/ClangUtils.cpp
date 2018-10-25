@@ -144,9 +144,8 @@ bool tsar::getRawTokenAfter(SourceLocation Loc, const SourceManager &SM,
   auto AfterTokenLoc = Lexer::getLocForEndOfToken(Loc, 0, SM, LangOpts);
   if (AfterTokenLoc.isInvalid())
     return true;
-  if (!Lexer::getRawToken(AfterTokenLoc, Tok, SM, LangOpts, true) &&
-      Tok.getLocation().isValid())
-    return false;
+  return Lexer::getRawToken(AfterTokenLoc, Tok, SM, LangOpts, true) ||
+    Tok.getLocation().isInvalid();
 }
 
 ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
