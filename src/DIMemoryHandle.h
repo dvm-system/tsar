@@ -46,7 +46,7 @@ public:
   }
 
   /// Removes this handle from a list of memory handles.
-  ~DIMemoryHandleBase() {
+  virtual ~DIMemoryHandleBase() {
     if (isValid(mMemory))
       removeFromUseList();
   }

@@ -126,6 +126,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createGlobalDCEPass());
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createDILoopRetrieverPass());
+  // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
+  // avoid dangling handles. So, we add pool before environment in the manager.
+  //Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
   // Preliminary analysis of privatizable variables. This analysis is necessary
   // to prevent lost of result of optimized values. The memory promotion

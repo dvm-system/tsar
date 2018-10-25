@@ -24,7 +24,7 @@ class DIAliasTree;
 class DIMemory;
 class DIMemoryHandleBase;
 
-class DIMemoryEnvironment {
+class DIMemoryEnvironment final {
   /// \brief This defines callback that run when underlying function has RAUW
   /// called on it or destroyed.
   ///
@@ -58,6 +58,13 @@ class DIMemoryEnvironment {
     FunctionCallbackVHDenseMapInfo>;
 
 public:
+  ~DIMemoryEnvironment() {
+    // It is not possible to delete handles here, because a handle may not be
+    // a dynamic object. So, we only check that there is no active handles.
+    assert(mMemoryHandles.empty() &&
+      "Memory handles must be deleted before environmment!");
+  }
+
   /// Map from a memory to list of handles.
   using DIMemoryHandleMap = llvm::DenseMap<DIMemory *, DIMemoryHandleBase *>;
 
