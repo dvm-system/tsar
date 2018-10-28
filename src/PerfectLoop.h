@@ -14,13 +14,13 @@
 #include "tsar_pass.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
-#include <set>
+#include <llvm/ADT/DenseSet.h>
 
 namespace tsar {
 class DFNode;
 
 /// Set of perfect loops.
-typedef std::set<DFNode *> PerfectLoopInfo;
+using PerfectLoopInfo = llvm::DenseSet<DFNode *>;
 }
 
 namespace llvm {
