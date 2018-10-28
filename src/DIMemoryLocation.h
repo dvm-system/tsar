@@ -112,6 +112,14 @@ struct DIMemoryLocation {
   /// the expression.
   bool isValid() const;
 };
+
+inline bool operator==(DIMemoryLocation LHS, DIMemoryLocation RHS) noexcept {
+  return LHS.Var == RHS.Var && LHS.Expr == RHS.Expr;
+}
+
+inline bool operator!=(DIMemoryLocation LHS, DIMemoryLocation RHS) noexcept {
+  return LHS.Var != RHS.Var || LHS.Var != RHS.Var;
+}
 }
 
 namespace llvm {
