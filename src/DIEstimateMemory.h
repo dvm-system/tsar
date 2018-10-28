@@ -253,6 +253,11 @@ std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     DIMemory::Property = DIMemory::Explicit);
 
+/// Returns metadata-level raw representation for a specified debug memory
+/// location if it exist.
+llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
+    DIMemoryLocation DILoc);
+
 /// \brief This represents estimate memory location using metadata information.
 ///
 /// This class is similar to `EstimateMemory`. However, this is high level
@@ -283,6 +288,10 @@ public:
   /// Returns existent location. Note, it will not be attached to an alias node.
   static std::unique_ptr<DIEstimateMemory> getIfExists(
       llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+
+  /// Returns raw representation of existent location.
+  static llvm::MDNode * getRawIfExists(llvm::LLVMContext &Ctx,
       llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
 
   /// Creates a copy of a specified memory location. The copy is not attached
@@ -607,9 +616,38 @@ private:
   explicit DIAliasUnknownNode() : DIAliasMemoryNode(KIND_UNKNOWN) {}
 };
 
+/// This uses MDNode * which represents DIMemory * to store and to search memory
+/// in a map.
+struct DIMemoryMapInfo {
+  static inline DIMemory * getEmptyKey() {
+    return llvm::DenseMapInfo<DIMemory *>::getEmptyKey();
+  }
+  static inline DIMemory * getTombstoneKey() {
+    return llvm::DenseMapInfo<DIMemory *>::getTombstoneKey();
+  }
+  static unsigned getHashValue(const DIMemory *M) {
+    return llvm::DenseMapInfo<const llvm::MDNode *>
+      ::getHashValue(M->getAsMDNode());
+  }
+  static unsigned getHashValue(const llvm::MDNode *MD) {
+    return llvm::DenseMapInfo<const llvm::MDNode *>::getHashValue(MD);
+  }
+  static bool isEqual(const DIMemory *LHS, const DIMemory *RHS) {
+    return LHS == RHS ||
+      LHS && RHS &&
+      LHS != getTombstoneKey() && RHS != getTombstoneKey() &&
+      LHS != getEmptyKey() && RHS != getEmptyKey() &&
+      LHS->getAsMDNode() == RHS->getAsMDNode();
+  }
+  static bool isEqual(const llvm::MDNode *LHS, const DIMemory *RHS) {
+    return RHS && RHS != getEmptyKey() && RHS != getTombstoneKey() &&
+      LHS == RHS->getAsMDNode();
+  }
+};
+
 class DIAliasTree {
   /// Set of estimate memory locations.
-  using DIMemorySet = llvm::DenseSet<DIMemory *>;
+  using DIMemorySet = llvm::DenseSet<DIMemory *, DIMemoryMapInfo>;
 
   /// Pool to store pointers to all alias nodes.
   using AliasNodePool = llvm::ilist<DIAliasNode,
@@ -719,6 +757,16 @@ public:
   /// memory was the last location in the node and the node has been also
   /// removed.
   std::pair<bool, bool> erase(DIMemory &M);
+
+  /// Returns memory location which is represented by a specified metadata.
+  memory_iterator find(const llvm::MDNode &M) {
+    return mFragments.find_as(&M);
+  }
+
+  /// Returns memory location which is represented by a specified metadata.
+  memory_const_iterator find(const llvm::MDNode &M) const {
+    return mFragments.find_as(&M);
+  }
 
   /// \brief This pop up ghostview window and displays the alias tree.
   ///

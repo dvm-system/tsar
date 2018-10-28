@@ -175,6 +175,17 @@ DIEstimateMemory::getIfExists(
   return nullptr;
 }
 
+llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
+  assert(Var && "Variable must not be null!");
+  assert(Expr && "Expression must not be null!");
+  auto *FlagMD = llvm::ConstantAsMetadata::getIfExists(
+    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
+  if (!FlagMD)
+    return nullptr;
+  return llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD });
+}
+
 llvm::DIVariable * DIEstimateMemory::getVariable() {
   auto MD = getAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
@@ -1552,6 +1563,13 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
   }
   auto DIE = DIExpression::get(Ctx, Expr);
   return DIMemoryLocation(DIV, DIE, IsTemplate);
+}
+
+llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
+    DIMemoryLocation DILoc) {
+  auto Flags = DILoc.Template ?
+    DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+  return DIEstimateMemory::getRawIfExists(Ctx, DILoc.Var, DILoc.Expr, Flags);
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
