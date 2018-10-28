@@ -10,6 +10,7 @@
 #ifndef TSAR_UTILITY_H
 #define TSAR_UTILITY_H
 
+#include "DIMemoryLocation.h"
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/Optional.h>
@@ -263,19 +264,19 @@ llvm::DILocalVariable * findMetadata(const llvm::AllocaInst *AI);
 /// \param [in] DT If it is specified then llvm.dbg.value will be analyzed if
 /// necessary. Otherwise llvm.dbg.declare and global variables will be
 /// analyzed only.
-/// \param [out] Vars This will contain all variables which associated
-/// with a specified value. For this reason llvm.dbg.value and llvm.dbg.declare
-/// intrinsics will be analyzed. Intrinsics which dominates all uses of `V`
-/// will be only considered. The condition mentioned bellow is also checked.
-/// Let us consider some llvm.dbg.value `I` which dominates all uses of `V`
-/// and associates a variable `Var` with `V`. Paths from `I` to each use of V
-/// will be checked. There should be no other intrinsics which associates `Var`
-/// with some other value on these paths.
-/// \return A variable from `Vars`, llvm.dbg.value for this
-/// variable dominates llvm.dbg.value for other variables from `Vars`. If
-/// there is no such variable, nullptr is returned.
-llvm::DIVariable * findMetadata(const llvm::Value * V,
-  llvm::SmallVectorImpl<llvm::DIVariable *> &Vars,
+/// \param [out] DILocs This will contain all metadata-level locations which are
+/// associated with a specified value. For this reason llvm.dbg.value and
+/// llvm.dbg.declare intrinsics will be analyzed. Intrinsics which dominates all
+/// uses of `V` will be only considered. The condition mentioned bellow is also
+/// checked. Let us consider some llvm.dbg.value `I` which dominates all uses of
+/// `V` and associates a metadata-level `DILoc` with `V`. Paths from `I` to each
+/// use of V will be checked. There should be no other intrinsics which
+/// associates `DILoc` with some other value on these paths.
+/// \return A variable from `DILocs`, llvm.dbg.value for this
+/// variable dominates llvm.dbg.value for other variables from `DILocs`. If
+/// there is no such variable, None is returned.
+llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value * V,
+  llvm::SmallVectorImpl<DIMemoryLocation> &DILocs,
   const llvm::DominatorTree *DT = nullptr);
 
 /// \brief This is an implementation of detail::DenseMapPair which supports

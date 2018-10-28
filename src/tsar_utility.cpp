@@ -20,16 +20,17 @@
 #include <regex>
 
 using namespace llvm;
+using namespace tsar;
 
 namespace {
 /// Computes a list of basic blocks which dominates a list of specified uses of
 /// a value `V` and contains some of `llvm.dbg.value` associated with `V`.
-DenseMap<DIVariable *, SmallPtrSet<BasicBlock *, 8>>
+DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>>
 findDomDbgValues(const Value *V, const DominatorTree &DT,
     const SmallVectorImpl<Instruction *> &Users) {
   DbgValueList AllDbgValues;
   FindAllocaDbgValues(AllDbgValues, const_cast<Value *>(V));
-  DenseMap<DIVariable *, SmallPtrSet<BasicBlock *, 8>> Dominators;
+  DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>> Dominators;
   for (auto *DVI : AllDbgValues) {
     if (!DVI->getVariable())
       continue;
@@ -40,25 +41,25 @@ findDomDbgValues(const Value *V, const DominatorTree &DT,
         break;
     if (UI != UE)
       continue;
-    auto Pair = Dominators.try_emplace(DVI->getVariable());
+    auto Pair = Dominators.try_emplace(DIMemoryLocation::get(DVI));
     Pair.first->second.insert(DVI->getParent());
   }
   return Dominators;
 }
 
-/// \brief Determines all basic blocks which contains variables aliases with a
-/// specified one.
+/// \brief Determines all basic blocks which contains metadata-level locations
+/// aliases with a specified one.
 ///
 /// Two conditions is going to be checked. At first it means that such block
 /// should contain llvm.dbg.value intrinsic which is associated with a
-/// specified variable `Var` and a register other then `V`.
+/// specified metadata-level location `Loc` and a register other then `V`.
 /// The second condition is that there is no llvm.dbg.values after this
-/// intrinsic in the basic block which is associated with `Var` and `V`.
+/// intrinsic in the basic block which is associated with `Loc` and `V`.
 SmallPtrSet<BasicBlock *, 16>
-findAliasBlocks(const Value * V, const DIVariable *Var) {
+findAliasBlocks(const Value * V, const DIMemoryLocation Loc) {
   SmallPtrSet<BasicBlock *, 16> Aliases;
   auto *MDV = MetadataAsValue::getIfExists(
-    Var->getContext(), const_cast<DIVariable *>(Var));
+    Loc.Var->getContext(), const_cast<DIVariable *>(Loc.Var));
   if (!MDV)
     return Aliases;
   for (User *U : MDV->users()) {
@@ -68,7 +69,7 @@ findAliasBlocks(const Value * V, const DIVariable *Var) {
     auto I = DVI->getIterator(), E = DVI->getParent()->end();
     for (; I != E; ++I) {
       if (auto *SuccDVI = dyn_cast<DbgValueInst>(&*I))
-        if (SuccDVI->getValue() == V && SuccDVI->getVariable() == Var) {
+        if (SuccDVI->getValue() == V && DIMemoryLocation::get(SuccDVI) == Loc) {
           break;
         }
     }
@@ -195,24 +196,28 @@ DILocalVariable *findMetadata(const AllocaInst *AI) {
   return DDI ? DDI->getVariable() : nullptr;
 }
 
-DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
-    const DominatorTree *DT) {
+Optional<DIMemoryLocation> findMetadata(const Value * V,
+    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT) {
   assert(V && "Value must not be null!");
-  Vars.clear();
+  DILocs.clear();
   if (auto AI = dyn_cast<AllocaInst>(V)) {
     auto DIVar = findMetadata(AI);
-    if (DIVar)
-      Vars.push_back(DIVar);
-    return DIVar;
+    if (DIVar) {
+      DILocs.emplace_back(DIVar, DIExpression::get(DIVar->getContext(), {}));
+      return DILocs.back();
+    }
+    return None;
   }
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
     auto DIVar = findMetadata(GV);
-    if (DIVar)
-      Vars.push_back(DIVar);
-    return DIVar;
+    if (DIVar) {
+      DILocs.emplace_back(DIVar, DIExpression::get(DIVar->getContext(), {}));
+      return DILocs.back();
+    }
+    return None;
   }
   if (!DT)
-    return nullptr;
+    return None;
   SmallVector<Instruction *, 8> Users;
   // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
   // If `V` is a declaration of a function then call of this function will
@@ -228,17 +233,17 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
     if (auto I = dyn_cast<Instruction>(U))
       Users.push_back(I);
     else
-      return nullptr;
+      return None;
   }
   auto Dominators = findDomDbgValues(V, *DT, Users);
-  for (auto &VarToDom : Dominators) {
-    auto Var = VarToDom.first;
+  for (auto &DILocToDom : Dominators) {
+    auto DILoc = DILocToDom.first;
     // If Aliases is empty it does not mean that a current variable can be used
     // because if there are usage of V between two llvm.dbg.value (the first is
     // associated with some other variable and the second is associated with the
-    // Var) the appropriate basic block will not be inserted into Aliases.
-    auto Aliases = findAliasBlocks(V, Var);
-    // Checks that each definition of a variable `Var` in `VarToDom.second`
+    // DILoc) the appropriate basic block will not be inserted into Aliases.
+    auto Aliases = findAliasBlocks(V, DILoc);
+    // Checks that each definition of a variable `DILoc` in `DILocToDom.second`
     // reaches each uses of `V` in `Users`.
     bool IsReached = false;
     for (auto *I : Users) {
@@ -246,7 +251,7 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
       auto ReverseItr = I->getReverseIterator(), ReverseItrE = BB->rend();
       for (IsReached = false; ReverseItr != ReverseItrE; ++ReverseItr) {
         if (auto *DVI = dyn_cast<DbgValueInst>(&*ReverseItr))
-          if (DVI->getVariable() == Var) {
+          if (DIMemoryLocation::get(DVI) == DILoc) {
             if (DVI->getValue() == V)
               IsReached = true;
             break;
@@ -270,7 +275,7 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
             continue;
           if (Aliases.count(*PredItr))
             break;
-          if (VarToDom.second.count(*PredItr))
+          if (DILocToDom.second.count(*PredItr))
             continue;
           Worklist.push_back(*PredItr);
           VisitedPreds.insert(*PredItr);
@@ -284,33 +289,33 @@ DIVariable * findMetadata(const Value * V, SmallVectorImpl<DIVariable *> &Vars,
         break;
     }
     if (IsReached)
-      Vars.push_back(Var);
+      DILocs.push_back(DILoc);
   }
-  auto VarItr = Vars.begin(), VarItrE = Vars.end();
-  for (; VarItr != VarItrE; ++VarItr) {
-    if ([&V, &Vars, &VarItr, &VarItrE, &Dominators, DT]() {
-      auto VarToDom = Dominators.find(*VarItr);
-      for (auto I = Vars.begin(), E = VarItrE; I != E; ++I) {
-        if (I == VarItr)
+  auto DILocItr = DILocs.begin(), DILocItrE = DILocs.end();
+  for (; DILocItr != DILocItrE; ++DILocItr) {
+    if ([&V, &DILocs, &DILocItr, &DILocItrE, &Dominators, DT]() {
+      auto DILocToDom = Dominators.find(*DILocItr);
+      for (auto I = DILocs.begin(), E = DILocItrE; I != E; ++I) {
+        if (I == DILocItr)
           continue;
         for (auto BB : Dominators.find(*I)->second)
-          for (auto VarBB : VarToDom->second)
-            if (VarBB == BB) {
-              for (auto &Inst : *VarBB)
+          for (auto DILocBB : DILocToDom->second)
+            if (DILocBB == BB) {
+              for (auto &Inst : *DILocBB)
                 if (auto DVI = dyn_cast<DbgValueInst>(&Inst))
                   if (DVI->getValue() == V)
-                    if (DVI->getVariable() == *VarItr)
+                    if (DIMemoryLocation::get(DVI) == *DILocItr)
                       break;
-                    else if (DVI->getVariable() == *I)
+                    else if (DIMemoryLocation::get(DVI) == *I)
                       return false;
-            } else if (!DT->dominates(VarBB, BB)) {
+            } else if (!DT->dominates(DILocBB, BB)) {
               return false;
             }
       }
       return true;
     }())
-      return *VarItr;
+      return *DILocItr;
   }
-  return nullptr;
+  return None;
 }
 }

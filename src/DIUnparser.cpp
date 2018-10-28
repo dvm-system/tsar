@@ -99,14 +99,18 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
     mLastAddressChange = Expr;
   } else {
     mLastAddressChange = Expr;
-    SmallVector<DIVariable *, 2> Vars;
-    DIVariable *DIVar = findMetadata(Expr, Vars, mDT);
-    if (!DIVar)
+    SmallVector<DIMemoryLocation, 2> DILocs;
+    auto DILoc = findMetadata(Expr, DILocs, mDT);
+    /// TODO (kaniandr@gmail.com): if some aggregate variable has been promoted
+    /// than its metadata may contain not empty DIExpression. So, we should
+    /// unparse this expression.
+    if (!DILoc || DILoc->Expr)
       return false;
-    mDIType = stripDIType(DIVar->getType());
+    assert(DILoc->Var && "Variable must not be null!");
+    mDIType = stripDIType(DILoc->Var->getType());
     mIsDITypeEnd =
       !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
-    auto Name = DIVar->getName();
+    auto Name = DILoc->Var->getName();
     Str.append(Name.begin(), Name.end());
   }
   return Result;

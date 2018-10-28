@@ -1091,11 +1091,15 @@ DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
     Expr.push_back(dwarf::DW_OP_deref);
     return buildDIExpression(DL, DT, LI->getPointerOperand(), Expr, IsTemplate);
   }
-  SmallVector<DIVariable *, 4> Vars;
-  auto DIVar = findMetadata(Base, Vars, &DT);
-  if (DIVar && !isa<AllocaInst>(Base) && !isa<GlobalVariable>(Base))
+  SmallVector<DIMemoryLocation, 4> DILocs;
+  auto DILoc = findMetadata(Base, DILocs, &DT);
+  if (!DILoc || (DILoc->Expr && !DILoc->Expr->isValid()))
+    return nullptr;
+  if (!isa<AllocaInst>(Base) && !isa<GlobalVariable>(Base))
     Expr.push_back(dwarf::DW_OP_deref);
-  return DIVar;
+  if (DILoc->Expr)
+    Expr.append(DILoc->Expr->elements_begin(), DILoc->Expr->elements_end());
+  return DILoc->Var;
 };
 }
 
