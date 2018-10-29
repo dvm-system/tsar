@@ -244,7 +244,8 @@ if(LOCAL_LLVM OR DOWNLOAD_LLVM OR PACKAGE_LLVM)
     llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
     set(CLANG_LIBS clangTooling clangCodeGen clangFrontend clangDriver
       clangSerialization  clangParse clangSema clangAnalysis clangRewrite
-      clangEdit clangAST clangLex clangBasic clangASTMatchers)
+      clangEdit clangAST clangLex clangBasic clangASTMatchers
+      clangFormat clangToolingCore)
     if(NOT PACKAGE_LLVM)
       set(LLVM_INCLUDE_DIRS "${LLVM_INCLUDE_DIRS};${CLANG_SOURCE_DIR}/include;${CLANG_BINARY_DIR}/include")
     endif()
