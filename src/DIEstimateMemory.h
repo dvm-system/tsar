@@ -31,6 +31,7 @@
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/ValueHandle.h>
 #include <llvm/Pass.h>
+#include <memory>
 
 namespace llvm {
 class DataLayout;
@@ -43,10 +44,6 @@ class MemoryLocation;
 class DIVariable;
 class DIExpression;
 template<class Ty> class SmallPtrSetImpl;
-}
-
-namespace std {
-template<class T, class Deleter> class unique_ptr;
 }
 
 namespace tsar {
