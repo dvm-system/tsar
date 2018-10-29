@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_private.h"
+#include "tsar_config.h"
 #include "tsar_dbg_output.h"
 #include "DefinedMemory.h"
 #include "DFRegionInfo.h"
@@ -411,7 +412,10 @@ void PrivateRecognitionPass::resolveCandidats(
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     DEBUG(
-      dbgs() << "[PRIVATE]: analyze "; L->getLoop()->dump();
+      dbgs() << "[PRIVATE]: analyze loop";
+#ifndef LLVM_RELEASE_BUILD
+    L->getLoop()->dump();
+#endif
       if (DebugLoc DbgLoc = L->getLoop()->getStartLoc()) {
         dbgs() << " at ";
         DbgLoc.print(dbgs());
