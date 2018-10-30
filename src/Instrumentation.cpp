@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Instrumentation.h"
+#include "DIEstimateMemory.h"
+#include "SourceUnparserUtils.h"
 #include "DFRegionInfo.h"
 #include "CanonicalLoop.h"
 #include "Intrinsics.h"
@@ -19,6 +21,7 @@
 #include "tsar_utility.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpander.h>
 #include "llvm/IR/DiagnosticInfo.h"
@@ -188,7 +191,11 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   auto Idx = mDIStrings.regItem(&I);
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
-  regValue(&I, I.getAllocatedType(), MD, Idx, *InsertBefore, *I.getModule());
+  Optional<DIMemoryLocation> DIM;
+  if (MD)
+    DIM = DIMemoryLocation(MD, DIExpression::get(I.getContext(), {}));
+  regValue(&I, I.getAllocatedType(), DIM ? &*DIM : nullptr,
+    Idx, *InsertBefore, *I.getModule());
 }
 
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
@@ -495,6 +502,7 @@ void Instrumentation::visit(Function &F) {
     return;
   visitFunction(F);
   visit(F.begin(), F.end());
+  mDT = nullptr;
 }
 
 void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
@@ -541,8 +549,8 @@ void Instrumentation::visitFunction(llvm::Function &F) {
   auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
   auto &CanonicalLoop = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
-  auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
-  regLoops(F, LoopInfo, SE, DT, RegionInfo, CanonicalLoop);
+  mDT = &Provider.get<DominatorTreeWrapperPass>().getDomTree();
+  regLoops(F, LoopInfo, SE, *mDT, RegionInfo, CanonicalLoop);
 }
 
 void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
@@ -641,8 +649,12 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
     OpIdx = mDIStrings[GV];
   } else {
     OpIdx = mDIStrings.regItem(BasePtr);
-    regValue(BasePtr, BasePtr->getType(), nullptr, OpIdx, InsertBefore,
-      *InsertBefore.getModule());
+    auto M = InsertBefore.getModule();
+    assert(mDT && "Dominator tree must not be null!");
+    auto DIM =
+      buildDIMemory(MemoryLocation(BasePtr), Ctx, M->getDataLayout(), *mDT);
+    regValue(BasePtr, BasePtr->getType(), DIM ? &*DIM : nullptr,
+      OpIdx, InsertBefore, *InsertBefore.getModule());
   }
   auto DbgLocIdx = regDebugLoc(DbgLoc);
   auto DILoc = createPointerToDI(DbgLocIdx, InsertBefore);
@@ -880,15 +892,26 @@ auto Instrumentation::regDebugLoc(
   return DbgLocIdx;
 }
 
-void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
+void Instrumentation::regValue(Value *V, Type *T, const DIMemoryLocation *DIM,
     DIStringRegister::IdTy Idx,  Instruction &InsertBefore, Module &M) {
   assert(V && "Variable must not be null!");
   DEBUG(dbgs() << "[INSTR]: register variable ";
     V->printAsOperand(dbgs()); dbgs() << "\n");
-  auto DeclStr = MD ? (Twine("file=") + MD->getFilename() + "*" +
-    "line1=" + Twine(MD->getLine()) + "*" +
-      "name1=" + MD->getName() + "*").str() :
+  auto DeclStr = DIM && DIM->isValid() ?
+    (Twine("file=") + DIM->Var->getFilename() + "*" +
+      "line1=" + Twine(DIM->Var->getLine()) + "*").str() :
     (Twine("file=") + M.getSourceFileName() + "*").str();
+  auto ParentBB = InsertBefore.getParent();
+  auto ParentF = ParentBB ? ParentBB->getParent() : nullptr;
+  std::string NameStr;
+  if (DIM && DIM->isValid() && ParentF)
+    if (auto DWLang = getLanguage(*ParentF)) {
+      SmallString<16> DIName;
+      if (unparseToString(*DWLang, *DIM, DIName)) {
+        std::replace(DIName.begin(), DIName.end(), '*', '^');
+        NameStr = ("name1=" + DIName + "*").str();
+      }
+    }
   unsigned TypeId = mTypes.regItem(T);
   unsigned Rank;
   uint64_t ArraySize;
@@ -897,7 +920,7 @@ void Instrumentation::regValue(Value *V, Type *T, DIVariable *MD,
     (Twine("arr_name") + "*" + "rank=" + Twine(Rank) + "*").str();
   createInitDICall(
     Twine("type=") + TypeStr +
-    "vtype=" + Twine(TypeId) + "*" + DeclStr + "*",
+    "vtype=" + Twine(TypeId) + "*" + DeclStr + NameStr + "*",
     Idx);
   auto DIVar = createPointerToDI(Idx, InsertBefore);
   auto VarAddr = new BitCastInst(V,
@@ -955,7 +978,10 @@ void Instrumentation::regGlobals(Module& M) {
     ++RegisteredGLobals;
     auto Idx = mDIStrings.regItem(&(*I));
     auto *MD = findMetadata(&*I);
-    regValue(&*I, I->getValueType(), MD, Idx, *RetInst, M);
+    Optional<DIMemoryLocation> DIM;
+    if (MD)
+      DIM = DIMemoryLocation(MD, DIExpression::get(M.getContext(), {}));
+    regValue(&*I, I->getValueType(), DIM ? &*DIM : nullptr, Idx, *RetInst, M);
   }
   if (RegisteredGLobals == 0)
     RegGlobalFunc->eraseFromParent();

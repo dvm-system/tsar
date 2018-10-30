@@ -47,6 +47,7 @@ public:
 
 namespace tsar {
 class DFRegionInfo;
+struct DIMemoryLocation;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
@@ -163,14 +164,14 @@ private:
   /// variable, not a pointer to the variable. In case of `alloca` this type
   /// is 'allocated type' and in case of global variable this type is
   /// 'value type'.
-  /// \param [in] MD Debug information for the registered variable. It may be
-  /// `nullptr`. In this case some information for the variable will not
-  /// be available after instrumentation.
+  /// \param [in] DIM Debug information for the registered memory location.
+  /// It may be `nullptr`. In this case some information for the variable will
+  /// not be available after instrumentation.
   /// \param [in] Idx Index of a metadata string in the pool of strings.
   /// \param [in] InsertBefore This instruction identify position to insert
   /// necessary instructions.
   /// \param [in] M A module which is processed.
-  void regValue(llvm::Value *V, llvm::Type *T, llvm::DIVariable *MD,
+  void regValue(llvm::Value *V, llvm::Type *T, const DIMemoryLocation *DIM,
     DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore,
     llvm::Module &M);
 
@@ -280,6 +281,8 @@ private:
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
   llvm::Function *mInitDIAll = nullptr;
+  /// Dominator tree of a currently processed function.
+  llvm::DominatorTree *mDT = nullptr;
 };
 }
 
