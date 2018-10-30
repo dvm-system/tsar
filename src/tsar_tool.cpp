@@ -212,7 +212,7 @@ void Options::printVersion() {
 #ifndef __OPTIMIZE__
   OS << "  DEBUG build";
 #else
-  OS << "Optimized build";
+  OS << "  Optimized build";
 #endif
 #ifndef NDEBUG
   OS << " with assertions";
