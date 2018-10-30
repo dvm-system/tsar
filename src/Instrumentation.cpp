@@ -476,9 +476,9 @@ void Instrumentation::loopIterInstr(Loop *L, DIStringRegister::IdTy DILoopIdx) {
 void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
     llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
     DFRegionInfo &RI, const CanonicalLoopSet &CS) {
-  for_each(LI, [this, &SE, &DT, &RI, &CS](Loop *L) {
+  for_each(LI, [this, &SE, &DT, &RI, &CS, &F](Loop *L) {
     DEBUG(dbgs()<<"[INSTR]: process loop " << L->getHeader()->getName() <<"\n");
-    auto Idx = mDIStrings.regItem(L);
+    auto Idx = mDIStrings.regItem(LoopUnique(&F, L));
     loopBeginInstr(L, Idx, SE, DT, RI, CS);
     loopEndInstr(L, Idx);
     loopIterInstr(L, Idx);

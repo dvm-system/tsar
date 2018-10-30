@@ -86,9 +86,17 @@ llvm::Type *getInstrIdType(llvm::LLVMContext &Ctx);
 class Instrumentation : public llvm::InstVisitor<Instrumentation> {
   using Base = llvm::InstVisitor<Instrumentation>;
   using TypeRegister = ItemRegister<llvm::Type *>;
+  /// \breif This pair allows us to distinguish loops from different functions.
+  ///
+  /// Only one loop tree is available at a time. So, it is possible that number
+  /// of addresses of loops from one tree overlaps with addresses of loops in
+  /// another tree (at this moment the first tree has been already destroyed and
+  /// the second one has been already created). Hence, we use a pair to
+  /// accurately identify loops.
+  using LoopUnique = std::pair<llvm::Function *, llvm::Loop *>;
   using DIStringRegister = ItemRegister<
     llvm::AllocaInst *, llvm::GlobalVariable *, llvm::Instruction *,
-    llvm::Function *, llvm::Loop *, llvm::DILocation *, llvm::Value *>;
+    llvm::Function *, LoopUnique, llvm::DILocation *, llvm::Value *>;
 
   enum LoopBoundKind : short {
     LoopBoundIsUnknown = 0,
