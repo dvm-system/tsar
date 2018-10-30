@@ -404,8 +404,8 @@ int Tool::run(QueryManager *QM) {
   std::vector<std::string> NoLLSources;
   bool IsLLVMSources = false;
   for (auto &Src : mSources) {
-    auto InputKind =
-      FrontendOptions::getInputKindForExtension(sys::path::extension(Src));
+    auto InputKind = FrontendOptions::getInputKindForExtension(
+        sys::path::extension(Src).substr(1)); // ignore first . in extension
     if (mLanguage != "ast" && InputKind == IK_LLVM_IR)
       LLSources.push_back(Src);
     else
