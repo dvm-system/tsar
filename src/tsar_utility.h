@@ -125,6 +125,9 @@ inline llvm::Optional<unsigned> getLanguage(const llvm::Function &F) {
   return llvm::None;
 }
 
+/// Returns a language for a specified variable.
+llvm::Optional<unsigned> getLanguage(const llvm::DIVariable &DIVar);
+
 /// Returns number of dimensions in a specified type or 0 if it is not an array.
 inline unsigned dimensionsNum(const llvm::Type *Ty) {
   unsigned Dims = 0;

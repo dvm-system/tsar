@@ -149,6 +149,18 @@ llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo) {
   return ArgItr != ArgItrE ? &*ArgItr : nullptr;
 }
 
+Optional<unsigned> getLanguage(const DIVariable &DIVar) {
+  auto Scope = DIVar.getScope();
+  while (Scope) {
+    auto *CU = isa<DISubprogram>(Scope) ?
+      cast<DISubprogram>(Scope)->getUnit() : dyn_cast<DICompileUnit>(Scope);
+    if (CU)
+      return CU->getSourceLanguage();
+    Scope = Scope->getScope().resolve();
+  }
+  return None;
+}
+
 bool cloneChain(Instruction *From,
     SmallVectorImpl<Instruction *> &CloneList,
     Instruction *BoundInst, DominatorTree *DT) {

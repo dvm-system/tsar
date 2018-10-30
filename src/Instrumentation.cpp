@@ -895,17 +895,15 @@ auto Instrumentation::regDebugLoc(
 void Instrumentation::regValue(Value *V, Type *T, const DIMemoryLocation *DIM,
     DIStringRegister::IdTy Idx,  Instruction &InsertBefore, Module &M) {
   assert(V && "Variable must not be null!");
-  DEBUG(dbgs() << "[INSTR]: register variable ";
+  DEBUG(dbgs()<<"[INSTR]: register variable "<<(DIM ? "" : "without metadata ");
     V->printAsOperand(dbgs()); dbgs() << "\n");
   auto DeclStr = DIM && DIM->isValid() ?
     (Twine("file=") + DIM->Var->getFilename() + "*" +
       "line1=" + Twine(DIM->Var->getLine()) + "*").str() :
     (Twine("file=") + M.getSourceFileName() + "*").str();
-  auto ParentBB = InsertBefore.getParent();
-  auto ParentF = ParentBB ? ParentBB->getParent() : nullptr;
   std::string NameStr;
-  if (DIM && DIM->isValid() && ParentF)
-    if (auto DWLang = getLanguage(*ParentF)) {
+  if (DIM && DIM->isValid())
+    if (auto DWLang = getLanguage(*DIM->Var)) {
       SmallString<16> DIName;
       if (unparseToString(*DWLang, *DIM, DIName)) {
         std::replace(DIName.begin(), DIName.end(), '*', '^');
