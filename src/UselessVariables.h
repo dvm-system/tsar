@@ -1,13 +1,13 @@
-//=== UselessVariables.h --- High Level Variables Analyzer --------*- C++ -*-===//
+//=== UselessVariables.h --- High Level Variables Analyzer -----*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 //
 // This file defines classes to find declarations of uselsess variables
 // in a source code.
 //
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 
 #ifndef TSAR_CLANG_USELESS_VARIABLES_H
 #define TSAR_CLANG_USELESS_VARIABLES_H
