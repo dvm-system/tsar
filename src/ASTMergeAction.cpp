@@ -28,6 +28,28 @@ using namespace llvm;
 using namespace tsar;
 
 namespace clang {
+/// \brief This callback tries to perform manual update of imported TypeLocs.
+///
+/// TODO (kaniandr@gmail.com): at this moment "trivial" type source info
+/// is used for imported types. It means that TypeLocs have not a full
+/// information about types. For example, size expression is not specified for
+/// objects of ArrayTypeLoc class. We try to update TypeLocs in some cases.
+/// This class should be removed when ASTImporter will be fixed.
+class TypeLocCallback : public ast_matchers::MatchFinder::MatchCallback {
+public:
+  /// Creates callback.
+  explicit TypeLocCallback() {}
+
+  /// Updates type TypeLocs according to underlining types.
+  void run(const ast_matchers::MatchFinder::MatchResult &Result) override {
+    auto TL = Result.Nodes.getNodeAs<TypeLoc>("typeLoc");
+    if (auto ATL = TL->getAs<ArrayTypeLoc>())
+      if (!ATL.getSizeExpr())
+         if (auto VAT = dyn_cast<VariableArrayType>(ATL.getTypePtr()))
+           ATL.setSizeExpr(VAT->getSizeExpr());
+  }
+};
+
 /// \brief This callback for ASTMatcher tries to perform manual import of
 /// variable array types if clang::ASTImporter can not perform it itself.
 ///
@@ -283,6 +305,14 @@ void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
   Finder.matchAST(Unit.getASTContext());
 }
 
+void ASTMergeAction::FinalizeImport(clang::ASTContext &ToContext,
+    clang::DiagnosticsEngine &Diags) const {
+  ast_matchers::MatchFinder Finder;
+  TypeLocCallback TLC;
+  Finder.addMatcher(ast_matchers::typeLoc().bind("typeLoc"), &TLC);
+  Finder.matchAST(ToContext);
+}
+
 ASTImporter * ASTMergeAction::newImporter(
     ASTContext &ToContext, FileManager &ToFileManager,
     ASTContext &FromContext, FileManager &FromFileManager, bool MinimalImport) {
@@ -393,6 +423,7 @@ void ASTMergeAction::ExecuteAction() {
       continue;
     CI.getASTConsumer().CompleteTentativeDefinition(VD);
   }
+  FinalizeImport(CI.getASTContext(), CI.getDiagnostics());
   WrapperFrontendAction::ExecuteAction();
   CI.getDiagnostics().getClient()->EndSourceFile();
 }

@@ -70,6 +70,10 @@ protected:
   void PrepareToImport(clang::ASTUnit &Unit, clang::DiagnosticsEngine &Diags,
     clang::ASTImporter &Importer) const;
 
+  /// Updates AST after successful import if necessary.
+  void FinalizeImport(clang::ASTContext &ToContext,
+    clang::DiagnosticsEngine &Diags) const;
+
   std::vector<std::string> mASTFiles;
 };
 
