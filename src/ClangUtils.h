@@ -148,7 +148,7 @@ private:
   /// in `Type` where token is non-whitespace character or special sequence.
   /// \param [in] Context This is a string containing declarations used in case
   /// of referencing in `Type`.
-  /// \param [in] Replacements Map from tokens to a their new values. The tokens
+  /// \param [in] Replacements Map from tokens to their new values. The tokens
   /// will be replaced with the new values before the function constructs a new
   /// declarations.
   /// \return Vector of tokens which can be transformed to text string for

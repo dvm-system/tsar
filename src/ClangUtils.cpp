@@ -261,9 +261,7 @@ public:
     std::function<StringRef(StringRef, SmallVectorImpl<char> &)>;
 
   VarDeclSearch(StringRef Type, StringRef Id, const ProcessorT &P) :
-    mId(Id), mProcessor(P) {
-    mProcessor(Type, mType);
-  }
+    mType(Type), mId(Id), mProcessor(P) {}
 
   void run(const ast_matchers::MatchFinder::MatchResult &MR) {
     auto *VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
@@ -288,7 +286,7 @@ public:
   StringRef getId() const { return mId; }
 
 private:
-  SmallString<32> mType;
+  StringRef mType;
   StringRef mId;
   ProcessorT mProcessor;
   bool mIsFound = false;
@@ -308,7 +306,12 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     if (Itr != Replacements.end())
       T = Itr->getValue();
   }
-  VarDeclSearch Search(Type, Id, [](StringRef Str, SmallVectorImpl<char> &Out) {
+  // Do not use function parameter 'Type' to initialize search, because
+  // some identifiers in 'Type' should be replaced with identifiers from
+  // 'Replacements'. So, we explicitly join 'Tokens' to construct new type here.
+  SmallString<32> NewType;
+  VarDeclSearch Search(join(Tokens.begin(), Tokens.end(), " ", NewType), Id,
+    [](StringRef Str, SmallVectorImpl<char> &Out) {
       auto Tokens = tokenize(Str, Pattern);
       return join(Tokens.begin(), Tokens.end(), " ", Out);
   });
