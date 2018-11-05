@@ -257,6 +257,12 @@ llvm::ImmutablePass * createImmutableASTImportInfoPass(
   const tsar::ASTImportInfo &Info);
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
+
+//korchagin test pass
+llvm::ModulePass * createtestpass();
+void initializetestpassPass(PassRegistry &Registry);
+
 }
+
 
 #endif//TSAR_PASS_H
