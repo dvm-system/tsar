@@ -90,6 +90,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
     }
     if (!mNoFormat) {
       auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
+      EndLoc = SourceLocation::getFromRawEncoding(EndLoc.getRawEncoding() - 1);
       std::string TfmSrc = TfmRewriter.getRewrittenText({ StartLoc,  EndLoc });
       auto ReformatSrc = reformat(TfmSrc, Adjuster(OrigFile->getName()));
       if (!ReformatSrc) {
