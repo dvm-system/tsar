@@ -936,7 +936,7 @@ void ClangInliner::HandleTranslationUnit() {
   // we conservatively assume dependence from this declaration.
   // We also collects all raw identifiers mentioned in the body of each
   // user-defined function.
-  // We also ignores functions with macro in body or functions whith bounds in
+  // We also ignores functions with macro in body or functions with bounds in
   // different files.
   for (auto *D : mContext.getTranslationUnitDecl()->decls()) {
     if (!isa<FunctionDecl>(D))
@@ -997,7 +997,7 @@ void ClangInliner::HandleTranslationUnit() {
         auto GlobalItr = mGIE.getOutermostDecls().find(Tok.getRawIdentifier());
         if (GlobalItr != mGIE.getOutermostDecls().end()) {
           for (auto &D : GlobalItr->second) {
-            // We want to serch dependence using a pointer to declaration. So,
+            // We want to search dependence using a pointer to declaration. So,
             // use the first redeclaration and store the same pointers for all
             // redeclarations.
             auto *ND = cast<NamedDecl>(*D.getDescendant()->redecls_begin());
