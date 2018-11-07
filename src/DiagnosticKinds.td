@@ -42,6 +42,8 @@ def note_inline_no_call : Note<"no call suitable for inline is found">;
 
 def warn_inline_support_cpp : Warning<"inline expansion in C++ sources is not fully supported">;
 
+def warn_remove_useless_variables : Warning<"unable to remove useless variables">;
+
 def warn_disable_inline_no_body : Warning<"disable inline expansion for function without definition">;
 def warn_disable_inline_in_ternary : Warning<"disable inline expansion in conditional operator">;
 def warn_disable_inline_in_comma : Warning<"disable inline expansion in comma operator">;

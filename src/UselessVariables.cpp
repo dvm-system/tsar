@@ -1,10 +1,10 @@
-//=== UselessVariables.cpp - High Level Variables Loop Analyzer --------*- C++ -*-===//
+//=== UselessVariables.cpp - High Level Variables Loop Analyzer --*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements classes to find declarations of uselsess variables 
+// This file implements classes to find declarations of uselsess variables
 // in a source code.
 //
 //===----------------------------------------------------------------------===//
@@ -12,6 +12,7 @@
 
 
 #include "DFRegionInfo.h"
+#include "Diagnostic.h"
 #include "UselessVariables.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -29,7 +30,7 @@
 #include "tsar_transformation.h"
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/ADT/DenseSet.h>
-#include <llvm/Support/Casting.h>
+
 
 #include <iostream>
 #include <assert.h>
@@ -43,6 +44,10 @@ using namespace llvm;
 using namespace clang;
 
 using namespace tsar;
+
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "useless-vars"
 
 char ClangUselessVariablesPass::ID = 0;
 
@@ -65,49 +70,55 @@ class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
 public:
   /// Creates visitor.
   explicit DeclVisitor(){}
-  
+
   bool VisitVarDecl(VarDecl *D) {
-    pDecls_.insert(D);
     pDecls_map.insert(std::pair<VarDecl*, Stmt*>( D, stmt_stack.top() ) );
-    return true;    
+    return true;
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *D) {
-    pDecls_.erase(   (VarDecl*)(D->getFoundDecl())   );
-    auto it = pDecls_map.find( (VarDecl*)(D->getFoundDecl()) );
-    if(it != pDecls_map.end())
-      pDecls_map.erase(it);
+    if (isa<VarDecl>(D->getFoundDecl())) {
+      auto it = pDecls_map.find( cast<VarDecl>(D->getFoundDecl()) );
+      if(it != pDecls_map.end()) {
+        pDecls_map.erase(it);
+      }
+    }
     return true;
   }
 
   bool VisitDeclStmt(DeclStmt *S) {
     auto group = S->getDeclGroup();
-
-    if(S->isSingleDecl()) {
-
-    } else {
-      //Добавить warning, когда нашлось множественное объявление
-      for(auto i = group.begin(); i != group.end(); i++) {
-        bool res = pDecls_.erase(  cast<VarDecl>(*i)  );
-
-        auto it = pDecls_map.find( cast<VarDecl>(*i) );
-        if(it != pDecls_map.end())
-          pDecls_map.erase(it);
-      }
-    }
-
+    if(!S->isSingleDecl())
+      pGroups_.insert(S);
     return true;
   }
 
   bool VisitIfStmt(IfStmt *S) {
     auto D = S->getConditionVariable();
     if (D != nullptr) {
-      pDecls_.erase(D);
       auto it = pDecls_map.find( D );
-      if (it != pDecls_map.end())
+      if (it != pDecls_map.end()) {
+        toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
+          (it->first)->getLocation(), diag::warn_remove_useless_variables);
         pDecls_map.erase(it);
+      }
     }
     return true;
+  }
+
+  bool findCallExpr(Stmt *S) {
+    bool result = isa<CallExpr>(S);
+    if (result == false) {
+      for (auto i = S->child_begin(); i != S->child_end(); i++) {
+        if (*i != nullptr) {
+          result = this->findCallExpr(*i);
+          if (result == true)
+            return true;
+        }
+      }
+      return result;
+    } else
+      return result;
   }
 
   bool TraverseStmt(Stmt *S, DataRecursionQueue *Queue=nullptr) {
@@ -137,7 +148,6 @@ public:
           this->VisitIfStmt(cast<IfStmt>(*i));
         }
 
-
         this->TraverseStmt(*i);
 
         if ((isa<ForStmt>(*i)) || (isa<IfStmt>(*i)) || (isa<CompoundStmt>(*i)) \
@@ -145,60 +155,85 @@ public:
           stmt_stack.pop();
       }
 
-
-      
     }
     return true;
   }
 
 
-  void DelVarsFromCode(clang::Rewriter &mRewriter) {
-    for (auto i = pDecls_.begin(); i != pDecls_.end(); i++) {      
-      if (((*i)->isLocalVarDecl() == 0) && ((*i)->isLocalVarDeclOrParm() == 1))
-        pDecls_.erase(i);
-    }
-
-
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++) {
+  void DelVarsFromCode() {
+    for (auto i = pDecls_map.begin(); i != pDecls_map.end();) {
       if (((i->first)->isLocalVarDecl() == 0)  \
         && ((i->first)->isLocalVarDeclOrParm() == 1)) {
-          pDecls_map.erase(i);
-      }
+        toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
+          (i->first)->getLocation(), diag::warn_remove_useless_variables);
+        i = pDecls_map.erase(i);
+      } else
+        i++;
     }
 
-/*
-    //'этот кусок игнорирует переменные, которые инициализируются функцией
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++) {  
+
+    //ignore declaration which init by function return value
+    for (auto i = pDecls_map.begin(); i != pDecls_map.end();) {
       if ((i->first)->hasInit()) {
-        if (!isa<CallExpr>((i->first)->getInit())) {
-          pDecls_map.erase(i);
+        if(findCallExpr((i->first)->getInit())) {
+          toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
+            (i->first)->getLocation(), diag::warn_remove_useless_variables);
+          i = pDecls_map.erase(i);
+        } else
+          ++i;
+      } else
+        ++i;
+    }
+
+    //remove decl group of useless variables
+    for (auto i = pGroups_.begin(); i != pGroups_.end(); i++) {
+      auto group = (*i)->getDeclGroup();
+      int group_size = 0, num_useless = 0;
+      for(auto j = group.begin(); j != group.end(); j++) {
+        group_size++;
+        auto it = pDecls_map.find( cast<VarDecl>(*j) );
+        if(it != pDecls_map.end()) {
+          num_useless++;
         }
       }
-    }
-*/
+      if (num_useless != group_size) {
+        for(auto j = group.begin(); j != group.end(); j++) {
+          auto it = pDecls_map.find( cast<VarDecl>(*j) );
+          if(it != pDecls_map.end()) {
+            toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
+            (it->first)->getLocation(), diag::warn_remove_useless_variables);
+            pDecls_map.erase(it);
+          }
+        }
+      }
 
-    for (auto i = pDecls_.begin(); i != pDecls_.end(); i++)
-      mRewriter.RemoveText((*i)->getSourceRange());
-    mRewriter.overwriteChangedFiles();
+    }
+
+    for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++)
+      mRewriter_->RemoveText((i->first)->getSourceRange());
+    mRewriter_->overwriteChangedFiles();
 
   }
-
-
 
   void print_decls() {
-    std::cout << std::endl << std::endl << "=======function pass========" << std::endl;
-    std::cout << "######### usless Useless Variables" << std::endl;
+    dbgs() << "=======function pass========\n";
+    dbgs() << "######### usless Useless Variables\n";
     for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++) {
-      std::cout << "DenseSet:  " << (i->first)->getNameAsString() \
-      << "  " << (long)(i->first) <<std::endl;
+      dbgs() << "DenseSet:  " << (i->first)->getNameAsString() \
+      << "  " << (long)(i->first) <<"\n";
     }
+    dbgs() << "\n\n";
   }
+
+  void set_rewriter(clang::Rewriter *Rewriter) {
+    mRewriter_ = Rewriter;
+  }
+
   std::map<VarDecl*, Stmt*> pDecls_map;
   std::stack<Stmt*> stmt_stack;
-private:
-  DenseSet<VarDecl*>pDecls_;
-  
-  
+  clang::Rewriter *mRewriter_;
+  DenseSet<DeclStmt*>pGroups_;
+
 };
 }
 
@@ -213,23 +248,31 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
     return false;
 
   DeclVisitor Visitor;
+  Visitor.set_rewriter( &(TfmCtx->getRewriter()));
 
   Visitor.stmt_stack.push(FuncDecl->getBody());
   Visitor.TraverseStmt(FuncDecl->getBody());
 
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
 
-  for (auto i = Visitor.pDecls_map.begin(); i != Visitor.pDecls_map.end(); i++) {
+  //search macros in statement
+  for (auto i = Visitor.pDecls_map.begin(); i != Visitor.pDecls_map.end();) {
     bool flag = false;
     for_each_macro(i->second, TfmCtx->getContext().getSourceManager(), \
       TfmCtx->getContext().getLangOpts(), GIP.getRawInfo().Macros, \
       [&flag](SourceLocation x){flag = true;});
-    if (flag)
-      Visitor.pDecls_map.erase(i);
+    if (flag) {
+      toDiag(Visitor.mRewriter_->getSourceMgr().getDiagnostics(), \
+          (i->first)->getLocation(), diag::warn_remove_useless_variables);
+      i = Visitor.pDecls_map.erase(i);
+    }
+    else
+      ++i;
   }
-  //Visitor.print_decls();
 
-  Visitor.DelVarsFromCode(TfmCtx->getRewriter());
+  LLVM_DEBUG(Visitor.print_decls());
+
+  Visitor.DelVarsFromCode();
 
   return false;
 }
