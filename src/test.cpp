@@ -15,20 +15,7 @@
 #include <llvm/Support/Path.h>
 #include <llvm/IR/Module.h>
 #include "tsar_query.h"
-/*
- * по поводу мап
- * отображение VarDecl * -> string не позволяет делать поиск через find или count
- * все равно придется разыменовывать указатель и смотреть имя
- *  
- * если использовать ClangGlobalInfoPass
- * вероятно, выгодно вернуться к функциональному проходу
- * 
- * 
- * TO DO
- * как улучшить траверсы
- * подумать про DeclContext
- * сделать через ллвм мап
- */
+
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
@@ -50,53 +37,61 @@ ModulePass * llvm::createtestpass(){
 	return new testpass();
 }
 
-
-
 class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
-	public:
 	std::set<std::string> names;
-	std::map<std::string,std::string> change;
+	std::map<clang::Decl*,std::string> change;
+	std::list<clang::Decl*> del_lst;
 	clang::Rewriter &rwr;
-	tsar::TransformationContext * TfmCtx;
 	public:
-	explicit DeclVisitor(tsar::TransformationContext * a):rwr(a->getRewriter()){
-		TfmCtx=a;
+	explicit DeclVisitor(tsar::TransformationContext * a):rwr(a->getRewriter()){}
+	//это вспомогательная функция
+	void clr_del_lst(){
+		auto decl=del_lst.back();
+		del_lst.pop_back();
+		change.erase(change.find(decl));
 	}
 	bool TraverseCompoundStmt(CompoundStmt * S){
-		auto copy_change=change;
+		int d=del_lst.size();
 		RecursiveASTVisitor<DeclVisitor>::TraverseCompoundStmt(S);
-		change=copy_change;
+		while (del_lst.size()!=d) clr_del_lst();
 		return true;
 	}
 	bool TraverseForStmt(ForStmt * S){
-		auto copy_change=change;
+		int d=del_lst.size();
 		RecursiveASTVisitor<DeclVisitor>::TraverseForStmt(S);
-		change=copy_change;
+		while (del_lst.size()!=d) clr_del_lst();
 		return true;
 	}
 	bool TraverseIfStmt(IfStmt * S){
-		auto copy_change=change;
+		int d=del_lst.size();
 		RecursiveASTVisitor<DeclVisitor>::TraverseIfStmt(S);
-		change=copy_change;
+		while (del_lst.size()!=d) clr_del_lst();
 		return true;
 	}
 	bool TraverseWhileStmt(WhileStmt * S){
-		auto copy_change=change;
+		int d=del_lst.size();
 		RecursiveASTVisitor<DeclVisitor>::TraverseWhileStmt(S);
-		change=copy_change;
+		while (del_lst.size()!=d) clr_del_lst();
+		return true;
+	}
+	bool TraverseDoStmt(DoStmt * S){
+		int d=del_lst.size();
+		RecursiveASTVisitor<DeclVisitor>::TraverseDoStmt(S);
+		while (del_lst.size()!=d) clr_del_lst();
 		return true;
 	}
 	bool TraverseFunctionDecl(FunctionDecl * S){
 		auto copy_names=names;
-		auto copy_change=change;
+		int d=del_lst.size();
 		RecursiveASTVisitor<DeclVisitor>::TraverseFunctionDecl(S);
+		while (del_lst.size()!=d) clr_del_lst();
 		names=copy_names;
-		change=copy_change;
 		return true;
 	}
 	bool VisitDeclRefExpr(DeclRefExpr * V){
 		std::string name=((V->getNameInfo()).getName()).getAsString();
-		auto it=change.find(name);
+		clang::Decl * ptr=V->getFoundDecl();
+		auto it=change.find(ptr);
 		if (it!=change.end()){
 			rwr.ReplaceText(V->getLocation(),name.length(), it->second);
 		}
@@ -113,26 +108,20 @@ class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 			buf=name+std::to_string(count);
 			//вставляем новое имя в список имен
 			names.insert(name+std::to_string(count));
-			//ищем старое имя в списке замеH
-			auto it=change.find(name);
-			if (it!=change.end()){
-				it->second=buf;
-				rwr.ReplaceText(V->getLocation(),name.length(), buf);
-			}
-			else {
-				change.insert(std::pair<std::string,std::string>(name,buf));
-				rwr.ReplaceText(V->getLocation(),name.length(), buf);
-			}
+			//вставляем новое соотстветствие
+			change.insert(std::pair<clang::Decl*,std::string>(V,buf));
+			//добавляем элемент в список на удаление
+			del_lst.push_back(V);
+			//заменяем имя в тексте
+			rwr.ReplaceText(V->getLocation(),name.length(), buf);
 		}
 		else names.insert(name);
-		
 		//debug print
 		//errs()<<"NAMES\n";
 		//for (auto elem : change) errs()<<elem.first<<" TO "<<elem.second<<"\n";
 		return true;
 	}
 };
-
 
 bool testpass::runOnModule(Module & F){
 	releaseMemory();	
