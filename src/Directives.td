@@ -76,6 +76,8 @@ def NoInline : Clause<"noinline", Transform>;
 
 def Propagate : Clause<"propagate", Transform>;
 
+def Rename : Clause<"rename", Transform>;
+
 def Private : Clause<"private", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
