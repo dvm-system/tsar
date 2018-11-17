@@ -9,9 +9,13 @@ if (TSAR_FOLER)
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif()
 find_package(BCL 3.0 REQUIRED CONFIG)
-find_package(APC CONFIG QUIET)
-if(NOT APC_FOUND)
-  message(WARNING "Configuration without APC: APC package not found.")
+
+option(BUILD_APC "Build automated parallelizing compiler" OFF)
+if (BUILD_APC)
+  find_package(APC CONFIG REQUIRED)
+  message(STATUS "APC version: ${APC_VERSION}")
+endif()
+
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
