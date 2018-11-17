@@ -13,7 +13,7 @@ endif()
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
 
 # Minimum LLVM version which is necessary to build TSAR.
-set(LLVM_MIN_VERSION 4.0)
+set(LLVM_MIN_VERSION 7.0)
 
 include(BCLCompilerOptions)
 include(BCLUtils)
