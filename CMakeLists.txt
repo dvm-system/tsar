@@ -20,8 +20,9 @@ include(BCLUtils)
 include(llvm-utility)
 
 # There are four steps to configure LLVM and Clang:
-# 1. Check out a working copies ${LLVM_SOURCE_DIR} and ${CLANG_SOURCE_DIR}
-#    (or update if it already exists) from LLVM repository ${LLVM_REPO}.
+# 1. Check out a working copies ${LLVM_SOURCE_DIR}, ${CLANG_SOURCE_DIR}
+#    and ${COMPILER_RT_SOURCE_DIR} (or update if it already exists)
+#    from LLVM repository ${LLVM_REPO}.
 # 2. Apply patch in ${CMAKE_SOURCE_DIR}/patches/ to the working copies
 #    ${LLVM_SOURCE_DIR} and ${CLANG_SOURCE_DIR}.
 #    The patches for LLVN have names
@@ -46,6 +47,9 @@ set(LLVM_REPO
 set(CLANG_REPO
   "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_700/final/" CACHE STRING
   "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
+set(COMPILER_RT_REPO
+  "http://llvm.org/svn/llvm-project/compiler-rt/tags/RELEASE_700/final/" CACHE STRING
+  "URL of Compiler-RT subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH
    "Root of LLVM source tree")
@@ -55,11 +59,13 @@ set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
 
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
+option(BUILD_PROFILE "Build profile runtime" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 option(TSAR_SHARED "Build shared library for TSAR" OFF)
 
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
+set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/projects/compiler-rt")
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
 
@@ -76,14 +82,17 @@ endif()
 
 # Download LLVM if need
 set(DOWNLOAD_CLANG ${DOWNLOAD_LLVM})
+if (BUILD_PROFILE)
+  set(DOWNLOAD_COMPILER_RT ${DOWNLOAD_LLVM})
+endif()
 if(DOWNLOAD_LLVM)
   sapfor_download_llvm()
 endif()
 
 if(PACKAGE_LLVM)
-  if (BUILD_CLANG OR BUILD_OPT OR BUILD_LLC)
+  if (BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE)
     message(FATAL_ERROR
-      "Options BUILD_CLANG OR BUILD_OPT OR BUILD_LLC are not compatible with PACKAGE_LLVM")
+      "Options BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE are not compatible with PACKAGE_LLVM")
   endif()
   unset(LLVM_DIR CACHE)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
@@ -114,6 +123,10 @@ else()
   set(TSAR_PATCH_SUBVERSION_OPTIONS "")
   set(TSAR_PATCH_IGNORE IGNORE)
   set(TSAR_PATCH_COMMAND "")
+  if(BUILD_PROFILE AND (NOT LLVM_TOOL_COMPILER_RT_BUILD))
+    message(FATAL_ERROR
+      "To build profile runtime LLVM_TOOL_COMPILER_RT_BUILD must be set to ON.")
+  endif()
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
 
