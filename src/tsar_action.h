@@ -25,8 +25,7 @@ public:
   ///
   /// \return True on success; on failure ExecutionAction() and
   /// EndSourceFileAction() will not be called.
-  bool BeginSourceFileAction(
-    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+  bool BeginSourceFileAction(clang::CompilerInstance &CI) override;
 
   /// \brief Callback at the end of processing a single input.
   ///

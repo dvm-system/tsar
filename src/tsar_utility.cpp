@@ -28,8 +28,8 @@ namespace {
 DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>>
 findDomDbgValues(const Value *V, const DominatorTree &DT,
     const SmallVectorImpl<Instruction *> &Users) {
-  DbgValueList AllDbgValues;
-  FindAllocaDbgValues(AllDbgValues, const_cast<Value *>(V));
+  SmallVector<DbgValueInst *, 1> AllDbgValues;
+  findDbgValues(AllDbgValues, const_cast<Value *>(V));
   DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>> Dominators;
   for (auto *DVI : AllDbgValues) {
     if (!DVI->getVariable())
@@ -95,7 +95,7 @@ Value * cloneChainImpl(Value *From, Instruction *BoundInst, DominatorTree *DT,
   if (isa<PHINode>(I)) {
     for (auto Idx = BeforeCloneIdx + 1, IdxE = CloneList.size();
          Idx != IdxE; ++Idx)
-      delete CloneList[Idx];
+      CloneList[Idx]->deleteValue();
     CloneList.resize(BeforeCloneIdx + 1);
     return nullptr;
   }
@@ -192,8 +192,8 @@ DIGlobalVariable * findMetadata(const GlobalVariable *Var) {
 
 DILocalVariable *findMetadata(const AllocaInst *AI) {
   assert(AI && "Alloca must not be null!");
-  DbgDeclareInst *DDI = FindAllocaDbgDeclare(const_cast<AllocaInst *>(AI));
-  return DDI ? DDI->getVariable() : nullptr;
+  auto DIIList = FindDbgAddrUses(const_cast<AllocaInst *>(AI));
+  return DIIList.size() == 1 ? DIIList.front()->getVariable() : nullptr;
 }
 
 Optional<DIMemoryLocation> findMetadata(const Value * V,

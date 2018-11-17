@@ -34,7 +34,7 @@ using namespace tsar;
 char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
-  DEBUG(INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass));
+  LLVM_DEBUG(INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass));
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
@@ -46,7 +46,7 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   const DominatorTree *DT = nullptr;
-  DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
+  LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
   solveDataFlowUpward(&ReachDefFwk, DFF);
@@ -54,7 +54,7 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
-  DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
+  LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -134,9 +134,9 @@ public:
         if (mDU.hasDef(ALoc))
           continue;
         switch (mAA.getModRefInfo(&mInst, ALoc)) {
-        case MRI_ModRef: mDU.addUse(ALoc); mDU.addMayDef(ALoc); break;
-        case MRI_Mod: mDU.addMayDef(ALoc); break;
-        case MRI_Ref: mDU.addUse(ALoc); break;
+        case ModRefInfo::ModRef: mDU.addUse(ALoc); mDU.addMayDef(ALoc); break;
+        case ModRefInfo::Mod: mDU.addMayDef(ALoc); break;
+        case ModRefInfo::Ref: mDU.addUse(ALoc); break;
         }
       }
     }
@@ -343,10 +343,10 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         ImmutableCallSite CS(&I);
         if (CS) {
           switch (AA.getArgModRefInfo(CS, Idx)) {
-          case MRI_NoModRef: W = R = AccessInfo::No; break;
-          case MRI_Mod: W = AccessInfo::May; R = AccessInfo::No; break;
-          case MRI_Ref: W = AccessInfo::No; R = AccessInfo::May; break;
-          case MRI_ModRef: W = R = AccessInfo::May; break;
+          case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
+          case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
+          case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
+          case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
           }
         }
         switch (W) {
@@ -379,7 +379,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       }
     );
   }
-  DEBUG(intializeDefUseSetLog(*N, *DU, DFF->getDomTree()));
+  LLVM_DEBUG(intializeDefUseSetLog(*N, *DU, DFF->getDomTree()));
 }
 
 
@@ -388,7 +388,7 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   // Note, that transfer function is never evaluated for the entry node.
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null");
-  DEBUG(initializeTransferBeginLog(*N, V, DFF->getDomTree()));
+  LLVM_DEBUG(initializeTransferBeginLog(*N, V, DFF->getDomTree()));
   auto I = DFF->getDefInfo().find(N);
   assert(I != DFF->getDefInfo().end() &&
     I->get<ReachSet>() && I->get<DefUseSet>() &&
@@ -399,10 +399,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
     if (RS->getOut().MustReach != RS->getIn().MustReach ||
         RS->getOut().MayReach != RS->getIn().MayReach) {
       RS->setOut(RS->getIn());
-      DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
+      LLVM_DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
       return true;
     }
-    DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
+    LLVM_DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
     return false;
   }
   auto &DU = I->get<DefUseSet>();
@@ -430,10 +430,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   if (RS->getOut().MustReach != newOut.MustReach ||
     RS->getOut().MayReach != newOut.MayReach) {
     RS->setOut(std::move(newOut));
-    DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
+    LLVM_DEBUG(initializeTransferEndLog(RS->getOut(), true, DFF->getDomTree()));
     return true;
   }
-  DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
+  LLVM_DEBUG(initializeTransferEndLog(RS->getOut(), false, DFF->getDomTree()));
   return false;
 }
 
@@ -499,5 +499,5 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }
-  DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
+  LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
 }

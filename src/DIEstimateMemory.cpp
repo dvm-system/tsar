@@ -579,15 +579,15 @@ DIAliasNode * addCorruptedNode(
     return Itr->second;
   }
   if (!isa<DIAliasUnknownNode>(DIParent)) {
-    DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
     auto DIM = Corrupted->pop();
-    DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
+    LLVM_DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
     DIParent = DIAT.addNewUnknownNode(std::move(DIM), *DIParent).getAliasNode();
   }
   CorruptedNodes.try_emplace(Corrupted, cast<DIAliasUnknownNode>(DIParent));
   for (CorruptedMemoryItem::size_type I = 0, E = Corrupted->size(); I < E; ++I) {
     auto DIM = Corrupted->pop();
-    DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
+    LLVM_DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
     DIAT.addToNode(std::move(DIM), cast<DIAliasUnknownNode>(*DIParent));
   }
   return DIParent;
@@ -620,20 +620,20 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
     SmallVector<std::unique_ptr<DIEstimateMemory>, 8> Known;
     SmallVector<std::unique_ptr<DIMemory>, 8> Unknown;
     if (auto N = dyn_cast<AliasEstimateNode>(&Child)) {
-      DEBUG(dbgs() << "[DI ALIAS TREE]: process alias estimate node\n");
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: process alias estimate node\n");
       for (auto &EM : *N) {
         auto Root = EM.getTopLevelParent();
         if (&EM != Root && !RootOffsets.count(EM.front())) {
-          DEBUG(ignoreEMLog(EM, DT));
+          LLVM_DEBUG(ignoreEMLog(EM, DT));
           continue;
         }
         std::unique_ptr<DIMemory> DIM;
         if (!(DIM = CMR.popFromCash(&EM))) {
           DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), Env, DL, DT);
-          DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
+          LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
         }
         if (CMR.isCorrupted(*DIM).first) {
-          DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
+          LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
         if (isa<DIEstimateMemory>(*DIM))
@@ -643,15 +643,15 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       }
     } else {
       assert(isa<AliasUnknownNode>(Child) && "It must be alias unknown node!");
-      DEBUG(dbgs() << "[DI ALIAS TREE]: process alias unknown node\n");
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: process alias unknown node\n");
       for (auto Inst : cast<AliasUnknownNode>(Child)) {
         std::unique_ptr<DIMemory> DIM;
         if (!(DIM = CMR.popFromCash(Inst))) {
           DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env);
-          DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
+          LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
         if (CMR.isCorrupted(*DIM).first) {
-          DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
+          LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
         Unknown.push_back(std::move(DIM));
@@ -659,24 +659,24 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
     }
     if (!Unknown.empty()) {
       if (!isa<DIAliasUnknownNode>(DIN)) {
-        DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
-        DEBUG(addMemoryLog(DIAT.getFunction(), *Unknown.back()));
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
+        LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *Unknown.back()));
         DIN = DIAT.addNewUnknownNode(
           std::move(Unknown.back()), *DIN).getAliasNode();
         Unknown.pop_back();
       }
       for (auto &M : Unknown) {
-        DEBUG(addMemoryLog(DIAT.getFunction(), *M));
+        LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *M));
         DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
       }
     }
     if (!Known.empty()) {
-      DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias estimate node\n");
-      DEBUG(addMemoryLog(DIAT.getFunction(), *Known.back()));
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias estimate node\n");
+      LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *Known.back()));
       DIN = DIAT.addNewNode(std::move(Known.back()), *DIN).getAliasNode();
       Known.pop_back();
       for (auto &M : Known) {
-        DEBUG(addMemoryLog(DIAT.getFunction(), *M));
+        LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *M));
         DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
       }
     }
@@ -725,7 +725,7 @@ public:
 
   /// Builds a subtree of an alias tree.
   void buildSubtree() {
-    DEBUG(dbgs() << "[DI ALIAS TREE]: build subtree for a variable "
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: build subtree for a variable "
       << mVar->getName() << "\n");
     DIAliasNode *Parent = mDIAT->getTopLevelNode();
     if (mCorrupted = mCMR->hasUnknownParent(*mVar)) {
@@ -739,7 +739,7 @@ public:
       return;
     }
     if (mSortedFragments.front()->getNumElements() == 0) {
-      DEBUG(addFragmentLog(mSortedFragments.front()));
+      LLVM_DEBUG(addFragmentLog(mSortedFragments.front()));
       auto &DIM = mDIAT->addNewNode(
         DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments.front()),
         *Parent);
@@ -776,7 +776,7 @@ private:
   void addFragments(DIAliasNode *Parent, unsigned BeginIdx, unsigned EndIdx) {
     assert(Parent && "Alias node must not be null!");
     for (unsigned I = BeginIdx; I < EndIdx; ++I) {
-      DEBUG(addFragmentLog(mSortedFragments[I]));
+      LLVM_DEBUG(addFragmentLog(mSortedFragments[I]));
       Parent = addUnknownParentIfNecessary(Parent, mSortedFragments[I]);
       auto &DIM = mDIAT->addNewNode(
         DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I]),
@@ -843,10 +843,10 @@ private:
     auto IsCorrupted = mCMR->isCorrupted(*DIMTmp);
     if (IsCorrupted.first) {
       if (!IsCorrupted.second) {
-        DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
         bool IsErased = eraseCorrupted(DIMTmp->getAsMDNode(), Parent);
-        DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
-        DEBUG(addFragmentLog(DIMTmp->getExpression()));
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
+        LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
         auto &NewM = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
         // The corrupted has not been inserted into alias tree yet.
         // So it should be remembered to prevent such insertion later.
@@ -856,8 +856,8 @@ private:
       }
     } else {
       Parent = addUnknownParentIfNecessary(Parent, Expr);
-      DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
-      DEBUG(addFragmentLog(DIMTmp->getExpression()));
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
+      LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
       Parent = mDIAT->addNewNode(std::move(DIMTmp), *Parent).getAliasNode();
     }
     switch (Ty->getTag()) {
@@ -1104,15 +1104,15 @@ DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
 }
 
 void CorruptedMemoryResolver::resolve() {
-  DEBUG(dbgs() << "[DI ALIAS TREE]: determine safely promoted memory locations\n");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: determine safely promoted memory locations\n");
   findNoAliasFragments();
-  DEBUG(pomotedCandidatesLog());
+  LLVM_DEBUG(pomotedCandidatesLog());
   if (!mDIAT)
     return;
-  DEBUG(dbgs() << "[DI ALIAS TREE]: resolve corrupted memory locations\n");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: resolve corrupted memory locations\n");
   SpanningTreeRelation<AliasTree *> AliasSTR(mAT);
   for (auto *N : post_order(mDIAT)) {
-    DEBUG(dbgs() << "[DI ALIAS TREE]: visit debug alias node\n");
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: visit debug alias node\n");
     if (isa<DIAliasTopNode>(N))
       continue;
     determineCorruptedInsertionHint(cast<DIAliasMemoryNode>(*N), AliasSTR);
@@ -1122,14 +1122,14 @@ void CorruptedMemoryResolver::resolve() {
   for (auto &Root : mCorrupted) {
     if (Root->getForward())
       continue;
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
       CorruptedPool::size_type GraphSize = 0;
 #endif
       for (auto *Item : depth_first(Root.get())) {
-        DEBUG(++GraphSize);
+        LLVM_DEBUG(++GraphSize);
         Item->setForward(Root.get());
       }
-      DEBUG(dbgs() << "[DI ALIAS TREE]: forward corrupted graph of size "
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: forward corrupted graph of size "
         << GraphSize << "\n");
   }
 }
@@ -1204,7 +1204,7 @@ void CorruptedMemoryResolver::determineCorruptedInsertionHint(DIAliasMemoryNode 
   auto &Info = mChildStack.back();
   updateWorkLists(N, Info);
   if (Info.CorruptedWL.empty()) {
-    DEBUG(dbgs() <<
+    LLVM_DEBUG(dbgs() <<
       "[DI ALIAS TREE]: go through node without corrupted memory\n");
     return;
   }
@@ -1220,8 +1220,8 @@ void CorruptedMemoryResolver::collapseChildStack(const DIAliasNode &Parent,
     const SpanningTreeRelation<AliasTree *> &AliasSTR) {
   NodeInfo Info;
   if (Parent.child_empty()) {
-    DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
-    DEBUG(Info.sizeLog());
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
+    LLVM_DEBUG(Info.sizeLog());
     mChildStack.push_back(std::move(Info));
     return;
   }
@@ -1255,8 +1255,8 @@ void CorruptedMemoryResolver::collapseChildStack(const DIAliasNode &Parent,
     mChildStack.pop_back();
   }
   if (ChildIdx == ChildSize) {
-    DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
-    DEBUG(Info.sizeLog());
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
+    LLVM_DEBUG(Info.sizeLog());
     mChildStack.push_back(std::move(Info));
     return;
   }
@@ -1273,13 +1273,13 @@ void CorruptedMemoryResolver::collapseChildStack(const DIAliasNode &Parent,
     AliasTree *, GraphTraits<Inverse<AliasTree *>>::NodeRef>;
   Info.ParentOfUnknown = *findLCA(AliasSTR,
     NodeItr{ Nodes.begin(), mAT }, NodeItr{ Nodes.end(), mAT });
-  DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
-  DEBUG(Info.sizeLog());
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: push node information to stack\n");
+  LLVM_DEBUG(Info.sizeLog());
   mChildStack.push_back(std::move(Info));
 }
 
 void CorruptedMemoryResolver::promotedBasedHint(NodeInfo &Info) {
-  DEBUG(dbgs() << "[DI ALIAS TREE]: determine promoted based hint\n");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: determine promoted based hint\n");
   CorruptedMemoryItem *Item;
   if (!Info.ParentOfUnknown && Info.NodesWL.empty() &&
       Info.PromotedWL.size() == 1 &&
@@ -1314,7 +1314,7 @@ void CorruptedMemoryResolver::promotedBasedHint(NodeInfo &Info) {
 
 void CorruptedMemoryResolver::aliasTreeBasedHint(
     const SpanningTreeRelation<AliasTree *> &AliasSTR, NodeInfo &Info) {
-  DEBUG(dbgs() << "[DI ALIAS TREE]: determine alias tree based hint\n");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: determine alias tree based hint\n");
   auto PrevParentOfUnknown = Info.ParentOfUnknown;
   if (Info.ParentOfUnknown != mAT->getTopLevelNode()) {
     using NodeItr = bcl::IteratorDataAdaptor<
@@ -1367,7 +1367,7 @@ void CorruptedMemoryResolver::aliasTreeBasedHint(
 }
 
 void CorruptedMemoryResolver::distinctUnknownHint(NodeInfo &Info) {
-  DEBUG(dbgs() << "[DI ALIAS TREE]: determine distinct unknown hint\n");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: determine distinct unknown hint\n");
   CorruptedMemoryItem *Item;
   if (!Info.Items.empty() &&
       Info.ParentOfUnknown == mAT->getTopLevelNode()) {
@@ -1406,7 +1406,7 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
 void CorruptedMemoryResolver::merge(
     CorruptedMemoryItem *LHS, CorruptedMemoryItem *RHS) {
   assert(LHS && RHS && "Merged items must not be null!");
-  DEBUG("[DI ALIAS TREE]: merge two corrupted lists");
+  LLVM_DEBUG("[DI ALIAS TREE]: merge two corrupted lists");
   if (LHS == RHS)
     return;
   LHS->addSuccessor(RHS);
@@ -1416,7 +1416,7 @@ void CorruptedMemoryResolver::merge(
 void CorruptedMemoryResolver::updateWorkLists(
     DIAliasMemoryNode &N, NodeInfo &Info) {
   for (auto &M : N) {
-    DEBUG(checkLog(M));
+    LLVM_DEBUG(checkLog(M));
     auto Binding = M.getBinding();
     if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
       DIMemoryLocation Loc(
@@ -1429,8 +1429,8 @@ void CorruptedMemoryResolver::updateWorkLists(
           FragmentItr->second = DIEM;
           continue;
         } else {
-          DEBUG(corruptedFoundLog(M));
-          DEBUG(dbgs() << "[DI ALIAS TREE]: safely promoted candidate is discarded\n");
+          LLVM_DEBUG(corruptedFoundLog(M));
+          LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: safely promoted candidate is discarded\n");
           Info.CorruptedWL.push_back(&M);
           mCorruptedSet.insert({ M.getAsMDNode(), true });
           // This is rare case, so we do not take care about overheads and
@@ -1443,7 +1443,7 @@ void CorruptedMemoryResolver::updateWorkLists(
         }
       } else if (Binding != DIMemory::Consistent ||
           !isSameAfterRebuild(*DIEM)) {
-        DEBUG(corruptedFoundLog(M));
+        LLVM_DEBUG(corruptedFoundLog(M));
         Info.CorruptedWL.push_back(&M);
         mCorruptedSet.insert({
           M.getAsMDNode(),
@@ -1453,8 +1453,8 @@ void CorruptedMemoryResolver::updateWorkLists(
       }
     } else if (Binding != DIMemory::Consistent ||
         !isSameAfterRebuild(cast<DIUnknownMemory>(M))) {
-      DEBUG(corruptedFoundLog(M));
-      DEBUG(dbgs() << "[DI ALIAS TREE]: unknown corrupted is found\n");
+      LLVM_DEBUG(corruptedFoundLog(M));
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: unknown corrupted is found\n");
       Info.CorruptedWL.push_back(&M);
       mCorruptedSet.insert({
         M.getAsMDNode(),
@@ -1479,11 +1479,11 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     if (Cashed.second) {
       Cashed.first->second =
         buildDIMemory(*EM, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
-      DEBUG(buildMemoryLog(
+      LLVM_DEBUG(buildMemoryLog(
         mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
-    DEBUG(afterRebuildLog(*Cashed.first->second));
+    LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
     assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
@@ -1508,10 +1508,10 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
     if (Cashed.second) {
       Cashed.first->second =
         buildDIMemory(*VH, mFunc->getContext(), M.getEnv(), M.getProperies());
-      DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
+      LLVM_DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
-    DEBUG(afterRebuildLog(*Cashed.first->second));
+    LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
     assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
@@ -1699,7 +1699,7 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
     CorruptedMemoryResolver CMR(F, &DL, &DT, Env[F], &AT);
     CMR.resolve();
     CorruptedMap CorruptedNodes;
-    DEBUG(dbgs() <<
+    LLVM_DEBUG(dbgs() <<
       "[DI ALIAS TREE]: add distinct unknown nodes for corrupted memory\n");
     for (size_t Idx = 0, IdxE = CMR.distinctUnknownNum(); Idx < IdxE; ++Idx)
       addCorruptedNode(*NewDIAT, CMR.distinctUnknown(Idx),
@@ -1712,9 +1712,9 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
       Builder.buildSubtree();
     }
     auto RootOffsets = findLocationToInsert(AT, DL);
-    DEBUG(dbgs() <<
+    LLVM_DEBUG(dbgs() <<
       "[DI ALIAS TREE]: use an existing alias tree to add new nodes\n");
-    DEBUG(constantOffsetLog(RootOffsets.begin(), RootOffsets.end(), DT));
+    LLVM_DEBUG(constantOffsetLog(RootOffsets.begin(), RootOffsets.end(), DT));
     buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, *NewDIAT,
       *AT.getTopLevelNode(), *NewDIAT->getTopLevelNode(), CorruptedNodes);
   }

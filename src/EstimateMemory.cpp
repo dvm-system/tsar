@@ -365,25 +365,25 @@ void mergeChainAfterLog(EstimateMemory *EM, const DominatorTree &DT) {
 
 void AliasTree::add(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
-  DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
   EstimateMemory *PrevChainEnd = nullptr;
   do {
-    DEBUG(evaluateMemoryLevelLog(Base, getDomTree()));
+    LLVM_DEBUG(evaluateMemoryLevelLog(Base, getDomTree()));
     stripToBase(*mDL, Base);
     EstimateMemory *EM;
     bool IsNew, AddAmbiguous;
     std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
     EM->setExplicit(EM->isExplicit() || !PrevChainEnd);
-    DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous, getDomTree()));
+    LLVM_DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous, getDomTree()));
     assert(EM && "New estimate memory must not be null!");
     if (PrevChainEnd && PrevChainEnd != EM) {
       assert((!PrevChainEnd->getParent() || PrevChainEnd->getParent() == EM) &&
         "Inconsistent parent of a node in estimate memory tree!");
-      DEBUG(mergeChainBeforeLog(EM, PrevChainEnd, getDomTree()));
+      LLVM_DEBUG(mergeChainBeforeLog(EM, PrevChainEnd, getDomTree()));
       CT::mergeNext(EM, PrevChainEnd);
-      DEBUG(mergeChainAfterLog(EM, getDomTree()));
+      LLVM_DEBUG(mergeChainAfterLog(EM, getDomTree()));
     }
     if (!IsNew && !AddAmbiguous)
       return;
@@ -450,7 +450,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
 
 void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   assert(I && "Instruction which accesses unknown memory must not be null!");
-  DEBUG(dbgs() << "[ALIAS TREE]: add unknown memory location\n");
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add unknown memory location\n");
   if (auto *II = dyn_cast<IntrinsicInst>(I)) {
     /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
     /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
@@ -510,8 +510,8 @@ AliasEstimateNode::slowMayAliasUnknownImp(
   assert(I && "Instruction must not be null!");
   for (auto &EM : *this) {
     for (auto *Ptr : EM)
-      if (AA.getModRefInfo(I,
-            MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
+      if (AA.getModRefInfo(I, MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo()))
+          != ModRefInfo::NoModRef)
         return std::make_pair(true, nullptr);
   }
   return std::make_pair(false, nullptr);
@@ -525,8 +525,8 @@ AliasUnknownNode::slowMayAliasUnknownImp(
     return std::make_pair(true, const_cast<Instruction *>(I));
   for (auto *UI : *this) {
     ImmutableCallSite C1(UI), C2(I);
-    if (!C1 || !C2 || AA.getModRefInfo(C1, C2) != MRI_NoModRef ||
-      AA.getModRefInfo(C2, C1) != MRI_NoModRef)
+    if (!C1 || !C2 || AA.getModRefInfo(C1, C2) != ModRefInfo::NoModRef ||
+      AA.getModRefInfo(C2, C1) != ModRefInfo::NoModRef)
       return std::make_pair(true, UI);
   }
   return std::make_pair(false, nullptr);
@@ -551,8 +551,8 @@ std::pair<bool, EstimateMemory *>
 AliasUnknownNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
   for (auto *UI : *this) {
     for (auto *Ptr : EM)
-      if (AA.getModRefInfo(UI,
-            MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo())) != MRI_NoModRef)
+      if (AA.getModRefInfo(UI, MemoryLocation(Ptr, EM.getSize(), EM.getAAInfo()))
+          != ModRefInfo::NoModRef)
         return std::make_pair(true, nullptr);
   }
   return std::make_pair(false, nullptr);

@@ -54,7 +54,7 @@ public:
 /// Represents possible options for TSAR.
 struct Options : private bcl::Uncopyable {
   /// This is a version printer for TSAR.
-  static void printVersion();
+  static void printVersion(raw_ostream &OS);
 
   /// Returns all possible analyzer options.
   static Options & get() {
@@ -172,7 +172,7 @@ Options::Options() :
   assert(Opts.count("help") == 1 && "Option '-help' must be specified!");
   auto Help = Opts["help"];
   static cl::alias HelpA("h", cl::aliasopt(*Help), cl::desc("Alias for -help"));
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
   // Debug options are not available if LLVM has been built in release mode.
   if (Opts.count("debug") == 1) {
     auto Debug = Opts["debug"];
@@ -209,8 +209,7 @@ Options::Options() :
   cl::HideUnrelatedOptions(Categories);
 }
 
-void Options::printVersion() {
-  raw_ostream &OS = outs();
+void Options::printVersion(raw_ostream &OS) {
   OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
   OS << "  version " << TSAR_VERSION_STRING << "\n";
 #ifdef APC_FOUND
@@ -402,7 +401,7 @@ void Tool::storeCLOptions() {
     auto LLSrcItr = std::find_if(mSources.begin(), mSources.end(),
       [](StringRef Src) {
         return FrontendOptions::getInputKindForExtension(
-          sys::path::extension(Src)) == IK_LLVM_IR; });
+          sys::path::extension(Src)).getLanguage() == InputKind::LLVM_IR; });
     if (LLSrcItr != mSources.end()) {
       std::string Msg();
       LLIncompatibleOpts[0]->error(
@@ -421,11 +420,11 @@ int Tool::run(QueryManager *QM) {
   for (auto &Src : mSources) {
     auto InputKind = FrontendOptions::getInputKindForExtension(
         sys::path::extension(Src).substr(1)); // ignore first . in extension
-    if (mLanguage != "ast" && InputKind == IK_LLVM_IR)
+    if (mLanguage != "ast" && InputKind.getLanguage() == InputKind::LLVM_IR)
       LLSources.push_back(Src);
     else
       NoLLSources.push_back(Src);
-    if (mLanguage != "ast" && InputKind != IK_AST)
+    if (mLanguage != "ast" && InputKind.getFormat() != InputKind::Precompiled)
       NoASTSources.push_back(Src);
     else
       SourcesToMerge.push_back(Src);

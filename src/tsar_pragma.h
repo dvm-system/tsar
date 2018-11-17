@@ -114,7 +114,7 @@ bool findClause(Pragma &P, ClauseId Id,
 bool pragmaRangeToRemove(const Pragma &P,
   const llvm::SmallVectorImpl<clang::Stmt *> &Clauses,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
-  llvm::SmallVectorImpl<clang::SourceRange> &ToRemove);
+  llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove);
 
 /// Constructs a string representation of a pragma according to introducer kind.
 llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,

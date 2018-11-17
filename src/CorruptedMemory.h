@@ -198,7 +198,7 @@ private:
     /// this subtree is descendant of an unknown node.
     llvm::SmallVector<DIMemoryLocation, 4> PromotedWL;
 
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
     void sizeLog() {
       llvm::dbgs() << "[DI ALIAS TREE]: node info has size " << sizeof(*this);
       llvm::dbgs() << " and consists of ";

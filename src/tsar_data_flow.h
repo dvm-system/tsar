@@ -187,7 +187,7 @@ template<class DFFwk> void solveDataFlowTopologicaly(DFFwk DFF,
 #else
   typedef typename GT::NodeRef NodeRef;
 #endif
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
   for (nodes_iterator I = GT::nodes_begin(DFG), E = GT::nodes_end(DFG);
        I != E; ++I)
     assert((*I == GT::getEntryNode(DFG) ||

@@ -126,14 +126,16 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
   SmallVector<std::pair<int64_t, int64_t>, 8> Dims;
   auto pushDimSize = [this, DICTy, Offset, IsPositive, &Dims](unsigned Dim) {
     auto DInfo = cast<DISubrange>(DICTy->getElements()[Dim]);
-    if (DInfo->getCount() <= 0)
+    if (DInfo->getCount().is<DIVariable *>() ||
+        DInfo->getCount().get<ConstantInt *>()->isMinusOne())
       if (mLoc.Template) {
         addUnknownSubscripts(DICTy->getElements().size());
         return std::make_pair(false, true);
       } else {
         return std::make_pair(false, unparseAsScalarTy(Offset, IsPositive));
       }
-    Dims.push_back(std::make_pair(DInfo->getLowerBound(), DInfo->getCount()));
+    auto *C = DInfo->getCount().get<ConstantInt *>();
+    Dims.push_back(std::make_pair(DInfo->getLowerBound(), C->getSExtValue()));
     return std::make_pair(true, true);
   };
   if (mIsForwardDim)

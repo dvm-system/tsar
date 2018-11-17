@@ -17,7 +17,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
 #  include <llvm/Support/raw_ostream.h>
 #  include <clang/Lex/Lexer.h>
 #endif
@@ -83,7 +83,7 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
   if (isa<TranslationUnitDecl>(D))
     return RecursiveASTVisitor::TraverseDecl(D);
   traverseSourceLocation(D, [this](SourceLocation Loc) { visitLoc(Loc); });
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
   auto log = [D, this]() {
     dbgs() << "[GLOBAL INFO]: global declaration with name "
       << cast<NamedDecl>(D)->getName() << " has outermost declaration at ";
@@ -95,7 +95,7 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
     mOutermostDecl = D;
     if (auto ND = dyn_cast<NamedDecl>(D)) {
       mOutermostDecls[ND->getName()].emplace_back(ND, mOutermostDecl);
-      DEBUG(log());
+      LLVM_DEBUG(log());
     }
     auto Res = RecursiveASTVisitor::TraverseDecl(D);
     mOutermostDecl = nullptr;
@@ -104,7 +104,7 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
   if (!mLangOpts.CPlusPlus && isa<TagDecl>(mOutermostDecl) && isa<TagDecl>(D)) {
     auto ND = cast<NamedDecl>(D);
     mOutermostDecls[ND->getName()].emplace_back(ND, mOutermostDecl);
-    DEBUG(log());
+    LLVM_DEBUG(log());
   }
   return RecursiveASTVisitor::TraverseDecl(D);
 }
@@ -118,7 +118,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     if (auto Entry = mSM.getFileEntryForID(FID)) {
       auto Info = mFiles.insert(Entry);
       if (Info.second) {
-        DEBUG(dbgs() << "[GLOBAL INFO]: visited file " << Entry->getName() <<
+        LLVM_DEBUG(dbgs() << "[GLOBAL INFO]: visited file " << Entry->getName() <<
           " with " << mSM.getNumCreatedFIDsForFileID(FID) <<" FIDs\n");
       }
     }
@@ -126,7 +126,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     if (IncLoc.isValid()) {
       bool F = mVisitedIncludeLocs.insert(IncLoc.getRawEncoding()).second;
       if (F) {
-        DEBUG(dbgs() << "[GLOBAL INFO]: visited #include location ";
+        LLVM_DEBUG(dbgs() << "[GLOBAL INFO]: visited #include location ";
           IncLoc.dump(mSM); dbgs() << "\n");
       }
     }
@@ -148,7 +148,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     // If this is the expansion of a macro argument, point the caret at the
     // use of the argument in the definition of the macro, not the expansion.
     if (mSM.isMacroArgExpansion(Loc)) {
-      auto ArgInMacroLoc = mSM.getImmediateExpansionRange(Loc).first;
+      auto ArgInMacroLoc = mSM.getImmediateExpansionRange(Loc).getBegin();
       LocationStack.push_back(ArgInMacroLoc);
       // Remember file which contains macro definition.
       auto FID = mSM.getFileID(mSM.getSpellingLoc(ArgInMacroLoc));
@@ -168,7 +168,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     }
     assert(Loc.isValid() && "Must have a valid source location here!");
   }
-  DEBUG(
+  LLVM_DEBUG(
     dbgs() << "[GLOBAL INFO]: expanded macros:\n";
     for (auto Loc : LocationStack) {
       dbgs() << "  " << Lexer::getImmediateMacroNameForDiagnostics(

@@ -64,7 +64,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
     return Path.str();
   };
   Rewriter FormatRewriter(SrcMgr, LangOpts);
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
   StringSet<> TransformedFiles;
 #endif
   for (auto &Buffer :

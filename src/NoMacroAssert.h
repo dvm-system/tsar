@@ -30,7 +30,7 @@ namespace detail {
 ///
 /// Usage:
 ///   V.Traverse...(Node);
-///   V.RawTraverse(Node.getSourceRange());
+///   V.RawTraverse(CharSourceRange::getTokenRange(Node.getSourceRange()));
 template<class FuncT>
 class MacroVisitor : public clang::RecursiveASTVisitor<MacroVisitor<FuncT>> {
 public:
@@ -43,7 +43,7 @@ public:
   ///
   /// This uses internal list of visited locations to avoid reevaluation
   /// of macro. So, call Travser...() method at first.
-  void RawTraverse(clang::SourceRange SR) {
+  void RawTraverse(clang::CharSourceRange SR) {
     LocalLexer Lex(SR, mSrcMgr, mLangOpts);
     clang::Token Tok;
     while (!Lex.LexFromRawLexer(Tok)) {

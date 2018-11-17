@@ -54,12 +54,15 @@ void tsar::unreachableBlocks(clang::CFG &Cfg,
 
 LocalLexer::LocalLexer(SourceRange SR,
     const SourceManager &SM, const LangOptions &LangOpts) :
+  LocalLexer(CharSourceRange::getTokenRange(SR), SM, LangOpts) {}
+
+LocalLexer::LocalLexer(CharSourceRange SR,
+    const SourceManager &SM, const LangOptions &LangOpts) :
   mSR(SR), mSM(SM), mLangOpts(LangOpts) {
   assert(mSM.isWrittenInSameFile(mSR.getBegin(), mSR.getEnd()) &&
     "Start and end of the range must be from the same buffer!");
   mCurrentPos = SR.getBegin().getRawEncoding();
-  auto SourceText =
-    Lexer::getSourceText(CharSourceRange::getTokenRange(mSR), mSM, mLangOpts);
+  auto SourceText = Lexer::getSourceText(mSR, mSM, mLangOpts);
   mLength = mCurrentPos + (SourceText.empty() ? 0 : SourceText.size() - 1);
   assert(mLength <= std::numeric_limits<decltype(mCurrentPos)>::max() &&
     "Too long buffer!");
@@ -185,11 +188,14 @@ void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
 }
 
 bool ExternalRewriter::RemoveText(SourceRange SR, bool RemoveLineIfEmpty) {
+  return RemoveText(CharSourceRange::getTokenRange(SR), RemoveLineIfEmpty);
+}
+
+bool ExternalRewriter::RemoveText(CharSourceRange SR, bool RemoveLineIfEmpty) {
   if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
     return true;
   bool IsInvalid;
-  auto ReplacedText = Lexer::getSourceText(
-    CharSourceRange::getTokenRange(SR), mSM, mLangOpts, &IsInvalid);
+  auto ReplacedText = Lexer::getSourceText(SR, mSM, mLangOpts, &IsInvalid);
   if (IsInvalid)
     return true;
   unsigned RemoveOffset = ComputeOrigOffset(SR.getBegin());
@@ -269,7 +275,7 @@ public:
     SmallString<32> Buffer;
     mIsFound |= (VD->getName() == mId &&
       mProcessor(VD->getType().getAsString(), Buffer) == mType);
-    DEBUG({
+    LLVM_DEBUG({
       bcl::swapMemory(llvm::errs(), llvm::nulls());
       dbgs() << "[BUILD DECLARATION]: candidate type '" << Buffer << "'\n";
       dbgs() << "[BUILD DECLARATION]: candidate id '" << VD->getName() << "'\n";
@@ -317,9 +323,9 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   ast_matchers::MatchFinder MatchFinder;
   MatchFinder.addMatcher(ast_matchers::varDecl().bind("varDecl"), &Search);
   Tokens.push_back(Id);
-  DEBUG(dbgs() << "[BUILD DECLARATION]: context '" << Context << "'\n");
-  DEBUG(dbgs() << "[BUILD DECLARATION]: type '" << Search.getType() << "'\n");
-  DEBUG(dbgs() << "[BUILD DECLARATION]: id '" << Search.getId() << "'\n");
+  LLVM_DEBUG(dbgs() << "[BUILD DECLARATION]: context '" << Context << "'\n");
+  LLVM_DEBUG(dbgs() << "[BUILD DECLARATION]: type '" << Search.getType() << "'\n");
+  LLVM_DEBUG(dbgs() << "[BUILD DECLARATION]: id '" << Search.getId() << "'\n");
   if (Tokens.size() < 2)
     return std::vector<StringRef>();
   // Let us find a valid position for identifier in a variable declaration.
@@ -333,7 +339,7 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     SmallString<128> DeclStr;
     std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
       Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
-    DEBUG({
+    LLVM_DEBUG({
       bcl::swapMemory(llvm::errs(), llvm::nulls());
       SmallString<128> DeclStr;
       dbgs() << "[BUILD DECLARATION]: possible declaration with token at " <<
@@ -359,7 +365,9 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   using namespace clang::format;
   using namespace clang::tooling;
   std::vector<Range> Ranges({ Range(0, TfmSrc.size()) });
-  FormatStyle Style = format::getStyle("LLVM", "", "LLVM");
+  auto Style = format::getStyle("LLVM", "", "LLVM");
+  if (auto Err = Style.takeError())
+    return Err;
   // TODO (kaniadnr@gmail.com): it seams that sortInclude() removes adjacent
   // includes with the same name. In the following case:
   //   #include "file.h"
@@ -367,7 +375,7 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   // the result will be
   //    #include "file.h"
   // So, we disable call of sortInclude() at this moment.
-  // Replacements Replaces = sortIncludes(Style, TfmSrc, Ranges, Filename);
-  Replacements FormatChanges = reformat(Style, TfmSrc, Ranges, Filename);
+  // Replacements Replaces = sortIncludes(*Style, TfmSrc, Ranges, Filename);
+  Replacements FormatChanges = reformat(*Style, TfmSrc, Ranges, Filename);
   return applyAllReplacements(TfmSrc, FormatChanges);
 }

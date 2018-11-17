@@ -160,10 +160,12 @@ public:
         if (!isa<AllocaInst>(I))
           continue;
         ++NumNonMatchIRMemory;
-        DbgDeclareInst *DDI = FindAllocaDbgDeclare(&I);
-        if (!DDI)
+        auto DIIList = FindDbgAddrUses(&I);
+        // TODO (kaniandr@gmail.com): what should we do in case of multiple
+        // dbg instrinsics?
+        if (DIIList.size() != 1)
           continue;
-        auto Loc = DDI->getDebugLoc();
+        auto Loc = DIIList.front()->getDebugLoc();
         if (Loc) {
           auto Pair = mLocToIR->insert(
             std::make_pair(Loc, bcl::TransparentQueue<Value>(&I)));

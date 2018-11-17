@@ -42,6 +42,7 @@
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
@@ -399,10 +400,9 @@ ActionBase::ActionBase(QueryManager *QM) : mQueryManager(QM) {
   assert(QM && "Query manager must be specified!");
 }
 
-bool ActionBase::BeginSourceFileAction(
-    CompilerInstance &CI, StringRef InFile) {
+bool ActionBase::BeginSourceFileAction(CompilerInstance &CI) {
   TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
-  return mQueryManager->beginSourceFile(CI, InFile);
+  return mQueryManager->beginSourceFile(CI, getCurrentFile());
 }
 
 void ActionBase::EndSourceFileAction() {
@@ -411,7 +411,7 @@ void ActionBase::EndSourceFileAction() {
 
 void ActionBase::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
-  if (getCurrentFileKind() != IK_LLVM_IR) {
+  if (getCurrentFileKind().getLanguage() != InputKind::LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
     return;
   }

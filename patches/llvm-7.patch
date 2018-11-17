@@ -1,0 +1,31 @@
+diff --git include/llvm/ADT/iterator.h include/llvm/ADT/iterator.h
+index 549c522..6d4fa8f 100644
+--- include/llvm/ADT/iterator.h
++++ include/llvm/ADT/iterator.h
+@@ -311,8 +311,11 @@ make_pointee_range(RangeT &&Range) {
+ template <typename WrappedIteratorT,
+           typename T = decltype(&*std::declval<WrappedIteratorT>())>
+ class pointer_iterator
+-    : public iterator_adaptor_base<pointer_iterator<WrappedIteratorT, T>,
+-                                   WrappedIteratorT, T> {
++    : public iterator_adaptor_base<
++        pointer_iterator<WrappedIteratorT>,
++        WrappedIteratorT,
++        typename std::iterator_traits<WrappedIteratorT>::iterator_category,
++        T> {
+   mutable T Ptr;
+ 
+ public:
+diff --git include/llvm/IR/LegacyPassNameParser.h include/llvm/IR/LegacyPassNameParser.h
+index 4cec081..6bcd4bf 100644
+--- include/llvm/IR/LegacyPassNameParser.h
++++ include/llvm/IR/LegacyPassNameParser.h
+@@ -105,6 +105,8 @@ private:
+   Filter filter;
+ 
+ public:
++  FilteredPassNameParser(cl::Option &O) : PassNameParser(O) {}
++
+   bool ignorablePassImpl(const PassInfo *P) const override {
+     return !filter(*P);
+   }

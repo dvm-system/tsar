@@ -1,0 +1,14 @@
+diff --git include/clang/AST/ASTImporter.h include/clang/AST/ASTImporter.h
+index 2e9a877..924626f 100644
+--- include/clang/AST/ASTImporter.h
++++ include/clang/AST/ASTImporter.h
+@@ -55,7 +55,9 @@ class Attr;
+   /// Imports selected nodes from one AST context into another context,
+   /// merging AST nodes where appropriate.
+   class ASTImporter {
++    friend class VariableArrayCallback;
+   public:
++
+     using NonEquivalentDeclSet = llvm::DenseSet<std::pair<Decl *, Decl *>>;
+     using ImportedCXXBaseSpecifierMap =
+         llvm::DenseMap<const CXXBaseSpecifier *, CXXBaseSpecifier *>;

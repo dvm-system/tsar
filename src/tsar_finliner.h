@@ -136,7 +136,7 @@ public:
   using CallSet =  llvm::DenseSet<TemplateInstantiation>;
 
   /// List of source ranges.
-  using RangeList = llvm::SmallVector<clang::SourceRange, 8>;
+  using RangeList = llvm::SmallVector<clang::CharSourceRange, 8>;
 
   /// \brief List of return statements.
   ///

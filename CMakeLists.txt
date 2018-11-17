@@ -41,10 +41,10 @@ option(LOCAL_LLVM "Use existing LLVM installation" OFF)
 option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
 
 set(LLVM_REPO
-  "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_400/final/" CACHE STRING
+  "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_700/final/" CACHE STRING
   "URL of LLVM subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 set(CLANG_REPO
-  "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_400/final/" CACHE STRING
+  "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_700/final/" CACHE STRING
   "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
 
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH
@@ -164,8 +164,8 @@ set(LLVM_COMPONENTS
   analysis asmparser bitreader core instrumentation irreader scalaropts support
   tablegen target transformutils coverage mcparser option debuginfodwarf
   x86asmparser x86info x86codegen
-	powerpcasmparser powerpcinfo powerpccodegen
-	aarch64asmparser aarch64info aarch64codegen
+  powerpcasmparser powerpcinfo powerpccodegen
+  aarch64asmparser aarch64info aarch64codegen
   amdgpuasmparser amdgpuinfo amdgpucodegen
   armasmparser arminfo armcodegen
   mipsasmparser mipsinfo mipscodegen
@@ -173,11 +173,14 @@ set(LLVM_COMPONENTS
   systemzasmparser systemzinfo systemzcodegen
   hexagoninfo hexagoncodegen
   xcoreinfo xcorecodegen
-  bpfinfo bpfcodegen
+  bpfasmparser bpfinfo bpfcodegen
   nvptxinfo nvptxcodegen
   msp430info msp430codegen
-  lanaiasmparser lanaiinfo lanaicodegen
-  riscvdesc riscvinfo riscvcodegen)
+  lanaiasmparser lanaiinfo lanaicodegen)
+  # It seems that RISC-V architecture support in LLVM is experimental and it
+  # is not a part of default build. However, LLVM build can be configured to
+  # support RISC-V if necessary.
+  #riscvdesc riscvinfo riscvcodegen)
 
 llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 

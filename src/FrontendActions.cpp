@@ -27,19 +27,18 @@ tsar::ASTPrintAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) 
 
 std::unique_ptr<ASTConsumer>
 tsar::ASTDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return CreateASTDumper("", true, false);
+  return CreateASTDumper(nullptr, "", true, true, true);
 }
 
 GenPCHPragmaAction::~GenPCHPragmaAction() {
   DeleteContainerPointers(mNamespaces);
 }
 
-bool GenPCHPragmaAction::BeginSourceFileAction(
-    CompilerInstance &CI, StringRef Filename) {
+bool GenPCHPragmaAction::BeginSourceFileAction(CompilerInstance &CI) {
   CI.getLangOpts().CompilingPCH = true;
   mPP = &CI.getPreprocessor();
   AddPragmaHandlers(*mPP, mNamespaces);
-  if (!WrapperFrontendAction::BeginSourceFileAction(CI, Filename)) {
+  if (!WrapperFrontendAction::BeginSourceFileAction(CI)) {
     DeleteContainerPointers(mNamespaces);
     return false;
   }

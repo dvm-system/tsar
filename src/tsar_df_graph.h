@@ -70,7 +70,7 @@ public:
 
   /// Destructor.
   virtual ~DFNode() {
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
     mKind = INVALID_KIND;
     mParent = nullptr;
 #endif
@@ -295,7 +295,7 @@ public:
       "Only one exit node must be in the region!");
     assert(!llvm::isa<DFLatch>(N) || !mLatchNode &&
       "Only one latch node must be in the region!");
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
     for (DFNode *Node : mNodes)
       assert(N != Node &&
         "The node must not be contained in the region!");

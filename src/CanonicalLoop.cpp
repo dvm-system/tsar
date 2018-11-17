@@ -77,17 +77,17 @@ public:
       Result.Nodes.getNodeAs<ForStmt>("forLoop"));
     if (!For)
       return;
-    DEBUG(dbgs() << "[CANONICAL LOOP]: process loop at ");
-    DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
-    DEBUG(dbgs() << "\n");
+    LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: process loop at ");
+    LLVM_DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
+    LLVM_DEBUG(dbgs() << "\n");
     auto Match = mLoopInfo->find<AST>(For);
     if (Match == mLoopInfo->end()) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");
       return;
     }
     auto *Region = cast<DFLoop>(mRgnInfo->getRegionFor(Match->get<IR>()));
     if (mCanonicalLoopInfo->find_as(Region) != mCanonicalLoopInfo->end()) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: loop is already checked.\n");
       --NumNonCanonical;
       return;
     }
@@ -98,7 +98,7 @@ public:
       Init = Result.Nodes.
         getNodeAs<clang::BinaryOperator>("LoopInitAssignment")->getRHS();
     if (!Init) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: loop without initialization.\n");
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: loop without initialization.\n");
       return;
     }
     auto *InitVar = Result.Nodes.getNodeAs<VarDecl>("InitVarName");
@@ -141,15 +141,15 @@ public:
       BinaryIncr && coherent(
         Init, BinaryIncr, Condition, ReversedCond, Result.Context);
     if (!CoherentCond) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: condition and increment is not consistent.\n");
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: condition and increment is not consistent.\n");
       return;
     }
-    DEBUG(dbgs() << "[CANONICAL LOOP]: syntactically canonical loop found.\n");
+    LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: syntactically canonical loop found.\n");
     auto *LI = new CanonicalLoopInfo(Region, For);
     mCanonicalLoopInfo->insert(LI);
     checkLoop(Region, const_cast<VarDecl*>(InitVar->getCanonicalDecl()), LI);
     if (LI->isCanonical()) {
-      DEBUG(dbgs() << "[CANONICAL LOOP]: canonical loop found.\n");
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: canonical loop found.\n");
       ++NumCanonical;
       --NumNonCanonical;
     }
@@ -394,7 +394,7 @@ private:
     if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
     LInfo->setInduction(AI);
-    DEBUG(dbgs() << "[CANONICAL LOOP]: induction variable is"; AI->dump());
+    LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: induction variable is"; AI->dump());
     llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree->find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
@@ -462,7 +462,7 @@ private:
     if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
     LInfo->setStart(Expr);
-    DEBUG(
+    LLVM_DEBUG(
       if (Expr) {
         dbgs() << "[CANONICAL LOOP]: lower bound of induction variable is ";
         Expr->dump();
@@ -482,7 +482,7 @@ private:
         LInfo->setStep(mSE->getNegativeSCEV(mSE->getSCEV(Expr)));
       else
         LInfo->setStep(mSE->getSCEV(Expr));
-    DEBUG(
+    LLVM_DEBUG(
       if (LInfo->getStep()) {
         dbgs() << "[CANONICAL LOOP]: step of induction variable is ";
         LInfo->getStep()->dump();
@@ -492,7 +492,7 @@ private:
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
     LInfo->setEnd(Expr);
-    DEBUG(
+    LLVM_DEBUG(
       if (Expr) {
         dbgs() << "[CANONICAL LOOP]: upper bound of induction variable is ";
         Expr->dump();

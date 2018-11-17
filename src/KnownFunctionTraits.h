@@ -29,7 +29,7 @@ template<llvm::Intrinsic::ID Id> struct IntrinsicTraits {
 /// \brief This proposes traits of some known library functions.
 ///
 /// This class should be specialized by different function ids.
-template<llvm::LibFunc::Func Id> struct LibFuncTraits {
+template<llvm::LibFunc Id> struct LibFuncTraits {
   template<class Function> static void foreachMemoryArgument(Function &&F) {}
 };
 
@@ -50,7 +50,7 @@ inline void foreachIntrinsicMemArg(Function &&F) {
 
 /// Applies a specified function to each argument (of library function `Id`)
 /// which accesses memory.
-template<llvm::LibFunc::Func Id, class Function>
+template<llvm::LibFunc Id, class Function>
 inline void foreachLibFuncMemArg(Function &&F) {
   LibFuncTraits<Id>::foreachMemoryArgument(std::forward<Function>(F));
 }
@@ -121,16 +121,16 @@ void foreachIntrinsicMemArg(const llvm::IntrinsicInst &II, Function &&F) {
 //===----------------------------------------------------------------------===//
 // LibFunc specializations for LLVM library functions
 //===----------------------------------------------------------------------===//
-template<> struct LibFuncTraits<llvm::LibFunc::memset_pattern16> :
+template<> struct LibFuncTraits<llvm::LibFunc_memset_pattern16> :
   public KnownFunctionMemoryArgument<0, 1> {};
 
 /// Applies a specified function to each argument which accesses memory.
 template<class Function>
-void foreachLibFuncMemArg(llvm::LibFunc::Func Id, Function &&F) {
+void foreachLibFuncMemArg(llvm::LibFunc Id, Function &&F) {
   using namespace llvm;
   switch (Id) {
-  case LibFunc::memset_pattern16:
-    foreachLibFuncMemArg<LibFunc::memset_pattern16>(std::forward<Function>(F));
+  case LibFunc_memset_pattern16:
+    foreachLibFuncMemArg<LibFunc_memset_pattern16>(std::forward<Function>(F));
     return;
   }
 }
@@ -140,7 +140,7 @@ template<class Function>
 void foreachLibFuncMemArg(const llvm::Function &Func,
     const llvm::TargetLibraryInfo &TLI, Function &&F) {
   using namespace llvm;
-  LibFunc::Func Id;
+  LibFunc Id;
   if (!TLI.getLibFunc(Func, Id) && !TLI.has(Id))
     return;
   return foreachLibFuncMemArg(Id, std::forward<Function>(F));

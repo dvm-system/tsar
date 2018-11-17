@@ -45,18 +45,22 @@ public:
   LocalLexer(clang::SourceRange SR,
     const clang::SourceManager &SM, const clang::LangOptions &LangOpts);
 
+  /// Initializes lexer to relex tokens in a specified range `SR`.
+  LocalLexer(clang::CharSourceRange SR,
+    const clang::SourceManager &SM, const clang::LangOptions &LangOpts);
+
   /// Lex a token, returns `false` on success and `true` otherwise
   bool LexFromRawLexer(clang::Token &Tok);
 
   const clang::SourceManager & getSourceManager() const noexcept { return mSM; }
   const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
-  clang::SourceRange getSourceRange() const { return mSR; }
+  clang::CharSourceRange getSourceRange() const { return mSR; }
 
   /// Returns list of already lexed tokens.
   const LexedTokens & getLexedTokens() const noexcept { return mTokens; }
 
 private:
-  clang::SourceRange mSR;
+  clang::CharSourceRange mSR;
   const clang::LangOptions &mLangOpts;
   const clang::SourceManager &mSM;
   std::size_t mLength;
@@ -107,6 +111,13 @@ public:
   /// If `RemoveLineIfEmpty` is `true` and removing of a specified range leads
   /// to an empty line, then this line will be removed.
   bool RemoveText(clang::SourceRange SR, bool RemoveLineIfEmpty = false);
+
+  /// \brief Removes a rang of characters in the buffer, return `false`
+  /// on success.
+  ///
+  /// If `RemoveLineIfEmpty` is `true` and removing of a specified range leads
+  /// to an empty line, then this line will be removed.
+  bool RemoveText(clang::CharSourceRange SR, bool RemoveLineIfEmpty = false);
 
   /// \brief Returns the rewritten form of the text in the specified range
   /// inside the initial one (getSourceRange()).
@@ -198,15 +209,15 @@ inline clang::SourceLocation getStartOfLine(clang::SourceLocation Loc,
 }
 
 /// Returns range of expansion locations.
-inline clang::SourceRange getExpansionRange(const clang::SourceManager &SM,
+inline clang::CharSourceRange getExpansionRange(const clang::SourceManager &SM,
     clang::SourceRange Range) {
   return SM.getExpansionRange(Range);
 }
 
 /// Returns range of spelling locations.
-inline clang::SourceRange getSpellingRange(const clang::SourceManager &SM,
+inline clang::CharSourceRange getSpellingRange(const clang::SourceManager &SM,
     clang::SourceRange Range) {
-  return clang::SourceRange(
+  return clang::CharSourceRange::getCharRange(
     SM.getSpellingLoc(Range.getBegin()), SM.getSpellingLoc(Range.getEnd()));
 }
 

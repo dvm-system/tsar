@@ -43,8 +43,7 @@ public:
   bool hasIRSupport() const override { return false; }
 
 protected:
-  bool BeginSourceFileAction(clang::CompilerInstance &CI,
-    clang::StringRef Filename) override;
+  bool BeginSourceFileAction(clang::CompilerInstance &CI) override;
   void ExecuteAction() override;
 
   /// Allocates new importer.

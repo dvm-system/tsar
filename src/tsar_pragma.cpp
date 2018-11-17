@@ -166,7 +166,7 @@ bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
 
 bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses,
     const SourceManager &SM, const LangOptions &LangOpts,
-    SmallVectorImpl<SourceRange> &ToRemove) {
+    SmallVectorImpl<CharSourceRange> &ToRemove) {
   assert(P && "Pragma must be valid!");
   SourceLocation PStart = P.getNamespace()->getLocStart();
   SourceLocation PEnd = P.getNamespace()->getLocEnd();
@@ -174,10 +174,11 @@ bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses
     return false;
   if (PStart.isFileID()) {
     if (Clauses.size() == P.clause_size())
-      ToRemove.emplace_back(getStartOfLine(PStart, SM), PEnd);
+      ToRemove.push_back(
+        CharSourceRange::getTokenRange({getStartOfLine(PStart, SM), PEnd}));
     else
       for (auto C : Clauses)
-        ToRemove.push_back(C->getSourceRange());
+        ToRemove.push_back(CharSourceRange::getTokenRange(C->getSourceRange()));
     return true;
   }
   Token Tok;
@@ -200,9 +201,9 @@ bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses
       auto OffsetS = CSpellingS - PSpelling;
       // Offset of clause end from `spf` in _Pragma("spf ...
       auto OffsetE = CSpellingE - PSpelling;
-      ToRemove.emplace_back(
-        PStartExp.getLocWithOffset(OffsetS + 8), // ' ' before clause name
-        PStartExp.getLocWithOffset(OffsetE + 9)); // end of clause
+      ToRemove.emplace_back(CharSourceRange::getTokenRange(
+        { PStartExp.getLocWithOffset(OffsetS + 8),     // ' ' before clause name
+          PStartExp.getLocWithOffset(OffsetE + 9) })); // end of clause
     }
   }
   return true;
@@ -327,7 +328,7 @@ void ClauseReplacer::HandlePragma(
 
 void ClauseReplacer::HandleBody(
     Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
-  DEBUG(dbgs() << "[PRAGMA HANDLER]: process body of '" << getName() << "'\n");
+  LLVM_DEBUG(dbgs() << "[PRAGMA HANDLER]: process body of '" << getName() << "'\n");
   const auto Prototype = ClausePrototype::get(mClauseId);
   DefaultClauseVisitor<ReplacementT> CV(PP, getReplacement());
   CV.visitBody(Prototype.begin(), Prototype.end(), FirstToken);

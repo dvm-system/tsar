@@ -186,7 +186,7 @@ void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
 }
 
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
-  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto MD = findMetadata(&I);
   auto Idx = mDIStrings.regItem(&I);
   BasicBlock::iterator InsertBefore(I);
@@ -199,7 +199,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
 }
 
 void Instrumentation::visitReturnInst(llvm::ReturnInst &I) {
-  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto Fun = getDeclaration(I.getModule(), IntrinsicId::func_end);
   unsigned Idx = mDIStrings[I.getFunction()];
   auto DIFunc = createPointerToDI(Idx, I);
@@ -477,7 +477,7 @@ void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
     llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
     DFRegionInfo &RI, const CanonicalLoopSet &CS) {
   for_each(LI, [this, &SE, &DT, &RI, &CS, &F](Loop *L) {
-    DEBUG(dbgs()<<"[INSTR]: process loop " << L->getHeader()->getName() <<"\n");
+    LLVM_DEBUG(dbgs()<<"[INSTR]: process loop " << L->getHeader()->getName() <<"\n");
     auto Idx = mDIStrings.regItem(LoopUnique(&F, L));
     loopBeginInstr(L, Idx, SE, DT, RI, CS);
     loopEndInstr(L, Idx);
@@ -507,7 +507,7 @@ void Instrumentation::visit(Function &F) {
 
 void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
   DISubprogram *MD, DIStringRegister::IdTy Idx, Module &M) {
-  DEBUG(dbgs() << "[INSTR]: register function ";
+  LLVM_DEBUG(dbgs() << "[INSTR]: register function ";
     F.printAsOperand(dbgs()); dbgs() << "\n");
   std::string DeclStr = !MD ? F.getName().empty() ? std::string("") :
     (Twine("name1=") + F.getName() + "*").str() :
@@ -523,7 +523,7 @@ void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
 }
 
 void Instrumentation::visitFunction(llvm::Function &F) {
-  DEBUG(dbgs() << "[INSTR]: process function ";
+  LLVM_DEBUG(dbgs() << "[INSTR]: process function ";
     F.printAsOperand(dbgs()); dbgs() << "\n");
   // Change linkage for inline functions, to avoid merge of a function which
   // should not be instrumented with this function. For example, call of
@@ -568,7 +568,7 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     auto AllocaMD = findMetadata(Alloca);
     if (!AllocaMD || !AllocaMD->isParameter())
       continue;
-    DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
+    LLVM_DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
       dbgs() << " as argument "; Arg.print(dbgs());
       dbgs() << " with no " << Arg.getArgNo() << "\n");
     auto AllocaAddr =
@@ -621,7 +621,7 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
     FuncIdx = mDIStrings.regItem(CS.getCalledValue());
   }
   auto *Inst = CS.getInstruction();
-  DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
   auto DbgLocIdx = regDebugLoc(Inst->getDebugLoc());
   auto DILoc = createPointerToDI(DbgLocIdx, *Inst);
   auto DIFunc = createPointerToDI(FuncIdx, *Inst);
@@ -692,7 +692,7 @@ void Instrumentation::visitInstruction(Instruction &I) {
 void Instrumentation::regReadMemory(Instruction &I, Value &Ptr) {
   if (I.getMetadata("sapfor.da"))
     return;
-  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   auto *M = I.getModule();
   llvm::Value *DILoc, *Addr, *DIVar, *ArrayBase;
   std::tie(DILoc, Addr, DIVar, ArrayBase) =
@@ -713,7 +713,7 @@ void Instrumentation::regReadMemory(Instruction &I, Value &Ptr) {
 void Instrumentation::regWriteMemory(Instruction &I, Value &Ptr) {
   if (I.getMetadata("sapfor.da"))
     return;
-  DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
   auto *M = I.getModule();
@@ -895,7 +895,7 @@ auto Instrumentation::regDebugLoc(
 void Instrumentation::regValue(Value *V, Type *T, const DIMemoryLocation *DIM,
     DIStringRegister::IdTy Idx,  Instruction &InsertBefore, Module &M) {
   assert(V && "Variable must not be null!");
-  DEBUG(dbgs()<<"[INSTR]: register variable "<<(DIM ? "" : "without metadata ");
+  LLVM_DEBUG(dbgs()<<"[INSTR]: register variable "<<(DIM ? "" : "without metadata ");
     V->printAsOperand(dbgs()); dbgs() << "\n");
   auto DeclStr = DIM && DIM->isValid() ?
     (Twine("file=") + DIM->Var->getFilename() + "*" +
@@ -1017,7 +1017,7 @@ static Optional<unsigned> findAvailableSuffix(Module &M, unsigned MinSuffix,
 }
 
 void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
-  DEBUG(dbgs() << "[INSTR]: process entry point ";
+  LLVM_DEBUG(dbgs() << "[INSTR]: process entry point ";
     Entry.printAsOperand(dbgs()); dbgs() << "\n");
   // Erase all existent initialization functions from the modules and remember
   // index of metadata operand which points to the removed function.
@@ -1030,7 +1030,7 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
   auto PoolSizeTy = Type::getInt64Ty(Entry.getContext());
   APInt PoolSize(PoolSizeTy->getBitWidth(), 0);
   for (auto *M: Modules) {
-    DEBUG(dbgs() << "[INSTR]: initialize module "
+    LLVM_DEBUG(dbgs() << "[INSTR]: initialize module "
       << M->getSourceFileName() << "\n");
     auto NamedMD = M->getNamedMetadata("sapfor.da");
     if (!NamedMD) {

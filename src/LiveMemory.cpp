@@ -10,7 +10,7 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Debug.h>
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
 # include <llvm/IR/Dominators.h>
 #endif
 #include "tsar_dbg_output.h"
@@ -35,7 +35,7 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
   DominatorTree *DT = nullptr;
-  DEBUG(
+  LLVM_DEBUG(
     auto DTPass = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
   if (DTPass)
     DT = &DTPass->getDomTree();
@@ -110,7 +110,7 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
     if (!DU->hasDef(Loc))
       newIn.insert(Loc);
   }
-  DEBUG(
+  LLVM_DEBUG(
     dbgs() << "[LIVE] Live locations analysis, transfer function results for:";
   if (isa<DFBlock>(N)) {
     cast<DFBlock>(N)->getBlock()->print(dbgs());

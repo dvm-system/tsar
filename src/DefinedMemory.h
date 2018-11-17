@@ -29,7 +29,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/MemoryLocation.h>
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
 # include <llvm/IR/Instruction.h>
 #endif//DEBUG
 #include <llvm/Pass.h>

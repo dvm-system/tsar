@@ -237,7 +237,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     }
   }
 
-  DEBUG(
+  LLVM_DEBUG(
   for (auto B : *CFG) {
     B->dump();
     llvm::dbgs() << "GEN(B" << B->getBlockID() << "):" << '\n';
@@ -335,7 +335,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
     }
   }
 
-  DEBUG(
+  LLVM_DEBUG(
   for (auto B : *CFG) {
     B->dump();
     llvm::dbgs() << "GEN(B" << B->getBlockID() << "):" << '\n';
@@ -400,7 +400,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
           std::end(DeclRefs));
         for (auto DRE : DeclRefs) {
           // rewrite DRE with RHS
-          DEBUG(
+          LLVM_DEBUG(
           llvm::dbgs() << getSourceText(getRange(CS->getStmt())) << ':'
             << LHS->getName() << " -> " << RHS->getName() << '\n';
           );
@@ -480,7 +480,7 @@ bool CopyEliminationPass::runOnFunction(Function& F) {
       std::begin(RewrittenRefs), std::end(RewrittenRefs),
       std::inserter(Difference, std::end(Difference)));
     if (Difference.empty()) {
-      DEBUG(
+      LLVM_DEBUG(
       llvm::dbgs() << getSourceText(getRange(Decl.first)) << " : "
         << Decl.first->getName() << " can be omitted" << '\n';
       );

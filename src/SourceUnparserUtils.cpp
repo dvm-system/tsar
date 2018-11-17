@@ -11,7 +11,7 @@
 
 #include "SourceUnparserUtils.h"
 #include "CSourceUnparser.h"
-#include <llvm/Support/Dwarf.h>
+#include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 

@@ -99,12 +99,12 @@ public:
   ///   - On success, `Tok` is a last token in clause body.
   void visitBody(iterator I, iterator EI, clang::Token &Tok) {
     assert(mExprStack.empty() && "Expression level stack must be empty!");
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
     auto StartI = I;
 #endif
     mPP.EnableBacktrackAtThisPos();
     for (; I != EI; ++I) {
-      DEBUG(processPrototypeLog(StartI, I));
+      LLVM_DEBUG(processPrototypeLog(StartI, I));
       switch (*I) {
       case ClauseExpr::EK_One:
         push(I, Tok);
@@ -132,7 +132,7 @@ public:
         break;
       default:
         mPP.LexUnexpandedToken(Tok);
-        DEBUG(visitTokenLog(*I, Tok.getKind()));
+        LLVM_DEBUG(visitTokenLog(*I, Tok.getKind()));
         if (Tok.is(getTokenKind(*I))) {
           static_cast<VisitorT *>(this)->visitSingleExpr(*I, Tok);
           if (!mExprStack.empty() &&
@@ -143,7 +143,7 @@ public:
           if (mExprStack.empty() && Tok.is(clang::tok::eod)) {
             // Do not consume tok::eod to enable further processing of input.
             mPP.RevertCachedTokens(1);
-            DEBUG(llvm::dbgs() << "[PRAGMA HANDLER]: revert 'tok::eod'\n");
+            LLVM_DEBUG(llvm::dbgs() << "[PRAGMA HANDLER]: revert 'tok::eod'\n");
           } else {
             Backup = backtrack(I, EI, Tok);
           }
@@ -155,7 +155,7 @@ public:
             return;
           }
           I = Backup;
-          DEBUG(backtrackLog(StartI, I, EI));
+          LLVM_DEBUG(backtrackLog(StartI, I, EI));
         }
         break;
       }
@@ -315,7 +315,7 @@ private:
   }
 
 
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
 void visitTokenLog(ClauseExpr ExpectedId, clang::tok::TokenKind VisitedId) {
   llvm::dbgs()
     << "[PRAGMA HANDLER]: expected token '" << tsar::getName(ExpectedId)

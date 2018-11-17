@@ -356,7 +356,7 @@ void ASTMergeAction::ExecuteAction() {
           *CI.getDiagnostics().getClient()), /*ShouldOwnClient=*/true));
     std::unique_ptr<ASTUnit> Unit =
       ASTUnit::LoadFromASTFile(mASTFiles[I], CI.getPCHContainerReader(),
-        Diags, CI.getFileSystemOpts(), false);
+        ASTUnit::LoadEverything, Diags, CI.getFileSystemOpts(), false);
     if (!Unit)
       continue;
     std::unique_ptr<ASTImporter> Importer(
@@ -428,8 +428,7 @@ void ASTMergeAction::ExecuteAction() {
   CI.getDiagnostics().getClient()->EndSourceFile();
 }
 
-bool ASTMergeAction::BeginSourceFileAction(
-    CompilerInstance &CI, StringRef Filename) {
+bool ASTMergeAction::BeginSourceFileAction(CompilerInstance &CI) {
   /// TODO(kaniandr@gmail.com): This is a hack. It is necessary to set ASTUnit
   /// for an action to be wrapped, but WrapperFrontendAction is set it to null.
   /// So we believe that it is safe to set it after BeginSourceFileAction() call
@@ -438,7 +437,7 @@ bool ASTMergeAction::BeginSourceFileAction(
   /// Note that WrapperFrontendAction will unset ASTUnit for both (current and
   /// wrapped actions), so it is necessary to save ASTUnit.
   auto ASTUnit = takeCurrentASTUnit();
-  auto Ret = WrapperFrontendAction::BeginSourceFileAction(CI, Filename);
+  auto Ret = WrapperFrontendAction::BeginSourceFileAction(CI);
   getWrappedAction().setCurrentInput(getCurrentInput(), std::move(ASTUnit));
   return Ret;
 }

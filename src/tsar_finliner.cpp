@@ -81,7 +81,7 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
 }
 
 namespace {
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
 void printLocLog(const SourceManager &SM, SourceRange R) {
   dbgs() << "[";
   R.getBegin().dump(SM);
@@ -94,8 +94,7 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
     const SourceManager &SM, const LangOptions &LangOpts) {
   auto sourceText = [&SM, &LangOpts](const Stmt *S) {
     auto SR = getExpansionRange(SM, S->getSourceRange());
-    return Lexer::getSourceText(
-      CharSourceRange::getTokenRange(SR), SM, LangOpts);
+    return Lexer::getSourceText(SR, SM, LangOpts);
   };
   llvm::dbgs() << "[INLINE]: enabled templates (" <<
     std::count_if(std::begin(Ts), std::end(Ts),
@@ -179,7 +178,7 @@ bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
     mCurrentT->addParmRef(PVD, DRE);
   auto ND = DRE->getFoundDecl();
   visitNamedDecl(ND);
-  DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
+  LLVM_DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
     mCurrentT->getFuncDecl()->getName() << "' at ";
     DRE->getLocation().dump(mSrcMgr);  dbgs() << "\n");
   mDeclRefLoc.insert(
@@ -191,7 +190,7 @@ bool ClangInliner::VisitDecl(Decl *D) {
   traverseSourceLocation(D,
     [this](SourceLocation Loc) { rememberMacroLoc(Loc); });
   if (auto ND = dyn_cast<NamedDecl>(D)) {
-    DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
+    LLVM_DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentT->getFuncDecl()->getName() << "' at ";
       ND->getLocation().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
@@ -213,7 +212,7 @@ bool ClangInliner::VisitTagType(TagType *TT) {
 
 bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getDecl())) {
-    DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
+    LLVM_DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
@@ -236,7 +235,7 @@ void ClangInliner::visitNamedDecl(clang::NamedDecl *ND) {
     "Seems that redeclaration is not presented in AST");
   ND = cast<NamedDecl>(*ND->redecls_begin());
   if (auto OD = mGIE.findOutermostDecl(ND)) {
-    DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
+    LLVM_DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
       mCurrentT->getFuncDecl()->getName() <<
       "' found '" << ND->getName() << "'\n");
     mCurrentT->addForwardDecl(OD);
@@ -245,7 +244,7 @@ void ClangInliner::visitNamedDecl(clang::NamedDecl *ND) {
 
 bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
   if (auto ND = dyn_cast_or_null<NamedDecl>(TTL.getTypedefNameDecl())) {
-    DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
+    LLVM_DEBUG(dbgs() << "[INLINE]: reference to '" << ND->getName() << "' in '" <<
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
@@ -278,7 +277,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
         "At least one parent which is not a pragma must exist!");
     }
     if (ParentI + 1 == ParentEI) {
-      DEBUG(dbgs() << "[INLINE]: last statement for '" <<
+      LLVM_DEBUG(dbgs() << "[INLINE]: last statement for '" <<
         mCurrentT->getFuncDecl()->getName() << "' found at ";
       S->getLocStart().dump(mSrcMgr); dbgs() << "\n");
       mCurrentT->setLastStmt(S);
@@ -313,7 +312,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
 }
 
 bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
-  DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
+  LLVM_DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
     getSourceText(getFileRange(Call)) << "' at ";
     Call->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
@@ -391,10 +390,10 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   // If statement with call is not inside a compound statement braces should be
   // added after inlining: if(...) f(); -> if (...) { /* inlined f() */ }
   bool IsNeedBraces = !isa<CompoundStmt>(*ParentI);
-  DEBUG(dbgs() << "[INLINE]: statement with call '" <<
+  LLVM_DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getFileRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
-  DEBUG(dbgs() << "[INLINE]: parent statement at ";
+  LLVM_DEBUG(dbgs() << "[INLINE]: parent statement at ";
     (*ParentI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
@@ -404,11 +403,11 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       break;
     }
     if (ClauseI == mScopes.rend()) {
-      DEBUG(dbgs() << "[INLINE]: clause not found\n");
+      LLVM_DEBUG(dbgs() << "[INLINE]: clause not found\n");
       return true;
     }
   }
-  DEBUG(dbgs() << "[INLINE]: clause found '" <<
+  LLVM_DEBUG(dbgs() << "[INLINE]: clause found '" <<
     getSourceText(getFileRange(ClauseI->getStmt())) << "' at ";
     (*ClauseI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   // We mark this clause here, however checks bellow may disable inline
@@ -735,7 +734,7 @@ auto ClangInliner::getTemplateCheckers() const
   Checkers.push_back([this](const Template &T) {
     if (mSrcMgr.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
         SrcMgr::C_User) {
-      DEBUG(dbgs() << "[INLINE]: non-user defined function '" <<
+      LLVM_DEBUG(dbgs() << "[INLINE]: non-user defined function '" <<
         T.getFuncDecl()->getName() << "' for instantiation\n");
       toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline_system);
@@ -1006,10 +1005,10 @@ void ClangInliner::HandleTranslationUnit() {
             if (mCurrentT->getForwardDecls().count(OD))
               continue;
             mCurrentT->addMayForwardDecl(OD);
-            DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
+            LLVM_DEBUG(dbgs() << "[INLINE]: potential external declaration for '" <<
               mCurrentT->getFuncDecl()->getName() << "' found '" <<
               D.getDescendant()->getName() << "'\n");
-            DEBUG(dbgs() << "[INLINE]: reference to '" <<
+            LLVM_DEBUG(dbgs() << "[INLINE]: reference to '" <<
               D.getDescendant()->getName() << "' in '" <<
               mCurrentT->getFuncDecl()->getName() << "' at ";
               Tok.getLocation().dump(mSrcMgr); dbgs() << "\n");
@@ -1019,7 +1018,7 @@ void ClangInliner::HandleTranslationUnit() {
     }
   }
   checkTemplates(getTemplateCheckers());
-  DEBUG(templatesInfoLog(mTs, mSrcMgr, mLangOpts));
+  LLVM_DEBUG(templatesInfoLog(mTs, mSrcMgr, mLangOpts));
   CallGraph CG;
   CG.TraverseDecl(mContext.getTranslationUnitDecl());
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
@@ -1040,7 +1039,7 @@ void ClangInliner::HandleTranslationUnit() {
         mRewriter.RemoveText(SR, RemoveEmptyLine);
       continue;
     }
-    DEBUG(dbgs() << "[INLINE]: inline calls from '" << Definition->getName() << "'\n");
+    LLVM_DEBUG(dbgs() << "[INLINE]: inline calls from '" << Definition->getName() << "'\n");
     SmallVector<const TemplateInstantiation *, 8> CallStack;
     // We create a bogus template instantiation to identify a root of call graph
     // subtree which should be inlined.

@@ -60,8 +60,7 @@ public:
     : PublicWrapperFrontendAction(WrappedAction.release()) {}
   ~GenPCHPragmaAction();
 
-  bool BeginSourceFileAction(clang::CompilerInstance& CI,
-    llvm::StringRef Filename) override;
+  bool BeginSourceFileAction(clang::CompilerInstance& CI) override;
   void EndSourceFileAction() override;
 private:
   llvm::SmallVector<PragmaNamespaceReplacer *, 1> mNamespaces;

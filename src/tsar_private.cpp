@@ -78,7 +78,7 @@ INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
-#ifdef DEBUG
+#ifdef LLVM_DEBUG
   for (const BasicBlock &BB : F)
     assert((&F.getEntryBlock() == &BB || BB.getNumUses() > 0 )&&
       "Data-flow graph must not contain unreachable nodes!");
@@ -338,7 +338,7 @@ static inline void updateDependence(const EstimateMemory *EM,
   if (!Itr->template get<DependenceImp>())
     Itr->template get<DependenceImp>().reset(new DependenceImp);
   Itr->template get<DependenceImp>()->update(Dptr, F, Dist);
-  DEBUG(updateDependenceLog(*EM, *Itr->template get<DependenceImp>()));
+  LLVM_DEBUG(updateDependenceLog(*EM, *Itr->template get<DependenceImp>()));
 }
 
 /// Merges descriptions of loop-carried dependencies and stores result in
@@ -368,7 +368,7 @@ static inline void mergeDependence(const EstimateMemory *To, TraitId ToTrait,
     ToItr->template get<DependenceImp>().reset(new DependenceImp);
   if (FromDep)
     ToItr->template get<DependenceImp>()->update(*FromDep);
-  DEBUG(updateDependenceLog(*To, *ToItr->template get<DependenceImp>()));
+  LLVM_DEBUG(updateDependenceLog(*To, *ToItr->template get<DependenceImp>()));
 }
 
 static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
@@ -411,7 +411,7 @@ void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
-    DEBUG(
+    LLVM_DEBUG(
       dbgs() << "[PRIVATE]: analyze loop";
 #ifndef LLVM_RELEASE_BUILD
     L->getLoop()->dump();
@@ -457,7 +457,7 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
     trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps) {
   auto Dir = Dep.getDirection(L.getLoopDepth());
   if (Dir == Dependence::DVEntry::EQ) {
-    DEBUG(dbgs() << "[PRIVATE]: ignore loop independent dependence\n");
+    LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore loop independent dependence\n");
     return;
   }
   assert((Dep.isOutput() || Dep.isAnti() || Dep.isFlow()) &&
@@ -512,9 +512,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
         auto insertUnknownDep =
           [this, &AA, &SrcItr, &DstItr, &Dptr, Flag, &Deps](Instruction &,
             MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
-          if (AA.getModRefInfo(*SrcItr, Loc) == MRI_NoModRef)
+          if (AA.getModRefInfo(*SrcItr, Loc) == ModRefInfo::NoModRef)
             return;
-          if (AA.getModRefInfo(*DstItr, Loc) == MRI_NoModRef)
+          if (AA.getModRefInfo(*DstItr, Loc) == ModRefInfo::NoModRef)
             return;
           updateDependence(mAliasTree->find(Loc), Dptr, Flag, nullptr, Deps);
         };
@@ -528,14 +528,14 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
         if (!Dst.Ptr)
           continue;
         if (auto D = mDepInfo->depends(*SrcItr, *DstItr, true)) {
-          DEBUG(
+          LLVM_DEBUG(
             dbgs() << "[PRIVATE]: dependence found: ";
             D->dump(dbgs());
             (**SrcItr).dump();
             (**DstItr).dump();
           );
           if (!D->isAnti() && !D->isFlow() && !D->isOutput()) {
-            DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
+            LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
             continue;
           }
           // Do not use Dependence::isLoopIndependent() to check loop
@@ -611,7 +611,7 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     } else {
       CurrTraits &= Readonly;
     }
-    DEBUG(updateTraitsLog(Base, CurrTraits));
+    LLVM_DEBUG(updateTraitsLog(Base, CurrTraits));
   }
   for (const auto &Unknown : DefUse.getExplicitUnknowns()) {
     const auto N = mAliasTree->findUnknown(Unknown);
@@ -714,7 +714,7 @@ void PrivateRecognitionPass::propagateTraits(
     const tsar::DFRegion &R,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
     AliasMap &NodeTraits, DependenceMap &Deps, DependencySet &DS) {
-  DEBUG(dbgs() << "[PRIVATE]: propagate traits\n");
+  LLVM_DEBUG(dbgs() << "[PRIVATE]: propagate traits\n");
   std::stack<TraitPair> ChildTraits;
   auto *Prev = mAliasTree->getTopLevelNode();
   // Such initialization of Prev is sufficient for the first iteration, then
@@ -752,10 +752,10 @@ void PrivateRecognitionPass::propagateTraits(
       }
     }
     auto &TL = NTItr->get<TraitList>();
-    DEBUG(removeRedundantLog(TL, "before"));
+    LLVM_DEBUG(removeRedundantLog(TL, "before"));
     for (auto BI = TL.before_begin(), I = TL.begin(), E = TL.end(); I != E;)
       removeRedundant(N, NTItr->get<TraitList>(), BI, I, Deps);
-    DEBUG(removeRedundantLog(TL, "after"));
+    LLVM_DEBUG(removeRedundantLog(TL, "after"));
     TraitPair NT(&NTItr->get<TraitList>(), &NTItr->get<UnknownList>());
     storeResults(
       Numbers, R, *N, ExplicitAccesses, ExplicitUnknowns, Deps, NT, DS);
@@ -906,7 +906,7 @@ void PrivateRecognitionPass::storeResults(
     auto Dep = EMToDep->get<DependenceImp>().get();
     Dep->get().for_each(DependenceImp::SummarizeFunctor<MemoryTraitSet>{
       Dep, &*EMTraitItr, mSE});
-    DEBUG(
+    LLVM_DEBUG(
       dbgs() << "[PRIVATE]: summarize dependence for ";
       printLocationSource(dbgs(), MemoryLocation(
         EMI->get<EstimateMemory>()->front(),
@@ -1001,7 +1001,7 @@ void PrivateRecognitionPass::storeResults(
      bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
      bcl::trait::set(CombinedDepDptr, *NodeTraitItr);
   }
-  DEBUG(dbgs() << "[PRIVATE]: set combined trait to ";
+  LLVM_DEBUG(dbgs() << "[PRIVATE]: set combined trait to ";
     NodeTraitItr->print(dbgs()); dbgs() << "\n";);
   /// Due to conservativeness of analysis type of dependencies must be the
   /// same for all locations in the node.
@@ -1016,7 +1016,7 @@ void PrivateRecognitionPass::storeResults(
   /// traits.
   for (auto &T : *NodeTraitItr) {
     bcl::trait::set(CombinedDepDptr, T);
-    DEBUG(
+    LLVM_DEBUG(
       dbgs() << "[PRIVATE]: conservatively update trait of ";
       printLocationSource(dbgs(), MemoryLocation(T.getMemory()->front(),
         T.getMemory()->getSize(), T.getMemory()->getAAInfo()));

@@ -48,7 +48,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
   auto traverseActualParams = [&TLI, &Func, &UnknownFunc](CallSite CS) {
     auto Callee =
       llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
-    llvm::LibFunc::Func LibId;
+    llvm::LibFunc LibId;
     if (auto II = llvm::dyn_cast<IntrinsicInst>(CS.getInstruction())) {
       /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
       /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
