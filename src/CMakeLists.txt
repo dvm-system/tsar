@@ -54,6 +54,7 @@ endif()
 target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
   target_link_libraries(tsar APC::APCCore)
+  add_definitions("-D__SPC")
 endif()
 install(TARGETS tsar
   RUNTIME DESTINATION bin
