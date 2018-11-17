@@ -8,6 +8,7 @@ set (TSAR_FOLDER "" CACHE STRING "Specify IDE folder for TSAR.")
 if (TSAR_FOLER)
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif()
+
 find_package(BCL 3.0 REQUIRED CONFIG)
 
 option(BUILD_APC "Build automated parallelizing compiler" OFF)
@@ -16,6 +17,10 @@ if (BUILD_APC)
   message(STATUS "APC version: ${APC_VERSION}")
 endif()
 
+option(BUILD_lp_solve "Build Mixed Integer Linear Programming (MILP) solver" OFF)
+if (BUILD_lp_solve)
+  find_package(lp_solve CONFIG QUIET)
+  message(STATUS "lp_solve version: ${lp_solve_VERSION}")
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
