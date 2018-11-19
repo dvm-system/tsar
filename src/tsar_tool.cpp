@@ -336,6 +336,9 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
 
 void Tool::storeCLOptions() {
   mSources = Options::get().Sources;
+  mCommandLine.emplace_back("-O1");
+  mCommandLine.emplace_back("-Xclang");
+  mCommandLine.emplace_back("-disable-llvm-passes");
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-Wunknown-pragmas");
   if (Options::get().Verbose)
