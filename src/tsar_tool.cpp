@@ -28,6 +28,9 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/CommandLine.h>
+#ifdef lp_solve_FOUND
+# include <lp_solve/lp_solve_config.h>
+#endif
 
 using namespace clang;
 using namespace clang::tooling;
@@ -221,6 +224,10 @@ void Options::printVersion(raw_ostream &OS) {
 # endif
   OS << "\n";
 #endif
+#ifdef lp_solve_FOUND
+  OS << "  with lp_solve(" << LP_SOLVE_HOMEPAGE_URL << "):\n";
+  OS << "    version " << LP_SOLVE_VERSION_STRING << "\n";
+#endif
 #ifndef __OPTIMIZE__
   OS << "  DEBUG build";
 #else
@@ -233,7 +240,6 @@ void Options::printVersion(raw_ostream &OS) {
   OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
   std::string CPU = sys::getHostCPUName();
   OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
-
 }
 
 Tool::Tool(int Argc, const char **Argv) {
