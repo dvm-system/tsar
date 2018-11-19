@@ -67,7 +67,7 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
   }
   updatePriority(TOKEN_FIELD, TOKEN_FIELD);
   mSuffix.append({ TOKEN_FIELD,TOKEN_IDENTIFIER });
-  mIdentifiers.push_back(CurrEl->getName());
+  mIdentifiers.push_back(CurrEl);
   mCurrType = stripDIType(CurrEl->getBaseType()).resolve();
   Offset -= CurrEl->getOffsetInBits() / 8;
   return unparse(Offset, true);
@@ -215,7 +215,7 @@ bool SourceUnparserImp::unparse(uint64_t Offset, bool IsPositive) {
 
 bool SourceUnparserImp::unparse() {
   clear();
-  mIdentifiers.push_back(mLoc.Var->getName());
+  mIdentifiers.push_back(mLoc.Var);
   mLastOpPriority = getPriority(TOKEN_IDENTIFIER);
   SmallVector<uint64_t, 4> Offsets;
   SmallBitVector SignMask;
@@ -236,4 +236,12 @@ bool SourceUnparserImp::unparse() {
     mReversePrefix.push_back(TOKEN_DEREF);
   }
   return true;
+}
+
+StringRef SourceUnparserImp::getName(const MDNode &Identifier) const {
+  if (auto *DIVar = dyn_cast<DIVariable>(&Identifier))
+    return DIVar->getName();
+  if (auto *DITy = dyn_cast<DIDerivedType>(&Identifier))
+    return DITy->getName();
+  return StringRef();
 }

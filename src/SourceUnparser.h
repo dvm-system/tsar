@@ -20,6 +20,7 @@
 #include <vector>
 
 namespace llvm {
+class MDNode;
 class DIType;
 class raw_ostream;
 }
@@ -62,7 +63,7 @@ public:
   };
 
   using TokenList = llvm::SmallVector<Token, 8>;
-  using IdentifierList = std::vector<llvm::SmallString<16>>;
+  using IdentifierList = std::vector<llvm::MDNode *>;
   using UnsignedConstList = llvm::SmallVector<uint64_t, 4>;
 
   ///\brief Creates unparser for a specified expression.
@@ -84,7 +85,12 @@ public:
   /// Returns reversed prefix which precedes the variable name.
   const TokenList & getReversePrefix() const noexcept { return mReversePrefix; }
 
-  /// Returns list of identifiers.
+  /// \brief Returns list of identifiers.
+  ///
+  /// Each identifier is a MDNode which has a name, for example it may be
+  /// DIVariable * (name of variables) or DIDerivedType * (name of a member of
+  /// an aggregate type). The getName() method returns name of an identifier
+  /// in this list.
   const IdentifierList & getIdentifiers() const noexcept { return mIdentifiers; }
 
   /// Returns list of unsigned constants.
@@ -101,6 +107,9 @@ public:
     case TOKEN_PARENTHESES_LEFT: case TOKEN_PARENTHESES_RIGHT: return 4;
     }
   }
+
+  /// Returns name of an identifier from getIdentifiers() list.
+  llvm::StringRef getName(const llvm::MDNode &Identifier) const;
 
   /// Performs unparsing.
   bool unparse();
@@ -202,7 +211,8 @@ public:
       appendToken(T, false, Str);
     assert(!getIdentifiers().empty() && "At least one identifier must be set!");
     auto IdentItr = getIdentifiers().begin();
-    Str.append(IdentItr->begin(), IdentItr->end()), ++IdentItr;
+    auto Id = getName(**IdentItr);
+    Str.append(Id.begin(), Id.end()), ++IdentItr;
     auto UConstItr = getUConsts().begin();
     bool IsSubscript = false;
     for (auto T : getSuffix()) {
@@ -211,7 +221,7 @@ public:
       else if (T == TOKEN_SUBSCRIPT_END)
         IsSubscript = false, endSubscript(Str);
       else if (T == TOKEN_IDENTIFIER)
-        Str.append(IdentItr->begin(), IdentItr->end()), ++IdentItr;
+        Id = getName(**IdentItr), Str.append(Id.begin(), Id.end()), ++IdentItr;
       else if (T == TOKEN_UCONST)
         appendUConst(*(UConstItr++), IsSubscript, Str);
       else
