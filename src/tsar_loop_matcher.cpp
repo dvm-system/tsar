@@ -258,7 +258,7 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     return false;
   auto &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   MatchExplicitVisitor::LocToIRMap LocToLoop;
-  for_each(LpInfo, [&LocToLoop](Loop *L) {
+  for_each_loop(LpInfo, [&LocToLoop](Loop *L) {
     auto Loc = L->getStartLoc();
     // If an appropriate loop will be found the counter will be decreased.
     ++NumNonMatchIRLoop;

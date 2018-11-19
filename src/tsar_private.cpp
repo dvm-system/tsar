@@ -1208,7 +1208,7 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
   auto &RInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  for_each(LpInfo, [this, &OS, &RInfo, &DT, &GlobalOpts](Loop *L) {
+  for_each_loop(LpInfo, [this, &OS, &RInfo, &DT, &GlobalOpts](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
     std::string Offset(L->getLoopDepth(), ' ');
     OS << Offset;

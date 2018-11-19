@@ -201,20 +201,20 @@ bool operator!=(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
 namespace detail {
 /// Applies a specified function object to each loop in a loop tree.
 template<class Function>
-void for_each(llvm::LoopInfo::reverse_iterator ReverseI,
+void for_each_loop(llvm::LoopInfo::reverse_iterator ReverseI,
   llvm::LoopInfo::reverse_iterator ReverseEI,
   Function F) {
   for (; ReverseI != ReverseEI; ++ReverseI) {
     F(*ReverseI);
-    for_each((*ReverseI)->rbegin(), (*ReverseI)->rend(), F);
+    for_each_loop((*ReverseI)->rbegin(), (*ReverseI)->rend(), F);
   }
 }
 }
 
 /// Applies a specified function object to each loop in a loop tree.
 template<class Function>
-Function for_each(const llvm::LoopInfo &LI, Function F) {
-  detail::for_each(LI.rbegin(), LI.rend(), F);
+Function for_each_loop(const llvm::LoopInfo &LI, Function F) {
+  detail::for_each_loop(LI.rbegin(), LI.rend(), F);
   return std::move(F);
 }
 
