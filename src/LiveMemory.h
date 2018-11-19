@@ -23,11 +23,8 @@ class DominatorTree;
 }
 
 namespace tsar {
-/// \brief Data-flow framework which is used to find live locations
+/// Data-flow framework which is used to find live locations
 /// for each data-flow regions: basic blocks, loops, functions, etc.
-///
-/// The LiveAttr attribute for each nodes in a data-flow graph is available
-/// after this analysis.
 class LiveDFFwk : private bcl::Uncopyable {
 public:
   typedef DFValue<LiveDFFwk, MemorySet<llvm::MemoryLocation>> LiveSet;

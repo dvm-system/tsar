@@ -42,7 +42,7 @@ inline FilenameAdjuster getPureFilenameAdjuster() {
 ///
 /// For the same file during a single program work session the 'number' is
 /// increased every time the adjuster is called. For different work sessions
-/// the countdown begins again and the files will be overwritten.
+/// the counting begins again and the files will be overwritten.
 FilenameAdjuster getDumpFilenameAdjuster();
 
 /// Returns a filename adjuster which generates the following name:
