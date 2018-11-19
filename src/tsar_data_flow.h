@@ -28,6 +28,7 @@
 #define TSAR_DATA_FLOW_H
 
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/iterator_range.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/PostOrderIterator.h>
@@ -409,8 +410,14 @@ public:
   /// Type used to iterate over successors.
   typedef typename llvm::SmallVectorImpl<NodeTy *>::const_iterator succ_iterator;
 
+  /// Range of successors.
+  typedef llvm::iterator_range<succ_iterator> succ_range;
+
   /// Type used to iterate over predecessors.
   typedef typename llvm::SmallVectorImpl<NodeTy *>::const_iterator pred_iterator;
+
+  /// Range of predecessors.
+  typedef llvm::iterator_range<pred_iterator> pred_range;
 
   /// Type used to represent number of adjacent nodes.
   typedef typename llvm::SmallVector<NodeTy *, N>::size_type size_type;
@@ -421,11 +428,21 @@ public:
   /// Returns iterator that points to the ending of the successor list.
   succ_iterator succ_end() const { return mAdjacentNodes[SUCC].end(); }
 
+  /// Returns range of predecessors.
+  succ_range successors() const {
+    return llvm::make_range(succ_begin(), succ_end());
+  }
+
   /// Returns iterator that points to the beginning of the predecessor list.
   pred_iterator pred_begin() const { return mAdjacentNodes[PRED].begin(); }
 
   /// Returns iterator that points to the ending of the predecessor list.
   pred_iterator pred_end() const { return mAdjacentNodes[PRED].end(); }
+
+  /// Returns range of predecessors.
+  pred_range predecessors() const {
+    return llvm::make_range(pred_begin(), pred_end());
+  }
 
   /// Returns true if the specified node is a successor of this node.
   bool isSuccessor(NodeTy *Node) const {
