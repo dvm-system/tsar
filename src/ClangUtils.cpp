@@ -367,7 +367,7 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   std::vector<Range> Ranges({ Range(0, TfmSrc.size()) });
   auto Style = format::getStyle("LLVM", "", "LLVM");
   if (auto Err = Style.takeError())
-    return Err;
+    return std::move(Err);
   // TODO (kaniadnr@gmail.com): it seams that sortInclude() removes adjacent
   // includes with the same name. In the following case:
   //   #include "file.h"
