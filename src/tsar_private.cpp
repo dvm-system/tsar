@@ -411,11 +411,11 @@ void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
-    LLVM_DEBUG(
-      dbgs() << "[PRIVATE]: analyze loop";
+    LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop");
 #ifndef LLVM_RELEASE_BUILD
     L->getLoop()->dump();
 #endif
+    LLVM_DEBUG(
       if (DebugLoc DbgLoc = L->getLoop()->getStartLoc()) {
         dbgs() << " at ";
         DbgLoc.print(dbgs());
