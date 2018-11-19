@@ -70,10 +70,6 @@ macro(sapfor_install_llvm)
         "$<TARGET_FILE_DIR:clang>/clang++${CMAKE_EXECUTABLE_SUFFIX}"
         "$<TARGET_FILE_DIR:clang>/clang-cl${CMAKE_EXECUTABLE_SUFFIX}"
         "$<TARGET_FILE_DIR:clang>/clang-cpp${CMAKE_EXECUTABLE_SUFFIX}")
-      if (WIN32)
-        list(APPEND CLANG_LINKS_TO_INSTALL
-        "$<TARGET_FILE_DIR:clang>/../msbuild-bin/cl${CMAKE_EXECUTABLE_SUFFIX}")
-      endif()
     endif()
     add_custom_target(CLANG_BUILD ALL)
     add_dependencies(CLANG_BUILD clang)
