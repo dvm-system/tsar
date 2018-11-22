@@ -124,7 +124,7 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   for (auto &Loc : newIn)
     (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "OUT:\n";
-  for (auto &Loc : V)
+  for (auto &Loc : LS->getOut())
     (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "[END LIVE]\n";
   );
