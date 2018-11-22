@@ -11,6 +11,7 @@
 #define TSAR_UTILITY_H
 
 #include "DIMemoryLocation.h"
+#include "tsar_config.h"
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ADT/Optional.h>
@@ -21,6 +22,16 @@
 #include <tuple>
 #include <bcl/convertible_pair.h>
 #include <bcl/tagged.h>
+
+#if !defined LLVM_RELEASE_BUILD && defined TSAR_ENABLE_LLVM_DUMP
+/// Use this macro if dump() is called for LLVM objects. Otherwise, link-time
+/// errors occur if configuration of LLVM build is not Debug.
+# define TSAR_LLVM_DUMP(X) do { X; } while (false)
+#else
+/// Use this macro if dump() is called for LLVM objects. Otherwise, link-time
+/// errors occur if configuration of LLVM build is not Debug.
+# define TSAR_LLVM_DUMP(X)
+#endif
 
 namespace llvm {
 class BasicBlock;

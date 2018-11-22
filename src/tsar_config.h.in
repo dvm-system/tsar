@@ -20,5 +20,6 @@
 #cmakedefine lp_solve_FOUND
 #cmakedefine LLVM_DEBUG_BUILD @LLVM_DEBUG_BUILD@
 #cmakedefine LLVM_RELEASE_BUILD @LLVM_RELEASE_BUILD@
+#cmakedefine TSAR_ENABLE_LLVM_DUMP
 
 #endif//TSAR_CONFIG_H

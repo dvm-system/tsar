@@ -77,6 +77,8 @@ option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 option(TSAR_SHARED "Build shared library for TSAR" OFF)
 
+option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
+
 set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
 set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/projects/compiler-rt")
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")

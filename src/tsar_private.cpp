@@ -228,7 +228,7 @@ public:
   void print(raw_ostream &OS) { mDptr.for_each(DumpFunctor{ this, OS }); }
 
   /// Print information about dependencies.
-  void dump() { print(dbgs()); dbgs() << "\n"; }
+  LLVM_DUMP_METHOD void dump() { print(dbgs()); dbgs() << "\n"; }
 
 private:
   /// This functor updates specified dependence description mDep.
@@ -411,11 +411,8 @@ void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
-    LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop");
-#ifndef LLVM_RELEASE_BUILD
-    L->getLoop()->dump();
-#endif
-    LLVM_DEBUG(
+    LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop ";
+      TSAR_LLVM_DUMP(L->getLoop()->dump());
       if (DebugLoc DbgLoc = L->getLoop()->getStartLoc()) {
         dbgs() << " at ";
         DbgLoc.print(dbgs());
@@ -530,9 +527,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
         if (auto D = mDepInfo->depends(*SrcItr, *DstItr, true)) {
           LLVM_DEBUG(
             dbgs() << "[PRIVATE]: dependence found: ";
-            D->dump(dbgs());
-            (**SrcItr).dump();
-            (**DstItr).dump();
+            TSAR_LLVM_DUMP(D->dump(dbgs()));
+            TSAR_LLVM_DUMP((**SrcItr).dump());
+            TSAR_LLVM_DUMP((**DstItr).dump());
           );
           if (!D->isAnti() && !D->isFlow() && !D->isOutput()) {
             LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");

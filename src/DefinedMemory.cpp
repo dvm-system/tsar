@@ -221,7 +221,7 @@ void intializeDefUseSetLog(
   dbgs() << "[DEFUSE] Def/Use locations for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
-    cast<DFBlock>(N).getBlock()->dump();
+    TSAR_LLVM_DUMP(cast<DFBlock>(N).getBlock()->dump());
   } else if (isa<DFEntry>(N) || isa<DFExit>(N) || isa<DFLatch>(N)) {
     dbgs() << "an empty boundary basic block:\n";
   } else {
@@ -244,7 +244,7 @@ void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In,
   dbgs() << "[TRANSFER REACH] Transfer function for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
-    cast<DFBlock>(N).getBlock()->dump();
+    TSAR_LLVM_DUMP(cast<DFBlock>(N).getBlock()->dump());
   } else if (isa<DFEntry>(N) || isa<DFExit>(N) || isa<DFLatch>(N)) {
     dbgs() << "an empty boundary basic block:\n";
   } else {

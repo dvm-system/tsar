@@ -357,7 +357,7 @@ void DIMemoryHandleBase::memoryIsDeleted(DIMemory *M) {
   if (M->hasMemoryHandle()) {
 #ifndef NDEBUG
     dbgs() << "While deleting: ";
-    M->getAsMDNode()->dump();
+    TSAR_LLVM_DUMP(M->getAsMDNode()->dump());
     if (M->getEnv()[M]->getKind() == Assert)
       llvm_unreachable("An asserting memory handle still pointed to this memory!");
 #endif
@@ -400,9 +400,9 @@ void DIMemoryHandleBase::memoryIsRAUWd(DIMemory *Old, DIMemory *New) {
       switch (Entry->getKind()) {
       case Weak:
         dbgs() << "After RAUW from ";
-        Old->getAsMDNode()->dump();
+        TSAR_LLVM_DUMP(Old->getAsMDNode()->dump());
         dbgs() << "to ";
-        New->getAsMDNode()->dump();
+        TSAR_LLVM_DUMP(New->getAsMDNode()->dump());
         llvm_unreachable("A weak value handle still pointed to the"
                          " old value!\n");
       default:
@@ -1406,7 +1406,7 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
 void CorruptedMemoryResolver::merge(
     CorruptedMemoryItem *LHS, CorruptedMemoryItem *RHS) {
   assert(LHS && RHS && "Merged items must not be null!");
-  LLVM_DEBUG("[DI ALIAS TREE]: merge two corrupted lists");
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge two corrupted lists\n");
   if (LHS == RHS)
     return;
   LHS->addSuccessor(RHS);

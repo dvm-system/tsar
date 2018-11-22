@@ -56,5 +56,7 @@ void LocationDFValue::print(raw_ostream &OS, const DominatorTree *DT) const {
   }
 }
 
-void LocationDFValue::dump(const DominatorTree *DT) const { print(dbgs(), DT); }
+LLVM_DUMP_METHOD void LocationDFValue::dump(const DominatorTree *DT) const {
+  print(dbgs(), DT);
+}
 }
