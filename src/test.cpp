@@ -2,7 +2,6 @@
 #include <list>
 #include <iterator>
 #include <string>
-#include <set>
 #include "tsar_transformation.h"
 #include <llvm/Support/raw_ostream.h>
 #include <clang/Rewrite/Core/Rewriter.h>
@@ -10,14 +9,15 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include <clang/AST/ASTContext.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Support/Path.h>
 #include <llvm/IR/Module.h>
 #include "tsar_query.h"
 #include "tsar_pragma.h"
-
+#include "Diagnostic.h"
+#include "NoMacroAssert.h"
+#include <algorithm>
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
@@ -38,7 +38,7 @@ INITIALIZE_PASS_IN_GROUP_END  (testpass,"Korchagintestpass",
 void testpass::getAnalysisUsage(AnalysisUsage & AU) const{
 	//указание зависимости
 	AU.addRequired<TransformationEnginePass>();
-	//AU.setPreservesAll();//проход ничего не меняет
+	AU.setPreservesAll();//проход ничего не меняет
 }
 
 ModulePass * llvm::createtestpass(){
@@ -48,7 +48,8 @@ ModulePass * llvm::createtestpass(){
 class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 	public:
 	explicit DeclVisitor(tsar::TransformationContext * a):
-		mRewriter(a->getRewriter()){}
+		mRewriter(a->getRewriter()),
+		mTfmCtx(a) {}
 	//это вспомогательная функция, вызывается в переопределениях
 	void clr_mLstdel(){
 		auto decl=mLstdel.back();
@@ -99,7 +100,6 @@ class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 		auto it=mChange.find(ptr);
 		if (it!=mChange.end()){
 			mRewriter.ReplaceText(V->getLocation(),Name.length(), it->second);
-			errs()<<"Replace "<<Name<<" to "<<it->second;
 		}
 		return true;
 	}
@@ -123,7 +123,6 @@ class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 			mRewriter.ReplaceText(V->getLocation(),Name.length(), Buf);
 		}
 		else mNames.insert(Name);
-		errs()<<"VISIT VARDECL\n";
 		return true;
 	}
 	//для отладки
@@ -145,8 +144,10 @@ class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 	//таблица соотвествий для VarDecl и замен имен
 	std::map<clang::Decl*,std::string> mChange;
 	//список тех VarDecl, которые нужно удалить по выходу из траверса
-	std::list<clang::Decl*> mLstdel;
+	std::vector<clang::Decl*> mLstdel;
 	clang::Rewriter &mRewriter;
+	tsar::TransformationContext * mTfmCtx;
+	
 };
 
 //этот визитер обходит дерево в поиске прагмы
@@ -154,30 +155,64 @@ class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
 //CompoundStmt
 class RenameChecker : public RecursiveASTVisitor <RenameChecker>{
 	public:
-	RenameChecker(tsar::TransformationContext * TfmCtx){
-		mTfmCtx=TfmCtx;
-		flag=false;
-	}
+	RenameChecker(tsar::TransformationContext * a):
+		mTfmCtx(a),
+		mRewriter(a->getRewriter()),
+		mContext(a->getContext()),
+		mSrcMgr(mRewriter.getSourceMgr()),
+		mIsMacro(true),
+		mFlag(false) {}
 	bool TraverseCompoundStmt(clang::CompoundStmt * S){
-		if (flag) {
-			flag=false;
+		//проверка на то, что только что была прагма
+		if (mFlag) {
+			mClauses.pop_back();
+			mFlag=false;
+			//проверка на макросы в CompoundStmt, следующий за прагмой
+			if (mIsMacro){
+				mIsMacro=false;
+				StringMap<SourceLocation> mRawMacros;
+				for_each_macro(S,
+				mSrcMgr, mContext.getLangOpts(),
+				mRawMacros, [this](clang::SourceLocation src){toDiag(mContext.getDiagnostics(),src, diag::warn_macro_in_rename); mIsMacro=true;});
+				if (mIsMacro) return true;
+			}
 			DeclVisitor Vis(mTfmCtx);
 			Vis.TraverseCompoundStmt(S);
 			return true;
 		}
-		SmallVector<Stmt *, 1> Clauses;
 		Pragma P(*S);
-		if (findClause(P, ClauseId::Rename, Clauses)) {
-			flag=true;
+		if (findClause(P, ClauseId::Rename, mClauses)) {
+			mFlag=true;
 			return true;
 		}
 		else
-			RecursiveASTVisitor::TraverseCompoundStmt(S);
-		return true;
+		return RecursiveASTVisitor::TraverseCompoundStmt(S);
+	}
+	bool VisitStmt(clang::Stmt * S){
+		if (mFlag) {
+			mFlag=false; 
+			toDiag(mContext.getDiagnostics(),mClauses[0]->getLocStart(),diag::warn_pragma_with_no_body);
+			mClauses.pop_back();
+		}
+		return RecursiveASTVisitor::VisitStmt(S);
+	}
+	bool VisitDecl(clang::Decl * D){
+		if (mFlag) {
+			mFlag=false;
+			toDiag(mContext.getDiagnostics(),mClauses[0]->getLocStart(),diag::warn_pragma_with_no_body);
+			mClauses.pop_back();
+		}
+		return RecursiveASTVisitor::VisitDecl(D);
 	}
 	private:
 	tsar::TransformationContext * mTfmCtx;
-	bool flag;
+	
+	clang::ASTContext & mContext;
+	clang::Rewriter &mRewriter;
+	clang::SourceManager & mSrcMgr;
+	llvm::SmallVector<Stmt *,1> mClauses;
+	bool mIsMacro;
+	bool mFlag;
 };
 
 bool testpass::runOnModule(Module & F){
