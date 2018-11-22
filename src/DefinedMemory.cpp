@@ -203,14 +203,14 @@ private: \
 };
 
 ADD_ACCESS_FUNCTOR(AddDefFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addDef(Loc), mDU.addMayDef(Loc))
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addDef(Loc))
 ADD_ACCESS_FUNCTOR(AddMayDefFunctor, AddKnownAccessFunctor,
   const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc))
 ADD_ACCESS_FUNCTOR(AddUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc))
 ADD_ACCESS_FUNCTOR(AddDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
-  mDU.addDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addDef(Loc); mDU.addUse(Loc))
 ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
   mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
