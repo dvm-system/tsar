@@ -48,6 +48,8 @@ tsar_tablegen(Directives.gen -gen-tsar-directives-defs
   SOURCE Directives.td
   TARGET DirectivesGen)
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
+set_target_properties(tsar PROPERTIES
+  COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 add_dependencies(tsar DiagnosticKinds IntrinsicsGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
