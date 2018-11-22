@@ -223,8 +223,8 @@ include_directories(${LLVM_INCLUDE_DIRS})
 
 if(PACKAGE_LLVM)
   list(APPEND CMAKE_MODULE_PATH ${LLVM_BINARY_DIR}/lib/cmake/llvm)
-  include(AddLLVM.cmake)
-  include(TableGen.cmake)
+  include(AddLLVM)
+  include(TableGen)
   link_directories(${LLVM_LIBRARY_DIRS})
 endif()
 
