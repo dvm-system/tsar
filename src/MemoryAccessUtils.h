@@ -57,10 +57,12 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
       case llvm::Intrinsic::assume:
         return;
       }
-      foreachIntrinsicMemArg(*II, [&CS, &TLI, &Func](unsigned Idx) {
+      bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
+      foreachIntrinsicMemArg(*II, [IsMarker, &CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),
-          Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
-          CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
+          Idx,
+          (CS.doesNotReadMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May,
+          (CS.onlyReadsMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May);
       });
     } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
       foreachLibFuncMemArg(LibId, [&CS, &TLI, &Func](unsigned Idx) {

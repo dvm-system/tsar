@@ -19,6 +19,17 @@
 #include <llvm/IR/IntrinsicInst.h>
 
 namespace tsar {
+/// Returns 'true' if a specified intrinsic indicates some information about
+/// memory objects only and does not access the memory.
+inline bool isMemoryMarkerIntrinsic(llvm::Intrinsic::ID Id) noexcept {
+  switch (Id) {
+  case llvm::Intrinsic::lifetime_start: case llvm::Intrinsic::lifetime_end:
+  case llvm::Intrinsic::invariant_start: case llvm::Intrinsic::invariant_end:
+    return true;
+  }
+  return false;
+}
+
 /// \brief This proposes traits of some known intrinsic functions.
 ///
 /// This class should be specialized by different function ids.

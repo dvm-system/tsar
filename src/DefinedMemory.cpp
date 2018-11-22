@@ -311,6 +311,13 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     }
     if (!I.mayReadOrWriteMemory())
       continue;
+    // TODO (kaniandr@gmail.com): LLVM analysis says that memory marker
+    // intrinsics may access memory, so we exclude these intrinsics from
+    // analysis manually. Is it correct? For example, may be we should set that
+    // 'lifetime' intrinsics write memory?
+    if (auto II = llvm::dyn_cast<IntrinsicInst>(&I))
+      if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+        continue;
     // 1. Must/may def-use information will be set for location accessed in a
     // current instruction.
     // 2. Must/may def-use information will be set for all explicitly mentioned
