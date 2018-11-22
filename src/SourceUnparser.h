@@ -106,6 +106,8 @@ public:
     case TOKEN_IDENTIFIER: case TOKEN_UCONST: case TOKEN_UNKNOWN: return 3;
     case TOKEN_PARENTHESES_LEFT: case TOKEN_PARENTHESES_RIGHT: return 4;
     }
+    llvm_unreachable("Unknown token!");
+    return 0;
   }
 
   /// Returns name of an identifier from getIdentifiers() list.
