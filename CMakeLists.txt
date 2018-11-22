@@ -213,7 +213,7 @@ llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 set(CLANG_LIBS
   clangTooling clangCodeGen clangFrontend clangDriver clangSerialization
   clangParse clangSema clangAnalysis clangRewrite clangEdit clangAST clangLex
-  clangBasic clangASTMatchers clangFormat clangToolingCore)
+  clangBasic clangASTMatchers clangFormat clangToolingCore clangToolingInclusions)
 
 if(NOT PACKAGE_LLVM)
   list(APPEND LLVM_INCLUDE_DIRS
