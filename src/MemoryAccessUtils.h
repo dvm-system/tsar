@@ -50,13 +50,6 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
       llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
     llvm::LibFunc LibId;
     if (auto II = llvm::dyn_cast<IntrinsicInst>(CS.getInstruction())) {
-      /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
-      /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
-      switch (II->getIntrinsicID()) {
-      case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
-      case llvm::Intrinsic::assume:
-        return;
-      }
       bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
       foreachIntrinsicMemArg(*II, [IsMarker, &CS, &TLI, &Func](unsigned Idx) {
         Func(*CS.getInstruction(), MemoryLocation::getForArgument(CS, Idx, TLI),

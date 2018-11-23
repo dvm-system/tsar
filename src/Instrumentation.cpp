@@ -15,6 +15,7 @@
 #include "CanonicalLoop.h"
 #include "Intrinsics.h"
 #include "tsar_memory_matcher.h"
+#include "KnownFunctionTraits.h"
 #include "MetadataUtils.h"
 #include "tsar_pass_provider.h"
 #include "tsar_transformation.h"
@@ -598,13 +599,13 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
 }
 
 void Instrumentation::visitCallSite(llvm::CallSite CS) {
-  /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
-  /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
   switch (CS.getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
-  case llvm::Intrinsic::assume:
+  case llvm::Intrinsic::dbg_addr:
     return;
   }
+  if (isMemoryMarkerIntrinsic(CS.getIntrinsicID()))
+    return;
   DIStringRegister::IdTy FuncIdx = 0;
   if (auto *Callee = llvm::dyn_cast<llvm::Function>(
         CS.getCalledValue()->stripPointerCasts())) {
@@ -949,13 +950,13 @@ void Instrumentation::regFunctions(Module& M) {
     }
     if (F.getMetadata("sapfor.da"))
       continue;
-    /// TODO (kaniandr@gmail.com): may be some other intrinsics also should be
-    /// ignored, see llvm::AliasSetTracker::addUnknown() for details.
     switch (F.getIntrinsicID()) {
     case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
-    case llvm::Intrinsic::assume:
+    case llvm::Intrinsic::dbg_addr:
       continue;
     }
+    if (isMemoryMarkerIntrinsic(F.getIntrinsicID()))
+      continue;
     auto Idx = mDIStrings.regItem(&F);
     regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),
       F.getSubprogram(), Idx, M);

@@ -298,13 +298,16 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
       if (!Op->getType() || !Op->getType()->isPointerTy())
         continue;
+      // Function is a first parameter of 'call' instruction, so we should
+      // ignore intrinsics here.
       if (auto F = dyn_cast<Function>(Op))
-        /// TODO (kaniandr@gmail.com): may be some other intrinsics also should
-        /// be ignored, see llvm::AliasSetTracker::addUnknown() for details.
         switch (F->getIntrinsicID()) {
-        default: break;
+        default:
+          if (isMemoryMarkerIntrinsic(F->getIntrinsicID()))
+            continue;
+          break;
         case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
-        case Intrinsic::assume:
+        case Intrinsic::dbg_addr:
           continue;
         }
       DU->addAddressAccess(Op);

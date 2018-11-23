@@ -25,6 +25,7 @@ inline bool isMemoryMarkerIntrinsic(llvm::Intrinsic::ID Id) noexcept {
   switch (Id) {
   case llvm::Intrinsic::lifetime_start: case llvm::Intrinsic::lifetime_end:
   case llvm::Intrinsic::invariant_start: case llvm::Intrinsic::invariant_end:
+  case llvm::Intrinsic::sideeffect: case llvm::Intrinsic::assume:
     return true;
   }
   return false;
