@@ -29,6 +29,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeAliasTreeOnlyPrinterPass(Registry);
   initializeDIAliasTreePrinterPass(Registry);
   initializePrivateRecognitionPassPass(Registry);
+  initializeDIDependencyAnalysisPassPass(Registry);
   initializeTransformationEnginePassPass(Registry);
   initializeInstrumentationPassPass(Registry);
   initializeLoopMatcherPassPass(Registry);
@@ -51,6 +52,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeEarlyCSELegacyPassPass(Registry);
   initializeLoopSimplifyCFGLegacyPassPass(Registry);
   initializeSROALegacyPassPass(Registry);
+  initializeInstCombine(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {

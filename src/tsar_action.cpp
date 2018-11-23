@@ -47,6 +47,7 @@
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils.h>
 #include <memory>
 
 using namespace clang;
@@ -129,7 +130,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createDILoopRetrieverPass());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
-  //Passes.add(createDIMemoryTraitPoolStorage());
+  Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
   // Preliminary analysis of privatizable variables. This analysis is necessary
   // to prevent lost of result of optimized values. The memory promotion
@@ -138,30 +139,35 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // Memory promotion removes P, so X will be recognized as private variable.
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
-  Passes.add(createPrivateRecognitionPass());
+  Passes.add(createDIDependencyAnalysisPass());
   addPrint(BeforeTfmAnalysis);
   addOutput();
-  // Perform SROA in repeat variable privatization. After that reduction and
+  // Perform SROA and repeat variable privatization. After that reduction and
   // induction recognition will be performed. Flow/anti/output dependencies
   // also analyses.
   Passes.add(createCFGSimplificationPass());
-  Passes.add(createInstructionCombiningPass());
+  // Do not add 'instcombine' here, because in this case some metadata may be
+  // lost after SROA (for example, if a promoted variable is a structure).
+  // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
   Passes.add(createEarlyCSEPass());
   Passes.add(createCFGSimplificationPass());
   // This is necessary to combine multiple GEPs into a single GEP. This allows
   // dependency analysis works without delinearization.
   Passes.add(createInstructionCombiningPass());
+  Passes.add(createLoopSimplifyPass());
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
-  Passes.add(createPrivateRecognitionPass());
+  Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterSroaAnalysis);
   addOutput();
   // Perform loop rotation to enable reduction recognition if for-loops.
   Passes.add(createLoopRotatePass());
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());
-  Passes.add(createPrivateRecognitionPass());
+  Passes.add(createLoopSimplifyPass());
+  Passes.add(createLCSSAPass());
+  Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
   addOutput();
   Passes.add(createVerifierPass());

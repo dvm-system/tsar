@@ -84,6 +84,15 @@ ImmutablePass * createDIMemoryEnvironmentStorage();
 /// Initializes wrapper to access debug-level memory environment.
 void initializeDIMemoryEnvironmentWrapperPass(PassRegistry &Registry);
 
+/// Initializes storage of metadata-level pool of memory traits.
+void initializeDIMemoryTraitPoolStoragePass(PassRegistry &Registry);
+
+/// Creates storage of metadata-level pool of memory traits.
+ImmutablePass * createDIMemoryTraitPoolStorage();
+
+/// Initializes wrapper to access metadata-level pool of memory traits.
+void initializeDIMemoryTraitPoolWrapperPass(PassRegistry &Registry);
+
 /// Initializes a pass to display alias tree.
 void initializeAliasTreeViewerPass(PassRegistry &Registry);
 
@@ -126,6 +135,14 @@ void initializePrivateRecognitionPassPass(PassRegistry &Registry);
 /// Creates a pass to analyze private variables.
 FunctionPass * createPrivateRecognitionPass();
 
+/// Initializes a pass to analyze private variables (at metadata level).
+void initializeDIDependencyAnalysisPassPass(PassRegistry &Registry);
+
+/// \brief Creates a pass to classify data dependency at metadata level.
+///
+/// This includes privatization, reduction and induction variable recognition
+/// and flow/anti/output dependencies exploration.
+FunctionPass * createDIDependencyAnalysisPass();
 /// Initializes a pass to fetch private variables before they will be promoted
 /// to registers or removed.
 void initializeFetchPromotePrivatePassPass(PassRegistry &Registry);

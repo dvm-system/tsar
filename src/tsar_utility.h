@@ -64,6 +64,10 @@ struct Sibling {};
 
 /// This tag is used to implement a sequence of nodes which is treated as a pool.
 struct Pool {};
+
+/// This tag is used to provide access to a set of traits of a region.
+struct Region {};
+
 /// Merges elements from a specified range using a specified delimiter, put
 /// result to a specified buffer and returns reference to it.
 template<class ItrT>

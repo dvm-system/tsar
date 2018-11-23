@@ -182,6 +182,9 @@ public:
     return B;
   }
 
+  /// Returns true if there are no values which are bound to this location.
+  bool emptyBinding() const { return mValues.empty(); }
+
   /// Returns iterator that points to the beginning of the bound values list.
   iterator begin() const { return mValues.begin(); }
 
