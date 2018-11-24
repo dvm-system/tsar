@@ -95,9 +95,9 @@ macro(sapfor_install_llvm)
         # in case of MSVC. CMake does not substitute variable $(Configuration)
         # and it is presented in cmake_install.cmake. So, we manually generate
         # path to a build library.
-        set(PROFILE_LIB_PATH lib/clang/${LLVM_VERSION}/windows)
+        set(PROFILE_LIB_PATH lib/clang/${LLVM_VERSION}/lib/windows/)
         install(PROGRAMS
-          ${LLVM_BINARY_DIR}/$<CONFIG>/${PROFILE_LIB_PATH}/clang_rt.profile-${DEFAULT_ARCH}>
+          ${LLVM_BINARY_DIR}/$<CONFIG>/${PROFILE_LIB_PATH}/$<TARGET_FILE_NAME:clang_rt.profile-${DEFAULT_ARCH}>
           DESTINATION ${PROFILE_LIB_PATH})
       else()
         install(PROGRAMS $<TARGET_FILE:clang_rt.profile-${DEFAULT_ARCH}> DESTINATION lib)
