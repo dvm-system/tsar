@@ -88,35 +88,92 @@ namespace tsar {
       mBasePtr(BasePtr) {}
 
     // to access all elements
-    iterator begin();
-    iterator end();
-    const_iterator cbegin() const;
-    const_iterator cend() const;
-    std::size_t size() const;
-    bool empty() const;
+    iterator begin() {
+      return mElements.begin();
+    }
 
-    Element * getElement(std::size_t Idx);
+    iterator end() {
+      return mElements.end();
+    }
 
-    void pushBack(const Element &);
-    void pushBack(Element &&);
-    void emplaceBack(llvm::Value *Ptr, const ExprList &Subscript, bool isValid = true);
-    void emplaceBack(llvm::Value *Ptr, ExprList &&Subscript, bool isValid = true);
+    const_iterator cbegin() const {
+      return mElements.cbegin();
+    }
 
-    void clearDimensions();
+    const_iterator cend() const {
+      return mElements.cend();
+    }
 
-    void resizeDimensions(std::size_t Size);
+    std::size_t size() const {
+      return mElements.size();
+    }
 
-    void setDimension(std::size_t DimIdx, const llvm::SCEV *Expr);
-    const llvm::SCEV * getDimension(std::size_t DimIdx);
-    const ExprList & getDimensions() const;
-    std::size_t getDimensionsCount() const;
-    bool isDimensionsEmpty() const;
+    bool empty() const {
+      return mElements.empty();
+    }
 
-    llvm::Value * getBase() const;
+    Element * getElement(std::size_t Idx) {
+      if (Idx >= 0 && Idx < mElements.size()) {
+        return &mElements[Idx];
+      }
+      return nullptr;
+    }
 
-    bool isValid() const;
+    void pushBack(const Element &Access) {
+      mElements.push_back(Access);
+    }
+    void pushBack(Element &&Access) {
+      mElements.push_back(std::move(Access));
+    }
+ 
+    template<class... ArgTy> void emplaceBack(ArgTy &&...Args) {
+      mElements.emplace_back(std::forward<ArgTy>(Args)...);
+    }
 
-    void setValid(bool Valid);
+    void clearDimensions() {
+      mDims.clear();
+    }
+
+    void resizeDimensions(std::size_t Size) {
+      mDims.resize(Size);
+    }
+
+    void setDimension(std::size_t DimIdx, const llvm::SCEV *Expr) {
+      if (DimIdx >= 0 && DimIdx < mDims.size()) {
+        mDims[DimIdx] = Expr;
+      }
+    }
+
+    const llvm::SCEV * getDimension(std::size_t DimIdx) {
+      if (DimIdx >= 0 && DimIdx < mDims.size()) {
+        return mDims[DimIdx];
+      }
+      return nullptr;
+    }
+
+    const ExprList & getDimensions() const {
+      return mDims;
+    }
+
+    std::size_t getDimensionsCount() const {
+      return mDims.size();
+    }
+
+    bool isDimensionsEmpty() const {
+      return mDims.empty();
+    }
+
+    llvm::Value * getBase() const {
+      return mBasePtr;
+    }
+
+    bool isValid() const {
+      return mIsArrayValid;
+    }
+
+    void setValid(bool Valid) {
+      mIsArrayValid = Valid;
+    }
 
   private:
     llvm::Value *mBasePtr;
@@ -133,12 +190,20 @@ namespace tsar {
 namespace llvm {
 
 template<> struct DenseMapInfo<tsar::Array> {
-  static unsigned getHashValue(const tsar::Array Arr) {
+  static unsigned getHashValue(const tsar::Array &Arr) {
     return DenseMapInfo<Value *>::getHashValue(Arr.getBase());
   }
 
-  static bool isEqual(const tsar::Array LHS, const tsar::Array RHS) {
+  static bool isEqual(const tsar::Array &LHS, const tsar::Array &RHS) {
     return DenseMapInfo<Value *>::isEqual(LHS.getBase(), RHS.getBase());
+  }
+
+  static unsigned getHashValue(llvm::Value *Arr) {
+    return DenseMapInfo<Value *>::getHashValue(Arr);
+  }
+
+  static bool isEqual(llvm::Value *LHS , const tsar::Array &RHS) {
+    return DenseMapInfo<Value *>::isEqual(LHS, RHS.getBase());
   }
 
   static tsar::Array getEmptyKey() {
@@ -172,6 +237,11 @@ public:
     mArrays.clear();
     mElements.clear();
   }
+
+  const ArraySet & getAnalyzedArrays() const {
+    return mArrays;
+  }
+
 private:
   ArraySet mArrays;
   llvm::DenseMap<llvm::Value *, std::pair<tsar::Array *, std::size_t>> mElements;
@@ -198,6 +268,8 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
+  void print(raw_ostream &OS, const Module *M) const override;
+
   const DelinearizeInfo & getDelinearizeInfo() const {
     return mDelinearizeInfo;
   }
@@ -206,5 +278,6 @@ private:
   DelinearizeInfo mDelinearizeInfo;
 };
 }
+
 
 #endif //TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
