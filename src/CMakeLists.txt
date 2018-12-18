@@ -11,7 +11,7 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   Directives.cpp ClangUtils.cpp GlobalInfoExtractor.cpp ClangFormatPass.cpp
   NoMacroAssert.cpp DILoopRetriever.cpp DIMemoryLocation.cpp
   SourceUnparser.cpp SourceUnparserUtils.cpp DIEstimateMemory.cpp
-  DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp test.cpp)
+  DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp RenameLocal.cpp)
 if (TSAR_SHARED)
   set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
 else()

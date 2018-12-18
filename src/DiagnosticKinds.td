@@ -68,5 +68,4 @@ def note_end_location : Note<"end is here">;
 def err_assert : Error<"assert violation">;
 def note_assert_no_macro : Note<"macro found">;
 
-def warn_macro_in_rename : Warning<"Pragma rename will be ingnored because of macro within">;
-def warn_pragma_with_no_body : Warning<"Pragma haven't body and will be ingnored">;
+def warn_rename_macro_prevent : Warning<"macro prevent renaming">;

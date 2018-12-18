@@ -258,9 +258,11 @@ llvm::ImmutablePass * createImmutableASTImportInfoPass(
 
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 
-//korchagin test pass
-llvm::ModulePass * createtestpass();
-void initializetestpassPass(PassRegistry &Registry);
+/// Creates a pass to perform source-level object renaming.
+llvm::ModulePass * createRenameLocalPass();
+
+/// Initializes a pass to perform source-level object renaming.
+void initializeRenameLocalPassPass(PassRegistry &Registry);
 
 }
 
