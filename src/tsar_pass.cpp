@@ -65,6 +65,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeLoopSimplifyCFGLegacyPassPass(Registry);
   initializeSROALegacyPassPass(Registry);
   initializeInstCombine(Registry);
+  initializeDynResultsIntegrationPassPass(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {

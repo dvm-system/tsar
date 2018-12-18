@@ -94,6 +94,10 @@ ImmutablePass * createDIMemoryTraitPoolStorage();
 /// Initializes wrapper to access metadata-level pool of memory traits.
 void initializeDIMemoryTraitPoolWrapperPass(PassRegistry &Registry);
 
+FunctionPass * createDynResultsIntegrationPass();
+
+void initializeDynResultsIntegrationPassPass(PassRegistry &Registry);
+
 /// Initializes a pass to display alias tree.
 void initializeAliasTreeViewerPass(PassRegistry &Registry);
 
