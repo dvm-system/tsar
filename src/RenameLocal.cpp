@@ -34,6 +34,7 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -45,6 +46,9 @@
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "clang-rename"
 
 char RenameLocalPass::ID = 0;
 
@@ -63,81 +67,16 @@ void RenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.setPreservesAll();
 }
 
-FunctionPass * llvm::createRenameLocalPass() { return new RenameLocalPass(); }
+ModulePass * llvm::createRenameLocalPass() { return new RenameLocalPass(); }
 
 namespace {
-class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
-public:
-  explicit DeclVisitor(tsar::TransformationContext *TfmCtx) :
-    mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()) {}
-
-  bool TraverseFunctionDecl(FunctionDecl *S) {
-    auto Stash = mNames;
-    RecursiveASTVisitor<DeclVisitor>::TraverseFunctionDecl(S);
-    mNames = Stash;
-    return true;
-  }
-
-  bool VisitDeclRefExpr(DeclRefExpr *V) {
-    auto ND = V->getFoundDecl();
-    auto I = mChange.find(ND);
-    if (I != mChange.end()) {
-      std::string Name = ((V->getNameInfo()).getName()).getAsString();
-      mRewriter.ReplaceText(V->getLocation(), Name.length(), I->second);
-    }
-    return true;
-  }
-
-  bool VisitNamedDecl(NamedDecl * V) {
-    std::string Name = V->getName();
-    std::string Buf;
-    unsigned Count = 1;
-    if (mNames.count(Name)) {
-      while (mNames.count(Name + std::to_string(Count))) Count++;
-      Buf = Name + std::to_string(Count);
-      mNames.insert(Name + std::to_string(Count));
-      mChange.try_emplace(V, Buf);
-      mRewriter.ReplaceText(V->getLocation(), Name.length(), Buf);
-    } else {
-      mNames.insert(Name);
-    }
-    return true;
-  }
-
-#ifdef LLVM_DEBUG
-  void printChanges() {
-    dbgs() << "[RENAME]: original and new names in the scope: \n";
-    for (auto &N : mChange)
-      dbgs() << N.first->getName() << "->" << N.second << " ";
-    dbgs() << "\n";
-  }
-
-  void printAllNamesInScope() {
-    dbgs() << "[RENAME]: names which are used in the scope:\n";
-    for (auto &N : mNames)
-      dbgs() << N.first() << " ";
-    dbgs() << "\n";
-  }
-#endif
-
-private:
-  tsar::TransformationContext * mTfmCtx;
-  clang::Rewriter &mRewriter;
-
-  /// List of all names in a scope.
-  StringSet<> mNames;
-
-  /// List of new names of declarations.
-  DenseMap<NamedDecl *, std::string> mChange;
-};
-
 /// The visitor searches a pragma `rename` and performs renaming for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
 class RenameChecker : public RecursiveASTVisitor <RenameChecker> {
 public:
   RenameChecker(TransformationContext &TfmCtx,
-      const ClangGlobalInfoPass::RawInfo &RawInfo) :
+      ClangGlobalInfoPass::RawInfo &RawInfo) :
     mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()) {}
 
@@ -157,9 +96,10 @@ public:
         });
         if (mIsMacro) return true;
       }
-      DeclVisitor Vis(mTfmCtx);
-      Vis.TraverseCompoundStmt(S);
-      return true;
+      mActiveRename = true;
+      auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
+      mActiveRename = false;
+      return Res;
     }
     Pragma P(*S);
     if (findClause(P, ClauseId::Rename, mClauses)) {
@@ -189,31 +129,75 @@ public:
     return RecursiveASTVisitor::VisitDecl(D);
   }
 
+  bool VisitNamedDecl(NamedDecl *ND) {
+    if (mActiveRename) {
+      auto Name = ND->getName();
+      SmallString<32> Buf;
+      if (mRawInfo->Identifiers.count(Name)) {
+        for (unsigned Count = 0;
+          mRawInfo->Identifiers.count((Name + Twine(Count)).toStringRef(Buf));
+          ++Count, Buf.clear());
+        StringRef NewName(Buf.data(), Buf.size());
+        mRawInfo->Identifiers.insert(NewName);
+        mChange.try_emplace(ND, NewName);
+        mRewriter.ReplaceText(ND->getLocation(), Name.size(), NewName);
+      }
+    }
+    return RecursiveASTVisitor::VisitNamedDecl(ND);
+  }
+
+  bool VisitDeclRefExpr(DeclRefExpr *Expr) {
+    if (mActiveRename) {
+      auto ND = Expr->getFoundDecl();
+      auto I = mChange.find(ND);
+      if (I != mChange.end())
+        mRewriter.ReplaceText(
+          Expr->getLocation(), ND->getName().size(), I->second);
+    }
+    return RecursiveASTVisitor::VisitDeclRefExpr(Expr);
+  }
+
+  bool TraverseFunctionDecl(FunctionDecl *FD) {
+    mChange.clear();
+    auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
+    LLVM_DEBUG(printChanges());
+    return Res;
+  }
+
 private:
+#ifdef LLVM_DEBUG
+  void printChanges() {
+    dbgs() << "[RENAME]: original and new names in the scope: \n";
+    for (auto &N : mChange)
+      dbgs() << N.first->getName() << "->" << N.second << " ";
+    dbgs() << "\n";
+  }
+#endif
+
   TransformationContext *mTfmCtx;
-  const ClangGlobalInfoPass::RawInfo *mRawInfo;
+  ClangGlobalInfoPass::RawInfo *mRawInfo;
   clang::Rewriter &mRewriter;
   clang::ASTContext &mContext;
   clang::SourceManager &mSrcMgr;
   SmallVector<Stmt *, 1> mClauses;
   bool mIsMacro = true;
   bool mFlag = false;
+  bool mActiveRename = false;
+
+  /// List of new names of declarations.
+  DenseMap<NamedDecl *, std::string> mChange;
 };
 }
 
-bool RenameLocalPass::runOnFunction(Function &F) {
-  auto M = F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+bool RenameLocalPass::runOnModule(Module &M) {
+  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M->getContext().emitError("can not transform sources"
+    M.getContext().emitError("can not transform sources"
         ": transformation context is not available");
     return false;
   }
-  auto FD = TfmCtx->getDeclForMangledName(F.getName());
-  if (!FD)
-    return false;
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   RenameChecker Vis(*TfmCtx, GIP.getRawInfo());
-  Vis.TraverseDecl(FD);
+  Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   return false;
 }

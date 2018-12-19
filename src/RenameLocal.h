@@ -21,8 +21,8 @@
 // This file declares a pass to perform renaming of objects into a specified
 // scope. The goal of this transformation is to ensure that there is no
 // different objects with the same name at a specified scope. The transformation
-// also guaranties that names of objects in a specified scope do not match any
-// name from an outer scope.
+// also guaranties that names of objects declared in a specified scope do not
+// match any name from other scopes.
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,15 +32,15 @@
 
 namespace llvm {
 /// This pass performs renaming of objects into a specified scope.
-class RenameLocalPass : public FunctionPass, private bcl::Uncopyable {
+class RenameLocalPass : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  RenameLocalPass() : FunctionPass(ID) {
+  RenameLocalPass() : ModulePass(ID) {
     initializeRenameLocalPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnFunction(Function &F) override;
+  bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
