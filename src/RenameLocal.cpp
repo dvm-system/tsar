@@ -88,7 +88,7 @@ public:
     return true;
   }
 
-  bool VisitVarDecl(VarDecl * V) {
+  bool VisitNamedDecl(NamedDecl * V) {
     std::string Name = V->getName();
     std::string Buf;
     unsigned Count = 1;
@@ -124,10 +124,7 @@ private:
   tsar::TransformationContext * mTfmCtx;
   clang::Rewriter &mRewriter;
 
-  /// \brief List of all names in a scope.
-  ///
-  /// TODO (kaniandr@gmail.com): store names of all used objects instead of
-  /// variable names only.
+  /// List of all names in a scope.
   StringSet<> mNames;
 
   /// List of new names of declarations.

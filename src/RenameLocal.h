@@ -24,9 +24,6 @@
 // also guaranties that names of objects in a specified scope do not match any
 // name from an outer scope.
 //
-// At this moment local variables which are declared in a specified scope
-// will be renamed only.
-//
 //===----------------------------------------------------------------------===//
 
 #include "tsar_pass.h"
