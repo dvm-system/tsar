@@ -25,6 +25,7 @@
 #include "RenameLocal.h"
 #include "DFRegionInfo.h"
 #include "Diagnostic.h"
+#include "GlobalInfoExtractor.h"
 #include "NoMacroAssert.h"
 #include "tsar_pragma.h"
 #include "tsar_query.h"
@@ -51,12 +52,14 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(RenameLocalPass,"clang-rename",
   "Source-level Renaming of Local Objects (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass);
+INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass);
 INITIALIZE_PASS_IN_GROUP_END(RenameLocalPass,"clang-rename",
   "Source-level Renaming of Local Objects (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
 
 void RenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
@@ -136,9 +139,10 @@ private:
 /// other warnings.
 class RenameChecker : public RecursiveASTVisitor <RenameChecker> {
 public:
-  RenameChecker(tsar::TransformationContext *TfmCtx) :
-    mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()),
-    mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()) {}
+  RenameChecker(TransformationContext &TfmCtx,
+      const ClangGlobalInfoPass::RawInfo &RawInfo) :
+    mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
+    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()) {}
 
   bool TraverseCompoundStmt(clang::CompoundStmt * S) {
     if (mFlag) {
@@ -148,8 +152,7 @@ public:
       mFlag = false;
       if (mIsMacro) {
         mIsMacro = false;
-        StringMap<SourceLocation> mRawMacros;
-        for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawMacros,
+        for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo->Macros,
           [this](clang::SourceLocation Loc) {
             toDiag(mContext.getDiagnostics(), Loc,
               diag::warn_rename_macro_prevent);
@@ -190,7 +193,8 @@ public:
   }
 
 private:
-  tsar::TransformationContext *mTfmCtx;
+  TransformationContext *mTfmCtx;
+  const ClangGlobalInfoPass::RawInfo *mRawInfo;
   clang::Rewriter &mRewriter;
   clang::ASTContext &mContext;
   clang::SourceManager &mSrcMgr;
@@ -211,7 +215,8 @@ bool RenameLocalPass::runOnFunction(Function &F) {
   auto FD = TfmCtx->getDeclForMangledName(F.getName());
   if (!FD)
     return false;
-  RenameChecker Vis(TfmCtx);
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  RenameChecker Vis(*TfmCtx, GIP.getRawInfo());
   Vis.TraverseDecl(FD);
   return false;
 }
