@@ -202,6 +202,11 @@ private:
 
 bool RenameLocalPass::runOnModule(Module &M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!TfmCtx || !TfmCtx->hasInstance()) {
+    M.getContext().emitError("can not transform sources"
+        ": transformation context is not available");
+    return false;
+  }
   RenameChecker Vis(TfmCtx);
   Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   return false;
