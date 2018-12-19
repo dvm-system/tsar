@@ -35,15 +35,15 @@
 
 namespace llvm {
 /// This pass performs renaming of objects into a specified scope.
-class RenameLocalPass : public ModulePass, private bcl::Uncopyable {
+class RenameLocalPass : public FunctionPass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  RenameLocalPass() : ModulePass(ID) {
+  RenameLocalPass() : FunctionPass(ID) {
     initializeRenameLocalPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnModule(Module &M) override;
+  bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }

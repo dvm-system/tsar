@@ -60,7 +60,7 @@ void RenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.setPreservesAll();
 }
 
-ModulePass * llvm::createRenameLocalPass() { return new RenameLocalPass(); }
+FunctionPass * llvm::createRenameLocalPass() { return new RenameLocalPass(); }
 
 namespace {
 class DeclVisitor : public RecursiveASTVisitor <DeclVisitor> {
@@ -200,14 +200,18 @@ private:
 };
 }
 
-bool RenameLocalPass::runOnModule(Module &M) {
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+bool RenameLocalPass::runOnFunction(Function &F) {
+  auto M = F.getParent();
+  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
+    M->getContext().emitError("can not transform sources"
         ": transformation context is not available");
     return false;
   }
+  auto FD = TfmCtx->getDeclForMangledName(F.getName());
+  if (!FD)
+    return false;
   RenameChecker Vis(TfmCtx);
-  Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
+  Vis.TraverseDecl(FD);
   return false;
 }
