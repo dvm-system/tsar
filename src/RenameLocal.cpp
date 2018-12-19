@@ -68,46 +68,9 @@ public:
   explicit DeclVisitor(tsar::TransformationContext *TfmCtx) :
     mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()) {}
 
-  bool TraverseCompoundStmt(CompoundStmt *S) {
-    int d = mLstdel.size();
-    RecursiveASTVisitor<DeclVisitor>::TraverseCompoundStmt(S);
-    while (mLstdel.size() != d) popDecl();
-    return true;
-  }
-
-  bool TraverseForStmt(ForStmt *S) {
-    int d = mLstdel.size();
-    RecursiveASTVisitor<DeclVisitor>::TraverseForStmt(S);
-    while (mLstdel.size() != d) popDecl();
-    return true;
-  }
-
-  bool TraverseIfStmt(IfStmt *S) {
-    int d = mLstdel.size();
-    RecursiveASTVisitor<DeclVisitor>::TraverseIfStmt(S);
-    while (mLstdel.size() != d) popDecl();
-    return true;
-  }
-
-  bool TraverseWhileStmt(WhileStmt *S) {
-    int d = mLstdel.size();
-    RecursiveASTVisitor<DeclVisitor>::TraverseWhileStmt(S);
-    while (mLstdel.size() != d) popDecl();
-    return true;
-  }
-
-  bool TraverseDoStmt(DoStmt *S) {
-    int d = mLstdel.size();
-    RecursiveASTVisitor<DeclVisitor>::TraverseDoStmt(S);
-    while (mLstdel.size() != d) popDecl();
-    return true;
-  }
-
   bool TraverseFunctionDecl(FunctionDecl *S) {
     auto Stash = mNames;
-    int d = mLstdel.size();
     RecursiveASTVisitor<DeclVisitor>::TraverseFunctionDecl(S);
-    while (mLstdel.size() != d) popDecl();
     mNames = Stash;
     return true;
   }
@@ -131,7 +94,6 @@ public:
       Buf = Name + std::to_string(Count);
       mNames.insert(Name + std::to_string(Count));
       mChange.try_emplace(V, Buf);
-      mLstdel.push_back(V);
       mRewriter.ReplaceText(V->getLocation(), Name.length(), Buf);
     } else {
       mNames.insert(Name);
@@ -156,12 +118,6 @@ public:
 #endif
 
 private:
-  void popDecl() {
-    auto ND = mLstdel.back();
-    mLstdel.pop_back();
-    mChange.erase(ND);
-  }
-
   tsar::TransformationContext * mTfmCtx;
   clang::Rewriter &mRewriter;
 
@@ -173,8 +129,6 @@ private:
 
   /// List of new names of declarations.
   DenseMap<NamedDecl *, std::string> mChange;
-
-  std::vector<NamedDecl *> mLstdel;
 };
 
 /// The visitor searches a pragma `rename` and performs renaming for a scope
