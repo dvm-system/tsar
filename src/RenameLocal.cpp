@@ -96,41 +96,37 @@ public:
         mRewriter.RemoveText(SR, RemoveEmptyLine);
       return true;
     }
-    return RecursiveASTVisitor::TraverseStmt(S);
-  }
-
-  bool TraverseCompoundStmt(clang::CompoundStmt * S) {
-    if (!mClauses.empty()) {
-      // There was a pragma rename, so check absence of macros and perform
-      // renaming.
-      mClauses.clear();
-      bool StashRenameState = mActiveRename;
-      // We do not perform search of macros in case of nested 'rename'
-      // directives and active renaming. The search has been already performed.
-      if (!mActiveRename) {
-        bool HasMacro = false;
-        for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo->Macros,
-          [&HasMacro, this](clang::SourceLocation Loc) {
-            if (!HasMacro) {
-              toDiag(mContext.getDiagnostics(), Loc,
-                diag::warn_rename_macro_prevent);
-              HasMacro = true;
-          }
-        });
-        // We should not stop traverse because some nested rename directives
-        // may exist.
-        if (HasMacro)
-          return RecursiveASTVisitor::TraverseCompoundStmt(S);
-        mActiveRename = true;
-      }
-      auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-      mActiveRename = StashRenameState;
-      return Res;
+    if (mClauses.empty() || !isa<CompoundStmt>(S) &&
+        !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
+      return RecursiveASTVisitor::TraverseStmt(S);
+    // There was a pragma rename, so check absence of macros and perform
+    // renaming.
+    mClauses.clear();
+    bool StashRenameState = mActiveRename;
+    // We do not perform search of macros in case of nested 'rename'
+    // directives and active renaming. The search has been already performed.
+    if (!mActiveRename) {
+      bool HasMacro = false;
+      for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo->Macros,
+        [&HasMacro, this](clang::SourceLocation Loc) {
+          if (!HasMacro) {
+            toDiag(mContext.getDiagnostics(), Loc,
+              diag::warn_rename_macro_prevent);
+            HasMacro = true;
+        }
+      });
+      // We should not stop traverse because some nested rename directives
+      // may exist.
+      if (HasMacro)
+        return RecursiveASTVisitor::TraverseStmt(S);
+      mActiveRename = true;
     }
-    return RecursiveASTVisitor::TraverseCompoundStmt(S);
+    auto Res = RecursiveASTVisitor::TraverseStmt(S);
+    mActiveRename = StashRenameState;
+    return Res;
   }
 
-  bool VisitStmt(clang::Stmt * S) {
+  bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
         diag::warn_unexpected_directive);
@@ -139,7 +135,7 @@ public:
     return RecursiveASTVisitor::VisitStmt(S);
   }
 
-  bool VisitDecl(clang::Decl * D) {
+  bool VisitDecl(Decl * D) {
     if (!mClauses.empty()) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
         diag::warn_unexpected_directive);
