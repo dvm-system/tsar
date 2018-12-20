@@ -78,14 +78,32 @@ public:
   RenameChecker(TransformationContext &TfmCtx,
       ClangGlobalInfoPass::RawInfo &RawInfo) :
     mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
-    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()) {}
+    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
+    mLangOpts(mRewriter.getLangOpts()) {}
+
+  bool TraverseStmt(Stmt *S) {
+    if (!S)
+      return RecursiveASTVisitor::TraverseStmt(S);
+    Pragma P(*S);
+    if (findClause(P, ClauseId::Rename, mClauses)) {
+      llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
+      if (!pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove))
+        toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          diag::warn_remove_directive_in_macro);
+      Rewriter::RewriteOptions RemoveEmptyLine;
+      RemoveEmptyLine.RemoveLineIfEmpty = true;
+      for (auto SR : ToRemove)
+        mRewriter.RemoveText(SR, RemoveEmptyLine);
+      return true;
+    }
+    return RecursiveASTVisitor::TraverseStmt(S);
+  }
 
   bool TraverseCompoundStmt(clang::CompoundStmt * S) {
-    if (mFlag) {
+    if (!mClauses.empty()) {
       // There was a pragma rename, so check absence of macros and perform
       // renaming.
-      mClauses.pop_back();
-      mFlag = false;
+      mClauses.clear();
       bool StashRenameState = mActiveRename;
       // We do not perform search of macros in case of nested 'rename'
       // directives and active renaming. The search has been already performed.
@@ -109,31 +127,23 @@ public:
       mActiveRename = StashRenameState;
       return Res;
     }
-    Pragma P(*S);
-    if (findClause(P, ClauseId::Rename, mClauses)) {
-      mFlag = true;
-      return true;
-    } else {
-      return RecursiveASTVisitor::TraverseCompoundStmt(S);
-    }
+    return RecursiveASTVisitor::TraverseCompoundStmt(S);
   }
 
   bool VisitStmt(clang::Stmt * S) {
-    if (mFlag) {
-      mFlag = false;
-      toDiag(mContext.getDiagnostics(), mClauses[0]->getLocStart(),
+    if (!mClauses.empty()) {
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
         diag::warn_unexpected_directive);
-      mClauses.pop_back();
+      mClauses.clear();
     }
     return RecursiveASTVisitor::VisitStmt(S);
   }
 
   bool VisitDecl(clang::Decl * D) {
-    if (mFlag) {
-      mFlag = false;
-      toDiag(mContext.getDiagnostics(), mClauses[0]->getLocStart(),
+    if (!mClauses.empty()) {
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
         diag::warn_unexpected_directive);
-      mClauses.pop_back();
+      mClauses.clear();
     }
     return RecursiveASTVisitor::VisitDecl(D);
   }
@@ -185,11 +195,11 @@ private:
 
   TransformationContext *mTfmCtx;
   ClangGlobalInfoPass::RawInfo *mRawInfo;
-  clang::Rewriter &mRewriter;
-  clang::ASTContext &mContext;
-  clang::SourceManager &mSrcMgr;
+  Rewriter &mRewriter;
+  ASTContext &mContext;
+  SourceManager &mSrcMgr;
+  const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-  bool mFlag = false;
   bool mActiveRename = false;
 
   /// List of new names of declarations.
