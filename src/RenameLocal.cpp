@@ -86,27 +86,36 @@ public:
       // renaming.
       mClauses.pop_back();
       mFlag = false;
-      if (mIsMacro) {
-        mIsMacro = false;
+      bool StashRenameState = mActiveRename;
+      // We do not perform search of macros in case of nested 'rename'
+      // directives and active renaming. The search has been already performed.
+      if (!mActiveRename) {
+        bool HasMacro = false;
         for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo->Macros,
-          [this](clang::SourceLocation Loc) {
-            toDiag(mContext.getDiagnostics(), Loc,
-              diag::warn_rename_macro_prevent);
-            mIsMacro = true;
+          [&HasMacro, this](clang::SourceLocation Loc) {
+            if (!HasMacro) {
+              toDiag(mContext.getDiagnostics(), Loc,
+                diag::warn_rename_macro_prevent);
+              HasMacro = true;
+          }
         });
-        if (mIsMacro) return true;
+        // We should not stop traverse because some nested rename directives
+        // may exist.
+        if (HasMacro)
+          return RecursiveASTVisitor::TraverseCompoundStmt(S);
+        mActiveRename = true;
       }
-      mActiveRename = true;
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-      mActiveRename = false;
+      mActiveRename = StashRenameState;
       return Res;
     }
     Pragma P(*S);
     if (findClause(P, ClauseId::Rename, mClauses)) {
       mFlag = true;
       return true;
-    } else
+    } else {
       return RecursiveASTVisitor::TraverseCompoundStmt(S);
+    }
   }
 
   bool VisitStmt(clang::Stmt * S) {
@@ -180,7 +189,6 @@ private:
   clang::ASTContext &mContext;
   clang::SourceManager &mSrcMgr;
   SmallVector<Stmt *, 1> mClauses;
-  bool mIsMacro = true;
   bool mFlag = false;
   bool mActiveRename = false;
 
