@@ -32,12 +32,12 @@
 
 namespace llvm {
 /// This pass performs renaming of objects into a specified scope.
-class RenameLocalPass : public ModulePass, private bcl::Uncopyable {
+class ClangRenameLocalPass : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  RenameLocalPass() : ModulePass(ID) {
-    initializeRenameLocalPassPass(*PassRegistry::getPassRegistry());
+  ClangRenameLocalPass() : ModulePass(ID) {
+    initializeClangRenameLocalPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module &M) override;

@@ -50,32 +50,32 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-rename"
 
-char RenameLocalPass::ID = 0;
+char ClangRenameLocalPass::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(RenameLocalPass,"clang-rename",
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangRenameLocalPass,"clang-rename",
   "Source-level Renaming of Local Objects (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass);
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass);
-INITIALIZE_PASS_IN_GROUP_END(RenameLocalPass,"clang-rename",
+INITIALIZE_PASS_IN_GROUP_END(ClangRenameLocalPass,"clang-rename",
   "Source-level Renaming of Local Objects (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
 
-void RenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
+void ClangRenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
-ModulePass * llvm::createRenameLocalPass() { return new RenameLocalPass(); }
+ModulePass * llvm::createClangRenameLocalPass() { return new ClangRenameLocalPass(); }
 
 namespace {
 /// The visitor searches a pragma `rename` and performs renaming for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
-class RenameChecker : public RecursiveASTVisitor <RenameChecker> {
+class ClangRenamer : public RecursiveASTVisitor<ClangRenamer> {
 public:
-  RenameChecker(TransformationContext &TfmCtx,
+  ClangRenamer(TransformationContext &TfmCtx,
       ClangGlobalInfoPass::RawInfo &RawInfo) :
     mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
@@ -182,7 +182,7 @@ public:
 private:
 #ifdef LLVM_DEBUG
   void printChanges() {
-    dbgs() << "[RENAME]: original and new names in the scope: \n";
+    dbgs() << "[RENAME]: original and new names in the scope: ";
     for (auto &N : mChange)
       dbgs() << N.first->getName() << "->" << N.second << " ";
     dbgs() << "\n";
@@ -203,7 +203,7 @@ private:
 };
 }
 
-bool RenameLocalPass::runOnModule(Module &M) {
+bool ClangRenameLocalPass::runOnModule(Module &M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
@@ -211,7 +211,7 @@ bool RenameLocalPass::runOnModule(Module &M) {
     return false;
   }
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  RenameChecker Vis(*TfmCtx, GIP.getRawInfo());
+  ClangRenamer Vis(*TfmCtx, GIP.getRawInfo());
   Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   return false;
 }

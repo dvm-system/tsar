@@ -42,7 +42,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeClangInlinerPassPass(Registry);
   initializeClangFormatPassPass(Registry);
   initializeCopyEliminationPassPass(Registry);
-  initializeRenameLocalPassPass(Registry);
+  initializeClangRenameLocalPassPass(Registry);
   // Initialize checkers.
   initializeClangNoMacroAssertPass(Registry);
   // Initialize necessary LLVM passes.

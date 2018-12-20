@@ -259,10 +259,10 @@ llvm::ImmutablePass * createImmutableASTImportInfoPass(
 void initializeCopyEliminationPassPass(PassRegistry& Registry);
 
 /// Creates a pass to perform source-level object renaming.
-llvm::ModulePass * createRenameLocalPass();
+llvm::ModulePass * createClangRenameLocalPass();
 
 /// Initializes a pass to perform source-level object renaming.
-void initializeRenameLocalPassPass(PassRegistry &Registry);
+void initializeClangRenameLocalPassPass(PassRegistry &Registry);
 
 }
 
