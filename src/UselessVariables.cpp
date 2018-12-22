@@ -80,19 +80,6 @@ public:
     return true;
   }
 
-  bool VisitIfStmt(IfStmt *S) {
-    auto D = S->getConditionVariable();
-    if (D != nullptr) {
-      auto it = mDeadDecls.find( D );
-      if (it != mDeadDecls.end()) {
-        toDiag(mRewriter->getSourceMgr().getDiagnostics(), \
-          (it->first)->getLocation(), diag::warn_remove_useless_variables);
-        mDeadDecls.erase(it);
-      }
-    }
-    return true;
-  }
-
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
