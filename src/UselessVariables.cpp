@@ -31,7 +31,9 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -67,9 +69,25 @@ public:
     return true;
   }
 
+  bool VisitTypeDecl(TypeDecl *D) {
+    auto Itr = mDeadDecls.emplace(D, mScopes.top()).first;
+    assert(Itr != mDeadDecls.end() &&
+      "Unable to insert declaration in the map!");
+    mTypeDecls.try_emplace(D->getTypeForDecl(), Itr);
+    return true;
+  }
+
   bool VisitDeclRefExpr(DeclRefExpr *D) {
-    if (auto VD = dyn_cast<VarDecl>(D->getFoundDecl()))
-      mDeadDecls.erase(VD);
+    mDeadDecls.erase(D->getFoundDecl());
+    return true;
+  }
+
+  bool VisitTypeLoc(TypeLoc TL) {
+    auto DeclItr = mTypeDecls.find(TL.getTypePtr());
+    if (DeclItr != mTypeDecls.end()) {
+      mDeadDecls.erase(DeclItr->second);
+      mTypeDecls.erase(DeclItr);
+    }
     return true;
   }
 
@@ -93,63 +111,50 @@ public:
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
-  bool findCallExpr(Stmt *S) {
-    bool Result = isa<CallExpr>(S);
-    if (!Result) {
-      for (auto I = S->child_begin(), EI = S->child_end(); I != EI; I++) {
-        if (*I != nullptr) {
-          if ((Result = findCallExpr(*I)))
-            return true;
-        }
-      }
+  /// Returns true if there is a call expression inside a specified statement.
+  bool findCallExpr(const Stmt &S) {
+    if (!isa<CallExpr>(S)) {
+      for (auto Child : make_range(S.child_begin(), S.child_end()))
+        if (Child && findCallExpr(*Child))
+          return true;
       return false;
     }
     return true;
   }
 
-  void DelVarsFromCode() {
+  void eliminateDeadDecls() {
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
-      if (!I->first->isLocalVarDecl() && I->first->isLocalVarDeclOrParm()) {
-        toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-          (I->first)->getLocation(), diag::warn_remove_useless_variables);
-        I = mDeadDecls.erase(I);
-      } else {
-        I++;
-      }
-    }
-    //ignore declaration which init by function return value
-    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
-      if (I->first->hasInit()) {
-        if(findCallExpr(I->first->getInit())) {
+      if (auto VD = dyn_cast<VarDecl>(I->first)) {
+        if (!VD->isLocalVarDecl() && VD->isLocalVarDeclOrParm()) {
           toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-            (I->first)->getLocation(), diag::warn_remove_useless_variables);
+            VD->getLocation(), diag::warn_remove_useless_variables);
           I = mDeadDecls.erase(I);
-        } else {
-          ++I;
+          continue;
+        } else if (VD->hasInit() && findCallExpr(*VD->getInit())) {
+          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+            VD->getLocation(), diag::warn_remove_useless_variables);
+          I = mDeadDecls.erase(I);
+          continue;
         }
-      } else {
-        ++I;
       }
+      ++I;
     }
     // Check that all declarations in a group are dead.
-    for (auto I = mMultipleDecls.begin(), EI = mMultipleDecls.end();
-         I != EI; I++) {
-      auto Group = (*I)->getDeclGroup();
-      int GroupSize = 0, DeadNum = 0;
-      for (auto DI = Group.begin(), DEI = Group.end(); DI != DEI; DI++) {
+    for (auto *S : mMultipleDecls) {
+      auto Group = S->getDeclGroup();
+      unsigned GroupSize = 0;
+      SmallVector<NamedDecl *, 8> DeadInGroup;
+      for (auto *D : Group) {
         GroupSize++;
-        auto Itr = mDeadDecls.find(cast<VarDecl>(*DI));
-        if(Itr != mDeadDecls.end())
-          DeadNum++;
+        if (auto ND = dyn_cast<NamedDecl>(D))
+          if (mDeadDecls.count(ND))
+            DeadInGroup.push_back(ND);
       }
-      if (DeadNum != GroupSize) {
-        for (auto DI = Group.begin(), DEI = Group.end(); DI != DEI; DI++) {
-          auto Itr = mDeadDecls.find( cast<VarDecl>(*DI) );
-          if(Itr != mDeadDecls.end()) {
-            toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-              Itr->first->getLocation(), diag::warn_remove_useless_variables);
-            mDeadDecls.erase(Itr);
-          }
+      if (!DeadInGroup.empty() && DeadInGroup.size() != GroupSize) {
+        for (auto *ND : DeadInGroup) {
+          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+            ND->getLocation(), diag::warn_remove_useless_variables);
+          mDeadDecls.erase(ND);
         }
       }
     }
@@ -164,10 +169,11 @@ public:
     dbgs() << "\n";
   }
 
-  std::map <VarDecl*, Stmt*> mDeadDecls;
+  std::map<NamedDecl *, Stmt *> mDeadDecls;
   std::stack<Stmt*> mScopes;
   clang::Rewriter *mRewriter;
   DenseSet<DeclStmt*>mMultipleDecls;
+  DenseMap<const clang::Type *, decltype(mDeadDecls)::const_iterator> mTypeDecls;
 };
 }
 
@@ -203,7 +209,7 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of all dead declarations ";
     Visitor.printRemovedDecls());
-  Visitor.DelVarsFromCode();
+  Visitor.eliminateDeadDecls();
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of removed declarations ";
     Visitor.printRemovedDecls());
