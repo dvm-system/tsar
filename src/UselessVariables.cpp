@@ -1,279 +1,243 @@
-//=== UselessVariables.cpp - High Level Variables Loop Analyzer --*- C++ -*-===//
+//=== UselessVariables.cpp - Dead Declaration Elimination (Clang) *- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
-// This file implements classes to find declarations of uselsess variables
-// in a source code.
+// This file implements a pass to eliminate dead declarations in a source code.
 //
 //===----------------------------------------------------------------------===//
 
-
-
-#include "DFRegionInfo.h"
-#include "Diagnostic.h"
 #include "UselessVariables.h"
+#include "Diagnostic.h"
+#include "GlobalInfoExtractor.h"
+#include "NoMacroAssert.h"
+#include "tsar_query.h"
+#include "tsar_transformation.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include <llvm/ADT/Statistic.h>
-#include <llvm/IR/Function.h>
-#include <llvm/Support/Path.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/Casting.h>
-
-#include "NoMacroAssert.h"
-#include "GlobalInfoExtractor.h"
-#include "tsar_query.h"
-#include "tsar_transformation.h"
-#include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/ADT/DenseSet.h>
-
-
-#include <iostream>
-#include <assert.h>
-#include <typeinfo>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <vector>
 #include <stack>
-#include <map>
 
-
-using namespace llvm;
 using namespace clang;
-
+using namespace llvm;
 using namespace tsar;
 
-
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "useless-vars"
+#define DEBUG_TYPE "clang-de-decls"
 
 char ClangUselessVariablesPass::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(ClangUselessVariablesPass, "clang-useless-vars",
-  "search usless vars (Clang)", false, false,
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangUselessVariablesPass, "clang-de-decls",
+  "Dead Declarations Elimination (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
-
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-
-INITIALIZE_PASS_IN_GROUP_END(ClangUselessVariablesPass, "clang-useless-vars",
-  "search usless vars (Clang)", false, false,
+INITIALIZE_PASS_IN_GROUP_END(ClangUselessVariablesPass, "clang-de-decls",
+  "Dead Declarations Elimination (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 
-
-
 namespace {
-/// This visits and analyzes all for-loops in a source code.
 class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
 public:
-  /// Creates visitor.
-  explicit DeclVisitor(){}
+  explicit DeclVisitor(clang::Rewriter &Rewriter) : mRewriter(&Rewriter) {}
 
   bool VisitVarDecl(VarDecl *D) {
-    pDecls_map.insert(std::pair<VarDecl*, Stmt*>( D, stmt_stack.top() ) );
+    mDeadDecls.emplace(D, mScopes.top());
     return true;
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *D) {
-    if (isa<VarDecl>(D->getFoundDecl())) {
-      auto it = pDecls_map.find( cast<VarDecl>(D->getFoundDecl()) );
-      if(it != pDecls_map.end()) {
-        pDecls_map.erase(it);
-      }
-    }
+    if (auto VD = dyn_cast<VarDecl>(D->getFoundDecl()))
+      mDeadDecls.erase(VD);
     return true;
   }
 
   bool VisitDeclStmt(DeclStmt *S) {
-    auto group = S->getDeclGroup();
+    auto Group = S->getDeclGroup();
     if(!S->isSingleDecl())
-      pGroups_.insert(S);
+      mMultipleDecls.insert(S);
     return true;
   }
 
   bool VisitIfStmt(IfStmt *S) {
     auto D = S->getConditionVariable();
     if (D != nullptr) {
-      auto it = pDecls_map.find( D );
-      if (it != pDecls_map.end()) {
-        toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
+      auto it = mDeadDecls.find( D );
+      if (it != mDeadDecls.end()) {
+        toDiag(mRewriter->getSourceMgr().getDiagnostics(), \
           (it->first)->getLocation(), diag::warn_remove_useless_variables);
-        pDecls_map.erase(it);
+        mDeadDecls.erase(it);
+      }
+    }
+    return true;
+  }
+
+  bool TraverseStmt(Stmt *S) {
+    for (auto I = S->child_begin(), EI = S->child_end(); I != EI; I++) {
+      if (*I != nullptr) {
+        if (isa<ForStmt>(*I) || isa<IfStmt>(*I) || isa<CompoundStmt>(*I) ||
+            isa<DoStmt>(*I) || isa<WhileStmt>(*I))
+          mScopes.push(*I);
+        if (auto DS = dyn_cast<DeclStmt>(*I)) {
+          for (auto DI = DS->decl_begin(), DEI = DS->decl_end();
+               DI != DEI; DI++) {
+            if (*DI && isa<VarDecl>(*DI))
+             this->VisitVarDecl(cast<VarDecl>(*DI));
+          }
+          this->VisitDeclStmt(cast<DeclStmt>(*I));
+        }
+        if (isa<DeclRefExpr>(*I)) {
+          this->VisitDeclRefExpr(cast<DeclRefExpr>(*I));
+        }
+        if (isa<IfStmt>(*I)) {
+          this->VisitIfStmt(cast<IfStmt>(*I));
+        }
+        this->TraverseStmt(*I);
+        if (isa<ForStmt>(*I) || isa<IfStmt>(*I) || isa<CompoundStmt>(*I) ||
+            isa<DoStmt>(*I) || isa<WhileStmt>(*I))
+          mScopes.pop();
       }
     }
     return true;
   }
 
   bool findCallExpr(Stmt *S) {
-    bool result = isa<CallExpr>(S);
-    if (result == false) {
-      for (auto i = S->child_begin(); i != S->child_end(); i++) {
-        if (*i != nullptr) {
-          result = this->findCallExpr(*i);
-          if (result == true)
+    bool Result = isa<CallExpr>(S);
+    if (!Result) {
+      for (auto I = S->child_begin(), EI = S->child_end(); I != EI; I++) {
+        if (*I != nullptr) {
+          if ((Result = findCallExpr(*I)))
             return true;
         }
       }
-      return result;
-    } else
-      return result;
-  }
-
-  bool TraverseStmt(Stmt *S, DataRecursionQueue *Queue=nullptr) {
-    for (auto i = S->child_begin(); i != S->child_end(); i++) {
-
-      if (*i != nullptr) {
-        if ((isa<ForStmt>(*i)) || (isa<IfStmt>(*i)) || (isa<CompoundStmt>(*i)) \
-         || (isa<DoStmt>(*i)) || (isa<WhileStmt>(*i)))
-          stmt_stack.push(*i);
-
-        if (isa<DeclStmt>(*i)) {
-          DeclStmt* d_stmt = cast<DeclStmt>(*i);
-          for (auto j = d_stmt->decl_begin(); j != d_stmt->decl_end(); j++) {
-            if (*j != nullptr) {
-              if( std::string((*j)->getDeclKindName()) == "Var") {
-                this->VisitVarDecl(cast<VarDecl>(*j));
-              }
-            }
-          }
-          this->VisitDeclStmt(cast<DeclStmt>(*i));
-        }
-
-        if (isa<DeclRefExpr>(*i)) {
-          this->VisitDeclRefExpr(cast<DeclRefExpr>(*i));
-        }
-        if (isa<IfStmt>(*i)) {
-          this->VisitIfStmt(cast<IfStmt>(*i));
-        }
-
-        this->TraverseStmt(*i);
-
-        if ((isa<ForStmt>(*i)) || (isa<IfStmt>(*i)) || (isa<CompoundStmt>(*i)) \
-         || (isa<DoStmt>(*i)) || (isa<WhileStmt>(*i)))
-          stmt_stack.pop();
-      }
-
+      return false;
     }
     return true;
   }
 
-
   void DelVarsFromCode() {
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end();) {
-      if (((i->first)->isLocalVarDecl() == 0)  \
-        && ((i->first)->isLocalVarDeclOrParm() == 1)) {
-        toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
-          (i->first)->getLocation(), diag::warn_remove_useless_variables);
-        i = pDecls_map.erase(i);
-      } else
-        i++;
-    }
-
-
-    //ignore declaration which init by function return value
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end();) {
-      if ((i->first)->hasInit()) {
-        if(findCallExpr((i->first)->getInit())) {
-          toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
-            (i->first)->getLocation(), diag::warn_remove_useless_variables);
-          i = pDecls_map.erase(i);
-        } else
-          ++i;
-      } else
-        ++i;
-    }
-
-    //remove decl group of useless variables
-    for (auto i = pGroups_.begin(); i != pGroups_.end(); i++) {
-      auto group = (*i)->getDeclGroup();
-      int group_size = 0, num_useless = 0;
-      for(auto j = group.begin(); j != group.end(); j++) {
-        group_size++;
-        auto it = pDecls_map.find( cast<VarDecl>(*j) );
-        if(it != pDecls_map.end()) {
-          num_useless++;
-        }
+    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
+      if (!I->first->isLocalVarDecl() && I->first->isLocalVarDeclOrParm()) {
+        toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+          (I->first)->getLocation(), diag::warn_remove_useless_variables);
+        I = mDeadDecls.erase(I);
+      } else {
+        I++;
       }
-      if (num_useless != group_size) {
-        for(auto j = group.begin(); j != group.end(); j++) {
-          auto it = pDecls_map.find( cast<VarDecl>(*j) );
-          if(it != pDecls_map.end()) {
-            toDiag(mRewriter_->getSourceMgr().getDiagnostics(), \
-            (it->first)->getLocation(), diag::warn_remove_useless_variables);
-            pDecls_map.erase(it);
+    }
+    //ignore declaration which init by function return value
+    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
+      if (I->first->hasInit()) {
+        if(findCallExpr(I->first->getInit())) {
+          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+            (I->first)->getLocation(), diag::warn_remove_useless_variables);
+          I = mDeadDecls.erase(I);
+        } else {
+          ++I;
+        }
+      } else {
+        ++I;
+      }
+    }
+    // Check that all declarations in a group are dead.
+    for (auto I = mMultipleDecls.begin(), EI = mMultipleDecls.end();
+         I != EI; I++) {
+      auto Group = (*I)->getDeclGroup();
+      int GroupSize = 0, DeadNum = 0;
+      for (auto DI = Group.begin(), DEI = Group.end(); DI != DEI; DI++) {
+        GroupSize++;
+        auto Itr = mDeadDecls.find(cast<VarDecl>(*DI));
+        if(Itr != mDeadDecls.end())
+          DeadNum++;
+      }
+      if (DeadNum != GroupSize) {
+        for (auto DI = Group.begin(), DEI = Group.end(); DI != DEI; DI++) {
+          auto Itr = mDeadDecls.find( cast<VarDecl>(*DI) );
+          if(Itr != mDeadDecls.end()) {
+            toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+              Itr->first->getLocation(), diag::warn_remove_useless_variables);
+            mDeadDecls.erase(Itr);
           }
         }
       }
-
     }
-
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++)
-      mRewriter_->RemoveText((i->first)->getSourceRange());
-    mRewriter_->overwriteChangedFiles();
-
+    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI; I++)
+      mRewriter->RemoveText(I->first->getSourceRange());
+    mRewriter->overwriteChangedFiles();
   }
 
-  void print_decls() {
-    dbgs() << "=======function pass========\n";
-    dbgs() << "######### usless Useless Variables\n";
-    for (auto i = pDecls_map.begin(); i != pDecls_map.end(); i++) {
-      dbgs() << "DenseSet:  " << (i->first)->getNameAsString() \
-      << "  " << (long)(i->first) <<"\n";
+  void printRemovedDecls() {
+    for (auto &D : mDeadDecls) {
+      dbgs() << D.first->getName() << "(" << (ptrdiff_t)(D.first) <<") ";
     }
-    dbgs() << "\n\n";
+    dbgs() << "\n";
   }
 
-  void set_rewriter(clang::Rewriter *Rewriter) {
-    mRewriter_ = Rewriter;
-  }
-
-  std::map<VarDecl*, Stmt*> pDecls_map;
-  std::stack<Stmt*> stmt_stack;
-  clang::Rewriter *mRewriter_;
-  DenseSet<DeclStmt*>pGroups_;
-
+  std::map <VarDecl*, Stmt*> mDeadDecls;
+  std::stack<Stmt*> mScopes;
+  clang::Rewriter *mRewriter;
+  DenseSet<DeclStmt*>mMultipleDecls;
 };
 }
 
-
 bool ClangUselessVariablesPass::runOnFunction(Function &F) {
-  auto M = F.getParent();
+  auto *M = F.getParent();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
-  if (!TfmCtx || !TfmCtx->hasInstance())
+  if (!TfmCtx || !TfmCtx->hasInstance()) {
+    M->getContext().emitError("can not transform sources"
+      ": transformation context is not available");
     return false;
+  }
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
-
-  DeclVisitor Visitor;
-  Visitor.set_rewriter( &(TfmCtx->getRewriter()));
-
-  Visitor.stmt_stack.push(FuncDecl->getBody());
+  DeclVisitor Visitor(TfmCtx->getRewriter());
+  Visitor.mScopes.push(FuncDecl->getBody());
   Visitor.TraverseStmt(FuncDecl->getBody());
-
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-
   //search macros in statement
-  for (auto i = Visitor.pDecls_map.begin(); i != Visitor.pDecls_map.end();) {
-    bool flag = false;
-    for_each_macro(i->second, TfmCtx->getContext().getSourceManager(), \
-      TfmCtx->getContext().getLangOpts(), GIP.getRawInfo().Macros, \
-      [&flag](SourceLocation x){flag = true;});
-    if (flag) {
-      toDiag(Visitor.mRewriter_->getSourceMgr().getDiagnostics(), \
-          (i->first)->getLocation(), diag::warn_remove_useless_variables);
-      i = Visitor.pDecls_map.erase(i);
+  for (auto I = Visitor.mDeadDecls.begin(), EI = Visitor.mDeadDecls.end();
+       I != EI;) {
+    bool HasMacro = false;
+    for_each_macro(I->second, TfmCtx->getContext().getSourceManager(),
+      TfmCtx->getContext().getLangOpts(), GIP.getRawInfo().Macros,
+      [&HasMacro](SourceLocation x) {HasMacro = true; });
+    if (!HasMacro) {
+      ++I;
+    } else {
+      toDiag(Visitor.mRewriter->getSourceMgr().getDiagnostics(),
+          (I->first)->getLocation(), diag::warn_remove_useless_variables);
+      I = Visitor.mDeadDecls.erase(I);
     }
-    else
-      ++i;
   }
-
-  LLVM_DEBUG(Visitor.print_decls());
-
+  LLVM_DEBUG(
+    dbgs() << "[DEAD DECLS ELIMINATION]: list of all dead declarations ";
+    Visitor.printRemovedDecls());
   Visitor.DelVarsFromCode();
-
+  LLVM_DEBUG(
+    dbgs() << "[DEAD DECLS ELIMINATION]: list of removed declarations ";
+    Visitor.printRemovedDecls());
   return false;
 }
 
