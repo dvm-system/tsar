@@ -111,19 +111,26 @@ public:
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
-  /// Returns true if there is a call expression inside a specified statement.
-  bool findCallExpr(const Stmt &S) {
-    if (!isa<CallExpr>(S)) {
-      for (auto Child : make_range(S.child_begin(), S.child_end()))
-        if (Child && findCallExpr(*Child))
-          return true;
-      return false;
-    }
-    return true;
-  }
-
-  void eliminateDeadDecls() {
+  void eliminateDeadDecls(const ClangGlobalInfoPass::RawInfo &RawInfo) {
+    // We should check absence of macros in a transformed scope.
+    DenseMap<Stmt *, SourceLocation> ScopeWithMacro;
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
+      SourceLocation MacroLoc;
+      auto MacroItr = ScopeWithMacro.find(I->second);
+      if (MacroItr == ScopeWithMacro.end()) {
+        for_each_macro(I->second, mRewriter->getSourceMgr(),
+          mRewriter->getLangOpts(), RawInfo.Macros,
+          [&MacroLoc](SourceLocation Loc) { MacroLoc = Loc; });
+        ScopeWithMacro.try_emplace(I->second, MacroLoc);
+      } else {
+        MacroLoc = MacroItr->second;
+      }
+      if (MacroLoc.isValid()) {
+        toDiag(mRewriter->getSourceMgr().getDiagnostics(),
+          I->first->getLocation(), diag::warn_remove_useless_variables);
+        I = mDeadDecls.erase(I);
+        continue;
+      }
       if (auto VD = dyn_cast<VarDecl>(I->first)) {
         if (!VD->isLocalVarDecl() && VD->isLocalVarDeclOrParm()) {
           toDiag(mRewriter->getSourceMgr().getDiagnostics(),
@@ -169,10 +176,22 @@ public:
     dbgs() << "\n";
   }
 
+private:
+  /// Returns true if there is a call expression inside a specified statement.
+  bool findCallExpr(const Stmt &S) {
+    if (!isa<CallExpr>(S)) {
+      for (auto Child : make_range(S.child_begin(), S.child_end()))
+        if (Child && findCallExpr(*Child))
+          return true;
+      return false;
+    }
+    return true;
+  }
+
   std::map<NamedDecl *, Stmt *> mDeadDecls;
   std::stack<Stmt*> mScopes;
   clang::Rewriter *mRewriter;
-  DenseSet<DeclStmt*>mMultipleDecls;
+  DenseSet<DeclStmt*> mMultipleDecls;
   DenseMap<const clang::Type *, decltype(mDeadDecls)::const_iterator> mTypeDecls;
 };
 }
@@ -191,25 +210,10 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   DeclVisitor Visitor(TfmCtx->getRewriter());
   Visitor.TraverseStmt(FuncDecl->getBody());
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  //search macros in statement
-  for (auto I = Visitor.mDeadDecls.begin(), EI = Visitor.mDeadDecls.end();
-       I != EI;) {
-    bool HasMacro = false;
-    for_each_macro(I->second, TfmCtx->getContext().getSourceManager(),
-      TfmCtx->getContext().getLangOpts(), GIP.getRawInfo().Macros,
-      [&HasMacro](SourceLocation x) {HasMacro = true; });
-    if (!HasMacro) {
-      ++I;
-    } else {
-      toDiag(Visitor.mRewriter->getSourceMgr().getDiagnostics(),
-          (I->first)->getLocation(), diag::warn_remove_useless_variables);
-      I = Visitor.mDeadDecls.erase(I);
-    }
-  }
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of all dead declarations ";
     Visitor.printRemovedDecls());
-  Visitor.eliminateDeadDecls();
+  Visitor.eliminateDeadDecls(GIP.getRawInfo());
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of removed declarations ";
     Visitor.printRemovedDecls());
