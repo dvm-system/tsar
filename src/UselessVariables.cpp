@@ -184,7 +184,6 @@ public:
     }
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI; I++)
       mRewriter->RemoveText(I->first->getSourceRange());
-    mRewriter->overwriteChangedFiles();
   }
 
   void printRemovedDecls() {
