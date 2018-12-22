@@ -94,32 +94,16 @@ public:
   }
 
   bool TraverseStmt(Stmt *S) {
-    for (auto I = S->child_begin(), EI = S->child_end(); I != EI; I++) {
-      if (*I != nullptr) {
-        if (isa<ForStmt>(*I) || isa<IfStmt>(*I) || isa<CompoundStmt>(*I) ||
-            isa<DoStmt>(*I) || isa<WhileStmt>(*I))
-          mScopes.push(*I);
-        if (auto DS = dyn_cast<DeclStmt>(*I)) {
-          for (auto DI = DS->decl_begin(), DEI = DS->decl_end();
-               DI != DEI; DI++) {
-            if (*DI && isa<VarDecl>(*DI))
-             this->VisitVarDecl(cast<VarDecl>(*DI));
-          }
-          this->VisitDeclStmt(cast<DeclStmt>(*I));
-        }
-        if (isa<DeclRefExpr>(*I)) {
-          this->VisitDeclRefExpr(cast<DeclRefExpr>(*I));
-        }
-        if (isa<IfStmt>(*I)) {
-          this->VisitIfStmt(cast<IfStmt>(*I));
-        }
-        this->TraverseStmt(*I);
-        if (isa<ForStmt>(*I) || isa<IfStmt>(*I) || isa<CompoundStmt>(*I) ||
-            isa<DoStmt>(*I) || isa<WhileStmt>(*I))
-          mScopes.pop();
-      }
+    if (!S)
+      return true;
+    if (isa<ForStmt>(S) || isa<IfStmt>(S) || isa<CompoundStmt>(S) ||
+        isa<DoStmt>(S) || isa<WhileStmt>(S)) {
+      mScopes.push(S);
+      auto Res = RecursiveASTVisitor::TraverseStmt(S);
+      mScopes.pop();
+      return Res;
     }
-    return true;
+    return RecursiveASTVisitor::TraverseStmt(S);
   }
 
   bool findCallExpr(Stmt *S) {
@@ -212,7 +196,6 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   if (!FuncDecl)
     return false;
   DeclVisitor Visitor(TfmCtx->getRewriter());
-  Visitor.mScopes.push(FuncDecl->getBody());
   Visitor.TraverseStmt(FuncDecl->getBody());
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   //search macros in statement
