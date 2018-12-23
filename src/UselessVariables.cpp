@@ -103,8 +103,7 @@ public:
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
-    if (isa<ForStmt>(S) || isa<IfStmt>(S) || isa<CompoundStmt>(S) ||
-        isa<DoStmt>(S) || isa<WhileStmt>(S)) {
+    if (isa<ForStmt>(S) || isa<CompoundStmt>(S)) {
       mScopes.push(S);
       auto Res = RecursiveASTVisitor::TraverseStmt(S);
       mScopes.pop();
@@ -171,8 +170,19 @@ public:
         }
       }
     }
-    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI; I++)
+    for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI; I++) {
       mRewriter->RemoveText(I->first->getSourceRange());
+      if (I->second && isa<CompoundStmt>(I->second)) {
+        Token SemiTok;
+        auto &SrcMgr = mRewriter->getSourceMgr();
+        auto &LangOpts = mRewriter->getLangOpts();
+        Rewriter::RewriteOptions RemoveEmptyLine;
+        RemoveEmptyLine.RemoveLineIfEmpty = true;
+        if (!getRawTokenAfter(SrcMgr.getFileLoc(I->first->getLocEnd()),
+            SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
+          mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
+      }
+    }
   }
 
   void printRemovedDecls() {
