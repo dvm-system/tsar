@@ -62,7 +62,9 @@ INITIALIZE_PASS_IN_GROUP_END(ClangUselessVariablesPass, "clang-de-decls",
 namespace {
 class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
 public:
-  explicit DeclVisitor(clang::Rewriter &Rewriter) : mRewriter(&Rewriter) {}
+  explicit DeclVisitor(clang::Rewriter &Rewriter) : mRewriter(&Rewriter) {
+    mScopes.push(nullptr); // push global scope
+  }
 
   bool VisitVarDecl(VarDecl *D) {
     mDeadDecls.emplace(D, mScopes.top());
@@ -112,9 +114,24 @@ public:
   }
 
   void eliminateDeadDecls(const ClangGlobalInfoPass::RawInfo &RawInfo) {
-    // We should check absence of macros in a transformed scope.
+    auto &Diags = mRewriter->getSourceMgr().getDiagnostics();
     DenseMap<Stmt *, SourceLocation> ScopeWithMacro;
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
+      if (auto VD = dyn_cast<VarDecl>(I->first)) {
+        if (!VD->isLocalVarDecl() && VD->isLocalVarDeclOrParm()) {
+          toDiag(Diags, VD->getLocation(), diag::warn_disable_de_parameter);
+          I = mDeadDecls.erase(I);
+          continue;
+        } else if (VD->hasInit()) {
+          if (auto Call = findCallExpr(*VD->getInit())) {
+            toDiag(Diags, VD->getLocation(), diag::warn_disable_de);
+            toDiag(Diags, Call->getLocStart(), diag::note_de_call_prevent);
+            I = mDeadDecls.erase(I);
+            continue;
+          }
+        }
+      }
+      assert(I->second && "Scope must not be global!");
       SourceLocation MacroLoc;
       auto MacroItr = ScopeWithMacro.find(I->second);
       if (MacroItr == ScopeWithMacro.end()) {
@@ -126,41 +143,30 @@ public:
         MacroLoc = MacroItr->second;
       }
       if (MacroLoc.isValid()) {
-        toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-          I->first->getLocation(), diag::warn_remove_useless_variables);
+        toDiag(Diags, I->first->getLocation(), diag::warn_disable_de);
+        toDiag(Diags, MacroLoc, diag::note_de_macro_prevent);
         I = mDeadDecls.erase(I);
         continue;
-      }
-      if (auto VD = dyn_cast<VarDecl>(I->first)) {
-        if (!VD->isLocalVarDecl() && VD->isLocalVarDeclOrParm()) {
-          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-            VD->getLocation(), diag::warn_remove_useless_variables);
-          I = mDeadDecls.erase(I);
-          continue;
-        } else if (VD->hasInit() && findCallExpr(*VD->getInit())) {
-          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-            VD->getLocation(), diag::warn_remove_useless_variables);
-          I = mDeadDecls.erase(I);
-          continue;
-        }
       }
       ++I;
     }
     // Check that all declarations in a group are dead.
     for (auto *S : mMultipleDecls) {
       auto Group = S->getDeclGroup();
-      unsigned GroupSize = 0;
+      const Decl *LiveD = nullptr;
       SmallVector<NamedDecl *, 8> DeadInGroup;
       for (auto *D : Group) {
-        GroupSize++;
         if (auto ND = dyn_cast<NamedDecl>(D))
-          if (mDeadDecls.count(ND))
+          if (mDeadDecls.count(ND)) {
             DeadInGroup.push_back(ND);
+            continue;
+          }
+        LiveD = D;
       }
-      if (!DeadInGroup.empty() && DeadInGroup.size() != GroupSize) {
+      if (!DeadInGroup.empty() && LiveD) {
         for (auto *ND : DeadInGroup) {
-          toDiag(mRewriter->getSourceMgr().getDiagnostics(),
-            ND->getLocation(), diag::warn_remove_useless_variables);
+          toDiag(Diags, ND->getLocation(), diag::warn_disable_de);
+          toDiag(Diags, LiveD->getLocation(), diag::note_de_multiple_prevent);
           mDeadDecls.erase(ND);
         }
       }
@@ -178,14 +184,15 @@ public:
 
 private:
   /// Returns true if there is a call expression inside a specified statement.
-  bool findCallExpr(const Stmt &S) {
+  const CallExpr * findCallExpr(const Stmt &S) {
     if (!isa<CallExpr>(S)) {
       for (auto Child : make_range(S.child_begin(), S.child_end()))
-        if (Child && findCallExpr(*Child))
-          return true;
-      return false;
+        if (Child)
+          if (auto Call = findCallExpr(*Child))
+          return Call;
+      return nullptr;
     }
-    return true;
+    return cast<CallExpr>(&S);
   }
 
   std::map<NamedDecl *, Stmt *> mDeadDecls;
@@ -208,7 +215,7 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   if (!FuncDecl)
     return false;
   DeclVisitor Visitor(TfmCtx->getRewriter());
-  Visitor.TraverseStmt(FuncDecl->getBody());
+  Visitor.TraverseDecl(FuncDecl);
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of all dead declarations ";
