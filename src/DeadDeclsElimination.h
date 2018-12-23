@@ -1,4 +1,4 @@
-//=== UselessVariables.h - Dead Declaration Elimination (Clang) --*- C++ -*===//
+//=== DeadDeclsElimination.h - Dead Decls Elimination (Clang) ----*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -24,8 +24,8 @@
 //
 //===---------------------------------------------------------------------===//
 
-#ifndef TSAR_CLANG_USELESS_VARIABLES_H
-#define TSAR_CLANG_USELESS_VARIABLES_H
+#ifndef TSAR_CLANG_DE_DECLS_H
+#define TSAR_CLANG_DE_DECLS_H
 
 #include "tsar_pass.h"
 #include <bcl/utility.h>
@@ -34,16 +34,16 @@
 namespace llvm {
 /// This per-function pass perform source-level elimination of
 /// local dead declarations.
-class ClangUselessVariablesPass : public FunctionPass, private bcl::Uncopyable {
+class ClangDeadDeclsElimination : public FunctionPass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  ClangUselessVariablesPass() : FunctionPass(ID) {
-    initializeClangUselessVariablesPassPass(*PassRegistry::getPassRegistry());
+  ClangDeadDeclsElimination() : FunctionPass(ID) {
+    initializeClangDeadDeclsEliminationPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
-#endif// TSAR_CLANG_USELESS_VARIABLES_H
+#endif//TSAR_CLANG_DE_DECLS_H

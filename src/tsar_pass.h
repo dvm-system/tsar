@@ -264,9 +264,11 @@ llvm::ModulePass * createClangRenameLocalPass();
 /// Initializes a pass to perform source-level object renaming.
 void initializeClangRenameLocalPassPass(PassRegistry &Registry);
 
-void initializeClangUselessVariablesPassPass(PassRegistry &Registry);
+/// Creates a pass to perform elimination of dead declarations.
+FunctionPass * createClangDeadDeclsElimination();
 
-FunctionPass * createClangUselessVariablesPass();
+/// Initializes a pass to perform elimination of dead declarations.
+void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
 }
 
 #endif//TSAR_PASS_H

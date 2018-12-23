@@ -1,4 +1,4 @@
-//=== UselessVariables.cpp - Dead Declaration Elimination (Clang) *- C++ -*===//
+//=== DeadDeclsElimination.cpp - Dead Decls Elimination (Clang) --*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -22,7 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "UselessVariables.h"
+#include "DeadDeclsElimination.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
 #include "NoMacroAssert.h"
@@ -48,14 +48,14 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-de-decls"
 
-char ClangUselessVariablesPass::ID = 0;
+char ClangDeadDeclsElimination::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(ClangUselessVariablesPass, "clang-de-decls",
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangDeadDeclsElimination, "clang-de-decls",
   "Dead Declarations Elimination (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_IN_GROUP_END(ClangUselessVariablesPass, "clang-de-decls",
+INITIALIZE_PASS_IN_GROUP_END(ClangDeadDeclsElimination, "clang-de-decls",
   "Dead Declarations Elimination (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 
@@ -112,6 +112,7 @@ public:
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
+  /// Checks precondition and performs elimination of dead declarations.
   void eliminateDeadDecls(const ClangGlobalInfoPass::RawInfo &RawInfo) {
     auto &Diags = mRewriter->getSourceMgr().getDiagnostics();
     DenseMap<Stmt *, SourceLocation> ScopeWithMacro;
@@ -185,12 +186,13 @@ public:
     }
   }
 
+#ifdef LLVM_DEBUG
   void printRemovedDecls() {
-    for (auto &D : mDeadDecls) {
-      dbgs() << D.first->getName() << "(" << (ptrdiff_t)(D.first) <<") ";
-    }
+    for (auto &D : mDeadDecls)
+      dbgs() << D.first->getName() << "(" << D.first <<") ";
     dbgs() << "\n";
   }
+#endif
 
 private:
   /// Returns true if there is a call expression inside a specified statement.
@@ -213,7 +215,7 @@ private:
 };
 }
 
-bool ClangUselessVariablesPass::runOnFunction(Function &F) {
+bool ClangDeadDeclsElimination::runOnFunction(Function &F) {
   auto *M = F.getParent();
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
@@ -237,12 +239,12 @@ bool ClangUselessVariablesPass::runOnFunction(Function &F) {
   return false;
 }
 
-void ClangUselessVariablesPass::getAnalysisUsage(AnalysisUsage &AU) const {
+void ClangDeadDeclsElimination::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
-FunctionPass *llvm::createClangUselessVariablesPass() {
-  return new ClangUselessVariablesPass();
+FunctionPass *llvm::createClangDeadDeclsElimination() {
+  return new ClangDeadDeclsElimination();
 }
