@@ -67,7 +67,9 @@ void ClangRenameLocalPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.setPreservesAll();
 }
 
-ModulePass * llvm::createClangRenameLocalPass() { return new ClangRenameLocalPass(); }
+ModulePass * llvm::createClangRenameLocalPass() {
+  return new ClangRenameLocalPass();
+}
 
 namespace {
 /// The visitor searches a pragma `rename` and performs renaming for a scope

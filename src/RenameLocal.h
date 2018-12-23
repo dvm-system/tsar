@@ -26,6 +26,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef TSAR_CLANG_RENAME_LOCAL_H
+#define TSAR_CLANG_RENAME_LOCAL_H
+
 #include "tsar_pass.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
@@ -44,3 +47,4 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
+#endif//TSAR_CLANG_RENAME_LOCAL_H
