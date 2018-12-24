@@ -37,4 +37,14 @@ transform_36 - все корректно отработало
 transform_37 - все корректно отработало
 transform_38 - все корректно отработало
 transform_39 - ошибки
-transform_40 -
+transform_40 - все корректно отработало
+transform_41 - все корректно отработало
+transform_42 - ошибки
+transform_43 - все корректно отработало
+transform_44 - ошибки
+transform_45 - ошибки
+transform_46 -
+transform_47 - все корректно отработало
+transform_48 - все корректно отработало
+transform_49 - все корректно отработало
+transform_50 -
