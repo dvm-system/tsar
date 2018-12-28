@@ -171,6 +171,20 @@ bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
   return false;
 }
 
+bool ExternalRewriter::InsertText(SourceLocation Loc, StringRef NewStr,
+    bool InsertAfter) {
+  if (Loc.isInvalid() || Loc.isMacroID())
+    return true;
+  auto OrigBegin = ComputeOrigOffset(Loc);
+ auto Begin = InsertAfter ? mMapping[++OrigBegin] :
+    OrigBegin == 0 ? 0 : mMapping[OrigBegin - 1] + 1;
+  mBuffer.insert(Begin, NewStr);
+  auto NewStrSize = NewStr.size();
+  for (std::size_t I = OrigBegin, EI = mMapping.size(); I < EI; ++I)
+    mMapping[I] += NewStrSize;
+  return false;
+}
+
 void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
     StringRef NewStr) {
   auto OrigEnd = OrigBegin + Length;

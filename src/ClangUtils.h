@@ -105,6 +105,29 @@ public:
   /// `false` on success and `true` in case of errors.
   bool ReplaceText(clang::SourceRange SR, clang::StringRef NewStr);
 
+  /// Inserts a specified string at a specified location in the buffer,
+  /// return `false` on success and `true` in case of errors.
+  bool InsertText(clang::SourceLocation Loc, clang::StringRef NewStr,
+    bool InsertAfter = true);
+
+  /// \brief Inserts a specified string at a specified location in the buffer,
+  /// return `false` on success and `true` in case of errors.
+  ///
+  /// The text is inserted before the specified location. This is
+  /// method is the same as InsertText with "InsertAfter == false".
+  bool InsertTextBefore(clang::SourceLocation Loc, clang::StringRef NewStr) {
+    return InsertText(Loc, NewStr, false);
+  }
+
+  /// \brief Inserts a specified string at a specified location in the buffer,
+  /// return `false` on success and `true` in case of errors.
+  ///
+  /// Text is inserted after any other text that has been previously inserted
+  /// at the some point (the default behavior for InsertText).
+  bool InsertTextAfter(clang::SourceLocation Loc, clang::StringRef NewStr) {
+    return InsertText(Loc, NewStr, true);
+  }
+
   /// \brief Removes a rang of characters in the buffer, return `false`
   /// on success.
   ///
