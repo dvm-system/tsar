@@ -657,9 +657,25 @@ std::pair<std::string, std::string> ClangInliner::compile(
     for (auto SR : TI.mCallee->getToRemove())
       Canvas.RemoveText(SR, true) ;
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
+  Text += "\n";
   if (IsNeedLabel)
     Text.insert(Text.size() - 1, (RetLab + ":;").str());
   Text.insert(Text.begin() + 1, Params.begin(), Params.end());
+  // We should check that all includes are mentioned in AST.
+  // For example, if there is an include which contains macros only and
+  // this macros do not used then there is no FileID for this include.
+  // Hence, it has not been parsed by getRawMacrosAndIncludes() function and
+  // some macro names are lost. The lost macro names potentially leads to
+  // transformation errors.
+  //
+  // However, it is not possible to establish correspondence between #include
+  // directives and available file entries due to complexity of the search
+  // of files that should be included. So, we disable this check. Instead we
+  // add `#pragma spf assert nomacro` before the body of inlined function to
+  // perform the check using the analyzer at the next time.
+  SmallString<64> NoMacroPragma;
+  getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
+  Text.insert(Text.begin(), NoMacroPragma.begin(), NoMacroPragma.end());
   Text.insert(Text.begin(), RetIdDeclStmt.begin(), RetIdDeclStmt.end());
   return { Text, RetId.str() };
 }
@@ -1066,22 +1082,8 @@ void ClangInliner::HandleTranslationUnit() {
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           Text.first = "{" + Text.first + "}";
       }
-      // We should check that all includes are mentioned in AST.
-      // For example, if there is an include which contains macros only and
-      // this macros do not used then there is no FileID for this include.
-      // Hence, it has not been parsed by getRawMacrosAndIncludes() function and
-      // some macro names are lost. The lost macro names potentially leads to
-      // transformation errors.
-      //
-      // However, it is not possible to establish correspondence between #include
-      // directives and available file entries due to complexity of the search
-      // of files that should be included. So, we disable this check. Instead we
-      // add `#pragma spf assert nomacro` before the body of inlined function to
-      // perform the check using the analyzer at the next time.
-      SmallString<64> NoMacroPragma;
       mRewriter.ReplaceText(getFileRange(TI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" +
-          getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma) +
             Text.first).str());
       Token SemiTok;
       if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
