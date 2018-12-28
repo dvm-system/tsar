@@ -155,7 +155,7 @@ public:
   /// Returns current state of the text in the initial range.
   clang::StringRef getBuffer() const { return mBuffer; }
 
-  const clang::SourceManager & getSourceManager() const noexcept { return mSM; }
+  const clang::SourceManager & getSourceMgr() const noexcept { return mSM; }
   const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
 
 private:
