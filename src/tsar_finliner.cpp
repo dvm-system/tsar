@@ -322,7 +322,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     return false;
   // Some calls may be visited multiple times.
   // For example, struct A A1 = { .X = f() };
-  if (mCurrentT->getCalls().find_as(Call) != mCurrentT->getCalls().end())
+  if (mCurrentT->findCall(Call) != mCurrentT->getCalls().end())
     return true;
   std::swap(InlineInMacro, mStmtInMacro);
   if (mStmtInMacro.isInvalid())
@@ -569,19 +569,23 @@ std::pair<std::string, std::string> ClangInliner::compile(
       bool Res = Canvas.ReplaceText(
         getFileRange(CallTI.mCallExpr), Text.second);
       assert(!Res && "Can not replace text in an external buffer!");
-      Text.first += Canvas.getRewrittenText(getFileRange(CallTI.mStmt));
-      // We will rewrite CallTI.mStmt without final ';'.
-      Text.first += ';';
       if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
-        Text.first = "{" + Text.first + "}";
+        Text.first = "{" + Text.first;
+      Canvas.InsertTextAfter(
+        mSrcMgr.getFileLoc(CallTI.mStmt->getLocStart()).getLocWithOffset(-1),
+          ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
+        Canvas.InsertTextAfter(
+          mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()), "}");
+    } else {
+      bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
+        ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+      assert(!Res && "Can not replace text in an external buffer!");
+      Token SemiTok;
+      if (!getRawTokenAfter(mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()),
+        mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+        Canvas.RemoveText(SemiTok.getLocation(), true);
     }
-    bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
-      ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
-    assert(!Res && "Can not replace text in an external buffer!");
-    Token SemiTok;
-    if (!getRawTokenAfter(mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()),
-          mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
-      Canvas.RemoveText(SemiTok.getLocation(), true);
   }
   SmallVector<Template::ReturnStmts::value_type, 8> UnreachableRetStmts;
   SmallVector<Template::ReturnStmts::value_type, 8> ReachableRetStmts;
@@ -602,7 +606,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     auto Tokens = buildDeclStringRef(RetTy, RetId, Context, Replacements);
     assert(!Tokens.empty() && "Unable to build return value declaration!");
     join(Tokens.begin(), Tokens.end(), " ", RetIdDeclStmt);
-    RetIdDeclStmt += ";";
+    RetIdDeclStmt += ";\n";
     for (auto &RS : ReachableRetStmts) {
       SmallString<256> Text;
       raw_svector_ostream TextOS(Text);
@@ -654,8 +658,8 @@ std::pair<std::string, std::string> ClangInliner::compile(
     toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS.first).getBegin(),
       diag::remark_remove_unreachable);
   }
-    for (auto SR : TI.mCallee->getToRemove())
-      Canvas.RemoveText(SR, true) ;
+  for (auto SR : TI.mCallee->getToRemove())
+    Canvas.RemoveText(SR, true);
   std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
   Text += "\n";
   if (IsNeedLabel)
@@ -1062,6 +1066,11 @@ void ClangInliner::HandleTranslationUnit() {
     TemplateInstantiation BogusTI { nullptr, nullptr, nullptr,
       mTs[CallsItr->first].get(), TemplateInstantiation::DefaultFlags };
     CallStack.push_back(&BogusTI);
+    // In case of statements with multiple calls we accumulate inlining result
+    // in a separate strings and then update a source code.
+    std::string InsertBeforeStmt, InsertAfterStmt;
+    const Stmt *CurrStmt = nullptr;
+    bool NeedReplace = false;
     for (auto &TI : CallsItr->second->getCalls()) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
         continue;
@@ -1076,19 +1085,24 @@ void ClangInliner::HandleTranslationUnit() {
       auto CallExpr = getSourceText(getFileRange(TI.mCallExpr));
       if (!Text.second.empty()) {
         mRewriter.ReplaceText(getFileRange(TI.mCallExpr), Text.second);
-        Text.first += mRewriter.getRewrittenText(getFileRange(TI.mStmt));
-        // We will rewrite CallTI.mStmt without final ';'.
-        Text.first += ';';
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
-          Text.first = "{" + Text.first + "}";
+          Text.first = "{" + Text.first;
+        auto BeforeLoc = mSrcMgr.getFileLoc(TI.mStmt->getLocStart());
+        mRewriter.InsertTextAfter(BeforeLoc.getLocWithOffset(-1),
+          ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+        if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
+          mRewriter.InsertTextAfter(
+            mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()), "}");
+        if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
+          InsertAfterStmt += "}";
+      } else {
+        mRewriter.ReplaceText(getFileRange(TI.mStmt),
+          ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
+        Token SemiTok;
+        if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
+          mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+          mRewriter.RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
       }
-      mRewriter.ReplaceText(getFileRange(TI.mStmt),
-        ("/* " + CallExpr + " is inlined below */\n" +
-            Text.first).str());
-      Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
-            mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
-        mRewriter.RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
     }
     for (auto SR : CallsItr->second->getToRemove())
       mRewriter.RemoveText(SR, RemoveEmptyLine);

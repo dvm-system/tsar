@@ -76,40 +76,6 @@ inline bool operator==(const TemplateInstantiation &LHS,
 }
 }
 
-namespace llvm {
-template<> struct DenseMapInfo<tsar::detail::TemplateInstantiation> {
-  static inline tsar::detail::TemplateInstantiation getEmptyKey() {
-    return tsar::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getEmptyKey(),
-      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline tsar::detail::TemplateInstantiation getTombstoneKey() {
-    return tsar::detail::TemplateInstantiation{
-      nullptr, nullptr,
-      DenseMapInfo<clang::CallExpr *>::getTombstoneKey(),
-      nullptr, tsar::detail::TemplateInstantiation::DefaultFlags
-    };
-  }
-  static inline unsigned getHashValue(
-      const tsar::detail::TemplateInstantiation &TI) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(TI.mCallExpr);
-  }
-  static inline unsigned getHashValue(const clang::CallExpr *Call) {
-    return DenseMapInfo<clang::CallExpr *>::getHashValue(Call);
-  }
-  static inline bool isEqual(const tsar::detail::TemplateInstantiation &LHS,
-      const tsar::detail::TemplateInstantiation &RHS) noexcept {
-    return LHS == RHS;
-  }
-  static inline bool isEqual(const clang::CallExpr *Call,
-      const tsar::detail::TemplateInstantiation &RHS) noexcept {
-    return RHS.mCallExpr == Call;
-  }
-};
-}
-
 namespace tsar {
 namespace detail {
 /// Contains general information which describes a function.
@@ -120,6 +86,11 @@ class Template {
     IsKnownMayForwardDecls = 1u << 1,
     LLVM_MARK_AS_BITMASK_ENUM(IsKnownMayForwardDecls)
   };
+
+  /// Set of calls from the current function. A value is an index in the
+  /// list of template instantiations.
+  using CallMap = llvm::DenseMap<const clang::CallExpr *, std::size_t>;
+
 public:
   /// Set of declarations, name is used to build hash.
   using DeclSet = llvm::DenseSet<
@@ -132,8 +103,8 @@ public:
   /// Set of statements.
   using StmtSet = llvm::DenseSet<const clang::Stmt *>;
 
-  /// Set of calls from the current function.
-  using CallSet =  llvm::DenseSet<TemplateInstantiation>;
+  /// List of calls from the current function.
+  using CallList = std::vector<TemplateInstantiation>;
 
   /// List of source ranges.
   using RangeList = llvm::SmallVector<clang::CharSourceRange, 8>;
@@ -192,10 +163,21 @@ public:
     return mMayForwardDecls;
   }
 
-  std::pair<CallSet::iterator, bool> addCall(TemplateInstantiation &&TI) {
-    return mCalls.insert(std::move(TI));
+  std::pair<CallList::iterator, bool> addCall(TemplateInstantiation &&TI) {
+    assert(TI.mCallExpr && "Call must not be null!");
+    auto CallInfo = mCallIdxs.try_emplace(TI.mCallExpr, mCalls.size());
+    if (CallInfo.second) {
+      mCalls.push_back(std::move(TI));
+      return std::make_pair(mCalls.end() - 1, true);
+    }
+    return std::make_pair(mCalls.begin() + CallInfo.first->second, false);
   }
-  const CallSet & getCalls() const noexcept { return mCalls; }
+  CallList::iterator findCall(const clang::CallExpr *Call) {
+    assert(Call && "Call must not be null!");
+    auto I= mCallIdxs.find(Call);
+    return I == mCallIdxs.end() ? mCalls.end() : mCalls.begin() + I->second;
+  }
+  const CallList & getCalls() const noexcept { return mCalls; }
 
   bool isMacroInDecl() const { return mMacroInDecl.isValid(); }
   clang::SourceLocation getMacroInDecl() const { return mMacroInDecl; }
@@ -234,7 +216,8 @@ private:
   DeclSet mForwardDecls;
   DeclSet mMayForwardDecls;
   StmtSet mUnreachable;
-  CallSet mCalls;
+  CallMap mCallIdxs;
+  CallList mCalls;
   RangeList mToRemove;
 };
 
