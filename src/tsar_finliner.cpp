@@ -634,8 +634,16 @@ std::pair<std::string, std::string> ClangInliner::compile(
     SmallString<16> RetStmt;
     ("goto " + RetLab).toVector(RetStmt);
     for (auto &RS : ReachableRetStmts) {
-      if (RS.first == TI.mCallee->getLastStmt())
+      if (RS.first == TI.mCallee->getLastStmt()) {
+        bool Res = Canvas.RemoveText(getFileRange(RS.first));
+        assert(!Res && "Can not remove text in an external buffer!");
+        // Now, we remove `;` after the ending return.
+        Token SemiTok;
+        if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+            mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
+          Canvas.RemoveText(SemiTok.getLocation(), true);
         continue;
+      }
       IsNeedLabel = true;
       bool Res = Canvas.ReplaceText(getFileRange(RS.first), RetStmt);
       assert(!Res && "Can not replace text in an external buffer!");
