@@ -313,7 +313,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
 
 bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   LLVM_DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
-    getSourceText(getFileRange(Call)) << "' at ";
+    getSourceText(getTfmRange(Call)) << "' at ";
     Call->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
   mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
@@ -391,7 +391,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   // added after inlining: if(...) f(); -> if (...) { /* inlined f() */ }
   bool IsNeedBraces = !isa<CompoundStmt>(*ParentI);
   LLVM_DEBUG(dbgs() << "[INLINE]: statement with call '" <<
-    getSourceText(getFileRange(StmtWithCall)) << "' at ";
+    getSourceText(getTfmRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   LLVM_DEBUG(dbgs() << "[INLINE]: parent statement at ";
     (*ParentI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
@@ -408,7 +408,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     }
   }
   LLVM_DEBUG(dbgs() << "[INLINE]: clause found '" <<
-    getSourceText(getFileRange(ClauseI->getStmt())) << "' at ";
+    getSourceText(getTfmRange(ClauseI->getStmt())) << "' at ";
     (*ClauseI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
   // We mark this clause here, however checks bellow may disable inline
   // expansion of the current call. It seems the we should not diagnose the
@@ -449,7 +449,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   //   #include ...
   // );
   // We also search for raw macros which locations have not been visited.
-  LocalLexer Lex(StmtWithCall->getSourceRange(), mSrcMgr, mLangOpts);
+  LocalLexer Lex(getTfmRange(StmtWithCall), mSrcMgr, mLangOpts);
   while (true) {
     Token Tok;
     if (Lex.LexFromRawLexer(Tok))
@@ -519,15 +519,15 @@ std::pair<std::string, std::string> ClangInliner::compile(
   assert(TI.mCallee->getFuncDecl()->getNumParams() == Args.size()
     && "Undefined behavior: incorrect number of arguments specified");
   auto CalleeFD = TI.mCallee->getFuncDecl();
-  ExternalRewriter Canvas(getFileRange(CalleeFD), mSrcMgr, mLangOpts);
+  ExternalRewriter Canvas(getTfmRange(CalleeFD), mSrcMgr, mLangOpts);
   std::string Context;
   // Initialize context to enable usage of tooling::buildASTFromCode function.
   auto initContext = [this, &Context, &TI]() {
     Context.clear();
     for (auto D : TI.mCallee->getForwardDecls())
-      Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
+      Context += (getSourceText(getTfmRange(D->getRoot())) + ";").str();
     for (auto D : TI.mCallee->getMayForwardDecls())
-      Context += (getSourceText(getFileRange(D->getRoot())) + ";").str();
+      Context += (getSourceText(getTfmRange(D->getRoot())) + ";").str();
   };
   // Prepare formal parameters' assignments.
   initContext();
@@ -548,7 +548,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     /// Seems that AST merge action may break parameters numbering.
     Params += (DeclStr + " = " + Args[ParamIdx++] + ";").str();
     for (auto DRE : TI.mCallee->getParmRefs(PVD)) {
-      bool Res = Canvas.ReplaceText(getFileRange(DRE), Identifier);
+      bool Res = Canvas.ReplaceText(getTfmRange(DRE), Identifier);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
@@ -560,30 +560,30 @@ std::pair<std::string, std::string> ClangInliner::compile(
     SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());
     std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
       std::begin(Args), [this, &Canvas](const clang::Expr* Arg) {
-        return Canvas.getRewrittenText(getFileRange(Arg));
+        return Canvas.getRewrittenText(getTfmRange(Arg));
     });
     CallStack.push_back(&CallTI);
     auto Text = compile(CallTI, Args, TICheckers, CallStack);
     CallStack.pop_back();
-    auto CallExpr = getSourceText(getFileRange(CallTI.mCallExpr));
+    auto CallExpr = getSourceText(getTfmRange(CallTI.mCallExpr));
     if (!Text.second.empty()) {
       bool Res = Canvas.ReplaceText(
-        getFileRange(CallTI.mCallExpr), Text.second);
+        getTfmRange(CallTI.mCallExpr), Text.second);
       assert(!Res && "Can not replace text in an external buffer!");
       if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
         Text.first = "{" + Text.first;
       Canvas.InsertTextAfter(
-        mSrcMgr.getFileLoc(CallTI.mStmt->getLocStart()).getLocWithOffset(-1),
+        mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocStart()).getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
         Canvas.InsertTextAfter(
-          mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()), "}");
+          mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()), "}");
     } else {
-      bool Res = Canvas.ReplaceText(getFileRange(CallTI.mStmt),
+      bool Res = Canvas.ReplaceText(getTfmRange(CallTI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       assert(!Res && "Can not replace text in an external buffer!");
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getFileLoc(CallTI.mStmt->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()),
         mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
@@ -612,7 +612,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
       SmallString<256> Text;
       raw_svector_ostream TextOS(Text);
       auto RetValue =
-        Canvas.getRewrittenText(getFileRange(RS.first->getRetValue()));
+        Canvas.getRewrittenText(getTfmRange(RS.first->getRetValue()));
       if (RS.first == TI.mCallee->getLastStmt()) {
         TextOS << RetId << " = " << RetValue << ";";
       } else {
@@ -624,10 +624,10 @@ std::pair<std::string, std::string> ClangInliner::compile(
         if (RS.second)
           TextOS << "}";
       }
-      bool Res = Canvas.ReplaceText(getFileRange(RS.first), Text);
+      bool Res = Canvas.ReplaceText(getTfmRange(RS.first), Text);
       assert(!Res && "Can not replace text in an external buffer!");
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
@@ -636,17 +636,17 @@ std::pair<std::string, std::string> ClangInliner::compile(
     ("goto " + RetLab).toVector(RetStmt);
     for (auto &RS : ReachableRetStmts) {
       if (RS.first == TI.mCallee->getLastStmt()) {
-        bool Res = Canvas.RemoveText(getFileRange(RS.first));
+        bool Res = Canvas.RemoveText(getTfmRange(RS.first));
         assert(!Res && "Can not remove text in an external buffer!");
         // Now, we remove `;` after the ending return.
         Token SemiTok;
-        if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
             mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
           Canvas.RemoveText(SemiTok.getLocation(), true);
         continue;
       }
       IsNeedLabel = true;
-      bool Res = Canvas.ReplaceText(getFileRange(RS.first), RetStmt);
+      bool Res = Canvas.ReplaceText(getTfmRange(RS.first), RetStmt);
       assert(!Res && "Can not replace text in an external buffer!");
     }
   }
@@ -654,22 +654,22 @@ std::pair<std::string, std::string> ClangInliner::compile(
     toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
       diag::remark_inline);
   for (auto &RS : UnreachableRetStmts) {
-    bool Res = Canvas.ReplaceText(getFileRange(RS.first), "");
+    bool Res = Canvas.ReplaceText(getTfmRange(RS.first), "");
     assert(!Res && "Can not replace text in an external buffer!");
     if (!RS.second) {
       // If braces is not needed we can remover ending `;`.
       // if (...) return; => IsNeedBraces == true => do not remove `;`.
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getFileLoc(RS.first->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
-    toDiag(mSrcMgr.getDiagnostics(), getFileRange(RS.first).getBegin(),
+    toDiag(mSrcMgr.getDiagnostics(), getTfmRange(RS.first).getBegin(),
       diag::remark_remove_unreachable);
   }
   for (auto SR : TI.mCallee->getToRemove())
     Canvas.RemoveText(SR, true);
-  std::string Text = Canvas.getRewrittenText(getFileRange(CalleeFD->getBody()));
+  std::string Text = Canvas.getRewrittenText(getTfmRange(CalleeFD->getBody()));
   Text += "\n";
   if (IsNeedLabel)
     Text.insert(Text.size() - 1, (RetLab + ":;").str());
@@ -1086,29 +1086,29 @@ void ClangInliner::HandleTranslationUnit() {
       SmallVector<std::string, 8> Args(TI.mCallExpr->getNumArgs());
       std::transform(TI.mCallExpr->arg_begin(), TI.mCallExpr->arg_end(),
         std::begin(Args), [this](const clang::Expr* Arg) {
-          return mRewriter.getRewrittenText(getFileRange(Arg));
+          return mRewriter.getRewrittenText(getTfmRange(Arg));
       });
       CallStack.push_back(&TI);
       auto Text = compile(TI, Args, TICheckers, CallStack);
       CallStack.pop_back();
-      auto CallExpr = getSourceText(getFileRange(TI.mCallExpr));
+      auto CallExpr = getSourceText(getTfmRange(TI.mCallExpr));
       if (!Text.second.empty()) {
-        mRewriter.ReplaceText(getFileRange(TI.mCallExpr), Text.second);
+        mRewriter.ReplaceText(getTfmRange(TI.mCallExpr), Text.second);
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           Text.first = "{" + Text.first;
-        auto BeforeLoc = mSrcMgr.getFileLoc(TI.mStmt->getLocStart());
+        auto BeforeLoc = mSrcMgr.getExpansionLoc(TI.mStmt->getLocStart());
         mRewriter.InsertTextAfter(BeforeLoc.getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           mRewriter.InsertTextAfter(
-            mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()), "}");
+            mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()), "}");
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           InsertAfterStmt += "}";
       } else {
-        mRewriter.ReplaceText(getFileRange(TI.mStmt),
+        mRewriter.ReplaceText(getTfmRange(TI.mStmt),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
         Token SemiTok;
-        if (!getRawTokenAfter(mSrcMgr.getFileLoc(TI.mStmt->getLocEnd()),
+        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter.RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
       }
@@ -1124,8 +1124,8 @@ StringRef ClangInliner::getSourceText(const clang::SourceRange& SR) const {
 }
 
 template<class T>
-clang::SourceRange ClangInliner::getFileRange(T *Node) const {
-  return tsar::getFileRange(mSrcMgr, Node->getSourceRange());
+clang::SourceRange ClangInliner::getTfmRange(T *Node) const {
+  return tsar::getExpansionRange(mSrcMgr, Node->getSourceRange()).getAsRange();
 }
 
 void ClangInliner::addSuffix(StringRef Prefix, SmallVectorImpl<char> &Out) {

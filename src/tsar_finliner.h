@@ -383,7 +383,7 @@ private:
 
   /// Returns source range for a specified node, `T` must provide
   /// `getSourceRange()` method.
-  template<class T> clang::SourceRange getFileRange(T *Node) const;
+  template<class T> clang::SourceRange getTfmRange(T *Node) const;
 
   /// Appends numeric suffix to the end of a specified identifier `Prefix`,
   /// avoids collision using set of identifiers available in a translation unit.
