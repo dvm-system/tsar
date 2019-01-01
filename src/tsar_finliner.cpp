@@ -442,6 +442,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       diag::note_source_range_not_single_file);
     toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getLocEnd(),
       diag::note_end_location);
+    return true;
   }
   // Now, we search macro definitions in the call expression.
   // f(
