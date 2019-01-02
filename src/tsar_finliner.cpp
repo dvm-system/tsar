@@ -182,7 +182,7 @@ bool ClangInliner::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
     mCurrentT->getFuncDecl()->getName() << "' at ";
     DRE->getLocation().dump(mSrcMgr);  dbgs() << "\n");
   mDeclRefLoc.insert(
-    mSrcMgr.getExpansionLoc(DRE->getLocation()).getRawEncoding());
+    mSrcMgr.getSpellingLoc(DRE->getLocation()).getRawEncoding());
   return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
 }
 
@@ -194,7 +194,7 @@ bool ClangInliner::VisitDecl(Decl *D) {
       mCurrentT->getFuncDecl()->getName() << "' at ";
       ND->getLocation().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
-      mSrcMgr.getExpansionLoc(ND->getLocation()).getRawEncoding());
+      mSrcMgr.getSpellingLoc(ND->getLocation()).getRawEncoding());
   }
   return RecursiveASTVisitor::VisitDecl(D);
 }
@@ -216,7 +216,7 @@ bool ClangInliner::VisitTagTypeLoc(TagTypeLoc TTL) {
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
-      mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
+      mSrcMgr.getSpellingLoc(TTL.getNameLoc()).getRawEncoding());
   }
   return RecursiveASTVisitor::VisitTagTypeLoc(TTL);
 }
@@ -248,7 +248,7 @@ bool ClangInliner::VisitTypedefTypeLoc(TypedefTypeLoc TTL) {
       mCurrentT->getFuncDecl()->getName() << "' at ";
       TTL.getNameLoc().dump(mSrcMgr);  dbgs() << "\n");
     mDeclRefLoc.insert(
-      mSrcMgr.getExpansionLoc(TTL.getNameLoc()).getRawEncoding());
+      mSrcMgr.getSpellingLoc(TTL.getNameLoc()).getRawEncoding());
   }
   return RecursiveASTVisitor::VisitTypedefTypeLoc(TTL);
 }
@@ -428,6 +428,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   if (InlineInMacro.isValid()) {
+    LLVM_DEBUG(dbgs() << "[INLINE]: call contains a macro\n");
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
     toDiag(mSrcMgr.getDiagnostics(), InlineInMacro,
@@ -448,7 +449,17 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   // f(
   //   #include ...
   // );
-  // We also search for raw macros which locations have not been visited.
+  // We also search for macros which have not been found yet. Note, that it
+  // is necessary to check the whole statement (not only call).
+  // For example:
+  //   #define M X = 5; X +
+  //   M f(X);
+  // It is not possible to perform inlining in this case, because `X` should be
+  // initialized before the function call. The following result will be wrong
+  // because `X` will be initialized after execution of a function `f()`.
+  //  int R1;
+  //  {X1 = X; ... } // body of f(X)
+  //  M + R1
   LocalLexer Lex(getTfmRange(StmtWithCall), mSrcMgr, mLangOpts);
   while (true) {
     Token Tok;
@@ -472,6 +483,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     auto MacroItr = mRawInfo.Macros.find(Tok.getRawIdentifier());
     if (MacroItr == mRawInfo.Macros.end())
       continue;
+    LLVM_DEBUG(dbgs() << "[INLINE]: raw macro disables inline expansion\n");
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline);
     toDiag(mSrcMgr.getDiagnostics(), Tok.getLocation(),
