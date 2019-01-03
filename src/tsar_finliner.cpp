@@ -796,7 +796,8 @@ auto ClangInliner::getTemplateCheckers() const
         diag::warn_disable_inline);
       toDiag(mSrcMgr.getDiagnostics(), T.getMacroInDecl(),
         diag::note_inline_macro_prevent);
-      if (T.getMacroSpellingHint().isValid())
+      if (T.getMacroSpellingHint().isValid() &&
+          T.getMacroSpellingHint() != T.getMacroInDecl())
         toDiag(mSrcMgr.getDiagnostics(), T.getMacroSpellingHint(),
           diag::note_expanded_from_here);
       return false;
