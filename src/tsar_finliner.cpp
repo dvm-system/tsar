@@ -587,9 +587,14 @@ std::pair<std::string, std::string> ClangInliner::compile(
       Canvas.InsertTextAfter(
         mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocStart()).getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
-      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
-        Canvas.InsertTextAfter(
-          mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()), "}");
+      if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces) {
+        Token SemiTok;
+        auto InsertLoc =
+          (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()),
+            mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi)) ?
+          SemiTok.getLocation() : CallTI.mStmt->getLocEnd();
+        Canvas.InsertTextAfterToken(mSrcMgr.getExpansionLoc(InsertLoc), "}");
+      }
     } else {
       bool Res = Canvas.ReplaceText(getTfmRange(CallTI.mStmt),
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
@@ -1127,11 +1132,14 @@ void ClangInliner::HandleTranslationUnit() {
         auto BeforeLoc = mSrcMgr.getExpansionLoc(TI.mStmt->getLocStart());
         mRewriter.InsertTextAfter(BeforeLoc.getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
-        if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
-          mRewriter.InsertTextAfter(
-            mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()), "}");
-        if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
-          InsertAfterStmt += "}";
+        if (TI.mFlags & TemplateInstantiation::IsNeedBraces) {
+          Token SemiTok;
+          auto InsertLoc =
+            (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()),
+              mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi)) ?
+            SemiTok.getLocation() : TI.mStmt->getLocEnd();
+          mRewriter.InsertTextAfterToken(mSrcMgr.getExpansionLoc(InsertLoc),"}");
+        }
       } else {
         mRewriter.ReplaceText(getTfmRange(TI.mStmt),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
