@@ -835,6 +835,22 @@ bool ClangInliner::checkTemplateInstantiation(const TemplateInstantiation &TI,
 auto ClangInliner::getTemplatInstantiationCheckers() const
     -> SmallVector<TemplateInstantiationChecker, 8> {
   SmallVector<TemplateInstantiationChecker, 8> Checkers;
+  // Disables inline expansion if a number of formal parameters in a function
+  // declaration differs from a number of actual arguments.
+  Checkers.push_back([this](const TemplateInstantiation &TI,
+      const InlineStackImpl &CallStack) {
+    assert(CallStack.back()->mCallee == TI.mCaller &&
+      "Function at the top of stack should make a call which is checked!");
+    auto F = TI.mCallee->getFuncDecl();
+    if (TI.mCallExpr->getNumArgs() != F->getNumParams()) {
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+        diag::warn_disable_inline);
+      toDiag(mSrcMgr.getDiagnostics(), F->getLocStart(),
+        diag::note_inline_different_num_params);
+      return false;
+    }
+    return true;
+  });
   // Disables inline expansion into #include files.
   Checkers.push_back([this](const TemplateInstantiation &TI,
       const InlineStackImpl &CallStack) {
