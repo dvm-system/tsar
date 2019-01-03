@@ -128,6 +128,9 @@ public:
     return InsertText(Loc, NewStr, true);
   }
 
+  /// Insert the specified string after the token in the specified location.
+  bool InsertTextAfterToken(clang::SourceLocation Loc, clang::StringRef NewStr);
+
   /// \brief Removes a rang of characters in the buffer, return `false`
   /// on success.
   ///

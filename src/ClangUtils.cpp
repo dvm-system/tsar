@@ -176,13 +176,21 @@ bool ExternalRewriter::InsertText(SourceLocation Loc, StringRef NewStr,
   if (Loc.isInvalid() || Loc.isMacroID())
     return true;
   auto OrigBegin = ComputeOrigOffset(Loc);
- auto Begin = InsertAfter ? mMapping[++OrigBegin] :
+  auto Begin = InsertAfter ? mMapping[OrigBegin] :
     OrigBegin == 0 ? 0 : mMapping[OrigBegin - 1] + 1;
   mBuffer.insert(Begin, NewStr);
   auto NewStrSize = NewStr.size();
   for (std::size_t I = OrigBegin, EI = mMapping.size(); I < EI; ++I)
     mMapping[I] += NewStrSize;
   return false;
+}
+
+bool ExternalRewriter::InsertTextAfterToken(
+    SourceLocation Loc, StringRef NewStr) {
+  if (Loc.isInvalid() || Loc.isMacroID())
+    return true;
+  Loc = Loc.getLocWithOffset(Lexer::MeasureTokenLength(Loc, mSM, mLangOpts));
+  return InsertTextAfter(Loc, NewStr);
 }
 
 void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
