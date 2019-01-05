@@ -14,6 +14,7 @@
 #include "tsar_transformation.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/SourceManager.h>
+#include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/IR/Module.h>
@@ -89,15 +90,14 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       }
     }
     if (!mNoFormat) {
+      std::string TfmSrc(Buffer.second.begin(), Buffer.second.end());
       auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
-      EndLoc = SourceLocation::getFromRawEncoding(EndLoc.getRawEncoding() - 1);
-      std::string TfmSrc = TfmRewriter.getRewrittenText({ StartLoc,  EndLoc });
       auto ReformatSrc = reformat(TfmSrc, Adjuster(OrigFile->getName()));
       if (!ReformatSrc) {
         toDiag(Diags, StartLoc, diag::warn_reformat);
         continue;
       }
-      TfmRewriter.ReplaceText({ StartLoc, EndLoc }, ReformatSrc.get());
+      TfmRewriter.ReplaceText(StartLoc, Buffer.second.size(), ReformatSrc.get());
     }
   }
   TfmCtx->release(Adjuster);
