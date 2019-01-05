@@ -155,8 +155,12 @@ ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
     const LangOptions &LangOpts) : mSR(SR), mSM(SM), mLangOpts(LangOpts),
   mBuffer(
     Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM, LangOpts)),
-  mMapping(mBuffer.size() + 1) {
-  std::iota(std::begin(mMapping), std::end(mMapping), 0);
+  mMapping(2*mBuffer.size()) {
+  std::size_t OrigIdx = 0;
+  for (auto I = mMapping.begin(), EI = mMapping.end(); I != EI; I += 2) {
+    *I = OrigIdx;
+    *(I + 1) = OrigIdx++;
+  }
 }
 
 bool ExternalRewriter::ReplaceText(SourceRange SR, StringRef NewStr) {
@@ -176,11 +180,10 @@ bool ExternalRewriter::InsertText(SourceLocation Loc, StringRef NewStr,
   if (Loc.isInvalid() || Loc.isMacroID())
     return true;
   auto OrigBegin = ComputeOrigOffset(Loc);
-  auto Begin = InsertAfter ? mMapping[OrigBegin] :
-    OrigBegin == 0 ? 0 : mMapping[OrigBegin - 1] + 1;
-  mBuffer.insert(Begin, NewStr);
+  std::size_t OrigIdx = InsertAfter ? 2 * OrigBegin + 1 : 2 * OrigBegin;
+  mBuffer.insert(mMapping[OrigIdx], NewStr);
   auto NewStrSize = NewStr.size();
-  for (std::size_t I = OrigBegin, EI = mMapping.size(); I < EI; ++I)
+  for (std::size_t I = OrigIdx, EI = mMapping.size(); I < EI; ++I)
     mMapping[I] += NewStrSize;
   return false;
 }
@@ -195,15 +198,16 @@ bool ExternalRewriter::InsertTextAfterToken(
 
 void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
     StringRef NewStr) {
-  auto OrigEnd = OrigBegin + Length;
-  auto Begin = mMapping[OrigBegin];
-  auto End = mMapping[OrigEnd];
+  std::size_t OrigBeginIdx = 2 * OrigBegin;
+  std::size_t OrigEndIdx = 2 * (OrigBegin + Length - 1) + 1;
+  auto Begin = mMapping[OrigBeginIdx];
+  auto End = mMapping[OrigEndIdx] + 1;
   auto NewStrSize = NewStr.size();
   if (End - Begin < NewStrSize) {
-    for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
+    for (std::size_t I = OrigEndIdx, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] += NewStrSize - (End - Begin);
   } else if (End - Begin > NewStrSize) {
-    for (std::size_t I = OrigEnd, EI = mMapping.size(); I < EI; ++I)
+    for (std::size_t I = OrigEndIdx, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] -= (End - Begin) - NewStrSize;
   }
   mBuffer.replace(Begin, End - Begin, NewStr);
@@ -266,10 +270,10 @@ StringRef ExternalRewriter::getRewrittenText(clang::SourceRange SR) {
   if (mSM.getFileID(SR.getBegin()) != mSM.getFileID(SR.getBegin()))
     return StringRef();
   unsigned OrigBegin = ComputeOrigOffset(SR.getBegin());
-  unsigned Begin = mMapping[OrigBegin];
+  unsigned Begin = mMapping[2 * OrigBegin];
   auto Text =
     Lexer::getSourceText(CharSourceRange::getTokenRange(SR), mSM, mLangOpts);
-  unsigned End = mMapping[OrigBegin + Text.size()];
+  unsigned End = mMapping[2 * (OrigBegin + Text.size() - 1) + 1] + 1;
   return StringRef(mBuffer.data() + Begin, End - Begin);
 }
 
