@@ -1111,8 +1111,6 @@ void ClangInliner::HandleTranslationUnit() {
     CallStack.push_back(&BogusTI);
     // In case of statements with multiple calls we accumulate inlining result
     // in a separate strings and then update a source code.
-    std::string InsertBeforeStmt, InsertAfterStmt;
-    const Stmt *CurrStmt = nullptr;
     bool NeedReplace = false;
     for (auto &TI : CallsItr->second->getCalls()) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
