@@ -97,7 +97,9 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
         toDiag(Diags, StartLoc, diag::warn_reformat);
         continue;
       }
-      TfmRewriter.ReplaceText(StartLoc, Buffer.second.size(), ReformatSrc.get());
+      auto CurrSize = Buffer.second.size();
+      Buffer.second.InsertTextBefore(0, ReformatSrc.get());
+      Buffer.second.RemoveText(0, CurrSize);
     }
   }
   TfmCtx->release(Adjuster);
