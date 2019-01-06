@@ -42,6 +42,7 @@ def warn_inline_support_cpp : Warning<"inline expansion in C++ sources is not fu
 
 def warn_disable_inline_no_body : Warning<"disable inline expansion for function without definition">;
 def warn_disable_inline_in_ternary : Warning<"disable inline expansion in conditional operator">;
+def warn_disable_inline_in_comma : Warning<"disable inline expansion in comma operator">;
 def warn_disable_inline_in_loop_cond : Warning<"disable inline expansion in conditional expression of loop">;
 def warn_disable_inline_in_for_inc : Warning<"disable inline expansion in the third section of for-loop">;
 def warn_disable_inline_system : Warning<"disable inline expansion of non-user defined function">;
