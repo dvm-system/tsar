@@ -375,7 +375,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       break;
     } else if (auto BO = dyn_cast<clang::BinaryOperator > (*ScopeI)) {
       if (BO->getRHS() == *(ScopeI - 1))
-        InLogicRHS = BO->isLogicalOp() || BO->isBitwiseOp();
+        InLogicRHS |= BO->isLogicalOp() || BO->isBitwiseOp();
     } else if (isa<CompoundStmt>(*ScopeI) ||
                isa<CaseStmt>(*ScopeI) || isa<DefaultStmt>(*ScopeI)) {
       break;
