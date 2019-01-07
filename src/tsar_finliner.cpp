@@ -260,10 +260,18 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   Pragma P(*S);
   if (findClause(P, ClauseId::Inline, Clauses)) {
     mActiveClause = { Clauses.front(), true, false };
-    if (!pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
-        mCurrentT->getToRemove()))
-      toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-        diag::warn_remove_directive_in_macro);
+    auto IsPossible = pragmaRangeToRemove(
+      P, Clauses, mSrcMgr, mLangOpts, mCurrentT->getToRemove());
+    if (!IsPossible.first)
+      if (IsPossible.second & PragmaFlags::IsInMacro)
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          diag::warn_remove_directive_in_macro);
+      else if (IsPossible.second & PragmaFlags::IsInHeader)
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          diag::warn_remove_directive_in_include);
+      else
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          diag::warn_remove_directive);
     return true;
   }
   if (P)

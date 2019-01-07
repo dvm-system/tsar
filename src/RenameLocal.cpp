@@ -89,9 +89,18 @@ public:
     Pragma P(*S);
     if (findClause(P, ClauseId::Rename, mClauses)) {
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-      if (!pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove))
-        toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
-          diag::warn_remove_directive_in_macro);
+      auto IsPossible =
+        pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+      if (!IsPossible.first)
+        if (IsPossible.second & PragmaFlags::IsInMacro)
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            diag::warn_remove_directive_in_macro);
+        else if (IsPossible.second & PragmaFlags::IsInHeader)
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            diag::warn_remove_directive_in_include);
+        else
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
       RemoveEmptyLine.RemoveLineIfEmpty = true;
       for (auto SR : ToRemove)

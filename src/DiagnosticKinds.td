@@ -35,6 +35,8 @@ def err_transform_system : Note<"unable to transform system file">;
 def warn_reformat : Warning<"unable to reformat file">;
 
 def warn_remove_directive_in_macro : Warning<"unable to remove directive in macro">;
+def warn_remove_directive_in_include : Warning<"unable to remove directive in include">;
+def warn_remove_directive : Warning<"unable to remove directive">;
 def warn_unexpected_directive : Warning<"unexpected directive ignored">;
 def note_inline_no_call : Note<"no call suitable for inline is found">;
 

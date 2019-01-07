@@ -164,28 +164,37 @@ bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
   return !Clauses.empty();
 }
 
-bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses,
+std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
+    const SmallVectorImpl<Stmt *> &Clauses,
     const SourceManager &SM, const LangOptions &LangOpts,
     SmallVectorImpl<CharSourceRange> &ToRemove) {
   assert(P && "Pragma must be valid!");
   SourceLocation PStart = P.getNamespace()->getLocStart();
   SourceLocation PEnd = P.getNamespace()->getLocEnd();
   if (PStart.isInvalid())
-    return false;
+    return { false, PragmaFlags::DefaultFlags };
+  auto PStartDExp = SM.getDecomposedExpansionLoc(PStart);
+  auto ErrFlags =
+    SM.getDecomposedIncludedLoc(PStartDExp.first).first.isValid() ?
+    PragmaFlags::IsInHeader : PragmaFlags::DefaultFlags;
   if (PStart.isFileID()) {
+    if (ErrFlags)
+      return { false, ErrFlags };
     if (Clauses.size() == P.clause_size())
       ToRemove.push_back(
         CharSourceRange::getTokenRange({getStartOfLine(PStart, SM), PEnd}));
     else
       for (auto C : Clauses)
         ToRemove.push_back(CharSourceRange::getTokenRange(C->getSourceRange()));
-    return true;
+    return { true, PragmaFlags::DefaultFlags };
   }
   Token Tok;
   auto PStartExp = SM.getExpansionLoc(PStart);
   if (Lexer::getRawToken(PStartExp, Tok, SM, LangOpts) ||
       Tok.isNot(tok::raw_identifier) || Tok.getRawIdentifier() != "_Pragma")
-    return false;
+    ErrFlags |= PragmaFlags::IsInMacro;
+  if (ErrFlags)
+    return { false, ErrFlags };
   if (Clauses.size() == P.clause_size()) {
     ToRemove.push_back(SM.getExpansionRange({ PStart, PEnd }));
   } else {
@@ -206,7 +215,7 @@ bool pragmaRangeToRemove(const Pragma &P, const SmallVectorImpl<Stmt *> &Clauses
           PStartExp.getLocWithOffset(OffsetE + 9) })); // end of clause
     }
   }
-  return true;
+  return { true, PragmaFlags::DefaultFlags };
 }
 
 llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,

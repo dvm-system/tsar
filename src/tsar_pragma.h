@@ -23,6 +23,7 @@
 #include <clang/AST/Stmt.h>
 #include <clang/Lex/Pragma.h>
 #include <clang/Lex/Token.h>
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/SmallVector.h>
 
 namespace clang {
@@ -34,6 +35,8 @@ template<class T> class SmallVectorImpl;
 }
 
 namespace tsar {
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
 /// Description of a directive.
 class Pragma {
 public:
@@ -101,6 +104,16 @@ private:
 bool findClause(Pragma &P, ClauseId Id,
   llvm::SmallVectorImpl<clang::Stmt *> &Clauses);
 
+/// Represents some pragma properties.
+struct PragmaFlags {
+  enum Flags : uint8_t {
+    DefaultFlags = 0,
+    IsInMacro = 1u << 0,
+    IsInHeader = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(IsInHeader)
+  };
+};
+
 /// \brief Collects source ranges to removes all clauses from a specified list.
 ///
 /// \pre A specified pragma `P` contains all clauses from a specified list
@@ -111,7 +124,7 @@ bool findClause(Pragma &P, ClauseId Id,
 /// pragma can be removed. So, the range of this pragma will be stored.
 ///
 /// TODO (kaniandr@gmail.com): check this for Microsoft-like pragmas.
-bool pragmaRangeToRemove(const Pragma &P,
+std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   const llvm::SmallVectorImpl<clang::Stmt *> &Clauses,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
   llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove);
