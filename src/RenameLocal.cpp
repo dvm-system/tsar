@@ -214,7 +214,7 @@ private:
 };
 }
 
-bool ClangRenameLocalPass::runOnModule(Module &M) {
+bool ClangRenameLocalPass::runOnModule(llvm::Module &M) {
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
