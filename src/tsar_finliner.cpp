@@ -831,7 +831,14 @@ auto ClangInliner::getTemplateCheckers() const
   /// Checks that a specified function does not contain recursion.
   Checkers.push_back([this](const Template &T) {
     static auto Recursive = findRecursion();
-    if (Recursive.count(T.getFuncDecl())) {
+    struct LocationLess {
+      bool operator()(const FunctionDecl *LHS, const FunctionDecl *RHS) const {
+        return LHS->getLocation() < RHS->getLocation();
+      }
+    };
+    static std::set<const FunctionDecl *, LocationLess> SortedRecursive(
+      Recursive.begin(), Recursive.end());
+    if (SortedRecursive.count(T.getFuncDecl())) {
       toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline_recursive);
       return false;
