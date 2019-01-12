@@ -101,7 +101,8 @@ bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
     mOutermostDecl = nullptr;
     return Res;
   }
-  if (!mLangOpts.CPlusPlus && isa<TagDecl>(mOutermostDecl) && isa<TagDecl>(D)) {
+  if (!mLangOpts.CPlusPlus && isa<TagDecl>(mOutermostDecl) &&
+      (isa<TagDecl>(D) || isa<EnumConstantDecl>(D))) {
     auto ND = cast<NamedDecl>(D);
     mOutermostDecls[ND->getName()].emplace_back(ND, mOutermostDecl);
     LLVM_DEBUG(log());
