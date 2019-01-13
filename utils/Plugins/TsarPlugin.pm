@@ -22,6 +22,9 @@
 #   # A file with correct results, required
 #   sample = private_1.c
 #
+#   # Additional files which can be checked using 'diff' tools, optional
+#   # sample_diff =
+#
 #   # Prefix of a single line comments, optional, default:
 #   # ';' is for .ll sample,
 #   # 'C' for .f, .for, .f90, .fdv sample,
@@ -51,10 +54,11 @@ package Plugins::TsarPlugin;
 use base qw(Plugins::Base);
 
 use File::Path qw(remove_tree);
-use File::Spec::Functions qw(catfile);
+use File::Spec::Functions qw(catfile rel2abs splitdir);
 use File::Copy qw(copy);
 use File::chdir;
 use File::Compare;
+use Text::Diff;
 use File::Temp qw(tempdir);
 use File::Basename qw(fileparse);
 
@@ -68,6 +72,36 @@ use strict;
 TSAR (Traits Static AnalyzeR) test plugin for PTS (Process Task Set)
 
 =cut
+
+# Checks files and copy them to a template directory.
+#
+# Arguments: task directory, template directory, additional suffix for copy,
+# flag which is specified whether it is necessary to 'die' in case of errors.
+# Returns names of copies (it does not matter whether it was possible to copy).
+sub copy_files {
+  my $task_dir = shift @_;
+  my $tmp_dir = shift @_;
+  my $suffix_copy = shift @_;
+  my $quiet = shift @_;
+  my @suffixes = qw(.h .c .cpp .cxx .cdv .f .for .f90 .fdv .ll);
+  my @copy_list;
+  for (@_) {
+    my $file = rel2abs(catfile($task_dir, $_));
+    my ($name, $path, $suffix) = fileparse($file, @suffixes);
+    unless ($suffix) {
+      remove_tree $tmp_dir;
+      die "fail: unsupported extension of $file: expected @suffixes\n";
+    }
+    my $copy_file = $suffix_copy ? "$name.$suffix_copy$suffix" : "$name$suffix";
+    if (!copy($file, catfile($tmp_dir, $copy_file)) && !$quiet) {
+      remove_tree $tmp_dir;
+      die "fail: can not copy $file to a temporary directory\n";
+    }
+    push @copy_list, $copy_file;
+  }
+  return @copy_list;
+}
+
 
 sub process {
   my ($class, $task, $db) = @_;
@@ -93,9 +127,10 @@ sub process {
     $base_task = $db->get_task($base_task_id);
   }
   $base_task->reload_config(
-    multiline => {'' => [qw(run)]},
+    multiline => {'' => [qw(sample_diff run)]},
     required  => {'' => [qw(sample run)]});
   my $sample = $base_task->conf->{''}{'sample'};
+  my @sample_diff = defined $base_task->conf->{''}{'sample_diff'} ? @{$base_task->get_var('','sample_diff')} : ();
   my $comment = $base_task->conf->{''}{'comment'};
   unless ($comment) {
     my ($sample_name, $sample_path, $sample_suffix) = fileparse($sample, keys %comments);
@@ -109,6 +144,11 @@ sub process {
   $task->DEBUG("create temporary output directory");
   my $work_dir = tempdir($task->name.'_XXXX', DIR => $CWD, CLEANUP => 0);
   my $output_file = catfile($work_dir, 'output.log');
+
+  $sample =~ s/\$(\w+)/my $v = $base_task->get_var('', $1); ref $v ? "@$v" : $v/ge;
+  for (@sample_diff) {
+    $_ =~ s/\$(\w+)/my $v = $base_task->get_var('', $1); ref $v ? "@$v" : $v/ge;
+  }
 
   $task->DEBUG("verify prefixes which identify sample lines");
   my $check_prefixes = '';
@@ -140,6 +180,14 @@ sub process {
   close $sf;
   close $out;
 
+  $task->DEBUG("backup sample files and discard lines with specified prefixes '$check_prefixes' in the original files");
+  my $sample_backup = catfile($work_dir, $sample);
+  copy($sample, $sample_backup) or $action eq 'init' or throw Exception => $task->name . ": unable to backup sample file '$sample'";
+  for (@sample_diff) {
+    copy($_, catfile($work_dir, $_)) or $action eq 'init' or throw Exception => $task->name . ": unable to backup sample file '$_'";
+  }
+  copy($output_file, $sample) or throw Exception => $task->name . "unable to remove sample lines from '$sample'";
+
   RUN: for (@run) {
     my $check_prefix = 'CHECK';
     $_ =~ s/\$(\w+)/my $v = $base_task->get_var('', $1); ref $v ? "@$v" : $v/ge;
@@ -158,19 +206,25 @@ sub process {
       open(my $err, '>', $err_file) or throw Exception => $task->name . ": unable to write TSAR executable errors to file";
       print $err $output;
       close $err;
-      throw Exception => $task->name . ": TSAR executable error (see '$err_file')" if $?;
+      print $task->name . ": TSAR executable error (see '$err_file')";
+      $ret = 0;
+      next RUN;
     }
     $output =~ s/\n$//;
     $output =~ s/\n/\n$comment$check_prefix: /g;
+    my $curr_path = $CWD;
+    $curr_path =~ s/\\/\\\\/g;
+    $output =~ s/(:?$curr_path|\.)(:?\\|\/)//g;
     $output = "$comment$check_prefix: $output\n";
     $task->DEBUG("write output to a file");
     open(my $out, '>>', $output_file) or throw Exception => $task->name . ": unable to open output file '$output_file'";
     print $out $output;
     close $out;
     if ($action eq 'check') {
-      $task->DEBUG("compare output with sample '$sample'");
+      $task->DEBUG("start comparison for '$exec'");
+      $task->DEBUG("compare output with sample '$sample_backup'");
       my @output = split /\n/, $output;
-      open(my $sf, '<', $sample) or throw Exception => $task->name . ": unable to open sample file '$sample'";
+      open(my $sf, '<', $sample_backup) or throw Exception => $task->name . ": unable to open sample file '$sample_backup'";
       while (my $line = <$sf>) {
         chomp $line;
         if ($line =~ m/^$comment$check_prefix: /) {
@@ -178,7 +232,7 @@ sub process {
           my $output_row = shift @output;
           if ($line ne $output_row) {
             close $sf;
-            print $task->name . ": output and sample are not equal at line $line_idx with prefix '$check_prefix' (see '$output_file')\n";
+            print $task->name . ": output and sample are not equal at line $line_idx with prefix '$check_prefix' (see '$output_file' .vs '$sample')\n";
             $ret = 0;
             next RUN;
           }
@@ -187,28 +241,60 @@ sub process {
       close $sf;
       ++$line_idx;
       if (@output) {
-        print $task->name . ": output and sample are not equal at line $line_idx\n";
+        print $task->name . ": output and sample are not equal at line $line_idx with prefix '$check_prefix' (see '$output_file' .vs '$sample')\n";
         $ret = 0;
         next RUN;
       }
+      for (@sample_diff) {
+        my $backup = catfile($work_dir, $_);
+        $task->DEBUG("compare output with sample '$backup'");
+        unless (-e "$_") {
+          print $task->name . ": '$_': output has not been created by '$exec'\n";
+          $ret = 0;
+        } elsif (my $diff = diff($_, $backup)) {
+          print $task->name . ": '$_': output and sample are note equal for '$exec'\n";
+          print $diff;
+          $ret = 0;
+        }
+      }
+      $task->DEBUG("end comparison for '$exec'");
     }
   }
+
   if ($ret) {
     if ($action eq 'init') {
-      if (-e "$sample" && compare($output_file, $sample) == 0) {
-        print $task->name . " - not changes in sample";
+      my @no_changes;
+      for (@sample_diff) {
+        throw Exception => $task->name . ": sample '$_' has not been created" unless (-e "$_");
+        my $backup = catfile($work_dir, $_);
+        push @no_changes, $_ if (-e $backup && compare($_, $backup) == 0);
+      }
+      if (-e "$sample_backup" && compare($output_file, $sample_backup) == 0) {
+        copy($sample_backup, $sample) or throw Exception => $task->name . "unable to restore sample file '$sample' from '$sample_backup'";
+        push @no_changes, $sample;
       } elsif (!copy($output_file, $sample)) {
         throw Exception => $task->name . ": can not copy output '$output_file' to sample '$sample'";
+      }
+      if (@no_changes) {
+        print $task->name . " - no changes in @no_changes";
       } else {
         print $task->name;
       }
     } elsif ($action eq 'check') {
+      copy($sample_backup, $sample) or throw Exception => $task->name . ": unable to restore sample file '$sample'";
       print $task->name;
     } else {
       throw Exception => $task->name . ": unknown action specified '$action'";
     }
     remove_tree $work_dir;
     print " - ok\n";
+  } else {
+    throw Exception => $task->name . ": unknown action specified '$action'" unless ($action eq 'check');
+    $task->DEBUG("restore sample files");
+    copy($sample_backup, $sample) or throw Exception => $task->name . ": unable to restore sample file '$sample'";
+    for (@sample_diff) {
+      copy(catfile($work_dir, $_), $_) or throw Exception => $task->name . ": unable to restore sample file '$_'";
+    }
   }
   $ret;
 }
