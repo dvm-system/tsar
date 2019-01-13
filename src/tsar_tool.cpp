@@ -87,6 +87,10 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<std::string> Output;
   llvm::cl::opt<std::string> Language;
   llvm::cl::opt<bool> Verbose;
+  llvm::cl::opt<bool> CaretDiagnostics;
+  llvm::cl::opt<bool> NoCaretDiagnostics;
+  llvm::cl::opt<bool> ShowSourceLocation;
+  llvm::cl::opt<bool> NoShowSourceLocation;
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
@@ -144,6 +148,14 @@ Options::Options() :
     cl::Prefix),
   Verbose("v", cl::cat(CompileCategory),
     cl::desc("Show commands to run and use verbose output")),
+  CaretDiagnostics("fcaret-diagnostics", cl::cat(CompileCategory),
+    cl::desc("Print source line and ranges from source code in diagnostic")),
+  NoCaretDiagnostics("fno-caret-diagnostics", cl::cat(CompileCategory),
+    cl::desc("Do not print source line and ranges from source code in diagnostic")),
+  ShowSourceLocation("fshow-source-location", cl::cat(CompileCategory),
+    cl::desc("Print source file/line/column information in diagnostic")),
+  NoShowSourceLocation("fno-show-source-location", cl::cat(CompileCategory),
+    cl::desc("Do not print source file/line/column information in diagnostic.")),
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
@@ -341,6 +353,14 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-disable-llvm-passes");
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-Wunknown-pragmas");
+  if (Options::get().CaretDiagnostics)
+    mCommandLine.emplace_back("-fcaret-diagnostics");
+  if (Options::get().NoCaretDiagnostics)
+    mCommandLine.emplace_back("-fno-caret-diagnostics");
+  if (Options::get().ShowSourceLocation)
+    mCommandLine.emplace_back("-fshow-source-location");
+  if (Options::get().NoShowSourceLocation)
+    mCommandLine.emplace_back("-fno-show-source-location");
   if (Options::get().Verbose)
     mCommandLine.emplace_back("-v");
   if (!Options::get().LanguageStd.empty())
