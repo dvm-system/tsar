@@ -1131,9 +1131,6 @@ void ClangInliner::HandleTranslationUnit() {
     TemplateInstantiation BogusTI { nullptr, nullptr, nullptr,
       mTs[CallsItr->first].get(), TemplateInstantiation::DefaultFlags };
     CallStack.push_back(&BogusTI);
-    // In case of statements with multiple calls we accumulate inlining result
-    // in a separate strings and then update a source code.
-    bool NeedReplace = false;
     for (auto &TI : CallsItr->second->getCalls()) {
       if (!checkTemplateInstantiation(TI, CallStack, TICheckers))
         continue;
