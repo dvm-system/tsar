@@ -99,7 +99,7 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
   llvm::dbgs() << "[INLINE]: enabled templates (" <<
     std::count_if(std::begin(Ts), std::end(Ts),
       [](const std::pair<
-        const clang::FunctionDecl*, std::unique_ptr<Template>> &LHS) {
+        const clang::FunctionDecl * const, std::unique_ptr<Template>> &LHS) {
         return LHS.second->isNeedToInline();
       }) << "):\n";
   for (auto &T : Ts)
@@ -109,7 +109,7 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
   llvm::dbgs() << "[INLINE]: disabled templates (" <<
     std::count_if(std::begin(Ts), std::end(Ts),
       [](const std::pair<
-        const clang::FunctionDecl*, std::unique_ptr<Template>> &LHS) {
+        const clang::FunctionDecl * const, std::unique_ptr<Template>> &LHS) {
         return !LHS.second->isNeedToInline();
       }) << "):\n";
   for (auto &T : Ts)

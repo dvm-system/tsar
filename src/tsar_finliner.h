@@ -22,6 +22,7 @@
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/Pass.h>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -298,9 +299,17 @@ class ClangInliner : public clang::RecursiveASTVisitor<ClangInliner> {
     std::function<bool(const detail::TemplateInstantiation &,
       const InlineStackImpl &)>;
 public:
+  /// Compares locations of two function declarations.
+  struct LocationLess {
+    bool operator()(const clang::FunctionDecl *LHS,
+        const clang::FunctionDecl *RHS) const {
+      return LHS->getLocation() < RHS->getLocation();
+    }
+  };
+
   /// Map from function declaration to its template.
-  using TemplateMap = llvm::DenseMap<
-    const clang::FunctionDecl*, std::unique_ptr<detail::Template>>;
+  using TemplateMap = std::map<
+    const clang::FunctionDecl*, std::unique_ptr<detail::Template>, LocationLess>;
 
   explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context,
       const GlobalInfoExtractor &GIE,
