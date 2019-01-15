@@ -311,7 +311,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   // #pragma ...
   // }
   // <stmt>, pragma should not mark <stmt>
-  if (mActiveClause) {
+  if (mActiveClause && !isa<CaseStmt>(S)) {
     toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
       diag::warn_unexpected_directive);
     mActiveClause.reset();
@@ -399,7 +399,12 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     "Is compound statement which is function body lost?");
   // If statement with call is not inside a compound statement braces should be
   // added after inlining: if(...) f(); -> if (...) { /* inlined f() */ }
-  bool IsNeedBraces = !isa<CompoundStmt>(*ParentI);
+  // There is a special case if `switch` statement is processed.
+  // `switch (...) {
+  //  case 1: stmt1; stmt2; ...`
+  // A parent for `stmt2` is compound statement, not a `case`.
+  bool IsNeedBraces = !isa<CompoundStmt>(*ParentI) ||
+      ((ParentI + 1 != ScopeE) && isa<SwitchStmt>(*(ParentI + 1)));
   LLVM_DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getTfmRange(StmtWithCall)) << "' at ";
     StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
