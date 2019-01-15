@@ -259,6 +259,11 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   SmallVector<Stmt *, 1> Clauses;
   Pragma P(*S);
   if (findClause(P, ClauseId::Inline, Clauses)) {
+    if (mActiveClause) {
+      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+        diag::warn_unexpected_directive);
+      mActiveClause.reset();
+    }
     mActiveClause = { Clauses.front(), true, false };
     auto IsPossible = pragmaRangeToRemove(
       P, Clauses, mSrcMgr, mLangOpts, mCurrentT->getToRemove());
