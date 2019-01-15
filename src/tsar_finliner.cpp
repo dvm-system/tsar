@@ -149,7 +149,7 @@ bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
     + FD->getName()).str().data());
   llvm::SmallPtrSet<clang::CFGBlock *, 8> UB;
   unreachableBlocks(*CFG, UB);
-  auto &NewT = mTs.try_emplace(FD).first->second;
+  auto &NewT = mTs.emplace(FD, nullptr).first->second;
   if (!NewT)
     NewT = llvm::make_unique<Template>(FD);
   mCurrentT = NewT.get();
@@ -538,7 +538,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   // Template may not exist yet if forward declaration of a function is used.
-  auto &CalleeT = mTs.try_emplace(Definition).first->second;
+  auto &CalleeT = mTs.emplace(Definition, nullptr).first->second;
   if (!CalleeT)
     CalleeT = llvm::make_unique<Template>(Definition);
   CalleeT->setNeedToInline();
