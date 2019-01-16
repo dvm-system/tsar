@@ -190,27 +190,28 @@ message(STATUS ${LLVM_STATUS})
 
 set(LLVM_COMPONENTS
   analysis asmparser bitreader core instrumentation irreader scalaropts support
-  tablegen target transformutils coverage mcparser option debuginfodwarf
-  x86asmparser x86info x86codegen
-  powerpcasmparser powerpcinfo powerpccodegen
-  aarch64asmparser aarch64info aarch64codegen
-  amdgpuasmparser amdgpuinfo amdgpucodegen
-  armasmparser arminfo armcodegen
-  mipsasmparser mipsinfo mipscodegen
-  sparcasmparser sparcinfo sparccodegen
-  systemzasmparser systemzinfo systemzcodegen
-  hexagoninfo hexagoncodegen
-  xcoreinfo xcorecodegen
-  bpfasmparser bpfinfo bpfcodegen
-  nvptxinfo nvptxcodegen
-  msp430info msp430codegen
-  lanaiasmparser lanaiinfo lanaicodegen)
-  # It seems that RISC-V architecture support in LLVM is experimental and it
-  # is not a part of default build. However, LLVM build can be configured to
-  # support RISC-V if necessary.
-  #riscvdesc riscvinfo riscvcodegen)
+  tablegen target transformutils coverage mcparser option debuginfodwarf)
 
 llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
+
+# Add targets to the list of necessary LLVM libraries (LLVM_LIBS).
+foreach(T ${LLVM_TARGETS_TO_BUILD})
+  llvm_map_components_to_libnames(L "${T}asmparser")
+  list(FIND LLVM_AVAILABLE_LIBS "${L}" FIND_RES)
+  if (NOT ${FIND_RES} EQUAL -1)
+    list(APPEND LLVM_LIBS ${L})
+  endif()
+  llvm_map_components_to_libnames(L "${T}info")
+  list(FIND LLVM_AVAILABLE_LIBS ${L} FIND_RES)
+  if (NOT ${FIND_RES} EQUAL -1)
+    list(APPEND LLVM_LIBS "${L}")
+  endif()
+  llvm_map_components_to_libnames(L "${T}codegen")
+  list(FIND LLVM_AVAILABLE_LIBS "${L}" FIND_RES)
+  if (NOT ${FIND_RES} EQUAL -1)
+    list(APPEND LLVM_LIBS ${L})
+  endif()
+endforeach()
 
 set(CLANG_LIBS
   clangTooling clangCodeGen clangFrontend clangDriver clangSerialization
