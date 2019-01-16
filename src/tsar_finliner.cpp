@@ -440,9 +440,8 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       diag::warn_disable_inline_unreachable);
     return true;
   }
-  const FunctionDecl* Definition = nullptr;
-  Call->getDirectCallee()->hasBody(Definition);
-  if (!Definition) {
+  const auto *Definition = Call->getDirectCallee();
+  if (!Definition || !Definition->hasBody(Definition)) {
     toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
       diag::warn_disable_inline_no_body);
     return true;
