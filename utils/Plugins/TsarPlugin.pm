@@ -155,13 +155,14 @@ sub process {
   for (@run) {
     my $check_prefix = 'CHECK';
     $_ =~ s/\$(\w+)/my $v = $base_task->get_var('', $1); ref $v ? "@$v" : $v/ge;
-    my ($exec, $check_args) = $_ =~ m/^(.+?)(?:\|\s*(.*)\s*)?$/;
+    my ($exec, $check_args) = $_ =~ m/^(.*?)(?:\|\s*(.*)\s*)?$/;
     if ($check_args) {
       (($check_prefix) = $check_args =~ m/^-check-prefix=(.*)$/) or
         throw Exception => $task->name . ": unknown check option '$check_args'";
       ($check_prefix ne '') or
         throw Exception => $task->name . ": empty check prefix is not allowed";
     }
+    $task->DEBUG("prefix '$check_prefix' is verified");
     $check_prefixes .= "$comment$check_prefix: |";
   }
   $check_prefixes =~ s/\|$//;
