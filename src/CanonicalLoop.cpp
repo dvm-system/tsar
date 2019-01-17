@@ -13,9 +13,11 @@
 #include "DefinedMemory.h"
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
+#include "GlobalOptions.h"
 #include "tsar_loop_matcher.h"
 #include "MemoryAccessUtils.h"
 #include "tsar_memory_matcher.h"
+#include "tsar_query.h"
 #include "SpanningTreeRelation.h"
 #include "tsar_transformation.h"
 #include <clang/AST/Decl.h>
@@ -41,8 +43,10 @@ STATISTIC(NumCanonical, "Number of canonical for-loops");
 STATISTIC(NumNonCanonical, "Number of non-canonical for-loops");
 
 char CanonicalLoopPass::ID = 0;
-INITIALIZE_PASS_BEGIN(CanonicalLoopPass, "canonical-loop",
-  "Canonical Form Loop Analysis", true, true)
+INITIALIZE_PASS_IN_GROUP_BEGIN(CanonicalLoopPass, "canonical-loop",
+  "Canonical Form Loop Analysis", true, true,
+  DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
@@ -51,8 +55,9 @@ INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
-INITIALIZE_PASS_END(CanonicalLoopPass, "canonical-loop",
-  "Canonical Form Loop Analysis", true, true)
+INITIALIZE_PASS_IN_GROUP_END(CanonicalLoopPass, "canonical-loop",
+  "Canonical Form Loop Analysis", true, true,
+  DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 namespace {
 /// This class visits and analyzes all matched for-loops in a source code.
@@ -622,7 +627,20 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
   return false;
 }
 
+void CanonicalLoopPass::print(raw_ostream &OS, const llvm::Module *M) const {
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  for (auto *Info : mCanonicalLoopInfo) {
+    auto *DFL = Info->getLoop();
+    OS << "loop at ";
+    tsar::print(OS, DFL->getLoop()->getStartLoc(),
+                GlobalOpts.PrintFilenameOnly);
+    OS << " is " << (Info->isCanonical() ? "semantically" : "syntactically")
+       << " canonical\n";
+  }
+}
+
 void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();

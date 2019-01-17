@@ -140,6 +140,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
   Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createMemoryMatcherPass());
   addPrint(BeforeTfmAnalysis);
   addOutput();
   // Perform SROA and repeat variable privatization. After that reduction and
@@ -159,6 +160,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createMemoryMatcherPass());
   addPrint(AfterSroaAnalysis);
   addOutput();
   // Perform loop rotation to enable reduction recognition if for-loops.
@@ -168,6 +170,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createLoopSimplifyPass());
   Passes.add(createLCSSAPass());
   Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createMemoryMatcherPass());
   addPrint(AfterLoopRotateAnalysis);
   addOutput();
   Passes.add(createVerifierPass());
