@@ -120,8 +120,19 @@ public:
                    getPreprocessor(), getReplacement());
     AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
   }
-};
 
+  /// Assumes that a current token is a numeric constant and append to
+  /// replacement something similar to `(void)(5);` (for constant `5`).
+  void visitEK_NumericConstant(Token &Tok) {
+    assert(Tok.is(tok::numeric_constant) &&
+           "Token must be a numeric constant!");
+    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    getReplacement().push_back(Tok);
+    AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
+  }
+};
 }
 
 namespace tsar {
