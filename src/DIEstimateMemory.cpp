@@ -1080,10 +1080,11 @@ DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
   };
   if (Offset > 0) {
       Expr.push_back(Offset);
-      Expr.push_back(dwarf::DW_OP_plus);
+      Expr.push_back(dwarf::DW_OP_plus_uconst);
   } else if (Offset < 0) {
-    Expr.push_back(-Offset);
     Expr.push_back(dwarf::DW_OP_minus);
+    Expr.push_back(-Offset);
+    Expr.push_back(dwarf::DW_OP_constu);
   }
   if (Offset != 0)
     Expr[Expr.size() - 2] *= 8;
@@ -1558,9 +1559,10 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
         ++I;
     }
     if (Expr.empty () || LastDwarfOp == dwarf::DW_OP_deref ||
-        LastDwarfOp == dwarf::DW_OP_minus) {
+        LastDwarfOp == dwarf::DW_OP_minus || LastDwarfOp == dwarf::DW_OP_plus) {
       Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, Loc.Size * 8});
     } else {
+      assert(LastDwarfOp == dwarf::DW_OP_plus_uconst && "Unknown DWARF operand!");
       Expr[Expr.size() - 2] = dwarf::DW_OP_LLVM_fragment;
       Expr.push_back(Loc.Size * 8);
     }

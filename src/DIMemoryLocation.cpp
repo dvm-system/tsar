@@ -72,13 +72,16 @@ void DIMemoryLocation::getOffsets(
     }
     NegativeOffset = PositiveOffset = 0;
   };
+  uint64_t Offset = 0;
   for (auto I = Expr->expr_op_begin(), E = Expr->expr_op_end(); I != E; ++I) {
     switch (I->getOp()) {
     default:
       llvm_unreachable("Unsupported kind of DWARF expression!");
     case dwarf::DW_OP_deref: push(); break;
-    case dwarf::DW_OP_plus: PositiveOffset += I->getArg(0); break;
-    case dwarf::DW_OP_minus: NegativeOffset += I->getArg(0); break;
+    case dwarf::DW_OP_constu: Offset = I->getArg(0); break;
+    case dwarf::DW_OP_plus_uconst: PositiveOffset += I->getArg(0); break;
+    case dwarf::DW_OP_plus: PositiveOffset += Offset; break;
+    case dwarf::DW_OP_minus: NegativeOffset += Offset; break;
     case dwarf::DW_OP_LLVM_fragment:
       PositiveOffset += Expr->getFragmentInfo(I, E)->OffsetInBits; break;
     }

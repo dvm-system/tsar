@@ -26,7 +26,8 @@ namespace tsar {
 ///
 /// DWARF expressions is used to calculate address of location starting point.
 /// Address of variable is used as a basis for such calculation. If variable is
-/// a pointer than DW_OP_deref expression can be used. DW_OP_plus, DW_OP_minus,
+/// a pointer than DW_OP_deref expression can be used.
+/// DW_OP_plus, DW_OP_minus, DW_OP_plus_uconst, DW_OP_constu
 /// are also supported to move address of the beginning. Memory location may be
 /// also described as a fragment of some variable (DW_OP_LLVM_fragment). Each
 /// fragment has an offset from the variable beginning and size.
