@@ -43,6 +43,9 @@ namespace tsar {
 /// (of integer values) is specified as {DW_OP_LLVM_fragment, 0, 4}. In case of
 /// template location it means any element A[?] instead of A[0] only.
 ///
+/// Note, that if size of DW_OP_LLVM_fragment is 0 then it means that size of
+/// the location is unknown.
+///
 /// \attention Type casts can not be safely represented as template locations.
 /// For example, (char *)P + ? where P has type 'int' will be unparsed as
 /// P[?] and (char *)P + 1 + ? will be unparsed as (char *)P + 1. Existing of
@@ -90,15 +93,19 @@ struct DIMemoryLocation {
 
   /// \brief Returns true if size is known.
   ///
-  /// \attention It does not check whether memory out of range memory access
+  /// \attention
+  /// - It does not check whether memory out of range memory access
   /// occurs. In this case `isSized()` returns `true` but `getSize()` returns
   /// llvm::MemoryLocation::UnknownSize.
+  /// - If size of DW_OP_LLVM_fragment is 0 the size is unknown and this method
+  /// returns false.
   bool isSized() const;
 
   /// \brief Returns size of location, in address units, or
   /// llvm::MemoryLocation::UnknownSize if the size is not known.
   ///
   /// If out of range memory access occurs UnknownSize will be also returned.
+  /// If size of DW_OP_LLVM_fragment is 0 then UnknownSize will be returned.
   uint64_t getSize() const;
 
   /// \brief Returns list of offsets of the location starting point from its

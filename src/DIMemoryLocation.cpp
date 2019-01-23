@@ -31,14 +31,18 @@ bool DIMemoryLocation::startsWithDeref() const {
 
 bool DIMemoryLocation::isSized() const {
   assert(isValid() && "Debug memory location is invalid!");
-  return !hasDeref() || Expr->isFragment();
+  auto Fragment = Expr->getFragmentInfo();
+  if (Fragment.hasValue())
+    return Fragment->SizeInBits != 0;
+  return !hasDeref();
 }
 
 uint64_t DIMemoryLocation::getSize() const {
   assert(isValid() && "Debug memory location is invalid!");
   auto Fragment = Expr->getFragmentInfo();
   if (Fragment.hasValue())
-    return (Fragment->SizeInBits + 7) / 8;
+    return Fragment->SizeInBits == 0 ? MemoryLocation::UnknownSize :
+      (Fragment->SizeInBits + 7) / 8;
   if (hasDeref())
     return llvm::MemoryLocation::UnknownSize;
   if (auto Ty = stripDIType(Var->getType()).resolve()) {

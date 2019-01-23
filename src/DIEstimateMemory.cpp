@@ -1551,13 +1551,13 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
     if (DIL.getSize() == Loc.Size)
       return DIL;
   }
+  uint64_t LastDwarfOp = 0;
+  for (size_t I = 0, E = Expr.size(); I < E; ++I) {
+    LastDwarfOp = Expr[I];
+    if (Expr[I] != dwarf::DW_OP_deref)
+      ++I;
+  }
   if (Loc.Size != MemoryLocation::UnknownSize) {
-    uint64_t LastDwarfOp;
-    for (size_t I = 0, E = Expr.size(); I < E; ++I) {
-      LastDwarfOp = Expr[I];
-      if (Expr[I] != dwarf::DW_OP_deref)
-        ++I;
-    }
     if (Expr.empty () || LastDwarfOp == dwarf::DW_OP_deref ||
         LastDwarfOp == dwarf::DW_OP_minus || LastDwarfOp == dwarf::DW_OP_plus) {
       Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, Loc.Size * 8});
@@ -1566,6 +1566,11 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
       Expr[Expr.size() - 2] = dwarf::DW_OP_LLVM_fragment;
       Expr.push_back(Loc.Size * 8);
     }
+  } else {
+    if (!Expr.empty() && LastDwarfOp == dwarf::DW_OP_LLVM_fragment)
+      Expr.back() = 0;
+    else
+      Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, 0 });
   }
   auto DIE = DIExpression::get(Ctx, Expr);
   return DIMemoryLocation(DIV, DIE, IsTemplate);
