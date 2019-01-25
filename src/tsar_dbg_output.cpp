@@ -81,20 +81,29 @@ void printDILocationSource(unsigned DWLang,
     auto DbgLoc = UM->getDebugLoc();
     auto MD = UM->getMetadata();
     assert(MD && "MDNode must not be null!");
-    if (UM->isCall())
+    if (UM->isExec()) {
       if (!isa<DISubprogram>(MD))
         O << "?()";
       else
         O << cast<DISubprogram>(MD)->getName() << "()";
-    else
+      if (DbgLoc)
+        O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+    } else if (UM->isResult()) {
+      if (!isa<DISubprogram>(MD))
+        O << "<?()";
+      else
+        O << "<" << cast<DISubprogram>(MD)->getName() << "()";
+      if (DbgLoc)
+        O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+      O << ",?>";
+    } else {
       if (!isa<DISubprogram>(MD))
         O << "<?,?>";
       else
         O << "<" << cast<DISubprogram>(MD)->getName() << ",?>";
-    if (DbgLoc)
-      O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+    }
   } else {
-      O << "<?, ?>";
+      O << "<?,?>";
   }
 }
 

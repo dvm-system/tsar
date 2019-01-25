@@ -646,7 +646,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: process alias unknown node\n");
       for (auto Inst : cast<AliasUnknownNode>(Child)) {
         std::unique_ptr<DIMemory> DIM;
-        if (!(DIM = CMR.popFromCash(Inst))) {
+        if (!(DIM = CMR.popFromCash(Inst, true))) {
           DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
@@ -1479,7 +1479,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     auto Cashed = mCashedMemory.try_emplace(EM);
     if (Cashed.second) {
       Cashed.first->second =
-        buildDIMemory(*EM, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
+        tsar::buildDIMemory(*EM, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
       LLVM_DEBUG(buildMemoryLog(
         mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
     }
@@ -1505,10 +1505,10 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
-    auto Cashed = mCashedUnknownMemory.try_emplace(VH);
+    auto Cashed = mCashedUnknownMemory.try_emplace({VH, M.isExec()});
     if (Cashed.second) {
-      Cashed.first->second =
-        buildDIMemory(*VH, mFunc->getContext(), M.getEnv(), M.getProperies());
+      Cashed.first->second = tsar::buildDIMemory(
+        *VH, mFunc->getContext(), M.getEnv(), M.getProperies(), M.getFlags());
       LLVM_DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
@@ -1531,8 +1531,8 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
   SmallVector<uint64_t, 8> ReverseExpr;
   bool IsTemplate = false;
   auto DIV = buildDIExpression(DL, DT, Loc.Ptr, ReverseExpr, IsTemplate);
-    if (!DIV)
-      return None;
+  if (!DIV)
+    return None;
   SmallVector<uint64_t, 8> Expr(ReverseExpr.rbegin(), ReverseExpr.rend());
   if (Expr.empty()) {
     auto DIE = DIExpression::get(Ctx, Expr);
@@ -1592,21 +1592,23 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
   auto VItr = EM.begin();
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
   if (!DILoc) {
-    DIM = buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, Properties);
+    auto F = ImmutableCallSite(*VItr) ? DIUnknownMemory::Result
+                                      : DIUnknownMemory::Object;
+    DIM = buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, Properties, F);
     ++VItr;
   } else {
     auto Flags = DILoc->Template ?
       DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
     DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags);
+    DIM->setProperties(Properties);
   }
-  DIM->setProperties(Properties);
   for (auto EItr = EM.end(); VItr != EItr; ++VItr)
     DIM->bindValue(const_cast<Value *>(*VItr));
   return DIM;
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, DIMemory::Property P) {
+    DIMemoryEnvironment &Env, DIMemory::Property P, DIUnknownMemory::Flags F) {
   CallSite CS(&V);
   auto Callee = !CS ? dyn_cast_or_null<Function>(&V) : dyn_cast<Function>(
       CS.getCalledValue()->stripPointerCasts());
@@ -1614,9 +1616,9 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
   /// prototypes. May be some special pass should be added to insert such
   /// metadata.
   MDNode *MD = Callee ? Callee->getSubprogram() : nullptr;
-  DILocation *Loc = CS ? CS->getDebugLoc().get() : nullptr;
-  auto Flags = CS ? DIUnknownMemory::Call : DIUnknownMemory::NoFlags;
-  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, Flags);
+  DILocation *Loc =
+    isa<Instruction>(V) ? cast<Instruction>(V).getDebugLoc().get() : nullptr;
+  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, F);
   DIM->bindValue(&V);
   DIM->setProperties(P);
   return std::move(DIM);

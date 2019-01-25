@@ -132,8 +132,18 @@ private:
     llvm::DenseMap<const EstimateMemory *, std::unique_ptr<DIMemory>>;
 
   /// Already constructed memory locations for a new debug alias tree.
-  using DIUnknownMemoryCash =
-    llvm::DenseMap<const llvm::Value *, std::unique_ptr<DIMemory>>;
+  ///
+  /// A bit flag (`true`) indicates whether a value it is an instruction which
+  /// accesses some memory while it is executed or (`false`) it is a pointer to
+  /// memory.
+  std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    DIMemory::Property = DIMemory::Explicit,
+    DIUnknownMemory::Flags = DIUnknownMemory::NoFlags);
+
+  using DIUnknownMemoryCash = llvm::DenseMap<
+    llvm::PointerIntPair<const llvm::Value *, 1, bool>,
+    std::unique_ptr<DIMemory>>;
 
   /// \brief Hints to attach new debug unknown node to its child in constructed
   /// debug alias tree.
@@ -294,8 +304,8 @@ public:
   }
 
   /// Returns already constructed debug memory location for a specified memory.
-  std::unique_ptr<DIMemory> popFromCash(const llvm::Value *V) {
-    auto Itr = mCashedUnknownMemory.find(V);
+  std::unique_ptr<DIMemory> popFromCash(const llvm::Value *V, bool IsExec) {
+    auto Itr = mCashedUnknownMemory.find({ V, IsExec });
     if (Itr == mCashedUnknownMemory.end())
       return nullptr;
     auto M = std::move(Itr->second);

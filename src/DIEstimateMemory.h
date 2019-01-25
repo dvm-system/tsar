@@ -241,26 +241,6 @@ private:
   llvm::SmallVector<llvm::WeakVH, 1> mValues;
 };
 
-/// Builds debug memory location for a specified memory location.
-llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
-    llvm::LLVMContext &Ctx,
-    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
-
-/// Builds debug memory location for a specified memory location.
-std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
-    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
-
-/// Builds debug memory location for a specified memory location.
-std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
-    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-    DIMemory::Property = DIMemory::Explicit);
-
-/// Returns metadata-level raw representation for a specified debug memory
-/// location if it exist.
-llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
-    DIMemoryLocation DILoc);
-
 /// \brief This represents estimate memory location using metadata information.
 ///
 /// This class is similar to `EstimateMemory`. However, this is high level
@@ -356,10 +336,18 @@ private:
 class DIUnknownMemory : public DIMemory {
 public:
   /// Set of flags which may be stored in MDNode attached to this location.
+  ///
+  /// If special flags does not specified it means that this represents a memory
+  /// accessed when an appropriate instruction (for example, call of a specified
+  /// subprogram) is executed.
   enum Flags : uint16_t {
     NoFlags = 0,
-    Call = 1u << 0,
-    LLVM_MARK_AS_BITMASK_ENUM(Call)
+    /// Uses to represent memory which is associated with an object differs from
+    /// a source program variable.
+    Object = 1u << 0,
+    /// Uses to represent unnamed memory refereed by the result of instruction.
+    Result = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(Result)
   };
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
@@ -402,8 +390,16 @@ public:
   void setFlags(Flags F) { DIMemory::setFlags(F); }
 
   /// Returns true if this is a representation of memory accessed via a
-  /// function call.
-  bool isCall() const { return Call & getFlags(); }
+  /// instruction execution.
+  bool isExec() const { return getFlags() == NoFlags; }
+
+  /// Returns true if this is a representation of unnamed memory refereed by
+  /// return value.
+  bool isResult() const { return Result & getFlags(); }
+
+  /// Returns true if this is a representation of memory which is associated
+  /// with an object differs from a source program variable.
+  bool isObject() const { return Object & getFlags(); }
 
 private:
   /// Creates interface to access information about an estimate memory location,
@@ -418,6 +414,27 @@ std::unique_ptr<DIMemory> DIMemory::get(llvm::LLVMContext &Ctx,
     return DIEstimateMemory::get(Ctx, Env, *EM);
   return DIUnknownMemory::get(Ctx, Env, llvm::cast<DIUnknownMemory>(M));
 }
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    DIMemory::Property = DIMemory::Explicit,
+    DIUnknownMemory::Flags = DIUnknownMemory::NoFlags);
+
+/// Builds debug memory location for a specified memory location.
+llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
+    llvm::LLVMContext &Ctx,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Returns metadata-level raw representation for a specified debug memory
+/// location if it exist.
+llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
+    DIMemoryLocation DILoc);
 
 /// This represents debug info node in an alias tree which refers
 /// an alias sequence of estimate memory locations.
