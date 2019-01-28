@@ -844,16 +844,12 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       const Instruction &I, const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
+    if (isa<Constant>(V) && cast<Constant>(V)->isNullValue())
+      return;
     if (auto F = dyn_cast<Function>(V))
-      switch (F->getIntrinsicID()) {
-      default:
-        if (isMemoryMarkerIntrinsic(F->getIntrinsicID()))
-          return;
-        break;
-      case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
-      case Intrinsic::dbg_addr:
+      if (isDbgInfoIntrinsic(F->getIntrinsicID()) ||
+          isMemoryMarkerIntrinsic(F->getIntrinsicID()))
         return;
-      }
     if (AccessedMemory.count(V))
       return;
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();

@@ -301,15 +301,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       // Function is a first parameter of 'call' instruction, so we should
       // ignore intrinsics here.
       if (auto F = dyn_cast<Function>(Op))
-        switch (F->getIntrinsicID()) {
-        default:
-          if (isMemoryMarkerIntrinsic(F->getIntrinsicID()))
-            continue;
-          break;
-        case Intrinsic::dbg_declare: case Intrinsic::dbg_value:
-        case Intrinsic::dbg_addr:
+        if (isDbgInfoIntrinsic(F->getIntrinsicID()) ||
+            isMemoryMarkerIntrinsic(F->getIntrinsicID()))
           continue;
-        }
       DU->addAddressAccess(Op);
     }
     if (!I.mayReadOrWriteMemory())

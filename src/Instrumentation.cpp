@@ -599,12 +599,8 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
 }
 
 void Instrumentation::visitCallSite(llvm::CallSite CS) {
-  switch (CS.getIntrinsicID()) {
-  case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
-  case llvm::Intrinsic::dbg_addr:
-    return;
-  }
-  if (isMemoryMarkerIntrinsic(CS.getIntrinsicID()))
+  if (isDbgInfoIntrinsic(CS.getIntrinsicID()) ||
+      isMemoryMarkerIntrinsic(CS.getIntrinsicID()))
     return;
   DIStringRegister::IdTy FuncIdx = 0;
   if (auto *Callee = llvm::dyn_cast<llvm::Function>(
@@ -950,12 +946,8 @@ void Instrumentation::regFunctions(Module& M) {
     }
     if (F.getMetadata("sapfor.da"))
       continue;
-    switch (F.getIntrinsicID()) {
-    case llvm::Intrinsic::dbg_declare: case llvm::Intrinsic::dbg_value:
-    case llvm::Intrinsic::dbg_addr:
-      continue;
-    }
-    if (isMemoryMarkerIntrinsic(F.getIntrinsicID()))
+    if (isDbgInfoIntrinsic(F.getIntrinsicID()) ||
+        isMemoryMarkerIntrinsic(F.getIntrinsicID()))
       continue;
     auto Idx = mDIStrings.regItem(&F);
     regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),

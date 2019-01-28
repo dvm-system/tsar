@@ -31,6 +31,19 @@ inline bool isMemoryMarkerIntrinsic(llvm::Intrinsic::ID Id) noexcept {
   return false;
 }
 
+/// Returns 'true' if a specified intrinsic indicates some
+/// metadata information only.
+inline bool isDbgInfoIntrinsic(llvm::Intrinsic::ID Id) noexcept {
+  switch (Id) {
+  case llvm::Intrinsic::dbg_value:
+  case llvm::Intrinsic::dbg_addr:
+  case llvm::Intrinsic::dbg_declare:
+  case llvm::Intrinsic::dbg_label:
+    return true;
+  }
+  return false;
+}
+
 /// \brief This proposes traits of some known intrinsic functions.
 ///
 /// This class should be specialized by different function ids.
