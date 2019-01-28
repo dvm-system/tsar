@@ -1035,6 +1035,14 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
     for (auto &EM : *cast<AliasEstimateNode>(AN)) {
       if (!EM.isLeaf())
         continue;
+      auto *Ty = EM.front()->getType();
+      if (!Ty || !Ty->isPtrOrPtrVectorTy()) {
+        // For example, `(int *)1` will be stored in alias tree as `i64 1`.
+        // Its type is not pointer, so `GetPointerBaseWithConstantOffset` can
+        // not be called.
+        RootOffsets.try_emplace(EM.front(), 0);
+        continue;
+      }
       auto Root = EM.getTopLevelParent();
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
@@ -1047,6 +1055,11 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
           RootOffsets.try_emplace(CurrEM->front(), Offset);
         }
         CurrEM = CurrEM->getParent();
+        auto *CurrTy = CurrEM->front()->getType();
+        if (!CurrTy || !CurrTy->isPtrOrPtrVectorTy()) {
+          RootOffsets.try_emplace(EM.front(), 0);
+          continue;
+        }
         Base = GetPointerBaseWithConstantOffset(CurrEM->front(), Offset, DL);
       }
     }
@@ -1064,6 +1077,12 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
 /// is unsuccessful.
 DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
     const Value *V, SmallVectorImpl<uint64_t> &Expr, bool &IsTemplate) {
+  auto *Ty = V->getType();
+  // For example, `(int *)1` will be stored in alias tree as `i64 1`.
+  // Its type is not pointer, so `GetPointerBaseWithConstantOffset` can
+  // not be called.
+  if (!Ty || !Ty->isPtrOrPtrVectorTy())
+    return nullptr;
   int64_t Offset = 0;
   const Value *Curr = V, *Base = nullptr;
   while (true) {
