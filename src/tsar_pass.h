@@ -207,6 +207,14 @@ void initializeDILoopRetrieverPassPass(PassRegistry &Registry);
 /// it is not presented in LLVM IR.
 Pass * createDILoopRetrieverPass();
 
+/// Initializes a pass which retrieves some debug information for global values
+/// if it is not presented in LLVM IR.
+void initializeDIGlobalRetrieverPassPass(PassRegistry &Registry);
+
+/// Creates a pass which retrieves some debug information for global values
+/// if it is not presented in LLVM IR.
+ModulePass * createDIGlobalRetrieverPass();
+
 /// Initializes a pass to determine perfect for-loops in a source code.
 void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
 

@@ -182,10 +182,18 @@ bool findNotDom(Instruction *From, Instruction *BoundInst, DominatorTree *DT,
   return false;
 }
 
-DIGlobalVariable * findMetadata(const GlobalVariable *Var) {
+DISubprogram *findMetadata(const Function *F) {
+  assert(F && "Function must not be null!");
+  if (auto *SP = F->getSubprogram())
+    return SP;
+  return dyn_cast_or_null<DISubprogram>(F->getMetadata("sapfor.dbg"));
+}
+
+DIGlobalVariable *findMetadata(const GlobalVariable *Var) {
   assert(Var && "Variable must not be null!");
-  if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(
-      Var->getMetadata(LLVMContext::MD_dbg)))
+  auto MD = Var->getMetadata(LLVMContext::MD_dbg);
+  MD = MD ? MD : Var->getMetadata("sapfor.dbg");
+  if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD))
     return DIExpr->getVariable();
   return nullptr;
 }

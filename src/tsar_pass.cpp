@@ -35,6 +35,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeLoopMatcherPassPass(Registry);
   initializeTestPrinterPassPass(Registry);
   initializeDILoopRetrieverPassPass(Registry);
+  initializeDIGlobalRetrieverPassPass(Registry);
   // Initialize source-level analysis passes.
   initializeClangPerfectLoopPassPass(Registry);
   initializeClangGlobalInfoPassPass(Registry);

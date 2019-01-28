@@ -104,7 +104,8 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
     /// TODO (kaniandr@gmail.com): if some aggregate variable has been promoted
     /// than its metadata may contain not empty DIExpression. So, we should
     /// unparse this expression.
-    if (!DILoc || DILoc->Expr && DILoc->Expr->getNumElements() > 0)
+    if (!DILoc || DILoc->Expr && DILoc->Expr->getNumElements() > 0 ||
+        isStubType(DILoc->Var->getType()))
       return false;
     assert(DILoc->Var && "Variable must not be null!");
     mDIType = stripDIType(DILoc->Var->getType());

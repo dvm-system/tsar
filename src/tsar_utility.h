@@ -40,6 +40,7 @@ class DominatorTree;
 class GlobalVariable;
 class DILocalVariable;
 class DIVariable;
+class DISubprogram;
 class AllocaInst;
 class Instruction;
 class Use;
@@ -194,6 +195,17 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
   return DITy;
 }
 
+/// Additional types may be necessary for metadata-level analysis. This function
+/// returns 'true' if a specified type is one of thes types and it has not bee
+/// accurately generated.
+///
+/// TODO (kaniandr@gmail.com): may be we should use other way to distinguish
+/// such types. How LLVM uses 'artificial' flag on types?
+inline bool isStubType(llvm::DITypeRef DITy) {
+  auto Ty = DITy.resolve();
+  return !Ty || (Ty->isArtificial() && Ty->getName() == "sapfor.type");
+}
+
 /// Compares two set.
 template<class PtrType, unsigned SmallSize>
 bool operator==(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
@@ -266,6 +278,9 @@ bool cloneChain(llvm::Instruction *From,
 bool findNotDom(llvm::Instruction *From,
   llvm::Instruction *BoundInst, llvm::DominatorTree *DT,
   llvm::SmallVectorImpl<llvm::Use *> &NotDom);
+
+/// Returns a meta information for function or nullptr;
+llvm::DISubprogram * findMetadata(const llvm::Function *F);
 
 /// Returns a meta information for a global variable or nullptr;
 llvm::DIGlobalVariable * findMetadata(const llvm::GlobalVariable *Var);

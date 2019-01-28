@@ -1628,15 +1628,21 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
 
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
     DIMemoryEnvironment &Env, DIMemory::Property P, DIUnknownMemory::Flags F) {
-  CallSite CS(&V);
-  auto Callee = !CS ? dyn_cast_or_null<Function>(&V) : dyn_cast<Function>(
-      CS.getCalledValue()->stripPointerCasts());
-  /// TODO (kaniandr@gmail.com): Clang do not add metadata for function
-  /// prototypes. May be some special pass should be added to insert such
-  /// metadata.
-  MDNode *MD = Callee ? Callee->getSubprogram() : nullptr;
-  DILocation *Loc =
-    isa<Instruction>(V) ? cast<Instruction>(V).getDebugLoc().get() : nullptr;
+  MDNode *MD = nullptr;
+  DILocation *Loc = nullptr;
+  if (auto ConstInt = dyn_cast<ConstantInt>(&V)) {
+    auto ConstV = llvm::ConstantAsMetadata::get(
+      llvm::ConstantInt::get(Type::getInt64Ty(Ctx), ConstInt->getValue()));
+    MD = MDNode::get(Ctx, {ConstV});
+  } else {
+    CallSite CS(&V);
+    auto Callee = !CS ? dyn_cast_or_null<Function>(&V)
+      : dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    if (Callee)
+      MD = findMetadata(Callee);
+    if (isa<Instruction>(V))
+      Loc = cast<Instruction>(V).getDebugLoc().get();
+  }
   auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, F);
   DIM->bindValue(&V);
   DIM->setProperties(P);
