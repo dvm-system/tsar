@@ -352,6 +352,7 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-Xclang");
   mCommandLine.emplace_back("-disable-llvm-passes");
   mCommandLine.emplace_back("-g");
+  mCommandLine.emplace_back("-fstandalone-debug");
   mCommandLine.emplace_back("-Wunknown-pragmas");
   if (Options::get().CaretDiagnostics)
     mCommandLine.emplace_back("-fcaret-diagnostics");
