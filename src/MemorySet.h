@@ -239,6 +239,10 @@ public:
   /// If the specified value contains some value in this set, the appropriate
   /// value will be updated. In this case, this method also returns true.
   ///
+  /// \attention This method updates AATags for an existing location. So,
+  /// us `sanitizeAAInfo()` method to obtain correct value. Note, that alias
+  /// analysis may not work if AATages is corrupted.
+  ///
   /// The MemorySetInfo is responsible for supplying methods make(Ty),
   /// getPtr(Ty), getSize(Ty), setSize(Ty &, uint64_t),
   /// getAATags(Ty), setAATags(Ty &, AAMDNodes) for each location type used.

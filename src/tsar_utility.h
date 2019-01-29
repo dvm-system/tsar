@@ -195,6 +195,19 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
   return DITy;
 }
 
+/// If we have missing or conflicting AAInfo, return 'true'.
+inline bool isAAInfoCorrupted(llvm::AAMDNodes AAInfo) {
+  return (AAInfo == llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey() ||
+    AAInfo == llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey());
+}
+
+/// If we have missing or conflicting AAInfo, return null.
+inline llvm::AAMDNodes sanitizeAAInfo(llvm::AAMDNodes AAInfo) {
+  if (isAAInfoCorrupted(AAInfo))
+    return llvm::AAMDNodes();
+  return AAInfo;
+}
+
 /// Additional types may be necessary for metadata-level analysis. This function
 /// returns 'true' if a specified type is one of thes types and it has not bee
 /// accurately generated.

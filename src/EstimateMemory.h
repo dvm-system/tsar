@@ -414,13 +414,7 @@ public:
 
   /// Returns the metadata nodes which describes the aliasing of the location,
   /// or null if there is no information or conflicting information.
-  llvm::AAMDNodes getAAInfo() const {
-    // If we have missing or conflicting AAInfo, return null.
-    if (mAATags == llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey() ||
-      mAATags == llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey())
-      return llvm::AAMDNodes();
-    return mAATags;
-  }
+  llvm::AAMDNodes getAAInfo() const { return sanitizeAAInfo(mAATags); }
 
   /// \brief Returns true if this location defines ambiguous memory,
   /// for example, due to multiple pointer assignment.

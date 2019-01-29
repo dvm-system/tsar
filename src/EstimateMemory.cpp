@@ -165,7 +165,9 @@ bool isSameBase(const DataLayout &DL,
 AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
     const MemoryLocation &LHS, const MemoryLocation &RHS) {
   AliasDescriptor Dptr;
-  auto AR = AA.alias(LHS, RHS);
+  auto AR = AA.alias(
+    isAAInfoCorrupted(LHS.AATags) ? LHS.getWithoutAATags() : LHS,
+    isAAInfoCorrupted(RHS.AATags) ? RHS.getWithoutAATags() : RHS);
   switch (AR) {
   default: llvm_unreachable("Unknown result of alias analysis!");
   case NoAlias: Dptr.set<trait::NoAlias>(); break;
@@ -647,11 +649,12 @@ AliasEstimateNode * AliasTree::addEmptyNode(
 
 AliasResult AliasTree::isSamePointer(
     const EstimateMemory &EM, const MemoryLocation &Loc) const {
+  auto LocAATags = sanitizeAAInfo(Loc.AATags);
   bool IsAmbiguous = false;
   for (auto *Ptr : EM) {
     switch (mAA->alias(
         MemoryLocation(Ptr, 1, EM.getAAInfo()),
-        MemoryLocation(Loc.Ptr, 1, Loc.AATags))) {
+        MemoryLocation(Loc.Ptr, 1, LocAATags))) {
       case MustAlias: return MustAlias;
       case MayAlias: IsAmbiguous = true; break;
     }
