@@ -107,9 +107,15 @@ bool isSameBase(const DataLayout &DL,
   if (!BasePtr1 || !BasePtr2 ||
       BasePtr1->getValueID() != BasePtr2->getValueID())
     return false;
-  if (Operator::getOpcode(BasePtr1) == Instruction::IntToPtr ||
-      Operator::getOpcode(BasePtr1) == Instruction::BitCast ||
-      Operator::getOpcode(BasePtr1) == Instruction::AddrSpaceCast)
+  auto Opcode1 = Operator::getOpcode(BasePtr1);
+  auto Opcode2 = Operator::getOpcode(BasePtr2);
+  // Value::getValueID() does not distinguish instructions (constant
+  // expressions) kinds.
+  if (Opcode1 != Opcode2 || Opcode1 == Instruction::UserOp1)
+    return false;
+  if (Opcode1 == Instruction::IntToPtr ||
+      Opcode1 == Instruction::BitCast ||
+      Opcode1 == Instruction::AddrSpaceCast)
     return isSameBase(DL,
       cast<const Operator>(BasePtr1)->getOperand(0),
       cast<const Operator>(BasePtr2)->getOperand(0));
