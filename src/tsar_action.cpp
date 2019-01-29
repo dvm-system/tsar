@@ -129,6 +129,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDIGlobalRetrieverPass());
+  Passes.add(createMemoryMatcherPass());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
   Passes.add(createDIMemoryTraitPoolStorage());
@@ -141,7 +142,6 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
   Passes.add(createDIDependencyAnalysisPass());
-  Passes.add(createMemoryMatcherPass());
   addPrint(BeforeTfmAnalysis);
   addOutput();
   // Perform SROA and repeat variable privatization. After that reduction and
@@ -160,8 +160,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createLoopSimplifyPass());
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
-  Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterSroaAnalysis);
   addOutput();
   // Perform loop rotation to enable reduction recognition if for-loops.
@@ -170,8 +170,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
   Passes.add(createLCSSAPass());
-  Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
   addOutput();
   Passes.add(createVerifierPass());
