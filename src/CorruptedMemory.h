@@ -184,8 +184,8 @@ private:
     ///
     /// The special case occurs if all location in a this node a destroyed and
     /// corrupted. In this case this is a collapsed ParentOfUnknown nodes for
-    /// its children of this child. In this case `Items` contains multiple records and CorruptedWL
-    /// contains list of unprocessed corrupted locations.
+    /// its children of this child. In this case `Items` contains multiple
+    /// records and CorruptedWL contains list of unprocessed corrupted locations.
     AliasNode *ParentOfUnknown = nullptr;
 
     /// \brief These lists contain locations for an unknown nodes which are
