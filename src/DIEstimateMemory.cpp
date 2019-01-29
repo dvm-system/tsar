@@ -82,19 +82,19 @@ void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
       continue;
     AliasNode *N = nullptr;
     if (auto Inst = dyn_cast<Instruction>(VH))
-      N = AT.findUnknown(cast<Instruction>(*VH));
-    if (!N) {
-      auto EM = AT.find(MemoryLocation(VH, 0));
-      // Memory becomes unused after transformation and does not presented in
-      // the alias tree.
-      if (!EM)
-        continue;
-      // We use this conservative assumption because the real size of memory
-      // is unknown.
-      N = AT.getTopLevelNode();
-    }
-    assert(N && "Unknown memory must be presented in the alias tree!");
-    Nodes.insert(N);
+      if (auto *N = AT.findUnknown(cast<Instruction>(*VH))) {
+        Nodes.insert(N);
+        return;
+      }
+    auto EM = AT.find(MemoryLocation(VH, 0));
+    // Memory becomes unused after transformation and does not presented in
+    // the alias tree.
+    if (!EM)
+      continue;
+    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    do {
+      Nodes.insert(EM->getAliasNode(AT));
+    } while (EM = CT::getNext(EM));
   }
 }
 
@@ -558,6 +558,29 @@ void addMemoryLog(Function &F, DIMemory &EM) {
 }
 #endif
 
+/// If a specified value is 'inttoptr' operator then it is stripped
+/// otherwise original value is returned.
+///
+/// In case of 'inttoptr' different values may have the same base.
+/// The following values will be binded to the same DIMemory:
+/// 'inttoptr i64 %Y to i64*'
+/// 'inttoptr i64 %Y to %struct.S*'
+/// So, we use %Y to represent corresponding DIUnknownMemory location
+const Value *stripIntToPtr(const Value *V) {
+  if (Operator::getOpcode(V) != Instruction::IntToPtr)
+    return V;
+  V = cast<Operator>(V)->getOperand(0);
+  if (auto LI = dyn_cast<LoadInst>(V))
+    return LI->getPointerOperand();
+  return V;
+}
+
+/// If a specified value is 'inttoptr' operator then it is stripped
+/// otherwise original value is returned.
+Value *stripIntToPtr(Value *V) {
+  return const_cast<Value *>(stripIntToPtr(static_cast<const Value *>(V)));
+}
+
 /// This is a map from list of corrupted memory locations to an unknown
 /// node in a debug alias tree.
 using CorruptedMap = DenseMap<CorruptedMemoryItem *, DIAliasNode *>;
@@ -647,7 +670,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       for (auto Inst : cast<AliasUnknownNode>(Child)) {
         std::unique_ptr<DIMemory> DIM;
         if (!(DIM = CMR.popFromCash(Inst, true))) {
-          DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env);
+          DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env, DT);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
         if (CMR.isCorrupted(*DIM).first) {
@@ -1025,6 +1048,7 @@ private:
 /// - It has a known offset from it's root in estimate memory tree.
 /// - It's offset is not zero or it's size is not equal to size of root.
 /// - All descendant locations in estimate memory tree have known offsets from
+/// - There is no 'inttoptr' cast in the root.
 /// the root.
 DenseMap<const Value *, int64_t>
 findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
@@ -1035,15 +1059,9 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
     for (auto &EM : *cast<AliasEstimateNode>(AN)) {
       if (!EM.isLeaf())
         continue;
-      auto *Ty = EM.front()->getType();
-      if (!Ty || !Ty->isPtrOrPtrVectorTy()) {
-        // For example, `(int *)1` will be stored in alias tree as `i64 1`.
-        // Its type is not pointer, so `GetPointerBaseWithConstantOffset` can
-        // not be called.
-        RootOffsets.try_emplace(EM.front(), 0);
-        continue;
-      }
       auto Root = EM.getTopLevelParent();
+      if (Operator::getOpcode(Root->front()) == Instruction::IntToPtr)
+        continue;
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
       auto CurrEM = &EM;
@@ -1056,10 +1074,6 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
         }
         CurrEM = CurrEM->getParent();
         auto *CurrTy = CurrEM->front()->getType();
-        if (!CurrTy || !CurrTy->isPtrOrPtrVectorTy()) {
-          RootOffsets.try_emplace(EM.front(), 0);
-          continue;
-        }
         Base = GetPointerBaseWithConstantOffset(CurrEM->front(), Offset, DL);
       }
     }
@@ -1078,8 +1092,7 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
 DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
     const Value *V, SmallVectorImpl<uint64_t> &Expr, bool &IsTemplate) {
   auto *Ty = V->getType();
-  // For example, `(int *)1` will be stored in alias tree as `i64 1`.
-  // Its type is not pointer, so `GetPointerBaseWithConstantOffset` can
+  // If type is not a pointer then `GetPointerBaseWithConstantOffset` can
   // not be called.
   if (!Ty || !Ty->isPtrOrPtrVectorTy())
     return nullptr;
@@ -1121,6 +1134,16 @@ DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
     Expr.append(DILoc->Expr->elements_begin(), DILoc->Expr->elements_end());
   return DILoc->Var;
 };
+}
+
+std::unique_ptr<DIMemory> CorruptedMemoryResolver::popFromCash(
+    const Value *V, bool IsExec) {
+  auto Itr = mCashedUnknownMemory.find({ stripIntToPtr(V), IsExec });
+  if (Itr == mCashedUnknownMemory.end())
+    return nullptr;
+  auto M = std::move(Itr->second);
+  mCashedUnknownMemory.erase(Itr);
+  return M;
 }
 
 void CorruptedMemoryResolver::resolve() {
@@ -1524,10 +1547,17 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
-    auto Cashed = mCashedUnknownMemory.try_emplace({VH, M.isExec()});
+    // In case of 'inttoptr' different values may have the same base.
+    // The following values will be binded to the same DIMemory:
+    // 'inttoptr i64 %Y to i64*'
+    // 'inttoptr i64 %Y to %struct.S*'
+    // So, we use %Y as a key in cash instead of each of values. Otherwise, cash
+    // will be contained different keys (Value) with the same value (DIMemory).
+    auto Cashed =
+      mCashedUnknownMemory.try_emplace({ stripIntToPtr(VH), M.isExec() });
     if (Cashed.second) {
-      Cashed.first->second = tsar::buildDIMemory(
-        *VH, mFunc->getContext(), M.getEnv(), M.getProperies(), M.getFlags());
+      Cashed.first->second = tsar::buildDIMemory(*VH, mFunc->getContext(),
+        M.getEnv(), *mDT, M.getProperies(), M.getFlags());
       LLVM_DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
@@ -1613,7 +1643,8 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
   if (!DILoc) {
     auto F = ImmutableCallSite(*VItr) ? DIUnknownMemory::Result
                                       : DIUnknownMemory::Object;
-    DIM = buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, Properties, F);
+    DIM =
+      buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, DT, Properties, F);
     ++VItr;
   } else {
     auto Flags = DILoc->Template ?
@@ -1627,13 +1658,22 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, DIMemory::Property P, DIUnknownMemory::Flags F) {
+    DIMemoryEnvironment &Env, const DominatorTree &DT,
+    DIMemory::Property P, DIUnknownMemory::Flags F) {
   MDNode *MD = nullptr;
   DILocation *Loc = nullptr;
-  if (auto ConstInt = dyn_cast<ConstantInt>(&V)) {
-    auto ConstV = llvm::ConstantAsMetadata::get(
-      llvm::ConstantInt::get(Type::getInt64Ty(Ctx), ConstInt->getValue()));
-    MD = MDNode::get(Ctx, {ConstV});
+  auto IntExpr = stripIntToPtr(&V);
+  if (IntExpr != &V) {
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    if (auto ConstInt = dyn_cast<ConstantInt>(IntExpr)) {
+      auto ConstV = llvm::ConstantAsMetadata::get(
+        llvm::ConstantInt::get(Type::getInt64Ty(Ctx), ConstInt->getValue()));
+      MD = MDNode::get(Ctx, { ConstV });
+    } else if (auto DILoc = findMetadata(IntExpr, DILocs, &DT)) {
+      MD = DILoc->Var;
+    } else if (isa<Instruction>(V)) {
+      Loc = cast<Instruction>(V).getDebugLoc().get();
+    }
   } else {
     CallSite CS(&V);
     auto Callee = !CS ? dyn_cast_or_null<Function>(&V)

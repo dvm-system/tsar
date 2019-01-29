@@ -304,14 +304,7 @@ public:
   }
 
   /// Returns already constructed debug memory location for a specified memory.
-  std::unique_ptr<DIMemory> popFromCash(const llvm::Value *V, bool IsExec) {
-    auto Itr = mCashedUnknownMemory.find({ V, IsExec });
-    if (Itr == mCashedUnknownMemory.end())
-      return nullptr;
-    auto M = std::move(Itr->second);
-    mCashedUnknownMemory.erase(Itr);
-    return M;
-  }
+  std::unique_ptr<DIMemory> popFromCash(const llvm::Value *V, bool IsExec);
 
   /// Returns memory location which has represented a specified promoted
   /// location before promotion.

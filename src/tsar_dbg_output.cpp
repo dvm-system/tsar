@@ -98,16 +98,21 @@ void printDILocationSource(unsigned DWLang,
       O << ",?>";
     } else {
       if (isa<DISubprogram>(MD)) {
-        O << "<" << cast<DISubprogram>(MD)->getName() << ",?>";
+        O << "<*" << cast<DISubprogram>(MD)->getName() << ",?>";
+      } else if (isa<DIVariable>(MD)) {
+        O << "<*" << cast<DIVariable>(MD)->getName() << ",?>";
       } else {
         SmallString<32> Address("?");
         if (MD->getNumOperands() == 1)
           if (auto Const = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
             auto CInt = cast<ConstantInt>(Const->getValue());
-            Address.clear();
+            Address.front() = '*';
             CInt->getValue().toStringUnsigned(Address);
           }
-        O << "<" << Address << ",?>";
+        O << "<" << Address;
+        if (DbgLoc)
+          O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+        O << ",?>";
       }
     }
   } else {

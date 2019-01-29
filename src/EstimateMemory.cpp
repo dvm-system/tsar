@@ -54,14 +54,14 @@ void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   // behavior.
   if (auto  GEP = dyn_cast<const GEPOperator>(Loc.Ptr))
     return;
-  // It seams that it is safe to strip 'inttoptr', 'addrspacecast' and that an
-  // alias analysis works well in this case. LLVM IR specification requires that
-  // if the address space conversion is legal then both result and operand refer
-  // to the same memory location.
-  if (Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr) {
-    Loc.Ptr = cast<const Operator>(Loc.Ptr)->getOperand(0);
-    return stripToBase(DL, Loc);
-  }
+  // We should not strip 'inttoptr' cast because alias analysis for values with
+  // no-pointer types always returns NoAlias.
+  if (Operator::getOpcode(Loc.Ptr) == Instruction::IntToPtr)
+    return;
+  // It seams that it is safe to strip 'addrspacecast' and that an alias
+  // analysis works well in this case. LLVM IR specification requires that
+  // if the address space conversion is legal then both result and operand
+  // refer to the same memory location.
   auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), DL, 1);
   if (BasePtr == Loc.Ptr)
     return;

@@ -423,6 +423,7 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
 /// Builds debug memory location for a specified memory location.
 std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    const llvm::DominatorTree &DT,
     DIMemory::Property = DIMemory::Explicit,
     DIUnknownMemory::Flags = DIUnknownMemory::NoFlags);
 
