@@ -40,14 +40,18 @@ public:
         std::make_pair("Flow", std::set<std::string>()),
         std::make_pair("Anti", std::set<std::string>()),
         std::make_pair("Private", std::set<std::string>()),
+        std::make_pair("Readonly", std::set<std::string>()),
+        std::make_pair("DynamicPrivate", std::set<std::string>()),
       };
       for (auto &Region : *Loop.getSecond()) {
         tsar::DIMemory* Memory = Region.getFirst();
         if (!tsar::DIEstimateMemory::classof(Memory)) continue;
         auto Var = cast<tsar::DIEstimateMemory>(Memory)->getVariable();
+        auto Expr = cast<tsar::DIEstimateMemory>(Memory)->getExpression();
         std::stringstream Variable;
         Variable << "File: " << Var->getScope()->getFilename().str()
-          << " Name: " << Var->getName().str() << " Line: " << Var->getLine();
+          << " Name: " << (Expr->getNumElements() ? "*" : "")
+          << Var->getName().str() << " Line: " << Var->getLine();
         if (Region.getSecond().is<tsar::trait::Flow>()) {
           Variables["Flow"].insert(Variable.str());
         }
@@ -57,9 +61,15 @@ public:
         if (Region.getSecond().is<tsar::trait::Private>()) {
           Variables["Private"].insert(Variable.str());
         }
+        if (Region.getSecond().is<tsar::trait::Readonly>()) {
+          Variables["Readonly"].insert(Variable.str());
+        }
+        if (Region.getSecond().is<tsar::trait::DynamicPrivate>()) {
+          Variables["DynamicPrivate"].insert(Variable.str());
+        }
       }
       for (auto &Var : Variables) {
-        OS << Var.first << "\n";
+        OS << "  " << Var.first << "\n";
         for (auto &Each : Var.second) {
           OS << "\t" << Each << "\n";
         }
@@ -67,10 +77,11 @@ public:
     }
   }
 private:
-  using LoopsMap = std::map<std::tuple<std::string, unsigned, unsigned>, 
+  using LoopsMap = std::map<std::tuple<std::string, unsigned, unsigned>,
    dyna::Loop>;
+  using VarsSet = std::set<std::tuple<std::string, unsigned, std::string>>;
   LoopsMap getLoopsMap(dyna::Info&) const;
+  VarsSet getPrivateVarsSet(dyna::Info&, dyna::Loop&) const;
   DebugLoc getDebugLocByID(const MDNode*) const;
-  inline bool isSameVariable(const dyna::Var&, const DIVariable&) const;
 };
 }

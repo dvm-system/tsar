@@ -39,14 +39,16 @@ DynResultsIntegrationPass::LoopsMap DynResultsIntegrationPass::getLoopsMap(
   return Result;
 }
 
-inline bool DynResultsIntegrationPass::isSameVariable(
-  const dyna::Var& DynaVar,
-  const DIVariable& DIVar) const {
-  //No column information in llvm::DIVariable. Ignore it
-  return
-    DynaVar[dyna::Var::File] == DIVar.getScope()->getFilename().str()
-    && DynaVar[dyna::Var::Name] == DIVar.getName().str()
-    && DynaVar[dyna::Var::Line] == DIVar.getLine();
+DynResultsIntegrationPass::VarsSet DynResultsIntegrationPass::getPrivateVarsSet(
+  dyna::Info& Info,
+  dyna::Loop& Loop) const {
+  VarsSet Result;
+  for (auto &Private : Loop[dyna::Loop::Private]) {
+    auto &Var = Info[dyna::Info::Vars][Private];
+    Result.insert(std::make_tuple(Var[dyna::Var::Name],
+      Var[dyna::Var::Line], Var[dyna::Var::File]));
+  }
+  return Result;
 }
 
 bool DynResultsIntegrationPass::runOnFunction(Function &F) {
@@ -58,7 +60,10 @@ bool DynResultsIntegrationPass::runOnFunction(Function &F) {
   In.close();
   json::Parser<> Parser(ResultsJson);
   dyna::Info Info;
-  if (!Parser.parse(Info)) return true;
+  if (!Parser.parse(Info)) {
+    std::cerr << "Error while parsing " << DYNAMIC_RESULTS_JSON << std::endl;
+    return true;
+  }
   auto DynaLoops = getLoopsMap(Info);
   for (auto &TraitLoop : TraitPool) {
     auto LoopID = cast<MDNode>(TraitLoop.getFirst());
@@ -66,26 +71,22 @@ bool DynResultsIntegrationPass::runOnFunction(Function &F) {
     auto LoopDescr = std::make_tuple(cast<DIScope>(Loc.getScope())
       ->getFilename().str(), Loc.getLine(), Loc.getCol());
     if (DynaLoops.find(LoopDescr) == DynaLoops.end()) continue;
-    for (auto &Private : DynaLoops[LoopDescr][dyna::Loop::Private]) {
-      auto DynaVar = Info[dyna::Info::Vars][Private];
-      for (auto &Region : *TraitLoop.getSecond()) {
-        tsar::DIMemory* Memory = Region.getFirst();
-        if (!tsar::DIEstimateMemory::classof(Memory)) continue;
-        if (!isSameVariable(DynaVar, *cast<tsar::DIEstimateMemory>(Memory)
-          ->getVariable())) continue;
-        if (!Region.getSecond().is<tsar::trait::Private>()) {
-          Region.getSecond().set<tsar::trait::Private>();
-        }
-        //Should i also unset trait::privates if they are not in dynamic
-        //analysis result? Using for those cases something like 
-        //"Region.getSecond().unset<tsar::trait::Private>()" does not compile.
-        //
-        //e.g:
-        //for (int i = 0; i < 5; ++i) 
-        //  if (i == 10) int n = 1;
-        //n would be as private in DIMemoryTraitPoolWrapper results but not in
-        //dynamic analysis results.
-      }        
+    auto DynaVars = getPrivateVarsSet(Info, DynaLoops[LoopDescr]);
+    for (auto &Region : *TraitLoop.getSecond()) {
+      tsar::DIMemory* Memory = Region.getFirst();
+      if (!tsar::DIEstimateMemory::classof(Memory)) continue;
+      auto DIVar = cast<tsar::DIEstimateMemory>(Memory)->getVariable();
+      auto PointerPrefix = (cast<tsar::DIEstimateMemory>(Memory)
+        ->getExpression()->getNumElements() ? "^" : "");
+      auto VarDescr = std::make_tuple(PointerPrefix + DIVar->getName().str(),
+        DIVar->getLine(), DIVar->getScope()->getFilename().str());
+      if (Region.getSecond().is<tsar::trait::Private>() &&
+        DynaVars.find(VarDescr) == DynaVars.end()) {
+        Region.getSecond().set<tsar::trait::Readonly>();
+      } else if (!Region.getSecond().is<tsar::trait::Private>() &&
+        DynaVars.find(VarDescr) != DynaVars.end()) {
+        Region.getSecond().set<tsar::trait::DynamicPrivate>();
+      }
     }
     //for (auto &Anti : DynaLoops[LoopDescr][dyna::Loop::Anti]);
     //for (auto &Flow : DynaLoops[LoopDescr][dyna::Loop::Flow]);
