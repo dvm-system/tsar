@@ -1187,8 +1187,8 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
     // Ignore expressions other than empty or fragment. Such expressions may
     // be created after some transform passes when llvm.dbg.declare is
     // replaced with llvm.dbg.value.
-    if (Loc.Expr->getNumElements() != 0 && Loc.Expr->getNumElements() != 3 ||
-        Loc.Expr->getFragmentInfo()) {
+    if (!(Loc.Expr->getNumElements() == 0 ||
+          (Loc.Expr->getNumElements() == 3 && Loc.Expr->getFragmentInfo()))) {
       auto VarFragments = mVarToFragments.find(Loc.Var);
       if (VarFragments == mVarToFragments.end())
         continue;
