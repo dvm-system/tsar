@@ -328,7 +328,7 @@ void updateEMTreeLog(EstimateMemory *EM,
   dbgs() << "[ALIAS TREE]: update estimate memory location tree:";
   dbgs() << " IsNew=" << (IsNew ? "true" : "false");
   dbgs() << " AddAmbiguous=" << (AddAmbiguous ? "true" : "false");
-  dbgs() << " Neighbors={";
+  dbgs() << " Neighbors={ ";
   if (auto PrevEM = CT::getPrev(EM))
     printLocationSource(dbgs(),
       MemoryLocation(PrevEM->front(), PrevEM->getSize()), &DT);
@@ -340,6 +340,23 @@ void updateEMTreeLog(EstimateMemory *EM,
       MemoryLocation(NextEM->front(), NextEM->getSize()), &DT);
   else
     dbgs() << "NULL";
+  dbgs() << " }";
+  dbgs() << " Parent=";
+  if (auto Parent = EM->getParent())
+    printLocationSource(dbgs(),
+      MemoryLocation(Parent->front(), Parent->getSize()), &DT);
+  else
+    dbgs() << "NULL";
+  dbgs() << " Children={ ";
+  if (EM->isLeaf()) {
+    dbgs() << "NULL ";
+  } else {
+    for (auto &Child : make_range(EM->child_begin(), EM->child_end())) {
+      printLocationSource(dbgs(),
+        MemoryLocation(Child.front(), Child.getSize()), &DT);
+      dbgs() << " ";
+    }
+  }
   dbgs() << "}\n";
 }
 
@@ -366,6 +383,23 @@ void mergeChainAfterLog(EstimateMemory *EM, const DominatorTree &DT) {
       MemoryLocation(NextEM->front(), NextEM->getSize()), &DT);
   else
     dbgs() << "NULL";
+  dbgs() << " }";
+  dbgs() << " Parent=";
+  if (auto Parent = EM->getParent())
+    printLocationSource(dbgs(),
+      MemoryLocation(Parent->front(), Parent->getSize()), &DT);
+  else
+    dbgs() << "NULL";
+  dbgs() << " Children={ ";
+  if (EM->isLeaf()) {
+    dbgs() << "NULL ";
+  } else {
+    for (auto &Child : make_range(EM->child_begin(), EM->child_end())) {
+      printLocationSource(dbgs(),
+        MemoryLocation(Child.front(), Child.getSize()), &DT);
+      dbgs() << " ";
+    }
+  }
   dbgs() << "}\n";
 }
 #endif
@@ -393,8 +427,10 @@ void AliasTree::add(const MemoryLocation &Loc) {
       CT::mergeNext(EM, PrevChainEnd);
       LLVM_DEBUG(mergeChainAfterLog(EM, getDomTree()));
     }
-    if (!IsNew && !AddAmbiguous)
+    if (!IsNew && !AddAmbiguous) {
+      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: end memory levels processing\n");
       return;
+    }
     PrevChainEnd = EM;
     while (CT::getNext(PrevChainEnd))
       PrevChainEnd = CT::getNext(PrevChainEnd);
@@ -454,6 +490,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
       EM->setAliasNode(*Node, *this);
     }
   } while (stripMemoryLevel(*mDL, Base));
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: end memory levels processing\n");
 }
 
 void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
@@ -796,6 +833,7 @@ AliasTree::insert(const MemoryLocation &Base) {
   } else {
     BL = &mBases.insert(std::make_pair(StrippedPtr, BaseList())).first->second;
   }
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: build new chain\n");
   auto Chain = new EstimateMemory(Base, AmbiguousRef::make(mAmbiguousPool));
   ++NumEstimateMemory;
   BL->push_back(Chain);
