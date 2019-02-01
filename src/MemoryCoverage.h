@@ -42,7 +42,7 @@ bool cover(
   struct Size {};
   // This map is used to sort memory locations according to preorder numbering
   // of alias tree nodes. This simplify devision of nodes into classes of
-  // equivalence. To locations are related to the same class if they may alias.
+  // equivalence. Two locations are related to the same class if they may alias.
   // Reverse postorder numbering is used further to determine boundary of each
   // class.
   std::map<std::size_t,
