@@ -252,9 +252,12 @@ public:
     return I == mChildOfUnknown.end() ? nullptr : I->second->getForward();
   }
 
-  /// If a specified variable produces a root of a debug alias subtree which
+  /// If a specified variable produces a root of a debug alias subtree
   /// which must be a children of some unknown node than corrupted memory
   /// locations which forms this node are returned.
+  ///
+  /// Note, if a root of subtree is also corrupted it is contained in the result
+  /// of this function.
   CorruptedMemoryItem * hasUnknownParent(const llvm::DIVariable &Var) {
     auto I = mVarChildOfUnknown.find(&Var);
     return I == mVarChildOfUnknown.end() ? nullptr : I->second->getForward();

@@ -761,13 +761,19 @@ public:
       addFragments(Parent, 0, mSortedFragments.size());
       return;
     }
+    auto DIEmptyExpr = DIExpression::get(*mContext, {});
     if (mSortedFragments.front()->getNumElements() == 0) {
-      LLVM_DEBUG(addFragmentLog(mSortedFragments.front()));
-      auto &DIM = mDIAT->addNewNode(
-        DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments.front()),
-        *Parent);
-      if (auto M = mCMR->beforePromotion(
-            DIMemoryLocation(mVar, mSortedFragments.front())))
+      auto DIMVar = DIEstimateMemory::get(*mContext, *mEnv, mVar, DIEmptyExpr);
+      auto IsCorruptedRoot = mCMR->isCorrupted(*DIMVar);
+      if (IsCorruptedRoot.first) {
+        if (IsCorruptedRoot.second)
+          return;
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
+        eraseCorrupted(DIMVar->getAsMDNode(), Parent);
+      }
+      LLVM_DEBUG(addFragmentLog(DIEmptyExpr));
+      auto &DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
+      if (auto M = mCMR->beforePromotion(DIMemoryLocation(mVar, DIEmptyExpr)))
         M->replaceAllUsesWith(&DIM);
       DIM.setProperties(DIMemory::Explicit);
       return;
@@ -778,8 +784,8 @@ public:
       addFragments(Parent, 0, mSortedFragments.size());
       return;
     }
-    evaluateTy(DIExpression::get(*mContext, {}),
-      Ty, 0, std::make_pair(0, mSortedFragments.size()), Parent);
+    evaluateTy(
+      DIEmptyExpr, Ty, 0, std::make_pair(0, mSortedFragments.size()), Parent);
   }
 
 private:
@@ -1442,6 +1448,18 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
       NewM->bindValue(VH);
     }
     M->replaceAllUsesWith(NewM.get());
+    if (auto DIEM = dyn_cast<DIEstimateMemory>(NewM.get()))
+      if (!DIEM->isTemplate() && DIEM->getExpression()->getNumElements() == 0) {
+        // Now, we process a corrupted location which is a root of subtree
+        // that contains promoted locations (fragments). We specify unknown node
+        // which must contain root of subtree.
+        auto Info = mVarChildOfUnknown.try_emplace(DIEM->getVariable(), Item);
+        // If Info.first->second is null it means that it is under construction
+        // at this moment. Note, that Item is constructing now, so it replace
+        // null later.
+        if (!Info.second && Info.first->second)
+          merge(Info.first->second, Item);
+      }
     Item->push(std::move(NewM));
   }
   return Item;
