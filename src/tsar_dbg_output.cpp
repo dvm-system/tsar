@@ -53,7 +53,7 @@ void printDILocationSource(unsigned DWLang,
     const DIMemoryLocation &Loc, raw_ostream &O) {
   if (!Loc.isValid()) {
     O << "<";
-    O << "invalid";
+    O << "sapfor.invalid";
     if (Loc.Var)
       O << "(" << Loc.Var->getName() << ")";
     O << ",?>";
@@ -74,11 +74,45 @@ void printDILocationSource(unsigned DWLang,
 void printDILocationSource(unsigned DWLang,
     const DIMemory &Loc, llvm::raw_ostream &O) {
   auto M = const_cast<DIMemory *>(&Loc);
+  auto printDbgLoc = [&Loc, &O]() {
+    SmallVector<DebugLoc, 1> DbgLocs;
+    Loc.getDebugLoc(DbgLocs);
+    if (DbgLocs.size() == 1) {
+      O << ":" << DbgLocs.front().getLine() << ":" << DbgLocs.front().getCol();
+    } else if (!DbgLocs.empty()) {
+      O << ":{";
+      auto I = DbgLocs.begin();
+      for (auto EI = DbgLocs.end() - 1; I != EI; ++I)
+        if (*I)
+          O << I->getLine() << ":" << I->getCol() << "|";
+      if (*I)
+        O << I->getLine() << ":" << I->getCol() << "|";
+    }
+  };
   if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
-    printDILocationSource(DWLang,
-      { EM->getVariable(), EM->getExpression(), EM->isTemplate() }, O);
+    DIMemoryLocation TmpLoc{ EM->getVariable(), EM->getExpression(),
+      EM->isTemplate() };
+    if (!TmpLoc.isValid()) {
+      O << "<";
+      O << "sapfor.invalid";
+      if (TmpLoc.Var)
+        O << "(" << TmpLoc.Var->getName() << ")";
+      printDbgLoc();
+      O << ",?>";
+      return;
+    }
+    O << "<";
+    if (!unparsePrint(DWLang, TmpLoc, O))
+      O << "?" << TmpLoc.Var->getName() << "?";
+    printDbgLoc();
+    O << ", ";
+    auto Size = TmpLoc.getSize();
+    if (Size == MemoryLocation::UnknownSize)
+      O << "?";
+    else
+      O << Size;
+    O << ">";
   } else if (auto UM = dyn_cast<DIUnknownMemory>(M)) {
-    auto DbgLoc = UM->getDebugLoc();
     auto MD = UM->getMetadata();
     assert(MD && "MDNode must not be null!");
     if (UM->isExec()) {
@@ -86,15 +120,13 @@ void printDILocationSource(unsigned DWLang,
         O << "?()";
       else
         O << cast<DISubprogram>(MD)->getName() << "()";
-      if (DbgLoc)
-        O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+      printDbgLoc();
     } else if (UM->isResult()) {
       if (!isa<DISubprogram>(MD))
         O << "<?()";
       else
         O << "<" << cast<DISubprogram>(MD)->getName() << "()";
-      if (DbgLoc)
-        O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+      printDbgLoc();
       O << ",?>";
     } else {
       if (isa<DISubprogram>(MD)) {
@@ -110,8 +142,7 @@ void printDILocationSource(unsigned DWLang,
             CInt->getValue().toStringUnsigned(Address);
           }
         O << "<" << Address;
-        if (DbgLoc)
-          O << ":" << DbgLoc.getLine() << ":" << DbgLoc.getCol();
+        printDbgLoc();
         O << ",?>";
       }
     }

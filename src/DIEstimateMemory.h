@@ -161,6 +161,10 @@ public:
   /// Returns MDNode which represents this estimate memory location.
   const llvm::MDNode * getAsMDNode() const noexcept { return mMD; }
 
+  /// Returns locations in a source code which defines this memory if location
+  /// is specified.
+  void getDebugLoc(llvm::SmallVectorImpl<llvm::DebugLoc> &DbgLocs) const;
+
   /// Return true if an alias node has been already specified.
   bool hasAliasNode() const noexcept { return mNode != nullptr; }
 
@@ -266,23 +270,24 @@ public:
   /// Creates a new memory location which is not attached to any alias node.
   static std::unique_ptr<DIEstimateMemory> get(
       llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+      llvm::DIVariable *Var, llvm::DIExpression *Expr,
+      Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
 
   /// Returns existent location. Note, it will not be attached to an alias node.
   static std::unique_ptr<DIEstimateMemory> getIfExists(
       llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+      llvm::DIVariable *Var, llvm::DIExpression *Expr,
+      Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
 
   /// Returns raw representation of existent location.
   static llvm::MDNode * getRawIfExists(llvm::LLVMContext &Ctx,
-      llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F = NoFlags);
+      llvm::DIVariable *Var, llvm::DIExpression *Expr,
+      Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
 
   /// Creates a copy of a specified memory location. The copy is not attached
   /// to any alias node. No values are bound to a new location.
   static std::unique_ptr<DIEstimateMemory> get(llvm::LLVMContext &Ctx,
-      DIMemoryEnvironment &Env, DIEstimateMemory &EM) {
-    return get(Ctx, Env, EM.getVariable(), EM.getExpression(), EM.getFlags());
-  }
+    DIMemoryEnvironment &Env, DIEstimateMemory &EM);
 
   /// Returns underlying variable.
   llvm::DIVariable * getVariable();
@@ -362,18 +367,14 @@ public:
 
   /// Creates unknown memory location from a specified MDNode.
   static std::unique_ptr<DIUnknownMemory> get(llvm::LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, llvm::MDNode *MD, llvm::DILocation *Loc,
-    Flags F = NoFlags);
+    DIMemoryEnvironment &Env, llvm::MDNode *MD,
+    Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
 
   /// Returns underlying metadata.
   llvm::MDNode * getMetadata();
 
   /// Returns underlying metadata.
   const llvm::MDNode * getMetadata() const;
-
-  /// Returns location in a source code which defines this memory if location
-  /// is specified.
-  llvm::DebugLoc getDebugLoc() const;
 
   /// \brief Returns true if this is a distinct memory.
   ///

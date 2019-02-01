@@ -127,11 +127,15 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
 }
 
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
-    DIMemoryEnvironment &Env, MDNode *MD, DILocation *Loc, Flags F) {
+  DIMemoryEnvironment &Env, MDNode *MD, Flags F,
+  ArrayRef<DILocation *> DbgLocs) {
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  auto NewMD = Loc ? llvm::MDNode::get(Ctx, { MD, FlagMD, Loc }) :
-    llvm::MDNode::get(Ctx, { MD, FlagMD });
+  SmallVector<Metadata *, 3> MDs{ MD, FlagMD };
+  for (auto DbgLoc : DbgLocs)
+    if (DbgLoc)
+      MDs.push_back(DbgLoc);
+  auto NewMD = llvm::MDNode::get(Ctx, MDs);
   assert(NewMD && "Can not create metadata node!");
   if (!MD)
     NewMD->replaceOperandWith(0, NewMD);
@@ -139,22 +143,26 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, NewMD));
 }
 
-llvm::DebugLoc DIUnknownMemory::getDebugLoc() const {
+void DIMemory::getDebugLoc(SmallVectorImpl<DebugLoc> &DbgLocs) const {
   auto MD = getAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
     if (auto *Loc = llvm::dyn_cast<llvm::DILocation>(MD->getOperand(I)))
-      return Loc;
-  return DebugLoc();
+      DbgLocs.emplace_back(Loc);
 }
 
 std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F,
+    ArrayRef<DILocation *> DbgLocs) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  auto MD = llvm::MDNode::get(Ctx, { Var, Expr, FlagMD });
+  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  for (auto DbgLoc : DbgLocs)
+    if (DbgLoc)
+      MDs.push_back(DbgLoc);
+  auto MD = llvm::MDNode::get(Ctx, MDs);
   assert(MD && "Can not create metadata node!");
   ++NumEstimateMemory;
   return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(Env, MD));
@@ -163,12 +171,17 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
 std::unique_ptr<DIEstimateMemory>
 DIEstimateMemory::getIfExists(
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F,
+    ArrayRef<DILocation *> DbgLocs) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  if (auto MD = llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD })) {
+  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  for (auto DbgLoc : DbgLocs)
+    if (DbgLoc)
+      MDs.push_back(DbgLoc);
+  if (auto MD = llvm::MDNode::getIfExists(Ctx, MDs)) {
     ++NumEstimateMemory;
     return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(Env, MD));
   }
@@ -176,14 +189,33 @@ DIEstimateMemory::getIfExists(
 }
 
 llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F) {
+    llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F,
+    ArrayRef<DILocation *> DbgLocs) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::getIfExists(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   if (!FlagMD)
     return nullptr;
-  return llvm::MDNode::getIfExists(Ctx, { Var, Expr, FlagMD });
+  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  for (auto DbgLoc : DbgLocs)
+    if (DbgLoc)
+      MDs.push_back(DbgLoc);
+  return llvm::MDNode::getIfExists(Ctx, MDs);
+}
+
+std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(llvm::LLVMContext &Ctx,
+    DIMemoryEnvironment &Env, DIEstimateMemory &EM) {
+  SmallVector<DebugLoc, 1> DbgLocs;
+  EM.getDebugLoc(DbgLocs);
+  SmallVector<DILocation *, 1> DILocs(DbgLocs.size());
+  std::size_t ToIdx = 0;
+  for (std::size_t I = 0, EI = DbgLocs.size(); I < EI; ++I)
+    if (DbgLocs[I])
+      DILocs[ToIdx++] = DbgLocs[I].get();
+  DILocs.resize(ToIdx);
+  return get(
+    Ctx, Env, EM.getVariable(), EM.getExpression(), EM.getFlags(), DILocs);
 }
 
 llvm::DIVariable * DIEstimateMemory::getVariable() {
@@ -1668,7 +1700,12 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
   } else {
     auto Flags = DILoc->Template ?
       DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
-    DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags);
+    SmallVector<DILocation *, 1> Dbgs;
+    for (auto *V : EM)
+      if (auto *I = dyn_cast_or_null<Instruction>(V))
+        if (auto DbgLoc = I->getDebugLoc())
+          Dbgs.push_back(DbgLoc.get());
+    DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags, Dbgs);
     DIM->setProperties(Properties);
   }
   for (auto EItr = EM.end(); VItr != EItr; ++VItr)
@@ -1702,7 +1739,7 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
     if (isa<Instruction>(V))
       Loc = cast<Instruction>(V).getDebugLoc().get();
   }
-  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, Loc, F);
+  auto DIM = DIUnknownMemory::get(Ctx, Env, MD, F, Loc);
   DIM->bindValue(&V);
   DIM->setProperties(P);
   return std::move(DIM);
