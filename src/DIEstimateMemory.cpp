@@ -1568,7 +1568,10 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
     auto EM = mAT->find(MemoryLocation(VH, M.getSize()));
-    assert(EM && "Estimate memory must be presented in the alias tree!");
+    assert(EM || isa<GlobalValue>(VH) || isa<Operator>(VH) &&
+      "Local estimate memory must be presented in the alias tree!");
+    if (!EM)
+      return false;
     auto Cashed = mCashedMemory.try_emplace(EM);
     if (Cashed.second) {
       Cashed.first->second =
