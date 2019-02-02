@@ -86,7 +86,7 @@ void printDILocationSource(unsigned DWLang,
         if (*I)
           O << I->getLine() << ":" << I->getCol() << "|";
       if (*I)
-        O << I->getLine() << ":" << I->getCol() << "|";
+        O << I->getLine() << ":" << I->getCol() << "}";
     }
   };
   if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
