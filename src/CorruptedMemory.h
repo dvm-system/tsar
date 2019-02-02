@@ -359,13 +359,16 @@ private:
   /// Determines insertion hints for separate unknown nodes.
   void distinctUnknownHint(NodeInfo &Info);
 
-  /// \brief Add a copy of memory locations from a specified work list to a list
+  /// Add a copy of memory locations from a specified work list to a list
   /// of corrupted memory locations.
-  ///
-  /// If Item is `nullptr` new item will be created.
-  /// \return Pointer to an updated item.
-  CorruptedMemoryItem * copyToCorrupted(
+  void copyToCorrupted(
     const llvm::SmallVectorImpl<DIMemory *> &WL, CorruptedMemoryItem *Item);
+
+  /// Allocates memory for a new list of corrupted memory locations.
+  CorruptedMemoryItem * newCorrupted() {
+    mCorrupted.push_back(llvm::make_unique<CorruptedMemoryItem>());
+    return mCorrupted.back().get();
+  }
 
   /// Merges corrupted lists with specified key in
   /// mChildOfUnknown map to a specified corrupted list and update map.

@@ -1368,20 +1368,22 @@ void CorruptedMemoryResolver::promotedBasedHint(NodeInfo &Info) {
       Info.PromotedWL.front().Expr->getNumElements() > 0 ) {
     auto Pair = mFragChildOfUnknown.try_emplace(Info.PromotedWL.front());
     assert(Pair.second && "Hint must not be inserted yet!");
-    Item = Pair.first->second = copyToCorrupted(Info.CorruptedWL, nullptr);
+    Item = Pair.first->second = newCorrupted();
+    copyToCorrupted(Info.CorruptedWL, Item);
     Info.ParentOfUnknown = mAT->getTopLevelNode();
   } else {
     if (!Info.Items.empty() &&
         Info.ParentOfUnknown == mAT->getTopLevelNode()) {
       mergeRange(Info.Items.begin(), Info.Items.end());
       merge(*Info.Items.begin(), Info.PromotedWL.front().Var);
-      Item = copyToCorrupted(Info.CorruptedWL, *Info.Items.begin());
+      copyToCorrupted(Info.CorruptedWL, Item = *Info.Items.begin());
     } else {
       Info.ParentOfUnknown = mAT->getTopLevelNode();
       auto Pair = mVarChildOfUnknown.try_emplace(
         Info.PromotedWL.front().Var);
-      Item = Pair.first->second = copyToCorrupted(
-        Info.CorruptedWL, Pair.second ? nullptr : Pair.first->second);
+      if (Pair.second)
+        Pair.first->second = newCorrupted();
+      copyToCorrupted(Info.CorruptedWL, Item = Pair.first->second);
     }
     for (auto I = Info.PromotedWL.begin() + 1, E = Info.PromotedWL.end();
          I != E; ++I)
@@ -1430,15 +1432,16 @@ void CorruptedMemoryResolver::aliasTreeBasedHint(
   CorruptedMemoryItem *Item;
   if (!Info.Items.empty() && Info.ParentOfUnknown == PrevParentOfUnknown) {
     mergeRange(Info.Items.begin(), Info.Items.end());
-    Item = copyToCorrupted(Info.CorruptedWL, *Info.Items.begin());
+    copyToCorrupted(Info.CorruptedWL, Item = *Info.Items.begin());
   } else {
     auto P = *Info.NodesWL.begin();
     if (P != mAT->getTopLevelNode())
       while(P->getParent(*mAT) != Info.ParentOfUnknown)
         P = P->getParent(*mAT);
     auto Pair = mChildOfUnknown.try_emplace(P);
-    Item = Pair.first->second = copyToCorrupted(
-        Info.CorruptedWL, Pair.second ? nullptr : Pair.first->second);
+    if (Pair.second)
+      Pair.first->second = newCorrupted();
+    copyToCorrupted(Info.CorruptedWL, Item = Pair.first->second);
   }
   auto NodeItr = Info.NodesWL.begin(), NodeItrE = Info.NodesWL.end();
   for (++NodeItr; NodeItr != NodeItrE; ++NodeItr)
@@ -1454,10 +1457,10 @@ void CorruptedMemoryResolver::distinctUnknownHint(NodeInfo &Info) {
   if (!Info.Items.empty() &&
       Info.ParentOfUnknown == mAT->getTopLevelNode()) {
     mergeRange(Info.Items.begin(), Info.Items.end());
-    Item = copyToCorrupted(Info.CorruptedWL, *Info.Items.begin());
+    copyToCorrupted(Info.CorruptedWL, Item = *Info.Items.begin());
   } else {
     Info.ParentOfUnknown = mAT->getTopLevelNode();
-    Item = copyToCorrupted(Info.CorruptedWL, nullptr);
+    copyToCorrupted(Info.CorruptedWL, Item = newCorrupted());
     mDistinctUnknown.push_back(Item);
   }
   Info.CorruptedWL.clear();
@@ -1465,12 +1468,9 @@ void CorruptedMemoryResolver::distinctUnknownHint(NodeInfo &Info) {
   Info.Items.push_back(Item);
 }
 
-CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
+void CorruptedMemoryResolver::copyToCorrupted(
     const SmallVectorImpl<DIMemory *> &WL, CorruptedMemoryItem *Item) {
-  if (!Item) {
-    mCorrupted.push_back(make_unique<CorruptedMemoryItem>());
-    Item = mCorrupted.back().get();
-  }
+  assert(Item && "List of corrupted memory must not be null!");
   for (auto *M : WL) {
     ++NumCorruptedMemory;
     auto NewM = DIMemory::get(mFunc->getContext(), M->getEnv(), *M);
@@ -1494,7 +1494,6 @@ CorruptedMemoryItem * CorruptedMemoryResolver::copyToCorrupted(
       }
     Item->push(std::move(NewM));
   }
-  return Item;
 }
 
 void CorruptedMemoryResolver::merge(
