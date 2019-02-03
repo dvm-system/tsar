@@ -152,7 +152,12 @@ llvm::Optional<
     }
     switch (R) {
     case TR_ANCESTOR: break;
-    case TR_DESCENDANT: LCA = *CurrItr; break;
+    case TR_DESCENDANT:
+      auto Parent = findParent(*CurrItr, STR);
+      if (!Parent.hasValue())
+        return llvm::None;
+      LCA = *Parent;
+      break;
     }
   }
   return LCA;
