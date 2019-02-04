@@ -504,8 +504,8 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
         ImmutableCallSite DstCS(*DstItr);
         trait::Dependence::Flag Flag = trait::Dependence::May |
           trait::Dependence::UnknownDistance |
-          (!SrcCS && !DstCS ? trait::Dependence::CallCause :
-            trait::Dependence::UnknownCause);
+          (!SrcCS && !DstCS ? trait::Dependence::UnknownCause :
+            trait::Dependence::CallCause);
         DependenceImp::Descriptor Dptr;
         Dptr.set<trait::Flow, trait::Anti, trait::Output>();
         auto insertUnknownDep =
