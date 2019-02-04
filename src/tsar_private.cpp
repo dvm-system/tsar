@@ -389,8 +389,10 @@ void PrivateRecognitionPass::collectHeaderAccesses(Loop *L,
     if (!I.mayReadOrWriteMemory())
       continue;
     for_each_memory(I, *mTLI,
-      [this, &ExplicitAccesses](Instruction &, MemoryLocation &&Loc,
-          unsigned, AccessInfo, AccessInfo) {
+      [this, &ExplicitAccesses](Instruction &I, MemoryLocation &&Loc,
+          unsigned, AccessInfo R, AccessInfo W) {
+        if (R == AccessInfo::No &&  W == AccessInfo::No)
+          return;
         auto *EM = mAliasTree->find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         auto Itr = ExplicitAccesses.find(EM);
