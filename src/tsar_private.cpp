@@ -497,10 +497,16 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
       continue;
     auto Src = getLoadOrStoreLocation(*SrcItr);
     if (!Src.Ptr) {
+      if (auto II = dyn_cast<IntrinsicInst>(*SrcItr))
+        if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+          continue;
       ImmutableCallSite SrcCS(*SrcItr);
       for (auto DstItr = SrcItr; DstItr != EndItr; ++DstItr) {
         if (!(**DstItr).mayReadOrWriteMemory())
           continue;
+        if (auto II = dyn_cast<IntrinsicInst>(*DstItr))
+          if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+            continue;
         ImmutableCallSite DstCS(*DstItr);
         trait::Dependence::Flag Flag = trait::Dependence::May |
           trait::Dependence::UnknownDistance |
@@ -510,7 +516,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
         Dptr.set<trait::Flow, trait::Anti, trait::Output>();
         auto insertUnknownDep =
           [this, &AA, &SrcItr, &DstItr, &Dptr, Flag, &Deps](Instruction &,
-            MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
+            MemoryLocation &&Loc, unsigned, AccessInfo R, AccessInfo W) {
+          if (R == AccessInfo::No && W == AccessInfo::No)
+            return;
           if (AA.getModRefInfo(*SrcItr, Loc) == ModRefInfo::NoModRef)
             return;
           if (AA.getModRefInfo(*DstItr, Loc) == ModRefInfo::NoModRef)
@@ -524,24 +532,40 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
     } else {
       for (auto DstItr = SrcItr; DstItr != EndItr; ++DstItr) {
         auto Dst = getLoadOrStoreLocation(*DstItr);
-        if (!Dst.Ptr)
-          continue;
-        if (auto D = mDepInfo->depends(*SrcItr, *DstItr, true)) {
-          LLVM_DEBUG(
-            dbgs() << "[PRIVATE]: dependence found: ";
-            TSAR_LLVM_DUMP(D->dump(dbgs()));
-            TSAR_LLVM_DUMP((**SrcItr).dump());
-            TSAR_LLVM_DUMP((**DstItr).dump());
-          );
-          if (!D->isAnti() && !D->isFlow() && !D->isOutput()) {
-            LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
+        if (!Dst.Ptr) {
+          if (!(**DstItr).mayReadOrWriteMemory())
             continue;
+          if (auto II = dyn_cast<IntrinsicInst>(*DstItr))
+            if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+              continue;
+          if (AA.getModRefInfo(*DstItr, Src) == ModRefInfo::NoModRef)
+            continue;
+          ImmutableCallSite DstCS(*DstItr);
+          trait::Dependence::Flag Flag = trait::Dependence::May |
+            trait::Dependence::UnknownDistance |
+            (!DstCS ? trait::Dependence::UnknownCause :
+              trait::Dependence::CallCause);
+          DependenceImp::Descriptor Dptr;
+          Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+          updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
+        } else {
+          if (auto D = mDepInfo->depends(*SrcItr, *DstItr, true)) {
+            LLVM_DEBUG(
+              dbgs() << "[PRIVATE]: dependence found: ";
+              TSAR_LLVM_DUMP(D->dump(dbgs()));
+              TSAR_LLVM_DUMP((**SrcItr).dump());
+              TSAR_LLVM_DUMP((**DstItr).dump());
+            );
+            if (!D->isAnti() && !D->isFlow() && !D->isOutput()) {
+              LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
+              continue;
+            }
+            // Do not use Dependence::isLoopIndependent() to check loop
+            // independent dependencies. This method returns `may` instead of
+            // `must`. This means that if it returns `true` than dependency
+            // may be loop-carried or may arise inside a single iteration.
+            insertDependence(*D, Src, Dst, trait::Dependence::No, *L, Deps);
           }
-          // Do not use Dependence::isLoopIndependent() to check loop
-          // independent dependencies. This method returns `may` instead of
-          // `must`. This means that if it returns `true` than dependency
-          // may be loop-carried or may arise inside a single iteration.
-          insertDependence(*D, Src, Dst, trait::Dependence::No, *L, Deps);
         }
       }
     }
