@@ -1,4 +1,4 @@
-package DotDiff;
+package Plugins::lib::DotDiff;
 use base qw(Exporter);
 @EXPORT_OK = qw(dot_diff);
 

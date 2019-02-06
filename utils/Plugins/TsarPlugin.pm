@@ -64,7 +64,7 @@ use File::Basename qw(fileparse);
 
 use Exceptions;
 use ConfigFile;
-#use Plugins::lib::DotDiff qw(dot_diff);
+use Plugins::lib::DotDiff qw(dot_diff);
 
 use strict;
 
@@ -250,10 +250,11 @@ sub process {
       for (@sample_diff) {
         my $backup = catfile($work_dir, $_);
         $task->DEBUG("compare output with sample '$backup'");
+        my ($name, $path, $dot) = fileparse($_, qw(.dot));
         unless (-e "$_") {
           print $task->name . ": '$_': output has not been created by '$exec'\n";
           $ret = 0;
-        } elsif (my $diff = diff($_, $backup)) {
+        } elsif (my $diff = $dot ? dot_diff($_, $backup) : diff($_, $backup)) {
           print $task->name . ": '$_': output and sample are note equal for '$exec'\n";
           print $diff;
           $ret = 0;
