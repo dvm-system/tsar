@@ -64,6 +64,7 @@ use File::Basename qw(fileparse);
 
 use Exceptions;
 use ConfigFile;
+#use Plugins::lib::DotDiff qw(dot_diff);
 
 use strict;
 
