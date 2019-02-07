@@ -2,6 +2,20 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // Traits Static Analyzer (TSAR) is a part of a system for automated
@@ -18,23 +32,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Pass.h>
+#include "Messages.h"
+#include "tsar_query.h"
+#include "tsar_tool.h"
+#include "tsar_transformation.h"
+#include <bcl/IntrusiveConnection.h>
+#include <bcl/Json.h>
+#include <bcl/RedirectIO.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/CodeGen/Passes.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/raw_ostream.h>
 #include <map>
 #include <vector>
-#include <bcl/IntrusiveConnection.h>
-#include <bcl/Json.h>
-#include <bcl/RedirectIO.h>
-#include "Messages.h"
-#include "tsar_query.h"
-#include "tsar_tool.h"
-#include "tsar_transformation.h"
 
 using namespace bcl;
 using namespace llvm;
@@ -42,32 +56,22 @@ using namespace tsar;
 
 namespace tsar {
 namespace msg {
-namespace detail {
-struct CommandLine {
-  MSG_FIELD_TYPE(Args, std::vector<const char *>)
-  MSG_FIELD_TYPE(Input, const char *)
-  MSG_FIELD_TYPE(Output, const char *)
-  MSG_FIELD_TYPE(Error, const char *)
-  typedef bcl::StaticMap<Args, Input, Output, Error> Base;
-};
-}
-
 /// \brief This message represents a command line which is used to run a tool.
 ///
 /// This consists of the following elements:
 /// - list of arguments which contains options and input data,
 /// - specification of an input/output redirection.
-class CommandLine :
-  public json::Object, public msg::detail::CommandLine::Base {
-public:
-  MSG_NAME(CommandLine)
-  MSG_FIELD(CommandLine, Args)
-  MSG_FIELD(CommandLine, Input)
-  MSG_FIELD(CommandLine, Output)
-  MSG_FIELD(CommandLine, Error)
+JSON_OBJECT_BEGIN(CommandLine)
+JSON_OBJECT_ROOT_PAIR_4(CommandLine,
+  Args, std::vector<const char *>,
+  Input, const char *,
+  Output, const char *,
+  Error, const char *)
 
-  CommandLine() : json::Object(name()),
-  StaticMap(std::vector<const char *>(), nullptr, nullptr, nullptr) {}
+  CommandLine() :
+    JSON_INIT_ROOT,
+    JSON_INIT(CommandLine,
+      std::vector<const char *>(), nullptr, nullptr, nullptr) {}
 
   ~CommandLine() {
     auto &This = *this;
@@ -86,14 +90,11 @@ public:
   CommandLine & operator=(const CommandLine &) = default;
   CommandLine(CommandLine &&) = default;
   CommandLine & operator=(CommandLine &&) = default;
-};
-}
-}
 
-namespace json {
-template<> struct Traits<::tsar::msg::CommandLine> :
-  public json::Traits<::tsar::msg::detail::CommandLine::Base> {};
+JSON_OBJECT_END(CommandLine)
 }
+}
+JSON_DEFAULT_TRAITS(tsar::msg::, CommandLine)
 
 namespace {
 class ServerQueryManager : public QueryManager {

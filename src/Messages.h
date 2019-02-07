@@ -2,6 +2,20 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // This defines general messages for server-client interaction, where server
@@ -9,105 +23,26 @@
 // a new message.
 //
 // Each message is a JSON string which is parsed and unparsed with JSON String
-// Serializer from Json.h file. High-level message representation is a class
-// inherited from json::Object and bcl::StaticMap. To simplify a new message
-// definition this file proposes macros MSG_FIELD_TYPE, MSG_FIELD, MSG_NAME.
-//
-// Let us consider usage of this macros on example of msg::Diagnostic message.
-//
-// At first structure of message should be declared:
-//  namespace tsar {
-//  namespace msg {
-//  namespace detail {
-//  struct Diagnostic {
-//    MSG_FIELD_TYPE(Status, msg::Status)
-//    MSG_FIELD_TYPE(Error, std::vector<std::string>)
-//    MSG_FIELD_TYPE(Warning, std::vector<std::string>)
-//    MSG_FIELD_TYPE(Terminal, std::string)
-//    typedef bcl::StaticMap<Status, Error, Warning, Terminal> Base;
-//  };
-//  }
-//
-// This message contains field with names Status, Error, Warning, Terminal
-// (the first parameter of MSG_FIELD_TYPE macro) and types msg::Status
-// (enum declared in this file), vector, vector and string correspondingly
-// (the second parameter of MSG_FIELD_TYPE). This structure is placed in
-// detail namespace because it is internal information about message and
-// should not be accessed directly by the user.
-//
-//  class Diagnostic :
-//    public json::Object, public msg::detail::Diagnostic::Base{
-//  public:
-//    MSG_NAME(Diagnostic)
-//    MSG_FIELD(Diagnostic, Status)
-//    MSG_FIELD(Diagnostic, Error)
-//    MSG_FIELD(Diagnostic, Warning)
-//    MSG_FIELD(Diagnostic, Terminal)
-//
-//    Diagnostic(msg::Status S) : json::Object(name()), StaticMap(S) {}
-//
-//    Diagnostic(const Diagnostic &) = default;
-//    Diagnostic & operator=(const Diagnostic &) = default;
-//    Diagnostic(Diagnostic &&) = default;
-//    Diagnostic & operator=(Diagnostic &&) = default;
-//    ...
-//  };
-//  }
-//  }
-//
-// Now me declare the main class for diagnostic representation. MSG_NAME macro
-// specified identifier of this message and MSG_FIELD macro proposes a way
-// to access previously defined fields (for example use Diag[msg::Status] to
-// read/write Status filed of Diagnostic message stored in Diag object).
-//
-// At least one constructor must be defined, it should initialize the base class
-// json::Object with object name (json::Object(name()). The name() method
-// is defined by MSG_NAME macro.
-//
-// The class json::Object has virtual destructor so default copy constructors
-// and assignment operators will not be defined for msg::Diagnostic by the
-// compiler. But it is still possible to use '= default' construction to force
-// such definition.
-//
-// The last one step is definition of parsing rules for JSON serializatoin.
-//
-//  template<> struct json::Traits<tsar::msg::Diagnostic> :
-//    public json::Traits<tsar::msg::detail::Diagnostic::Base> {};
-//
-// Note, that the type of Status file is user defined type so JSON serialization
-// rules must be also psoposed for this type (see detail in this file).
+// Serializer from bcl/Json.h file.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef TSAR_MESSAGES_H
 #define TSAR_MESSAGES_H
 
+#include <bcl/cell.h>
+#include <bcl/Diagnostic.h>
+#include <bcl/Json.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <array>
 #include <vector>
 #include <string>
-#include <bcl/cell.h>
-#include <bcl/Diagnostic.h>
-#include <bcl/Json.h>
-
-/// Specifies identifier of a message (provides the name() method).
-#define MSG_NAME(Name) \
-static inline const std::string & \
-name( ) { static const std::string N(#Name); return N;}
-
-/// Specifies identifiers and types of message fields.
-#define MSG_FIELD_TYPE(Field, Type) \
-struct Field { MSG_NAME(Field) typedef Type ValueType; };
-
-/// Specifies a way to access message fields.
-#define MSG_FIELD(Msg, Field) \
-static constexpr detail::Msg::Field Field = detail::Msg::Field();
 
 namespace tsar {
 namespace msg {
 /// Represents general static information about header files.
 struct HeaderFile {
-  MSG_NAME(header)
+  JSON_NAME(header)
   static const std::array<const char *, 2> & extensions() {
     static std::array<const char *, 2> Exts{ { ".h", ".hpp" } };
     return Exts;
@@ -116,7 +51,7 @@ struct HeaderFile {
 
 /// Represents general static information about source files.
 struct SourceFile {
-  MSG_NAME(source)
+  JSON_NAME(source)
   static const std::array<const char *, 3> & extensions() {
     static std::array<const char *, 3> Exts{ {".c", ".cpp", ".cxx"} };
     return Exts;
@@ -125,7 +60,7 @@ struct SourceFile {
 
 /// Represents general static information about unknown files.
 struct OtherFile {
-  MSG_NAME(other)
+  JSON_NAME(other)
 };
 
 /// \brief This defines Status type of field for some messages.
@@ -155,30 +90,19 @@ enum class Analysis : short {
   Number = Invalid
 };
 
-namespace detail {
-struct Diagnostic {
-  MSG_FIELD_TYPE(Status, msg::Status)
-  MSG_FIELD_TYPE(Error, std::vector<std::string>)
-  MSG_FIELD_TYPE(Warning, std::vector<std::string>)
-  MSG_FIELD_TYPE(Terminal, std::string)
-  typedef bcl::StaticMap<Status, Error, Warning, Terminal> Base;
-};
-}
-
 /// \brief This message provide diagnostic for analysis execution.
 ///
 /// Terminal filed is used to provide data from stdout or/and stderr.
-class Diagnostic :
-  public json::Object, public msg::detail::Diagnostic::Base {
-public:
-  MSG_NAME(Diagnostic)
-  MSG_FIELD(Diagnostic, Status)
-  MSG_FIELD(Diagnostic, Error)
-  MSG_FIELD(Diagnostic, Warning)
-  MSG_FIELD(Diagnostic, Terminal)
+JSON_OBJECT_BEGIN(Diagnostic)
+JSON_OBJECT_ROOT_PAIR_4(Diagnostic,
+  Status, msg::Status,
+  Error, std::vector<std::string>,
+  Warning, std::vector<std::string>,
+  Terminal, std::string)
 
   /// Creates new diagnostic of a specified status.
-  Diagnostic(msg::Status S) : json::Object(name()), StaticMap(S) {}
+  explicit Diagnostic(msg::Status S) :
+    JSON_INIT_ROOT, JSON_INIT(Diagnostic, S) {}
 
   Diagnostic(const Diagnostic &) = default;
   Diagnostic & operator=(const Diagnostic &) = default;
@@ -193,9 +117,11 @@ public:
     for (auto Msg : D)
       value<Ty>().push_back(Msg);
   }
-};
+JSON_OBJECT_END(Diagnostic)
 }
 }
+
+JSON_DEFAULT_TRAITS(tsar::msg::, Diagnostic)
 
 namespace json {
 /// Specialization of JSON serialization traits for tsar::msg::Status type.
@@ -251,8 +177,5 @@ template<> struct Traits<tsar::msg::Analysis> {
     JSON += '"';
   }
 };
-
-template<> struct Traits<tsar::msg::Diagnostic> :
-  public json::Traits<tsar::msg::detail::Diagnostic::Base> {};
 }
 #endif//TSAR_MESSAGES_H

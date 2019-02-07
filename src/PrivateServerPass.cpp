@@ -2,24 +2,26 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file implements a pass to interact with client software and to provide
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/ADT/StringSwitch.h>
-#include <llvm/Analysis/Passes.h>
-#if (LLVM_VERSION_MAJOR > 2 && LLVM_VERSION_MINOR > 7 || LLVM_VERSION_MAJOR > 3)
-# include <llvm/Analysis/BasicAliasAnalysis.h>
-#endif
-#include <llvm/CodeGen/Passes.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/Path.h>
-#include <bcl/cell.h>
-#include <bcl/IntrusiveConnection.h>
-#include <bcl/Json.h>
-#include <bcl/RedirectIO.h>
 #include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "tsar_loop_matcher.h"
@@ -30,6 +32,16 @@
 #include "PrivateServerPass.h"
 #include "tsar_trait.h"
 #include "tsar_transformation.h"
+#include <bcl/cell.h>
+#include <bcl/IntrusiveConnection.h>
+#include <bcl/Json.h>
+#include <bcl/RedirectIO.h>
+#include <llvm/ADT/StringSwitch.h>
+#include <llvm/Analysis/Passes.h>
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/CodeGen/Passes.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/Path.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -40,37 +52,24 @@ using ::llvm::Module;
 
 namespace tsar {
 namespace msg {
-namespace detail {
-struct Statistic {
-  MSG_FIELD_TYPE(Files, std::map<BCL_JOIN(std::string, unsigned)>)
-  MSG_FIELD_TYPE(Functions, unsigned)
-  MSG_FIELD_TYPE(Loops, std::map<BCL_JOIN(Analysis, unsigned)>)
-  MSG_FIELD_TYPE(Variables, std::map<BCL_JOIN(Analysis, unsigned)>)
-  MSG_FIELD_TYPE(Traits,
-    bcl::StaticTraitMap<BCL_JOIN(unsigned, MemoryDescriptor)>)
-  typedef bcl::StaticMap<Functions, Variables, Files, Loops, Traits> Base;
-};
-}
-
 /// \brief This message provides statistic of program analysis results.
 ///
 /// This contains number of analyzed files, functions, loops and variables and
 /// number of explored traits, such as induction, reduction, data dependencies,
 /// etc.
-class Statistic :
-  public json::Object, public msg::detail::Statistic::Base {
+JSON_OBJECT_BEGIN(Statistic)
+JSON_OBJECT_ROOT_PAIR_5(Statistic,
+  Functions, unsigned,
+  Files, std::map<BCL_JOIN(std::string, unsigned)>,
+  Loops, std::map<BCL_JOIN(Analysis, unsigned)>,
+  Variables, std::map<BCL_JOIN(Analysis, unsigned)>,
+  Traits, bcl::StaticTraitMap<BCL_JOIN(unsigned, MemoryDescriptor)>)
+
   struct InitTraitsFunctor {
     template<class Trait> inline void operator()(unsigned &C) { C = 0; }
   };
-public:
-  MSG_NAME(Statistic)
-  MSG_FIELD(Statistic, Files)
-  MSG_FIELD(Statistic, Functions)
-  MSG_FIELD(Statistic, Loops)
-  MSG_FIELD(Statistic, Variables)
-  MSG_FIELD(Statistic, Traits)
 
-  Statistic() : json::Object(name()), msg::detail::Statistic::Base(0) {
+  Statistic() : JSON_INIT_ROOT, JSON_INIT(Statistic, 0) {
     (*this)[Statistic::Traits].for_each(InitTraitsFunctor());
   }
 
@@ -78,36 +77,19 @@ public:
   Statistic & operator=(const Statistic &) = default;
   Statistic(Statistic &&) = default;
   Statistic & operator=(Statistic &&) = default;
-};
+
+JSON_OBJECT_END(Statistic)
 }
 }
 
-namespace json {
-template<> struct Traits<tsar::msg::Statistic> :
-  public json::Traits<tsar::msg::detail::Statistic::Base> {};
-}
+JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
 
-#if (LLVM_VERSION_MAJOR < 4 && LLVM_VERSION_MINOR < 8)
-namespace {
-class ServerPrivateProvider : public FunctionPassProvider<
-  PrivateRecognitionPass, TransformationEnginePass,
-  LoopMatcherPass, DFRegionInfoPass> {
-  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
-    auto P = createBasicAliasAnalysisPass();
-    AU.addRequiredID(P->getPassID());
-    delete P;
-    FunctionPassProvider::getAnalysisUsage(AU);
-  }
-};
-}
-#else
-typedef FunctionPassProvider<
+using ServerPrivateProvider = FunctionPassProvider<
   BasicAAWrapperPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
   LoopMatcherPass,
-  DFRegionInfoPass> ServerPrivateProvider;
-#endif
+  DFRegionInfoPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
@@ -151,7 +133,7 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
     auto N = RI.getRegionFor(Match.get<IR>());
     auto DSItr = PI.find(N);
     assert(DSItr != PI.end() && DSItr->get<DependencySet>() &&
-      "Privatiability information must be specified!");
+      "Loop traits must be specified!");
     for (auto &AT : *DSItr->get<DependencySet>())
       AT.for_each(TraitCounter<TraitMap>{AT, TM});
   }
