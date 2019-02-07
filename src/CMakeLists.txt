@@ -1,6 +1,6 @@
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
+set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp
   tsar_transformation.cpp tsar_tool.cpp tsar_test.cpp
   tsar_loop_matcher.cpp tsar_memory_matcher.cpp tsar_pragma.cpp
@@ -13,13 +13,8 @@ set(TSAR_EXECUTABLES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   SourceUnparser.cpp SourceUnparserUtils.cpp DIEstimateMemory.cpp
   DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp DIGlobalRetriever.cpp)
-if (TSAR_SHARED)
-  set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} Server.cpp PrivateServerPass.cpp)
-else()
-  set(TSAR_EXECUTABLES ${TSAR_EXECUTABLES} main.cpp)
-endif()
 if(MSVC_IDE)
-  source_group(src FILES ${TSAR_EXECUTABLES})
+  source_group(src FILES ${TSAR_SOURCES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
   source_group(src FILES ${TSAR_HEADERS})
   source_group(bcl FILES ${BCL_CORE_HEADERS})
@@ -31,13 +26,8 @@ if(MSVC_IDE)
     source_group(lp_solve FILES ${lp_solve_HEADERS})
   endif()
 endif()
-if (TSAR_SHARED)
-  add_library(tsar SHARED ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${TSAR_PATCHES})
-  add_definitions("-DBCL_EXPORTING")
-else()
-  add_executable(tsar ${TSAR_EXECUTABLES} ${TSAR_HEADERS} ${TSAR_PATCHES})
-endif()
-set_target_properties(tsar PROPERTIES FOLDER "${TSAR_FOLDER}")
+add_library(TSARCore STATIC ${TSAR_SOURCES} ${TSAR_HEADERS} ${TSAR_PATCHES})
+set_target_properties(TSARCore PROPERTIES FOLDER "${TSAR_LIBRARY_FOLDER}")
 include(tsar-tablegen)
 tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
   SOURCE DiagnosticKinds.td
@@ -49,22 +39,46 @@ tsar_tablegen(Directives.gen -gen-tsar-directives-defs
   SOURCE Directives.td
   TARGET DirectivesGen)
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
-set_target_properties(tsar PROPERTIES
+set_target_properties(TSARCore PROPERTIES
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
-add_dependencies(tsar DiagnosticKinds IntrinsicsGen DirectivesGen)
+add_dependencies(TSARCore DiagnosticKinds IntrinsicsGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
-  add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARCore ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(tsar ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+target_link_libraries(TSARCore ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
-  target_link_libraries(tsar APC::APCCore)
+  target_link_libraries(TSARCore APC::APCCore)
   add_definitions("-D__SPC")
 endif()
 if(lp_solve_FOUND)
-  target_link_libraries(tsar lp_solve)
+  target_link_libraries(TSARCore lp_solve)
 endif()
-install(TARGETS tsar
-  RUNTIME DESTINATION bin
-  LIBRARY DESTINATION bin)
+
+set(TSAR_EXEC_SOURCES main.cpp)
+add_executable(tsar ${TSAR_EXEC_SOURCES})
+add_dependencies(tsar TSARCore)
+if(NOT PACKAGE_LLVM)
+  add_dependencies(tsar ${LLVM_LIBS})
+endif()
+target_link_libraries(tsar TSARCore ${LLVM_LIBS} BCL::Core)
+set_target_properties(tsar PROPERTIES FOLDER "${TSAR_FOLDER}")
+install(TARGETS tsar RUNTIME DESTINATION bin)
+
+if (TSAR_SERVER)
+  set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp)
+  add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
+  add_dependencies(TSARServer TSARCore)
+  if(NOT PACKAGE_LLVM)
+    add_dependencies(TSARServer TSARCore ${CLANG_LIBS} ${LLVM_LIBS})
+  endif()
+  target_link_libraries(TSARServer TSARCore ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+  set_target_properties(TSARServer PROPERTIES
+    COMPILE_DEFINITIONS BCL_EXPORTING
+    FOLDER "${TSAR_SERVER_FOLDER}")
+  install(TARGETS TSARServer
+    LIBRARY DESTINATION shared
+    RUNTIME DESTINATION shared
+    ARCHIVE DESTINATION lib)
+endif()

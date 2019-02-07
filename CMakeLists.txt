@@ -4,8 +4,10 @@ project(TSAR VERSION 0.1 LANGUAGES CXX)
 set(TSAR_DESCRIPTION "Traits Static Analyzer")
 set(TSAR_HOMEPAGE_URL "https://bitbucket.org/dvm-system/tsar")
 
-set (TSAR_FOLDER "" CACHE STRING "Specify IDE folder for TSAR.")
-if (TSAR_FOLER)
+set (TSAR_FOLDER "" CACHE STRING "Specify IDE folder for TSAR executable.")
+set (TSAR_LIBRARY_FOLDER "" CACHE STRING "Specify IDE folder for TSAR libraries.")
+set (TSAR_SERVER_FOLDER "" CACHE STRING "Specify IDE floder for TSAR server library.")
+if (TSAR_FOLER OR TSAR_LIBRARY_FOLDER)
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif()
 
@@ -75,7 +77,7 @@ option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_PROFILE "Build profile runtime" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
-option(TSAR_SHARED "Build shared library for TSAR" OFF)
+option(TSAR_SERVER "Build TSAR server shared library" OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
 

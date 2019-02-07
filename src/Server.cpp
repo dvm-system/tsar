@@ -28,9 +28,9 @@
 #include <llvm/Support/raw_ostream.h>
 #include <map>
 #include <vector>
-#include <IntrusiveConnection.h>
-#include <Json.h>
-#include <RedirectIO.h>
+#include <bcl/IntrusiveConnection.h>
+#include <bcl/Json.h>
+#include <bcl/RedirectIO.h>
 #include "Messages.h"
 #include "tsar_query.h"
 #include "tsar_tool.h"
@@ -112,6 +112,7 @@ public:
       Passes.add(TEP);
     }
     Passes.add(createUnreachableBlockEliminationPass());
+    Passes.add(createMemoryMatcherPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
     Passes.run(*M);

@@ -47,7 +47,7 @@ struct Statistic {
   MSG_FIELD_TYPE(Loops, std::map<BCL_JOIN(Analysis, unsigned)>)
   MSG_FIELD_TYPE(Variables, std::map<BCL_JOIN(Analysis, unsigned)>)
   MSG_FIELD_TYPE(Traits,
-    bcl::StaticTraitMap<BCL_JOIN(unsigned, DependencyDescriptor)>)
+    bcl::StaticTraitMap<BCL_JOIN(unsigned, MemoryDescriptor)>)
   typedef bcl::StaticMap<Functions, Variables, Files, Loops, Traits> Base;
 };
 }
@@ -122,7 +122,7 @@ char PrivateServerPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
@@ -135,7 +135,7 @@ struct TraitCounter {
   template<class Trait> void operator()() {
     for (auto &LT : AT)
       LT.for_each(bcl::TraitMapConstructor<
-        LocationTrait, TraitMap, bcl::CountInserter>(LT, TM));
+        MemoryTraitSet, TraitMap, bcl::CountInserter>(LT, TM));
   }
   AliasTrait &AT;
   TraitMap &TM;
@@ -208,11 +208,11 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       if (!I.second)
         ++I.first->second;
     }
-    auto &MMP = getAnalysis<MemoryMatcherPass>();
+    auto &MMP = getAnalysis<MemoryMatcherImmutableWrapper>();
     Stat[msg::Statistic::Variables].insert(
-      std::make_pair(msg::Analysis::Yes, MMP.getMatcher().size()));
+      std::make_pair(msg::Analysis::Yes, MMP->Matcher.size()));
     Stat[msg::Statistic::Variables].insert(
-      std::make_pair(msg::Analysis::No, MMP.getUnmatchedAST().size()));
+      std::make_pair(msg::Analysis::No, MMP->UnmatchedAST.size()));
     std::pair<unsigned, unsigned> Loops(0, 0);
     for (Function &F : M) {
       if (F.empty())
@@ -236,7 +236,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
 void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<MemoryMatcherPass>();
+  AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.setPreservesAll();
 }
 
