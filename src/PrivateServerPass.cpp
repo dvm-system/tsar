@@ -110,19 +110,6 @@ INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
 namespace {
-/// This functor increments count of analyzed traits (according to number of
-/// explicitly accessed locations from 'mAT') in a map 'mTM'.
-template<class TraitMap>
-struct TraitCounter {
-  template<class Trait> void operator()() {
-    for (auto &LT : AT)
-      LT.for_each(bcl::TraitMapConstructor<
-        MemoryTraitSet, TraitMap, bcl::CountInserter>(LT, TM));
-  }
-  AliasTrait &AT;
-  TraitMap &TM;
-};
-
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
 void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
@@ -134,8 +121,29 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
     auto DSItr = PI.find(N);
     assert(DSItr != PI.end() && DSItr->get<DependencySet>() &&
       "Loop traits must be specified!");
-    for (auto &AT : *DSItr->get<DependencySet>())
-      AT.for_each(TraitCounter<TraitMap>{AT, TM});
+    auto ATRoot = DSItr->get<DependencySet>()->getAliasTree()->getTopLevelNode();
+    for (auto &AT : *DSItr->get<DependencySet>()) {
+      if (ATRoot == AT.getNode())
+        continue;
+      for (auto &T : make_range(AT.begin(), AT.end())) {
+        if (T.is<trait::NoAccess>()) {
+          if (T.is<trait::AddressAccess>())
+            ++TM.template value<trait::AddressAccess>();
+          continue;
+        }
+        AT.for_each(bcl::TraitMapConstructor<
+          MemoryDescriptor, TraitMap, bcl::CountInserter>(AT, TM));
+      }
+      for (auto &T : make_range(AT.unknown_begin(), AT.unknown_end())) {
+        if (T.is<trait::NoAccess>()) {
+          if (T.is<trait::AddressAccess>())
+            ++TM.template value<trait::AddressAccess>();
+          continue;
+        }
+        AT.for_each(bcl::TraitMapConstructor<
+          MemoryDescriptor, TraitMap, bcl::CountInserter>(AT, TM));
+      }
+    }
   }
 }
 }
