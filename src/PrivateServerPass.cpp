@@ -101,7 +101,8 @@ JSON_OBJECT_PAIR_4(LoopTraits,
   Canonical, Analysis)
 
   LoopTraits() :
-    JSON_INIT(LoopTraits, Analysis::No, Analysis::No) {}
+    JSON_INIT(LoopTraits,
+      Analysis::No, Analysis::No, Analysis::No, Analysis::No) {}
   ~LoopTraits() = default;
 
   LoopTraits(const LoopTraits &) = default;
