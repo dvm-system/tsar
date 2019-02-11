@@ -39,20 +39,7 @@ DynResultsIntegrationPass::LoopsMap DynResultsIntegrationPass::getLoopsMap(
   return Result;
 }
 
-DynResultsIntegrationPass::VarsSet DynResultsIntegrationPass::getPrivateVarsSet(
-  dyna::Info& Info,
-  dyna::Loop& Loop) const {
-  VarsSet Result;
-  for (auto &Private : Loop[dyna::Loop::Private]) {
-    auto &Var = Info[dyna::Info::Vars][Private];
-    Result.insert(std::make_tuple(Var[dyna::Var::Name],
-      Var[dyna::Var::Line], Var[dyna::Var::File]));
-  }
-  return Result;
-}
-
 bool DynResultsIntegrationPass::runOnFunction(Function &F) {
-  print(std::cout);
   auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
   std::ifstream In(DYNAMIC_RESULTS_JSON);
   std::string ResultsJson;
@@ -71,7 +58,12 @@ bool DynResultsIntegrationPass::runOnFunction(Function &F) {
     auto LoopDescr = std::make_tuple(cast<DIScope>(Loc.getScope())
       ->getFilename().str(), Loc.getLine(), Loc.getCol());
     if (DynaLoops.find(LoopDescr) == DynaLoops.end()) continue;
-    auto DynaVars = getPrivateVarsSet(Info, DynaLoops[LoopDescr]);
+    auto DynaPrivateVars = getVarsSet(Info, DynaLoops[LoopDescr],
+      dyna::Loop::Private);
+    auto DynaFlowVars = getVarsMap(Info, DynaLoops[LoopDescr],
+      dyna::Loop::Flow);
+    auto DynaAntiVars = getVarsMap(Info, DynaLoops[LoopDescr],
+      dyna::Loop::Anti);
     for (auto &Region : *TraitLoop.getSecond()) {
       tsar::DIMemory* Memory = Region.getFirst();
       if (!tsar::DIEstimateMemory::classof(Memory)) continue;
@@ -80,20 +72,44 @@ bool DynResultsIntegrationPass::runOnFunction(Function &F) {
         ->getExpression()->getNumElements() ? "^" : "");
       auto VarDescr = std::make_tuple(PointerPrefix + DIVar->getName().str(),
         DIVar->getLine(), DIVar->getScope()->getFilename().str());
-      if (Region.getSecond().is<tsar::trait::Private>() &&
-        DynaVars.find(VarDescr) == DynaVars.end()) {
-        Region.getSecond().set<tsar::trait::Readonly>();
-      } else if (!Region.getSecond().is<tsar::trait::Private>() &&
-        DynaVars.find(VarDescr) != DynaVars.end()) {
-        Region.getSecond().set<tsar::trait::DynamicPrivate>();
+      bool HasStaticInfo = Region.getSecond().is<tsar::trait::Private>() ||
+        Region.getSecond().is<tsar::trait::Anti>() ||
+        Region.getSecond().is<tsar::trait::Flow>();
+      bool HasDynamicInfo =
+        !(DynaPrivateVars.find(VarDescr) == DynaPrivateVars.end() &&
+        DynaFlowVars.find(VarDescr) == DynaFlowVars.end() &&
+        DynaAntiVars.find(VarDescr) == DynaAntiVars.end());
+      assert((HasStaticInfo || !HasDynamicInfo)
+        "All variables detected in dynamic should be detected on static too");
+      if (HasStaticInfo && !HasDynamicInfo) {
+        Region.getSecond().template set<tsar::trait::Readonly>();
+        continue;
+      }
+      if (!Region.getSecond().is<tsar::trait::Private>() &&
+        DynaPrivateVars.find(VarDescr) != DynaPrivateVars.end() &&
+        DynaAntiVars.find(VarDescr) == DynaAntiVars.end() &&
+        DynaFlowVars.find(VarDescr) == DynaFlowVars.end()) {
+        //Looks like it impossible to set DynamicPrivate/Private trait
+        //simulteniously with Flow/Anti traits. But in dynamic analysis results
+        //they usually in a such way. Decided not to set DynamicPrivate in those
+        //cases.
+        Region.getSecond().template set<tsar::trait::DynamicPrivate>();
+      }
+      if (DynaAntiVars.find(VarDescr) != DynaAntiVars.end()) {
+        setDistance<tsar::trait::Anti>(DynaAntiVars[VarDescr],
+          Region.getSecond());
+      } else if (Region.getSecond().is<tsar::trait::Anti>()) {
+        //Need to unset trait. How to compile this?
+        //Region.getSecond().template unset<tsar::trait::Anti>();
+      }
+      if (DynaFlowVars.find(VarDescr) != DynaFlowVars.end()) {
+        setDistance<tsar::trait::Flow>(DynaFlowVars[VarDescr],
+          Region.getSecond());
+      } else if (Region.getSecond().is<tsar::trait::Flow>()) {
+        //Need to unset trait. How to compile this?
+        //Region.getSecond().template unset<tsar::trait::Flow>();
       }
     }
-    //for (auto &Anti : DynaLoops[LoopDescr][dyna::Loop::Anti]);
-    //for (auto &Flow : DynaLoops[LoopDescr][dyna::Loop::Flow]);
-    //I don't understand how flow and anti works. Variables for which flow and
-    //anti traits are set by DIMemoryTraitPoolWrapper, are completely different
-    //from flow and anti got by dynamic analysis. Are they represent the same
-    //entities? Left it blank now.
   }
   print(std::cout);
   return true;

@@ -27,7 +27,6 @@ public:
 
   template<class OStream>
   void print(OStream& OS) const {
-    OS << "print\n";
     auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
     for (auto &Loop : TraitPool) {
       auto LoopID = cast<MDNode>(Loop.getFirst());
@@ -53,10 +52,36 @@ public:
           << " Name: " << (Expr->getNumElements() ? "*" : "")
           << Var->getName().str() << " Line: " << Var->getLine();
         if (Region.getSecond().is<tsar::trait::Flow>()) {
-          Variables["Flow"].insert(Variable.str());
+          auto DIDep = Region.getSecond().get<tsar::trait::Flow>();
+          std::stringstream FlowVar;
+          if (DIDep) {
+            auto Dist = DIDep->getDistance();
+            auto Flag = DIDep->getFlags() & tsar::trait::Dependence::Flag
+              ::UnknownDistance;
+            if (!Flag && Dist.first && Dist.second) {
+              FlowVar  << " Distance: " << Dist.first->getExtValue() << ":"
+                << Dist.second->getExtValue();
+            } else {
+              FlowVar << " Unknown Distance";
+            }
+          }
+          Variables["Flow"].insert(Variable.str() + FlowVar.str());
         }
         if (Region.getSecond().is<tsar::trait::Anti>()) {
-          Variables["Anti"].insert(Variable.str());
+          auto DIDep = Region.getSecond().get<tsar::trait::Anti>();
+          std::stringstream AntiVar;
+          if (DIDep) {
+            auto Dist = DIDep->getDistance();
+            auto Flag = DIDep->getFlags() & tsar::trait::Dependence::Flag
+              ::UnknownDistance;
+            if (!Flag && Dist.first && Dist.second) {
+              AntiVar  << " Distance: " << Dist.first->getExtValue() << ":"
+                << Dist.second->getExtValue();
+            } else {
+              AntiVar << " Unknown Distance";
+            }
+          }
+          Variables["Anti"].insert(Variable.str() + AntiVar.str());
         }
         if (Region.getSecond().is<tsar::trait::Private>()) {
           Variables["Private"].insert(Variable.str());
@@ -79,9 +104,49 @@ public:
 private:
   using LoopsMap = std::map<std::tuple<std::string, unsigned, unsigned>,
    dyna::Loop>;
-  using VarsSet = std::set<std::tuple<std::string, unsigned, std::string>>;
-  LoopsMap getLoopsMap(dyna::Info&) const;
-  VarsSet getPrivateVarsSet(dyna::Info&, dyna::Loop&) const;
+  using VarDescr = std::tuple<std::string, dyna::LineTy, std::string>;
+  using VarsSet = std::set<VarDescr>;
+  using VarsMap = std::map<VarDescr, std::pair<dyna::DistanceTy, dyna::DistanceTy>>;
+
   DebugLoc getDebugLocByID(const MDNode*) const;
+  LoopsMap getLoopsMap(dyna::Info&) const;
+
+  template<class T>
+  VarsMap getVarsMap(dyna::Info& Info, dyna::Loop& Loop, T Field) const {
+    VarsMap Result;
+    for (auto &I : Loop[Field]) {
+      auto &V = Info[dyna::Info::Vars][I.first];
+      auto Var = std::make_tuple(V[dyna::Var::Name], V[dyna::Var::Line],
+        V[dyna::Var::File]);
+      auto Dist = std::make_pair(I.second[dyna::Distance::Min],
+        I.second[dyna::Distance::Max]);
+      Result.insert(std::make_pair(Var, Dist));
+    }
+    return Result;
+  }
+
+  template<class T>
+  VarsSet getVarsSet(dyna::Info& Info, dyna::Loop& Loop, T Field) const {
+    VarsSet Result;
+    for (auto &I : Loop[Field]) {
+      auto &Var = Info[dyna::Info::Vars][I];
+      Result.insert(std::make_tuple(Var[dyna::Var::Name],
+        Var[dyna::Var::Line], Var[dyna::Var::File]));
+    }
+    return Result;
+  }
+
+  template<class T>
+  void setDistance(std::pair<dyna::DistanceTy, dyna::DistanceTy> &Dist,
+    tsar::DIMemoryTraitSet &MemoryTrait) {
+    auto Flag = tsar::trait::Dependence::Flag::No;
+    auto DI = MemoryTrait.get<T>();
+    if (DI) Flag = DI->getFlags();
+    Flag &= (~tsar::trait::Dependence::Flag::UnknownDistance);
+    tsar::trait::DIDependence::DistanceRange Range;
+    Range.first = APSInt(APInt(8 * sizeof(Dist.first), Dist.first));
+    Range.second = APSInt(APInt(8 * sizeof(Dist.second), Dist.second));
+    MemoryTrait.template set<T>(new tsar::trait::DIDependence(Flag, Range));
+  }
 };
 }
