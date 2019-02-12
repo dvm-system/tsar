@@ -124,6 +124,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createInferFunctionAttrsLegacyPass());
   Passes.add(createPostOrderFunctionAttrsLegacyPass());
   Passes.add(createReversePostOrderFunctionAttrsPass());
+  Passes.add(createRPOFunctionAttrsAnalysis());
   Passes.add(createStripDeadPrototypesPass());
   Passes.add(createGlobalDCEPass());
   Passes.add(createGlobalsAAWrapperPass());

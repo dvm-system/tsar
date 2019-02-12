@@ -285,6 +285,12 @@ ModulePass * createCalleeProcLocationPass();
 void initializeInterprocAttrPassPass(PassRegistry &Registry);
 
 ModulePass * createInterprocAttrPass();
+
+/// Initializes a pass which deduce function attributes in RPO.
+void initializeRPOFunctionAttrsAnalysisPass(PassRegistry &Registry);
+
+/// Creates a pass which deduce function attributes in RPO.
+ModulePass *createRPOFunctionAttrsAnalysis();
 }
 
 #endif//TSAR_PASS_H
