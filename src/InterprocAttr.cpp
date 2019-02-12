@@ -1,50 +1,52 @@
-#include "CalleeProcLocation.h"
+//===- InterprocAttr.cpp - Interprocedural Attributes Deduction -*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines passes which perform interprocedural analysis in order to
+// deduce some function and loop attributes.
+//
+//===----------------------------------------------------------------------===//
 #include "InterprocAttr.h"
-#include "Attributes.h"
-#include "tsar_loop_matcher.h"
-#include "tsar_pass_provider.h"
-#include "tsar_transformation.h"
-#include <clang/AST/Expr.h>
+#include "tsar_utility.h"
 #include <llvm/ADT/SCCIterator.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/CallGraph.h>
+#include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/Support/raw_ostream.h>
-#include <set>
 #include <vector>
 
 using namespace tsar;
 using namespace llvm;
-using namespace clang;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "functionattrs"
 
 STATISTIC(NumLibFunc, "Number of functions marked as sapfor.libfunc");
-
-typedef FunctionPassProvider<
-  TransformationEnginePass,
-  LoopMatcherPass> InterprocAttrProvider;
-
-INITIALIZE_PROVIDER_BEGIN(InterprocAttrProvider, "interproc-attr-provider",
-  "Interprocedural Attribute Provider")
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
-INITIALIZE_PROVIDER_END(InterprocAttrProvider, "interproc-attr-provider",
-    "Interprocedural Attribute Provider")
-
-char InterprocAttrPass::ID = 0;
-INITIALIZE_PASS_BEGIN(InterprocAttrPass, "interproc-attr",
-  "Interprocedural Attribute Pass", false, false)
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(InterprocAttrProvider)
-INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
-INITIALIZE_PASS_END(InterprocAttrPass, "interproc-attr",
-  "Interprocedural Attribute Pass", false, false)
+STATISTIC(NumNoIOFunc, "Number of functions marked as sapfor.noio");
+STATISTIC(NumAlwaysRetFunc, "Number of functions marked as sapfor.alwaysreturn");
+STATISTIC(NumNoIOLoop, "Number of loops marked as sapfor.noio");
+STATISTIC(NumAlwaysRetLoop, "Number of loops marked as sapfor.alwaysreturn");
 
 namespace {
-/// This pass walks SCCs of the call  graph in RPO to deduce and propagate
+/// This pass walks SCCs of the call graph in RPO to deduce and propagate
 /// function attributes.
 ///
 /// Currently it only handles synthesizing sapfor.libfunc attributes.
@@ -66,6 +68,40 @@ struct RPOFunctionAttrsAnalysis : public ModulePass, private bcl::Uncopyable {
   }
 };
 
+/// This pass walks SCCs of the call graph in PO to deduce and propagate
+/// function attributes.
+class POFunctionAttrsAnalysis :
+  public CallGraphSCCPass, private bcl::Uncopyable {
+public:
+  static char ID;
+  POFunctionAttrsAnalysis() : CallGraphSCCPass(ID) {
+    initializePOFunctionAttrsAnalysisPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnSCC(CallGraphSCC &M) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    CallGraphSCCPass::getAnalysisUsage(AU);
+  }
+
+private:
+  /// Checks is it necessary to add an attribute to the whole functions from
+  /// currently processed SCC and returns this attribute, otherwise return
+  /// `not_attribute`.
+  AttrKind addNoIOAttr();
+
+  /// Checks is it necessary to add an attribute to the whole functions from
+  /// currently processed SCC and returns this attribute, otherwise return
+  /// `not_attribute`.
+  AttrKind addAlwaysReturnAttr();
+
+  TargetLibraryInfo *mTLI = nullptr;
+  SmallPtrSet<Function *, 4> mSCCFuncs;
+  SmallPtrSet<Function *, 16> mCalleeFuncs;
+};
+
 bool addLibFuncAttrsTopDown(Function &F) {
   for (auto *U : F.users()) {
     CallSite CS(U);
@@ -76,22 +112,6 @@ bool addLibFuncAttrsTopDown(Function &F) {
     }
   }
   return true;
-}
-
-void setLoopIA(llvm::Module &M, Stmt *S, tsar::InterprocAttrStmtInfo &IALI) {
-  tsar::InterprocAttrs IA;
-  std::vector<CallExpr *> VecCallExpr;
-  std::vector<Function *> SetCalleeFunc;
-  clang::getStmtTypeFromStmtTree(S, VecCallExpr);
-  for (auto CE : VecCallExpr)
-    SetCalleeFunc.push_back(M.getFunction(CE->getDirectCallee()->getName()));
-  for (auto CF : SetCalleeFunc) {
-    if (!hasFnAttr(*CF, AttrKind::NoIO))
-      IA.setAttr(tsar::InterprocAttrs::Attr::InOutFunc);
-    if (!hasFnAttr(*CF, AttrKind::AlwaysReturn))
-      IA.setAttr(tsar::InterprocAttrs::Attr::NoReturn);
-  }
-  IALI.insert(std::make_pair(S, IA));
 }
 }
 
@@ -119,9 +139,9 @@ bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
       if (auto F = CGN->getFunction()) {
         if (F->isIntrinsic())
           continue;
-        LibFunc LibId;
         Worklist.push_back(F);
-        HasLibFunc = HasLibFunc || TLI.getLibFunc(*F, LibId);
+        LibFunc LibId;
+        HasLibFunc |= TLI.getLibFunc(*F, LibId);
       }
     if (HasLibFunc)
       for (std::size_t EIdx = Worklist.size(); CGNIdx < EIdx; ++CGNIdx)
@@ -133,44 +153,44 @@ bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
   return Changed;
 }
 
-bool InterprocAttrPass::runOnModule(llvm::Module &M) {
-  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  scc_iterator<CallGraph *> CGSCCIter = scc_begin(&CG);
-  CallGraphSCC CGSCC(CG, &CGSCCIter);
-  while (!CGSCCIter.isAtEnd()) {
-    const std::vector<CallGraphNode *> &VecCGN = *CGSCCIter;
-    CGSCC.initialize(VecCGN);
-    runOnSCC(CGSCC, M);
-    ++CGSCCIter;
-  }
-  return false;
+char POFunctionAttrsAnalysis::ID = 0;
+
+INITIALIZE_PASS_BEGIN(POFunctionAttrsAnalysis, "sapfor-functionattrs",
+  "Deduce function attributes", false, false)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_END(POFunctionAttrsAnalysis, "sapfor-functionattrs",
+  "Deduce function attributes", false, false)
+
+Pass * llvm::createPOFunctionAttrsAnalysis() {
+  return new POFunctionAttrsAnalysis();
 }
 
-void InterprocAttrPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    errs() << "error: can not transform sources for the module "
-      << M.getName() << "\n";
-    return;
-  }
-  InterprocAttrProvider::initialize<TransformationEnginePass>(
-      [&M, &TfmCtx](TransformationEnginePass &TEP) {
-    TEP.setContext(M, TfmCtx);
-  });
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  std::set<Function *> SetSCCFunc;
-  std::set<Function *> SetCalleeFunc;
-  bool InOutFunc = false;
-  bool NoReturn = false;
+bool POFunctionAttrsAnalysis::runOnSCC(CallGraphSCC &SCC) {
+  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (auto *CGN : SCC)
     if(auto F = CGN->getFunction())
-      SetSCCFunc.insert(F);
+      mSCCFuncs.insert(F);
   for (auto *CGN : SCC)
     if (auto F = CGN->getFunction())
       for (auto &CFGTo : *CGN)
         if (auto FTo = CFGTo.second->getFunction())
-          SetCalleeFunc.insert(FTo);
-  for (auto *SCCF : SetSCCFunc) {
+          mCalleeFuncs.insert(FTo);
+  SmallVector<AttrKind, 4> AddAttrs;;
+  auto Kind = addNoIOAttr();
+  if (Kind != AttrKind::not_attribute)
+    AddAttrs.push_back(Kind);
+  Kind = addAlwaysReturnAttr();
+  if (Kind != AttrKind::not_attribute)
+    AddAttrs.push_back(Kind);
+  for (auto *SCCF : mSCCFuncs)
+    for (auto Attr : AddAttrs)
+      addFnAttr(*SCCF, Attr);
+  return !AddAttrs.empty();
+}
+
+AttrKind POFunctionAttrsAnalysis::addNoIOAttr() {
+  for (auto *SCCF : mSCCFuncs) {
     if (SCCF->isIntrinsic())
       continue;
     LibFunc LibId;
@@ -179,65 +199,78 @@ void InterprocAttrPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
     // functions which treated as library by TargetLibraryInfo only. So, the
     // mentioned set may not contain some 'safpor.libfunc' functions which are
     // in/out functions.
-    bool IsLibFunc = TLI.getLibFunc(*SCCF, LibId);
-    if ((IsLibFunc && SetInOutFunc.count(SCCF->getName())) ||
-        (!IsLibFunc && SCCF->isDeclaration())) {
-      InOutFunc = true;
-      break;
-    }
+    bool IsLibFunc = mTLI->getLibFunc(*SCCF, LibId);
+    if ((IsLibFunc && isIOLibFuncName(SCCF->getName())) ||
+        (!IsLibFunc && SCCF->isDeclaration()))
+      return AttrKind::not_attribute;
   }
-  if (!InOutFunc)
-    for (auto *CF : SetCalleeFunc)
-      if (!hasFnAttr(*CF, AttrKind::NoIO)) {
-        InOutFunc = true;
-        break;
-      }
-  for (auto *SCCF : SetSCCFunc) {
-    if (SCCF->hasFnAttribute(Attribute::NoReturn) ||
-        (SCCF->isDeclaration() &&
-          !SCCF->isIntrinsic() && !hasFnAttr(*SCCF, AttrKind::LibFunc))) {
-      NoReturn = true;
-      break;
-    }
-  }
-  if (!NoReturn)
-    for (auto *CF : SetCalleeFunc) {
-      if (!hasFnAttr(*CF, AttrKind::AlwaysReturn)) {
-        NoReturn = true;
-        break;
-      }
-    }
-  for (auto *CGN : SCC) {
-    auto F = CGN->getFunction();
-    if (!F)
-      continue;
-    if (!InOutFunc)
-      addFnAttr(*F, AttrKind::NoIO);
-    if (!NoReturn)
-      addFnAttr(*F, AttrKind::AlwaysReturn);
-  }
-  for (auto CGN : SCC) {
-    auto F = CGN->getFunction();
-    if (!F || F->empty())
-      continue;
-    auto &Provider = getAnalysis<InterprocAttrProvider>(*F);
-    auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
-    auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    for (auto Match : Matcher)
-      setLoopIA(M, Match.first, mInterprocAttrLoopInfo);
-    for (auto Unmatch : Unmatcher)
-      setLoopIA(M, Unmatch, mInterprocAttrLoopInfo);
-  }
+  for (auto *CF : mCalleeFuncs)
+    if (!hasFnAttr(*CF, AttrKind::NoIO))
+      return AttrKind::not_attribute;
+  NumNoIOFunc += mSCCFuncs.size();
+  return AttrKind::NoIO;
 }
 
-void InterprocAttrPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<InterprocAttrProvider>();
-  AU.addRequired<TargetLibraryInfoWrapperPass>();
-  AU.addRequired<CallGraphWrapperPass>();
+AttrKind POFunctionAttrsAnalysis::addAlwaysReturnAttr() {
+  for (auto *SCCF : mSCCFuncs) {
+    if (SCCF->hasFnAttribute(Attribute::NoReturn) ||
+        (SCCF->isDeclaration() &&
+         !SCCF->isIntrinsic() && !hasFnAttr(*SCCF, AttrKind::LibFunc)))
+      return AttrKind::not_attribute;
+    }
+  for (auto *CF : mCalleeFuncs)
+    if (!hasFnAttr(*CF, AttrKind::AlwaysReturn))
+      return AttrKind::not_attribute;
+  NumAlwaysRetFunc += mSCCFuncs.size();
+  return AttrKind::AlwaysReturn;
+}
+
+char LoopAttributesDeductionPass::ID = 0;
+
+INITIALIZE_PASS_BEGIN(LoopAttributesDeductionPass, "loopattrs",
+  "Deduce function attributes in RPO", false, true)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_END(LoopAttributesDeductionPass, "loopattrss",
+  "Deduce function attributes in RPO", false, true)
+
+FunctionPass * llvm::createLoopAttributesDeductionPass() {
+  return new LoopAttributesDeductionPass();
+}
+
+void LoopAttributesDeductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
-ModulePass *llvm::createInterprocAttrPass() {
-  return new InterprocAttrPass();
+bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
+  releaseMemory();
+  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  for_each_loop(LI, [this](const Loop *L) {
+    bool MayNoReturn = false, MayIO = false;
+    for (auto *BB : L->blocks())
+      for (auto &I : *BB) {
+        CallSite CS(&I);
+        if (!CS)
+          continue;
+        auto Callee =
+          dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+        if (!Callee)
+          return;
+        MayIO |= !hasFnAttr(*Callee, AttrKind::NoIO);
+        MayNoReturn |= !hasFnAttr(*Callee, AttrKind::AlwaysReturn);
+      }
+    auto Itr = mAttrs.end();
+    if (!MayIO) {
+      Itr = mAttrs.try_emplace(L).first;
+      Itr->second.insert(AttrKind::NoIO);
+      ++NumNoIOLoop;
+    }
+    if (!MayNoReturn) {
+      if (Itr == mAttrs.end())
+        Itr = mAttrs.try_emplace(L).first;
+      Itr->second.insert(AttrKind::AlwaysReturn);
+      ++NumAlwaysRetLoop;
+    }
+  });
+  return false;
 }

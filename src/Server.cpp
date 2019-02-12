@@ -117,6 +117,7 @@ public:
     Passes.add(createUnreachableBlockEliminationPass());
     Passes.add(createPostOrderFunctionAttrsLegacyPass());
     Passes.add(createRPOFunctionAttrsAnalysis());
+    Passes.add(createPOFunctionAttrsAnalysis());
     Passes.add(createMemoryMatcherPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());

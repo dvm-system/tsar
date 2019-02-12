@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Attributes.h"
+#include <bcl/utility.h>
 #include <llvm/IR/Function.h>
 
 using namespace llvm;
@@ -55,5 +56,22 @@ bool hasFnAttr(llvm::Function &F, AttrKind Kind) {
   return F.hasFnAttribute(getAsString(Kind));
 }
 
+/// Table of string names of input/output library functions.
+static const char * const IOFunctionNameTable[] = {
+#define GET_IO_FUNCTIONS
+#include "LibraryFunctions.def"
+#undef GET_IO_FUNCTIONS
+};
 
+bool isIOLibFuncName(StringRef FuncName) {
+  const char* const *Start = &IOFunctionNameTable[0];
+  const char* const *End =
+    &IOFunctionNameTable[bcl::array_sizeof(IOFunctionNameTable)];
+  if (FuncName.empty())
+    return false;
+  const char* const *I = std::find(Start, End, FuncName);
+  if (I != End)
+    return true;
+  return false;
+}
 }

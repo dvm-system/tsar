@@ -62,6 +62,9 @@ template<class Function> void for_each_attr(Function &&F) {
   for (KindI++; KindI < KindE; ++KindI)
     F(static_cast<AttrKind>(KindI));
 }
+
+/// Returns true if a specified name is a name of input/output library function.
+bool isIOLibFuncName(llvm::StringRef FuncName);
 }
 #endif//TSAR_ATTRIBUTES_H
 

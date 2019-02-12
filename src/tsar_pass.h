@@ -282,15 +282,23 @@ void initializeCalleeProcLocationPassPass(PassRegistry &Registry);
 
 ModulePass * createCalleeProcLocationPass();
 
-void initializeInterprocAttrPassPass(PassRegistry &Registry);
+/// Initializes a pass which deduce function attributes in PO.
+void initializePOFunctionAttrsAnalysisPass(PassRegistry &Registry);
 
-ModulePass * createInterprocAttrPass();
+/// Creates a pass which deduce function attributes in PO.
+Pass * createPOFunctionAttrsAnalysis();
 
 /// Initializes a pass which deduce function attributes in RPO.
 void initializeRPOFunctionAttrsAnalysisPass(PassRegistry &Registry);
 
 /// Creates a pass which deduce function attributes in RPO.
-ModulePass *createRPOFunctionAttrsAnalysis();
+ModulePass * createRPOFunctionAttrsAnalysis();
+
+/// Initializes a pass which deduce loop attributes.
+void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
+
+/// Creates a pass which deduce loop attributes.
+FunctionPass * createLoopAttributesDeductionPass();
 }
 
 #endif//TSAR_PASS_H

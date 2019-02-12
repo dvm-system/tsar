@@ -290,6 +290,7 @@ using ServerPrivateProvider = FunctionPassProvider<
   ClangPerfectLoopPass,
   CanonicalLoopPass,
   MemoryMatcherImmutableWrapper,
+  LoopAttributesDeductionPass,
   AAResultsWrapperPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
@@ -302,6 +303,7 @@ INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
@@ -312,7 +314,6 @@ INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(CalleeProcLocationPass)
-INITIALIZE_PASS_DEPENDENCY(InterprocAttrPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -464,12 +465,11 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       getPerfectLoopInfo();
     auto &CLoopInfo = Provider.get<CanonicalLoopPass>().
       getCanonicalLoopInfo();
+    auto &IALoopInfo = Provider.get<LoopAttributesDeductionPass>();
     auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
       getLoopCalleeProcInfo();
     auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
       getFuncCalleeProcInfo();
-    auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
-      getInterprocAttrLoopInfo();
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
@@ -480,8 +480,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
       auto &CPL = LoopCPInfo.find(Match.first)->second;
-      auto &IA = IALoopInfo.find(Match.first)->second;
-      if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
+      if (!IALoopInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       for (auto BB : Match.get<IR>()->blocks())
         if (Match.get<IR>()->isLoopExiting(BB))
@@ -496,9 +495,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       auto Loop = getLoopInfo(Unmatch, SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
       auto &CPL = LoopCPInfo.find(Unmatch)->second;
-      auto &IA = IALoopInfo.find(Unmatch)->second;
-      if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
-        LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
+      LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
         if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
@@ -633,25 +630,19 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
         getLoopCalleeProcInfo();
     auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
         getFuncCalleeProcInfo();
-    auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
-        getInterprocAttrLoopInfo();
     tsar::CalleeProcLocation CPL;
-    tsar::InterprocAttrs IA;
     if (CalleeFuncList[msg::CalleeFuncList::LoopID]) {
       for (auto Match : Matcher)
         if (Match.first->getLocStart().getRawEncoding() ==
             CalleeFuncList[msg::CalleeFuncList::LoopID]) {
           CPL = LoopCPInfo.find(Match.first)->second;
-          IA = IALoopInfo.find(Match.first)->second;
         }
       for (auto Unmatch : Unmatcher)
         if (Unmatch->getLocStart().getRawEncoding() ==
             CalleeFuncList[msg::CalleeFuncList::LoopID]) {
           CPL = LoopCPInfo.find(Unmatch)->second;
-          IA = IALoopInfo.find(Unmatch)->second;
         }
-      if (CalleeFuncList[msg::CalleeFuncList::Attr] ==
-          (unsigned)tsar::InterprocAttrs::Attr::NoReturn) {
+      if (CalleeFuncList[msg::CalleeFuncList::Attr] == 2) {
         if (!CPL.getBreak().empty()) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::Name] = "break";
@@ -755,7 +746,6 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<CalleeProcLocationPass>();
-  AU.addRequired<InterprocAttrPass>();
   AU.setPreservesAll();
 }
 
