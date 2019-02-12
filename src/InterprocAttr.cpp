@@ -120,6 +120,8 @@ bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
     bool HasLibFunc = false;
     for (auto *CGN : *I)
       if (auto F = CGN->getFunction()) {
+        if (F->isIntrinsic())
+          continue;
         LibFunc LibId;
         Worklist.push_back(F);
         HasLibFunc = HasLibFunc || TLI.getLibFunc(*F, LibId);
