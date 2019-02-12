@@ -13,7 +13,7 @@ set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   SourceUnparser.cpp SourceUnparserUtils.cpp DIEstimateMemory.cpp
   DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp DIGlobalRetriever.cpp InterprocAttr.cpp
-  CalleeProcLocation.cpp)
+  CalleeProcLocation.cpp Attributes.cpp)
 if(MSVC_IDE)
   source_group(src FILES ${TSAR_SOURCES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
@@ -36,13 +36,17 @@ tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
 tsar_tablegen(Intrinsics.gen -gen-tsar-intrinsics-defs
   SOURCE Intrinsics.td
   TARGET IntrinsicsGen)
+tsar_tablegen(Attributes.gen -gen-tsar-attributes-defs
+  SOURCE Attributes.td
+  TARGET AttributesGen)
 tsar_tablegen(Directives.gen -gen-tsar-directives-defs
   SOURCE Directives.td
   TARGET DirectivesGen)
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
 set_target_properties(TSARCore PROPERTIES
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
-add_dependencies(TSARCore DiagnosticKinds IntrinsicsGen DirectivesGen)
+add_dependencies(TSARCore
+  DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)

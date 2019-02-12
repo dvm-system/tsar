@@ -23,6 +23,7 @@ enum ActionType {
   GenTSARDiagsDefs,
   GenTSARIntrinsicsDefs,
   GenTSARDirectivesDefs,
+  GenTSARAttrubutesDefs,
 };
 
 namespace {
@@ -33,7 +34,9 @@ namespace {
          cl::values(clEnumValN(GenTSARDirectivesDefs, "gen-tsar-directives-defs",
                                "Generate TSAR directives definitions")),
          cl::values(clEnumValN(GenTSARIntrinsicsDefs,"gen-tsar-intrinsics-defs",
-                               "Generate TSAR intrinsics definitions")));
+                               "Generate TSAR intrinsics definitions")),
+         cl::values(clEnumValN(GenTSARAttrubutesDefs,"gen-tsar-attributes-defs",
+                               "Generate TSAR attributes definitions")));
 
 void GenFileHeader(raw_ostream &OS) {
   OS << "\
@@ -100,7 +103,7 @@ unsigned GenExprDescription(raw_ostream &OS, Record *Rec) {
   for (Record *Child : Rec->getValueAsListOfDefs("ExprList")) {
     Size += GenExprDescription(OS, Child);
   }
-  auto Anchor = Rec->getRecords().getDef("Anchor"); 
+  auto Anchor = Rec->getRecords().getDef("Anchor");
   OS << " CLAUSE_EXPR(" << Anchor->getValueAsDef("Kind")->getName() << ")";
   return Size + 1;
 }
@@ -259,6 +262,31 @@ void GenIntrinsicOffsetList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "#endif\n\n";
 }
 
+//===----------------------------------------------------------------------===//
+// Generate TSAR attributes definitions.
+//===----------------------------------------------------------------------===//
+
+void GenAttributeIdList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Enum values for Attribute IDs\n";
+  OS << "#ifdef GET_ATTRIBUTE_ENUM_VALUES\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Attribute")) {
+    OS << "  " << Rec->getName() << ",";
+    OS << "                // " << Rec->getValueAsString("Name") << "\n";
+  }
+  OS << "#endif\n\n";
+}
+
+void GenAttributeNameList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// Attribute ID to name table\n";
+  OS << "#ifdef GET_ATTRIBUTE_NAME_TABLE\n";
+  OS << "// Note that entry #0 is the invalid attribute!\n";
+  for (Record *Rec : Records.getAllDerivedDefinitions("Attribute")) {
+    OS << "  \"";
+    OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
+  }
+  OS << "#endif\n\n";
+}
+
 bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
   GenFileHeader(OS);
   switch (Action) {
@@ -276,6 +304,10 @@ bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
     GenIntrinsicIdList(OS, Records);
     GenIntrinsicNameList(OS, Records);
     GenIntrinsicOffsetList(OS, Records);
+    break;
+  case GenTSARAttrubutesDefs:
+    GenAttributeIdList(OS, Records);
+    GenAttributeNameList(OS, Records);
     break;
   case GenTSARDirectivesDefs:
     GenExprKindList(OS, Records);
