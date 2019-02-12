@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrivateServerPass.h"
+#include "Attributes.h"
 #include "CalleeProcLocation.h"
 #include "CanonicalLoop.h"
 #include "EstimateMemory.h"
@@ -469,8 +470,6 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
       getFuncCalleeProcInfo();
     auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
       getInterprocAttrLoopInfo();
-    auto &IAFuncInfo = PSP->getAnalysis<InterprocAttrPass>().
-      getInterprocAttrFuncInfo();
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::MainLoopInfo::Traits];
@@ -489,8 +488,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
           Loop[msg::MainLoopInfo::Exit]++;
       auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
-        if (IAFuncInfo.find(CFL.first)->second.
-            hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
+        if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
           Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
@@ -503,8 +501,7 @@ std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
-        if (IAFuncInfo.find(CFL.first)->second.
-            hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
+        if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
           Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
@@ -591,8 +588,6 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     auto &LMP = Provider.get<LoopMatcherPass>();
     auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
-    auto &IA = PSP->getAnalysis<InterprocAttrPass>().
-        getInterprocAttrFuncInfo().find(&F)->second;
     msg::MainFuncInfo Func;
     Func[msg::MainFuncInfo::Name] = F.getName();
     Func[msg::MainFuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
@@ -603,10 +598,10 @@ std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
     if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::Readonly]
         = msg::Analysis::Yes;
-    if (IA.hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
+    if (!hasFnAttr(F, AttrKind::AlwaysReturn))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::NoReturn]
         = msg::Analysis::Yes;
-    if (IA.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
+    if (!hasFnAttr(F, AttrKind::NoIO))
       Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::InOut]
         = msg::Analysis::Yes;
     if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
@@ -640,8 +635,6 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
         getFuncCalleeProcInfo();
     auto &IALoopInfo = PSP->getAnalysis<InterprocAttrPass>().
         getInterprocAttrLoopInfo();
-    auto &IAFuncInfo = PSP->getAnalysis<InterprocAttrPass>().
-        getInterprocAttrFuncInfo();
     tsar::CalleeProcLocation CPL;
     tsar::InterprocAttrs IA;
     if (CalleeFuncList[msg::CalleeFuncList::LoopID]) {
@@ -689,24 +682,22 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
       }
     } else {
       CPL = FuncCPInfo.find(&F)->second;
-      IA = IAFuncInfo.find(&F)->second;
     }
-    for (auto MapCF : CPL.getCalleeFuncLoc()) {
-      for (unsigned IdxAttr = 1;
-          IdxAttr < (unsigned)InterprocAttrs::Attr::EndAttr; IdxAttr++)
-        if ((CalleeFuncList[msg::CalleeFuncList::Attr] == IdxAttr) &&
-            IAFuncInfo.find(MapCF.first)->second.
-                hasAttr((InterprocAttrs::Attr)IdxAttr)) {
+    for (auto &MapCF : CPL.getCalleeFuncLoc()) {
+      for_each_attr([&SrcMgr, &MapCF, &CalleeFuncList](AttrKind Kind) {
+        if ((CalleeFuncList[msg::CalleeFuncList::Attr] == (unsigned)Kind) &&
+            hasFnAttr(*MapCF.first, Kind)) {
           msg::CalleeFuncInfo Func;
           Func[msg::CalleeFuncInfo::ID] = std::to_string(
-              MapCF.second[0].getRawEncoding());
+            MapCF.second[0].getRawEncoding());
           Func[msg::CalleeFuncInfo::Name] = MapCF.first->getName();
           for (auto Loc : MapCF.second)
             Func[msg::CalleeFuncInfo::Locations].
-                push_back(getLocation(Loc, SrcMgr));
+              push_back(getLocation(Loc, SrcMgr));
           CalleeFuncList[msg::CalleeFuncList::Functions].
-              push_back(std::move(Func));
+            push_back(std::move(Func));
         }
+      });
     }
   }
   return json::Parser<msg::CalleeFuncList>::unparseAsObject(CalleeFuncList);

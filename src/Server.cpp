@@ -34,6 +34,7 @@
 
 #include "Messages.h"
 #include "tsar_query.h"
+#include "tsar_pass.h"
 #include "tsar_tool.h"
 #include "tsar_transformation.h"
 #include <bcl/IntrusiveConnection.h>
@@ -115,6 +116,7 @@ public:
     }
     Passes.add(createUnreachableBlockEliminationPass());
     Passes.add(createPostOrderFunctionAttrsLegacyPass());
+    Passes.add(createRPOFunctionAttrsAnalysis());
     Passes.add(createMemoryMatcherPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());

@@ -38,8 +38,6 @@ struct InterprocAttrs {
   private:
   std::set<Attr> mAttrs;
 };
-typedef llvm::DenseMap<llvm::Function *,
-    InterprocAttrs> InterprocAttrFuncInfo;
 typedef llvm::DenseMap<clang::Stmt *,
     InterprocAttrs> InterprocAttrStmtInfo;
 }
@@ -52,13 +50,6 @@ namespace llvm {
     InterprocAttrPass() : ModulePass(ID) {
       initializeInterprocAttrPassPass(*PassRegistry::getPassRegistry());
     }
-    tsar::InterprocAttrFuncInfo & getInterprocAttrFuncInfo() noexcept {
-      return mInterprocAttrFuncInfo;
-    }
-    const tsar::InterprocAttrFuncInfo &
-        getInterprocAttrFuncInfo() const noexcept {
-      return mInterprocAttrFuncInfo;
-    }
     tsar::InterprocAttrStmtInfo & getInterprocAttrLoopInfo() noexcept {
       return mInterprocAttrLoopInfo;
     }
@@ -70,7 +61,6 @@ namespace llvm {
     void getAnalysisUsage(AnalysisUsage &AU) const override;
   private:
     void runOnSCC(CallGraphSCC &SCC, Module &M);
-    tsar::InterprocAttrFuncInfo mInterprocAttrFuncInfo;
     tsar::InterprocAttrStmtInfo mInterprocAttrLoopInfo;
   };
 }

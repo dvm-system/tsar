@@ -78,9 +78,7 @@ bool addLibFuncAttrsTopDown(Function &F) {
   return true;
 }
 
-void setLoopIA(llvm::Module &M, Stmt *S,
-    tsar::InterprocAttrFuncInfo &IAFI,
-    tsar::InterprocAttrStmtInfo &IALI) {
+void setLoopIA(llvm::Module &M, Stmt *S, tsar::InterprocAttrStmtInfo &IALI) {
   tsar::InterprocAttrs IA;
   std::vector<CallExpr *> VecCallExpr;
   std::vector<Function *> SetCalleeFunc;
@@ -88,10 +86,9 @@ void setLoopIA(llvm::Module &M, Stmt *S,
   for (auto CE : VecCallExpr)
     SetCalleeFunc.push_back(M.getFunction(CE->getDirectCallee()->getName()));
   for (auto CF : SetCalleeFunc) {
-    auto E = IAFI.find(CF)->second;
-    if (E.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc))
+    if (!hasFnAttr(*CF, AttrKind::NoIO))
       IA.setAttr(tsar::InterprocAttrs::Attr::InOutFunc);
-    if (E.hasAttr(tsar::InterprocAttrs::Attr::NoReturn))
+    if (!hasFnAttr(*CF, AttrKind::AlwaysReturn))
       IA.setAttr(tsar::InterprocAttrs::Attr::NoReturn);
   }
   IALI.insert(std::make_pair(S, IA));
@@ -161,74 +158,63 @@ void InterprocAttrPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
     TEP.setContext(M, TfmCtx);
   });
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  LibFunc LibID;
   std::set<Function *> SetSCCFunc;
   std::set<Function *> SetCalleeFunc;
   bool InOutFunc = false;
   bool NoReturn = false;
-  for (auto CGN : SCC) {
-    auto F = CGN->getFunction();
-    if (F && TfmCtx->getDeclForMangledName(F->getName()))
+  for (auto *CGN : SCC)
+    if(auto F = CGN->getFunction())
       SetSCCFunc.insert(F);
-  }
-  for (auto CGN : SCC) {
-    auto F = CGN->getFunction();
-    if (!F)
+  for (auto *CGN : SCC)
+    if (auto F = CGN->getFunction())
+      for (auto &CFGTo : *CGN)
+        if (auto FTo = CFGTo.second->getFunction())
+          SetCalleeFunc.insert(FTo);
+  for (auto *SCCF : SetSCCFunc) {
+    if (SCCF->isIntrinsic())
       continue;
-    for (auto CFGTo : *CGN) {
-      auto FTo = CFGTo.second->getFunction();
-      if (FTo && SetSCCFunc.find(FTo) == SetSCCFunc.end())
-        SetCalleeFunc.insert(FTo);
-    }
-  }
-  for (auto SCCF : SetSCCFunc)
-    if ((TLI.getLibFunc(*SCCF, LibID) &&
-        SetInOutFunc.find(SCCF->getName()) != SetInOutFunc.end()) ||
-        (!TLI.getLibFunc(*SCCF, LibID) && SCCF->empty())) {
+    LibFunc LibId;
+    // We can not use here 'sapfor.libfunc' attribute to check whether a
+    // function is a library function because set of in/out functions contains
+    // functions which treated as library by TargetLibraryInfo only. So, the
+    // mentioned set may not contain some 'safpor.libfunc' functions which are
+    // in/out functions.
+    bool IsLibFunc = TLI.getLibFunc(*SCCF, LibId);
+    if ((IsLibFunc && SetInOutFunc.count(SCCF->getName())) ||
+        (!IsLibFunc && SCCF->isDeclaration())) {
       InOutFunc = true;
       break;
     }
+  }
   if (!InOutFunc)
-    for (auto CF : SetCalleeFunc) {
-      auto IACF = mInterprocAttrFuncInfo.find(CF);
-      if (IACF != mInterprocAttrFuncInfo.end() &&
-          IACF->second.hasAttr(tsar::InterprocAttrs::Attr::InOutFunc)) {
+    for (auto *CF : SetCalleeFunc)
+      if (!hasFnAttr(*CF, AttrKind::NoIO)) {
         InOutFunc = true;
         break;
       }
-    }
-  for (auto SCCF : SetSCCFunc)
+  for (auto *SCCF : SetSCCFunc) {
     if (SCCF->hasFnAttribute(Attribute::NoReturn) ||
-        (!TLI.getLibFunc(*SCCF, LibID) && SCCF->empty())) {
+        (SCCF->isDeclaration() &&
+          !SCCF->isIntrinsic() && !hasFnAttr(*SCCF, AttrKind::LibFunc))) {
       NoReturn = true;
       break;
     }
+  }
   if (!NoReturn)
-    for (auto CF : SetCalleeFunc) {
-      auto IACF = mInterprocAttrFuncInfo.find(CF);
-      if (IACF != mInterprocAttrFuncInfo.end() &&
-          IACF->second.hasAttr(tsar::InterprocAttrs::Attr::NoReturn)) {
-        for (auto SCCF : SetSCCFunc)
-          if (SetInOutFunc.find(SCCF->getName()) == SetInOutFunc.end()) {
-            NoReturn = true;
-            break;
-          }
+    for (auto *CF : SetCalleeFunc) {
+      if (!hasFnAttr(*CF, AttrKind::AlwaysReturn)) {
+        NoReturn = true;
         break;
       }
     }
-  for (auto CGN : SCC) {
+  for (auto *CGN : SCC) {
     auto F = CGN->getFunction();
     if (!F)
       continue;
-    auto D = TfmCtx->getDeclForMangledName(F->getName());
-    if (!D)
-      continue;
-    tsar::InterprocAttrs IA;
-    if (InOutFunc)
-      IA.setAttr(tsar::InterprocAttrs::Attr::InOutFunc);
-    if (NoReturn)
-      IA.setAttr(tsar::InterprocAttrs::Attr::NoReturn);
-    mInterprocAttrFuncInfo.insert(std::make_pair(F, IA));
+    if (!InOutFunc)
+      addFnAttr(*F, AttrKind::NoIO);
+    if (!NoReturn)
+      addFnAttr(*F, AttrKind::AlwaysReturn);
   }
   for (auto CGN : SCC) {
     auto F = CGN->getFunction();
@@ -238,11 +224,9 @@ void InterprocAttrPass::runOnSCC(CallGraphSCC &SCC, llvm::Module &M) {
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
     for (auto Match : Matcher)
-      setLoopIA(M, Match.first,
-          mInterprocAttrFuncInfo, mInterprocAttrLoopInfo);
+      setLoopIA(M, Match.first, mInterprocAttrLoopInfo);
     for (auto Unmatch : Unmatcher)
-      setLoopIA(M, Unmatch,
-          mInterprocAttrFuncInfo, mInterprocAttrLoopInfo);
+      setLoopIA(M, Unmatch, mInterprocAttrLoopInfo);
   }
 }
 

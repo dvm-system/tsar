@@ -27,6 +27,6 @@ class Attribute<string name> {
   string Name = name;
 }
 
-def IO : Attribute<"sapfor.io">;
+def NoIO : Attribute<"sapfor.noio">;
 def AlwaysReturn : Attribute<"sapfor.alwaysreturn">;
 def LibFunc : Attribute<"sapfor.libfunc">;
