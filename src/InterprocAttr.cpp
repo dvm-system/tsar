@@ -105,7 +105,7 @@ private:
 bool addLibFuncAttrsTopDown(Function &F) {
   for (auto *U : F.users()) {
     CallSite CS(U);
-    if (CS || hasFnAttr(*CS.getParent()->getParent(), AttrKind::LibFunc)) {
+    if (CS && hasFnAttr(*CS.getParent()->getParent(), AttrKind::LibFunc)) {
       addFnAttr(F, AttrKind::LibFunc);
       ++NumLibFunc;
       return true;
