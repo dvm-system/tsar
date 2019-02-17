@@ -118,10 +118,28 @@ JSON_OBJECT_ROOT_PAIR_4(Diagnostic,
       value<Ty>().push_back(Msg);
   }
 JSON_OBJECT_END(Diagnostic)
+
+/// This represents location in a source code.
+JSON_OBJECT_BEGIN(Location)
+JSON_OBJECT_PAIR_4(Location,
+  Line, unsigned,
+  Column, unsigned,
+  MacroLine, unsigned,
+  MacroColumn, unsigned)
+
+  Location() = default;
+  ~Location() = default;
+
+  Location(const Location &) = default;
+  Location & operator=(const Location &) = default;
+  Location(Location &&) = default;
+  Location & operator=(Location &&) = default;
+JSON_OBJECT_END(Location)
 }
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Diagnostic)
+JSON_DEFAULT_TRAITS(tsar::msg::, Location)
 
 namespace json {
 /// Specialization of JSON serialization traits for tsar::msg::Status type.

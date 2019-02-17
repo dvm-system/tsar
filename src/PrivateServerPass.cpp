@@ -19,26 +19,29 @@
 //===----------------------------------------------------------------------===//
 //
 // This file implements a pass to interact with client software and to provide
+// results of loop traits analysis.
 //
 //===----------------------------------------------------------------------===//
 
-#include "PrivateServerPass.h"
 #include "Attributes.h"
 #include "CalleeProcLocation.h"
 #include "CanonicalLoop.h"
+#include "ClangMessages.h"
 #include "EstimateMemory.h"
 #include "InterprocAttr.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"
-#include "Messages.h"
+#include "tsar_pass.h"
 #include "tsar_pass_provider.h"
 #include "PerfectLoop.h"
 #include "tsar_private.h"
 #include "tsar_transformation.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/RedirectIO.h>
+#include <bcl/utility.h>
 #include <clang/AST/ASTContext.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 
 using namespace llvm;
@@ -78,22 +81,6 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
   Statistic & operator=(Statistic &&) = default;
 JSON_OBJECT_END(Statistic)
 
-JSON_OBJECT_BEGIN(Location)
-JSON_OBJECT_PAIR_4(Location,
-  Line, unsigned,
-  Column, unsigned,
-  MacroLine, unsigned,
-  MacroColumn, unsigned)
-
-  Location() = default;
-  ~Location() = default;
-
-  Location(const Location &) = default;
-  Location & operator=(const Location &) = default;
-  Location(Location &&) = default;
-  Location & operator=(Location &&) = default;
-JSON_OBJECT_END(Location)
-
 JSON_OBJECT_BEGIN(LoopTraits)
 JSON_OBJECT_PAIR_4(LoopTraits,
   IsAnalyzed, Analysis,
@@ -122,8 +109,8 @@ enum class LoopType : short {
   Number = Invalid
 };
 
-JSON_OBJECT_BEGIN(MainLoopInfo)
-JSON_OBJECT_PAIR_7(MainLoopInfo,
+JSON_OBJECT_BEGIN(Loop)
+JSON_OBJECT_PAIR_7(Loop,
   ID, unsigned,
   StartLocation, Location,
   EndLocation, Location,
@@ -132,19 +119,19 @@ JSON_OBJECT_PAIR_7(MainLoopInfo,
   Level, unsigned,
   Type, LoopType)
 
-  MainLoopInfo() = default;
-  ~MainLoopInfo() = default;
+  Loop() = default;
+  ~Loop() = default;
 
-  MainLoopInfo(const MainLoopInfo &) = default;
-  MainLoopInfo & operator=(const MainLoopInfo &) = default;
-  MainLoopInfo(MainLoopInfo &&) = default;
-  MainLoopInfo & operator=(MainLoopInfo &&) = default;
-JSON_OBJECT_END(MainLoopInfo)
+  Loop(const Loop &) = default;
+  Loop & operator=(const Loop &) = default;
+  Loop(Loop &&) = default;
+  Loop & operator=(Loop &&) = default;
+JSON_OBJECT_END(Loop)
 
 JSON_OBJECT_BEGIN(LoopTree)
 JSON_OBJECT_ROOT_PAIR_2(LoopTree,
-  ID, unsigned,
-  Loops, std::vector<MainLoopInfo>)
+  FunctionID, unsigned,
+  Loops, std::vector<Loop>)
 
   LoopTree() : JSON_INIT_ROOT {}
   ~LoopTree() override = default;
@@ -158,7 +145,7 @@ JSON_OBJECT_END(LoopTree)
 JSON_OBJECT_BEGIN(FunctionTraits)
 JSON_OBJECT_PAIR_4(FunctionTraits,
   Readonly, Analysis,
-  NoReturn, Analysis,
+  UnsafeCFG, Analysis,
   InOut, Analysis,
   Loops, Analysis)
 
@@ -173,27 +160,27 @@ JSON_OBJECT_PAIR_4(FunctionTraits,
   FunctionTraits & operator=(FunctionTraits &&) = default;
 JSON_OBJECT_END(FunctionTraits)
 
-JSON_OBJECT_BEGIN(MainFuncInfo)
-JSON_OBJECT_PAIR_6(MainFuncInfo,
+JSON_OBJECT_BEGIN(Function)
+JSON_OBJECT_PAIR_6(Function,
   ID, unsigned,
   Name, std::string,
   StartLocation, Location,
   EndLocation, Location,
-  Loops, std::vector<MainLoopInfo>,
+  Loops, std::vector<Loop>,
   Traits, FunctionTraits)
 
-  MainFuncInfo() = default;
-  ~MainFuncInfo() = default;
+  Function() = default;
+  ~Function() = default;
 
-  MainFuncInfo(const MainFuncInfo &) = default;
-  MainFuncInfo & operator=(const MainFuncInfo &) = default;
-  MainFuncInfo(MainFuncInfo &&) = default;
-  MainFuncInfo & operator=(MainFuncInfo &&) = default;
-JSON_OBJECT_END(MainFuncInfo)
+  Function(const Function &) = default;
+  Function & operator=(const Function &) = default;
+  Function(Function &&) = default;
+  Function & operator=(Function &&) = default;
+JSON_OBJECT_END(Function)
 
 JSON_OBJECT_BEGIN(FunctionList)
 JSON_OBJECT_ROOT_PAIR(FunctionList,
-  Functions, std::vector<MainFuncInfo>)
+  Functions, std::vector<Function>)
 
   FunctionList() : JSON_INIT_ROOT {}
   ~FunctionList() override = default;
@@ -238,12 +225,11 @@ JSON_OBJECT_END(CalleeFuncList)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
-JSON_DEFAULT_TRAITS(tsar::msg::, Location)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTraits)
-JSON_DEFAULT_TRAITS(tsar::msg::, MainLoopInfo)
+JSON_DEFAULT_TRAITS(tsar::msg::, Loop)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionTraits)
-JSON_DEFAULT_TRAITS(tsar::msg::, MainFuncInfo)
+JSON_DEFAULT_TRAITS(tsar::msg::, Function)
 JSON_DEFAULT_TRAITS(tsar::msg::, FunctionList)
 JSON_DEFAULT_TRAITS(tsar::msg::, CalleeFuncInfo)
 JSON_DEFAULT_TRAITS(tsar::msg::, CalleeFuncList)
@@ -307,17 +293,45 @@ INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
-char PrivateServerPass::ID = 0;
-INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
-  "Server Private Pass", true, true)
-INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(CalleeProcLocationPass)
-INITIALIZE_PASS_END(PrivateServerPass, "server-private",
-  "Server Private Pass", true, true)
-
 namespace {
+/// Interacts with a client and sends result of analysis on request.
+class PrivateServerPass :
+  public ModulePass, private bcl::Uncopyable {
+public:
+  /// Pass identification, replacement for typeid.
+  static char ID;
+
+  /// Default constructor.
+  PrivateServerPass() : ModulePass(ID), mConnection(nullptr) {
+    initializePrivateServerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  /// Constructor.
+  explicit PrivateServerPass(bcl::IntrusiveConnection &IC,
+      bcl::RedirectIO &StdErr) :
+    ModulePass(ID), mConnection(&IC), mStdErr(&StdErr) {
+    initializePrivateServerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  /// Interacts with a client and sends result of analysis on request.
+  bool runOnModule(llvm::Module &M) override;
+
+  /// Set analysis information that is necessary to run this pass.
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  std::string answerStatistic(llvm::Module &M);
+  std::string answerFunctionList(llvm::Module &M);
+  std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
+  std::string answerCalleeFuncList(llvm::Module &M,
+    msg::CalleeFuncList CalleeFuncList);
+
+  bcl::IntrusiveConnection *mConnection;
+  bcl::RedirectIO *mStdErr;
+
+  TransformationContext *mTfmCtx  = nullptr;
+};
+
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
 void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
@@ -355,10 +369,44 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
   }
 }
 
-std::string answerStatistic(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx) {
+msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
+  assert(S && "Statement must not be null!");
+  auto LocStart = S->getLocStart();
+  auto LocEnd = S->getLocEnd();
+  msg::Loop Loop;
+  Loop[msg::Loop::ID] = LocStart.getRawEncoding();
+  Loop[msg::Loop::Exit] = 0;
+  if (isa<clang::ForStmt>(S))
+    Loop[msg::Loop::Type] = msg::LoopType::For;
+  else if (isa<clang::DoStmt>(S))
+    Loop[msg::Loop::Type] = msg::LoopType::DoWhile;
+  else if (isa<clang::WhileStmt>(S))
+    Loop[msg::Loop::Type] = msg::LoopType::While;
+  else if (isa<clang::LabelStmt>(S))
+    Loop[msg::Loop::Type] = msg::LoopType::Implicit;
+  else
+    Loop[msg::Loop::Type] = msg::LoopType::Invalid;
+  assert(Loop[msg::Loop::Type] != msg::LoopType::Invalid &&
+    "Unknown loop type!");
+  Loop[msg::Loop::StartLocation] = getLocation(LocStart, SrcMgr);
+  Loop[msg::Loop::EndLocation] = getLocation(LocEnd, SrcMgr);
+  return Loop;
+}
+}
+
+char PrivateServerPass::ID = 0;
+INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
+  "Server Private Pass", true, true)
+INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(CalleeProcLocationPass)
+INITIALIZE_PASS_END(PrivateServerPass, "server-private",
+  "Server Private Pass", true, true)
+
+std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
   msg::Statistic Stat;
-  auto &Rewriter = TfmCtx->getRewriter();
+  auto &Rewriter = mTfmCtx->getRewriter();
   for (auto FI = Rewriter.getSourceMgr().fileinfo_begin(),
     EI = Rewriter.getSourceMgr().fileinfo_end(); FI != EI; ++FI) {
     auto Ext = sys::path::extension(FI->first->getName());
@@ -379,24 +427,25 @@ std::string answerStatistic(llvm::PrivateServerPass * const PSP,
     if (!I.second)
       ++I.first->second;
   }
-  auto &MMP = PSP->getAnalysis<MemoryMatcherImmutableWrapper>();
+  auto &MMP = getAnalysis<MemoryMatcherImmutableWrapper>();
   Stat[msg::Statistic::Variables].insert(
     std::make_pair(msg::Analysis::Yes, MMP->Matcher.size()));
   Stat[msg::Statistic::Variables].insert(
     std::make_pair(msg::Analysis::No, MMP->UnmatchedAST.size()));
   std::pair<unsigned, unsigned> Loops(0, 0);
-  auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
   for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
         != clang::SrcMgr::C_User)
       continue;
     ++Stat[msg::Statistic::Functions];
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+    // Analysis are not available for functions without body.
+    if (F.isDeclaration())
+      continue;
+    auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &LMP = Provider.get<LoopMatcherPass>();
     Loops.first += LMP.getMatcher().size();
     Loops.second += LMP.getUnmatchedAST().size();
@@ -409,226 +458,186 @@ std::string answerStatistic(llvm::PrivateServerPass * const PSP,
   return json::Parser<msg::Statistic>::unparseAsObject(Stat);
 }
 
-msg::Location getLocation(
-    clang::SourceLocation &SLoc, clang::SourceManager &SrcMgr) {
-  msg::Location MsgLoc;
-  MsgLoc[msg::Location::Line] = SrcMgr.getExpansionLineNumber(SLoc);
-  MsgLoc[msg::Location::Column] = SrcMgr.getExpansionColumnNumber(SLoc);
-  MsgLoc[msg::Location::MacroLine] = SrcMgr.getSpellingLineNumber(SLoc);
-  MsgLoc[msg::Location::MacroColumn] = SrcMgr.getSpellingColumnNumber(SLoc);
-  return MsgLoc;
-}
-
-msg::MainLoopInfo getLoopInfo(clang::Stmt *Ptr, clang::SourceManager &SrcMgr) {
-  auto LocStart = Ptr->getLocStart();
-  auto LocEnd = Ptr->getLocEnd();
-  msg::MainLoopInfo Loop;
-  Loop[msg::MainLoopInfo::ID] = LocStart.getRawEncoding();
-  Loop[msg::MainLoopInfo::Exit] = 0;
-  if (isa<clang::ForStmt>(Ptr))
-    Loop[msg::MainLoopInfo::Type] = msg::LoopType::For;
-  else if (isa<clang::DoStmt>(Ptr))
-    Loop[msg::MainLoopInfo::Type] = msg::LoopType::DoWhile;
-  else if (isa<clang::WhileStmt>(Ptr))
-    Loop[msg::MainLoopInfo::Type] = msg::LoopType::While;
-  else if (isa<clang::LabelStmt>(Ptr))
-    Loop[msg::MainLoopInfo::Type] = msg::LoopType::Implicit;
-  else
-    Loop[msg::MainLoopInfo::Type] = msg::LoopType::Invalid;
-  assert(Loop[msg::MainLoopInfo::Type] != msg::LoopType::Invalid &&
-    "Unknown loop type");
-  Loop[msg::MainLoopInfo::StartLocation] = getLocation(LocStart, SrcMgr);
-  Loop[msg::MainLoopInfo::EndLocation] = getLocation(LocEnd, SrcMgr);
-  return Loop;
-}
-
-std::string answerLoopTree(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx,
-    msg::LoopTree LoopTree) {
+std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
+    const msg::LoopTree &Request) {
   for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     if (FuncDecl->getLocStart().getRawEncoding() !=
-        LoopTree[msg::LoopTree::ID])
+        Request[msg::LoopTree::FunctionID])
       continue;
-    typedef msg::MainLoopInfo LoopInfo;
-    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+    if (F.isDeclaration())
+      return json::Parser<msg::LoopTree>::unparseAsObject(Request);
+    msg::LoopTree LoopTree;
+    LoopTree[msg::LoopTree::FunctionID] = Request[msg::LoopTree::FunctionID];
+    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+    auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
     auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
-    auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().
+    auto &PerfectInfo = Provider.get<ClangPerfectLoopPass>().
       getPerfectLoopInfo();
-    auto &CLoopInfo = Provider.get<CanonicalLoopPass>().
+    auto &CanonicalInfo = Provider.get<CanonicalLoopPass>().
       getCanonicalLoopInfo();
-    auto &IALoopInfo = Provider.get<LoopAttributesDeductionPass>();
-    auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+    auto &AttrsInfo = Provider.get<LoopAttributesDeductionPass>();
+    auto &LoopCPInfo = getAnalysis<CalleeProcLocationPass>().
       getLoopCalleeProcInfo();
-    auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+    auto &FuncCPInfo = getAnalysis<CalleeProcLocationPass>().
       getFuncCalleeProcInfo();
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
-      auto &LT = Loop[msg::MainLoopInfo::Traits];
+      auto &LT = Loop[msg::Loop::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::Yes;
-      auto CI = CLoopInfo.find_as(RegionInfo.getRegionFor(Match.get<IR>()));
-      if (CI != CLoopInfo.end() && (**CI).isCanonical())
+      auto CI = CanonicalInfo.find_as(RegionInfo.getRegionFor(Match.get<IR>()));
+      if (CI != CanonicalInfo.end() && (**CI).isCanonical())
         LT[msg::LoopTraits::Canonical] = msg::Analysis::Yes;
-      if (PLoopInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
+      if (PerfectInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
-      auto &CPL = LoopCPInfo.find(Match.first)->second;
-      if (!IALoopInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
+      if (!AttrsInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
       for (auto BB : Match.get<IR>()->blocks())
         if (Match.get<IR>()->isLoopExiting(BB))
-          Loop[msg::MainLoopInfo::Exit]++;
+          Loop[msg::Loop::Exit]++;
+      auto &CPL = LoopCPInfo.find(Match.first)->second;
       auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
         if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
-          Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
+          Loop[msg::Loop::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher) {
       auto Loop = getLoopInfo(Unmatch, SrcMgr);
-      auto &LT = Loop[msg::MainLoopInfo::Traits];
-      auto &CPL = LoopCPInfo.find(Unmatch)->second;
+      auto &LT = Loop[msg::Loop::Traits];
+      LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
       LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
+      auto &CPL = LoopCPInfo.find(Unmatch)->second;
       auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
       for (auto CFL : CalleeFuncLoc)
         if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
-          Loop[msg::MainLoopInfo::Exit] += CFL.second.size();
+          Loop[msg::Loop::Exit] += CFL.second.size();
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     std::sort(LoopTree[msg::LoopTree::Loops].begin(),
       LoopTree[msg::LoopTree::Loops].end(),
-      [](msg::MainLoopInfo &LHS,
-         msg::MainLoopInfo &RHS) -> bool {
+      [](msg::Loop &LHS, msg::Loop &RHS) -> bool {
         return
-          (LHS[LoopInfo::StartLocation][msg::Location::Line] <
-              RHS[LoopInfo::StartLocation][msg::Location::Line]) ||
-          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
-              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::Column] <
-              RHS[LoopInfo::StartLocation][msg::Location::Column])) ||
-          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
-              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::Column] ==
-              RHS[LoopInfo::StartLocation][msg::Location::Column]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::MacroLine] <
-              RHS[LoopInfo::StartLocation][msg::Location::MacroLine])) ||
-          ((LHS[LoopInfo::StartLocation][msg::Location::Line] ==
-              RHS[LoopInfo::StartLocation][msg::Location::Line]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::Column] ==
-              RHS[LoopInfo::StartLocation][msg::Location::Column]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::MacroLine] ==
-              RHS[LoopInfo::StartLocation][msg::Location::MacroLine]) &&
-          (LHS[LoopInfo::StartLocation][msg::Location::MacroColumn] <
-              RHS[LoopInfo::StartLocation][msg::Location::MacroColumn]));
+          (LHS[msg::Loop::StartLocation][msg::Location::Line] <
+              RHS[msg::Loop::StartLocation][msg::Location::Line]) ||
+          ((LHS[msg::Loop::StartLocation][msg::Location::Line] ==
+              RHS[msg::Loop::StartLocation][msg::Location::Line]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::Column] <
+              RHS[msg::Loop::StartLocation][msg::Location::Column])) ||
+          ((LHS[msg::Loop::StartLocation][msg::Location::Line] ==
+              RHS[msg::Loop::StartLocation][msg::Location::Line]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::Column] ==
+              RHS[msg::Loop::StartLocation][msg::Location::Column]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::MacroLine] <
+              RHS[msg::Loop::StartLocation][msg::Location::MacroLine])) ||
+          ((LHS[msg::Loop::StartLocation][msg::Location::Line] ==
+              RHS[msg::Loop::StartLocation][msg::Location::Line]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::Column] ==
+              RHS[msg::Loop::StartLocation][msg::Location::Column]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::MacroLine] ==
+              RHS[msg::Loop::StartLocation][msg::Location::MacroLine]) &&
+          (LHS[msg::Loop::StartLocation][msg::Location::MacroColumn] <
+              RHS[msg::Loop::StartLocation][msg::Location::MacroColumn]));
     });
-    std::vector<std::pair<std::pair<unsigned, unsigned>,
-        std::pair<unsigned, unsigned>>> Levels;
+    std::vector<msg::Location> Levels;
     for (auto &Loop : LoopTree[msg::LoopTree::Loops]) {
       while (!Levels.empty() &&
-          ((Levels[Levels.size() - 1].first.first <
-              Loop[LoopInfo::EndLocation][msg::Location::Line]) ||
-          ((Levels[Levels.size() - 1].first.first ==
-              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
-          (Levels[Levels.size() - 1].first.second <
-              Loop[LoopInfo::EndLocation][msg::Location::Column])) ||
-          ((Levels[Levels.size() - 1].first.first ==
-              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
-          (Levels[Levels.size() - 1].first.second ==
-              Loop[LoopInfo::EndLocation][msg::Location::Column]) &&
-          (Levels[Levels.size() - 1].second.first <
-              Loop[LoopInfo::EndLocation][msg::Location::MacroLine])) ||
-          ((Levels[Levels.size() - 1].first.first ==
-              Loop[LoopInfo::EndLocation][msg::Location::Line]) &&
-          (Levels[Levels.size() - 1].first.second ==
-              Loop[LoopInfo::EndLocation][msg::Location::Column]) &&
-          (Levels[Levels.size() - 1].second.first ==
-              Loop[LoopInfo::EndLocation][msg::Location::MacroLine]) &&
-          (Levels[Levels.size() - 1].second.second <
-              Loop[LoopInfo::EndLocation][msg::Location::MacroColumn]))))
+          ((Levels[Levels.size() - 1][msg::Location::Line] <
+              Loop[msg::Loop::EndLocation][msg::Location::Line]) ||
+          ((Levels[Levels.size() - 1][msg::Location::Line] ==
+              Loop[msg::Loop::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1][msg::Location::Column] <
+              Loop[msg::Loop::EndLocation][msg::Location::Column])) ||
+          ((Levels[Levels.size() - 1][msg::Location::Line] ==
+              Loop[msg::Loop::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1][msg::Location::Column] ==
+              Loop[msg::Loop::EndLocation][msg::Location::Column]) &&
+          (Levels[Levels.size() - 1][msg::Location::MacroLine] <
+              Loop[msg::Loop::EndLocation][msg::Location::MacroLine])) ||
+          ((Levels[Levels.size() - 1][msg::Location::Line] ==
+              Loop[msg::Loop::EndLocation][msg::Location::Line]) &&
+          (Levels[Levels.size() - 1][msg::Location::Column] ==
+              Loop[msg::Loop::EndLocation][msg::Location::Column]) &&
+          (Levels[Levels.size() - 1][msg::Location::MacroLine] ==
+              Loop[msg::Loop::EndLocation][msg::Location::MacroLine]) &&
+          (Levels[Levels.size() - 1][msg::Location::MacroColumn] <
+              Loop[msg::Loop::EndLocation][msg::Location::MacroColumn]))))
         Levels.pop_back();
-      Loop[msg::MainLoopInfo::Level] = Levels.size() + 1;
-      Levels.emplace_back(
-        std::piecewise_construct,
-        std::forward_as_tuple(
-          Loop[LoopInfo::EndLocation][msg::Location::Line],
-          Loop[LoopInfo::EndLocation][msg::Location::Column]),
-        std::forward_as_tuple(
-          Loop[LoopInfo::EndLocation][msg::Location::MacroLine],
-          Loop[LoopInfo::EndLocation][msg::Location::MacroColumn]));
+      Loop[msg::Loop::Level] = Levels.size() + 1;
+      Levels.push_back(Loop[msg::Loop::EndLocation]);
     }
-    break;
+    return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
   }
-  return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
+  return json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
-std::string answerFunctionList(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx) {
+std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
   for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
-    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
     if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
         != clang::SrcMgr::C_User)
       continue;
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
-    auto &LMP = Provider.get<LoopMatcherPass>();
-    auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
     auto FuncDecl = Decl->getAsFunction();
-    msg::MainFuncInfo Func;
-    Func[msg::MainFuncInfo::Name] = F.getName();
-    Func[msg::MainFuncInfo::ID] = FuncDecl->getLocStart().getRawEncoding();
-    Func[msg::MainFuncInfo::StartLocation] =
+    assert(FuncDecl && "Function declaration must not be null!");
+    msg::Function Func;
+    Func[msg::Function::Name] = F.getName();
+    Func[msg::Function::ID] = FuncDecl->getLocStart().getRawEncoding();
+    Func[msg::Function::StartLocation] =
         getLocation(FuncDecl->getLocStart(), SrcMgr);
-    Func[msg::MainFuncInfo::EndLocation] =
+    Func[msg::Function::EndLocation] =
         getLocation(FuncDecl->getLocEnd(), SrcMgr);
-    if (AA.onlyReadsMemory(&F) && F.hasFnAttribute(Attribute::NoUnwind))
-      Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::Readonly]
-        = msg::Analysis::Yes;
-    if (!hasFnAttr(F, AttrKind::AlwaysReturn))
-      Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::NoReturn]
+    if (!hasFnAttr(F, AttrKind::AlwaysReturn) ||
+        !F.hasFnAttribute(Attribute::NoUnwind) ||
+        F.hasFnAttribute(Attribute::ReturnsTwice))
+      Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
         = msg::Analysis::Yes;
     if (!hasFnAttr(F, AttrKind::NoIO))
-      Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::InOut]
+      Func[msg::Function::Traits][msg::FunctionTraits::InOut]
         = msg::Analysis::Yes;
-    if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
-      Func[msg::MainFuncInfo::Traits][msg::FunctionTraits::Loops]
+    if (!F.isDeclaration()) {
+      auto &Provider = getAnalysis<ServerPrivateProvider>(F);
+      auto &LMP = Provider.get<LoopMatcherPass>();
+      auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
+      if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
+        Func[msg::Function::Traits][msg::FunctionTraits::Loops]
         = msg::Analysis::Yes;
+      if (AA.onlyReadsMemory(&F))
+        Func[msg::Function::Traits][msg::FunctionTraits::Readonly]
+        = msg::Analysis::Yes;
+    }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
-std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
-    llvm::Module &M, tsar::TransformationContext *TfmCtx,
+std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     msg::CalleeFuncList CalleeFuncList) {
   for (Function &F : M) {
-    if (F.empty())
-      continue;
-    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     if (FuncDecl->getLocStart().getRawEncoding() !=
         CalleeFuncList[msg::CalleeFuncList::FuncID])
       continue;
-    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
-    auto &Provider = PSP->getAnalysis<ServerPrivateProvider>(F);
+    if (F.isDeclaration())
+      return json::Parser<msg::CalleeFuncList>::unparseAsObject(CalleeFuncList);
+    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+    auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    auto &LoopCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+    auto &LoopCPInfo = getAnalysis<CalleeProcLocationPass>().
         getLoopCalleeProcInfo();
-    auto &FuncCPInfo = PSP->getAnalysis<CalleeProcLocationPass>().
+    auto &FuncCPInfo = getAnalysis<CalleeProcLocationPass>().
         getFuncCalleeProcInfo();
     tsar::CalleeProcLocation CPL;
     if (CalleeFuncList[msg::CalleeFuncList::LoopID]) {
@@ -693,23 +702,22 @@ std::string answerCalleeFuncList(llvm::PrivateServerPass * const PSP,
   }
   return json::Parser<msg::CalleeFuncList>::unparseAsObject(CalleeFuncList);
 }
-}
+
 
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
   if (!mConnection) {
-    errs() << "error: intrusive connection is not specified for the module "
-      << M.getName() << "\n";
+    M.getContext().emitError("intrusive connection is not established");
     return false;
   }
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    errs() << "error: can not transform sources for the module "
-      << M.getName() << "\n";
+  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
+    M.getContext().emitError("can not access sources"
+        ": transformation context is not available");
     return false;
   }
   ServerPrivateProvider::initialize<TransformationEnginePass>(
-    [&M, &TfmCtx](TransformationEnginePass &TEP) {
-      TEP.setContext(M, TfmCtx);
+    [this, &M](TransformationEnginePass &TEP) {
+      TEP.setContext(M, mTfmCtx);
   });
   auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
   ServerPrivateProvider::initialize<MemoryMatcherImmutableWrapper>(
@@ -717,7 +725,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     Wrapper.set(*MMWrapper);
   });
   while (mConnection->answer(
-      [this, &M, &TfmCtx](const std::string &Request) -> std::string {
+      [this, &M](const std::string &Request) -> std::string {
     msg::Diagnostic Diag(msg::Status::Error);
     if (mStdErr->isDiff()) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
@@ -728,14 +736,13 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     auto Obj = P.parse();
     assert(Obj && "Invalid request!");
     if (Obj->is<msg::Statistic>())
-      return answerStatistic(this, M, TfmCtx);
+      return answerStatistic(M);
     if (Obj->is<msg::LoopTree>())
-      return answerLoopTree(this, M, TfmCtx, Obj->as<msg::LoopTree>());
+      return answerLoopTree(M, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())
-      return answerFunctionList(this, M, TfmCtx);
+      return answerFunctionList(M);
     if (Obj->is<msg::CalleeFuncList>())
-      return answerCalleeFuncList(
-        this, M, TfmCtx, Obj->as<msg::CalleeFuncList>());
+      return answerCalleeFuncList(M, Obj->as<msg::CalleeFuncList>());
     llvm_unreachable("Unknown request to server!");
   }));
   return false;

@@ -72,7 +72,7 @@ set_target_properties(tsar PROPERTIES FOLDER "${TSAR_FOLDER}")
 install(TARGETS tsar RUNTIME DESTINATION bin)
 
 if (TSAR_SERVER)
-  set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp)
+  set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp ClangMessages.cpp)
   add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
   add_dependencies(TSARServer TSARCore)
   if(NOT PACKAGE_LLVM)
