@@ -299,6 +299,13 @@ void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
 
 /// Creates a pass which deduce loop attributes.
 FunctionPass * createLoopAttributesDeductionPass();
+/// Initializes an AST-level pass which collects control-flow traits
+/// for function and its loops.
+void initializeClangCFTraitsPassPass(PassRegistry &Registry);
+
+/// Creates an AST-level pass which collects control-flow traits
+/// for function and its loops.
+FunctionPass * createClangCFTraitsPass();
 }
 
 #endif//TSAR_PASS_H

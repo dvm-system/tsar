@@ -24,9 +24,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Attributes.h"
-#include "CalleeProcLocation.h"
 #include "CanonicalLoop.h"
 #include "ClangMessages.h"
+#include "ControlFlowTraits.h"
 #include "EstimateMemory.h"
 #include "InterprocAttr.h"
 #include "tsar_loop_matcher.h"
@@ -40,6 +40,7 @@
 #include <bcl/RedirectIO.h>
 #include <bcl/utility.h>
 #include <clang/AST/ASTContext.h>
+#include <clang/AST/Expr.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
@@ -210,7 +211,7 @@ JSON_OBJECT_BEGIN(CalleeFuncList)
 JSON_OBJECT_ROOT_PAIR_4(CalleeFuncList,
   FuncID, unsigned,
   LoopID, unsigned,
-  Attr, unsigned,
+  Attr, CFFlags,
   Functions, std::vector<CalleeFuncInfo>)
 
   CalleeFuncList() : JSON_INIT_ROOT {}
@@ -265,6 +266,59 @@ template<> struct Traits<tsar::msg::LoopType> {
     JSON += '"';
   }
 };
+
+template<> struct Traits<CFFlags> {
+  static bool parse(CFFlags &Dest, json::Lexer &Lex) {
+    Position MaxIdx, Count;
+    bool Ok;
+    std::tie(Count, MaxIdx, Ok) = Parser<>::numberOfKeys(Lex);
+    if (!Ok)
+      return false;
+    Dest = CFFlags::DefaultFlags;
+    return Parser<>::traverse<Traits<CFFlags>>(Dest, Lex);
+  }
+  static bool parse(CFFlags &Dest, json::Lexer &Lex,
+      std::pair<Position, Position> Key) noexcept {
+    try {
+      auto Value = Lex.discardQuote();
+      auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
+      Dest |= llvm::StringSwitch<CFFlags>(S)
+        .Case("Entry", CFFlags::Entry)
+        .Case("Exit", CFFlags::Exit)
+        .Case("InOut", CFFlags::InOut)
+        .Case("MayNoReturn", CFFlags::MayNoReturn)
+        .Case("MayUnwind", CFFlags::MayUnwind)
+        .Case("MayReturnTwice", CFFlags::MayReturnTwice)
+        .Case("UnsafeCFG", CFFlags::UnsafeCFG)
+        .Default(CFFlags::DefaultFlags);
+    }
+    catch (...) {
+      return false;
+    }
+    return true;
+  }
+  static void unparse(String &JSON, CFFlags Obj) {
+    JSON += '[';
+    if (Obj & CFFlags::Entry)
+      JSON += R"("Entry",)";
+    if (Obj & CFFlags::Exit)
+      JSON += R"("Exit",)";
+    if (Obj & CFFlags::InOut)
+      JSON += R"("InOut",)";
+    if (Obj & CFFlags::MayNoReturn)
+      JSON += R"("MayNoReturn",)";
+    if (Obj & CFFlags::MayReturnTwice)
+      JSON += R"("MayReturnTwice",)";
+    if (Obj & CFFlags::MayUnwind)
+      JSON += R"("MayUnwind",)";
+    if (Obj & CFFlags::UnsafeCFG)
+      JSON += R"("UnsafeCFG",)";
+    if (JSON.back() != '[')
+      JSON.back() = ']';
+    else
+      JSON += ']';
+  }
+};
 }
 
 using ServerPrivateProvider = FunctionPassProvider<
@@ -277,6 +331,7 @@ using ServerPrivateProvider = FunctionPassProvider<
   CanonicalLoopPass,
   MemoryMatcherImmutableWrapper,
   LoopAttributesDeductionPass,
+  ClangCFTraitsPass,
   AAResultsWrapperPass>;
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
@@ -290,6 +345,7 @@ INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass)
+INITIALIZE_PASS_DEPENDENCY(ClangCFTraitsPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
@@ -324,7 +380,7 @@ private:
   std::string answerFunctionList(llvm::Module &M);
   std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
   std::string answerCalleeFuncList(llvm::Module &M,
-    msg::CalleeFuncList CalleeFuncList);
+    const msg::CalleeFuncList &Request);
 
   bcl::IntrusiveConnection *mConnection;
   bcl::RedirectIO *mStdErr;
@@ -400,7 +456,6 @@ INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(CalleeProcLocationPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -482,10 +537,11 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     auto &CanonicalInfo = Provider.get<CanonicalLoopPass>().
       getCanonicalLoopInfo();
     auto &AttrsInfo = Provider.get<LoopAttributesDeductionPass>();
-    auto &LoopCPInfo = getAnalysis<CalleeProcLocationPass>().
-      getLoopCalleeProcInfo();
-    auto &FuncCPInfo = getAnalysis<CalleeProcLocationPass>().
-      getFuncCalleeProcInfo();
+    auto &CFLoopInfo = Provider.get<ClangCFTraitsPass>().getLoopInfo();
+    // TODO (kaniandr@gmail.com): add UnsafeCFG property for loops, use
+    // AlwaysReturn attribute from AttrsInfo, or list of callee functions
+    // for unmatched loops. We should also consider 'nounwind', 'returns_twice'
+    // function attributes from LLVM IR.
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::Loop::Traits];
@@ -497,14 +553,25 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
       if (!AttrsInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
         LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
-      for (auto BB : Match.get<IR>()->blocks())
-        if (Match.get<IR>()->isLoopExiting(BB))
-          Loop[msg::Loop::Exit]++;
-      auto &CPL = LoopCPInfo.find(Match.first)->second;
-      auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
-      for (auto CFL : CalleeFuncLoc)
-        if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
-          Loop[msg::Loop::Exit] += CFL.second.size();
+      auto InfoItr = CFLoopInfo.find(Match.get<AST>());
+      if (InfoItr != CFLoopInfo.end()) {
+        // Processing of explicit loops.
+        // TODO (kaniandr@gmail.com): calculate number of entries inside a loop.
+        // Calculate this value for unmatched loops also.
+        for (auto &T : InfoItr->second)
+          if (T.Flags & CFFlags::Exit)
+            ++Loop[msg::Loop::Exit];
+        ++Loop[msg::Loop::Exit];
+      } else if (isa<clang::LabelStmt>(Match.get<AST>())) {
+        for (auto *BB : Match.get<IR>()->blocks()) {
+          if (Match.get<IR>()->isLoopExiting(BB))
+            ++Loop[msg::Loop::Exit];
+        }
+        LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
+      } else {
+        // This loop has no control-flow traits, so it has a single exit.
+        ++Loop[msg::Loop::Exit];
+      }
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher) {
@@ -512,11 +579,14 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       auto &LT = Loop[msg::Loop::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
       LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
-      auto &CPL = LoopCPInfo.find(Unmatch)->second;
-      auto &CalleeFuncLoc = CPL.getCalleeFuncLoc();
-      for (auto CFL : CalleeFuncLoc)
-        if (!hasFnAttr(*CFL.first, AttrKind::AlwaysReturn))
-          Loop[msg::Loop::Exit] += CFL.second.size();
+      auto InfoItr = CFLoopInfo.find(Unmatch);
+      if (InfoItr != CFLoopInfo.end()) {
+        for (auto &T : InfoItr->second) {
+          if (T.Flags & CFFlags::Exit)
+            ++Loop[msg::Loop::Exit];
+        }
+      }
+      ++Loop[msg::Loop::Exit];
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     std::sort(LoopTree[msg::LoopTree::Loops].begin(),
@@ -620,89 +690,76 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
 }
 
 std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
-    msg::CalleeFuncList CalleeFuncList) {
+    const msg::CalleeFuncList &Request) {
   for (Function &F : M) {
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     if (FuncDecl->getLocStart().getRawEncoding() !=
-        CalleeFuncList[msg::CalleeFuncList::FuncID])
+        Request[msg::CalleeFuncList::FuncID])
       continue;
     if (F.isDeclaration())
-      return json::Parser<msg::CalleeFuncList>::unparseAsObject(CalleeFuncList);
+      return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+    msg::CalleeFuncList StmtList = Request;
     auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
-    auto &LoopCPInfo = getAnalysis<CalleeProcLocationPass>().
-        getLoopCalleeProcInfo();
-    auto &FuncCPInfo = getAnalysis<CalleeProcLocationPass>().
-        getFuncCalleeProcInfo();
-    tsar::CalleeProcLocation CPL;
-    if (CalleeFuncList[msg::CalleeFuncList::LoopID]) {
+    auto &FuncInfo = Provider.get<ClangCFTraitsPass>().getFuncInfo();
+    auto &CFLoopInfo = Provider.get<ClangCFTraitsPass>().getLoopInfo();
+    const ClangCFTraitsPass::RegionCFInfo *Info = nullptr;
+    if (StmtList[msg::CalleeFuncList::LoopID]) {
+      bcl::tagged_pair<
+        bcl::tagged<clang::Stmt *, AST>,
+        bcl::tagged<Loop *, IR>> Loop(nullptr, nullptr);
       for (auto Match : Matcher)
-        if (Match.first->getLocStart().getRawEncoding() ==
-            CalleeFuncList[msg::CalleeFuncList::LoopID]) {
-          CPL = LoopCPInfo.find(Match.first)->second;
+        if (Match.get<AST>()->getLocStart().getRawEncoding() ==
+            StmtList[msg::CalleeFuncList::LoopID]) {
+          Loop = Match;
+          break;
         }
-      for (auto Unmatch : Unmatcher)
-        if (Unmatch->getLocStart().getRawEncoding() ==
-            CalleeFuncList[msg::CalleeFuncList::LoopID]) {
-          CPL = LoopCPInfo.find(Unmatch)->second;
-        }
-      if (CalleeFuncList[msg::CalleeFuncList::Attr] == 2) {
-        if (!CPL.getBreak().empty()) {
-          msg::CalleeFuncInfo Func;
-          Func[msg::CalleeFuncInfo::Name] = "break";
-          for (auto Loc : CPL.getBreak())
-            Func[msg::CalleeFuncInfo::Locations].
-                push_back(getLocation(Loc, SrcMgr));
-          CalleeFuncList[msg::CalleeFuncList::Functions].
-              push_back(std::move(Func));
-        }
-        if (!CPL.getReturn().empty()) {
-          msg::CalleeFuncInfo Func;
-          Func[msg::CalleeFuncInfo::Name] = "return";
-          for (auto Loc : CPL.getReturn())
-            Func[msg::CalleeFuncInfo::Locations].
-                push_back(getLocation(Loc, SrcMgr));
-          CalleeFuncList[msg::CalleeFuncList::Functions].
-              push_back(std::move(Func));
-        }
-        if (!CPL.getGoto().empty()) {
-          msg::CalleeFuncInfo Func;
-          Func[msg::CalleeFuncInfo::Name] = "goto";
-          for (auto Loc : CPL.getGoto())
-            Func[msg::CalleeFuncInfo::Locations].
-                push_back(getLocation(Loc, SrcMgr));
-          CalleeFuncList[msg::CalleeFuncList::Functions].
-              push_back(std::move(Func));
-        }
+      if (!Loop.get<AST>()) {
+        for (auto Unmatch : Unmatcher)
+          if (Unmatch->getLocStart().getRawEncoding() ==
+              StmtList[msg::CalleeFuncList::LoopID]) {
+            Loop.get<AST>() = Unmatch;
+            break;
+          }
       }
+      if (!Loop.get<AST>())
+        return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+      auto I = CFLoopInfo.find(Loop.get<AST>());
+      if (I != CFLoopInfo.end())
+        Info = &I->second;
     } else {
-      CPL = FuncCPInfo.find(&F)->second;
+      Info = &FuncInfo;
     }
-    for (auto &MapCF : CPL.getCalleeFuncLoc()) {
-      for_each_attr([&SrcMgr, &MapCF, &CalleeFuncList](AttrKind Kind) {
-        if ((CalleeFuncList[msg::CalleeFuncList::Attr] == (unsigned)Kind) &&
-            hasFnAttr(*MapCF.first, Kind)) {
-          msg::CalleeFuncInfo Func;
-          Func[msg::CalleeFuncInfo::ID] = std::to_string(
-            MapCF.second[0].getRawEncoding());
-          Func[msg::CalleeFuncInfo::Name] = MapCF.first->getName();
-          for (auto Loc : MapCF.second)
-            Func[msg::CalleeFuncInfo::Locations].
-              push_back(getLocation(Loc, SrcMgr));
-          CalleeFuncList[msg::CalleeFuncList::Functions].
-            push_back(std::move(Func));
-        }
-      });
+    for (auto &T : *Info) {
+      if (!(T.Flags & StmtList[msg::CalleeFuncList::Attr]))
+        continue;
+      msg::CalleeFuncInfo F;
+      if (isa<clang::BreakStmt>(T))
+        F[msg::CalleeFuncInfo::Name] = "break";
+      else if (isa<clang::ReturnStmt>(T))
+        F[msg::CalleeFuncInfo::Name] = "return";
+      else if (isa<clang::GotoStmt>(T))
+        F[msg::CalleeFuncInfo::Name] = "goto";
+      else if (auto CE = dyn_cast<clang::CallExpr>(T))
+        if (auto FD = CE->getDirectCallee())
+          F[msg::CalleeFuncInfo::Name] = FD->getName();
+        else
+          F[msg::CalleeFuncInfo::Name] = "call";
+      F[msg::CalleeFuncInfo::ID] =
+        utostr(T.Stmt->getLocStart().getRawEncoding());
+      F[msg::CalleeFuncInfo::Locations].
+            push_back(getLocation(T.Stmt->getLocStart(), SrcMgr));
+      StmtList[msg::CalleeFuncList::Functions].push_back(std::move(F));
     }
+    return json::Parser<msg::CalleeFuncList>::unparseAsObject(StmtList);
   }
-  return json::Parser<msg::CalleeFuncList>::unparseAsObject(CalleeFuncList);
+  return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
 }
-
 
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
   if (!mConnection) {
@@ -752,7 +809,6 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
-  AU.addRequired<CalleeProcLocationPass>();
   AU.setPreservesAll();
 }
 
