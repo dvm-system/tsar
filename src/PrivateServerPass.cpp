@@ -659,7 +659,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     auto FuncDecl = Decl->getAsFunction();
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
-    Func[msg::Function::Name] = F.getName();
+    Func[msg::Function::Name] = FuncDecl->getName();
     Func[msg::Function::ID] = FuncDecl->getLocStart().getRawEncoding();
     Func[msg::Function::StartLocation] =
         getLocation(FuncDecl->getLocStart(), SrcMgr);
