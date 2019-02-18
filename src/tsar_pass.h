@@ -189,6 +189,12 @@ void initializeMemoryMatcherImmutableWrapperPass(PassRegistry &Registry);
 /// Creates a pass to match variables and allocas (or global variables).
 ModulePass * createMemoryMatcherPass();
 
+/// Initializes a pass to match high-level and low-level expressions.
+void initializeClangExprMatcherPassPass(PassRegistry &Registry);
+
+/// Creates a pass to match high-level and low-level expressions.
+FunctionPass * createClangExprMatcherPass();
+
 /// Creates a pass to print internal state of the specified pass after the
 /// last execution.
 FunctionPass * createFunctionPassPrinter(const PassInfo *PI, raw_ostream &OS);
@@ -299,6 +305,7 @@ void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
 
 /// Creates a pass which deduce loop attributes.
 FunctionPass * createLoopAttributesDeductionPass();
+
 /// Initializes an AST-level pass which collects control-flow traits
 /// for function and its loops.
 void initializeClangCFTraitsPassPass(PassRegistry &Registry);
@@ -306,6 +313,7 @@ void initializeClangCFTraitsPassPass(PassRegistry &Registry);
 /// Creates an AST-level pass which collects control-flow traits
 /// for function and its loops.
 FunctionPass * createClangCFTraitsPass();
+
 }
 
 #endif//TSAR_PASS_H
