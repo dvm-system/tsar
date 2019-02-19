@@ -34,6 +34,7 @@
 #include <bcl/Diagnostic.h>
 #include <bcl/Json.h>
 #include <llvm/ADT/StringSwitch.h>
+#include <llvm/ADT/Optional.h>
 #include <array>
 #include <vector>
 #include <string>
@@ -193,6 +194,39 @@ template<> struct Traits<tsar::msg::Analysis> {
       default: JSON += "Invalid"; break;
     }
     JSON += '"';
+  }
+};
+
+/// Specialization of JSON serialization traits for llvm::Optional type.
+///
+/// Note that 'T' must be default constructible and copy assignable.
+template<class T> struct Traits<llvm::Optional<T>> {
+  static_assert(std::is_default_constructible<T>::value,
+    "Underlining type must be default constructible!");
+  static_assert(std::is_copy_assignable<T>::value,
+    "Underlining type must be copy assignable!");
+  static bool parse(llvm::Optional<T> &Dest, json::Lexer &Lex) noexcept {
+    try {
+      auto Value = Lex.discardQuote();
+      auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
+      if (S == "null") {
+        Dest.reset();
+      } else {
+        T Tmp;
+        Traits<T>::parse(Tmp, Lex);
+        Dest = std::move(Tmp);
+      }
+    }
+    catch (...) {
+      return false;
+    }
+    return true;
+  }
+  static void unparse(String &JSON, const llvm::Optional<T> &Obj) {
+    if (Obj.hasValue())
+      Traits<T>::unparse(JSON, *Obj);
+    else
+      JSON += R"(null)";
   }
 };
 }
