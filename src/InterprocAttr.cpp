@@ -44,6 +44,8 @@ STATISTIC(NumNoIOFunc, "Number of functions marked as sapfor.noio");
 STATISTIC(NumAlwaysRetFunc, "Number of functions marked as sapfor.alwaysreturn");
 STATISTIC(NumNoIOLoop, "Number of loops marked as sapfor.noio");
 STATISTIC(NumAlwaysRetLoop, "Number of loops marked as sapfor.alwaysreturn");
+STATISTIC(NumNoUnwindLoop, "Number of loops marked as nounwind");
+STATISTIC(NumReturnsTwiceLoop, "Number of loops marked as returns_twice");
 
 namespace {
 /// This pass walks SCCs of the call graph in RPO to deduce and propagate
@@ -247,6 +249,7 @@ bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   for_each_loop(LI, [this](const Loop *L) {
     bool MayNoReturn = false, MayIO = false;
+    bool MayUnwind = false, MayReturnsTwice = false;
     for (auto *BB : L->blocks())
       for (auto &I : *BB) {
         CallSite CS(&I);
@@ -258,18 +261,32 @@ bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
           return;
         MayIO |= !hasFnAttr(*Callee, AttrKind::NoIO);
         MayNoReturn |= !hasFnAttr(*Callee, AttrKind::AlwaysReturn);
+        MayUnwind |= !Callee->hasFnAttribute(Attribute::NoUnwind);
+        MayReturnsTwice |= Callee->hasFnAttribute(Attribute::ReturnsTwice);
       }
     auto Itr = mAttrs.end();
     if (!MayIO) {
       Itr = mAttrs.try_emplace(L).first;
-      Itr->second.insert(AttrKind::NoIO);
+      Itr->second.get<AttrKind>().insert(AttrKind::NoIO);
       ++NumNoIOLoop;
     }
     if (!MayNoReturn) {
       if (Itr == mAttrs.end())
         Itr = mAttrs.try_emplace(L).first;
-      Itr->second.insert(AttrKind::AlwaysReturn);
+      Itr->second.get<AttrKind>().insert(AttrKind::AlwaysReturn);
       ++NumAlwaysRetLoop;
+    }
+    if (!MayUnwind) {
+      if (Itr == mAttrs.end())
+        Itr = mAttrs.try_emplace(L).first;
+      Itr->second.get<Attribute::AttrKind>().insert(Attribute::NoUnwind);
+      ++NumNoUnwindLoop;
+    }
+    if (MayReturnsTwice) {
+      if (Itr == mAttrs.end())
+        Itr = mAttrs.try_emplace(L).first;
+      Itr->second.get<Attribute::AttrKind>().insert(Attribute::ReturnsTwice);
+      ++NumReturnsTwiceLoop;
     }
   });
   return false;

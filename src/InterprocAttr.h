@@ -26,8 +26,10 @@
 #include "Attributes.h"
 #include "tsar_pass.h"
 #include <bcl/utility.h>
+#include <bcl/tagged.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallSet.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/Pass.h>
 
 #ifndef TSAR_INTERPROC_ATTR_H
@@ -40,6 +42,9 @@ class Loop;
 /// loop attributes.
 class LoopAttributesDeductionPass :
   public FunctionPass, private bcl::Uncopyable {
+
+  template<class AttrT, unsigned N>
+  using TaggedSet = bcl::tagged<SmallSet<AttrT, N>, AttrT>;
 public:
   static char ID;
   LoopAttributesDeductionPass() : FunctionPass(ID) {
@@ -51,12 +56,17 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   /// Returns true if a specified loop has a specified attribute.
-  bool hasAttr(const Loop &L, tsar::AttrKind Kind) {
+  ///
+  /// LLVM and SAPFOR attributes are supported.
+  template<class KindT>
+  bool hasAttr(const Loop &L, KindT Kind) {
     auto I = mAttrs.find(&L);
-    return I != mAttrs.end() && I->second.count(Kind);
+    return I != mAttrs.end() && I->second.get<KindT>().count(Kind);
   }
 private:
-  DenseMap<const Loop *, SmallSet<tsar::AttrKind, 2>> mAttrs;;
+  DenseMap<const Loop *, bcl::tagged_pair<
+      TaggedSet<tsar::AttrKind, 2>,
+      TaggedSet<llvm::Attribute::AttrKind, 2>>> mAttrs;
 };
 }
 
