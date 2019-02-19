@@ -148,7 +148,7 @@ template<> struct Traits<tsar::msg::Status> {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
-      Dest = llvm::StringSwitch<tsar::msg::Status>(Lex.json())
+      Dest = llvm::StringSwitch<tsar::msg::Status>(S)
         .Case("Success", tsar::msg::Status::Success)
         .Case("Error", tsar::msg::Status::Error)
         .Default(tsar::msg::Status::Invalid);
@@ -175,7 +175,7 @@ template<> struct Traits<tsar::msg::Analysis> {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
-      Dest = llvm::StringSwitch<tsar::msg::Analysis>(Lex.json())
+      Dest = llvm::StringSwitch<tsar::msg::Analysis>(S)
         .Case("Yes", tsar::msg::Analysis::Yes)
         .Case("No", tsar::msg::Analysis::No)
         .Default(tsar::msg::Analysis::Invalid);
