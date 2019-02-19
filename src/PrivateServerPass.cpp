@@ -42,6 +42,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Expr.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 
@@ -83,15 +84,16 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
 JSON_OBJECT_END(Statistic)
 
 JSON_OBJECT_BEGIN(LoopTraits)
-JSON_OBJECT_PAIR_4(LoopTraits,
+JSON_OBJECT_PAIR_5(LoopTraits,
   IsAnalyzed, Analysis,
   Perfect, Analysis,
   InOut, Analysis,
-  Canonical, Analysis)
+  Canonical, Analysis,
+  UnsafeCFG, Analysis)
 
   LoopTraits() :
     JSON_INIT(LoopTraits,
-      Analysis::No, Analysis::No, Analysis::No, Analysis::No) {}
+      Analysis::No, Analysis::No, Analysis::Yes, Analysis::No, Analysis::Yes) {}
   ~LoopTraits() = default;
 
   LoopTraits(const LoopTraits &) = default;
@@ -116,7 +118,7 @@ JSON_OBJECT_PAIR_7(Loop,
   StartLocation, Location,
   EndLocation, Location,
   Traits, LoopTraits,
-  Exit, unsigned,
+  Exit, Optional<unsigned>,
   Level, unsigned,
   Type, LoopType)
 
@@ -152,7 +154,7 @@ JSON_OBJECT_PAIR_4(FunctionTraits,
 
   FunctionTraits() :
     JSON_INIT(FunctionTraits,
-      Analysis::No, Analysis::No, Analysis::No, Analysis::No) {}
+      Analysis::No, Analysis::Yes, Analysis::Yes, Analysis::No) {}
   ~FunctionTraits() = default;
 
   FunctionTraits(const FunctionTraits &) = default;
@@ -162,12 +164,13 @@ JSON_OBJECT_PAIR_4(FunctionTraits,
 JSON_OBJECT_END(FunctionTraits)
 
 JSON_OBJECT_BEGIN(Function)
-JSON_OBJECT_PAIR_6(Function,
+JSON_OBJECT_PAIR_7(Function,
   ID, unsigned,
   Name, std::string,
   StartLocation, Location,
   EndLocation, Location,
   Loops, std::vector<Loop>,
+  Exit, llvm::Optional<unsigned>,
   Traits, FunctionTraits)
 
   Function() = default;
@@ -431,7 +434,6 @@ msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
   auto LocEnd = S->getLocEnd();
   msg::Loop Loop;
   Loop[msg::Loop::ID] = LocStart.getRawEncoding();
-  Loop[msg::Loop::Exit] = 0;
   if (isa<clang::ForStmt>(S))
     Loop[msg::Loop::Type] = msg::LoopType::For;
   else if (isa<clang::DoStmt>(S))
@@ -538,10 +540,6 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       getCanonicalLoopInfo();
     auto &AttrsInfo = Provider.get<LoopAttributesDeductionPass>();
     auto &CFLoopInfo = Provider.get<ClangCFTraitsPass>().getLoopInfo();
-    // TODO (kaniandr@gmail.com): add UnsafeCFG property for loops, use
-    // AlwaysReturn attribute from AttrsInfo, or list of callee functions
-    // for unmatched loops. We should also consider 'nounwind', 'returns_twice'
-    // function attributes from LLVM IR.
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::Loop::Traits];
@@ -551,26 +549,16 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
         LT[msg::LoopTraits::Canonical] = msg::Analysis::Yes;
       if (PerfectInfo.count(RegionInfo.getRegionFor(Match.get<IR>())))
         LT[msg::LoopTraits::Perfect] = msg::Analysis::Yes;
-      if (!AttrsInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
-        LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
-      auto InfoItr = CFLoopInfo.find(Match.get<AST>());
-      if (InfoItr != CFLoopInfo.end()) {
-        // Processing of explicit loops.
-        // TODO (kaniandr@gmail.com): calculate number of entries inside a loop.
-        // Calculate this value for unmatched loops also.
-        for (auto &T : InfoItr->second)
-          if (T.Flags & CFFlags::Exit)
-            ++Loop[msg::Loop::Exit];
-        ++Loop[msg::Loop::Exit];
-      } else if (isa<clang::LabelStmt>(Match.get<AST>())) {
-        for (auto *BB : Match.get<IR>()->blocks()) {
-          if (Match.get<IR>()->isLoopExiting(BB))
-            ++Loop[msg::Loop::Exit];
-        }
-        LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
-      } else {
-        // This loop has no control-flow traits, so it has a single exit.
-        ++Loop[msg::Loop::Exit];
+      if (AttrsInfo.hasAttr(*Match.get<IR>(), AttrKind::NoIO))
+        LT[msg::LoopTraits::InOut] = msg::Analysis::No;
+      if (AttrsInfo.hasAttr(*Match.get<IR>(), AttrKind::AlwaysReturn) &&
+          AttrsInfo.hasAttr(*Match.get<IR>(), Attribute::NoUnwind) &&
+          !AttrsInfo.hasAttr(*Match.get<IR>(), Attribute::ReturnsTwice))
+        LT[msg::LoopTraits::UnsafeCFG] = msg::Analysis::No;
+      Loop[msg::Loop::Exit] = 0;
+      for (auto *BB : Match.get<IR>()->blocks()) {
+        if (Match.get<IR>()->isLoopExiting(BB))
+          ++*Loop[msg::Loop::Exit];
       }
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
@@ -578,15 +566,6 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       auto Loop = getLoopInfo(Unmatch, SrcMgr);
       auto &LT = Loop[msg::Loop::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
-      LT[msg::LoopTraits::InOut] = msg::Analysis::Yes;
-      auto InfoItr = CFLoopInfo.find(Unmatch);
-      if (InfoItr != CFLoopInfo.end()) {
-        for (auto &T : InfoItr->second) {
-          if (T.Flags & CFFlags::Exit)
-            ++Loop[msg::Loop::Exit];
-        }
-      }
-      ++Loop[msg::Loop::Exit];
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     std::sort(LoopTree[msg::LoopTree::Loops].begin(),
@@ -665,14 +644,14 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
         getLocation(FuncDecl->getLocStart(), SrcMgr);
     Func[msg::Function::EndLocation] =
         getLocation(FuncDecl->getLocEnd(), SrcMgr);
-    if (!hasFnAttr(F, AttrKind::AlwaysReturn) ||
-        !F.hasFnAttribute(Attribute::NoUnwind) ||
-        F.hasFnAttribute(Attribute::ReturnsTwice))
+    if (hasFnAttr(F, AttrKind::AlwaysReturn) ||
+        F.hasFnAttribute(Attribute::NoUnwind) ||
+        !F.hasFnAttribute(Attribute::ReturnsTwice))
       Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
-        = msg::Analysis::Yes;
-    if (!hasFnAttr(F, AttrKind::NoIO))
+        = msg::Analysis::No;
+    if (hasFnAttr(F, AttrKind::NoIO))
       Func[msg::Function::Traits][msg::FunctionTraits::InOut]
-        = msg::Analysis::Yes;
+        = msg::Analysis::No;
     if (!F.isDeclaration()) {
       auto &Provider = getAnalysis<ServerPrivateProvider>(F);
       auto &LMP = Provider.get<LoopMatcherPass>();
@@ -683,6 +662,12 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
       if (AA.onlyReadsMemory(&F))
         Func[msg::Function::Traits][msg::FunctionTraits::Readonly]
         = msg::Analysis::Yes;
+      auto &FuncCFInfo = Provider.get<ClangCFTraitsPass>().getFuncInfo();
+      Func[msg::Function::Exit] = 0;
+      if (!F.hasFnAttribute(Attribute::NoReturn))
+        for (auto &I : instructions(F))
+          if (isa<ReturnInst>(I))
+            ++*Func[msg::Function::Exit];
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
