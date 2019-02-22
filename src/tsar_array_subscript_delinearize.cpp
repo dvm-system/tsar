@@ -4,6 +4,7 @@
 #include "tsar_array_usage_matcher.h"
 #include "tsar_utility.h"
 #include "tsar_query.h"
+#include "MemoryAccessUtils.h"
 
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/Function.h>
@@ -19,14 +20,11 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/ADT/SmallVector.h>
-#include <llvm/ADT/DenseSet.h>
 #include "llvm/Analysis/InstructionSimplify.h"
-#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DEBUGInfoMetadata.h>
 #include <llvm/ADT/Sequence.h>
 #include <llvm/IR/Type.h>
-#include <Json.h>
-//#include <cell.h>
-//#include <Diagnostic.h>
+#include "bcl/Json.h"
 
 #include <vector>
 #include <utility>
@@ -42,12 +40,6 @@ using namespace tsar;
 #define DEBUG_TYPE "array-subscript-delinearize"
 
 char ArraySubscriptDelinearizePass::ID = 0;
-//INITIALIZE_PASS_BEGIN(ArraySubscriptDelinearizePass, "array-subscript-delinearize",
-//  "Array Subscript Delinearize", false, true)
-//  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-//  //INITIALIZE_PASS_DEPENDENCY(ArrayUsageMatcherImmutableWrapper)
-//INITIALIZE_PASS_END(ArraySubscriptDelinearizePass, "array-subscript-delinearize",
-//  "Array Subscript Delinearize", false, true)
 INITIALIZE_PASS_IN_GROUP_BEGIN(ArraySubscriptDelinearizePass, "array-subscript-delinearize",
   "Array Subscript Delinearize", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -750,8 +742,8 @@ Value *GetUnderlyingObjectWithDbgCheck(Value *V, const DataLayout &DL,
   if (!V->getType()->isPointerTy())
     return V;
   for (unsigned Count = 0; MaxLookup == 0 || Count < MaxLookup; ++Count) {
-    DbgValueList DbgValues;
-    FindAllocaDbgValues(DbgValues, V);
+    SmallVector<DbgValueInst *, 1> DbgValues;
+    findDbgValues(DbgValues, V);
     if (!DbgValues.empty()) {
       return V;
     }
@@ -797,12 +789,13 @@ const DIVariable* findVariableDbg(Value* V) {
   }
 
   //TODO replace by a new function from tsar_ulility
-  if (auto *DDI = FindAllocaDbgDeclare(V)) {
-    return DDI->getVariable();
+  auto DIIList = FindDbgAddrUses(V);
+  if (DIIList.size() == 1) {
+    return DIIList.front()->getVariable();
   } 
-
-  DbgValueList DbgValues;
-  FindAllocaDbgValues(DbgValues, V);
+  
+  SmallVector<DbgValueInst *, 1> DbgValues;
+  findDbgValues(DbgValues, V);
   if (!DbgValues.empty()) {
     return DbgValues[0]->getVariable();
   }
@@ -811,14 +804,25 @@ const DIVariable* findVariableDbg(Value* V) {
 }
 
 Value *findRootArray(Instruction *I) {
-  Value *PointerOp;
+  Value *PointerOp = nullptr;
   if (auto *SI = dyn_cast<StoreInst>(I)) {
     PointerOp = SI->getPointerOperand();
-  }
-  if (auto *LI = dyn_cast<LoadInst>(I)) {
+  } else if (auto *LI = dyn_cast<LoadInst>(I)) {
     PointerOp = LI->getPointerOperand();
+  /*} else if (auto *CI = dyn_cast<CallInst>(I)) {
+
+  } */
+  } else {
+    LLVM_DEBUG(
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] In search of root array was ignored:\n\t";
+      I->dump();
+    );
   }
 
+  if (!PointerOp) {
+    return nullptr;
+  }
+  
   if (auto *Gep = dyn_cast<GetElementPtrInst>(PointerOp)) {
     Value * RootArr = (GetUnderlyingObjectWithDbgCheck(Gep, Gep->getModule()->getDataLayout(), 0));
     //For function argument GetUnderlyingObject returns LoadInst with
@@ -830,15 +834,16 @@ Value *findRootArray(Instruction *I) {
     if (auto *LI = dyn_cast<LoadInst>(RootArr)) {
       RootArr = LI->getPointerOperand();
     }
-    DEBUG(
-      llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] RootArr " << *RootArr << "\n";
+    
+    LLVM_DEBUG(
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] RootArr " << *RootArr << "\n";
     );
     return RootArr;
   } 
   
   if (auto *GV = dyn_cast<GlobalVariable>(PointerOp)) {
-    DEBUG(
-      llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] RootArrGV " << *GV << "\n";
+    LLVM_DEBUG(
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] RootArrGV " << *GV << "\n";
     );
     return GV;
   }
@@ -885,13 +890,13 @@ void findArrayDimesionsFromDbgInfo(Value *RootArr,
     }
   }
 
-  DEBUG(
+  LLVM_DEBUG(
     if (IsFirstDimPointer && TypeElements) {
-      llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array dimensions count: "
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array dimensions count: "
         << TypeElements.size() + 1 << "\n\t"
         << RootArr->getName() << "[]";
     } else {
-      llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array dimensions count: "
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array dimensions count: "
       << TypeElements.size() << "\n\t"
       << RootArr->getName();
     }
@@ -904,53 +909,73 @@ void findArrayDimesionsFromDbgInfo(Value *RootArr,
   if (!TypeElements) {
     return;
   }
-
+ 
   for (unsigned int i = 0; i < TypeElements.size(); ++i) {
     if (auto *DimSize = dyn_cast<DISubrange>(TypeElements[i])) {
-      Dimensions.push_back(DimSize->getCount());
-      DEBUG(
-        llvm::dbgs() << "[";
-      if (DimSize->getCount() > 0)
-        llvm::dbgs() << DimSize->getCount();
-      llvm::dbgs() << "]";
+      auto DimSizeCount = DimSize->getCount();
+      int64_t DimSizeValue = -1;
+      if (DimSizeCount.is<ConstantInt*>()) {
+        DimSizeValue = DimSizeCount.get<ConstantInt*>()->getLimitedValue();
+        LLVM_DEBUG(
+          dbgs() << "\tConstInt: " << DimSizeValue << "\n";
+        );
+      } else if (DimSizeCount.is<DIVariable *>()) {
+        LLVM_DEBUG(
+          dbgs() << "\tDIVar: ";
+          DimSizeCount.get<DIVariable *>()->dump();
+        );
+      } else {
+        LLVM_DEBUG(
+          dbgs() << "\tDimSizeCount is null\n";
+        );
+      }
+      Dimensions.push_back(DimSizeValue);
+      LLVM_DEBUG(
+        dbgs() << "[";
+      if (DimSizeValue > 0)
+        dbgs() << DimSizeValue;
+      dbgs() << "]";
       );
     }
   }
-  DEBUG(
-    llvm::dbgs() << "\n";
+  LLVM_DEBUG(
+    dbgs() << "\n";
   );
 }
 
-//TODO MemoryAccessUtils for_each_memory для нахождение пишущих/читающих гепов
-//тело collectArrays заменить на лямбду, вызываемую в for_each_memory вместо if (<Store> | <Load>)
 GetElementPtrInst *findGepOperand(Instruction *I) {
   assert(I && "Instruction must not be null");
-  DEBUG(
-    llvm::dbgs() << "Find Gep operand start\n";
-  );
+  /*LLVM_DEBUG(
+    dbgs() << "Find Gep operand start\n";
+  );*/
   for (unsigned int i = 0; i < I->getNumOperands(); ++i) {
-    DEBUG(
+    /*LLVM_DEBUG(
       I->getOperand(i)->dump();
-    );
+    );*/
     if (auto *Gep = dyn_cast<GetElementPtrInst>(I->getOperand(i))) {
-      DEBUG(
-        llvm::dbgs() << "Find Gep operand finish with gep\n";
+      LLVM_DEBUG(
+        dbgs() << "Find Gep operand finish with gep\n";
+      Gep->dump();
       );
       return Gep;
     }
   }
-  DEBUG(
-    llvm::dbgs() << "Find Gep operand finish\n";
+  LLVM_DEBUG(
+    dbgs() << "Find Gep operand finish with nullptr\n";
   );
   return nullptr;
 }
 
-void findGeps(Instruction *I, SmallVectorImpl<GetElementPtrInst *> &Geps) {
+void findGeps(Instruction *I, SmallVectorImpl<int64_t> &Dimensions,
+  SmallVectorImpl<GetElementPtrInst *> &Geps) {
   assert(I && "Instruction must not be null");
   auto *CurrentInst = I;
   do {
-    DEBUG(
+    LLVM_DEBUG(
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]GEPS search current inst: ";
       CurrentInst->dump();
+      /*dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]GEPS size: " << Geps.size() << "\n";
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Dimensions size: " << Dimensions.size() << "\n";*/
     );
     auto *Gep = findGepOperand(CurrentInst);
     if (Gep) {
@@ -960,40 +985,38 @@ void findGeps(Instruction *I, SmallVectorImpl<GetElementPtrInst *> &Geps) {
       CurrentInst = nullptr;
       for (unsigned int i = 0; i < I->getNumOperands(); ++i) {
         if (auto *LI = dyn_cast<LoadInst>(I->getOperand(i))) {
-          DEBUG(
-            llvm::dbgs() << "Found LI";
+          /*LLVM_DEBUG(
+            dbgs() << "Found LI";
             LI->dump();
-          );
+          );*/
           if (auto* InnerGep = findGepOperand(LI)) {
-            DEBUG(
-              llvm::dbgs() << "Found InnerGep";
+            /*LLVM_DEBUG(
+              dbgs() << "Found InnerGep";
               InnerGep->dump();
-            );
+            );*/
             Geps.push_back(InnerGep);
             CurrentInst = InnerGep;
             break;
           } else {
-            DEBUG(
-              llvm::dbgs() << "Dont found InnerGep";
-            );
+           /* LLVM_DEBUG(
+              dbgs() << "Dont found InnerGep";
+            );*/
           }
         }
       }
     }
-  } while (CurrentInst);
+  } while (CurrentInst && (Geps.size() < Dimensions.size()));
   std::reverse(Geps.begin(), Geps.end());
-  DEBUG(
-    llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]GEPS size: " << Geps.size() << "\n";
+  LLVM_DEBUG(
+    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]GEPS size: " << Geps.size() << "\n";
   );
 }
 
 void findLLVMIdxs(Value *RootArr, SmallVectorImpl<GetElementPtrInst *> &Geps, 
-  SmallVectorImpl<Value *> &Idxs, ScalarEvolution &SE) {
+  ScalarEvolution &SE, SmallVectorImpl<Value *> &Idxs) {
   assert(RootArr && "RootArr must not be null");
   assert(!Geps.empty() && "Geps size must not be zero");
   Idxs.clear();
-  /*SmallVector<int64_t, 3> Dimensions;
-  findArrayDimesionsFromDbgInfo(RootArr, Dimensions);*/
   for (auto &Gep : Geps) {
     int numOperands = Gep->getNumOperands();
     if (numOperands == 2) {
@@ -1011,18 +1034,6 @@ void findLLVMIdxs(Value *RootArr, SmallVectorImpl<GetElementPtrInst *> &Geps,
       }
     }
   }
-  ////In some cases zero subscript is dropping out by optimizing passes
-  //if (Idxs.size() == Dimensions.size() - 1) {
-  //  Type *IdxsType;
-  //  if (Idxs.size()) {
-  //    IdxsType = Idxs.front()->getType();
-  //  }
-  //  Idxs.insert(Idxs.begin(), SE.getZero(IdxsType));
-  //  DEBUG(
-  //    llvm::dbgs() << "Adding exta idx\n\t";
-  //    Geps[0]->getOperand(1)->dump();
-  //  );
-  //}
 }
 
 void countPrimeNumbers(uint64_t Bound, std::vector<uint64_t> &Primes) {
@@ -1104,8 +1115,8 @@ void countPrimeNumbers(uint64_t Bound, std::vector<uint64_t> &Primes) {
   }
 }
 
-void countConstantMultipliers(const SCEVConstant *Const, SmallVectorImpl<const SCEV *> &Multipliers,
-  ScalarEvolution &SE) {
+void countConstantMultipliers(const SCEVConstant *Const,
+  ScalarEvolution &SE, SmallVectorImpl<const SCEV *> &Multipliers) {
   uint64_t ConstValue = Const->getAPInt().getLimitedValue();
   assert(ConstValue && "Constant value is zero");
 
@@ -1120,14 +1131,14 @@ void countConstantMultipliers(const SCEVConstant *Const, SmallVectorImpl<const S
   std::vector<uint64_t> Primes;
   countPrimeNumbers(ConstValue, Primes);
   size_t i = Primes.size() - 1;
-  DEBUG(
-    llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Constant Multipliers:\n";
+  LLVM_DEBUG(
+    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Constant Multipliers:\n";
   );
   while (ConstValue > 1) {
     if (ConstValue % Primes[i] == 0) {
       Multipliers.push_back(SE.getConstant(Const->getType(), Primes[i], false));
-      DEBUG(
-        llvm::dbgs() << "\t";
+      LLVM_DEBUG(
+        dbgs() << "\t";
         Multipliers[Multipliers.size() - 1]->dump();
       );
       ConstValue /= Primes[i];
@@ -1311,10 +1322,10 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
     }
   }
 
-  DEBUG(
-    llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD Terms:\n";
+  LLVM_DEBUG(
+    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD Terms:\n";
     for (auto *Term : Terms) {
-      llvm::dbgs() << "\t";
+      dbgs() << "\t";
       Term->dump();
     });
 
@@ -1342,7 +1353,7 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
     for (int i = 0; i < Mul->getNumOperands(); ++i) {
       if (auto *Const = dyn_cast<SCEVConstant>(Mul->getOperand(i))) {
         SmallVector<const SCEV *, 3> ConstMultipliers;
-        countConstantMultipliers(Const, ConstMultipliers, SE);
+        countConstantMultipliers(Const, SE, ConstMultipliers);
         Dividers.append(ConstMultipliers.begin(), ConstMultipliers.end());
       } else {
         Dividers.push_back(Mul->getOperand(i));
@@ -1351,7 +1362,7 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
   } else {
     if (auto *Const = dyn_cast<SCEVConstant>(OpeningSCEV)) {
       SmallVector<const SCEV *, 3> ConstMultipliers;
-      countConstantMultipliers(Const, ConstMultipliers, SE);
+      countConstantMultipliers(Const, SE, ConstMultipliers);
       Dividers.append(ConstMultipliers.begin(), ConstMultipliers.end());
     } else {
       Dividers.push_back(OpeningSCEV);
@@ -1388,34 +1399,40 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
 
 }
 
-void collectArrays(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F,
-  ScalarEvolution &SE) {
+void collectArrays(Function &F, ScalarEvolution &SE, TargetLibraryInfo &TLI,
+  DenseMap<Value *, SmallVector <int64_t, 3> > &CachedArraysDbgInfo,
+  DelinearizeInfo::ArraySet &AnalyzedArrays) {
 
   for (auto &BB :  F) {
     for (auto &I : BB) {
-      if (isa<StoreInst>(I) || isa<LoadInst>(I)) {
-
+      auto ProcessAccessInstruction = [&AnalyzedArrays, &SE, &CachedArraysDbgInfo](Instruction &I) {
         Value *RootArr = findRootArray(&I);
         if (!RootArr) {
-          continue;
-        }
-
-        SmallVector<GetElementPtrInst *, 3> Geps;
-        findGeps(&I, Geps);
-
-        if (Geps.empty()) {
-          continue;
-        }
-
-        SmallVector<Value *, 3> Idxs;
-        findLLVMIdxs(RootArr, Geps, Idxs, SE);
-
-        if (Idxs.empty()) {
-          continue;
+          return;
         }
 
         SmallVector<int64_t, 3> Dimensions;
-        findArrayDimesionsFromDbgInfo(RootArr, Dimensions);
+        auto ArrayDbgInfoCache = CachedArraysDbgInfo.find(RootArr);
+        if (ArrayDbgInfoCache != CachedArraysDbgInfo.end()) {
+          Dimensions = ArrayDbgInfoCache->second;
+        } else {
+          findArrayDimesionsFromDbgInfo(RootArr, Dimensions);
+          CachedArraysDbgInfo.insert(std::make_pair(RootArr, Dimensions));
+        }
+
+        SmallVector<GetElementPtrInst *, 3> Geps;
+        findGeps(&I, Dimensions, Geps);
+
+        if (Geps.empty()) {
+          return;
+        }
+
+        SmallVector<Value *, 3> Idxs;
+        findLLVMIdxs(RootArr, Geps, SE, Idxs);
+
+        if (Idxs.empty()) {
+          return;
+        }
 
 
         Array::ExprList Subscripts;
@@ -1431,8 +1448,8 @@ void collectArrays(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F,
           }
           for (int i = 0; i < Dimensions.size() - Idxs.size(); i++) {
             Subscripts.push_back(SE.getZero(IdxsType));
-            DEBUG(
-              llvm::dbgs() << "Adding exta zero subscript\n";
+            LLVM_DEBUG(
+              dbgs() << "Adding exta zero subscript\n";
             );
           }
         }
@@ -1441,48 +1458,57 @@ void collectArrays(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F,
           Subscripts.push_back(IdxSCEV);
         }
 
-        DEBUG(
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Inst: ";
-          I.dump();
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Idxs: " << Idxs.size() << "\n";
-          for (auto *Idx : Idxs) {
-            llvm::dbgs() << "\t";
-            Idx->dump();
-            auto *IdxSCEV = SE.getSCEV(Idx);
-            llvm::dbgs() << "\t\t";
-            IdxSCEV->dump();
-          }
+        LLVM_DEBUG(
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Inst: ";
+        I.dump();
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Idxs: " << Idxs.size() << "\n";
+        for (auto *Idx : Idxs) {
+          dbgs() << "\t";
+          Idx->dump();
+          auto *IdxSCEV = SE.getSCEV(Idx);
+          dbgs() << "\t\t";
+          IdxSCEV->dump();
+        }
         );
 
         Array *CurrentArray;
         auto ArrayEntryIt = AnalyzedArrays.find_as(RootArr);
         if (ArrayEntryIt != AnalyzedArrays.end()) {
           CurrentArray = &(*ArrayEntryIt);
-        } else  {
+        } else {
           auto InsertResult = AnalyzedArrays.insert(Array(RootArr));
           if (!InsertResult.second) {
-            continue;
+            return;
           }
           CurrentArray = &(*InsertResult.first);
         }
-        
+
         CurrentArray->emplaceBack(Geps[0], std::move(Subscripts));
         CurrentArray->setValid(IsIdxsValid);
-      }
+      };
+
+      for_each_memory(I, TLI, 
+        [&ProcessAccessInstruction] (Instruction &I, MemoryLocation, 
+          unsigned,  AccessInfo IsRead, AccessInfo IsWrite) {
+          if (IsRead != AccessInfo::No || IsWrite != AccessInfo::No) {
+            ProcessAccessInstruction(I);
+          }
+        },
+        [&ProcessAccessInstruction](Instruction &I, AccessInfo IsRead, 
+          AccessInfo IsWrite) {
+          if (IsRead != AccessInfo::No || IsWrite != AccessInfo::No) {
+            ProcessAccessInstruction(I);
+          }
+        }
+      );
     }
   }
 }
 
-void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
+void fillArrayDimensionsSizes(SmallVectorImpl<int64_t> &Dimensions, ScalarEvolution &SE, 
+  Array *CurrentArray) {
   assert(CurrentArray && "Current Array must not be null");
   assert(!CurrentArray->empty() && "Acesses size must not be zero");
-
-  SmallVector<int64_t, 3> Dimensions;
-  findArrayDimesionsFromDbgInfo(CurrentArray->getBase(), Dimensions);
-  //TODO Если есть отлдадочная информация, то она в приоритете, если нет отладочной, 
-  //а в инструкциях не совпадает количество измерений, то забраковывать массив
-  //Проанализировать разыменование не всех измерений, что возвращает GEP
-  //Если уверенно найдены измерения, то отбрасывать инструкцию, если неуверенно, то весь массив
   
   if (Dimensions.empty()) {
     size_t DimensionsCount = CurrentArray->getElement(0)->Subscript.size();
@@ -1490,8 +1516,8 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
     for (int i = 1; i < CurrentArray->size(); ++i) {
       if (CurrentArray->getElement(0)->Subscript.size() != DimensionsCount) {
         CurrentArray->setValid(false);
-        DEBUG(
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Array " <<
+        LLVM_DEBUG(
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Array " <<
             CurrentArray->getBase()->getName() << " is unrealible\n";
         );
         return;
@@ -1516,7 +1542,7 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
     if (Dimensions[i] > 0) {
       LastConstDimension = i;
       CurrentArray->setDimension(i, SE.getConstant(Ty, Dimensions[i], false));
-      DEBUG(
+      LLVM_DEBUG(
         dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set dim size ";
         CurrentArray->getDimension(i)->dump();
       );
@@ -1529,14 +1555,14 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
   if (Dimensions[0] > 0) {
     if (LastConstDimension != 0) {
       CurrentArray->setDimension(0, SE.getConstant(Ty, Dimensions[0], false));
-      DEBUG(
+      LLVM_DEBUG(
         dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set first dim size ";
         CurrentArray->getDimension(0)->dump();
       );
     }
   } else {
     CurrentArray->setDimension(0, SE.getCouldNotCompute());
-    DEBUG(
+    LLVM_DEBUG(
       dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set first dim size ";
       CurrentArray->getDimension(0)->dump();
     );
@@ -1548,9 +1574,9 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
 
   size_t FirstUnknownDimension = LastConstDimension - 1;
 
-  DEBUG(
+  LLVM_DEBUG(
     if (LastConstDimension < Dimensions.size()) {
-      llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Filling array const dims from " <<
+      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Filling array const dims from " <<
         LastConstDimension << " to " << Dimensions.size() - 1 << "\n";
     }
   );
@@ -1559,27 +1585,27 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
     return;
   }
 
-  DEBUG(
-    llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Start filling\n";
+  LLVM_DEBUG(
+    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Start filling\n";
   );
 
   auto *PrevioslyDimsSizesProduct = SE.getConstant(Ty, 1, false);
 
   for (int i = FirstUnknownDimension - 1; i >= 0; --i) {
-    DEBUG(
-      llvm::dbgs() << "i: " << i << "\n";
+    LLVM_DEBUG(
+      dbgs() << "i: " << i << "\n";
     );
     const SCEV *Q, *R, *DimSize;
 
     //Find divider (dimension size), switch by constant or variable
     if (Dimensions[i + 1] > 0) {
-      DEBUG(
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Const dim size\n";
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Const dim size\n";
       );
       DimSize = SE.getConstant(Ty, Dimensions[i + 1], false);
     } else {
-      DEBUG(
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Var dim size\n";
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Var dim size\n";
       );
       SmallVector<const SCEV *, 3> Expressions;
       for (auto CurrentElementIt = CurrentArray->begin();
@@ -1587,31 +1613,31 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
         if (CurrentElementIt->Subscript.size() != Dimensions.size()) {
           CurrentElementIt->isValid = false;
         } else {
-          DEBUG(
-            llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Expressions\n";
+          LLVM_DEBUG(
+            dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Expressions\n";
           );
           for (int j = i; j >= 0; --j) {
             Expressions.push_back(CurrentElementIt->Subscript[j]);
-            DEBUG(
-              llvm::dbgs() << "\t";
+            LLVM_DEBUG(
+              dbgs() << "\t";
               CurrentElementIt->Subscript[j]->dump();
             );
           }
         }
       }
       DimSize = findGCD(Expressions, SE);
-      DEBUG(
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD: ";
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD: ";
         DimSize->dump();
       );
 
       SCEVDivision::divide(SE, DimSize, PrevioslyDimsSizesProduct, &Q, &R);
-      DEBUG(
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] PrevioslyDimsSizesProduct: ";
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] PrevioslyDimsSizesProduct: ";
         PrevioslyDimsSizesProduct->dump();
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
         Q->dump();
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
         R->dump();
       );
       if (R->isZero()) {
@@ -1631,7 +1657,7 @@ void fillArrayDimensionsSizes(Array *CurrentArray, ScalarEvolution &SE) {
     }
 
     CurrentArray->setDimension(i + 1, DimSize);
-    DEBUG(
+    LLVM_DEBUG(
       dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set dim size ";
       DimSize->dump();
     );
@@ -1657,8 +1683,8 @@ void cleanSubscripts(Array *CurrentArray, ScalarEvolution &SE) {
   const SCEV *Q, *R;
 
   Type *Ty = CurrentArray->getElement(0)->Subscript[0]->getType();
-  //DEBUG(
-  //  llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV Type: ";
+  //LLVM_DEBUG(
+  //  dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV Type: ";
   //  Ty->dump();
   //);
   auto *PrivioslyDimsSizesProduct = SE.getConstant(Ty, 1, true);
@@ -1674,14 +1700,14 @@ void cleanSubscripts(Array *CurrentArray, ScalarEvolution &SE) {
       ++CurrentElementIt) {
       auto *CurrentSCEV = CurrentElementIt->Subscript[i];
         SCEVDivision::divide(SE, CurrentSCEV, PrivioslyDimsSizesProduct, &Q, &R);
-        DEBUG(
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV: ";
+        LLVM_DEBUG(
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV: ";
           CurrentSCEV->dump();
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Divider: ";
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Divider: ";
           PrivioslyDimsSizesProduct->dump();
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
           R->dump();
-          llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
+          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
           Q->dump();
         );
         if (R->isZero()) {
@@ -1689,8 +1715,8 @@ void cleanSubscripts(Array *CurrentArray, ScalarEvolution &SE) {
         } else {
           assert(false && "Cant divide access");
         }
-      DEBUG(
-        llvm::dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set ";
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set ";
         CurrentSCEV->dump();
       );
       CurrentElementIt->Subscript[i] = CurrentSCEV;
@@ -1700,13 +1726,26 @@ void cleanSubscripts(Array *CurrentArray, ScalarEvolution &SE) {
 
 //TODO проверка через isValid или заменить флаг пустым множеством измерений
 void findSubscripts(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F, 
-  ScalarEvolution &SE) {
-  collectArrays(AnalyzedArrays, F, SE);
+  ScalarEvolution &SE, TargetLibraryInfo &TLI) {
+  DenseMap<Value *, SmallVector <int64_t, 3> > CachedArraysDbgInfo;
+  collectArrays(F, SE, TLI, CachedArraysDbgInfo, AnalyzedArrays);
 
   for (auto &CurrentArray : AnalyzedArrays) {
-    fillArrayDimensionsSizes(&CurrentArray, SE);
+    SmallVector<int64_t, 3> Dimensions;
+    auto ArrayDbgInfoCache = CachedArraysDbgInfo.find(CurrentArray.getBase());
+    if (ArrayDbgInfoCache != CachedArraysDbgInfo.end()) {
+      Dimensions = ArrayDbgInfoCache->second;
+    } else {
+      findArrayDimesionsFromDbgInfo(CurrentArray.getBase(), Dimensions);
+      CachedArraysDbgInfo.insert(std::make_pair(CurrentArray.getBase(), Dimensions));
+    }
+    fillArrayDimensionsSizes(Dimensions, SE, &CurrentArray);
     if (!CurrentArray.isDimensionsEmpty()) {
       cleanSubscripts(&CurrentArray, SE);
+    } else {
+      LLVM_DEBUG(
+        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array Dimensions is empty";
+      );
     }
   }
 }
@@ -1769,17 +1808,66 @@ namespace json {
 
 namespace llvm {
 bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
-  DEBUG(
+  LLVM_DEBUG(
     dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] In function " << F.getName() << "\n";
-  F.dump();
+    F.dump();
   );
 
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+
+  //LLVM Delinearization
+  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+    Instruction *Inst = &(*I);
+
+    // Only analyze loads and stores.
+    if (!isa<StoreInst>(Inst) && !isa<LoadInst>(Inst) &&
+      !isa<GetElementPtrInst>(Inst))
+      continue;
+
+    const BasicBlock *BB = Inst->getParent();
+    // Delinearize the memory access as analyzed in all the surrounding loops.
+    // Do not analyze memory accesses outside loops.
+    for (Loop *L = LI.getLoopFor(BB); L != nullptr; L = L->getParentLoop()) {
+      const SCEV *AccessFn = SE.getSCEVAtScope(getPointerOperand(Inst), L);
+
+      const SCEVUnknown *BasePointer =
+        dyn_cast<SCEVUnknown>(SE.getPointerBase(AccessFn));
+      // Do not delinearize if we cannot find the base pointer.
+      if (!BasePointer)
+        break;
+      AccessFn = SE.getMinusSCEV(AccessFn, BasePointer);
+      LLVM_DEBUG(
+        dbgs() << "AccessFunction: " << *AccessFn << "\n";
+      );
+
+      SmallVector<const SCEV *, 3> Subscripts, Sizes;
+      SE.delinearize(AccessFn, Subscripts, Sizes, SE.getElementSize(Inst));
+      if (Subscripts.size() == 0 || Sizes.size() == 0 ||
+        Subscripts.size() != Sizes.size()) {
+        continue;
+      }
+      LLVM_DEBUG(
+        dbgs() << "Base offset: " << *BasePointer << "\n";
+        dbgs() << "ArrayDecl[UnknownSize]";
+        int Size = Subscripts.size();
+        for (int i = 0; i < Size - 1; i++)
+          dbgs() << "[" << *Sizes[i] << "]";
+        dbgs() << " with elements of " << *Sizes[Size - 1] << " bytes.\n";
+
+        dbgs() << "ArrayRef";
+        for (int i = 0; i < Size; i++)
+          dbgs() << "[" << *Subscripts[i] << "]";
+        dbgs() << "\n";
+      );
+    }
+  }
+  //LLVM Delinearization end
 
   DelinearizeInfo::ArraySet AnalyzedArrays;
 
-  findSubscripts(AnalyzedArrays, F, SE);
+  findSubscripts(AnalyzedArrays, F, SE, TLI);
 
   mDelinearizeInfo = DelinearizeInfo(AnalyzedArrays);
   mDelinearizeInfo.fillElementsMap();
@@ -1835,7 +1923,7 @@ bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
       std::move(ArrayNameStr), std::move(ArraySubscripts)));
   }
   std::string JsonStr = json::Parser<dln::ArrayInfo>::unparse(Info);
-  DEBUG(
+  LLVM_DEBUG(
     for (auto &ArrayEntry : AnalyzedArrays) {
       dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array ";
       ArrayEntry.getBase()->dump();
@@ -1881,6 +1969,7 @@ bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
 void ArraySubscriptDelinearizePass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 

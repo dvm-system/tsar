@@ -85,7 +85,8 @@ namespace tsar {
     using const_iterator = Elements::const_iterator;
 
     Array(llvm::Value *BasePtr) :
-      mBasePtr(BasePtr) {}
+      mBasePtr(BasePtr),
+      mIsArrayValid(true){}
 
     // to access all elements
     iterator begin() {
