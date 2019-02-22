@@ -29,7 +29,7 @@
 
 namespace tsar {
 msg::Location getLocation(
-    clang::SourceLocation &SLoc, clang::SourceManager &SrcMgr) {
+    const clang::SourceLocation &SLoc, const clang::SourceManager &SrcMgr) {
   msg::Location MsgLoc;
   MsgLoc[msg::Location::Line] = SrcMgr.getExpansionLineNumber(SLoc);
   MsgLoc[msg::Location::Column] = SrcMgr.getExpansionColumnNumber(SLoc);

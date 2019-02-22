@@ -56,21 +56,22 @@ enum CFFlags : uint8_t {
 
 /// Description of a single control flow trait, this contains a statement which
 /// is a source of a trait and a description of this traits with flags.
-template <class StmtT> struct CFTraits {
+template <class StmtT> struct CFTraitsBase {
   StmtT Stmt;
   CFFlags Flags;
 };
 } // namespace tsar
 
 namespace llvm {
-template <class StmtT> struct DenseMapInfo<tsar::CFTraits<StmtT>> {
-  using T = tsar::CFTraits<StmtT>;
+template <class StmtT> struct DenseMapInfo<tsar::CFTraitsBase<StmtT>> {
+  using T = tsar::CFTraitsBase<StmtT>;
   static inline T getEmptyKey() {
-    return T{ llvm::DenseMapInfo<StmtT>::getEmptyKey(), CFFlags::DefaultFlags };
+    return T{ llvm::DenseMapInfo<StmtT>::getEmptyKey(),
+      tsar::CFFlags::DefaultFlags };
   }
   static inline T getTombstoneKey() {
     return T{ llvm::DenseMapInfo<StmtT>::getTombstoneKey(),
-      CFFlags::DefaultFlags };
+      tsar::CFFlags::DefaultFlags };
   }
   static inline unsigned getHashValue(const T &Val) {
     return llvm::DenseMapInfo<StmtT>::getHashValue(Val.Stmt);
@@ -86,18 +87,18 @@ template <class StmtT> struct DenseMapInfo<tsar::CFTraits<StmtT>> {
   }
 };
 
-// Specialize simplify_type to allow CFTraits to participate in
+// Specialize simplify_type to allow CFTraitsBase to participate in
 // dyn_cast, isa, etc.
-template<class StmtT> struct simplify_type<tsar::CFTraits<StmtT>> {
+template<class StmtT> struct simplify_type<tsar::CFTraitsBase<StmtT>> {
   using SimpleType = StmtT;
-  static SimpleType getSimplifiedValue(tsar::CFTraits<StmtT> &Info) {
+  static SimpleType getSimplifiedValue(tsar::CFTraitsBase<StmtT> &Info) {
     return Info.Stmt;
   }
 };
-template<class StmtT> struct simplify_type<const tsar::CFTraits<StmtT>> {
+template<class StmtT> struct simplify_type<const tsar::CFTraitsBase<StmtT>> {
   using SimpleType = const StmtT;
   static SimpleType getSimplifiedValue(
-    const tsar::CFTraits<StmtT> &Info) {
+    const tsar::CFTraitsBase<StmtT> &Info) {
     return Info.Stmt;
   }
 };
@@ -107,8 +108,8 @@ namespace tsar {
 /// Information of traits which have been investigated for a region in a
 /// control-flow graph. Note, that statement is used as key in a set of traits.
 template<class FuncT, class StmtT>
-class RegionCFInfo {
-  using TraitSet = PersistentSet<CFTraits<StmtT>>;
+class RegionCFInfoBase {
+  using TraitSet = PersistentSet<CFTraitsBase<StmtT>>;
   using CallMap = llvm::DenseMap<FuncT,
     llvm::SmallVector<typename TraitSet::persistent_iterator, 16>>;
 
@@ -146,7 +147,7 @@ class RegionCFInfo {
       return mItrPtr == RHS.mItrPtr;
     }
     bool operator!=(const call_iterator_impl &RHS) const noexcept {
-      return !operator()==(RHS);
+      return !operator==(RHS);
     }
 
     call_iterator_impl & operator++() noexcept { return ++mItrPtr; }
@@ -160,7 +161,7 @@ class RegionCFInfo {
   };
 
 public:
-  using CFTraits = CFTraits<StmtT>;
+  using CFTraits = CFTraitsBase<StmtT>;
 
   /// This type used to iterate over traits.
   using iterator = typename TraitSet::iterator;
@@ -326,7 +327,7 @@ public:
   iterator find(const CFTraits &T) { return mTraits.find(T); }
 
   /// Find a trait, note that statement is a key.
-  const_iterator find(const CFTraits &T) const { return mTraits.find(ST); }
+  const_iterator find(const CFTraits &T) const { return mTraits.find(T); }
 
   /// Find a trait.
   iterator find(const_stmt_type_t S) { return mTraits.find_as(S); }
@@ -351,7 +352,7 @@ namespace llvm {
 /// loops. This pass uses Clang AST to represent traits.
 class ClangCFTraitsPass : public FunctionPass, private bcl::Uncopyable {
 public:
-  using RegionCFInfo = tsar::RegionCFInfo<clang::Decl *, clang::Stmt *>;
+  using RegionCFInfo = tsar::RegionCFInfoBase<clang::Decl *, clang::Stmt *>;
   using LoopCFInfo = llvm::DenseMap<clang::Stmt *, RegionCFInfo>;
   using CFTraits = typename RegionCFInfo::CFTraits;
 

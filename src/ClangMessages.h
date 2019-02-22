@@ -35,6 +35,6 @@ class SourceManager;
 namespace tsar {
 /// Converts a specified location to JSON.
 msg::Location getLocation(
-  clang::SourceLocation &SLoc, clang::SourceManager &SrcMgr);
+  const clang::SourceLocation &SLoc, const clang::SourceManager &SrcMgr);
 }
 #endif//TSAR_CLANG_MESSAGES_H
