@@ -259,7 +259,7 @@ private:
 namespace llvm {
 template<typename From> struct simplify_type;
 
-// Specialize simplify_type to allow WeakVH to participate in
+// Specialize simplify_type to allow detail::ScopeInfo to participate in
 // dyn_cast, isa, etc.
 template<> struct simplify_type<tsar::detail::ScopeInfo> {
   using SimpleType = clang::Stmt *;

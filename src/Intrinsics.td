@@ -1,4 +1,4 @@
-//===- Intrinsics.td - Defines all LLVM intrinsics ---------*- tablegen -*-===//
+//===- Intrinsics.td - Defines all TSAR intrinsics ---------*- tablegen -*-===//
 //
 //                      Traits Static Analyzer (SAPFOR)
 //
