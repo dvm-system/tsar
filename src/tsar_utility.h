@@ -151,6 +151,49 @@ inline llvm::Optional<unsigned> getLanguage(const llvm::Function &F) {
 /// Returns a language for a specified variable.
 llvm::Optional<unsigned> getLanguage(const llvm::DIVariable &DIVar);
 
+/// Returns true if a specified language is C language.
+inline bool isC(unsigned DWLang) noexcept {
+  using namespace llvm;
+  switch (DWLang) {
+  case dwarf::DW_LANG_C:
+  case dwarf::DW_LANG_C89:
+  case dwarf::DW_LANG_C99:
+  case dwarf::DW_LANG_C11:
+  case dwarf::DW_LANG_ObjC:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Returns true if a specified language is C++ language.
+inline bool isCXX(unsigned DWLang) noexcept {
+  using namespace llvm;
+  switch (DWLang) {
+  case dwarf::DW_LANG_C_plus_plus:
+  case dwarf::DW_LANG_C_plus_plus_03:
+  case dwarf::DW_LANG_C_plus_plus_11:
+  case dwarf::DW_LANG_C_plus_plus_14:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Returns true if a specified language is Fortran language.
+inline bool isFortran(unsigned DWLang) noexcept {
+  using namespace llvm;
+  switch (DWLang) {
+  case dwarf::DW_LANG_Fortran77:
+  case dwarf::DW_LANG_Fortran90:
+  case dwarf::DW_LANG_Fortran03:
+  case dwarf::DW_LANG_Fortran08:
+    return true;
+  default:
+    return false;
+  }
+}
+
 /// Returns number of dimensions in a specified type or 0 if it is not an array.
 inline unsigned dimensionsNum(const llvm::Type *Ty) {
   unsigned Dims = 0;
