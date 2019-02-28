@@ -225,13 +225,8 @@ Instrumentation::computeLoopBounds(Loop &L, IntegerType &IntTy,
   if (!EndTy || !EndTy->isIntegerTy() ||
       EndTy->getIntegerBitWidth() > IntTy.getBitWidth())
     return std::make_tuple(nullptr, nullptr, nullptr, false);
-  bool Signed = false;
-  bool Unsigned = false;
-  for (auto *U : End->users())
-    if (auto *Cmp = dyn_cast<CmpInst>(U)) {
-      Signed |= Cmp->isSigned();
-      Unsigned |= Cmp->isUnsigned();
-    }
+  bool Signed = (*CanonItr)->isSigned();
+  bool Unsigned = (*CanonItr)->isUnsigned();
   // Is sign known?
   if (Signed == Unsigned)
     return std::make_tuple(nullptr, nullptr, nullptr, false);
