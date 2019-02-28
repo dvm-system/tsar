@@ -257,8 +257,10 @@ bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
           continue;
         auto Callee =
           dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
-        if (!Callee)
-          return;
+        if (!Callee) {
+          MayIO = MayNoReturn = MayUnwind = MayReturnsTwice = true;
+          break;
+        }
         MayIO |= !hasFnAttr(*Callee, AttrKind::NoIO);
         MayNoReturn |= !hasFnAttr(*Callee, AttrKind::AlwaysReturn);
         MayUnwind |= !Callee->hasFnAttribute(Attribute::NoUnwind);
