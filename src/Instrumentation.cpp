@@ -102,6 +102,8 @@ bool InstrumentationPass::runOnModule(Module &M) {
   Instrumentation::visit(M, *this);
   if (auto EntryPoint = M.getFunction("main"))
     visitEntryPoint(*EntryPoint, { &M });
+  else if (auto EntryPoint = M.getFunction("MAIN_"))
+    visitEntryPoint(*EntryPoint, { &M });
   else
     M.getContext().diagnose(DiagnosticInfoInlineAsm("entry point is not found"));
   return true;
