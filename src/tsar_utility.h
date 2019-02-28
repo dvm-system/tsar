@@ -54,6 +54,9 @@ struct IR {};
 /// This tag provides access to source-level representation of matched entities.
 struct AST {};
 
+/// This tag provides access to metadata-level representation of matched entities.
+struct MD {};
+
 /// This tag is used to implement hierarchy of nodes.
 struct Hierarchy {};
 
@@ -68,6 +71,9 @@ struct Pool {};
 
 /// This tag is used to provide access to a set of traits of a region.
 struct Region {};
+
+/// Loop identifier.
+using LoopID = llvm::MDNode *;
 
 /// Merges elements from a specified range using a specified delimiter, put
 /// result to a specified buffer and returns reference to it.
