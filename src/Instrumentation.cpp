@@ -378,8 +378,6 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   } else {
     auto *NewBB = BasicBlock::Create(Header->getContext(),
       "preheader", Header->getParent(), Header);
-    InsertBefore = BranchInst::Create(Header, NewBB);
-    InsertBefore->setMetadata("sapfor.da", InstrMD);
     for (auto *PredBB : predecessors(Header)) {
       if (L->contains(PredBB))
         continue;
@@ -389,6 +387,8 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
         if (PredBranch->getSuccessor(SuccIdx) ==  Header)
           PredBranch->setSuccessor(SuccIdx, NewBB);
     }
+    InsertBefore = BranchInst::Create(Header, NewBB);
+    InsertBefore->setMetadata("sapfor.da", InstrMD);
   }
   auto DbgLoc = L->getLocRange();
   std::string StartLoc = DbgLoc.getStart() ?
