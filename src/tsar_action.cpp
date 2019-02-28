@@ -147,6 +147,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // avoid dangling handles. So, we add pool before environment in the manager.
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
+#ifdef APC_FOUND
+  Passes.add(createAPCContextStorage());
+#endif
   // Preliminary analysis of privatizable variables. This analysis is necessary
   // to prevent lost of result of optimized values. The memory promotion
   // may remove some variables with attached source-level debug information.
@@ -179,6 +182,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createLoopSimplifyPass());
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createRPOFunctionAttrsAnalysis());
+  Passes.add(createPOFunctionAttrsAnalysis());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterSroaAnalysis);

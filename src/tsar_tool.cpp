@@ -18,7 +18,7 @@
 #include "tsar_test.h"
 #include "tsar_tool.h"
 #ifdef APC_FOUND
-# include <apc/apc-config.h>
+# include "tsar/APC/Utils.h"
 #endif
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/Tooling.h>
@@ -268,13 +268,7 @@ void Options::printVersion(raw_ostream &OS) {
   OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
   OS << "  version " << TSAR_VERSION_STRING << "\n";
 #ifdef APC_FOUND
-  OS << "  with APC (" << APC_HOMEPAGE_URL << "):\n";
-  OS << "    version " << APC_VERSION_STRING << "\n";
-  OS << "    language ";
-# ifdef APC_C
-  OS << "C";
-# endif
-  OS << "\n";
+  OS << "  with "; printAPCVersion(OS);
 #endif
 #ifdef lp_solve_FOUND
   OS << "  with lp_solve(" << LP_SOLVE_HOMEPAGE_URL << "):\n";

@@ -55,6 +55,10 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeClangAnalysis(Registry);
   // Initialize source-level transform passes.
   initializeClangTransform(Registry);
+  // Initialize parallelization passes.
+#ifdef APC_FOUND
+  initializeAPC(Registry);
+#endif
   // Initialize necessary LLVM passes.
   initializeUnreachableBlockElimLegacyPassPass(Registry);
   initializeCanonicalLoopPassPass(Registry);

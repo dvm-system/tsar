@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This file contains definitions that is necessary to combine TSAR and LLVM.
-// It contains declarations definitions of functions that initialize and
+// It contains declarations of functions that initialize and
 // create an instances of TSAR passes.
 //
 //===----------------------------------------------------------------------===//
@@ -15,6 +15,10 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
+#include "tsar_config.h"
+#ifdef APC_FOUND
+# include "tsar/APC/Passes.h"
+#endif
 
 namespace bcl {
 class IntrusiveConnection;
