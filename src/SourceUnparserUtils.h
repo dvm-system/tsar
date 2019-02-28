@@ -16,6 +16,9 @@
 
 namespace llvm {
 class raw_ostream;
+class DominatorTree;
+class CallSite;
+class Module;
 }
 
 namespace tsar {
@@ -34,5 +37,10 @@ bool unparsePrint(unsigned DWLang,
 /// Unparses the expression (in a specified language DWLang) and prints result
 /// to the debug stream returns true on success.
 bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc);
+
+/// Unparses callee and appends result to a specified string,
+/// returns true on success.
+bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
+  llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S);
 }
 #endif//TSAR_SOURCE_UNPARSER_UTILS_H

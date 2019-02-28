@@ -11,9 +11,12 @@
 
 #include "SourceUnparserUtils.h"
 #include "CSourceUnparser.h"
+#include "DIEstimateMemory.h"
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/CallSite.h>
 
 using namespace llvm;
 
@@ -87,5 +90,20 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
     llvm_unreachable("Unparsing of Fortran metadata is not implemented yet!");
   }
   return false;
+}
+
+bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
+    llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S) {
+  auto Callee = CS.getCalledValue()->stripPointerCasts();
+  if (auto F = dyn_cast<Function>(Callee)) {
+    S.assign(F->getName().begin(), F->getName().end());
+    return true;
+  }
+  auto DIM = buildDIMemory(MemoryLocation(Callee),
+    M.getContext(), M.getDataLayout(), DT);
+  if (DIM && DIM->isValid())
+    if (auto DWLang = getLanguage(*DIM->Var))
+      return unparseToString(*DWLang, *DIM, S);
+   return false;
 }
 }
