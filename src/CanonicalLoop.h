@@ -17,7 +17,9 @@
 #include "tsar_utility.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/Pass.h>
 #include <set>
 
@@ -34,6 +36,8 @@ namespace tsar {
 class DFLoop;
 class DFNode;
 
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
 ///\brief A Loop syntactically written in canonical form.
 ///
 /// This loop in a source code has a head like
@@ -41,7 +45,16 @@ class DFNode;
 /// However, some conditions may be semantically violated. To obtain
 /// accurate information CanonicalLoopInfo::isCanonical() should be used.
 class CanonicalLoopInfo : private bcl::Uncopyable {
+  enum Flags : uint8_t {
+    DefaultFlags = 0,
+    IsCanonical = 1u << 0,
+    IsSigned = 1u << 1,
+    IsUnsigned = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(IsUnsigned)
+  };
 public:
+  using Predicate = llvm::CmpInst::Predicate;
+
   /// Creates information for a specified syntactically canonical loop.
   explicit CanonicalLoopInfo(DFLoop *L, clang::ForStmt *For = nullptr) :
     mLoop(L), mASTLoop(For) {
@@ -49,10 +62,10 @@ public:
   }
 
   /// Returns true if this loop is semantically canonical.
-  bool isCanonical() const noexcept { return mIsCanonical; }
+  bool isCanonical() const noexcept { return mFlags & IsCanonical; }
 
   /// Marks this syntactically canonical loop as semantically canonical.
-  void markAsCanonical() noexcept { mIsCanonical = true; }
+  void markAsCanonical() noexcept { mFlags |= IsCanonical; }
 
   /// Returns low-level representation of the loop.
   DFLoop * getLoop() noexcept { return mLoop; }
@@ -80,14 +93,32 @@ public:
   void setEnd(llvm::Value *End) noexcept { mEnd = End; }
   void setStep(const llvm::SCEV *Step) noexcept { mStep = Step; }
 
+  /// Returns comparison predicate.
+  Predicate getPredicate() const noexcept { return mPredicate; }
+
+  /// Set comparison predicate.
+  void setPredicate(Predicate P) noexcept { mPredicate = P; }
+
+  /// Returns true if comparison is signed.
+  bool isSigned() const { return mFlags & IsSigned; }
+  void markAsSigned() { mFlags &= ~IsUnsigned; mFlags |= IsSigned; }
+
+  /// Returns true if comparison is unsigned.
+  bool isUnsigned() const { return mFlags & IsUnsigned; }
+  void markAsUnsigned() { mFlags &= ~IsSigned; mFlags |= IsUnsigned; }
+
+  /// Drops sign property for comparison operation.
+  void markAsUnknownSign() { mFlags &= ~(IsSigned | IsUnsigned); }
+
 private:
   DFLoop *mLoop;
   clang::ForStmt *mASTLoop;
-  bool mIsCanonical = false;
+  Flags mFlags = DefaultFlags;
   llvm::Value *mInduction = nullptr;
   llvm::Value *mStart = nullptr;
   llvm::Value *mEnd = nullptr;
   const llvm::SCEV *mStep = nullptr;
+  Predicate mPredicate = Predicate::BAD_ICMP_PREDICATE;
 };
 
 /// Replacement of default llvm::DenseMapInfo<CanonicalLoopInfo *>.

@@ -413,6 +413,14 @@ private:
     assert(Init && "Init instruction should not be nullptr!");
     Instruction *Condition = findLastCmp(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
+    if (auto CmpI = dyn_cast<CmpInst>(Condition)) {
+      if (CmpI->isSigned())
+        LInfo->markAsSigned();
+      else if (CmpI->isUnsigned())
+        LInfo->markAsUnsigned();
+      // TODO (kaniandr@gmail.com): use Clang to determine sign if possible.
+      // Note, that equal comparison in LLVM has no sign.
+    }
     auto *LatchBB = L->getLoopLatch();
     Instruction *Increment = nullptr;
     for (auto *BB: L->blocks()) {
@@ -499,6 +507,13 @@ private:
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
     LInfo->setEnd(Expr);
+    if (Expr && Condition->getNumOperands() == 2)
+      if (auto CmpI = dyn_cast<CmpInst>(Condition)) {
+        if (CmpI->getOperand(0) == Expr)
+          LInfo->setPredicate(CmpI->getInversePredicate());
+        else
+          LInfo->setPredicate(CmpI->getPredicate());
+      }
     LLVM_DEBUG(
       if (Expr) {
         dbgs() << "[CANONICAL LOOP]: upper bound of induction variable is ";
