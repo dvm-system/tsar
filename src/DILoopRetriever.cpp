@@ -9,6 +9,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "KnownFunctionTraits.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
 #include <bcl/utility.h>
@@ -42,6 +43,22 @@ public:
     AU.setPreservesAll();
   }
 };
+
+/// Returns first known location in a specified range.
+/// This function ignores debug and memory marker intrinsics.
+template<class ItrT>
+DebugLoc firstInRange(const ItrT &BeginItr, const ItrT &EndItr) {
+  for (auto I = BeginItr; I != EndItr; ++I) {
+    if (!I->getDebugLoc())
+      continue;
+    if (auto II = dyn_cast<IntrinsicInst>(&*I))
+      if (isDbgInfoIntrinsic(II->getIntrinsicID()) ||
+          isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+            continue;
+    return I->getDebugLoc();
+  }
+  return DebugLoc();
+}
 }
 char DILoopRetrieverPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DILoopRetrieverPass, "loop-diretriever",
@@ -63,49 +80,33 @@ bool DILoopRetrieverPass::runOnLoop(Loop *L, LPPassManager &LPM) {
       MDs.push_back(Node);
     }
   }
-  auto *F = L->getHeader()->getParent();
+  auto Header = L->getHeader();
+  assert(Header && "Header of the loop must not be null!");
+  auto *F = Header->getParent();
   assert(F && "Function which is owner of a loop must not be null!");
   auto DISub = F->getSubprogram();
   auto StabLoc = DISub ?
     DILocation::get(F->getContext(), 0, 0, DISub->getScope()) : nullptr;
-  auto DWLang = getLanguage(*F);
-  if (DWLang && isFortran(*DWLang)) {
-    bool NeedStabLoc = true;
-    if (auto Preheader = L->getLoopPreheader()) {
-      auto I = Preheader->rbegin();
-      ++I;
-      if (I->getDebugLoc() && I->getDebugLoc().get()) {
-        MDs.push_back(I->getDebugLoc().get());
-        NeedStabLoc = false;
-      }
-    }
-    if (auto Latch = L->getLoopLatch()) {
-      auto TI = Latch->getTerminator();
-      assert(TI && "Basic block is not well formed!");
-      if (TI->getDebugLoc() && TI->getDebugLoc().get()) {
-        if (NeedStabLoc && StabLoc) {
-          MDs.push_back(StabLoc);
-          MDs.push_back(TI->getDebugLoc().get());
-        } else if (!NeedStabLoc) {
-          MDs.push_back(TI->getDebugLoc().get());
-        }
-      }
-    }
-  }
-  if (!isFortran(*DWLang) || MDs.size() == 1 || !isa<DILocation>(MDs.back())) {
-    auto LocRange = L->getLocRange();
-    LocRange.getStart().getAsMDNode();
-    bool NeedStabLoc = true;
-    if (LocRange.getStart() && LocRange.getStart().get()) {
-      MDs.push_back(LocRange.getStart().get());
+  bool NeedStabLoc = true;
+  if (auto PreBB = L->getLoopPredecessor())
+    if (auto Loc = firstInRange(PreBB->rbegin(), PreBB->rend())) {
+      MDs.push_back(Loc.getAsMDNode());
       NeedStabLoc = false;
     }
-    if (LocRange.getEnd() && LocRange.getEnd().get()) {
+  if (NeedStabLoc)
+    if (auto Loc = firstInRange(Header->begin(), Header->end())) {
+      MDs.push_back(Loc.getAsMDNode());
+      NeedStabLoc = false;
+    }
+  if (auto Latch = L->getLoopLatch()) {
+    auto TI = Latch->getTerminator();
+    assert(TI && "Basic block is not well formed!");
+    if (TI->getDebugLoc()) {
       if (NeedStabLoc && StabLoc) {
         MDs.push_back(StabLoc);
-        MDs.push_back(LocRange.getEnd().get());
+        MDs.push_back(TI->getDebugLoc().getAsMDNode());
       } else if (!NeedStabLoc) {
-        MDs.push_back(LocRange.getEnd().get());
+        MDs.push_back(TI->getDebugLoc().getAsMDNode());
       }
     }
   }
