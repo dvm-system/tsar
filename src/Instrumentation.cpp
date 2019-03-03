@@ -190,13 +190,11 @@ void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
 
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
-  auto MD = findMetadata(&I);
+  SmallVector<DIMemoryLocation, 1> DILocs;
+  auto DIM = findMetadata(&I, DILocs);
   auto Idx = mDIStrings.regItem(&I);
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
-  Optional<DIMemoryLocation> DIM;
-  if (MD)
-    DIM = DIMemoryLocation(MD, DIExpression::get(I.getContext(), {}));
   regValue(&I, I.getAllocatedType(), DIM ? &*DIM : nullptr,
     Idx, *InsertBefore, *I.getModule());
 }
@@ -563,8 +561,11 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     auto *Alloca = dyn_cast<AllocaInst>(U->getPointerOperand());
     if (!Alloca)
       continue;
-    auto AllocaMD = findMetadata(Alloca);
-    if (!AllocaMD || !AllocaMD->isParameter())
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    auto DIM = findMetadata(Alloca, DILocs);
+    assert(!DIM || DIM->isValid() && isa<DILocalVariable>(DIM->Var) &&
+      "Invalid metadata for 'alloca' instruction!");
+    if (!DIM || !cast<DILocalVariable>(DIM->Var)->isParameter())
       continue;
     LLVM_DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
       dbgs() << " as argument "; Arg.print(dbgs());
@@ -965,10 +966,8 @@ void Instrumentation::regGlobals(Module& M) {
       continue;
     ++RegisteredGLobals;
     auto Idx = mDIStrings.regItem(&(*I));
-    auto *MD = findMetadata(&*I);
-    Optional<DIMemoryLocation> DIM;
-    if (MD)
-      DIM = DIMemoryLocation(MD, DIExpression::get(M.getContext(), {}));
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    auto DIM = findMetadata(&*I, DILocs);
     regValue(&*I, I->getValueType(), DIM ? &*DIM : nullptr, Idx, *RetInst, M);
   }
   if (RegisteredGLobals == 0)

@@ -208,10 +208,19 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
     SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT) {
   assert(V && "Value must not be null!");
   DILocs.clear();
-  if (auto AI = dyn_cast<AllocaInst>(V)) {
-    auto DIVar = findMetadata(AI);
+  auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
+  if (!AddrUses.empty()) {
+    auto DIVar = AddrUses.front()->getVariable();
     if (DIVar) {
-      DILocs.emplace_back(DIVar, DIExpression::get(DIVar->getContext(), {}));
+      for (auto DbgI : AddrUses) {
+        if (DbgI->getVariable() != DIVar ||
+            DbgI->getExpression() != AddrUses.front()->getExpression())
+        return None;
+      }
+      auto DIM = DIMemoryLocation::get(AddrUses.front());
+      if (!DIM.isValid())
+        return None;
+      DILocs.push_back(std::move(DIM));
       return DILocs.back();
     }
     return None;

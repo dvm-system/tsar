@@ -354,11 +354,11 @@ llvm::DILocalVariable * findMetadata(const llvm::AllocaInst *AI);
 ///
 /// \param [in] V Analyzed value.
 /// \param [in] DT If it is specified then llvm.dbg.value will be analyzed if
-/// necessary. Otherwise llvm.dbg.declare and global variables will be
-/// analyzed only.
+/// necessary. Otherwise llvm.dbg.declare, llvm.dbg.address and global
+/// variables will be analyzed only.
 /// \param [out] DILocs This will contain all metadata-level locations which are
-/// associated with a specified value. For this reason llvm.dbg.value and
-/// llvm.dbg.declare intrinsics will be analyzed. Intrinsics which dominates all
+/// associated with a specified value. For this reason llvm.dbg. ...
+/// intrinsics will be analyzed. Intrinsics which dominates all
 /// uses of `V` will be only considered. The condition mentioned bellow is also
 /// checked. Let us consider some llvm.dbg.value `I` which dominates all uses of
 /// `V` and associates a metadata-level `DILoc` with `V`. Paths from `I` to each

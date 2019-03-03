@@ -58,10 +58,10 @@ struct DIMemoryLocation {
   bool Template = false;
 
   /// Determines which memory location is exhibits by a specified instruction.
-  static inline DIMemoryLocation get(llvm::DbgValueInst *Inst) {
+  static inline DIMemoryLocation get(llvm::DbgInfoIntrinsic *Inst) {
     assert(Inst && "Instruction must not be null!");
     return {
-      llvm::cast<llvm::DIVariable>(Inst->getVariable()),
+      llvm::cast_or_null<llvm::DIVariable>(Inst->getVariable()),
       Inst->getExpression()
     };
   }
