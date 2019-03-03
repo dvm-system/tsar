@@ -553,29 +553,36 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
   auto InstrMD = MDNode::get(F.getContext(), {});
   auto *BytePtrTy = Type::getInt8PtrTy(F.getContext());
   for (auto &Arg : F.args()) {
-    if (Arg.getNumUses() != 1)
-      continue;
-    auto *U = dyn_cast<StoreInst>(*Arg.user_begin());
-    if (!U)
-      continue;
-    auto *Alloca = dyn_cast<AllocaInst>(U->getPointerOperand());
-    if (!Alloca)
-      continue;
     SmallVector<DIMemoryLocation, 1> DILocs;
-    auto DIM = findMetadata(Alloca, DILocs);
+    auto DIM = findMetadata(&Arg, DILocs);
+    Value *ArgValue = &Arg;
+    auto *InsertBefore = &*F.begin()->begin();
+    if (!DIM) {
+      if (Arg.getNumUses() != 1)
+        continue;
+      auto *U = dyn_cast<StoreInst>(*Arg.user_begin());
+      if (!U)
+        continue;
+      InsertBefore = U;
+      ArgValue = dyn_cast<AllocaInst>(U->getPointerOperand());
+      if (!ArgValue)
+        continue;
+      auto DIM = findMetadata(ArgValue, DILocs);
+    }
     assert(!DIM || DIM->isValid() && isa<DILocalVariable>(DIM->Var) &&
-      "Invalid metadata for 'alloca' instruction!");
+      "Invalid metadata!");
     if (!DIM || !cast<DILocalVariable>(DIM->Var)->isParameter())
       continue;
-    LLVM_DEBUG(dbgs() << "[INSTR]: register "; Alloca->print(dbgs());
+    LLVM_DEBUG(dbgs() << "[INSTR]: register "; ArgValue->print(dbgs());
       dbgs() << " as argument "; Arg.print(dbgs());
       dbgs() << " with no " << Arg.getArgNo() << "\n");
-    auto AllocaAddr =
-      new BitCastInst(Alloca, BytePtrTy, Alloca->getName() + ".addr", U);
-    AllocaAddr->setMetadata("sapfor.da", InstrMD);
+    auto ArgAddr = new BitCastInst(
+      ArgValue, BytePtrTy, ArgValue->getName() + ".addr", InsertBefore);
+    ArgAddr->setMetadata("sapfor.da", InstrMD);
     unsigned Rank;
     uint64_t ArraySize;
-    std::tie(Rank, ArraySize) = arraySize(Alloca->getAllocatedType());
+    std::tie(Rank, ArraySize) = arraySize(isa<AllocaInst>(ArgValue) ?
+      cast<AllocaInst>(ArgValue)->getAllocatedType() : ArgValue->getType());
     CallInst *Call = nullptr;
     if (Rank != 0) {
       auto Func = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_arr);
@@ -583,15 +590,15 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
       assert(FuncTy->getNumParams() > 3 && "Too few arguments!");
       auto Size = ConstantInt::get(FuncTy->getParamType(1), ArraySize);
       auto Pos = ConstantInt::get(FuncTy->getParamType(3), Arg.getArgNo());
-      Call = CallInst::Create(Func, { DIFunc, Size, AllocaAddr, Pos }, "");
+      Call = CallInst::Create(Func, { DIFunc, Size, ArgAddr, Pos }, "");
     } else {
       auto Func = getDeclaration(F.getParent(), IntrinsicId::reg_dummy_var);
       auto FuncTy = Func->getFunctionType();
       assert(FuncTy->getNumParams() > 2 && "Too few arguments!");
       auto Pos = ConstantInt::get(FuncTy->getParamType(2), Arg.getArgNo());
-      Call = CallInst::Create(Func, { DIFunc, AllocaAddr, Pos }, "");
+      Call = CallInst::Create(Func, { DIFunc, ArgAddr, Pos }, "");
     }
-    Call->insertBefore(U);
+    Call->insertBefore(InsertBefore);
     Call->setMetadata("sapfor.da", InstrMD);
   }
 }

@@ -204,6 +204,7 @@ inline unsigned dimensionsNum(const llvm::Type *Ty) {
 /// Returns number of dimensions and elements in a specified type or 0,1 if it
 /// is not an array type.
 inline std::pair<unsigned, uint64_t> arraySize(const llvm::Type *Ty) {
+  assert(Ty && "Type must not be null!");
   unsigned Dims = 0;
   uint64_t NumElements = 1;
   for (; Ty->isArrayTy(); Ty = Ty->getArrayElementType(), ++Dims)
