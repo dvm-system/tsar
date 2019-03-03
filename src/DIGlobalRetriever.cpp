@@ -83,7 +83,8 @@ bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
   auto *FileCU = CU ? CU->getFile() : nullptr;
   DIBuilder DIB(M);
   for (auto &GlobalVar : M.globals()) {
-    if (auto *MD = findMetadata(&GlobalVar))
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    if (findGlobalMetadata(&GlobalVar, DILocs))
       continue;
     DIFile *File = FileCU;
     unsigned Line = 0;

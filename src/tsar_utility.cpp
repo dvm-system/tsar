@@ -189,19 +189,21 @@ DISubprogram *findMetadata(const Function *F) {
   return dyn_cast_or_null<DISubprogram>(F->getMetadata("sapfor.dbg"));
 }
 
-DIGlobalVariable *findMetadata(const GlobalVariable *Var) {
+bool findGlobalMetadata(const GlobalVariable *Var,
+    SmallVectorImpl<DIMemoryLocation> &DILocs) {
   assert(Var && "Variable must not be null!");
-  auto MD = Var->getMetadata(LLVMContext::MD_dbg);
-  MD = MD ? MD : Var->getMetadata("sapfor.dbg");
-  if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD))
-    return DIExpr->getVariable();
-  return nullptr;
-}
-
-DILocalVariable *findMetadata(const AllocaInst *AI) {
-  assert(AI && "Alloca must not be null!");
-  auto DIIList = FindDbgAddrUses(const_cast<AllocaInst *>(AI));
-  return DIIList.size() == 1 ? DIIList.front()->getVariable() : nullptr;
+  SmallVector<MDNode *, 1> MDs;
+  Var->getMetadata(LLVMContext::MD_dbg, MDs);
+  if (MDs.empty())
+    Var->getMetadata("sapfor.dbg", MDs);
+  bool IsChanged = false;
+  for (auto *MD : MDs) {
+    if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD)) {
+      DILocs.emplace_back(DIExpr->getVariable(), DIExpr->getExpression());
+      IsChanged = true;
+    }
+  }
+  return IsChanged;
 }
 
 Optional<DIMemoryLocation> findMetadata(const Value * V,
@@ -226,12 +228,10 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
     return None;
   }
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
-    auto DIVar = findMetadata(GV);
-    if (DIVar) {
-      DILocs.emplace_back(DIVar, DIExpression::get(DIVar->getContext(), {}));
+    if (findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
       return DILocs.back();
-    }
-    return None;
+    else
+      return None;
   }
   if (!DT)
     return None;
