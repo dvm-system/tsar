@@ -84,7 +84,7 @@ bool DILoopRetrieverPass::runOnLoop(Loop *L, LPPassManager &LPM) {
   assert(Header && "Header of the loop must not be null!");
   auto *F = Header->getParent();
   assert(F && "Function which is owner of a loop must not be null!");
-  auto DISub = F->getSubprogram();
+  auto DISub = findMetadata(F);
   auto StabLoc = DISub ?
     DILocation::get(F->getContext(), 0, 0, DISub->getScope()) : nullptr;
   bool NeedStabLoc = true;
