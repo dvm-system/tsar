@@ -76,14 +76,15 @@ public:
   explicit ItemRegister(IdTy FirstId = 0) noexcept : mIdNum(FirstId) {}
 
   /// Registers a new item if it has not been registered yet and
-  /// returns its ID.
+  /// returns its ID. The second return value is `true` if the item has not been
+  /// registered yet.
   template<class Ty>
-  IdTy regItem(const Ty &Item) {
+  std::pair<IdTy, bool> regItem(const Ty &Item) {
     auto Pair =
       mRegisters.template value<RegisterKey<Ty>>().try_emplace(Item, mIdNum);
     if (Pair.second)
       ++mIdNum;
-    return Pair.first->template get<IdTy>();
+    return std::make_pair(Pair.first->template get<IdTy>(), Pair.second);
   }
 
   /// Returns number of items that have been registered.

@@ -192,7 +192,7 @@ void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
   LLVM_DEBUG(dbgs() << "[INSTR]: process "; I.print(dbgs()); dbgs() << "\n");
   SmallVector<DIMemoryLocation, 1> DILocs;
   auto DIM = findMetadata(&I, DILocs);
-  auto Idx = mDIStrings.regItem(&I);
+  auto Idx = mDIStrings.regItem(&I).first;
   BasicBlock::iterator InsertBefore(I);
   ++InsertBefore;
   regValue(&I, I.getAllocatedType(), DIM ? &*DIM : nullptr,
@@ -474,7 +474,7 @@ void Instrumentation::regLoops(llvm::Function &F, llvm::LoopInfo &LI,
     DFRegionInfo &RI, const CanonicalLoopSet &CS) {
   for_each_loop(LI, [this, &SE, &DT, &RI, &CS, &F](Loop *L) {
     LLVM_DEBUG(dbgs()<<"[INSTR]: process loop " << L->getHeader()->getName() <<"\n");
-    auto Idx = mDIStrings.regItem(LoopUnique(&F, L));
+    auto Idx = mDIStrings.regItem(LoopUnique(&F, L)).first;
     loopBeginInstr(L, Idx, SE, DT, RI, CS);
     loopEndInstr(L, Idx);
     loopIterInstr(L, Idx);
@@ -510,7 +510,7 @@ void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
     ("line1=" + Twine(MD->getLine()) + "*" +
       "name1=" + MD->getName() + "*").str();
   auto Filename = MD ? MD->getFilename() : StringRef(M.getSourceFileName());
-  auto ReturnTypeId = mTypes.regItem(ReturnTy);
+  auto ReturnTypeId = mTypes.regItem(ReturnTy).first;
   createInitDICall(Twine("type=") + "function" + "*" +
     "file=" + Filename + "*" +
     "vtype=" + Twine(ReturnTypeId) + "*" +
@@ -620,7 +620,8 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
       return;
     FuncIdx = mDIStrings[Callee];
   } else {
-    FuncIdx = mDIStrings.regItem(CS.getCalledValue());
+    auto Info = mDIStrings.regItem(CS.getCalledValue());
+    FuncIdx = Info.first;
   }
   auto *Inst = CS.getInstruction();
   LLVM_DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
@@ -650,13 +651,16 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
   } else if (auto GV = dyn_cast<GlobalVariable>(BasePtr)) {
     OpIdx = mDIStrings[GV];
   } else {
-    OpIdx = mDIStrings.regItem(BasePtr);
-    auto M = InsertBefore.getModule();
-    assert(mDT && "Dominator tree must not be null!");
-    auto DIM =
-      buildDIMemory(MemoryLocation(BasePtr), Ctx, M->getDataLayout(), *mDT);
-    regValue(BasePtr, BasePtr->getType(), DIM ? &*DIM : nullptr,
-      OpIdx, InsertBefore, *InsertBefore.getModule());
+    auto Info = mDIStrings.regItem(BasePtr);
+    OpIdx = Info.first;
+    if (Info.second) {
+      auto M = InsertBefore.getModule();
+      assert(mDT && "Dominator tree must not be null!");
+      auto DIM =
+        buildDIMemory(MemoryLocation(BasePtr), Ctx, M->getDataLayout(), *mDT);
+      regValue(BasePtr, BasePtr->getType(), DIM ? &*DIM : nullptr,
+        OpIdx, InsertBefore, *InsertBefore.getModule());
+    }
   }
   auto DbgLocIdx = regDebugLoc(DbgLoc);
   auto DILoc = createPointerToDI(DbgLocIdx, InsertBefore);
@@ -883,15 +887,17 @@ auto Instrumentation::regDebugLoc(
   // We use reserved index if source location is unknown.
   if (!DbgLoc)
     return DIStringRegister::indexOfItemType<DILocation *>();
-  auto DbgLocIdx = mDIStrings.regItem(DbgLoc.get());
+  auto DbgLocInfo = mDIStrings.regItem(DbgLoc.get());
+  if (!DbgLocInfo.second)
+    return DbgLocInfo.first;
   auto *Scope = cast<DIScope>(DbgLoc->getScope());
   std::string ColStr = !DbgLoc.getCol() ? std::string("") :
     ("col1=" + Twine(DbgLoc.getCol()) + "*").str();
   createInitDICall(
     Twine("type=") + "file_name" + "*" +
     "file=" + Scope->getFilename() + "*" +
-    "line1=" + Twine(DbgLoc.getLine()) + "*" + ColStr + "*", DbgLocIdx);
-  return DbgLocIdx;
+    "line1=" + Twine(DbgLoc.getLine()) + "*" + ColStr + "*", DbgLocInfo.first);
+  return DbgLocInfo.first;
 }
 
 void Instrumentation::regValue(Value *V, Type *T, const DIMemoryLocation *DIM,
@@ -912,7 +918,7 @@ void Instrumentation::regValue(Value *V, Type *T, const DIMemoryLocation *DIM,
         NameStr = ("name1=" + DIName + "*").str();
       }
     }
-  unsigned TypeId = mTypes.regItem(T);
+  unsigned TypeId = mTypes.regItem(T).first;
   unsigned Rank;
   uint64_t ArraySize;
   std::tie(Rank, ArraySize) = arraySize(T);
@@ -954,7 +960,7 @@ void Instrumentation::regFunctions(Module& M) {
     if (isDbgInfoIntrinsic(F.getIntrinsicID()) ||
         isMemoryMarkerIntrinsic(F.getIntrinsicID()))
       continue;
-    auto Idx = mDIStrings.regItem(&F);
+    auto Idx = mDIStrings.regItem(&F).first;
     regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),
       F.getSubprogram(), Idx, M);
   }
@@ -972,7 +978,7 @@ void Instrumentation::regGlobals(Module& M) {
     if (I->getMetadata("sapfor.da"))
       continue;
     ++RegisteredGLobals;
-    auto Idx = mDIStrings.regItem(&(*I));
+    auto Idx = mDIStrings.regItem(&(*I)).first;
     SmallVector<DIMemoryLocation, 1> DILocs;
     auto DIM = findMetadata(&*I, DILocs);
     regValue(&*I, I->getValueType(), DIM ? &*DIM : nullptr, Idx, *RetInst, M);

@@ -197,9 +197,9 @@ private:
   /// Registers types which are used in a specified module.
   void regTypes(llvm::Module& M);
 
-  /// Registers a metadata string for a specified location. If this location is
-  /// nullptr, than previously reserved string is used. The function returns
-  /// index of the metadata string.
+  /// Registers a metadata string for a specified location if it has not been
+  /// registered yet. If this location is nullptr, than previously reserved
+  /// string is used. The function returns index of the metadata string.
   DIStringRegister::IdTy regDebugLoc(const llvm::DebugLoc &DbgLoc);
 
   /// \brief Inserts a call of sapforInitDI(...) and registers a specified
