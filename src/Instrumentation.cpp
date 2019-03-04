@@ -502,14 +502,24 @@ void Instrumentation::visit(Function &F) {
 }
 
 void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
-  DISubprogram *MD, DIStringRegister::IdTy Idx, Module &M) {
+  DINode *MD, DIStringRegister::IdTy Idx, Module &M) {
   LLVM_DEBUG(dbgs() << "[INSTR]: register function ";
     F.printAsOperand(dbgs()); dbgs() << "\n");
-  std::string DeclStr = !MD ? F.getName().empty() ? std::string("") :
-    (Twine("name1=") + F.getName() + "*").str() :
-    ("line1=" + Twine(MD->getLine()) + "*" +
-      "name1=" + MD->getName() + "*").str();
-  auto Filename = MD ? MD->getFilename() : StringRef(M.getSourceFileName());
+  std::string DeclStr;
+  StringRef Filename;
+  if (!MD) {
+    if (!F.getName().empty())
+      DeclStr = (Twine("name1=") + F.getName() + "*").str();
+    Filename = M.getSourceFileName();
+  } else if (auto DI = dyn_cast<DISubprogram>(MD)) {
+    DeclStr = ("line1=" + Twine(DI->getLine()) + "*" +
+      "name1=" + DI->getName() + "*").str();
+    Filename = DI->getFilename();
+  } else if (auto DI = dyn_cast<DIVariable>(MD)) {
+    DeclStr = ("line1=" + Twine(DI->getLine()) + "*" +
+      "name1=" + DI->getName() + "*").str();
+    Filename = DI->getFilename();
+  }
   auto ReturnTypeId = mTypes.regItem(ReturnTy).first;
   createInitDICall(Twine("type=") + "function" + "*" +
     "file=" + Filename + "*" +
@@ -608,6 +618,9 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
       isMemoryMarkerIntrinsic(CS.getIntrinsicID()))
     return;
   DIStringRegister::IdTy FuncIdx = 0;
+  auto *Inst = CS.getInstruction();
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
+  auto *M = Inst->getModule();
   if (auto *Callee = llvm::dyn_cast<llvm::Function>(
         CS.getCalledValue()->stripPointerCasts())) {
     IntrinsicId LibId;
@@ -620,15 +633,22 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
       return;
     FuncIdx = mDIStrings[Callee];
   } else {
-    auto Info = mDIStrings.regItem(CS.getCalledValue());
+    auto CalledValue = CS.getCalledValue();
+    auto Info = mDIStrings.regItem(CalledValue);
     FuncIdx = Info.first;
+    if (Info.second) {
+      auto FuncTy = CS.getFunctionType();
+      assert(FuncTy && "Function type must not be null!");
+      assert(mDT && "Dominator tree must not be null!");
+      auto DIM = buildDIMemory(MemoryLocation(CalledValue),
+        M->getContext(), M->getDataLayout(), *mDT);
+      regFunction(*CalledValue, FuncTy->getReturnType(), FuncTy->getNumParams(),
+        DIM ? DIM->Var : nullptr, FuncIdx, *M);
+    }
   }
-  auto *Inst = CS.getInstruction();
-  LLVM_DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
   auto DbgLocIdx = regDebugLoc(Inst->getDebugLoc());
   auto DILoc = createPointerToDI(DbgLocIdx, *Inst);
   auto DIFunc = createPointerToDI(FuncIdx, *Inst);
-  auto *M = Inst->getModule();
   auto Fun = getDeclaration(M, tsar::IntrinsicId::func_call_begin);
   auto CallBegin = llvm::CallInst::Create(Fun, {DILoc, DIFunc}, "", Inst);
   auto InstrMD = MDNode::get(M->getContext(), {});
@@ -962,7 +982,7 @@ void Instrumentation::regFunctions(Module& M) {
       continue;
     auto Idx = mDIStrings.regItem(&F).first;
     regFunction(F, F.getReturnType(), F.getFunctionType()->getNumParams(),
-      F.getSubprogram(), Idx, M);
+      findMetadata(&F), Idx, M);
   }
 }
 

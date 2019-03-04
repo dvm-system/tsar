@@ -146,7 +146,7 @@ private:
   /// A specified value `F` may not be a function, for example if a pointer is
   /// used in a call instruction.
   void regFunction(llvm::Value &F, llvm::Type *ReturnTy, unsigned Rank,
-    llvm::DISubprogram *MD, DIStringRegister::IdTy Idx, llvm::Module &M);
+    llvm::DINode *MD, DIStringRegister::IdTy Idx, llvm::Module &M);
 
   /// Registers arguments of a specified function which have not be promoted
   /// to registers.
