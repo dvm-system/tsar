@@ -101,9 +101,12 @@ bool InstrumentationPass::runOnModule(Module &M) {
       Wrapper.set(*MMWrapper);
   });
   Instrumentation::visit(M, *this);
-  if (auto EntryPoint = M.getFunction("main"))
-    visitEntryPoint(*EntryPoint, { &M });
-  else if (auto EntryPoint = M.getFunction("MAIN_"))
+  Function *EntryPoint = nullptr;
+  if (!mInstrEntry.empty())
+    EntryPoint = M.getFunction(mInstrEntry);
+  else if (!(EntryPoint = M.getFunction("main")))
+    EntryPoint = M.getFunction("MAIN_");
+  if (EntryPoint)
     visitEntryPoint(*EntryPoint, { &M });
   else
     M.getContext().diagnose(DiagnosticInfoInlineAsm("entry point is not found"));
@@ -116,8 +119,8 @@ void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<MemoryMatcherImmutableWrapper>();
 }
 
-ModulePass * llvm::createInstrumentationPass() {
-  return new InstrumentationPass();
+ModulePass * llvm::createInstrumentationPass(StringRef InstrEntry) {
+  return new InstrumentationPass(InstrEntry);
 }
 
 Function * tsar::createEmptyInitDI(Module &M, Type &IdTy) {

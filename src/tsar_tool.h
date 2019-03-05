@@ -102,6 +102,7 @@ private:
   std::string mOutputFilename;
   std::string mLanguage;
   std::string mOutputSuffix;
+  std::string mInstrEntry;
 };
 }
 #endif//TSAR_TOOL_H

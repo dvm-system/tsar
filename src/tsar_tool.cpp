@@ -81,6 +81,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::list<std::string> MacroDefs;
   llvm::cl::opt<std::string> LanguageStd;
   llvm::cl::opt<bool> InstrLLVM;
+  llvm::cl::opt<std::string> InstrEntry;
   llvm::cl::opt<bool> EmitAST;
   llvm::cl::opt<bool> MergeAST;
   llvm::cl::alias MergeASTA;
@@ -136,6 +137,8 @@ Options::Options() :
     cl::desc("Language standard to compile for")),
   InstrLLVM("instr-llvm", cl::cat(CompileCategory),
     cl::desc("Perform low-level (LLVM IR) instrumentation")),
+  InstrEntry("instr-entry", cl::cat(CompileCategory), cl::value_desc("function"),
+    cl::desc("Name of a function where to place metadata initialization")),
   EmitAST("emit-ast", cl::cat(CompileCategory),
     cl::desc("Emit Clang AST files for source inputs")),
   MergeAST("merge-ast", cl::cat(CompileCategory),
@@ -288,8 +291,8 @@ inline static EmitLLVMQueryManager * getEmitLLVMQM() {
   return &QM;
 }
 
-inline static InstrLLVMQueryManager * getInstrLLVMQM() {
-  static InstrLLVMQueryManager QM;
+inline static InstrLLVMQueryManager * getInstrLLVMQM(StringRef InstrEntry) {
+  static InstrLLVMQueryManager QM(InstrEntry);
   return &QM;
 }
 
@@ -407,6 +410,11 @@ void Tool::storeCLOptions() {
   mOutputPasses = Options::get().OutputPasses;
   mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
+  mInstrEntry = Options::get().InstrEntry;
+  if (!mInstrLLVM && !mInstrEntry.empty()) {
+    IncompatibleOpts.push_back(&Options::get().InstrEntry);
+    LLIncompatibleOpts.push_back(&Options::get().InstrEntry);
+  }
   mCheck = addLLIfSet(Options::get().Check);
   mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
@@ -513,7 +521,7 @@ int Tool::run(QueryManager *QM) {
     if (mEmitLLVM)
       QM = getEmitLLVMQM();
     else if (mInstrLLVM)
-      QM = getInstrLLVMQM();
+      QM = getInstrLLVMQM(mInstrEntry);
     else if (mTest)
       QM = getTestQM();
     else if (mTfmPass)

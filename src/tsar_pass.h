@@ -169,7 +169,7 @@ ImmutablePass * createTransformationEnginePass();
 void initializeInstrumentationPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
-ModulePass * createInstrumentationPass();
+ModulePass * createInstrumentationPass(llvm::StringRef InstrEntry = "");
 
 /// Initialize a pass to match high-level and low-level loops.
 void initializeLoopMatcherPassPass(PassRegistry &Registry);

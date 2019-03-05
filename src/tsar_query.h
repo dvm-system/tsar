@@ -206,7 +206,14 @@ protected:
 /// This performs instrumentation of LLVM IR and prints it to the standard
 /// output stream after instrumentation.
 class InstrLLVMQueryManager : public EmitLLVMQueryManager {
+public:
+  explicit InstrLLVMQueryManager(llvm::StringRef InstrEntry = "") :
+    mInstrEntry(InstrEntry) {}
+
   void run(llvm::Module *M, tsar::TransformationContext *) override;
+
+private:
+  std::string mInstrEntry;
 };
 
 /// This performs a specified source-level transformation.

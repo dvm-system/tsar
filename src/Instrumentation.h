@@ -37,11 +37,21 @@ public:
     initializeInstrumentationPassPass(*PassRegistry::getPassRegistry());
   }
 
+  /// This construction specifies a function
+  /// where should be placed initialization of metadata.
+  InstrumentationPass(llvm::StringRef InstrEntry) :
+      ModulePass(ID), mInstrEntry(InstrEntry) {
+    initializeInstrumentationPassPass(*PassRegistry::getPassRegistry());
+  }
+
   /// Implements the per-module instrumentation pass.
   bool runOnModule(Module &M) override;
 
   /// Set analysis information that is necessary to run this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  std::string mInstrEntry;
 };
 }
 
