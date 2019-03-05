@@ -148,7 +148,7 @@ private:
   void regFunction(llvm::Value &F, llvm::Type *ReturnTy, unsigned Rank,
     llvm::DINode *MD, DIStringRegister::IdTy Idx, llvm::Module &M);
 
-  /// Registers arguments of a specified function which have not be promoted
+  /// Registers arguments of a specified function which have not been promoted
   /// to registers.
   void regArgs(llvm::Function &F, llvm::LoadInst *DIFunc);
 
@@ -167,11 +167,21 @@ private:
   /// \brief Registers a metadata string and a variable.
   ///
   /// \post Insert calls of `sapforInitDI` and `sapforRegVar/sapforRegArr`.
+  void regValue(llvm::Value *V, llvm::Type *T, llvm::Value *ArraySize,
+    const DIMemoryLocation *DIM, DIStringRegister::IdTy Idx,
+    llvm::Instruction &InsertBefore, llvm::Module &M);
+
+  /// Prepare arguments to register a specified value.
+  ///
   /// \param [in] V IR-level description of the variable.
   /// \param [in] T Type of the variable. Note, the this must be a type of a
   /// variable, not a pointer to the variable. In case of `alloca` this type
   /// is 'allocated type' and in case of global variable this type is
   /// 'value type'.
+  /// \param [in] ArraySize Number of allocated elements of a type T and
+  /// start adress V.
+  /// \param [in] SizeArgTy Type of ArraySize parameter in registration
+  /// intrinsic, for example in `sapforRegArr`.
   /// \param [in] DIM Debug information for the registered memory location.
   /// It may be `nullptr`. In this case some information for the variable will
   /// not be available after instrumentation.
@@ -179,9 +189,13 @@ private:
   /// \param [in] InsertBefore This instruction identify position to insert
   /// necessary instructions.
   /// \param [in] M A module which is processed.
-  void regValue(llvm::Value *V, llvm::Type *T, const DIMemoryLocation *DIM,
-    DIStringRegister::IdTy Idx, llvm::Instruction &InsertBefore,
-    llvm::Module &M);
+  /// \param [out] Args General arguments which is necessary to register
+  /// scalar/array variable.
+  void regValueArgs(llvm::Value *V, llvm::Type *T,
+    llvm::Value *ArraySize, llvm::Type *SizeArgTy,
+    const DIMemoryLocation *DIM, DIStringRegister::IdTy Idx,
+    llvm::Instruction &InsertBefore, llvm::Module &M,
+    llvm::SmallVectorImpl<llvm::Value *> &Args);
 
   /// Registers a metadata string for each declared function (except functions
   /// which are marked with 'sapfor.da' metadata).

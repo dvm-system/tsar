@@ -201,15 +201,17 @@ inline unsigned dimensionsNum(const llvm::Type *Ty) {
   return Dims;
 }
 
-/// Returns number of dimensions and elements in a specified type or 0,1 if it
-/// is not an array type.
-inline std::pair<unsigned, uint64_t> arraySize(const llvm::Type *Ty) {
+/// Returns number of dimensions and elements in a specified type and type of
+/// innermost array element. If `Ty` is not an array type this function reutrns
+/// or 0,1, Ty.
+inline std::tuple<unsigned, uint64_t, llvm::Type *>
+arraySize(llvm::Type *Ty) {
   assert(Ty && "Type must not be null!");
   unsigned Dims = 0;
   uint64_t NumElements = 1;
   for (; Ty->isArrayTy(); Ty = Ty->getArrayElementType(), ++Dims)
     NumElements *= llvm::cast<llvm::ArrayType>(Ty)->getArrayNumElements();
-  return std::make_pair(Dims, NumElements);
+  return std::make_tuple(Dims, NumElements, Ty);
 }
 
 /// Returns size of type, in address units, type must not be null.

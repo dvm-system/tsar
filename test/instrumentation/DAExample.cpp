@@ -12,6 +12,8 @@
 // (2) clang -std=c++11 Example.ll DAExample.cpp
 // (3) ./a.out or Example.exe (in case of Windows)
 //
+// Note: use clang-cl on Windows OS.
+//
 //===----------------------------------------------------------------------===//
 
 #include <cstdint>
@@ -87,16 +89,18 @@ void sapforFuncEnd(void *DIFunc) {
   printf("DIFunc = %s\n\n", DIFunc);
 }  
 
-void sapforRegDummyVar(void *DIFunc, void *Addr, uint64_t Position) {
+void sapforRegDummyVar(void *DIVar, void *Addr, void *DIFunc,
+    uint64_t Position) {
   printf("called sapforRegDummyVar\n");
-  printf("DIFunc = %s\nPosition = %ju\n\n", DIFunc, Position);
+  printf("DIVar = %s\nDIFunc = %s\nPosition = %zu\n\n",
+    DIVar, DIFunc, Position);
 }
 
-void sapforRegDummyArr(void *DIFunc, uint64_t ArrSize,
-    void *Addr, uint64_t Position) {
+void sapforRegDummyArr(void *DIVar, uint64_t ArrSize, void* Addr,
+    void *DIFunc, uint64_t Position) {
   printf("called sapforRegDummyArr\n");
-  printf("DIFunc = %s\nPosition = %zu\nArrSize = %zu\n\n", DIFunc, Position,
-    ArrSize);
+  printf("DIVar = %s\nArrSize = %ju\nDIFunc = %s\nPosition = %zu\n\n",
+    DIVar, ArrSize, DIFunc, Position);
 }
 
 void sapforFuncCallBegin(void *DILoc, void *DIFunc) {

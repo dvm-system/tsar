@@ -79,11 +79,12 @@ def func_end : Intrinsic<"sapforFuncEnd",
                         tsar_void_ty, [tsar_di_func_ty]>;
 
 def reg_dummy_var : Intrinsic<"sapforRegDummyVar", tsar_void_ty,
-                        [tsar_di_func_ty, tsar_addr_ty, tsar_position_ty]>;
+                        [tsar_di_var_ty, tsar_addr_ty,
+                        tsar_di_func_ty, tsar_position_ty]>;
 
 def reg_dummy_arr : Intrinsic<"sapforRegDummyArr", tsar_void_ty,
-                        [tsar_di_func_ty, tsar_size_ty, tsar_addr_ty,
-                        tsar_position_ty]>;
+                        [tsar_di_var_ty, tsar_size_ty, tsar_addr_ty,
+                        tsar_di_func_ty, tsar_position_ty]>;
 
 def func_call_begin : Intrinsic<"sapforFuncCallBegin",
                         tsar_void_ty, [tsar_di_loc_ty, tsar_di_func_ty]>;
