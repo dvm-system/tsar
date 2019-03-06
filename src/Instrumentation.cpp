@@ -1002,7 +1002,8 @@ void Instrumentation::regValueArgs(Value *V, Type *T,
     (Twine("arr_name") + "*" + "rank=" + Twine(Rank) + "*").str();
   createInitDICall(
     Twine("type=") + TypeStr +
-    "vtype=" + Twine(TypeId) + "*" + DeclStr + NameStr + "*",
+    "vtype=" + Twine(TypeId) + "*" + DeclStr + NameStr +
+    "local=" + (isa<AllocaInst>(V) ? "1" : "0") + "*" + "*",
     Idx);
   auto DIVar = createPointerToDI(Idx, InsertBefore);
   auto VarAddr = new BitCastInst(V,
