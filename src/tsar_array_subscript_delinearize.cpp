@@ -1750,164 +1750,61 @@ void findSubscripts(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F,
     }
   }
 }
+
+#ifdef LLVM_DEBUG
+void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
+    raw_ostream  &OS) {
+  for (auto &ArrayEntry : Info.getAnalyzedArrays()) {
+    OS << "[DELINEARIZATION]: results for array ";
+    ArrayEntry.getBase()->print(OS, true);
+    OS << "\n";
+    OS << "  number of dimensions: " << ArrayEntry.getDimensionsCount() << "\n";
+    for (std::size_t I = 0, EI = ArrayEntry.getDimensionsCount(); I < EI; ++I) {
+      OS << "    " << I << ": ";
+      ArrayEntry.getDimension(I)->print(OS);
+      OS << "\n";
+    }
+    OS << "  accesses:\n";
+    for (auto &El : ArrayEntry) {
+      OS << "    address: ";
+      El.Ptr->print(OS, true);
+      OS << "\n";
+      for (auto *S : El.Subscript) {
+        OS << "      SCEV: ";
+        S->print(OS);
+        OS << "\n";
+        const SCEV *Coef, *ConstTerm;
+        std::tie(Coef, ConstTerm) = findCoefficientsInSCEV(S, SE);
+        OS << "      a: ";
+        if (Coef)
+          Coef->print(OS);
+        else
+          OS << "null";
+        OS << "\n";
+        OS << "      b: ";
+        if (ConstTerm)
+          ConstTerm->print(OS);
+        else
+          OS << "null";
+        OS << "\n";
+      }
+    }
+  }
+}
+#endif
 }
 
 bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
   LLVM_DEBUG(
-    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] In function " << F.getName() << "\n";
-    F.dump();
-  );
-
+    dbgs() << "[DELINEARIZATION]: process function " << F.getName() << "\n");
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-
-  //LLVM Delinearization
-  for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-    Instruction *Inst = &(*I);
-
-    // Only analyze loads and stores.
-    if (!isa<StoreInst>(Inst) && !isa<LoadInst>(Inst) &&
-      !isa<GetElementPtrInst>(Inst))
-      continue;
-
-    const BasicBlock *BB = Inst->getParent();
-    // Delinearize the memory access as analyzed in all the surrounding loops.
-    // Do not analyze memory accesses outside loops.
-    for (Loop *L = LI.getLoopFor(BB); L != nullptr; L = L->getParentLoop()) {
-      const SCEV *AccessFn = SE.getSCEVAtScope(getPointerOperand(Inst), L);
-
-      const SCEVUnknown *BasePointer =
-        dyn_cast<SCEVUnknown>(SE.getPointerBase(AccessFn));
-      // Do not delinearize if we cannot find the base pointer.
-      if (!BasePointer)
-        break;
-      AccessFn = SE.getMinusSCEV(AccessFn, BasePointer);
-      LLVM_DEBUG(
-        dbgs() << "AccessFunction: " << *AccessFn << "\n";
-      );
-
-      SmallVector<const SCEV *, 3> Subscripts, Sizes;
-      SE.delinearize(AccessFn, Subscripts, Sizes, SE.getElementSize(Inst));
-      if (Subscripts.size() == 0 || Sizes.size() == 0 ||
-        Subscripts.size() != Sizes.size()) {
-        continue;
-      }
-      LLVM_DEBUG(
-        dbgs() << "Base offset: " << *BasePointer << "\n";
-        dbgs() << "ArrayDecl[UnknownSize]";
-        int Size = Subscripts.size();
-        for (int i = 0; i < Size - 1; i++)
-          dbgs() << "[" << *Sizes[i] << "]";
-        dbgs() << " with elements of " << *Sizes[Size - 1] << " bytes.\n";
-
-        dbgs() << "ArrayRef";
-        for (int i = 0; i < Size; i++)
-          dbgs() << "[" << *Subscripts[i] << "]";
-        dbgs() << "\n";
-      );
-    }
-  }
-  //LLVM Delinearization end
-
   DelinearizeInfo::ArraySet AnalyzedArrays;
-
   findSubscripts(AnalyzedArrays, F, SE, TLI);
-
   mDelinearizeInfo = DelinearizeInfo(AnalyzedArrays);
   mDelinearizeInfo.fillElementsMap();
-
-  RawDelinearizeInfo Info;
-
-  for (auto &ArrayEntry : AnalyzedArrays) {
-    std::string ArrayNameStr;
-    llvm::raw_string_ostream ArrayNameStrStream(ArrayNameStr);
-    ArrayEntry.getBase()->print(ArrayNameStrStream);
-    //Flush stream to string
-    ArrayNameStrStream.str();
-
-    std::vector<std::string> ArrayDimSizes;
-    for (auto *DimSize : ArrayEntry.getDimensions()) {
-      std::string DimSizeStr;
-      llvm::raw_string_ostream DimSizeStrStream(DimSizeStr);
-      DimSize->print(DimSizeStrStream);
-      DimSizeStrStream.str();
-      ArrayDimSizes.push_back(std::move(DimSizeStr));
-    }
-    Info[RawDelinearizeInfo::Sizes].insert(std::make_pair(
-      ArrayNameStr, std::move(ArrayDimSizes)));
-
-    std::vector<std::vector<std::vector<std::string> > > ArraySubscripts;
-    for (auto ElementEntryIt = ArrayEntry.begin();
-          ElementEntryIt != ArrayEntry.end();
-          ++ElementEntryIt) {
-      std::vector<std::vector<std::string> > SubscriptEntry;
-      for (auto *S : ElementEntryIt->Subscript) {
-        std::string FirstIdxStr, SecondIdxStr;
-        llvm::raw_string_ostream FirstIdxStrStream(FirstIdxStr);
-        llvm::raw_string_ostream SecondIdxStrStream(SecondIdxStr);
-        auto Idxs = findCoefficientsInSCEV(S, SE);
-        if (Idxs.first) {
-          Idxs.first->print(FirstIdxStrStream);
-          FirstIdxStrStream.str();
-        } else {
-          FirstIdxStr = "null";
-        }
-        if (Idxs.second) {
-          Idxs.second->print(SecondIdxStrStream);
-          SecondIdxStrStream.str();
-        } else {
-          SecondIdxStr = "null";
-        }
-        std::vector<std::string> IdxStrs = {std::move(FirstIdxStr), std::move(SecondIdxStr)};
-        SubscriptEntry.push_back(std::move(IdxStrs));
-      }
-      ArraySubscripts.push_back(std::move(SubscriptEntry));
-    }
-    Info[RawDelinearizeInfo::Accesses].insert(std::make_pair(
-      std::move(ArrayNameStr), std::move(ArraySubscripts)));
-  }
-  std::string JsonStr = json::Parser<RawDelinearizeInfo>::unparse(Info);
-  LLVM_DEBUG(
-    for (auto &ArrayEntry : AnalyzedArrays) {
-      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array ";
-      ArrayEntry.getBase()->dump();
-      dbgs() << "Dims:" << ArrayEntry.getDimensionsCount() << "\n";
-      for (auto *DimSize : ArrayEntry.getDimensions()) {
-        dbgs() << "\t";
-        DimSize->dump();
-      }
-      dbgs() << "\n";
-
-      dbgs() << "Accesses:\n";
-      for (auto ElementEntryIt = ArrayEntry.begin();
-        ElementEntryIt != ArrayEntry.end();
-        ++ElementEntryIt) {
-        dbgs() << "\tValue: ";
-        ElementEntryIt->Ptr->dump();
-        for (auto *S : ElementEntryIt->Subscript) {
-          dbgs() << "\tSCEV: ";
-          S->dump();
-
-          auto Idxs = findCoefficientsInSCEV(S, SE);
-          if (Idxs.first) {
-            dbgs() << "\ta: ";
-            Idxs.first->dump();
-          } else {
-            dbgs() << "\ta: null";
-          }
-          if (Idxs.second) {
-            dbgs() << "\tb: ";
-            Idxs.second->dump();
-          } else {
-            dbgs() << "\tb: null";
-          }
-        }
-        dbgs() << "\n";
-      }
-    }
-    dbgs() << JsonStr << "\n";
-  );
+  LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, SE, dbgs()));
   return false;
 }
 
