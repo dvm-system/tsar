@@ -1,4 +1,5 @@
 #include "tsar_array_subscript_delinearize.h"
+#include "DelinearizeJSON.h"
 #include "tsar_pass.h"
 #include "tsar_transformation.h"
 #include "tsar_array_usage_matcher.h"
@@ -24,7 +25,7 @@
 #include <llvm/IR/DEBUGInfoMetadata.h>
 #include <llvm/ADT/Sequence.h>
 #include <llvm/IR/Type.h>
-#include "bcl/Json.h"
+#include <bcl/Json.h>
 
 #include <vector>
 #include <utility>
@@ -1751,62 +1752,6 @@ void findSubscripts(DelinearizeInfo::ArraySet &AnalyzedArrays, Function &F,
 }
 }
 
-
-namespace tsar {
-  namespace dln {
-    namespace detail {
-      struct ArrayInfo {
-        struct Accesses {
-          static inline const std::string & name() {
-            static const std::string N("Accesses");
-            return N;
-          }
-
-          using ValueType = std::map<std::string, \
-            std::vector<std::vector<std::vector<std::string> > > >;
-        };
-
-        struct Sizes {
-          static inline const std::string & name() {
-            static const std::string N("Sizes");
-            return N;
-          }
-
-          using ValueType = std::map<std::string, std::vector<std::string> >;
-        };
-
-        using Base = bcl::StaticMap<Accesses, Sizes>;
-      };
-    }
-
-    class ArrayInfo :
-      public json::Object, public dln::detail::ArrayInfo::Base {
-    public:
-      static inline const std::string & name() {
-        static const std::string N("ArrayInfo");
-        return N;
-      }
-
-      static constexpr detail::ArrayInfo::Accesses Accesses = detail::ArrayInfo::Accesses();
-      static constexpr detail::ArrayInfo::Sizes Sizes = detail::ArrayInfo::Sizes();
-
-      ArrayInfo() : json::Object(name()), detail::ArrayInfo::Base() { }
-
-      ArrayInfo(const ArrayInfo &) = default;
-      ArrayInfo & operator=(const ArrayInfo &) = default;
-      ArrayInfo(ArrayInfo &&) = default;
-      ArrayInfo & operator=(ArrayInfo &&) = default;
-    };
-
-  }
-}
-
-namespace json {
-  template<> struct json::Traits<tsar::dln::ArrayInfo> :
-    public json::Traits<tsar::dln::detail::ArrayInfo::Base> {};
-}
-
-namespace llvm {
 bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
   LLVM_DEBUG(
     dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] In function " << F.getName() << "\n";
@@ -1871,8 +1816,8 @@ bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
 
   mDelinearizeInfo = DelinearizeInfo(AnalyzedArrays);
   mDelinearizeInfo.fillElementsMap();
-  
-  dln::ArrayInfo Info;
+
+  RawDelinearizeInfo Info;
 
   for (auto &ArrayEntry : AnalyzedArrays) {
     std::string ArrayNameStr;
@@ -1889,7 +1834,7 @@ bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
       DimSizeStrStream.str();
       ArrayDimSizes.push_back(std::move(DimSizeStr));
     }
-    Info[dln::ArrayInfo::Sizes].insert(std::make_pair(
+    Info[RawDelinearizeInfo::Sizes].insert(std::make_pair(
       ArrayNameStr, std::move(ArrayDimSizes)));
 
     std::vector<std::vector<std::vector<std::string> > > ArraySubscripts;
@@ -1919,10 +1864,10 @@ bool ArraySubscriptDelinearizePass::runOnFunction(Function &F) {
       }
       ArraySubscripts.push_back(std::move(SubscriptEntry));
     }
-    Info[dln::ArrayInfo::Accesses].insert(std::make_pair(
+    Info[RawDelinearizeInfo::Accesses].insert(std::make_pair(
       std::move(ArrayNameStr), std::move(ArraySubscripts)));
   }
-  std::string JsonStr = json::Parser<dln::ArrayInfo>::unparse(Info);
+  std::string JsonStr = json::Parser<RawDelinearizeInfo>::unparse(Info);
   LLVM_DEBUG(
     for (auto &ArrayEntry : AnalyzedArrays) {
       dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Array ";
@@ -1974,64 +1919,58 @@ void ArraySubscriptDelinearizePass::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 void ArraySubscriptDelinearizePass::print(raw_ostream &OS, const Module *M) const {
-
-  auto AnalyzedArrays = mDelinearizeInfo.getAnalyzedArrays();
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  dln::ArrayInfo Info;
-
-  for (auto &ArrayEntry : AnalyzedArrays) {
-    std::string ArrayNameStr;
-    llvm::raw_string_ostream ArrayNameStrStream(ArrayNameStr);
-    ArrayEntry.getBase()->print(ArrayNameStrStream);
-    //Flush stream to string
-    ArrayNameStrStream.str();
-
-    std::vector<std::string> ArrayDimSizes;
-    for (auto *DimSize : ArrayEntry.getDimensions()) {
-      std::string DimSizeStr;
-      llvm::raw_string_ostream DimSizeStrStream(DimSizeStr);
-      DimSize->print(DimSizeStrStream);
-      DimSizeStrStream.str();
-      ArrayDimSizes.push_back(std::move(DimSizeStr));
-    }
-    Info[dln::ArrayInfo::Sizes].insert(std::make_pair(
-      ArrayNameStr, std::move(ArrayDimSizes)));
-
-    std::vector<std::vector<std::vector<std::string> > > ArraySubscripts;
-    for (auto ElementEntryIt = ArrayEntry.begin();
-      ElementEntryIt != ArrayEntry.end();
-      ++ElementEntryIt) {
-      std::vector<std::vector<std::string> > SubscriptEntry;
-      for (auto *S : ElementEntryIt->Subscript) {
-        std::string FirstIdxStr, SecondIdxStr;
-        llvm::raw_string_ostream FirstIdxStrStream(FirstIdxStr);
-        llvm::raw_string_ostream SecondIdxStrStream(SecondIdxStr);
-        auto Idxs = findCoefficientsInSCEV(S, SE);
-        if (Idxs.first) {
-          Idxs.first->print(FirstIdxStrStream);
-          FirstIdxStrStream.str();
-        } else {
-          FirstIdxStr = "null";
-        }
-        if (Idxs.second) {
-          Idxs.second->print(SecondIdxStrStream);
-          SecondIdxStrStream.str();
-        } else {
-          SecondIdxStr = "null";
-        }
-        std::vector<std::string> IdxStrs = { std::move(FirstIdxStr), std::move(SecondIdxStr) };
-        SubscriptEntry.push_back(std::move(IdxStrs));
-      }
-      ArraySubscripts.push_back(std::move(SubscriptEntry));
-    }
-    Info[dln::ArrayInfo::Accesses].insert(std::make_pair(
-      std::move(ArrayNameStr), std::move(ArraySubscripts)));
-  }
-  std::string JsonStr = json::Parser<dln::ArrayInfo>::unparse(Info);
-  OS << JsonStr << '\n';
+  RawDelinearizeInfo Info = tsar::toJSON(mDelinearizeInfo, SE);
+  OS << json::Parser<RawDelinearizeInfo>::unparse(Info) << '\n';
 }
 
 FunctionPass * createArraySubscriptDelinearizePass() {
   return new ArraySubscriptDelinearizePass;
 }
+
+RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE) {
+  RawDelinearizeInfo RawInfo;
+  for (auto &ArrayEntry : Info.getAnalyzedArrays()) {
+    std::string NameStr;
+    raw_string_ostream NameOS(NameStr);
+    NameOS.flush();
+    ArrayEntry.getBase()->print(NameOS);
+    std::vector<std::string> DimSizes(ArrayEntry.getDimensionsCount());
+    for (std::size_t I = 0, EI = DimSizes.size(); I < EI; ++I) {
+      raw_string_ostream DimSizeOS(DimSizes[I]);
+      ArrayEntry.getDimension(I)->print(DimSizeOS);
+      DimSizeOS.flush();
+    }
+    std::vector<std::vector<std::vector<std::string>>> Accesses;
+    for (auto &El : ArrayEntry) {
+      std::vector<std::vector<std::string>> Subscripts;
+      for (auto *S : El.Subscript) {
+        Subscripts.emplace_back(2);
+        auto &CoefStr = Subscripts.back().front();
+        auto &ConstTermStr = Subscripts.back().back();
+        const SCEV *Coef, *ConstTerm;
+        std::tie(Coef, ConstTerm) = findCoefficientsInSCEV(S, SE);
+        if (Coef) {
+          raw_string_ostream CoefOS(CoefStr);
+          Coef->print(CoefOS);
+          CoefOS.flush();
+        } else {
+          CoefStr = "null";
+        }
+        if (ConstTerm) {
+          raw_string_ostream ConstTermOS(ConstTermStr);
+          ConstTerm->print(ConstTermOS);
+          ConstTermOS.flush();
+        } else {
+          ConstTermStr = "null";
+        }
+      }
+      Accesses.push_back(std::move(Subscripts));
+    }
+    RawInfo[RawDelinearizeInfo::Sizes].emplace(NameStr, std::move(DimSizes));
+    RawInfo[RawDelinearizeInfo::Accesses].emplace(
+      std::move(NameStr), std::move(Accesses));
+  }
+  return RawInfo;
 }
+

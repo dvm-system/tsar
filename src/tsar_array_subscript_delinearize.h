@@ -97,6 +97,14 @@ namespace tsar {
       return mElements.end();
     }
 
+    const_iterator begin() const {
+      return mElements.begin();
+    }
+
+    const_iterator end() const {
+      return mElements.end();
+    }
+
     const_iterator cbegin() const {
       return mElements.cbegin();
     }
@@ -145,7 +153,7 @@ namespace tsar {
       }
     }
 
-    const llvm::SCEV * getDimension(std::size_t DimIdx) {
+    const llvm::SCEV * getDimension(std::size_t DimIdx) const {
       if (DimIdx >= 0 && DimIdx < mDims.size()) {
         return mDims[DimIdx];
       }
