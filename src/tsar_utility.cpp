@@ -10,6 +10,7 @@
 
 #include "tsar_utility.h"
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/GlobalVariable.h>
@@ -180,6 +181,21 @@ bool findNotDom(Instruction *From, Instruction *BoundInst, DominatorTree *DT,
       if (findNotDom(I, BoundInst, DT, NotDom))
         NotDom.push_back(&Op);
   return false;
+}
+
+Value *GetUnderlyingObjectWithMetadata(Value *V, const DataLayout &DL) {
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    if (findGlobalMetadata(GV, DILocs))
+      return V;
+  } else {
+    SmallVector<DbgInfoIntrinsic *, 8> DbgInstrs;
+    findDbgUsers(DbgInstrs, V);
+    if (!DbgInstrs.empty())
+      return V;
+  }
+  auto BasePtr = GetUnderlyingObject(V, DL, 1);
+  return V == BasePtr ? V : GetUnderlyingObjectWithMetadata(BasePtr, DL);
 }
 
 DISubprogram *findMetadata(const Function *F) {

@@ -344,6 +344,12 @@ bool findNotDom(llvm::Instruction *From,
   llvm::Instruction *BoundInst, llvm::DominatorTree *DT,
   llvm::SmallVectorImpl<llvm::Use *> &NotDom);
 
+/// This function strips off any GEP address adjustments and pointer casts from
+/// the specified value while it is possible or until the object with attached
+/// metadata describing a value will be found.
+llvm::Value * GetUnderlyingObjectWithMetadata(llvm::Value *V,
+  const llvm::DataLayout &DL);
+
 /// Returns a meta information for function or nullptr;
 llvm::DISubprogram * findMetadata(const llvm::Function *F);
 
