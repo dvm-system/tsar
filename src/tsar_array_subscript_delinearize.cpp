@@ -2,7 +2,6 @@
 #include "DelinearizeJSON.h"
 #include "tsar_pass.h"
 #include "tsar_transformation.h"
-#include "tsar_array_usage_matcher.h"
 #include "tsar_utility.h"
 #include "tsar_query.h"
 #include "MemoryAccessUtils.h"
