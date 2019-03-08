@@ -782,11 +782,15 @@ Value *GetUnderlyingObjectWithDbgCheck(Value *V, const DataLayout &DL,
 const DIVariable* findVariableDbg(Value* V) {
   assert(V && "Value must not be null");
   if (auto *GV = dyn_cast<GlobalVariable>(V)) {
-    return findMetadata(GV);
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    auto DIM = findMetadata(GV, DILocs);
+    return DIM ? DIM->Var : nullptr;
   }
 
   if (auto *AI = dyn_cast<AllocaInst>(V)) {
-    return findMetadata(AI);
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    auto DIM = findMetadata(AI, DILocs);
+    return DIM ? DIM->Var : nullptr;
   }
 
   //TODO replace by a new function from tsar_ulility
