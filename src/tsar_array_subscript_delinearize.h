@@ -48,156 +48,111 @@ class SCEVMulExpr;
 }
 
 namespace tsar {
+/// Delinearized array.
+class Array {
+public:
+  using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
 
-  class Array {
-  public:
-    using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
+  /// Map from linearized index of array to its delinearized representation.
+  /// Instruction does not access memory.
+  struct Element {
+    /// Pointer to an element of an array.
+    llvm::Value *Ptr;
 
-    /// Map from linearized index of array to its delinearized representation.
-    /// Instruction does not access memory.
-    struct Element {
-      /// Pointer to an element of array.
-      llvm::Value *Ptr;
+    /// List of subscript expressions which allow to access this element.
+    ///
+    /// This is representation of offset (`Ptr-ArrayPtr`) after delinearization.
+    ExprList Subscripts;
 
-      /// \brief Number of subscript expressions which allow to access this
-      /// element.
-      ///
-      /// This is representation of offset (`Ptr-ArrayPtr`) after delinearization.
-      /// If possible each subscript expression should be converted to AddRecExpr.
-      /// In this case, it is possible to determine coefficients and loop.
-      ExprList Subscript;
+    /// `True` if address of this element of an array has been successfully
+    /// delinearized.
+    bool IsValid = false;
 
-      bool isValid;
-
-      Element(llvm::Value *Ptr, const ExprList &Subscript, bool isValid = true) :
-        Ptr(Ptr),
-        Subscript(Subscript),
-        isValid(isValid) {}
-
-      Element(llvm::Value *Ptr, ExprList &&Subscript, bool isValid = true) :
-        Ptr(Ptr),
-        Subscript(std::move(Subscript)),
-        isValid(isValid) {}
-    };
-
-    using Elements = std::vector<Element>;
-    using iterator = Elements::iterator;
-    using const_iterator = Elements::const_iterator;
-
-    Array(llvm::Value *BasePtr) :
-      mBasePtr(BasePtr),
-      mIsArrayValid(true){}
-
-    // to access all elements
-    iterator begin() {
-      return mElements.begin();
+    /// Creates element referenced with a specified pointer. Initial this
+    /// element is not delineariaced yet.
+    explicit Element(llvm::Value *Ptr) : Ptr(Ptr) {
+      assert(Ptr && "Pointer must not be null!");
     }
-
-    iterator end() {
-      return mElements.end();
-    }
-
-    const_iterator begin() const {
-      return mElements.begin();
-    }
-
-    const_iterator end() const {
-      return mElements.end();
-    }
-
-    const_iterator cbegin() const {
-      return mElements.cbegin();
-    }
-
-    const_iterator cend() const {
-      return mElements.cend();
-    }
-
-    std::size_t size() const {
-      return mElements.size();
-    }
-
-    bool empty() const {
-      return mElements.empty();
-    }
-
-    Element * getElement(std::size_t Idx) {
-      if (Idx >= 0 && Idx < mElements.size()) {
-        return &mElements[Idx];
-      }
-      return nullptr;
-    }
-
-    void pushBack(const Element &Access) {
-      mElements.push_back(Access);
-    }
-    void pushBack(Element &&Access) {
-      mElements.push_back(std::move(Access));
-    }
- 
-    template<class... ArgTy> void emplaceBack(ArgTy &&...Args) {
-      mElements.emplace_back(std::forward<ArgTy>(Args)...);
-    }
-
-    void clearDimensions() {
-      mDims.clear();
-    }
-
-    void resizeDimensions(std::size_t Size) {
-      mDims.resize(Size);
-    }
-
-    void setDimension(std::size_t DimIdx, const llvm::SCEV *Expr) {
-      if (DimIdx >= 0 && DimIdx < mDims.size()) {
-        mDims[DimIdx] = Expr;
-      }
-    }
-
-    const llvm::SCEV * getDimension(std::size_t DimIdx) const {
-      if (DimIdx >= 0 && DimIdx < mDims.size()) {
-        return mDims[DimIdx];
-      }
-      return nullptr;
-    }
-
-    const ExprList & getDimensions() const {
-      return mDims;
-    }
-
-    std::size_t getDimensionsCount() const {
-      return mDims.size();
-    }
-
-    bool isDimensionsEmpty() const {
-      return mDims.empty();
-    }
-
-    llvm::Value * getBase() const {
-      return mBasePtr;
-    }
-
-    bool isValid() const {
-      return mIsArrayValid;
-    }
-
-    void setValid(bool Valid) {
-      mIsArrayValid = Valid;
-    }
-
-  private:
-    llvm::Value *mBasePtr;
-    ExprList mDims;
-    std::vector<Element> mElements;
-
-    bool mIsArrayValid;
-
   };
 
-  std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
-    const llvm::SCEV *Expr, llvm::ScalarEvolution &SE);
-}
-namespace llvm {
+  using Elements = std::vector<Element>;
+  using iterator = Elements::iterator;
+  using const_iterator = Elements::const_iterator;
 
+  /// Creates new array representation for an array which starts at
+  /// a specified address.
+  explicit Array(llvm::Value *BasePtr) :  mBasePtr(BasePtr) {
+    assert(BasePtr && "Pointer to the array beginning must not be null!");
+  }
+
+  /// Returns pointer to the array beginning.
+  const llvm::Value * getBase() const { return mBasePtr; }
+
+  /// Returns pointer to the array beginning.
+  llvm::Value * getBase() { return mBasePtr; }
+
+  iterator begin() { return mElements.begin(); }
+  iterator end() { return mElements.end(); }
+
+  const_iterator begin() const { return mElements.begin(); }
+  const_iterator end() const { return mElements.end(); }
+
+  std::size_t size() const { return mElements.size(); }
+  bool empty() const { return mElements.empty(); }
+
+  /// Add element which is referenced in a source code with
+  /// a specified pointer.
+  Element & addElement(llvm::Value *Ptr) {
+    mElements.emplace_back(Ptr);
+    return mElements.back();
+  }
+
+  Element * getElement(std::size_t Idx) {
+    assert(Idx < mElements.size() && "Index is out of range!");
+    return mElements.data() + Idx;
+  }
+
+  const Element * getElement(std::size_t Idx) const {
+    assert(Idx < mElements.size() && "Index is out of range!");
+    return mElements.data() + Idx;
+  }
+
+  /// Set number of dimensions.
+  ///
+  /// If the current number of dimenstions size is less than count,
+  /// additional dimensions are appended and their sizes are initialized
+  /// with `nullptr` expressions.
+  void setNumberOfDims(std::size_t Count) { mDims.resize(Count, nullptr); }
+
+  /// Return number of dimensions.
+  std::size_t getNumberOfDims() const { return mDims.size(); }
+
+  /// Set size of a specified dimension.
+  void setDimSize(std::size_t DimIdx, const llvm::SCEV *Expr) {
+    assert(Expr && "Expression must not be null!");
+    assert(DimIdx < getNumberOfDims() && "Dimension index is out of range!");
+    mDims[DimIdx] = Expr;
+  }
+
+  /// Returns size of a specified dimension.
+  const llvm::SCEV * getDimSize(std::size_t DimIdx) const {
+    assert(DimIdx < getNumberOfDims() && "Dimension index is out of range!");
+    return mDims[DimIdx];
+  }
+
+  bool isValid() { return !mDims.empty(); }
+
+private:
+  llvm::Value *mBasePtr;
+  ExprList mDims;
+  std::vector<Element> mElements;
+};
+
+std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
+  const llvm::SCEV *Expr, llvm::ScalarEvolution &SE);
+}
+
+namespace llvm {
 template<> struct DenseMapInfo<tsar::Array> {
   static unsigned getHashValue(const tsar::Array &Arr) {
     return DenseMapInfo<Value *>::getHashValue(Arr.getBase());
@@ -223,37 +178,65 @@ template<> struct DenseMapInfo<tsar::Array> {
     return tsar::Array(DenseMapInfo<Value *>::getTombstoneKey());
   }
 };
+}
 
-class DelinearizeInfo {
+namespace tsar {
+/// Contains a list of delinearized arrays and a list of accessed elements of
+/// these arrays in a function.
+class DelinearizeInfo : private bcl::Uncopyable {
+  struct ElementInfo :
+    llvm::detail::DenseMapPair<llvm::Value *, std::pair<Array *, std::size_t>> {
+    llvm::Value * getElementPtr() { return getFirst(); }
+    const llvm::Value *  getElementPtr() const { return getFirst(); }
+    Array * getArray() { return getSecond().first; }
+    const Array * getArray() const { return getSecond().first; }
+    std::size_t getElementIdx() const { return getSecond().second; }
+  };
+  using ElementMap =
+    llvm::DenseMap<llvm::Value *, std::pair<Array *, std::size_t>,
+      llvm::DenseMapInfo<llvm::Value *>, ElementInfo>;
 public:
-  using ArrayMapInfo = DenseMapInfo<tsar::Array>;
-  using ArraySet = llvm::DenseSet<tsar::Array, ArrayMapInfo>;
+  using ArraySet = llvm::DenseSet<Array>;
 
-  DelinearizeInfo(const ArraySet &AnalyzedArrays) :
-    mArrays(AnalyzedArrays) {}
+  /// Returns delinearized representation of a specified element of an array.
+  std::pair<Array *, Array::Element *>
+      findElement(const llvm::Value *ElementPtr) {
+    auto Tmp =
+      static_cast<const DelinearizeInfo *>(this)->findElement(ElementPtr);
+    return std::make_pair(
+      const_cast<Array *>(Tmp.first), const_cast<Array::Element *>(Tmp.second));
+  }
 
-  DelinearizeInfo() = default;
+  /// Returns delinearized representation of a specified element of an array.
+  std::pair<const Array *, const Array::Element *>
+    findElement(const llvm::Value *ElementPtr) const;
 
-  DelinearizeInfo(ArraySet &&AnalyzedArrays) :
-    mArrays(std::move(AnalyzedArrays)) {}
+  /// Returns an array which starts at a specified address.
+  Array * findArray(const llvm::Value *BasePtr) {
+    return const_cast<Array *>(
+      static_cast<const DelinearizeInfo *>(this)->findArray(BasePtr));
+  }
+
+  /// Returns an array which starts at a specified address.
+  const Array * findArray(const llvm::Value *BasePtr) const;
+
+  /// Returns list of all delinearized arrays.
+  ArraySet & getArrays() noexcept { return mArrays; }
+
+  /// Returns list of all delinearized arrays.
+  const ArraySet & getArrays() const noexcept { return mArrays; }
 
   void fillElementsMap();
 
-  std::pair<tsar::Array *, tsar::Array::Element *> findElement(llvm::Value *Ptr);
-  const tsar::Array * findArray(llvm::Value *BasePtr) const;
-
+  /// Remove all available information.
   void clear() {
     mArrays.clear();
     mElements.clear();
   }
 
-  const ArraySet & getAnalyzedArrays() const {
-    return mArrays;
-  }
-
 private:
   ArraySet mArrays;
-  llvm::DenseMap<llvm::Value *, std::pair<tsar::Array *, std::size_t>> mElements;
+  ElementMap mElements;
 };
 }
 
@@ -279,12 +262,14 @@ public:
 
   void print(raw_ostream &OS, const Module *M) const override;
 
-  const DelinearizeInfo & getDelinearizeInfo() const {
+  void releaseMemory() override { mDelinearizeInfo.clear(); }
+
+  const tsar::DelinearizeInfo & getDelinearizeInfo() const {
     return mDelinearizeInfo;
   }
 
 private:
-  DelinearizeInfo mDelinearizeInfo;
+  tsar::DelinearizeInfo mDelinearizeInfo;
 };
 }
 
