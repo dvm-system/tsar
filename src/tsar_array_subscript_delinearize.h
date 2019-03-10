@@ -1,42 +1,13 @@
 #ifndef TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
 #define TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
 
-#include <llvm/Pass.h>
-#include <llvm/IR/Function.h>
-#include <llvm/Analysis/ScalarEvolution.h>
-#include <utility>
-#include <set>
-#include <map>
-#include "tsar_bimap.h"
 #include "tsar_pass.h"
-#include "tsar_utility.h"
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
-
-#include "tsar_pass.h"
-#include "tsar_transformation.h"
-#include <llvm/ADT/Statistic.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Instructions.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/Pass.h>
-#include <llvm/Transforms/Utils/Local.h>
-#include <llvm/PassAnalysisSupport.h>
-#include <llvm/Analysis/ScalarEvolution.h>
-#include <llvm/ADT/SmallSet.h>
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
-#include <llvm/Analysis/ValueTracking.h>
-#include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/ADT/Sequence.h>
-#include <llvm/IR/Type.h>
-
-
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/Pass.h>
+#include <bcl/utility.h>
 #include <vector>
-#include <utility>
 
 namespace llvm {
 class Instruction;
@@ -45,6 +16,8 @@ class Value;
 class SCEV;
 class ScalarEvolution;
 class SCEVMulExpr;
+class DominatorTree;
+class TargetLibraryInfo;
 }
 
 namespace tsar {
@@ -81,7 +54,7 @@ public:
 
   /// Creates new array representation for an array which starts at
   /// a specified address.
-  explicit Array(llvm::Value *BasePtr) :  mBasePtr(BasePtr) {
+  explicit Array(llvm::Value *BasePtr) noexcept :  mBasePtr(BasePtr) {
     assert(BasePtr && "Pointer to the array beginning must not be null!");
   }
 
@@ -142,40 +115,33 @@ public:
 
   bool isValid() { return !mDims.empty(); }
 
+  bool hasElementAccess() const noexcept { return mHasElementAccess; }
+  void setEementAccess(bool Has = true) noexcept { mHasElementAccess = Has; }
+
 private:
   llvm::Value *mBasePtr;
   ExprList mDims;
   std::vector<Element> mElements;
+  bool mHasElementAccess = false;
 };
 
 std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
   const llvm::SCEV *Expr, llvm::ScalarEvolution &SE);
-}
 
-namespace llvm {
-template<> struct DenseMapInfo<tsar::Array> {
-  static unsigned getHashValue(const tsar::Array &Arr) {
-    return DenseMapInfo<Value *>::getHashValue(Arr.getBase());
+/// Implementation of llvm::DenseMapInfo which uses base pointer to compute
+/// hash for tsar::Array *.
+struct ArrayMapInfo : public llvm::DenseMapInfo<Array *> {
+  static inline unsigned getHashValue(const Array *Arr) {
+    return DenseMapInfo<const llvm::Value *>::getHashValue(Arr->getBase());
   }
-
-  static bool isEqual(const tsar::Array &LHS, const tsar::Array &RHS) {
-    return DenseMapInfo<Value *>::isEqual(LHS.getBase(), RHS.getBase());
+  static inline unsigned getHashValue(const llvm::Value *BasePtr) {
+    return DenseMapInfo<const llvm::Value *>::getHashValue(BasePtr);
   }
-
-  static unsigned getHashValue(llvm::Value *Arr) {
-    return DenseMapInfo<Value *>::getHashValue(Arr);
-  }
-
-  static bool isEqual(llvm::Value *LHS , const tsar::Array &RHS) {
-    return DenseMapInfo<Value *>::isEqual(LHS, RHS.getBase());
-  }
-
-  static tsar::Array getEmptyKey() {
-    return tsar::Array(DenseMapInfo<Value *>::getEmptyKey());
-  }
-
-  static tsar::Array getTombstoneKey() {
-    return tsar::Array(DenseMapInfo<Value *>::getTombstoneKey());
+  using DenseMapInfo<Array *>::isEqual;
+  static inline bool isEqual(const llvm::Value *LHS , const Array *RHS) {
+    return RHS != ArrayMapInfo::getEmptyKey() &&
+      RHS != ArrayMapInfo::getTombstoneKey() &&
+      llvm::DenseMapInfo<const llvm::Value *>::isEqual(LHS, RHS->getBase());
   }
 };
 }
@@ -183,7 +149,7 @@ template<> struct DenseMapInfo<tsar::Array> {
 namespace tsar {
 /// Contains a list of delinearized arrays and a list of accessed elements of
 /// these arrays in a function.
-class DelinearizeInfo : private bcl::Uncopyable {
+class DelinearizeInfo {
   struct ElementInfo :
     llvm::detail::DenseMapPair<llvm::Value *, std::pair<Array *, std::size_t>> {
     llvm::Value * getElementPtr() { return getFirst(); }
@@ -196,7 +162,16 @@ class DelinearizeInfo : private bcl::Uncopyable {
     llvm::DenseMap<llvm::Value *, std::pair<Array *, std::size_t>,
       llvm::DenseMapInfo<llvm::Value *>, ElementInfo>;
 public:
-  using ArraySet = llvm::DenseSet<Array>;
+  using ArraySet = llvm::DenseSet<Array *, ArrayMapInfo>;
+
+  DelinearizeInfo() = default;
+  ~DelinearizeInfo() { clear(); }
+
+  DelinearizeInfo(const DelinearizeInfo &) = delete;
+  DelinearizeInfo & operator=(const DelinearizeInfo &) = delete;
+
+  DelinearizeInfo(DelinearizeInfo &&) = default;
+  DelinearizeInfo & operator=(DelinearizeInfo &&) = default;
 
   /// Returns delinearized representation of a specified element of an array.
   std::pair<Array *, Array::Element *>
@@ -218,7 +193,10 @@ public:
   }
 
   /// Returns an array which starts at a specified address.
-  const Array * findArray(const llvm::Value *BasePtr) const;
+  const Array * findArray(const llvm::Value *BasePtr) const {
+    auto ResultItr = mArrays.find_as(const_cast<llvm::Value *>(BasePtr));
+    return (ResultItr != mArrays.end()) ? *ResultItr : nullptr;
+  }
 
   /// Returns list of all delinearized arrays.
   ArraySet & getArrays() noexcept { return mArrays; }
@@ -230,6 +208,8 @@ public:
 
   /// Remove all available information.
   void clear() {
+    for (auto *A : mArrays)
+      delete A;
     mArrays.clear();
     mElements.clear();
   }
@@ -241,19 +221,17 @@ private:
 }
 
 namespace llvm {
-class ArraySubscriptDelinearizePass :
-  public FunctionPass, private bcl::Uncopyable {
+/// This per-function pass performs delinearization of array accesses.
+class DelinearizationPass : public FunctionPass, private bcl::Uncopyable {
+  /// Map from array to a list of dimension sizes. If size is unknown it is
+  /// set to negative value.
+  using DimensionMap = DenseMap<Value *, SmallVector<int64_t, 3>>;
+
 public:
-
-  typedef std::map <Instruction *, SmallVector<
-    std::pair<const SCEV *, const SCEV *>, 3>> ArraySubscriptDelinearizeInfo;
-
-  typedef std::set<Instruction *> ArraySubscriptSet;
-
   static char ID;
 
-  ArraySubscriptDelinearizePass() : llvm::FunctionPass(ID) {
-    initializeArraySubscriptDelinearizePassPass(*llvm::PassRegistry::getPassRegistry());
+  DelinearizationPass() : FunctionPass(ID) {
+    initializeDelinearizationPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnFunction(Function &F) override;
@@ -269,7 +247,18 @@ public:
   }
 
 private:
+  /// Investigate metadata for `BasePtr` to determine number of its dimensions.
+  void findArrayDimesionsFromDbgInfo(Value *BasePtr,
+    SmallVectorImpl<int64_t> &Dimensions);
+
+  void collectArrays(Function &F, DimensionMap &DimsCache);
+
+  void findSubscripts(Function &F);
+
   tsar::DelinearizeInfo mDelinearizeInfo;
+  DominatorTree *mDT = nullptr;
+  ScalarEvolution *mSE = nullptr;
+  TargetLibraryInfo *mTLI = nullptr;
 };
 }
 
