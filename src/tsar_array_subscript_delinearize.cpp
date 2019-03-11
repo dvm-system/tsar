@@ -1093,231 +1093,11 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
 
 }
 
-
-
-void fillArrayDimensionsSizes(SmallVectorImpl<int64_t> &Dimensions, ScalarEvolution &SE,
-  Array *CurrentArray) {
-  assert(CurrentArray && "Current Array must not be null");
-  assert(!CurrentArray->empty() && "Acesses size must not be zero");
-
-  if (Dimensions.empty()) {
-    size_t DimensionsCount = CurrentArray->getElement(0)->Subscripts.size();
-
-    for (int i = 1; i < CurrentArray->size(); ++i) {
-      if (CurrentArray->getElement(0)->Subscripts.size() != DimensionsCount) {
-        //CurrentArray->setValid(false);
-        LLVM_DEBUG(
-          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE]Array " <<
-            CurrentArray->getBase()->getName() << " is unrealible\n";
-        );
-        return;
-      }
-    }
-
-    Dimensions.resize(DimensionsCount);
-    for (int i = 0; i < DimensionsCount; ++i) {
-      Dimensions[i] = -1;
-    }
-  }
-
-  //Fill const dimensions sizes
-  CurrentArray->setNumberOfDims(Dimensions.size());
-
-  Type *Ty = CurrentArray->getElement(0)->Subscripts[0]->getType();
-
-  size_t LastConstDimension = Dimensions.size();
-  //Find last (from left to right) dimension with constant size, extreme left is always unknown
-  for (int i = Dimensions.size() - 1; i >= 0; --i) {
-    if (Dimensions[i] > 0) {
-      LastConstDimension = i;
-      CurrentArray->setDimSize(i, SE.getConstant(Ty, Dimensions[i], false));
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set dim size ";
-        CurrentArray->getDimSize(i)->dump();
-      );
-    } else {
-      break;
-    }
-  }
-
-
-  if (Dimensions[0] > 0) {
-    if (LastConstDimension != 0) {
-      CurrentArray->setDimSize(0, SE.getConstant(Ty, Dimensions[0], false));
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set first dim size ";
-        CurrentArray->getDimSize(0)->dump();
-      );
-    }
-  } else {
-    CurrentArray->setDimSize(0, SE.getCouldNotCompute());
-    LLVM_DEBUG(
-      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set first dim size ";
-      CurrentArray->getDimSize(0)->dump();
-    );
-  }
-
-  //if (Dimensions[0] < 0) {
-  //  CurrentArray->setDimSize(0, SE.getCouldNotCompute());
-  //}
-
-  size_t FirstUnknownDimension = LastConstDimension - 1;
-
-  LLVM_DEBUG(
-    if (LastConstDimension < Dimensions.size()) {
-      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Filling array const dims from " <<
-        LastConstDimension << " to " << Dimensions.size() - 1 << "\n";
-    }
-  );
-
-  if (FirstUnknownDimension <= 0) {
-    return;
-  }
-
-  LLVM_DEBUG(
-    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Start filling\n";
-  );
-
-  auto *PrevioslyDimsSizesProduct = SE.getConstant(Ty, 1, false);
-
-  for (int i = FirstUnknownDimension - 1; i >= 0; --i) {
-    LLVM_DEBUG(
-      dbgs() << "i: " << i << "\n";
-    );
-    const SCEV *Q, *R, *DimSize;
-
-    //Find divider (dimension size), switch by constant or variable
-    if (Dimensions[i + 1] > 0) {
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Const dim size\n";
-      );
-      DimSize = SE.getConstant(Ty, Dimensions[i + 1], false);
-    } else {
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Var dim size\n";
-      );
-      SmallVector<const SCEV *, 3> Expressions;
-      for (auto CurrentElementIt = CurrentArray->begin();
-        CurrentElementIt != CurrentArray->end(); ++CurrentElementIt) {
-        if (CurrentElementIt->Subscripts.size() != Dimensions.size()) {
-          CurrentElementIt->IsValid = false;
-        } else {
-          LLVM_DEBUG(
-            dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Expressions\n";
-          );
-          for (int j = i; j >= 0; --j) {
-            Expressions.push_back(CurrentElementIt->Subscripts[j]);
-            LLVM_DEBUG(
-              dbgs() << "\t";
-              CurrentElementIt->Subscripts[j]->dump();
-            );
-          }
-        }
-      }
-      DimSize = findGCD(Expressions, SE);
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD: ";
-        DimSize->dump();
-      );
-
-      SCEVDivision::divide(SE, DimSize, PrevioslyDimsSizesProduct, &Q, &R);
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] PrevioslyDimsSizesProduct: ";
-        PrevioslyDimsSizesProduct->dump();
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
-        Q->dump();
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
-        R->dump();
-      );
-      if (R->isZero()) {
-        DimSize = Q;
-      } else {
-        DimSize = SE.getConstant(Ty, 1, false);
-        //CurrentArray->setValid(false);
-        assert(false && "Cant divide dim size");
-        break;
-      }
-    }
-    if (DimSize->isZero()) {
-      DimSize = SE.getCouldNotCompute();
-      //CurrentArray->setValid(false);
-    } else {
-      PrevioslyDimsSizesProduct = SE.getMulExpr(PrevioslyDimsSizesProduct, DimSize);
-    }
-
-    CurrentArray->setDimSize(i + 1, DimSize);
-    LLVM_DEBUG(
-      dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set dim size ";
-      DimSize->dump();
-    );
-  }
-}
-
-void cleanSubscripts(Array *CurrentArray, ScalarEvolution &SE) {
-  assert(CurrentArray && "Current Array must not be null");
-  assert(!CurrentArray->empty() && "Acesses size must not be zero");
-
-  size_t LastConstDimension = CurrentArray->getNumberOfDims();
-  //find last (from left to right) dimension with constant size, extreme left is always unknown
-  for (int i = CurrentArray->getNumberOfDims() - 1; i > 0; --i) {
-    if (isa<SCEVConstant>(CurrentArray->getDimSize(i))) {
-      LastConstDimension = i;
-    } else {
-      break;
-    }
-  }
-
-  size_t FirstUnknownDimension = LastConstDimension - 1;
-
-  const SCEV *Q, *R;
-
-  Type *Ty = CurrentArray->getElement(0)->Subscripts[0]->getType();
-  //LLVM_DEBUG(
-  //  dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV Type: ";
-  //  Ty->dump();
-  //);
-  auto *PrivioslyDimsSizesProduct = SE.getConstant(Ty, 1, true);
-
-  for (int i = FirstUnknownDimension - 1; i >= 0; --i) {
-    if (dyn_cast<SCEVCouldNotCompute>(CurrentArray->getDimSize(i + 1))) {
-      continue;
-    }
-    PrivioslyDimsSizesProduct = SE.getMulExpr(PrivioslyDimsSizesProduct,
-      CurrentArray->getDimSize(i + 1));
-    for (auto CurrentElementIt = CurrentArray->begin();
-      CurrentElementIt != CurrentArray->end();
-      ++CurrentElementIt) {
-      auto *CurrentSCEV = CurrentElementIt->Subscripts[i];
-        SCEVDivision::divide(SE, CurrentSCEV, PrivioslyDimsSizesProduct, &Q, &R);
-        LLVM_DEBUG(
-          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] SCEV: ";
-          CurrentSCEV->dump();
-          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Divider: ";
-          PrivioslyDimsSizesProduct->dump();
-          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] R: ";
-          R->dump();
-          dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Q: ";
-          Q->dump();
-        );
-        if (R->isZero()) {
-          CurrentSCEV = Q;
-        } else {
-          assert(false && "Cant divide access");
-        }
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Set ";
-        CurrentSCEV->dump();
-      );
-      CurrentElementIt->Subscripts[i] = CurrentSCEV;
-    }
-  }
-}
-
 #ifdef LLVM_DEBUG
 void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
     raw_ostream  &OS) {
   for (auto &ArrayInfo : Info.getArrays()) {
-    OS << "[DELINEARIZATION]: results for array ";
+    OS << "[DELINEARIZE]: results for array ";
     ArrayInfo->getBase()->print(OS, true);
     OS << "\n";
     OS << "  number of dimensions: " << ArrayInfo->getNumberOfDims() << "\n";
@@ -1354,6 +1134,150 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
   }
 }
 #endif
+}
+
+void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
+  assert(ArrayInfo.isDelinearized() && "Array must be delinearized!");
+  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: simplify subscripts for "
+                    << ArrayInfo.getBase()->getName() << "\n");
+  auto LastConstDim = ArrayInfo.getNumberOfDims();
+  for (LastConstDim; LastConstDim > 0; --LastConstDim)
+    if (!isa<SCEVConstant>(ArrayInfo.getDimSize(LastConstDim - 1)))
+      break;
+  if (LastConstDim == 0)
+    return;
+  auto *PrevDimSizesProduct = mSE->getConstant(mIndexTy, 1);
+  for (auto DimIdx = LastConstDim - 1; DimIdx > 0; --DimIdx) {
+    assert(ArrayInfo.isKnownDimSize(DimIdx) &&
+      "Non-first unknown dimension in delinearized array!");
+    PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct,
+      mSE->getTruncateOrZeroExtend(ArrayInfo.getDimSize(DimIdx), mIndexTy));
+    for (auto &Range: ArrayInfo) {
+      auto *Subscript = Range.Subscripts[DimIdx - 1];
+      const SCEV *Q = nullptr, *R = nullptr;
+      SCEVDivision::divide(*mSE, Subscript, PrevDimSizesProduct, &Q, &R);
+      LLVM_DEBUG(
+        dbgs() << "[DELINEARIZE]: subscript " << DimIdx - 1 << " ";
+        Subscript->dump();
+        dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
+        PrevDimSizesProduct->dump();
+        dbgs() << "[DELINEARIZE]: quotient "; Q->dump();
+        dbgs() << "[DELINEARIZE]: remainder "; R->dump());
+      if (!R->isZero()) {
+        Range.Traits &= ~Range.IsValid;
+        break;
+      }
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: set subscript to "; Q->dump());
+      Range.Subscripts[DimIdx - 1] = Q;
+    }
+  }
+}
+
+void DelinearizationPass::fillArrayDimensionsSizes(
+    SmallVectorImpl<int64_t> &DimSizes, Array &ArrayInfo) {
+  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: compute sizes of dimensions for "
+                    << ArrayInfo.getBase()->getName() << "\n");
+  auto NumberOfDims = ArrayInfo.getNumberOfDims();
+  auto LastUnknownDim = NumberOfDims;
+  if (NumberOfDims == 0) {
+    auto RangeItr = ArrayInfo.begin(), RangeItrE = ArrayInfo.end();
+    for (; RangeItr != RangeItrE; ++RangeItr) {
+      if (RangeItr->isElement() && RangeItr->isValid()) {
+        NumberOfDims = RangeItr->Subscripts.size();
+        break;
+      }
+    }
+    if (RangeItr == RangeItrE) {
+      LLVM_DEBUG(
+        dbgs() << "[DELINEARIZE]: no valid element found\n";
+        dbgs() << "[DELINEARIZE]: unable to determine number of"
+        " dimensions for " << ArrayInfo.getBase()->getName() << "\n");
+      return;
+    }
+    for (++RangeItr; RangeItr != RangeItrE; ++RangeItr)
+      if (RangeItr->isElement() && RangeItr->isValid())
+        if (NumberOfDims != RangeItr->Subscripts.size()) {
+          LLVM_DEBUG(
+            dbgs() << "[DELINEARIZE]: unable to determine number of"
+            " dimensions for " << ArrayInfo.getBase()->getName() << "\n");
+          return;
+        }
+    assert(NumberOfDims > 0 && "Scalar variable is treated as array?");
+    DimSizes.resize(NumberOfDims, -1);
+    ArrayInfo.setNumberOfDims(NumberOfDims);
+    ArrayInfo.setDimSize(0, mSE->getCouldNotCompute());
+    LastUnknownDim = NumberOfDims - 1;
+    LLVM_DEBUG(
+      dbgs() << "[DELINEARIZE]: extract number of dimensions from subscripts: "
+             << NumberOfDims << "\n");
+  } else {
+    auto LastConstDim = DimSizes.size();
+    for (auto I = DimSizes.size(); I > 0; --I) {
+      if (DimSizes[I - 1] < 0)
+        break;
+      LastConstDim = I - 1;
+      ArrayInfo.setDimSize(I - 1, mSE->getConstant(mIndexTy, DimSizes[I - 1]));
+    }
+    if (LastConstDim == 0) {
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: all dimensions have constant sizes\n");
+      return;
+    }
+    if (DimSizes[0] > 0)
+      ArrayInfo.setDimSize(0, mSE->getConstant(mIndexTy, DimSizes[0]));
+    else
+      ArrayInfo.setDimSize(0, mSE->getCouldNotCompute());
+    LastUnknownDim = LastConstDim - 1;
+  }
+  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: compute non-constant dimension sizes\n");
+  auto *PrevDimSizesProduct = mSE->getConstant(mIndexTy, 1);
+  auto DimIdx = LastUnknownDim;
+  for (; DimIdx > 0; --DimIdx) {
+    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process dimension " << DimIdx << "\n");
+    const SCEV *Q, *R, *DimSize;
+    if (DimSizes[DimIdx] > 0) {
+      DimSize = mSE->getConstant(mIndexTy, DimSizes[DimIdx]);
+    } else {
+      SmallVector<const SCEV *, 3> Expressions;
+      for (auto &Range: ArrayInfo) {
+        if (!Range.isElement())
+          continue;
+        assert(Range.Subscripts.size() == NumberOfDims &&
+          "Number of dimensions is inconsistent with number of subscripts!");
+        for (auto J = DimIdx; J > 0; --J) {
+          Expressions.push_back(Range.Subscripts[J - 1]);
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: use for GCD computation: ";
+            Expressions.back()->dump());
+        }
+      }
+      DimSize = findGCD(Expressions, *mSE);
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
+      SCEVDivision::divide(*mSE, DimSize, PrevDimSizesProduct, &Q, &R);
+      DimSize = Q;
+      LLVM_DEBUG(
+        dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
+        PrevDimSizesProduct->dump();
+        dbgs() << "[DELINEARIZE]: quotient "; Q->dump();
+        dbgs() << "[DELINEARIZE]: remainder "; R->dump());
+    }
+    if (DimSize->isZero()) {
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: could not compute dimension size\n");
+      DimSize = mSE->getCouldNotCompute();
+      ArrayInfo.setDimSize(DimIdx, DimSize);
+      for (auto J : seq(decltype(DimIdx)(1), DimIdx)) {
+        if (DimSizes[J] > 0)
+          ArrayInfo.setDimSize(J, mSE->getConstant(mIndexTy, DimSizes[J]));
+        else
+          ArrayInfo.setDimSize(J, DimSize);
+      }
+      break;
+    }
+    ArrayInfo.setDimSize(DimIdx, DimSize);
+    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is "; DimSize->dump());
+    DimSize = mSE->getTruncateOrZeroExtend(DimSize, mIndexTy);
+    PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct, DimSize);
+  }
+  if (DimIdx == 0)
+    ArrayInfo.setDelinearized();
 }
 
 void DelinearizationPass::findArrayDimesionsFromDbgInfo(
@@ -1455,21 +1379,22 @@ void DelinearizationPass::collectArrays(Function &F, DimensionMap &DimsCache) {
       // beginning of the list, try to implement smart extra subscript insertion.
       if (isa<LoadInst>(I) || isa<StoreInst>(I) ||
           isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I)) {
+        El.Traits |= Array::Element::IsElement;
         if (SubscriptValues.size() < NumberOfDims) {
-          El.IsValid = false;
-          auto Ty = SubscriptValues.empty() ? Type::getInt32Ty(I.getContext()) :
-            SubscriptValues.front()->getType();
+          (*ArrayItr)->setRangeRef();
           for (std::size_t Idx = 0, IdxE = NumberOfDims - SubscriptValues.size();
                Idx < IdxE; Idx++) {
-            El.Subscripts.push_back(mSE->getZero(Ty));
+            El.Subscripts.push_back(mSE->getZero(mIndexTy));
             LLVM_DEBUG(dbgs() << "[DELINEARIZE]: add extra zero subscript\n");
           }
         } else {
-          El.IsValid = true;
+          El.Traits |= Array::Element::IsValid;
         }
+      } else {
+        El.Traits |= Array::Element::IsValid;
       }
       if (!SubscriptValues.empty()) {
-        (*ArrayItr)->setEementAccess();
+        (*ArrayItr)->setRangeRef();
         for (auto *V : SubscriptValues)
           El.Subscripts.push_back(mSE->getSCEV(V));
       }
@@ -1493,7 +1418,7 @@ void DelinearizationPass::collectArrays(Function &F, DimensionMap &DimsCache) {
   for (auto Itr = mDelinearizeInfo.getArrays().begin(),
        ItrE = mDelinearizeInfo.getArrays().end(); Itr != ItrE;) {
     auto CurrItr = Itr++;
-    if ((*CurrItr)->getNumberOfDims() == 0 && !(*CurrItr)->hasElementAccess()) {
+    if ((*CurrItr)->getNumberOfDims() == 0 && !(*CurrItr)->hasRangeRef()) {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: not an array "
                         << (*CurrItr)->getBase()->getName() << "\n");
       DimsCache.erase((*CurrItr)->getBase());
@@ -1509,9 +1434,9 @@ void DelinearizationPass::findSubscripts(Function &F) {
     auto DimsItr = DimsCache.find(ArrayInfo->getBase());
     assert(DimsItr != DimsCache.end() &&
       "Cache of dimension sizes must be constructed!");
-    fillArrayDimensionsSizes(DimsItr->second, *mSE, ArrayInfo);
-    if (ArrayInfo->isValid()) {
-      cleanSubscripts(ArrayInfo, *mSE);
+    fillArrayDimensionsSizes(DimsItr->second, *ArrayInfo);
+    if (ArrayInfo->isDelinearized()) {
+      cleanSubscripts(*ArrayInfo);
     } else {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: unable to delinearize "
                         << DimsItr->first->getName() << "\n");
@@ -1521,11 +1446,14 @@ void DelinearizationPass::findSubscripts(Function &F) {
 
 bool DelinearizationPass::runOnFunction(Function &F) {
   LLVM_DEBUG(
-    dbgs() << "[DELINEARIZATION]: process function " << F.getName() << "\n");
+    dbgs() << "[DELINEARIZE]: process function " << F.getName() << "\n");
   releaseMemory();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &DL = F.getParent()->getDataLayout();
+  mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
+  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is "; mIndexTy->dump());
   findSubscripts(F);
   mDelinearizeInfo.fillElementsMap();
   LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, *mSE, dbgs()));

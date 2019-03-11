@@ -1,10 +1,12 @@
-#ifndef TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
-#define TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
+#ifndef TSAR_DELINIARIZATION_H
+#define TSAR_DELINIARIZATION_H
 
 #include "tsar_pass.h"
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Pass.h>
 #include <bcl/utility.h>
 #include <vector>
@@ -13,22 +15,34 @@ namespace llvm {
 class Instruction;
 class Function;
 class Value;
-class SCEV;
-class ScalarEvolution;
-class SCEVMulExpr;
 class DominatorTree;
 class TargetLibraryInfo;
 }
 
 namespace tsar {
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
 /// Delinearized array.
 class Array {
+  enum Flags : uint8_t {
+    DefaultFlags = 0u,
+    HasRangeRef = 1u << 0,
+    IsDelinearized = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(IsDelinearized)
+  };
 public:
   using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
 
   /// Map from linearized index of array to its delinearized representation.
   /// Instruction does not access memory.
   struct Element {
+    enum Flags : uint8_t {
+      DefaultFlags = 0u,
+      IsValid = 1u << 0,
+      IsElement = 1u << 1,
+      LLVM_MARK_AS_BITMASK_ENUM(IsElement)
+    };
+
     /// Pointer to an element of an array.
     llvm::Value *Ptr;
 
@@ -37,15 +51,17 @@ public:
     /// This is representation of offset (`Ptr-ArrayPtr`) after delinearization.
     ExprList Subscripts;
 
-    /// `True` if address of this element of an array has been successfully
-    /// delinearized.
-    bool IsValid = false;
+    /// Properties of this element.
+    Flags Traits = DefaultFlags;
 
     /// Creates element referenced with a specified pointer. Initial this
     /// element is not delineariaced yet.
     explicit Element(llvm::Value *Ptr) : Ptr(Ptr) {
       assert(Ptr && "Pointer must not be null!");
     }
+
+    bool isValid() const { return Traits & IsValid; }
+    bool isElement() const { return Traits & IsElement; }
   };
 
   using Elements = std::vector<Element>;
@@ -107,22 +123,36 @@ public:
     mDims[DimIdx] = Expr;
   }
 
-  /// Returns size of a specified dimension.
+  /// Return size of a specified dimension.
   const llvm::SCEV * getDimSize(std::size_t DimIdx) const {
     assert(DimIdx < getNumberOfDims() && "Dimension index is out of range!");
     return mDims[DimIdx];
   }
 
-  bool isValid() { return !mDims.empty(); }
+  /// Return true if size of a specified dimension is known. If size is unknown
+  /// it may be nullptr or llvm::SCEVCouldNotCompute.
+  bool isKnownDimSize(std::size_t DimIdx) const {
+    assert(DimIdx < getNumberOfDims() && "Dimension index is out of range!");
+    return mDims[DimIdx] &&
+      !llvm::isa<llvm::SCEVCouldNotCompute>(mDims[DimIdx]);
+  }
 
-  bool hasElementAccess() const noexcept { return mHasElementAccess; }
-  void setEementAccess(bool Has = true) noexcept { mHasElementAccess = Has; }
+  /// Return true if this array has been successfully delinearized. Note, that
+  /// deliniarization process may ignore pointers to some ranges of this array.
+  bool isDelinearized() const noexcept { return mF & IsDelinearized; }
+  void setDelinearized() noexcept { mF |= IsDelinearized; }
+
+  /// Return true if there is an instruction which computes a reference to
+  /// the beginning of an array subrange. The simplest example of such
+  /// instruction is GEP which returns pointer to an element of this array.
+  bool hasRangeRef() const noexcept { return mF & HasRangeRef; }
+  void setRangeRef() noexcept { mF |= HasRangeRef; }
 
 private:
   llvm::Value *mBasePtr;
   ExprList mDims;
   std::vector<Element> mElements;
-  bool mHasElementAccess = false;
+  Flags mF = DefaultFlags;
 };
 
 std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
@@ -255,12 +285,18 @@ private:
 
   void findSubscripts(Function &F);
 
+  void fillArrayDimensionsSizes(SmallVectorImpl<int64_t> &DimSizes,
+    tsar::Array &ArrayInfo);
+
+  void cleanSubscripts(tsar::Array &CurrentArray);
+
   tsar::DelinearizeInfo mDelinearizeInfo;
   DominatorTree *mDT = nullptr;
   ScalarEvolution *mSE = nullptr;
   TargetLibraryInfo *mTLI = nullptr;
+  Type *mIndexTy = nullptr;
 };
 }
 
 
-#endif //TSAR_ARRAY_SUBSCRIPT_DELINEARIZE_H
+#endif //TSAR_DELINIARIZATION_H
