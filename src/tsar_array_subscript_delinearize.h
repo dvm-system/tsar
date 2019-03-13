@@ -155,7 +155,7 @@ private:
   Flags mF = DefaultFlags;
 };
 
-std::pair<const llvm::SCEV *, const llvm::SCEV *> findCoefficientsInSCEV(
+std::pair<const llvm::SCEV *, bool> computeSCEVAddRec(
   const llvm::SCEV *Expr, llvm::ScalarEvolution &SE);
 
 /// Implementation of llvm::DenseMapInfo which uses base pointer to compute

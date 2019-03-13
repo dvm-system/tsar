@@ -47,111 +47,112 @@ static cl::opt<unsigned> MaxValueCompareDepth(
   cl::init(2));
 
 namespace {
-std::pair<const SCEV *, const SCEV *> findCoefficientsInSCEVMulExpr(const SCEVMulExpr *MulExpr,
-  ScalarEvolution &SE) {
-  assert(MulExpr && "MulExpr must not be null");
-  SmallVector<const SCEV*, 2> AMultipliers, BMultipliers;
-  bool hasAddRec = false;
+/// Traverse a SCEV and simplifies it to a binomial if possible. The result is
+/// `Coef * Count + FreeTerm`, where `Count` is and induction variable for L.
+/// `IsSafeCast` will be set to `false` if some unsafe casts are necessary for
+/// simplification.
+struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
+  ScalarEvolution *mSE = nullptr;
+  const SCEV * Coef = nullptr;
+  const SCEV * FreeTerm = nullptr;
+  const Loop * L = nullptr;
+  bool IsSafeCast = true;
 
-  for (int i = 0; i < MulExpr->getNumOperands(); ++i) {
-    auto *Op = MulExpr->getOperand(i);
-    switch (Op->getSCEVType()) {
-    case scTruncate:
-    case scZeroExtend:
-    case scSignExtend: {
-      auto *InnerOp = cast<SCEVCastExpr>(Op)->getOperand();
-      if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(InnerOp)) {
-        hasAddRec = true;
+  SCEVBionmialSearch(ScalarEvolution &SE) : mSE(&SE) {}
 
-        auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-        auto *AddRecStart = AddRec->getStart();
-
-        if (Op->getSCEVType() == scTruncate) {
-          AMultipliers.push_back(SE.getTruncateExpr(AddRecStepRecurrence, Op->getType()));
-          BMultipliers.push_back(SE.getTruncateExpr(AddRecStart, Op->getType()));
-        }
-        if (Op->getSCEVType() == scSignExtend) {
-          AMultipliers.push_back(SE.getSignExtendExpr(AddRecStepRecurrence, Op->getType()));
-          BMultipliers.push_back(SE.getSignExtendExpr(AddRecStart, Op->getType()));
-        }
-        if (Op->getSCEVType() == scZeroExtend) {
-          AMultipliers.push_back(SE.getZeroExtendExpr(AddRecStepRecurrence, Op->getType()));
-          BMultipliers.push_back(SE.getZeroExtendExpr(AddRecStart, Op->getType()));
-        }
-      } else {
-        AMultipliers.push_back(Op);
-        BMultipliers.push_back(Op);
-      }
-      break;
-    }
-    case scAddRecExpr: {
-      hasAddRec = true;
-
-      auto *AddRec = cast<SCEVAddRecExpr>(Op);
-
-      auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-      auto *AddRecStart = AddRec->getStart();
-
-      AMultipliers.push_back(AddRecStepRecurrence);
-      BMultipliers.push_back(AddRecStart);
-
-      break;
-    }
-    default: {
-      AMultipliers.push_back(Op);
-      BMultipliers.push_back(Op);
-      break;
-    }
-    }
-
+  void visitTruncateExpr(const SCEVTruncateExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getTruncateExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getTruncateExpr(FreeTerm, S->getType());
   }
-  if (!hasAddRec) {
-    return std::make_pair(SE.getConstant(APInt(sizeof(int), 0, true)), MulExpr);
+
+  void visitSignExtendExpr(const SCEVSignExtendExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getSignExtendExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getSignExtendExpr(FreeTerm, S->getType());
   }
-  auto *ACoefficient = SE.getMulExpr(AMultipliers);
-  auto *BCoefficient = SE.getMulExpr(BMultipliers);
-  return std::make_pair(ACoefficient, BCoefficient);
+
+  void visitZeroExtendExpr(const SCEVZeroExtendExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getZeroExtendExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getZeroExtendExpr(FreeTerm, S->getType());
+  }
+
+  void visitAddRecExpr(const SCEVAddRecExpr *S) {
+    L = S->getLoop();
+    Coef = S->getStepRecurrence(*mSE);
+    FreeTerm = S->getStart();
+  }
+
+  void visitMulExpr(const SCEVMulExpr *S) {
+    assert(!L && "Loop must not be set yet!");
+    auto OpI = S->op_begin(), OpEI = S->op_end();
+    SmallVector<const SCEV *, 4> MulCoef;
+    for (; OpI != OpEI; ++OpI) {
+      visit(*OpI);
+      if (L)
+        break;
+      MulCoef.push_back(*OpI);
+    }
+    if (L) {
+      MulCoef.append(++OpI, OpEI);
+      MulCoef.push_back(FreeTerm);
+      FreeTerm = mSE->getMulExpr(MulCoef);
+      MulCoef.back() = Coef;
+      Coef = mSE->getMulExpr(MulCoef);
+    } else {
+      FreeTerm = S;
+    }
+  }
+
+  void visitAddExpr(const SCEVAddExpr *S) {
+    assert(!L && "Loop must not be set yet!");
+    auto OpI = S->op_begin(), OpEI = S->op_end();
+    SmallVector<const SCEV *, 4> Terms;
+    for (; OpI != OpEI; ++OpI) {
+      visit(*OpI);
+      if (L)
+        break;
+      Terms.push_back(*OpI);
+    }
+    if (L) {
+      Terms.append(++OpI, OpEI);
+      Terms.push_back(FreeTerm);
+      FreeTerm = mSE->getAddExpr(Terms);
+    } else {
+      FreeTerm = S;
+    }
+  }
+
+  void visitConstant(const SCEVConstant *S) { FreeTerm = S; }
+  void visitUDivExpr(const SCEVUDivExpr *S) { FreeTerm = S; }
+  void visitSMaxExpr(const SCEVSMaxExpr *S) { FreeTerm = S; }
+  void visitUMaxExpr(const SCEVUMaxExpr *S) { FreeTerm = S; }
+  void visitUnknown(const SCEVUnknown *S) { FreeTerm = S; }
+  void visitCouldNotCompute(const SCEVCouldNotCompute *S) { FreeTerm = S; }
+};
 }
-}
 
-namespace tsar {
-std::pair<const SCEV *, const SCEV *> findCoefficientsInSCEV(const SCEV *Expr, ScalarEvolution &SE) {
-  assert(Expr && "Expression must not be null");
-  switch (Expr->getSCEVType()) {
-  case scTruncate:
-  case scZeroExtend:
-  case scSignExtend: {
-    return findCoefficientsInSCEV(cast<SCEVCastExpr>(Expr)->getOperand(), SE);
+std::pair<const SCEV *, bool> tsar::computeSCEVAddRec(
+    const SCEV *Expr, llvm::ScalarEvolution &SE) {
+  SCEVBionmialSearch Search(SE);
+  Search.visit(Expr);
+  bool IsSafe = true;
+  if (Search.L) {
+    Expr = SE.getAddRecExpr(
+      Search.FreeTerm, Search.Coef, Search.L, SCEV::FlagAnyWrap);
+    IsSafe = Search.IsSafeCast;
   }
-  case scAddRecExpr: {
-    auto *AddRec = cast<SCEVAddRecExpr>(Expr);
-
-    auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-    if (auto *CastExpr = dyn_cast<SCEVCastExpr>(AddRecStepRecurrence)) {
-      AddRecStepRecurrence = CastExpr->getOperand();
-    }
-
-    auto *AddRecStart = AddRec->getStart();
-    if (auto *CastExpr = dyn_cast<SCEVCastExpr>(AddRecStart)) {
-      AddRecStart = CastExpr->getOperand();
-    }
-
-    return std::make_pair(AddRecStepRecurrence, AddRecStart);
-  }
-  case scAddExpr:
-  case scConstant:
-  case scUnknown: {
-    return std::make_pair(SE.getConstant(APInt(sizeof(int), 0, true)), Expr);
-  }
-  case scMulExpr: {
-    return findCoefficientsInSCEVMulExpr(cast<SCEVMulExpr>(Expr), SE);
-  }
-  default: {
-    return std::make_pair(SE.getConstant(APInt(sizeof(int), 0, true)),
-      SE.getConstant(APInt(sizeof(int), 0, true)));
-  }
-  }
-}
+  return std::make_pair(Expr, IsSafe);
 }
 
 std::pair<const Array *, const Array::Element *>
@@ -1115,8 +1116,15 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
         OS << "      SCEV: ";
         S->print(OS);
         OS << "\n";
+        auto Info = computeSCEVAddRec(S, SE);
         const SCEV *Coef, *ConstTerm;
-        std::tie(Coef, ConstTerm) = findCoefficientsInSCEV(S, SE);
+        if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+          Coef = AddRec->getStepRecurrence(SE);
+          ConstTerm = AddRec->getStart();
+        } else {
+          Coef = nullptr;
+          ConstTerm = Info.first;
+        }
         OS << "      a: ";
         if (Coef)
           Coef->print(OS);
@@ -1129,6 +1137,8 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
         else
           OS << "null";
         OS << "\n";
+        if (!Info.second)
+          OS << "      unsafe cast\n";
       }
     }
   }
@@ -1495,8 +1505,15 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE
         Subscripts.emplace_back(2);
         auto &CoefStr = Subscripts.back().front();
         auto &ConstTermStr = Subscripts.back().back();
+        auto Info = computeSCEVAddRec(S, SE);
         const SCEV *Coef, *ConstTerm;
-        std::tie(Coef, ConstTerm) = findCoefficientsInSCEV(S, SE);
+        if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+          Coef = AddRec->getStepRecurrence(SE);
+          ConstTerm = AddRec->getStart();
+        } else {
+          Coef = nullptr;
+          ConstTerm = Info.first;
+        }
         if (Coef) {
           raw_string_ostream CoefOS(CoefStr);
           Coef->print(CoefOS);
