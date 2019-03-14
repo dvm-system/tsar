@@ -4,6 +4,7 @@
 #include "MemoryAccessUtils.h"
 #include "tsar_query.h"
 #include "tsar_utility.h"
+#include "tsar/Support/SCEVUtils.h"
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/Sequence.h>
@@ -35,16 +36,6 @@ INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 STATISTIC(NumDelinearizedSubscripts, "Number of delinearized subscripts");
-
-static cl::opt<unsigned> MaxSCEVCompareDepth(
-  "scalar-evolution-max-scev-compare-depth-local-copy", cl::Hidden,
-  cl::desc("Maximum depth of recursive SCEV complexity comparisons"),
-  cl::init(32));
-
-static cl::opt<unsigned> MaxValueCompareDepth(
-  "scalar-evolution-max-value-compare-depth-local-copy", cl::Hidden,
-  cl::desc("Maximum depth of recursive value complexity comparisons"),
-  cl::init(2));
 
 namespace {
 /// Traverse a SCEV and simplifies it to a binomial if possible. The result is
@@ -177,538 +168,6 @@ void DelinearizeInfo::fillElementsMap() {
 }
 
 namespace {
-static int
-CompareValueComplexity(SmallSet<std::pair<Value *, Value *>, 8> &EqCache,
-  const LoopInfo *const LI, Value *LV, Value *RV,
-  unsigned Depth) {
-  if (Depth > MaxValueCompareDepth || EqCache.count({ LV, RV }))
-    return 0;
-
-  // Order pointer values after integer values. This helps SCEVExpander form
-  // GEPs.
-  bool LIsPointer = LV->getType()->isPointerTy(),
-    RIsPointer = RV->getType()->isPointerTy();
-  if (LIsPointer != RIsPointer)
-    return (int)LIsPointer - (int)RIsPointer;
-
-  // Compare getValueID values.
-  unsigned LID = LV->getValueID(), RID = RV->getValueID();
-  if (LID != RID)
-    return (int)LID - (int)RID;
-
-  // Sort arguments by their position.
-  if (const auto *LA = dyn_cast<Argument>(LV)) {
-    const auto *RA = cast<Argument>(RV);
-    unsigned LArgNo = LA->getArgNo(), RArgNo = RA->getArgNo();
-    return (int)LArgNo - (int)RArgNo;
-  }
-
-  if (const auto *LGV = dyn_cast<GlobalValue>(LV)) {
-    const auto *RGV = cast<GlobalValue>(RV);
-
-    const auto IsGVNameSemantic = [&](const GlobalValue *GV) {
-      auto LT = GV->getLinkage();
-      return !(GlobalValue::isPrivateLinkage(LT) ||
-        GlobalValue::isInternalLinkage(LT));
-    };
-
-    // Use the names to distinguish the two values, but only if the
-    // names are semantically important.
-    if (IsGVNameSemantic(LGV) && IsGVNameSemantic(RGV))
-      return LGV->getName().compare(RGV->getName());
-  }
-
-  // For instructions, compare their loop depth, and their operand count.  This
-  // is pretty loose.
-  if (const auto *LInst = dyn_cast<Instruction>(LV)) {
-    const auto *RInst = cast<Instruction>(RV);
-
-    // Compare loop depths.
-    const BasicBlock *LParent = LInst->getParent(),
-      *RParent = RInst->getParent();
-    if (LParent != RParent) {
-      unsigned LDepth = LI->getLoopDepth(LParent),
-        RDepth = LI->getLoopDepth(RParent);
-      if (LDepth != RDepth)
-        return (int)LDepth - (int)RDepth;
-    }
-
-    // Compare the number of operands.
-    unsigned LNumOps = LInst->getNumOperands(),
-      RNumOps = RInst->getNumOperands();
-    if (LNumOps != RNumOps)
-      return (int)LNumOps - (int)RNumOps;
-
-    for (unsigned Idx : seq(0u, LNumOps)) {
-      int Result =
-        CompareValueComplexity(EqCache, LI, LInst->getOperand(Idx),
-          RInst->getOperand(Idx), Depth + 1);
-      if (Result != 0)
-        return Result;
-    }
-  }
-
-  EqCache.insert({ LV, RV });
-  return 0;
-}
-
-static int CompareSCEVComplexity(
-  SmallSet<std::pair<const SCEV *, const SCEV *>, 8> &EqCacheSCEV,
-  const LoopInfo *const LI, const SCEV *LHS, const SCEV *RHS,
-  unsigned Depth = 0) {
-  // Fast-path: SCEVs are uniqued so we can do a quick equality check.
-  if (LHS == RHS)
-    return 0;
-
-  // Primarily, sort the SCEVs by their getSCEVType().
-  unsigned LType = LHS->getSCEVType(), RType = RHS->getSCEVType();
-  if (LType != RType)
-    return (int)LType - (int)RType;
-
-  if (Depth > MaxSCEVCompareDepth || EqCacheSCEV.count({ LHS, RHS }))
-    return 0;
-  // Aside from the getSCEVType() ordering, the particular ordering
-  // isn't very important except that it's beneficial to be consistent,
-  // so that (a + b) and (b + a) don't end up as different expressions.
-  switch (static_cast<SCEVTypes>(LType)) {
-  case scUnknown: {
-    const SCEVUnknown *LU = cast<SCEVUnknown>(LHS);
-    const SCEVUnknown *RU = cast<SCEVUnknown>(RHS);
-
-    SmallSet<std::pair<Value *, Value *>, 8> EqCache;
-    int X = CompareValueComplexity(EqCache, LI, LU->getValue(), RU->getValue(),
-      Depth + 1);
-    if (X == 0)
-      EqCacheSCEV.insert({ LHS, RHS });
-    return X;
-  }
-
-  case scConstant: {
-    const SCEVConstant *LC = cast<SCEVConstant>(LHS);
-    const SCEVConstant *RC = cast<SCEVConstant>(RHS);
-
-    // Compare constant values.
-    const APInt &LA = LC->getAPInt();
-    const APInt &RA = RC->getAPInt();
-    unsigned LBitWidth = LA.getBitWidth(), RBitWidth = RA.getBitWidth();
-    if (LBitWidth != RBitWidth)
-      return (int)LBitWidth - (int)RBitWidth;
-    return LA.ult(RA) ? -1 : 1;
-  }
-
-  case scAddRecExpr: {
-    const SCEVAddRecExpr *LA = cast<SCEVAddRecExpr>(LHS);
-    const SCEVAddRecExpr *RA = cast<SCEVAddRecExpr>(RHS);
-
-    // Compare addrec loop depths.
-    const Loop *LLoop = LA->getLoop(), *RLoop = RA->getLoop();
-    if (LLoop != RLoop) {
-      unsigned LDepth = LLoop->getLoopDepth(), RDepth = RLoop->getLoopDepth();
-      if (LDepth != RDepth)
-        return (int)LDepth - (int)RDepth;
-    }
-
-    // Addrec complexity grows with operand count.
-    size_t LNumOps = LA->getNumOperands(), RNumOps = RA->getNumOperands();
-    if (LNumOps != RNumOps)
-      return (int)LNumOps - (int)RNumOps;
-
-    // Lexicographically compare.
-    for (unsigned i = 0; i != LNumOps; ++i) {
-      int X = CompareSCEVComplexity(EqCacheSCEV, LI, LA->getOperand(i),
-        RA->getOperand(i), Depth + 1);
-      if (X != 0)
-        return X;
-    }
-    EqCacheSCEV.insert({ LHS, RHS });
-    return 0;
-  }
-
-  case scAddExpr:
-  case scMulExpr:
-  case scSMaxExpr:
-  case scUMaxExpr: {
-    const SCEVNAryExpr *LC = cast<SCEVNAryExpr>(LHS);
-    const SCEVNAryExpr *RC = cast<SCEVNAryExpr>(RHS);
-
-    // Lexicographically compare n-ary expressions.
-    size_t LNumOps = LC->getNumOperands(), RNumOps = RC->getNumOperands();
-    if (LNumOps != RNumOps)
-      return (int)LNumOps - (int)RNumOps;
-
-    for (unsigned i = 0; i != LNumOps; ++i) {
-      if (i >= RNumOps)
-        return 1;
-      int X = CompareSCEVComplexity(EqCacheSCEV, LI, LC->getOperand(i),
-        RC->getOperand(i), Depth + 1);
-      if (X != 0)
-        return X;
-    }
-    EqCacheSCEV.insert({ LHS, RHS });
-    return 0;
-  }
-
-  case scUDivExpr: {
-    const SCEVUDivExpr *LC = cast<SCEVUDivExpr>(LHS);
-    const SCEVUDivExpr *RC = cast<SCEVUDivExpr>(RHS);
-
-    // Lexicographically compare udiv expressions.
-    int X = CompareSCEVComplexity(EqCacheSCEV, LI, LC->getLHS(), RC->getLHS(),
-      Depth + 1);
-    if (X != 0)
-      return X;
-    X = CompareSCEVComplexity(EqCacheSCEV, LI, LC->getRHS(), RC->getRHS(),
-      Depth + 1);
-    if (X == 0)
-      EqCacheSCEV.insert({ LHS, RHS });
-    return X;
-  }
-
-  case scTruncate:
-  case scZeroExtend:
-  case scSignExtend: {
-    const SCEVCastExpr *LC = cast<SCEVCastExpr>(LHS);
-    const SCEVCastExpr *RC = cast<SCEVCastExpr>(RHS);
-
-    // Compare cast expressions by operand.
-    int X = CompareSCEVComplexity(EqCacheSCEV, LI, LC->getOperand(),
-      RC->getOperand(), Depth + 1);
-    if (X == 0)
-      EqCacheSCEV.insert({ LHS, RHS });
-    return X;
-  }
-
-  case scCouldNotCompute:
-    llvm_unreachable("Attempt to use a SCEVCouldNotCompute object!");
-  }
-  llvm_unreachable("Unknown SCEV kind!");
-}
-
-static inline int sizeOfSCEV(const SCEV *S) {
-  struct FindSCEVSize {
-    int Size;
-    FindSCEVSize() : Size(0) {}
-
-    bool follow(const SCEV *S) {
-      ++Size;
-      // Keep looking at all operands of S.
-      return true;
-    }
-    bool isDone() const {
-      return false;
-    }
-  };
-
-  FindSCEVSize F;
-  SCEVTraversal<FindSCEVSize> ST(F);
-  ST.visitAll(S);
-  return F.Size;
-}
-
-struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
-public:
-  // Computes the Quotient and Remainder of the division of Numerator by
-  // Denominator.
-  static void divide(ScalarEvolution &SE, const SCEV *Numerator,
-    const SCEV *Denominator, const SCEV **Quotient,
-    const SCEV **Remainder) {
-    assert(Numerator && Denominator && "Uninitialized SCEV");
-
-    SCEVDivision D(SE, Numerator, Denominator);
-
-    // Check for the trivial case here to avoid having to check for it in the
-    // rest of the code.
-    if (Numerator == Denominator) {
-      *Quotient = D.One;
-      *Remainder = D.Zero;
-      return;
-    }
-
-    if (Numerator->isZero()) {
-      *Quotient = D.Zero;
-      *Remainder = D.Zero;
-      return;
-    }
-
-    // A simple case when N/1. The quotient is N.
-    if (Denominator->isOne()) {
-      *Quotient = Numerator;
-      *Remainder = D.Zero;
-      return;
-    }
-
-    // Split the Denominator when it is a product.
-    if (const SCEVMulExpr *T = dyn_cast<SCEVMulExpr>(Denominator)) {
-      const SCEV *Q, *R;
-      *Quotient = Numerator;
-      for (const SCEV *Op : T->operands()) {
-        divide(SE, *Quotient, Op, &Q, &R);
-        *Quotient = Q;
-
-        // Bail out when the Numerator is not divisible by one of the terms of
-        // the Denominator.
-        if (!R->isZero()) {
-          *Quotient = D.Zero;
-          *Remainder = Numerator;
-          return;
-        }
-      }
-      *Remainder = D.Zero;
-      return;
-    }
-
-    D.visit(Numerator);
-    *Quotient = D.Quotient;
-    *Remainder = D.Remainder;
-  }
-
-  // Except in the trivial case described above, we do not know how to divide
-  // Expr by Denominator for the following functions with empty implementation.
-  void visitTruncateExpr(const SCEVTruncateExpr *Numerator) {
-    const SCEV *CurrentNumerator, *CurrentDenominator, *Q, *R;
-    if (auto *CastDenominator = dyn_cast<SCEVCastExpr>(Denominator)) {
-      if (Numerator->getOperand()->getType()
-        == CastDenominator->getOperand()->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = CastDenominator->getOperand();
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    } else {
-      if (Numerator->getOperand()->getType() == Denominator->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = Denominator;
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    }
-    if (CurrentNumerator && CurrentDenominator) {
-      divide(SE, CurrentNumerator, CurrentDenominator, &Q, &R);
-      Quotient = SE.getTruncateExpr(Q, Numerator->getType());
-      Remainder = SE.getTruncateExpr(R, Numerator->getType());
-    }
-  }
-
-  void visitZeroExtendExpr(const SCEVZeroExtendExpr *Numerator) {
-    const SCEV *CurrentNumerator, *CurrentDenominator, *Q, *R;
-    if (auto *CastDenominator = dyn_cast<SCEVCastExpr>(Denominator)) {
-      if (Numerator->getOperand()->getType()
-        == CastDenominator->getOperand()->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = CastDenominator->getOperand();
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    } else {
-      if (Numerator->getOperand()->getType() == Denominator->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = Denominator;
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    }
-    if (CurrentNumerator && CurrentDenominator) {
-      divide(SE, CurrentNumerator, CurrentDenominator, &Q, &R);
-      Quotient = SE.getZeroExtendExpr(Q, Numerator->getType());
-      Remainder = SE.getZeroExtendExpr(R, Numerator->getType());
-    }
-  }
-
-  void visitSignExtendExpr(const SCEVSignExtendExpr *Numerator) {
-    const SCEV *CurrentNumerator, *CurrentDenominator, *Q, *R;
-    if (auto *CastDenominator = dyn_cast<SCEVCastExpr>(Denominator)) {
-      if (Numerator->getOperand()->getType()
-        == CastDenominator->getOperand()->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = CastDenominator->getOperand();
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    } else {
-      if (Numerator->getOperand()->getType() == Denominator->getType()) {
-        CurrentNumerator = Numerator->getOperand();
-        CurrentDenominator = Denominator;
-      } else {
-        CurrentNumerator = nullptr;
-        CurrentDenominator = nullptr;
-      }
-    }
-    if (CurrentNumerator && CurrentDenominator) {
-      divide(SE, CurrentNumerator, CurrentDenominator, &Q, &R);
-      Quotient = SE.getSignExtendExpr(Q, Numerator->getType());
-      Remainder = SE.getSignExtendExpr(R, Numerator->getType());
-    }
-  }
-
-  void visitUDivExpr(const SCEVUDivExpr *Numerator) {}
-  void visitSMaxExpr(const SCEVSMaxExpr *Numerator) {}
-  void visitUMaxExpr(const SCEVUMaxExpr *Numerator) {}
-  void visitUnknown(const SCEVUnknown *Numerator) {}
-  void visitCouldNotCompute(const SCEVCouldNotCompute *Numerator) {}
-
-  void visitConstant(const SCEVConstant *Numerator) {
-    if (const SCEVConstant *D = dyn_cast<SCEVConstant>(Denominator)) {
-      APInt NumeratorVal = Numerator->getAPInt();
-      APInt DenominatorVal = D->getAPInt();
-      uint32_t NumeratorBW = NumeratorVal.getBitWidth();
-      uint32_t DenominatorBW = DenominatorVal.getBitWidth();
-
-      if (NumeratorBW > DenominatorBW)
-        DenominatorVal = DenominatorVal.sext(NumeratorBW);
-      else if (NumeratorBW < DenominatorBW)
-        NumeratorVal = NumeratorVal.sext(DenominatorBW);
-
-      APInt QuotientVal(NumeratorVal.getBitWidth(), 0);
-      APInt RemainderVal(NumeratorVal.getBitWidth(), 0);
-      APInt::sdivrem(NumeratorVal, DenominatorVal, QuotientVal, RemainderVal);
-      Quotient = SE.getConstant(QuotientVal);
-      Remainder = SE.getConstant(RemainderVal);
-      return;
-    }
-  }
-
-  void visitAddRecExpr(const SCEVAddRecExpr *Numerator) {
-    const SCEV *StartQ, *StartR, *StepQ, *StepR;
-    if (!Numerator->isAffine())
-      return cannotDivide(Numerator);
-    divide(SE, Numerator->getStart(), Denominator, &StartQ, &StartR);
-    divide(SE, Numerator->getStepRecurrence(SE), Denominator, &StepQ, &StepR);
-    // Bail out if the types do not match.
-    Type *Ty = Denominator->getType();
-    if (Ty != StartQ->getType() || Ty != StartR->getType() ||
-      Ty != StepQ->getType() || Ty != StepR->getType())
-      return cannotDivide(Numerator);
-    Quotient = SE.getAddRecExpr(StartQ, StepQ, Numerator->getLoop(),
-      Numerator->getNoWrapFlags());
-    Remainder = SE.getAddRecExpr(StartR, StepR, Numerator->getLoop(),
-      Numerator->getNoWrapFlags());
-  }
-
-  void visitAddExpr(const SCEVAddExpr *Numerator) {
-    SmallVector<const SCEV *, 2> Qs, Rs;
-    Type *Ty = Denominator->getType();
-
-    for (const SCEV *Op : Numerator->operands()) {
-      const SCEV *Q, *R;
-      divide(SE, Op, Denominator, &Q, &R);
-
-      // Bail out if types do not match.
-      if (Ty != Q->getType() || Ty != R->getType())
-        return cannotDivide(Numerator);
-
-      Qs.push_back(Q);
-      Rs.push_back(R);
-    }
-
-    if (Qs.size() == 1) {
-      Quotient = Qs[0];
-      Remainder = Rs[0];
-      return;
-    }
-
-    Quotient = SE.getAddExpr(Qs);
-    Remainder = SE.getAddExpr(Rs);
-  }
-
-  void visitMulExpr(const SCEVMulExpr *Numerator) {
-    SmallVector<const SCEV *, 2> Qs;
-    Type *Ty = Denominator->getType();
-
-    bool FoundDenominatorTerm = false;
-    for (const SCEV *Op : Numerator->operands()) {
-      // Bail out if types do not match.
-      if (Ty != Op->getType())
-        return cannotDivide(Numerator);
-
-      if (FoundDenominatorTerm) {
-        Qs.push_back(Op);
-        continue;
-      }
-
-      // Check whether Denominator divides one of the product operands.
-      const SCEV *Q, *R;
-      divide(SE, Op, Denominator, &Q, &R);
-      if (!R->isZero()) {
-        Qs.push_back(Op);
-        continue;
-      }
-
-      // Bail out if types do not match.
-      if (Ty != Q->getType())
-        return cannotDivide(Numerator);
-
-      FoundDenominatorTerm = true;
-      Qs.push_back(Q);
-    }
-
-    if (FoundDenominatorTerm) {
-      Remainder = Zero;
-      if (Qs.size() == 1)
-        Quotient = Qs[0];
-      else
-        Quotient = SE.getMulExpr(Qs);
-      return;
-    }
-
-    if (!isa<SCEVUnknown>(Denominator))
-      return cannotDivide(Numerator);
-
-    // The Remainder is obtained by replacing Denominator by 0 in Numerator.
-    ValueToValueMap RewriteMap;
-    RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] =
-      cast<SCEVConstant>(Zero)->getValue();
-    Remainder = SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap, true);
-
-    if (Remainder->isZero()) {
-      // The Quotient is obtained by replacing Denominator by 1 in Numerator.
-      RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] =
-        cast<SCEVConstant>(One)->getValue();
-      Quotient =
-        SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap, true);
-      return;
-    }
-
-    // Quotient is (Numerator - Remainder) divided by Denominator.
-    const SCEV *Q, *R;
-    const SCEV *Diff = SE.getMinusSCEV(Numerator, Remainder);
-    // This SCEV does not seem to simplify: fail the division here.
-    if (sizeOfSCEV(Diff) > sizeOfSCEV(Numerator))
-      return cannotDivide(Numerator);
-    divide(SE, Diff, Denominator, &Q, &R);
-    if (R != Zero)
-      return cannotDivide(Numerator);
-    Quotient = Q;
-  }
-
-private:
-  SCEVDivision(ScalarEvolution &S, const SCEV *Numerator,
-    const SCEV *Denominator)
-    : SE(S), Denominator(Denominator) {
-    Zero = SE.getZero(Denominator->getType());
-    One = SE.getOne(Denominator->getType());
-
-    // We generally do not know how to divide Expr by Denominator. We
-    // initialize the division to a "cannot divide" state to simplify the rest
-    // of the code.
-    cannotDivide(Numerator);
-  }
-
-  // Convenience function for giving up on the division. We set the quotient to
-  // be equal to zero and the remainder to be equal to the numerator.
-  void cannotDivide(const SCEV *Numerator) {
-    Quotient = Zero;
-    Remainder = Numerator;
-  }
-
-  ScalarEvolution &SE;
-  const SCEV *Denominator, *Quotient, *Remainder, *Zero, *One;
-};
-
 template<class GEPItrT>
 void extractSubscriptsFromGEPs(
     const GEPItrT &GEPBeginItr, const GEPItrT &GEPEndItr,
@@ -1069,11 +528,10 @@ const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
     SmallVector<const SCEV *, 3> ActualStepDividers;
 
     for (auto *Divider : Dividers) {
-      const SCEV *Q, *R;
-      SCEVDivision::divide(SE, CurrentTerm, Divider, &Q, &R);
-      if (R->isZero()) {
+      auto Div = divide(SE, CurrentTerm, Divider, false);
+      if (Div.Remainder->isZero()) {
         ActualStepDividers.push_back(Divider);
-        CurrentTerm = Q;
+        CurrentTerm = Div.Quotient;
         if (ActualStepDividers.size() == Dividers.size()) {
           break;
         }
@@ -1122,23 +580,17 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
           Coef = AddRec->getStepRecurrence(SE);
           ConstTerm = AddRec->getStart();
         } else {
-          Coef = nullptr;
+          Coef = SE.getZero(Info.first->getType());
           ConstTerm = Info.first;
         }
         OS << "      a: ";
-        if (Coef)
-          Coef->print(OS);
-        else
-          OS << "null";
+        Coef->print(OS);
         OS << "\n";
         OS << "      b: ";
-        if (ConstTerm)
-          ConstTerm->print(OS);
-        else
-          OS << "null";
+        ConstTerm->print(OS);
         OS << "\n";
         if (!Info.second)
-          OS << "      unsafe cast\n";
+          OS << "      with unsafe cast\n";
       }
     }
   }
@@ -1164,21 +616,21 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
       mSE->getTruncateOrZeroExtend(ArrayInfo.getDimSize(DimIdx), mIndexTy));
     for (auto &Range: ArrayInfo) {
       auto *Subscript = Range.Subscripts[DimIdx - 1];
-      const SCEV *Q = nullptr, *R = nullptr;
-      SCEVDivision::divide(*mSE, Subscript, PrevDimSizesProduct, &Q, &R);
+      auto Div = divide(*mSE, Subscript, PrevDimSizesProduct, false);
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: subscript " << DimIdx - 1 << " ";
         Subscript->dump();
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
         PrevDimSizesProduct->dump();
-        dbgs() << "[DELINEARIZE]: quotient "; Q->dump();
-        dbgs() << "[DELINEARIZE]: remainder "; R->dump());
-      if (!R->isZero()) {
+        dbgs() << "[DELINEARIZE]: quotient "; Div.Quotient->dump();
+        dbgs() << "[DELINEARIZE]: remainder "; Div.Remainder->dump());
+      if (!Div.Remainder->isZero()) {
         Range.Traits &= ~Range.IsValid;
         break;
       }
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: set subscript to "; Q->dump());
-      Range.Subscripts[DimIdx - 1] = Q;
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: set subscript to ";
+        Div.Quotient->dump());
+      Range.Subscripts[DimIdx - 1] = Div.Quotient;
     }
   }
 }
@@ -1243,7 +695,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(
   auto DimIdx = LastUnknownDim;
   for (; DimIdx > 0; --DimIdx) {
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process dimension " << DimIdx << "\n");
-    const SCEV *Q, *R, *DimSize;
+    const SCEV *DimSize;
     if (DimSizes[DimIdx] > 0) {
       DimSize = mSE->getConstant(mIndexTy, DimSizes[DimIdx]);
     } else {
@@ -1261,13 +713,13 @@ void DelinearizationPass::fillArrayDimensionsSizes(
       }
       DimSize = findGCD(Expressions, *mSE);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
-      SCEVDivision::divide(*mSE, DimSize, PrevDimSizesProduct, &Q, &R);
-      DimSize = Q;
+      auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, false);
+      DimSize = Div.Quotient;
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
         PrevDimSizesProduct->dump();
-        dbgs() << "[DELINEARIZE]: quotient "; Q->dump();
-        dbgs() << "[DELINEARIZE]: remainder "; R->dump());
+        dbgs() << "[DELINEARIZE]: quotient "; Div.Quotient->dump();
+        dbgs() << "[DELINEARIZE]: remainder "; Div.Remainder->dump());
     }
     if (DimSize->isZero()) {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: could not compute dimension size\n");
@@ -1511,23 +963,15 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE
           Coef = AddRec->getStepRecurrence(SE);
           ConstTerm = AddRec->getStart();
         } else {
-          Coef = nullptr;
+          Coef = SE.getZero(Info.first->getType());
           ConstTerm = Info.first;
         }
-        if (Coef) {
-          raw_string_ostream CoefOS(CoefStr);
-          Coef->print(CoefOS);
-          CoefOS.flush();
-        } else {
-          CoefStr = "null";
-        }
-        if (ConstTerm) {
-          raw_string_ostream ConstTermOS(ConstTermStr);
-          ConstTerm->print(ConstTermOS);
-          ConstTermOS.flush();
-        } else {
-          ConstTermStr = "null";
-        }
+        raw_string_ostream CoefOS(CoefStr);
+        Coef->print(CoefOS);
+        CoefOS.flush();
+        raw_string_ostream ConstTermOS(ConstTermStr);
+        ConstTerm->print(ConstTermOS);
+        ConstTermOS.flush();
       }
       Accesses.push_back(std::move(Subscripts));
     }

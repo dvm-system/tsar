@@ -51,9 +51,9 @@ add_dependencies(TSARCore
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARCore ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARCore TSARSupport ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARCore ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+target_link_libraries(TSARCore TSARSupport ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
   target_link_libraries(TSARCore APC::APCCore)
   add_definitions("-D__SPC")
