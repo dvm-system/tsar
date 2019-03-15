@@ -192,366 +192,85 @@ void extractSubscriptsFromGEPs(
   }
 }
 
-void countPrimeNumbers(uint64_t Bound, std::vector<uint64_t> &Primes) {
-  //Implements Sieve of Atkin with cache
-
-  enum {
-    PRIMES_CACHE_SIZE = 60
-  };
-
-  static uint64_t CachedPrimes[PRIMES_CACHE_SIZE] = {
-    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59,
-    61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131,
-    137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197,
-    199, 211, 223, 227, 229, 233, 239, 241, 251, 257, 263, 269, 271,
-    277, 281
-  };
-
-  Primes.clear();
-
-  if (Bound <= CachedPrimes[PRIMES_CACHE_SIZE - 1]) {
-    for (int i = 0; i < PRIMES_CACHE_SIZE; i++) {
-      if (CachedPrimes[i] <= Bound) {
-        Primes.push_back(CachedPrimes[i]);
-      } else {
-        break;
-      }
-    }
-    return;
-  }
-
-  std::vector<bool> IsPrime;
-  IsPrime.resize(Bound + 1);
-  for (int i = 0; i <= Bound; i++) {
-    IsPrime[i] = false;
-  }
-  IsPrime[2] = true;
-  IsPrime[3] = true;
-  uint64_t BoundSqrt = (int)sqrt(Bound);
-
-  uint64_t x2 = 0, y2, n;
-  for (int i = 1; i <= BoundSqrt; i++) {
-    x2 += 2 * i - 1;
-    y2 = 0;
-    for (int j = 1; j <= BoundSqrt; j++) {
-      y2 += 2 * j - 1;
-      n = 4 * x2 + y2;
-      if ((n <= Bound) && (n % 12 == 1 || n % 12 == 5)) {
-        IsPrime[n] = !IsPrime[n];
-      }
-
-      n -= x2;
-      if ((n <= Bound) && (n % 12 == 7)) {
-        IsPrime[n] = !IsPrime[n];
-      }
-
-      n -= 2 * y2;
-      if ((i > j) && (n <= Bound) && (n % 12 == 11)) {
-        IsPrime[n] = !IsPrime[n];
-      }
-    }
-  }
-
-  for (int i = 5; i <= BoundSqrt; i++) {
-    if (IsPrime[i]) {
-      n = i * i;
-      for (uint64_t j = n; j <= Bound; j += n) {
-        IsPrime[j] = false;
-      }
-    }
-  }
-
-  Primes.push_back(2);
-  Primes.push_back(3);
-  Primes.push_back(5);
-  for (int i = 6; i <= Bound; i++) {
-    if ((IsPrime[i]) && (i % 3) && (i % 5)) {
-      Primes.push_back(i);
-    }
-  }
+inline const SCEV * stripCastIfNot(const SCEV *S, bool IsSafeTypeCast) {
+  assert(S && "SCEV must not be null!");
+  if (!IsSafeTypeCast)
+    while (auto *Cast = dyn_cast<SCEVCastExpr>(S))
+      S = Cast->getOperand();
+  return S;
 }
 
-void countConstantMultipliers(const SCEVConstant *Const,
-  ScalarEvolution &SE, SmallVectorImpl<const SCEV *> &Multipliers) {
-  uint64_t ConstValue = Const->getAPInt().getLimitedValue();
-  assert(ConstValue && "Constant value is zero");
-
-  if (ConstValue < 0) {
-    Multipliers.push_back(SE.getConstant(Const->getType(), -1, true));
-    ConstValue *= -1;
-  }
-  if (ConstValue == 1) {
-    Multipliers.push_back(SE.getConstant(Const->getType(), 1, false));
-    return;
-  }
-  std::vector<uint64_t> Primes;
-  countPrimeNumbers(ConstValue, Primes);
-  size_t i = Primes.size() - 1;
-  LLVM_DEBUG(
-    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] Constant Multipliers:\n";
-  );
-  while (ConstValue > 1) {
-    if (ConstValue % Primes[i] == 0) {
-      Multipliers.push_back(SE.getConstant(Const->getType(), Primes[i], false));
-      LLVM_DEBUG(
-        dbgs() << "\t";
-        Multipliers[Multipliers.size() - 1]->dump();
-      );
-      ConstValue /= Primes[i];
-    } else {
-      i--;
-    }
-  }
-}
-
-const SCEV* findGCD(SmallVectorImpl<const SCEV *> &Expressions,
-  ScalarEvolution &SE) {
-  assert(!Expressions.empty() && "GCD Expressions size must not be zero");
-
-  SmallVector<const SCEV *, 3> Terms;
-
-  //Release AddRec Expressions, multipliers are in step and start expressions
-  for (auto *Expr : Expressions) {
-    switch (Expr->getSCEVType()) {
-    case scTruncate:
-    case scZeroExtend:
-    case scSignExtend: {
-      auto *CastExpr = cast<SCEVCastExpr>(Expr);
-      auto *InnerOp = CastExpr->getOperand();
-      switch (InnerOp->getSCEVType()) {
-      case scAddRecExpr: {
-        auto *AddRec = cast<SCEVAddRecExpr>(InnerOp);
-        auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-        auto *AddRecStart = AddRec->getStart();
-        if (Expr->getSCEVType() == scTruncate) {
-          Terms.push_back(SE.getTruncateExpr(AddRecStepRecurrence, Expr->getType()));
-          Terms.push_back(SE.getTruncateExpr(AddRecStart, Expr->getType()));
-        }
-        if (Expr->getSCEVType() == scSignExtend) {
-          Terms.push_back(SE.getSignExtendExpr(AddRecStepRecurrence, Expr->getType()));
-          Terms.push_back(SE.getSignExtendExpr(AddRecStart, Expr->getType()));
-        }
-        if (Expr->getSCEVType() == scZeroExtend) {
-          Terms.push_back(SE.getZeroExtendExpr(AddRecStepRecurrence, Expr->getType()));
-          Terms.push_back(SE.getZeroExtendExpr(AddRecStart, Expr->getType()));
-        }
-        break;
-      }
-      case scUnknown:
-      case scAddExpr:
-      case scMulExpr: {
-        Terms.push_back(Expr);
-        break;
-      }
-      }
-      break;
-    }
-    case scConstant:
-    case scUnknown:
-    case scAddExpr: {
-      Terms.push_back(Expr);
-      break;
-    }
-    case scMulExpr: {
-      auto *MulExpr = cast<SCEVMulExpr>(Expr);
-      bool hasAddRec = false;
-      SmallVector<const SCEV *, 3> StepMultipliers, StartMultipliers;
-      for (int i = 0; i < MulExpr->getNumOperands(); ++i) {
-        auto *Op = MulExpr->getOperand(i);
-        switch (Op->getSCEVType()) {
-        case scTruncate:
-        case scZeroExtend:
-        case scSignExtend: {
-          auto *InnerOp = cast<SCEVCastExpr>(Op)->getOperand();
-
-          if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(InnerOp)) {
-            hasAddRec = true;
-            auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-            auto *AddRecStart = AddRec->getStart();
-            if (Op->getSCEVType() == scTruncate) {
-              StepMultipliers.push_back(SE.getTruncateExpr(AddRecStepRecurrence, Op->getType()));
-              if (!AddRecStart->isZero()) {
-                StartMultipliers.push_back(SE.getTruncateExpr(AddRecStart, Op->getType()));
-              }
-            }
-            if (Op->getSCEVType() == scSignExtend) {
-              StepMultipliers.push_back(SE.getSignExtendExpr(AddRecStepRecurrence, Op->getType()));
-              if (!AddRecStart->isZero()) {
-                StartMultipliers.push_back(SE.getSignExtendExpr(AddRecStart, Op->getType()));
-              }
-            }
-            if (Op->getSCEVType() == scZeroExtend) {
-              StepMultipliers.push_back(SE.getZeroExtendExpr(AddRecStepRecurrence, Op->getType()));
-              if (!AddRecStart->isZero()) {
-                StartMultipliers.push_back(SE.getZeroExtendExpr(AddRecStart, Op->getType()));
-              }
-            }
-          } else if (auto *InnerMulExpr = dyn_cast<SCEVMulExpr>(InnerOp)) {
-            StepMultipliers.push_back(Op);
-            StartMultipliers.push_back(Op);
-          } else if (InnerOp->getSCEVType() == scUnknown ||
-            InnerOp->getSCEVType() == scAddExpr) {
-            StepMultipliers.push_back(Op);
-            StartMultipliers.push_back(Op);
-          }
-         break;
-        }
-        case scAddRecExpr: {
-          auto *AddRec = cast<SCEVAddRecExpr>(Op);
-          hasAddRec = true;
-          auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-          auto *AddRecStart = AddRec->getStart();
-          StepMultipliers.push_back(AddRecStepRecurrence);
-          if (!AddRecStart->isZero()) {
-            StartMultipliers.push_back(AddRecStart);
-          }
-          break;
-        }
-        case scUnknown:
-        case scAddExpr:
-        case scConstant: {
-          StepMultipliers.push_back(Op);
-          StartMultipliers.push_back(Op);
-          break;
-        }
-        }
-      }
-      if (hasAddRec && !StartMultipliers.empty()) {
-        SmallVector<const SCEV *, 2> AddRecInnerExpressions = {
-          SE.getMulExpr(StartMultipliers),
-          SE.getMulExpr(StepMultipliers)
-        };
-        Terms.push_back(findGCD(AddRecInnerExpressions, SE));
-      } else if (!StepMultipliers.empty()) {
-        Terms.push_back(SE.getMulExpr(StepMultipliers));
-      }
-     break;
-    }
-    case scAddRecExpr: {
-      auto *AddRec = cast<SCEVAddRecExpr>(Expr);
-      auto *AddRecStepRecurrence = AddRec->getStepRecurrence(SE);
-      /*SCEVConstant *AddRecStartConstantMultiplier = nullptr;
-      SCEVConstant *AddRecStepConstantMultiplier = nullptr;*/
-
-      if (auto *MulExpr = dyn_cast<SCEVMulExpr>(AddRecStepRecurrence)) {
-        SmallVector<const SCEV *, 2> Multipliers;
-        for (int i = 0; i < MulExpr->getNumOperands(); ++i) {
-          auto *Op = MulExpr->getOperand(i);
-          if (Op->getSCEVType() == scUnknown ||
-            Op->getSCEVType() == scTruncate ||
-            Op->getSCEVType() == scSignExtend ||
-            Op->getSCEVType() == scZeroExtend ||
-            Op->getSCEVType() == scAddExpr ||
-            Op->getSCEVType() == scConstant) {
-            Multipliers.push_back(Op);
-          }
-          //if (auto *Const = dyn_cast<SCEVConstant>(Op)) {
-
-          //}
-        }
-        AddRecStepRecurrence = SE.getMulExpr(Multipliers);
-      }
-
-      auto *AddRecStart = AddRec->getStart();
-      if (auto *MulExpr = dyn_cast<SCEVMulExpr>(AddRecStart)) {
-        SmallVector<const SCEV *, 2> Multipliers;
-        for (int i = 0; i < MulExpr->getNumOperands(); ++i) {
-          auto *Op = MulExpr->getOperand(i);
-          if (Op->getSCEVType() == scUnknown ||
-            Op->getSCEVType() == scTruncate ||
-            Op->getSCEVType() == scSignExtend ||
-            Op->getSCEVType() == scZeroExtend ||
-            Op->getSCEVType() == scAddExpr ||
-            Op->getSCEVType() == scConstant) {
-            Multipliers.push_back(Op);
-          }
-        }
-        AddRecStart = SE.getMulExpr(Multipliers);
-      }
-      SmallVector<const SCEV *, 2> AddRecInnerExpressions = {AddRecStart, AddRecStepRecurrence};
-      //AddRecInnerExpressions.push_back();
-      Terms.push_back(findGCD(AddRecInnerExpressions, SE));
-      /*Terms.push_back(AddRecStepRecurrence);
-      Terms.push_back(AddRecStart);*/
-      break;
-    }
-    }
-  }
-
-  LLVM_DEBUG(
-    dbgs() << "[ARRAY SUBSCRIPT DELINEARIZE] GCD Terms:\n";
-    for (auto *Term : Terms) {
-      dbgs() << "\t";
-      Term->dump();
-    });
-
-  if (Terms.empty()) {
-    return SE.getConstant(Expressions[0]->getType(), 1, true);
-  }
-
-  SmallVector<const SCEV *, 3> Dividers;
-
-  const SCEV* OpeningSCEV = nullptr;
-
-  //Finding not zero SCEV in Terms
-  for (auto *Term : Terms) {
-    if (!Term->isZero()) {
-      OpeningSCEV = Term;
-      break;
-    }
-  }
-  if (!OpeningSCEV) {
-    return SE.getConstant(Expressions[0]->getType(), 0, true);
-  }
-
-  //Start from multipliers of first SCEV, then exclude them step by step
-  if (auto *Mul = dyn_cast<SCEVMulExpr>(OpeningSCEV)) {
-    for (int i = 0; i < Mul->getNumOperands(); ++i) {
-      if (auto *Const = dyn_cast<SCEVConstant>(Mul->getOperand(i))) {
-        SmallVector<const SCEV *, 3> ConstMultipliers;
-        countConstantMultipliers(Const, SE, ConstMultipliers);
-        Dividers.append(ConstMultipliers.begin(), ConstMultipliers.end());
+const SCEV* findGCD(ArrayRef<const SCEV *> Expressions,
+  ScalarEvolution &SE, bool IsSafeTypeCast = true) {
+  assert(!Expressions.empty() && "List of expressions must not be empty!");
+  std::vector<const SCEV *> Terms;
+  Terms.reserve(Expressions.size());
+  for (auto *S : Expressions) {
+    auto Info = computeSCEVAddRec(S, SE);
+    stripCastIfNot(Info.first, IsSafeTypeCast);
+    if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+      if (Info.second || !IsSafeTypeCast) {
+        Terms.push_back(AddRec->getStart());
+        Terms.push_back(AddRec->getStepRecurrence(SE));
       } else {
-        Dividers.push_back(Mul->getOperand(i));
+        Terms.push_back(S);
       }
-    }
-  } else {
-    if (auto *Const = dyn_cast<SCEVConstant>(OpeningSCEV)) {
-      SmallVector<const SCEV *, 3> ConstMultipliers;
-      countConstantMultipliers(Const, SE, ConstMultipliers);
-      Dividers.append(ConstMultipliers.begin(), ConstMultipliers.end());
     } else {
-      Dividers.push_back(OpeningSCEV);
+      Terms.push_back(S);
     }
   }
-
-  for (int i = 1; i < Terms.size(); ++i) {
-    auto *CurrentTerm = Terms[i];
-    SmallVector<const SCEV *, 3> ActualStepDividers;
-
-    for (auto *Divider : Dividers) {
-      auto Div = divide(SE, CurrentTerm, Divider, false);
-      if (Div.Remainder->isZero()) {
-        ActualStepDividers.push_back(Divider);
-        CurrentTerm = Div.Quotient;
-        if (ActualStepDividers.size() == Dividers.size()) {
-          break;
-        }
-      }
-    }
-
-    Dividers = ActualStepDividers;
-    if (Dividers.size() == 0) {
-      return SE.getConstant(Expressions[0]->getType(), 1, true);
-    }
-  }
-
-  if (Dividers.size() == 1) {
-    return Dividers[0];
+  // Remove duplicates.
+  array_pod_sort(Terms.begin(), Terms.end());
+  Terms.erase(std::unique(Terms.begin(), Terms.end()), Terms.end());
+  Terms.erase(
+    std::remove_if(Terms.begin(), Terms.end(),
+      [](const SCEV *S) { return S->isZero(); }), Terms.end());
+  // Put small terms first.
+  llvm::sort(Terms.begin(), Terms.end(),
+    [IsSafeTypeCast](const SCEV *LHS, const SCEV *RHS) {
+    LHS = stripCastIfNot(LHS, IsSafeTypeCast);
+    RHS = stripCastIfNot(RHS, IsSafeTypeCast);
+    auto LHSSize = isa<SCEVMulExpr>(LHS) ?
+      cast<SCEVMulExpr>(LHS)->getNumOperands() : 1;
+    auto RHSSize = isa<SCEVMulExpr>(RHS) ?
+      cast<SCEVMulExpr>(RHS)->getNumOperands() : 1;
+    return LHSSize < RHSSize;
+  });
+  LLVM_DEBUG(
+    dbgs() << "[GCD]: terms:\n";
+    for (auto *T : Terms)
+      dbgs() << "  " << *T << "\n");
+  if (Terms.empty())
+    return SE.getCouldNotCompute();
+  if (Terms.size() < 2)
+    return Terms.front()->isZero() ? SE.getCouldNotCompute() : Terms.front();
+  SmallVector<const SCEV *, 4> Dividers;
+  auto TermItr = Terms.begin(), TermItrE = Terms.end();
+  if (auto *Mul =
+      dyn_cast<SCEVMulExpr>(stripCastIfNot(*TermItr, IsSafeTypeCast))) {
+   for (auto *Op : Mul->operands())
+     Dividers.push_back(Op);
   } else {
-    return SE.getMulExpr(Dividers);
+    Dividers.push_back(*TermItr);
   }
-
+  for (++TermItr; TermItr != TermItrE; ++TermItr) {
+    SmallVector<const SCEV *, 4> NewDividers;
+    auto *T = *TermItr;
+    for (auto *D : Dividers) {
+      auto Div = divide(SE, T, D, IsSafeTypeCast);
+      if (!Div.Remainder->isZero())
+        continue;
+      NewDividers.push_back(D);
+      T = Div.Quotient;
+    }
+    if (NewDividers.empty())
+      return SE.getCouldNotCompute();
+    if (Dividers.size() != NewDividers.size())
+      std::swap(Dividers, NewDividers);
+  }
+  if (Dividers.size() == 1)
+    return Dividers.front();
+   return SE.getMulExpr(Dividers);
 }
 
 #ifdef LLVM_DEBUG
@@ -693,6 +412,18 @@ void DelinearizationPass::fillArrayDimensionsSizes(
     LastUnknownDim = LastConstDim - 1;
   }
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: compute non-constant dimension sizes\n");
+  auto setUnknownDims = [this, &DimSizes, &ArrayInfo](
+      std::size_t LastUnknownIdx) {
+    auto UnknownSize = mSE->getCouldNotCompute();
+    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: could not compute dimension size\n");
+    ArrayInfo.setDimSize(LastUnknownIdx, UnknownSize);
+    for (auto J : seq(decltype(LastUnknownIdx)(1), LastUnknownIdx)) {
+      if (DimSizes[J] > 0)
+        ArrayInfo.setDimSize(J, mSE->getConstant(mIndexTy, DimSizes[J]));
+      else
+        ArrayInfo.setDimSize(J, UnknownSize);
+    }
+  };
   auto *PrevDimSizesProduct = mSE->getConstant(mIndexTy, 1);
   auto DimIdx = LastUnknownDim;
   for (; DimIdx > 0; --DimIdx) {
@@ -700,6 +431,10 @@ void DelinearizationPass::fillArrayDimensionsSizes(
     const SCEV *DimSize;
     if (DimSizes[DimIdx] > 0) {
       DimSize = mSE->getConstant(mIndexTy, DimSizes[DimIdx]);
+      if (DimSize->isZero()) {
+        setUnknownDims(DimIdx);
+        return;
+      }
     } else {
       SmallVector<const SCEV *, 3> Expressions;
       for (auto &Range: ArrayInfo) {
@@ -713,8 +448,12 @@ void DelinearizationPass::fillArrayDimensionsSizes(
             Expressions.back()->dump());
         }
       }
-      DimSize = findGCD(Expressions, *mSE);
+      DimSize = findGCD(Expressions, *mSE, false);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
+      if (isa<SCEVCouldNotCompute>(DimSize)) {
+        setUnknownDims(DimIdx);
+        return;
+      }
       auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, false);
       DimSize = Div.Quotient;
       LLVM_DEBUG(
@@ -722,18 +461,6 @@ void DelinearizationPass::fillArrayDimensionsSizes(
         PrevDimSizesProduct->dump();
         dbgs() << "[DELINEARIZE]: quotient "; Div.Quotient->dump();
         dbgs() << "[DELINEARIZE]: remainder "; Div.Remainder->dump());
-    }
-    if (DimSize->isZero()) {
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: could not compute dimension size\n");
-      DimSize = mSE->getCouldNotCompute();
-      ArrayInfo.setDimSize(DimIdx, DimSize);
-      for (auto J : seq(decltype(DimIdx)(1), DimIdx)) {
-        if (DimSizes[J] > 0)
-          ArrayInfo.setDimSize(J, mSE->getConstant(mIndexTy, DimSizes[J]));
-        else
-          ArrayInfo.setDimSize(J, DimSize);
-      }
-      break;
     }
     ArrayInfo.setDimSize(DimIdx, DimSize);
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is "; DimSize->dump());
