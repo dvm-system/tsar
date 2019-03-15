@@ -87,18 +87,20 @@ struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
   void visitMulExpr(const SCEVMulExpr *S) {
     assert(!L && "Loop must not be set yet!");
     auto OpI = S->op_begin(), OpEI = S->op_end();
-    SmallVector<const SCEV *, 4> MulCoef;
+    SmallVector<const SCEV *, 4> MulFreeTerm;
     for (; OpI != OpEI; ++OpI) {
       visit(*OpI);
       if (L)
         break;
-      MulCoef.push_back(*OpI);
+      MulFreeTerm.push_back(*OpI);
     }
     if (L) {
-      MulCoef.append(++OpI, OpEI);
-      MulCoef.push_back(FreeTerm);
-      FreeTerm = mSE->getMulExpr(MulCoef);
-      MulCoef.back() = Coef;
+      MulFreeTerm.append(++OpI, OpEI);
+      auto MulCoef = MulFreeTerm;
+      MulFreeTerm.push_back(FreeTerm);
+      // Note, that getMulExpr() may change order of SCEVs in it's parameter.
+      FreeTerm = mSE->getMulExpr(MulFreeTerm);
+      MulCoef.push_back(Coef);
       Coef = mSE->getMulExpr(MulCoef);
     } else {
       FreeTerm = S;
