@@ -253,10 +253,6 @@ private:
 namespace llvm {
 /// This per-function pass performs delinearization of array accesses.
 class DelinearizationPass : public FunctionPass, private bcl::Uncopyable {
-  /// Map from array to a list of dimension sizes. If size is unknown it is
-  /// set to negative value.
-  using DimensionMap = DenseMap<Value *, SmallVector<int64_t, 3>>;
-
 public:
   static char ID;
 
@@ -277,16 +273,41 @@ public:
   }
 
 private:
-  /// Investigate metadata for `BasePtr` to determine number of its dimensions.
-  void findArrayDimesionsFromDbgInfo(Value *BasePtr,
-    SmallVectorImpl<int64_t> &Dimensions);
+  /// Investigate metadata for a specified array to determine number of
+  /// its dimensions.
+  ///
+  /// \post Reset number of dimensions if known and set sizes of known
+  /// dimensions. Sizes of other dimensions are not initialized.
+  void findArrayDimesionsFromDbgInfo(tsar::Array &ArrayInfo);
 
-  void collectArrays(Function &F, DimensionMap &DimsCache);
+  /// Collect arrays accessed in a specified function.
+  ///
+  /// This function also collect all ranges on an array which are referenced in
+  /// a specified function. If metadata are available this function tries to
+  /// determine number of array dimensions and size of each dimension.
+  void collectArrays(Function &F);
 
   void findSubscripts(Function &F);
 
-  void fillArrayDimensionsSizes(SmallVectorImpl<int64_t> &DimSizes,
-    tsar::Array &ArrayInfo);
+  /// Try to determine values of unknown dimension sizes.
+  ///
+  /// If number of dimensions is unknown this method uses accesses to elements
+  /// of a specified arrays to determine number of dimensions. Accesses to
+  /// elements are also analyzed to determine sizes of dimensions.
+  /// For example,
+  ///   float A[N][M][L][S];
+  ///   A[I][J][K][T] = 5.0;
+  /// in linear form is
+  ///    A + I * M * L * S + J * L * S + K * S + T.
+  /// (1) To determine size of L-dimension we analyze GEPs and extract terms:
+  ///   I * M * L * S and J * L * S.
+  /// (2) We find GCD for all extracted terms for all accesses:
+  ///   L * S.
+  /// (3) We divide GCD by a product of sizes of dimensions from the right hand
+  /// side of the analyzed dimension:
+  ///   L * S / S = L
+  /// (4) The result will be a size of the analyzed dimension.
+  void fillArrayDimensionsSizes(tsar::Array &ArrayInfo);
 
   void cleanSubscripts(tsar::Array &CurrentArray);
 
