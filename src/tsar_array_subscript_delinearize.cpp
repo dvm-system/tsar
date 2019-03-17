@@ -399,6 +399,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       LastConstDim = I - 1;
     }
     if (LastConstDim == 0) {
+      ArrayInfo.setDelinearized();
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: all dimensions have constant sizes\n");
       return;
     }
