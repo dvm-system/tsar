@@ -497,7 +497,7 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
   if (!ArrayDims)
     return;
   std::size_t PassPtrDim = IsFirstDimPointer ? 1 : 0;
-  for (unsigned int DimIdx = 0; DimIdx < ArrayDims.size(); ++DimIdx) {
+  for (std::size_t DimIdx = 0; DimIdx < ArrayDims.size(); ++DimIdx) {
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: size of " << DimIdx << " dimension is ");
     if (auto *DIDim = dyn_cast<DISubrange>(ArrayDims[DimIdx])) {
       auto DIDimCount = DIDim->getCount();
@@ -508,7 +508,15 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
             mSE->getSCEV(DIDimCount.get<ConstantInt *>()));
         LLVM_DEBUG(dbgs() << Count << "\n");
       } else if (DIDimCount.is<DIVariable *>()) {
-        LLVM_DEBUG(dbgs() << DIDimCount.get<DIVariable *>()->getName() << "\n");
+        auto DIVar = DIDimCount.get<DIVariable *>();
+        if (auto V = MetadataAsValue::getIfExists(DIVar->getContext(), DIVar)) {
+          SmallVector<DbgInfoIntrinsic *, 4> DbgInsts;
+          findDbgUsers(DbgInsts, V);
+          if (DbgInsts.size() == 1)
+            ArrayInfo.setDimSize(DimIdx + PassPtrDim,
+              mSE->getSCEV(DbgInsts.front()->getVariableLocation()));
+        }
+        LLVM_DEBUG(dbgs() << DIVar->getName() << "\n");
       } else {
         LLVM_DEBUG( dbgs() << "unknown\n");
       }
