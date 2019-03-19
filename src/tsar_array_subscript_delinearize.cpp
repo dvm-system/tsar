@@ -329,30 +329,59 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
       break;
   if (LastConstDim == 0)
     return;
-  auto *PrevDimSizesProduct = mSE->getConstant(mIndexTy, 1);
-  for (auto DimIdx = LastConstDim - 1; DimIdx > 0; --DimIdx) {
-    assert(ArrayInfo.isKnownDimSize(DimIdx) &&
-      "Non-first unknown dimension in delinearized array!");
-    PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct,
-      mSE->getTruncateOrZeroExtend(ArrayInfo.getDimSize(DimIdx), mIndexTy));
-    for (auto &Range: ArrayInfo) {
-      auto *Subscript = Range.Subscripts[DimIdx - 1];
-      auto Div = divide(*mSE, Subscript, PrevDimSizesProduct, false);
-      LLVM_DEBUG(
-        dbgs() << "[DELINEARIZE]: subscript " << DimIdx - 1 << " ";
-        Subscript->dump();
-        dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
-        PrevDimSizesProduct->dump();
-        dbgs() << "[DELINEARIZE]: quotient "; Div.Quotient->dump();
-        dbgs() << "[DELINEARIZE]: remainder "; Div.Remainder->dump());
-      if (!Div.Remainder->isZero()) {
-        Range.Traits &= ~Range.IsValid;
-        break;
+  for (auto &Range : ArrayInfo) {
+    assert(ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size()
+      && "Unknown subscripts in right dimensions with constant sizes!");
+    // In some cases zero subscript is dropping out by optimization passes.
+    // So, we try to add extra zero subscripts. We add subscripts for
+    // instructions which access a single element, for example, in case of call
+    // it is possible to pass a whole array as a parameter (without GEPs).
+    auto ExtraZeroCount = Range.isElement() && !Range.isValid() ?
+      ArrayInfo.getNumberOfDims() - Range.Subscripts.size() : 0;
+    std::size_t DimIdx = 0, SubscriptIdx = 0;
+    std::size_t DimIdxE = std::min(LastConstDim - 1, Range.Subscripts.size());
+    SmallVector<const SCEV *, 4> NewSubscripts;
+    for (;  DimIdx < DimIdxE; ++DimIdx) {
+      auto *Subscript = Range.Subscripts[SubscriptIdx++];
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: subscript " << DimIdx << ": "
+                        << *Subscript << "\n");
+      for (std::size_t I = DimIdx + 1; I < LastConstDim; ++I) {
+        auto Div = divide(*mSE, Subscript, ArrayInfo.getDimSize(I), false);
+        if (Div.Remainder->isZero()) {
+          Subscript = Div.Quotient;
+        } else if (ExtraZeroCount > 0) {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: add extra zero subscript\n");
+          Subscript = mSE->getZero(mIndexTy);
+          --ExtraZeroCount;
+          // We insert zero subscript before current subscript, so we should
+          // reprocess it.
+          --SubscriptIdx;
+          break;
+        } else {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: unable to delinearize\n");
+          Subscript = nullptr;
+          Range.Traits &= ~Range.IsValid;
+          break;
+        }
       }
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: set subscript to ";
-        Div.Quotient->dump());
-      Range.Subscripts[DimIdx - 1] = Div.Quotient;
+      if (!Subscript)
+        break;
+      NewSubscripts.push_back(Subscript);
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: set to " << *Subscript << "\n");
     }
+    if (DimIdx < DimIdxE)
+      continue;
+    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: add " << ExtraZeroCount
+                      << " extra zero subscripts to " << SubscriptIdx << "\n");
+    for (std::size_t I = 0; I < ExtraZeroCount; ++I)
+      NewSubscripts.push_back(mSE->getZero(mIndexTy));
+    // Add subscripts for constant dimensions.
+    for (auto EI = Range.Subscripts.size(); SubscriptIdx < EI; ++SubscriptIdx)
+      NewSubscripts.push_back(Range.Subscripts[SubscriptIdx]);
+    std::swap(Range.Subscripts, NewSubscripts);
+    assert(Range.Subscripts.size() == ArrayInfo.getNumberOfDims() &&
+      "Unable to delinearize element access!");
+    Range.Traits |= Range.IsValid;
   }
 }
 
@@ -432,7 +461,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
     } else {
       SmallVector<const SCEV *, 3> Expressions;
       for (auto &Range: ArrayInfo) {
-        if (!Range.isElement())
+        if (!Range.isElement() || !Range.isValid())
           continue;
         assert(Range.Subscripts.size() == NumberOfDims &&
           "Number of dimensions is inconsistent with number of subscripts!");
@@ -441,6 +470,12 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
           LLVM_DEBUG(dbgs() << "[DELINEARIZE]: use for GCD computation: ";
             Expressions.back()->dump());
         }
+      }
+      if (Expressions.empty()) {
+        LLVM_DEBUG(
+          dbgs() << "[DELINEARIZE]: no valid element found to compute GCD");
+        setUnknownDims(DimIdx);
+        return;
       }
       DimSize = findGCD(Expressions, *mSE, false);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
@@ -557,22 +592,12 @@ void DelinearizationPass::collectArrays(Function &F) {
       auto &El = (*ArrayItr)->addElement(
         GEPs.empty() ? const_cast<Value *>(Loc.Ptr) : GEPs.back());
       // In some cases zero subscript is dropping out by optimization passes.
-      // So, we add extra zero subscripts at the beginning of subscript list.
-      // We add subscripts for instructions which access a single element,
-      // for example, in case of call it is possible to pass a whole array
-      // as a parameter (without GEPs).
-      // TODO (kaniandr@gmail.com): we could add subscripts not only at the
-      // beginning of the list, try to implement smart extra subscript insertion.
+      // So, we try to add extra zero subscripts later.
       if (isa<LoadInst>(I) || isa<StoreInst>(I) ||
           isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I)) {
         El.Traits |= Array::Element::IsElement;
         if (SubscriptValues.size() < NumberOfDims) {
           (*ArrayItr)->setRangeRef();
-          for (std::size_t Idx = 0, IdxE = NumberOfDims - SubscriptValues.size();
-               Idx < IdxE; Idx++) {
-            El.Subscripts.push_back(mSE->getZero(mIndexTy));
-            LLVM_DEBUG(dbgs() << "[DELINEARIZE]: add extra zero subscript\n");
-          }
         } else {
           El.Traits |= Array::Element::IsValid;
         }
@@ -590,7 +615,7 @@ void DelinearizationPass::collectArrays(Function &F) {
         dbgs() << "[DELINEARIZE]: number of subscripts "
                << El.Subscripts.size() << "\n";
         dbgs() << "[DELINEARIZE]: element is "
-               << (El.IsValid ? "valid" : "invalid") << "\n";
+               << (El.isValid() ? "valid" : "invalid") << "\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : El.Subscripts) {
           dbgs() << "  "; Subscript->dump();
