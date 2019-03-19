@@ -391,29 +391,21 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   auto NumberOfDims = ArrayInfo.getNumberOfDims();
   auto LastUnknownDim = NumberOfDims;
   if (NumberOfDims == 0) {
-    auto RangeItr = ArrayInfo.begin(), RangeItrE = ArrayInfo.end();
-    for (; RangeItr != RangeItrE; ++RangeItr) {
-      if (RangeItr->isElement() && RangeItr->isValid()) {
-        NumberOfDims = RangeItr->Subscripts.size();
-        break;
-      }
-    }
-    if (RangeItr == RangeItrE) {
+    for (auto &Range : ArrayInfo)
+      if (Range.isElement() && Range.isValid())
+        NumberOfDims = std::max(Range.Subscripts.size(), NumberOfDims);
+    if (NumberOfDims == 0) {
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: no valid element found\n";
         dbgs() << "[DELINEARIZE]: unable to determine number of"
         " dimensions for " << ArrayInfo.getBase()->getName() << "\n");
       return;
     }
-    for (++RangeItr; RangeItr != RangeItrE; ++RangeItr)
-      if (RangeItr->isElement() && RangeItr->isValid())
-        if (NumberOfDims != RangeItr->Subscripts.size()) {
-          LLVM_DEBUG(
-            dbgs() << "[DELINEARIZE]: unable to determine number of"
-            " dimensions for " << ArrayInfo.getBase()->getName() << "\n");
-          return;
-        }
-    assert(NumberOfDims > 0 && "Scalar variable is treated as an array?");
+    for (auto &Range : ArrayInfo) {
+      if (Range.isElement() && Range.isValid() &&
+          NumberOfDims != Range.Subscripts.size())
+        Range.Traits &= ~Range.IsValid;
+    }
     ArrayInfo.setNumberOfDims(NumberOfDims);
     ArrayInfo.setDimSize(0, mSE->getCouldNotCompute());
     LastUnknownDim = NumberOfDims - 1;
