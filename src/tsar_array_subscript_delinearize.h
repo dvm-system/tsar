@@ -1,3 +1,27 @@
+//===- Delinearization.h -- Delinearization Engine --------------*- C++ -*-===//
+//
+//                     Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file allows to perform metadata-based delinearization of array accesses.
+//
+//===----------------------------------------------------------------------===/
+
 #ifndef TSAR_DELINIARIZATION_H
 #define TSAR_DELINIARIZATION_H
 
@@ -155,9 +179,6 @@ private:
   Flags mF = DefaultFlags;
 };
 
-std::pair<const llvm::SCEV *, bool> computeSCEVAddRec(
-  const llvm::SCEV *Expr, llvm::ScalarEvolution &SE);
-
 /// Implementation of llvm::DenseMapInfo which uses base pointer to compute
 /// hash for tsar::Array *.
 struct ArrayMapInfo : public llvm::DenseMapInfo<Array *> {
@@ -261,12 +282,13 @@ public:
   }
 
   bool runOnFunction(Function &F) override;
-
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-
-  void print(raw_ostream &OS, const Module *M) const override;
-
   void releaseMemory() override { mDelinearizeInfo.clear(); }
+
+  /// Print all found arrays and accessed ranges in JSON format. Note, that
+  /// is some range is invalid or an array has not been successfully
+  /// delinearized then JSON also contains description of this objects.
+  void print(raw_ostream &OS, const Module *M) const override;
 
   const tsar::DelinearizeInfo & getDelinearizeInfo() const {
     return mDelinearizeInfo;
@@ -286,8 +308,6 @@ private:
   /// a specified function. If metadata are available this function tries to
   /// determine number of array dimensions and size of each dimension.
   void collectArrays(Function &F);
-
-  void findSubscripts(Function &F);
 
   /// Try to determine values of unknown dimension sizes.
   ///
@@ -309,6 +329,22 @@ private:
   /// (4) The result will be a size of the analyzed dimension.
   void fillArrayDimensionsSizes(tsar::Array &ArrayInfo);
 
+  /// Remove sizes of dimensions from subscript expressions and add extra zero
+  /// subscripts if necessary.
+  ///
+  /// For example,
+  ///   float A[N][N][N];
+  ///   A[I][0][J] = 5.0;
+  /// is represented in LLVM IR as
+  ///   A + I * N * N + J
+  /// After processing of GEPs we find two subscripts: I * N * N, J.
+  /// (1) We should divide the first subscript by size of dimensions to obtain
+  /// original subscript representation: I.
+  /// (2) We could not divide the second subscript J by N
+  /// (size of last dimension), so we add extra zero subscript between I and J.
+  /// (3) The result will be an original representation of subscripts: I, 0, J.
+  /// If some of subscripts can not be processed safely then the whole element
+  /// remains unchanged.
   void cleanSubscripts(tsar::Array &CurrentArray);
 
   tsar::DelinearizeInfo mDelinearizeInfo;

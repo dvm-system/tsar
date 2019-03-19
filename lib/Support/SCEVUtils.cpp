@@ -25,6 +25,10 @@
 #include "tsar/Support/SCEVUtils.h"
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Support/Debug.h>
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "scev"
 
 using namespace llvm;
 using namespace tsar;
@@ -310,6 +314,111 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
   bool IsSafeTypeCast;
   SCEVDivisionResult Res;
 };
+
+/// Traverse a SCEV and simplifies it to a binomial if possible. The result is
+/// `Coef * Count + FreeTerm`, where `Count` is and induction variable for L.
+/// `IsSafeCast` will be set to `false` if some unsafe casts are necessary for
+/// simplification.
+struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
+  ScalarEvolution *mSE = nullptr;
+  const SCEV * Coef = nullptr;
+  const SCEV * FreeTerm = nullptr;
+  const Loop * L = nullptr;
+  bool IsSafeCast = true;
+
+  SCEVBionmialSearch(ScalarEvolution &SE) : mSE(&SE) {}
+
+  void visitTruncateExpr(const SCEVTruncateExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getTruncateExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getTruncateExpr(FreeTerm, S->getType());
+  }
+
+  void visitSignExtendExpr(const SCEVSignExtendExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getSignExtendExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getSignExtendExpr(FreeTerm, S->getType());
+  }
+
+  void visitZeroExtendExpr(const SCEVZeroExtendExpr *S) {
+    IsSafeCast = false;
+    visit(S->getOperand());
+    if (Coef)
+      Coef = mSE->getZeroExtendExpr(Coef, S->getType());
+    if (FreeTerm)
+      FreeTerm = mSE->getZeroExtendExpr(FreeTerm, S->getType());
+  }
+
+  void visitAddRecExpr(const SCEVAddRecExpr *S) {
+    L = S->getLoop();
+    Coef = S->getStepRecurrence(*mSE);
+    FreeTerm = S->getStart();
+  }
+
+  void visitMulExpr(const SCEVMulExpr *S) {
+    assert(!L && "Loop must not be set yet!");
+    auto OpI = S->op_begin(), OpEI = S->op_end();
+    SmallVector<const SCEV *, 4> MulFreeTerm;
+    for (; OpI != OpEI; ++OpI) {
+      visit(*OpI);
+      if (L)
+        break;
+      MulFreeTerm.push_back(*OpI);
+    }
+    if (L) {
+      MulFreeTerm.append(++OpI, OpEI);
+      auto MulCoef = MulFreeTerm;
+      MulFreeTerm.push_back(FreeTerm);
+      // Note, that getMulExpr() may change order of SCEVs in it's parameter.
+      FreeTerm = mSE->getMulExpr(MulFreeTerm);
+      MulCoef.push_back(Coef);
+      Coef = mSE->getMulExpr(MulCoef);
+    } else {
+      FreeTerm = S;
+    }
+  }
+
+  void visitAddExpr(const SCEVAddExpr *S) {
+    assert(!L && "Loop must not be set yet!");
+    auto OpI = S->op_begin(), OpEI = S->op_end();
+    SmallVector<const SCEV *, 4> Terms;
+    for (; OpI != OpEI; ++OpI) {
+      visit(*OpI);
+      if (L)
+        break;
+      Terms.push_back(*OpI);
+    }
+    if (L) {
+      Terms.append(++OpI, OpEI);
+      Terms.push_back(FreeTerm);
+      FreeTerm = mSE->getAddExpr(Terms);
+    } else {
+      FreeTerm = S;
+    }
+  }
+
+  void visitConstant(const SCEVConstant *S) { FreeTerm = S; }
+  void visitUDivExpr(const SCEVUDivExpr *S) { FreeTerm = S; }
+  void visitSMaxExpr(const SCEVSMaxExpr *S) { FreeTerm = S; }
+  void visitUMaxExpr(const SCEVUMaxExpr *S) { FreeTerm = S; }
+  void visitUnknown(const SCEVUnknown *S) { FreeTerm = S; }
+  void visitCouldNotCompute(const SCEVCouldNotCompute *S) { FreeTerm = S; }
+};
+
+/// Strip all type casts if unsafe type cast is allowed.
+inline const SCEV * stripCastIfNot(const SCEV *S, bool IsSafeTypeCast) {
+  assert(S && "SCEV must not be null!");
+  if (!IsSafeTypeCast)
+    while (auto *Cast = dyn_cast<SCEVCastExpr>(S))
+      S = Cast->getOperand();
+  return S;
+}
 }
 
 namespace tsar {
@@ -353,6 +462,92 @@ SCEVDivisionResult divide(ScalarEvolution &SE, const SCEV *Numerator,
   D.visit(Numerator);
   D.Res.IsSafeTypeCast &= IsSafeDominatorCast;
   return D.Res;
+}
+
+std::pair<const SCEV *, bool> tsar::computeSCEVAddRec(
+    const SCEV *Expr, llvm::ScalarEvolution &SE) {
+  SCEVBionmialSearch Search(SE);
+  Search.visit(Expr);
+  bool IsSafe = true;
+  if (Search.L) {
+    Expr = SE.getAddRecExpr(
+      Search.FreeTerm, Search.Coef, Search.L, SCEV::FlagAnyWrap);
+    IsSafe = Search.IsSafeCast;
+  }
+  return std::make_pair(Expr, IsSafe);
+}
+
+const SCEV* findGCD(ArrayRef<const SCEV *> Expressions,
+    ScalarEvolution &SE, bool IsSafeTypeCast) {
+  assert(!Expressions.empty() && "List of expressions must not be empty!");
+  std::vector<const SCEV *> Terms;
+  Terms.reserve(Expressions.size());
+  for (auto *S : Expressions) {
+    auto Info = computeSCEVAddRec(S, SE);
+    stripCastIfNot(Info.first, IsSafeTypeCast);
+    if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+      if (Info.second || !IsSafeTypeCast) {
+        Terms.push_back(AddRec->getStart());
+        Terms.push_back(AddRec->getStepRecurrence(SE));
+      } else {
+        Terms.push_back(S);
+      }
+    } else {
+      Terms.push_back(S);
+    }
+  }
+  // Remove duplicates.
+  array_pod_sort(Terms.begin(), Terms.end());
+  Terms.erase(std::unique(Terms.begin(), Terms.end()), Terms.end());
+  Terms.erase(
+    std::remove_if(Terms.begin(), Terms.end(),
+      [](const SCEV *S) { return S->isZero(); }), Terms.end());
+  // Put small terms first.
+  llvm::sort(Terms.begin(), Terms.end(),
+    [IsSafeTypeCast](const SCEV *LHS, const SCEV *RHS) {
+    LHS = stripCastIfNot(LHS, IsSafeTypeCast);
+    RHS = stripCastIfNot(RHS, IsSafeTypeCast);
+    auto LHSSize = isa<SCEVMulExpr>(LHS) ?
+      cast<SCEVMulExpr>(LHS)->getNumOperands() : 1;
+    auto RHSSize = isa<SCEVMulExpr>(RHS) ?
+      cast<SCEVMulExpr>(RHS)->getNumOperands() : 1;
+    return LHSSize < RHSSize;
+  });
+  LLVM_DEBUG(
+    dbgs() << "[GCD]: terms:\n";
+    for (auto *T : Terms)
+      dbgs() << "  " << *T << "\n");
+  if (Terms.empty())
+    return SE.getCouldNotCompute();
+  if (Terms.size() < 2)
+    return Terms.front()->isZero() ? SE.getCouldNotCompute() : Terms.front();
+  SmallVector<const SCEV *, 4> Dividers;
+  auto TermItr = Terms.begin(), TermItrE = Terms.end();
+  if (auto *Mul =
+      dyn_cast<SCEVMulExpr>(stripCastIfNot(*TermItr, IsSafeTypeCast))) {
+   for (auto *Op : Mul->operands())
+     Dividers.push_back(Op);
+  } else {
+    Dividers.push_back(*TermItr);
+  }
+  for (++TermItr; TermItr != TermItrE; ++TermItr) {
+    SmallVector<const SCEV *, 4> NewDividers;
+    auto *T = *TermItr;
+    for (auto *D : Dividers) {
+      auto Div = divide(SE, T, D, IsSafeTypeCast);
+      if (!Div.Remainder->isZero())
+        continue;
+      NewDividers.push_back(D);
+      T = Div.Quotient;
+    }
+    if (NewDividers.empty())
+      return SE.getCouldNotCompute();
+    if (Dividers.size() != NewDividers.size())
+      std::swap(Dividers, NewDividers);
+  }
+  if (Dividers.size() == 1)
+    return Dividers.front();
+   return SE.getMulExpr(Dividers);
 }
 }
 

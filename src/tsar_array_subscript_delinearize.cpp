@@ -1,3 +1,27 @@
+//===- Delinearization.cpp -- Delinearization Engine ------------*- C++ -*-===//
+//
+//                     Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file allows to perform metadata-based delinearization of array accesses.
+//
+//===----------------------------------------------------------------------===/
+
 #include "tsar_array_subscript_delinearize.h"
 #include "DelinearizeJSON.h"
 #include "KnownFunctionTraits.h"
@@ -34,119 +58,6 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   "Array Access Delinearizer", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
-
-STATISTIC(NumDelinearizedSubscripts, "Number of delinearized subscripts");
-
-namespace {
-/// Traverse a SCEV and simplifies it to a binomial if possible. The result is
-/// `Coef * Count + FreeTerm`, where `Count` is and induction variable for L.
-/// `IsSafeCast` will be set to `false` if some unsafe casts are necessary for
-/// simplification.
-struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
-  ScalarEvolution *mSE = nullptr;
-  const SCEV * Coef = nullptr;
-  const SCEV * FreeTerm = nullptr;
-  const Loop * L = nullptr;
-  bool IsSafeCast = true;
-
-  SCEVBionmialSearch(ScalarEvolution &SE) : mSE(&SE) {}
-
-  void visitTruncateExpr(const SCEVTruncateExpr *S) {
-    IsSafeCast = false;
-    visit(S->getOperand());
-    if (Coef)
-      Coef = mSE->getTruncateExpr(Coef, S->getType());
-    if (FreeTerm)
-      FreeTerm = mSE->getTruncateExpr(FreeTerm, S->getType());
-  }
-
-  void visitSignExtendExpr(const SCEVSignExtendExpr *S) {
-    IsSafeCast = false;
-    visit(S->getOperand());
-    if (Coef)
-      Coef = mSE->getSignExtendExpr(Coef, S->getType());
-    if (FreeTerm)
-      FreeTerm = mSE->getSignExtendExpr(FreeTerm, S->getType());
-  }
-
-  void visitZeroExtendExpr(const SCEVZeroExtendExpr *S) {
-    IsSafeCast = false;
-    visit(S->getOperand());
-    if (Coef)
-      Coef = mSE->getZeroExtendExpr(Coef, S->getType());
-    if (FreeTerm)
-      FreeTerm = mSE->getZeroExtendExpr(FreeTerm, S->getType());
-  }
-
-  void visitAddRecExpr(const SCEVAddRecExpr *S) {
-    L = S->getLoop();
-    Coef = S->getStepRecurrence(*mSE);
-    FreeTerm = S->getStart();
-  }
-
-  void visitMulExpr(const SCEVMulExpr *S) {
-    assert(!L && "Loop must not be set yet!");
-    auto OpI = S->op_begin(), OpEI = S->op_end();
-    SmallVector<const SCEV *, 4> MulFreeTerm;
-    for (; OpI != OpEI; ++OpI) {
-      visit(*OpI);
-      if (L)
-        break;
-      MulFreeTerm.push_back(*OpI);
-    }
-    if (L) {
-      MulFreeTerm.append(++OpI, OpEI);
-      auto MulCoef = MulFreeTerm;
-      MulFreeTerm.push_back(FreeTerm);
-      // Note, that getMulExpr() may change order of SCEVs in it's parameter.
-      FreeTerm = mSE->getMulExpr(MulFreeTerm);
-      MulCoef.push_back(Coef);
-      Coef = mSE->getMulExpr(MulCoef);
-    } else {
-      FreeTerm = S;
-    }
-  }
-
-  void visitAddExpr(const SCEVAddExpr *S) {
-    assert(!L && "Loop must not be set yet!");
-    auto OpI = S->op_begin(), OpEI = S->op_end();
-    SmallVector<const SCEV *, 4> Terms;
-    for (; OpI != OpEI; ++OpI) {
-      visit(*OpI);
-      if (L)
-        break;
-      Terms.push_back(*OpI);
-    }
-    if (L) {
-      Terms.append(++OpI, OpEI);
-      Terms.push_back(FreeTerm);
-      FreeTerm = mSE->getAddExpr(Terms);
-    } else {
-      FreeTerm = S;
-    }
-  }
-
-  void visitConstant(const SCEVConstant *S) { FreeTerm = S; }
-  void visitUDivExpr(const SCEVUDivExpr *S) { FreeTerm = S; }
-  void visitSMaxExpr(const SCEVSMaxExpr *S) { FreeTerm = S; }
-  void visitUMaxExpr(const SCEVUMaxExpr *S) { FreeTerm = S; }
-  void visitUnknown(const SCEVUnknown *S) { FreeTerm = S; }
-  void visitCouldNotCompute(const SCEVCouldNotCompute *S) { FreeTerm = S; }
-};
-}
-
-std::pair<const SCEV *, bool> tsar::computeSCEVAddRec(
-    const SCEV *Expr, llvm::ScalarEvolution &SE) {
-  SCEVBionmialSearch Search(SE);
-  Search.visit(Expr);
-  bool IsSafe = true;
-  if (Search.L) {
-    Expr = SE.getAddRecExpr(
-      Search.FreeTerm, Search.Coef, Search.L, SCEV::FlagAnyWrap);
-    IsSafe = Search.IsSafeCast;
-  }
-  return std::make_pair(Expr, IsSafe);
-}
 
 std::pair<const Array *, const Array::Element *>
 DelinearizeInfo::findElement(const Value *ElementPtr) const {
@@ -190,87 +101,6 @@ void extractSubscriptsFromGEPs(
       }
     }
   }
-}
-
-inline const SCEV * stripCastIfNot(const SCEV *S, bool IsSafeTypeCast) {
-  assert(S && "SCEV must not be null!");
-  if (!IsSafeTypeCast)
-    while (auto *Cast = dyn_cast<SCEVCastExpr>(S))
-      S = Cast->getOperand();
-  return S;
-}
-
-const SCEV* findGCD(ArrayRef<const SCEV *> Expressions,
-  ScalarEvolution &SE, bool IsSafeTypeCast = true) {
-  assert(!Expressions.empty() && "List of expressions must not be empty!");
-  std::vector<const SCEV *> Terms;
-  Terms.reserve(Expressions.size());
-  for (auto *S : Expressions) {
-    auto Info = computeSCEVAddRec(S, SE);
-    stripCastIfNot(Info.first, IsSafeTypeCast);
-    if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
-      if (Info.second || !IsSafeTypeCast) {
-        Terms.push_back(AddRec->getStart());
-        Terms.push_back(AddRec->getStepRecurrence(SE));
-      } else {
-        Terms.push_back(S);
-      }
-    } else {
-      Terms.push_back(S);
-    }
-  }
-  // Remove duplicates.
-  array_pod_sort(Terms.begin(), Terms.end());
-  Terms.erase(std::unique(Terms.begin(), Terms.end()), Terms.end());
-  Terms.erase(
-    std::remove_if(Terms.begin(), Terms.end(),
-      [](const SCEV *S) { return S->isZero(); }), Terms.end());
-  // Put small terms first.
-  llvm::sort(Terms.begin(), Terms.end(),
-    [IsSafeTypeCast](const SCEV *LHS, const SCEV *RHS) {
-    LHS = stripCastIfNot(LHS, IsSafeTypeCast);
-    RHS = stripCastIfNot(RHS, IsSafeTypeCast);
-    auto LHSSize = isa<SCEVMulExpr>(LHS) ?
-      cast<SCEVMulExpr>(LHS)->getNumOperands() : 1;
-    auto RHSSize = isa<SCEVMulExpr>(RHS) ?
-      cast<SCEVMulExpr>(RHS)->getNumOperands() : 1;
-    return LHSSize < RHSSize;
-  });
-  LLVM_DEBUG(
-    dbgs() << "[GCD]: terms:\n";
-    for (auto *T : Terms)
-      dbgs() << "  " << *T << "\n");
-  if (Terms.empty())
-    return SE.getCouldNotCompute();
-  if (Terms.size() < 2)
-    return Terms.front()->isZero() ? SE.getCouldNotCompute() : Terms.front();
-  SmallVector<const SCEV *, 4> Dividers;
-  auto TermItr = Terms.begin(), TermItrE = Terms.end();
-  if (auto *Mul =
-      dyn_cast<SCEVMulExpr>(stripCastIfNot(*TermItr, IsSafeTypeCast))) {
-   for (auto *Op : Mul->operands())
-     Dividers.push_back(Op);
-  } else {
-    Dividers.push_back(*TermItr);
-  }
-  for (++TermItr; TermItr != TermItrE; ++TermItr) {
-    SmallVector<const SCEV *, 4> NewDividers;
-    auto *T = *TermItr;
-    for (auto *D : Dividers) {
-      auto Div = divide(SE, T, D, IsSafeTypeCast);
-      if (!Div.Remainder->isZero())
-        continue;
-      NewDividers.push_back(D);
-      T = Div.Quotient;
-    }
-    if (NewDividers.empty())
-      return SE.getCouldNotCompute();
-    if (Dividers.size() != NewDividers.size())
-      std::swap(Dividers, NewDividers);
-  }
-  if (Dividers.size() == 1)
-    return Dividers.front();
-   return SE.getMulExpr(Dividers);
 }
 
 #ifdef LLVM_DEBUG
@@ -629,19 +459,6 @@ void DelinearizationPass::collectArrays(Function &F) {
   }
 }
 
-void DelinearizationPass::findSubscripts(Function &F) {
-  collectArrays(F);
-  for (auto *ArrayInfo : mDelinearizeInfo.getArrays()) {
-    fillArrayDimensionsSizes(*ArrayInfo);
-    if (ArrayInfo->isDelinearized()) {
-      cleanSubscripts(*ArrayInfo);
-    } else {
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: unable to delinearize "
-                        << ArrayInfo->getBase()->getName() << "\n");
-    }
-  }
-}
-
 bool DelinearizationPass::runOnFunction(Function &F) {
   LLVM_DEBUG(
     dbgs() << "[DELINEARIZE]: process function " << F.getName() << "\n");
@@ -652,7 +469,16 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   auto &DL = F.getParent()->getDataLayout();
   mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is "; mIndexTy->dump());
-  findSubscripts(F);
+  collectArrays(F);
+  for (auto *ArrayInfo : mDelinearizeInfo.getArrays()) {
+    fillArrayDimensionsSizes(*ArrayInfo);
+    if (ArrayInfo->isDelinearized()) {
+      cleanSubscripts(*ArrayInfo);
+    } else {
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: unable to delinearize "
+                        << ArrayInfo->getBase()->getName() << "\n");
+    }
+  }
   mDelinearizeInfo.fillElementsMap();
   LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, *mSE, dbgs()));
   return false;
@@ -673,7 +499,8 @@ void DelinearizationPass::print(raw_ostream &OS, const Module *M) const {
 
 FunctionPass * createDelinearizationPass() { return new DelinearizationPass; }
 
-RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE) {
+RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info,
+    ScalarEvolution &SE) {
   RawDelinearizeInfo RawInfo;
   for (auto &ArrayInfo : Info.getArrays()) {
     std::string NameStr;
@@ -687,9 +514,9 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE
       DimSizeOS.flush();
     }
     std::vector<std::vector<std::vector<std::string>>> Accesses;
-    for (auto &El : *ArrayInfo) {
+    for (auto &Range : *ArrayInfo) {
       std::vector<std::vector<std::string>> Subscripts;
-      for (auto *S : El.Subscripts) {
+      for (auto *S : Range.Subscripts) {
         Subscripts.emplace_back(2);
         auto &CoefStr = Subscripts.back().front();
         auto &ConstTermStr = Subscripts.back().back();
@@ -717,4 +544,3 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info, ScalarEvolution &SE
   }
   return RawInfo;
 }
-
