@@ -67,8 +67,8 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
       return;
     auto Tmp = divide(SE, Numerator->getOperand(), Denominator, IsSafeTypeCast);
     if (!isCannotDivide(Numerator->getOperand(), Tmp)) {
-      Res.Quotient = SE.getTruncateExpr(Tmp.Quotient, Numerator->getType());
-      Res.Remainder = SE.getTruncateExpr(Tmp.Remainder, Numerator->getType());
+      Res.Quotient = SE.getTruncateOrNoop(Tmp.Quotient, Numerator->getType());
+      Res.Remainder = SE.getTruncateOrNoop(Tmp.Remainder, Numerator->getType());
       Res.IsSafeTypeCast = false;
     }
   }
@@ -78,8 +78,15 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
       return;
     auto Tmp = divide(SE, Numerator->getOperand(), Denominator, IsSafeTypeCast);
     if (!isCannotDivide(Numerator->getOperand(), Tmp)) {
-      Res.Quotient = SE.getZeroExtendExpr(Tmp.Quotient, Numerator->getType());
-      Res.Remainder = SE.getZeroExtendExpr(Tmp.Remainder, Numerator->getType());
+      auto NumeratorBW = SE.getTypeSizeInBits(Numerator->getType());
+      Res.Quotient =
+        SE.getTypeSizeInBits(Tmp.Quotient->getType()) < NumeratorBW ?
+        SE.getZeroExtendExpr(Tmp.Quotient, Numerator->getType()) :
+        Tmp.Quotient;
+      Res.Remainder =
+        SE.getTypeSizeInBits(Tmp.Remainder->getType()) < NumeratorBW ?
+        SE.getZeroExtendExpr(Tmp.Remainder, Numerator->getType()) :
+        Tmp.Remainder;
       Res.IsSafeTypeCast = false;
     }
   }
@@ -89,8 +96,15 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
       return;
     auto Tmp = divide(SE, Numerator->getOperand(), Denominator, IsSafeTypeCast);
     if (!isCannotDivide(Numerator->getOperand(), Tmp)) {
-      Res.Quotient = SE.getSignExtendExpr(Tmp.Quotient, Numerator->getType());
-      Res.Remainder = SE.getSignExtendExpr(Tmp.Remainder, Numerator->getType());
+      auto NumeratorBW = SE.getTypeSizeInBits(Numerator->getType());
+      Res.Quotient =
+        SE.getTypeSizeInBits(Tmp.Quotient->getType()) < NumeratorBW ?
+        SE.getSignExtendExpr(Tmp.Quotient, Numerator->getType()) :
+        Tmp.Quotient;
+      Res.Remainder =
+        SE.getTypeSizeInBits(Tmp.Remainder->getType()) < NumeratorBW ?
+        SE.getSignExtendExpr(Tmp.Remainder, Numerator->getType()) :
+        Tmp.Remainder;
       Res.IsSafeTypeCast = false;
     }
   }
@@ -99,8 +113,8 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
     if (const SCEVConstant *D = dyn_cast<SCEVConstant>(Denominator)) {
       APInt NumeratorVal = Numerator->getAPInt();
       APInt DenominatorVal = D->getAPInt();
-      uint32_t NumeratorBW = NumeratorVal.getBitWidth();
-      uint32_t DenominatorBW = DenominatorVal.getBitWidth();
+      auto NumeratorBW = NumeratorVal.getBitWidth();
+      auto DenominatorBW = DenominatorVal.getBitWidth();
 
       if (NumeratorBW > DenominatorBW)
         DenominatorVal = DenominatorVal.sext(NumeratorBW);
