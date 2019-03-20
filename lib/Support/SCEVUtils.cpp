@@ -464,7 +464,7 @@ SCEVDivisionResult divide(ScalarEvolution &SE, const SCEV *Numerator,
   return D.Res;
 }
 
-std::pair<const SCEV *, bool> tsar::computeSCEVAddRec(
+std::pair<const SCEV *, bool> computeSCEVAddRec(
     const SCEV *Expr, llvm::ScalarEvolution &SE) {
   SCEVBionmialSearch Search(SE);
   Search.visit(Expr);
