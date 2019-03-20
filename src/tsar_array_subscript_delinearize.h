@@ -60,16 +60,27 @@ public:
   using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
 
   /// Map from linearized index of array to its delinearized representation.
-  /// Instruction does not access memory.
-  struct Element {
+  struct Range {
     enum Flags : uint8_t {
       DefaultFlags = 0u,
-      IsValid = 1u << 0,
-      IsElement = 1u << 1,
-      LLVM_MARK_AS_BITMASK_ENUM(IsElement)
+      /// Set if this class describes a single element of the array.
+      IsElement = 1u << 0,
+      /// Set if reference to this element has been successfully delinearized.
+      /// In this case the list of subscripts contains delinearized subscript
+      /// for each dimension. For A[I][J], subscripts will be I and J.
+      /// If delinearization is not possible the list of subscripts contains
+      /// original subscripts (A[I][J] ~ A + I*M + J): I*M and J.
+      IsDelinearized = 1u << 1,
+      /// Set if some extra zero subscripts must be added for delinearization.
+      /// In some cases zero subscript is dropping out by optimization passes.
+      /// So, we try to recover these zero subscripts.
+      NeedExtraZero = 1u << 2,
+      /// Set if delinearization ignores some beginning GEPs.
+      IgnoreGEP = 1u << 3,
+      LLVM_MARK_AS_BITMASK_ENUM(IgnoreGEP)
     };
 
-    /// Pointer to an element of an array.
+    /// Pointer to the beginning of array sub-range.
     llvm::Value *Ptr;
 
     /// List of subscript expressions which allow to access this element.
@@ -77,22 +88,32 @@ public:
     /// This is representation of offset (`Ptr-ArrayPtr`) after delinearization.
     ExprList Subscripts;
 
-    /// Properties of this element.
-    Flags Traits = DefaultFlags;
-
     /// Creates element referenced with a specified pointer. Initial this
-    /// element is not delineariaced yet.
-    explicit Element(llvm::Value *Ptr) : Ptr(Ptr) {
+    /// element is not delinearized yet.
+    explicit Range(llvm::Value *Ptr) : Ptr(Ptr) {
       assert(Ptr && "Pointer must not be null!");
     }
 
-    bool isValid() const { return Traits & IsValid; }
-    bool isElement() const { return Traits & IsElement; }
+    /// Returns true if this range has been successfully delinearized and
+    /// there is no properties which may lead to incorrect delinearization.
+    bool isValid() const {
+      return (Property & IsDelinearized) && !(Property & IgnoreGEP);
+    }
+
+    /// Returns true if this range describes a single element of the array.
+    bool isElement() const { return Property & IsElement; }
+
+    void setProperty(Flags F) { Property |= F; }
+    void unsetProperty(Flags F) { Property &= ~F; }
+    bool is(Flags F) { return Property & F; }
+
+  private:
+    Flags Property = DefaultFlags;
   };
 
-  using Elements = std::vector<Element>;
-  using iterator = Elements::iterator;
-  using const_iterator = Elements::const_iterator;
+  using Ranges = std::vector<Range>;
+  using iterator = Ranges::iterator;
+  using const_iterator = Ranges::const_iterator;
 
   /// Creates new array representation for an array which starts at
   /// a specified address. If `IsAddress` is true then a specified base is
@@ -114,35 +135,25 @@ public:
   /// this method returns false.
   bool isAddressOfVariable() const { return mBasePtr.getInt(); }
 
-  iterator begin() { return mElements.begin(); }
-  iterator end() { return mElements.end(); }
+  iterator begin() { return mRanges.begin(); }
+  iterator end() { return mRanges.end(); }
 
-  const_iterator begin() const { return mElements.begin(); }
-  const_iterator end() const { return mElements.end(); }
+  const_iterator begin() const { return mRanges.begin(); }
+  const_iterator end() const { return mRanges.end(); }
 
-  std::size_t size() const { return mElements.size(); }
-  bool empty() const { return mElements.empty(); }
+  std::size_t size() const { return mRanges.size(); }
+  bool empty() const { return mRanges.empty(); }
 
   /// Add element which is referenced in a source code with
   /// a specified pointer.
-  Element & addElement(llvm::Value *Ptr) {
-    mElements.emplace_back(Ptr);
-    return mElements.back();
-  }
-
-  Element * getElement(std::size_t Idx) {
-    assert(Idx < mElements.size() && "Index is out of range!");
-    return mElements.data() + Idx;
-  }
-
-  const Element * getElement(std::size_t Idx) const {
-    assert(Idx < mElements.size() && "Index is out of range!");
-    return mElements.data() + Idx;
+  Range & addRange(llvm::Value *Ptr) {
+    mRanges.emplace_back(Ptr);
+    return mRanges.back();
   }
 
   /// Set number of dimensions.
   ///
-  /// If the current number of dimenstions size is less than count,
+  /// If the current number of dimensions size is less than count,
   /// additional dimensions are appended and their sizes are initialized
   /// with `nullptr` expressions.
   void setNumberOfDims(std::size_t Count) { mDims.resize(Count, nullptr); }
@@ -172,7 +183,7 @@ public:
   }
 
   /// Return true if this array has been successfully delinearized. Note, that
-  /// deliniarization process may ignore pointers to some ranges of this array.
+  /// delinearization process may ignore pointers to some ranges of this array.
   bool isDelinearized() const noexcept { return mF & IsDelinearized; }
   void setDelinearized() noexcept { mF |= IsDelinearized; }
 
@@ -184,12 +195,24 @@ public:
 
 private:
   friend struct ArrayMapInfo;
+  friend class DelinearizeInfo;
 
   using BaseTy = llvm::PointerIntPair<llvm::Value *, 1, bool>;
 
+
+  Range * getRange(std::size_t Idx) {
+    assert(Idx < mRanges.size() && "Index is out of range!");
+    return mRanges.data() + Idx;
+  }
+
+  const Range * getRange(std::size_t Idx) const {
+    assert(Idx < mRanges.size() && "Index is out of range!");
+    return mRanges.data() + Idx;
+  }
+
   BaseTy mBasePtr;
   ExprList mDims;
-  std::vector<Element> mElements;
+  std::vector<Range> mRanges;
   Flags mF = DefaultFlags;
 };
 
@@ -241,7 +264,7 @@ class DelinearizeInfo {
     const Array * getArray() const { return getSecond().first; }
     std::size_t getElementIdx() const { return getSecond().second; }
   };
-  using ElementMap =
+  using RangeMap =
     llvm::DenseMap<llvm::Value *, std::pair<Array *, std::size_t>,
       llvm::DenseMapInfo<llvm::Value *>, ElementInfo>;
 public:
@@ -256,18 +279,18 @@ public:
   DelinearizeInfo(DelinearizeInfo &&) = default;
   DelinearizeInfo & operator=(DelinearizeInfo &&) = default;
 
-  /// Returns delinearized representation of a specified element of an array.
-  std::pair<Array *, Array::Element *>
-      findElement(const llvm::Value *ElementPtr) {
+  /// Returns delinearized representation of a specified range of an array.
+  std::pair<Array *, Array::Range *>
+      findRange(const llvm::Value *ElementPtr) {
     auto Tmp =
-      static_cast<const DelinearizeInfo *>(this)->findElement(ElementPtr);
+      static_cast<const DelinearizeInfo *>(this)->findRange(ElementPtr);
     return std::make_pair(
-      const_cast<Array *>(Tmp.first), const_cast<Array::Element *>(Tmp.second));
+      const_cast<Array *>(Tmp.first), const_cast<Array::Range *>(Tmp.second));
   }
 
-  /// Returns delinearized representation of a specified element of an array.
-  std::pair<const Array *, const Array::Element *>
-    findElement(const llvm::Value *ElementPtr) const;
+  /// Returns delinearized representation of a specified range of an array.
+  std::pair<const Array *, const Array::Range *>
+    findRange(const llvm::Value *ElementPtr) const;
 
   /// Returns an array which starts at a specified address.
   ///
@@ -310,19 +333,20 @@ public:
   /// Returns list of all delinearized arrays.
   const ArraySet & getArrays() const noexcept { return mArrays; }
 
-  void fillElementsMap();
+  /// Update cache to enable GEP-based search of array.
+  void updateRangeCache();
 
   /// Remove all available information.
   void clear() {
     for (auto *A : mArrays)
       delete A;
     mArrays.clear();
-    mElements.clear();
+    mRanges.clear();
   }
 
 private:
   ArraySet mArrays;
-  ElementMap mElements;
+  RangeMap mRanges;
 };
 }
 
@@ -409,6 +433,5 @@ private:
   Type *mIndexTy = nullptr;
 };
 }
-
 
 #endif //TSAR_DELINIARIZATION_H

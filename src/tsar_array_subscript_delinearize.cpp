@@ -59,24 +59,24 @@ INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   "Array Access Delinearizer", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
-std::pair<const Array *, const Array::Element *>
-DelinearizeInfo::findElement(const Value *ElementPtr) const {
-  auto Itr = mElements.find(ElementPtr);
-  if (Itr != mElements.end()) {
+std::pair<const Array *, const Array::Range *>
+DelinearizeInfo::findRange(const Value *ElementPtr) const {
+  auto Itr = mRanges.find(ElementPtr);
+  if (Itr != mRanges.end()) {
     auto *TargetArray = Itr->getArray();
-    auto *TargetElement = TargetArray->getElement(Itr->getElementIdx());
+    auto *TargetElement = TargetArray->getRange(Itr->getElementIdx());
     return std::make_pair(TargetArray, TargetElement);
   }
   return std::make_pair(nullptr, nullptr);
 }
 
-void DelinearizeInfo::fillElementsMap() {
-  mElements.clear();
+void DelinearizeInfo::updateRangeCache() {
+  mRanges.clear();
   for (auto &ArrayEntry : mArrays) {
     int Idx = 0;
     for (auto Itr = ArrayEntry->begin(), ItrE = ArrayEntry->end();
          Itr != ItrE; ++Itr, ++Idx)
-      mElements.try_emplace(Itr->Ptr, ArrayEntry, Idx);
+      mRanges.try_emplace(Itr->Ptr, ArrayEntry, Idx);
   }
 }
 
@@ -127,11 +127,11 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
       OS << "\n";
     }
     OS << "  accesses:\n";
-    for (auto &El : *ArrayInfo) {
+    for (auto &Range : *ArrayInfo) {
       OS << "    address: ";
-      El.Ptr->print(OS, true);
+      Range.Ptr->print(OS, true);
       OS << "\n";
-      for (auto *S : El.Subscripts) {
+      for (auto *S : Range.Subscripts) {
         OS << "      SCEV: ";
         S->print(OS);
         OS << "\n";
@@ -179,10 +179,8 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     assert(ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size()
       && "Unknown subscripts in right dimensions with constant sizes!");
     // In some cases zero subscript is dropping out by optimization passes.
-    // So, we try to add extra zero subscripts. We add subscripts for
-    // instructions which access a single element, for example, in case of call
-    // it is possible to pass a whole array as a parameter (without GEPs).
-    auto ExtraZeroCount = Range.isElement() && !Range.isValid() ?
+    // So, we try to add extra zero subscripts.
+    auto ExtraZeroCount = Range.is(Array::Range::NeedExtraZero) ?
       ArrayInfo.getNumberOfDims() - Range.Subscripts.size() : 0;
     std::size_t DimIdx = 0, SubscriptIdx = 0;
     std::size_t DimIdxE = std::min(LastConstDim - 1, Range.Subscripts.size());
@@ -206,7 +204,6 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
         } else {
           LLVM_DEBUG(dbgs() << "[DELINEARIZE]: unable to delinearize\n");
           Subscript = nullptr;
-          Range.Traits &= ~Range.IsValid;
           break;
         }
       }
@@ -227,7 +224,7 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     std::swap(Range.Subscripts, NewSubscripts);
     assert(Range.Subscripts.size() == ArrayInfo.getNumberOfDims() &&
       "Unable to delinearize element access!");
-    Range.Traits |= Range.IsValid;
+    Range.setProperty(Array::Range::IsDelinearized);
   }
 }
 
@@ -238,7 +235,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   auto LastUnknownDim = NumberOfDims;
   if (NumberOfDims == 0) {
     for (auto &Range : ArrayInfo)
-      if (Range.isElement() && Range.isValid())
+      if (Range.isElement())
         NumberOfDims = std::max(Range.Subscripts.size(), NumberOfDims);
     if (NumberOfDims == 0) {
       LLVM_DEBUG(
@@ -248,9 +245,8 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       return;
     }
     for (auto &Range : ArrayInfo) {
-      if (Range.isElement() && Range.isValid() &&
-          NumberOfDims != Range.Subscripts.size())
-        Range.Traits &= ~Range.IsValid;
+      if (Range.isElement() && NumberOfDims < Range.Subscripts.size())
+        Range.setProperty(Array::Range::NeedExtraZero);
     }
     ArrayInfo.setNumberOfDims(NumberOfDims);
     ArrayInfo.setDimSize(0, mSE->getCouldNotCompute());
@@ -299,7 +295,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
     } else {
       SmallVector<const SCEV *, 3> Expressions;
       for (auto &Range: ArrayInfo) {
-        if (!Range.isElement() || !Range.isValid())
+        if (!Range.isElement() || Range.is(Array::Range::NeedExtraZero))
           continue;
         assert(Range.Subscripts.size() == NumberOfDims &&
           "Number of dimensions is inconsistent with number of subscripts!");
@@ -311,7 +307,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       }
       if (Expressions.empty()) {
         LLVM_DEBUG(
-          dbgs() << "[DELINEARIZE]: no valid element found to compute GCD");
+          dbgs() << "[DELINEARIZE]: no valid element found to compute GCD\n");
         setUnknownDims(DimIdx);
         return;
       }
@@ -443,35 +439,39 @@ void DelinearizationPass::collectArrays(Function &F) {
       }
       SmallVector<Value *, 4> SubscriptValues;
       extractSubscriptsFromGEPs(GEPs.rbegin(), GEPs.rend(), SubscriptValues);
-      auto &El = ArrayPtr->addElement(
+      auto &Range = ArrayPtr->addRange(
         GEPs.empty() ? const_cast<Value *>(Loc.Ptr) : GEPs.back());
+      if (GEP)
+        Range.setProperty(Array::Range::IgnoreGEP);
       // In some cases zero subscript is dropping out by optimization passes.
-      // So, we try to add extra zero subscripts later.
+      // So, we try to add extra zero subscripts later. We add subscripts for
+      // instructions which access a single element, for example, in case of
+      // a call it is possible to pass a whole array as a parameter
+      // (without GEPs).
       if (isa<LoadInst>(I) || isa<StoreInst>(I) ||
           isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I)) {
-        El.Traits |= Array::Element::IsElement;
+        Range.setProperty(Array::Range::IsElement);
         if (SubscriptValues.size() < NumberOfDims) {
           ArrayPtr->setRangeRef();
-        } else {
-          El.Traits |= Array::Element::IsValid;
+          Range.setProperty(Array::Range::NeedExtraZero);
         }
-      } else {
-        El.Traits |= Array::Element::IsValid;
       }
       if (!SubscriptValues.empty()) {
         ArrayPtr->setRangeRef();
         for (auto *V : SubscriptValues)
-          El.Subscripts.push_back(mSE->getSCEV(V));
+          Range.Subscripts.push_back(mSE->getSCEV(V));
       }
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: number of dimensions "
                << NumberOfDims << "\n";
         dbgs() << "[DELINEARIZE]: number of subscripts "
-               << El.Subscripts.size() << "\n";
-        dbgs() << "[DELINEARIZE]: element is "
-               << (El.isValid() ? "valid" : "invalid") << "\n";
+               << Range.Subscripts.size() << "\n";
+        if (Range.is(Array::Range::NeedExtraZero))
+          dbgs() << "[DELINEARIZE]: need extra zero subscripts\n";
+        if (Range.is(Array::Range::IgnoreGEP))
+          dbgs() << "[DELINEARIZE]: ignore some beginning GEPs\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
-        for (auto *Subscript : El.Subscripts) {
+        for (auto *Subscript : Range.Subscripts) {
           dbgs() << "  "; Subscript->dump();
         }
       );
@@ -511,7 +511,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
                         << ArrayInfo->getBase()->getName() << "\n");
     }
   }
-  mDelinearizeInfo.fillElementsMap();
+  mDelinearizeInfo.updateRangeCache();
   LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, *mSE, dbgs()));
   return false;
 }
