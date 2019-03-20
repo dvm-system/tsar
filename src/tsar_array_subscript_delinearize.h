@@ -29,6 +29,7 @@
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/PointerIntPair.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Pass.h>
@@ -36,6 +37,7 @@
 #include <vector>
 
 namespace llvm {
+class DataLayout;
 class Instruction;
 class Function;
 class Value;
@@ -93,16 +95,24 @@ public:
   using const_iterator = Elements::const_iterator;
 
   /// Creates new array representation for an array which starts at
-  /// a specified address.
-  explicit Array(llvm::Value *BasePtr) noexcept :  mBasePtr(BasePtr) {
+  /// a specified address. If `IsAddress` is true then a specified base is
+  /// an address of an array address (for example alloc),
+  /// otherwise it is address of array.
+  explicit Array(llvm::Value *BasePtr, bool IsAddressOfVariable) :
+    mBasePtr(BasePtr, IsAddressOfVariable) {
     assert(BasePtr && "Pointer to the array beginning must not be null!");
   }
 
   /// Returns pointer to the array beginning.
-  const llvm::Value * getBase() const { return mBasePtr; }
+  const llvm::Value * getBase() const { return mBasePtr.getPointer(); }
 
   /// Returns pointer to the array beginning.
-  llvm::Value * getBase() { return mBasePtr; }
+  llvm::Value * getBase() { return mBasePtr.getPointer(); }
+
+  /// Returns `true` if getBase() returns an address of a variable which stores
+  /// address of array, otherwise getBase() returns an address of this array and
+  /// this method returns false.
+  bool isAddressOfVariable() const { return mBasePtr.getInt(); }
 
   iterator begin() { return mElements.begin(); }
   iterator end() { return mElements.end(); }
@@ -173,7 +183,11 @@ public:
   void setRangeRef() noexcept { mF |= HasRangeRef; }
 
 private:
-  llvm::Value *mBasePtr;
+  friend struct ArrayMapInfo;
+
+  using BaseTy = llvm::PointerIntPair<llvm::Value *, 1, bool>;
+
+  BaseTy mBasePtr;
   ExprList mDims;
   std::vector<Element> mElements;
   Flags mF = DefaultFlags;
@@ -183,16 +197,34 @@ private:
 /// hash for tsar::Array *.
 struct ArrayMapInfo : public llvm::DenseMapInfo<Array *> {
   static inline unsigned getHashValue(const Array *Arr) {
-    return DenseMapInfo<const llvm::Value *>::getHashValue(Arr->getBase());
+    return DenseMapInfo<Array::BaseTy>::getHashValue(Arr->mBasePtr);
   }
-  static inline unsigned getHashValue(const llvm::Value *BasePtr) {
-    return DenseMapInfo<const llvm::Value *>::getHashValue(BasePtr);
+  static inline unsigned getHashValue(Array::BaseTy Base) {
+    return DenseMapInfo<Array::BaseTy>::getHashValue(Base);
+  }
+  static inline unsigned getHashValue(std::pair<llvm::Value *, bool> Base) {
+    return DenseMapInfo<Array::BaseTy>::getHashValue(
+      Array::BaseTy(Base.first, Base.second));
+  }
+  static inline unsigned getHashValue(
+      std::pair<const llvm::Value *, bool> Base) {
+    return DenseMapInfo<Array::BaseTy>::getHashValue(
+      Array::BaseTy(const_cast<llvm::Value *>(Base.first), Base.second));
   }
   using DenseMapInfo<Array *>::isEqual;
-  static inline bool isEqual(const llvm::Value *LHS , const Array *RHS) {
+  static inline bool isEqual(Array::BaseTy LHS , const Array *RHS) {
     return RHS != ArrayMapInfo::getEmptyKey() &&
       RHS != ArrayMapInfo::getTombstoneKey() &&
-      llvm::DenseMapInfo<const llvm::Value *>::isEqual(LHS, RHS->getBase());
+      llvm::DenseMapInfo<Array::BaseTy>::isEqual(LHS, RHS->mBasePtr);
+  }
+  static inline bool isEqual(
+      std::pair<llvm::Value *, bool> LHS, const Array *RHS) {
+    return isEqual(Array::BaseTy(LHS.first, LHS.second), RHS);
+  }
+  static inline bool isEqual(
+      std::pair<const llvm::Value *, bool> LHS, const Array *RHS) {
+    return isEqual(
+      Array::BaseTy(const_cast<llvm::Value *>(LHS.first), LHS.second), RHS);
   }
 };
 }
@@ -238,15 +270,38 @@ public:
     findElement(const llvm::Value *ElementPtr) const;
 
   /// Returns an array which starts at a specified address.
-  Array * findArray(const llvm::Value *BasePtr) {
+  ///
+  /// If IsAddressOfVariable is `true` then `BasePtr` is considered as an
+  /// address of a variable which contains address of an array.
+  /// For example, if `BasePtr` is `alloca` then IsAddressOfVariable must be
+  /// set to true.
+  Array * findArray(const llvm::Value *BasePtr, bool IsAddressofVariable) {
     return const_cast<Array *>(
-      static_cast<const DelinearizeInfo *>(this)->findArray(BasePtr));
+      static_cast<const DelinearizeInfo *>(this)->findArray(
+        BasePtr, IsAddressofVariable));
   }
 
   /// Returns an array which starts at a specified address.
-  const Array * findArray(const llvm::Value *BasePtr) const {
-    auto ResultItr = mArrays.find_as(const_cast<llvm::Value *>(BasePtr));
+  ///
+  /// If IsAddressOfVariable is `true` then `BasePtr` is considered as an
+  /// address of a variable which contains address of an array.
+  /// For example, if `BasePtr` is `alloca` then IsAddressOfVariable must be
+  /// set to true.
+  const Array * findArray(const llvm::Value *BasePtr,
+      bool IsAddressOfVariable) const {
+    auto ResultItr = mArrays.find_as(
+      std::make_pair(BasePtr, IsAddressOfVariable));
     return (ResultItr != mArrays.end()) ? *ResultItr : nullptr;
+  }
+
+  /// Returns an array which contains a specified pointer.
+  const Array * findArray(const llvm::Value *Ptr,
+    const llvm::DataLayout &DL) const;
+
+  /// Returns an array which contains a specified pointer.
+  Array * findArray(llvm::Value *Ptr, const llvm::DataLayout &DL) {
+    return const_cast<Array *>(
+      static_cast<const DelinearizeInfo *>(this)->findArray(Ptr, DL));
   }
 
   /// Returns list of all delinearized arrays.

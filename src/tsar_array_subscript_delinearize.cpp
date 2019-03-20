@@ -103,6 +103,16 @@ void extractSubscriptsFromGEPs(
   }
 }
 
+std::pair<Value *, bool> GetUnderlyingArray(Value *Ptr, const DataLayout &DL) {
+  auto BasePtrInfo = GetUnderlyingObjectWithMetadata(Ptr, DL);
+  if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first))
+    Ptr = cast<LoadInst>(BasePtrInfo.first)->getPointerOperand();
+  else
+    Ptr = BasePtrInfo.first;
+  bool IsAddressOfVariable = (Ptr != BasePtrInfo.first);
+  return std::make_pair(Ptr, IsAddressOfVariable);
+}
+
 #ifdef LLVM_DEBUG
 void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
     raw_ostream  &OS) {
@@ -147,6 +157,12 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
   }
 }
 #endif
+}
+
+const Array *DelinearizeInfo::findArray(const Value *Ptr,
+    const DataLayout &DL) const {
+  auto Info = GetUnderlyingArray(const_cast<Value *>(Ptr), DL);
+  return findArray(Info.first, Info.second);
 }
 
 void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
@@ -324,7 +340,15 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
 
 void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
   SmallVector<DIMemoryLocation, 1> DILocs;
-  auto DIM = findMetadata(ArrayInfo.getBase(), DILocs, mDT);
+  // If base is an address of a memory which contains address of this array
+  // we search dbg.declare and dbg.address only. However, if base is an
+  // address of an array we search all metadata, because array may be a pointer
+  // (like in C) or a reference (like in Fortran). So, in C dbg.value is used
+  // to mark base and in Fortran dbg.address or dbg.declare may be used to
+  // mark underlying memory.
+  auto DIM = findMetadata(ArrayInfo.getBase(), DILocs, mDT,
+    ArrayInfo.isAddressOfVariable() ? MDSearch::AddressOfVariable :
+      MDSearch::Any);
   if (!DIM)
     return;
   assert(DIM->isValid() && "Debug memory location must be valid!");
@@ -393,16 +417,19 @@ void DelinearizationPass::collectArrays(Function &F) {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction "; I.dump());
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
-      BasePtr = GetUnderlyingObjectWithMetadata(BasePtr, DL);
-      if (auto *LI = dyn_cast<LoadInst>(BasePtr))
-        BasePtr = LI->getPointerOperand();
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: strip to base " << *BasePtr << "\n");
-      auto ArrayItr = mDelinearizeInfo.getArrays().find_as(BasePtr);
-      if (ArrayItr == mDelinearizeInfo.getArrays().end()) {
-        ArrayItr = mDelinearizeInfo.getArrays().insert(new Array(BasePtr)).first;
-        findArrayDimesionsFromDbgInfo(**ArrayItr);
+      bool IsAddressOfVariable;
+      std::tie(BasePtr, IsAddressOfVariable) = GetUnderlyingArray(BasePtr, DL);
+      LLVM_DEBUG(
+        dbgs() << "[DELINEARIZE]: strip to "
+               << (IsAddressOfVariable ? "address of " : "")
+               << "base " << *BasePtr << "\n");
+      auto ArrayPtr = mDelinearizeInfo.findArray(BasePtr, IsAddressOfVariable);
+      if (!ArrayPtr) {
+        ArrayPtr = *mDelinearizeInfo.getArrays().insert(
+          new Array(BasePtr, IsAddressOfVariable)).first;
+        findArrayDimesionsFromDbgInfo(*ArrayPtr);
       }
-      auto NumberOfDims = (*ArrayItr)->getNumberOfDims();
+      auto NumberOfDims = ArrayPtr->getNumberOfDims();
       SmallVector<GEPOperator *, 4> GEPs;
       auto *GEP = dyn_cast<GEPOperator>(const_cast<Value *>(Loc.Ptr));
       while (GEP && (NumberOfDims == 0 || GEPs.size() < NumberOfDims)) {
@@ -411,7 +438,7 @@ void DelinearizationPass::collectArrays(Function &F) {
       }
       SmallVector<Value *, 4> SubscriptValues;
       extractSubscriptsFromGEPs(GEPs.rbegin(), GEPs.rend(), SubscriptValues);
-      auto &El = (*ArrayItr)->addElement(
+      auto &El = ArrayPtr->addElement(
         GEPs.empty() ? const_cast<Value *>(Loc.Ptr) : GEPs.back());
       // In some cases zero subscript is dropping out by optimization passes.
       // So, we try to add extra zero subscripts later.
@@ -419,7 +446,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I)) {
         El.Traits |= Array::Element::IsElement;
         if (SubscriptValues.size() < NumberOfDims) {
-          (*ArrayItr)->setRangeRef();
+          ArrayPtr->setRangeRef();
         } else {
           El.Traits |= Array::Element::IsValid;
         }
@@ -427,7 +454,7 @@ void DelinearizationPass::collectArrays(Function &F) {
         El.Traits |= Array::Element::IsValid;
       }
       if (!SubscriptValues.empty()) {
-        (*ArrayItr)->setRangeRef();
+        ArrayPtr->setRangeRef();
         for (auto *V : SubscriptValues)
           El.Subscripts.push_back(mSE->getSCEV(V));
       }

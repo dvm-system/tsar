@@ -346,8 +346,9 @@ bool findNotDom(llvm::Instruction *From,
 
 /// This function strips off any GEP address adjustments and pointer casts from
 /// the specified value while it is possible or until the object with attached
-/// metadata describing a value will be found.
-llvm::Value * GetUnderlyingObjectWithMetadata(llvm::Value *V,
+/// metadata describing a value will be found. The second returned value is
+/// true if a returned object has attached metadata.
+std::pair<llvm::Value *, bool> GetUnderlyingObjectWithMetadata(llvm::Value *V,
   const llvm::DataLayout &DL);
 
 /// Returns a meta information for function or nullptr;
@@ -358,12 +359,19 @@ llvm::DISubprogram * findMetadata(const llvm::Function *F);
 bool findGlobalMetadata(const llvm::GlobalVariable *Var,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
 
+/// Specify kind of metadata which should be found.
+enum class MDSearch { AddressOfVariable, ValueOfVariable, Any };
+
 /// \brief Returns a meta information for a specified value or nullptr.
 ///
 /// \param [in] V Analyzed value.
 /// \param [in] DT If it is specified then llvm.dbg.value will be analyzed if
 /// necessary. Otherwise llvm.dbg.declare, llvm.dbg.address and global
 /// variables will be analyzed only.
+/// \param [in] MDS Kind of metadata which should be found. If AddressOfVariable
+/// is used then `V` is an address of a variable and dbg.declare, dbg.address
+/// should be found only. If ValueOfVariable is used then `V` is a value of a
+/// variable and dbg.value should be found only.
 /// \param [out] DILocs This will contain all metadata-level locations which are
 /// associated with a specified value. For this reason llvm.dbg. ...
 /// intrinsics will be analyzed. Intrinsics which dominates all
@@ -377,7 +385,7 @@ bool findGlobalMetadata(const llvm::GlobalVariable *Var,
 /// there is no such variable, None is returned.
 llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value * V,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs,
-  const llvm::DominatorTree *DT = nullptr);
+  const llvm::DominatorTree *DT = nullptr, MDSearch MDS = MDSearch::Any);
 
 /// \brief This is an implementation of detail::DenseMapPair which supports
 /// access to a first and second value via tag of a type (Pair.get<Tag>()).

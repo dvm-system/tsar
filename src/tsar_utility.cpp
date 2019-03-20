@@ -183,19 +183,19 @@ bool findNotDom(Instruction *From, Instruction *BoundInst, DominatorTree *DT,
   return false;
 }
 
-Value *GetUnderlyingObjectWithMetadata(Value *V, const DataLayout &DL) {
+std::pair<Value *, bool> GetUnderlyingObjectWithMetadata(
+    Value *V, const DataLayout &DL) {
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
     SmallVector<DIMemoryLocation, 1> DILocs;
     if (findGlobalMetadata(GV, DILocs))
-      return V;
+      return std::make_pair(V, true);
   } else {
-    SmallVector<DbgInfoIntrinsic *, 8> DbgInstrs;
-    findDbgUsers(DbgInstrs, V);
-    if (!DbgInstrs.empty())
-      return V;
+    if (V->isUsedByMetadata())
+      return std::make_pair(V, true);
   }
   auto BasePtr = GetUnderlyingObject(V, DL, 1);
-  return V == BasePtr ? V : GetUnderlyingObjectWithMetadata(BasePtr, DL);
+  return V == BasePtr ? std::make_pair(V, false) :
+    GetUnderlyingObjectWithMetadata(BasePtr, DL);
 }
 
 DISubprogram *findMetadata(const Function *F) {
@@ -223,26 +223,31 @@ bool findGlobalMetadata(const GlobalVariable *Var,
 }
 
 Optional<DIMemoryLocation> findMetadata(const Value * V,
-    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT) {
+    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT,
+    MDSearch MDS) {
   assert(V && "Value must not be null!");
   DILocs.clear();
-  auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
-  if (!AddrUses.empty()) {
-    auto DIVar = AddrUses.front()->getVariable();
-    if (DIVar) {
-      for (auto DbgI : AddrUses) {
-        if (DbgI->getVariable() != DIVar ||
+  if (MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) {
+    auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
+    if (!AddrUses.empty()) {
+      auto DIVar = AddrUses.front()->getVariable();
+      if (DIVar) {
+        for (auto DbgI : AddrUses) {
+          if (DbgI->getVariable() != DIVar ||
             DbgI->getExpression() != AddrUses.front()->getExpression())
-        return None;
+            return None;
+        }
+        auto DIM = DIMemoryLocation::get(AddrUses.front());
+        if (!DIM.isValid())
+          return None;
+        DILocs.push_back(std::move(DIM));
+        return DILocs.back();
       }
-      auto DIM = DIMemoryLocation::get(AddrUses.front());
-      if (!DIM.isValid())
-        return None;
-      DILocs.push_back(std::move(DIM));
-      return DILocs.back();
+      return None;
     }
-    return None;
   }
+  if (MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
+    return None;
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
     if (findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
       return DILocs.back();
