@@ -549,5 +549,65 @@ const SCEV* findGCD(ArrayRef<const SCEV *> Expressions,
     return Dividers.front();
    return SE.getMulExpr(Dividers);
 }
+
+std::vector<std::size_t> countPrimeNumbers(std::size_t Bound) {
+  std::vector<std::size_t> Primes;
+  enum { PRIMES_CACHE_SIZE = 60 };
+  static std::size_t CachedPrimes[PRIMES_CACHE_SIZE] = {
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59,
+    61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131,
+    137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197,
+    199, 211, 223, 227, 229, 233, 239, 241, 251, 257, 263, 269, 271,
+    277, 281
+  };
+  if (Bound <= CachedPrimes[PRIMES_CACHE_SIZE - 1]) {
+    for (unsigned I = 0; I < PRIMES_CACHE_SIZE; ++I) {
+      if (CachedPrimes[I] <= Bound)
+        Primes.push_back(CachedPrimes[I]);
+      else
+        break;
+    }
+    return Primes;
+  }
+  std::vector<bool> IsPrime;
+  IsPrime.resize(Bound + 1);
+  for (int i = 0; i <= Bound; i++)
+    IsPrime[i] = false;
+  IsPrime[2] = true;
+  IsPrime[3] = true;
+  std::size_t BoundSqrt = (std::size_t)std::sqrt(Bound);
+  std::size_t X2 = 0, Y2, N;
+  for (std::size_t I = 1; I <= BoundSqrt; ++I) {
+    X2 += 2 * I - 1;
+    Y2 = 0;
+    for (std::size_t J = 1; J <= BoundSqrt; J++) {
+      Y2 += 2 * J - 1;
+      N = 4 * X2 + Y2;
+      if ((N <= Bound) && (N % 12 == 1 || N % 12 == 5))
+        IsPrime[N] = !IsPrime[N];
+      N -= X2;
+      if ((N <= Bound) && (N % 12 == 7))
+        IsPrime[N] = !IsPrime[N];
+      N -= 2 * Y2;
+      if ((I > J) && (N <= Bound) && (N % 12 == 11))
+        IsPrime[N] = !IsPrime[N];
+    }
+  }
+  for (std::size_t I = 5; I <= BoundSqrt; ++I) {
+    if (IsPrime[I]) {
+      N = I * I;
+      for (std::size_t J = N; J <= Bound; J += N)
+        IsPrime[J] = false;
+    }
+  }
+  Primes.push_back(2);
+  Primes.push_back(3);
+  Primes.push_back(5);
+  for (std::size_t I = 6; I <= Bound; I++)
+    if ((IsPrime[I]) && (I % 3) && (I % 5))
+      Primes.push_back(I);
+  return Primes;
+}
+
 }
 

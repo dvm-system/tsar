@@ -26,6 +26,7 @@
 #define TSAR_SCEV_UTILS_H
 
 #include <llvm/ADT/ArrayRef.h>
+#include <vector>
 
 namespace llvm {
 class ScalarEvolution;
@@ -68,5 +69,10 @@ std::pair<const llvm::SCEV *, bool> computeSCEVAddRec(
 /// Note, that is seems that we also can not safely use Euclid algorithm.
 const llvm::SCEV* findGCD(llvm::ArrayRef<const llvm::SCEV *> Expressions,
   llvm::ScalarEvolution &SE, bool IsSafeTypeCast = true);
+
+/// Returns list of primes which is less or equal than a specified bound.
+///
+/// This function implements Sieve of Atkin with cache.
+std::vector<std::size_t> countPrimeNumbers(std::size_t Bound);
 }
 #endif//TSAR_SCEV_UTILS_H
