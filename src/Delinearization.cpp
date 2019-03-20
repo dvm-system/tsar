@@ -22,7 +22,7 @@
 //
 //===----------------------------------------------------------------------===/
 
-#include "tsar_array_subscript_delinearize.h"
+#include "Delinearization.h"
 #include "DelinearizeJSON.h"
 #include "KnownFunctionTraits.h"
 #include "MemoryAccessUtils.h"

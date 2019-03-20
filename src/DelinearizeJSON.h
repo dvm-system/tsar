@@ -25,7 +25,6 @@
 #ifndef TSAR_DELINEARIZE_JSON_H
 #define TSAR_DELINEARIZE_JSON_H
 
-#include "tsar_array_subscript_delinearize.h"
 #include <bcl/Json.h>
 
 namespace llvm {
@@ -33,6 +32,8 @@ class ScalarEvolution;
 }
 
 namespace tsar {
+class DelinearizeInfo;
+
 /// Description of delinearized array accesses.
 JSON_OBJECT_BEGIN(RawDelinearizeInfo)
 JSON_OBJECT_ROOT_PAIR_2(RawDelinearizeInfo,
