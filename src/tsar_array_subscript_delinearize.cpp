@@ -392,10 +392,15 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
         auto DIVar = DIDimCount.get<DIVariable *>();
         if (auto V = MetadataAsValue::getIfExists(DIVar->getContext(), DIVar)) {
           SmallVector<DbgInfoIntrinsic *, 4> DbgInsts;
-          findDbgUsers(DbgInsts, V);
-          if (DbgInsts.size() == 1)
+          // Do not use findDbgUsers(). It checks V->isUsedByMetadata() which
+          // may return false for MetadataAsValue.
+          for (User *U : V->users())
+            if (DbgInfoIntrinsic *DII = dyn_cast<DbgInfoIntrinsic>(U))
+              DbgInsts.push_back(DII);
+          if (DbgInsts.size() == 1) {
             ArrayInfo.setDimSize(DimIdx + PassPtrDim,
               mSE->getSCEV(DbgInsts.front()->getVariableLocation()));
+          }
         }
         LLVM_DEBUG(dbgs() << DIVar->getName() << "\n");
       } else {
