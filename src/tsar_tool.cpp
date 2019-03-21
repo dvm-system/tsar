@@ -110,6 +110,8 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::OptionCategory AnalysisCategory;
   llvm::cl::opt<bool> Check;
+  llvm::cl::opt<bool> SafeTypeCast;
+  llvm::cl::opt<bool> NoSafeTypeCast;
 
   llvm::cl::OptionCategory TransformCategory;
   llvm::cl::opt<bool> NoFormat;
@@ -181,6 +183,10 @@ Options::Options() :
   AnalysisCategory("Analysis options"),
   Check("check", cl::cat(AnalysisCategory),
     cl::desc("Check user-defined properties")),
+  SafeTypeCast("fsafe-type-cast", cl::cat(AnalysisCategory),
+    cl::desc("Disallow unsafe integer type cast in analysis passes")),
+  NoSafeTypeCast("fno-safe-type-cast", cl::cat(AnalysisCategory),
+    cl::desc("Allow unsafe integer type cast in analysis passes(default)")),
   TransformCategory("Transformation options"),
   NoFormat("no-format", cl::cat(TransformCategory),
     cl::desc("Disable format of transformed sources")),
@@ -400,6 +406,13 @@ void Tool::storeCLOptions() {
   if (mTfmPass = Options::get().TfmPass) {
     LLIncompatibleOpts.push_back(&Options::get().TfmPass);
     IncompatibleOpts.push_back(&Options::get().TfmPass);
+  }
+  getGlobalOptions()->IsSafeTypeCast = Options::get().SafeTypeCast;
+  if (Options::get().SafeTypeCast && Options::get().NoSafeTypeCast) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoSafeTypeCast.ArgStr);
+    Options::get().SafeTypeCast.error(Msg);
+    exit(1);
   }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?

@@ -22,6 +22,8 @@ namespace tsar {
 struct GlobalOptions {
   /// Print only names of files instead of full paths.
   bool PrintFilenameOnly = false;
+  /// Disallow unsafe integer type cast in analysis passes.
+  bool IsSafeTypeCast = true;
 };
 }
 

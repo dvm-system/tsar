@@ -24,6 +24,7 @@
 
 #include "Delinearization.h"
 #include "DelinearizeJSON.h"
+#include "GlobalOptions.h"
 #include "KnownFunctionTraits.h"
 #include "MemoryAccessUtils.h"
 #include "tsar_query.h"
@@ -55,6 +56,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(DelinearizationPass, "delinearize",
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   "Array Access Delinearizer", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -115,7 +117,7 @@ std::pair<Value *, bool> GetUnderlyingArray(Value *Ptr, const DataLayout &DL) {
 
 #ifdef LLVM_DEBUG
 void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
-    raw_ostream  &OS) {
+    bool IsSafeTypeCast, raw_ostream  &OS) {
   for (auto &ArrayInfo : Info.getArrays()) {
     OS << "[DELINEARIZE]: results for array ";
     ArrayInfo->getBase()->print(OS, true);
@@ -137,12 +139,14 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
         OS << "\n";
         auto Info = computeSCEVAddRec(S, SE);
         const SCEV *Coef, *ConstTerm;
-        if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+        if ((!IsSafeTypeCast || Info.second) &&
+            isa<SCEVAddRecExpr>(Info.first)) {
+          auto AddRec = cast<SCEVAddRecExpr>(Info.first);
           Coef = AddRec->getStepRecurrence(SE);
           ConstTerm = AddRec->getStart();
         } else {
-          Coef = SE.getZero(Info.first->getType());
-          ConstTerm = Info.first;
+          Coef = SE.getZero(S->getType());
+          ConstTerm = S;
         }
         OS << "      a: ";
         Coef->print(OS);
@@ -190,7 +194,8 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: subscript " << DimIdx << ": "
                         << *Subscript << "\n");
       for (std::size_t I = DimIdx + 1; I < LastConstDim; ++I) {
-        auto Div = divide(*mSE, Subscript, ArrayInfo.getDimSize(I), false);
+        auto Div =
+          divide(*mSE, Subscript, ArrayInfo.getDimSize(I), mIsSafeTypeCast);
         if (Div.Remainder->isZero()) {
           Subscript = Div.Quotient;
         } else if (ExtraZeroCount > 0) {
@@ -311,13 +316,13 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         setUnknownDims(DimIdx);
         return;
       }
-      DimSize = findGCD(Expressions, *mSE, false);
+      DimSize = findGCD(Expressions, *mSE, mIsSafeTypeCast);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
       if (isa<SCEVCouldNotCompute>(DimSize)) {
         setUnknownDims(DimIdx);
         return;
       }
-      auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, false);
+      auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, mIsSafeTypeCast);
       DimSize = Div.Quotient;
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
@@ -498,6 +503,8 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  mIsSafeTypeCast =
+    getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
   auto &DL = F.getParent()->getDataLayout();
   mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is "; mIndexTy->dump());
@@ -512,7 +519,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
     }
   }
   mDelinearizeInfo.updateRangeCache();
-  LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, *mSE, dbgs()));
+  LLVM_DEBUG(delinearizationLog(mDelinearizeInfo, *mSE, mIsSafeTypeCast, dbgs()));
   return false;
 }
 
@@ -520,19 +527,20 @@ void DelinearizationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
 void DelinearizationPass::print(raw_ostream &OS, const Module *M) const {
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  RawDelinearizeInfo Info = tsar::toJSON(mDelinearizeInfo, SE);
+  RawDelinearizeInfo Info = tsar::toJSON(mDelinearizeInfo, SE, mIsSafeTypeCast);
   OS << json::Parser<RawDelinearizeInfo>::unparse(Info) << '\n';
 }
 
 FunctionPass * createDelinearizationPass() { return new DelinearizationPass; }
 
 RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info,
-    ScalarEvolution &SE) {
+    ScalarEvolution &SE, bool IsSafeTypeCast) {
   RawDelinearizeInfo RawInfo;
   for (auto &ArrayInfo : Info.getArrays()) {
     std::string NameStr;
@@ -554,12 +562,14 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info,
         auto &ConstTermStr = Subscripts.back().back();
         auto Info = computeSCEVAddRec(S, SE);
         const SCEV *Coef, *ConstTerm;
-        if (auto AddRec = dyn_cast<SCEVAddRecExpr>(Info.first)) {
+        if ((!IsSafeTypeCast || Info.second) &&
+            isa<SCEVAddRecExpr>(Info.first)) {
+          auto AddRec = cast<SCEVAddRecExpr>(Info.first);
           Coef = AddRec->getStepRecurrence(SE);
           ConstTerm = AddRec->getStart();
         } else {
-          Coef = SE.getZero(Info.first->getType());
-          ConstTerm = Info.first;
+          Coef = SE.getZero(S->getType());
+          ConstTerm = S;
         }
         raw_string_ostream CoefOS(CoefStr);
         Coef->print(CoefOS);

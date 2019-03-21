@@ -430,6 +430,7 @@ private:
   DominatorTree *mDT = nullptr;
   ScalarEvolution *mSE = nullptr;
   TargetLibraryInfo *mTLI = nullptr;
+  bool mIsSafeTypeCast = true;
   Type *mIndexTy = nullptr;
 };
 }

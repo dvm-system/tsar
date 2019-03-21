@@ -50,8 +50,8 @@ JSON_OBJECT_ROOT_PAIR_2(RawDelinearizeInfo,
 JSON_OBJECT_END(RawDelinearizeInfo)
 
 /// Builds JSON representation for delinearized array accesses.
-RawDelinearizeInfo toJSON(
-  const DelinearizeInfo &Info, llvm::ScalarEvolution &SE);
+RawDelinearizeInfo toJSON(const DelinearizeInfo &Info,
+  llvm::ScalarEvolution &SE, bool IsSafeTypeCast = true);
 }
 JSON_DEFAULT_TRAITS(tsar::, RawDelinearizeInfo)
 #endif//TSAR_DELINEARIZE_JSON_H
