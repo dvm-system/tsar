@@ -1,4 +1,4 @@
-//===-- Instrinsics.cpp - TSAR Intrinsic Function Handling ------*- C++ -*-===//
+//===--- Attributes.cpp --- TSAR Attributes ---------------------*- C++ -*-===//
 //
 //                     Traits Static Analyzer (SAPFOR)
 //
