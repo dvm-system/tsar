@@ -227,7 +227,7 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     for (auto EI = Range.Subscripts.size(); SubscriptIdx < EI; ++SubscriptIdx)
       NewSubscripts.push_back(Range.Subscripts[SubscriptIdx]);
     std::swap(Range.Subscripts, NewSubscripts);
-    assert(Range.Subscripts.size() == ArrayInfo.getNumberOfDims() &&
+    assert(Range.Subscripts.size() <= ArrayInfo.getNumberOfDims() &&
       "Unable to delinearize element access!");
     Range.setProperty(Array::Range::IsDelinearized);
   }
