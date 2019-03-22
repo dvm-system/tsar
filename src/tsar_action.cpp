@@ -203,6 +203,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     TEP->setContext(*M, Ctx);
     Passes.add(TEP);
   }
+  Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createDIGlobalRetrieverPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDILoopRetrieverPass());
