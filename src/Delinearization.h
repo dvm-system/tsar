@@ -54,7 +54,8 @@ class Array {
     DefaultFlags = 0u,
     HasRangeRef = 1u << 0,
     IsDelinearized = 1u << 1,
-    LLVM_MARK_AS_BITMASK_ENUM(IsDelinearized)
+    HasMetadata = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(HasMetadata)
   };
 public:
   using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
@@ -192,6 +193,10 @@ public:
   /// instruction is GEP which returns pointer to an element of this array.
   bool hasRangeRef() const noexcept { return mF & HasRangeRef; }
   void setRangeRef() noexcept { mF |= HasRangeRef; }
+
+  /// Returns true if metadata is available.
+  bool hasMetadata() const noexcept { return mF & HasMetadata; }
+  void setMetadata() noexcept { mF |= HasMetadata; }
 
 private:
   friend struct ArrayMapInfo;

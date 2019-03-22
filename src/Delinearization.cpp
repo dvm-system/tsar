@@ -353,6 +353,7 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
   if (!DIM)
     return;
   assert(DIM->isValid() && "Debug memory location must be valid!");
+  ArrayInfo.setMetadata();
   if (!DIM->Var->getType())
     return;
   auto VarDbgTy = DIM->Var->getType().resolve();
