@@ -61,7 +61,7 @@ ParallelRegion & APCContext::getDefaultRegion() {
   return *mImpl->ParallelRegions.front();
 }
 
-bool APCContext::addLoop(LoopID ID, apc::LoopGraph *L, bool ManageMemory) {
+bool APCContext::addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory) {
   if (!mImpl->Loops.try_emplace(ID, L).second)
     return false;
   if (ManageMemory)

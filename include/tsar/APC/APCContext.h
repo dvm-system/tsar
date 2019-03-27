@@ -63,7 +63,7 @@ public:
   /// If ManageMemory is set to true then context releases memory when it
   /// becomes unused.
   /// \return `false` if loop with a specified ID already exists.
-  bool addLoop(LoopID ID, apc::LoopGraph *L, bool ManageMemory = false);
+  bool addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory = false);
 
   APCContextImpl * const mImpl;
 #ifndef NDEBUG

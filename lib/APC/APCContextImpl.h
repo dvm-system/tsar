@@ -37,7 +37,7 @@ struct APCContextImpl {
   using ParallelRegionPool = std::vector<std::unique_ptr<ParallelRegion>>;
 
   using LoopPool = std::vector<std::unique_ptr<LoopGraph>>;
-  using LoopMap = llvm::DenseMap<LoopID, LoopGraph *>;
+  using LoopMap = llvm::DenseMap<ObjectID, LoopGraph *>;
 
   ParallelRegionPool ParallelRegions;
 
