@@ -356,7 +356,7 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
   ArrayInfo.setMetadata();
   if (!DIM->Var->getType())
     return;
-  auto VarDbgTy = DIM->Var->getType().resolve();
+  auto VarDbgTy = stripDIType(DIM->Var->getType()).resolve();
   DINodeArray ArrayDims = nullptr;
   bool IsFirstDimPointer = false;
   if (VarDbgTy->getTag() == dwarf::DW_TAG_array_type) {
