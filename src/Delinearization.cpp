@@ -445,8 +445,7 @@ void DelinearizationPass::collectArrays(Function &F) {
       }
       SmallVector<Value *, 4> SubscriptValues;
       extractSubscriptsFromGEPs(GEPs.rbegin(), GEPs.rend(), SubscriptValues);
-      auto &Range = ArrayPtr->addRange(
-        GEPs.empty() ? const_cast<Value *>(Loc.Ptr) : GEPs.back());
+      auto &Range = ArrayPtr->addRange(const_cast<Value *>(Loc.Ptr));
       if (GEP)
         Range.setProperty(Array::Range::IgnoreGEP);
       // In some cases zero subscript is dropping out by optimization passes.
