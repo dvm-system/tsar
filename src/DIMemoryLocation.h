@@ -14,6 +14,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/DebugLoc.h>
 
 namespace llvm {
 class DIVariable;
@@ -55,6 +56,7 @@ namespace tsar {
 struct DIMemoryLocation {
   llvm::DIVariable *Var = nullptr;
   llvm::DIExpression *Expr = nullptr;
+  llvm::DILocation *Loc = nullptr;
   bool Template = false;
 
   /// Determines which memory location is exhibits by a specified instruction.
@@ -62,7 +64,8 @@ struct DIMemoryLocation {
     assert(Inst && "Instruction must not be null!");
     return {
       llvm::cast_or_null<llvm::DIVariable>(Inst->getVariable()),
-      Inst->getExpression()
+      Inst->getExpression(),
+      Inst->getDebugLoc().get()
     };
   }
 
@@ -76,9 +79,9 @@ struct DIMemoryLocation {
 
   /// Constructs a new memory location. Note, that variable and expression
   /// must not be null).
-  DIMemoryLocation(
-    llvm::DIVariable *Var, llvm::DIExpression *Expr, bool Template = false) :
-      Var(Var), Expr(Expr), Template(Template) {
+  DIMemoryLocation(llvm::DIVariable *Var, llvm::DIExpression *Expr,
+      llvm::DILocation *Loc = nullptr, bool Template = false) :
+      Var(Var), Expr(Expr), Loc(Loc), Template(Template) {
     // Do not check here that location isValid() because this leads to crash
     // of construction of empty key in specialization of llvm::DenseMapInfo.
     assert(Var && "Variable must not be null!");

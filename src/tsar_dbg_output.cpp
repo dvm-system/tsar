@@ -91,7 +91,7 @@ void printDILocationSource(unsigned DWLang,
   };
   if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
     DIMemoryLocation TmpLoc{ EM->getVariable(), EM->getExpression(),
-      EM->isTemplate() };
+      nullptr, EM->isTemplate() };
     if (!TmpLoc.isValid()) {
       O << "<";
       O << "sapfor.invalid";

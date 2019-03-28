@@ -1127,14 +1127,16 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
 /// \param [out] IsTemplate False if accurate representation is build and
 /// false otherwise (see DIMemoryLocation for details).
 /// \return Pointer to appropriate variable or nullptr if building
-/// is unsuccessful.
-DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
+/// is unsuccessful. The second value in a pair is a location of a variable
+/// declaration in a source code (if known).
+std::pair<DIVariable *, DILocation *> buildDIExpression(
+    const DataLayout &DL, const DominatorTree &DT,
     const Value *V, SmallVectorImpl<uint64_t> &Expr, bool &IsTemplate) {
   auto *Ty = V->getType();
   // If type is not a pointer then `GetPointerBaseWithConstantOffset` can
   // not be called.
   if (!Ty || !Ty->isPtrOrPtrVectorTy())
-    return nullptr;
+    return std::make_pair(nullptr, nullptr);
   int64_t Offset = 0;
   const Value *Curr = V, *Base = nullptr;
   while (true) {
@@ -1166,12 +1168,12 @@ DIVariable * buildDIExpression(const DataLayout &DL, const DominatorTree &DT,
   SmallVector<DIMemoryLocation, 4> DILocs;
   auto DILoc = findMetadata(Base, DILocs, &DT);
   if (!DILoc || (DILoc->Expr && !DILoc->Expr->isValid()))
-    return nullptr;
+    return std::make_pair(nullptr, nullptr);
   if (!isa<AllocaInst>(Base) && !isa<GlobalVariable>(Base))
     Expr.push_back(dwarf::DW_OP_deref);
   if (DILoc->Expr)
     Expr.append(DILoc->Expr->elements_begin(), DILoc->Expr->elements_end());
-  return DILoc->Var;
+  return std::make_pair(DILoc->Var, DILoc->Loc);
 };
 }
 
@@ -1513,7 +1515,7 @@ void CorruptedMemoryResolver::updateWorkLists(
     auto Binding = M.getBinding();
     if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
       DIMemoryLocation Loc(
-        DIEM->getVariable(), DIEM->getExpression(), DIEM->isTemplate());
+        DIEM->getVariable(), DIEM->getExpression(), nullptr, DIEM->isTemplate());
       auto FragmentItr = mSmallestFragments.find(Loc);
       if (FragmentItr != mSmallestFragments.end()) {
         if (Binding == DIMemory::Destroyed ||
@@ -1632,13 +1634,13 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   SmallVector<uint64_t, 8> ReverseExpr;
   bool IsTemplate = false;
-  auto DIV = buildDIExpression(DL, DT, Loc.Ptr, ReverseExpr, IsTemplate);
-  if (!DIV)
+  auto DIInfo = buildDIExpression(DL, DT, Loc.Ptr, ReverseExpr, IsTemplate);
+  if (!DIInfo.first)
     return None;
   SmallVector<uint64_t, 8> Expr(ReverseExpr.rbegin(), ReverseExpr.rend());
   if (Expr.empty()) {
     auto DIE = DIExpression::get(Ctx, Expr);
-    DIMemoryLocation DIL(DIV, DIE, IsTemplate);
+    DIMemoryLocation DIL(DIInfo.first, DIE, DIInfo.second, IsTemplate);
     // If expression is empty and  size can be obtained from a variable than
     // DW_OP_LLVM_fragment should not be added. If variable will be promoted it
     // will be represented without this size. So there will be different
@@ -1675,7 +1677,7 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
       Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, 0 });
   }
   auto DIE = DIExpression::get(Ctx, Expr);
-  return DIMemoryLocation(DIV, DIE, IsTemplate);
+  return DIMemoryLocation(DIInfo.first, DIE, DIInfo.second, IsTemplate);
 }
 
 llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
