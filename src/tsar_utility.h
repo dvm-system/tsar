@@ -247,6 +247,22 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
   return DITy;
 }
 
+/// Returns type of an array element or nullptr if type is unknown.
+inline llvm::DITypeRef arrayElementDIType(llvm::DITypeRef &DITy) {
+  using namespace llvm;
+  auto ElTy = stripDIType(DITy);
+  if (!ElTy.resolve() || !isa<llvm::DIDerivedType>(ElTy))
+    return DITypeRef();
+  if (ElTy.resolve()->getTag() != dwarf::DW_TAG_pointer_type &&
+      ElTy.resolve()->getTag() != dwarf::DW_TAG_array_type)
+    return DITypeRef();
+  if (ElTy.resolve()->getTag() == dwarf::DW_TAG_pointer_type)
+    ElTy = cast<DIDerivedType>(ElTy)->getBaseType().resolve();
+  if (ElTy.resolve()->getTag() == dwarf::DW_TAG_array_type)
+    ElTy = cast<DICompositeType>(ElTy)->getBaseType().resolve();
+  return stripDIType(ElTy);
+}
+
 /// If we have missing or conflicting AAInfo, return 'true'.
 inline bool isAAInfoCorrupted(llvm::AAMDNodes AAInfo) {
   return (AAInfo == llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey() ||
