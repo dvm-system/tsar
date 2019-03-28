@@ -50,6 +50,12 @@ void initializeAPCLoopInfoBasePassPass(PassRegistry &Registry);
 
 /// Creates a pass to collect general information about loops.
 FunctionPass * createAPCLoopInfoBasePass();
+
+/// Initializes a pass to collect arrays.
+void initializeAPCArrayInfoPassPass(PassRegistry &Registry);
+
+/// Creates a pass to collect arrays.
+FunctionPass * createAPCArrayInfoPass();
 }
 
 #endif//TSAR_APC_PASSES_H

@@ -33,12 +33,21 @@
 
 struct LoopGraph;
 struct ParallelRegion;
+struct ArrayInfo;
+struct ArrayOp;
 class Statement;
+
+namespace Distribution {
+class Array;
+}
 
 namespace apc {
 using LoopGraph = ::LoopGraph;
 using ParallelRegion = ::ParallelRegion;
 using Statement = ::Statement;
+using Array = Distribution::Array;
+using ArrayInfo = ::ArrayInfo;
+using ArrayOp = ::ArrayOp;
 }
 
 namespace tsar {
@@ -64,6 +73,19 @@ public:
   /// becomes unused.
   /// \return `false` if loop with a specified ID already exists.
   bool addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory = false);
+
+  /// Return loop with a specified ID or nullptr.
+  apc::LoopGraph * findLoop(ObjectID ID);
+
+  /// Add array with a specified ID under of APCContext control, context
+  /// releases memory when it becomes unused.
+  bool addArray(ObjectID ID, apc::Array *);
+
+  /// Return array with a specified ID or nullptr.
+  apc::Array * findArray(ObjectID);
+
+  /// Return number of registered arrays.
+  std::size_t getNumberOfArrays() const;
 
   APCContextImpl * const mImpl;
 #ifndef NDEBUG

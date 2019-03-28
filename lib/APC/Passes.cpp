@@ -29,4 +29,5 @@ using namespace llvm;
 
 void llvm::initializeAPC(PassRegistry &Registry) {
   initializeAPCLoopInfoBasePassPass(Registry);
+  initializeAPCArrayInfoPassPass(Registry);
 }

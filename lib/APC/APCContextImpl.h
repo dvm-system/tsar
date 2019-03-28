@@ -26,6 +26,7 @@
 #define TSAR_APC_CONTEXT_IMPL_H
 
 #include "tsar_utility.h"
+#include <apc/Distribution/Array.h>
 #include <apc/GraphLoop/graph_loops.h>
 #include <apc/Utils/AstWrapper.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
@@ -39,10 +40,14 @@ struct APCContextImpl {
   using LoopPool = std::vector<std::unique_ptr<LoopGraph>>;
   using LoopMap = llvm::DenseMap<ObjectID, LoopGraph *>;
 
+  using ArrayMap = llvm::DenseMap<ObjectID, std::unique_ptr<Distribution::Array>>;
+
   ParallelRegionPool ParallelRegions;
 
   LoopPool OuterLoops;
   LoopMap Loops;
+
+  ArrayMap Arrays;
 };
 }
 

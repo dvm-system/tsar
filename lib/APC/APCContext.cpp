@@ -69,6 +69,24 @@ bool APCContext::addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory) {
   return true;
 }
 
+apc::LoopGraph * APCContext::findLoop(ObjectID ID) {
+  auto I = mImpl->Loops.find(ID);
+  return I != mImpl->Loops.end() ? I->second : nullptr;
+}
+
+bool APCContext::addArray(ObjectID ID, apc::Array *A) {
+  return mImpl->Arrays.try_emplace(ID, A).second;
+}
+
+apc::Array* APCContext::findArray(ObjectID ID) {
+  auto I = mImpl->Arrays.find(ID);
+  return I != mImpl->Arrays.end() ? I->second.get() : nullptr;
+}
+
+std::size_t APCContext::getNumberOfArrays() const {
+  return mImpl->Arrays.size();
+}
+
 namespace {
 /// Storage for a current state of an automated parallelization process.
 class APCContextStorage : public ImmutablePass, private bcl::Uncopyable {
