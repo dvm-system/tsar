@@ -202,8 +202,8 @@ inline unsigned dimensionsNum(const llvm::Type *Ty) {
 }
 
 /// Returns number of dimensions and elements in a specified type and type of
-/// innermost array element. If `Ty` is not an array type this function reutrns
-/// or 0,1, Ty.
+/// innermost array element. If `Ty` is not an array type this function returns
+/// 0,1, Ty.
 inline std::tuple<unsigned, uint64_t, llvm::Type *>
 arraySize(llvm::Type *Ty) {
   assert(Ty && "Type must not be null!");
