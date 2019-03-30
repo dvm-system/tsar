@@ -667,6 +667,8 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
       continue;
     } else {
       ArgType = ArgValue->getType();
+      if (ArgType->getTypeID() != Type::TypeID::PointerTyID)
+        continue;
       ArraySize = ConstantInt::get(Type::getInt64Ty(F.getContext()), 1);
       Idx = mDIStrings.regItem(ArgValue).first;
     }
