@@ -324,6 +324,7 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
   auto M = L.getHeader()->getModule();
   APCLoop.hasPrints = false;
   APCLoop.hasStops = false;
+  APCLoop.hasNonPureProcedures = false;
   for (auto *BB : L.blocks()) 
     for (auto &I : *BB) {
       CallSite CS(&I);
@@ -348,10 +349,8 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
         decltype(APCLoop.linesOfStop)::value_type>::value,
         "Different storage types of call locations!");
       auto CalleeFunc = dyn_cast<Function>(Callee);
-      if (mAA->doesNotAccessMemory(CS) ||
-          AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
-        APCLoop.hasNonPureProcedures = false;
-      else
+      if (!mAA->doesNotAccessMemory(CS) &&
+          !AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
         APCLoop.hasNonPureProcedures = true;
       if (!CalleeFunc || !hasFnAttr(*CalleeFunc, AttrKind::NoIO)) {
         APCLoop.hasPrints = true;
