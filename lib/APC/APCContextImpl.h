@@ -27,6 +27,7 @@
 
 #include "tsar_utility.h"
 #include <apc/Distribution/Array.h>
+#include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphLoop/graph_loops.h>
 #include <apc/Utils/AstWrapper.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
@@ -42,12 +43,16 @@ struct APCContextImpl {
 
   using ArrayMap = llvm::DenseMap<ObjectID, std::unique_ptr<Distribution::Array>>;
 
+  using FunctionMap = llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
+
   ParallelRegionPool ParallelRegions;
 
   LoopPool OuterLoops;
   LoopMap Loops;
 
   ArrayMap Arrays;
+
+  FunctionMap Functions;
 };
 }
 

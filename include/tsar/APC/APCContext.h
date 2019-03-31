@@ -31,6 +31,8 @@
 #include <apc/apc-config.h>
 #include <bcl/utility.h>
 
+struct FuncInfo;
+struct FuncParam;
 struct LoopGraph;
 struct ParallelRegion;
 struct ArrayInfo;
@@ -42,12 +44,18 @@ class Array;
 }
 
 namespace apc {
+using FuncInfo = ::FuncInfo;
+using FuncParam = ::FuncParam;
 using LoopGraph = ::LoopGraph;
 using ParallelRegion = ::ParallelRegion;
 using Statement = ::Statement;
 using Array = Distribution::Array;
 using ArrayInfo = ::ArrayInfo;
 using ArrayOp = ::ArrayOp;
+}
+
+namespace llvm {
+class Function;
 }
 
 namespace tsar {
@@ -86,6 +94,13 @@ public:
 
   /// Return number of registered arrays.
   std::size_t getNumberOfArrays() const;
+
+  /// Add description of a specified function under of APCContext control,
+  /// context releases memory when it becomes unsed.
+  bool addFunction(llvm::Function &F, apc::FuncInfo *FI);
+
+  /// Return information about a specified function.
+  apc::FuncInfo * findFunction(const llvm::Function &F);
 
   APCContextImpl * const mImpl;
 #ifndef NDEBUG

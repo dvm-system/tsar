@@ -87,6 +87,15 @@ std::size_t APCContext::getNumberOfArrays() const {
   return mImpl->Arrays.size();
 }
 
+bool APCContext::addFunction(llvm::Function &F, apc::FuncInfo *FI) {
+  return mImpl->Functions.try_emplace(&F, FI).second;
+}
+
+apc::FuncInfo * APCContext::findFunction(const llvm::Function &F) {
+  auto I = mImpl->Functions.find(&F);
+  return I != mImpl->Functions.end() ? I->second.get() : nullptr;
+}
+
 namespace {
 /// Storage for a current state of an automated parallelization process.
 class APCContextStorage : public ImmutablePass, private bcl::Uncopyable {

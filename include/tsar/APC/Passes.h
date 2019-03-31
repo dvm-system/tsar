@@ -31,6 +31,7 @@ namespace llvm {
 class Pass;
 class ImmutablePass;
 class FunctionPass;
+class ModulePass;
 class PassRegistry;
 
 /// Initializes all APC passes.
@@ -57,6 +58,11 @@ void initializeAPCArrayInfoPassPass(PassRegistry &Registry);
 /// Create a pass to collect arrays.
 FunctionPass * createAPCArrayInfoPass();
 
+/// Initialize a pass to collect functions.
+void initializeAPCFunctionInfoPassPass(PassRegistry &Registry);
+
+/// Create a pass to collect function.
+ModulePass * createAPCFunctionInfoPass();
 }
 
 #endif//TSAR_APC_PASSES_H
