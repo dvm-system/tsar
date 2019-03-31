@@ -369,7 +369,6 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
 }
 
 void APCLoopInfoBasePass::print(raw_ostream &OS, const Module *M) const {
-  auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   for (auto &Root : mOuterLoops)
     for (auto *L : depth_first(Root)) {
       std::pair<unsigned, unsigned> StartLoc, EndLoc;
