@@ -79,10 +79,10 @@ public:
 
   /// Add array with a specified ID under of APCContext control, context
   /// releases memory when it becomes unused.
-  bool addArray(ObjectID ID, apc::Array *);
+  bool addArray(ObjectID ID, apc::Array * A);
 
   /// Return array with a specified ID or nullptr.
-  apc::Array * findArray(ObjectID);
+  apc::Array * findArray(ObjectID ID);
 
   /// Return number of registered arrays.
   std::size_t getNumberOfArrays() const;

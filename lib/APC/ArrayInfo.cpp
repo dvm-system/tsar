@@ -70,13 +70,13 @@ private:
 char APCArrayInfoPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
-  "Array Access Explorer (APC)", false, false
+  "Array Collector (APC)", false, false
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
 INITIALIZE_PASS_IN_GROUP_END(APCArrayInfoPass, "apc-array-info",
-  "Array Access Explorer (APC)", false, false,
+  "Array Collector (APC)", false, false,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createAPCArrayInfoPass() { return new APCArrayInfoPass; }
@@ -162,7 +162,6 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
 }
 
 void APCArrayInfoPass::print(raw_ostream &OS, const Module *M) const {
-  auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   for (auto *A : mArrays) {
     OS << format("%s [short=%s, unique=%s, id=%d]\n", A->GetName().c_str(),
       A->GetShortName().c_str(), A->GetArrayUniqKey().c_str(), A->GetId());
