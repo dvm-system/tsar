@@ -448,10 +448,16 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   } else {
     auto *NewBB = BasicBlock::Create(Header->getContext(),
       "preheader", Header->getParent(), Header);
-    for (auto *PredBB : predecessors(Header)) {
-      if (L->contains(PredBB))
+    const auto Predecessors = predecessors(Header);
+    auto PredBB = Predecessors.begin();
+    while (PredBB != Predecessors.end()) {
+      if (L->contains(*PredBB)) {
+        PredBB++;
         continue;
-      auto *PredBranch = PredBB->getTerminator();
+      }
+      auto Pred = PredBB;
+      PredBB++;
+      auto *PredBranch = (*Pred)->getTerminator();
       for (unsigned SuccIdx = 0, SuccIdxE = PredBranch->getNumSuccessors();
            SuccIdx < SuccIdxE; ++SuccIdx)
         if (PredBranch->getSuccessor(SuccIdx) ==  Header)
