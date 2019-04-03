@@ -648,7 +648,8 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     Type *ArgType = nullptr;
     Value *ArraySize = nullptr;
     DIStringRegister::IdTy Idx = 0;
-    BasicBlock::iterator InsertBefore = F.begin()->begin();
+    BasicBlock::iterator InsertBefore = BasicBlock::iterator(DIFunc);
+    InsertBefore++;
     if (!DIM) {
       LLVM_DEBUG(dbgs() << "[INSTR]: search for 'alloca' which stores argument value\n");
       if (Arg.getNumUses() != 1)
