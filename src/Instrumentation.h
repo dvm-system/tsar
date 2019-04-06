@@ -39,8 +39,13 @@ public:
 
   /// This construction specifies a function
   /// where should be placed initialization of metadata.
-  InstrumentationPass(llvm::StringRef InstrEntry) :
-      ModulePass(ID), mInstrEntry(InstrEntry) {
+  ///
+  /// If `StartFrom` is not empty all mentioned functions and transitive
+  /// callees from these functions should be processed only.
+  /// Other functions will be marked with sapfor.da.ignore metadata.
+  InstrumentationPass(StringRef InstrEntry, ArrayRef<std::string> StartFrom) :
+      ModulePass(ID), mInstrEntry(InstrEntry),
+      mStartFrom(StartFrom.begin(), StartFrom.end()) {
     initializeInstrumentationPassPass(*PassRegistry::getPassRegistry());
   }
 
@@ -50,8 +55,15 @@ public:
   /// Set analysis information that is necessary to run this pass.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
+  /// Return name of a function which contains metadata initialization.
+  StringRef getEntryName() const { return mInstrEntry;}
+
+  /// Return names of functions where instrumentation is started.
+  ArrayRef<std::string> getStartFrom() const { return mStartFrom; }
+
 private:
   std::string mInstrEntry;
+  std::vector<std::string> mStartFrom;
 };
 }
 
@@ -140,6 +152,15 @@ public:
   void visitCallSite(llvm::CallSite CS);
 
 private:
+  /// Mark functions which should be ignored with sapfor.da.ignore metadata.
+  ///
+  /// This method does not mark functions which are always ingored,
+  /// for example, functions which are marked as 'sapfor.da'.
+  /// \post If -instr-start option is specified all functions except
+  /// mentioned functions and transitive callees from these functions
+  /// will be marked with 'sapfor.da.ignore'.
+  void excludeFunctions(llvm::Module &M);
+
   void regReadMemory(llvm::Instruction &I, llvm::Value &Ptr);
   void regWriteMemory(llvm::Instruction &I, llvm::Value &Ptr);
 

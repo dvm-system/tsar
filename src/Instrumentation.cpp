@@ -21,11 +21,12 @@
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
 #include <llvm/ADT/Statistic.h>
+#include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpander.h>
-#include "llvm/IR/DiagnosticInfo.h"
+#include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
@@ -85,6 +86,7 @@ INITIALIZE_PASS_BEGIN(InstrumentationPass, "instr-llvm",
 INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_END(InstrumentationPass, "instr-llvm",
   "LLVM IR Instrumentation", false, false)
 
@@ -117,10 +119,12 @@ void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<InstrumentationPassProvider>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<CallGraphWrapperPass>();
 }
 
-ModulePass * llvm::createInstrumentationPass(StringRef InstrEntry) {
-  return new InstrumentationPass(InstrEntry);
+ModulePass * llvm::createInstrumentationPass(
+    StringRef InstrEntry, ArrayRef<std::string> StartFrom) {
+  return new InstrumentationPass(InstrEntry, StartFrom);
 }
 
 Function * tsar::createEmptyInitDI(Module &M, Type &IdTy) {
@@ -160,6 +164,38 @@ Type * tsar::getInstrIdType(LLVMContext &Ctx) {
   return InitDIFuncTy->getParamType(2);
 }
 
+static void collectCallee(CallGraphNode &CGN,
+    DenseSet<CallGraphNode *> &TransitiveCallees) {
+  for (auto &Callee : CGN) {
+    if (TransitiveCallees.insert(Callee.second).second)
+      collectCallee(*Callee.second, TransitiveCallees);
+  }
+}
+
+void Instrumentation::excludeFunctions(Module &M) {
+  if (mInstrPass->getStartFrom().empty())
+    return;
+  auto &CG = mInstrPass->getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  for (auto &Name : mInstrPass->getStartFrom()) {
+    auto F = M.getFunction(Name);
+    if (!F) {
+      M.getContext().diagnose(DiagnosticInfoInlineAsm(
+        Twine("unknown function '") + Name + "'", DS_Warning));
+      continue;
+    }
+    if (auto CGN = CG[F]) {
+      DenseSet<CallGraphNode *> TransitiveCallees;
+      TransitiveCallees.insert(CGN);
+      collectCallee(*CGN, TransitiveCallees);
+      for (auto &Caller : CG) {
+        if (auto *F = Caller.second->getFunction())
+          if (!TransitiveCallees.count(Caller.second.get()))
+            F->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
+      }
+    }
+  }
+}
+
 void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
   mInstrPass = &IP;
   mDIStrings.clear(DIStringRegister::numberOfItemTypes());
@@ -170,6 +206,7 @@ void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
   assert(IdTy && "Offset type must not be null!");
   mInitDIAll = createEmptyInitDI(M, *IdTy);
   reserveIncompleteDIStrings(M);
+  excludeFunctions(M);
   regFunctions(M);
   regGlobals(M);
   visit(M.begin(), M.end());
@@ -499,7 +536,7 @@ void Instrumentation::visit(Function &F) {
     F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
     return;
   }
-  if (F.getMetadata("sapfor.da"))
+  if (F.getMetadata("sapfor.da") || F.getMetadata("sapfor.da.ignore"))
     return;
   ++NumFunction;
   if (F.empty())
@@ -1037,7 +1074,7 @@ void Instrumentation::regFunctions(Module& M) {
       F.setMetadata("sapfor.da", MDNode::get(F.getContext(), {}));
       continue;
     }
-    if (F.getMetadata("sapfor.da"))
+    if (F.getMetadata("sapfor.da") || F.getMetadata("sapfor.da.ignore"))
       continue;
     if (isDbgInfoIntrinsic(F.getIntrinsicID()) ||
         isMemoryMarkerIntrinsic(F.getIntrinsicID()))

@@ -82,6 +82,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<std::string> LanguageStd;
   llvm::cl::opt<bool> InstrLLVM;
   llvm::cl::opt<std::string> InstrEntry;
+  llvm::cl::list<std::string> InstrStart;
   llvm::cl::opt<bool> EmitAST;
   llvm::cl::opt<bool> MergeAST;
   llvm::cl::alias MergeASTA;
@@ -141,6 +142,9 @@ Options::Options() :
     cl::desc("Perform low-level (LLVM IR) instrumentation")),
   InstrEntry("instr-entry", cl::cat(CompileCategory), cl::value_desc("function"),
     cl::desc("Name of a function where to place metadata initialization")),
+  InstrStart("instr-start", cl::cat(CompileCategory), cl::value_desc("functions"),
+    cl::ZeroOrMore, cl::ValueRequired, cl::CommaSeparated,
+    cl::desc("Add start point for instrumentation")),
   EmitAST("emit-ast", cl::cat(CompileCategory),
     cl::desc("Emit Clang AST files for source inputs")),
   MergeAST("merge-ast", cl::cat(CompileCategory),
@@ -297,8 +301,9 @@ inline static EmitLLVMQueryManager * getEmitLLVMQM() {
   return &QM;
 }
 
-inline static InstrLLVMQueryManager * getInstrLLVMQM(StringRef InstrEntry) {
-  static InstrLLVMQueryManager QM(InstrEntry);
+inline static InstrLLVMQueryManager * getInstrLLVMQM(
+    StringRef InstrEntry, ArrayRef<std::string> InstrStart) {
+  static InstrLLVMQueryManager QM(InstrEntry, InstrStart);
   return &QM;
 }
 
@@ -424,10 +429,10 @@ void Tool::storeCLOptions() {
   mEmitLLVM = addIfSet(Options::get().EmitLLVM);
   mInstrLLVM = addIfSet(Options::get().InstrLLVM);
   mInstrEntry = Options::get().InstrEntry;
-  if (!mInstrLLVM && !mInstrEntry.empty()) {
-    IncompatibleOpts.push_back(&Options::get().InstrEntry);
-    LLIncompatibleOpts.push_back(&Options::get().InstrEntry);
-  }
+  mInstrStart = Options::get().InstrStart;
+  if (!mInstrLLVM && (!mInstrEntry.empty() || !mInstrStart.empty()))
+    errs() << "WARNING: Instrumentation options are ignored when "
+              "-instr-llvm is not set.\n";
   mCheck = addLLIfSet(Options::get().Check);
   mTest = addIfSet(Options::get().Test);
   mOutputFilename = Options::get().Output;
@@ -534,7 +539,7 @@ int Tool::run(QueryManager *QM) {
     if (mEmitLLVM)
       QM = getEmitLLVMQM();
     else if (mInstrLLVM)
-      QM = getInstrLLVMQM(mInstrEntry);
+      QM = getInstrLLVMQM(mInstrEntry, mInstrStart);
     else if (mTest)
       QM = getTestQM();
     else if (mTfmPass)

@@ -207,13 +207,16 @@ protected:
 /// output stream after instrumentation.
 class InstrLLVMQueryManager : public EmitLLVMQueryManager {
 public:
-  explicit InstrLLVMQueryManager(llvm::StringRef InstrEntry = "") :
-    mInstrEntry(InstrEntry) {}
+  explicit InstrLLVMQueryManager(llvm::StringRef InstrEntry = "",
+      llvm::ArrayRef<std::string> InstrStart = {}) :
+    mInstrEntry(InstrEntry),
+    mInstrStart(InstrStart.begin(), InstrStart.end()) {}
 
   void run(llvm::Module *M, tsar::TransformationContext *) override;
 
 private:
   std::string mInstrEntry;
+  std::vector<std::string> mInstrStart;
 };
 
 /// This performs a specified source-level transformation.

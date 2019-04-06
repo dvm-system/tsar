@@ -13,6 +13,7 @@
 #ifndef TSAR_PASS_H
 #define TSAR_PASS_H
 
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
 
 namespace bcl {
@@ -169,7 +170,8 @@ ImmutablePass * createTransformationEnginePass();
 void initializeInstrumentationPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform low-level (LLVM IR) instrumentation of program.
-ModulePass * createInstrumentationPass(llvm::StringRef InstrEntry = "");
+ModulePass * createInstrumentationPass(llvm::StringRef InstrEntry = "",
+  llvm::ArrayRef<std::string> StartFrom = {});
 
 /// Initialize a pass to match high-level and low-level loops.
 void initializeLoopMatcherPassPass(PassRegistry &Registry);

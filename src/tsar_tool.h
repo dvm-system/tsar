@@ -103,6 +103,7 @@ private:
   std::string mLanguage;
   std::string mOutputSuffix;
   std::string mInstrEntry;
+  std::vector<std::string> mInstrStart;
 };
 }
 #endif//TSAR_TOOL_H
