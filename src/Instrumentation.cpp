@@ -165,10 +165,21 @@ Type * tsar::getInstrIdType(LLVMContext &Ctx) {
 }
 
 static void collectCallee(CallGraphNode &CGN,
-    DenseSet<CallGraphNode *> &TransitiveCallees) {
+    DenseSet<Function *> &TransitiveCallees) {
   for (auto &Callee : CGN) {
-    if (TransitiveCallees.insert(Callee.second).second)
-      collectCallee(*Callee.second, TransitiveCallees);
+    if (Callee.second->getFunction()) {
+      if (TransitiveCallees.insert(Callee.second->getFunction()).second)
+        collectCallee(*Callee.second, TransitiveCallees);
+    } else {
+      CallSite CS(Callee.first);
+      if (!CS)
+        continue;
+      auto F = dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      if (!F)
+        continue;
+      if (TransitiveCallees.insert(F).second)
+        collectCallee(*Callee.second, TransitiveCallees);
+    }
   }
 }
 
@@ -176,6 +187,7 @@ void Instrumentation::excludeFunctions(Module &M) {
   if (mInstrPass->getStartFrom().empty())
     return;
   auto &CG = mInstrPass->getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  DenseSet<Function *> TransitiveCallees;
   for (auto &Name : mInstrPass->getStartFrom()) {
     auto F = M.getFunction(Name);
     if (!F) {
@@ -183,16 +195,14 @@ void Instrumentation::excludeFunctions(Module &M) {
         Twine("unknown function '") + Name + "'", DS_Warning));
       continue;
     }
+    TransitiveCallees.insert(F);
     if (auto CGN = CG[F]) {
-      DenseSet<CallGraphNode *> TransitiveCallees;
-      TransitiveCallees.insert(CGN);
       collectCallee(*CGN, TransitiveCallees);
-      for (auto &Caller : CG) {
-        if (auto *F = Caller.second->getFunction())
-          if (!TransitiveCallees.count(Caller.second.get()))
-            F->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
-      }
     }
+  }
+  for (auto &F : M) {
+    if (!TransitiveCallees.count(&F))
+      F.setMetadata("sapfor.da.ignore", MDNode::get(M.getContext(), {}));
   }
 }
 
