@@ -4,6 +4,7 @@ void foo_2() {
   int X = 0;
 
   X++;
+
   foo();
 }
 int main() {

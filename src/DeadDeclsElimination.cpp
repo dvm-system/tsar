@@ -178,7 +178,9 @@ public:
         auto &SrcMgr = mRewriter->getSourceMgr();
         auto &LangOpts = mRewriter->getLangOpts();
         Rewriter::RewriteOptions RemoveEmptyLine;
-        RemoveEmptyLine.RemoveLineIfEmpty = true;
+        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+        /// set to true then removing (in RewriterBuffer) works incorrect.
+        RemoveEmptyLine.RemoveLineIfEmpty = false;
         if (!getRawTokenAfter(SrcMgr.getFileLoc(I->first->getLocEnd()),
             SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);

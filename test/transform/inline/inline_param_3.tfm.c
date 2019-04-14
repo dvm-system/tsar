@@ -6,6 +6,7 @@ void foo(int N, double (*A)[N]) {
 
 void bar() {
   double A[10][10];
+
   /* foo(10, A) is inlined below */
 #pragma spf assert nomacro
   {

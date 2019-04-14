@@ -4,6 +4,7 @@ int main() {
   int x = 56;
 
   if (x > 100) {
+
     /* foo() is inlined below */
     int R0;
 #pragma spf assert nomacro

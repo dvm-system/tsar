@@ -1,6 +1,7 @@
 int f1() { return 0; }
 
 void f(int X) {
+
   {
     switch (X) {
     case 1: /* f1() is inlined below */

@@ -2,6 +2,7 @@
 
 void foo() {
   Global = 5;
+
   /* bar() is inlined below */
 #pragma spf assert nomacro
   { Global = 10; }

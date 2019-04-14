@@ -5,6 +5,7 @@ int f(int I) {
 }
 
 void g() {
+
   /* f(1) is inlined below */
   int R0;
 #pragma spf assert nomacro

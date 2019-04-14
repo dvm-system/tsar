@@ -1,5 +1,6 @@
 int f2() { return 2; }
 int f3() {
+
   /* f2() is inlined below */
   int R2;
 #pragma spf assert nomacro
@@ -8,6 +9,7 @@ int f3() {
 }
 
 int f1() {
+
   /* f3() is inlined below */
   int R1;
 #pragma spf assert nomacro

@@ -2,6 +2,7 @@ void f(int *A, int I) { A[I] = 10; }
 
 void g() {
   int A[10];
+
   /* f(A, 1) is inlined below */
 #pragma spf assert nomacro
   {

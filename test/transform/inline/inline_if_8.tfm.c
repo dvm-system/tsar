@@ -5,6 +5,7 @@ void f() {
 }
 
 void g() {
+
   /* f() is inlined below */
 #pragma spf assert nomacro
   {

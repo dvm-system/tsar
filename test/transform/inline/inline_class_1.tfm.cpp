@@ -9,6 +9,7 @@ struct A f() {
 }
 
 void g() {
+
   /* f() is inlined below */
   struct A R0;
 #pragma spf assert nomacro

@@ -3,6 +3,7 @@ int foo(int A) { return 89 + A; }
 int main(int Argc, char **Argv) {
   switch (Argc) {
   case 1:
+
     /* foo(0) is inlined below */
     {
       int R0;

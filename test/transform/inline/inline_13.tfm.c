@@ -7,6 +7,7 @@ int main() {
   // It is not possible to inline f() because its body is not available.
   // However, C stanard does not determine order of calls execution inside
   // a single expression. So, it is valid to perform inlining in this case.
+
   /* g(&X) is inlined below */
   int R0;
 #pragma spf assert nomacro

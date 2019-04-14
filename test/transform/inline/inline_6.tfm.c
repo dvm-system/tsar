@@ -11,6 +11,7 @@ int f(int (*g)(struct A)) {
 int g(struct A);
 
 void f1() {
+
   /* f(g) is inlined below */
   int R0;
 #pragma spf assert nomacro

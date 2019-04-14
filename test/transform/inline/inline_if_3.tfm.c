@@ -1,6 +1,7 @@
 int f1() { return 0; }
 
 void f(int I) {
+
   {
     if (I == 1) {
     } else /* f1() is inlined below */

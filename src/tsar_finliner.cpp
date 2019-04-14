@@ -1118,7 +1118,9 @@ void ClangInliner::HandleTranslationUnit() {
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
   auto TICheckers = getTemplatInstantiationCheckers();
   Rewriter::RewriteOptions RemoveEmptyLine;
-  RemoveEmptyLine.RemoveLineIfEmpty = true;
+  /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+  /// set to true then removing (in RewriterBuffer) works incorrect.
+  RemoveEmptyLine.RemoveLineIfEmpty = false;
   for (auto I = RPOT.begin(), EI = RPOT.end(); I != EI; ++I) {
     if (!(*I)->getDecl() || !isa<FunctionDecl>((*I)->getDecl()))
       continue;

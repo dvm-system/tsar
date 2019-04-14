@@ -4,5 +4,6 @@ int f() { return 0; }
 
 void f2() {
   int x;
+
   MACRO f();
 }

@@ -3,6 +3,7 @@ typedef enum { false, true } logical;
 logical f(logical L) { return L; }
 
 int main() {
+
   /* f(false) is inlined below */
   logical R0;
 #pragma spf assert nomacro

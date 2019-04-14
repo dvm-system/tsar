@@ -2,6 +2,7 @@ int foo() { return 34; }
 int main() {
   int x;
 #ifdef INL
+
 #endif
   /* foo() is inlined below */
   int R0;

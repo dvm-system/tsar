@@ -6,5 +6,6 @@ void f() { int X; }
 
 void f1() {
   int X;
+
   MACRO(f)
 }

@@ -102,7 +102,9 @@ public:
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
             diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
-      RemoveEmptyLine.RemoveLineIfEmpty = true;
+      /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+      /// set to true then removing (in RewriterBuffer) works incorrect.
+      RemoveEmptyLine.RemoveLineIfEmpty = false;
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine);
       return true;

@@ -1,6 +1,7 @@
 int f() { return 1; }
 
 int g(int X) {
+
   /* f() is inlined below */
   int R0;
 #pragma spf assert nomacro

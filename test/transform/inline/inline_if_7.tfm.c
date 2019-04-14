@@ -1,6 +1,7 @@
 int foo() { return 221; }
 
 int bar(int Val) {
+
   {
     if (Val)
     /* foo() is inlined below */
@@ -15,6 +16,7 @@ int bar(int Val) {
 }
 
 int main() {
+
   /* bar(13) is inlined below */
   int R1;
 #pragma spf assert nomacro

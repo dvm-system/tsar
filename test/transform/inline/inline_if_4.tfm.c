@@ -1,6 +1,7 @@
 int f() { return 5; }
 
 int main() {
+
   {
     int X;
     if (1)

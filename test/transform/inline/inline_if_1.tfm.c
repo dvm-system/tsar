@@ -1,6 +1,7 @@
 int f() { return 1; }
 
 int main() {
+
   {
     /* f() is inlined below */
     int R0;

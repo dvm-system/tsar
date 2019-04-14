@@ -36,6 +36,7 @@ void f_6() { struct A A1 = {.X[4 ... _6] = 5}; }
 void f_5() { struct A A1 = {.X[4 ... 6] = _5}; }
 
 void all() {
+
   {
     f_DOT();
     f_L();

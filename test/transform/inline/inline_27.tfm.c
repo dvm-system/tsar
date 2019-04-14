@@ -17,6 +17,7 @@ int foo2(int N, int *A) {
 
 int main() {
   int *A, N, S;
+
   {
     /* foo1(N, &A) is inlined below */
     int *R0;
