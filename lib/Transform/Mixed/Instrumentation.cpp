@@ -465,19 +465,12 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
     }
     InsertBefore = BranchInst::Create(Header, NewBB);
     InsertBefore->setMetadata("sapfor.da", InstrMD);
-    // Not to process the whole block using an assumption that all phi-nodes
-    // are at the begginning of the block. Maybe unless intrinsic and sapfor
-    // calls
-    for (auto &Inst : *Header) {
-      if (Inst.getMetadata("sapfor.da") || isa<IntrinsicInst>(Inst))
-        continue;
-      if (!isa<PHINode>(Inst))
-        break;
+    for(auto &Phi : Header->phis()) {
       unsigned IncomingIdx = 0;
-      for (auto IncomingBB: cast<PHINode>(Inst).blocks()) {
+      for (auto IncomingBB: Phi.blocks()) {
         for (auto PredBB : predecessors(NewBB)) {
           if (PredBB == IncomingBB) {
-            cast<PHINode>(Inst).setIncomingBlock(IncomingIdx, NewBB);
+            Phi.setIncomingBlock(IncomingIdx, NewBB);
             break;
           }
         }
