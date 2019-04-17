@@ -24,13 +24,30 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+void findConstDbgValues(
+    SmallVectorImpl<DbgValueInst *> &DbgValues, Constant *C) {
+  assert(C && "Value must not be null!");
+  if (auto *CMD = ConstantAsMetadata::getIfExists(C))
+    if (auto *MDV = MetadataAsValue::getIfExists(C->getContext(), CMD))
+      for (User *U : MDV->users())
+        if (DbgValueInst *DVI = dyn_cast<DbgValueInst>(U))
+          DbgValues.push_back(DVI);
+}
+
+void findAllDbgValues(SmallVectorImpl<DbgValueInst *> &DbgValues, Value *V) {
+  if (auto *C = dyn_cast<Constant>(V))
+    findConstDbgValues(DbgValues, C);
+  else
+    findDbgValues(DbgValues, V);
+}
+
 /// Computes a list of basic blocks which dominates a list of specified uses of
 /// a value `V` and contains some of `llvm.dbg.value` associated with `V`.
 DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>>
 findDomDbgValues(const Value *V, const DominatorTree &DT,
-    const SmallVectorImpl<Instruction *> &Users) {
+    ArrayRef<Instruction *> Users) {
   SmallVector<DbgValueInst *, 1> AllDbgValues;
-  findDbgValues(AllDbgValues, const_cast<Value *>(V));
+  findAllDbgValues(AllDbgValues, const_cast<Value *>(V));
   DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>> Dominators;
   for (auto *DVI : AllDbgValues) {
     if (!DVI->getVariable())
@@ -222,58 +239,10 @@ bool findGlobalMetadata(const GlobalVariable *Var,
   return IsChanged;
 }
 
-Optional<DIMemoryLocation> findMetadata(const Value * V,
-    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT,
-    MDSearch MDS) {
-  assert(V && "Value must not be null!");
-  DILocs.clear();
-  if (MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) {
-    auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
-    if (!AddrUses.empty()) {
-      auto DIVar = AddrUses.front()->getVariable();
-      if (DIVar) {
-        for (auto DbgI : AddrUses) {
-          if (DbgI->getVariable() != DIVar ||
-            DbgI->getExpression() != AddrUses.front()->getExpression())
-            return None;
-        }
-        auto DIM = DIMemoryLocation::get(AddrUses.front());
-        if (!DIM.isValid())
-          return None;
-        DILocs.push_back(std::move(DIM));
-        return DILocs.back();
-      }
-      return None;
-    }
-  }
-  if (MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
-    return None;
-  if (auto GV = dyn_cast<GlobalVariable>(V)) {
-    if (findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
-      return DILocs.back();
-    else
-      return None;
-  }
-  if (!DT)
-    return None;
-  SmallVector<Instruction *, 8> Users;
-  // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
-  // If `V` is a declaration of a function then call of this function will
-  // be a `ConstantExpr`. May be some other cases exist.
-  for (User *U : const_cast<Value *>(V)->users()) {
-    if (auto Phi = dyn_cast<PHINode>(U)) {
-      if (auto I = dyn_cast<Instruction>(const_cast<Value *>(V)))
-        if (auto BB = I->getParent()) {
-          Users.push_back(&BB->back());
-          continue;
-        }
-    }
-    if (auto I = dyn_cast<Instruction>(U))
-      Users.push_back(I);
-    else
-      return None;
-  }
-  auto Dominators = findDomDbgValues(V, *DT, Users);
+Optional<DIMemoryLocation> findMetadata(const Value *V,
+    ArrayRef<Instruction *> Users,  const DominatorTree &DT,
+    SmallVectorImpl<DIMemoryLocation> &DILocs) {
+  auto Dominators = findDomDbgValues(V, DT, Users);
   for (auto &DILocToDom : Dominators) {
     auto DILoc = DILocToDom.first;
     // If Aliases is empty it does not mean that a current variable can be used
@@ -331,7 +300,7 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
   }
   auto DILocItr = DILocs.begin(), DILocItrE = DILocs.end();
   for (; DILocItr != DILocItrE; ++DILocItr) {
-    if ([&V, &DILocs, &DILocItr, &DILocItrE, &Dominators, DT]() {
+    if ([&V, &DILocs, &DILocItr, &DILocItrE, &Dominators, &DT]() {
       auto DILocToDom = Dominators.find(*DILocItr);
       for (auto I = DILocs.begin(), E = DILocItrE; I != E; ++I) {
         if (I == DILocItr)
@@ -346,7 +315,7 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
                       break;
                     else if (DIMemoryLocation::get(DVI) == *I)
                       return false;
-            } else if (!DT->dominates(DILocBB, BB)) {
+            } else if (!DT.dominates(DILocBB, BB)) {
               return false;
             }
       }
@@ -355,5 +324,59 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
       return *DILocItr;
   }
   return None;
+}
+
+Optional<DIMemoryLocation> findMetadata(const Value * V,
+    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT,
+    MDSearch MDS) {
+  assert(V && "Value must not be null!");
+  DILocs.clear();
+  if (MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) {
+    auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
+    if (!AddrUses.empty()) {
+      auto DIVar = AddrUses.front()->getVariable();
+      if (DIVar) {
+        for (auto DbgI : AddrUses) {
+          if (DbgI->getVariable() != DIVar ||
+            DbgI->getExpression() != AddrUses.front()->getExpression())
+            return None;
+        }
+        auto DIM = DIMemoryLocation::get(AddrUses.front());
+        if (!DIM.isValid())
+          return None;
+        DILocs.push_back(std::move(DIM));
+        return DILocs.back();
+      }
+      return None;
+    }
+  }
+  if (MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
+    return None;
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    if (findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
+      return DILocs.back();
+    else
+      return None;
+  }
+  if (!DT)
+    return None;
+  SmallVector<Instruction *, 8> Users;
+  // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
+  // If `V` is a declaration of a function then call of this function will
+  // be a `ConstantExpr`. May be some other cases exist.
+  for (User *U : const_cast<Value *>(V)->users()) {
+    if (auto Phi = dyn_cast<PHINode>(U)) {
+      if (auto I = dyn_cast<Instruction>(const_cast<Value *>(V)))
+        if (auto BB = I->getParent()) {
+          Users.push_back(&BB->back());
+          continue;
+        }
+    }
+    if (auto I = dyn_cast<Instruction>(U))
+      Users.push_back(I);
+    else
+      return None;
+  }
+  return findMetadata(V, Users, *DT, DILocs);
 }
 }

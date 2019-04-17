@@ -403,6 +403,16 @@ llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value * V,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs,
   const llvm::DominatorTree *DT = nullptr, MDSearch MDS = MDSearch::Any);
 
+/// Return meta information for a specified value or None.
+///
+/// This function is similar to previously defined function findMetadata(),
+/// however it performs only MDSearch::ValueOfVariable search. The main
+/// difference is it consider a specified users 'Users' of a specified value `V'.
+/// A general findMetadata() function consider all users of `V` instead.
+llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value *V,
+  llvm::ArrayRef<llvm::Instruction *> Users, const llvm::DominatorTree &DT,
+  llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
+
 /// \brief This is an implementation of detail::DenseMapPair which supports
 /// access to a first and second value via tag of a type (Pair.get<Tag>()).
 ///
