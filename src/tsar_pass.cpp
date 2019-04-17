@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_pass.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include <llvm/Config/llvm-config.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -52,6 +53,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeCopyEliminationPassPass(Registry);
   initializeClangRenameLocalPassPass(Registry);
   initializeClangDeadDeclsEliminationPass(Registry);
+  initializeClangTransform(Registry);
   // Initialize checkers.
   initializeClangNoMacroAssertPass(Registry);
   // Initialize necessary LLVM passes.
