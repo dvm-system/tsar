@@ -185,41 +185,41 @@ private:
 };
 }
 
-bool ClangCopyPropagation::isDef(const Value &V, unsigned DWLang,
-    SmallVectorImpl<char> &Def) {
-  if (auto *C = dyn_cast<Constant>(&V)) {
-    if (auto *CF = dyn_cast<Function>(&V)) {
+bool ClangCopyPropagation::unparseReplacement(
+    const Value &Def, const DIMemoryLocation *DIDef,
+    unsigned DWLang, const DIMemoryLocation &DIUse,
+    SmallVectorImpl<char> &DefStr, SmallVectorImpl<char> &UseStr) {
+  if (!unparseToString(DWLang, DIUse, UseStr))
+    return false;
+  if (auto *C = dyn_cast<Constant>(&Def)) {
+    if (auto *CF = dyn_cast<Function>(&Def)) {
       auto *D = mTfmCtx->getDeclForMangledName(CF->getName());
       auto *ND = dyn_cast_or_null<NamedDecl>(D);
       if (!ND)
         return false;
-      Def.assign(ND->getName().begin(), ND->getName().end());
-    } else if (auto *CFP = dyn_cast<ConstantFP>(&V)) {
-      CFP->getValueAPF().toString(Def);
+      DefStr.assign(ND->getName().begin(), ND->getName().end());
+    } else if (auto *CFP = dyn_cast<ConstantFP>(&Def)) {
+      CFP->getValueAPF().toString(DefStr);
+    } else if (auto *CInt = dyn_cast<ConstantInt>(&Def)) {
+      auto *Ty = dyn_cast_or_null<DIBasicType>(
+        DIUse.Var->getType().resolve());
+      if (!Ty)
+        return false;
+      DefStr.clear();
+      if (Ty->getEncoding() == dwarf::DW_ATE_signed)
+        CInt->getValue().toStringSigned(DefStr);
+      else if (Ty->getEncoding() == dwarf::DW_ATE_unsigned)
+        CInt->getValue().toStringUnsigned(DefStr);
+      else
+        return false;
     }
-  } else {
-    SmallVector<DIMemoryLocation, 4> DILocs;
-    auto MD = findMetadata(&V, DILocs, mDT, MDSearch::ValueOfVariable);
-    if (!MD || !MD->isValid() || MD->Template || !MD->Loc)
-      return false;
-    if (!unparseToString(DWLang, *MD, Def))
-      return false;
-  }
-  return true;
-}
-
-bool ClangCopyPropagation::unparseIntReplacement(const DIMemoryLocation &DILoc,
-  const ConstantInt &C, SmallVectorImpl<char> &Def) {
-  auto *Ty = dyn_cast_or_null<DIBasicType>(
-    DILoc.Var->getType().resolve());
-  if (!Ty)
+    return true;
+  } 
+  if (!DIDef || !DIDef->isValid() || DIDef->Template || !DIDef->Loc)
     return false;
-  Def.clear();
-  if (Ty->getEncoding() == dwarf::DW_ATE_signed)
-    C.getValue().toStringSigned(Def);
-  else if (Ty->getEncoding() == dwarf::DW_ATE_unsigned)
-    C.getValue().toStringUnsigned(Def);
-  else
+  if (!unparseToString(DWLang, *DIDef, DefStr))
+    return false;
+  if (StringRef(UseStr.data()) == DefStr.data())
     return false;
   return true;
 }
@@ -248,22 +248,19 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
     auto DbgVal = dyn_cast<DbgValueInst>(&I);
     if (!DbgVal)
       continue;
-    auto *V = DbgVal->getValue();
-    if (!V || isa<UndefValue>(V))
+    auto *Def = DbgVal->getValue();
+    if (!Def || isa<UndefValue>(Def))
       continue;
-    if (!WorkSet.insert(V).second)
+    if (!WorkSet.insert(Def).second)
       continue;
-    SmallString<16> DefStr;
-    if (!isDef(*V, *DWLang, DefStr))
-      continue;
-    for (auto &U : V->uses()) {
+    for (auto &U : Def->uses()) {
       if (!isa<Instruction>(U.getUser()))
         break;
       auto *UI = cast<Instruction>(U.getUser());
       if (!UI->getDebugLoc())
         continue;
       SmallVector<DIMemoryLocation, 4> DILocs;
-      findMetadata(V, makeArrayRef(UI), *mDT, DILocs);
+      auto DIDef = findMetadata(Def, makeArrayRef(UI), *mDT, DILocs);
       if (DILocs.empty())
         continue;
       LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember instruction " << *UI
@@ -271,23 +268,21 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
                  UI->getDebugLoc().print(dbgs()); dbgs() << "\n");
       auto &Candidates = Visitor.getReplacement(UI->getDebugLoc());
       for (auto &DILoc : DILocs) {
+        if (DILoc.Template)
+          continue;
+        SmallString<16> DefStr, UseStr;
+        if (!unparseReplacement(*Def, DIDef ? &*DIDef : nullptr,
+              *DWLang, DILoc, DefStr, UseStr))
+          continue;
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find source-level definition "
+                          << DefStr << " for " << *Def << " to  replace ";
+                   printDILocationSource(*DWLang, DILoc, dbgs());
+                   dbgs() << "\n");
         //TODO (kaniandr@gmail.com): it is possible to propagate not only
         // variables, for example, accesses to members of a structure can be
         // also propagated. However, it is necessary to update processing of
         // AST in DefUseVisitor for members.
-        if (DILoc.Template || DILoc.Expr->getNumElements() != 0)
-          continue;
-        if (auto *C = dyn_cast<ConstantInt>(V)) {
-          if (!unparseIntReplacement(DILoc, *C, DefStr))
-            continue;
-        } else if (DILoc.Var->getName() == DefStr) {
-          continue;
-        }
-        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find source-level definition "
-                          << DefStr << " for " << *V << " to  replace ";
-                   printDILocationSource(*DWLang, DILoc, dbgs());
-                   dbgs() << "\n");
-        Candidates.insert(std::make_pair(DILoc.Var->getName(), DefStr));
+        Candidates.insert(std::make_pair(UseStr, DefStr));
       }
     }
   }

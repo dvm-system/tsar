@@ -56,18 +56,13 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  /// Check that metadata is attached to a specified variable and can be used
-  /// as replacement.
+  /// Unparse replacement for a specified metadata-level candidate 'DIUse'.
   ///
-  /// \post 'Def' contains source-level representation of a replacement if
-  /// known. Note, that for integer constants replacement should be generated
-  /// later if sign of value become known.
-  bool isDef(const Value &V, unsigned DWLang, SmallVectorImpl<char> &Def);
-
-  /// Unparse replacement for a specified metadata-level using a specified
-  /// constant.
-  bool unparseIntReplacement(const tsar::DIMemoryLocation &DILoc,
-    const ConstantInt &C, SmallVectorImpl<char> &Def);
+  /// If `DIDef` is not specified then `Def` must be a constant for successful
+  /// unparsing.
+  bool unparseReplacement(const Value &Def, const tsar::DIMemoryLocation *DIDef,
+    unsigned DWLang, const tsar::DIMemoryLocation &DIUse,
+    SmallVectorImpl<char> &DefStr, SmallVectorImpl<char> &UseStr);
 
   DominatorTree *mDT = nullptr;
   tsar::TransformationContext *mTfmCtx = nullptr;
