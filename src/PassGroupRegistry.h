@@ -11,22 +11,36 @@
 #ifndef TSAR_PASS_SUPPORT_H
 #define TSAR_PASS_SUPPORT_H
 
+#include <memory>
 #include <vector>
 
 namespace llvm {
 class PassInfo;
+namespace legacy {
+class PassManager;
+}
 }
 
 namespace tsar {
+class PassGroupInfo {
+public:
+  virtual ~PassGroupInfo() {}
+  virtual void addBeforePass(llvm::legacy::PassManager &PM) const {}
+};
+
 /// Group of passes, which stores already allocated and registered PassInfo.
 class PassGroupRegistry {
   using PassList = std::vector<const llvm::PassInfo *>;
+  using PassGroupInfoList = std::vector<std::unique_ptr<PassGroupInfo>>;
 
 public:
   using iterator = PassList::iterator;
   using const_iterator = PassList::const_iterator;
 
-  void add(const llvm::PassInfo &PI) { mPasses.push_back(&PI); }
+  void add(const llvm::PassInfo &PI, std::unique_ptr<PassGroupInfo> GI) {
+    mPasses.push_back(&PI);
+    mGroupInfo.push_back(std::move(GI));
+  }
 
   iterator begin() { return mPasses.begin();}
   iterator end() { return mPasses.end(); }
@@ -41,17 +55,28 @@ public:
     return false;
   }
 
+  PassGroupInfo * groupInfo(const llvm::PassInfo &PI) const {
+    for (std::size_t I = 0, EI = mPasses.size(); I < EI; ++I)
+      if (mPasses[I] == &PI)
+        return mGroupInfo[I].get();
+    return nullptr;
+  }
+
 private:
   PassList mPasses;
+  PassGroupInfoList mGroupInfo;
 };
 }
+
+#define INITIALIZE_PASS_IN_GROUP_INFO(passGroupInfo) \
+    GI = std::unique_ptr<passGroupInfo>(new passGroupInfo);
 
 #define INITIALIZE_PASS_IN_GROUP(passName, arg, name, cfg, analysis, groupRegistry) \
   static void *initialize##passName##PassOnce(PassRegistry &Registry) {        \
     PassInfo *PI = new PassInfo(                                               \
         name, arg, &passName::ID,                                              \
         PassInfo::NormalCtor_t(callDefaultCtor<passName>), cfg, analysis);     \
-    groupRegistry.add(*PI);                                                    \
+    groupRegistry.add(*PI, nullptr);                                                    \
     Registry.registerPass(*PI, true);                                          \
     return PI;                                                                 \
   }                                                                            \
@@ -62,13 +87,14 @@ private:
   }
 
 #define INITIALIZE_PASS_IN_GROUP_BEGIN(passName, arg, name, cfg, analysis, groupRegistry) \
-  static void *initialize##passName##PassOnce(PassRegistry &Registry) {
+  static void *initialize##passName##PassOnce(PassRegistry &Registry) { \
+    std::unique_ptr<PassGroupInfo> GI;
 
 #define INITIALIZE_PASS_IN_GROUP_END(passName, arg, name, cfg, analysis, groupRegistry) \
   PassInfo *PI = new PassInfo(                                                 \
       name, arg, &passName::ID,                                                \
       PassInfo::NormalCtor_t(callDefaultCtor<passName>), cfg, analysis);       \
-  groupRegistry.add(*PI);                                                      \
+  groupRegistry.add(*PI, std::move(GI));                                                      \
   Registry.registerPass(*PI, true);                                            \
   return PI;                                                                   \
   }                                                                            \

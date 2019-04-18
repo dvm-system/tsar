@@ -101,6 +101,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
         errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
         continue;
       }
+      if (auto *GI = OutputPassGroup::getPassRegistry().groupInfo(*PI))
+        GI->addBeforePass(Passes);
       Passes.add(PI->getNormalCtor()());
     }
   };
@@ -228,6 +230,8 @@ void TransformationQueryManager::run(llvm::Module *M,
     M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
     return;
   }
+  if (auto *GI = getPassRegistry().groupInfo(*mTfmPass))
+    GI->addBeforePass(Passes);
   Passes.add(mTfmPass->getNormalCtor()());
   Passes.add(createClangFormatPass(mOutputSuffix, mNoFormat));
   Passes.add(createVerifierPass());
@@ -249,6 +253,8 @@ void CheckQueryManager::run(llvm::Module *M, TransformationContext* Ctx) {
       M->getContext().emitError("cannot create pass " + PI->getPassName());
       continue;
     }
+    if (auto *GI = getPassRegistry().groupInfo(*PI))
+      GI->addBeforePass(Passes);
     Passes.add(PI->getNormalCtor()());
   }
   Passes.add(createVerifierPass());
