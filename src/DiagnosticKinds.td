@@ -76,6 +76,8 @@ def note_assert_no_macro : Note<"macro found">;
 
 def warn_rename_macro_prevent : Warning<"macro prevent renaming">;
 
+def warn_propagate_macro_prevent : Warning<"macro prevent copy propagation">;
+
 def warn_disable_de_parameter : Warning<"disable dead code elimination for function parameters">;
 def warn_disable_de : Warning<"disable dead code elimination">;
 def note_de_macro_prevent : Warning<"macro prevent dead code elimination">;

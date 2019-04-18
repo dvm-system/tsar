@@ -25,8 +25,12 @@
 
 #include "tsar/Transform/Clang/CopyPropagation.h"
 #include "tsar_dbg_output.h"
+#include "Diagnostic.h"
+#include "GlobalInfoExtractor.h"
 #include "tsar_query.h"
 #include "tsar_matcher.h"
+#include "NoMacroAssert.h"
+#include "tsar_pragma.h"
 #include "SourceUnparserUtils.h"
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
@@ -42,6 +46,7 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -60,10 +65,20 @@ using namespace tsar;
 
 char ClangCopyPropagation::ID = 0;
 
+namespace {
+class ClangCopyPropagationInfo final : public PassGroupInfo {
+  void addBeforePass(legacy::PassManager &PM) const override {
+    PM.add(createSROAPass());
+  }
+};
+}
+
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangCopyPropagation, "clang-copy-propagation",
   "Copy Propagation (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP_INFO(ClangCopyPropagationInfo);
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangCopyPropagation, "clang-copy-propagation",
   "Copy Propagation (Clang)", false, false,
@@ -74,8 +89,8 @@ FunctionPass * createClangCopyPropagation() {
 }
 
 void ClangCopyPropagation::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequiredID(std::unique_ptr<FunctionPass>(createSROAPass())->getPassID());
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.setPreservesAll();
 }
@@ -108,9 +123,13 @@ private:
   };
 
 public:
-  explicit DefUseVisitor(TransformationContext &TfmCtx) :
+  DefUseVisitor(TransformationContext &TfmCtx,
+      ClangGlobalInfoPass::RawInfo &RawInfo) :
+    mRawInfo(RawInfo),
     mRewriter(TfmCtx.getRewriter()),
-    mSrcMgr(TfmCtx.getRewriter().getSourceMgr()) {}
+    mContext(TfmCtx.getContext()),
+    mSrcMgr(TfmCtx.getRewriter().getSourceMgr()),
+    mLangOpts(TfmCtx.getRewriter().getLangOpts()) {}
 
   /// Return set of replacements in subtrees of a tree which represents
   /// expression at a specified location (create empty set if it does not
@@ -126,12 +145,41 @@ public:
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
+    Pragma P(*S);
+    if (P) {
+      // Search for propagate clause and disable renaming in other pragmas.
+      if (findClause(P, ClauseId::Propagate, mClauses)) {
+        llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
+        auto IsPossible =
+          pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+        if (!IsPossible.first)
+          if (IsPossible.second & PragmaFlags::IsInMacro)
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+              diag::warn_remove_directive_in_macro);
+          else if (IsPossible.second & PragmaFlags::IsInHeader)
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+              diag::warn_remove_directive_in_include);
+          else
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+              diag::warn_remove_directive);
+        Rewriter::RewriteOptions RemoveEmptyLine;
+        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+        /// set to true then removing (in RewriterBuffer) works incorrect.
+        RemoveEmptyLine.RemoveLineIfEmpty = false;
+        for (auto SR : ToRemove)
+          mRewriter.RemoveText(SR, RemoveEmptyLine);
+        return true;
+      }
+    }
     // Do not replace variables in increment/decrement because this operators
     // change an accessed variable:
     // `X = I; ++X; return I;` is not equivalent `X = I; ++I; return I`
     if (auto *UOp = dyn_cast<UnaryOperator>(S))
       if (UOp->isIncrementDecrementOp())
         return true;
+    auto *StashPropagateScope = mDeclPropagateScope;
+    if (mDeclsToPropagate.empty())
+      mDeclPropagateScope = S;
     mParents.push(S);
     auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getLocStart();
     bool Res = false;
@@ -152,7 +200,49 @@ public:
       Res = RecursiveASTVisitor::TraverseStmt(S);
     }
     mParents.pop();
+    mDeclPropagateScope = StashPropagateScope;
     return Res;
+  }
+
+  bool TraverseCompoundStmt(CompoundStmt *S) {
+    if (mClauses.empty())
+      return RecursiveASTVisitor::TraverseCompoundStmt(S);
+    mClauses.clear();
+    bool StashPropagateState = mActivePropagate;
+    if (!mActivePropagate) {
+      if (hasMacro(S))
+        return RecursiveASTVisitor::TraverseCompoundStmt(S);
+      mActivePropagate = true;
+    }
+    auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
+    mActivePropagate = StashPropagateState;
+    return Res;
+  }
+
+  bool VisitStmt(Stmt *S) {
+    if (mClauses.empty())
+      return RecursiveASTVisitor::VisitStmt(S);
+    if (auto *DS = dyn_cast<DeclStmt>(S)) {
+      bool HasNamedDecl = false;
+      for (auto *D : DS->decls())
+        if (auto *ND = dyn_cast<NamedDecl>(D)) {
+          HasNamedDecl = true;
+          mDeclsToPropagate.insert(ND);
+        }
+      if (!HasNamedDecl)
+        toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+          diag::warn_unexpected_directive);
+      assert(mDeclPropagateScope && "Top level scope must not be null!");
+      if (hasMacro(mDeclPropagateScope)) {
+        mDeclsToPropagate.clear();
+        return RecursiveASTVisitor::VisitStmt(S);
+      }
+    } else if (!isa<CompoundStmt>(S)) {
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+        diag::warn_unexpected_directive);
+    }
+    mClauses.clear();
+    return RecursiveASTVisitor::VisitStmt(S);
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
@@ -160,6 +250,8 @@ public:
       return true;
     auto ND = Ref->getFoundDecl();
     if (!ND->getDeclName().isIdentifier())
+      return true;
+    if (!mDeclsToPropagate.count(ND) && !mActivePropagate)
       return true;
     auto &Candidates = mCurrUses.top().PropagatedDefs;
     auto ReplacementItr = Candidates.find(ND->getName());
@@ -176,12 +268,35 @@ public:
   }
 
 private:
+  /// Returns true and emit warning if there is macro in specified statement.
+  bool hasMacro(Stmt *S) {
+    bool HasMacro = false;
+    for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo.Macros,
+      [&HasMacro, this](clang::SourceLocation Loc) {
+        if (!HasMacro) {
+          toDiag(mContext.getDiagnostics(), Loc,
+            diag::warn_propagate_macro_prevent);
+          HasMacro = true;
+      }
+    });
+    return HasMacro;
+  }
+
   Rewriter &mRewriter;
+  ASTContext &mContext;
   SourceManager &mSrcMgr;
+  const LangOptions &mLangOpts;
+  ClangGlobalInfoPass::RawInfo &mRawInfo;
   UseLocationMap mUseLocs;
 
   std::stack<TargetStmt> mCurrUses;
   std::stack<Stmt *> mParents;
+  SmallVector<Stmt *, 1> mClauses;
+  SmallPtrSet<NamedDecl *, 16> mDeclsToPropagate;
+  /// Innermost scope which contains declarations with attached 'propagate'
+  /// clause.
+  Stmt *mDeclPropagateScope = nullptr;
+  bool mActivePropagate = false;
 };
 }
 
@@ -242,7 +357,8 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
   if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) != SrcMgr::C_User)
     return false;
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  DefUseVisitor Visitor(*mTfmCtx);
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo());
   DenseSet<Value *> WorkSet;
   for (auto &I : instructions(F)) {
     auto DbgVal = dyn_cast<DbgValueInst>(&I);
@@ -289,4 +405,3 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
   Visitor.TraverseDecl(FuncDecl);
   return false;
 }
-
