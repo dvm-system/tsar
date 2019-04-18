@@ -34,10 +34,12 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/IR/CallSite.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
@@ -89,24 +91,18 @@ public:
 
 private:
   /// Map from instruction which uses a memory location to a definition which
-  /// can be propagated to replace operand in this instruction. Index in a
-  /// vector is an index of a use which can be replaced with a corresponding
-  /// definition.
+  /// can be propagated to replace operand in this instruction.
   using UseLocationMap = DenseMap<
-    DILocation *, SmallVector<ReplacementT, 2>, DILocationMapInfo,
+    DILocation *, ReplacementT, DILocationMapInfo,
     TaggedDenseMapPair<
       bcl::tagged<DILocation *, Use>,
-      bcl::tagged<SmallVector<ReplacementT, 2>, Def>>>;
+      bcl::tagged<ReplacementT, Def>>>;
 
   /// A statement in AST which correspond to an instruction which contains
   /// uses that can be replaced.
   struct TargetStmt {
-    /// Definitions which can be used for replacement. Variable in a currently
-    /// processed subtree can be replaced with PropagatedDefs[CurrentChildNo]
-    /// if it is available.
+    /// Definitions which can be used for replacement.
     UseLocationMap::mapped_type &PropagatedDefs;
-    /// Number of a subtree of 'Root' which is currently processed.
-    unsigned CurrentChildNo;
     /// Root which corresponds to a some key in a UseLocationMap.
     Stmt *Root;
   };
@@ -116,15 +112,15 @@ public:
     mRewriter(TfmCtx.getRewriter()),
     mSrcMgr(TfmCtx.getRewriter().getSourceMgr()) {}
 
-  /// Return set of replacements for subtree `OpNum` of a tree which
-  /// represents expression at a specified location (create empty set if
-  /// it does not exist).
-  ReplacementT & getReplacement(DebugLoc UseLoc, unsigned OpNum) {
+  /// Return set of replacements in subtrees of a tree which represents
+  /// expression at a specified location (create empty set if it does not
+  /// exist).
+  ///
+  /// Note, that replacement for a subtree overrides a replacement for a tree.
+  ReplacementT & getReplacement(DebugLoc UseLoc) {
     assert(UseLoc && UseLoc.get() && "Use location must not be null!");
     auto UseItr = mUseLocs.try_emplace(UseLoc.get()).first;
-    if (OpNum >= UseItr->get<Def>().size())
-      UseItr->get<Def>().resize(OpNum + 1);
-    return UseItr->get<Def>()[OpNum];
+    return UseItr->get<Def>();
   }
 
   bool TraverseStmt(Stmt *S) {
@@ -136,8 +132,6 @@ public:
     if (auto *UOp = dyn_cast<UnaryOperator>(S))
       if (UOp->isIncrementDecrementOp())
         return true;
-    if (!mCurrUses.empty() && mCurrUses.top().Root == mParents.top())
-      ++mCurrUses.top().CurrentChildNo;
     mParents.push(S);
     auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getLocStart();
     bool Res = false;
@@ -148,7 +142,7 @@ public:
         LLVM_DEBUG(
             dbgs() << "[COPY PROPAGATION]: traverse propagation target at ";
             Loc.dump(mSrcMgr); dbgs() << "\n");
-        mCurrUses.push(TargetStmt{ UseItr->get<Def>(), 0, S });
+        mCurrUses.push(TargetStmt{ UseItr->get<Def>(), S });
         Res = RecursiveASTVisitor::TraverseStmt(S);
         mCurrUses.pop();
       } else {
@@ -164,28 +158,20 @@ public:
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
     if (mCurrUses.empty())
       return true;
-    if (!mCurrUses.empty() && mCurrUses.top().Root == Ref)
-      ++mCurrUses.top().CurrentChildNo;
-    assert(mCurrUses.top().CurrentChildNo != 0 &&
-      "Current child should be already counted!");
-    auto &Target = mCurrUses.top();
-    if (Target.PropagatedDefs.size() < Target.CurrentChildNo)
-      return true;
     auto ND = Ref->getFoundDecl();
     if (!ND->getDeclName().isIdentifier())
       return true;
-    auto &Candidates = Target.PropagatedDefs[Target.CurrentChildNo - 1];
+    auto &Candidates = mCurrUses.top().PropagatedDefs;
     auto ReplacementItr = Candidates.find(ND->getName());
     if (ReplacementItr == Candidates.end())
        return true;
-    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: replace variable in operand "
-                      << (Target.CurrentChildNo - 1) << " in [";
-               Ref->getLocStart().dump(mSrcMgr); dbgs() << ", ";
-               Ref->getLocEnd().dump(mSrcMgr);
-               dbgs() << "] with '" << ReplacementItr->second << "'\n");
-      mRewriter.ReplaceText(
-        SourceRange(Ref->getLocStart(), Ref->getLocEnd()),
-        ReplacementItr->second);
+    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: replace variable in [";
+                 Ref->getLocStart().dump(mSrcMgr); dbgs() << ", ";
+                 Ref->getLocEnd().dump(mSrcMgr);
+                 dbgs() << "] with '" << ReplacementItr->second << "'\n");
+    mRewriter.ReplaceText(
+      SourceRange(Ref->getLocStart(), Ref->getLocEnd()),
+      ReplacementItr->second);
     return true;
   }
 
@@ -276,27 +262,14 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
       auto *UI = cast<Instruction>(U.getUser());
       if (!UI->getDebugLoc())
         continue;
-      // Sometimes debug information is not accurate, so we check name of
-      // a variable that should be replaced.
-      // For example
-      // for (int I = 0; I < 10; ++I)
-      //    A[I] = I;
-      // Before access to A[I] `sext` for I is performed. And location for this
-      // `sext` equals to location of A. So, without this check A will be
-      // replaced with I.
       SmallVector<DIMemoryLocation, 4> DILocs;
       findMetadata(V, makeArrayRef(UI), *mDT, DILocs);
       if (DILocs.empty())
         continue;
-      auto OpNo = U.getOperandNo();
-      // In AST function is a first child of a call statement.
-      ImmutableCallSite CS(UI);
-      if (CS)
-        ++OpNo;
-      LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember operand " << OpNo
-                        << " for replacement at ";
+      LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember instruction " << *UI
+                        << "as a root for replacement at ";
                  UI->getDebugLoc().print(dbgs()); dbgs() << "\n");
-      auto &Candidates = Visitor.getReplacement(UI->getDebugLoc(), OpNo);
+      auto &Candidates = Visitor.getReplacement(UI->getDebugLoc());
       for (auto &DILoc : DILocs) {
         //TODO (kaniandr@gmail.com): it is possible to propagate not only
         // variables, for example, accesses to members of a structure can be
