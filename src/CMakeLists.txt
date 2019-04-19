@@ -48,6 +48,8 @@ set_target_properties(TSARCore PROPERTIES
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 add_dependencies(TSARCore
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
+add_dependencies(TSARClangTransform
+  DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
