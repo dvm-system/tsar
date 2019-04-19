@@ -382,7 +382,7 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
       if (DILocs.empty())
         continue;
       LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember instruction " << *UI
-                        << "as a root for replacement at ";
+                        << " as a root for replacement at ";
                  UI->getDebugLoc().print(dbgs()); dbgs() << "\n");
       auto &Candidates = Visitor.getReplacement(UI->getDebugLoc());
       for (auto &DILoc : DILocs) {
