@@ -327,6 +327,8 @@ bool ClangCopyPropagation::unparseReplacement(
         CInt->getValue().toStringUnsigned(DefStr);
       else
         return false;
+    } else {
+      return false;
     }
     return true;
   } 
