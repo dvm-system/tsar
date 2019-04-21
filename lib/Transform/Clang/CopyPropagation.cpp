@@ -96,8 +96,10 @@ void ClangCopyPropagation::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 namespace {
-struct Use {};
-struct Def {};
+struct UseLoc {};
+struct DefLoc {};
+struct Available {};
+using Candidate = SmallString<16>;
 
 class DefUseVisitor : public RecursiveASTVisitor<DefUseVisitor> {
 public:
@@ -110,8 +112,25 @@ private:
   using UseLocationMap = DenseMap<
     DILocation *, ReplacementT, DILocationMapInfo,
     TaggedDenseMapPair<
-      bcl::tagged<DILocation *, Use>,
-      bcl::tagged<ReplacementT, Def>>>;
+      bcl::tagged<DILocation *, UseLoc>,
+      bcl::tagged<ReplacementT, DefLoc>>>;
+
+  using LocationSet = DenseSet<DILocation *, DILocationMapInfo>;
+
+  using DeclUseLocationMap = DenseMap<
+    DILocation *, std::tuple<SmallVector<Candidate, 4>, LocationSet>,
+    DILocationMapInfo,
+    TaggedDenseMapTuple<
+      bcl::tagged<DILocation *, UseLoc>,
+      bcl::tagged<SmallVector<Candidate, 4>, Candidate>,
+      bcl::tagged<LocationSet, Available>>>;
+
+  using DefLocationMap = DenseMap<
+    DILocation *, DeclUseLocationMap,
+    DILocationMapInfo,
+    TaggedDenseMapPair<
+      bcl::tagged<DILocation *, DefLoc>,
+      bcl::tagged<DeclUseLocationMap, UseLoc>>>;
 
   /// A statement in AST which correspond to an instruction which contains
   /// uses that can be replaced.
@@ -136,10 +155,15 @@ public:
   /// exist).
   ///
   /// Note, that replacement for a subtree overrides a replacement for a tree.
-  ReplacementT & getReplacement(DebugLoc UseLoc) {
-    assert(UseLoc && UseLoc.get() && "Use location must not be null!");
-    auto UseItr = mUseLocs.try_emplace(UseLoc.get()).first;
-    return UseItr->get<Def>();
+  ReplacementT & getReplacement(DebugLoc Use) {
+    assert(Use && Use.get() && "Use location must not be null!");
+    auto UseItr = mUseLocs.try_emplace(Use.get()).first;
+    return UseItr->get<DefLoc>();
+  }
+
+  DefLocationMap::value_type & getDeclReplacement(DebugLoc Def) {
+    assert(Def && Def.get() && "Def location must not be null!");
+    return *mDefLocs.try_emplace(Def.get()).first;
   }
 
   bool TraverseStmt(Stmt *S) {
@@ -174,6 +198,7 @@ public:
     // Do not replace variables in increment/decrement because this operators
     // change an accessed variable:
     // `X = I; ++X; return I;` is not equivalent `X = I; ++I; return I`
+    // TODO (kaniandr@gmail.com): collect DeclRef in increment/decrement.
     if (auto *UOp = dyn_cast<UnaryOperator>(S))
       if (UOp->isIncrementDecrementOp())
         return true;
@@ -190,7 +215,7 @@ public:
         LLVM_DEBUG(
             dbgs() << "[COPY PROPAGATION]: traverse propagation target at ";
             Loc.dump(mSrcMgr); dbgs() << "\n");
-        mCurrUses.push(TargetStmt{ UseItr->get<Def>(), S });
+        mCurrUses.push(TargetStmt{ UseItr->get<DefLoc>(), S });
         Res = RecursiveASTVisitor::TraverseStmt(S);
         mCurrUses.pop();
       } else {
@@ -216,6 +241,50 @@ public:
     }
     auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
     mActivePropagate = StashPropagateState;
+    return Res;
+  }
+
+  bool TraverseBinAssign(clang::BinaryOperator *Expr) {
+    auto PLoc = mSrcMgr.getPresumedLoc(Expr->getRHS()->getExprLoc());
+    auto DefItr = mDefLocs.find_as(PLoc);
+    if (DefItr == mDefLocs.end())
+      return RecursiveASTVisitor::TraverseBinAssign(Expr);
+    auto Res = RecursiveASTVisitor::TraverseStmt(Expr->getLHS());
+    auto StashCollectDecls = mCollectDecls;
+    mCollectDecls = true;
+    auto DeclRefIdx = mDeclRefs.size();
+    Res |= RecursiveASTVisitor::TraverseStmt(Expr->getRHS());
+    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
+               Expr->getRHS()->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
+    auto DefSR = Expr->getRHS()->getSourceRange();
+    auto DefStr = Lexer::getSourceText(
+      CharSourceRange::getTokenRange(DefSR), mSrcMgr, mLangOpts);
+    bool IsAllDeclRefAvailable = true;
+    for (auto &U : DefItr->get<UseLoc>()) {
+      for (auto IdxE = mDeclRefs.size(); DeclRefIdx < IdxE; ++DeclRefIdx) {
+        auto *VD = dyn_cast<VarDecl>(mDeclRefs[DeclRefIdx]);
+        if (!VD || isa<clang::ArrayType>(VD->getType()))
+          continue;
+        auto PLoc = mSrcMgr.getPresumedLoc(
+          mDeclRefs[DeclRefIdx]->getLocation());
+        if (U.get<Available>().find_as(PLoc) == U.get<Available>().end()) {
+          mDeclRefs[DeclRefIdx]->getLocation().dump(mSrcMgr);
+          IsAllDeclRefAvailable = false;
+          // TODO (kaniandr@gmail.com): emit warning.
+          break;
+        }
+      }
+      if (IsAllDeclRefAvailable) {
+        auto &Candidates =
+          mUseLocs.try_emplace(U.get<UseLoc>()).first->get<DefLoc>();
+        for (auto &Name : U.get<Candidate>()) {
+          auto Info = Candidates.try_emplace(Name, DefStr);
+          if (!Info.second)
+            Info.first->second = DefStr;
+        }
+      }
+    }
+    mCollectDecls = StashCollectDecls;
     return Res;
   }
 
@@ -246,6 +315,8 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
+    if (mCollectDecls)
+      mDeclRefs.push_back(Ref->getFoundDecl());
     if (mCurrUses.empty())
       return true;
     auto ND = Ref->getFoundDecl();
@@ -288,9 +359,13 @@ private:
   const LangOptions &mLangOpts;
   ClangGlobalInfoPass::RawInfo &mRawInfo;
   UseLocationMap mUseLocs;
+  DefLocationMap mDefLocs;
 
   std::stack<TargetStmt> mCurrUses;
   std::stack<Stmt *> mParents;
+  SmallVector<NamedDecl *, 8> mDeclRefs;
+  bool mCollectDecls = false;
+  std::size_t mFirstDeclIdx = 0;
   SmallVector<Stmt *, 1> mClauses;
   SmallPtrSet<NamedDecl *, 16> mDeclsToPropagate;
   /// Innermost scope which contains declarations with attached 'propagate'
@@ -298,6 +373,48 @@ private:
   Stmt *mDeclPropagateScope = nullptr;
   bool mActivePropagate = false;
 };
+
+void rememberPossibleAssignment(Value &Def, Instruction &UI,
+    ArrayRef<DIMemoryLocation> DILocs, unsigned DWLang, const DominatorTree &DT,
+    DefUseVisitor &Visitor) {
+  auto *Inst = dyn_cast<Instruction>(&Def);
+  if (!Inst || !Inst->getDebugLoc())
+    return;
+  LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember possible assignment\n");
+  auto &DeclToReplace = Visitor.getDeclReplacement(Inst->getDebugLoc());
+  auto UseItr = DeclToReplace.get<UseLoc>().
+    try_emplace(UI.getDebugLoc().get()).first;
+  SmallPtrSet<Value *, 16> Ops;
+  SmallVector<Value *, 16> OpWorkList({ Inst });
+  while (!OpWorkList.empty()) {
+    if (auto *CurrOp = dyn_cast<User>(OpWorkList.pop_back_val()))
+      for (auto &Op : CurrOp->operands())
+        if (Ops.insert(Op).second)
+          OpWorkList.push_back(Op);
+  }
+  for (auto &DILoc : DILocs) {
+    SmallString<16> UseStr;
+    if (DILoc.isValid() && !DILoc.Template && DILoc.Loc)
+      if (unparseToString(DWLang, DILoc, UseStr)) {
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: may replace "
+                          << UseStr << "\n");
+        UseItr->get<Candidate>().push_back(std::move(UseStr));
+      }
+  }
+  for (auto *Op : Ops) {
+    SmallVector<DIMemoryLocation, 4> DIOps;
+    findMetadata(Op, makeArrayRef(&UI), DT, DIOps);
+    for (auto &DIOp : DIOps) {
+      SmallString<16> OpStr;
+      if (DIOp.isValid() && DIOp.Loc) {
+        UseItr->get<Available>().insert(DIOp.Loc);
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: assignment may use available"
+                             " location declared at ";
+                   DebugLoc(DIOp.Loc).dump(); dbgs() << "\n");
+      }
+    }
+  }
+}
 }
 
 bool ClangCopyPropagation::unparseReplacement(
@@ -336,7 +453,7 @@ bool ClangCopyPropagation::unparseReplacement(
     return false;
   if (!unparseToString(DWLang, *DIDef, DefStr))
     return false;
-  if (StringRef(UseStr.data()) == DefStr.data())
+  if (UseStr == DefStr)
     return false;
   return true;
 }
@@ -379,11 +496,13 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
         continue;
       SmallVector<DIMemoryLocation, 4> DILocs;
       auto DIDef = findMetadata(Def, makeArrayRef(UI), *mDT, DILocs);
-      if (DILocs.empty())
-        continue;
       LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember instruction " << *UI
                         << " as a root for replacement at ";
                  UI->getDebugLoc().print(dbgs()); dbgs() << "\n");
+
+      rememberPossibleAssignment(*Def, *UI, DILocs, *DWLang, *mDT, Visitor);
+      if (DILocs.empty())
+        continue;
       auto &Candidates = Visitor.getReplacement(UI->getDebugLoc());
       for (auto &DILoc : DILocs) {
         if (DILoc.Template)
