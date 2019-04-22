@@ -1,4 +1,4 @@
-//===- Passes.cpp ----- Create and Initialize APC Passes --------*- C++ -*-===//
+//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //

@@ -32,7 +32,7 @@ namespace llvm {
 class PassRegistry;
 class FunctionPass;
 
-/// Initialize all passes source-to-source transformation passes.
+/// Initialize all source-to-source transformation passes.
 void initializeClangTransform(PassRegistry &Registry);
 
 /// Initialize a pass to replace the occurrences of variables
