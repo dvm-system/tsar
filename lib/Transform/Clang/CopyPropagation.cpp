@@ -249,11 +249,11 @@ public:
     auto DefItr = mDefLocs.find_as(PLoc);
     if (DefItr == mDefLocs.end())
       return RecursiveASTVisitor::TraverseBinAssign(Expr);
-    auto Res = RecursiveASTVisitor::TraverseStmt(Expr->getLHS());
+    auto Res = TraverseStmt(Expr->getLHS());
     auto StashCollectDecls = mCollectDecls;
     mCollectDecls = true;
     auto DeclRefIdx = mDeclRefs.size();
-    Res |= RecursiveASTVisitor::TraverseStmt(Expr->getRHS());
+    Res |= TraverseStmt(Expr->getRHS());
     LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
                Expr->getRHS()->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
     auto DefSR = Expr->getRHS()->getSourceRange();
