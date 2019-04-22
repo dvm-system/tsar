@@ -272,7 +272,6 @@ public:
         auto PLoc = mSrcMgr.getPresumedLoc(
           mDeclRefs[DeclRefIdx]->getLocation());
         if (U.get<Available>().find_as(PLoc) == U.get<Available>().end()) {
-          mDeclRefs[DeclRefIdx]->getLocation().dump(mSrcMgr);
           IsAllDeclRefAvailable = false;
           // TODO (kaniandr@gmail.com): emit warning.
           break;
