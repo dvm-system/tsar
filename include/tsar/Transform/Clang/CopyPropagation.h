@@ -62,7 +62,7 @@ private:
   /// unparsing.
   bool unparseReplacement(const Value &Def, const tsar::DIMemoryLocation *DIDef,
     unsigned DWLang, const tsar::DIMemoryLocation &DIUse,
-    SmallVectorImpl<char> &DefStr, SmallVectorImpl<char> &UseStr);
+    SmallVectorImpl<char> &DefStr);
 
   DominatorTree *mDT = nullptr;
   tsar::TransformationContext *mTfmCtx = nullptr;

@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/CopyPropagation.h"
+#include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar_dbg_output.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
@@ -69,6 +70,7 @@ namespace {
 class ClangCopyPropagationInfo final : public PassGroupInfo {
   void addBeforePass(legacy::PassManager &PM) const override {
     PM.add(createSROAPass());
+    PM.add(createMemoryMatcherPass());
   }
 };
 }
@@ -80,6 +82,7 @@ INITIALIZE_PASS_IN_GROUP_INFO(ClangCopyPropagationInfo);
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangCopyPropagation, "clang-copy-propagation",
   "Copy Propagation (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
@@ -92,6 +95,7 @@ void ClangCopyPropagation::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<ClangDIMemoryMatcherPass>();
   AU.setPreservesAll();
 }
 
@@ -99,12 +103,12 @@ namespace {
 struct UseLoc {};
 struct DefLoc {};
 struct Available {};
-using Candidate = SmallString<16>;
+struct Candidate {};
 
 class DefUseVisitor : public RecursiveASTVisitor<DefUseVisitor> {
 public:
   /// Map from source string to possible a replacement string.
-  using ReplacementT = StringMap<SmallString<16>>;
+  using ReplacementT = DenseMap<Decl *, SmallString<16>>;
 
 private:
   /// Map from instruction which uses a memory location to a definition which
@@ -118,11 +122,11 @@ private:
   using LocationSet = DenseSet<DILocation *, DILocationMapInfo>;
 
   using DeclUseLocationMap = DenseMap<
-    DILocation *, std::tuple<SmallVector<Candidate, 4>, LocationSet>,
+    DILocation *, std::tuple<SmallVector<Decl *, 4>, LocationSet>,
     DILocationMapInfo,
     TaggedDenseMapTuple<
       bcl::tagged<DILocation *, UseLoc>,
-      bcl::tagged<SmallVector<Candidate, 4>, Candidate>,
+      bcl::tagged<SmallVector<Decl *, 4>, Candidate>,
       bcl::tagged<LocationSet, Available>>>;
 
   using DefLocationMap = DenseMap<
@@ -277,8 +281,8 @@ public:
       if (IsAllDeclRefAvailable) {
         auto &Candidates =
           mUseLocs.try_emplace(U.get<UseLoc>()).first->get<DefLoc>();
-        for (auto &Name : U.get<Candidate>()) {
-          auto Info = Candidates.try_emplace(Name, DefStr);
+        for (auto *D : U.get<Candidate>()) {
+          auto Info = Candidates.try_emplace(D, DefStr);
           if (!Info.second)
             Info.first->second = DefStr;
         }
@@ -315,17 +319,15 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
-    if (mCollectDecls)
-      mDeclRefs.push_back(Ref->getFoundDecl());
-    if (mCurrUses.empty())
-      return true;
     auto ND = Ref->getFoundDecl();
-    if (!ND->getDeclName().isIdentifier())
+    if (mCollectDecls)
+      mDeclRefs.push_back(ND);
+    if (mCurrUses.empty())
       return true;
     if (!mDeclsToPropagate.count(ND) && !mActivePropagate)
       return true;
     auto &Candidates = mCurrUses.top().PropagatedDefs;
-    auto ReplacementItr = Candidates.find(ND->getName());
+    auto ReplacementItr = Candidates.find(ND);
     if (ReplacementItr == Candidates.end())
        return true;
     LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: replace variable in [";
@@ -375,7 +377,9 @@ private:
 };
 
 void rememberPossibleAssignment(Value &Def, Instruction &UI,
-    ArrayRef<DIMemoryLocation> DILocs, unsigned DWLang, const DominatorTree &DT,
+    ArrayRef<DIMemoryLocation> DILocs,
+    const ClangDIMemoryMatcherPass::DIMemoryMatcher &DIMatcher,
+    unsigned DWLang, const DominatorTree &DT,
     DefUseVisitor &Visitor) {
   auto *Inst = dyn_cast<Instruction>(&Def);
   if (!Inst || !Inst->getDebugLoc())
@@ -393,13 +397,15 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
           OpWorkList.push_back(Op);
   }
   for (auto &DILoc : DILocs) {
-    SmallString<16> UseStr;
-    if (DILoc.isValid() && !DILoc.Template && DILoc.Loc)
-      if (unparseToString(DWLang, DILoc, UseStr)) {
-        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: may replace "
-                          << UseStr << "\n");
-        UseItr->get<Candidate>().push_back(std::move(UseStr));
-      }
+    if (!DILoc.isValid() || DILoc.Template || DILoc.Expr->getNumElements() != 0)
+      continue;
+    auto DIToDeclItr = DIMatcher.find<MD>(DILoc.Var);
+    if (DIToDeclItr == DIMatcher.end())
+      continue;
+    UseItr->get<Candidate>().push_back(DIToDeclItr->get<AST>());
+    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: may replace ";
+               printDILocationSource(DWLang, DILoc, dbgs());
+               dbgs() << "\n");
   }
   for (auto *Op : Ops) {
     SmallVector<DIMemoryLocation, 4> DIOps;
@@ -420,9 +426,7 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
 bool ClangCopyPropagation::unparseReplacement(
     const Value &Def, const DIMemoryLocation *DIDef,
     unsigned DWLang, const DIMemoryLocation &DIUse,
-    SmallVectorImpl<char> &DefStr, SmallVectorImpl<char> &UseStr) {
-  if (!unparseToString(DWLang, DIUse, UseStr))
-    return false;
+    SmallVectorImpl<char> &DefStr) {
   if (auto *C = dyn_cast<Constant>(&Def)) {
     if (auto *CF = dyn_cast<Function>(&Def)) {
       auto *D = mTfmCtx->getDeclForMangledName(CF->getName());
@@ -453,8 +457,6 @@ bool ClangCopyPropagation::unparseReplacement(
     return false;
   if (!unparseToString(DWLang, *DIDef, DefStr))
     return false;
-  if (UseStr == DefStr)
-    return false;
   return true;
 }
 
@@ -476,6 +478,7 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
   if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) != SrcMgr::C_User)
     return false;
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo());
   DenseSet<Value *> WorkSet;
@@ -500,26 +503,32 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
                         << " as a root for replacement at ";
                  UI->getDebugLoc().print(dbgs()); dbgs() << "\n");
 
-      rememberPossibleAssignment(*Def, *UI, DILocs, *DWLang, *mDT, Visitor);
+      rememberPossibleAssignment(
+        *Def, *UI, DILocs, DIMatcher, *DWLang, *mDT, Visitor);
       if (DILocs.empty())
         continue;
       auto &Candidates = Visitor.getReplacement(UI->getDebugLoc());
       for (auto &DILoc : DILocs) {
-        if (DILoc.Template)
-          continue;
-        SmallString<16> DefStr, UseStr;
-        if (!unparseReplacement(*Def, DIDef ? &*DIDef : nullptr,
-              *DWLang, DILoc, DefStr, UseStr))
-          continue;
-        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find source-level definition "
-                          << DefStr << " for " << *Def << " to  replace ";
-                   printDILocationSource(*DWLang, DILoc, dbgs());
-                   dbgs() << "\n");
         //TODO (kaniandr@gmail.com): it is possible to propagate not only
         // variables, for example, accesses to members of a structure can be
         // also propagated. However, it is necessary to update processing of
         // AST in DefUseVisitor for members.
-        Candidates.insert(std::make_pair(UseStr, DefStr));
+        if (DILoc.Template || DILoc.Expr->getNumElements() != 0)
+          continue;
+        auto DIToDeclItr = DIMatcher.find<MD>(DILoc.Var);
+        if (DIToDeclItr == DIMatcher.end())
+          continue;
+        SmallString<16> DefStr, UseStr;
+        if (!unparseReplacement(*Def, DIDef ? &*DIDef : nullptr,
+              *DWLang, DILoc, DefStr))
+          continue;
+        if (DefStr == DILoc.Var->getName())
+          continue;
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find source-level definition "
+                          << DefStr << " for " << *Def << " to replace ";
+                   printDILocationSource(*DWLang, DILoc, dbgs());
+                   dbgs() << "\n");
+        Candidates.insert(std::make_pair(DIToDeclItr->get<AST>(), DefStr));
       }
     }
   }
