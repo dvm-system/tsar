@@ -48,15 +48,17 @@ set_target_properties(TSARCore PROPERTIES
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 add_dependencies(TSARCore
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
+add_dependencies(TSARClangAnalysis
+  DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARClangTransform
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARCore TSARSupport TSARClangTransform
+  add_dependencies(TSARCore TSARSupport TSARClangAnalysis TSARClangTransform
     ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARCore TSARSupport TSARClangTransform
+target_link_libraries(TSARCore TSARSupport TSARClangAnalysis TSARClangTransform
   ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
   target_link_libraries(TSARCore APC::APCCore)
@@ -78,7 +80,7 @@ install(TARGETS tsar RUNTIME DESTINATION bin)
 
 if (TSAR_SERVER)
   set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp ClangMessages.cpp)
-  set_property(TARGET TSARCore TSARSupport TSARClangTransform
+  set_property(TARGET TSARCore TSARSupport TSARClangAnalysis TSARClangTransform
     PROPERTY POSITION_INDEPENDENT_CODE ON)
   add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
   add_dependencies(TSARServer TSARCore)
