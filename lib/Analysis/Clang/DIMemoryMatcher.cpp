@@ -106,11 +106,11 @@ public:
     }
     auto VarLoc = D->getLocation();
     if (auto *AI = findIRForLocation(VarLoc)) {
-      mMatcher->emplace(D, AI);
+      mMatcher->emplace(D->getCanonicalDecl(), AI);
       ++NumMatchMemory;
       --NumNonMatchDIMemory;
     } else {
-      mUnmatchedAST->insert(D);
+      mUnmatchedAST->insert(D->getCanonicalDecl());
       ++NumNonMatchASTMemory;
     }
     return true;
@@ -171,7 +171,7 @@ bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
   }
   for (auto *D : MemInfo.UnmatchedAST)
     if (mMatcher.find<AST>(D) == mMatcher.end()) {
-      mUnmatchedAST.insert(D);
+      mUnmatchedAST.insert(D->getCanonicalDecl());
       ++NumNonMatchASTMemory;
     }
   return false;

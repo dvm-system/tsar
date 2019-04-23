@@ -142,11 +142,11 @@ public:
     }
     auto VarLoc = D->getLocation();
     if (auto *AI = findIRForLocation(VarLoc)) {
-      mMatcher->emplace(D, AI);
+      mMatcher->emplace(D->getCanonicalDecl(), AI);
       ++NumMatchMemory;
       --NumNonMatchIRMemory;
     } else {
-      mUnmatchedAST->insert(D);
+      mUnmatchedAST->insert(D->getCanonicalDecl());
       ++NumNonMatchASTMemory;
     }
     return true;
@@ -207,7 +207,7 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
   for (auto &GlobalVar : M.globals()) {
     if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
       MatchInfo.Matcher.emplace(
-        static_cast<VarDecl *>(D), static_cast<Value*>(&GlobalVar));
+        cast<VarDecl>(D->getCanonicalDecl()), cast<Value>(&GlobalVar));
       ++NumMatchMemory;
     } else {
       ++NumNonMatchIRMemory;

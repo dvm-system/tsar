@@ -43,6 +43,8 @@ class DIVariable;
 
 /// A pass to match variable in a source high-level code and appropriate
 /// metadata-level representations of variables.
+///
+/// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
 class ClangDIMemoryMatcherPass : public FunctionPass, private bcl::Uncopyable {
 public:
   using DIMemoryMatcher = tsar::Bimap <
@@ -62,11 +64,14 @@ public:
   void releaseMemory() override { mMatcher.clear(); mUnmatchedAST.clear(); }
 
   /// Return memory matcher for the last analyzed function and global variables.
+  ///
+  /// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
   const DIMemoryMatcher & getMatcher() const noexcept { return mMatcher; }
 
   /// Return umatched variables in AST.
   ///
   /// For example, macro may prevent successful match.
+  /// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
   const MemoryASTSet & getUnmatchedAST() const noexcept { return mUnmatchedAST; }
 
 private:

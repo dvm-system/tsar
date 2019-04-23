@@ -30,6 +30,8 @@ class Value;
 
 namespace tsar {
 /// This provides access to results of a memory match analysis.
+///
+/// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
 struct MemoryMatchInfo : private bcl::Uncopyable {
   typedef tsar::Bimap<
     bcl::tagged<clang::VarDecl*, tsar::AST>,
