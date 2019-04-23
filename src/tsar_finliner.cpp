@@ -231,9 +231,9 @@ void ClangInliner::visitNamedDecl(clang::NamedDecl *ND) {
   // use the first redeclaration and store the same pointers for all
   // redeclarations.
   assert((!mGIE.findOutermostDecl(ND) ||
-    mGIE.findOutermostDecl(cast<NamedDecl>(*ND->redecls_begin()))) &&
+    mGIE.findOutermostDecl(cast<NamedDecl>(ND->getCanonicalDecl()))) &&
     "Seems that redeclaration is not presented in AST");
-  ND = cast<NamedDecl>(*ND->redecls_begin());
+  ND = cast<NamedDecl>(ND->getCanonicalDecl());
   if (auto OD = mGIE.findOutermostDecl(ND)) {
     LLVM_DEBUG(dbgs() << "[INLINE]: external declaration for '" <<
       mCurrentT->getFuncDecl()->getName() <<
@@ -922,7 +922,7 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
     };
     auto isInAvailableForwardDecl = [this](std::pair<FileID, unsigned> Bound,
         const GlobalInfoExtractor::OutermostDecl *FD) {
-      for (auto *Redecl : FD->getRoot()->redecls()) {
+      for (auto *Redecl : FD->getRoot()->getCanonicalDecl()->redecls()) {
         auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(Redecl->getLocEnd());
         while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
           FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
@@ -1093,7 +1093,7 @@ void ClangInliner::HandleTranslationUnit() {
             // We want to search dependence using a pointer to declaration. So,
             // use the first redeclaration and store the same pointers for all
             // redeclarations.
-            auto *ND = cast<NamedDecl>(*D.getDescendant()->redecls_begin());
+            auto *ND = cast<NamedDecl>(D.getDescendant()->getCanonicalDecl());
             auto *OD = mGIE.findOutermostDecl(ND);
             assert(OD && "Seems that redeclaration is not presented in AST");
             if (mCurrentT->getForwardDecls().count(OD))
