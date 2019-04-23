@@ -110,6 +110,14 @@ public:
   /// Map from source string to possible a replacement string.
   using ReplacementT = DenseMap<Decl *, SmallString<16>>;
 
+  using DeclUseLocationMap = DenseMap<
+    DILocation *, std::tuple<SmallVector<Decl *, 4>, SmallPtrSet<Decl *, 4>>,
+    DILocationMapInfo,
+    TaggedDenseMapTuple<
+      bcl::tagged<DILocation *, UseLoc>,
+      bcl::tagged<SmallVector<Decl *, 4>, Candidate>,
+      bcl::tagged<SmallPtrSet<Decl *, 4>, Available>>>;
+
 private:
   /// Map from instruction which uses a memory location to a definition which
   /// can be propagated to replace operand in this instruction.
@@ -119,16 +127,6 @@ private:
       bcl::tagged<DILocation *, UseLoc>,
       bcl::tagged<ReplacementT, DefLoc>>>;
 
-  using LocationSet = DenseSet<DILocation *, DILocationMapInfo>;
-
-  using DeclUseLocationMap = DenseMap<
-    DILocation *, std::tuple<SmallVector<Decl *, 4>, LocationSet>,
-    DILocationMapInfo,
-    TaggedDenseMapTuple<
-      bcl::tagged<DILocation *, UseLoc>,
-      bcl::tagged<SmallVector<Decl *, 4>, Candidate>,
-      bcl::tagged<LocationSet, Available>>>;
-
   using DefLocationMap = DenseMap<
     DILocation *, DeclUseLocationMap,
     DILocationMapInfo,
@@ -136,23 +134,17 @@ private:
       bcl::tagged<DILocation *, DefLoc>,
       bcl::tagged<DeclUseLocationMap, UseLoc>>>;
 
-  /// A statement in AST which correspond to an instruction which contains
-  /// uses that can be replaced.
-  struct TargetStmt {
-    /// Definitions which can be used for replacement.
-    UseLocationMap::mapped_type &PropagatedDefs;
-    /// Root which corresponds to a some key in a UseLocationMap.
-    Stmt *Root;
-  };
-
 public:
   DefUseVisitor(TransformationContext &TfmCtx,
       ClangGlobalInfoPass::RawInfo &RawInfo) :
+    mTfmCtx(TfmCtx),
     mRawInfo(RawInfo),
     mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()),
     mSrcMgr(TfmCtx.getRewriter().getSourceMgr()),
     mLangOpts(TfmCtx.getRewriter().getLangOpts()) {}
+
+  TransformationContext & getTfmContext() noexcept { return mTfmCtx; }
 
   /// Return set of replacements in subtrees of a tree which represents
   /// expression at a specified location (create empty set if it does not
@@ -199,17 +191,10 @@ public:
         return true;
       }
     }
-    // Do not replace variables in increment/decrement because this operators
-    // change an accessed variable:
-    // `X = I; ++X; return I;` is not equivalent `X = I; ++I; return I`
-    // TODO (kaniandr@gmail.com): collect DeclRef in increment/decrement.
-    if (auto *UOp = dyn_cast<UnaryOperator>(S))
-      if (UOp->isIncrementDecrementOp())
-        return true;
+    excludeIfAssignment(S);
     auto *StashPropagateScope = mDeclPropagateScope;
     if (mDeclsToPropagate.empty())
       mDeclPropagateScope = S;
-    mParents.push(S);
     auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getLocStart();
     bool Res = false;
     if (Loc.isValid() && Loc.isFileID()) {
@@ -219,16 +204,15 @@ public:
         LLVM_DEBUG(
             dbgs() << "[COPY PROPAGATION]: traverse propagation target at ";
             Loc.dump(mSrcMgr); dbgs() << "\n");
-        mCurrUses.push(TargetStmt{ UseItr->get<DefLoc>(), S });
+        mReplacement.push(&UseItr->get<DefLoc>());
         Res = RecursiveASTVisitor::TraverseStmt(S);
-        mCurrUses.pop();
+        mReplacement.pop();
       } else {
         Res = RecursiveASTVisitor::TraverseStmt(S);
       }
     } else {
       Res = RecursiveASTVisitor::TraverseStmt(S);
     }
-    mParents.pop();
     mDeclPropagateScope = StashPropagateScope;
     return Res;
   }
@@ -254,26 +238,24 @@ public:
     if (DefItr == mDefLocs.end())
       return RecursiveASTVisitor::TraverseBinAssign(Expr);
     auto Res = TraverseStmt(Expr->getLHS());
-    auto StashCollectDecls = mCollectDecls;
-    mCollectDecls = true;
-    auto DeclRefIdx = mDeclRefs.size();
+    bool StashCollectDecls;
+    auto DeclRefIdx = startCollectDeclRef(StashCollectDecls);
     Res |= TraverseStmt(Expr->getRHS());
     LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
                Expr->getRHS()->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
     auto DefSR = Expr->getRHS()->getSourceRange();
-    auto DefStr = Lexer::getSourceText(
-      CharSourceRange::getTokenRange(DefSR), mSrcMgr, mLangOpts);
+    auto DefStr = ("(" + Lexer::getSourceText(
+      CharSourceRange::getTokenRange(DefSR), mSrcMgr, mLangOpts) + ")").str();
     bool IsAllDeclRefAvailable = true;
+    SmallPtrSet<Decl *, 8> RHSDecls;
     for (auto &U : DefItr->get<UseLoc>()) {
       for (auto IdxE = mDeclRefs.size(); DeclRefIdx < IdxE; ++DeclRefIdx) {
-        auto *VD = dyn_cast<VarDecl>(mDeclRefs[DeclRefIdx]);
-        if (!VD || isa<clang::ArrayType>(VD->getType()))
-          continue;
-        auto PLoc = mSrcMgr.getPresumedLoc(
-          mDeclRefs[DeclRefIdx]->getLocation());
-        if (U.get<Available>().find_as(PLoc) == U.get<Available>().end()) {
+        auto *D = mDeclRefs[DeclRefIdx]->getCanonicalDecl();
+        RHSDecls.insert(D);
+        if (!U.get<Available>().count(D)) {
           IsAllDeclRefAvailable = false;
           // TODO (kaniandr@gmail.com): emit warning.
+          // TODO (kaniandr@gmail.com): emit warning in case of functions
           break;
         }
       }
@@ -281,13 +263,17 @@ public:
         auto &Candidates =
           mUseLocs.try_emplace(U.get<UseLoc>()).first->get<DefLoc>();
         for (auto *D : U.get<Candidate>()) {
+          // TODO (kaniandr@gmail.com): emit warning, use of variable in
+          // LHS and RHS of assignment.
+          if (RHSDecls.count(D))
+            continue;
           auto Info = Candidates.try_emplace(D, DefStr);
           if (!Info.second)
             Info.first->second = DefStr;
         }
       }
     }
-    mCollectDecls = StashCollectDecls;
+    restoreCollectDeclRef(StashCollectDecls);
     return Res;
   }
 
@@ -318,16 +304,14 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
-    auto ND = Ref->getFoundDecl();
-    if (mCollectDecls)
-      mDeclRefs.push_back(ND);
-    if (mCurrUses.empty())
+    storeDeclRef(Ref);
+    if (mReplacement.empty() || mNotPropagate.count(Ref))
       return true;
+    auto ND = Ref->getFoundDecl();
     if (!mDeclsToPropagate.count(ND) && !mActivePropagate)
       return true;
-    auto &Candidates = mCurrUses.top().PropagatedDefs;
-    auto ReplacementItr = Candidates.find(ND);
-    if (ReplacementItr == Candidates.end())
+    auto ReplacementItr = mReplacement.top()->find(ND);
+    if (ReplacementItr == mReplacement.top()->end())
        return true;
     LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: replace variable in [";
                  Ref->getLocStart().dump(mSrcMgr); dbgs() << ", ";
@@ -354,6 +338,62 @@ private:
     return HasMacro;
   }
 
+  /// Set flag to collect declaration references, return number of already
+  /// collected declarations.
+  std::size_t startCollectDeclRef(bool &StashCollectDecls) {
+    StashCollectDecls = mCollectDecls;
+    mCollectDecls = true;
+    return mDeclRefs.size();
+  }
+
+  /// Restore flag from a stashed value and clear list of collected declarations
+  /// if stashed value is 'false'.
+  void restoreCollectDeclRef(bool StashCollectDecls) {
+    mCollectDecls = StashCollectDecls;
+    if (!mCollectDecls)
+      mDeclRefs.clear();
+  }
+
+  /// Remember referenced declaration.
+  void storeDeclRef(DeclRefExpr *Expr) {
+    if (mCollectDecls)
+      mDeclRefs.push_back(Expr->getFoundDecl());
+  }
+
+  /// Disable propagation for declaration references which obtain new value
+  /// in a simple assignment-like statements.
+  ///
+  /// Do not replace variables in increment/decrement because this operators
+  /// change an accessed variable:
+  ///`X = I; ++X; return I;` is not equivalent `X = I; ++I; return I`
+  /// However, if binary operators or array subscripts expressions is used in
+  /// left-hand side of assignment to compute reference to the assigned memory,
+  /// substitution is still possible.
+  void excludeIfAssignment(Stmt *S) {
+    if ((isa<clang::BinaryOperator>(S) &&
+         cast<clang::BinaryOperator>(S)->isAssignmentOp()) ||
+        (isa<clang::UnaryOperator>(S)) &&
+         cast<clang::UnaryOperator>(S)->isIncrementDecrementOp()) {
+      DeclRefExpr *AssignDeclRef = nullptr;
+      Stmt *Curr = S;
+      for (auto Itr = Curr->child_begin(); Itr != Curr->child_end();
+           Curr = *Itr, Itr = Curr->child_begin()) {
+        if (auto *Ref = dyn_cast<DeclRefExpr>(*Itr))
+          AssignDeclRef = Ref;
+        else if (isa<clang::BinaryOperator>(*Itr) ||
+                 isa<ArraySubscriptExpr>(*Itr) ||
+                 isa<CallExpr>(*Itr))
+          return;
+      }
+      assert(AssignDeclRef && "Target of assignment must not be null!");
+      mNotPropagate.insert(AssignDeclRef);
+      LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: disable substitution in "
+                           "left-hand side of assignment at ";
+                 AssignDeclRef->getBeginLoc().dump(mSrcMgr));
+    }
+  }
+
+  TransformationContext &mTfmCtx;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
@@ -362,19 +402,100 @@ private:
   UseLocationMap mUseLocs;
   DefLocationMap mDefLocs;
 
-  std::stack<TargetStmt> mCurrUses;
-  std::stack<Stmt *> mParents;
+  /// Top of the stack contains definitions which can be used to replace
+  /// references in a currently processed statement.
+  std::stack<ReplacementT *> mReplacement;
+
+  /// Already visited references to declarations.
   SmallVector<NamedDecl *, 8> mDeclRefs;
+  /// If 'true' declarations from DeclRefExpr should be stored in mDeclRefs.
   bool mCollectDecls = false;
-  std::size_t mFirstDeclIdx = 0;
+
+  /// References which should not be propagated.
+  DenseSet<DeclRefExpr *> mNotPropagate;
+
   SmallVector<Stmt *, 1> mClauses;
+
+  /// Declarations which is marked wit 'propagate' clause.
   SmallPtrSet<NamedDecl *, 16> mDeclsToPropagate;
+
   /// Innermost scope which contains declarations with attached 'propagate'
   /// clause.
   Stmt *mDeclPropagateScope = nullptr;
   bool mActivePropagate = false;
 };
 
+/// Find declarations which is used in `DI` and which is available in `UI`.
+///
+/// \post Store result in `UseItr` container. Note, that if there is an
+/// instruction which prevents substitution of DI into UI list of available
+/// declarations are cleaned.
+void findAvailableDecls(Instruction &DI, Instruction &UI,
+    const ClangDIMemoryMatcherPass::DIMemoryMatcher &DIMatcher,
+    unsigned DWLang, const DominatorTree &DT, TransformationContext &TfmCtx,
+    DefUseVisitor::DeclUseLocationMap::iterator &UseItr) {
+  // Add Def instruction to list of operands because if it is a call
+  // we should check that it has no side effect.
+  SmallPtrSet<Value *, 16> Ops({ &DI});
+  SmallVector<Value *, 16> OpWorkList({ &DI});
+  while (!OpWorkList.empty()) {
+    if (auto *CurrOp = dyn_cast<User>(OpWorkList.pop_back_val()))
+      for (auto &Op : CurrOp->operands())
+        if (Ops.insert(Op).second)
+          OpWorkList.push_back(Op);
+  }
+  for (auto *Op : Ops) {
+    ImmutableCallSite CS(Op);
+    if ((CS && !CS.onlyReadsMemory() && !CS.doesNotReadMemory()) ||
+        (CS && !CS.doesNotThrow())) {
+      LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: disable due to "; Op->dump());
+      // Call may have side effect and prevent substitution.
+      UseItr->get<Available>().clear();
+      break;
+    }
+    if (auto *F = dyn_cast<Function>(Op)) {
+      auto *FD = TfmCtx.getDeclForMangledName(F->getName());
+      if (FD) {
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: assignment may use available"
+                             " function '" << F->getName() << "'\n");
+        UseItr->get<Available>().insert(FD->getCanonicalDecl());
+      }
+      continue;
+    }
+    SmallVector<DIMemoryLocation, 4> DIOps;
+    if (auto *GV = dyn_cast<GlobalVariable>(Op)) {
+      // If type is pointer then a global variable may be reassigned before
+      // propagation point (user instruction).
+      if (!GV->getValueType()->isPointerTy())
+        findGlobalMetadata(GV, DIOps);
+    } else {
+      findMetadata(Op, makeArrayRef(&UI), DT, DIOps);
+    }
+    for (auto &DIOp : DIOps) {
+      SmallString<16> OpStr;
+      if (DIOp.isValid()) {
+        auto DIToDeclItr = DIMatcher.find<MD>(DIOp.Var);
+        if (DIToDeclItr == DIMatcher.end())
+          continue;
+        UseItr->get<Available>().insert(DIToDeclItr->get<AST>());
+        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: assignment may use available"
+                             " location ";
+                   printDILocationSource(DWLang, DIOp, dbgs());
+                   dbgs() << " declared at line " << DIOp.Var->getLine()
+                          << " in " << DIOp.Var->getFilename() << "\n");
+      }
+    }
+  }
+}
+
+/// If `Def` may be an assignment in a source code then check is it possible
+/// to perform substitution.
+///
+/// (1) This function calculate candidates which can be replaced with this
+/// assignment.
+/// (2) This function determine declarations which can be used in a substitution
+/// point (available variable).
+/// (3) Determined values are stored in a `Visitor` for further processing.
 void rememberPossibleAssignment(Value &Def, Instruction &UI,
     ArrayRef<DIMemoryLocation> DILocs,
     const ClangDIMemoryMatcherPass::DIMemoryMatcher &DIMatcher,
@@ -387,14 +508,6 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
   auto &DeclToReplace = Visitor.getDeclReplacement(Inst->getDebugLoc());
   auto UseItr = DeclToReplace.get<UseLoc>().
     try_emplace(UI.getDebugLoc().get()).first;
-  SmallPtrSet<Value *, 16> Ops;
-  SmallVector<Value *, 16> OpWorkList({ Inst });
-  while (!OpWorkList.empty()) {
-    if (auto *CurrOp = dyn_cast<User>(OpWorkList.pop_back_val()))
-      for (auto &Op : CurrOp->operands())
-        if (Ops.insert(Op).second)
-          OpWorkList.push_back(Op);
-  }
   for (auto &DILoc : DILocs) {
     if (!DILoc.isValid() || DILoc.Template || DILoc.Expr->getNumElements() != 0)
       continue;
@@ -406,19 +519,10 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
                printDILocationSource(DWLang, DILoc, dbgs());
                dbgs() << "\n");
   }
-  for (auto *Op : Ops) {
-    SmallVector<DIMemoryLocation, 4> DIOps;
-    findMetadata(Op, makeArrayRef(&UI), DT, DIOps);
-    for (auto &DIOp : DIOps) {
-      SmallString<16> OpStr;
-      if (DIOp.isValid() && DIOp.Loc) {
-        UseItr->get<Available>().insert(DIOp.Loc);
-        LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: assignment may use available"
-                             " location declared at ";
-                   DebugLoc(DIOp.Loc).dump(); dbgs() << "\n");
-      }
-    }
-  }
+  if (UseItr->get<Candidate>().empty())
+    return;
+  findAvailableDecls(*Inst, UI,
+    DIMatcher, DWLang, DT, Visitor.getTfmContext(), UseItr);
 }
 }
 
@@ -481,6 +585,7 @@ bool ClangCopyPropagation::runOnFunction(Function &F) {
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo());
   DenseSet<Value *> WorkSet;
+  // Search for substitution candidates.
   for (auto &I : instructions(F)) {
     auto DbgVal = dyn_cast<DbgValueInst>(&I);
     if (!DbgVal)
