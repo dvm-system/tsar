@@ -226,6 +226,11 @@ void TransformationQueryManager::run(llvm::Module *M,
   Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createInferFunctionAttrsLegacyPass());
+  Passes.add(createPostOrderFunctionAttrsLegacyPass());
+  Passes.add(createReversePostOrderFunctionAttrsPass());
+  Passes.add(createRPOFunctionAttrsAnalysis());
+  Passes.add(createPOFunctionAttrsAnalysis());
   if (!mTfmPass->getNormalCtor()) {
     M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
     return;
