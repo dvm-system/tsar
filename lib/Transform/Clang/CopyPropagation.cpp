@@ -305,40 +305,7 @@ public:
     bool StashCollectDecls;
     auto DeclRefIdx = startCollectDeclRef(StashCollectDecls);
     Res &= TraverseStmt(Expr->getRHS());
-    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
-               Expr->getRHS()->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
-    auto DefSR = Expr->getRHS()->getSourceRange();
-    SmallString<16> DefStr;
-    ("(" + Lexer::getSourceText(
-      CharSourceRange::getTokenRange(DefSR), mSrcMgr,mLangOpts) + ")")
-        .toStringRef(DefStr);
-    bool IsAllDeclRefAvailable = true;
-    SmallPtrSet<NamedDecl *, 8> RHSDecls;
-    for (auto &U : DefItr->get<Usage>()) {
-      for (auto IdxE = mDeclRefs.size(); DeclRefIdx < IdxE; ++DeclRefIdx) {
-        auto *D = cast<NamedDecl>(mDeclRefs[DeclRefIdx]->getCanonicalDecl());
-        RHSDecls.insert(D);
-        if (!U.get<Available>().count(D)) {
-          IsAllDeclRefAvailable = false;
-          // TODO (kaniandr@gmail.com): emit warning.
-          // TODO (kaniandr@gmail.com): emit warning in case of functions
-          break;
-        }
-      }
-      if (IsAllDeclRefAvailable) {
-        auto &Candidates =
-          mUseLocs.try_emplace(U.get<Usage>()).first->get<Definition>();
-        for (auto *D : U.get<Candidate>()) {
-          // TODO (kaniandr@gmail.com): emit warning, use of variable in
-          // LHS and RHS of assignment.
-          if (RHSDecls.count(D))
-            continue;
-          auto Info = Candidates.try_emplace(D);
-          Info.first->get<Definition>() = DefStr;
-          Info.first->get<Access>().assign(RHSDecls.begin(), RHSDecls.end());
-        }
-      }
-    }
+    checkAssignmentRHS(Expr->getRHS(), *DefItr, DeclRefIdx);
     restoreCollectDeclRef(StashCollectDecls);
     return Res;
   }
@@ -381,6 +348,22 @@ public:
     assert(!mDeclsInScope.empty() && "At least one scope must exist!");
     mDeclsInScope.top().push_back(Pair.first->second);
     return true;
+  }
+
+  bool TraverseVarDecl(VarDecl *VD) {
+    if (isa<ParmVarDecl>(VD) || !VD->hasInit())
+      return RecursiveASTVisitor::TraverseVarDecl(VD);
+    auto *InitExpr = VD->getInit();
+    auto PLoc = mSrcMgr.getPresumedLoc(InitExpr->getExprLoc());
+    auto DefItr = mDefLocs.find_as(PLoc);
+    if (DefItr == mDefLocs.end())
+      return RecursiveASTVisitor::TraverseVarDecl(VD);
+    bool StashCollectDecls;
+    auto DeclRefIdx = startCollectDeclRef(StashCollectDecls);
+    auto Res = TraverseStmt(InitExpr);
+    checkAssignmentRHS(InitExpr, *DefItr, DeclRefIdx);
+    restoreCollectDeclRef(StashCollectDecls);
+    return Res && VisitDecl(VD);
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
@@ -484,6 +467,55 @@ private:
       LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: disable substitution in "
                            "left-hand side of assignment at ";
                  AssignDeclRef->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
+    }
+  }
+
+  /// Determine `RHS`-based replacement to substitute use in DefToUse pair.
+  ///
+  /// \param [in] RHS Right-hand side of assignment or variable initialization.
+  /// \param [in] DefToUse Pair of definition and usage which is a substitution
+  /// point.
+  /// \param [in] DeclRefIdx First declaration in mDeclRefs which is used in RHS.
+  ///
+  /// \pre RHS is located at DefToUse->get<Definition>() source code location.
+  /// \post If all declarations accessed in RHS are available at substitution
+  /// point then update mUseLocs map and set RHS as a possible replacement for
+  /// candidates mentioned in DefToUse pair.
+  void checkAssignmentRHS(Expr *RHS, DefLocationMap::value_type &DefToUse,
+      std::size_t DeclRefIdx) {
+    LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
+               RHS->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
+    auto DefSR = RHS->getSourceRange();
+    SmallString<16> DefStr;
+    ("(" + Lexer::getSourceText(
+      CharSourceRange::getTokenRange(DefSR), mSrcMgr,mLangOpts) + ")")
+        .toStringRef(DefStr);
+    bool IsAllDeclRefAvailable = true;
+    SmallPtrSet<NamedDecl *, 8> RHSDecls;
+    for (auto &U : DefToUse.get<Usage>()) {
+      for (auto IdxE = mDeclRefs.size(); DeclRefIdx < IdxE; ++DeclRefIdx) {
+        auto *D = cast<NamedDecl>(mDeclRefs[DeclRefIdx]->getCanonicalDecl());
+        RHSDecls.insert(D);
+        if (!U.get<Available>().count(D)) {
+          IsAllDeclRefAvailable = false;
+          // TODO (kaniandr@gmail.com): emit warning.
+          // TODO (kaniandr@gmail.com): emit warning in case of functions
+          break;
+        }
+      }
+      if (IsAllDeclRefAvailable) {
+        auto &Candidates =
+          mUseLocs.try_emplace(U.get<Usage>()).first->get<Definition>();
+        for (auto *D : U.get<Candidate>()) {
+          // TODO (kaniandr@gmail.com): emit warning, use of variable in
+          // LHS and RHS of assignment.
+          if (RHSDecls.count(D))
+            continue;
+          auto Info = Candidates.try_emplace(D);
+          Info.first->get<Definition>() = DefStr;
+          Info.first->get<Access>().assign(RHSDecls.begin(), RHSDecls.end());
+        }
+      }
     }
   }
 
@@ -631,7 +663,8 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
   auto *Inst = dyn_cast<Instruction>(&Def);
   if (!Inst || !Inst->getDebugLoc())
     return;
-  LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember possible assignment\n");
+  LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: remember possible assignment at ";
+             Inst->getDebugLoc().dump(); dbgs() << "\n");
   auto &DeclToReplace = Visitor.getDeclReplacement(Inst->getDebugLoc());
   auto UseItr = DeclToReplace.get<Usage>().
     try_emplace(UI.getDebugLoc().get()).first;
