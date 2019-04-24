@@ -304,7 +304,7 @@ public:
     auto Res = TraverseStmt(Expr->getLHS());
     bool StashCollectDecls;
     auto DeclRefIdx = startCollectDeclRef(StashCollectDecls);
-    Res |= TraverseStmt(Expr->getRHS());
+    Res &= TraverseStmt(Expr->getRHS());
     LLVM_DEBUG(dbgs() << "[COPY PROPAGATION]: find definition at ";
                Expr->getRHS()->getExprLoc().dump(mSrcMgr); dbgs() << "\n");
     auto DefSR = Expr->getRHS()->getSourceRange();
