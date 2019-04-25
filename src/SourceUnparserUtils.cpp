@@ -22,7 +22,7 @@ using namespace llvm;
 
 namespace tsar {
 bool unparseToString(unsigned DWLang,
-    const DIMemoryLocation &Loc, llvm::SmallVectorImpl<char> &S) {
+    const DIMemoryLocation &Loc, llvm::SmallVectorImpl<char> &S, bool IsMinimal) {
   switch (DWLang) {
   case dwarf::DW_LANG_C:
   case dwarf::DW_LANG_C89:
@@ -33,7 +33,7 @@ bool unparseToString(unsigned DWLang,
   case dwarf::DW_LANG_C_plus_plus_11:
   case dwarf::DW_LANG_C_plus_plus_14:
   {
-    CSourceUnparser U(Loc);
+    CSourceUnparser U(Loc, IsMinimal);
     return U.toString(S);
   }
   case dwarf::DW_LANG_Fortran77:
@@ -46,7 +46,7 @@ bool unparseToString(unsigned DWLang,
 }
 
 bool unparsePrint(unsigned DWLang,
-    const DIMemoryLocation &Loc, llvm::raw_ostream &OS) {
+    const DIMemoryLocation &Loc, llvm::raw_ostream &OS, bool IsMinimal) {
   switch (DWLang) {
   case dwarf::DW_LANG_C:
   case dwarf::DW_LANG_C89:
@@ -57,7 +57,7 @@ bool unparsePrint(unsigned DWLang,
   case dwarf::DW_LANG_C_plus_plus_11:
   case dwarf::DW_LANG_C_plus_plus_14:
   {
-    CSourceUnparser U(Loc);
+    CSourceUnparser U(Loc, IsMinimal);
     return U.print(OS);
   }
   case dwarf::DW_LANG_Fortran77:
@@ -69,7 +69,7 @@ bool unparsePrint(unsigned DWLang,
   return false;
 }
 
-bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
+bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc, bool IsMinimal) {
   switch (DWLang) {
   case dwarf::DW_LANG_C:
   case dwarf::DW_LANG_C89:
@@ -80,7 +80,7 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
   case dwarf::DW_LANG_C_plus_plus_11:
   case dwarf::DW_LANG_C_plus_plus_14:
   {
-    CSourceUnparser U(Loc);
+    CSourceUnparser U(Loc, IsMinimal);
     return U.dump();
   }
   case dwarf::DW_LANG_Fortran77:
@@ -93,7 +93,7 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc) {
 }
 
 bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
-    llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S) {
+    llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S, bool IsMinimal) {
   auto Callee = CS.getCalledValue()->stripPointerCasts();
   if (auto F = dyn_cast<Function>(Callee)) {
     S.assign(F->getName().begin(), F->getName().end());
@@ -103,7 +103,7 @@ bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
     M.getContext(), M.getDataLayout(), DT);
   if (DIM && DIM->isValid())
     if (auto DWLang = getLanguage(*DIM->Var))
-      return unparseToString(*DWLang, *DIM, S);
+      return unparseToString(*DWLang, *DIM, S, IsMinimal);
    return false;
 }
 }

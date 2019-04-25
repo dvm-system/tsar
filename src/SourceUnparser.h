@@ -71,8 +71,13 @@ public:
   /// \param [in] Loc Unparsed expression.
   /// \param [in] IsForwardDim Direction of dimension of arrays in memory.
   /// For example, `true` in case of C and `false` in case of Fortran.
-  SourceUnparserImp(const DIMemoryLocation &Loc, bool IsForwardDim) noexcept :
-    mLoc(Loc), mIsForwardDim(IsForwardDim) {
+  /// \param [in] IsMinimal If 'true', stop unparsing as soon as pointer to the
+  /// beginning of memory location is unparsed and size of pointee type is equal
+  /// to a size of location. For example, minimal unparsing of `A[0]` (if type
+  /// is `int A[1]`) leads to `A`.
+  SourceUnparserImp(const DIMemoryLocation &Loc, bool IsForwardDim,
+      bool IsMinimal = true) noexcept :
+    mLoc(Loc), mIsForwardDim(IsForwardDim), mIsMinimal(IsMinimal) {
     assert(Loc.isValid() && "Invalid memory location!");
   }
 
@@ -164,6 +169,7 @@ private:
   void addUnknownSubscripts(unsigned Dims);
 
   DIMemoryLocation mLoc;
+  bool mIsMinimal;
   bool mIsForwardDim;
   TokenList mReversePrefix;
   TokenList mSuffix;
@@ -200,8 +206,13 @@ public:
   /// \param [in] Loc Unparsed expression.
   /// \param [in] IsForwardDim Direction of dimension of arrays in memory.
   /// For example, `true` in case of C and `false` in case of Fortran.
-  SourceUnparser(const DIMemoryLocation &Loc, bool IsForwardDim) noexcept :
-    SourceUnparserImp(Loc, IsForwardDim) {}
+  /// \param [in] IsMinimal If 'true', stop unparsing as soon as pointer to the
+  /// beginning of memory location is unparsed and size of pointee type is equal
+  /// to a size of location. For example, minimal unparsing of `A[0]` (if type
+  /// is `int A[1]`) leads to `A`.
+  SourceUnparser(const DIMemoryLocation &Loc, bool IsForwardDim,
+      bool IsMinimal = true) noexcept :
+    SourceUnparserImp(Loc, IsForwardDim, IsMinimal) {}
 
   /// Unparses the expression and appends result to a specified string,
   /// returns true on success.

@@ -27,20 +27,24 @@ struct DIMemoryLocation;
 /// Unparses the expression (in a specified language DWLang) and appends result
 /// to a specified string, returns true on success.
 bool unparseToString(unsigned DWLang,
-  const DIMemoryLocation &Loc, llvm::SmallVectorImpl<char> &S);
+  const DIMemoryLocation &Loc, llvm::SmallVectorImpl<char> &S,
+  bool IsMinimal = true);
 
 /// Unparses the expression (in a specified language DWLang) and prints result
 /// to a specified stream returns true on success.
 bool unparsePrint(unsigned DWLang,
-  const DIMemoryLocation &Loc, llvm::raw_ostream &OS);
+  const DIMemoryLocation &Loc, llvm::raw_ostream &OS,
+  bool IsMinimal = true);
 
 /// Unparses the expression (in a specified language DWLang) and prints result
 /// to the debug stream returns true on success.
-bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc);
+bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc,
+  bool IsMinimal = true);
 
 /// Unparses callee and appends result to a specified string,
 /// returns true on success.
 bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
-  llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S);
+  llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S,
+  bool IsMinimal = true);
 }
 #endif//TSAR_SOURCE_UNPARSER_UTILS_H

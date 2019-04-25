@@ -19,8 +19,8 @@ namespace tsar {
 class CSourceUnparser : public SourceUnparser<CSourceUnparser> {
 public:
   ///Creates unparser for a specified expression.
-  explicit CSourceUnparser(const DIMemoryLocation &Loc) noexcept :
-    SourceUnparser(Loc, true) {}
+  explicit CSourceUnparser(const DIMemoryLocation &Loc, bool Minimal) noexcept :
+    SourceUnparser(Loc, true, Minimal) {}
 
 private:
   friend SourceUnparser<CSourceUnparser>;

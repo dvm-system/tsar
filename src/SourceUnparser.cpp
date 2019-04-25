@@ -228,7 +228,8 @@ bool SourceUnparserImp::unparse() {
         !unparseDeref())
       return false;
   }
-  if (!mCurrType || Offsets.back() != 0 || mLoc.getSize() < getSize(mCurrType))
+  if (!mIsMinimal || !mCurrType || Offsets.back() != 0 ||
+      mLoc.getSize() < getSize(mCurrType))
     if (!unparse(Offsets.back(), SignMask.test(Offsets.size() - 1)))
       return false;
   if (mIsAddress) {
