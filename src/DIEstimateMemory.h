@@ -63,16 +63,6 @@ class DIMemoryEnvironment;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
-/// \brief Checks that two fragments of a variable may overlap.
-///
-/// Two fragments of zero size may not overlap. Note that there is no reason
-/// to invoke this functions for fragments of different variables. Complex
-/// expressions which contains elements other then dwarf::DW_OP_LLVM_fragment
-/// does not analyzed accurately. In this case overlapping is conservatively
-/// assumed.
-bool mayAliasFragments(
-  const llvm::DIExpression &LHS, const llvm::DIExpression &RHS);
-
 /// Finds alias nodes which contains memory locations which is bound
 /// to a specified debug memory location.
 void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,

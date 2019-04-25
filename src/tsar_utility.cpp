@@ -74,7 +74,8 @@ findDomDbgValues(const Value *V, const DominatorTree &DT,
 /// The second condition is that there is no llvm.dbg.values after this
 /// intrinsic in the basic block which is associated with `Loc` and `V`.
 SmallPtrSet<BasicBlock *, 16>
-findAliasBlocks(const Value * V, const DIMemoryLocation Loc) {
+findAliasBlocks(const Value * V, const DIMemoryLocation &Loc) {
+  assert(Loc.isValid() && "Location must be valid!");
   SmallPtrSet<BasicBlock *, 16> Aliases;
   auto *MDV = MetadataAsValue::getIfExists(
     Loc.Var->getContext(), const_cast<DIVariable *>(Loc.Var));
@@ -83,6 +84,9 @@ findAliasBlocks(const Value * V, const DIMemoryLocation Loc) {
   for (User *U : MDV->users()) {
     DbgValueInst *DVI = dyn_cast<DbgValueInst>(U);
     if (!DVI)
+      continue;
+    assert(DVI->getExpression() && "Expression must not be null!");
+    if (!mayAliasFragments(*DVI->getExpression(), *Loc.Expr))
       continue;
     auto I = DVI->getIterator(), E = DVI->getParent()->end();
     for (; I != E; ++I) {
@@ -379,4 +383,24 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
   }
   return findMetadata(V, Users, *DT, DILocs);
 }
+
+bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
+  if (LHS.getNumElements() != 3 || RHS.getNumElements() != 3)
+    return true;
+  auto LHSFragment = LHS.getFragmentInfo();
+  auto RHSFragment = RHS.getFragmentInfo();
+  if (!LHSFragment || !RHSFragment)
+    return true;
+  if (LHSFragment->SizeInBits == 0 || RHSFragment->SizeInBits == 0)
+    return false;
+  return ((LHSFragment->OffsetInBits == RHSFragment->OffsetInBits) ||
+          (LHSFragment->OffsetInBits < RHSFragment->OffsetInBits &&
+          LHSFragment->OffsetInBits + LHSFragment->SizeInBits >
+            RHSFragment->OffsetInBits) ||
+          (RHSFragment->OffsetInBits < LHSFragment->OffsetInBits &&
+          RHSFragment->OffsetInBits + RHSFragment->SizeInBits >
+            LHSFragment->OffsetInBits));
+}
+
+
 }

@@ -43,24 +43,6 @@ STATISTIC(NumUnknownMemory, "Number of unknown memory created");
 STATISTIC(NumCorruptedMemory, "Number of corrupted memory created");
 
 namespace tsar {
-bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
-  if (LHS.getNumElements() != 3 || RHS.getNumElements() != 3)
-    return true;
-  auto LHSFragment = LHS.getFragmentInfo();
-  auto RHSFragment = RHS.getFragmentInfo();
-  if (!LHSFragment || !RHSFragment)
-    return true;
-  if (LHSFragment->SizeInBits == 0 || RHSFragment->SizeInBits == 0)
-    return false;
-  return ((LHSFragment->OffsetInBits == RHSFragment->OffsetInBits) ||
-          (LHSFragment->OffsetInBits < RHSFragment->OffsetInBits &&
-          LHSFragment->OffsetInBits + LHSFragment->SizeInBits >
-            RHSFragment->OffsetInBits) ||
-          (RHSFragment->OffsetInBits < LHSFragment->OffsetInBits &&
-          RHSFragment->OffsetInBits + RHSFragment->SizeInBits >
-            LHSFragment->OffsetInBits));
-}
-
 void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
   for (auto &VH : DIEM) {

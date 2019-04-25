@@ -375,6 +375,16 @@ llvm::DISubprogram * findMetadata(const llvm::Function *F);
 bool findGlobalMetadata(const llvm::GlobalVariable *Var,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
 
+/// \brief Checks that two fragments of a variable may overlap.
+///
+/// Two fragments of zero size may not overlap. Note that there is no reason
+/// to invoke this functions for fragments of different variables. Complex
+/// expressions which contains elements other then dwarf::DW_OP_LLVM_fragment
+/// does not analyzed accurately. In this case overlapping is conservatively
+/// assumed.
+bool mayAliasFragments(
+  const llvm::DIExpression &LHS, const llvm::DIExpression &RHS);
+
 /// Specify kind of metadata which should be found.
 enum class MDSearch { AddressOfVariable, ValueOfVariable, Any };
 
