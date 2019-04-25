@@ -718,7 +718,7 @@ bool ClangCopyPropagation::unparseReplacement(
   } 
   if (!DIDef || !DIDef->isValid() || DIDef->Template || !DIDef->Loc)
     return false;
-  if (!unparseToString(DWLang, *DIDef, DefStr))
+  if (!unparseToString(DWLang, *DIDef, DefStr, false))
     return false;
   return true;
 }
