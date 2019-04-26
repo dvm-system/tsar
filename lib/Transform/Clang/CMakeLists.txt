@@ -1,4 +1,4 @@
-set(TRANSFORM_SOURCES Passes.cpp CopyPropagation.cpp)
+set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

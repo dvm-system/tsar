@@ -23,7 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/CopyPropagation.h"
+#include "tsar/Transform/Clang/ExprPropagation.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar_dbg_output.h"
 #include "Diagnostic.h"
@@ -64,7 +64,7 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-propagate"
 
-char ClangCopyPropagation::ID = 0;
+char ClangExprPropagation::ID = 0;
 
 namespace {
 class ClangCopyPropagationInfo final : public PassGroupInfo {
@@ -75,7 +75,7 @@ class ClangCopyPropagationInfo final : public PassGroupInfo {
 };
 }
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(ClangCopyPropagation, "clang-propagate",
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangExprPropagation, "clang-propagate",
   "Expression Propagation (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_IN_GROUP_INFO(ClangCopyPropagationInfo);
@@ -83,15 +83,15 @@ INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
-INITIALIZE_PASS_IN_GROUP_END(ClangCopyPropagation, "clang-propagate",
+INITIALIZE_PASS_IN_GROUP_END(ClangExprPropagation, "clang-propagate",
   "Expression Propagation (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 
 FunctionPass * createClangCopyPropagation() {
-  return new ClangCopyPropagation();
+  return new ClangExprPropagation();
 }
 
-void ClangCopyPropagation::getAnalysisUsage(AnalysisUsage &AU) const {
+void ClangExprPropagation::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
@@ -738,7 +738,7 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
 }
 }
 
-bool ClangCopyPropagation::unparseReplacement(
+bool ClangExprPropagation::unparseReplacement(
     const Value &Def, const DIMemoryLocation *DIDef,
     unsigned DWLang, const DIMemoryLocation &DIUse,
     SmallVectorImpl<char> &DefStr) {
@@ -775,7 +775,7 @@ bool ClangCopyPropagation::unparseReplacement(
   return true;
 }
 
-bool ClangCopyPropagation::runOnFunction(Function &F) {
+bool ClangExprPropagation::runOnFunction(Function &F) {
   auto *M = F.getParent();
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {

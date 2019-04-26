@@ -37,10 +37,10 @@ void initializeClangTransform(PassRegistry &Registry);
 
 /// Initialize a pass to replace the occurrences of variables
 /// with direct assignments.
-void initializeClangCopyPropagationPass(PassRegistry &Registry);
+void initializeClangExprPropagationPass(PassRegistry &Registry);
 
 /// Create a pass to replace the occurrences of variables
 /// with direct assignments.
-FunctionPass *createClangCopyPropagation();
+FunctionPass *createClangExprPropagation();
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

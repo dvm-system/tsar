@@ -44,12 +44,12 @@ class Value;
 class ConstantInt;
 class DominatorTree;
 
-class ClangCopyPropagation : public FunctionPass, private bcl::Uncopyable {
+class ClangExprPropagation : public FunctionPass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  ClangCopyPropagation() : FunctionPass(ID) {
-    initializeClangCopyPropagationPass(*PassRegistry::getPassRegistry());
+  ClangExprPropagation() : FunctionPass(ID) {
+    initializeClangExprPropagationPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnFunction(Function &F) override;
