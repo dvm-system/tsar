@@ -170,9 +170,11 @@ private:
 
 public:
   DefUseVisitor(TransformationContext &TfmCtx,
-      ClangGlobalInfoPass::RawInfo &RawInfo) :
+      const ClangGlobalInfoPass::RawInfo &RawInfo,
+      const GlobalInfoExtractor &GlobalInfo) :
     mTfmCtx(TfmCtx),
     mRawInfo(RawInfo),
+    mGlobalInfo(GlobalInfo),
     mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()),
     mSrcMgr(TfmCtx.getRewriter().getSourceMgr()),
@@ -388,6 +390,7 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
+    //TODO (kaniandr@gmail.com): add `assert nomacro` after propagation
     storeDeclRef(Ref);
     if (mReplacement.empty() || mNotPropagate.count(Ref))
       return true;
@@ -416,7 +419,7 @@ public:
       if ((Itr == mNameToVisibleDecl.end() ||
            mVisibleDecls[Itr->second].empty() ||
            mVisibleDecls[Itr->second].back() != AccessDecl) &&
-          !AccessDecl->getDeclContext()->isFileContext()) {
+          !mGlobalInfo.findOutermostDecl(AccessDecl)) {
         toDiag(mContext.getDiagnostics(), Ref->getLocation(),
           diag::warn_disable_propagate);
         toDiag(mContext.getDiagnostics(), AccessDecl->getLocation(),
@@ -534,6 +537,8 @@ private:
       for (auto IdxE = mDeclRefs.size(); DeclRefIdx < IdxE; ++DeclRefIdx) {
         auto *ND = cast<NamedDecl>(mDeclRefs[DeclRefIdx]->getCanonicalDecl());
         RHSDecls.insert(ND);
+        if (isa<EnumConstantDecl>(ND))
+          continue;
         if (!U.get<Available>().count(ND)) {
           IsAllDeclRefAvailable = false;
           auto UsageDiagItr = mDiags.try_emplace(U.get<Usage>()).first;
@@ -591,7 +596,8 @@ private:
   ASTContext &mContext;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
-  ClangGlobalInfoPass::RawInfo &mRawInfo;
+  const ClangGlobalInfoPass::RawInfo &mRawInfo;
+  const GlobalInfoExtractor &mGlobalInfo;
   UseLocationMap mUseLocs;
   DefLocationMap mDefLocs;
   DiagnosticMap mDiags;
@@ -795,7 +801,7 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo());
+  DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo(), GIP.getGlobalInfo());
   DenseSet<Value *> WorkSet;
   // Search for PROPAGATION candidates.
   for (auto &I : instructions(F)) {
