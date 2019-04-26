@@ -1,4 +1,4 @@
-//===---- CopyPropagation.h - Copy Propagation (Clang) -----------*- C++ -*===//
+//===-- ExpressionPropagation.h - Expression Propagation (Clang) -*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -18,16 +18,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines a pass to replace the occurrences of variables with direct
-// assignments. A direct assignment is an instruction of the form 'x = y'.
+// This file defines a pass to replace the occurrences of variables with
+// expressions which compute their values.
 // Note, that propagation of array subranges is also supported, for example
 // the following assignments can be processed '(*A)[5] = B[X]', where B is
 // a 3-dimensional array.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_CLANG_COPY_PROPAGATION_H
-#define TSAR_CLANG_COPY_PROPAGATION_H
+#ifndef TSAR_CLANG_EXPR_PROPAGATION_H
+#define TSAR_CLANG_EXPR_PROPAGATION_H
 
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
@@ -69,4 +69,4 @@ private:
 };
 }
 
-#endif//TSAR_CLANG_COPY_PROPAGATION_H
+#endif//TSAR_CLANG_EXPR_PROPAGATION_H

@@ -76,7 +76,13 @@ def note_assert_no_macro : Note<"macro found">;
 
 def warn_rename_macro_prevent : Warning<"macro prevent renaming">;
 
-def warn_propagate_macro_prevent : Warning<"macro prevent copy propagation">;
+def warn_propagate_macro_prevent : Warning<"macro prevent expression propagation">;
+def warn_disable_propagate_in_include : Warning<"disable expression propagation in header file">;
+def warn_disable_propagate : Warning<"disable expression propagation">;
+def note_propagate_hidden_dep : Note<"hidden dependence prevents propagation">;
+def note_propagate_recurrence : Note<"recurrence prevents propagation">;
+def note_propagate_not_available : Note<"expression is not available at propagation point">;
+def note_propagate_new_value : Note<"value may differs in definition and propagation points or may produce side effect">;
 
 def warn_disable_de_parameter : Warning<"disable dead code elimination for function parameters">;
 def warn_disable_de : Warning<"disable dead code elimination">;

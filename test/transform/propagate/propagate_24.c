@@ -9,4 +9,10 @@ int foo(int Z) {
   }
   return X;
 }
-//CHECK: 
+//CHECK: propagate_24.c:10:10: warning: disable expression propagation
+//CHECK:   return X;
+//CHECK:          ^
+//CHECK: propagate_24.c:7:9: note: hidden dependence prevents propagation
+//CHECK:     int Y = bar();
+//CHECK:         ^
+//CHECK: 1 warning generated.
