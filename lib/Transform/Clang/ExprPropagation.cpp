@@ -137,7 +137,7 @@ public:
 private:
   /// Map from instruction which uses a memory location to a definition which
   /// can be propagated to replace operand in this instruction.
-  using UseLocationMap = DenseMap<
+  using UseLocationMap = PersistentMap<
     DILocation *, ReplacementT, DILocationMapInfo,
     TaggedDenseMapPair<
       bcl::tagged<DILocation *, Usage>,
@@ -245,7 +245,7 @@ public:
         LLVM_DEBUG(
             dbgs() << "[PROPAGATION]: traverse propagation target at ";
             Loc.dump(mSrcMgr); dbgs() << "\n");
-        mReplacement.push(&UseItr->get<Definition>());
+        mReplacement.push(UseItr);
         // Create list of diagnostics if it is not exist.
         auto DiagItr = mDiags.try_emplace(UseItr->get<Usage>()).first;
         mReplacementDiag.push(DiagItr);
@@ -394,8 +394,8 @@ public:
     auto ND = Ref->getFoundDecl();
     if (!mDeclsToPropagate.count(ND) && !mActivePropagate)
       return true;
-    auto ReplacementItr = mReplacement.top()->find(ND);
-    if (ReplacementItr == mReplacement.top()->end()) {
+    auto ReplacementItr = mReplacement.top()->get<Definition>().find(ND);
+    if (ReplacementItr == mReplacement.top()->get<Definition>().end()) {
       auto DiagItr = mReplacementDiag.top()->get<Diagnostic>().find(ND);
       if (DiagItr != mReplacementDiag.top()->get<Diagnostic>().end()) {
         toDiag(mContext.getDiagnostics(), Ref->getLocation(),
@@ -598,7 +598,7 @@ private:
 
   /// Top of the stack contains definitions which can be used to replace
   /// references in a currently processed statement.
-  std::stack<ReplacementT *> mReplacement;
+  std::stack<UseLocationMap::persistent_iterator> mReplacement;
   std::stack<DiagnosticMap::persistent_iterator> mReplacementDiag;
 
   /// Collection of stacks of declarations with the same name. A top declaration
