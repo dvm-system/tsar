@@ -398,7 +398,7 @@ public:
     auto Res = TraverseStmt(InitExpr);
     checkAssignmentRHS(InitExpr, *DefItr, DeclRefIdx);
     restoreCollectDeclRef(StashCollectDecls);
-    return Res && VisitDecl(VD);
+    return Res && WalkUpFromVarDecl(VD);
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Ref) {
@@ -436,7 +436,7 @@ public:
           diag::warn_disable_propagate);
         toDiag(mContext.getDiagnostics(), AccessDecl->getLocation(),
           diag::note_propagate_hidden_dep);
-        LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable PROPAGATION due to "
+        LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable propagate due to "
                           << "hidden declaration of ";
                    AccessDecl->getDeclName().dump());
         return true;
