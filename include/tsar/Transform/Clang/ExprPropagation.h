@@ -43,6 +43,7 @@ namespace llvm {
 class Value;
 class ConstantInt;
 class DominatorTree;
+class DataLayout;
 
 class ClangExprPropagation : public FunctionPass, private bcl::Uncopyable {
 public:
@@ -64,6 +65,7 @@ private:
     unsigned DWLang, const tsar::DIMemoryLocation &DIUse,
     SmallVectorImpl<char> &DefStr);
 
+  const DataLayout *mDL = nullptr;
   DominatorTree *mDT = nullptr;
   tsar::TransformationContext *mTfmCtx = nullptr;
 };

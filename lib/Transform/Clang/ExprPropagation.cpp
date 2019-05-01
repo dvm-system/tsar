@@ -26,6 +26,7 @@
 #include "tsar/Transform/Clang/ExprPropagation.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar_dbg_output.h"
+#include "DIEstimateMemory.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
 #include "tsar_query.h"
@@ -42,6 +43,7 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/IR/CallSite.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Operator.h>
@@ -792,6 +794,25 @@ bool ClangExprPropagation::unparseReplacement(
         CInt->getValue().toStringUnsigned(DefStr);
       else
         return false;
+    } else if (auto *GEP = dyn_cast<GEPOperator>(&Def)) {
+      auto MD =
+        buildDIMemory(MemoryLocation(GEP), GEP->getContext(), *mDL, *mDT);
+      if (MD && MD->isValid() && !MD->Template) {
+        if (unparseToString(DWLang, *MD, DefStr, false)) {
+          auto NumberOfDims = 1 + dimensionsNum(
+            cast<PointerType>(GEP->getType())->getPointerElementType());
+          for(; NumberOfDims > 0 && DefStr.size() > 3; --NumberOfDims) {
+            auto Size = DefStr.size();
+            if (DefStr[Size - 1] != ']' ||
+                DefStr[Size - 2] != '0' ||
+                DefStr[Size - 3] != '[')
+              return false;
+            DefStr.resize(Size - 3);
+          }
+          return NumberOfDims == 0;
+        }
+      }
+      return false;
     } else {
       return false;
     }
@@ -821,6 +842,7 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
   auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) != SrcMgr::C_User)
     return false;
+  mDL = &M->getDataLayout();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
