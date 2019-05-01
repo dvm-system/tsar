@@ -1,5 +1,6 @@
 int foo() {
 
+#pragma spf assert nomacro
   {
     int A[3], X, Y;
     unsigned Z;

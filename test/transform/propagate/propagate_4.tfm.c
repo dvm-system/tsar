@@ -3,7 +3,10 @@ struct STy {
 };
 
 int foo(struct STy S) {
+#pragma spf assert nomacro
+  {
 
-  int Z = S.Y;
-  return S.Y;
+    int Z = S.Y;
+    return S.Y;
+  }
 }

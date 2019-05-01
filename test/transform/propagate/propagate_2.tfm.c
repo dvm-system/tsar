@@ -1,6 +1,7 @@
 int foo(int X) {
   int Y;
 
+#pragma spf assert nomacro
   {
     if (X < 0)
       Y = X;

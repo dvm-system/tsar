@@ -3,6 +3,7 @@ float *P;
 
 int foo(int I, int J) {
 
+#pragma spf assert nomacro
   {
     int X = I;
     int Y = J;

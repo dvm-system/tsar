@@ -199,9 +199,9 @@ public:
   }
 
   bool TraverseFunctionDecl(FunctionDecl *FD) {
-    enterInScope();
+    enterInScope(nullptr);
     auto Res = RecursiveASTVisitor::TraverseFunctionDecl(FD);
-    exitFromScope();
+    exitFromScope(nullptr);
     return Res;
   }
 
@@ -235,9 +235,6 @@ public:
       return true;
     }
     excludeIfAssignment(S);
-    auto *StashPropagateScope = mDeclPropagateScope;
-    if (mDeclsToPropagate.empty())
-      mDeclPropagateScope = S;
     auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getLocStart();
     bool Res = false;
     if (Loc.isValid() && Loc.isFileID()) {
@@ -260,62 +257,67 @@ public:
     } else {
       Res = RecursiveASTVisitor::TraverseStmt(S);
     }
-    mDeclPropagateScope = StashPropagateScope;
     return Res;
   }
 
   bool TraverseCompoundStmt(CompoundStmt *S) {
     bool Res = false;
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     if (mClauses.empty()) {
       Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
     } else {
       mClauses.clear();
       bool StashPropagateState = mActivePropagate;
       if (!mActivePropagate) {
-        if (hasMacro(S))
-          return RecursiveASTVisitor::TraverseCompoundStmt(S);
+        if (hasMacro(S)) {
+          Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
+          exitFromScope(StashPropagateScope);
+          return Res;
+        }
         mActivePropagate = true;
+        SmallString<64> NoMacroPragma;
+        getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
+        mRewriter.InsertTextBefore(S->getLocStart(), NoMacroPragma);
       }
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
       mActivePropagate = StashPropagateState;
     }
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
   bool TraverseForStmt(ForStmt *S) {
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     bool Res = RecursiveASTVisitor::TraverseForStmt(S);
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
   bool TraverseDoStmt(DoStmt *S) {
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     bool Res = RecursiveASTVisitor::TraverseDoStmt(S);
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
   bool TraverseWhileStmt(WhileStmt *S) {
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     bool Res = RecursiveASTVisitor::TraverseWhileStmt(S);
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
   bool TraverseIfStmt(IfStmt *S) {
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     bool Res = RecursiveASTVisitor::TraverseIfStmt(S);
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
   bool TraverseSwitchStmt(SwitchStmt *S) {
-    enterInScope();
+    auto StashPropagateScope = enterInScope(S);
     bool Res = RecursiveASTVisitor::TraverseSwitchStmt(S);
-    exitFromScope();
+    exitFromScope(StashPropagateScope);
     return Res;
   }
 
@@ -346,10 +348,20 @@ public:
       if (!HasNamedDecl)
         toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
           diag::warn_unexpected_directive);
-      assert(mDeclPropagateScope && "Top level scope must not be null!");
-      if (hasMacro(mDeclPropagateScope)) {
+      assert(mDeclPropagateScope.first && "Top level scope must not be null!");
+      if (hasMacro(mDeclPropagateScope.first)) {
         mDeclsToPropagate.clear();
         return RecursiveASTVisitor::VisitStmt(S);
+      }
+      SmallString<64> NoMacroPragma("\n");
+      getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
+      mRewriter.InsertTextBefore(
+        mDeclPropagateScope.first->getLocStart(), NoMacroPragma);
+      if (!mDeclPropagateScope.second) {
+        // Propagation scope is a function body, add extra {} around a pragma.
+        mRewriter.InsertTextBefore(
+          mDeclPropagateScope.first->getLocStart(), "{");
+        mRewriter.InsertTextAfter(mDeclPropagateScope.first->getLocEnd(), "}");
       }
     } else if (!isa<CompoundStmt>(S)) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
@@ -574,12 +586,18 @@ private:
     }
   }
 
-  void enterInScope() {
+  Stmt * enterInScope(Stmt *S) {
     LLVM_DEBUG(dbgs() << "[PROPAGATION]: enter in scope\n");
     mDeclsInScope.push({});
+    auto *StashPropagateScope = mDeclPropagateScope.second;
+    if (mDeclsToPropagate.empty()) {
+      mDeclPropagateScope.second = mDeclPropagateScope.first;
+      mDeclPropagateScope.first = S;
+    }
+    return StashPropagateScope;
   }
 
-  void exitFromScope() {
+  void exitFromScope(Stmt *StashPropagateScope) {
     assert(!mDeclsInScope.empty() && "At least one scope must exist!");
     LLVM_DEBUG(dbgs() << "[PROPAGATION]: exit from scope\n");
     for (auto Idx : mDeclsInScope.top()) {
@@ -589,6 +607,11 @@ private:
       mVisibleDecls[Idx].pop_back();
     }
     mDeclsInScope.pop();
+    if (StashPropagateScope != mDeclPropagateScope.second) {
+      // `mDeclPropagateScope` has been changed in `enterInScope()` method.
+      mDeclPropagateScope.first = mDeclPropagateScope.second;
+      mDeclPropagateScope.second = StashPropagateScope;
+    }
   }
 
   TransformationContext &mTfmCtx;
@@ -635,8 +658,8 @@ private:
   SmallPtrSet<NamedDecl *, 16> mDeclsToPropagate;
 
   /// Innermost scope which contains declarations with attached 'propagate'
-  /// clause.
-  Stmt *mDeclPropagateScope = nullptr;
+  /// clause and a parent scope (in case of function body parent scope is null).
+  std::pair<Stmt *, Stmt *> mDeclPropagateScope = { nullptr, nullptr };
   bool mActivePropagate = false;
 };
 

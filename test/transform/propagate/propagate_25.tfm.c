@@ -1,8 +1,11 @@
 int foo(int Z) {
-
-  int X = Z;
+#pragma spf assert nomacro
   {
-    int Z = 5;
-    return X;
+
+    int X = Z;
+    {
+      int Z = 5;
+      return X;
+    }
   }
 }

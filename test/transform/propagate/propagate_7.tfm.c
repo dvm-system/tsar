@@ -4,8 +4,11 @@ struct STy {
 };
 
 int foo(int Y) {
+#pragma spf assert nomacro
+  {
 
-  struct STy S;
-  S.X = Y;
-  return Y;
+    struct STy S;
+    S.X = Y;
+    return Y;
+  }
 }

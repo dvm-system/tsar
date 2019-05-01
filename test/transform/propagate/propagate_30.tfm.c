@@ -1,5 +1,6 @@
 float foo() {
 
+#pragma spf assert nomacro
   {
     float X = 2.1;
     double Y = 2.1;
