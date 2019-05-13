@@ -1025,7 +1025,10 @@ void Instrumentation::regValueArgs(Value *V, Type *T,
   assert(SizeArgTy && "Type of ArraySize parameter of registration function must not be null!");
   LLVM_DEBUG(dbgs()<<"[INSTR]: register variable "<<(DIM ? "" : "without metadata ");
     V->printAsOperand(dbgs()); dbgs() << "\n");
-  auto DeclStr = DIM && DIM->isValid() ?
+  auto DeclStr = DIM && DIM->isValid() ? DIM->Loc ?
+    (Twine("file=") + DIM->Loc->getFilename() + "*" +
+      "line1=" + Twine(DIM->Loc->getLine()) + "*"
+      "col1=" + Twine(DIM->Loc->getColumn()) + "*").str() :
     (Twine("file=") + DIM->Var->getFilename() + "*" +
       "line1=" + Twine(DIM->Var->getLine()) + "*").str() :
     (Twine("file=") + M.getSourceFileName() + "*").str();
