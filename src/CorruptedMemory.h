@@ -109,10 +109,12 @@ class CorruptedMemoryResolver {
 public:
   /// Map from a variable to its fragments.
   using DIFragmentMap = llvm::DenseMap <
-    llvm::DIVariable *, llvm:: TinyPtrVector<llvm::DIExpression *>,
+    llvm::DIVariable *,
+    std::tuple<llvm::DILocation *, llvm::TinyPtrVector<llvm::DIExpression *>>,
     llvm::DenseMapInfo<llvm::DIVariable *>,
-    tsar::TaggedDenseMapPair<
+    tsar::TaggedDenseMapTuple<
       bcl::tagged<llvm::DIVariable *, llvm::DIVariable>,
+      bcl::tagged<llvm::DILocation *, llvm::DILocation>,
       bcl::tagged<llvm::TinyPtrVector<llvm::DIExpression *>, llvm::DIExpression>>>;
 
 private:

@@ -737,13 +737,16 @@ public:
   DIAliasTreeBuilder(DIAliasTree &DIAT, LLVMContext &Ctx,
       DIMemoryEnvironment &Env,
       CorruptedMemoryResolver &CMR, CorruptedMap &CorruptedNodes,
-      DIVariable *Var, const TinyPtrVector<DIExpression *> &Fragments) :
+      DIVariable *Var, DILocation *DbgLoc,
+      const TinyPtrVector<DIExpression *> &Fragments) :
       mDIAT(&DIAT), mContext(&Ctx), mEnv(&Env),
       mCMR(&CMR), mCorruptedNodes(&CorruptedNodes),
-      mVar(Var), mSortedFragments(Fragments) {
+      mVar(Var),  mSortedFragments(Fragments) {
     assert(mDIAT && "Alias tree must not be null!");
     assert(mVar && "Variable must not be null!");
     assert(!Fragments.empty() && "At least one fragment must be specified!");
+    if (DbgLoc)
+      mDbgLocs.push_back(DbgLoc);
     std::sort(mSortedFragments.begin(), mSortedFragments.end(),
       [this](DIExpression *LHS, DIExpression *RHS) {
         assert(!mayAliasFragments(*LHS, *RHS) && "Fragments must not be alias!");
@@ -777,7 +780,8 @@ public:
     }
     auto DIEmptyExpr = DIExpression::get(*mContext, {});
     if (mSortedFragments.front()->getNumElements() == 0) {
-      auto DIMVar = DIEstimateMemory::get(*mContext, *mEnv, mVar, DIEmptyExpr);
+      auto DIMVar = DIEstimateMemory::get(*mContext, *mEnv, mVar, DIEmptyExpr,
+        DIEstimateMemory::NoFlags, mDbgLocs);
       auto IsCorruptedRoot = mCMR->isCorrupted(*DIMVar);
       if (IsCorruptedRoot.first) {
         if (IsCorruptedRoot.second)
@@ -822,7 +826,8 @@ private:
       LLVM_DEBUG(addFragmentLog(mSortedFragments[I]));
       Parent = addUnknownParentIfNecessary(Parent, mSortedFragments[I]);
       auto &DIM = mDIAT->addNewNode(
-        DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I]),
+        DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I],
+          DIEstimateMemory::NoFlags, mDbgLocs),
         *Parent);
       if (auto M = mCMR->beforePromotion(
             DIMemoryLocation(mVar, mSortedFragments[I])))
@@ -882,7 +887,8 @@ private:
     assert(Expr && "Expression must not be null!");
     assert(Ty && "Type must not be null!");
     assert(Parent && "Alias node must not be null!");
-    auto DIMTmp = DIEstimateMemory::get(*mContext, *mEnv, mVar, Expr);
+    auto DIMTmp = DIEstimateMemory::get(*mContext, *mEnv, mVar, Expr,
+      DIEstimateMemory::NoFlags, mDbgLocs);
     auto IsCorrupted = mCMR->isCorrupted(*DIMTmp);
     if (IsCorrupted.first) {
       if (!IsCorrupted.second) {
@@ -1055,6 +1061,7 @@ private:
   CorruptedMemoryResolver *mCMR;
   CorruptedMap *mCorruptedNodes;
   DIVariable *mVar;
+  SmallVector<DILocation *, 1> mDbgLocs;
   TinyPtrVector<DIExpression *> mSortedFragments;
   CorruptedMemoryItem *mCorrupted;
   SmallPtrSet<DIAliasUnknownNode *, 2> mVisitedCorrupted;
@@ -1237,7 +1244,7 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
       if (HasDbgDeclare)
         continue;
     }
-    auto VarFragments = mVarToFragments.try_emplace(Loc.Var, Loc.Expr);
+    auto VarFragments = mVarToFragments.try_emplace(Loc.Var, Loc.Loc, Loc.Expr);
     if (VarFragments.second) {
       mSmallestFragments.try_emplace(std::move(Loc), nullptr);
       continue;
@@ -1514,8 +1521,9 @@ void CorruptedMemoryResolver::updateWorkLists(
           // remove an expression from a vector.
           auto VToF = mVarToFragments.find(Loc.Var);
           auto ExprItr = std::find(
-            VToF->second.begin(), VToF->second.end(), Loc.Expr);
-          VToF->second.erase(ExprItr);
+            VToF->get<DIExpression>().begin(),
+            VToF->get<DIExpression>().end(), Loc.Expr);
+          VToF->get<DIExpression>().erase(ExprItr);
           mSmallestFragments.erase(Loc);
         }
       } else if (Binding != DIMemory::Consistent ||
@@ -1664,9 +1672,12 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
 
 llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
     DIMemoryLocation DILoc) {
-  auto Flags = DILoc.Template ?
+  auto F = DILoc.Template ?
     DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
-  return DIEstimateMemory::getRawIfExists(Ctx, DILoc.Var, DILoc.Expr, Flags);
+  SmallVector<DILocation *, 1> Dbgs;
+  if (DILoc.Loc)
+    Dbgs.push_back(DILoc.Loc);
+  return DIEstimateMemory::getRawIfExists(Ctx, DILoc.Var, DILoc.Expr, F, Dbgs);
 }
 
 std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
@@ -1691,6 +1702,8 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
       if (auto *I = dyn_cast_or_null<Instruction>(V))
         if (auto DbgLoc = I->getDebugLoc())
           Dbgs.push_back(DbgLoc.get());
+    if (DILoc->Loc)
+      Dbgs.push_back(DILoc->Loc);
     DIM = DIEstimateMemory::get(Ctx, Env, DILoc->Var, DILoc->Expr, Flags, Dbgs);
     DIM->setProperties(Properties);
   }
@@ -1824,7 +1837,8 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
       if (VToF.get<DIExpression>().empty())
         continue;
       DIAliasTreeBuilder Builder(*NewDIAT, F.getContext(), Env,
-        CMR, CorruptedNodes, VToF.get<DIVariable>(), VToF.get<DIExpression>());
+        CMR, CorruptedNodes, VToF.get<DIVariable>(), VToF.get<DILocation>(),
+        VToF.get<DIExpression>());
       Builder.buildSubtree();
     }
     auto RootOffsets = findLocationToInsert(AT, DL);
