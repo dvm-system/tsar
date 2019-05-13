@@ -113,6 +113,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> Check;
   llvm::cl::opt<bool> SafeTypeCast;
   llvm::cl::opt<bool> NoSafeTypeCast;
+  llvm::cl::opt<std::string> AnalysisUse;
 
   llvm::cl::OptionCategory TransformCategory;
   llvm::cl::opt<bool> NoFormat;
@@ -191,6 +192,9 @@ Options::Options() :
     cl::desc("Disallow unsafe integer type cast in analysis passes")),
   NoSafeTypeCast("fno-safe-type-cast", cl::cat(AnalysisCategory),
     cl::desc("Allow unsafe integer type cast in analysis passes(default)")),
+  AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
+    cl::value_desc("filename"),
+    cl::desc("Use external analysis results to clarify analysis")),
   TransformCategory("Transformation options"),
   NoFormat("no-format", cl::cat(TransformCategory),
     cl::desc("Disable format of transformed sources")),
@@ -290,9 +294,10 @@ inline static GlobalOptions * getGlobalOptions() {
 inline static QueryManager * getDefaultQM(
     const DefaultQueryManager::PassList &OutputPasses,
     const DefaultQueryManager::PassList &PrintPasses,
-    const DefaultQueryManager::ProcessingStep PrintSteps) {
+    const DefaultQueryManager::ProcessingStep PrintSteps,
+    StringRef AnalysisUse) {
   static DefaultQueryManager QM(getGlobalOptions(),
-    OutputPasses, PrintPasses, PrintSteps);
+    OutputPasses, PrintPasses, PrintSteps, AnalysisUse);
   return &QM;
 }
 
@@ -435,6 +440,7 @@ void Tool::storeCLOptions() {
               "-instr-llvm is not set.\n";
   mCheck = addLLIfSet(Options::get().Check);
   mTest = addIfSet(Options::get().Test);
+  mAnalysisUse = Options::get().AnalysisUse;
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
@@ -548,7 +554,7 @@ int Tool::run(QueryManager *QM) {
       QM = getCheckQM();
     else
       QM = getDefaultQM(mOutputPasses, mPrintPasses,
-        (DefaultQueryManager::ProcessingStep)mPrintSteps);
+        (DefaultQueryManager::ProcessingStep)mPrintSteps, mAnalysisUse);
   }
   auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {

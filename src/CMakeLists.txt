@@ -14,7 +14,7 @@ set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp DIGlobalRetriever.cpp InterprocAttr.cpp
   ControlFlowTraits.cpp Attributes.cpp ExpressionMatcher.cpp
-  Delinearization.cpp DynamicResultsIntegration.cpp)
+  Delinearization.cpp)
 if(MSVC_IDE)
   source_group(src FILES ${TSAR_SOURCES})
   file(GLOB_RECURSE TSAR_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
@@ -48,6 +48,8 @@ set_target_properties(TSARCore PROPERTIES
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
 add_dependencies(TSARCore
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
+add_dependencies(TSARAnalysisReader
+  DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARClangAnalysis
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARClangTransform
@@ -55,10 +57,12 @@ add_dependencies(TSARClangTransform
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARCore TSARSupport TSARClangTransform TSARClangAnalysis
+  add_dependencies(TSARCore TSARSupport TSARAnalysisReader
+    TSARClangTransform TSARClangAnalysis
     ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARCore TSARSupport TSARClangTransform TSARClangAnalysis
+target_link_libraries(TSARCore TSARSupport TSARAnalysisReader
+  TSARClangTransform TSARClangAnalysis
   ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
   target_link_libraries(TSARCore APC::APCCore)
@@ -80,7 +84,8 @@ install(TARGETS tsar RUNTIME DESTINATION bin)
 
 if (TSAR_SERVER)
   set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp ClangMessages.cpp)
-  set_property(TARGET TSARCore TSARSupport TSARClangTransform TSARClangAnalysis
+  set_property(TARGET TSARCore TSARSupport TSARAnalysisReader
+    TSARClangTransform TSARClangAnalysis
     PROPERTY POSITION_INDEPENDENT_CODE ON)
   add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
   add_dependencies(TSARServer TSARCore)

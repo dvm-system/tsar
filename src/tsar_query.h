@@ -158,11 +158,15 @@ public:
   /// be printed. Specified passes must override their print() methods.
   /// \param [in] PrintSteps This specifies processing steps, the result of
   /// which should be printed. This is a bit list of steps.
+  /// \param [in] AnalysisUse Name of a file with external analysis results
+  /// which should be used to clarify analysis.
   DefaultQueryManager(const GlobalOptions *Options,
       const PassList &OutputPasses, const PassList &PrintPasses,
-      ProcessingStep PrintSteps = allSteps()) : mGlobalOptions(Options),
+      ProcessingStep PrintSteps = allSteps(),
+      llvm::StringRef AnalysisUse = "") :
+    mGlobalOptions(Options),
     mOutputPasses(OutputPasses), mPrintPasses(PrintPasses),
-    mPrintSteps(PrintSteps) {}
+    mPrintSteps(PrintSteps), mAnalysisUse(AnalysisUse) {}
 
   /// Runs default sequence of passes.
   void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
@@ -177,6 +181,7 @@ private:
   PassList mPrintPasses;
   ProcessingStep mPrintSteps;
   const GlobalOptions *mGlobalOptions;
+  std::string mAnalysisUse;
 };
 
 /// This prints LLVM IR to the standard output stream.

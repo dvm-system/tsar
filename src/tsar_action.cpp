@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_action.h"
+#include "tsar/Analysis/Reader/Passes.h"
 #include "Instrumentation.h"
 #include "tsar_query.h"
 #include "tsar_pass.h"
@@ -49,7 +50,6 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils.h>
 #include <memory>
-#include "DynamicResultsIntegration.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -147,7 +147,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
   Passes.add(createDIDependencyAnalysisPass());
-  Passes.add(createDynResultsIntegrationPass());
+  if (!mAnalysisUse.empty())
+    Passes.add(createAnalysisReader(mAnalysisUse));
   addPrint(BeforeTfmAnalysis);
   addOutput();
   // Perform SROA and repeat variable privatization. After that reduction and

@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_pass.h"
+#include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <llvm/Config/llvm-config.h>
 #include <llvm/InitializePasses.h>
@@ -39,6 +40,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeTestPrinterPassPass(Registry);
   initializeLoopAttributesDeductionPassPass(Registry);
   initializeDelinearizationPassPass(Registry);
+  initializeAnalysisReader(Registry);
   // Initialize LLVM-level transformation passes.
   initializeDILoopRetrieverPassPass(Registry);
   initializeDIGlobalRetrieverPassPass(Registry);
@@ -65,7 +67,6 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeLoopSimplifyCFGLegacyPassPass(Registry);
   initializeSROALegacyPassPass(Registry);
   initializeInstCombine(Registry);
-  initializeDynResultsIntegrationPassPass(Registry);
 }
 
 void initializeTSAR(LLVMPassRegistryRef R) {
