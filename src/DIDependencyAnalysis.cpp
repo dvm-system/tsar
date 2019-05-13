@@ -114,18 +114,24 @@ template<class Tag> void convertIf(
     std::is_same<Tag, trait::Anti>::value ||
     std::is_same<Tag, trait::Output>::value, "Unknown type of dependence!");
   if (auto IRDep = IRTrait.template get<Tag>()) {
-      auto Dist = IRDep->getDistance();
-      trait::DIDependence::DistanceRange DIDistRange;
-      if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
-        DIDistRange.first = APSInt(ConstDist->getAPInt());
-      if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
-        DIDistRange.second = APSInt(ConstDist->getAPInt());
-      auto F = IRDep->getFlags();
-      if (IRDep->isKnownDistance() &&
-          (!DIDistRange.first || !DIDistRange.second))
-        F |= trait::Dependence::UnknownDistance;
-      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
+    if (auto *DIDep = DITrait.template get<Tag>()) {
+      if (DIDep->isKnownDistance())
+        return;
     }
+    LLVM_DEBUG(dbgs() << "[DA DI]: update " << Tag::toString()
+                      << " dependence\n");
+    auto Dist = IRDep->getDistance();
+    trait::DIDependence::DistanceRange DIDistRange;
+    if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
+      DIDistRange.first = APSInt(ConstDist->getAPInt());
+    if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
+      DIDistRange.second = APSInt(ConstDist->getAPInt());
+    auto F = IRDep->getFlags();
+    if (IRDep->isKnownDistance() &&
+      (!DIDistRange.first || !DIDistRange.second))
+      F |= trait::Dependence::UnknownDistance;
+    DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
+  }
 }
 
 void convertTraitsForEstimateNode(DIAliasEstimateNode &DIN, AliasTree &AT,
@@ -162,6 +168,8 @@ void convertTraitsForEstimateNode(DIAliasEstimateNode &DIN, AliasTree &AT,
     if (MTraitItr == ATraitItr->end())
       continue;
     auto DIMTraitItr = Pool.find_as(&M);
+    LLVM_DEBUG(if (DIMTraitItr == Pool.end())
+      dbgs() << "[DA DI]: add new trait to pool\n");
     if (DIMTraitItr != Pool.end())
       *DIMTraitItr = *MTraitItr;
     else
@@ -391,6 +399,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       continue;
     assert(L->getLoopID() && "Identifier of a loop must be specified!");
     auto DILoop = L->getLoopID();
+    LLVM_DEBUG(dbgs() << "[DA DI]: process loop at "; L->getStartLoc().dump();
+               dbgs() << "\n");
     auto &Pool = TraitPool[DILoop];
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     auto &DepSet = *Info.get<DependencySet>();
