@@ -25,6 +25,7 @@
 #include "tsar/Transform/Clang/FormatPass.h"
 #include "ClangUtils.h"
 #include "Diagnostic.h"
+#include "GlobalOptions.h"
 #include "tsar_transformation.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/SourceManager.h>
@@ -46,17 +47,15 @@ char ClangFormatPass::ID = 0;
 INITIALIZE_PASS_BEGIN(ClangFormatPass, "clang-format",
   "Source-level Formatting (Clang)", false, false)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper);
 INITIALIZE_PASS_END(ClangFormatPass, "clang-format",
   "Source-level Formatting (Clang)", false, false)
 
 ModulePass* llvm::createClangFormatPass() { return new ClangFormatPass(); }
 
-ModulePass* llvm::createClangFormatPass(StringRef OutputSuffix, bool NoFormat) {
-  return new ClangFormatPass(OutputSuffix, NoFormat);
-}
-
 void ClangFormatPass::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -71,11 +70,12 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
   auto &SrcMgr = TfmRewriter.getSourceMgr();
   auto &LangOpts = TfmRewriter.getLangOpts();
   auto &Diags = SrcMgr.getDiagnostics();
-  auto Adjuster = mOutputSuffix.empty() ? getPureFilenameAdjuster() :
-    [this](llvm::StringRef Filename) -> std::string {
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto Adjuster = GlobalOpts.OutputSuffix.empty() ? getPureFilenameAdjuster() :
+    [this, &GlobalOpts](llvm::StringRef Filename) -> std::string {
       SmallString<128> Path = Filename;
       sys::path::replace_extension(Path,
-        "." + mOutputSuffix + sys::path::extension(Path));
+        "." + GlobalOpts.OutputSuffix + sys::path::extension(Path));
     return Path.str();
   };
   Rewriter FormatRewriter(SrcMgr, LangOpts);
@@ -94,7 +94,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       "Multiple rewriter buffers for the same file does not allowed!");
     // Backup original files if they will be overwritten due to empty output
     // suffix.
-    if (mOutputSuffix.empty()) {
+    if (GlobalOpts.OutputSuffix.empty()) {
       std::error_code Err = sys::fs::copy_file(OrigFile->getName(),
         getBackupFilenameAdjuster()(OrigFile->getName()));
       if (Err) {
@@ -103,7 +103,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
         continue;
       }
     }
-    if (!mNoFormat) {
+    if (!GlobalOpts.NoFormat) {
       std::string TfmSrc(Buffer.second.begin(), Buffer.second.end());
       auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
       auto ReformatSrc = reformat(TfmSrc, Adjuster(OrigFile->getName()));

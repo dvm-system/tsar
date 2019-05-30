@@ -262,7 +262,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   if (auto *GI = getPassRegistry().groupInfo(*mTfmPass))
     GI->addBeforePass(Passes);
   Passes.add(mTfmPass->getNormalCtor()());
-  Passes.add(createClangFormatPass(mOutputSuffix, mNoFormat));
+  Passes.add(createClangFormatPass());
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }

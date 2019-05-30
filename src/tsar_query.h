@@ -227,8 +227,8 @@ public:
   }
 
   explicit TransformationQueryManager(const llvm::PassInfo *TfmPass,
-    llvm::StringRef OutputSuffix = "", bool NoFormat = false) :
-    mTfmPass(TfmPass), mOutputSuffix(OutputSuffix), mNoFormat(NoFormat) {}
+      const GlobalOptions *Options) :
+    mTfmPass(TfmPass), mGlobalOptions(Options) {}
 
   void run(llvm::Module *M, TransformationContext *Ctx) override;
 
@@ -236,8 +236,7 @@ public:
 
 private:
   const llvm::PassInfo *mTfmPass;
-  std::string mOutputSuffix;
-  bool mNoFormat;
+  const GlobalOptions *mGlobalOptions;
   ASTImportInfo mImportInfo;
 };
 

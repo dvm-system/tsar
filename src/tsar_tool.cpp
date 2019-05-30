@@ -353,8 +353,8 @@ inline static TestQueryManager * getTestQM() {
 }
 
 inline static TransformationQueryManager * getTransformationQM(
-    const llvm::PassInfo *TfmPass, StringRef OutputSuffix, bool NoFormat) {
-  static TransformationQueryManager QM(TfmPass, OutputSuffix, NoFormat);
+    const llvm::PassInfo *TfmPass) {
+  static TransformationQueryManager QM(TfmPass, getGlobalOptions());
   return &QM;
 }
 
@@ -511,9 +511,9 @@ void Tool::storeCLOptions() {
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
-  mNoFormat = addIfSetIf(Options::get().NoFormat, !mTfmPass);
-  mOutputSuffix = Options::get().OutputSuffix;
-  if (!mTfmPass && !mOutputSuffix.empty()) {
+  getGlobalOptions()->NoFormat = addIfSetIf(Options::get().NoFormat, !mTfmPass);
+  getGlobalOptions()->OutputSuffix = Options::get().OutputSuffix;
+  if (!mTfmPass && !getGlobalOptions()->OutputSuffix.empty()) {
     IncompatibleOpts.push_back(&Options::get().OutputSuffix);
     LLIncompatibleOpts.push_back(&Options::get().OutputSuffix);
   }
@@ -616,7 +616,7 @@ int Tool::run(QueryManager *QM) {
     else if (mTest)
       QM = getTestQM();
     else if (mTfmPass)
-      QM = getTransformationQM(mTfmPass, mOutputSuffix, mNoFormat);
+      QM = getTransformationQM(mTfmPass);
     else if (mCheck)
       QM = getCheckQM();
     else

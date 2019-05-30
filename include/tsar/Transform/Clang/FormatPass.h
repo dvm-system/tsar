@@ -39,20 +39,17 @@ public:
   static char ID;
 
   /// \brief Creates pass which adds a specified suffix to transformed sources
-  /// performs formatting if NoFormat is not set (default).
+  /// (see GlobalOptions) and performs formatting if
+  /// (GlobalOptions::NoFormat) is not set.
   ///
   /// Note, if suffix is specified it will be added before the file extension.
   /// If suffix is empty, the original will be stored to
   /// <filenmae>.<extension>.orig and then it will be overwritten.
-  ClangFormatPass(llvm::StringRef OutputSuffix ="", bool NoFormat = false) :
-    ModulePass(ID), mOutputSuffix(OutputSuffix), mNoFormat(NoFormat) {
+  ClangFormatPass() : ModulePass(ID) {
     initializeClangFormatPassPass(*PassRegistry::getPassRegistry());
   }
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-private:
-  std::string mOutputSuffix;
-  bool mNoFormat;
 };
 }
 #endif//TSAR_CLANG_FORMAT_PASS_H

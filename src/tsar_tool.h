@@ -95,13 +95,11 @@ private:
   bool mDumpAST = false;
   bool mEmitLLVM = false;
   bool mInstrLLVM = false;
-  bool mNoFormat = false;
   bool mCheck = false;
   bool mTest = false;
   bool mPrint = false;
   std::string mOutputFilename;
   std::string mLanguage;
-  std::string mOutputSuffix;
   std::string mInstrEntry;
   std::vector<std::string> mInstrStart;
   std::string mAnalysisUse;

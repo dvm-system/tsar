@@ -42,6 +42,10 @@ struct GlobalOptions {
   /// metadata. So, some results may be lost. However analysis after
   /// transformation proposes more accurate results in some cases.
   bool UnsafeTfmAnalysis = false;
+  /// This suffix should be add to transformed sources before extension.
+  std::string OutputSuffix = "";
+  /// Disable formatting of a source code after transformation.
+  bool NoFormat = false;
 };
 }
 
