@@ -16,7 +16,6 @@
 #include "ASTImportInfo.h"
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/StringRef.h>
-#include <llvm/Config/llvm-config.h>
 #include <vector>
 
 namespace llvm {
@@ -192,19 +191,13 @@ public:
   void run(llvm::Module *M, tsar::TransformationContext *) override;
 
   void endSourceFile() override {
-#if (LLVM_VERSION_MAJOR > 3)
     // An output stream attached to a temporary output file should be freed.
     // Otherwise it prevents renaming a temporary output file to a regular one.
     mOS.reset();
-#endif
   }
 
 protected:
-#if (LLVM_VERSION_MAJOR < 4)
-  llvm::raw_pwrite_stream *mOS = nullptr;
-#else
   std::unique_ptr<llvm::raw_pwrite_stream > mOS;
-#endif
   const clang::CodeGenOptions *mCodeGenOpts = nullptr;
 };
 
