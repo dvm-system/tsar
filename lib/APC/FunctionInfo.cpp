@@ -111,6 +111,7 @@ char APCFunctionInfoPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
   "Function Collector (APC)", false, false
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
+  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
@@ -125,6 +126,7 @@ ModulePass * llvm::createAPCFunctionInfoPass() {
 
 void APCFunctionInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<APCContextWrapper>();
@@ -150,6 +152,14 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     // entry point.
     if (auto DWLang = getLanguage(*Caller.first))
       FI.isMain = isC(*DWLang) && FI.funcName == "main";
+    auto &LI = getAnalysis<LoopInfoWrapperPass>(
+      const_cast<Function &>(*Caller.first)).getLoopInfo();
+    for (auto *L : LI) {
+      assert(L->getLoopID() && "Loop ID must not be null!");
+      auto *APCLoop = APCCtx.findLoop(L->getLoopID());
+      assert(APCLoop && "List of APC loops must be filled!");
+      FI.loopsInFunc.push_back(APCLoop);
+    }
     auto &DT = getAnalysis<DominatorTreeWrapperPass>(
       const_cast<Function &>(*Caller.first)).getDomTree();
     for (auto &Arg : Caller.first->args()) {
