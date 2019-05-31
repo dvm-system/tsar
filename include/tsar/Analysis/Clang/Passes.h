@@ -31,6 +31,7 @@
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
+class ModulePass;
 
 /// Initialize all passes to perfrom source-base analysis of C programs.
 void initializeClangAnalysis(PassRegistry &Registry);
@@ -50,5 +51,13 @@ void initializeClangNoMacroAssertPass(PassRegistry& Registry);
 /// Initializes pass to check absence of a macro in source ranges which
 /// are marked with `assert nomacro` directive.
 llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
+
+/// Initialize a pass to match only global variable in a source high-level code
+/// and appropriate metadata-level representations of variables.
+void initializeClangDIGlobalMemoryMatcherPassPass(PassRegistry &Registry);
+
+/// Create a pass to match only global variable in a source high-level code
+/// and appropriate metadata-level representations of variables.
+ModulePass *createDIGlobalMemoryMatcherPass();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H

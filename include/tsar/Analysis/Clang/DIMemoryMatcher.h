@@ -78,5 +78,39 @@ private:
   DIMemoryMatcher mMatcher;
   MemoryASTSet mUnmatchedAST;
 };
+
+/// This pass match only global variables.
+class ClangDIGlobalMemoryMatcherPass :
+  public ModulePass, private bcl::Uncopyable {
+public:
+  using DIMemoryMatcher = ClangDIMemoryMatcherPass::DIMemoryMatcher;
+  using MemoryASTSet = ClangDIMemoryMatcherPass::MemoryASTSet;
+
+  static char ID;
+
+  ClangDIGlobalMemoryMatcherPass() : ModulePass(ID) {
+    initializeClangDIGlobalMemoryMatcherPassPass(
+      *PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(llvm::Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+  void releaseMemory() override { mMatcher.clear(); mUnmatchedAST.clear(); }
+
+  /// Return memory matcher for the last analyzed function and global variables.
+  ///
+  /// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
+  const DIMemoryMatcher & getMatcher() const noexcept { return mMatcher; }
+
+  /// Return umatched variables in AST.
+  ///
+  /// For example, macro may prevent successful match.
+  /// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
+  const MemoryASTSet & getUnmatchedAST() const noexcept { return mUnmatchedAST; }
+
+private:
+  DIMemoryMatcher mMatcher;
+  MemoryASTSet mUnmatchedAST;
+};
 }
 #endif//TSAR_CLANG_DI_MEMORY_MATCHER_H

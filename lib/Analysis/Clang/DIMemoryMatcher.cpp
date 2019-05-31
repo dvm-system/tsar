@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
+#include "GlobalInfoExtractor.h"
 #include "tsar_memory_matcher.h"
 #include "tsar_matcher.h"
 #include "tsar_transformation.h"
@@ -173,5 +174,57 @@ bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
       mUnmatchedAST.insert(D->getCanonicalDecl());
       ++NumNonMatchASTMemory;
     }
+  return false;
+}
+
+char ClangDIGlobalMemoryMatcherPass::ID = 0;
+
+INITIALIZE_PASS_BEGIN(ClangDIGlobalMemoryMatcherPass, "di-global-memory-matcher",
+  "High and Metadata Global Memory Matcher (Clang)", true, true)
+  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+  INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+  INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
+INITIALIZE_PASS_END(ClangDIGlobalMemoryMatcherPass, "di-global-memory-matcher",
+  "High and Metadata Global Memory Matcher (Clang)", true, true)
+
+ModulePass *llvm::createDIGlobalMemoryMatcherPass() {
+  return new ClangDIGlobalMemoryMatcherPass;
+}
+
+void ClangDIGlobalMemoryMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<ClangGlobalInfoPass>();
+  AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.setPreservesAll();
+}
+
+bool ClangDIGlobalMemoryMatcherPass::runOnModule(llvm::Module &M) {
+  auto &MemInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
+  for (auto &Match : MemInfo.Matcher) {
+    if (!isa<GlobalVariable>(Match.get<IR>()))
+      continue;
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    findGlobalMetadata(cast<GlobalVariable>(Match.get<IR>()), DILocs);
+    Optional<DIMemoryLocation> MD;
+    if (DILocs.size() == 1 && (MD = DILocs.back()) &&
+        MD->isValid() && MD->Expr->getNumElements() == 0) {
+      mMatcher.emplace(Match.get<AST>(), MD->Var);
+      if (mUnmatchedAST.erase(Match.get<AST>()))
+        --NumNonMatchASTMemory;
+      ++NumMatchMemory;
+    } else {
+      mUnmatchedAST.insert(Match.get<AST>());
+      ++NumNonMatchASTMemory;
+    }
+  }
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  for (auto *D : MemInfo.UnmatchedAST) {
+    if (!GIP.getGlobalInfo().findOutermostDecl(D))
+      continue;
+    if (mMatcher.find<AST>(D) == mMatcher.end()) {
+      mUnmatchedAST.insert(D->getCanonicalDecl());
+      ++NumNonMatchASTMemory;
+    }
+  }
   return false;
 }
