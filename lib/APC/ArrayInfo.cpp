@@ -20,7 +20,7 @@
 //
 // This file implements per-function pass to obtain general information about
 // arrays which are accessed in a function. Not all arrays are collected, if
-// some information of an array have been then lost it will be ignored.
+// some information of an array have been lost then it will be ignored.
 //
 //===----------------------------------------------------------------------===//
 

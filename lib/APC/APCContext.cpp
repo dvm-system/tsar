@@ -32,6 +32,10 @@
 using namespace tsar;
 using namespace llvm;
 
+//===--------------- Necessary External Objects----------------------------===//
+//
+// The following items is necessary for linking but do not used at this moment.
+
 /// Global map from a file name to a list of functions it contains.
 std::map<std::string, std::vector<FuncInfo*>> allFuncInfo;
 
@@ -43,6 +47,11 @@ std::map<std::string, std::vector<LoopGraph*>> loopGraph;
 
 /// Global map from a file name to a list of diagnostic messages.
 std::map<std::string, std::vector<Messages>> SPF_messages;
+
+void sendMessage_1lvl(const std::wstring &toSend) {}
+void sendMessage_2lvl(const std::wstring &toSend) {}
+
+//===----------------------------------------------------------------------===//
 
 APCContext::APCContext() : mImpl(new APCContextImpl) {}
 APCContext::~APCContext() { delete mImpl; }
