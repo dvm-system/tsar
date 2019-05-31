@@ -149,6 +149,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createDIMemoryEnvironmentStorage());
 #ifdef APC_FOUND
   Passes.add(createAPCContextStorage());
+  Passes.add(createAPCLoopInfoBasePass());
 #endif
   // Preliminary analysis of privatizable variables. This analysis is necessary
   // to prevent lost of result of optimized values. The memory promotion
@@ -186,6 +187,12 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createPOFunctionAttrsAnalysis());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
+#ifdef APC_FOUND
+  Passes.add(createAPCFunctionInfoPass());
+  Passes.add(createAPCArrayInfoPass());
+  Passes.add(createAPCDataDistributionPass());
+  Passes.add(createAPCDVMHWriter());
+#endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
   // Perform loop rotation to enable reduction recognition if for-loops.
@@ -200,6 +207,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
   addOutput(AfterLoopRotateAnalysis);
+#ifdef APC_FOUND
+  Passes.add(createClangFormatPass());
+#endif
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }
@@ -246,6 +256,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   auto TEP = static_cast<TransformationEnginePass *>(
     createTransformationEnginePass());
   TEP->setContext(*M, Ctx);
+  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
   Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());

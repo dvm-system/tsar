@@ -52,6 +52,7 @@ class Namespace<string name> {
 }
 
 def Spf : Namespace<"spf">;
+def Dvm : Namespace<"dvm">;
 
 // Define one directive which may contain multiple clauses.
 class Directive<string name, Namespace parent = Spf> {
@@ -62,6 +63,10 @@ class Directive<string name, Namespace parent = Spf> {
 def Analysis   : Directive<"analysis">;
 def Transform  : Directive<"transform">;
 def Assert     : Directive<"assert">;
+
+def DvmTemplate: Directive<"template", Dvm>;
+def DvmArray   : Directive<"array", Dvm>;
+def DvmInherit : Directive<"inherit", Dvm>;
 
 // Define one clause.
 class Clause<string name, Directive parent, list<Expr> expr_list = []> {
@@ -85,3 +90,5 @@ def Induction : Clause<"induction", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
 def AssertNoMacro : Clause<"nomacro", Assert>;
+
+def DvmAlign : Clause<"align", DvmArray>;

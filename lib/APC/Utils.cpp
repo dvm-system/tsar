@@ -23,8 +23,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/APC/Utils.h"
+#include "DistributionUtils.h"
 #include <apc/apc-config.h>
+#include <apc/Distribution/DvmhDirective.h>
 #include <llvm/Support/raw_os_ostream.h>
+
+using namespace llvm;
+using namespace tsar;
 
 namespace tsar {
 void printAPCVersion(llvm::raw_ostream &OS) {
@@ -35,5 +40,25 @@ void printAPCVersion(llvm::raw_ostream &OS) {
   OS << "C";
 #endif
   OS << "\n";
+}
+
+SmallVector<std::size_t, 8> extractTplDimsAlignmentIndexes(
+    const apc::AlignRule &AR) {
+  SmallVector<std::size_t, 8> TplDimAR(
+    AR.alignWith->GetDimSize(), AR.alignWith->GetDimSize());
+  assert(AR.alignArray->GetDimSize() == AR.alignRuleWith.size() &&
+    "Number of alignment rules must be equal number of dims in array!");
+  for (std::size_t ArrayDimIdx = 0, ArrayDimIdxE = AR.alignRuleWith.size();
+    ArrayDimIdx < ArrayDimIdxE; ++ArrayDimIdx)
+    if (AR.alignRuleWith[ArrayDimIdx].first >= 0)
+      TplDimAR[AR.alignRuleWith[ArrayDimIdx].first] = ArrayDimIdx;
+  auto NewOrder = AR.alignWith->GetNewTemplateDimsOrder();
+  if (!NewOrder.empty()) {
+    auto TplDimARPrev(TplDimAR);
+    for (std::size_t I = 0, EI = NewOrder.size(); I < EI; ++I) {
+      TplDimAR[I] = TplDimARPrev[NewOrder[I]];
+    }
+  }
+  return TplDimAR;
 }
 }
