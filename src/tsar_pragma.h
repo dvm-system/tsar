@@ -130,6 +130,10 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove);
 
 /// Constructs a string representation of a pragma according to introducer kind.
+llvm::StringRef getPragmaText(DirectiveId Id, llvm::SmallVectorImpl<char> &Out,
+  clang::PragmaIntroducerKind PIK = clang::PIK_HashPragma);
+
+/// Constructs a string representation of a pragma according to introducer kind.
 llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,
   clang::PragmaIntroducerKind PIK = clang::PIK_HashPragma);
 

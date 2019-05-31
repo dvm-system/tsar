@@ -218,6 +218,26 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   return { true, PragmaFlags::DefaultFlags };
 }
 
+llvm::StringRef getPragmaText(DirectiveId Id, llvm::SmallVectorImpl<char> &Out,
+    clang::PragmaIntroducerKind PIK) {
+  assert(DirectiveId::NotDirective < Id && Id < DirectiveId::NumDirectives &&
+    "Invalid identifier of a directive!");
+  DirectiveNamespaceId NID = getParent(Id);
+  llvm::raw_svector_ostream OS(Out);
+  switch (PIK) {
+  case PIK_HashPragma: OS << "#pragma "; break;
+  case PIK__Pragma: OS << "_Pragma(\""; break;
+  case PIK___pragma: OS << "__pragma(\""; break;
+  }
+  OS << getName(NID) << " " << getName(Id);
+  switch (PIK) {
+  case PIK__Pragma: case PIK___pragma: OS << "\")"; break;
+  }
+  OS << "\n";
+  return StringRef(Out.data(), Out.size());
+}
+
+
 llvm::StringRef getPragmaText(ClauseId Id, llvm::SmallVectorImpl<char> &Out,
     clang::PragmaIntroducerKind PIK) {
   assert(ClauseId::NotClause < Id && Id < ClauseId::NumClauses &&
