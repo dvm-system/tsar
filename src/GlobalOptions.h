@@ -78,6 +78,12 @@ public:
     return *mOptions;
   }
 
+  /// Set a list of global options, it must not be null.
+  void setOptions(const tsar::GlobalOptions *Options) noexcept {
+    assert(Options && "List of options must not be null!");
+    mOptions = Options;
+  }
+
   /// Returns true if a list of options is specified.
   bool isSpecified() const noexcept { return mOptions; }
 
