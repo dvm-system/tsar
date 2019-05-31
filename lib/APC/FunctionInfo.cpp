@@ -232,7 +232,9 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       if (!Callee.second->getFunction())
         continue;
       auto CalleeFI = APCCtx.findFunction(*Callee.second->getFunction());
-      assert(CalleeFI && "Function should be registered in APC context!");
+      // Some functions are not registered, for example functions without body.
+      if (!CalleeFI)
+        continue;
       CalleeFI->callsTo.push_back(FI);
       apc::FuncParam Param;
       CallSite CS(Callee.first);
