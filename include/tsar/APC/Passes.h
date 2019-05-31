@@ -63,6 +63,12 @@ void initializeAPCFunctionInfoPassPass(PassRegistry &Registry);
 
 /// Create a pass to collect function.
 ModulePass * createAPCFunctionInfoPass();
+
+/// Initialize a pass to determine rules for data distribution.
+void initializeAPCDataDistributionPassPass(PassRegistry &Registry);
+
+/// Create a pass to determine rules for data distribution.
+ModulePass * createAPCDataDistributionPass();
 }
 
 #endif//TSAR_APC_PASSES_H

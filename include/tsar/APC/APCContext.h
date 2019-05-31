@@ -37,11 +37,14 @@ struct LoopGraph;
 struct ParallelRegion;
 struct ArrayInfo;
 struct ArrayOp;
+struct DataDirective;
+struct AlignRule;
 class Statement;
 class Symbol;
 
 namespace Distribution {
 class Array;
+class ArrayAccessInfo;
 }
 
 namespace apc {
@@ -53,7 +56,10 @@ using Statement = ::Statement;
 using Symbol = ::Symbol;
 using Array = Distribution::Array;
 using ArrayInfo = ::ArrayInfo;
+using ArrayAccessInfo = Distribution::ArrayAccessInfo;
 using ArrayOp = ::ArrayOp;
+using DataDirective = ::DataDirective;
+using AlignRule = ::AlignRule;
 }
 
 namespace llvm {
