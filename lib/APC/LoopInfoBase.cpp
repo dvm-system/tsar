@@ -113,7 +113,7 @@ private:
 char APCLoopInfoBasePass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
-  "Loop Graph Builder (APC)", false, false,
+  "Loop Graph Builder (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
@@ -124,7 +124,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_IN_GROUP_END(APCLoopInfoBasePass, "apc-loop-info",
-  "Loop Graph Builder (APC)", false, false,
+  "Loop Graph Builder (APC)", true, true,
     DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createAPCLoopInfoBasePass() {

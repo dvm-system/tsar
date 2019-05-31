@@ -109,7 +109,7 @@ apc::FuncInfo & registerFunction(Function &F, APCContext &APCCtx) {
 char APCFunctionInfoPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
-  "Function Collector (APC)", false, false
+  "Function Collector (APC)", true, true
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
@@ -117,7 +117,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_IN_GROUP_END(APCFunctionInfoPass, "apc-function-info",
-  "Function Collector (APC)", false, false,
+  "Function Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 ModulePass * llvm::createAPCFunctionInfoPass() {
