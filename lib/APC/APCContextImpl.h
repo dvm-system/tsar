@@ -25,6 +25,7 @@
 #ifndef TSAR_APC_CONTEXT_IMPL_H
 #define TSAR_APC_CONTEXT_IMPL_H
 
+#include "AstWrapperImpl.h"
 #include "tsar_utility.h"
 #include <apc/Distribution/Array.h>
 #include <apc/GraphCall/graph_calls.h>
@@ -36,6 +37,7 @@
 
 namespace tsar {
 struct APCContextImpl {
+  using SymbolPool = std::vector<std::unique_ptr<Symbol>>;
   using ParallelRegionPool = std::vector<std::unique_ptr<ParallelRegion>>;
 
   using LoopPool = std::vector<std::unique_ptr<LoopGraph>>;
@@ -45,6 +47,7 @@ struct APCContextImpl {
 
   using FunctionMap = llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
 
+  SymbolPool Symbols;
   ParallelRegionPool ParallelRegions;
 
   LoopPool OuterLoops;

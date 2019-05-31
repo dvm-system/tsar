@@ -70,6 +70,10 @@ ParallelRegion & APCContext::getDefaultRegion() {
   return *mImpl->ParallelRegions.front();
 }
 
+void APCContext::addSymbol(apc::Symbol *S) {
+  mImpl->Symbols.emplace_back(S);
+}
+
 bool APCContext::addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory) {
   if (!mImpl->Loops.try_emplace(ID, L).second)
     return false;

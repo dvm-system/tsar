@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AstWrapperImpl.h"
 #include <tsar/APC/APCContext.h>
 #include <tsar/APC/Passes.h>
 #include <tsar/Support/Diagnostic.h>
@@ -70,13 +71,13 @@ private:
 char APCArrayInfoPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
-  "Array Collector (APC)", false, false
+  "Array Collector (APC)", true, true
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
 INITIALIZE_PASS_IN_GROUP_END(APCArrayInfoPass, "apc-array-info",
-  "Array Collector (APC)", false, false,
+  "Array Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createAPCArrayInfoPass() { return new APCArrayInfoPass; }
@@ -139,9 +140,11 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
       emitUnableShrink(F.getContext(), F, getDbgLoc(), DS_Warning);
     auto RawDIM = getRawDIMemoryIfExists(F.getContext(), *DIM);
     assert(RawDIM && "Unknown raw memory!");
+    auto APCSymbol = new apc::Symbol(*DIM);
+    APCCtx.addSymbol(APCSymbol);
     auto APCArray = new apc::Array(UniqueName, DIM->Var->getName(),
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),
-      Filename, ShrinkedDeclLoc, std::move(DeclScope), nullptr,
+      Filename, ShrinkedDeclLoc, std::move(DeclScope), APCSymbol,
       { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
     auto IsNew = APCCtx.addArray(RawDIM, APCArray);
     mArrays.push_back(APCArray);

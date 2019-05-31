@@ -38,6 +38,7 @@ struct ParallelRegion;
 struct ArrayInfo;
 struct ArrayOp;
 class Statement;
+class Symbol;
 
 namespace Distribution {
 class Array;
@@ -49,6 +50,7 @@ using FuncParam = ::FuncParam;
 using LoopGraph = ::LoopGraph;
 using ParallelRegion = ::ParallelRegion;
 using Statement = ::Statement;
+using Symbol = ::Symbol;
 using Array = Distribution::Array;
 using ArrayInfo = ::ArrayInfo;
 using ArrayOp = ::ArrayOp;
@@ -75,6 +77,13 @@ public:
   /// Returns default region which is a whole program.
   ParallelRegion & getDefaultRegion();
 
+  /// Add a new symbol under of APCContext control, context releases memory
+  /// when it becomes unused.
+  ///
+  /// \pre The same symbol should not be added twice. This may lead to multiple
+  /// deallocation of the same memory.
+  void addSymbol(apc::Symbol *S);
+
   /// Add loop with a specified ID under of APCContext control.
   ///
   /// If ManageMemory is set to true then context releases memory when it
@@ -96,7 +105,7 @@ public:
   std::size_t getNumberOfArrays() const;
 
   /// Add description of a specified function under of APCContext control,
-  /// context releases memory when it becomes unsed.
+  /// context releases memory when it becomes unused.
   bool addFunction(llvm::Function &F, apc::FuncInfo *FI);
 
   /// Return information about a specified function.
