@@ -261,7 +261,7 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
 inline llvm::DITypeRef arrayElementDIType(llvm::DITypeRef &DITy) {
   using namespace llvm;
   auto ElTy = stripDIType(DITy);
-  if (!ElTy.resolve() || !isa<llvm::DIDerivedType>(ElTy))
+  if (!ElTy.resolve())
     return DITypeRef();
   if (ElTy.resolve()->getTag() != dwarf::DW_TAG_pointer_type &&
       ElTy.resolve()->getTag() != dwarf::DW_TAG_array_type)
