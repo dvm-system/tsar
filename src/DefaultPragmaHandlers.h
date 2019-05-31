@@ -27,6 +27,8 @@ void AddPragmaHandlers(clang::Preprocessor &PP, ContainerT &C) {
     PP.AddPragmaHandler(NR);
     for (auto DId = DirectiveId::NotDirective + 1;
          DId < DirectiveId::NumDirectives; ++DId) {
+      if (tsar::getParent(DId) != NId)
+        continue;
       auto *PR = new PragmaReplacer(DId, *NR);
       NR->AddPragma(PR);
       for (ClauseId CId = ClauseId::NotClause + 1;
