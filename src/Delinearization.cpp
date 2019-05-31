@@ -177,8 +177,11 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
   for (LastConstDim; LastConstDim > 0; --LastConstDim)
     if (!isa<SCEVConstant>(ArrayInfo.getDimSize(LastConstDim - 1)))
       break;
-  if (LastConstDim == 0)
+  if (LastConstDim == 0) {
+    for (auto &Range : ArrayInfo)
+      Range.setProperty(Array::Range::IsDelinearized);
     return;
+  }
   for (auto &Range : ArrayInfo) {
     assert(ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size()
       && "Unknown subscripts in right dimensions with constant sizes!");
