@@ -88,6 +88,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     Passes.add(TEP);
   }
   Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
+  Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   auto addInitialAliasAanalysis = [&Passes]() {
     Passes.add(createCFLSteensAAWrapperPass());
     Passes.add(createCFLAndersAAWrapperPass());

@@ -170,6 +170,9 @@ public:
   /// Runs default sequence of passes.
   void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
 
+  /// Initializes external storage to access information about import process.
+  ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
+
 private:
   /// Updates pass manager. Adds a specified pass and a pass to print its result
   // if `PrintResult` is set to 'true`.
@@ -181,6 +184,7 @@ private:
   ProcessingStep mPrintSteps;
   const GlobalOptions *mGlobalOptions;
   std::string mAnalysisUse;
+  ASTImportInfo mImportInfo;
 };
 
 /// This prints LLVM IR to the standard output stream.
