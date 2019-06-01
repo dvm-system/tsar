@@ -158,6 +158,13 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     [&GlobalOpts](GlobalOptionsImmutableWrapper &GO) {
       GO.setOptions(&GlobalOpts);
   });
+  // TODO (kaniandr@gmail.com): what should we do if an array is a function
+  // parameter, however it is not accessed in a function. In this case,
+  // this array is not processed by this pass and it will not be added in
+  // a graph of arrays. So, there is no information that this array should
+  // be mentioned in #pragma dvm inherit(...) directive.
+  // It is not possible to delinearize this array without interprocedural
+  // analysis, so it has not been stored in the list of apc::Array.
   FileToFuncMap FileToFunc;
   ArrayAccessSummary ArrayRWs;
   ArrayAccessPool AccessPool;
