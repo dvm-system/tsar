@@ -30,6 +30,7 @@
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "ASTImportInfo.h"
 #include "ClangUtils.h"
+#include "GlobalInfoExtractor.h"
 #include "tsar_memory_matcher.h"
 #include "tsar_pass_provider.h"
 #include "tsar_pragma.h"
@@ -116,6 +117,7 @@ INITIALIZE_PASS_BEGIN(APCDVMHWriter, "apc-dvmh-writer",
   INITIALIZE_PASS_DEPENDENCY(ClangDIGlobalMemoryMatcherPass)
   INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
   INITIALIZE_PASS_DEPENDENCY(APCDVMHWriterProvider)
+  INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_END(APCDVMHWriter, "apc-dvmh-writer",
   "DVMH Writer (APC)", true, true)
 
@@ -128,6 +130,8 @@ void APCDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ClangDIGlobalMemoryMatcherPass>();
   AU.addRequired<APCDVMHWriterProvider>();
   AU.addUsedIfAvailable<ImmutableASTImportInfoPass>();
+  AU.addRequired<ClangGlobalInfoPass>();
+  AU.setPreservesAll();
 }
 
 bool APCDVMHWriter::runOnModule(llvm::Module &M) {
@@ -150,6 +154,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
   const auto *Import = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     Import = &ImportPass->getImportInfo();
+  auto &GlobalRawInfo = getAnalysis<ClangGlobalInfoPass>().getRawInfo();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   auto &APCRegion = APCCtx.getDefaultRegion();
   auto &DataDirs = APCRegion.GetDataDir();
@@ -233,6 +238,8 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     insertAlignAndCollectTpl(GlobalMatcher, *AR, DIVar);
   }
   insertDistibution(APCRegion, DataDirs, *TfmCtx, Templates);
+  for (auto &TplInfo : DataDirs.distrRules)
+    GlobalRawInfo.Identifiers.insert(TplInfo.first->GetShortName());
   return false;
 }
 
