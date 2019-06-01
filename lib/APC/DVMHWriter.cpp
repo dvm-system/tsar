@@ -28,6 +28,7 @@
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
+#include "ASTImportInfo.h"
 #include "ClangUtils.h"
 #include "tsar_memory_matcher.h"
 #include "tsar_pass_provider.h"
@@ -67,7 +68,7 @@ class APCDVMHWriter : public ModulePass, private bcl::Uncopyable {
 
 public:
   static char ID;
-  
+
   APCDVMHWriter() : ModulePass(ID) {
     initializeAPCDVMHWriterPass(*PassRegistry::getPassRegistry());
   }
@@ -87,8 +88,8 @@ private:
     const apc::DataDirective &DataDirx, TransformationContext &TfmCtx,
     TemplateInFileUsage &Templates);
 
-  SourceLocation insertAlignment(const apc::AlignRule &AR, const VarDecl *VD,
-    TransformationContext &TrmCtx);
+  SourceLocation insertAlignment(const ASTImportInfo &Import,
+    const apc::AlignRule &AR, const VarDecl *VD, TransformationContext &TrmCtx);
 };
 
 using APCDVMHWriterProvider = FunctionPassProvider<
@@ -113,6 +114,7 @@ INITIALIZE_PASS_BEGIN(APCDVMHWriter, "apc-dvmh-writer",
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIGlobalMemoryMatcherPass)
+  INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
   INITIALIZE_PASS_DEPENDENCY(APCDVMHWriterProvider)
 INITIALIZE_PASS_END(APCDVMHWriter, "apc-dvmh-writer",
   "DVMH Writer (APC)", true, true)
@@ -125,6 +127,7 @@ void APCDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<ClangDIGlobalMemoryMatcherPass>();
   AU.addRequired<APCDVMHWriterProvider>();
+  AU.addUsedIfAvailable<ImmutableASTImportInfoPass>();
 }
 
 bool APCDVMHWriter::runOnModule(llvm::Module &M) {
@@ -143,6 +146,10 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     [&MatchInfo](MemoryMatcherImmutableWrapper &Matcher) {
       Matcher.set(MatchInfo);
   });
+  ASTImportInfo ImportStub;
+  const auto *Import = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    Import = &ImportPass->getImportInfo();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   auto &APCRegion = APCCtx.getDefaultRegion();
   auto &DataDirs = APCRegion.GetDataDir();
@@ -166,7 +173,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     LocalItr->second.push_back(&AR);
   }
   TemplateInFileUsage Templates;
-  auto insertAlignAndCollectTpl = [this, TfmCtx, &Templates](
+  auto insertAlignAndCollectTpl = [this, TfmCtx, Import, &Templates](
       const ClangDIMemoryMatcherPass::DIMemoryMatcher &Matcher,
       const apc::AlignRule &AR, DIVariable *DIVar) {
     auto Itr = Matcher.find<MD>(DIVar);
@@ -174,11 +181,16 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
       // TODO (kaniandr@gmail.com): diagnose error.
       return;
     }
-    auto AfterLoc = insertAlignment(AR, Itr->get<AST>(), *TfmCtx);
-    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
-    auto FID = SrcMgr.getFileID(AfterLoc);
-    auto TplItr = Templates.try_emplace(FID).first;
-    TplItr->second.try_emplace(AR.alignWith);
+    auto DefinitionLoc = insertAlignment(*Import, AR, Itr->get<AST>(), *TfmCtx);
+    // We should add declaration of template before 'align' directive.
+    // So, we remember file with 'align' directive if this directive
+    // has been successfully inserted.
+    if (DefinitionLoc.isValid()) {
+      auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+      auto FID = SrcMgr.getFileID(DefinitionLoc);
+      auto TplItr = Templates.try_emplace(FID).first;
+      TplItr->second.try_emplace(AR.alignWith);
+    }
   };
   for (auto &Info : LocalVariables) {
     auto *F = M.getFunction(Info.first->getName());
@@ -224,8 +236,8 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
   return false;
 }
 
-SourceLocation APCDVMHWriter::insertAlignment(const apc::AlignRule &AR,
-    const VarDecl *VD, TransformationContext &TfmCtx) {
+SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
+    const apc::AlignRule &AR, const VarDecl *VD, TransformationContext &TfmCtx) {
   // Obtain `#pragma dvm array align` clause.
   SmallString<128> Align;
   getPragmaText(ClauseId::DvmAlign, Align);
@@ -254,12 +266,76 @@ SourceLocation APCDVMHWriter::insertAlignment(const apc::AlignRule &AR,
     Align += "]";
   }
   Align += ")\n";
-  auto StartOfLine = getStartOfLine(VD->getLocation(),
-    TfmCtx.getRewriter().getSourceMgr());
-  // TODO(kaniandr@gmail.com): split declaration statement if it contains
+  // TODO (kaniandr@gmail.com): split declaration statement if it contains
   // multiple declarations.
-  TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Align);
-  return StartOfLine;
+  // TODO (kaniandr@gmail.com): emit warning if definition is not found.
+  // TODO (kaniandr@gmail.com): insert new definition if it is not found,
+  // for example we do not treat definitions in include files as definitions
+  // and do not insert align directives before such definitions.
+  // TODO (kaniandr@gmail.com): check that definition/declaration is not
+  // located in macro.
+  // TODO (kaniandr@gmail.com): check that declaration and directive insertion
+  // point are in the same file.
+  auto &SrcMgr = TfmCtx.getContext().getSourceManager();
+  // We should not transform different representations of the same files.
+  // For example, if a file has been included twice Rewriter does not allow
+  // to transform it twice.
+  StringMap<FileID> TransformedFiles;
+  SourceLocation DefinitionLoc;
+  auto *VarDef = VD->getDefinition();
+  if (VarDef) {
+    DefinitionLoc = VarDef->getLocation();
+    auto StartOfLine = getStartOfLine(VarDef->getLocation(), SrcMgr);
+    TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Align);
+    auto FID = SrcMgr.getFileID(StartOfLine);
+    auto *File = SrcMgr.getFileEntryForID(FID);
+    TransformedFiles.try_emplace(File->getName(), FID);
+  }
+  // Insert 'align' directive before a variable definition (if it is available)
+  // and insert 'array' directive before redeclarations of a variable.
+  SmallString<16> Array;
+  getPragmaText(DirectiveId::DvmArray, Array);
+  for (auto *Redecl : VD->getFirstDecl()->redecls()) {
+    auto StartOfLine = getStartOfLine(Redecl->getLocation(), SrcMgr);
+    switch (Redecl->isThisDeclarationADefinition()) {
+    case VarDecl::Definition: break;
+    case VarDecl::DeclarationOnly:
+      TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Array);
+      break;
+    case VarDecl::TentativeDefinition:
+      if (DefinitionLoc.isInvalid()) {
+        auto FID = SrcMgr.getFileID(StartOfLine);
+        bool IsInclude = SrcMgr.getDecomposedIncludedLoc(FID).first.isValid();
+        if (IsInclude) {
+          auto *File = SrcMgr.getFileEntryForID(FID);
+          if (!TransformedFiles.count(File->getName()))
+            TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Array);
+        } else {
+          DefinitionLoc = Redecl->getLocation();
+          TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Align);
+        }
+      } else {
+        DefinitionLoc = Redecl->getLocation();
+        TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Array);
+      }
+      break;
+    }
+    auto FID = SrcMgr.getFileID(StartOfLine);
+    auto *File = SrcMgr.getFileEntryForID(FID);
+    TransformedFiles.try_emplace(File->getName(), FID);
+    auto RedeclLocItr =
+      Import.RedeclLocs.find(Redecl->getLocEnd().getRawEncoding());
+    if (RedeclLocItr != Import.RedeclLocs.end()) {
+      for (auto RedeclLoc : RedeclLocItr->second) {
+        auto StartOfLine = getStartOfLine(RedeclLoc, SrcMgr);
+        auto FID = SrcMgr.getFileID(StartOfLine);
+        auto *File = SrcMgr.getFileEntryForID(FID);
+        if (!TransformedFiles.count(File->getName()))
+          TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Array);
+      }
+    }
+  }
+  return DefinitionLoc;
 }
 
 void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
