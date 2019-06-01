@@ -24,7 +24,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
-#include "GlobalInfoExtractor.h"
 #include "tsar_memory_matcher.h"
 #include "tsar_matcher.h"
 #include "tsar_transformation.h"
@@ -193,7 +192,6 @@ ModulePass *llvm::createDIGlobalMemoryMatcherPass() {
 
 void ClangDIGlobalMemoryMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.setPreservesAll();
 }
@@ -217,9 +215,8 @@ bool ClangDIGlobalMemoryMatcherPass::runOnModule(llvm::Module &M) {
       ++NumNonMatchASTMemory;
     }
   }
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   for (auto *D : MemInfo.UnmatchedAST) {
-    if (!GIP.getGlobalInfo().findOutermostDecl(D))
+    if (D->isLocalVarDeclOrParm())
       continue;
     if (mMatcher.find<AST>(D) == mMatcher.end()) {
       mUnmatchedAST.insert(D->getCanonicalDecl());
