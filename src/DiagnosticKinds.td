@@ -89,3 +89,6 @@ def warn_disable_de : Warning<"disable dead code elimination">;
 def note_de_macro_prevent : Warning<"macro prevent dead code elimination">;
 def note_de_call_prevent : Warning<"function call prevent dead code elimination">;
 def note_de_multiple_prevent : Warning<"live declaration prevent dead code elimination">;
+
+def err_apc_insert_dvm_directive : Error<"unable to insert DVMH directive '%0'">;
+def note_apc_not_single_decl_stmt : Note<"declaration statement must containt a single declaration">;
