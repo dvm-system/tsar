@@ -946,10 +946,9 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
         /// So, it is not possible to find include which makes the From location
         /// visible at some point. Therefore we use additional information about
         /// import process (if it is available).
-        auto RedeclLocItr =
-          mImportInfo.RedeclLocs.find(Redecl->getLocEnd().getRawEncoding());
+        auto RedeclLocItr = mImportInfo.RedeclLocs.find(Redecl);
         if (RedeclLocItr != mImportInfo.RedeclLocs.end())
-          for (auto RedeclLoc : RedeclLocItr->second) {
+          for (auto RedeclLoc : RedeclLocItr->second.find(Redecl->getLocEnd())) {
             auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(RedeclLoc);
             while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
               FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);

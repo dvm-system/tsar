@@ -201,25 +201,19 @@ public:
 
   Decl *Imported(Decl *From, Decl *To) override {
     To = GeneralImporter::Imported(From, To);
-    SmallVector<SourceLocation, 4> FromLocs, ToLocs;
+    SmallVector<SourceLocation, 5> FromLocs, ToLocs;
     traverseSourceLocation(From,
-      [&FromLocs](SourceLocation Loc) { FromLocs.push_back(Loc); });
+      [&FromLocs, this](SourceLocation Loc) {FromLocs.push_back(Import(Loc));});
     traverseSourceLocation(To,
       [&ToLocs](SourceLocation Loc) { ToLocs.push_back(Loc); });
     assert(FromLocs.size() == ToLocs.size() &&
       "Different lists of known locations for the source and the result of import!");
-    for (std::size_t I = 0, EI = ToLocs.size(); I < EI; ++I) {
-      auto ToLoc = Import(FromLocs[I]);
-      if (ToLoc != ToLocs[I] && !mImportedLocs.count(ToLoc.getRawEncoding())) {
-        mOut.RedeclLocs[ToLocs[I].getRawEncoding()].push_back(ToLoc);
-        mImportedLocs.insert(ToLoc.getRawEncoding());
-      }
-    }
+    auto &RedeclLocs = mOut.RedeclLocs.try_emplace(To, ToLocs).first->second;
+    RedeclLocs.push_back(FromLocs);
     return To;
   }
 private:
   ASTImportInfo &mOut;
-  DenseSet<unsigned> mImportedLocs;
 };
 
 std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
