@@ -92,3 +92,7 @@ def note_de_multiple_prevent : Warning<"live declaration prevent dead code elimi
 
 def err_apc_insert_dvm_directive : Error<"unable to insert DVMH directive '%0'">;
 def note_apc_not_single_decl_stmt : Note<"declaration statement must containt a single declaration">;
+def note_apc_insert_macro_prevent : Note<"macro prevent insertion of directive">;
+def note_apc_insert_multiple_directives : Note<"other directive has been already inserted in this location">;
+def note_apc_no_proper_definition : Note<"proper definition for '%0' not found">;
+def note_apc_insert_include_prevent : Note<"unable to insert directive in include">;

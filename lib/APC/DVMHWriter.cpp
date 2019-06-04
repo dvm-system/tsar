@@ -110,6 +110,12 @@ public:
 
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+  void releaseMemory() override {
+    mCtx = nullptr;
+    mRewriter = nullptr;
+    mTransformedFiles.clear();
+    mInsertedDirs.clear();
+  }
 
 private:
   /// Insert distribution directives for templates into source files.
@@ -167,17 +173,77 @@ private:
   /// Insert a specified data directive `DirStr` in a specified location `Where`
   /// or diagnose error if insertion is not possible.
   void insertDataDirective(SourceLocation DeclLoc,
-      const DeclarationInfoMap &Decls, SourceLocation Where, StringRef DirStr,
-      DiagnosticsEngine &Diags, Rewriter &Rwr) {
+      const DeclarationInfoMap &Decls, SourceLocation Where, StringRef DirStr) {
+    assert(Where.isValid() && "Location must be valid!");
+    assert(DeclLoc.isValid() && "Location must be valid!");
+    auto &Diags = mCtx->getDiagnostics();
+    if (Where.isMacroID()) {
+      toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
+      toDiag(Diags, DeclLoc, diag::note_apc_insert_macro_prevent);
+      return;
+    }
     auto DInfoItr = Decls.find(DeclLoc.getRawEncoding());
     assert(DInfoItr != Decls.end() && "Declaration info must be available!");
     if (DInfoItr->second.IsSingleDeclStmt) {
-      Rwr.InsertTextBefore(Where, DirStr);
+      insertDirective(Where, DirStr);
     } else {
       toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
       toDiag(Diags, DeclLoc, diag::note_apc_not_single_decl_stmt);
     }
   }
+
+  /// Insert a specified directive in a specified location or diagnose error
+  /// if other directive has been already inserted at the same point.
+  void insertDirective(SourceLocation Where, StringRef DirStr) {
+    assert(Where.isValid() && "Location must be valid!");
+    assert(Where.isFileID() && "Location must not be in macro!");
+    Where = getLocationToTransform(Where);
+    assert(Where.isValid() && "Location must be valid!");
+    auto Itr = mInsertedDirs.find(Where.getRawEncoding());
+    if (Itr != mInsertedDirs.end() && Itr->second != DirStr) {
+      auto &Diags = mCtx->getDiagnostics();
+      toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
+      toDiag(Diags, Where, diag::note_apc_insert_multiple_directives);
+      return;
+    }
+    mRewriter->InsertTextBefore(Where, DirStr);
+    auto &SrcMgr = mCtx->getSourceManager();
+    if (Where != getStartOfLine(Where, SrcMgr))
+      mRewriter->InsertTextBefore(Where, "\n");
+    mTransformedFiles.try_emplace(
+      SrcMgr.getFilename(Where), SrcMgr.getFileID(Where));
+    mInsertedDirs.try_emplace(Where.getRawEncoding(), DirStr);
+  }
+
+  /// If file which contains a specified location `Loc` has been already
+  /// transformed return location which points to the same point as `Loc` in
+  /// a transformed file.
+  SourceLocation getLocationToTransform(SourceLocation Loc) {
+    assert(Loc.isValid() && "Location must be valid!");
+    assert(Loc.isFileID() && "Location must not be in macro!");
+    auto &SrcMgr = mCtx->getSourceManager();
+    auto Filename = SrcMgr.getFilename(Loc);
+    assert(!Filename.empty() && "File must be known for a specified location!");
+    auto FileItr = mTransformedFiles.find(Filename);
+    if (FileItr == mTransformedFiles.end())
+      return Loc;
+    auto DecLoc = SrcMgr.getDecomposedLoc(Loc);
+    auto FileStartLoc = SrcMgr.getLocForStartOfFile(FileItr->second);
+    return FileStartLoc.getLocWithOffset(DecLoc.second);
+  }
+
+  /// List of already transformed files.
+  ///
+  /// We should not transform different representations of the same files.
+  /// For example, if a file has been included twice Rewriter does not allow
+  /// to transform it twice.
+  StringMap<FileID> mTransformedFiles;
+
+  /// List of already inserted directives at specified locations.
+  DenseMap<unsigned, std::string> mInsertedDirs;
+
+  Rewriter *mRewriter;
+  ASTContext *mCtx;
 };
 
 using APCDVMHWriterProvider = FunctionPassProvider<
@@ -222,12 +288,15 @@ void APCDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 bool APCDVMHWriter::runOnModule(llvm::Module &M) {
+  releaseMemory();
   auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
       ": transformation context is not available");
     return false;
   }
+  mCtx = &TfmCtx->getContext();
+  mRewriter = &TfmCtx->getRewriter();
   APCDVMHWriterProvider::initialize<TransformationEnginePass>(
     [&M, TfmCtx](TransformationEnginePass &TEP) {
     TEP.setContext(M, TfmCtx);
@@ -265,7 +334,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     LocalItr->second.push_back(&AR);
   }
   DeclarationInfoMap Decls;
-  auto *Unit = TfmCtx->getContext().getTranslationUnitDecl();
+  auto *Unit = mCtx->getTranslationUnitDecl();
   isGlobalSingleDeclStmt(*Unit, *Import, Decls);
   TemplateInFileUsage Templates;
   auto insertAlignAndCollectTpl =
@@ -282,7 +351,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     // So, we remember file with 'align' directive if this directive
     // has been successfully inserted.
     if (DefLoc.isValid()) {
-      auto &SrcMgr = TfmCtx->getContext().getSourceManager();
+      auto &SrcMgr = mCtx->getSourceManager();
       auto FID = SrcMgr.getFileID(DefLoc);
       auto TplItr = Templates.try_emplace(FID).first;
       TplItr->second.try_emplace(AR.alignWith);
@@ -301,7 +370,6 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     assert(FD && "AST-level function declaration must not be null!");
     DeclarationInfoExtractor Visitor(Decls);
     Visitor.TraverseFunctionDecl(FD);
-    /// TODO (kaniandr@gmail.com): check that function not in macro.
     SmallString<64> Inherit;
     getPragmaText(DirectiveId::DvmInherit, Inherit);
     Inherit.pop_back();
@@ -375,74 +443,66 @@ SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   // TODO (kaniandr@gmail.com): insert new definition if it is not found,
   // for example we do not treat definitions in include files as definitions
   // and do not insert align directives before such definitions.
-  // TODO (kaniandr@gmail.com): check that definition/declaration is not
-  // located in macro.
   // TODO (kaniandr@gmail.com): check that declaration and directive insertion
   // point are in the same file.
-  auto &SrcMgr = TfmCtx.getContext().getSourceManager();
-  auto &Diags = TfmCtx.getContext().getDiagnostics();
-  auto &Rwr = TfmCtx.getRewriter();
-  // We should not transform different representations of the same files.
-  // For example, if a file has been included twice Rewriter does not allow
-  // to transform it twice.
-  StringMap<FileID> TransformedFiles;
+  // TODO (kaniandr@gmail.com): do not insert directives inside a function body
+  // which is located in include file. Do not insert directives in an include
+  // file if inclusion point may be in local scope
+  // (for example inside a function).
+  // TODO (kaniandr@gmail.com): do not insert directives for local declarations
+  // in include files.
+  auto &SrcMgr = mCtx->getSourceManager();
   SourceLocation DefinitionLoc;
   auto *VarDef = VD->getDefinition();
   if (VarDef) {
     DefinitionLoc = VarDef->getLocation();
-    auto StartOfLine = getStartOfLine(VarDef->getLocation(), SrcMgr);
-    insertDataDirective(DefinitionLoc, Decls, StartOfLine, Align, Diags, Rwr);
-    auto FID = SrcMgr.getFileID(StartOfLine);
-    auto *File = SrcMgr.getFileEntryForID(FID);
-    TransformedFiles.try_emplace(File->getName(), FID);
+    auto StartOfLine = VarDef->getLocStart();
+    insertDataDirective(DefinitionLoc, Decls, StartOfLine, Align);
   }
   // Insert 'align' directive before a variable definition (if it is available)
   // and insert 'array' directive before redeclarations of a variable.
   SmallString<16> Array;
   getPragmaText(DirectiveId::DvmArray, Array);
   for (auto *Redecl : VD->getFirstDecl()->redecls()) {
-    auto StartOfLine = getStartOfLine(Redecl->getLocation(), SrcMgr);
+    auto StartOfLine = Redecl->getLocStart();
     auto RedeclLoc = Redecl->getLocation();
     switch (Redecl->isThisDeclarationADefinition()) {
     case VarDecl::Definition: break;
     case VarDecl::DeclarationOnly:
-      TfmCtx.getRewriter().InsertTextBefore(StartOfLine, Array);
-      insertDataDirective(RedeclLoc, Decls, StartOfLine, Array, Diags, Rwr);
+      insertDataDirective(RedeclLoc, Decls, StartOfLine, Array);
       break;
     case VarDecl::TentativeDefinition:
       if (DefinitionLoc.isInvalid()) {
         auto FID = SrcMgr.getFileID(StartOfLine);
         bool IsInclude = SrcMgr.getDecomposedIncludedLoc(FID).first.isValid();
         if (IsInclude) {
-          auto *File = SrcMgr.getFileEntryForID(FID);
-          if (!TransformedFiles.count(File->getName()))
-            insertDataDirective(RedeclLoc, Decls, StartOfLine, Array, Diags, Rwr);
+          insertDataDirective(RedeclLoc, Decls, StartOfLine, Array);
         } else {
           DefinitionLoc = Redecl->getLocation();
-          insertDataDirective(RedeclLoc, Decls, StartOfLine, Align, Diags, Rwr);
+          insertDataDirective(RedeclLoc, Decls, StartOfLine, Align);
         }
       } else {
         DefinitionLoc = Redecl->getLocation();
-        insertDataDirective(RedeclLoc, Decls, StartOfLine, Array, Diags, Rwr);
+        insertDataDirective(RedeclLoc, Decls, StartOfLine, Align);
       }
       break;
     }
-    auto FID = SrcMgr.getFileID(StartOfLine);
-    auto *File = SrcMgr.getFileEntryForID(FID);
-    TransformedFiles.try_emplace(File->getName(), FID);
     auto RedeclLocItr = Import.RedeclLocs.find(Redecl);
     if (RedeclLocItr != Import.RedeclLocs.end()) {
       auto &Locs = RedeclLocItr->second.find(RedeclLoc);
-      for (auto Loc : Locs) {
-        if (Loc == RedeclLoc)
+      auto &StartLocs = RedeclLocItr->second.find(StartOfLine);
+      for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I) {
+        if (Locs[I] == RedeclLoc)
           continue;
-        auto StartOfLine = getStartOfLine(Loc, SrcMgr);
-        auto FID = SrcMgr.getFileID(StartOfLine);
-        auto *File = SrcMgr.getFileEntryForID(FID);
-        if (!TransformedFiles.count(File->getName()))
-          insertDataDirective(Loc, Decls, StartOfLine, Array, Diags, Rwr);
+        insertDataDirective(Locs[I], Decls, StartLocs[I], Array);
       }
     }
+  }
+  if (DefinitionLoc.isInvalid()) {
+    toDiag(mCtx->getDiagnostics(), VD->getLocation(),
+      diag::err_apc_insert_dvm_directive) << StringRef(Align).trim();
+    toDiag(mCtx->getDiagnostics(), diag::note_apc_no_proper_definition) <<
+      VD->getName();
   }
   return DefinitionLoc;
 }
@@ -453,6 +513,7 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
   auto &Rewriter = TfmCtx.getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   auto &LangOpts = Rewriter.getLangOpts();
+  auto &Diags = TfmCtx.getContext().getDiagnostics();
   for (auto &File : Templates) {
     auto PreInfo =
       Lexer::ComputePreamble(SrcMgr.getBufferData(File.first), LangOpts);
@@ -496,9 +557,19 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
         }
       }
       Distribute += "\n";
-      // Use `extern` in include files and to avoid variable redefinition.
-      if (SrcMgr.getDecomposedIncludedLoc(File.first).first.isValid() ||
-          TplInfo.HasDefinition)
+      auto Where =
+        SrcMgr.getLocForStartOfFile(File.first).getLocWithOffset(PreInfo.Size);
+      // TODO (kaniandr@gmail.com): do not insert directive in include file
+      // if some inclusion locations may be in a local scope. Such check is
+      // not implemented, hence we conservatively disable insertion of directive
+      // in an include file.
+      if (SrcMgr.getDecomposedIncludedLoc(File.first).first.isValid()) {
+        toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) <<
+          StringRef(Distribute).trim();
+        toDiag(Diags, Where, diag::note_apc_insert_include_prevent);
+      }
+      // Use `extern` in to avoid variable redefinition.
+      if (TplInfo.HasDefinition)
         Distribute += "extern";
       else
         TplInfo.HasDefinition = true;
@@ -506,9 +577,13 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
       Distribute += Tpl->GetShortName();
       Distribute += ";\n\n";
       // Insert at the end of preamble.
-      Rewriter.InsertTextBefore(
-        SrcMgr.getLocForStartOfFile(File.first).getLocWithOffset(PreInfo.Size),
-        Distribute);
+      Where = getLocationToTransform(Where);
+      assert(Where.isFileID() && "Location must not be in macro!");
+      Rewriter.InsertTextBefore(Where, Distribute);
+      mTransformedFiles.try_emplace(SrcMgr.getFilename(Where), File.first);
     }
+    /// TODO (kaniandr@gmail.com): emit warning if definition of template has
+    /// not been created. Check that definitions for all templates in DataDirs
+    /// has been created.
   }
 }
