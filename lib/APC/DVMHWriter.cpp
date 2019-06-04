@@ -424,10 +424,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
       auto *APCSymbol = AR->alignArray->GetDeclSymbol();
       auto *DIVar = cast<DILocalVariable>(APCSymbol->getMemory().Var);
       auto Itr = Matcher.find<MD>(DIVar);
-      if (Itr == Matcher.end()) {
-        // TODO (kaniandr@gmail.com): diagnose error.
-        continue;
-      }
+      assert(Itr != Matcher.end() && "Source-level location must be available!");
       if (DIVar->isParameter()) {
         // TODO (kaniandr@gmail.com): should we add inherit for function
         // declaration?
@@ -453,10 +450,8 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     auto *APCSymbol = AR->alignArray->GetDeclSymbol();
     auto *DIVar = APCSymbol->getMemory().Var;
     auto Itr = GlobalMatcher.find<MD>(DIVar);
-    if (Itr == GlobalMatcher.end()) {
-      // TODO (kaniandr@gmail.com): diagnose error.
-      continue;
-    }
+    assert(Itr != GlobalMatcher.end() &&
+      "Source-level location must be available!");
     insertAlignAndCollectTpl(*Itr->get<AST>(), *AR);
     NotDistrCanonicalDecls.erase(Itr->get<AST>());
   }
