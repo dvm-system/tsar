@@ -514,6 +514,7 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
   auto &SrcMgr = Rewriter.getSourceMgr();
   auto &LangOpts = Rewriter.getLangOpts();
   auto &Diags = TfmCtx.getContext().getDiagnostics();
+  SmallPtrSet<apc::Array *, 8> InsertedTemplates;
   for (auto &File : Templates) {
     auto PreInfo =
       Lexer::ComputePreamble(SrcMgr.getBufferData(File.first), LangOpts);
@@ -581,9 +582,12 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
       assert(Where.isFileID() && "Location must not be in macro!");
       Rewriter.InsertTextBefore(Where, Distribute);
       mTransformedFiles.try_emplace(SrcMgr.getFilename(Where), File.first);
+      InsertedTemplates.insert(Tpl);
     }
-    /// TODO (kaniandr@gmail.com): emit warning if definition of template has
-    /// not been created. Check that definitions for all templates in DataDirs
-    /// has been created.
   }
+  if (DataDirs.distrRules.size() != InsertedTemplates.size())
+    for (auto &TplInfo : DataDirs.distrRules)
+      if (!InsertedTemplates.count(TplInfo.first))
+        toDiag(Diags, diag::err_apc_insert_template) <<
+          TplInfo.first->GetShortName();
 }
