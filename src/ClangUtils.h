@@ -230,8 +230,15 @@ inline clang::SourceLocation getStartOfLine(clang::SourceLocation Loc,
   unsigned Col = SM.getPresumedColumnNumber(Loc, &IsInvalid);
   if (IsInvalid)
     return clang::SourceLocation();
-  return clang::SourceLocation::getFromRawEncoding(
+  auto StartOfLine = clang::SourceLocation::getFromRawEncoding(
     Loc.getRawEncoding() + 1 - Col);
+  Col = SM.getPresumedColumnNumber(StartOfLine, &IsInvalid);
+  if (IsInvalid)
+    return clang::SourceLocation();
+  if (Col > 1)
+    return clang::SourceLocation::getFromRawEncoding(
+      StartOfLine.getRawEncoding() - 1);
+  return StartOfLine;
 }
 
 /// Returns range of expansion locations.
