@@ -200,7 +200,9 @@ private:
     Where = getLocationToTransform(Where);
     assert(Where.isValid() && "Location must be valid!");
     auto Itr = mInsertedDirs.find(Where.getRawEncoding());
-    if (Itr != mInsertedDirs.end() && Itr->second != DirStr) {
+    if (Itr != mInsertedDirs.end()) {
+      if (Itr->second == DirStr)
+        return;
       auto &Diags = mCtx->getDiagnostics();
       toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
       toDiag(Diags, Where, diag::note_apc_insert_multiple_directives);
