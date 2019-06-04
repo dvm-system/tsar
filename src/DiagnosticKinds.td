@@ -97,3 +97,4 @@ def note_apc_insert_multiple_directives : Note<"other directive has been already
 def note_apc_no_proper_definition : Note<"proper definition for '%0' not found">;
 def note_apc_insert_include_prevent : Note<"unable to insert directive in include">;
 def err_apc_insert_template : Error<"unable to create template definition for '%0'">;
+def err_apc_not_distr_decl_directive : Error<"distribution of declaration depends on usage location">;

@@ -75,8 +75,8 @@ public:
   bool VisitDeclStmt(DeclStmt *DS) {
     for (auto *D : DS->decls())
       if (isa<VarDecl>(D)) {
-        auto &Pair = mDecls.try_emplace(D->getLocation().getRawEncoding());
-        Pair.first->second.IsSingleDeclStmt = DS->isSingleDecl();
+        auto Loc = D->getLocation();
+        mDecls[Loc.getRawEncoding()].IsSingleDeclStmt = DS->isSingleDecl();
       }
     return true;
   }
@@ -97,6 +97,9 @@ class APCDVMHWriter : public ModulePass, private bcl::Uncopyable {
   /// Contains templates which are used in program files.
   using TemplateInFileUsage =
     DenseMap<FileID, SmallDenseMap<apc::Array *, TemplateInfo, 1>>;
+
+  /// Set of variable declarations.
+  using DeclarationSet = DenseSet<VarDecl *>;
 
   using DeclarationInfo = DeclarationInfoExtractor::DeclarationInfo;
   using DeclarationInfoMap = DeclarationInfoExtractor::DeclarationInfoMap;
@@ -132,16 +135,31 @@ private:
     const apc::DataDirective &DataDirx, TransformationContext &TfmCtx,
     TemplateInFileUsage &Templates);
 
-  SourceLocation insertAlignment(const ASTImportInfo &Import,
-    const DeclarationInfoMap &Decls, const apc::AlignRule &AR, const VarDecl *VD,
-    TransformationContext &TrmCtx);
-
-  /// Set `IsSingleDeclStmt property` for global declarations.
+  /// Insert `align` and `array` directives according to a specified align rule
+  /// for all redeclarations of a specified variable. Emit diagnostics in case
+  /// of errors.
   ///
+  // TODO (kaniandr@gmail.com): split declaration statement if it contains
+  // multiple declarations.
+  // TODO (kaniandr@gmail.com): insert new definition if it is not found,
+  // for example we do not treat definitions in include files as definitions
+  // and do not insert align directives before such definitions.
+  SourceLocation insertAlignment(const ASTImportInfo &Import,
+    const DeclarationInfoMap &Decls, const apc::AlignRule &AR,
+    const VarDecl *VD, TransformationContext &TrmCtx);
+
+  /// Initialize declaration information for global declarations and
+  /// collect all canonical declarations (including the local ones).
+  ///
+  /// \post
+  /// - Set `IsSingleDeclStmt` property for global declarations only.
   /// If `Decls` does not contain a declaration then this container will be
   /// updated and declaration will be inserted.
-  void isGlobalSingleDeclStmt(const TranslationUnitDecl &Unit,
-      const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls) {
+  /// - Canonical declarations for all declarations will be stored in
+  /// `CanonicalDecls` container.
+  void initializeDeclInfo(const TranslationUnitDecl &Unit,
+      const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls,
+      DeclarationSet &CanonicalDecls) {
     DenseMap<unsigned, SourceLocation> FirstGlobalAtLoc;
     auto checkSingleDecl = [&FirstGlobalAtLoc, &Decls](
         SourceLocation StartLoc, SourceLocation Loc) {
@@ -155,17 +173,24 @@ private:
       }
     };
     for (auto *D : Unit.decls()) {
-      auto *VD = dyn_cast<VarDecl>(D);
-      if (!VD)
-        continue;
-      auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
-      if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
-        checkSingleDecl(VD->getLocStart(), VD->getLocation());
-      } else {
-        auto &StartLocs = MergedLocItr->second.find(VD->getLocStart());
-        auto &Locs = MergedLocItr->second.find(VD->getLocation());
-        for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I)
-          checkSingleDecl(StartLocs[I], Locs[I]);
+      if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+        if (FD->hasBody())
+          for (auto *D : FD->decls())
+            if (isa<VarDecl>(D)) {
+              CanonicalDecls.insert(cast<VarDecl>(D->getCanonicalDecl()));
+              Decls[D->getLocation().getRawEncoding()].IsSingleDeclStmt = false;
+            }
+      } else if (auto *VD = dyn_cast<VarDecl>(D)) {
+        CanonicalDecls.insert(cast<VarDecl>(VD->getCanonicalDecl()));
+        auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
+        if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
+          checkSingleDecl(VD->getLocStart(), VD->getLocation());
+        } else {
+          auto &StartLocs = MergedLocItr->second.find(VD->getLocStart());
+          auto &Locs = MergedLocItr->second.find(VD->getLocation());
+          for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I)
+            checkSingleDecl(StartLocs[I], Locs[I]);
+        }
       }
     }
   }
@@ -232,6 +257,30 @@ private:
     auto DecLoc = SrcMgr.getDecomposedLoc(Loc);
     auto FileStartLoc = SrcMgr.getLocForStartOfFile(FileItr->second);
     return FileStartLoc.getLocWithOffset(DecLoc.second);
+  }
+
+  /// Check that declarations which should not be distributed are not
+  /// corrupted by distribution directives.
+  void checkNotDistributedDecls(DeclarationSet NotDistrCanonicalDecls) {
+    auto &SrcMgr = mCtx->getSourceManager();
+    auto &Diags = mCtx->getDiagnostics();
+    for (auto *VD : NotDistrCanonicalDecls)
+      for (auto *Redecl : VD->getFirstDecl()->redecls()) {
+        auto StartOfDecl = Redecl->getLocStart();
+        // We have not inserted directives in a macro.
+        if (StartOfDecl.isMacroID())
+          continue;
+        auto Filename = SrcMgr.getFilename(StartOfDecl);
+        auto TfmFileItr = mTransformedFiles.find(Filename);
+        if (TfmFileItr == mTransformedFiles.end())
+          continue;
+        auto DecLoc = SrcMgr.getDecomposedLoc(StartOfDecl);
+        StartOfDecl = SrcMgr.getLocForStartOfFile(TfmFileItr->second).
+          getLocWithOffset(DecLoc.second);
+        // Whether a distribution pragma acts on this declaration?
+        if (mInsertedDirs.count(StartOfDecl.getRawEncoding()))
+          toDiag(Diags, StartOfDecl, diag::err_apc_not_distr_decl_directive);
+      }
   }
 
   /// List of already transformed files.
@@ -336,19 +385,14 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     LocalItr->second.push_back(&AR);
   }
   DeclarationInfoMap Decls;
+  DeclarationSet NotDistrCanonicalDecls;
   auto *Unit = mCtx->getTranslationUnitDecl();
-  isGlobalSingleDeclStmt(*Unit, *Import, Decls);
+  initializeDeclInfo(*Unit, *Import, Decls, NotDistrCanonicalDecls);
   TemplateInFileUsage Templates;
   auto insertAlignAndCollectTpl =
-    [this, TfmCtx, Import, &GIP, &Templates, &Decls](
-      const ClangDIMemoryMatcherPass::DIMemoryMatcher &Matcher,
-      const apc::AlignRule &AR, DIVariable *DIVar) {
-    auto Itr = Matcher.find<MD>(DIVar);
-    if (Itr == Matcher.end()) {
-      // TODO (kaniandr@gmail.com): diagnose error.
-      return;
-    }
-    auto DefLoc = insertAlignment(*Import, Decls, AR, Itr->get<AST>(), *TfmCtx);
+    [this, TfmCtx, Import, &Templates, &Decls](
+      VarDecl &VD, const apc::AlignRule &AR) {
+    auto DefLoc = insertAlignment(*Import, Decls, AR, &VD, *TfmCtx);
     // We should add declaration of template before 'align' directive.
     // So, we remember file with 'align' directive if this directive
     // has been successfully inserted.
@@ -379,12 +423,20 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     for (auto *AR : Info.second) {
       auto *APCSymbol = AR->alignArray->GetDeclSymbol();
       auto *DIVar = cast<DILocalVariable>(APCSymbol->getMemory().Var);
+      auto Itr = Matcher.find<MD>(DIVar);
+      if (Itr == Matcher.end()) {
+        // TODO (kaniandr@gmail.com): diagnose error.
+        continue;
+      }
       if (DIVar->isParameter()) {
+        // TODO (kaniandr@gmail.com): should we add inherit for function
+        // declaration?
         Inherit += ",";
         Inherit += DIVar->getName();
       } else {
-        insertAlignAndCollectTpl(Matcher, *AR, DIVar);
+        insertAlignAndCollectTpl(*Itr->get<AST>(), *AR);
       }
+      NotDistrCanonicalDecls.erase(Itr->get<AST>());
     }
     const FunctionDecl *BodyDecl;
     FD->getBody(BodyDecl);
@@ -400,8 +452,15 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
   for (auto *AR : GlobalArrays) {
     auto *APCSymbol = AR->alignArray->GetDeclSymbol();
     auto *DIVar = APCSymbol->getMemory().Var;
-    insertAlignAndCollectTpl(GlobalMatcher, *AR, DIVar);
+    auto Itr = GlobalMatcher.find<MD>(DIVar);
+    if (Itr == GlobalMatcher.end()) {
+      // TODO (kaniandr@gmail.com): diagnose error.
+      continue;
+    }
+    insertAlignAndCollectTpl(*Itr->get<AST>(), *AR);
+    NotDistrCanonicalDecls.erase(Itr->get<AST>());
   }
+  checkNotDistributedDecls(NotDistrCanonicalDecls);
   insertDistibution(APCRegion, DataDirs, *TfmCtx, Templates);
   for (auto &TplInfo : DataDirs.distrRules)
     GIP.getRawInfo().Identifiers.insert(TplInfo.first->GetShortName());
@@ -439,60 +498,46 @@ SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
     Align += "]";
   }
   Align += ")\n";
-  // TODO (kaniandr@gmail.com): split declaration statement if it contains
-  // multiple declarations.
-  // TODO (kaniandr@gmail.com): emit warning if definition is not found.
-  // TODO (kaniandr@gmail.com): insert new definition if it is not found,
-  // for example we do not treat definitions in include files as definitions
-  // and do not insert align directives before such definitions.
-  // TODO (kaniandr@gmail.com): check that declaration and directive insertion
-  // point are in the same file.
-  // TODO (kaniandr@gmail.com): do not insert directives inside a function body
-  // which is located in include file. Do not insert directives in an include
-  // file if inclusion point may be in local scope
-  // (for example inside a function).
-  // TODO (kaniandr@gmail.com): do not insert directives for local declarations
-  // in include files.
   auto &SrcMgr = mCtx->getSourceManager();
   SourceLocation DefinitionLoc;
   auto *VarDef = VD->getDefinition();
   if (VarDef) {
     DefinitionLoc = VarDef->getLocation();
-    auto StartOfLine = VarDef->getLocStart();
-    insertDataDirective(DefinitionLoc, Decls, StartOfLine, Align);
+    auto StartOfDecl = VarDef->getLocStart();
+    insertDataDirective(DefinitionLoc, Decls, StartOfDecl, Align);
   }
   // Insert 'align' directive before a variable definition (if it is available)
   // and insert 'array' directive before redeclarations of a variable.
   SmallString<16> Array;
   getPragmaText(DirectiveId::DvmArray, Array);
   for (auto *Redecl : VD->getFirstDecl()->redecls()) {
-    auto StartOfLine = Redecl->getLocStart();
+    auto StartOfDecl = Redecl->getLocStart();
     auto RedeclLoc = Redecl->getLocation();
     switch (Redecl->isThisDeclarationADefinition()) {
     case VarDecl::Definition: break;
     case VarDecl::DeclarationOnly:
-      insertDataDirective(RedeclLoc, Decls, StartOfLine, Array);
+      insertDataDirective(RedeclLoc, Decls, StartOfDecl, Array);
       break;
     case VarDecl::TentativeDefinition:
       if (DefinitionLoc.isInvalid()) {
-        auto FID = SrcMgr.getFileID(StartOfLine);
+        auto FID = SrcMgr.getFileID(StartOfDecl);
         bool IsInclude = SrcMgr.getDecomposedIncludedLoc(FID).first.isValid();
         if (IsInclude) {
-          insertDataDirective(RedeclLoc, Decls, StartOfLine, Array);
+          insertDataDirective(RedeclLoc, Decls, StartOfDecl, Array);
         } else {
           DefinitionLoc = Redecl->getLocation();
-          insertDataDirective(RedeclLoc, Decls, StartOfLine, Align);
+          insertDataDirective(RedeclLoc, Decls, StartOfDecl, Align);
         }
       } else {
         DefinitionLoc = Redecl->getLocation();
-        insertDataDirective(RedeclLoc, Decls, StartOfLine, Align);
+        insertDataDirective(RedeclLoc, Decls, StartOfDecl, Align);
       }
       break;
     }
     auto RedeclLocItr = Import.RedeclLocs.find(Redecl);
     if (RedeclLocItr != Import.RedeclLocs.end()) {
       auto &Locs = RedeclLocItr->second.find(RedeclLoc);
-      auto &StartLocs = RedeclLocItr->second.find(StartOfLine);
+      auto &StartLocs = RedeclLocItr->second.find(StartOfDecl);
       for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I) {
         if (Locs[I] == RedeclLoc)
           continue;
