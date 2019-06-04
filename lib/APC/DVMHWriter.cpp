@@ -208,8 +208,8 @@ private:
       return;
     }
     auto DInfoItr = Decls.find(DeclLoc.getRawEncoding());
-    assert(DInfoItr != Decls.end() && "Declaration info must be available!");
-    if (DInfoItr->second.IsSingleDeclStmt) {
+    // DeclarationInfo is not available for functions.
+    if (DInfoItr == Decls.end() || DInfoItr->second.IsSingleDeclStmt) {
       insertDirective(Where, DirStr);
     } else {
       toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
@@ -281,6 +281,61 @@ private:
         if (mInsertedDirs.count(StartOfDecl.getRawEncoding()))
           toDiag(Diags, StartOfDecl, diag::err_apc_not_distr_decl_directive);
       }
+  }
+
+  /// Insert inherit directive for all redeclarations of a specified function.
+  void insertInherit(FunctionDecl *FD, const DeclarationInfoMap &Decls,
+      ArrayRef<const DILocalVariable *> InheritArgs) {
+    if (InheritArgs.empty())
+      return;
+    for (auto *Redecl : FD->getFirstDecl()->redecls()) {
+      SmallString<64> Inherit;
+      getPragmaText(DirectiveId::DvmInherit, Inherit);
+      Inherit.pop_back();
+      Inherit += "(";
+      SmallVector<std::pair<SourceLocation, StringRef>, 8> UnnamedArgsInMacro;
+      auto insert = [this, Redecl, &Inherit, &UnnamedArgsInMacro](
+          const DILocalVariable *DIArg) {
+        auto Param = Redecl->getParamDecl(DIArg->getArg() - 1);
+        assert(Param && "Parameter must not be null!");
+        if (Param->getName().empty()) {
+          Inherit += DIArg->getName();
+          auto Loc = Param->getLocation();
+          if (Loc.isMacroID()) {
+            UnnamedArgsInMacro.emplace_back(Loc, DIArg->getName());
+          } else {
+            SmallVector<char, 16> Name;
+            // We add brackets due to the following case
+            // void foo(double *A);
+            // #define M
+            // void foo(double *M);
+            // Without brackets we obtain 'void foo(double *MA)' instead of
+            // 'void foo(double *M(A))' and do not obtain 'void foo(double *A)'
+            // after preprocessing.
+            mRewriter->InsertTextBefore(Loc,
+              ("(" + DIArg->getName() + ")").toStringRef(Name));
+          }
+        } else {
+          Inherit += Param->getName();
+        }
+      };
+      insert(InheritArgs.front());
+      for (unsigned I = 1, EI = InheritArgs.size(); I < EI; ++I) {
+        Inherit += ",";
+        insert(InheritArgs[I]);
+      }
+      Inherit += ")\n";
+      if (!UnnamedArgsInMacro.empty()) {
+        auto &Diags = mCtx->getDiagnostics();
+        toDiag(Diags, Redecl->getLocStart(),
+          diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
+        for (auto &Arg : UnnamedArgsInMacro)
+          toDiag(Diags, Arg.first, diag::note_decl_insert_macro_prevent) <<
+            Arg.second;
+      }
+      insertDataDirective(Redecl->getLocation(), Decls,
+        Redecl->getLocStart(), Inherit);
+    }
   }
 
   /// List of already transformed files.
@@ -416,33 +471,21 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     assert(FD && "AST-level function declaration must not be null!");
     DeclarationInfoExtractor Visitor(Decls);
     Visitor.TraverseFunctionDecl(FD);
-    SmallString<64> Inherit;
-    getPragmaText(DirectiveId::DvmInherit, Inherit);
-    Inherit.pop_back();
-    auto InheritBeforeArrayIdx = Inherit.size();
+    SmallVector<DILocalVariable *, 8> InheritArgs;
     for (auto *AR : Info.second) {
       auto *APCSymbol = AR->alignArray->GetDeclSymbol();
       auto *DIVar = cast<DILocalVariable>(APCSymbol->getMemory().Var);
       auto Itr = Matcher.find<MD>(DIVar);
       assert(Itr != Matcher.end() && "Source-level location must be available!");
-      if (DIVar->isParameter()) {
-        // TODO (kaniandr@gmail.com): should we add inherit for function
-        // declaration?
-        Inherit += ",";
-        Inherit += DIVar->getName();
-      } else {
+      if (DIVar->isParameter())
+        InheritArgs.push_back(DIVar);
+      else
         insertAlignAndCollectTpl(*Itr->get<AST>(), *AR);
-      }
       NotDistrCanonicalDecls.erase(Itr->get<AST>());
     }
-    const FunctionDecl *BodyDecl;
-    FD->getBody(BodyDecl);
-    assert(BodyDecl && "AST-level function declaration must not be null!");
-    if (InheritBeforeArrayIdx < Inherit.size()) {
-      Inherit[InheritBeforeArrayIdx] = '(';
-      Inherit += ")\n";
-      TfmCtx->getRewriter().InsertTextBefore(BodyDecl->getLocStart(), Inherit);
-    }
+    // TODO (kaniandr@gmail.com): check that there is no functions
+    // without `inherit` directive
+    insertInherit(FD, Decls, InheritArgs);
   }
   auto &GlobalMatcher = 
     getAnalysis<ClangDIGlobalMemoryMatcherPass>().getMatcher();

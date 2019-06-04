@@ -98,3 +98,5 @@ def note_apc_no_proper_definition : Note<"proper definition for '%0' not found">
 def note_apc_insert_include_prevent : Note<"unable to insert directive in include">;
 def err_apc_insert_template : Error<"unable to create template definition for '%0'">;
 def err_apc_not_distr_decl_directive : Error<"distribution of declaration depends on usage location">;
+
+def note_decl_insert_macro_prevent : Note<"unable to create declaration '%0' in macro">;
