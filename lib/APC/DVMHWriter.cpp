@@ -98,8 +98,8 @@ class APCDVMHWriter : public ModulePass, private bcl::Uncopyable {
   using TemplateInFileUsage =
     DenseMap<FileID, SmallDenseMap<apc::Array *, TemplateInfo, 1>>;
 
-  /// Set of variable declarations.
-  using DeclarationSet = DenseSet<VarDecl *>;
+  /// Set of declarations.
+  using DeclarationSet = DenseSet<Decl *>;
 
   using DeclarationInfo = DeclarationInfoExtractor::DeclarationInfo;
   using DeclarationInfoMap = DeclarationInfoExtractor::DeclarationInfoMap;
@@ -155,8 +155,8 @@ private:
   /// - Set `IsSingleDeclStmt` property for global declarations only.
   /// If `Decls` does not contain a declaration then this container will be
   /// updated and declaration will be inserted.
-  /// - Canonical declarations for all declarations will be stored in
-  /// `CanonicalDecls` container.
+  /// - Canonical declarations for all variable and function declarations will
+  /// be stored in `CanonicalDecls` container.
   void initializeDeclInfo(const TranslationUnitDecl &Unit,
       const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls,
       DeclarationSet &CanonicalDecls) {
@@ -174,14 +174,15 @@ private:
     };
     for (auto *D : Unit.decls()) {
       if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+        CanonicalDecls.insert(FD->getCanonicalDecl());
         if (FD->hasBody())
           for (auto *D : FD->decls())
             if (isa<VarDecl>(D)) {
-              CanonicalDecls.insert(cast<VarDecl>(D->getCanonicalDecl()));
+              CanonicalDecls.insert(D->getCanonicalDecl());
               Decls[D->getLocation().getRawEncoding()].IsSingleDeclStmt = false;
             }
       } else if (auto *VD = dyn_cast<VarDecl>(D)) {
-        CanonicalDecls.insert(cast<VarDecl>(VD->getCanonicalDecl()));
+        CanonicalDecls.insert(VD->getCanonicalDecl());
         auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
         if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
           checkSingleDecl(VD->getLocStart(), VD->getLocation());
@@ -259,35 +260,48 @@ private:
     return FileStartLoc.getLocWithOffset(DecLoc.second);
   }
 
-  /// Check that declarations which should not be distributed are not
+  /// Check that declaration which should not be distributed are not
   /// corrupted by distribution directives.
-  void checkNotDistributedDecls(DeclarationSet NotDistrCanonicalDecls) {
+  template<class DeclT> void checkNotDistributedDecl(const DeclT *D) {
     auto &SrcMgr = mCtx->getSourceManager();
     auto &Diags = mCtx->getDiagnostics();
-    for (auto *VD : NotDistrCanonicalDecls)
-      for (auto *Redecl : VD->getFirstDecl()->redecls()) {
-        auto StartOfDecl = Redecl->getLocStart();
-        // We have not inserted directives in a macro.
-        if (StartOfDecl.isMacroID())
-          continue;
-        auto Filename = SrcMgr.getFilename(StartOfDecl);
-        auto TfmFileItr = mTransformedFiles.find(Filename);
-        if (TfmFileItr == mTransformedFiles.end())
-          continue;
-        auto DecLoc = SrcMgr.getDecomposedLoc(StartOfDecl);
-        StartOfDecl = SrcMgr.getLocForStartOfFile(TfmFileItr->second).
-          getLocWithOffset(DecLoc.second);
-        // Whether a distribution pragma acts on this declaration?
-        if (mInsertedDirs.count(StartOfDecl.getRawEncoding()))
-          toDiag(Diags, StartOfDecl, diag::err_apc_not_distr_decl_directive);
-      }
+    for (auto *Redecl : D->getFirstDecl()->redecls()) {
+      auto StartOfDecl = Redecl->getLocStart();
+      // We have not inserted directives in a macro.
+      if (StartOfDecl.isMacroID())
+        continue;
+      auto Filename = SrcMgr.getFilename(StartOfDecl);
+      auto TfmFileItr = mTransformedFiles.find(Filename);
+      if (TfmFileItr == mTransformedFiles.end())
+        continue;
+      auto DecLoc = SrcMgr.getDecomposedLoc(StartOfDecl);
+      StartOfDecl = SrcMgr.getLocForStartOfFile(TfmFileItr->second).
+        getLocWithOffset(DecLoc.second);
+      // Whether a distribution pragma acts on this declaration?
+      if (mInsertedDirs.count(StartOfDecl.getRawEncoding()))
+        toDiag(Diags, StartOfDecl, diag::err_apc_not_distr_decl_directive);
+    }
+  }
+
+  /// Check that declarations which should not be distributed are not
+  /// corrupted by distribution directives.
+  void checkNotDistributedDecls(const DeclarationSet &NotDistrCanonicalDecls) {
+    for (auto *D : NotDistrCanonicalDecls)
+      if (isa<VarDecl>(D))
+        checkNotDistributedDecl(cast<VarDecl>(D));
+      else if (isa<FunctionDecl>(D))
+        checkNotDistributedDecl(cast<FunctionDecl>(D));
+      else
+        llvm_unreachable("Unsupported kind of declaration");
   }
 
   /// Insert inherit directive for all redeclarations of a specified function.
   void insertInherit(FunctionDecl *FD, const DeclarationInfoMap &Decls,
-      ArrayRef<const DILocalVariable *> InheritArgs) {
+      ArrayRef<const DILocalVariable *> InheritArgs,
+      DeclarationSet &NotDistrCanonicalDecls) {
     if (InheritArgs.empty())
       return;
+    NotDistrCanonicalDecls.erase(FD);
     for (auto *Redecl : FD->getFirstDecl()->redecls()) {
       SmallString<64> Inherit;
       getPragmaText(DirectiveId::DvmInherit, Inherit);
@@ -483,9 +497,7 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
         insertAlignAndCollectTpl(*Itr->get<AST>(), *AR);
       NotDistrCanonicalDecls.erase(Itr->get<AST>());
     }
-    // TODO (kaniandr@gmail.com): check that there is no functions
-    // without `inherit` directive
-    insertInherit(FD, Decls, InheritArgs);
+    insertInherit(FD, Decls, InheritArgs, NotDistrCanonicalDecls);
   }
   auto &GlobalMatcher = 
     getAnalysis<ClangDIGlobalMemoryMatcherPass>().getMatcher();
