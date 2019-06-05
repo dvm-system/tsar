@@ -192,7 +192,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createAPCFunctionInfoPass());
   Passes.add(createAPCArrayInfoPass());
   Passes.add(createAPCDataDistributionPass());
-  Passes.add(createAPCDVMHWriter());
+  Passes.add(createAPCClangDVMHWriter());
 #endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);

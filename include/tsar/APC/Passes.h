@@ -71,10 +71,10 @@ void initializeAPCDataDistributionPassPass(PassRegistry &Registry);
 ModulePass * createAPCDataDistributionPass();
 
 /// Create a pass to insert DVMH-directives into a source program.
-ModulePass * createAPCDVMHWriter();
+ModulePass * createAPCClangDVMHWriter();
 
 /// Initialize a pass to insert DVMH-directives into a source program.
-void initializeAPCDVMHWriterPass(PassRegistry &Registry);
+void initializeAPCClangDVMHWriterPass(PassRegistry &Registry);
 }
 
 #endif//TSAR_APC_PASSES_H

@@ -32,5 +32,5 @@ void llvm::initializeAPC(PassRegistry &Registry) {
   initializeAPCArrayInfoPassPass(Registry);
   initializeAPCFunctionInfoPassPass(Registry);
   initializeAPCDataDistributionPassPass(Registry);
-  initializeAPCDVMHWriterPass(Registry);
+  initializeAPCClangDVMHWriterPass(Registry);
 }

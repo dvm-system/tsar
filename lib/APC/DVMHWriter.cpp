@@ -85,7 +85,7 @@ private:
   DeclarationInfoMap &mDecls;
 };
 
-class APCDVMHWriter : public ModulePass, private bcl::Uncopyable {
+class APCClangDVMHWriter : public ModulePass, private bcl::Uncopyable {
   /// Description of a template which is necessary for source-to-source
   /// transformation.
   struct TemplateInfo {
@@ -107,15 +107,14 @@ class APCDVMHWriter : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  APCDVMHWriter() : ModulePass(ID) {
-    initializeAPCDVMHWriterPass(*PassRegistry::getPassRegistry());
+  APCClangDVMHWriter() : ModulePass(ID) {
+    initializeAPCClangDVMHWriterPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   void releaseMemory() override {
-    mCtx = nullptr;
-    mRewriter = nullptr;
+    mTfmCtx = nullptr;
     mTransformedFiles.clear();
     mInsertedDirs.clear();
   }
@@ -132,8 +131,7 @@ private:
   /// - If definition of template has been created then `HasDefinition` flag
   /// is set to true for this template.
   void insertDistibution(const apc::ParallelRegion &Region,
-    const apc::DataDirective &DataDirx, TransformationContext &TfmCtx,
-    TemplateInFileUsage &Templates);
+    const apc::DataDirective &DataDirx, TemplateInFileUsage &Templates);
 
   /// Insert `align` and `array` directives according to a specified align rule
   /// for all redeclarations of a specified variable. Emit diagnostics in case
@@ -146,7 +144,12 @@ private:
   // and do not insert align directives before such definitions.
   SourceLocation insertAlignment(const ASTImportInfo &Import,
     const DeclarationInfoMap &Decls, const apc::AlignRule &AR,
-    const VarDecl *VD, TransformationContext &TrmCtx);
+    const VarDecl *VD);
+
+  /// Insert inherit directive for all redeclarations of a specified function.
+  void insertInherit(FunctionDecl *FD, const DeclarationInfoMap &Decls,
+    ArrayRef<const DILocalVariable *> InheritArgs,
+    DeclarationSet &NotDistrCanonicalDecls);
 
   /// Initialize declaration information for global declarations and
   /// collect all canonical declarations (including the local ones).
@@ -158,43 +161,8 @@ private:
   /// - Canonical declarations for all variable and function declarations will
   /// be stored in `CanonicalDecls` container.
   void initializeDeclInfo(const TranslationUnitDecl &Unit,
-      const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls,
-      DeclarationSet &CanonicalDecls) {
-    DenseMap<unsigned, SourceLocation> FirstGlobalAtLoc;
-    auto checkSingleDecl = [&FirstGlobalAtLoc, &Decls](
-        SourceLocation StartLoc, SourceLocation Loc) {
-      auto Info =
-        FirstGlobalAtLoc.try_emplace(StartLoc.getRawEncoding(), Loc);
-      if (!Info.second) {
-        Decls[Info.first->second.getRawEncoding()].IsSingleDeclStmt = false;
-        Decls[Loc.getRawEncoding()].IsSingleDeclStmt = false;
-      } else {
-        Decls[Loc.getRawEncoding()].IsSingleDeclStmt = true;
-      }
-    };
-    for (auto *D : Unit.decls()) {
-      if (auto *FD = dyn_cast<FunctionDecl>(D)) {
-        CanonicalDecls.insert(FD->getCanonicalDecl());
-        if (FD->hasBody())
-          for (auto *D : FD->decls())
-            if (isa<VarDecl>(D)) {
-              CanonicalDecls.insert(D->getCanonicalDecl());
-              Decls[D->getLocation().getRawEncoding()].IsSingleDeclStmt = false;
-            }
-      } else if (auto *VD = dyn_cast<VarDecl>(D)) {
-        CanonicalDecls.insert(VD->getCanonicalDecl());
-        auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
-        if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
-          checkSingleDecl(VD->getLocStart(), VD->getLocation());
-        } else {
-          auto &StartLocs = MergedLocItr->second.find(VD->getLocStart());
-          auto &Locs = MergedLocItr->second.find(VD->getLocation());
-          for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I)
-            checkSingleDecl(StartLocs[I], Locs[I]);
-        }
-      }
-    }
-  }
+    const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls,
+    DeclarationSet &CanonicalDecls);
 
   /// Insert a specified data directive `DirStr` in a specified location `Where`
   /// or diagnose error if insertion is not possible.
@@ -202,7 +170,7 @@ private:
       const DeclarationInfoMap &Decls, SourceLocation Where, StringRef DirStr) {
     assert(Where.isValid() && "Location must be valid!");
     assert(DeclLoc.isValid() && "Location must be valid!");
-    auto &Diags = mCtx->getDiagnostics();
+    auto &Diags = mTfmCtx->getContext().getDiagnostics();
     if (Where.isMacroID()) {
       toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
       toDiag(Diags, DeclLoc, diag::note_apc_insert_macro_prevent);
@@ -229,15 +197,16 @@ private:
     if (Itr != mInsertedDirs.end()) {
       if (Itr->second == DirStr)
         return;
-      auto &Diags = mCtx->getDiagnostics();
+      auto &Diags = mTfmCtx->getContext().getDiagnostics();
       toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
       toDiag(Diags, Where, diag::note_apc_insert_multiple_directives);
       return;
     }
-    mRewriter->InsertTextBefore(Where, DirStr);
-    auto &SrcMgr = mCtx->getSourceManager();
+    auto &Rwr = mTfmCtx->getRewriter();
+    Rwr.InsertTextBefore(Where, DirStr);
+    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
     if (Where != getStartOfLine(Where, SrcMgr))
-      mRewriter->InsertTextBefore(Where, "\n");
+      Rwr.InsertTextBefore(Where, "\n");
     mTransformedFiles.try_emplace(
       SrcMgr.getFilename(Where), SrcMgr.getFileID(Where));
     mInsertedDirs.try_emplace(Where.getRawEncoding(), DirStr);
@@ -249,7 +218,7 @@ private:
   SourceLocation getLocationToTransform(SourceLocation Loc) {
     assert(Loc.isValid() && "Location must be valid!");
     assert(Loc.isFileID() && "Location must not be in macro!");
-    auto &SrcMgr = mCtx->getSourceManager();
+    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
     auto Filename = SrcMgr.getFilename(Loc);
     assert(!Filename.empty() && "File must be known for a specified location!");
     auto FileItr = mTransformedFiles.find(Filename);
@@ -263,8 +232,9 @@ private:
   /// Check that declaration which should not be distributed are not
   /// corrupted by distribution directives.
   template<class DeclT> void checkNotDistributedDecl(const DeclT *D) {
-    auto &SrcMgr = mCtx->getSourceManager();
-    auto &Diags = mCtx->getDiagnostics();
+    auto &Ctx = mTfmCtx->getContext();
+    auto &SrcMgr = Ctx.getSourceManager();
+    auto &Diags = Ctx.getDiagnostics();
     for (auto *Redecl : D->getFirstDecl()->redecls()) {
       auto StartOfDecl = Redecl->getLocStart();
       // We have not inserted directives in a macro.
@@ -295,63 +265,6 @@ private:
         llvm_unreachable("Unsupported kind of declaration");
   }
 
-  /// Insert inherit directive for all redeclarations of a specified function.
-  void insertInherit(FunctionDecl *FD, const DeclarationInfoMap &Decls,
-      ArrayRef<const DILocalVariable *> InheritArgs,
-      DeclarationSet &NotDistrCanonicalDecls) {
-    if (InheritArgs.empty())
-      return;
-    NotDistrCanonicalDecls.erase(FD);
-    for (auto *Redecl : FD->getFirstDecl()->redecls()) {
-      SmallString<64> Inherit;
-      getPragmaText(DirectiveId::DvmInherit, Inherit);
-      Inherit.pop_back();
-      Inherit += "(";
-      SmallVector<std::pair<SourceLocation, StringRef>, 8> UnnamedArgsInMacro;
-      auto insert = [this, Redecl, &Inherit, &UnnamedArgsInMacro](
-          const DILocalVariable *DIArg) {
-        auto Param = Redecl->getParamDecl(DIArg->getArg() - 1);
-        assert(Param && "Parameter must not be null!");
-        if (Param->getName().empty()) {
-          Inherit += DIArg->getName();
-          auto Loc = Param->getLocation();
-          if (Loc.isMacroID()) {
-            UnnamedArgsInMacro.emplace_back(Loc, DIArg->getName());
-          } else {
-            SmallVector<char, 16> Name;
-            // We add brackets due to the following case
-            // void foo(double *A);
-            // #define M
-            // void foo(double *M);
-            // Without brackets we obtain 'void foo(double *MA)' instead of
-            // 'void foo(double *M(A))' and do not obtain 'void foo(double *A)'
-            // after preprocessing.
-            mRewriter->InsertTextBefore(Loc,
-              ("(" + DIArg->getName() + ")").toStringRef(Name));
-          }
-        } else {
-          Inherit += Param->getName();
-        }
-      };
-      insert(InheritArgs.front());
-      for (unsigned I = 1, EI = InheritArgs.size(); I < EI; ++I) {
-        Inherit += ",";
-        insert(InheritArgs[I]);
-      }
-      Inherit += ")\n";
-      if (!UnnamedArgsInMacro.empty()) {
-        auto &Diags = mCtx->getDiagnostics();
-        toDiag(Diags, Redecl->getLocStart(),
-          diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
-        for (auto &Arg : UnnamedArgsInMacro)
-          toDiag(Diags, Arg.first, diag::note_decl_insert_macro_prevent) <<
-            Arg.second;
-      }
-      insertDataDirective(Redecl->getLocation(), Decls,
-        Redecl->getLocStart(), Inherit);
-    }
-  }
-
   /// List of already transformed files.
   ///
   /// We should not transform different representations of the same files.
@@ -362,67 +275,64 @@ private:
   /// List of already inserted directives at specified locations.
   DenseMap<unsigned, std::string> mInsertedDirs;
 
-  Rewriter *mRewriter;
-  ASTContext *mCtx;
+  TransformationContext *mTfmCtx = nullptr;
 };
 
-using APCDVMHWriterProvider = FunctionPassProvider<
+using APCClangDVMHWriterProvider = FunctionPassProvider<
   TransformationEnginePass,
   MemoryMatcherImmutableWrapper,
   ClangDIMemoryMatcherPass>;
 }
 
-char APCDVMHWriter::ID = 0;
+char APCClangDVMHWriter::ID = 0;
 
-INITIALIZE_PROVIDER_BEGIN(APCDVMHWriterProvider, "apc-dvmh-writer-provider",
+INITIALIZE_PROVIDER_BEGIN(APCClangDVMHWriterProvider, "apc-dvmh-writer-provider",
   "DVMH Writer (APC, Provider")
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
-INITIALIZE_PROVIDER_END(APCDVMHWriterProvider, "apc-dvmh-writer-provider",
+INITIALIZE_PROVIDER_END(APCClangDVMHWriterProvider, "apc-dvmh-writer-provider",
   "DVMH Writer (APC, Provider")
 
-INITIALIZE_PASS_BEGIN(APCDVMHWriter, "apc-dvmh-writer",
+INITIALIZE_PASS_BEGIN(APCClangDVMHWriter, "apc-dvmh-writer",
   "DVMH Writer (APC)", true, true)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIGlobalMemoryMatcherPass)
   INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
-  INITIALIZE_PASS_DEPENDENCY(APCDVMHWriterProvider)
+  INITIALIZE_PASS_DEPENDENCY(APCClangDVMHWriterProvider)
   INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_END(APCDVMHWriter, "apc-dvmh-writer",
+INITIALIZE_PASS_END(APCClangDVMHWriter, "apc-dvmh-writer",
   "DVMH Writer (APC)", true, true)
 
-ModulePass * llvm::createAPCDVMHWriter() { return new APCDVMHWriter; }
+ModulePass * llvm::createAPCClangDVMHWriter() { return new APCClangDVMHWriter; }
 
-void APCDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
+void APCClangDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<APCContextWrapper>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<ClangDIGlobalMemoryMatcherPass>();
-  AU.addRequired<APCDVMHWriterProvider>();
+  AU.addRequired<APCClangDVMHWriterProvider>();
   AU.addUsedIfAvailable<ImmutableASTImportInfoPass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
-bool APCDVMHWriter::runOnModule(llvm::Module &M) {
+bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   releaseMemory();
-  auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
+  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
       ": transformation context is not available");
     return false;
   }
-  mCtx = &TfmCtx->getContext();
-  mRewriter = &TfmCtx->getRewriter();
-  APCDVMHWriterProvider::initialize<TransformationEnginePass>(
-    [&M, TfmCtx](TransformationEnginePass &TEP) {
-    TEP.setContext(M, TfmCtx);
+  APCClangDVMHWriterProvider::initialize<TransformationEnginePass>(
+    [&M, this](TransformationEnginePass &TEP) {
+    TEP.setContext(M, mTfmCtx);
   });
   auto &MatchInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
-  APCDVMHWriterProvider::initialize<MemoryMatcherImmutableWrapper>(
+  APCClangDVMHWriterProvider::initialize<MemoryMatcherImmutableWrapper>(
     [&MatchInfo](MemoryMatcherImmutableWrapper &Matcher) {
       Matcher.set(MatchInfo);
   });
@@ -455,18 +365,18 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
   }
   DeclarationInfoMap Decls;
   DeclarationSet NotDistrCanonicalDecls;
-  auto *Unit = mCtx->getTranslationUnitDecl();
+  auto *Unit = mTfmCtx->getContext().getTranslationUnitDecl();
   initializeDeclInfo(*Unit, *Import, Decls, NotDistrCanonicalDecls);
   TemplateInFileUsage Templates;
   auto insertAlignAndCollectTpl =
-    [this, TfmCtx, Import, &Templates, &Decls](
+    [this, Import, &Templates, &Decls](
       VarDecl &VD, const apc::AlignRule &AR) {
-    auto DefLoc = insertAlignment(*Import, Decls, AR, &VD, *TfmCtx);
+    auto DefLoc = insertAlignment(*Import, Decls, AR, &VD);
     // We should add declaration of template before 'align' directive.
     // So, we remember file with 'align' directive if this directive
     // has been successfully inserted.
     if (DefLoc.isValid()) {
-      auto &SrcMgr = mCtx->getSourceManager();
+      auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
       auto FID = SrcMgr.getFileID(DefLoc);
       auto TplItr = Templates.try_emplace(FID).first;
       TplItr->second.try_emplace(AR.alignWith);
@@ -478,10 +388,9 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
       F = M.getFunction(Info.first->getLinkageName());
     assert(F && F->getSubprogram() == Info.first &&
       "LLVM IR function with attached metadata must not be null!");
-    auto &Provider = getAnalysis<APCDVMHWriterProvider>(*F);
+    auto &Provider = getAnalysis<APCClangDVMHWriterProvider>(*F);
     auto &Matcher = Provider.get<ClangDIMemoryMatcherPass>().getMatcher();
-    auto *FD =
-      cast<FunctionDecl>(TfmCtx->getDeclForMangledName(F->getName()));
+    auto *FD = cast<FunctionDecl>(mTfmCtx->getDeclForMangledName(F->getName()));
     assert(FD && "AST-level function declaration must not be null!");
     DeclarationInfoExtractor Visitor(Decls);
     Visitor.TraverseFunctionDecl(FD);
@@ -511,15 +420,111 @@ bool APCDVMHWriter::runOnModule(llvm::Module &M) {
     NotDistrCanonicalDecls.erase(Itr->get<AST>());
   }
   checkNotDistributedDecls(NotDistrCanonicalDecls);
-  insertDistibution(APCRegion, DataDirs, *TfmCtx, Templates);
+  insertDistibution(APCRegion, DataDirs, Templates);
   for (auto &TplInfo : DataDirs.distrRules)
     GIP.getRawInfo().Identifiers.insert(TplInfo.first->GetShortName());
   return false;
 }
 
-SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
+void APCClangDVMHWriter::initializeDeclInfo(const TranslationUnitDecl &Unit,
+    const ASTImportInfo &ImportInfo, DeclarationInfoMap &Decls,
+    DeclarationSet &CanonicalDecls) {
+  DenseMap<unsigned, SourceLocation> FirstGlobalAtLoc;
+  auto checkSingleDecl = [&FirstGlobalAtLoc, &Decls](
+      SourceLocation StartLoc, SourceLocation Loc) {
+    auto Info =
+      FirstGlobalAtLoc.try_emplace(StartLoc.getRawEncoding(), Loc);
+    if (!Info.second) {
+      Decls[Info.first->second.getRawEncoding()].IsSingleDeclStmt = false;
+      Decls[Loc.getRawEncoding()].IsSingleDeclStmt = false;
+    } else {
+      Decls[Loc.getRawEncoding()].IsSingleDeclStmt = true;
+    }
+  };
+  for (auto *D : Unit.decls()) {
+    if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+      CanonicalDecls.insert(FD->getCanonicalDecl());
+      if (FD->hasBody())
+        for (auto *D : FD->decls())
+          if (isa<VarDecl>(D)) {
+            CanonicalDecls.insert(D->getCanonicalDecl());
+            Decls[D->getLocation().getRawEncoding()].IsSingleDeclStmt = false;
+          }
+    } else if (auto *VD = dyn_cast<VarDecl>(D)) {
+      CanonicalDecls.insert(VD->getCanonicalDecl());
+      auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
+      if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
+        checkSingleDecl(VD->getLocStart(), VD->getLocation());
+      } else {
+        auto &StartLocs = MergedLocItr->second.find(VD->getLocStart());
+        auto &Locs = MergedLocItr->second.find(VD->getLocation());
+        for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I)
+          checkSingleDecl(StartLocs[I], Locs[I]);
+      }
+    }
+  }
+}
+
+void APCClangDVMHWriter::insertInherit(FunctionDecl *FD,
+    const DeclarationInfoMap &Decls,
+    ArrayRef<const DILocalVariable *> InheritArgs,
+    DeclarationSet &NotDistrCanonicalDecls) {
+  if (InheritArgs.empty())
+    return;
+  NotDistrCanonicalDecls.erase(FD);
+  for (auto *Redecl : FD->getFirstDecl()->redecls()) {
+    SmallString<64> Inherit;
+    getPragmaText(DirectiveId::DvmInherit, Inherit);
+    Inherit.pop_back();
+    Inherit += "(";
+    SmallVector<std::pair<SourceLocation, StringRef>, 8> UnnamedArgsInMacro;
+    auto insert = [this, Redecl, &Inherit, &UnnamedArgsInMacro](
+        const DILocalVariable *DIArg) {
+      auto Param = Redecl->getParamDecl(DIArg->getArg() - 1);
+      assert(Param && "Parameter must not be null!");
+      if (Param->getName().empty()) {
+        Inherit += DIArg->getName();
+        auto Loc = Param->getLocation();
+        if (Loc.isMacroID()) {
+          UnnamedArgsInMacro.emplace_back(Loc, DIArg->getName());
+        } else {
+          SmallVector<char, 16> Name;
+          // We add brackets due to the following case
+          // void foo(double *A);
+          // #define M
+          // void foo(double *M);
+          // Without brackets we obtain 'void foo(double *MA)' instead of
+          // 'void foo(double *M(A))' and do not obtain 'void foo(double *A)'
+          // after preprocessing.
+          mTfmCtx->getRewriter().InsertTextBefore(Loc,
+            ("(" + DIArg->getName() + ")").toStringRef(Name));
+        }
+      } else {
+        Inherit += Param->getName();
+      }
+    };
+    insert(InheritArgs.front());
+    for (unsigned I = 1, EI = InheritArgs.size(); I < EI; ++I) {
+      Inherit += ",";
+      insert(InheritArgs[I]);
+    }
+    Inherit += ")\n";
+    if (!UnnamedArgsInMacro.empty()) {
+      auto &Diags = mTfmCtx->getContext().getDiagnostics();
+      toDiag(Diags, Redecl->getLocStart(),
+        diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
+      for (auto &Arg : UnnamedArgsInMacro)
+        toDiag(Diags, Arg.first, diag::note_decl_insert_macro_prevent) <<
+          Arg.second;
+    }
+    insertDataDirective(Redecl->getLocation(), Decls,
+      Redecl->getLocStart(), Inherit);
+  }
+}
+
+SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
     const DeclarationInfoMap &Decls, const apc::AlignRule &AR,
-    const VarDecl *VD, TransformationContext &TfmCtx) {
+    const VarDecl *VD) {
   // Obtain `#pragma dvm array align` clause.
   SmallString<128> Align;
   getPragmaText(ClauseId::DvmAlign, Align);
@@ -548,7 +553,7 @@ SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
     Align += "]";
   }
   Align += ")\n";
-  auto &SrcMgr = mCtx->getSourceManager();
+  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
   SourceLocation DefinitionLoc;
   auto *VarDef = VD->getDefinition();
   if (VarDef) {
@@ -596,21 +601,20 @@ SourceLocation APCDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
     }
   }
   if (DefinitionLoc.isInvalid()) {
-    toDiag(mCtx->getDiagnostics(), VD->getLocation(),
+    auto &Diags = mTfmCtx->getContext().getDiagnostics();
+    toDiag(Diags, VD->getLocation(),
       diag::err_apc_insert_dvm_directive) << StringRef(Align).trim();
-    toDiag(mCtx->getDiagnostics(), diag::note_apc_no_proper_definition) <<
-      VD->getName();
+    toDiag(Diags, diag::note_apc_no_proper_definition) << VD->getName();
   }
   return DefinitionLoc;
 }
 
-void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
-    const apc::DataDirective &DataDirs, TransformationContext &TfmCtx,
-    TemplateInFileUsage &Templates) {
-  auto &Rewriter = TfmCtx.getRewriter();
-  auto &SrcMgr = Rewriter.getSourceMgr();
-  auto &LangOpts = Rewriter.getLangOpts();
-  auto &Diags = TfmCtx.getContext().getDiagnostics();
+void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
+    const apc::DataDirective &DataDirs, TemplateInFileUsage &Templates) {
+  auto &Rwr = mTfmCtx->getRewriter();
+  auto &SrcMgr = Rwr.getSourceMgr();
+  auto &LangOpts = Rwr.getLangOpts();
+  auto &Diags = mTfmCtx->getContext().getDiagnostics();
   SmallPtrSet<apc::Array *, 8> InsertedTemplates;
   for (auto &File : Templates) {
     auto PreInfo =
@@ -677,7 +681,7 @@ void APCDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
       // Insert at the end of preamble.
       Where = getLocationToTransform(Where);
       assert(Where.isFileID() && "Location must not be in macro!");
-      Rewriter.InsertTextBefore(Where, Distribute);
+      Rwr.InsertTextBefore(Where, Distribute);
       mTransformedFiles.try_emplace(SrcMgr.getFilename(Where), File.first);
       InsertedTemplates.insert(Tpl);
     }
