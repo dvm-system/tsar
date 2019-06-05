@@ -1,4 +1,4 @@
-//===--- DVMHWriter.cpp ---- DVMH Program Generator -------------*- C++ -*-===//
+//===- ClangDVMHWriter.cpp -- DVMH Program Generator ------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //

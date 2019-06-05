@@ -1,5 +1,5 @@
 set(APC_SOURCES Passes.cpp APCContext.cpp Utils.cpp LoopInfoBase.cpp
-  ArrayInfo.cpp FunctionInfo.cpp DataDistribution.cpp DVMHWriter.cpp)
+  ArrayInfo.cpp FunctionInfo.cpp DataDistribution.cpp ClangDVMHWriter.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE APC_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
