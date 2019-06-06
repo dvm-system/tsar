@@ -22,11 +22,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RenameLocal.h"
+#include "tsar/Transform/Clang/RenameLocal.h"
+#include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "DFRegionInfo.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
-#include "NoMacroAssert.h"
 #include "tsar_pragma.h"
 #include "tsar_query.h"
 #include "tsar_transformation.h"

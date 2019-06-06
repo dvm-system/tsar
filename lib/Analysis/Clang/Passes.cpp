@@ -29,4 +29,6 @@ using namespace llvm;
 
 void llvm::initializeClangAnalysis(PassRegistry &Registry) {
   initializeClangDIMemoryMatcherPassPass(Registry);
+  // Initialize checkers.
+  initializeClangNoMacroAssertPass(Registry);
 }

@@ -42,5 +42,13 @@ void initializeClangDIMemoryMatcherPassPass(PassRegistry &Registry);
 /// Create a pass to match variable in a source high-level code
 /// and appropriate metadata-level representations of variables.
 FunctionPass *createDIMemoryMatcherPass();
+
+/// Initializes pass to check absence of a macro in source ranges which
+/// are marked with `assert nomacro` directive.
+void initializeClangNoMacroAssertPass(PassRegistry& Registry);
+
+/// Initializes pass to check absence of a macro in source ranges which
+/// are marked with `assert nomacro` directive.
+llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H

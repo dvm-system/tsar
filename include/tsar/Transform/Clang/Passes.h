@@ -31,9 +31,21 @@
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
+class ModulePass;
+class StringRef;
 
 /// Initialize all source-to-source transformation passes.
 void initializeClangTransform(PassRegistry &Registry);
+
+/// Initializes a pass to reformat sources after transformation using Clang.
+void initializeClangFormatPassPass(PassRegistry& Registry);
+
+/// Creates a pass to reformat sources after transformation using Clang.
+llvm::ModulePass *createClangFormatPass();
+
+/// Creates a pass to reformat sources after transformation using Clang.
+llvm::ModulePass* createClangFormatPass(
+  llvm::StringRef OutputSuffix, bool NoFormat);
 
 /// Initialize a pass to replace the occurrences of variables
 /// with direct assignments.
@@ -42,5 +54,23 @@ void initializeClangExprPropagationPass(PassRegistry &Registry);
 /// Create a pass to replace the occurrences of variables
 /// with direct assignments.
 FunctionPass *createClangExprPropagation();
+
+/// Initializes a pass to perform source-level inline expansion using Clang.
+void initializeClangInlinerPassPass(PassRegistry& Registry);
+
+/// Creates a pass to perform source-level inline expansion using Clang.
+llvm::ModulePass *createClangInlinerPass();
+
+/// Creates a pass to perform source-level object renaming.
+llvm::ModulePass * createClangRenameLocalPass();
+
+/// Initializes a pass to perform source-level object renaming.
+void initializeClangRenameLocalPassPass(PassRegistry &Registry);
+
+/// Creates a pass to perform elimination of dead declarations.
+FunctionPass * createClangDeadDeclsElimination();
+
+/// Initializes a pass to perform elimination of dead declarations.
+void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

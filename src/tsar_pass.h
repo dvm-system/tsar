@@ -144,6 +144,7 @@ void initializeDIDependencyAnalysisPassPass(PassRegistry &Registry);
 /// This includes privatization, reduction and induction variable recognition
 /// and flow/anti/output dependencies exploration.
 FunctionPass * createDIDependencyAnalysisPass();
+
 /// Initializes a pass to fetch private variables before they will be promoted
 /// to registers or removed.
 void initializeFetchPromotePrivatePassPass(PassRegistry &Registry);
@@ -241,30 +242,6 @@ void initializeCanonicalLoopPassPass(PassRegistry &Registry);
 /// Creates a pass to determine canonical for-loops in a source code.
 FunctionPass * createCanonicalLoopPass();
 
-/// Initializes a pass to perform source-level inline expansion using Clang.
-void initializeClangInlinerPassPass(PassRegistry& Registry);
-
-/// Creates a pass to perform source-level inline expansion using Clang.
-llvm::ModulePass *createClangInlinerPass();
-
-/// Initializes a pass to reformat sources after transformation using Clang.
-void initializeClangFormatPassPass(PassRegistry& Registry);
-
-/// Creates a pass to reformat sources after transformation using Clang.
-llvm::ModulePass *createClangFormatPass();
-
-/// Creates a pass to reformat sources after transformation using Clang.
-llvm::ModulePass* createClangFormatPass(
-  llvm::StringRef OutputSuffix, bool NoFormat);
-
-/// Initializes pass to check absence of a macro in source ranges which
-/// are marked with `assert nomacro` directive.
-void initializeClangNoMacroAssertPass(PassRegistry& Registry);
-
-/// Initializes pass to check absence of a macro in source ranges which
-/// are marked with `assert nomacro` directive.
-llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
-
 /// Initializes a pass which collects information about source-level globals.
 void initializeClangGlobalInfoPassPass(PassRegistry &Registry);
 
@@ -277,22 +254,6 @@ void initializeImmutableASTImportInfoPassPass(PassRegistry &Registry);
 /// Creates a pass to obtain access to the import process information.
 llvm::ImmutablePass * createImmutableASTImportInfoPass(
   const tsar::ASTImportInfo &Info);
-
-/// Creates a pass to perform source-level object renaming.
-llvm::ModulePass * createClangRenameLocalPass();
-
-/// Initializes a pass to perform source-level object renaming.
-void initializeClangRenameLocalPassPass(PassRegistry &Registry);
-
-/// Creates a pass to perform elimination of dead declarations.
-FunctionPass * createClangDeadDeclsElimination();
-
-/// Initializes a pass to perform elimination of dead declarations.
-void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
-
-void initializeCalleeProcLocationPassPass(PassRegistry &Registry);
-
-ModulePass * createCalleeProcLocationPass();
 
 /// Initializes a pass which deduce function attributes in PO.
 void initializePOFunctionAttrsAnalysisPass(PassRegistry &Registry);
@@ -319,7 +280,6 @@ void initializeClangCFTraitsPassPass(PassRegistry &Registry);
 /// Creates an AST-level pass which collects control-flow traits
 /// for function and its loops.
 FunctionPass * createClangCFTraitsPass();
-
 }
 
 #endif//TSAR_PASS_H

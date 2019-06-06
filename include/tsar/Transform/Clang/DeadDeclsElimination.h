@@ -27,7 +27,7 @@
 #ifndef TSAR_CLANG_DE_DECLS_H
 #define TSAR_CLANG_DE_DECLS_H
 
-#include "tsar_pass.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 

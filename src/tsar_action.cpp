@@ -10,6 +10,7 @@
 
 #include "tsar_action.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include "Instrumentation.h"
 #include "tsar_query.h"
 #include "tsar_pass.h"

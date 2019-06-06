@@ -29,7 +29,7 @@
 #ifndef TSAR_CLANG_RENAME_LOCAL_H
 #define TSAR_CLANG_RENAME_LOCAL_H
 
-#include "tsar_pass.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 

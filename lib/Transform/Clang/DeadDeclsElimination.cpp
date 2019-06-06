@@ -22,10 +22,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DeadDeclsElimination.h"
+#include "tsar/Transform/Clang/DeadDeclsElimination.h"
+#include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "Diagnostic.h"
 #include "GlobalInfoExtractor.h"
-#include "NoMacroAssert.h"
 #include "tsar_query.h"
 #include "tsar_transformation.h"
 #include <clang/AST/Decl.h>

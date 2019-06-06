@@ -13,7 +13,6 @@
 #include "tsar_action.h"
 #include "ASTMergeAction.h"
 #include "GlobalOptions.h"
-#include "tsar_finliner.h"
 #include "tsar_pragma.h"
 #include "tsar_query.h"
 #include "tsar_test.h"

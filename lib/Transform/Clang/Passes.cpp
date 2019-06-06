@@ -28,5 +28,9 @@
 using namespace llvm;
 
 void llvm::initializeClangTransform(PassRegistry &Registry) {
+  initializeClangFormatPassPass(Registry);
   initializeClangExprPropagationPass(Registry);
+  initializeClangInlinerPassPass(Registry);
+  initializeClangRenameLocalPassPass(Registry);
+  initializeClangDeadDeclsEliminationPass(Registry);
 }
