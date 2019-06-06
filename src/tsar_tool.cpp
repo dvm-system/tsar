@@ -511,9 +511,16 @@ void Tool::storeCLOptions() {
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
-  getGlobalOptions()->NoFormat = addIfSetIf(Options::get().NoFormat, !mTfmPass);
+#ifdef APC_FOUND
+  /// TODO (kaniandr@gmail.com): allow to use -output-suffix option for
+  /// instrumentation and emit LLVM passes.
+  bool NoTfmPass = mInstrLLVM || mEmitAST;
+#else
+  bool NoTfmPass = !mTfmPass;
+#endif
+  getGlobalOptions()->NoFormat = addIfSetIf(Options::get().NoFormat, NoTfmPass);
   getGlobalOptions()->OutputSuffix = Options::get().OutputSuffix;
-  if (!mTfmPass && !getGlobalOptions()->OutputSuffix.empty()) {
+  if (NoTfmPass && !getGlobalOptions()->OutputSuffix.empty()) {
     IncompatibleOpts.push_back(&Options::get().OutputSuffix);
     LLIncompatibleOpts.push_back(&Options::get().OutputSuffix);
   }
