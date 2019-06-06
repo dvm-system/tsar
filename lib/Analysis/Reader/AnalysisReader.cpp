@@ -166,7 +166,7 @@ const trait::Loop * findLoop(const MDNode *LoopID, const LoopCache &Cache,
     return nullptr;
   auto LoopKey =
     LocationT{ Loc->getFilename().str(), Loc->getLine(), Loc->getColumn() };
-  auto &LoopItr = Cache.find(LoopKey);
+  auto LoopItr = Cache.find(LoopKey);
   return (LoopItr == Cache.end() ? nullptr :
     &Info[trait::Info::Loops][LoopItr->second]);
 }
