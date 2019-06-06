@@ -399,8 +399,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       continue;
     assert(L->getLoopID() && "Identifier of a loop must be specified!");
     auto DILoop = L->getLoopID();
-    LLVM_DEBUG(dbgs() << "[DA DI]: process loop at "; L->getStartLoc().dump();
-               dbgs() << "\n");
+    LLVM_DEBUG(dbgs() << "[DA DI]: process loop at ";
+               TSAR_LLVM_DUMP(L->getStartLoc().dump()); dbgs() << "\n");
     auto &Pool = TraitPool[DILoop];
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     auto &DepSet = *Info.get<DependencySet>();

@@ -307,7 +307,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         for (auto J = DimIdx; J > 0; --J) {
           Expressions.push_back(Range.Subscripts[J - 1]);
           LLVM_DEBUG(dbgs() << "[DELINEARIZE]: use for GCD computation: ";
-            Expressions.back()->dump());
+            TSAR_LLVM_DUMP(Expressions.back()->dump()));
         }
       }
       if (Expressions.empty()) {
@@ -317,7 +317,8 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         return;
       }
       DimSize = findGCD(Expressions, *mSE, mIsSafeTypeCast);
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: "; DimSize->dump());
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: ";
+        TSAR_LLVM_DUMP(DimSize->dump()));
       if (isa<SCEVCouldNotCompute>(DimSize)) {
         setUnknownDims(DimIdx);
         return;
@@ -326,12 +327,15 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       DimSize = Div.Quotient;
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
-        PrevDimSizesProduct->dump();
-        dbgs() << "[DELINEARIZE]: quotient "; Div.Quotient->dump();
-        dbgs() << "[DELINEARIZE]: remainder "; Div.Remainder->dump());
+        TSAR_LLVM_DUMP(PrevDimSizesProduct->dump());
+        dbgs() << "[DELINEARIZE]: quotient ";
+        TSAR_LLVM_DUMP(Div.Quotient->dump());
+        dbgs() << "[DELINEARIZE]: remainder ";
+        TSAR_LLVM_DUMP(Div.Remainder->dump()));
     }
     ArrayInfo.setDimSize(DimIdx, DimSize);
-    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is "; DimSize->dump());
+    LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is ";
+      TSAR_LLVM_DUMP(DimSize->dump()));
     DimSize = mSE->getTruncateOrZeroExtend(DimSize, mIndexTy);
     PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct, DimSize);
   }
@@ -421,7 +425,8 @@ void DelinearizationPass::collectArrays(Function &F) {
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           return;
       }
-      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction "; I.dump());
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction ";
+        TSAR_LLVM_DUMP(I.dump()));
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
       bool IsAddressOfVariable;
@@ -477,7 +482,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           dbgs() << "[DELINEARIZE]: ignore some beginning GEPs\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : Range.Subscripts) {
-          dbgs() << "  "; Subscript->dump();
+          dbgs() << "  "; TSAR_LLVM_DUMP( Subscript->dump());
         }
       );
     };
@@ -507,7 +512,8 @@ bool DelinearizationPass::runOnFunction(Function &F) {
     getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
   auto &DL = F.getParent()->getDataLayout();
   mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
-  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is "; mIndexTy->dump());
+  LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is ";
+    TSAR_LLVM_DUMP(mIndexTy->dump()));
   collectArrays(F);
   for (auto *ArrayInfo : mDelinearizeInfo.getArrays()) {
     fillArrayDimensionsSizes(*ArrayInfo);

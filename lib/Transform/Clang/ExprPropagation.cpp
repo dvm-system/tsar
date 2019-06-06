@@ -688,7 +688,8 @@ void findAvailableDecls(Instruction &DI, Instruction &UI,
     ImmutableCallSite CS(Op);
     if ((CS && !CS.onlyReadsMemory() && !CS.doesNotReadMemory()) ||
         (CS && !CS.doesNotThrow())) {
-      LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable due to "; Op->dump());
+      LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable due to ";
+        TSAR_LLVM_DUMP(Op->dump()));
       // Call may have side effect and prevent PROPAGATION.
       UseItr->get<Available>().clear();
       break;
@@ -747,7 +748,7 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
   if (!Inst || !Inst->getDebugLoc())
     return;
   LLVM_DEBUG(dbgs() << "[PROPAGATION]: remember possible assignment at ";
-             Inst->getDebugLoc().dump(); dbgs() << "\n");
+             TSAR_LLVM_DUMP(Inst->getDebugLoc().dump()); dbgs() << "\n");
   auto &DeclToReplace = Visitor.getDeclReplacement(Inst->getDebugLoc());
   auto UseItr = DeclToReplace.get<Usage>().
     try_emplace(UI.getDebugLoc().get()).first;
