@@ -34,7 +34,6 @@
 #include "DefinedMemory.h"
 #include "DIUnparser.h"
 #include "EstimateMemory.h"
-#include "tsar_fcopy_elimination.h"
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"
 #include "PerfectLoop.h"
@@ -77,7 +76,6 @@ typedef FunctionPassProvider<
   DFRegionInfoPass,
   ClangPerfectLoopPass,
   CanonicalLoopPass,
-  CopyEliminationPass,
   MemoryMatcherImmutableWrapper> TestPrinterProvider;
 #endif
 
@@ -90,7 +88,6 @@ INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(CopyEliminationPass)
 INITIALIZE_PROVIDER_END(TestPrinterProvider, "test-provider",
   "Test Printer Provider")
 

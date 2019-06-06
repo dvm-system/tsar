@@ -54,7 +54,6 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   // Initialize source-level transform passes.
   initializeClangInlinerPassPass(Registry);
   initializeClangFormatPassPass(Registry);
-  initializeCopyEliminationPassPass(Registry);
   initializeClangRenameLocalPassPass(Registry);
   initializeClangDeadDeclsEliminationPass(Registry);
   initializeClangTransform(Registry);

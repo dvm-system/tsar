@@ -278,8 +278,6 @@ void initializeImmutableASTImportInfoPassPass(PassRegistry &Registry);
 llvm::ImmutablePass * createImmutableASTImportInfoPass(
   const tsar::ASTImportInfo &Info);
 
-void initializeCopyEliminationPassPass(PassRegistry& Registry);
-
 /// Creates a pass to perform source-level object renaming.
 llvm::ModulePass * createClangRenameLocalPass();
 
