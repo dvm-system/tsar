@@ -81,7 +81,7 @@ void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
 /// This represents estimate memory location using metadata information.
 class DIMemory :
     public llvm::ilist_node<DIMemory, llvm::ilist_tag<Alias>> {
-  using BoundValues = llvm::SmallVector<llvm::WeakVH, 2>;
+  using BoundValues = llvm::SmallVector<llvm::WeakTrackingVH, 2>;
 
 public:
   /// Kind of memory.
@@ -232,7 +232,7 @@ private:
   Property mProperties = NoProperty;
   llvm::MDNode *mMD;
   DIAliasMemoryNode *mNode;
-  llvm::SmallVector<llvm::WeakVH, 1> mValues;
+  BoundValues mValues;
 };
 
 /// \brief This represents estimate memory location using metadata information.
