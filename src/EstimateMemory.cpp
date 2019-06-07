@@ -611,11 +611,23 @@ AliasEstimateNode * AliasTree::addEmptyNode(
     Aliases.clear();
     for (auto &Ch : make_range(Current->child_begin(), Current->child_end())) {
       auto Result = Ch.slowMayAlias(NewEM, *mAA);
-      if (Result.first)
+      if (Result.first) {
         if (Result.second)
           Aliases.push_back(Result.second);
         else
           Aliases.push_back(&Ch);
+      } else if (isa<AliasUnknownNode>(Ch)) {
+        // If unknown node does not alias with a memory it does not mean
+        // that its children nodes do not alias with this memory. The issue is
+        // that unknown node may not cover its children nodes.
+        for (auto &N : make_range(Ch.child_begin(), Ch.child_end())) {
+          auto Result = N.slowMayAlias(NewEM, *mAA);
+          if (Result.first) {
+            Aliases.push_back(&Ch);
+            break;
+          }
+        }
+      }
     }
     if (Aliases.empty())
       return make_node<AliasEstimateNode, llvm::Statistic, 2>(
