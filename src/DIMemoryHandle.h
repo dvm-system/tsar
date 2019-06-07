@@ -158,7 +158,7 @@ public:
 namespace llvm {
 template<typename From> struct simplify_type;
 
-// Specialize simplify_type to allow WeakVH to participate in
+// Specialize simplify_type to allow WeakDIMemoryHandle to participate in
 // dyn_cast, isa, etc.
 template<> struct simplify_type<tsar::WeakDIMemoryHandle> {
   using SimpleType = tsar::DIMemory *;
