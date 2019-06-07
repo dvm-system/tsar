@@ -1094,8 +1094,8 @@ private:
 /// - It has a known offset from it's root in estimate memory tree.
 /// - It's offset is not zero or it's size is not equal to size of root.
 /// - All descendant locations in estimate memory tree have known offsets from
+///   the root.
 /// - There is no 'inttoptr' cast in the root.
-/// the root.
 DenseMap<const Value *, int64_t>
 findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
   DenseMap<const Value *, int64_t> RootOffsets;
@@ -1107,6 +1107,9 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
         continue;
       auto Root = EM.getTopLevelParent();
       if (Operator::getOpcode(Root->front()) == Instruction::IntToPtr)
+        continue;
+      ImmutableCallSite CS(Root->front());
+      if (CS)
         continue;
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
