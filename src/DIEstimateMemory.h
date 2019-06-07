@@ -145,11 +145,20 @@ public:
 
   /// Returns true if this is a template which represents a set of memory
 
-  /// Returns MDNode which represents this estimate memory location.
+  /// Returns MDNode which represents this memory location.
   llvm::MDNode * getAsMDNode() noexcept { return mMD; }
 
-  /// Returns MDNode which represents this estimate memory location.
+  /// Returns MDNode which represents this memory location.
   const llvm::MDNode * getAsMDNode() const noexcept { return mMD; }
+
+  /// Return MDNode which represents basic representation of this memory.
+  llvm::MDNode * getBaseAsMDNode() {
+    return const_cast<llvm::MDNode *>(
+      static_cast<const DIMemory *>(this)->getBaseAsMDNode());
+  }
+
+  /// Return MDNode which represents basic representation of this memory.
+  const llvm::MDNode * getBaseAsMDNode() const;
 
   /// Returns locations in a source code which defines this memory if location
   /// is specified.
@@ -211,7 +220,7 @@ protected:
   /// Returns flags which are specified for an underlying memory location.
   uint64_t getFlags() const;
 
-  /// Returns number of a flag operand of MDNode.
+  /// Returns number of a flag operand in basic MDNode.
   unsigned getFlagsOp() const;
 
   /// Bitwise OR the current flags with the given flags.
@@ -370,7 +379,7 @@ public:
   ///
   /// This means that this location is always unique. The same location
   /// can not be obtained after rebuild.
-  bool isDistinct() const { return getAsMDNode() == getMetadata(); }
+  bool isDistinct() const { return getBaseAsMDNode() == getMetadata(); }
 
   /// Returns flags which are specified for an underlying variable.
   Flags getFlags() const {

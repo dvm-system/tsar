@@ -290,10 +290,10 @@ public:
   /// Returns true if a specified memory location is corrupted
   /// (first value is true) and whether some values are bound to
   /// the corrupted location (second value is true).
-  std::pair<bool, bool> isCorrupted(const DIMemory &M) const {
-    if (mCorruptedSet.count({ M.getAsMDNode(), true }))
+  std::pair<bool, bool> isCorrupted(const llvm::MDNode *MD) const {
+    if (mCorruptedSet.count({ MD, true }))
       return std::make_pair(true, true);
-    if (mCorruptedSet.count({ M.getAsMDNode(), false }))
+    if (mCorruptedSet.count({ MD, false }))
       return std::make_pair(true, false);
     return std::make_pair(false, false);
   }

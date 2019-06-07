@@ -113,14 +113,17 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   ArrayRef<DILocation *> DbgLocs) {
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  SmallVector<Metadata *, 3> MDs{ MD, FlagMD };
+  SmallVector<Metadata *, 2> BasicMDs{ MD, FlagMD };
+  auto BasicMD = llvm::MDNode::get(Ctx, BasicMDs);
+  assert(BasicMD && "Can not create metadata node!");
+  if (!MD)
+    BasicMD->replaceOperandWith(0, BasicMD);
+  SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
       MDs.push_back(DbgLoc);
   auto NewMD = llvm::MDNode::get(Ctx, MDs);
   assert(NewMD && "Can not create metadata node!");
-  if (!MD)
-    NewMD->replaceOperandWith(0, NewMD);
   ++NumUnknownMemory;
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, NewMD));
 }
@@ -140,7 +143,10 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  SmallVector<Metadata *, 3> BasicMDs{ Var, Expr, FlagMD};
+  auto BasicMD = llvm::MDNode::get(Ctx, BasicMDs);
+  assert(BasicMD && "Can not create metadata node!");
+  SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
       MDs.push_back(DbgLoc);
@@ -159,7 +165,11 @@ DIEstimateMemory::getIfExists(
   assert(Expr && "Expression must not be null!");
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  SmallVector<Metadata *, 3> BasicMDs{ Var, Expr, FlagMD};
+  auto *BasicMD = llvm::MDNode::getIfExists(Ctx, BasicMDs);
+  if (!BasicMD)
+    return nullptr;
+  SmallVector<Metadata *, 2> MDs{ BasicMD};
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
       MDs.push_back(DbgLoc);
@@ -179,7 +189,11 @@ llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   if (!FlagMD)
     return nullptr;
-  SmallVector<Metadata *, 4> MDs{ Var, Expr, FlagMD};
+  SmallVector<Metadata *, 3> BasicMDs{ Var, Expr, FlagMD};
+  auto *BasicMD = llvm::MDNode::getIfExists(Ctx, BasicMDs);
+  if (!BasicMD)
+    return nullptr;
+  SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
       MDs.push_back(DbgLoc);
@@ -201,7 +215,7 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(llvm::LLVMContext &Ctx,
 }
 
 llvm::DIVariable * DIEstimateMemory::getVariable() {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
     if (auto *Var = llvm::dyn_cast<llvm::DIVariable>(MD->getOperand(I)))
       return Var;
@@ -210,7 +224,7 @@ llvm::DIVariable * DIEstimateMemory::getVariable() {
 }
 
 const llvm::DIVariable * DIEstimateMemory::getVariable() const {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
     if (auto *Var = llvm::dyn_cast<llvm::DIVariable>(MD->getOperand(I)))
       return Var;
@@ -219,7 +233,7 @@ const llvm::DIVariable * DIEstimateMemory::getVariable() const {
 }
 
 llvm::DIExpression * DIEstimateMemory::getExpression() {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
     if (auto *Expr = llvm::dyn_cast<llvm::DIExpression>(MD->getOperand(I)))
       return Expr;
@@ -228,7 +242,7 @@ llvm::DIExpression * DIEstimateMemory::getExpression() {
 }
 
 const llvm::DIExpression * DIEstimateMemory::getExpression() const {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
     if (auto *Expr = llvm::dyn_cast<llvm::DIExpression>(MD->getOperand(I)))
       return Expr;
@@ -236,8 +250,14 @@ const llvm::DIExpression * DIEstimateMemory::getExpression() const {
   return nullptr;
 }
 
-unsigned DIMemory::getFlagsOp() const {
+const MDNode * DIMemory::getBaseAsMDNode() const {
   auto MD = getAsMDNode();
+  assert(MD->getNumOperands() > 0 && "At least one operand must exist!");
+  return cast<MDNode>(MD->getOperand(0));
+}
+
+unsigned DIMemory::getFlagsOp() const {
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
     auto &Op = MD->getOperand(I);
     auto CMD = dyn_cast<ConstantAsMetadata>(Op);
@@ -250,14 +270,14 @@ unsigned DIMemory::getFlagsOp() const {
 }
 
 uint64_t DIMemory::getFlags() const {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   auto CMD = cast<ConstantAsMetadata>(MD->getOperand(getFlagsOp()));
   auto CInt = cast<ConstantInt>(CMD->getValue());
   return CInt->getZExtValue();
 }
 
 void DIMemory::setFlags(uint64_t F) {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   auto OpIdx = getFlagsOp();
   auto CMD = cast<ConstantAsMetadata>(MD->getOperand(OpIdx));
   auto CInt = cast<ConstantInt>(CMD->getValue());
@@ -268,10 +288,8 @@ void DIMemory::setFlags(uint64_t F) {
 }
 
 llvm::MDNode * DIUnknownMemory::getMetadata() {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
-    if (isa<DILocation>(MD->getOperand(I)))
-      continue;
     if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
       return Op;
   }
@@ -280,10 +298,8 @@ llvm::MDNode * DIUnknownMemory::getMetadata() {
 }
 
 const llvm::MDNode * DIUnknownMemory::getMetadata() const {
-  auto MD = getAsMDNode();
+  auto MD = getBaseAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
-    if (isa<DILocation>(MD->getOperand(I)))
-      continue;
     if (auto *Op = llvm::dyn_cast<llvm::MDNode>(MD->getOperand(I)))
       return Op;
   }
@@ -372,6 +388,7 @@ void DIMemoryHandleBase::memoryIsDeleted(DIMemory *M) {
 #ifndef NDEBUG
     dbgs() << "While deleting: ";
     TSAR_LLVM_DUMP(M->getAsMDNode()->dump());
+    TSAR_LLVM_DUMP(M->getBaseAsMDNode()->dump());
     if (M->getEnv()[M]->getKind() == Assert)
       llvm_unreachable("An asserting memory handle still pointed to this memory!");
 #endif
@@ -415,8 +432,10 @@ void DIMemoryHandleBase::memoryIsRAUWd(DIMemory *Old, DIMemory *New) {
       case Weak:
         dbgs() << "After RAUW from ";
         TSAR_LLVM_DUMP(Old->getAsMDNode()->dump());
+        TSAR_LLVM_DUMP(Old->getBaseAsMDNode()->dump());
         dbgs() << "to ";
         TSAR_LLVM_DUMP(New->getAsMDNode()->dump());
+        TSAR_LLVM_DUMP(New->getBaseAsMDNode()->dump());
         llvm_unreachable("A weak value handle still pointed to the"
                          " old value!\n");
       default:
@@ -669,7 +688,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), Env, DL, DT);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
         }
-        if (CMR.isCorrupted(*DIM).first) {
+        if (CMR.isCorrupted(DIM->getAsMDNode()).first) {
           LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
@@ -687,7 +706,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env, DT);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
-        if (CMR.isCorrupted(*DIM).first) {
+        if (CMR.isCorrupted(DIM->getAsMDNode()).first) {
           LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: ignore corrupted memory location\n");
           continue;
         }
@@ -782,12 +801,12 @@ public:
     if (mSortedFragments.front()->getNumElements() == 0) {
       auto DIMVar = DIEstimateMemory::get(*mContext, *mEnv, mVar, DIEmptyExpr,
         DIEstimateMemory::NoFlags, mDbgLocs);
-      auto IsCorruptedRoot = mCMR->isCorrupted(*DIMVar);
+      auto IsCorruptedRoot = mCMR->isCorrupted(DIMVar->getBaseAsMDNode());
       if (IsCorruptedRoot.first) {
         if (IsCorruptedRoot.second)
           return;
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
-        eraseCorrupted(DIMVar->getAsMDNode(), Parent);
+        eraseCorrupted(DIMVar->getBaseAsMDNode(), Parent);
       }
       LLVM_DEBUG(addFragmentLog(DIEmptyExpr));
       auto &DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
@@ -860,7 +879,7 @@ private:
   bool eraseCorrupted(MDNode *MD, DIAliasNode *&Current) {
     for (auto *N : mVisitedCorrupted)
       for (auto &M : *N)
-        if (M.getAsMDNode() == MD) {
+        if (M.getBaseAsMDNode() == MD) {
           --NumCorruptedMemory;
           isa<DIEstimateMemory>(M) ? --NumEstimateMemory : --NumUnknownMemory;
           auto Parent = Current->getParent();
@@ -889,11 +908,11 @@ private:
     assert(Parent && "Alias node must not be null!");
     auto DIMTmp = DIEstimateMemory::get(*mContext, *mEnv, mVar, Expr,
       DIEstimateMemory::NoFlags, mDbgLocs);
-    auto IsCorrupted = mCMR->isCorrupted(*DIMTmp);
+    auto IsCorrupted = mCMR->isCorrupted(DIMTmp->getBaseAsMDNode());
     if (IsCorrupted.first) {
       if (!IsCorrupted.second) {
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
-        bool IsErased = eraseCorrupted(DIMTmp->getAsMDNode(), Parent);
+        bool IsErased = eraseCorrupted(DIMTmp->getBaseAsMDNode(), Parent);
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
         LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
         auto &NewM = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
@@ -1517,6 +1536,7 @@ void CorruptedMemoryResolver::updateWorkLists(
           LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: safely promoted candidate is discarded\n");
           Info.CorruptedWL.push_back(&M);
           mCorruptedSet.insert({ M.getAsMDNode(), true });
+          mCorruptedSet.insert({ M.getBaseAsMDNode(), true });
           // This is rare case, so we do not take care about overheads and
           // remove an expression from a vector.
           auto VToF = mVarToFragments.find(Loc.Var);
@@ -1530,22 +1550,24 @@ void CorruptedMemoryResolver::updateWorkLists(
           !isSameAfterRebuild(*DIEM)) {
         LLVM_DEBUG(corruptedFoundLog(M));
         Info.CorruptedWL.push_back(&M);
-        mCorruptedSet.insert({
+        auto Pair = mCorruptedSet.insert({
           M.getAsMDNode(),
           Binding == DIMemory::Empty ||
             Binding == DIMemory::Destroyed ? false : true
         });
+        mCorruptedSet.insert({ M.getBaseAsMDNode(), (*Pair.first).getInt() });
       }
     } else if (Binding != DIMemory::Consistent ||
         !isSameAfterRebuild(cast<DIUnknownMemory>(M))) {
       LLVM_DEBUG(corruptedFoundLog(M));
       LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: unknown corrupted is found\n");
       Info.CorruptedWL.push_back(&M);
-      mCorruptedSet.insert({
+      auto Pair = mCorruptedSet.insert({
         M.getAsMDNode(),
         Binding == DIMemory::Empty ||
           Binding == DIMemory::Destroyed ? false : true
       });
+      mCorruptedSet.insert({ M.getBaseAsMDNode(), (*Pair.first).getInt() });
     }
     findBoundAliasNodes(M, *mAT, Info.NodesWL);
   }
@@ -1572,7 +1594,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     }
     assert(Cashed.first->second || "Debug memory location must not be null!");
     LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
-    if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
+    if (Cashed.first->second->getBaseAsMDNode() != M.getBaseAsMDNode())
       return false;
     assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
       "Different estimate memory locations produces the same debug-level memory!");
