@@ -50,6 +50,8 @@ add_dependencies(TSARCore
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARAnalysisReader
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
+add_dependencies(TSARAnalysisMemory
+  DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARClangAnalysis
   DiagnosticKinds IntrinsicsGen AttributesGen DirectivesGen)
 add_dependencies(TSARClangTransform
@@ -58,11 +60,11 @@ add_dependencies(TSARClangTransform
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARCore TSARSupport TSARAnalysisReader
-    TSARClangTransform TSARClangAnalysis
+    TSARAnalysisMemory TSARClangTransform TSARClangAnalysis
     ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
 target_link_libraries(TSARCore TSARSupport TSARAnalysisReader
-  TSARClangTransform TSARClangAnalysis
+  TSARAnalysisMemory TSARClangTransform TSARClangAnalysis
   ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 if(APC_FOUND)
   target_link_libraries(TSARCore APC::APCCore)
@@ -85,7 +87,7 @@ install(TARGETS tsar RUNTIME DESTINATION bin)
 if (TSAR_SERVER)
   set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp ClangMessages.cpp)
   set_property(TARGET TSARCore TSARSupport TSARAnalysisReader
-    TSARClangTransform TSARClangAnalysis
+    TSARAnalysisMemory TSARClangTransform TSARClangAnalysis
     PROPERTY POSITION_INDEPENDENT_CODE ON)
   add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
   add_dependencies(TSARServer TSARCore)

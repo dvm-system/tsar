@@ -22,12 +22,12 @@
 #include "MemoryAccessUtils.h"
 #include "tsar_query.h"
 #include "tsar_utility.h"
+#include "tsar/Analysis/Memory/DependenceAnalysis.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/STLExtras.h>
-#include <llvm/Analysis/DependenceAnalysis.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/IR/Dominators.h>
