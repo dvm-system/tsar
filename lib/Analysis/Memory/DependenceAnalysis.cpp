@@ -108,7 +108,7 @@ STATISTIC(BanerjeeIndependence, "Banerjee independence");
 STATISTIC(BanerjeeSuccesses, "Banerjee successes");
 
 static cl::opt<bool>
-    Delinearize("da-delinearize", cl::init(true), cl::Hidden, cl::ZeroOrMore,
+    Delinearize("delinearize-da", cl::init(true), cl::Hidden, cl::ZeroOrMore,
                 cl::desc("Try to delinearize array references."));
 
 //===----------------------------------------------------------------------===//
@@ -134,7 +134,7 @@ INITIALIZE_PASS_END(DependenceAnalysisWrapperPass, "da", "Dependence Analysis",
 
 char DependenceAnalysisWrapperPass::ID = 0;
 
-FunctionPass *llvm::createDependenceAnalysisWrapperPass() {
+FunctionPass *llvm::tsar_impl::createDependenceAnalysisWrapperPass() {
   return new DependenceAnalysisWrapperPass();
 }
 

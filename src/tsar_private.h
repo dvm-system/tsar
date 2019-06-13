@@ -58,8 +58,12 @@ class DependenceImp;
 
 namespace llvm {
 class DataLayout;
+
+inline namespace tsar_impl {
 class Dependence;
 class DependenceInfo;
+}
+
 class Loop;
 class TargetLibraryInfo;
 class ScalarEvolution;

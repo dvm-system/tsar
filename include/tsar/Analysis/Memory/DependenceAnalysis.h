@@ -45,6 +45,14 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
 
+#define DependenceAnalysisWrapperPass TSARDependenceAnalysisWrapperPass
+#define initializeDependenceAnalysisWrapperPassPass initializeTSARDependenceAnalysisWrapperPassPass
+
+namespace llvm {
+class PassRegistry;
+void initializeDependenceAnalysisWrapperPassPass(PassRegistry &Registry);
+}
+
 namespace llvm {
 template <typename T> class ArrayRef;
   class Loop;
@@ -54,6 +62,7 @@ template <typename T> class ArrayRef;
   class SCEVConstant;
   class raw_ostream;
 
+inline namespace tsar_impl {
   /// Dependence - This class represents a dependence between two memory
   /// memory references in a function. It contains minimal information and
   /// is used in the very common situation where the compiler is unable to
@@ -958,7 +967,7 @@ template <typename T> class ArrayRef;
   /// createDependenceAnalysisPass - This creates an instance of the
   /// DependenceAnalysis wrapper pass.
   FunctionPass *createDependenceAnalysisWrapperPass();
-
+}
 } // namespace llvm
 
 #endif
