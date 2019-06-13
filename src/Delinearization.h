@@ -106,7 +106,7 @@ public:
 
     void setProperty(Flags F) { Property |= F; }
     void unsetProperty(Flags F) { Property &= ~F; }
-    bool is(Flags F) { return Property & F; }
+    bool is(Flags F) const { return Property & F; }
 
   private:
     Flags Property = DefaultFlags;
