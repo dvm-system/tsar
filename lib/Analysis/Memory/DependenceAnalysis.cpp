@@ -50,7 +50,10 @@
 //                                                                            //
 //===----------------------------------------------------------------------===//
 
+#include "Delinearization.h"
+#include "GlobalOptions.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
+#include "tsar/Support/SCEVUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -68,6 +71,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+using namespace tsar;
 
 #define DEBUG_TYPE "da"
 
@@ -129,6 +133,8 @@ INITIALIZE_PASS_BEGIN(DependenceAnalysisWrapperPass, "da",
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(DependenceAnalysisWrapperPass, "da", "Dependence Analysis",
                     true, true)
 
@@ -142,7 +148,9 @@ bool DependenceAnalysisWrapperPass::runOnFunction(Function &F) {
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  info.reset(new DependenceInfo(&F, &AA, &SE, &LI));
+  auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  info.reset(new DependenceInfo(&F, &AA, &SE, &LI, &DI, &GO));
   return false;
 }
 
@@ -155,6 +163,8 @@ void DependenceAnalysisWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequiredTransitive<AAResultsWrapperPass>();
   AU.addRequiredTransitive<ScalarEvolutionWrapperPass>();
   AU.addRequiredTransitive<LoopInfoWrapperPass>();
+  AU.addRequiredTransitive<DelinearizationPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
 }
 
 
@@ -1010,6 +1020,7 @@ bool DependenceInfo::isKnownLessThan(const SCEV *S, const SCEV *Size) const {
 
   // Special check for addrecs using BE taken count
   const SCEV *Bound = SE->getMinusSCEV(S, Size);
+
   if (const SCEVAddRecExpr *AddRec = dyn_cast<SCEVAddRecExpr>(Bound)) {
     if (AddRec->isAffine()) {
       const SCEV *BECount = SE->getBackedgeTakenCount(AddRec->getLoop());
@@ -3249,53 +3260,83 @@ void DependenceInfo::updateDirection(Dependence::DVEntry &Level,
 /// for each loop level.
 bool DependenceInfo::tryDelinearize(Instruction *Src, Instruction *Dst,
                                     SmallVectorImpl<Subscript> &Pair) {
+  assert(Src && "Instruction must not be null!");
   assert(isLoadOrStore(Src) && "instruction is not load or store");
-  assert(isLoadOrStore(Dst) && "instruction is not load or store");
+
   Value *SrcPtr = getLoadStorePointerOperand(Src);
   Value *DstPtr = getLoadStorePointerOperand(Dst);
 
-  Loop *SrcLoop = LI->getLoopFor(Src->getParent());
-  Loop *DstLoop = LI->getLoopFor(Dst->getParent());
+  SmallVector<const SCEV *, 4> Sizes;
+  SmallVector<const SCEV *, 4> SrcSubscripts, DstSubscripts;
 
-  // Below code mimics the code in Delinearization.cpp
-  const SCEV *SrcAccessFn =
-    SE->getSCEVAtScope(SrcPtr, SrcLoop);
-  const SCEV *DstAccessFn =
-    SE->getSCEVAtScope(DstPtr, DstLoop);
+  bool IsDIDelinearized = false;
+  if (DI) {
+    auto SrcInfo = DI->findRange(SrcPtr);
+    auto DstInfo = DI->findRange(DstPtr);
+    if (SrcInfo.first && SrcInfo.first == DstInfo.first &&
+        SrcInfo.first->isDelinearized() &&
+        SrcInfo.second->isValid() && DstInfo.second->isValid()) {
+      IsDIDelinearized = true;
+      LLVM_DEBUG(dbgs() << "\nuse metadata-based delinearization\n");
+      Sizes.resize(SrcInfo.first->getNumberOfDims());
+      for (unsigned I = 0, EI = Sizes.size(); I < EI; ++I)
+        Sizes[I] = SrcInfo.first->isKnownDimSize(I) ?
+          SrcInfo.first->getDimSize(I) : SE->getCouldNotCompute();
+      for (auto *S : SrcInfo.second->Subscripts) {
+        auto AddRecInfo = computeSCEVAddRec(S, *SE);
+        SrcSubscripts.push_back(
+          AddRecInfo.second || !GO->IsSafeTypeCast ? AddRecInfo.first : S);
+      }
+      for (auto *S : DstInfo.second->Subscripts) {
+        auto AddRecInfo = computeSCEVAddRec(S, *SE);
+        DstSubscripts.push_back(
+          AddRecInfo.second || !GO->IsSafeTypeCast ? AddRecInfo.first : S);
+      }
+    }
+  }
 
-  const SCEVUnknown *SrcBase =
+  if (!IsDIDelinearized) {
+    Loop *SrcLoop = LI->getLoopFor(Src->getParent());
+    Loop *DstLoop = LI->getLoopFor(Dst->getParent());
+
+    // Below code mimics the code in Delinearization.cpp
+    const SCEV *SrcAccessFn =
+      SE->getSCEVAtScope(SrcPtr, SrcLoop);
+    const SCEV *DstAccessFn =
+      SE->getSCEVAtScope(DstPtr, DstLoop);
+
+    const SCEVUnknown *SrcBase =
       dyn_cast<SCEVUnknown>(SE->getPointerBase(SrcAccessFn));
-  const SCEVUnknown *DstBase =
+    const SCEVUnknown *DstBase =
       dyn_cast<SCEVUnknown>(SE->getPointerBase(DstAccessFn));
 
-  if (!SrcBase || !DstBase || SrcBase != DstBase)
-    return false;
+    if (!SrcBase || !DstBase || SrcBase != DstBase)
+      return false;
 
-  const SCEV *ElementSize = SE->getElementSize(Src);
-  if (ElementSize != SE->getElementSize(Dst))
-    return false;
+    const SCEV *ElementSize = SE->getElementSize(Src);
+    if (ElementSize != SE->getElementSize(Dst))
+      return false;
 
-  const SCEV *SrcSCEV = SE->getMinusSCEV(SrcAccessFn, SrcBase);
-  const SCEV *DstSCEV = SE->getMinusSCEV(DstAccessFn, DstBase);
+    const SCEV *SrcSCEV = SE->getMinusSCEV(SrcAccessFn, SrcBase);
+    const SCEV *DstSCEV = SE->getMinusSCEV(DstAccessFn, DstBase);
 
-  const SCEVAddRecExpr *SrcAR = dyn_cast<SCEVAddRecExpr>(SrcSCEV);
-  const SCEVAddRecExpr *DstAR = dyn_cast<SCEVAddRecExpr>(DstSCEV);
-  if (!SrcAR || !DstAR || !SrcAR->isAffine() || !DstAR->isAffine())
-    return false;
+    const SCEVAddRecExpr *SrcAR = dyn_cast<SCEVAddRecExpr>(SrcSCEV);
+    const SCEVAddRecExpr *DstAR = dyn_cast<SCEVAddRecExpr>(DstSCEV);
+    if (!SrcAR || !DstAR || !SrcAR->isAffine() || !DstAR->isAffine())
+      return false;
 
-  // First step: collect parametric terms in both array references.
-  SmallVector<const SCEV *, 4> Terms;
-  SE->collectParametricTerms(SrcAR, Terms);
-  SE->collectParametricTerms(DstAR, Terms);
+    // First step: collect parametric terms in both array references.
+    SmallVector<const SCEV *, 4> Terms;
+    SE->collectParametricTerms(SrcAR, Terms);
+    SE->collectParametricTerms(DstAR, Terms);
 
-  // Second step: find subscript sizes.
-  SmallVector<const SCEV *, 4> Sizes;
-  SE->findArrayDimensions(Terms, Sizes, ElementSize);
+    // Second step: find subscript sizes.
+    SE->findArrayDimensions(Terms, Sizes, ElementSize);
 
-  // Third step: compute the access functions for each subscript.
-  SmallVector<const SCEV *, 4> SrcSubscripts, DstSubscripts;
-  SE->computeAccessFunctions(SrcAR, SrcSubscripts, Sizes);
-  SE->computeAccessFunctions(DstAR, DstSubscripts, Sizes);
+    // Third step: compute the access functions for each subscript.
+    SE->computeAccessFunctions(SrcAR, SrcSubscripts, Sizes);
+    SE->computeAccessFunctions(DstAR, DstSubscripts, Sizes);
+  }
 
   // Fail when there is only a subscript: that's a linearized access function.
   if (SrcSubscripts.size() < 2 || DstSubscripts.size() < 2 ||
@@ -3311,6 +3352,7 @@ bool DependenceInfo::tryDelinearize(Instruction *Src, Instruction *Dst,
   // FIXME: It may be better to record these sizes and add them as constraints
   // to the dependency checks.
   for (int i = 1; i < size; ++i) {
+
     if (!isKnownNonNegative(SrcSubscripts[i], SrcPtr))
       return false;
 
@@ -3376,6 +3418,7 @@ static void dumpSmallBitVector(SmallBitVector &BV) {
 std::unique_ptr<Dependence>
 DependenceInfo::depends(Instruction *Src, Instruction *Dst,
                         bool PossiblyLoopIndependent) {
+
   if (Src == Dst)
     PossiblyLoopIndependent = false;
 

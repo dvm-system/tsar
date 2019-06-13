@@ -53,6 +53,11 @@ class PassRegistry;
 void initializeDependenceAnalysisWrapperPassPass(PassRegistry &Registry);
 }
 
+namespace tsar {
+class DelinearizeInfo;
+struct GlobalOptions;
+}
+
 namespace llvm {
 template <typename T> class ArrayRef;
   class Loop;
@@ -281,8 +286,10 @@ inline namespace tsar_impl {
   class DependenceInfo {
   public:
     DependenceInfo(Function *F, AliasAnalysis *AA, ScalarEvolution *SE,
-                   LoopInfo *LI)
-        : AA(AA), SE(SE), LI(LI), F(F) {}
+                   LoopInfo *LI,
+                   const tsar::DelinearizeInfo *DI = nullptr,
+                   const tsar::GlobalOptions *GO = nullptr)
+        : AA(AA), SE(SE), LI(LI), F(F), DI(DI), GO(GO) {}
 
     /// depends - Tests for a dependence between the Src and Dst instructions.
     /// Returns NULL if no dependence; otherwise, returns a Dependence (or a
@@ -343,6 +350,8 @@ inline namespace tsar_impl {
     ScalarEvolution *SE;
     LoopInfo *LI;
     Function *F;
+    const tsar::DelinearizeInfo *DI;
+    const tsar::GlobalOptions *GO;
 
     /// Subscript - This private struct represents a pair of subscripts from
     /// a pair of potentially multi-dimensional array references. We use a
