@@ -35,7 +35,6 @@
 #include "SourceUnparser.h"
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/Statistic.h>
-#include <llvm/Analysis/DependenceAnalysis.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/IR/DebugInfoMetadata.h>
