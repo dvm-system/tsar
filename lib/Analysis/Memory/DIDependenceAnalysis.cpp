@@ -24,15 +24,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar_dbg_output.h"
 #include "DIEstimateMemory.h"
 #include "EstimateMemory.h"
 #include "GlobalOptions.h"
 #include "MemoryAccessUtils.h"
 #include "tsar_query.h"
-#include "tsar_private.h"
 #include "SourceUnparser.h"
+#include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>

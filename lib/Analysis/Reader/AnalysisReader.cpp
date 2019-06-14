@@ -24,10 +24,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
-#include "DIMemoryTrait.h"
-#include "DIDependencyAnalysis.h"
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
 #include <llvm/IR/Function.h>

@@ -1,6 +1,6 @@
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
+set(TSAR_SOURCES tsar_pass.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp
   tsar_transformation.cpp tsar_tool.cpp tsar_test.cpp
   tsar_loop_matcher.cpp tsar_memory_matcher.cpp tsar_pragma.cpp
@@ -11,8 +11,7 @@ set(TSAR_SOURCES tsar_pass.cpp tsar_private.cpp tsar_dbg_output.cpp
   Directives.cpp ClangUtils.cpp GlobalInfoExtractor.cpp
   DILoopRetriever.cpp DIMemoryLocation.cpp
   SourceUnparser.cpp SourceUnparserUtils.cpp DIEstimateMemory.cpp
-  DIAliasTreePrinter.cpp DIDependencyAnalysis.cpp
-  DIGlobalRetriever.cpp InterprocAttr.cpp
+  DIAliasTreePrinter.cpp DIGlobalRetriever.cpp InterprocAttr.cpp
   ControlFlowTraits.cpp Attributes.cpp ExpressionMatcher.cpp
   Delinearization.cpp)
 if(MSVC_IDE)

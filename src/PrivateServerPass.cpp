@@ -34,8 +34,8 @@
 #include "tsar_pass.h"
 #include "tsar_pass_provider.h"
 #include "PerfectLoop.h"
-#include "tsar_private.h"
 #include "tsar_transformation.h"
+#include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/RedirectIO.h>
 #include <bcl/utility.h>

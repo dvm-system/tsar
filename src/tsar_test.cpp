@@ -37,12 +37,12 @@
 #include "tsar_loop_matcher.h"
 #include "tsar_memory_matcher.h"
 #include "PerfectLoop.h"
-#include "tsar_private.h"
 #include "tsar_pass_provider.h"
 #include "tsar_test.h"
-#include "tsar_trait.h"
 #include "tsar_transformation.h"
 #include "tsar_utility.h"
+#include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include "tsar/Analysis/Memory/IRMemoryTrait.h"
 
 using namespace tsar;
 using namespace llvm;

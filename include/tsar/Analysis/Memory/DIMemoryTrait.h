@@ -28,10 +28,10 @@
 #include "AnalysisWrapperPass.h"
 #include "DIEstimateMemory.h"
 #include "DIMemoryHandle.h"
-#include "MemoryTrait.h"
 #include "PersistentMap.h"
 #include "PersistentIteratorInfo.h"
 #include "tsar_utility.h"
+#include "tsar/Analysis/Memory/MemoryTrait.h"
 #include <llvm/ADT/APSInt.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>

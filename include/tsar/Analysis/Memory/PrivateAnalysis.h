@@ -1,6 +1,20 @@
-//===--- tsar_private.h - Private Variable Analyzer -------------*- C++ -*-===//
+//===--- PrivateAnalysis.h - Private Variable Analyzer ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 //
@@ -13,17 +27,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_PRIVATE_H
-#define TSAR_PRIVATE_H
+#ifndef TSAR_PRIVATE_ANALYSIS_H
+#define TSAR_PRIVATE_ANALYSIS_H
 
 #include "tsar_df_graph.h"
 #include "tsar_df_location.h"
 #include "DefinedMemory.h"
 #include "GraphNumbering.h"
 #include "LiveMemory.h"
-#include "tsar_pass.h"
-#include "tsar_trait.h"
 #include "tsar_utility.h"
+#include "tsar/Analysis/Memory/IRMemoryTrait.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
@@ -348,4 +362,4 @@ private:
   ScalarEvolution *mSE = nullptr;
 };
 }
-#endif//TSAR_PRIVATE_H
+#endif//TSAR_PRIVATE_ANALYSIS_H

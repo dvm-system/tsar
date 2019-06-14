@@ -27,9 +27,9 @@
 #ifndef TSAR_DI_DEPENDENCY_ANALYSIS_H
 #define TSAR_DI_DEPENDENCY_ANALYSIS_H
 
-#include "DIMemoryTrait.h"
-#include "tsar_pass.h"
 #include "tsar_utility.h"
+#include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>

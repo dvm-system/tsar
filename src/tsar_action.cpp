@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_action.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "Instrumentation.h"
