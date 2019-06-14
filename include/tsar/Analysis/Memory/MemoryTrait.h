@@ -27,7 +27,9 @@
 #define TSAR_MEMORY_TRAIT_H
 
 #include <bcl/trait.h>
+#include <bcl/tagged.h>
 #include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/StringRef.h>
 
 namespace tsar {
@@ -204,5 +206,51 @@ using MemoryDescriptor = bcl::TraitDescriptor<
     bcl::TraitUnion<trait::LastPrivate, trait::FirstPrivate, trait::Shared>,
     bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate, trait::Shared>,
     bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate, trait::Shared>>>;
+
+/// Statistic of collected memory traits.
+using MemoryStatistic = bcl::tagged_tuple<
+  bcl::tagged<llvm::Statistic &, trait::AddressAccess>,
+  bcl::tagged<llvm::Statistic &, trait::ExplicitAccess>,
+  bcl::tagged<llvm::Statistic &, trait::HeaderAccess>,
+  bcl::tagged<llvm::Statistic &, trait::Readonly>,
+  bcl::tagged<llvm::Statistic &, trait::Shared>,
+  bcl::tagged<llvm::Statistic &, trait::Private>,
+  bcl::tagged<llvm::Statistic &, trait::FirstPrivate>,
+  bcl::tagged<llvm::Statistic &, trait::SecondToLastPrivate>,
+  bcl::tagged<llvm::Statistic &, trait::LastPrivate>,
+  bcl::tagged<llvm::Statistic &, trait::DynamicPrivate>,
+  bcl::tagged<llvm::Statistic &, trait::Reduction>,
+  bcl::tagged<llvm::Statistic &, trait::Induction>,
+  bcl::tagged<llvm::Statistic &, trait::Flow>,
+  bcl::tagged<llvm::Statistic &, trait::Anti>,
+  bcl::tagged<llvm::Statistic &, trait::Output>>;
+
+/// A macro to make definition of statistics really simple.
+///
+/// This automatically passes the DEBUG_TYPE of the file into the statistic.
+/// Note that this macro defines static variable VARNAME and a list of variables
+/// with VARNAME##<trait kind> names.
+#define MEMORY_TRAIT_STATISTIC(VARNAME) \
+  STATISTIC(VARNAME##AddressAccess, "Number of locations address of which is evaluated"); \
+  STATISTIC(VARNAME##ExplicitAccess, "Number of explicitly accessed locations"); \
+  STATISTIC(VARNAME##HeaderAccess, "Number of traits caused by memory accesses in a loop header"); \
+  STATISTIC(VARNAME##Readonly, "Number of read-only locations found"); \
+  STATISTIC(VARNAME##Shared, "Number of shared locations found"); \
+  STATISTIC(VARNAME##Private, "Number of private locations found"); \
+  STATISTIC(VARNAME##FirstPrivate, "Number of first private locations found"); \
+  STATISTIC(VARNAME##SecondToLastPrivate, "Number of second-to-last-private locations found"); \
+  STATISTIC(VARNAME##LastPrivate, "Number of last private locations found"); \
+  STATISTIC(VARNAME##DynamicPrivate, "Number of dynamic private locations found"); \
+  STATISTIC(VARNAME##Reduction, "Number of reductions found"); \
+  STATISTIC(VARNAME##Induction, "Number of inductions found"); \
+  STATISTIC(VARNAME##Flow, "Number of flow dependencies found"); \
+  STATISTIC(VARNAME##Anti, "Number of anti dependencies found"); \
+  STATISTIC(VARNAME##Output, "Number of output dependencies found"); \
+  static ::tsar::MemoryStatistic VARNAME = {\
+    VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
+    VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
+    VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate, VARNAME##LastPrivate, \
+    VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
+    VARNAME##Flow, VARNAME##Anti, VARNAME##Output};
 }
 #endif//TSAR_MEMORY_TRAIT_H

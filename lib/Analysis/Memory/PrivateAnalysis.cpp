@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include "BitMemoryTrait.h"
 #include "tsar_config.h"
 #include "tsar_dbg_output.h"
 #include "DefinedMemory.h"
@@ -62,16 +63,7 @@ using bcl::operator "" _b;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "private"
 
-STATISTIC(NumPrivate, "Number of private locations found");
-STATISTIC(NumLPrivate, "Number of last private locations found");
-STATISTIC(NumSToLPrivate, "Number of second to last private locations found");
-STATISTIC(NumDPrivate, "Number of dynamic private locations found");
-STATISTIC(NumFPrivate, "Number of first private locations found");
-STATISTIC(NumDeps, "Number of unsorted dependencies found");
-STATISTIC(NumReadonly, "Number of read-only locations found");
-STATISTIC(NumShared, "Number of shared locations found");
-STATISTIC(NumAddressAccess, "Number of locations address of which is evaluated");
-STATISTIC(NumHeaderAccess, "Number of traits caused by memory accesses in a loop header");
+MEMORY_TRAIT_STATISTIC(NumTraits)
 
 char PrivateRecognitionPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(PrivateRecognitionPass, "private",
@@ -115,74 +107,6 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
 
 namespace tsar {
 namespace detail {
-/// \brief Identifiers of recognized traits.
-///
-/// This is a helpful enumeration which must not be used outside the private
-/// recognition pass. It is easy to join different traits. For example,
-/// Readonly & LastPrivate = 0011001 = LastPrivate & FirstPrivate. So if some
-/// part of memory locations is read-only and other part is last private a union
-/// is last private and first private (for details see resolve... methods).
-enum TraitId : unsigned long long {
-  NoAccess = 11111111_b,
-  Readonly = 11110111_b,
-  Shared = 11110011_b,
-  Private = 01111111_b,
-  FirstPrivate = 01110111_b,
-  SecondToLastPrivate = 01011111_b,
-  LastPrivate = 00111111_b,
-  DynamicPrivate = 00011111_b,
-  Dependency = 00000011_b,
-  AddressAccess = 11111101_b,
-  HeaderAccess = 11111110_b,
-};
-
-constexpr inline TraitId operator&(TraitId LHS, TraitId RHS) noexcept {
-  return static_cast<TraitId>(
-    static_cast<std::underlying_type<TraitId>::type>(LHS) &
-    static_cast<std::underlying_type<TraitId>::type>(RHS));
-}
-constexpr inline TraitId operator|(TraitId LHS, TraitId RHS) noexcept {
-  return static_cast<TraitId>(
-    static_cast<std::underlying_type<TraitId>::type>(LHS) |
-    static_cast<std::underlying_type<TraitId>::type>(RHS));
-}
-constexpr inline TraitId operator~(TraitId What) noexcept {
-  // We use `... & NoAccess` to avoid reversal of unused bits.
-  return static_cast<TraitId>(
-    ~static_cast<std::underlying_type<TraitId>::type>(What) & NoAccess);
-}
-
-/// Drops bits which identifies single-bit traits.
-static inline TraitId dropUnitFlag(TraitId T) noexcept {
-  return T | ~AddressAccess | ~HeaderAccess;
-}
-
-/// Drops a single bit which identifies shared trait (shared becomes read-only).
-static inline TraitId dropSharedFlag(TraitId T) noexcept {
-  return T | ~(~Readonly | Shared);
-}
-
-/// Internal representation of traits of memory locations.
-class TraitImp {
-public:
-  TraitImp() = default;
-  TraitImp(TraitId Id) noexcept : mId(static_cast<decltype(mId)>(Id)) {}
-  TraitImp & operator=(TraitId Id) noexcept { return *this = TraitImp(Id); }
-  TraitImp & operator&=(const TraitImp &With) noexcept {
-    mId &= With.mId;
-    return *this;
-  }
-  TraitImp & operator|=(const TraitImp &With) noexcept {
-    mId != With.mId;
-    return *this;
-  }
-  bool operator!() const noexcept { return !mId; }
-  operator TraitId () const noexcept{ return get(); }
-  TraitId get() const noexcept { return static_cast<TraitId>(mId); }
-private:
-  std::underlying_type<TraitId>::type mId = NoAccess;
-};
-
 /// Internal representation of loop-carried dependencies.
 class DependenceImp {
   friend struct UpdateFunctor;
@@ -308,13 +232,13 @@ private:
 }
 
 #ifndef NDEBUG
-static void updateTraitsLog(const EstimateMemory *EM, TraitImp T) {
-  dbgs() << "[PRIVATE]: update traits of ";
-  printLocationSource(
-    dbgs(), MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
-  dbgs() << " to ";
-  bcl::bitPrint(T, dbgs());
-  dbgs() << "\n";
+static void updateTraitsLog(const EstimateMemory *EM, BitMemoryTrait T) {
+  llvm::dbgs() << "[MEMORY TRAIT]: update traits of ";
+  printLocationSource(llvm::dbgs(),
+    llvm::MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
+  llvm::dbgs() << " to ";
+  bcl::bitPrint(T, llvm::dbgs());
+  llvm::dbgs() << "\n";
 }
 
 static void updateDependenceLog(const EstimateMemory &EM, DependenceImp &Dep) {
@@ -364,7 +288,8 @@ static inline void updateDependence(const EstimateMemory *EM,
 /// If `ToTrait` is `Dependency` or `From` is located in `Deps` than record for
 /// `EM` will be inserted into `Deps` even if it did not exist before.
 template<class MapTy>
-static inline void mergeDependence(const EstimateMemory *To, TraitId ToTrait,
+static inline void mergeDependence(const EstimateMemory *To,
+    BitMemoryTrait::Id ToTrait,
     const EstimateMemory *From, MapTy &Deps) {
   assert(To && "Estimate memory must not be null!");
   assert(From && "Estimate memory must not be null!");
@@ -374,7 +299,7 @@ static inline void mergeDependence(const EstimateMemory *To, TraitId ToTrait,
     FromDep = FromItr->template get<DependenceImp>().get();
     assert(FromDep &&
       "Location is stored in dependence map without dependence description!");
-  } else if (dropUnitFlag(ToTrait) != Dependency) {
+  } else if (dropUnitFlag(ToTrait) != BitMemoryTrait::Dependency) {
     return;
   }
   auto ToItr = Deps.try_emplace(To, nullptr).first;
@@ -412,13 +337,13 @@ void PrivateRecognitionPass::collectHeaderAccesses(Loop *L,
         auto Itr = ExplicitAccesses.find(EM);
         assert(Itr != ExplicitAccesses.end() &&
           "Explicitly accessed memory must be stored in a list of explicit accesses!");
-        *Itr->get<TraitImp>() &= HeaderAccess;
+        *Itr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
       },
       [this, &ExplicitUnknowns](Instruction &I, AccessInfo, AccessInfo) {
         auto Itr = ExplicitUnknowns.find(&I);
         assert(Itr != ExplicitUnknowns.end() &&
           "Explicitly accessed memory must be stored in a list of explicit accesses!");
-        *Itr->get<TraitImp>() &= HeaderAccess;
+        *Itr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
       });
   }
 }
@@ -615,17 +540,18 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
     if (Pair.second) {
       auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
-      I->get<TraitList>().push_front(std::make_pair(Base, TraitImp()));
-      Pair.first->get<TraitImp>() =
-        &I->get<TraitList>().front().get<TraitImp>();
+      I->get<TraitList>().push_front(std::make_pair(Base, BitMemoryTrait()));
+      Pair.first->get<BitMemoryTrait>() =
+        &I->get<TraitList>().front().get<BitMemoryTrait>();
     }
-    auto &CurrTraits = *Pair.first->get<TraitImp>();
-    TraitImp SharedTrait = !Deps.count(Base) ? Shared : NoAccess;
+    auto &CurrTraits = *Pair.first->get<BitMemoryTrait>();
+    BitMemoryTrait SharedTrait = !Deps.count(Base) ?
+      BitMemoryTrait::Shared : BitMemoryTrait::NoAccess;
     if (!DefUse.hasUse(Loc)) {
       if (!LS.getOut().overlap(Loc))
-        CurrTraits &= Private & SharedTrait;
+        CurrTraits &= BitMemoryTrait::Private & SharedTrait;
       else if (DefUse.hasDef(Loc))
-        CurrTraits &= LastPrivate & SharedTrait;
+        CurrTraits &= BitMemoryTrait::LastPrivate & SharedTrait;
       else if (LatchDefs.MustReach.contain(Loc) &&
         !ExitingDefs.MayReach.overlap(Loc))
         // These location will be stored as second to last private, i.e.
@@ -635,18 +561,20 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         // It is possible that there is only one (last) iteration in
         // the loop. In this case the location has not been assigned and
         // must be declared as a first private.
-        CurrTraits &= SecondToLastPrivate & FirstPrivate & SharedTrait;
+        CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
+          BitMemoryTrait::FirstPrivate & SharedTrait;
       else
         // There is no certainty that the location is always assigned
         // the value in the loop. Therefore, it must be declared as a
         // first private, to preserve the value obtained before the loop
         // if it has not been assigned.
-        CurrTraits &= DynamicPrivate & FirstPrivate & SharedTrait;
+        CurrTraits &= BitMemoryTrait::DynamicPrivate &
+          BitMemoryTrait::FirstPrivate & SharedTrait;
     } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc)) &&
-        SharedTrait == NoAccess) {
-      CurrTraits &= Dependency;
+        SharedTrait == BitMemoryTrait::NoAccess) {
+      CurrTraits &= BitMemoryTrait::Dependency;
     } else {
-      CurrTraits &= Readonly;
+      CurrTraits &= BitMemoryTrait::Readonly;
     }
     LLVM_DEBUG(updateTraitsLog(Base, CurrTraits));
   }
@@ -656,11 +584,12 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     auto I = NodeTraits.find(N);
     auto &AA = mAliasTree->getAliasAnalysis();
     ImmutableCallSite CS(Unknown);
-    TraitId TID = (CS && AA.onlyReadsMemory(CS)) ?
-      TraitId::Readonly : TraitId::Dependency;
-    I->get<UnknownList>().push_front(std::make_pair(Unknown, TraitImp(TID)));
+    BitMemoryTrait::Id TID = (CS && AA.onlyReadsMemory(CS)) ?
+      BitMemoryTrait::Readonly : BitMemoryTrait::Dependency;
+    I->get<UnknownList>().push_front(
+      std::make_pair(Unknown, BitMemoryTrait(TID)));
     ExplicitUnknowns.insert(std::make_pair(Unknown,
-      std::make_tuple(N, &I->get<UnknownList>().front().get<TraitImp>())));
+      std::make_tuple(N, &I->get<UnknownList>().front().get<BitMemoryTrait>())));
   }
 }
 
@@ -674,16 +603,20 @@ void PrivateRecognitionPass::resolvePointers(
       auto LocTraits = ExplicitAccesses.find(EM);
       assert(LocTraits != ExplicitAccesses.end() &&
         "Traits of location must be initialized!");
-      if (dropSharedFlag(dropUnitFlag(*LocTraits->get<TraitImp>())) == Private ||
-          dropUnitFlag(*LocTraits->get<TraitImp>()) == Readonly ||
-          dropUnitFlag(*LocTraits->get<TraitImp>()) == Shared)
+      if (dropSharedFlag(dropUnitFlag(*LocTraits->get<BitMemoryTrait>()))
+            == BitMemoryTrait::Private ||
+          dropUnitFlag(*LocTraits->get<BitMemoryTrait>())
+            == BitMemoryTrait::Readonly ||
+          dropUnitFlag(*LocTraits->get<BitMemoryTrait>())
+            == BitMemoryTrait::Shared)
         continue;
       const EstimateMemory *Ptr = mAliasTree->find(MemoryLocation::get(LI));
       assert(Ptr && "Estimate memory location must not be null!");
       auto PtrTraits = ExplicitAccesses.find(Ptr);
       assert(PtrTraits != ExplicitAccesses.end() &&
         "Traits of location must be initialized!");
-      if (dropUnitFlag(*PtrTraits->get<TraitImp>()) == Readonly)
+      if (dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
+            == BitMemoryTrait::Readonly)
         continue;
       // Location can not be declared as copy in or copy out without
       // additional analysis because we do not know which memory must
@@ -694,7 +627,7 @@ void PrivateRecognitionPass::resolvePointers(
       // may be difficulty to implement for distributed memory, for example:
       // for(...) { P = ...; ... = *P; } It is not evident which memory
       // should be copy to each processor.
-      *LocTraits->get<TraitImp>() &= Dependency;
+      *LocTraits->get<BitMemoryTrait>() &= BitMemoryTrait::Dependency;
     }
   }
 }
@@ -731,15 +664,16 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
           cast<StoreInst>(User)->getValueOperand() == Ptr)) {
         auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
         if (!Pair.second) {
-          *Pair.first->get<TraitImp>() &= AddressAccess;
+          *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;
         } else {
           auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
           I->get<TraitList>().push_front(
-            std::make_pair(Base, TraitImp(NoAccess & AddressAccess)));
-          Pair.first->get<TraitImp>() =
-            &I->get<TraitList>().front().get<TraitImp>();
+            std::make_pair(Base, BitMemoryTrait(
+              BitMemoryTrait::NoAccess & BitMemoryTrait::AddressAccess)));
+          Pair.first->get<BitMemoryTrait>() =
+            &I->get<TraitList>().front().get<BitMemoryTrait>();
         }
-        ++NumAddressAccess;
+        ++NumTraits.get<trait::AddressAccess>();
         break;
       }
     }
@@ -774,14 +708,14 @@ void PrivateRecognitionPass::propagateTraits(
           } else {
             auto EA = ExplicitAccesses.find(Parent);
             if (EA != ExplicitAccesses.end()) {
-              *EA->get<TraitImp>() &= EMToT.get<TraitImp>();
-              mergeDependence(Parent, *EA->get<TraitImp>(),
+              *EA->get<BitMemoryTrait>() &= EMToT.get<BitMemoryTrait>();
+              mergeDependence(Parent, *EA->get<BitMemoryTrait>(),
                 EMToT.get<EstimateMemory>(), Deps);
             } else
-              mergeDependence(Parent, EMToT.get<TraitImp>(),
+              mergeDependence(Parent, EMToT.get<BitMemoryTrait>(),
                 EMToT.get<EstimateMemory>(), Deps);
               NTItr->get<TraitList>().push_front(
-                std::make_pair(Parent, std::move(EMToT.get<TraitImp>())));
+                std::make_pair(Parent, std::move(EMToT.get<BitMemoryTrait>())));
           }
         }
         for (auto &UToT : *CT.get<UnknownList>())
@@ -871,7 +805,7 @@ void PrivateRecognitionPass::checkFirstPrivate(
   /// locations.
   if (cover(*mAliasTree, Numbers, *EM, DefLeafs.begin(), DefLeafs.end()))
     return;
-  TraitItr->get<TraitImp>() &= FirstPrivate;
+  TraitItr->get<BitMemoryTrait>() &= BitMemoryTrait::FirstPrivate;
   Dptr.set<trait::FirstPrivate>();
 }
 
@@ -899,28 +833,28 @@ void PrivateRecognitionPass::removeRedundant(
     // conjunction will change nothing. However, if Current is explicitly
     // accessed it is presented in a TraitList as a separate item and will be
     // processed separately.
-    mergeDependence(Current, CurrItr->get<TraitImp>(),
+    mergeDependence(Current, CurrItr->get<BitMemoryTrait>(),
       CurrItr->get<EstimateMemory>(), Deps);
     CurrItr->get<EstimateMemory>() = Current;
   }
   for (++I; I != E;) {
     if (Current == I->get<EstimateMemory>()) {
-      I->get<TraitImp>() &= CurrItr->get<TraitImp>();
+      I->get<BitMemoryTrait>() &= CurrItr->get<BitMemoryTrait>();
       CurrItr = Traits.erase_after(BeforeCurrItr);
       return;
     }
     auto Ancestor = ancestor(Current, I->get<EstimateMemory>());
     if (Ancestor == I->get<EstimateMemory>()) {
-      I->get<TraitImp>() &= CurrItr->get<TraitImp>();
+      I->get<BitMemoryTrait>() &= CurrItr->get<BitMemoryTrait>();
       mergeDependence(
-        I->get<EstimateMemory>(), I->get<TraitImp>(), Current, Deps);
+        I->get<EstimateMemory>(), I->get<BitMemoryTrait>(), Current, Deps);
       CurrItr = Traits.erase_after(BeforeCurrItr);
       return;
     }
     if (Ancestor == Current) {
-      CurrItr->get<TraitImp>() &= I->get<TraitImp>();
+      CurrItr->get<BitMemoryTrait>() &= I->get<BitMemoryTrait>();
       mergeDependence(
-        Current, CurrItr->get<TraitImp>(), I->get<EstimateMemory>(), Deps);
+        Current, CurrItr->get<BitMemoryTrait>(), I->get<EstimateMemory>(), Deps);
       I = Traits.erase_after(BeforeI);
     } else {
       ++BeforeI; ++I;
@@ -964,17 +898,18 @@ void PrivateRecognitionPass::storeResults(
     NodeTraitItr = DS.insert(&N, MemoryDescriptor()).first;
     auto SecondEM = Traits.get<TraitList>()->begin(); ++SecondEM;
     if (Traits.get<UnknownList>()->empty() && SecondEM == EME) {
-      *NodeTraitItr = toDescriptor(EMI->get<TraitImp>(), 1);
+      *NodeTraitItr = EMI->get<BitMemoryTrait>().toDescriptor(1, NumTraits);
       checkFirstPrivate(Numbers, R, EMI, *NodeTraitItr);
       auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
       if (ExplicitItr != ExplicitAccesses.end() &&
-          dropUnitFlag(*ExplicitItr->second) != NoAccess &&
+          dropUnitFlag(*ExplicitItr->second) != BitMemoryTrait::NoAccess &&
           EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
         NodeTraitItr->set<trait::ExplicitAccess>();
       bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
       auto EMTraitItr = NodeTraitItr->insert(
         EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr)).first;
-      if (dropUnitFlag(EMI->get<TraitImp>()) == Dependency) {
+      if (dropUnitFlag(EMI->get<BitMemoryTrait>())
+            == BitMemoryTrait::Dependency) {
         storeDepIfNeed(EMI, EMTraitItr);
         *NodeTraitItr = *EMTraitItr;
       }
@@ -989,15 +924,16 @@ void PrivateRecognitionPass::storeResults(
   // which are covered by estimate memory locations from different estimate
   // memory trees. So only three types of combined results are possible:
   // read-only, shared or dependency.
-  TraitImp CombinedTrait;
+  BitMemoryTrait CombinedTrait;
   DependenceImp::Descriptor CombinedDepDptr;
   for (; EMI != EME; ++EMI) {
-    CombinedTrait &= EMI->get<TraitImp>();
-    auto Dptr = toDescriptor(EMI->get<TraitImp>(), 0);
+    CombinedTrait &= EMI->get<BitMemoryTrait>();
+    auto Dptr = EMI->get<BitMemoryTrait>().toDescriptor(0, NumTraits);
     checkFirstPrivate(Numbers, R, EMI, Dptr);
     auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
     if (ExplicitItr != ExplicitAccesses.end() &&
-        dropUnitFlag(*ExplicitItr->get<TraitImp>()) != NoAccess &&
+        dropUnitFlag(*ExplicitItr->get<BitMemoryTrait>())
+          != BitMemoryTrait::NoAccess &&
         EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
@@ -1005,36 +941,39 @@ void PrivateRecognitionPass::storeResults(
     bcl::trait::unset<DependenceImp::Descriptor>(Dptr);
     auto EMTraitItr = NodeTraitItr->insert(
       EstimateMemoryTrait(EMI->get<EstimateMemory>(), std::move(Dptr))).first;
-    if (dropUnitFlag(EMI->get<TraitImp>()) == Dependency) {
+    if (dropUnitFlag(EMI->get<BitMemoryTrait>()) == BitMemoryTrait::Dependency) {
       storeDepIfNeed(EMI, EMTraitItr);
       bcl::trait::set(*EMTraitItr, CombinedDepDptr);
     }
   }
   for (auto &U : *Traits.get<UnknownList>()) {
-    CombinedTrait &= U.get<TraitImp>();
-    auto Dptr = toDescriptor(U.get<TraitImp>(), 0);
+    CombinedTrait &= U.get<BitMemoryTrait>();
+    auto Dptr = U.get<BitMemoryTrait>().toDescriptor(0, NumTraits);
     auto ExplicitItr = ExplicitUnknowns.find(U.get<Instruction>());
     if (ExplicitItr != ExplicitUnknowns.end() &&
-        dropUnitFlag(*ExplicitItr->get<TraitImp>()) != NoAccess &&
+        dropUnitFlag(*ExplicitItr->get<BitMemoryTrait>())
+          != BitMemoryTrait::NoAccess &&
         ExplicitItr->get<AliasNode>() == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
     }
-    if (dropUnitFlag(U.get<TraitImp>()) == Dependency)
+    if (dropUnitFlag(U.get<BitMemoryTrait>()) == BitMemoryTrait::Dependency)
       bcl::trait::set<DependenceImp::Descriptor>(CombinedDepDptr);
     NodeTraitItr->insert(
       UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
   CombinedTrait &=
-    dropUnitFlag(CombinedTrait) == Readonly ? Readonly :
-      dropUnitFlag(CombinedTrait) == Shared ? Shared : Dependency;
+    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+      BitMemoryTrait::Readonly :
+        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
+          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
   if (NodeTraitItr->is<trait::ExplicitAccess>()) {
-    *NodeTraitItr = toDescriptor(CombinedTrait, NodeTraitItr->count());
+    *NodeTraitItr = CombinedTrait.toDescriptor(NodeTraitItr->count(), NumTraits);
       bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
       bcl::trait::set(CombinedDepDptr, *NodeTraitItr);
       NodeTraitItr->set<trait::ExplicitAccess>();
   } else {
-    *NodeTraitItr = toDescriptor(CombinedTrait, NodeTraitItr->count());
+    *NodeTraitItr = CombinedTrait.toDescriptor(NodeTraitItr->count(), NumTraits);
      bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
      bcl::trait::set(CombinedDepDptr, *NodeTraitItr);
   }
@@ -1060,58 +999,6 @@ void PrivateRecognitionPass::storeResults(
       dbgs() << " to "; T.get().print(dbgs()); dbgs() << "\n";
     );
   }
-}
-
-MemoryDescriptor PrivateRecognitionPass::toDescriptor(
-    const TraitImp &T, unsigned TraitNumber) {
-  MemoryDescriptor Dptr;
-  if (!(T & ~AddressAccess)) {
-    Dptr.set<trait::AddressAccess>();
-    NumAddressAccess += TraitNumber;
-  }
-  if (!(T & ~HeaderAccess)) {
-    Dptr.set<trait::HeaderAccess>();
-    NumHeaderAccess += TraitNumber;
-  }
-  if (dropUnitFlag(T) == Dependency) {
-    Dptr.set<trait::Flow, trait::Anti, trait::Output>();
-    NumDeps += TraitNumber;
-    return Dptr;
-  }
-  switch (dropUnitFlag(dropSharedFlag(T))) {
-  default:
-    llvm_unreachable("Unknown type of memory location dependency!");
-    break;
-  case NoAccess: Dptr.set<trait::NoAccess>(); break;
-  case Readonly: Dptr.set<trait::Readonly>(); NumReadonly += TraitNumber; break;
-  case Private: Dptr.set<trait::Private>(); NumPrivate += TraitNumber; break;
-  case FirstPrivate:
-    Dptr.set<trait::FirstPrivate>(); NumFPrivate += TraitNumber;
-    break;
-  case FirstPrivate & LastPrivate:
-    Dptr.set<trait::FirstPrivate>(); NumFPrivate += TraitNumber;
-  case LastPrivate:
-    Dptr.set<trait::LastPrivate>(); NumLPrivate += TraitNumber;
-    break;
-  case FirstPrivate & SecondToLastPrivate:
-    Dptr.set<trait::FirstPrivate>(); NumFPrivate += TraitNumber;
-  case SecondToLastPrivate:
-    Dptr.set<trait::SecondToLastPrivate>(); NumSToLPrivate +=TraitNumber;
-    break;
-  case FirstPrivate & DynamicPrivate:
-    Dptr.set<trait::FirstPrivate>(); NumFPrivate += TraitNumber;
-  case DynamicPrivate:
-    Dptr.set<trait::DynamicPrivate>(); NumDPrivate += TraitNumber;
-    break;
-  }
-  // If shared is one of traits it has been set as read-only in `switch`.
-  // Hence, do not move this condition before `switch` because it should
-  // override read-only if necessary.
-  if (!(T &  ~(~Readonly | Shared))) {
-    Dptr.set<trait::Shared>();
-    NumShared += TraitNumber;
-  }
-  return Dptr;
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {

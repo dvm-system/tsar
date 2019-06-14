@@ -50,6 +50,7 @@ class AliasTree;
 class DefUseSet;
 class DFLoop;
 class EstimateMemory;
+class BitMemoryTrait;
 template<class GraphType> class SpanningTreeRelation;
 
 /// This determine relation between two nodes in an alias tree.
@@ -64,8 +65,6 @@ using PrivateInfo =
       bcl::tagged<std::unique_ptr<DependencySet>, DependencySet>>>;
 
 namespace detail {
-enum TraitId : unsigned long long;
-class TraitImp;
 class DependenceImp;
 }
 }
@@ -105,31 +104,31 @@ class PrivateRecognitionPass :
   /// two times. At first, find() will be called and than insert(). If map
   /// is used only insert() is necessary (see resolveAccesses() for details).
   using TraitMap = DenseMap<
-    const tsar::EstimateMemory *, tsar::detail::TraitImp *,
+    const tsar::EstimateMemory *, tsar::BitMemoryTrait *,
     DenseMapInfo<const tsar::EstimateMemory *>,
     tsar::TaggedDenseMapPair<
       bcl::tagged<const tsar::EstimateMemory *, tsar::EstimateMemory>,
-      bcl::tagged<tsar::detail::TraitImp *, tsar::detail::TraitImp>>>;
+      bcl::tagged<tsar::BitMemoryTrait *, tsar::BitMemoryTrait>>>;
 
   /// Map from unknown memory location to traits.
   using UnknownMap = DenseMap<
     const llvm::Instruction *,
-    std::tuple<const tsar::AliasNode *, tsar::detail::TraitImp*>,
+    std::tuple<const tsar::AliasNode *, tsar::BitMemoryTrait*>,
     DenseMapInfo<const llvm::Instruction *>,
     tsar::TaggedDenseMapTuple<
       bcl::tagged<const llvm::Instruction *, llvm::Instruction>,
       bcl::tagged<const tsar::AliasNode *, tsar::AliasNode>,
-      bcl::tagged<tsar::detail::TraitImp *, tsar::detail::TraitImp>>>;
+      bcl::tagged<tsar::BitMemoryTrait *, tsar::BitMemoryTrait>>>;
 
   /// List of memory location traits.
   using TraitList = std::forward_list<bcl::tagged_pair<
       bcl::tagged<const tsar::EstimateMemory *, tsar::EstimateMemory>,
-      bcl::tagged<tsar::detail::TraitImp, tsar::detail::TraitImp>>>;
+      bcl::tagged<tsar::BitMemoryTrait, tsar::BitMemoryTrait>>>;
 
   /// List of unknown memory location traits.
   using UnknownList = std::forward_list<bcl::tagged_pair<
       bcl::tagged<const llvm::Instruction *, llvm::Instruction>,
-      bcl::tagged<tsar::detail::TraitImp, tsar::detail::TraitImp>>>;
+      bcl::tagged<tsar::BitMemoryTrait, tsar::BitMemoryTrait>>>;
 
   /// Pair of lists of traits.
   using TraitPair = bcl::tagged_tuple<
@@ -340,16 +339,6 @@ private:
      const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
      const DependenceMap &Deps, const TraitPair &Traits,
      tsar::DependencySet &DS);
-
-  /// \brief Converts internal representation of a trait to a dependency
-  /// descriptor.
-  ///
-  /// This method also calculates statistic which proposes number of determined
-  /// traits. If different locations has the same traits TraitNumber parameter
-  /// can be used to take into account all traits. It also can be set to 0
-  /// if a specified trait should not be counted.
-  tsar::MemoryDescriptor toDescriptor(const tsar::detail::TraitImp &T,
-   unsigned TraitNumber);
 
 private:
   tsar::PrivateInfo mPrivates;
