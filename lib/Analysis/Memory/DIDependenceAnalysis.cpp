@@ -52,18 +52,6 @@ using namespace tsar;
 
 MEMORY_TRAIT_STATISTIC(NumTraits)
 
-STATISTIC(NumLoops, "Number of loops analyzed");
-STATISTIC(NumPrivateLoops, "Number of loops with private locations found");
-STATISTIC(NumLPrivateLoops, "Number of loops with last private locations found");
-STATISTIC(NumSToLPrivateLoops, "Number of loops with second to last private locations found");
-STATISTIC(NumFPrivateLoops, "Number of loops with first private locations found");
-STATISTIC(NumDPrivateLoops, "Number of loops with dynamic private locations found");
-STATISTIC(NumDepLoops, "Number of loops with unsorted dependencies found");
-STATISTIC(NumSharedLoops, "Number of loops with shared locations found");
-STATISTIC(NumInductionLoops, "Number of loops with induction locations found");
-STATISTIC(NumReductionLoops, "Number of loops with reduction locations found");
-
-
 char DIDependencyAnalysisPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(DIDependencyAnalysisPass, "da-di",
   "Dependency Analysis (Metadata)", false, true,
@@ -88,12 +76,6 @@ void allocatePoolLog(unsigned DWLang,
   for (auto &M : *Pool)
     printDILocationSource(DWLang, *M.getMemory(), dbgs()), dbgs() << " ";
   dbgs() << "\n";
-}
-
-/// Returns number of explicitly accessed locations in the dependence set.
-std::size_t accessedMemoryCount(AliasTree &AT, DependencySet &DS) {
-  auto TopTraitsItr = DS.find(AT.getTopLevelNode());
-  return TopTraitsItr->count() + TopTraitsItr->unknown_count();
 }
 
 /// \brief Converts IR-level representation of a dependence of
@@ -201,175 +183,157 @@ void convertTraitsForEstimateNode(DIAliasEstimateNode &DIN, AliasTree &AT,
 }
 }
 
+namespace {
+/// Convert IR-level reduction kind to metadata-level reduction kind.
+///
+/// \pre RD represents a valid reduction, RK_NoReduction kind is not permitted.
+trait::DIReduction::ReductionKind getReductionKind(
+  const RecurrenceDescriptor &RD) {
+  switch (const_cast<RecurrenceDescriptor &>(RD).getRecurrenceKind()) {
+  case RecurrenceDescriptor::RK_IntegerAdd:
+  case RecurrenceDescriptor::RK_FloatAdd:
+    return trait::DIReduction::RK_Add;
+  case RecurrenceDescriptor::RK_IntegerMult:
+  case RecurrenceDescriptor::RK_FloatMult:
+    return trait::DIReduction::RK_Mult;
+  case RecurrenceDescriptor::RK_IntegerOr:
+    return trait::DIReduction::RK_Or;
+  case RecurrenceDescriptor::RK_IntegerAnd:
+    return trait::DIReduction::RK_And;
+  case RecurrenceDescriptor::RK_IntegerXor:
+    return trait::DIReduction::RK_Xor;
+  case RecurrenceDescriptor::RK_IntegerMinMax:
+  case RecurrenceDescriptor::RK_FloatMinMax:
+    switch (const_cast<RecurrenceDescriptor &>(RD).getMinMaxRecurrenceKind()) {
+    case RecurrenceDescriptor::MRK_FloatMax:
+    case RecurrenceDescriptor::MRK_SIntMax:
+    case RecurrenceDescriptor::MRK_UIntMax:
+      return trait::DIReduction::RK_Max;
+    case RecurrenceDescriptor::MRK_FloatMin:
+    case RecurrenceDescriptor::MRK_SIntMin:
+    case RecurrenceDescriptor::MRK_UIntMin:
+      return trait::DIReduction::RK_Min;
+    }
+    break;
+  }
+  llvm_unreachable("Unknown kind of reduction!");
+  return trait::DIReduction::RK_NoReduction;
+}
+
+/// Update traits of metadata-level locations related to a specified Phi-node
+/// in a specified loop. This function uses a specified `TraitInserter` functor
+/// to update traits for a single memory location.
+template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
+    const DominatorTree &DT, Optional<unsigned> DWLang,
+    DIMemoryTraitRegionPool &Pool, FuncT &&TraitInserter) {
+  for (const auto &Incoming : Phi->incoming_values()) {
+    if (!L->contains(Phi->getIncomingBlock(Incoming)))
+      continue;
+    LLVM_DEBUG(dbgs() << "[DA DI]: traits for promoted location ";
+      printLocationSource(dbgs(), Incoming, &DT); dbgs() << " found \n");
+    SmallVector<DIMemoryLocation, 2> DILocs;
+    findMetadata(Incoming, DILocs, &DT, MDSearch::ValueOfVariable);
+    if (DILocs.empty())
+      continue;
+    for (auto &DILoc : DILocs) {
+      auto *MD = getRawDIMemoryIfExists(Incoming->getContext(), DILoc);
+      if (!MD)
+        continue;
+      auto DIMTraitItr = Pool.find_as(MD);
+      if (DIMTraitItr == Pool.end() ||
+          !DIMTraitItr->getMemory()->emptyBinding() ||
+          !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>())
+        continue;
+      LLVM_DEBUG(if (DWLang) {
+        dbgs() << "[DA DI]: update traits for ";
+        printDILocationSource(*DWLang, *DIMTraitItr->getMemory(), dbgs());
+        dbgs() << "\n";
+      });
+      TraitInserter(*DIMTraitItr);
+    }
+  }
+}
+}
+
 void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     Optional<unsigned> DWLang, DIMemoryTraitRegionPool &Pool) {
+  assert(L && "Loop must not be null!");
   // If there is no preheader induction and reduction analysis will fail.
   if (!L->getLoopPreheader())
     return;
+  BasicBlock *Header = L->getHeader();
+  Function &F = *Header->getParent();
+  // Enable analysis of reductions in case of real variables.
+  bool HasFunNoNaNAttr =
+    F.getFnAttribute("no-nans-fp-math").getValueAsString() == "true";
+  if (!HasFunNoNaNAttr)
+    F.addFnAttr("no-nans-fp-math", "true");
   for (auto I = L->getHeader()->begin(); isa<PHINode>(I); ++I) {
     auto *Phi = cast<PHINode>(I);
-    InductionDescriptor ID;
     RecurrenceDescriptor RD;
+    InductionDescriptor ID;
     PredicatedScalarEvolution PSE(*mSE, *L);
-    BasicBlock *Header = L->getHeader();
-    Function &F = *Header->getParent();
-    // Enable analysis of reductions in case of real variables.
-    bool HasFunNoNaNAttr =
-      F.getFnAttribute("no-nans-fp-math").getValueAsString() == "true";
-    if (!HasFunNoNaNAttr)
-      F.addFnAttr("no-nans-fp-math", "true");
     if (RecurrenceDescriptor::isReductionPHI(Phi, L, RD)) {
-      ++NumReductionLoops;
-      ++NumTraits.get<trait::Reduction>();
+      auto RK = getReductionKind(RD);
+      updateTraits(L, Phi, *mDT, DWLang, Pool, [RK](DIMemoryTrait &T) {
+        T.set<trait::Reduction>(new trait::DIReduction(RK));
+        LLVM_DEBUG(dbgs() << "[DA DI]: reduction found\n");
+        ++NumTraits.get<trait::Reduction>();
+      });
     } else if (InductionDescriptor::isInductionPHI(Phi, L, PSE, ID)) {
-      ++NumInductionLoops;
-      ++NumTraits.get<trait::Induction>();
-    }
-    if (!HasFunNoNaNAttr)
-      F.addFnAttr("no-nans-fp-math", "false");
-    trait::DIReduction Red(trait::DIReduction::RK_NoReduction);
-    trait::DIInduction Ind(trait::DIInduction::InductionKind::IK_NoInduction);
-    if (RD.getRecurrenceKind() != RecurrenceDescriptor::RK_NoRecurrence) {
-      auto RK = trait::DIReduction::RK_NoReduction;
-      switch (RD.getRecurrenceKind()) {
-      case RecurrenceDescriptor::RK_IntegerAdd:
-      case RecurrenceDescriptor::RK_FloatAdd:
-        RK = trait::DIReduction::RK_Add; break;
-      case RecurrenceDescriptor::RK_IntegerMult:
-      case RecurrenceDescriptor::RK_FloatMult:
-        RK = trait::DIReduction::RK_Mult; break;
-      case RecurrenceDescriptor::RK_IntegerOr:
-        RK = trait::DIReduction::RK_Or; break;
-      case RecurrenceDescriptor::RK_IntegerAnd:
-        RK = trait::DIReduction::RK_And; break;
-      case RecurrenceDescriptor::RK_IntegerXor:
-        RK = trait::DIReduction::RK_Xor; break;
-      case RecurrenceDescriptor::RK_IntegerMinMax:
-      case RecurrenceDescriptor::RK_FloatMinMax:
-        switch (RD.getMinMaxRecurrenceKind()) {
-        case RecurrenceDescriptor::MRK_FloatMax:
-        case RecurrenceDescriptor::MRK_SIntMax:
-        case RecurrenceDescriptor::MRK_UIntMax:
-          RK = trait::DIReduction::RK_Max; break;
-        case RecurrenceDescriptor::MRK_FloatMin:
-        case RecurrenceDescriptor::MRK_SIntMin:
-        case RecurrenceDescriptor::MRK_UIntMin:
-          RK = trait::DIReduction::RK_Min; break;
-        }
-        break;
-      }
-      assert(RK != trait::DIReduction::RK_NoReduction &&
-        "Unknown kind of reduction!");
-      Red = trait::DIReduction(RK);
-    } else if (ID.getKind() != InductionDescriptor::IK_NoInduction) {
-      trait::DIInduction::Constant Start, Step, End;
-      if (auto StartConst =
-          dyn_cast<SCEVConstant>(mSE->getSCEV(ID.getStartValue())))
-        Start = APSInt(StartConst->getAPInt());
-      if (auto StepConst = dyn_cast<SCEVConstant>(ID.getStep()))
-        Step = APSInt(StepConst->getAPInt());
+      trait::DIInduction::Constant Start, Step, BackedgeCount;
+      if (auto *C = dyn_cast<SCEVConstant>(mSE->getSCEV(ID.getStartValue())))
+        Start = APSInt(C->getAPInt());
+      if (auto *C = dyn_cast<SCEVConstant>(ID.getStep()))
+        Step = APSInt(C->getAPInt());
       if (Start && Step && mSE->hasLoopInvariantBackedgeTakenCount(L))
-        if (auto BackedgeConst =
-            dyn_cast<SCEVConstant>(mSE->getBackedgeTakenCount(L)))
-          End = APSInt(BackedgeConst->getAPInt());
-      // We temporary store back edge count instead of upper bound of induction.
-      // So, to store trait in a trait set it should be recalculated.
-      Ind = trait::DIInduction(ID.getKind(), Start, End, Step);
-    } else {
-      continue;
-    }
-    for (const auto &Incoming : Phi->incoming_values()) {
-      if (!L->contains(Phi->getIncomingBlock(Incoming)))
-        continue;
-      LLVM_DEBUG(
-        dbgs() << "[DA DI]: in loop at ";
-        auto LpLoc = L->getStartLoc();
-        if (LpLoc)
-          LpLoc.print(dbgs());
-        else
-          dbgs() << "unknown location";
-        dbgs() <<
-          (ID.getKind() != InductionDescriptor::IK_NoInduction ? " induction" :
-          RD.getRecurrenceKind() != RecurrenceDescriptor::RK_NoRecurrence ?
-            " reduction" : "unknown") << " trait found for ";
-        printLocationSource(dbgs(), Incoming, mDT); dbgs() << "\n");
-      SmallVector<DIMemoryLocation, 2> DILocs;
-      findMetadata(Incoming, DILocs, mDT);
-      if (DILocs.empty())
-        continue;
-      for (auto &DILoc : DILocs) {
-        auto *MD = getRawDIMemoryIfExists(Incoming->getContext(), DILoc);
-        if (!MD)
-          continue;
-        auto DIMTraitItr = Pool.find_as(MD);
-        if (DIMTraitItr == Pool.end() ||
-            !DIMTraitItr->getMemory()->emptyBinding() ||
-            !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>())
-          continue;
-        LLVM_DEBUG(if (DWLang) {
-          dbgs() << "[DA DI]: update traits for ";
-          printDILocationSource(*DWLang, *DIMTraitItr->getMemory(), dbgs());
-          dbgs() << "\n";
-        });
-        if (Red)
-          DIMTraitItr->set<trait::Reduction>(new trait::DIReduction(Red));
-        else if (Ind) {
-          auto Start = Ind.getStart();
-          auto End = Ind.getEnd();
-          auto Step = Ind.getStep();
-          if (auto DIEM = dyn_cast<DIEstimateMemory>(DIMTraitItr->getMemory())) {
-            SourceUnparserImp Unparser(
-              DIMemoryLocation(const_cast<DIVariable *>(DIEM->getVariable()),
-                const_cast<DIExpression *>(DIEM->getExpression())),
-              true /*order of dimensions is not important here*/);
-            if (Unparser.unparse() && !Unparser.getIdentifiers().empty()) {
-              auto Id = Unparser.getIdentifiers().back();
-              assert(Id && "Identifier must not be null!");
-              DIType *DITy = nullptr;
-              if (auto DIVar = dyn_cast<DIVariable>(Id))
-                DITy = DIVar->getType().resolve();
-              else
-                DITy = dyn_cast<DIDerivedType>(Id);
-              while (DITy && isa<DIDerivedType>(DITy))
-                DITy = cast<DIDerivedType>(DITy)->getBaseType().resolve();
-              if (auto DIBasicTy = dyn_cast_or_null<DIBasicType>(DITy))
-                if (DIBasicTy->getEncoding() == dwarf::DW_ATE_signed) {
-                  if (Start)
-                    Start->setIsSigned(true);
-                  if (End)
-                    End->setIsSigned(true);
-                  if (Step)
-                    Step->setIsSigned(true);
-                  if (Start && Step && End)
-                    End = *Start + *End * *Step;
-                  else
-                    End.reset();
-                  DIMTraitItr->set<trait::Induction>(
-                    new trait::DIInduction(Ind.getKind(), Start, End, Step));
-                  continue;
-                } else if (DIBasicTy->getEncoding() == dwarf::DW_ATE_unsigned) {
-                  if (Start)
-                    Start->setIsSigned(false);
-                  if (End)
-                    End->setIsSigned(false);
-                  if (Step)
-                    Step->setIsSigned(false);
-                  if (Start && Step && End)
-                    End = *Start + *End * *Step;
-                  else
-                    End.reset();
-                  DIMTraitItr->set<trait::Induction>(
-                    new trait::DIInduction(Ind.getKind(), Start, End, Step));
-                  continue;
-                }
+        if (auto *C = dyn_cast<SCEVConstant>(mSE->getBackedgeTakenCount(L)))
+          BackedgeCount = APSInt(C->getAPInt());
+      updateTraits(L, Phi, *mDT, DWLang, Pool,
+          [&ID, &Start, &Step, &BackedgeCount](DIMemoryTrait &T) {
+        auto DIEM = dyn_cast<DIEstimateMemory>(T.getMemory());
+        if (!DIEM)
+          return;
+        SourceUnparserImp Unparser(DIMemoryLocation(
+          const_cast<DIVariable *>(DIEM->getVariable()),
+          const_cast<DIExpression *>(DIEM->getExpression())),
+          true /*order of dimensions is not important here*/);
+        if (!Unparser.unparse() || Unparser.getIdentifiers().empty())
+          return;
+        LLVM_DEBUG(dbgs() << "[DA DI]: induction found\n");
+        ++NumTraits.get<trait::Induction>();
+        auto Id = Unparser.getIdentifiers().back();
+        assert(Id && "Identifier must not be null!");
+        auto DITy = isa<DIVariable>(Id) ?
+          stripDIType(cast<DIVariable>(Id)->getType()) :
+          dyn_cast<DIDerivedType>(Id);
+        while (DITy && isa<DIDerivedType>(DITy))
+          DITy = stripDIType(cast<DIDerivedType>(DITy)->getBaseType());
+        if (auto DIBasicTy = dyn_cast_or_null<DIBasicType>(DITy)) {
+          auto Encoding = DIBasicTy->getEncoding();
+          bool IsSigned;
+          if (IsSigned = (Encoding == dwarf::DW_ATE_signed) ||
+              !(IsSigned = !(Encoding == dwarf::DW_ATE_unsigned))) {
+            if (Start)
+              Start->setIsSigned(IsSigned);
+            if (Step)
+              Step->setIsSigned(IsSigned);
+            trait::DIInduction::Constant End;
+            if (Start && Step && BackedgeCount) {
+              BackedgeCount->setIsSigned(IsSigned);
+              End = *Start + *BackedgeCount * *Step;
             }
+            T.set<trait::Induction>(
+              new trait::DIInduction(ID.getKind(), Start, End, Step));
+            return;
           }
-          DIMTraitItr->set<trait::Induction>(
-            new trait::DIInduction(Ind.getKind()));
         }
-      }
+        T.set<trait::Induction>(new trait::DIInduction(ID.getKind()));
+      });
     }
   }
+  if (!HasFunNoNaNAttr)
+    F.addFnAttr("no-nans-fp-math", "false");
 }
 
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
@@ -391,8 +355,10 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       continue;
     assert(L->getLoopID() && "Identifier of a loop must be specified!");
     auto DILoop = L->getLoopID();
-    LLVM_DEBUG(dbgs() << "[DA DI]: process loop at ";
-               TSAR_LLVM_DUMP(L->getStartLoc().dump()); dbgs() << "\n");
+    LLVM_DEBUG(dbgs() << "[DA DI]: process "; TSAR_LLVM_DUMP(L->dump());
+      if (DebugLoc DbgLoc = L->getStartLoc()) {
+        dbgs() << "[DA DI]: loop at ";  DbgLoc.print(dbgs()); dbgs() << "\n";
+      });
     auto &Pool = TraitPool[DILoop];
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     auto &DepSet = *Info.get<DependencySet>();
