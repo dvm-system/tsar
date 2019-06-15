@@ -50,15 +50,8 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "da-di"
 
-STATISTIC(NumPrivate, "Number of private locations found");
-STATISTIC(NumLPrivate, "Number of last private locations found");
-STATISTIC(NumSToLPrivate, "Number of second to last private locations found");
-STATISTIC(NumDPrivate, "Number of dynamic private locations found");
-STATISTIC(NumFPrivate, "Number of first private locations found");
-STATISTIC(NumDeps, "Number of unsorted dependencies found");
-STATISTIC(NumShared, "Number of shared locations found");
-STATISTIC(NumInduction, "Number of induction variable found");
-STATISTIC(NumReduction, "Number of reductiond variable found");
+MEMORY_TRAIT_STATISTIC(NumTraits)
+
 STATISTIC(NumLoops, "Number of loops analyzed");
 STATISTIC(NumPrivateLoops, "Number of loops with private locations found");
 STATISTIC(NumLPrivateLoops, "Number of loops with last private locations found");
@@ -227,10 +220,10 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
       F.addFnAttr("no-nans-fp-math", "true");
     if (RecurrenceDescriptor::isReductionPHI(Phi, L, RD)) {
       ++NumReductionLoops;
-      ++NumReduction;
+      ++NumTraits.get<trait::Reduction>();
     } else if (InductionDescriptor::isInductionPHI(Phi, L, PSE, ID)) {
       ++NumInductionLoops;
-      ++NumInduction;
+      ++NumTraits.get<trait::Induction>();
     }
     if (!HasFunNoNaNAttr)
       F.addFnAttr("no-nans-fp-math", "false");
