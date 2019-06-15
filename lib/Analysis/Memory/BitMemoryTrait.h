@@ -65,8 +65,12 @@ public:
 
   BitMemoryTrait() = default;
   BitMemoryTrait(Id Id) noexcept : mId(static_cast<decltype(mId)>(Id)) {}
+  BitMemoryTrait(const MemoryDescriptor &Dptr);
   BitMemoryTrait & operator=(Id Id) noexcept {
     return *this = BitMemoryTrait(Id);
+  }
+  BitMemoryTrait & operator=(const MemoryDescriptor &Dptr) {
+    return *this = BitMemoryTrait(Dptr);
   }
   BitMemoryTrait & operator&=(const BitMemoryTrait &With) noexcept {
     mId &= With.mId;

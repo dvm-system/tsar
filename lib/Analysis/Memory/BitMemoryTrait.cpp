@@ -26,6 +26,37 @@
 
 using namespace tsar;
 
+BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
+  if (Dptr.is<trait::AddressAccess>())
+    mId &= AddressAccess;
+  if (Dptr.is<trait::HeaderAccess>())
+    mId &= HeaderAccess;
+  if (Dptr.is<trait::Flow>() ||
+      Dptr.is<trait::Anti>() ||
+      Dptr.is<trait::Output>()) {
+    mId &= Dependency;
+  } else if (Dptr.is<trait::Reduction>()) {
+    mId &= Reduction;
+  } else if (Dptr.is<trait::Induction>()) {
+    mId &= Induction;
+  } else if (Dptr.is<trait::Readonly>()) {
+    mId &= Readonly;
+  } else {
+    if (Dptr.is<trait::Shared>())
+      mId &= Shared;
+    if (Dptr.is<trait::FirstPrivate>())
+      mId &= FirstPrivate;
+    if (Dptr.is<trait::Private>())
+      mId &= Private;
+    else if (Dptr.is<trait::LastPrivate>())
+      mId &= LastPrivate;
+    else if (Dptr.is<trait::SecondToLastPrivate>())
+      mId &= SecondToLastPrivate;
+    else if (Dptr.is<trait::DynamicPrivate>())
+      mId &= DynamicPrivate;
+  }
+}
+
 MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     MemoryStatistic &Stat) const {
   MemoryDescriptor Dptr;
