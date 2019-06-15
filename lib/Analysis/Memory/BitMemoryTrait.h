@@ -48,17 +48,19 @@ public:
   /// part of memory locations is read-only and other part is last private a union
   /// is last private and first private (for details see resolve... methods).
   enum Id : unsigned long long {
-    NoAccess = 11111111_b,
-    Readonly = 11110111_b,
-    Shared = 11110011_b,
-    Private = 01111111_b,
-    FirstPrivate = 01110111_b,
-    SecondToLastPrivate = 01011111_b,
-    LastPrivate = 00111111_b,
-    DynamicPrivate = 00011111_b,
-    Dependency = 00000011_b,
-    AddressAccess = 11111101_b,
-    HeaderAccess = 11111110_b,
+    NoAccess =            1111111111_b,
+    Readonly =            0011110111_b,
+    Shared =              0011110011_b,
+    Private =             0001111111_b,
+    FirstPrivate =        0001110111_b,
+    SecondToLastPrivate = 0001011111_b,
+    LastPrivate =         0000111111_b,
+    DynamicPrivate =      0000011111_b,
+    Dependency =          0000000011_b,
+    AddressAccess =       1111111101_b,
+    HeaderAccess =        1111111110_b,
+    Reduction =           0100000011_b,
+    Induction =           1000000011_b,
   };
 
   BitMemoryTrait() = default;

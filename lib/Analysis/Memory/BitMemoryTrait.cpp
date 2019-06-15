@@ -76,6 +76,14 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     Dptr.set<trait::DynamicPrivate>();
     Stat.get<trait::DynamicPrivate>() += TraitNumber;
     break;
+  case Reduction:
+    Dptr.set<trait::Reduction>();
+    Stat.get<trait::Reduction>() += TraitNumber;
+    break;
+  case Induction:
+    Dptr.set<trait::Induction>();
+    Stat.get<trait::Induction>() += TraitNumber;
+    break;
   }
   // If shared is one of traits it has been set as read-only in `switch`.
   // Hence, do not move this condition before `switch` because it should
