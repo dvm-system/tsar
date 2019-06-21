@@ -12,6 +12,7 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/IR/Passes.h"
 #include "Instrumentation.h"
 #include "tsar_query.h"
 #include "tsar_pass.h"
@@ -134,6 +135,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createStripDeadPrototypesPass());
   Passes.add(createGlobalDCEPass());
   Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createNoMetadataDSEPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDIGlobalRetrieverPass());
   Passes.add(createMemoryMatcherPass());
@@ -211,6 +213,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     Passes.add(TEP);
   }
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createNoMetadataDSEPass());
   Passes.add(createDIGlobalRetrieverPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDILoopRetrieverPass());
@@ -236,6 +239,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   Passes.add(createReversePostOrderFunctionAttrsPass());
   Passes.add(createRPOFunctionAttrsAnalysis());
   Passes.add(createPOFunctionAttrsAnalysis());
+  Passes.add(createNoMetadataDSEPass());
   if (!mTfmPass->getNormalCtor()) {
     M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
     return;
@@ -258,6 +262,7 @@ void CheckQueryManager::run(llvm::Module *M, TransformationContext* Ctx) {
   TEP->setContext(*M, Ctx);
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());
+  Passes.add(createNoMetadataDSEPass());
   for (auto *PI : getPassRegistry()) {
     if (!PI->getNormalCtor()) {
       M->getContext().emitError("cannot create pass " + PI->getPassName());

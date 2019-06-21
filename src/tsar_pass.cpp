@@ -13,6 +13,7 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/IR/Passes.h"
 #include <llvm/Config/llvm-config.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -21,6 +22,7 @@ using namespace llvm;
 
 void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeMemoryAnalysis(Registry);
+  initializeIRTransform(Registry);
   initializeGlobalOptionsImmutableWrapperPass(Registry);
   initializeDFRegionInfoPassPass(Registry);
   initializeDefinedMemoryPassPass(Registry);
