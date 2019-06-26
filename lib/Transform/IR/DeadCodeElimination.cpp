@@ -92,7 +92,7 @@ bool NoMetadataDSEPass::runOnFunction(Function &F) {
         if (Itr == OnlyStores.end())
           return;
         auto Info = GetUnderlyingObjectWithMetadata(Ptr, DL);
-        if (Info.second || !isa<StoreInst>(I))
+        if (!isa<AllocaInst>(Info.first) || Info.second || !isa<StoreInst>(I))
           OnlyStores.erase(Itr);
         else
           Itr->second.push_back(&I);
