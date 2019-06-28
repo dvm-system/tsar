@@ -305,6 +305,18 @@ public:
     assert(N && "Alias node must not be null!");
   }
 
+  /// Assigns dependency descriptor to this set of traits.
+  DIAliasTrait & operator=(const MemoryDescriptor &Dptr) noexcept {
+    MemoryDescriptor::operator=(Dptr);
+    return *this;
+  }
+
+  /// Assigns dependency descriptor to this set of traits.
+  DIAliasTrait & operator=(MemoryDescriptor &&Dptr) noexcept {
+    MemoryDescriptor::operator=(std::move(Dptr));
+    return *this;
+  }
+
   /// Returns an alias node for which traits is specified.
   const DIAliasNode * getNode() const noexcept { return mNode; }
 
