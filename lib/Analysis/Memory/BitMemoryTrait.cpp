@@ -68,6 +68,10 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     Dptr.set<trait::HeaderAccess>();
     Stat.get<trait::HeaderAccess>() += TraitNumber;
   }
+  if (!(get() & ~ExplicitAccess)) {
+    Dptr.set<trait::ExplicitAccess>();
+    Stat.get<trait::ExplicitAccess>() += TraitNumber;
+  }
   if (dropUnitFlag(get()) == Dependency) {
     Dptr.set<trait::Flow, trait::Anti, trait::Output>();
     Stat.get<trait::Flow>() += TraitNumber;
