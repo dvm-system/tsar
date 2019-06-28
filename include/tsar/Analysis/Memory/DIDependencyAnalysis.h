@@ -33,7 +33,7 @@
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
-#include <memory>
+#include <forward_list>
 
 namespace llvm {
 class DominatorTree;
@@ -42,6 +42,12 @@ class MDNode;
 }
 
 namespace tsar {
+class AliasTree;
+class BitMemoryTrait;
+class DIAliasMemoryNode;
+class DependencySet;
+template<class GraphType> class SpanningTreeRelation;
+
 /// Source-level representation of data-dependencies (including anti/flow/output
 /// dependencies, privatizable variables, reductions and inductions).
 using DIDependencyInfo =
@@ -56,8 +62,32 @@ namespace llvm {
 /// This uses source-level debug information to summarize low-level results of
 /// privatization, reduction and induction recognition and flow/anti/output
 /// dependencies exploration.
+///
+/// TODO (kaniandr@gmail.com):
+/// (1) Support for hierarchy of promoted locations. For example, in case of
+/// structure S with fields S.X and S.Y we should merge traits for each field
+/// to obtain traits for the whole structure. At this moment the whole structure
+/// and its fields are considered separately this leads to conservative
+/// recognition of data dependence.
+/// (2) Clarify analysis of corrupted memory locations. For example, in case
+/// of P = A (where A is a pointer) P will be substituted in IR-level and marked
+/// as corrupted. However, relation with A will be available form metadata-level
+/// alias tree (binding locations for a metadata-level alias node).
+/// (3) Implement register-based analysis of privitizable variables.
+/// (4) Merge traits for memory across RAUW. Sometimes different locations
+/// RAUWed to the same location, so traits should be merged accurately.
+/// (5) There are three steps of metadata-level data-dependence analysis. After
+/// each step traits of memory location will be updated. However, sometimes
+/// some traits should not changed after some steps. For example, locations
+/// which are accessed in a loop header should not be analyzed after loop
+/// rotation.
 class DIDependencyAnalysisPass :
   public FunctionPass, private bcl::Uncopyable {
+
+  /// List of memory location traits.
+  using TraitList = std::forward_list<bcl::tagged_pair<
+    bcl::tagged<const tsar::DIMemory *, tsar::DIMemory>,
+    bcl::tagged<tsar::BitMemoryTrait, tsar::BitMemoryTrait>>>;
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -81,7 +111,12 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   /// Releases allocated memory.
-  void releaseMemory() override { mDeps.clear(); }
+  void releaseMemory() override {
+    mDeps.clear();
+    mAT = nullptr;
+    mDT = nullptr;
+    mSE = nullptr;
+  }
 
   /// Prints out the internal state of the pass. This also used to produce
   /// analysis correctness tests.
@@ -94,7 +129,18 @@ private:
   void analyzePromoted(Loop *L, Optional<unsigned> DWLang,
     tsar::DIMemoryTraitRegionPool &Pool);
 
+  /// Perform analysis of a specified metadata-level alias node.
+  ///
+  /// Descendant alias node must be already analyzed. This method use results
+  /// of IR-level dependence analysis (including variable privatization) and
+  /// results of analysis of promoted memory locations.
+  void analyzeNode(tsar::DIAliasMemoryNode &DIN, Optional<unsigned> DWLang,
+    tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
+    tsar::DependencySet &DepSet, tsar::DIDependenceSet &DIDepSet,
+    tsar::DIMemoryTraitRegionPool &Pool);
+
   tsar::DIDependencyInfo mDeps;
+  tsar::AliasTree *mAT;
   DominatorTree *mDT;
   ScalarEvolution *mSE;
 };

@@ -25,24 +25,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "BitMemoryTrait.h"
 #include "tsar_dbg_output.h"
 #include "DIEstimateMemory.h"
 #include "EstimateMemory.h"
 #include "GlobalOptions.h"
-#include "MemoryAccessUtils.h"
 #include "tsar_query.h"
 #include "SourceUnparser.h"
+#include "SpanningTreeRelation.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/IR/IntrinsicInst.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
-#include <llvm/Transforms/Utils/Local.h>
-#include <llvm/Transforms/Utils/LoopUtils.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -56,11 +53,14 @@ char DIDependencyAnalysisPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(DIDependencyAnalysisPass, "da-di",
   "Dependency Analysis (Metadata)", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
-INITIALIZE_PASS_DEPENDENCY(LoopPass)
-INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
-INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
-INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass);
+  INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper);
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
+  INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PASS_IN_GROUP_END(DIDependencyAnalysisPass, "da-di",
   "Dependency Analysis (Metadata)", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -78,7 +78,7 @@ void allocatePoolLog(unsigned DWLang,
   dbgs() << "\n";
 }
 
-/// \brief Converts IR-level representation of a dependence of
+/// Convert IR-level representation of a dependence of
 /// a specified type `Tag` to metadata-level representation.
 ///
 /// \pre `Tag` must be one of `trait::Flow`, `trait::Anti`, `trati::Output`.
@@ -108,82 +108,84 @@ template<class Tag> void convertIf(
   }
 }
 
-void convertTraitsForEstimateNode(DIAliasEstimateNode &DIN, AliasTree &AT,
-    DependencySet &DepSet, DIDependenceSet &DIDepSet,
+/// Store traits of for a specified memory `M` in a specified pool. Add new
+/// trait if `M` is not stored in pool.
+DIMemoryTraitRef addOrUpdateInPool(DIMemory &M, const MemoryDescriptor &Dptr,
     DIMemoryTraitRegionPool &Pool) {
-  DependencySet::iterator ATraitItr = DepSet.end();
-  for (auto &Mem : DIN) {
-    auto &M = cast<DIEstimateMemory>(Mem);
-    if (M.emptyBinding())
-      continue;
-    /// TODO (kaniandr@gmail.com): use variable to specify language.
-    LLVM_DEBUG(dbgs() << "[DA DI]: extract traits for ";
-    printDILocationSource(dwarf::DW_LANG_C, M, dbgs()); dbgs() << "\n");
-    auto &VH = *M.begin();
-    // Conditions which are checked bellow may be violated if DIAliasTree
-    // has not been rebuild after transformations.
-    assert(VH && !isa<UndefValue>(VH) &&
-      "Metadata-level alias tree is corrupted!");
-    auto EM = AT.find(MemoryLocation(VH, M.getSize()));
-    assert(EM && "Estimate memory must be presented in the alias tree!");
-    auto AN = EM->getAliasNode(AT);
-    assert((ATraitItr == DepSet.end() || ATraitItr->getNode() == AN) &&
-      "Multiple AliasNodes associated with a DIEstimateMemoryNode!");
-    if (ATraitItr == DepSet.end())
-      ATraitItr = DepSet.find(AN);
-    // If memory from this metadata alias node does not accessed in the region
-    // then go to the next node.
-    if (ATraitItr == DepSet.end())
-      return;
-    auto MTraitItr = ATraitItr->find(EM);
-    // If memory location is not explicitly accessed in the region and if it
-    // does not cover any explicitly accessed location then go to the next
-    // location.
-    if (MTraitItr == ATraitItr->end())
-      continue;
-    auto DIMTraitItr = Pool.find_as(&M);
-    LLVM_DEBUG(if (DIMTraitItr == Pool.end())
-      dbgs() << "[DA DI]: add new trait to pool\n");
-    if (DIMTraitItr != Pool.end())
-      *DIMTraitItr = *MTraitItr;
-    else
-      DIMTraitItr = Pool.try_emplace({ &M, &Pool }, *MTraitItr).first;
-    convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-    convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-    convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
-    /// TODO (kaninadr@gmail.com): merge traits
-    auto DIATraitPair = DIDepSet.insert(DIAliasTrait(&DIN, *DIMTraitItr));
-    if (!DIATraitPair.second) {
-      DIATraitPair.first->set<trait::Flow, trait::Anti, trait::Output>();
-    }
-    DIATraitPair.first->insert(DIMTraitItr);
-  }
-  // At first we evaluate locations with bounded memory. If there are such
-  // locations, however, there is no traits for this locations, this means
-  // that this memory does not accessed in this loop. So, processing will be
-  // ended (see return in the previous loop) before running this loop.
-  for (auto &Mem : DIN) {
-    auto &M = cast<DIEstimateMemory>(Mem);
-    if (!M.emptyBinding())
-      continue;
-    /// TODO (kaniandr@gmail.com): use variable to specify language.
-    LLVM_DEBUG(dbgs() << "[DA DI]: extract traits for ";
-    printDILocationSource(dwarf::DW_LANG_C, M, dbgs()); dbgs() << "\n");
-    auto DIMTraitItr = Pool.find_as(&M);
-    if (DIMTraitItr == Pool.end())
-      continue;
-    LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
-    /// TODO (kaninadr@gmail.com): merge traits
-    auto DIATraitPair = DIDepSet.insert(DIAliasTrait(&DIN, *DIMTraitItr));
-    if (!DIATraitPair.second) {
-      DIATraitPair.first->set<trait::Flow, trait::Anti, trait::Output>();
-    }
-    DIATraitPair.first->insert(DIMTraitItr);
-  }
-}
+  auto DIMTraitItr = Pool.find_as(&M);
+  LLVM_DEBUG(if (DIMTraitItr == Pool.end())
+    dbgs() << "[DA DI]: add new trait to pool\n");
+  if (DIMTraitItr != Pool.end())
+    *DIMTraitItr = Dptr;
+  else
+    DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
+  return DIMTraitItr;
 }
 
-namespace {
+/// Find IR-level memory node which relates to a specified metadata-level node.
+///
+/// Some IR-level estimate memory can be converted to metadata-level
+/// unknown memory. So, metadata-level unknown memory may correspond to
+/// adjacent unknown and estimate IR-level alias nodes at the same time.
+AliasNode * findBoundAliasNode(AliasTree &AT,
+    const SpanningTreeRelation<AliasTree *> &AliasSTR,
+    DIAliasUnknownNode &DIN) {
+  SmallPtrSet<AliasNode *, 4> BoundNodes;
+  for (auto &M : DIN) {
+    if (M.isOriginal() || M.emptyBinding())
+      continue;
+    findBoundAliasNodes(M, AT, BoundNodes);
+    assert(!BoundNodes.empty() && "Metadata-level alias tree is corrupted!");
+  }
+  if (BoundNodes.empty())
+    return nullptr;
+  using NodeItr = bcl::IteratorDataAdaptor<
+    SmallPtrSetImpl<AliasNode *>::iterator,
+    AliasTree *, GraphTraits<Inverse<AliasTree *>>::NodeRef>;
+  AliasNode *AN = *findLCA(AliasSTR,
+    NodeItr{ BoundNodes.begin(), &AT }, NodeItr{ BoundNodes.end(), &AT });
+  auto InBoundNodesItr = std::find_if(AN->child_begin(), AN->child_end(),
+      [&AliasSTR, &BoundNodes](AliasNode &N) {
+    return &N == *BoundNodes.begin() ||
+      AliasSTR.isAncestor(const_cast<AliasNode *>(&N), *BoundNodes.begin());
+  });
+  if (InBoundNodesItr == AN->child_end())
+    return AN;
+  for (auto *N: BoundNodes)
+    if (N != &*InBoundNodesItr && !AliasSTR.isAncestor(&*InBoundNodesItr, N))
+      return AN;
+  return &*InBoundNodesItr;
+}
+
+/// Find IR-level memory node which relates to a specified metadata-level node.
+AliasNode * findBoundAliasNode(AliasTree &AT, DIAliasEstimateNode &DIN) {
+  SmallPtrSet<AliasNode *, 1> BoundNodes;
+  for (auto &M : DIN) {
+    if (M.isOriginal() || M.emptyBinding())
+      continue;
+    findBoundAliasNodes(M, AT, BoundNodes);
+    assert(BoundNodes.size() == 1 &&
+      "Metadata-level alias tree is corrupted!");
+#ifndef LLVM_DEBUG
+    return *BoundNodes.begin();
+  }
+  return nullptr;
+#else
+  }
+  assert((BoundNodes.empty() || BoundNodes.size() == 1) &&
+    "Metadata-level alias tree is corrupted!");
+  return BoundNodes.empty() ? nullptr : *BoundNodes.begin();
+#endif
+}
+
+AliasNode * findBoundAliasNode(AliasTree &AT,
+    const SpanningTreeRelation<AliasTree *> &AliasSTR, DIAliasMemoryNode &DIN) {
+  if (isa<DIAliasEstimateNode>(DIN))
+    return findBoundAliasNode(AT, cast<DIAliasEstimateNode>(DIN));
+  return findBoundAliasNode(AT, AliasSTR, cast<DIAliasUnknownNode>(DIN));
+}
+
+
 /// Convert IR-level reduction kind to metadata-level reduction kind.
 ///
 /// \pre RD represents a valid reduction, RK_NoReduction kind is not permitted.
@@ -336,21 +338,155 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     F.addFnAttr("no-nans-fp-math", "false");
 }
 
+void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
+    Optional<unsigned> DWLang, SpanningTreeRelation<AliasTree *> &AliasSTR,
+    DependencySet &DepSet, DIDependenceSet &DIDepSet,
+    DIMemoryTraitRegionPool &Pool) {
+  assert(!DIN.empty() && "Alias node must contain memory locations!");
+  auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
+  auto ATraitItr = AN ? DepSet.find(AN) : DepSet.end();
+  DIDependenceSet::iterator DIATraitItr = DIDepSet.end();
+  for (auto &M : DIN) {
+    LLVM_DEBUG(if (DWLang) {
+      dbgs() << "[DA DI]: extract traits for ";
+      printDILocationSource(*DWLang, M, dbgs());
+      dbgs() << "\n";
+    });
+    if (M.isOriginal() || M.emptyBinding()) {
+      auto DIMTraitItr = Pool.find_as(&M);
+      if (DIMTraitItr == Pool.end())
+        continue;
+      LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
+      if (DIATraitItr == DIDepSet.end())
+        DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
+      DIATraitItr->insert(DIMTraitItr);
+      continue;
+    }
+    // If memory from this metadata alias node is not accessed in the region
+    // then do not process memory from this node. Note, that some corrupted
+    // memory covered by this metadata-level node may be accessed in the region.
+    // So, exit from loop but not from a function.
+    if (ATraitItr == DepSet.end())
+      break;
+    auto &VH = *M.begin();
+    assert(VH && !isa<UndefValue>(VH) &&
+      "Metadata-level alias tree is corrupted!");
+    DIMemoryTraitRef DIMTraitItr;
+    if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
+      auto EM = mAT->find(MemoryLocation(VH, DIEM->getSize()));
+      assert(EM && "Estimate memory must be presented in the alias tree!");
+      auto MTraitItr = ATraitItr->find(EM);
+      // If memory location is not explicitly accessed in the region and if it
+      // does not cover any explicitly accessed location then go to the next
+      // location.
+      if (MTraitItr == ATraitItr->end())
+        continue;
+      DIMTraitItr = addOrUpdateInPool(M, *MTraitItr, Pool);
+      convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
+      convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
+      convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
+    } else if (cast<DIUnknownMemory>(M).isExec()) {
+      auto MTraitItr = ATraitItr->find(cast<Instruction>(VH));
+      // If memory location is not explicitly accessed in the region and if it
+      // does not cover any explicitly accessed location then go to the next
+      // location.
+      if (MTraitItr == ATraitItr->unknown_end())
+        continue;
+      DIMTraitItr = addOrUpdateInPool(M, *MTraitItr, Pool);
+    } else {
+      bool IsTraitFound = false;
+      for (auto &T : *ATraitItr) {
+        auto Itr = std::find(T.getMemory()->begin(), T.getMemory()->end(), VH);
+        if (Itr != T.getMemory()->end()) {
+          DIMTraitItr = addOrUpdateInPool(M, T, Pool);
+          convertIf<trait::Flow>(T, *DIMTraitItr);
+          convertIf<trait::Anti>(T, *DIMTraitItr);
+          convertIf<trait::Output>(T, *DIMTraitItr);
+          IsTraitFound = true;
+        }
+      }
+      // If memory location is not explicitly accessed in the region and if it
+      // does not cover any explicitly accessed location then go to the next
+      // location.
+      if (!IsTraitFound)
+        continue;
+    }
+    if (DIATraitItr == DIDepSet.end())
+      DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
+    DIATraitItr->insert(DIMTraitItr);
+  }
+  // Collect locations from descendant nodes which are explicitly accessed.
+  for (auto &Child : make_range(DIN.child_begin(), DIN.child_end())) {
+    auto ChildTraitItr = DIDepSet.find_as(&Child);
+    // If memory from this child is not accessed in a region then go to the next
+    // child.
+    if (ChildTraitItr == DIDepSet.end())
+      continue;
+    for (auto &DIMTraitItr : *ChildTraitItr) {
+      if (!DIMTraitItr->is_any<trait::ExplicitAccess, trait::AddressAccess>())
+        continue;
+      auto *DIM = DIMTraitItr->getMemory();
+      // Alias trait contains not only locations from a corresponding alias
+      // node. It may also contain locations from descendant nodes.
+      auto N = DIM->getAliasNode();
+      // Locations from descendant estimate nodes have been already processed
+      // implicitly when IR-level analysis has been performed and traits for
+      // estimate memory locations have been fetched for nodes in IR-level
+      // alias tree.
+      if (!DIM->emptyBinding() && isa<DIAliasEstimateNode>(N))
+        continue;
+      LLVM_DEBUG(if (DWLang) {
+        dbgs() << "[DA DI]: extract traits from descendant node";
+        printDILocationSource(*DWLang, *DIM, dbgs());
+        dbgs() << "\n";
+      });
+      if (DIATraitItr == DIDepSet.end())
+        DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
+      DIATraitItr->insert(DIMTraitItr);
+    }
+  }
+  // Combine traits for memory locations and set traits for the whole alias node.
+  if (DIATraitItr == DIDepSet.end())
+    return;
+  assert(!DIATraitItr->empty() && "List of traits must not be empty!");
+  if (DIATraitItr->size() == 1) {
+    *DIATraitItr = **DIATraitItr->begin();
+    return;
+  }
+  BitMemoryTrait CombinedTrait;
+  for (auto &DIMTraitItr : *DIATraitItr)
+    CombinedTrait &= *DIMTraitItr;
+  CombinedTrait &=
+    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+      BitMemoryTrait::Readonly :
+        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
+          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
+  auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
+  *DIATraitItr = Dptr;
+  LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
+    Dptr.print(dbgs()); dbgs() << "\n");
+  // We do not update traits for each memory location (as in private recognition
+  // pass) because these traits should be updated early (during analysis of
+  // promoted locations or by the private recognition pass).
+}
+
+
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
+  mAT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &PI = getAnalysis<PrivateRecognitionPass>().getPrivateInfo();
   auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
   auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
   auto &DL = F.getParent()->getDataLayout();
   auto DWLang = getLanguage(F);
+  SpanningTreeRelation<AliasTree *> AliasSTR(mAT);
   for (auto &Info : PI) {
     if (!isa<DFLoop>(Info.get<DFNode>()))
       continue;
     auto L = cast<DFLoop>(Info.get<DFNode>())->getLoop();
+    /// TODO (kaniandr@gmail.com): use other identifier because LLVM identifier
+    /// may be lost.
     if (!L->getLoopID())
       continue;
     assert(L->getLoopID() && "Identifier of a loop must be specified!");
@@ -369,28 +505,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     for (auto *DIN : post_order(&DIAT)) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
-      if (auto MemoryNode = dyn_cast<DIAliasEstimateNode>(DIN)) {
-        convertTraitsForEstimateNode(*MemoryNode, AT,
-          *Info.get<DependencySet>(), DIDepSet, *Pool);
-      } else {
-        /// TODO (kaniandr@gmail.com): processing of unknown nodes is temporary
-        /// too conservative.
-        auto UnknownNode = cast<DIAliasUnknownNode>(DIN);
-        DIMemoryTraitSet Dptr;
-        Dptr.set<trait::Flow, trait::Anti, trait::Output>();
-        for (auto &Mem : *UnknownNode) {
-          /// TODO (kaniandr@gmail.com): use variable to specify language.
-          LLVM_DEBUG(dbgs() << "[DA DI]: extract traits for ";
-          printDILocationSource(dwarf::DW_LANG_C, Mem, dbgs()); dbgs() << "\n");
-          auto DIMTraitPair = Pool->try_emplace({ &Mem, Pool.get() }, Dptr);
-          if (!DIMTraitPair.second)
-            continue;
-          LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
-          /// TODO (kaninadr@gmail.com): merge traits
-          auto DIATraitPair = DIDepSet.insert(DIAliasTrait(DIN, Dptr));
-          DIATraitPair.first->insert(DIMTraitPair.first);
-        }
-      }
+      analyzeNode(cast<DIAliasMemoryNode>(*DIN),
+        DWLang, AliasSTR, DepSet, DIDepSet, *Pool);
     }
   }
   return false;
@@ -549,13 +665,9 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
 }
 
 void DIDependencyAnalysisPass::getAnalysisUsage(AnalysisUsage &AU)  const {
-  // Call getLoopAnalysisUsage(AU) at the beginning. Otherwise, pass manager
-  // can not schedule passes.
-  //getLoopAnalysisUsage(AU);
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
-  AU.addRequired<LoopInfoWrapperPass>();
-  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<DIEstimateMemoryPass>();
   AU.addRequired<PrivateRecognitionPass>();
