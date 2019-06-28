@@ -170,7 +170,7 @@ public:
         if (this->mDU.hasDef(ALoc))
           continue;
         auto AR = aliasRelation(this->mAA, this->mDL, mLoc, ALoc);
-        if (AR.template is<trait::CoverAlias, trait::CoincideAlias>())
+        if (AR.template is_any<trait::CoverAlias, trait::CoincideAlias>())
           addMust(ALoc);
         else
           addMay(ALoc);
