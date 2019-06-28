@@ -1,5 +1,7 @@
 configure_file("tsar_config.h.in" "tsar_config.h")
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+# TODO (kaniandr@gmail.com): temporary include path, must be removed later
+include_directories("${PROJECT_SOURCE_DIR}/src")
 set(TSAR_SOURCES tsar_pass.cpp tsar_dbg_output.cpp
   tsar_df_location.cpp tsar_utility.cpp tsar_action.cpp
   tsar_transformation.cpp tsar_tool.cpp tsar_test.cpp
