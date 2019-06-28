@@ -1487,6 +1487,7 @@ void CorruptedMemoryResolver::copyToCorrupted(
   for (auto *M : WL) {
     ++NumCorruptedMemory;
     auto NewM = DIMemory::get(mFunc->getContext(), M->getEnv(), *M);
+    NewM->setProperties(DIMemory::Original);
     for (auto &VH : *M) {
       if (!VH || isa<UndefValue>(VH))
         continue;

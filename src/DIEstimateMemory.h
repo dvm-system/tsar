@@ -113,7 +113,8 @@ public:
   enum Property : uint8_t {
     NoProperty = 0,
     Explicit = 1u << 0,
-    LLVM_MARK_AS_BITMASK_ENUM(Explicit)
+    Original = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(Original)
   };
 
   /// This is used to iterate over all values bound to this memory location.
@@ -143,7 +144,9 @@ public:
   /// source code.
   bool isExplicit() const { return Explicit & getProperies(); }
 
-  /// Returns true if this is a template which represents a set of memory
+  /// Returns true if this location represents memory before transformation that
+  /// has corrupted this location.
+   bool isOriginal() const { return Original & getProperies(); }
 
   /// Returns MDNode which represents this memory location.
   llvm::MDNode * getAsMDNode() noexcept { return mMD; }
