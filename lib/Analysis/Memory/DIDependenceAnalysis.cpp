@@ -78,6 +78,33 @@ void allocatePoolLog(unsigned DWLang,
   dbgs() << "\n";
 }
 
+/// Return `true` if traits for a specified memory should not be updated.
+///
+/// `LockedTraits` is a list of traits which is locked. All memory locations
+/// which may alias with a memory from this list also should be locked.
+///
+/// \attention We do not set `trait::Lock` property form `T` if it should be
+/// locked implicitly (if it does not already contained in LockedTraits).
+/// If we set this property and add `T` in LockedTraits then some traits which
+/// should not be locked may become locked. For example, let us consider a
+/// structure S with fields X and Y. If S.X should be locked then S should
+/// be locked implicitly and S.Y should not be locked. However, if we mark
+/// S as locked and store it in LockedTraits then S.Y becomes implicitly
+/// locked.
+bool isLockedTrait(const DIMemoryTrait &T,
+  ArrayRef<const DIMemory *> LockedTraits,
+  const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR) {
+  if (T.is<trait::Lock>())
+    return true;
+  auto *DIM = T.getMemory();
+  auto *AN = DIM->getAliasNode();
+  for (auto *M : LockedTraits) {
+    if (!DIAliasSTR.isUnreachable(AN, M->getAliasNode()))
+      return true;
+  }
+  return false;
+}
+
 /// Convert IR-level representation of a dependence of
 /// a specified type `Tag` to metadata-level representation.
 ///
@@ -108,18 +135,25 @@ template<class Tag> void convertIf(
   }
 }
 
-/// Store traits of for a specified memory `M` in a specified pool. Add new
+/// Store traits for a specified memory `M` in a specified pool. Add new
 /// trait if `M` is not stored in pool.
-DIMemoryTraitRef addOrUpdateInPool(DIMemory &M, const MemoryDescriptor &Dptr,
+///
+/// If traits for `M` already exist in a poll and should not be updated
+/// (for example, should be locked) the second returned value is `false`.
+std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
+    const MemoryDescriptor &Dptr, ArrayRef<const DIMemory *> LockedTraits,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     DIMemoryTraitRegionPool &Pool) {
   auto DIMTraitItr = Pool.find_as(&M);
   LLVM_DEBUG(if (DIMTraitItr == Pool.end())
     dbgs() << "[DA DI]: add new trait to pool\n");
-  if (DIMTraitItr != Pool.end())
+  if (DIMTraitItr == Pool.end())
+    DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
+  else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
     *DIMTraitItr = Dptr;
   else
-    DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
-  return DIMTraitItr;
+    return std::make_pair(DIMTraitItr, false);
+  return std::make_pair(DIMTraitItr, true);
 }
 
 /// Find IR-level memory node which relates to a specified metadata-level node.
@@ -227,6 +261,8 @@ trait::DIReduction::ReductionKind getReductionKind(
 /// to update traits for a single memory location.
 template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     const DominatorTree &DT, Optional<unsigned> DWLang,
+    ArrayRef<const DIMemory *> LockedTraits,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     DIMemoryTraitRegionPool &Pool, FuncT &&TraitInserter) {
   for (const auto &Incoming : Phi->incoming_values()) {
     if (!L->contains(Phi->getIncomingBlock(Incoming)))
@@ -244,7 +280,8 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
       auto DIMTraitItr = Pool.find_as(MD);
       if (DIMTraitItr == Pool.end() ||
           !DIMTraitItr->getMemory()->emptyBinding() ||
-          !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>())
+          !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
+          isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
         continue;
       LLVM_DEBUG(if (DWLang) {
         dbgs() << "[DA DI]: update traits for ";
@@ -258,7 +295,9 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
 }
 
 void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
-    Optional<unsigned> DWLang, DIMemoryTraitRegionPool &Pool) {
+    Optional<unsigned> DWLang,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const DIMemory *> LockedTraits, DIMemoryTraitRegionPool &Pool) {
   assert(L && "Loop must not be null!");
   // If there is no preheader induction and reduction analysis will fail.
   if (!L->getLoopPreheader())
@@ -277,7 +316,8 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     PredicatedScalarEvolution PSE(*mSE, *L);
     if (RecurrenceDescriptor::isReductionPHI(Phi, L, RD)) {
       auto RK = getReductionKind(RD);
-      updateTraits(L, Phi, *mDT, DWLang, Pool, [RK](DIMemoryTrait &T) {
+      updateTraits(L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool,
+          [RK](DIMemoryTrait &T) {
         T.set<trait::Reduction>(new trait::DIReduction(RK));
         LLVM_DEBUG(dbgs() << "[DA DI]: reduction found\n");
         ++NumTraits.get<trait::Reduction>();
@@ -291,7 +331,7 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
       if (Start && Step && mSE->hasLoopInvariantBackedgeTakenCount(L))
         if (auto *C = dyn_cast<SCEVConstant>(mSE->getBackedgeTakenCount(L)))
           BackedgeCount = APSInt(C->getAPInt());
-      updateTraits(L, Phi, *mDT, DWLang, Pool,
+      updateTraits(L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool,
           [&ID, &Start, &Step, &BackedgeCount](DIMemoryTrait &T) {
         auto DIEM = dyn_cast<DIEstimateMemory>(T.getMemory());
         if (!DIEM)
@@ -339,7 +379,10 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
 }
 
 void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
-    Optional<unsigned> DWLang, SpanningTreeRelation<AliasTree *> &AliasSTR,
+    Optional<unsigned> DWLang,
+    const SpanningTreeRelation<AliasTree *> &AliasSTR,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const DIMemory *> LockedTraits,
     DependencySet &DepSet, DIDependenceSet &DIDepSet,
     DIMemoryTraitRegionPool &Pool) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
@@ -381,10 +424,14 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       // location.
       if (MTraitItr == ATraitItr->end())
         continue;
-      DIMTraitItr = addOrUpdateInPool(M, *MTraitItr, Pool);
-      convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-      convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-      convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
+      bool IsNotLocked = false;
+      std::tie(DIMTraitItr, IsNotLocked) =
+        addOrUpdateInPool(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
+      if (IsNotLocked) {
+        convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
+        convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
+        convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
+      }
     } else if (cast<DIUnknownMemory>(M).isExec()) {
       auto MTraitItr = ATraitItr->find(cast<Instruction>(VH));
       // If memory location is not explicitly accessed in the region and if it
@@ -392,16 +439,21 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       // location.
       if (MTraitItr == ATraitItr->unknown_end())
         continue;
-      DIMTraitItr = addOrUpdateInPool(M, *MTraitItr, Pool);
+      std::tie(DIMTraitItr, std::ignore) =
+        addOrUpdateInPool(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
     } else {
       bool IsTraitFound = false;
       for (auto &T : *ATraitItr) {
         auto Itr = std::find(T.getMemory()->begin(), T.getMemory()->end(), VH);
         if (Itr != T.getMemory()->end()) {
-          DIMTraitItr = addOrUpdateInPool(M, T, Pool);
-          convertIf<trait::Flow>(T, *DIMTraitItr);
-          convertIf<trait::Anti>(T, *DIMTraitItr);
-          convertIf<trait::Output>(T, *DIMTraitItr);
+          bool IsNotLocked = false;
+          std::tie(DIMTraitItr, IsNotLocked) =
+            addOrUpdateInPool(M, T, LockedTraits, DIAliasSTR, Pool);
+          if (IsNotLocked) {
+            convertIf<trait::Flow>(T, *DIMTraitItr);
+            convertIf<trait::Anti>(T, *DIMTraitItr);
+            convertIf<trait::Output>(T, *DIMTraitItr);
+          }
           IsTraitFound = true;
         }
       }
@@ -481,6 +533,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   auto &DL = F.getParent()->getDataLayout();
   auto DWLang = getLanguage(F);
   SpanningTreeRelation<AliasTree *> AliasSTR(mAT);
+  SpanningTreeRelation<const DIAliasTree *> DIAliasSTR(&DIAT);
   for (auto &Info : PI) {
     if (!isa<DFLoop>(Info.get<DFNode>()))
       continue;
@@ -497,16 +550,22 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       });
     auto &Pool = TraitPool[DILoop];
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
-    auto &DepSet = *Info.get<DependencySet>();
-    if (!Pool)
+    SmallVector<const DIMemory *, 4> LockedTraits;
+    if (!Pool) {
       Pool = make_unique<DIMemoryTraitRegionPool>();
+    } else {
+      for (auto &T : *Pool)
+        if (T.is<trait::Lock>())
+          LockedTraits.push_back(T.getMemory());
+    }
+    auto &DepSet = *Info.get<DependencySet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
-    analyzePromoted(L, DWLang, *Pool);
+    analyzePromoted(L, DWLang, DIAliasSTR, LockedTraits, *Pool);
     for (auto *DIN : post_order(&DIAT)) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
       analyzeNode(cast<DIAliasMemoryNode>(*DIN),
-        DWLang, AliasSTR, DepSet, DIDepSet, *Pool);
+        DWLang, AliasSTR, DIAliasSTR, LockedTraits, DepSet, DIDepSet, *Pool);
     }
   }
   return false;

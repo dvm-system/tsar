@@ -10,6 +10,7 @@
 
 #include "tsar_action.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/TraitFilter.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
@@ -176,6 +177,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   addPrint(AfterSroaAnalysis);
   addOutput();
   // Perform loop rotation to enable reduction recognition if for-loops.
+  Passes.add(createLockDIMemoryTraitPass(is<trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());

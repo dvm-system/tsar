@@ -31,6 +31,7 @@
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include <bcl/utility.h>
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
 #include <forward_list>
@@ -45,6 +46,7 @@ namespace tsar {
 class AliasTree;
 class BitMemoryTrait;
 class DIAliasMemoryNode;
+class DIMemory;
 class DependencySet;
 template<class GraphType> class SpanningTreeRelation;
 
@@ -76,11 +78,6 @@ namespace llvm {
 /// (3) Implement register-based analysis of privitizable variables.
 /// (4) Merge traits for memory across RAUW. Sometimes different locations
 /// RAUWed to the same location, so traits should be merged accurately.
-/// (5) There are three steps of metadata-level data-dependence analysis. After
-/// each step traits of memory location will be updated. However, sometimes
-/// some traits should not changed after some steps. For example, locations
-/// which are accessed in a loop header should not be analyzed after loop
-/// rotation.
 class DIDependencyAnalysisPass :
   public FunctionPass, private bcl::Uncopyable {
 
@@ -127,6 +124,8 @@ private:
   /// updates description of metadata-level traits in a specified pool if
   /// necessary.
   void analyzePromoted(Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DIMemoryTraitRegionPool &Pool);
 
   /// Perform analysis of a specified metadata-level alias node.
@@ -135,7 +134,9 @@ private:
   /// of IR-level dependence analysis (including variable privatization) and
   /// results of analysis of promoted memory locations.
   void analyzeNode(tsar::DIAliasMemoryNode &DIN, Optional<unsigned> DWLang,
-    tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
+    const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
+    const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DependencySet &DepSet, tsar::DIDependenceSet &DIDepSet,
     tsar::DIMemoryTraitRegionPool &Pool);
 
