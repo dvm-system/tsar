@@ -48,20 +48,21 @@ public:
   /// part of memory locations is read-only and other part is last private a union
   /// is last private and first private (for details see resolve... methods).
   enum Id : unsigned long long {
-    NoAccess =            11111111111_b,
-    Readonly =            00111101111_b,
-    Shared =              00111100111_b,
-    Private =             00011111111_b,
-    FirstPrivate =        00011101111_b,
-    SecondToLastPrivate = 00010111111_b,
-    LastPrivate =         00001111111_b,
-    DynamicPrivate =      00000111111_b,
-    Dependency =          00000000111_b,
-    AddressAccess =       11111111011_b,
-    HeaderAccess =        11111111101_b,
-    ExplicitAccess =      11111111110_b,
-    Reduction =           01000000111_b,
-    Induction =           10000000111_b,
+    NoAccess =            111111111111_b,
+    Readonly =            001111011111_b,
+    Shared =              001111001111_b,
+    Private =             000111111111_b,
+    FirstPrivate =        000111011111_b,
+    SecondToLastPrivate = 000101111111_b,
+    LastPrivate =         000011111111_b,
+    DynamicPrivate =      000001111111_b,
+    Dependency =          000000001111_b,
+    AddressAccess =       111111110111_b,
+    HeaderAccess =        111111111011_b,
+    ExplicitAccess =      111111111101_b,
+    Reduction =           010000001111_b,
+    Induction =           100000001111_b,
+    Lock =                111111111110_b
   };
 
   BitMemoryTrait() = default;
@@ -139,7 +140,7 @@ constexpr inline BitMemoryTrait::Id operator~(
 constexpr inline BitMemoryTrait::Id dropUnitFlag(
     BitMemoryTrait::Id T) noexcept {
   return T | ~BitMemoryTrait::AddressAccess | ~BitMemoryTrait::HeaderAccess |
-    ~BitMemoryTrait::ExplicitAccess;
+    ~BitMemoryTrait::ExplicitAccess | ~BitMemoryTrait::Lock;
 }
 
 /// Drops a single bit which identifies shared trait (shared becomes read-only).

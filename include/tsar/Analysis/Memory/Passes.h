@@ -28,7 +28,14 @@
 #ifndef TSAR_MEMORY_ANALYSIS_PASSES_H
 #define TSAR_MEMORY_ANALYSIS_PASSES_H
 
+#include <functional>
+
+namespace tsar {
+class DIMemoryTrait;
+}
+
 namespace llvm {
+class Pass;
 class PassRegistry;
 class FunctionPass;
 
@@ -44,10 +51,17 @@ FunctionPass * createPrivateRecognitionPass();
 /// Initializes a pass to analyze private variables (at metadata level).
 void initializeDIDependencyAnalysisPassPass(PassRegistry &Registry);
 
-/// \brief Creates a pass to classify data dependency at metadata level.
+/// Create a pass to classify data dependency at metadata level.
 ///
 /// This includes privatization, reduction and induction variable recognition
 /// and flow/anti/output dependencies exploration.
 FunctionPass * createDIDependencyAnalysisPass();
+
+/// Initialize a pass to mark traits in a loop as locked.
+void initializeLockDIMemoryTraitPassPass(PassRegistry &Registry);
+
+/// Create a pass to mark traits in a loop as locked.
+Pass * createLockDIMemoryTraitPass(
+  const std::function<bool(const tsar::DIMemoryTrait &)> &Lock);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

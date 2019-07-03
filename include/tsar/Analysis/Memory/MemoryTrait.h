@@ -67,6 +67,7 @@ TSAR_TRAIT_DECL(Induction, "induction")
 TSAR_TRAIT_DECL(Flow, "flow")
 TSAR_TRAIT_DECL(Anti, "anti")
 TSAR_TRAIT_DECL(Output, "output")
+TSAR_TRAIT_DECL(Lock, "lock")
 
 #undef TSAR_TRAIT_DECL
 
@@ -158,7 +159,8 @@ private:
 /// - is it a shared location;
 /// - is it a location that caused dependence;
 /// - is it a loop induction location;
-/// - is it a location which is accessed in a loop header.
+/// - is it a location which is accessed in a loop header;
+/// - is it a location whith locked traits which should not be further analyzed.
 ///
 /// If location is not accessed in a region it will be marked as 'no access'
 /// only if it has some other traits, otherwise it can be omitted in a list
@@ -198,7 +200,7 @@ private:
 /// where the last definition of an location have been executed. Such locations
 /// will be stored as dynamic private locations collection.
 using MemoryDescriptor = bcl::TraitDescriptor<
-  trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess,
+  trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess, trait::Lock,
   bcl::TraitAlternative<
     trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
     bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
@@ -223,7 +225,8 @@ using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::Induction>,
   bcl::tagged<llvm::Statistic &, trait::Flow>,
   bcl::tagged<llvm::Statistic &, trait::Anti>,
-  bcl::tagged<llvm::Statistic &, trait::Output>>;
+  bcl::tagged<llvm::Statistic &, trait::Output>,
+  bcl::tagged<llvm::Statistic &, trait::Lock>>;
 
 /// A macro to make definition of statistics really simple.
 ///
@@ -246,11 +249,12 @@ using MemoryStatistic = bcl::tagged_tuple<
   STATISTIC(VARNAME##Flow, "Number of flow dependencies found"); \
   STATISTIC(VARNAME##Anti, "Number of anti dependencies found"); \
   STATISTIC(VARNAME##Output, "Number of output dependencies found"); \
+  STATISTIC(VARNAME##Lock, "Number of locked traits"); \
   static ::tsar::MemoryStatistic VARNAME = {\
     VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
     VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
     VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate, VARNAME##LastPrivate, \
     VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
-    VARNAME##Flow, VARNAME##Anti, VARNAME##Output};
+    VARNAME##Flow, VARNAME##Anti, VARNAME##Output, VARNAME##Lock};
 }
 #endif//TSAR_MEMORY_TRAIT_H
