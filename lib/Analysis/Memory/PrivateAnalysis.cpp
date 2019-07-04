@@ -545,8 +545,10 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         &I->get<TraitList>().front().get<BitMemoryTrait>();
     }
     auto &CurrTraits = *Pair.first->get<BitMemoryTrait>();
-    BitMemoryTrait SharedTrait = !Deps.count(Base) ?
-      BitMemoryTrait::Shared : BitMemoryTrait::NoAccess;
+    BitMemoryTrait SharedTrait = BitMemoryTrait::NoAccess;
+    BitMemoryTrait DefTrait = BitMemoryTrait::Dependency;
+    if (!Deps.count(Base))
+      SharedTrait = DefTrait = BitMemoryTrait::Shared;
     if (!DefUse.hasUse(Loc)) {
       if (!LS.getOut().overlap(Loc))
         CurrTraits &= BitMemoryTrait::Private & SharedTrait;
@@ -570,9 +572,8 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         // if it has not been assigned.
         CurrTraits &= BitMemoryTrait::DynamicPrivate &
           BitMemoryTrait::FirstPrivate & SharedTrait;
-    } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc)) &&
-        SharedTrait == BitMemoryTrait::NoAccess) {
-      CurrTraits &= BitMemoryTrait::Dependency;
+    } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))) {
+      CurrTraits &= DefTrait;
     } else {
       CurrTraits &= BitMemoryTrait::Readonly;
     }
