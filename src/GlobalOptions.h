@@ -24,6 +24,8 @@ struct GlobalOptions {
   bool PrintFilenameOnly = false;
   /// Disallow unsafe integer type cast in analysis passes.
   bool IsSafeTypeCast = true;
+  /// Assume that subscript expression is in bounds value of an array dimension.
+  bool InBoundsSubscripts = false;
 };
 }
 

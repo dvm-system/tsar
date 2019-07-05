@@ -112,6 +112,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> Check;
   llvm::cl::opt<bool> SafeTypeCast;
   llvm::cl::opt<bool> NoSafeTypeCast;
+  llvm::cl::opt<bool> InBoundsSubscripts;
+  llvm::cl::opt<bool> NoInBoundsSubscripts;
   llvm::cl::opt<std::string> AnalysisUse;
 
   llvm::cl::OptionCategory TransformCategory;
@@ -191,6 +193,10 @@ Options::Options() :
     cl::desc("Disallow unsafe integer type cast in analysis passes")),
   NoSafeTypeCast("fno-safe-type-cast", cl::cat(AnalysisCategory),
     cl::desc("Allow unsafe integer type cast in analysis passes(default)")),
+  InBoundsSubscripts("finbounds-subscripts", cl::cat(AnalysisCategory),
+    cl::desc("Assume that subscript expression is in bounds value of an array dimension")),
+  NoInBoundsSubscripts("fno-inbounds-subscripts", cl::cat(AnalysisCategory),
+    cl::desc("Check that subscript expression is in bounds value of an array dimension(default)")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -421,6 +427,13 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoSafeTypeCast.ArgStr);
     Options::get().SafeTypeCast.error(Msg);
+    exit(1);
+  }
+  getGlobalOptions()->InBoundsSubscripts = Options::get().InBoundsSubscripts;
+  if (Options::get().InBoundsSubscripts && Options::get().NoInBoundsSubscripts) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoInBoundsSubscripts.ArgStr);
+    Options::get().InBoundsSubscripts.error(Msg);
     exit(1);
   }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));

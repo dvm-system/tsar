@@ -3345,25 +3345,27 @@ bool DependenceInfo::tryDelinearize(Instruction *Src, Instruction *Dst,
 
   int size = SrcSubscripts.size();
 
-  // Statically check that the array bounds are in-range. The first subscript we
-  // don't have a size for and it cannot overflow into another subscript, so is
-  // always safe. The others need to be 0 <= subscript[i] < bound, for both src
-  // and dst.
-  // FIXME: It may be better to record these sizes and add them as constraints
-  // to the dependency checks.
-  for (int i = 1; i < size; ++i) {
+  if (!IsDIDelinearized || !GO->InBoundsSubscripts) {
+    // Statically check that the array bounds are in-range. The first subscript we
+    // don't have a size for and it cannot overflow into another subscript, so is
+    // always safe. The others need to be 0 <= subscript[i] < bound, for both src
+    // and dst.
+    // FIXME: It may be better to record these sizes and add them as constraints
+    // to the dependency checks.
+    for (int i = 1; i < size; ++i) {
 
-    if (!isKnownNonNegative(SrcSubscripts[i], SrcPtr))
-      return false;
+      if (!isKnownNonNegative(SrcSubscripts[i], SrcPtr))
+        return false;
 
-    if (!isKnownLessThan(SrcSubscripts[i], Sizes[i - 1]))
-      return false;
+      if (!isKnownLessThan(SrcSubscripts[i], Sizes[i - 1]))
+        return false;
 
-    if (!isKnownNonNegative(DstSubscripts[i], DstPtr))
-      return false;
+      if (!isKnownNonNegative(DstSubscripts[i], DstPtr))
+        return false;
 
-    if (!isKnownLessThan(DstSubscripts[i], Sizes[i - 1]))
-      return false;
+      if (!isKnownLessThan(DstSubscripts[i], Sizes[i - 1]))
+        return false;
+    }
   }
 
   LLVM_DEBUG({
