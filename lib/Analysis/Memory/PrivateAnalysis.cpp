@@ -393,7 +393,17 @@ void PrivateRecognitionPass::resolveCandidats(
 void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
     const MemoryLocation &Src, const MemoryLocation Dst,
     trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps) {
-  auto Dir = Dep.getDirection(L.getLoopDepth());
+  auto LoopDepth = L.getLoopDepth();
+  for (unsigned OuterDepth = 1; OuterDepth < LoopDepth; ++OuterDepth) {
+    auto Dir = Dep.getDirection(OuterDepth);
+    if (Dir != Dependence::DVEntry::EQ && Dir != Dependence::DVEntry::ALL &&
+        Dir != Dependence::DVEntry::LE && Dir != Dependence::DVEntry::GE) {
+      LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore loop independent dependence (due "
+                           "to outer loop dependence direction)\n");
+      return;
+    }
+  }
+  auto Dir = Dep.getDirection(LoopDepth);
   if (Dir == Dependence::DVEntry::EQ) {
     LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore loop independent dependence\n");
     return;
