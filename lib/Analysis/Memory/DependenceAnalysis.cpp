@@ -51,8 +51,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "Delinearization.h"
+#include "DefinedMemory.h"
+#include "EstimateMemory.h"
 #include "GlobalOptions.h"
+#include "DFRegionInfo.h"
+#include "SpanningTreeRelation.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/SCEVUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
@@ -60,6 +65,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/InstIterator.h"
@@ -135,6 +141,10 @@ INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_END(DependenceAnalysisWrapperPass, "da", "Dependence Analysis",
                     true, true)
 
@@ -149,8 +159,14 @@ bool DependenceAnalysisWrapperPass::runOnFunction(Function &F) {
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  info.reset(new DependenceInfo(&F, &AA, &SE, &LI, &DI, &GO));
+  auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
+  auto &DFI = getAnalysis<DFRegionInfoPass>().getRegionInfo();
+  auto &DMP = getAnalysis<DefinedMemoryPass>();
+  SpanningTreeRelation<const AliasTree *> STR(&AT);
+  info.reset(new DependenceInfo(
+    &F, &AA, &SE, &LI, &TLI, &DI, &GO, &AT, &STR, &DFI, &DMP));
   return false;
 }
 
@@ -165,6 +181,10 @@ void DependenceAnalysisWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequiredTransitive<LoopInfoWrapperPass>();
   AU.addRequiredTransitive<DelinearizationPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<DefinedMemoryPass>();
+  AU.addRequired<DFRegionInfoPass>();
 }
 
 
@@ -780,6 +800,16 @@ bool DependenceInfo::isLoopInvariant(const SCEV *Expression,
                                      const Loop *LoopNest) const {
   if (!LoopNest)
     return true;
+  if (AllowNotPromotedAnalysis) {
+    auto *DFL = DFI->getRegionFor(const_cast<Loop *>(LoopNest));
+    assert(DFL && "Region for a loop must be knonwn!");
+    auto Itr = DMP->getDefInfo().find(DFL);
+    assert(Itr != DMP->getDefInfo().end() &&
+      "Def-use set must be available for a loop!");
+    auto &DUS = Itr->get<DefUseSet>();
+    return tsar::isLoopInvariant(Expression, LoopNest, *TLI, *SE, *DUS, *AT, *STR) &&
+      isLoopInvariant(Expression, LoopNest->getParentLoop());
+  }
   return SE->isLoopInvariant(Expression, LoopNest) &&
     isLoopInvariant(Expression, LoopNest->getParentLoop());
 }

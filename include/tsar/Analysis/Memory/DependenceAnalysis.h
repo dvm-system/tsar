@@ -54,8 +54,11 @@ void initializeDependenceAnalysisWrapperPassPass(PassRegistry &Registry);
 }
 
 namespace tsar {
+class AliasTree;
 class DelinearizeInfo;
+class DFRegionInfo;
 struct GlobalOptions;
+template<class GraphType> class SpanningTreeRelation;
 }
 
 namespace llvm {
@@ -66,6 +69,8 @@ template <typename T> class ArrayRef;
   class SCEV;
   class SCEVConstant;
   class raw_ostream;
+  class TargetLibraryInfo;
+  class DefinedMemoryPass;
 
 inline namespace tsar_impl {
   /// Dependence - This class represents a dependence between two memory
@@ -286,10 +291,15 @@ inline namespace tsar_impl {
   class DependenceInfo {
   public:
     DependenceInfo(Function *F, AliasAnalysis *AA, ScalarEvolution *SE,
-                   LoopInfo *LI,
-                   const tsar::DelinearizeInfo *DI = nullptr,
-                   const tsar::GlobalOptions *GO = nullptr)
-        : AA(AA), SE(SE), LI(LI), F(F), DI(DI), GO(GO) {}
+      LoopInfo *LI) : AA(AA), SE(SE), LI(LI), F(F) {}
+
+    DependenceInfo(Function *F, AliasAnalysis *AA, ScalarEvolution *SE,
+        LoopInfo *LI, TargetLibraryInfo *TLI, const tsar::DelinearizeInfo *DI,
+        const tsar::GlobalOptions *GO, const tsar::AliasTree *AT,
+        const tsar::SpanningTreeRelation<const tsar::AliasTree *> *STR,
+        const tsar::DFRegionInfo *DFI, const DefinedMemoryPass *DMP) :
+      AA(AA), SE(SE), LI(LI), F(F), TLI(TLI), DI(DI), GO(GO), AT(AT), STR(STR),
+      DFI(DFI), DMP(DMP), AllowNotPromotedAnalysis(true) {}
 
     /// depends - Tests for a dependence between the Src and Dst instructions.
     /// Returns NULL if no dependence; otherwise, returns a Dependence (or a
@@ -350,8 +360,14 @@ inline namespace tsar_impl {
     ScalarEvolution *SE;
     LoopInfo *LI;
     Function *F;
-    const tsar::DelinearizeInfo *DI;
-    const tsar::GlobalOptions *GO;
+    TargetLibraryInfo *TLI = nullptr;
+    const tsar::DelinearizeInfo *DI = nullptr;
+    const tsar::GlobalOptions *GO = nullptr;
+    const tsar::AliasTree *AT = nullptr;
+    const tsar::SpanningTreeRelation<const tsar::AliasTree *> *STR = nullptr;
+    const tsar::DFRegionInfo *DFI = nullptr;
+    const DefinedMemoryPass *DMP = nullptr;
+    bool AllowNotPromotedAnalysis = false;
 
     /// Subscript - This private struct represents a pair of subscripts from
     /// a pair of potentially multi-dimensional array references. We use a
