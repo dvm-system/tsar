@@ -394,7 +394,20 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
     const MemoryLocation &Src, const MemoryLocation Dst,
     trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps) {
   auto LoopDepth = L.getLoopDepth();
-  for (unsigned OuterDepth = 1; OuterDepth < LoopDepth; ++OuterDepth) {
+  if (Dep.getConfusedLevels() >= LoopDepth) {
+    LLVM_DEBUG(dbgs() << "[PRIVATE]: assume confused dependence"
+      " (confused levels " << Dep.getConfusedLevels() << ")\n");
+    DependenceImp::Descriptor Dptr;
+    Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+    trait::Dependence::Flag Flag = trait::Dependence::ConfusedCause |
+      trait::Dependence::LoadStoreCause | trait::Dependence::May;
+    updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
+    updateDependence(mAliasTree->find(Dst), Dptr, Flag, nullptr, Deps);
+    return;
+  }
+  for (unsigned OuterDepth =
+       Dep.getConfusedLevels() > 0 ? Dep.getConfusedLevels() : 1;
+       OuterDepth < LoopDepth; ++OuterDepth) {
     auto Dir = Dep.getDirection(OuterDepth);
     if (Dir != Dependence::DVEntry::EQ && Dir != Dependence::DVEntry::ALL &&
         Dir != Dependence::DVEntry::LE && Dir != Dependence::DVEntry::GE) {
@@ -498,22 +511,34 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
           Dptr.set<trait::Flow, trait::Anti, trait::Output>();
           updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
         } else {
-          if (auto D = mDepInfo->depends(*SrcItr, *DstItr, true)) {
+          if (!(*SrcItr)->mayWriteToMemory() &&
+              !(*DstItr)->mayWriteToMemory()) {
+            LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
+            continue;
+          }
+          unsigned short ConfusedLevels;
+          auto D = mDepInfo->depends(*SrcItr, *DstItr, true, &ConfusedLevels);
+          if (D) {
             LLVM_DEBUG(
               dbgs() << "[PRIVATE]: dependence found: ";
               TSAR_LLVM_DUMP(D->dump(dbgs()));
               TSAR_LLVM_DUMP((**SrcItr).dump());
               TSAR_LLVM_DUMP((**DstItr).dump());
             );
-            if (!D->isAnti() && !D->isFlow() && !D->isOutput()) {
-              LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
-              continue;
-            }
             // Do not use Dependence::isLoopIndependent() to check loop
             // independent dependencies. This method returns `may` instead of
             // `must`. This means that if it returns `true` than dependency
             // may be loop-carried or may arise inside a single iteration.
             insertDependence(*D, Src, Dst, trait::Dependence::No, *L, Deps);
+          } else if (L->getLoopDepth() <= ConfusedLevels) {
+            LLVM_DEBUG(dbgs() << "[PRIVATE]: assume confused dependence"
+              " (confused levels " << ConfusedLevels << ")\n");
+            DependenceImp::Descriptor Dptr;
+            Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+            trait::Dependence::Flag Flag = trait::Dependence::ConfusedCause |
+              trait::Dependence::LoadStoreCause | trait::Dependence::May;
+            updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
+            updateDependence(mAliasTree->find(Dst), Dptr, Flag, nullptr, Deps);
           }
         }
       }

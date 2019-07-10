@@ -797,7 +797,7 @@ unsigned DependenceInfo::mapDstLoop(const Loop *DstLoop) const {
 
 // Returns true if Expression is loop invariant in LoopNest.
 bool DependenceInfo::isLoopInvariant(const SCEV *Expression,
-                                     const Loop *LoopNest) const {
+    const Loop *LoopNest, short unsigned *ConfusedLevels = nullptr) const {
   if (!LoopNest)
     return true;
   if (AllowNotPromotedAnalysis) {
@@ -807,11 +807,17 @@ bool DependenceInfo::isLoopInvariant(const SCEV *Expression,
     assert(Itr != DMP->getDefInfo().end() &&
       "Def-use set must be available for a loop!");
     auto &DUS = Itr->get<DefUseSet>();
-    return tsar::isLoopInvariant(Expression, LoopNest, *TLI, *SE, *DUS, *AT, *STR) &&
-      isLoopInvariant(Expression, LoopNest->getParentLoop());
+    if (!tsar::isLoopInvariant(Expression, LoopNest, *TLI, *SE, *DUS, *AT, *STR)) {
+      if (ConfusedLevels)
+        *ConfusedLevels = LoopNest->getLoopDepth();
+      return false;
+    }
+  } else if (!SE->isLoopInvariant(Expression, LoopNest)) {
+    if (ConfusedLevels)
+      *ConfusedLevels = LoopNest->getLoopDepth();
+    return false;
   }
-  return SE->isLoopInvariant(Expression, LoopNest) &&
-    isLoopInvariant(Expression, LoopNest->getParentLoop());
+  return isLoopInvariant(Expression, LoopNest->getParentLoop(), ConfusedLevels);
 }
 
 
@@ -906,10 +912,11 @@ void DependenceInfo::removeMatchingExtensions(Subscript *Pair) {
 // Examine the scev and return true iff it's linear.
 // Collect any loops mentioned in the set of "Loops".
 bool DependenceInfo::checkSrcSubscript(const SCEV *Src, const Loop *LoopNest,
-                                       SmallBitVector &Loops) {
+                                       SmallBitVector &Loops,
+                                       short unsigned *ConfusedLevels) {
   const SCEVAddRecExpr *AddRec = dyn_cast<SCEVAddRecExpr>(Src);
   if (!AddRec)
-    return isLoopInvariant(Src, LoopNest);
+    return isLoopInvariant(Src, LoopNest, ConfusedLevels);
   const SCEV *Start = AddRec->getStart();
   const SCEV *Step = AddRec->getStepRecurrence(*SE);
   const SCEV *UB = SE->getBackedgeTakenCount(AddRec->getLoop());
@@ -920,10 +927,21 @@ bool DependenceInfo::checkSrcSubscript(const SCEV *Src, const Loop *LoopNest,
         return false;
     }
   }
-  if (!isLoopInvariant(Step, LoopNest))
-    return false;
+  if (!isLoopInvariant(Step, LoopNest, ConfusedLevels))
+    if (!ConfusedLevels || *ConfusedLevels > LoopNest->getLoopDepth())
+      return false;
   Loops.set(mapSrcLoop(AddRec->getLoop()));
-  return checkSrcSubscript(Start, LoopNest, Loops);
+  if (ConfusedLevels) {
+    short unsigned Level = 0;
+    auto Res = checkSrcSubscript(Start, LoopNest, Loops, &Level);
+    // If 'Res' is 'false' and 'Level > 0' then checkSrcSubscript() failed
+    // due to check of loop invariant. So, we update `ConfusedLevels`
+    // if necessary. Otherwise we set it to '0'.
+    if (!Res && (Level == 0 || Level > *ConfusedLevels))
+      *ConfusedLevels = Level;
+    return Res;
+  }
+  return checkSrcSubscript(Start, LoopNest, Loops, ConfusedLevels);
 }
 
 
@@ -931,10 +949,11 @@ bool DependenceInfo::checkSrcSubscript(const SCEV *Src, const Loop *LoopNest,
 // Examine the scev and return true iff it's linear.
 // Collect any loops mentioned in the set of "Loops".
 bool DependenceInfo::checkDstSubscript(const SCEV *Dst, const Loop *LoopNest,
-                                       SmallBitVector &Loops) {
+                                       SmallBitVector &Loops,
+                                       short unsigned *ConfusedLevels) {
   const SCEVAddRecExpr *AddRec = dyn_cast<SCEVAddRecExpr>(Dst);
   if (!AddRec)
-    return isLoopInvariant(Dst, LoopNest);
+    return isLoopInvariant(Dst, LoopNest, ConfusedLevels);
   const SCEV *Start = AddRec->getStart();
   const SCEV *Step = AddRec->getStepRecurrence(*SE);
   const SCEV *UB = SE->getBackedgeTakenCount(AddRec->getLoop());
@@ -945,10 +964,21 @@ bool DependenceInfo::checkDstSubscript(const SCEV *Dst, const Loop *LoopNest,
         return false;
     }
   }
-  if (!isLoopInvariant(Step, LoopNest))
-    return false;
+  if (!isLoopInvariant(Step, LoopNest, ConfusedLevels))
+    if (!ConfusedLevels || *ConfusedLevels > LoopNest->getLoopDepth())
+      return false;
   Loops.set(mapDstLoop(AddRec->getLoop()));
-  return checkDstSubscript(Start, LoopNest, Loops);
+  if (ConfusedLevels) {
+    short unsigned Level = 0;
+    auto Res = checkDstSubscript(Start, LoopNest, Loops, &Level);
+    // If 'Res' is 'false' and 'Level > 0' then checkDstSubscript() failed
+    // due to check of loop invariant. So, we update `ConfusedLevels`
+    // if necessary. Otherwise we set it to '0'.
+    if (!Res && (Level == 0 || Level > *ConfusedLevels))
+      *ConfusedLevels = Level;
+    return Res;
+  }
+  return checkDstSubscript(Start, LoopNest, Loops, ConfusedLevels);
 }
 
 
@@ -958,13 +988,28 @@ bool DependenceInfo::checkDstSubscript(const SCEV *Dst, const Loop *LoopNest,
 DependenceInfo::Subscript::ClassificationKind
 DependenceInfo::classifyPair(const SCEV *Src, const Loop *SrcLoopNest,
                              const SCEV *Dst, const Loop *DstLoopNest,
-                             SmallBitVector &Loops) {
+                             SmallBitVector &Loops,
+                             short unsigned *ConfusedLevels) {
   SmallBitVector SrcLoops(MaxLevels + 1);
   SmallBitVector DstLoops(MaxLevels + 1);
-  if (!checkSrcSubscript(Src, SrcLoopNest, SrcLoops))
+  short unsigned SrcConfusedLevels = 0, DstConfusedLevels = 0;
+  auto SrcCheck =
+    checkSrcSubscript(Src, SrcLoopNest, SrcLoops, &SrcConfusedLevels);
+  auto DstCheck =
+    checkDstSubscript(Dst, DstLoopNest, DstLoops, &DstConfusedLevels);
+  auto Level = SrcConfusedLevels > DstConfusedLevels ?
+    SrcConfusedLevels : DstConfusedLevels;
+  // If some of checks has failed because some of loop invariant checks
+  // failed and there is common loop nest for which these checks not
+  // failed, we consider subscripts as liner and remember depth of the
+  // successfully checked loop nest.
+  if ((!SrcCheck || !DstCheck) &&
+      (!ConfusedLevels || Level == 0 ||
+       Level > SrcLoopNest->getLoopDepth() ||
+       Level > DstLoopNest->getLoopDepth()))
     return Subscript::NonLinear;
-  if (!checkDstSubscript(Dst, DstLoopNest, DstLoops))
-    return Subscript::NonLinear;
+  if (ConfusedLevels)
+    *ConfusedLevels = Level;
   Loops = SrcLoops;
   Loops |= DstLoops;
   unsigned N = Loops.count();
@@ -3449,7 +3494,10 @@ static void dumpSmallBitVector(SmallBitVector &BV) {
 // up to date with respect to this routine.
 std::unique_ptr<Dependence>
 DependenceInfo::depends(Instruction *Src, Instruction *Dst,
-                        bool PossiblyLoopIndependent) {
+                        bool PossiblyLoopIndependent,
+                        unsigned short *ConfusedLevels) {
+  if (ConfusedLevels)
+    *ConfusedLevels = 0;
 
   if (Src == Dst)
     PossiblyLoopIndependent = false;
@@ -3515,10 +3563,13 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
     Pair[P].GroupLoops.resize(MaxLevels + 1);
     Pair[P].Group.resize(Pairs);
     removeMatchingExtensions(&Pair[P]);
+    unsigned short Levels = 0;
     Pair[P].Classification =
       classifyPair(Pair[P].Src, LI->getLoopFor(Src->getParent()),
                    Pair[P].Dst, LI->getLoopFor(Dst->getParent()),
-                   Pair[P].Loops);
+                   Pair[P].Loops, &Levels);
+    if (Result.ConfusedLevels < Levels)
+      Result.ConfusedLevels = Levels;
     Pair[P].GroupLoops = Pair[P].Loops;
     Pair[P].Group.set(P);
     LLVM_DEBUG(dbgs() << "    subscript " << P << "\n");
@@ -3528,6 +3579,8 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
     LLVM_DEBUG(dbgs() << "\tloops = ");
     LLVM_DEBUG(dumpSmallBitVector(Pair[P].Loops));
   }
+  if (ConfusedLevels)
+    *ConfusedLevels = Result.ConfusedLevels;
 
   SmallBitVector Separable(Pairs);
   SmallBitVector Coupled(Pairs);
@@ -3729,10 +3782,13 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
                           Constraints, Result.Consistent)) {
               LLVM_DEBUG(dbgs() << "\t    Changed\n");
               ++DeltaPropagations;
+              unsigned short Levels = 0;
               Pair[SJ].Classification =
                 classifyPair(Pair[SJ].Src, LI->getLoopFor(Src->getParent()),
                              Pair[SJ].Dst, LI->getLoopFor(Dst->getParent()),
-                             Pair[SJ].Loops);
+                             Pair[SJ].Loops, &Levels);
+              if (Result.ConfusedLevels < Levels)
+                Result.ConfusedLevels = Levels;
               switch (Pair[SJ].Classification) {
               case Subscript::ZIV:
                 LLVM_DEBUG(dbgs() << "ZIV\n");
@@ -3752,6 +3808,8 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
               }
             }
           }
+          if (ConfusedLevels)
+            *ConfusedLevels = Result.ConfusedLevels;
         }
       }
 

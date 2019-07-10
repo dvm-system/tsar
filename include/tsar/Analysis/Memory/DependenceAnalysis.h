@@ -172,6 +172,15 @@ inline namespace tsar_impl {
     /// source and destination of the dependence.
     virtual unsigned getLevels() const { return 0; }
 
+    /// getConfusedLevels() - Returns the number of outermost common loops
+    /// surrounding the source and destination of the dependence for which
+    /// these dependence is confused.
+    ///
+    /// Note, that for these loops presented results of analysis may be
+    /// invalid and dependence should conservarively assumed by the user
+    /// manually.
+    virtual unsigned getConfusedLevels() const { return 0; }
+
     /// getDirection - Returns the direction associated with a particular
     /// level.
     virtual unsigned getDirection(unsigned Level) const { return DVEntry::ALL; }
@@ -253,6 +262,15 @@ inline namespace tsar_impl {
     /// source and destination of the dependence.
     unsigned getLevels() const override { return Levels; }
 
+    /// getConfusedLevels() - Returns the number of outermost common loops
+    /// surrounding the source and destination of the dependence for which
+    /// these dependence is confused.
+    ///
+    /// Note, that for these loops presented results of analysis may be
+    /// invalid and dependence should conservarively assumed by the user
+    /// manually.
+    virtual unsigned getConfusedLevels() const { return ConfusedLevels; }
+
     /// getDirection - Returns the direction associated with a particular
     /// level.
     unsigned getDirection(unsigned Level) const override;
@@ -280,6 +298,7 @@ inline namespace tsar_impl {
 
   private:
     unsigned short Levels;
+    unsigned short ConfusedLevels = 0;
     bool LoopIndependent;
     bool Consistent; // Init to true, then refine.
     std::unique_ptr<DVEntry[]> DV;
@@ -307,9 +326,15 @@ inline namespace tsar_impl {
     /// The flag PossiblyLoopIndependent should be set by the caller
     /// if it appears that control flow can reach from Src to Dst
     /// without traversing a loop back edge.
+    ///
+    /// If 'ConfusedLevels' is not `nullptr` it will be set to the number of
+    /// outermost common loops surrounding the source and destination of
+    /// the dependence for which these dependence is confused (for example
+    /// due to impossibility to check that some expressions is loop invariant).
     std::unique_ptr<Dependence> depends(Instruction *Src,
                                         Instruction *Dst,
-                                        bool PossiblyLoopIndependent);
+                                        bool PossiblyLoopIndependent,
+                                        unsigned short *ConfusedLevels = nullptr);
 
     /// getSplitIteration - Give a dependence that's splittable at some
     /// particular level, return the iteration that should be used to split
@@ -551,7 +576,12 @@ inline namespace tsar_impl {
 
     /// isLoopInvariant - Returns true if Expression is loop invariant
     /// in LoopNest.
-    bool isLoopInvariant(const SCEV *Expression, const Loop *LoopNest) const;
+    ///
+    /// If `ConfusedLevels` is not `nullptr` and the expression is note invariant
+    /// in the whole `LoopNest` then this variable will be set to the innermost
+    /// loop in the nest in which this check fails.
+    bool isLoopInvariant(const SCEV *Expression, const Loop *LoopNest,
+      short unsigned *ConfusedLevels) const;
 
     /// Makes sure all subscript pairs share the same integer type by
     /// sign-extending as necessary.
@@ -575,13 +605,15 @@ inline namespace tsar_impl {
     /// linear. Collect the set of loops mentioned by Src.
     bool checkSrcSubscript(const SCEV *Src,
                            const Loop *LoopNest,
-                           SmallBitVector &Loops);
+                           SmallBitVector &Loops,
+                           short unsigned *ConfusedLevels = nullptr);
 
     /// checkDstSubscript - Examines the SCEV Dst, returning true iff it's
     /// linear. Collect the set of loops mentioned by Dst.
     bool checkDstSubscript(const SCEV *Dst,
                            const Loop *LoopNest,
-                           SmallBitVector &Loops);
+                           SmallBitVector &Loops,
+                           short unsigned *ConfusedLevels = nullptr);
 
     /// isKnownPredicate - Compare X and Y using the predicate Pred.
     /// Basically a wrapper for SCEV::isKnownPredicate,
@@ -617,11 +649,15 @@ inline namespace tsar_impl {
     /// classifyPair - Examines the subscript pair (the Src and Dst SCEVs)
     /// and classifies it as either ZIV, SIV, RDIV, MIV, or Nonlinear.
     /// Collects the associated loops in a set.
+    ///
+    /// If 'ConfusedLevels' is not null set it to the depth of innermost
+    /// loop nest for which subscripts may be non-linear.
     Subscript::ClassificationKind classifyPair(const SCEV *Src,
                                            const Loop *SrcLoopNest,
                                            const SCEV *Dst,
                                            const Loop *DstLoopNest,
-                                           SmallBitVector &Loops);
+                                           SmallBitVector &Loops,
+                                           short unsigned *ConfusedLevels = nullptr);
 
     /// testZIV - Tests the ZIV subscript pair (Src and Dst) for dependence.
     /// Returns true if any possible dependence is disproved.

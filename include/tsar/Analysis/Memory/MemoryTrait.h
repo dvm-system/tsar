@@ -88,8 +88,12 @@ public:
     /// At least one of dependence causes is unknown instruction which accesses
     /// a memory.
     UnknownCause = 1u << 3,
+    /// At least one of dependence causes is impossibility  to analyze some of
+    /// surrounding loop nests (for example, unable to check that some
+    /// expressions is loop invariant).
+    ConfusedCause = 1u << 4,
     /// Distance is unknown.
-    UnknownDistance = 1u << 4,
+    UnknownDistance = 1u << 5,
     LLVM_MARK_AS_BITMASK_ENUM(UnknownDistance)
   };
 
