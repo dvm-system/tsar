@@ -172,7 +172,8 @@ const Array *DelinearizeInfo::findArray(const Value *Ptr,
 void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
   assert(ArrayInfo.isDelinearized() && "Array must be delinearized!");
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: simplify subscripts for "
-                    << ArrayInfo.getBase()->getName() << "\n");
+                    << (ArrayInfo.isAddressOfVariable() ? "address of " : "")
+                    << "base " << ArrayInfo.getBase()->getName() << "\n");
   auto LastConstDim = ArrayInfo.getNumberOfDims();
   for (LastConstDim; LastConstDim > 0; --LastConstDim)
     if (!isa<SCEVConstant>(ArrayInfo.getDimSize(LastConstDim - 1)))
@@ -238,7 +239,8 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
 
 void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: compute sizes of dimensions for "
-                    << ArrayInfo.getBase()->getName() << "\n");
+                    << (ArrayInfo.isAddressOfVariable() ? "address of " : "")
+                    << "base " << ArrayInfo.getBase()->getName() << "\n");
   auto NumberOfDims = ArrayInfo.getNumberOfDims();
   auto LastUnknownDim = NumberOfDims;
   if (NumberOfDims == 0) {
@@ -347,6 +349,10 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
 }
 
 void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
+  if (auto *AI = dyn_cast<AllocaInst>(ArrayInfo.getBase()))
+    if (!ArrayInfo.isAddressOfVariable() &&
+        !AI->isArrayAllocation() && !AI->getAllocatedType()->isArrayTy())
+      return;
   SmallVector<DIMemoryLocation, 1> DILocs;
   // If base is an address of a memory which contains address of this array
   // we search dbg.declare and dbg.address only. However, if base is an
@@ -498,7 +504,8 @@ void DelinearizationPass::collectArrays(Function &F) {
     auto CurrItr = Itr++;
     if ((*CurrItr)->getNumberOfDims() == 0 && !(*CurrItr)->hasRangeRef()) {
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: not an array "
-                        << (*CurrItr)->getBase()->getName() << "\n");
+        << ((*CurrItr)->isAddressOfVariable() ? "address of " : "")
+        << "base " << (*CurrItr)->getBase()->getName() << "\n");
       mDelinearizeInfo.getArrays().erase(CurrItr);
     }
   }
