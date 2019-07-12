@@ -98,7 +98,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
       for (auto PI : mPrintPasses)
         Passes.add(createFunctionPassPrinter(PI, errs()));
   };
-  auto addOutput = [&Passes, this]() {
+  auto addOutput = [&Passes, this](ProcessingStep CurrentStep) {
+    if (!(CurrentStep & mPrintSteps))
+      return;
     for (auto PI : mOutputPasses) {
       if (!PI->getNormalCtor()) {
         /// TODO (kainadnr@gmail.com): add a name of executable before
@@ -155,7 +157,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   if (!mAnalysisUse.empty())
     Passes.add(createAnalysisReader(mAnalysisUse));
   addPrint(BeforeTfmAnalysis);
-  addOutput();
+  addOutput(BeforeTfmAnalysis);
   // Perform SROA and repeat variable privatization. After that reduction and
   // induction recognition will be performed. Flow/anti/output dependencies
   // also analyses.
@@ -175,7 +177,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterSroaAnalysis);
-  addOutput();
+  addOutput(AfterSroaAnalysis);
   // Perform loop rotation to enable reduction recognition if for-loops.
   Passes.add(createLockDIMemoryTraitPass(is<trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
@@ -186,7 +188,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
-  addOutput();
+  addOutput(AfterLoopRotateAnalysis);
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }
