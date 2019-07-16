@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Support/Debug.h>
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Dominators.h>
@@ -48,16 +49,19 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
   assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
     "Def-use set must not be null!");
   auto &DefUse = DefItr->get<DefUseSet>();
+  auto &DL = F.getParent()->getDataLayout();
   // If inter-procedural analysis is not performed conservative assumption for
   // live variable analysis should be made. All locations except 'alloca' are
   // considered as alive before exit from this function.
   MemorySet<MemoryLocation> MayLives;
   for (const MemoryLocation &Loc : DefUse->getDefs()) {
-    if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
+    assert(Loc.Ptr && "Pointer to location must not be null!");
+    if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
       MayLives.insert(Loc);
   }
   for (const MemoryLocation &Loc : DefUse->getMayDefs()) {
-    if (!Loc.Ptr || !isa<AllocaInst>(Loc.Ptr))
+    assert(Loc.Ptr && "Pointer to location must not be null!");
+    if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
       MayLives.insert(Loc);
   }
   LS->setOut(std::move(MayLives));
