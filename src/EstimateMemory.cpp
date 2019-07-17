@@ -894,13 +894,14 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL, DT);
   DenseSet<const Value *> AccessedMemory;
-  auto addLocation = [&AccessedMemory, this](const Instruction &/*I*/,
-      MemoryLocation &&Loc, unsigned Idx, AccessInfo IsRead = AccessInfo::May,
-      AccessInfo IsWrite = AccessInfo::May) {
+  auto addLocation = [&AccessedMemory, this](MemoryLocation &&Loc) {
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(Loc);
   };
-  for_each_memory(F, TLI, addLocation,
+  for_each_memory(F, TLI, [&addLocation](
+    Instruction &, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
+      addLocation(std::move(Loc));
+  },
     [this](Instruction &I, AccessInfo, AccessInfo) {
       mAliasTree->addUnknown(&I);
   });
@@ -912,8 +913,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // TODO (kaniandr@gmail.com): `AccessedMemory` does not contain locations
   // which have been added implicitly. For example, if stripMemoryLevel() has
   // been called.
-  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](
-      const Instruction &I, const Value *V) {
+  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](const Value *V) {
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
     if (isa<Constant>(V) && cast<Constant>(V)->isNullValue())
@@ -926,14 +926,15 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       return;
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
     assert(PointeeTy && "Pointee type must not be null!");
-    addLocation(I, MemoryLocation(V, PointeeTy->isSized() ?
-      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize),
-      I.getNumOperands());
+    addLocation(MemoryLocation(V, PointeeTy->isSized() ?
+      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
   };
+  for (auto &Arg : F.args())
+    addPointeeIfNeed(&Arg);
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
-    addPointeeIfNeed(I, &I);
+    addPointeeIfNeed(&I);
     for (auto *Op : make_range(I.value_op_begin(), I.value_op_end()))
-      addPointeeIfNeed(I, Op);
+      addPointeeIfNeed(Op);
   }
   return false;
 }
