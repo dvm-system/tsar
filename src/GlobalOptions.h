@@ -26,6 +26,12 @@ struct GlobalOptions {
   bool IsSafeTypeCast = true;
   /// Assume that subscript expression is in bounds value of an array dimension.
   bool InBoundsSubscripts = false;
+  /// Perform analysis of library functions.
+  ///
+  /// Note, that if this attribute is set to 'false' this does not mean that
+  /// all library functions are not analyzed. Some analysis may be performed
+  /// to ensure correctness of other results.
+  bool AnalyzeLibFunc = true;
 };
 }
 

@@ -114,6 +114,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoSafeTypeCast;
   llvm::cl::opt<bool> InBoundsSubscripts;
   llvm::cl::opt<bool> NoInBoundsSubscripts;
+  llvm::cl::opt<bool> AnalyzeLibFunc;
+  llvm::cl::opt<bool> NoAnalyzeLibFunc;
   llvm::cl::opt<std::string> AnalysisUse;
 
   llvm::cl::OptionCategory TransformCategory;
@@ -197,6 +199,10 @@ Options::Options() :
     cl::desc("Assume that subscript expression is in bounds value of an array dimension")),
   NoInBoundsSubscripts("fno-inbounds-subscripts", cl::cat(AnalysisCategory),
     cl::desc("Check that subscript expression is in bounds value of an array dimension(default)")),
+  AnalyzeLibFunc("fanalyze-library-functions", cl::cat(AnalysisCategory),
+    cl::desc("Perform analysis of library functions(default)")),
+  NoAnalyzeLibFunc("fno-analyze-library-functions", cl::cat(AnalysisCategory),
+    cl::desc("Do not perform analysis of library functions")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -435,6 +441,13 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoInBoundsSubscripts.ArgStr);
     Options::get().InBoundsSubscripts.error(Msg);
+    exit(1);
+  }
+  getGlobalOptions()->AnalyzeLibFunc = Options::get().AnalyzeLibFunc;
+  if (Options::get().AnalyzeLibFunc && Options::get().NoAnalyzeLibFunc) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoAnalyzeLibFunc.ArgStr);
+    Options::get().AnalyzeLibFunc.error(Msg);
     exit(1);
   }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));

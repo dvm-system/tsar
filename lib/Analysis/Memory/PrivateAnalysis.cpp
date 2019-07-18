@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include "Attributes.h"
 #include "BitMemoryTrait.h"
 #include "tsar_config.h"
 #include "tsar_dbg_output.h"
@@ -84,6 +85,9 @@ INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
 
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  if (!GlobalOpts.AnalyzeLibFunc && hasFnAttr(F, AttrKind::LibFunc))
+    return false;
 #ifdef LLVM_DEBUG
   for (const BasicBlock &BB : F)
     assert((&F.getEntryBlock() == &BB || BB.getNumUses() > 0 )&&
@@ -1168,6 +1172,9 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
   auto &RInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto *F = cast<DFFunction>(RInfo.getTopLevelRegion())->getFunction();
+  if (!GlobalOpts.AnalyzeLibFunc && hasFnAttr(*F, AttrKind::LibFunc))
+    return;
   for_each_loop(LpInfo, [this, &OS, &RInfo, &DT, &GlobalOpts](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
     std::string Offset(L->getLoopDepth(), ' ');

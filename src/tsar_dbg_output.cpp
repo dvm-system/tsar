@@ -9,9 +9,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_dbg_output.h"
+#include "Attributes.h"
 #include "DIEstimateMemory.h"
 #include "DIMemoryLocation.h"
 #include "DIUnparser.h"
+#include "GlobalOptions.h"
 #include "tsar_pass.h"
 #include "SourceUnparserUtils.h"
 #include "tsar_utility.h"
@@ -224,6 +226,9 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  if (!GlobalOpts.AnalyzeLibFunc && tsar::hasFnAttr(F, tsar::AttrKind::LibFunc))
+    return false;
     mOut << "Printing analysis '" << mPassToPrint->getPassName()
       << "' for function '" << F.getName() << "':\n";
     getAnalysisID<Pass>(mPassToPrint->getTypeInfo()).

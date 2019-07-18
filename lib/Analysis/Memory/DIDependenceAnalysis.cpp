@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "Attributes.h"
 #include "BitMemoryTrait.h"
 #include "tsar_dbg_output.h"
 #include "DIEstimateMemory.h"
@@ -524,6 +525,10 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
 
 
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
+  releaseMemory();
+  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  if (!GlobalOpts.AnalyzeLibFunc && hasFnAttr(F, AttrKind::LibFunc))
+    return false;
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mAT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
@@ -691,6 +696,9 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
   auto &LpInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
+  if (!GlobalOpts.AnalyzeLibFunc &&
+      hasFnAttr(DIAT.getFunction(), AttrKind::LibFunc))
+    return;
   auto DWLang = getLanguage(DIAT.getFunction());
   if (!DWLang) {
     M->getContext().emitError(
