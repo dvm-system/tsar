@@ -84,10 +84,12 @@ void DelinearizeInfo::updateRangeCache() {
 
 namespace {
 template<class GEPItrT>
-void extractSubscriptsFromGEPs(
+bool extractSubscriptsFromGEPs(
     const GEPItrT &GEPBeginItr, const GEPItrT &GEPEndItr,
-    SmallVectorImpl<Value *> &Idxs) {
+    std::size_t NumberOfDims, SmallVectorImpl<Value *> &Idxs) {
   for (auto *GEP : make_range(GEPBeginItr, GEPEndItr)) {
+    if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
+      return false;
     unsigned NumOperands = GEP->getNumOperands();
     if (NumOperands == 2) {
       Idxs.push_back(GEP->getOperand(1));
@@ -99,10 +101,13 @@ void extractSubscriptsFromGEPs(
         Idxs.push_back(GEP->getOperand(1));
       }
       for (unsigned I = 2; I < NumOperands; ++I) {
+        if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
+          return false;
         Idxs.push_back(GEP->getOperand(I));
       }
     }
   }
+  return true;
 }
 
 std::pair<Value *, bool> GetUnderlyingArray(Value *Ptr, const DataLayout &DL) {
@@ -457,10 +462,11 @@ void DelinearizationPass::collectArrays(Function &F) {
         GEPs.push_back(GEP);
         GEP = dyn_cast<GEPOperator>(GEP->getPointerOperand());
       }
-      SmallVector<Value *, 4> SubscriptValues;
-      extractSubscriptsFromGEPs(GEPs.rbegin(), GEPs.rend(), SubscriptValues);
       auto &Range = ArrayPtr->addRange(const_cast<Value *>(Loc.Ptr));
-      if (GEP)
+      SmallVector<Value *, 4> SubscriptValues;
+      bool UseAllSubscripts = extractSubscriptsFromGEPs(
+        GEPs.rbegin(), GEPs.rend(), NumberOfDims, SubscriptValues);
+      if (GEP || !UseAllSubscripts)
         Range.setProperty(Array::Range::IgnoreGEP);
       // In some cases zero subscript is dropping out by optimization passes.
       // So, we try to add extra zero subscripts later. We add subscripts for
