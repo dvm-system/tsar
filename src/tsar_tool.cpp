@@ -354,7 +354,7 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
   if (Options::get().PrintStep.empty()) {
     mPrintSteps = DefaultQueryManager::allSteps();
   } else {
-    if (!mPrint)
+    if (!mPrint && mOutputPasses.empty())
       errs() << "WARNING: The -print-step option is ignored when "
         "passes to be printed are not set.\n";
     mPrintSteps = DefaultQueryManager::InitialStep;
