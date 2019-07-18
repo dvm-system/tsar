@@ -335,6 +335,13 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
     MDSearch MDS) {
   assert(V && "Value must not be null!");
   DILocs.clear();
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    if ((MDS == MDSearch::Any || MDS == MDSearch::ValueOfVariable) &&
+        findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
+      return DILocs.back();
+    else
+      return None;
+  }
   if (MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) {
     auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
     if (!AddrUses.empty()) {
@@ -354,15 +361,7 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
       return None;
     }
   }
-  if (MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
-    return None;
-  if (auto GV = dyn_cast<GlobalVariable>(V)) {
-    if (findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
-      return DILocs.back();
-    else
-      return None;
-  }
-  if (!DT)
+  if (!DT || MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
     return None;
   SmallVector<Instruction *, 8> Users;
   // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
