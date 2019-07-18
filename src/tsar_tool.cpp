@@ -334,6 +334,7 @@ inline static CheckQueryManager * getCheckQM() {
 }
 
 void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
+  mPrint = false;
   mPrintPasses = Options::get().PrintOnly;
   if (!mPrintPasses.empty()) {
     mPrint = true;
