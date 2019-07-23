@@ -698,6 +698,38 @@ bool isLoadOrStore(const Instruction *I) {
   return false;
 }
 
+/// Return true if LHS and RHS are have no recurrence expressions
+/// or these expressions are in the same enclosing nest.
+static bool isEnclosingNestAddRec(const SCEV *LHS, const SCEV *RHS) {
+  SmallPtrSet<const Loop *, 8> LoopsUsed;
+  struct FindUsedLoops {
+    FindUsedLoops(SmallPtrSetImpl<const Loop *> &LoopsUsed)
+        : LoopsUsed(LoopsUsed) {}
+    SmallPtrSetImpl<const Loop *> &LoopsUsed;
+    bool follow(const SCEV *S) {
+      if (auto *AR = dyn_cast<SCEVAddRecExpr>(S))
+        LoopsUsed.insert(AR->getLoop());
+      return true;
+    }
+
+    bool isDone() const { return false; }
+  };
+
+  FindUsedLoops F(LoopsUsed);
+  SCEVTraversal<FindUsedLoops>(F).visitAll(LHS);
+  SCEVTraversal<FindUsedLoops>(F).visitAll(RHS);
+  auto isParent = [](const Loop *L, const Loop *Parent) {
+    while (L->getParentLoop() && L != Parent)
+      L = L->getParentLoop();
+    return L == Parent;
+  };
+  for (auto *L1 : LoopsUsed)
+    for (auto *L2 : LoopsUsed) {
+      if (!isParent(L1, L2) && !isParent(L2, L1))
+        return false;
+    }
+  return true;
+}
 
 // Examines the loop nesting of the Src and Dst
 // instructions and establishes their shared loops. Sets the variables
@@ -1053,6 +1085,8 @@ bool DependenceInfo::isKnownPredicate(ICmpInst::Predicate Pred, const SCEV *X,
       }
     }
   }
+  if (!isEnclosingNestAddRec(X, Y))
+    return false;
   if (SE->isKnownPredicate(Pred, X, Y))
     return true;
   // If SE->isKnownPredicate can't prove the condition,
@@ -1229,7 +1263,8 @@ bool DependenceInfo::strongSIVtest(const SCEV *Coeff, const SCEV *SrcConst,
   ++StrongSIVapplications;
   assert(0 < Level && Level <= CommonLevels && "level out of range");
   Level--;
-
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(SrcConst, DstConst);
   LLVM_DEBUG(dbgs() << "\t    Delta = " << *Delta);
   LLVM_DEBUG(dbgs() << ", " << *Delta->getType() << "\n");
@@ -1363,6 +1398,8 @@ bool DependenceInfo::weakCrossingSIVtest(
   assert(0 < Level && Level <= CommonLevels && "Level out of range");
   Level--;
   Result.Consistent = false;
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(DstConst, SrcConst);
   LLVM_DEBUG(dbgs() << "\t    Delta = " << *Delta << "\n");
   NewConstraint.setLine(Coeff, Coeff, Delta, CurLoop);
@@ -1576,6 +1613,8 @@ bool DependenceInfo::exactSIVtest(const SCEV *SrcCoeff, const SCEV *DstCoeff,
   assert(0 < Level && Level <= CommonLevels && "Level out of range");
   Level--;
   Result.Consistent = false;
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(DstConst, SrcConst);
   LLVM_DEBUG(dbgs() << "\t    Delta = " << *Delta << "\n");
   NewConstraint.setLine(SrcCoeff, SE->getNegativeSCEV(DstCoeff),
@@ -1788,6 +1827,8 @@ bool DependenceInfo::weakZeroSrcSIVtest(const SCEV *DstCoeff,
   assert(0 < Level && Level <= MaxLevels && "Level out of range");
   Level--;
   Result.Consistent = false;
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(SrcConst, DstConst);
   NewConstraint.setLine(SE->getZero(Delta->getType()), DstCoeff, Delta,
                         CurLoop);
@@ -1897,6 +1938,8 @@ bool DependenceInfo::weakZeroDstSIVtest(const SCEV *SrcCoeff,
   assert(0 < Level && Level <= SrcLevels && "Level out of range");
   Level--;
   Result.Consistent = false;
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(DstConst, SrcConst);
   NewConstraint.setLine(SrcCoeff, SE->getZero(Delta->getType()), Delta,
                         CurLoop);
@@ -1977,6 +2020,8 @@ bool DependenceInfo::exactRDIVtest(const SCEV *SrcCoeff, const SCEV *DstCoeff,
   LLVM_DEBUG(dbgs() << "\t    DstConst = " << *DstConst << "\n");
   ++ExactRDIVapplications;
   Result.Consistent = false;
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(DstConst, SrcConst);
   LLVM_DEBUG(dbgs() << "\t    Delta = " << *Delta << "\n");
   const SCEVConstant *ConstDelta = dyn_cast<SCEVConstant>(Delta);
@@ -2122,6 +2167,8 @@ bool DependenceInfo::symbolicRDIVtest(const SCEV *A1, const SCEV *A2,
   const SCEV *N2 = collectUpperBound(Loop2, A1->getType());
   LLVM_DEBUG(if (N1) dbgs() << "\t    N1 = " << *N1 << "\n");
   LLVM_DEBUG(if (N2) dbgs() << "\t    N2 = " << *N2 << "\n");
+  if (!isEnclosingNestAddRec(C1, C2))
+    return false;
   const SCEV *C2_C1 = SE->getMinusSCEV(C2, C1);
   const SCEV *C1_C2 = SE->getMinusSCEV(C1, C2);
   LLVM_DEBUG(dbgs() << "\t    C2 - C1 = " << *C2_C1 << "\n");
@@ -2275,7 +2322,6 @@ bool DependenceInfo::testSIV(const SCEV *Src, const SCEV *Dst, unsigned &Level,
   llvm_unreachable("SIV test expected at least one AddRec");
   return false;
 }
-
 
 // testRDIV -
 // When we have a pair of subscripts of the form [c1 + a1*i] and [c2 + a2*j]
@@ -2442,7 +2488,8 @@ bool DependenceInfo::gcdMIVtest(const SCEV *Src, const SCEV *Dst,
     Coefficients = AddRec->getStart();
   }
   const SCEV *DstConst = Coefficients;
-
+  if (!isEnclosingNestAddRec(SrcConst, DstConst))
+    return false;
   APInt ExtraGCD = APInt::getNullValue(BitWidth);
   const SCEV *Delta = SE->getMinusSCEV(DstConst, SrcConst);
   LLVM_DEBUG(dbgs() << "    Delta = " << *Delta << "\n");
@@ -2613,6 +2660,8 @@ bool DependenceInfo::banerjeeMIVtest(const SCEV *Src, const SCEV *Dst,
   const SCEV *B0;
   CoefficientInfo *B = collectCoeffInfo(Dst, false, B0);
   BoundInfo *Bound = new BoundInfo[MaxLevels + 1];
+  if (!isEnclosingNestAddRec(A0, B0))
+    return false;
   const SCEV *Delta = SE->getMinusSCEV(B0, A0);
   LLVM_DEBUG(dbgs() << "\tDelta = " << *Delta << '\n');
 
