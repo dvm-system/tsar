@@ -42,7 +42,8 @@ void findAllDbgValues(SmallVectorImpl<DbgValueInst *> &DbgValues, Value *V) {
 }
 
 /// Computes a list of basic blocks which dominates a list of specified uses of
-/// a value `V` and contains some of `llvm.dbg.value` associated with `V`.
+/// a value `V` and contains some of `llvm.dbg.value` which associate value
+/// of `V` with a variable (not an address of a variable).
 DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>>
 findDomDbgValues(const Value *V, const DominatorTree &DT,
     ArrayRef<Instruction *> Users) {
@@ -50,7 +51,7 @@ findDomDbgValues(const Value *V, const DominatorTree &DT,
   findAllDbgValues(AllDbgValues, const_cast<Value *>(V));
   DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>> Dominators;
   for (auto *DVI : AllDbgValues) {
-    if (!DVI->getVariable())
+    if (!DVI->getVariable() || hasDeref(*DVI->getExpression()))
       continue;
     bool IsDbgDom = true;
     auto UI = Users.begin(), UE = Users.end();
@@ -86,7 +87,8 @@ findAliasBlocks(const Value * V, const DIMemoryLocation &Loc) {
     if (!DVI)
       continue;
     assert(DVI->getExpression() && "Expression must not be null!");
-    if (!mayAliasFragments(*DVI->getExpression(), *Loc.Expr))
+    if (hasDeref(*DVI->getExpression()) ||
+        !mayAliasFragments(*DIMemoryLocation::get(DVI).Expr, *Loc.Expr))
       continue;
     auto I = DVI->getIterator(), E = DVI->getParent()->end();
     for (; I != E; ++I) {
@@ -262,7 +264,8 @@ Optional<DIMemoryLocation> findMetadata(const Value *V,
       auto ReverseItr = I->getReverseIterator(), ReverseItrE = BB->rend();
       for (IsReached = false; ReverseItr != ReverseItrE; ++ReverseItr) {
         if (auto *DVI = dyn_cast<DbgValueInst>(&*ReverseItr))
-          if (DIMemoryLocation::get(DVI) == DILoc) {
+          if (!hasDeref(*DVI->getExpression()) &&
+              DIMemoryLocation::get(DVI) == DILoc) {
             if (DVI->getValue() == V)
               IsReached = true;
             break;
@@ -314,7 +317,7 @@ Optional<DIMemoryLocation> findMetadata(const Value *V,
             if (DILocBB == BB) {
               for (auto &Inst : *DILocBB)
                 if (auto DVI = dyn_cast<DbgValueInst>(&Inst))
-                  if (DVI->getValue() == V)
+                  if (DVI->getValue() == V && !hasDeref(*DVI->getExpression()))
                     if (DIMemoryLocation::get(DVI) == *DILocItr)
                       break;
                     else if (DIMemoryLocation::get(DVI) == *I)
@@ -382,6 +385,14 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
   }
   return findMetadata(V, Users, *DT, DILocs);
 }
+
+bool hasDeref(const DIExpression &Expr) {
+  for (auto I = Expr.expr_op_begin(), E = Expr.expr_op_end(); I != E; ++I)
+    if (I->getOp() == dwarf::DW_OP_deref || I->getOp() == dwarf::DW_OP_xderef)
+      return true;
+  return false;
+}
+
 
 bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
   if (LHS.getNumElements() != 3 || RHS.getNumElements() != 3)

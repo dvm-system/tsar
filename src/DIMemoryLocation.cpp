@@ -98,3 +98,19 @@ void DIMemoryLocation::getOffsets(
 bool DIMemoryLocation::isValid() const {
   return Var && Expr && Expr->isValid() && !Expr->isConstant();
 }
+
+DIMemoryLocation DIMemoryLocation::get(DbgInfoIntrinsic *Inst) {
+  assert(Inst && "Instruction must not be null!");
+  auto *Expr = Inst->getExpression();
+  assert(Expr && Expr->isValid() && "Expression must not be valid!");
+  if (auto Frag = Expr->getFragmentInfo())
+    Expr = DIExpression::get(Expr->getContext(),
+      { dwarf::DW_OP_LLVM_fragment, Frag->OffsetInBits, Frag->SizeInBits });
+  else
+    Expr = DIExpression::get(Expr->getContext(), {});
+  return {
+    llvm::cast_or_null<DIVariable>(Inst->getVariable()),
+    Expr,
+    Inst->getDebugLoc().get()
+  };
+}

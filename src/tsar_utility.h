@@ -385,6 +385,9 @@ bool findGlobalMetadata(const llvm::GlobalVariable *Var,
 bool mayAliasFragments(
   const llvm::DIExpression &LHS, const llvm::DIExpression &RHS);
 
+/// Return true if a specified expression contains dereference.
+bool hasDeref(const llvm::DIExpression &Expr);
+
 /// Specify kind of metadata which should be found.
 enum class MDSearch { AddressOfVariable, ValueOfVariable, Any };
 

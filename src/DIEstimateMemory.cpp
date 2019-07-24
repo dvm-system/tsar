@@ -1236,11 +1236,14 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
     auto Loc = DIMemoryLocation::get(&I);
     if (mSmallestFragments.count(Loc))
       continue;
-    // Ignore expressions other than empty or fragment. Such expressions may
-    // be created after some transform passes when llvm.dbg.declare is
-    // replaced with llvm.dbg.value.
-    if (!(Loc.Expr->getNumElements() == 0 ||
-          (Loc.Expr->getNumElements() == 3 && Loc.Expr->getFragmentInfo()))) {
+    // Ignore expression if it represent address of a variable instead of
+    // a value: call void @llvm.dbg.value(
+    //    metadata i32* %X, metadata !20, metadata !DIExpression(DW_OP_deref)).
+    // %X stores an address of a variable !20, so there is no insurance that
+    // !20 is not overlapped with some other memory locations.
+    // Such expressions may be created after some transform passes when
+    // llvm.dbg.declare is replaced with llvm.dbg.value.
+    if (hasDeref(*cast<DbgValueInst>(I).getExpression())) {
       auto VarFragments = mVarToFragments.find(Loc.Var);
       if (VarFragments == mVarToFragments.end())
         continue;
@@ -1750,7 +1753,8 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
       auto ConstV = llvm::ConstantAsMetadata::get(
         llvm::ConstantInt::get(Type::getInt64Ty(Ctx), ConstInt->getValue()));
       MD = MDNode::get(Ctx, { ConstV });
-    } else if (auto DILoc = findMetadata(IntExpr, DILocs, &DT)) {
+    } else if (auto DILoc = findMetadata(
+        IntExpr, DILocs, &DT, MDSearch::ValueOfVariable)) {
       MD = DILoc->Var;
     } else if (isa<Instruction>(V)) {
       Loc = cast<Instruction>(V).getDebugLoc().get();
