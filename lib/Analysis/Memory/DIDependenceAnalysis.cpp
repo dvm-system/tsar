@@ -280,6 +280,7 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
         continue;
       auto DIMTraitItr = Pool.find_as(MD);
       if (DIMTraitItr == Pool.end() ||
+          DIMTraitItr->getMemory()->isOriginal() ||
           !DIMTraitItr->getMemory()->emptyBinding() ||
           !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
           isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
