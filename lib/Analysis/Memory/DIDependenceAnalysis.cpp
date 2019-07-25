@@ -300,18 +300,31 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
 void combineTraits(DIAliasTrait &DIATrait) {
   assert(!DIATrait.empty() && "List of traits must not be empty!");
   if (DIATrait.size() == 1) {
-    DIATrait = **DIATrait.begin();
+    auto DIMTraitItr = *DIATrait.begin();
+    DIATrait = *DIMTraitItr;
+    if (!(DIMTraitItr->is<trait::ExplicitAccess>() &&
+         !DIMTraitItr->is<trait::NoAccess>() &&
+         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::ExplicitAccess>();
     return;
   }
   BitMemoryTrait CombinedTrait;
-  for (auto &DIMTraitItr : DIATrait)
+  bool ExplicitAccess = false;
+  for (auto &DIMTraitItr : DIATrait) {
     CombinedTrait &= *DIMTraitItr;
+    if (DIMTraitItr->is<trait::ExplicitAccess>() &&
+        !DIMTraitItr->is<trait::NoAccess>() &&
+        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+      ExplicitAccess = true;
+  }
   CombinedTrait &=
     dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
       BitMemoryTrait::Readonly :
         dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
           BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
+  if (!ExplicitAccess)
+    Dptr.unset<trait::ExplicitAccess>();
   DIATrait = Dptr;
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
