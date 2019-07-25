@@ -364,8 +364,7 @@ void PrivateRecognitionPass::resolveCandidats(
       }
       dbgs() << "\n";
     );
-    auto PrivInfo = mPrivates.insert(
-      std::make_pair(L, llvm::make_unique<DependenceSet>()));
+    auto PrivInfo = mPrivates.try_emplace(L);
     auto DefItr = mDefInfo->find(L);
     assert(DefItr != mDefInfo->end() &&
       DefItr->get<DefUseSet>() && DefItr->get<ReachSet>() &&
@@ -388,7 +387,7 @@ void PrivateRecognitionPass::resolveCandidats(
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
-      Deps, *PrivInfo.first->get<DependenceSet>());
+      Deps, PrivInfo.first->get<DependenceSet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
     resolveCandidats(Numbers, *I);
@@ -1108,7 +1107,7 @@ public:
   }
 
   /// Prints description of a trait into a specified stream.
-  void traitToStr(trait::IRDependence *Dep, raw_string_ostream &OS) {
+  void traitToStr(const trait::IRDependence *Dep, raw_string_ostream &OS) {
     if (!Dep)
       return;
     if (!Dep->getDistance().first && !Dep->getDistance().second)
@@ -1123,7 +1122,7 @@ public:
   }
 
   /// Prints description of a trait into a specified stream.
-  void traitToStr(void *Dep, raw_string_ostream &OS) {}
+  void traitToStr(const void *Dep, raw_string_ostream &OS) {}
 
   /// Returns a static trait map.
   TraitToStringMap & getStringMap() { return *mMap; }
@@ -1131,17 +1130,17 @@ public:
   /// \brief Returns current trait set.
   ///
   /// \pre Trait set must not be null and has been specified by setTraitSet().
-  AliasTrait & getTraitSet() {
+  const AliasTrait & getTraitSet() const {
     assert(mTS && "Trait set must not be null!");
     return *mTS;
   }
 
   /// Specifies current trait set.
-  void setTraitSet(AliasTrait &TS) { mTS = &TS; }
+  void setTraitSet(const AliasTrait &TS) { mTS = &TS; }
 
 private:
   TraitToStringMap *mMap;
-  AliasTrait *mTS;
+  const AliasTrait *mTS;
   std::string mOffset;
   const DominatorTree *mDT;
 };
@@ -1186,12 +1185,11 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
     auto N = RInfo.getRegionFor(L);
     auto &Info = getPrivateInfo();
     auto Itr = Info.find(N);
-    assert(Itr != Info.end() && Itr->get<DependenceSet>() &&
-      "Privatiability information must be specified!");
+    assert(Itr != Info.end() && "Privatiability information must be specified!");
     TraitToStringFunctor::TraitToStringMap TraitToStr;
     TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ", DT);
     auto ATRoot = AT.getTopLevelNode();
-    for (auto &TS : *Itr->get<DependenceSet>()) {
+    for (auto &TS : Itr->get<DependenceSet>()) {
       if (TS.getNode() == ATRoot)
         continue;
       ToStrFunctor.setTraitSet(TS);

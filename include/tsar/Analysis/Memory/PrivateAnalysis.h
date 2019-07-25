@@ -58,11 +58,11 @@ using AliasTreeRelation = SpanningTreeRelation<const AliasTree *>;
 
 /// Information about privatizability of locations for an analyzed region.
 using PrivateInfo =
-  llvm::DenseMap<DFNode *, std::unique_ptr<DependenceSet>,
+  llvm::DenseMap<DFNode *, DependenceSet,
     llvm::DenseMapInfo<DFNode *>,
     TaggedDenseMapPair<
       bcl::tagged<DFNode *, DFNode>,
-      bcl::tagged<std::unique_ptr<DependenceSet>, DependenceSet>>>;
+      bcl::tagged<DependenceSet, DependenceSet>>>;
 
 namespace detail {
 class DependenceImp;

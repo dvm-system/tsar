@@ -568,7 +568,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
         if (T.is<trait::Lock>())
           LockedTraits.push_back(T.getMemory());
     }
-    auto &DepSet = *Info.get<DependenceSet>();
+    auto &DepSet = Info.get<DependenceSet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
     analyzePromoted(L, DWLang, DIAliasSTR, LockedTraits, *Pool);
     for (auto *DIN : post_order(&DIAT)) {

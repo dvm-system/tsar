@@ -207,12 +207,12 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
           [](raw_ostream &OS) {OS << " loop(" << mImplicitLoopClause << ")"; });
       auto N = RegionInfo.getRegionFor(Match.get<IR>());
       auto DSItr = PrivateInfo.find(N);
-      assert(DSItr != PrivateInfo.end() && DSItr->get<DependenceSet>() &&
+      assert(DSItr != PrivateInfo.end() &&
         "Privatiability information must be specified!");
       typedef bcl::StaticTraitMap<
         std::vector<AliasTrait *>, MemoryDescriptor> TraitMap;
       TraitMap TM;
-      for (auto &TS : *DSItr->get<DependenceSet>())
+      for (auto &TS : DSItr->get<DependenceSet>())
         TS.for_each(
           bcl::TraitMapConstructor<AliasTrait, TraitMap>(TS, TM));
       printPragma(Match.get<AST>()->getLocStart(), Rewriter,
