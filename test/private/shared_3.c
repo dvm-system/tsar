@@ -17,4 +17,4 @@ void foo(double *U) {
 //CHECK:    header access:
 //CHECK:     <*U:3:18, ?> <IEnd, 4> | <I:4:12, 4>
 //CHECK:    explicit access:
-//CHECK:     <I:4:12, 4> | <U:3:18, 8>
+//CHECK:     <*U:3:18, ?> <IEnd, 4> | <I:4:12, 4> | <U:3:18, 8>

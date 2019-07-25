@@ -24,31 +24,58 @@
 #ifndef TSAR_MEMORY_TRAITS_UTILS_H
 #define TSAR_MEMORY_TRAITS_UTILS_H
 
-#include "EstimateMemory.h"
-#include "tsar/Analysis/Memory/IRMemoryTrait.h"
-
 namespace tsar {
 namespace detail {
-template<template<class Element, class Coll> class Inserter, class Coll>
+template<template<class Element, class Coll> class InserterT,
+  class DependenceSetT, class AliasNodeT, class CollT>
 inline void explicitAccessCoverage(
-    const DependencySet &DS, const AliasNode &N, Coll &C) {
-  auto AT = DS.find(&N);
-  if (AT == DS.end() || !AT->is<trait::ExplicitAccess>())
+    const DependenceSetT &DS, const AliasNodeT &N, CollT &C) {
+  auto ATraitItr = DS.find(&N);
+  if (ATraitItr == DS.end() || !ATraitItr->template is<trait::ExplicitAccess>())
     for (auto &Child : make_range(N.child_begin(), N.child_end()))
-      detail::explicitAccessCoverage<Inserter>(DS, Child, C);
+      detail::explicitAccessCoverage<InserterT>(DS, Child, C);
   else
-    Inserter<const AliasNode *, Coll>::insert(&N, C);
+    InserterT<const AliasNodeT *, CollT>::insert(&N, C);
+}
+
+template<
+  template<class ElementT, class CollT> class InserterT,
+  class DependenceSetT, class AliasNodeT, class CollT>
+inline void accessCoverage(
+    const DependenceSetT &DS, const AliasNodeT &N, CollT &C) {
+  auto ATraitItr = DS.find_as(&N);
+  if (ATraitItr == DS.end())
+    return;
+  for (auto &MTraitItr : *ATraitItr) {
+    auto *Node = MTraitItr->getMemory()->getAliasNode();
+    if (Node == &N) {
+      InserterT<const AliasNodeT *, CollT>::insert(&N, C);
+      return;
+    }
+  }
+  for (auto &Child : make_range(N.child_begin(), N.child_end()))
+    detail::accessCoverage<InserterT>(DS, Child, C);
 }
 }
 
 /// Returns a number of the smallest alias nodes which covers all explicit
 /// memory accesses in the region.
 template<
-  template<class Element, class Coll> class Inserter = bcl::PushBackInserter,
-  class Coll>
+  template<class ElementT, class CollT> class InserterT = bcl::PushBackInserter,
+  class DependenceSetT, class AliasTreeT, class CollT>
 inline void explicitAccessCoverage(
-    const DependencySet &DS, const AliasTree &AT, Coll &C) {
-  detail::explicitAccessCoverage<Inserter>(DS, *AT.getTopLevelNode(), C);
+    const DependenceSetT &DS, const AliasTreeT &AT, CollT &C) {
+  detail::explicitAccessCoverage<InserterT>(DS, *AT.getTopLevelNode(), C);
+}
+
+/// Returns a number of the smallest alias nodes which covers all
+/// memory accesses in the region.
+template<
+  template<class ElementT, class CollT> class InserterT = bcl::PushBackInserter,
+  class DependenceSetT, class AliasTreeT, class CollT>
+inline void accessCoverage(
+    const DependenceSetT &DS, const AliasTreeT &AT, CollT &C) {
+  detail::accessCoverage<InserterT>(DS, *AT.getTopLevelNode(), C);
 }
 }
 #endif//TSAR_MEMORY_TRAITS_UTILS_H

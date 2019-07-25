@@ -16,19 +16,19 @@ double foo() {
 //CHECK:    private:
 //CHECK:     <J:8:14, 4>
 //CHECK:    output:
-//CHECK:     <JStart, 4> | bar():7:5
+//CHECK:     <JStart, 4> bar():7:5
 //CHECK:    anti:
-//CHECK:     <JStart, 4> | bar():7:5
+//CHECK:     <JStart, 4> bar():7:5
 //CHECK:    flow:
-//CHECK:     <JStart, 4> | <U:5:10, 800>:[1,1] | bar():7:5
+//CHECK:     <JStart, 4> bar():7:5 | <U:5:10, 800>:[1,1]
 //CHECK:    induction:
 //CHECK:     <I:6:12, 4>:[Int,1,100,1]
 //CHECK:    lock:
 //CHECK:     <I:6:12, 4>
 //CHECK:    header access:
-//CHECK:     <I:6:12, 4> | <JStart, 4> | bar():7:5
+//CHECK:     <I:6:12, 4> | <JStart, 4> bar():7:5
 //CHECK:    explicit access:
-//CHECK:     <I:6:12, 4> | <J:8:14, 4> | <JStart, 4> | bar():7:5
+//CHECK:     <I:6:12, 4> | <J:8:14, 4> | <JStart, 4> bar():7:5
 //CHECK:   loop at depth 2 distance_7.c:8:5
 //CHECK:     output:
 //CHECK:      <U:5:10, 800>

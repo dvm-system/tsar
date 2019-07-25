@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "Attributes.h"
 #include "BitMemoryTrait.h"
 #include "tsar_dbg_output.h"
@@ -294,6 +295,27 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     }
   }
 }
+
+/// Combine traits for memory locations and set traits for the whole alias node.
+void combineTraits(DIAliasTrait &DIATrait) {
+  assert(!DIATrait.empty() && "List of traits must not be empty!");
+  if (DIATrait.size() == 1) {
+    DIATrait = **DIATrait.begin();
+    return;
+  }
+  BitMemoryTrait CombinedTrait;
+  for (auto &DIMTraitItr : DIATrait)
+    CombinedTrait &= *DIMTraitItr;
+  CombinedTrait &=
+    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+      BitMemoryTrait::Readonly :
+        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
+          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
+  auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
+  DIATrait = Dptr;
+  LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
+    Dptr.print(dbgs()); dbgs() << "\n");
+}
 }
 
 void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
@@ -477,8 +499,6 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     if (ChildTraitItr == DIDepSet.end())
       continue;
     for (auto &DIMTraitItr : *ChildTraitItr) {
-      if (!DIMTraitItr->is_any<trait::ExplicitAccess, trait::AddressAccess>())
-        continue;
       auto *DIM = DIMTraitItr->getMemory();
       // Alias trait contains not only locations from a corresponding alias
       // node. It may also contain locations from descendant nodes.
@@ -487,7 +507,8 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       // implicitly when IR-level analysis has been performed and traits for
       // estimate memory locations have been fetched for nodes in IR-level
       // alias tree.
-      if (!DIM->emptyBinding() && isa<DIAliasEstimateNode>(N))
+      if (isa<DIAliasEstimateNode>(DIN) &&
+          !DIM->emptyBinding() && isa<DIAliasEstimateNode>(N))
         continue;
       LLVM_DEBUG(if (DWLang) {
         dbgs() << "[DA DI]: extract traits from descendant node";
@@ -499,26 +520,9 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIATraitItr->insert(DIMTraitItr);
     }
   }
-  // Combine traits for memory locations and set traits for the whole alias node.
   if (DIATraitItr == DIDepSet.end())
     return;
-  assert(!DIATraitItr->empty() && "List of traits must not be empty!");
-  if (DIATraitItr->size() == 1) {
-    *DIATraitItr = **DIATraitItr->begin();
-    return;
-  }
-  BitMemoryTrait CombinedTrait;
-  for (auto &DIMTraitItr : *DIATraitItr)
-    CombinedTrait &= *DIMTraitItr;
-  CombinedTrait &=
-    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
-      BitMemoryTrait::Readonly :
-        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
-          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
-  auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
-  *DIATraitItr = Dptr;
-  LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
-    Dptr.print(dbgs()); dbgs() << "\n");
+  combineTraits(*DIATraitItr);
   // We do not update traits for each memory location (as in private recognition
   // pass) because these traits should be updated early (during analysis of
   // promoted locations or by the private recognition pass).
@@ -573,6 +577,17 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       analyzeNode(cast<DIAliasMemoryNode>(*DIN),
         DWLang, AliasSTR, DIAliasSTR, LockedTraits, DepSet, DIDepSet, *Pool);
     }
+    LLVM_DEBUG(dbgs() << "[DA DI]: set traits for a top level node\n");
+    auto TopDIN = DIAT.getTopLevelNode();
+    auto TopTraitItr = DIDepSet.insert(DIAliasTrait(TopDIN)).first;
+    for (auto &Child : make_range(TopDIN->child_begin(), TopDIN->child_end())) {
+      auto ChildTraitItr = DIDepSet.find_as(&Child);
+      if (ChildTraitItr == DIDepSet.end())
+        continue;
+      for (auto &DIMTraitItr : *ChildTraitItr)
+        TopTraitItr->insert(DIMTraitItr);
+    }
+    combineTraits(*TopTraitItr);
   }
   return false;
 }
@@ -596,8 +611,6 @@ struct TraitPrinter {
     };
     std::set<decltype(VarLists)::size_type, decltype(less)> ANTraitList(less);
     for (auto *AT : TraitVector) {
-      if (AT->getNode() == mDIAT->getTopLevelNode())
-        continue;
       VarLists.emplace_back();
       for (auto &T : *AT) {
         if (!std::is_same<Trait, trait::AddressAccess>::value &&
@@ -725,9 +738,13 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
     using TraitMap = bcl::StaticTraitMap<
       std::vector<const DIAliasTrait *>, MemoryDescriptor>;
     TraitMap TM;
+    DenseSet<const DIAliasNode *> Coverage;
+    accessCoverage<bcl::SimpleInserter>(
+      Info->get<DIDependenceSet> (), DIAT, Coverage);
     for (auto &TS : Info->get<DIDependenceSet>())
-      TS.for_each(
-        bcl::TraitMapConstructor<const DIAliasTrait, TraitMap>(TS, TM));
+      if (Coverage.count(TS.getNode()))
+        TS.for_each(
+          bcl::TraitMapConstructor<const DIAliasTrait, TraitMap>(TS, TM));
     TM.for_each(TraitPrinter(OS, DIAT, Offset, *DWLang));
   });
 }

@@ -30,6 +30,7 @@ shared_17.init
 shared_18.init
 shared_19.init
 shared_20.safe.init
+shared_call_1.init
 distance_1.init
 distance_2.init
 distance_3.safe.init
@@ -38,3 +39,4 @@ distance_5.safe.init
 distance_6.init
 distance_7.init
 dependence_1.init
+induction_1.init
