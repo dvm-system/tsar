@@ -365,7 +365,7 @@ void PrivateRecognitionPass::resolveCandidats(
       dbgs() << "\n";
     );
     auto PrivInfo = mPrivates.insert(
-      std::make_pair(L, llvm::make_unique<DependencySet>(*mAliasTree)));
+      std::make_pair(L, llvm::make_unique<DependencySet>()));
     auto DefItr = mDefInfo->find(L);
     assert(DefItr != mDefInfo->end() &&
       DefItr->get<DefUseSet>() && DefItr->get<ReachSet>() &&
@@ -781,7 +781,7 @@ void PrivateRecognitionPass::propagateTraits(
   for (auto *N : Coverage)
     for (auto &Child : make_range(N->child_begin(), N->child_end()))
       for (auto *Descendant : make_range(df_begin(&Child), df_end(&Child))) {
-        auto I = DS.find(Descendant);
+        auto I = DS.find_as(Descendant);
         if (I != DS.end() && !I->is<trait::NoAccess>())
           I->set<trait::Flow, trait::Anti, trait::Output>();
       }
@@ -908,7 +908,7 @@ void PrivateRecognitionPass::storeResults(
     const DFRegion &R, const AliasNode &N,
     const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
     const DependenceMap &Deps, const TraitPair &Traits, DependencySet &DS) {
-  assert(DS.find(&N) == DS.end() && "Results must not be already stored!");
+  assert(DS.find_as(&N) == DS.end() && "Results must not be already stored!");
   auto storeDepIfNeed = [this, &Deps](TraitList::iterator EMI,
       AliasTrait::iterator EMTraitItr) {
     auto EMToDep = Deps.find(EMI->get<EstimateMemory>());
@@ -1172,10 +1172,11 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
   auto &RInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto *F = cast<DFFunction>(RInfo.getTopLevelRegion())->getFunction();
   if (!GlobalOpts.AnalyzeLibFunc && hasFnAttr(*F, AttrKind::LibFunc))
     return;
-  for_each_loop(LpInfo, [this, &OS, &RInfo, &DT, &GlobalOpts](Loop *L) {
+  for_each_loop(LpInfo, [this, &OS, &RInfo, &DT, &AT, &GlobalOpts](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
     std::string Offset(L->getLoopDepth(), ' ');
     OS << Offset;
@@ -1189,7 +1190,7 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
       "Privatiability information must be specified!");
     TraitToStringFunctor::TraitToStringMap TraitToStr;
     TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ", DT);
-    auto ATRoot = Itr->get<DependencySet>()->getAliasTree()->getTopLevelNode();
+    auto ATRoot = AT.getTopLevelNode();
     for (auto &TS : *Itr->get<DependencySet>()) {
       if (TS.getNode() == ATRoot)
         continue;

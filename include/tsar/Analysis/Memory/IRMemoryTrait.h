@@ -154,7 +154,7 @@ using UnknownMemoryTrait =
 /// each such location. Conservative combination of these traits leads to
 /// the proposed traits of a node. Nodes that explicitly accessed locations may
 /// be associated with some of descendant alias nodes of the current one.
-class AliasTrait : public MemoryDescriptor, private bcl::Uncopyable {
+class AliasTrait : public MemoryDescriptor {
   /// List of explicitly accessed estimate memory locations and their traits.
   using AccessTraits = llvm::SmallDenseMap<
     const EstimateMemory *, MemoryTraitSet, 1,
@@ -180,6 +180,12 @@ public:
 
   /// This stores size of a list of explicitly accessed locations.
   using size_type = AccessTraits::size_type;
+
+  AliasTrait(AliasTrait &&) = default;
+  AliasTrait & operator=(AliasTrait &&) = default;
+
+  AliasTrait(const AliasTrait &) = delete;
+  AliasTrait & operator=(const AliasTrait &) = delete;
 
   /// Creates representation of traits.
   explicit AliasTrait(const AliasNode *N) : mNode(N) {
@@ -331,7 +337,7 @@ private:
 /// This is a set of different traits suitable for a region.
 class DependencySet {
   using AliasTraits =
-    llvm::DenseMap<const AliasNode *, std::unique_ptr<AliasTrait>>;
+    llvm::DenseMap<const AliasNode *, AliasTrait>;
 public:
   /// This class used to iterate over traits of different alias nodes.
   class const_iterator :
@@ -346,7 +352,7 @@ public:
       mCurrItr(I) {}
     explicit const_iterator(AliasTraits::const_iterator &&I) :
       mCurrItr(std::move(I)) {}
-    const AliasTrait & operator*() const { return *mCurrItr->second; }
+    const AliasTrait & operator*() const { return mCurrItr->second; }
     const AliasTrait * operator->() const { return &operator*(); }
     bool operator==(const const_iterator &RHS) const {
       return mCurrItr == RHS.mCurrItr;
@@ -387,10 +393,7 @@ public:
   };
 
   /// Creates set of traits.
-  explicit DependencySet(const AliasTree &AT) : mAliasTree(&AT) {}
-
-  /// Returns alias tree nodes of which are analyzed.
-  const AliasTree * getAliasTree() const noexcept { return mAliasTree; }
+  DependencySet() = default;
 
   /// Returns iterator that points to the beginning of the traits list.
   iterator begin() { return iterator(mTraits.begin()); }
@@ -404,23 +407,22 @@ public:
   /// Returns iterator that points to the ending of the traits list.
   const_iterator end() const { return const_iterator(mTraits.end()); }
 
-
   /// Finds traits of a specified alias node.
-  iterator find(const AliasNode *N) const { return iterator(mTraits.find(N)); }
+  iterator find_as(const AliasNode *N) const {
+    return iterator(mTraits.find(N));
+  }
 
   /// Inserts traits of a specified alias node.
   std::pair<iterator, bool> insert(
-      const AliasNode *N, const MemoryDescriptor &Dptr) {
-    auto Pair = mTraits.insert(
-      std::make_pair(N, llvm::make_unique<AliasTrait>(N, Dptr)));
+    const AliasNode *N, const MemoryDescriptor &Dptr) {
+    auto Pair = mTraits.try_emplace(N, N, Dptr);
     return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
   }
 
   /// Inserts traits of a specified alias node.
   std::pair<iterator, bool> insert(
-      const AliasNode *N, MemoryDescriptor &&Dptr) {
-    auto Pair = mTraits.insert(
-      std::make_pair(N, llvm::make_unique<AliasTrait>(N, std::move(Dptr))));
+    const AliasNode *N, MemoryDescriptor &&Dptr) {
+    auto Pair = mTraits.try_emplace(N, N, std::move(Dptr));
     return std::make_pair(iterator(std::move(Pair.first)), Pair.second);
   }
 
@@ -438,7 +440,7 @@ public:
 
 private:
   AliasTraits mTraits;
-  const AliasTree *mAliasTree;
 };
 }
+
 #endif//TSAR_IR_MEMORY_TRAIT_H

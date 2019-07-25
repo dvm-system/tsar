@@ -411,7 +411,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     DIMemoryTraitRegionPool &Pool) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
   auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
-  auto ATraitItr = AN ? DepSet.find(AN) : DepSet.end();
+  auto ATraitItr = AN ? DepSet.find_as(AN) : DepSet.end();
   DIDependenceSet::iterator DIATraitItr = DIDepSet.end();
   for (auto &M : DIN) {
     LLVM_DEBUG(if (DWLang) {

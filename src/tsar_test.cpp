@@ -70,6 +70,7 @@ class TestPrinterProvider : public FunctionPassProvider<
 typedef FunctionPassProvider<
   DominatorTreeWrapperPass,
   BasicAAWrapperPass,
+  EstimateMemoryPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
   LoopMatcherPass,
@@ -81,6 +82,7 @@ typedef FunctionPassProvider<
 
 INITIALIZE_PROVIDER_BEGIN(TestPrinterProvider, "test-provider",
   "Test Printer Provider")
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
@@ -196,6 +198,7 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
     auto &RegionInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &PLoopInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
     auto &CLoopInfo = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+    auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();
     for (auto &Match : LpMatcher) {
       if (!isa<ForStmt>(Match.get<AST>()) &&
           !isa<WhileStmt>(Match.get<AST>()) &&
@@ -212,10 +215,9 @@ bool TestPrinterPass::runOnModule(llvm::Module &M) {
       for (auto &TS : *DSItr->get<DependencySet>())
         TS.for_each(
           bcl::TraitMapConstructor<AliasTrait, TraitMap>(TS, TM));
-      auto *AT = DSItr->get<DependencySet>()->getAliasTree();
       printPragma(Match.get<AST>()->getLocStart(), Rewriter,
-        [&TM, AT, &DT](raw_ostream &OS) {
-          TM.for_each(TraitClausePrinter(AT, DT, OS));
+        [&TM, &AT, &DT](raw_ostream &OS) {
+          TM.for_each(TraitClausePrinter(&AT, DT, OS));
       });
       if (PLoopInfo.find(N) != PLoopInfo.end()) {
         printPragma(Match.get<AST>()->getLocStart(), Rewriter,

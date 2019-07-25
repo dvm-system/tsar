@@ -30,7 +30,7 @@ template<template<class Element, class Coll> class InserterT,
   class DependenceSetT, class AliasNodeT, class CollT>
 inline void explicitAccessCoverage(
     const DependenceSetT &DS, const AliasNodeT &N, CollT &C) {
-  auto ATraitItr = DS.find(&N);
+  auto ATraitItr = DS.find_as(&N);
   if (ATraitItr == DS.end() || !ATraitItr->template is<trait::ExplicitAccess>())
     for (auto &Child : make_range(N.child_begin(), N.child_end()))
       detail::explicitAccessCoverage<InserterT>(DS, Child, C);

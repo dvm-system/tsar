@@ -326,6 +326,7 @@ template<> struct Traits<CFFlags> {
 
 using ServerPrivateProvider = FunctionPassProvider<
   BasicAAWrapperPass,
+  EstimateMemoryPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
   LoopMatcherPass,
@@ -339,6 +340,7 @@ using ServerPrivateProvider = FunctionPassProvider<
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
@@ -397,12 +399,13 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
   auto &LMP = P.get<LoopMatcherPass>();
   auto &PI = P.get<PrivateRecognitionPass>().getPrivateInfo();
   auto &RI = P.get<DFRegionInfoPass>().getRegionInfo();
+  auto &AT = P.get<EstimateMemoryPass>().getAliasTree();
   for (auto &Match : LMP.getMatcher()) {
     auto N = RI.getRegionFor(Match.get<IR>());
     auto DSItr = PI.find(N);
     assert(DSItr != PI.end() && DSItr->get<DependencySet>() &&
       "Loop traits must be specified!");
-    auto ATRoot = DSItr->get<DependencySet>()->getAliasTree()->getTopLevelNode();
+    auto ATRoot = AT.getTopLevelNode();
     for (auto &AT : *DSItr->get<DependencySet>()) {
       if (ATRoot == AT.getNode())
         continue;
