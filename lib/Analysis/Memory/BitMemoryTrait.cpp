@@ -31,6 +31,8 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
     mId &= AddressAccess;
   if (Dptr.is<trait::HeaderAccess>())
     mId &= HeaderAccess;
+  if (Dptr.is<trait::ExplicitAccess>())
+    mId &= ExplicitAccess;
   if (Dptr.is<trait::Flow>() ||
       Dptr.is<trait::Anti>() ||
       Dptr.is<trait::Output>()) {
