@@ -52,7 +52,7 @@ template<class GraphType> class SpanningTreeRelation;
 
 /// Source-level representation of data-dependencies (including anti/flow/output
 /// dependencies, privatizable variables, reductions and inductions).
-using DIDependencyInfo =
+using DIDependencInfo =
   llvm::DenseMap<llvm::MDNode *, DIDependenceSet,
     llvm::DenseMapInfo<llvm::MDNode *>,
     TaggedDenseMapPair<
@@ -95,10 +95,10 @@ public:
   }
 
   /// Returns information about discovered dependencies.
-  tsar::DIDependencyInfo & getDependencies() noexcept {return mDeps;}
+  tsar::DIDependencInfo & getDependencies() noexcept {return mDeps;}
 
   /// Returns information about discovered dependencies.
-  const tsar::DIDependencyInfo &getDependencies() const noexcept {return mDeps;}
+  const tsar::DIDependencInfo &getDependencies() const noexcept {return mDeps;}
 
   // Summarizes low-level results of privatization, reduction and induction
   // recognition and flow/anti/output dependencies exploration.
@@ -140,7 +140,7 @@ private:
     tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
     tsar::DIMemoryTraitRegionPool &Pool);
 
-  tsar::DIDependencyInfo mDeps;
+  tsar::DIDependencInfo mDeps;
   tsar::AliasTree *mAT;
   DominatorTree *mDT;
   ScalarEvolution *mSE;
