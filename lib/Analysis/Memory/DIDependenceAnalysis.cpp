@@ -601,6 +601,18 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
         TopTraitItr->insert(DIMTraitItr);
     }
     combineTraits(*TopTraitItr);
+    std::vector<const DIAliasNode *> Coverage;
+    explicitAccessCoverage(DIDepSet, DIAT, Coverage);
+    // All descendant nodes for nodes in `Coverage` access some part of
+    // explicitly accessed memory. The conservativeness of analysis implies
+    // that memory accesses from this nodes arise loop carried dependencies.
+    for (auto *N : Coverage)
+      for (auto &Child : make_range(N->child_begin(), N->child_end()))
+        for (auto *Descendant : make_range(df_begin(&Child), df_end(&Child))) {
+          auto I = DIDepSet.find_as(Descendant);
+          if (I != DIDepSet.end() && !I->is<trait::NoAccess>())
+            I->set<trait::Flow, trait::Anti, trait::Output>();
+        }
   }
   return false;
 }
