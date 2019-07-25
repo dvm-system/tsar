@@ -335,7 +335,7 @@ private:
 };
 
 /// This is a set of different traits suitable for a region.
-class DependencySet {
+class DependenceSet {
   using AliasTraits =
     llvm::DenseMap<const AliasNode *, AliasTrait>;
 public:
@@ -393,7 +393,7 @@ public:
   };
 
   /// Creates set of traits.
-  DependencySet() = default;
+  DependenceSet() = default;
 
   /// Returns iterator that points to the beginning of the traits list.
   iterator begin() { return iterator(mTraits.begin()); }

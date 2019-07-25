@@ -47,7 +47,7 @@ class AliasTree;
 class BitMemoryTrait;
 class DIAliasMemoryNode;
 class DIMemory;
-class DependencySet;
+class DependenceSet;
 template<class GraphType> class SpanningTreeRelation;
 
 /// Source-level representation of data-dependencies (including anti/flow/output
@@ -137,7 +137,7 @@ private:
     const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
     const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const tsar::DIMemory *> LockedTraits,
-    tsar::DependencySet &DepSet, tsar::DIDependenceSet &DIDepSet,
+    tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
     tsar::DIMemoryTraitRegionPool &Pool);
 
   tsar::DIDependencyInfo mDeps;

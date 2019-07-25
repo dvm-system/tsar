@@ -407,7 +407,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     const SpanningTreeRelation<AliasTree *> &AliasSTR,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const DIMemory *> LockedTraits,
-    DependencySet &DepSet, DIDependenceSet &DIDepSet,
+    DependenceSet &DepSet, DIDependenceSet &DIDepSet,
     DIMemoryTraitRegionPool &Pool) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
   auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
@@ -568,7 +568,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
         if (T.is<trait::Lock>())
           LockedTraits.push_back(T.getMemory());
     }
-    auto &DepSet = *Info.get<DependencySet>();
+    auto &DepSet = *Info.get<DependenceSet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
     analyzePromoted(L, DWLang, DIAliasSTR, LockedTraits, *Pool);
     for (auto *DIN : post_order(&DIAT)) {

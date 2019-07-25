@@ -403,10 +403,10 @@ void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
   for (auto &Match : LMP.getMatcher()) {
     auto N = RI.getRegionFor(Match.get<IR>());
     auto DSItr = PI.find(N);
-    assert(DSItr != PI.end() && DSItr->get<DependencySet>() &&
+    assert(DSItr != PI.end() && DSItr->get<DependenceSet>() &&
       "Loop traits must be specified!");
     auto ATRoot = AT.getTopLevelNode();
-    for (auto &AT : *DSItr->get<DependencySet>()) {
+    for (auto &AT : *DSItr->get<DependenceSet>()) {
       if (ATRoot == AT.getNode())
         continue;
       for (auto &T : make_range(AT.begin(), AT.end())) {

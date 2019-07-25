@@ -365,7 +365,7 @@ void PrivateRecognitionPass::resolveCandidats(
       dbgs() << "\n";
     );
     auto PrivInfo = mPrivates.insert(
-      std::make_pair(L, llvm::make_unique<DependencySet>()));
+      std::make_pair(L, llvm::make_unique<DependenceSet>()));
     auto DefItr = mDefInfo->find(L);
     assert(DefItr != mDefInfo->end() &&
       DefItr->get<DefUseSet>() && DefItr->get<ReachSet>() &&
@@ -388,7 +388,7 @@ void PrivateRecognitionPass::resolveCandidats(
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
-      Deps, *PrivInfo.first->get<DependencySet>());
+      Deps, *PrivInfo.first->get<DependenceSet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
     resolveCandidats(Numbers, *I);
@@ -724,7 +724,7 @@ void PrivateRecognitionPass::propagateTraits(
     const tsar::GraphNumbering<const AliasNode *> &Numbers,
     const tsar::DFRegion &R,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits, DependenceMap &Deps, DependencySet &DS) {
+    AliasMap &NodeTraits, DependenceMap &Deps, DependenceSet &DS) {
   LLVM_DEBUG(dbgs() << "[PRIVATE]: propagate traits\n");
   std::stack<TraitPair> ChildTraits;
   auto *Prev = mAliasTree->getTopLevelNode();
@@ -907,7 +907,7 @@ void PrivateRecognitionPass::storeResults(
     const GraphNumbering<const tsar::AliasNode *> &Numbers,
     const DFRegion &R, const AliasNode &N,
     const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
-    const DependenceMap &Deps, const TraitPair &Traits, DependencySet &DS) {
+    const DependenceMap &Deps, const TraitPair &Traits, DependenceSet &DS) {
   assert(DS.find_as(&N) == DS.end() && "Results must not be already stored!");
   auto storeDepIfNeed = [this, &Deps](TraitList::iterator EMI,
       AliasTrait::iterator EMTraitItr) {
@@ -931,7 +931,7 @@ void PrivateRecognitionPass::storeResults(
       dbgs() << "\n";
     );
   };
-  DependencySet::iterator NodeTraitItr;
+  DependenceSet::iterator NodeTraitItr;
   auto EMI = Traits.get<TraitList>()->begin();
   auto EME = Traits.get<TraitList>()->end();
   if (!Traits.get<TraitList>()->empty()) {
@@ -1186,12 +1186,12 @@ void PrivateRecognitionPass::print(raw_ostream &OS, const Module *M) const {
     auto N = RInfo.getRegionFor(L);
     auto &Info = getPrivateInfo();
     auto Itr = Info.find(N);
-    assert(Itr != Info.end() && Itr->get<DependencySet>() &&
+    assert(Itr != Info.end() && Itr->get<DependenceSet>() &&
       "Privatiability information must be specified!");
     TraitToStringFunctor::TraitToStringMap TraitToStr;
     TraitToStringFunctor ToStrFunctor(TraitToStr, Offset + "  ", DT);
     auto ATRoot = AT.getTopLevelNode();
-    for (auto &TS : *Itr->get<DependencySet>()) {
+    for (auto &TS : *Itr->get<DependenceSet>()) {
       if (TS.getNode() == ATRoot)
         continue;
       ToStrFunctor.setTraitSet(TS);

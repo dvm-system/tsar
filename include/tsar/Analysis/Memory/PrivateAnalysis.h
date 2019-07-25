@@ -58,11 +58,11 @@ using AliasTreeRelation = SpanningTreeRelation<const AliasTree *>;
 
 /// Information about privatizability of locations for an analyzed region.
 using PrivateInfo =
-  llvm::DenseMap<DFNode *, std::unique_ptr<DependencySet>,
+  llvm::DenseMap<DFNode *, std::unique_ptr<DependenceSet>,
     llvm::DenseMapInfo<DFNode *>,
     TaggedDenseMapPair<
       bcl::tagged<DFNode *, DFNode>,
-      bcl::tagged<std::unique_ptr<DependencySet>, DependencySet>>>;
+      bcl::tagged<std::unique_ptr<DependenceSet>, DependenceSet>>>;
 
 namespace detail {
 class DependenceImp;
@@ -278,7 +278,7 @@ private:
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
     const tsar::DFRegion &R,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits, DependenceMap &Deps, tsar::DependencySet &DS);
+    AliasMap &NodeTraits, DependenceMap &Deps, tsar::DependenceSet &DS);
 
   /// \brief This removes redundant traits from a list.
   ///
@@ -338,7 +338,7 @@ private:
      const tsar::DFRegion &R, const tsar::AliasNode &N,
      const TraitMap &ExplicitAccesses, const UnknownMap &ExplicitUnknowns,
      const DependenceMap &Deps, const TraitPair &Traits,
-     tsar::DependencySet &DS);
+     tsar::DependenceSet &DS);
 
 private:
   tsar::PrivateInfo mPrivates;
