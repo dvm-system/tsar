@@ -3402,10 +3402,16 @@ bool DependenceInfo::tryDelinearize(Instruction *Src, Instruction *Dst,
         SrcInfo.second->isValid() && DstInfo.second->isValid()) {
       IsDIDelinearized = true;
       LLVM_DEBUG(dbgs() << "\nuse metadata-based delinearization\n");
-      Sizes.resize(SrcInfo.first->getNumberOfDims());
-      for (unsigned I = 0, EI = Sizes.size(); I < EI; ++I)
-        Sizes[I] = SrcInfo.first->isKnownDimSize(I) ?
-          SrcInfo.first->getDimSize(I) : SE->getCouldNotCompute();
+      // Size of the first dimension is not important and in general is not
+      // known. Furthermore, SCEV-based delinearization (in LLVM) never stores
+      // a size of the first dimension in Sizes, so we implement the same
+      // behavior.
+      Sizes.resize(SrcInfo.first->getNumberOfDims() - 1);
+      for (unsigned I = 0, EI = Sizes.size(); I < EI; ++I) {
+        assert(SrcInfo.first->isKnownDimSize(I + 1) &&
+          "Dimensions of delinearized array (except first) must have known sizes!");
+        Sizes[I] = SrcInfo.first->getDimSize(I + 1);
+      }
       for (auto *S : SrcInfo.second->Subscripts) {
         auto AddRecInfo = computeSCEVAddRec(S, *SE);
         SrcSubscripts.push_back(
