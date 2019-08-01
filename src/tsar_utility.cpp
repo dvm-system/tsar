@@ -345,7 +345,8 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
     else
       return None;
   }
-  if (MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) {
+  if ((MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) &&
+      !isa<Constant>(V)) {
     auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
     if (!AddrUses.empty()) {
       auto DIVar = AddrUses.front()->getVariable();

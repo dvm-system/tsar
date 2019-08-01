@@ -296,7 +296,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     if (I.getType() && I.getType()->isPointerTy())
       DU->addAddressAccess(&I);
     for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
-      if (!Op->getType() || !Op->getType()->isPointerTy())
+      if (isa<UndefValue>(Op) || !Op->getType() || !Op->getType()->isPointerTy())
         continue;
       // Function is a first parameter of 'call' instruction, so we should
       // ignore intrinsics here.

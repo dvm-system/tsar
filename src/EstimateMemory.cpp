@@ -431,6 +431,7 @@ void mergeChainAfterLog(EstimateMemory *EM, const DominatorTree &DT) {
 
 void AliasTree::add(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  assert(!isa<UndefValue>(Loc.Ptr) && "Pointer to memory location must be valid!");
   LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
@@ -925,6 +926,8 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // which have been added implicitly. For example, if stripMemoryLevel() has
   // been called.
   auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](const Value *V) {
+    if (isa<UndefValue>(V))
+      return;
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
     if (isa<Constant>(V) && cast<Constant>(V)->isNullValue())
