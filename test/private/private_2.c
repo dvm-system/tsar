@@ -17,6 +17,8 @@ int main() {
 //CHECK:     <I:2:7, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:2:7, 4> | <X:2:10, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:2:7, 4> <X:2:10, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'main':
 //SAFE:  loop at depth 1 private_2.c:3:3
 //SAFE:    first private:
@@ -31,3 +33,5 @@ int main() {
 //SAFE:     <I:2:7, 4>
 //SAFE:    explicit access:
 //SAFE:     <I:2:7, 4> | <X:2:10, 4>
+//SAFE:    explicit access (separate):
+//SAFE:     <I:2:7, 4> <X:2:10, 4>

@@ -22,3 +22,5 @@ void foo(int * restrict A) {
 //CHECK:     <*A:3:25, ?> | <I:4:12, 4> | <Start, 4>
 //CHECK:    explicit access:
 //CHECK:     <A:3:25, 8> | <I:4:12, 4> | <Start, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <A:3:25, 8> <I:4:12, 4> <Start, 4>

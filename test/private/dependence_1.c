@@ -25,3 +25,5 @@ void foo(int N) {
 //CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:8:12, 4> bar():9:5

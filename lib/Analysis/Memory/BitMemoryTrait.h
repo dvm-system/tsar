@@ -48,21 +48,22 @@ public:
   /// part of memory locations is read-only and other part is last private a union
   /// is last private and first private (for details see resolve... methods).
   enum Id : unsigned long long {
-    NoAccess =            111111111111_b,
-    Readonly =            001111011111_b,
-    Shared =              001111001111_b,
-    Private =             000111111111_b,
-    FirstPrivate =        000111011111_b,
-    SecondToLastPrivate = 000101111111_b,
-    LastPrivate =         000011111111_b,
-    DynamicPrivate =      000001111111_b,
-    Dependency =          000000001111_b,
-    AddressAccess =       111111110111_b,
-    HeaderAccess =        111111111011_b,
-    ExplicitAccess =      111111111101_b,
-    Reduction =           010000001111_b,
-    Induction =           100000001111_b,
-    Lock =                111111111110_b
+    NoAccess =            1111111111111_b,
+    Readonly =            0011110111111_b,
+    Shared =              0011110011111_b,
+    Private =             0001111111111_b,
+    FirstPrivate =        0001110111111_b,
+    SecondToLastPrivate = 0001011111111_b,
+    LastPrivate =         0000111111111_b,
+    DynamicPrivate =      0000011111111_b,
+    Dependency =          0000000011111_b,
+    AddressAccess =       1111111101111_b,
+    HeaderAccess =        1111111110111_b,
+    ExplicitAccess =      1111111111011_b,
+    Reduction =           0100000011111_b,
+    Induction =           1000000011111_b,
+    Lock =                1111111111101_b,
+    Redundant =           1111111111110_b,
   };
 
   BitMemoryTrait() = default;
@@ -140,7 +141,8 @@ constexpr inline BitMemoryTrait::Id operator~(
 constexpr inline BitMemoryTrait::Id dropUnitFlag(
     BitMemoryTrait::Id T) noexcept {
   return T | ~BitMemoryTrait::AddressAccess | ~BitMemoryTrait::HeaderAccess |
-    ~BitMemoryTrait::ExplicitAccess | ~BitMemoryTrait::Lock;
+    ~BitMemoryTrait::ExplicitAccess | ~BitMemoryTrait::Lock |
+    ~BitMemoryTrait::Redundant;
 }
 
 /// Drops a single bit which identifies shared trait (shared becomes read-only).

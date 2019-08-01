@@ -34,7 +34,9 @@ void foo() {
 //CHECK:     <I:6:12, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:6:12, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4>
-//CHECK:   loop at depth 2 shared_15.c:10:5
+//CHECK:    explicit access (separate):
+//CHECK:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4>
+//CHECK:   loop at depth 2 shared_15.c:11:5
 //CHECK:     shared:
 //CHECK:      <U, 80000>
 //CHECK:     induction:
@@ -47,6 +49,8 @@ void foo() {
 //CHECK:      <J:5:10, 4> | <JEnd, 4> | <U, 80000>
 //CHECK:     explicit access:
 //CHECK:      <I:6:12, 4> | <J:5:10, 4> | <JEnd, 4>
+//CHECK:     explicit access (separate):
+//CHECK:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 shared_15.c:6:3
 //SAFE:    private:
@@ -67,6 +71,8 @@ void foo() {
 //SAFE:     <I:6:12, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
 //SAFE:    explicit access:
 //SAFE:     <I:6:12, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4>
+//SAFE:    explicit access (separate):
+//SAFE:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4>
 //SAFE:   loop at depth 2 shared_15.c:11:5
 //SAFE:     shared:
 //SAFE:      <U, 80000>
@@ -80,3 +86,5 @@ void foo() {
 //SAFE:      <J:5:10, 4> | <JEnd, 4> | <U, 80000>
 //SAFE:     explicit access:
 //SAFE:      <I:6:12, 4> | <J:5:10, 4> | <JEnd, 4>
+//SAFE:     explicit access (separate):
+//SAFE:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4>

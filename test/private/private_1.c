@@ -16,3 +16,5 @@ int main() {
 //CHECK:     <I:2:7, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:2:7, 4> | <X:2:10, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:2:7, 4> <X:2:10, 4>

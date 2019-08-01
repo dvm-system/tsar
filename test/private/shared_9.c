@@ -54,6 +54,8 @@ void foo(int N, int JStart, double * restrict * restrict U) {
 //SAFE:     <*U[?]:{6:17|3:58}, ?> <IEnd, 4> <JEnd, 4> | <I:4:12, 4>
 //SAFE:    explicit access:
 //SAFE:     <*U[?]:{6:17|3:58}, ?> <IEnd, 4> <JEnd, 4> | <I:4:12, 4> | <J:5:14, 4> | <JStart:3:21, 4> | <U:3:58, 8>
+//SAFE:    explicit access (separate):
+//SAFE:     <I:4:12, 4> <IEnd, 4> <J:5:14, 4> <JEnd, 4> <JStart:3:21, 4> <U:3:58, 8>
 //SAFE:   loop at depth 2 shared_9.c:5:5
 //SAFE:     output:
 //SAFE:      <*U[?]:{6:17|3:58}, ?> <JEnd, 4>
@@ -71,3 +73,5 @@ void foo(int N, int JStart, double * restrict * restrict U) {
 //SAFE:      <*U:3:58, ?> | <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <J:5:14, 4>
 //SAFE:     explicit access:
 //SAFE:      <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <I:4:12, 4> | <J:5:14, 4> | <U:3:58, 8>
+//SAFE:     explicit access (separate):
+//SAFE:      <I:4:12, 4> <J:5:14, 4> <JEnd, 4> <U:3:58, 8>

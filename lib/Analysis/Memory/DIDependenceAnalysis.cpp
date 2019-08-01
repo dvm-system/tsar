@@ -85,7 +85,7 @@ void allocatePoolLog(unsigned DWLang,
 /// `LockedTraits` is a list of traits which is locked. All memory locations
 /// which may alias with a memory from this list also should be locked.
 ///
-/// \attention We do not set `trait::Lock` property form `T` if it should be
+/// \attention We do not set `trait::Lock` property for `T` if it should be
 /// locked implicitly (if it does not already contained in LockedTraits).
 /// If we set this property and add `T` in LockedTraits then some traits which
 /// should not be locked may become locked. For example, let us consider a
@@ -306,16 +306,22 @@ void combineTraits(DIAliasTrait &DIATrait) {
          !DIMTraitItr->is<trait::NoAccess>() &&
          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::ExplicitAccess>();
+    if (!(DIMTraitItr->is<trait::Redundant>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::Redundant>();
     return;
   }
   BitMemoryTrait CombinedTrait;
-  bool ExplicitAccess = false;
+  bool ExplicitAccess = false, Redundant = false;
   for (auto &DIMTraitItr : DIATrait) {
     CombinedTrait &= *DIMTraitItr;
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       ExplicitAccess = true;
+    if (DIMTraitItr->is<trait::Redundant>() &&
+        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+      Redundant = true;
   }
   CombinedTrait &=
     dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
@@ -325,9 +331,41 @@ void combineTraits(DIAliasTrait &DIATrait) {
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
   if (!ExplicitAccess)
     Dptr.unset<trait::ExplicitAccess>();
+  if (!Redundant)
+    Dptr.unset<trait::Redundant>();
   DIATrait = Dptr;
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
+}
+
+/// Check that a specified corrupted memory location `M` is redundant.
+bool isRedundantCorrupted(const DIMemory &M, const AliasTrait &ATrait,
+    const AliasTree &AT) {
+  if (M.emptyBinding())
+    return true;
+  auto &VH = *M.begin();
+  assert(VH && !isa<UndefValue>(VH) &&
+    "Metadata-level alias tree is corrupted!");
+  if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
+    auto EM = AT.find(MemoryLocation(VH, DIEM->getSize()));
+    if (!EM)
+      return true;
+    auto MTraitItr = ATrait.find(EM);
+    if (MTraitItr == ATrait.end())
+      return true;
+  } else if (cast<DIUnknownMemory>(M).isExec()) {
+      auto MTraitItr = ATrait.find(cast<Instruction>(VH));
+      if (MTraitItr == ATrait.unknown_end())
+        return true;
+  } else {
+    for (auto &T : ATrait) {
+      auto Itr = std::find(T.getMemory()->begin(), T.getMemory()->end(), VH);
+      if (Itr != T.getMemory()->end())
+        return false;
+    }
+    return true;
+  }
+  return false;
 }
 }
 
@@ -437,6 +475,11 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       if (DIMTraitItr == Pool.end())
         continue;
       LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
+      if (M.isOriginal() &&
+          !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR) &&
+          (ATraitItr == DepSet.end() ||
+           isRedundantCorrupted(M, *ATraitItr, *mAT)))
+        DIMTraitItr->set<trait::Redundant>();
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
       DIATraitItr->insert(DIMTraitItr);
@@ -618,17 +661,68 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
 }
 
 namespace {
+/// If TraitT is set and its tag is presented in SeparateTraitListT then store
+/// a specified value in a list of traits.
+template<class TraitT, class ValueT, class SeparateTraitListT>
+struct StoreIfSet {
+  template<class Trait> void operator()() {
+    if (T.typename is<Trait>())
+      Traits.template get<Trait>().insert(V);
+  }
+
+  const TraitT &T;
+  const ValueT &V;
+  SeparateTraitListT &Traits;
+};
+
+template<class TraitT, class ValueT, class SeparateTraitListT>
+StoreIfSet<TraitT, ValueT, SeparateTraitListT> getStoreIfSetFunctor(
+    const TraitT &T, const ValueT &V, SeparateTraitListT &Traits) {
+  return StoreIfSet<TraitT, ValueT, SeparateTraitListT>{ T, V, Traits};
+}
+
+template<class... SeparateTraits>
 struct TraitPrinter {
+  /// Sorted list of traits to (print their in algoristic order).
+  using SortedVarListT = std::set<std::string, std::less<std::string>>;
+
+  /// Container of traits which should be printed if they have been set for
+  /// a memory location separately (it may not be set for the whole alias node).
+  using SeparateTraitList =
+    bcl::tags::get_tagged_tuple_t<SortedVarListT, SeparateTraits...>;
+
+  /// Functor to print some traits for memory locations separately.
+  struct SeparatePrinter {
+    template<class TagT> void operator()() {
+      if (Traits.template get<TagT>().empty())
+        return;
+      OS << Offset << TagT::toString() << " (separate):\n" << Offset;
+      for (auto &T : Traits.template get<TagT>())
+        OS << " " << T;
+      OS << "\n";
+    }
+    SeparateTraitList &Traits;
+    std::string Offset;
+    llvm::raw_ostream &OS;
+  };
+
   explicit TraitPrinter(raw_ostream &OS, const DIAliasTree &DIAT,
     StringRef Offset, unsigned DWLang) :
     mOS(OS), mDIAT(&DIAT), mOffset(Offset), mDWLang(DWLang) {}
+
+  /// Print traits from `SeparateTraits` if they have been set for
+  /// a memory location separately (it may not be set for the whole alias node).
+  void printSeparateTraits() {
+    bcl::TypeList<SeparateTraits...>::template for_each_type(
+      SeparatePrinter{ mSeparateTraits, mOffset, mOS });
+  }
+
   template<class Trait> void operator()(
       ArrayRef<const DIAliasTrait *> TraitVector) {
     if (TraitVector.empty())
       return;
     mOS << mOffset << Trait::toString() << ":\n";
     /// Sort traits to print their in algoristic order.
-    using SortedVarListT = std::set<std::string, std::less<std::string>>;
     std::vector<SortedVarListT> VarLists;
     auto less = [&VarLists](decltype(VarLists)::size_type LHS,
       decltype(VarLists)::size_type RHS) {
@@ -645,6 +739,8 @@ struct TraitPrinter {
         std::string Str;
         raw_string_ostream TmpOS(Str);
         printDILocationSource(mDWLang, *T->getMemory(), TmpOS);
+        bcl::TypeList<SeparateTraits...>::template for_each_type(
+          getStoreIfSetFunctor(*T, TmpOS.str(), mSeparateTraits));
         traitToStr(T->get<Trait>(), TmpOS);
         VarLists.back().insert(TmpOS.str());
       }
@@ -728,6 +824,7 @@ struct TraitPrinter {
   const DIAliasTree *mDIAT;
   std::string mOffset;
   unsigned mDWLang;
+  SeparateTraitList mSeparateTraits;
 };
 }
 
@@ -770,7 +867,10 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
       if (Coverage.count(TS.getNode()))
         TS.for_each(
           bcl::TraitMapConstructor<const DIAliasTrait, TraitMap>(TS, TM));
-    TM.for_each(TraitPrinter(OS, DIAT, Offset, *DWLang));
+    TraitPrinter<trait::ExplicitAccess, trait::Redundant>
+      Printer(OS, DIAT, Offset, *DWLang);
+    TM.for_each(Printer);
+    Printer.printSeparateTraits();
   });
 }
 

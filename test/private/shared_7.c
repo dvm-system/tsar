@@ -22,6 +22,8 @@ void foo(int JStart) {
 //CHECK:     <I:5:12, 4> | <IEnd, 4> | <JEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:12, 4> | <IEnd, 4> | <J:6:14, 4> | <JEnd, 4> | <JStart:4:14, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:5:12, 4> <IEnd, 4> <J:6:14, 4> <JEnd, 4> <JStart:4:14, 4>
 //CHECK:   loop at depth 2 shared_7.c:6:5
 //CHECK:     shared:
 //CHECK:      <U, 80000>
@@ -35,3 +37,5 @@ void foo(int JStart) {
 //CHECK:      <J:6:14, 4> | <JEnd, 4> | <U, 80000>
 //CHECK:     explicit access:
 //CHECK:      <I:5:12, 4> | <J:6:14, 4> | <JEnd, 4>
+//CHECK:     explicit access (separate):
+//CHECK:      <I:5:12, 4> <J:6:14, 4> <JEnd, 4>

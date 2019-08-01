@@ -25,6 +25,8 @@ void foo() {
 //CHECK:     <I:6:7, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:6:7, 4> | <J:6:10, 4>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:6:7, 4> <J:6:10, 4>
 //CHECK:   loop at depth 2 distance_8.c:10:5
 //CHECK:     flow:
 //CHECK:      <A, 80000>:[1,1]
@@ -38,6 +40,8 @@ void foo() {
 //CHECK:      <A, 80000> | <J:6:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:6:7, 4> | <J:6:10, 4>
+//CHECK:     explicit access (separate):
+//CHECK:      <I:6:7, 4> <J:6:10, 4>
 //CHECK:   loop at depth 2 distance_8.c:8:5
 //CHECK:     shared:
 //CHECK:      <A, 80000>
@@ -51,3 +55,5 @@ void foo() {
 //CHECK:      <A, 80000> | <J:6:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:6:7, 4> | <J:6:10, 4>
+//CHECK:     explicit access (separate):
+//CHECK:      <I:6:7, 4> <J:6:10, 4>

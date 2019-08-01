@@ -18,3 +18,5 @@ void foo(double * restrict U, int IStep) {
 //CHECK:     <*U:3:28, ?> | <I:4:12, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:4:12, 4> | <IEnd, 4> | <IStep:3:35, 4> | <U:3:28, 8>
+//CHECK:    explicit access (separate):
+//CHECK:     <I:4:12, 4> <IEnd, 4> <IStep:3:35, 4> <U:3:28, 8>
