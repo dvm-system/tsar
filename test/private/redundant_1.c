@@ -15,11 +15,13 @@ void foo() {
 //CHECK:    private:
 //CHECK:     <Nx1:7:9, 4>
 //CHECK:    output:
-//CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4>
+//CHECK:     <A, 40> <B, 44> <Nx, 4>
 //CHECK:    anti:
-//CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4>
+//CHECK:     <A, 40> <B, 44> <Nx, 4>
 //CHECK:    flow:
-//CHECK:     <A, 40> <B, 44>:[1,1] <Nx, 4> | <I:6:12, 4>
+//CHECK:     <A, 40> <B, 44>:[1,1] <Nx, 4>
+//CHECK:    induction:
+//CHECK:     <I:6:12, 4>:[Int,0,10,1]
 //CHECK:    redundant:
 //CHECK:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
 //CHECK:    lock:

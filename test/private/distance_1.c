@@ -24,12 +24,8 @@ void foo() {
 //CHECK:   loop at depth 2 distance_1.c:5:5
 //CHECK:     shared:
 //CHECK:      <U, 80000>
-//CHECK:     output:
-//CHECK:      <J:5:14, 4>
-//CHECK:     anti:
-//CHECK:      <J:5:14, 4>
-//CHECK:     flow:
-//CHECK:      <J:5:14, 4>
+//CHECK:     induction:
+//CHECK:      <J:5:14, 4>:[Int,0,99,1]
 //CHECK:     read only:
 //CHECK:      <I:4:12, 4>
 //CHECK:     lock:

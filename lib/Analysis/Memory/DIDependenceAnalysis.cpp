@@ -272,7 +272,8 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     LLVM_DEBUG(dbgs() << "[DA DI]: traits for promoted location ";
       printLocationSource(dbgs(), Incoming, &DT); dbgs() << " found \n");
     SmallVector<DIMemoryLocation, 2> DILocs;
-    findMetadata(Incoming, DILocs, &DT, MDSearch::ValueOfVariable);
+    Instruction * Users[] = { &Phi->getIncomingBlock(Incoming)->back() };
+    findMetadata(Incoming, Users, DT, DILocs);
     if (DILocs.empty())
       continue;
     for (auto &DILoc : DILocs) {
