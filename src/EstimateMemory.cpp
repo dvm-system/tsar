@@ -50,6 +50,17 @@ Value * stripPointer(const DataLayout &DL, Value *Ptr) {
 
 void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
+  // Try to strip zero offset, to avoid construction of different location for
+  // &X and &X + 0. Different locations produce the same metadata-level location
+  // &X, but this location can not be inserted in metadata-level alias tree
+  // twice.
+  if (auto *I = dyn_cast<Instruction>(Loc.Ptr)) {
+    auto &DL = I->getModule()->getDataLayout();
+    int64_t Offset;
+    auto *Base = GetPointerBaseWithConstantOffset(Loc.Ptr, Offset, DL);
+    if (Offset == 0)
+      Loc.Ptr = Base;
+  }
   // GepUnderlyingObject() will strip `getelementptr` instruction, so ignore such
   // behavior.
   if (auto  GEP = dyn_cast<const GEPOperator>(Loc.Ptr))
