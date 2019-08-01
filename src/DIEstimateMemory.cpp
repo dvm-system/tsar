@@ -787,8 +787,8 @@ public:
     LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: build subtree for a variable "
       << mVar->getName() << "\n");
     DIAliasNode *Parent = mDIAT->getTopLevelNode();
-    if (mCorrupted = mCMR->hasUnknownParent(*mVar)) {
-      Parent = addCorruptedNode(*mDIAT, mCorrupted, Parent, *mCorruptedNodes);
+    if (auto *Corrupted = mCMR->hasUnknownParent(*mVar)) {
+      Parent = addCorruptedNode(*mDIAT, Corrupted, Parent, *mCorruptedNodes);
       if (auto N = dyn_cast<DIAliasUnknownNode>(Parent))
         mVisitedCorrupted.insert(N);
     }
@@ -864,9 +864,18 @@ private:
       return Parent;
     Corrupted->erase(
       mCorruptedReplacement.begin(), mCorruptedReplacement.end());
+    // Node may already exist in the set, however it may be invalid. So, we
+    // update it.
+    // void foo() { for (int I = 0; I < 10; ++I) { int X[10]; X[0] = I; } }
+    // At first, unknown node for corrupted <X,40> would be created. However,
+    // corrupted <X,40> will be replaced with a fragment and unknown node will
+    // be removed. After this mCorruptedNodes contains an empty 'Corrupted'
+    // which points to a deleted pointer.
     if (Corrupted->empty())
-      return mCorruptedNodes->try_emplace(Corrupted, Parent).first->second;
-    return addCorruptedNode(*mDIAT, Corrupted, Parent, *mCorruptedNodes);
+      return mCorruptedNodes->try_emplace(Corrupted).first->second = Parent;
+    Parent = addCorruptedNode(*mDIAT, Corrupted, Parent, *mCorruptedNodes);
+    if (auto N = dyn_cast<DIAliasUnknownNode>(Parent))
+      mVisitedCorrupted.insert(N);
   }
 
   /// \brief Removes corrupted node equal to a specified node.
@@ -884,8 +893,7 @@ private:
           isa<DIEstimateMemory>(M) ? --NumEstimateMemory : --NumUnknownMemory;
           auto Parent = Current->getParent();
           if (mDIAT->erase(M).second) {
-            auto &CN = (*mCorruptedNodes)[mCorrupted];
-            Current = (CN == Current) ? Parent : Current;
+            Current = (N == Current) ? Parent : Current;
             mVisitedCorrupted.erase(N);
             --NumUnknownNode;
             --NumAliasNode;
@@ -1082,7 +1090,6 @@ private:
   DIVariable *mVar;
   SmallVector<DILocation *, 1> mDbgLocs;
   TinyPtrVector<DIExpression *> mSortedFragments;
-  CorruptedMemoryItem *mCorrupted;
   SmallPtrSet<DIAliasUnknownNode *, 2> mVisitedCorrupted;
   SmallPtrSet<MDNode *, 4> mCorruptedReplacement;
 };
