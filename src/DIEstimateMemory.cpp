@@ -1238,7 +1238,11 @@ void CorruptedMemoryResolver::resolve() {
 
 void CorruptedMemoryResolver::findNoAliasFragments() {
   for (auto &I : make_range(inst_begin(mFunc), inst_end(mFunc))) {
-    if (!isa<DbgValueInst>(I))
+    // We ignore 'undef' values, so if there are no other registers associated
+    // with this variable, then the variable becomes corrupted and may be
+    // considered as redundant.
+    if (!isa<DbgValueInst>(I) ||
+        isa<UndefValue>(cast<DbgValueInst>(I).getValue()))
       continue;
     auto Loc = DIMemoryLocation::get(&I);
     if (mSmallestFragments.count(Loc))
