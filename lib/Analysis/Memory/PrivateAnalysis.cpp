@@ -714,7 +714,6 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
           Pair.first->get<BitMemoryTrait>() =
             &I->get<TraitList>().front().get<BitMemoryTrait>();
         }
-        ++NumTraits.get<trait::AddressAccess>();
         break;
       }
     }
@@ -944,8 +943,10 @@ void PrivateRecognitionPass::storeResults(
       auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
       if (ExplicitItr != ExplicitAccesses.end() &&
           dropUnitFlag(*ExplicitItr->second) != BitMemoryTrait::NoAccess &&
-          EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N)
+          EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N) {
         NodeTraitItr->set<trait::ExplicitAccess>();
+        ++NumTraits.get<trait::ExplicitAccess>();
+      }
       bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
       auto EMTraitItr = NodeTraitItr->insert(
         EstimateMemoryTrait(EMI->get<EstimateMemory>(), *NodeTraitItr)).first;
@@ -978,6 +979,7 @@ void PrivateRecognitionPass::storeResults(
         EMI->get<EstimateMemory>()->getAliasNode(*mAliasTree) == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
+      ++NumTraits.get<trait::ExplicitAccess>();
     }
     bcl::trait::unset<DependenceImp::Descriptor>(Dptr);
     auto EMTraitItr = NodeTraitItr->insert(
@@ -997,6 +999,7 @@ void PrivateRecognitionPass::storeResults(
         ExplicitItr->get<AliasNode>() == &N) {
       NodeTraitItr->set<trait::ExplicitAccess>();
       Dptr.set<trait::ExplicitAccess>();
+      ++NumTraits.get<trait::ExplicitAccess>();
     }
     if (dropUnitFlag(U.get<BitMemoryTrait>()) == BitMemoryTrait::Dependency)
       bcl::trait::set<DependenceImp::Descriptor>(CombinedDepDptr);
