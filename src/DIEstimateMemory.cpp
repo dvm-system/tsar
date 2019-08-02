@@ -1614,8 +1614,10 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getBaseAsMDNode() != M.getBaseAsMDNode())
       return false;
-    assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
-      "Different estimate memory locations produces the same debug-level memory!");
+    // Different estimate memory locations produces the same debug-level memory.
+    // For example, P = ...; ... P = ...; ... .
+    if (RAUWd && RAUWd != Cashed.first->second.get())
+      return false;
     RAUWd = Cashed.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
