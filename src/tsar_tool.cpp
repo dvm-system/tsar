@@ -116,6 +116,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoInBoundsSubscripts;
   llvm::cl::opt<bool> AnalyzeLibFunc;
   llvm::cl::opt<bool> NoAnalyzeLibFunc;
+  llvm::cl::opt<bool> IgnoreRedundantMemory;
+  llvm::cl::opt<bool> NoIgnoreRedundantMemory;
   llvm::cl::opt<std::string> AnalysisUse;
 
   llvm::cl::OptionCategory TransformCategory;
@@ -203,6 +205,10 @@ Options::Options() :
     cl::desc("Perform analysis of library functions(default)")),
   NoAnalyzeLibFunc("fno-analyze-library-functions", cl::cat(AnalysisCategory),
     cl::desc("Do not perform analysis of library functions")),
+  IgnoreRedundantMemory("fignore-redundant-memory", cl::cat(AnalysisCategory),
+    cl::desc("Try to discard influence of redundant memory on the analysis results")),
+  NoIgnoreRedundantMemory("fno-ignore-redundant-memory", cl::cat(AnalysisCategory),
+    cl::desc("Try to discard influence of redundant memory on the analysis results")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -448,6 +454,15 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoAnalyzeLibFunc.ArgStr);
     Options::get().AnalyzeLibFunc.error(Msg);
+    exit(1);
+  }
+  getGlobalOptions()->IgnoreRedundantMemory =
+    Options::get().IgnoreRedundantMemory;
+  if (Options::get().IgnoreRedundantMemory &&
+      Options::get().NoIgnoreRedundantMemory) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoIgnoreRedundantMemory.ArgStr);
+    Options::get().IgnoreRedundantMemory.error(Msg);
     exit(1);
   }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));

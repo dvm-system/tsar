@@ -69,6 +69,7 @@ TSAR_TRAIT_DECL(Anti, "anti")
 TSAR_TRAIT_DECL(Output, "output")
 TSAR_TRAIT_DECL(Lock, "lock")
 TSAR_TRAIT_DECL(Redundant, "redundant")
+TSAR_TRAIT_DECL(NoRedundant, "no redundant")
 
 #undef TSAR_TRAIT_DECL
 
@@ -152,8 +153,8 @@ private:
 /// recognized by analyzer.
 ///
 /// The following information is available:
-/// - is it a location which is not accessed in a region
-/// - is it a location which is explicitly accessed in a region
+/// - is it a location which is not accessed in a region;
+/// - is it a location which is explicitly accessed in a region;
 /// - is it a location address of which is evaluated;
 /// - is it a private location;
 /// - is it a last private location;
@@ -166,15 +167,22 @@ private:
 /// - is it a loop induction location;
 /// - is it a location which is accessed in a loop header;
 /// - is it a location with locked traits which should not be further analyzed;
-/// - is it a redundant location which can be removed after some transformations.
+/// - is it a redundant location which can be removed after some transformations;
+/// - is it a location which is not redundant.
 ///
 /// If location is not accessed in a region it will be marked as 'no access'
 /// only if it has some other traits, otherwise it can be omitted in a list
 /// of region traits.
 ///
 /// Location is accessed in a region implicitly if descendant of it in an
-/// estimate memory tree will be accessed explicitly. If some other location is
+/// alias tree will be accessed explicitly. If some other location is
 /// accessed due to alias with such location it is not treated.
+///
+/// There are difference of meaning of some traits for a separate memory
+/// location and for a node in alias tree. This relates to explicitly accessed,
+/// redundant and not redundant locations. An alias node has one of these
+/// traits only if it contains at least one location which has an appropriate
+/// trait (locations from descendant nodes are not analyzed in this case).
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -207,7 +215,7 @@ private:
 /// will be stored as dynamic private locations collection.
 using MemoryDescriptor = bcl::TraitDescriptor<
   trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess, trait::Lock,
-  trait::Redundant,
+  trait::Redundant, trait::NoRedundant,
   bcl::TraitAlternative<
     trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
     bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
@@ -234,7 +242,8 @@ using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::Anti>,
   bcl::tagged<llvm::Statistic &, trait::Output>,
   bcl::tagged<llvm::Statistic &, trait::Lock>,
-  bcl::tagged<llvm::Statistic &, trait::Redundant>>;
+  bcl::tagged<llvm::Statistic &, trait::Redundant>,
+  bcl::tagged<llvm::Statistic &, trait::NoRedundant>>;
 
 /// A macro to make definition of statistics really simple.
 ///
@@ -259,13 +268,14 @@ using MemoryStatistic = bcl::tagged_tuple<
   STATISTIC(VARNAME##Output, "Number of output dependencies found"); \
   STATISTIC(VARNAME##Lock, "Number of locked traits"); \
   STATISTIC(VARNAME##Redundant, "Number of redundant locations"); \
+  STATISTIC(VARNAME##NoRedundant, "Number of not redundant locations"); \
   static ::tsar::MemoryStatistic VARNAME = {\
     VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
     VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
     VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate, VARNAME##LastPrivate, \
     VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
     VARNAME##Flow, VARNAME##Anti, VARNAME##Output, VARNAME##Lock, \
-    VARNAME##Redundant};
+    VARNAME##Redundant, VARNAME##NoRedundant};
 }
 #endif//TSAR_MEMORY_TRAIT_H
 

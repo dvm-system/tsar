@@ -34,3 +34,23 @@ void foo() {
 //CHECK:     <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>
 //CHECK:    redundant (separate):
 //CHECK:     <Nx, 4> <Nx1:7:9, 4>
+//REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
+//REDUNDANT:  loop at depth 1 redundant_1.c:6:3
+//REDUNDANT:    shared:
+//REDUNDANT:     <A, 40>
+//REDUNDANT:    flow:
+//REDUNDANT:     <B, 44>:[1,1]
+//REDUNDANT:    induction:
+//REDUNDANT:     <I:6:12, 4>:[Int,0,10,1]
+//REDUNDANT:    redundant:
+//REDUNDANT:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
+//REDUNDANT:    lock:
+//REDUNDANT:     <I:6:12, 4>
+//REDUNDANT:    header access:
+//REDUNDANT:     <A, 40> | <B, 44> | <I:6:12, 4>
+//REDUNDANT:    explicit access:
+//REDUNDANT:     <I:6:12, 4>
+//REDUNDANT:    explicit access (separate):
+//REDUNDANT:     <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>
+//REDUNDANT:    redundant (separate):
+//REDUNDANT:     <Nx, 4> <Nx1:7:9, 4>

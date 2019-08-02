@@ -578,7 +578,8 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
     if (Pair.second) {
       auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
-      I->get<TraitList>().push_front(std::make_pair(Base, BitMemoryTrait()));
+      I->get<TraitList>().push_front(
+        std::make_pair(Base, BitMemoryTrait::NoRedundant));
       Pair.first->get<BitMemoryTrait>() =
         &I->get<TraitList>().front().get<BitMemoryTrait>();
     }
@@ -623,10 +624,11 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     auto I = NodeTraits.find(N);
     auto &AA = mAliasTree->getAliasAnalysis();
     ImmutableCallSite CS(Unknown);
-    BitMemoryTrait::Id TID = (CS && AA.onlyReadsMemory(CS)) ?
+    BitMemoryTrait TID = (CS && AA.onlyReadsMemory(CS)) ?
       BitMemoryTrait::Readonly : BitMemoryTrait::Dependency;
+    TID &= BitMemoryTrait::NoRedundant;
     I->get<UnknownList>().push_front(
-      std::make_pair(Unknown, BitMemoryTrait(TID)));
+      std::make_pair(Unknown, TID));
     ExplicitUnknowns.insert(std::make_pair(Unknown,
       std::make_tuple(N, &I->get<UnknownList>().front().get<BitMemoryTrait>())));
   }
@@ -707,7 +709,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
         } else {
           auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
           I->get<TraitList>().push_front(
-            std::make_pair(Base, BitMemoryTrait(
+            std::make_pair(Base, BitMemoryTrait(BitMemoryTrait::NoRedundant &
               BitMemoryTrait::NoAccess & BitMemoryTrait::AddressAccess)));
           Pair.first->get<BitMemoryTrait>() =
             &I->get<TraitList>().front().get<BitMemoryTrait>();

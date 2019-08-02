@@ -48,22 +48,23 @@ public:
   /// part of memory locations is read-only and other part is last private a union
   /// is last private and first private (for details see resolve... methods).
   enum Id : unsigned long long {
-    NoAccess =            1111111111111_b,
-    Readonly =            0011110111111_b,
-    Shared =              0011110011111_b,
-    Private =             0001111111111_b,
-    FirstPrivate =        0001110111111_b,
-    SecondToLastPrivate = 0001011111111_b,
-    LastPrivate =         0000111111111_b,
-    DynamicPrivate =      0000011111111_b,
-    Dependency =          0000000011111_b,
-    AddressAccess =       1111111101111_b,
-    HeaderAccess =        1111111110111_b,
-    ExplicitAccess =      1111111111011_b,
-    Reduction =           0100000011111_b,
-    Induction =           1000000011111_b,
-    Lock =                1111111111101_b,
-    Redundant =           1111111111110_b,
+    NoAccess =            11111111111111_b,
+    Readonly =            00111101111111_b,
+    Shared =              00111100111111_b,
+    Private =             00011111111111_b,
+    FirstPrivate =        00011101111111_b,
+    SecondToLastPrivate = 00010111111111_b,
+    LastPrivate =         00001111111111_b,
+    DynamicPrivate =      00000111111111_b,
+    Dependency =          00000000111111_b,
+    AddressAccess =       11111111011111_b,
+    HeaderAccess =        11111111101111_b,
+    ExplicitAccess =      11111111110111_b,
+    Reduction =           01000000111111_b,
+    Induction =           10000000111111_b,
+    Lock =                11111111111011_b,
+    Redundant =           11111111111101_b,
+    NoRedundant =         11111111111110_b,
   };
 
   BitMemoryTrait() = default;
@@ -142,7 +143,7 @@ constexpr inline BitMemoryTrait::Id dropUnitFlag(
     BitMemoryTrait::Id T) noexcept {
   return T | ~BitMemoryTrait::AddressAccess | ~BitMemoryTrait::HeaderAccess |
     ~BitMemoryTrait::ExplicitAccess | ~BitMemoryTrait::Lock |
-    ~BitMemoryTrait::Redundant;
+    ~BitMemoryTrait::Redundant | ~BitMemoryTrait::NoRedundant;
 }
 
 /// Drops a single bit which identifies shared trait (shared becomes read-only).

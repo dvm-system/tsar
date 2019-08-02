@@ -49,6 +49,7 @@ class DIAliasMemoryNode;
 class DIMemory;
 class DependenceSet;
 template<class GraphType> class SpanningTreeRelation;
+struct GlobalOptions;
 
 /// Source-level representation of data-dependencies (including anti/flow/output
 /// dependencies, privatizable variables, reductions and inductions).
@@ -137,6 +138,7 @@ private:
     const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
     const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const tsar::DIMemory *> LockedTraits,
+    const tsar::GlobalOptions &GlobalOpts,
     tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
     tsar::DIMemoryTraitRegionPool &Pool);
 

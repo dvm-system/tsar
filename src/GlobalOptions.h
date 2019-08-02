@@ -32,6 +32,9 @@ struct GlobalOptions {
   /// all library functions are not analyzed. Some analysis may be performed
   /// to ensure correctness of other results.
   bool AnalyzeLibFunc = true;
+  /// Try to discard influence of redundant memory locations on the analysis
+  /// results for other memory locations.
+  bool IgnoreRedundantMemory = false;
 };
 }
 

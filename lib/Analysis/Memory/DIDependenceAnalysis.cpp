@@ -298,7 +298,7 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
 }
 
 /// Combine traits for memory locations and set traits for the whole alias node.
-void combineTraits(DIAliasTrait &DIATrait) {
+void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   assert(!DIATrait.empty() && "List of traits must not be empty!");
   if (DIATrait.size() == 1) {
     auto DIMTraitItr = *DIATrait.begin();
@@ -307,22 +307,39 @@ void combineTraits(DIAliasTrait &DIATrait) {
          !DIMTraitItr->is<trait::NoAccess>() &&
          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::ExplicitAccess>();
+    assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      "Conflict in traits for a memory location!");
     if (!(DIMTraitItr->is<trait::Redundant>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::Redundant>();
+    if (IgnoreRedundant && DIMTraitItr->is<trait::Redundant>()) {
+      DIATrait.set<trait::NoAccess>();
+      DIATrait.unset<trait::HeaderAccess, trait::AddressAccess>();
+    }
     return;
   }
   BitMemoryTrait CombinedTrait;
-  bool ExplicitAccess = false, Redundant = false;
+  bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
   for (auto &DIMTraitItr : DIATrait) {
-    CombinedTrait &= *DIMTraitItr;
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       ExplicitAccess = true;
-    if (DIMTraitItr->is<trait::Redundant>() &&
-        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
-      Redundant = true;
+    assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      "Conflict in traits for a memory location!");
+    if (DIMTraitItr->is<trait::Redundant>()) {
+      if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()) {
+        Redundant = true;
+        CombinedTrait &= BitMemoryTrait::Redundant;
+      }
+      if (IgnoreRedundant)
+        continue;
+    } else {
+      assert(DIMTraitItr->is<trait::NoRedundant>() && "Trait must be set!");
+      if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+        NoRedundant = true;
+    }
+    CombinedTrait &= *DIMTraitItr;
   }
   CombinedTrait &=
     dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
@@ -334,6 +351,8 @@ void combineTraits(DIAliasTrait &DIATrait) {
     Dptr.unset<trait::ExplicitAccess>();
   if (!Redundant)
     Dptr.unset<trait::Redundant>();
+  if (!NoRedundant)
+    Dptr.unset<trait::NoRedundant>();
   DIATrait = Dptr;
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
@@ -458,7 +477,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     Optional<unsigned> DWLang,
     const SpanningTreeRelation<AliasTree *> &AliasSTR,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
-    ArrayRef<const DIMemory *> LockedTraits,
+    ArrayRef<const DIMemory *> LockedTraits, const GlobalOptions &GlobalOpts,
     DependenceSet &DepSet, DIDependenceSet &DIDepSet,
     DIMemoryTraitRegionPool &Pool) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
@@ -479,8 +498,10 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       if (M.isOriginal() &&
           !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR) &&
           (ATraitItr == DepSet.end() ||
-           isRedundantCorrupted(M, *ATraitItr, *mAT)))
+           isRedundantCorrupted(M, *ATraitItr, *mAT))) {
         DIMTraitItr->set<trait::Redundant>();
+        DIMTraitItr->unset<trait::NoRedundant>();
+      }
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
       DIATraitItr->insert(DIMTraitItr);
@@ -579,7 +600,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
   }
   if (DIATraitItr == DIDepSet.end())
     return;
-  combineTraits(*DIATraitItr);
+  combineTraits(GlobalOpts.IgnoreRedundantMemory, *DIATraitItr);
   // We do not update traits for each memory location (as in private recognition
   // pass) because these traits should be updated early (during analysis of
   // promoted locations or by the private recognition pass).
@@ -631,8 +652,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     for (auto *DIN : post_order(&DIAT)) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
-      analyzeNode(cast<DIAliasMemoryNode>(*DIN),
-        DWLang, AliasSTR, DIAliasSTR, LockedTraits, DepSet, DIDepSet, *Pool);
+      analyzeNode(cast<DIAliasMemoryNode>(*DIN), DWLang, AliasSTR, DIAliasSTR,
+        LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool);
     }
     LLVM_DEBUG(dbgs() << "[DA DI]: set traits for a top level node\n");
     auto TopDIN = DIAT.getTopLevelNode();
@@ -644,7 +665,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       for (auto &DIMTraitItr : *ChildTraitItr)
         TopTraitItr->insert(DIMTraitItr);
     }
-    combineTraits(*TopTraitItr);
+    combineTraits(GlobalOpts.IgnoreRedundantMemory, *TopTraitItr);
     std::vector<const DIAliasNode *> Coverage;
     explicitAccessCoverage(DIDepSet, DIAT, Coverage);
     // All descendant nodes for nodes in `Coverage` access some part of
@@ -720,7 +741,7 @@ struct TraitPrinter {
 
   template<class Trait> void operator()(
       ArrayRef<const DIAliasTrait *> TraitVector) {
-    if (TraitVector.empty())
+    if (TraitVector.empty() || std::is_same<Trait, trait::NoRedundant>())
       return;
     mOS << mOffset << Trait::toString() << ":\n";
     /// Sort traits to print their in algoristic order.
@@ -862,12 +883,15 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
       std::vector<const DIAliasTrait *>, MemoryDescriptor>;
     TraitMap TM;
     DenseSet<const DIAliasNode *> Coverage;
-    accessCoverage<bcl::SimpleInserter>(
-      Info->get<DIDependenceSet> (), DIAT, Coverage);
-    for (auto &TS : Info->get<DIDependenceSet>())
+    accessCoverage<bcl::SimpleInserter>(Info->get<DIDependenceSet> (),
+      DIAT, Coverage, GlobalOpts.IgnoreRedundantMemory);
+    for (auto &TS : Info->get<DIDependenceSet>()) {
       if (Coverage.count(TS.getNode()))
         TS.for_each(
           bcl::TraitMapConstructor<const DIAliasTrait, TraitMap>(TS, TM));
+      else if (TS.is<trait::Redundant>())
+        TM.value<trait::Redundant>().push_back(&TS);
+    }
     TraitPrinter<trait::ExplicitAccess, trait::Redundant>
       Printer(OS, DIAT, Offset, *DWLang);
     TM.for_each(Printer);
