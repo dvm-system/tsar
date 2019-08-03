@@ -53,7 +53,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
       bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
       foreachIntrinsicMemArg(*II, [IsMarker, &CS, &TLI, &Func](unsigned Idx) {
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (isa<UndefValue>(Loc.Ptr))
+        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
           return;
         Func(*CS.getInstruction(), std::move(Loc), Idx,
           (CS.doesNotReadMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May,
@@ -62,7 +62,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
       foreachLibFuncMemArg(LibId, [&CS, &TLI, &Func](unsigned Idx) {
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (isa<UndefValue>(Loc.Ptr))
+        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
           return;
         Func(*CS.getInstruction(), std::move(Loc), Idx,
           CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
@@ -75,7 +75,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!CS.getArgument(Idx)->getType()->isPointerTy())
           continue;
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (isa<UndefValue>(Loc.Ptr))
+        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
           continue;
         Func(*CS.getInstruction(), std::move(Loc),
          Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
@@ -101,7 +101,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     auto Loc = MemoryLocation::get(&I);
     assert(Loc.Ptr == I.getOperand(0) &&
       "Operand with a specified number must be a specified memory location!");
-    if (isa<UndefValue>(Loc.Ptr))
+    if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
       return;
     Func(I, std::move(Loc), 0,
       I.mayReadFromMemory() ? AccessInfo::Must : AccessInfo::No,
@@ -113,7 +113,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     auto Loc = MemoryLocation::get(&I);
     assert(Loc.Ptr == I.getOperand(1) &&
       "Operand with a specified number must be a specified memory location!");
-    if (isa<UndefValue>(Loc.Ptr))
+    if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
       return;
     Func(I, MemoryLocation::get(cast<StoreInst>(&I)), 1,
       AccessInfo::No, AccessInfo::Must);
