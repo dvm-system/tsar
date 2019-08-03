@@ -806,7 +806,7 @@ public:
         if (IsCorruptedRoot.second)
           return;
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
-        eraseCorrupted(DIMVar->getBaseAsMDNode(), Parent);
+        eraseAndReplaceCorrupted(DIMVar.get(), Parent);
       }
       LLVM_DEBUG(addFragmentLog(DIEmptyExpr));
       auto &DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
@@ -878,20 +878,23 @@ private:
       mVisitedCorrupted.insert(N);
   }
 
-  /// \brief Removes corrupted node equal to a specified node.
+  /// \brief Removes corrupted node equal to a specified node and replace its
+  /// uses with a specified one.
   ///
   /// \return `True` if corrupted node has been found in `mVisitedCorrupted`
   /// list and removed.
   /// \post If a removed corrupted has been the last one location in the node
   /// the node will be removed. If `Current`equal to a removed node it will be
   /// set to it's parent.
-  bool eraseCorrupted(MDNode *MD, DIAliasNode *&Current) {
+  bool eraseAndReplaceCorrupted(DIMemory *What, DIAliasNode *&Current) {
+    auto *MD = What->getBaseAsMDNode();
     for (auto *N : mVisitedCorrupted)
       for (auto &M : *N)
         if (M.getBaseAsMDNode() == MD) {
           --NumCorruptedMemory;
           isa<DIEstimateMemory>(M) ? --NumEstimateMemory : --NumUnknownMemory;
           auto Parent = Current->getParent();
+          M.replaceAllUsesWith(What);
           if (mDIAT->erase(M).second) {
             Current = (N == Current) ? Parent : Current;
             mVisitedCorrupted.erase(N);
@@ -920,7 +923,7 @@ private:
     if (IsCorrupted.first) {
       if (!IsCorrupted.second) {
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replace corrupted\n");
-        bool IsErased = eraseCorrupted(DIMTmp->getBaseAsMDNode(), Parent);
+        bool IsErased = eraseAndReplaceCorrupted(DIMTmp.get(), Parent);
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
         LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
         auto &NewM = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
