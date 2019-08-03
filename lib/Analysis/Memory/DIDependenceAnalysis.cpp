@@ -667,7 +667,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     }
     combineTraits(GlobalOpts.IgnoreRedundantMemory, *TopTraitItr);
     std::vector<const DIAliasNode *> Coverage;
-    explicitAccessCoverage(DIDepSet, DIAT, Coverage);
+    explicitAccessCoverage(DIDepSet, DIAT, Coverage,
+      GlobalOpts.IgnoreRedundantMemory);
     // All descendant nodes for nodes in `Coverage` access some part of
     // explicitly accessed memory. The conservativeness of analysis implies
     // that memory accesses from this nodes arise loop carried dependencies.
