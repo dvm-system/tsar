@@ -688,7 +688,7 @@ namespace {
 template<class TraitT, class ValueT, class SeparateTraitListT>
 struct StoreIfSet {
   template<class Trait> void operator()() {
-    if (T.typename is<Trait>())
+    if (T.template is<Trait>())
       Traits.template get<Trait>().insert(V);
   }
 
