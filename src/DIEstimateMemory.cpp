@@ -1128,10 +1128,8 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
         auto ParentEM = CurrEM->getParent();
         auto PtrTy =
           dyn_cast_or_null<PointerType>(CurrEM->front()->getType());
-        if ((!PtrTy || !isa<ArrayType>(PtrTy->getPointerElementType())) &&
-            (Offset != 0 || CurrEM->getSize() != ParentEM->getSize())) {
+        if (Offset != 0 || CurrEM->getSize() != ParentEM->getSize())
           RootOffsets.try_emplace(CurrEM->front(), Offset);
-        }
         CurrEM = ParentEM;
         auto *CurrTy = CurrEM->front()->getType();
         Base = GetPointerBaseWithConstantOffset(CurrEM->front(), Offset, DL);
