@@ -86,11 +86,20 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     Dptr.set<trait::NoRedundant>();
     Stat.get<trait::NoRedundant>() += TraitNumber;
   }
-  if (dropUnitFlag(get()) == Dependency) {
+  switch (dropUnitFlag(get())) {
+  case Dependency:
     Dptr.set<trait::Flow, trait::Anti, trait::Output>();
     Stat.get<trait::Flow>() += TraitNumber;
     Stat.get<trait::Anti>() += TraitNumber;
     Stat.get<trait::Output>() += TraitNumber;
+    return Dptr;
+  case Reduction:
+    Dptr.set<trait::Reduction>();
+    Stat.get<trait::Reduction>() += TraitNumber;
+    return Dptr;
+  case Induction:
+    Dptr.set<trait::Induction>();
+    Stat.get<trait::Induction>() += TraitNumber;
     return Dptr;
   }
   switch (dropUnitFlag(dropSharedFlag(get()))) {
@@ -124,14 +133,6 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
   case DynamicPrivate:
     Dptr.set<trait::DynamicPrivate>();
     Stat.get<trait::DynamicPrivate>() += TraitNumber;
-    break;
-  case Reduction:
-    Dptr.set<trait::Reduction>();
-    Stat.get<trait::Reduction>() += TraitNumber;
-    break;
-  case Induction:
-    Dptr.set<trait::Induction>();
-    Stat.get<trait::Induction>() += TraitNumber;
     break;
   }
   // If shared is one of traits it has been set as read-only in `switch`.
