@@ -140,7 +140,7 @@ template<class Tag> void convertIf(
 /// Store traits for a specified memory `M` in a specified pool. Add new
 /// trait if `M` is not stored in pool.
 ///
-/// If traits for `M` already exist in a poll and should not be updated
+/// If traits for `M` already exist in a pool and should not be updated
 /// (for example, should be locked) the second returned value is `false`.
 std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
     const MemoryDescriptor &Dptr, ArrayRef<const DIMemory *> LockedTraits,
@@ -309,6 +309,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       DIATrait.unset<trait::ExplicitAccess>();
     assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
+    assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      "One of traits must be set!");
     if (!(DIMTraitItr->is<trait::Redundant>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::Redundant>();
@@ -569,6 +571,28 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
     DIATraitItr->insert(DIMTraitItr);
   }
+  // We will collapse traits for promoted location only if this location is
+  // used in a region. If location is explicitly used traits for locations
+  // covered by it will be ignored, because the parent trait has been already
+  // analyzed.
+  struct {
+    DIMemory *Memory = nullptr;
+    bool Collapse = true;
+    BitMemoryTrait Trait;
+  } CurrentPromoted;
+  if (DIATraitItr != DIDepSet.end() && isa<DIAliasEstimateNode>(DIN) &&
+      DIN.size() == 1 && DIN.begin()->emptyBinding()) {
+    auto DIMTraitItr = DIATraitItr->find(&*DIN.begin());
+    if (DIMTraitItr != DIATraitItr->end()) {
+      CurrentPromoted.Memory = &*DIN.begin();
+      LLVM_DEBUG(if (DWLang) {
+        dbgs() << "[DA DI]: node contains a single promoted location ";
+        printDILocationSource(*DWLang, *CurrentPromoted.Memory, dbgs());
+        dbgs() << "\n";
+      });
+      CurrentPromoted.Collapse = !(**DIMTraitItr).is<trait::ExplicitAccess>();
+    }
+  }
   // Collect locations from descendant nodes which are explicitly accessed.
   for (auto &Child : make_range(DIN.child_begin(), DIN.child_end())) {
     auto ChildTraitItr = DIDepSet.find_as(&Child);
@@ -581,15 +605,28 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       // Alias trait contains not only locations from a corresponding alias
       // node. It may also contain locations from descendant nodes.
       auto N = DIM->getAliasNode();
-      // Locations from descendant estimate nodes have been already processed
-      // implicitly when IR-level analysis has been performed and traits for
-      // estimate memory locations have been fetched for nodes in IR-level
-      // alias tree.
-      if (isa<DIAliasEstimateNode>(DIN) &&
-          !DIM->emptyBinding() && isa<DIAliasEstimateNode>(N))
-        continue;
+      if (isa<DIAliasEstimateNode>(DIN) && isa<DIAliasEstimateNode>(N)) {
+        if (CurrentPromoted.Memory) {
+          LLVM_DEBUG(if (DWLang) {
+            dbgs() << "[DA DI]: "
+                   << (CurrentPromoted.Collapse ? "propagate" : "ignore")
+                   << " traits of promoted location child ";
+            printDILocationSource(*DWLang, *DIM, dbgs());
+            dbgs() << "\n";
+          });
+          if (CurrentPromoted.Collapse)
+            CurrentPromoted.Trait &= *DIMTraitItr;
+          continue;
+        } else if (!DIM->emptyBinding()) {
+          // Locations from descendant estimate nodes have been already processed
+          // implicitly when IR-level analysis has been performed and traits for
+          // estimate memory locations have been fetched for nodes in IR-level
+          // alias tree.
+          continue;
+        }
+      }
       LLVM_DEBUG(if (DWLang) {
-        dbgs() << "[DA DI]: extract traits from descendant node";
+        dbgs() << "[DA DI]: extract traits from descendant node ";
         printDILocationSource(*DWLang, *DIM, dbgs());
         dbgs() << "\n";
       });
@@ -598,14 +635,22 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIATraitItr->insert(DIMTraitItr);
     }
   }
-  if (DIATraitItr == DIDepSet.end())
+  if (CurrentPromoted.Memory && CurrentPromoted.Collapse) {
+    DIMemoryTraitRef DIMTraitItr;
+    std::tie(DIMTraitItr, std::ignore) =
+      addOrUpdateInPool(*CurrentPromoted.Memory,
+        CurrentPromoted.Trait.toDescriptor(1, NumTraits),
+        LockedTraits, DIAliasSTR, Pool);
+    DIMTraitItr->unset<trait::ExplicitAccess>();
+    assert(DIATraitItr != DIDepSet.end() && "Trait must be already exist!");
+    DIATraitItr->insert(DIMTraitItr);
+  } else if (DIATraitItr == DIDepSet.end())
     return;
   combineTraits(GlobalOpts.IgnoreRedundantMemory, *DIATraitItr);
   // We do not update traits for each memory location (as in private recognition
   // pass) because these traits should be updated early (during analysis of
   // promoted locations or by the private recognition pass).
 }
-
 
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   releaseMemory();
