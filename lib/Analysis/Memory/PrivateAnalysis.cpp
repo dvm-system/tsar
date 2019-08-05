@@ -237,7 +237,7 @@ private:
 
 #ifndef NDEBUG
 static void updateTraitsLog(const EstimateMemory *EM, BitMemoryTrait T) {
-  llvm::dbgs() << "[MEMORY TRAIT]: update traits of ";
+  llvm::dbgs() << "[PRIVATE]: update traits of ";
   printLocationSource(llvm::dbgs(),
     llvm::MemoryLocation(EM->front(), EM->getSize(), EM->getAAInfo()));
   llvm::dbgs() << " to ";
