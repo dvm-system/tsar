@@ -37,6 +37,8 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
     mId &= Redundant;
   if (Dptr.is<trait::NoRedundant>())
     mId &= NoRedundant;
+  if (Dptr.is<trait::NoAccess>())
+    return;
   if (Dptr.is<trait::Flow>() ||
       Dptr.is<trait::Anti>() ||
       Dptr.is<trait::Output>()) {
@@ -48,23 +50,25 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
   } else if (Dptr.is<trait::Readonly>()) {
     mId &= Readonly;
   } else {
-    if (Dptr.is<trait::Shared>())
-      mId &= Shared;
+    auto SharedFlag = Dptr.is<trait::Shared>() ? SharedJoin : ~NoAccess;
+    auto SharedTrait = Dptr.is<trait::Shared>() ? Shared : Dependency;
     if (Dptr.is<trait::FirstPrivate>())
-      mId &= FirstPrivate;
+      mId &= FirstPrivate | SharedFlag;
     if (Dptr.is<trait::Private>())
-      mId &= Private;
+      mId &= Private | SharedFlag;
     else if (Dptr.is<trait::LastPrivate>())
       mId &= LastPrivate;
     else if (Dptr.is<trait::SecondToLastPrivate>())
-      mId &= SecondToLastPrivate;
+      mId &= SecondToLastPrivate | SharedFlag;
     else if (Dptr.is<trait::DynamicPrivate>())
-      mId &= DynamicPrivate;
+      mId &= DynamicPrivate | SharedFlag;
+    else
+      mId &= SharedTrait;
   }
 }
 
 MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
-    MemoryStatistic &Stat) const {
+  MemoryStatistic &Stat) const {
   MemoryDescriptor Dptr;
   if (!(get() & ~AddressAccess)) {
     Dptr.set<trait::AddressAccess>();
@@ -87,28 +91,24 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     Stat.get<trait::NoRedundant>() += TraitNumber;
   }
   switch (dropUnitFlag(get())) {
-  case Dependency:
-    Dptr.set<trait::Flow, trait::Anti, trait::Output>();
-    Stat.get<trait::Flow>() += TraitNumber;
-    Stat.get<trait::Anti>() += TraitNumber;
-    Stat.get<trait::Output>() += TraitNumber;
+  case Readonly:
+    Dptr.set<trait::Readonly>();
+    Stat.get<trait::Readonly>() += TraitNumber;
     return Dptr;
-  case Reduction:
-    Dptr.set<trait::Reduction>();
-    Stat.get<trait::Reduction>() += TraitNumber;
+  case NoAccess:
+    Dptr.set<trait::NoAccess>();
     return Dptr;
-  case Induction:
-    Dptr.set<trait::Induction>();
-    Stat.get<trait::Induction>() += TraitNumber;
-    return Dptr;
+  }
+  if (hasSharedJoin(get())) {
+    Dptr.set<trait::Shared>();
+    Stat.get<trait::Shared>() += TraitNumber;
   }
   switch (dropUnitFlag(dropSharedFlag(get()))) {
   default:
     llvm_unreachable("Unknown type of memory location dependency!");
     break;
-  case NoAccess: Dptr.set<trait::NoAccess>(); break;
-  case Readonly: Dptr.set<trait::Readonly>();
-    Stat.get<trait::Readonly>() += TraitNumber; break;
+  case Shared: Dptr.set<trait::Shared>();
+    Stat.get<trait::Shared>() += TraitNumber; break;
   case Private: Dptr.set<trait::Private>();
     Stat.get<trait::Private>() += TraitNumber; break;
   case FirstPrivate: Dptr.set<trait::FirstPrivate>();
@@ -134,14 +134,20 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
     Dptr.set<trait::DynamicPrivate>();
     Stat.get<trait::DynamicPrivate>() += TraitNumber;
     break;
-  }
-  // If shared is one of traits it has been set as read-only in `switch`.
-  // Hence, do not move this condition before `switch` because it should
-  // override read-only if necessary.
-  if (!(get() &  ~(~Readonly | Shared))) {
-    Dptr.set<trait::Shared>();
-    Stat.get<trait::Shared>() += TraitNumber;
-    Stat.get<trait::Readonly>() -= TraitNumber;
+  case Dependency:
+    Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+    Stat.get<trait::Flow>() += TraitNumber;
+    Stat.get<trait::Anti>() += TraitNumber;
+    Stat.get<trait::Output>() += TraitNumber;
+    return Dptr;
+  case Reduction:
+    Dptr.set<trait::Reduction>();
+    Stat.get<trait::Reduction>() += TraitNumber;
+    return Dptr;
+  case Induction:
+    Dptr.set<trait::Induction>();
+    Stat.get<trait::Induction>() += TraitNumber;
+    return Dptr;
   }
   return Dptr;
 }

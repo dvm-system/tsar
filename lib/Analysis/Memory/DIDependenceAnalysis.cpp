@@ -318,6 +318,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       DIATrait.set<trait::NoAccess>();
       DIATrait.unset<trait::HeaderAccess, trait::AddressAccess>();
     }
+    LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
+      DIATrait.print(dbgs()); dbgs() << "\n");
     return;
   }
   BitMemoryTrait CombinedTrait;

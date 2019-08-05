@@ -44,27 +44,38 @@ public:
   /// \brief Identifiers of recognized traits.
   ///
   /// It is easy to join different traits. For example,
-  /// Readonly & LastPrivate = 0011001 = LastPrivate & FirstPrivate. So if some
-  /// part of memory locations is read-only and other part is last private a union
+  /// `Readonly & LastPrivate = LastPrivate & FirstPrivate`. So if some part
+  /// of memory locations is read-only and other part is last private a union
   /// is last private and first private (for details see resolve... methods).
+  ///
+  /// Some flags does not depends from other flags (unit flags) all such flags
+  /// could be dropped of using 'dropUnitFlag()' method.
+  ///
+  /// There is a special flag `SharedJoin` it should be used with other flags
+  /// to mark absence of dependence. For example Private | SharedJoin means
+  /// that a privatizable variable is not caused dependency. Use `|` with
+  /// `SharedJoin` instead of `&`. To drop it use `dropSharedFlag()` method
+  /// (note, this method change NoAccess and Readonly to invalid flags).
   enum Id : unsigned long long {
-    NoAccess =            11111111111111_b,
-    Readonly =            00111101111111_b,
-    Shared =              00111100111111_b,
-    Private =             00011111111111_b,
-    FirstPrivate =        00011101111111_b,
-    SecondToLastPrivate = 00010111111111_b,
-    LastPrivate =         00001111111111_b,
-    DynamicPrivate =      00000111111111_b,
-    Dependency =          00000000111111_b,
-    AddressAccess =       11111111011111_b,
-    HeaderAccess =        11111111101111_b,
-    ExplicitAccess =      11111111110111_b,
-    Reduction =           01000000111111_b,
-    Induction =           10000000111111_b,
-    Lock =                11111111111011_b,
-    Redundant =           11111111111101_b,
-    NoRedundant =         11111111111110_b,
+    NoAccess =            111111111111111_b,
+    Readonly =            100111101111111_b,
+    SharedJoin =          000000001111111_b,
+    Shared =              100000100111111_b,
+    Private =             000011110111111_b,
+    FirstPrivate =        000011100111111_b,
+    SecondToLastPrivate = 000010110111111_b,
+    LastPrivate =         000001110111111_b,
+    DynamicPrivate =      000000110111111_b,
+    Dependency =          000000000111111_b,
+    Reduction =           001000000111111_b,
+    Induction =           010000000111111_b,
+    AddressAccess =       111111111011111_b,
+    HeaderAccess =        111111111101111_b,
+    ExplicitAccess =      111111111110111_b,
+    Lock =                111111111111011_b,
+    Redundant =           111111111111101_b,
+    NoRedundant =         111111111111110_b,
+    AllUnitFlags =        111111111000000_b,
   };
 
   BitMemoryTrait() = default;
@@ -138,18 +149,21 @@ constexpr inline BitMemoryTrait::Id operator~(
       BitMemoryTrait::NoAccess);
 }
 
-/// Drops bits which identifies single-bit traits.
+/// Drop bits which identifies single-bit traits.
 constexpr inline BitMemoryTrait::Id dropUnitFlag(
     BitMemoryTrait::Id T) noexcept {
-  return T | ~BitMemoryTrait::AddressAccess | ~BitMemoryTrait::HeaderAccess |
-    ~BitMemoryTrait::ExplicitAccess | ~BitMemoryTrait::Lock |
-    ~BitMemoryTrait::Redundant | ~BitMemoryTrait::NoRedundant;
+  return T | ~BitMemoryTrait::AllUnitFlags;
 }
 
-/// Drops a single bit which identifies shared trait (shared becomes read-only).
+/// Drop a single bit (equal to 1) which identifies shared trait.
 constexpr inline BitMemoryTrait::Id dropSharedFlag(
     BitMemoryTrait::Id T) noexcept {
-  return T | ~(~BitMemoryTrait::Readonly | BitMemoryTrait::Shared);
+  return T & dropUnitFlag(~BitMemoryTrait::SharedJoin);
+}
+
+/// Check a single bit (equal to 1) which identifies shared trait.
+constexpr inline bool hasSharedJoin(BitMemoryTrait::Id T) noexcept {
+  return T & BitMemoryTrait::SharedJoin & BitMemoryTrait::AllUnitFlags;
 }
 
 /// Convert internal representation of a trait to a dependency descriptor.

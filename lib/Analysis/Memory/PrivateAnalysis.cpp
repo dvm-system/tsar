@@ -584,15 +584,17 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         &I->get<TraitList>().front().get<BitMemoryTrait>();
     }
     auto &CurrTraits = *Pair.first->get<BitMemoryTrait>();
-    BitMemoryTrait SharedTrait = BitMemoryTrait::NoAccess;
+    BitMemoryTrait SharedTrait = ~BitMemoryTrait::NoAccess;
     BitMemoryTrait DefTrait = BitMemoryTrait::Dependency;
-    if (!Deps.count(Base))
-      SharedTrait = DefTrait = BitMemoryTrait::Shared;
+    if (!Deps.count(Base)) {
+      SharedTrait = BitMemoryTrait::SharedJoin;
+      DefTrait = BitMemoryTrait::Shared;
+    }
     if (!DefUse.hasUse(Loc)) {
       if (!LS.getOut().overlap(Loc))
-        CurrTraits &= BitMemoryTrait::Private & SharedTrait;
+        CurrTraits &= BitMemoryTrait::Private | SharedTrait;
       else if (DefUse.hasDef(Loc))
-        CurrTraits &= BitMemoryTrait::LastPrivate & SharedTrait;
+        CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
       else if (LatchDefs.MustReach.contain(Loc) &&
         !ExitingDefs.MayReach.overlap(Loc))
         // These location will be stored as second to last private, i.e.
@@ -603,14 +605,14 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
         // the loop. In this case the location has not been assigned and
         // must be declared as a first private.
         CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
-          BitMemoryTrait::FirstPrivate & SharedTrait;
+          BitMemoryTrait::FirstPrivate | SharedTrait;
       else
         // There is no certainty that the location is always assigned
         // the value in the loop. Therefore, it must be declared as a
         // first private, to preserve the value obtained before the loop
         // if it has not been assigned.
         CurrTraits &= BitMemoryTrait::DynamicPrivate &
-          BitMemoryTrait::FirstPrivate & SharedTrait;
+          BitMemoryTrait::FirstPrivate | SharedTrait;
     } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))) {
       CurrTraits &= DefTrait;
     } else {
