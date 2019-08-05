@@ -421,8 +421,9 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
       });
     } else if (InductionDescriptor::isInductionPHI(Phi, L, PSE, ID)) {
       trait::DIInduction::Constant Start, Step, BackedgeCount;
-      if (auto *C = dyn_cast<SCEVConstant>(mSE->getSCEV(ID.getStartValue())))
-        Start = APSInt(C->getAPInt());
+      if (mSE->isSCEVable(ID.getStartValue()->getType()))
+        if (auto *C = dyn_cast<SCEVConstant>(mSE->getSCEV(ID.getStartValue())))
+          Start = APSInt(C->getAPInt());
       if (auto *C = dyn_cast<SCEVConstant>(ID.getStep()))
         Step = APSInt(C->getAPInt());
       if (Start && Step && mSE->hasLoopInvariantBackedgeTakenCount(L))
