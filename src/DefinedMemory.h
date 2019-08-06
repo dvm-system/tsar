@@ -2,6 +2,20 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file defines passes to determine must/may defined locations for each
@@ -19,6 +33,7 @@
 #ifndef TSAR_DEFINED_MEMORY_H
 #define TSAR_DEFINED_MEMORY_H
 
+#include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar_df_location.h"
 #include "tsar_data_flow.h"
 #include "DFRegionInfo.h"
@@ -28,7 +43,6 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>
-#include <llvm/Analysis/MemoryLocation.h>
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Instruction.h>
 #endif//DEBUG
@@ -64,7 +78,7 @@ public:
   typedef llvm::SmallPtrSet<llvm::Instruction *, 32> InstructionSet;
 
   /// Set of memory locations.
-  typedef MemorySet<llvm::MemoryLocation> LocationSet;
+  typedef MemorySet<MemoryLocationRange> LocationSet;
 
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
@@ -72,14 +86,14 @@ public:
   /// Returns true if a location have definition in a data-flow node.
   ///
   /// \attention This method does not use alias information.
-  bool hasDef(const llvm::MemoryLocation &Loc) const {
+  bool hasDef(const MemoryLocationRange &Loc) const {
     return mDefs.contain(Loc);
   }
 
   /// Specifies that a location has definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addDef(const llvm::MemoryLocation &Loc) {
+  bool addDef(const MemoryLocationRange &Loc) {
     return mDefs.insert(Loc).second;
   }
 
@@ -90,7 +104,7 @@ public:
     assert(I && "Instruction must not be null!");
     assert(llvm::isa<llvm::StoreInst>(I) &&
       "Only store instructions produce must defined locations!");
-    return addDef(llvm::MemoryLocation::get(I));
+    return addDef(MemoryLocationRange::get(I));
   }
 
   /// Returns set of the may defined locations.
@@ -108,14 +122,14 @@ public:
   /// - This method does not use alias information.
   /// - This method returns true even if only part of the location may have
   /// definition.
-  bool hasMayDef(const llvm::MemoryLocation &Loc) const {
+  bool hasMayDef(const MemoryLocationRange &Loc) const {
     return mMayDefs.overlap(Loc);
   }
 
   /// Specifies that a location may have definition in a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addMayDef(const llvm::MemoryLocation &Loc) {
+  bool addMayDef(const MemoryLocationRange &Loc) {
     return mMayDefs.insert(Loc).second;
   }
 
@@ -126,7 +140,7 @@ public:
   bool addMayDef(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
     assert(I->mayWriteToMemory() && "Instruction does not modify memory!");
-    return addMayDef(llvm::MemoryLocation::get(I));
+    return addMayDef(MemoryLocationRange::get(I));
   }
 
   /// Returns set of the locations which get values outside a data-flow node.
@@ -140,14 +154,14 @@ public:
   /// - This method does not use alias information.
   /// - This method returns true even if only part of the location
   /// get values outside a data-flow node.
-  bool hasUse(const llvm::MemoryLocation &Loc) const {
+  bool hasUse(const MemoryLocationRange &Loc) const {
     return mUses.overlap(Loc);
   }
 
   /// Specifies that a location gets values outside a data-flow node.
   ///
   /// \return False if it has been already specified.
-  bool addUse(const llvm::MemoryLocation &Loc) {
+  bool addUse(const MemoryLocationRange &Loc) {
     return mUses.insert(Loc).second;
   }
 
@@ -158,7 +172,7 @@ public:
   bool addUse(llvm::Instruction *I) {
     assert(I && "Instruction must not be null!");
     assert(I->mayReadFromMemory() && "Instruction does not read memory!");
-    return addUse(llvm::MemoryLocation::get(I));
+    return addUse(MemoryLocationRange::get(I));
   }
 
   /// Returns locations accesses to which are performed explicitly.
@@ -174,13 +188,13 @@ public:
   ///
   /// \attention This method returns true even if only part of the location
   /// has explicit access.
-  bool hasExplicitAccess(const llvm::MemoryLocation &Loc) const {
+  bool hasExplicitAccess(const MemoryLocationRange &Loc) const {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
     return mExplicitAccesses.overlap(Loc);
   }
 
   /// Specifies that there are an explicit access to a location in the node.
-  void addExplicitAccess(const llvm::MemoryLocation &Loc) {
+  void addExplicitAccess(const MemoryLocationRange &Loc) {
     assert(Loc.Ptr && "Pointer to memory location must not be null!");
     mExplicitAccesses.insert(Loc);
   }

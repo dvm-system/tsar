@@ -2,6 +2,20 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file defines abstractions to access information obtained from data-flow
@@ -12,10 +26,10 @@
 #ifndef TSAR_DF_LOCATION_H
 #define TSAR_DF_LOCATION_H
 
+#include "tsar/Analysis/Memory/MemoryLocationRange.h"
+#include "MemorySet.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/Analysis/MemoryLocation.h>
-#include "MemorySet.h"
 
 namespace llvm {
 class DominatorTree;
@@ -73,7 +87,7 @@ public:
   /// \param [in] Value Data-flow value.
   /// \param [out] Result It contains the result of this operation.
   /// The following operation should be provided:
-  /// - void ResultSet::insert(const llvm::MemoryLocation &)
+  /// - void ResultSet::insert(const MemoryLocationRange &)
   /// - void ResultSet::insert(location_iterator &, location_iterator &)
   template<class location_iterator, class ResultSet>
   static void difference(
@@ -134,21 +148,21 @@ public:
 
   /// Returns true if there is a location in this value which contains
   /// the specified location.
-  bool contain(const llvm::MemoryLocation &Loc) const {
+  bool contain(const MemoryLocationRange &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.contain(Loc);
   }
 
   /// Returns true if there is a location in this value which may overlap with
   /// the specified location.
-  bool overlap(const llvm::MemoryLocation &Loc) const {
+  bool overlap(const MemoryLocationRange &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
 
   /// Returns true if there is a location in this value which is contained
   /// in the specified location.
-  bool cover(const llvm::MemoryLocation &Loc) const {
+  bool cover(const MemoryLocationRange &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind != KIND_FULL && mLocations.cover(Loc);
   }
@@ -171,7 +185,7 @@ public:
   ///
   /// If the specified value contains some value in this set, the appropriate
   /// value will be updated. In this case, this method also returns true.
-  bool insert(const llvm::MemoryLocation &Loc) {
+  bool insert(const MemoryLocationRange &Loc) {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     if (mKind == KIND_FULL)
       return true;
@@ -218,7 +232,7 @@ public:
 
 private:
   Kind mKind;
-  MemorySet<llvm::MemoryLocation> mLocations;
+  MemorySet<MemoryLocationRange> mLocations;
 };
 
 /// \brief This calculates the difference between a set of locations and a set
@@ -230,7 +244,7 @@ private:
 /// \param [in] Value Data-flow value.
 /// \param [out] Result It contains the result of this operation.
 /// The following operation should be provided:
-/// - void ResultSet::insert(const llvm::MemoryLocation *)
+/// - void ResultSet::insert(const MemoryLocationRange &)
 /// - void ResultSet::insert(location_iterator &, location_iterator &)
 template<class location_iterator, class ResultSet>
 void difference(const location_iterator &LocBegin,

@@ -17,6 +17,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -170,20 +171,31 @@ public:
         if (this->mDU.hasDef(ALoc))
           continue;
         auto AR = aliasRelation(this->mAA, this->mDL, mLoc, ALoc);
-        if (AR.template is_any<trait::CoverAlias, trait::CoincideAlias>())
+        if (AR.template is_any<trait::CoverAlias, trait::CoincideAlias>()) {
           addMust(ALoc);
-        else
+        } else if (AR.template is<trait::ContainedAlias>()) {
+          int64_t OffsetLoc, OffsetALoc;
+          GetPointerBaseWithConstantOffset(mLoc.Ptr, OffsetLoc, this->mDL);
+          GetPointerBaseWithConstantOffset(ALoc.Ptr, OffsetALoc, this->mDL);
+          // Base - OffsetLoc --------------|mLoc.Ptr| --- mLoc.Size --- |
+          // Base - OffsetALoc -|ALoc.Ptr| ---- ALoc.Size -------------------- |
+          //--------------------|ALoc.Ptr|--| ------ addMust(...) ------ |
+          MemoryLocationRange Range(ALoc.Ptr, OffsetLoc - OffsetALoc,
+            OffsetLoc - OffsetALoc + mLoc.Size, ALoc.AATags);
+          addMust(Range);
+        } else {
           addMay(ALoc);
+        }
       }
     }
   }
 
 private:
-  void addMust(const MemoryLocation &Loc) {
+  void addMust(const MemoryLocationRange &Loc) {
     static_cast<ImpTy *>(this)->addMust(Loc);
   }
 
-  void addMay(const MemoryLocation &Loc) {
+  void addMay(const MemoryLocationRange &Loc) {
     static_cast<ImpTy *>(this)->addMay(Loc);
   }
 
@@ -198,8 +210,8 @@ public: \
     BASE<NAME>(AA, DL, Loc, DU) {} \
 private: \
   friend BASE<NAME>; \
-  void addMust(const MemoryLocation &Loc) { MUST; } \
-  void addMay(const MemoryLocation &Loc) { MAY; } \
+  void addMust(const MemoryLocationRange &Loc) { MUST; } \
+  void addMay(const MemoryLocationRange &Loc) { MAY; } \
 };
 
 ADD_ACCESS_FUNCTOR(AddDefFunctor, AddKnownAccessFunctor,

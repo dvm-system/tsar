@@ -2,6 +2,20 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file defines storage of objects which represent memory locations.
@@ -28,16 +42,16 @@ class MemorySet {
   template<class Ty, class Info> friend class MemorySet;
 
   /// Map from pointers to locations.
-  typedef llvm::DenseMap<const llvm::Value *, LocationTy *> MapTy;
+  typedef llvm::DenseMap<const llvm::Value *, LocationTy> MapTy;
 public:
-  /// \brief Calculates the difference between two sets of locations.
+  /// \brief Calculate the difference between two sets of locations.
   ///
   /// The result set will contain locations from the first set which are not
   /// overlapped with any locations from the second set.
   /// \param [in] LocBegin Iterator that points to the beginning of
-  /// the first locations set.
+  /// the first location set.
   /// \param [in] LocEnd Iterator that points to the ending of
-  /// the first locations set.
+  /// the first location set.
   /// \param [in] LocSet The second location set.
   /// \param [out] Result It contains the result of this operation.
   /// The following operation should be provided:
@@ -47,11 +61,13 @@ public:
   static void difference(
     const location_iterator &LocBegin, const location_iterator &LocEnd,
     const MemorySet &LocSet, ResultSet &Result) {
-    if (LocSet.mLocations.empty())
+    if (LocSet.mLocations.empty()) {
       Result.insert(LocBegin, LocEnd);
-    for (location_iterator I = LocBegin; I != LocEnd; ++I)
-      if (!LocSet.overlap(*I))
-        Result.insert(*I);
+    } else {
+      for (location_iterator I = LocBegin; I != LocEnd; ++I)
+        if (!LocSet.overlap(*I))
+          Result.insert(*I);
+    }
   }
 
   /// This implements iterator over all memory locations in a set.
@@ -68,7 +84,7 @@ public:
       return !operator==(RHS);
     }
 
-    value_type & operator*() const { return *(mCurItr->second); }
+    value_type & operator*() const { return mCurItr->second; }
 
     value_type * operator->() const { return &operator*(); }
 
@@ -91,20 +107,11 @@ public:
   using const_iterator =
     LocationItr<typename MapTy::const_iterator, const LocationTy>;
 
-  /// Default constructor.
-  MemorySet() {}
-
-  /// Destructor.
+  MemorySet() = default;
   ~MemorySet() { clear(); }
 
-  /// Move constructor.
-  MemorySet(MemorySet &&that) :
-    mLocations(std::move(that.mLocations)) {}
-
-  /// Copy constructor.
-  MemorySet(const MemorySet &that) {
-    insert(that.begin(), that.end());
-  }
+  MemorySet(MemorySet &&that) : mLocations(std::move(that.mLocations)) {}
+  MemorySet(const MemorySet &that) { insert(that.begin(), that.end()); }
 
   /// Move assignment operator.
   MemorySet & operator=(MemorySet &&that) {
@@ -124,154 +131,135 @@ public:
     return *this;
   }
 
-  /// Returns iterator that points to the beginning of locations.
+  /// Return iterator that points to the beginning of locations.
   iterator begin() { return iterator(mLocations.begin()); }
 
-  /// Returns iterator that points to the ending of locations.
+  /// Return iterator that points to the ending of locations.
   iterator end() { return iterator(mLocations.end()); }
 
-  /// Returns iterator that points to the beginning of locations.
+  /// Return iterator that points to the beginning of locations.
   const_iterator begin() const { return const_iterator(mLocations.begin()); }
 
-  /// Returns iterator that points to the ending of locations.
+  /// Return iterator that points to the ending of locations.
   const_iterator end() const { return const_iterator(mLocations.end()); }
 
-  /// \brief Returns a location which contains the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return location which contains a specified location.
   template<class Ty> iterator findContaining(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second)) ?
-      iterator(I) : iterator(mLocations.end());
+      MemoryInfo::getLowerBound(Loc) >= MemoryInfo::getLowerBound(I->second) &&
+      MemoryInfo::getUpperBound(Loc) <= MemoryInfo::getUpperBound(I->second)) ?
+        iterator(I) : iterator(mLocations.end());
   }
 
-  /// \brief Returns a location which contains the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return location which contains a specified location.
   template<class Ty> const_iterator findContaining(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) <= MemoryInfo::getSize(*I->second)) ?
-      const_iterator(I) : const_iterator(mLocations.end());
+      MemoryInfo::getLowerBound(Loc) >= MemoryInfo::getLowerBound(I->second) &&
+      MemoryInfo::getUpperBound(Loc) <= MemoryInfo::getUpperBound(I->second)) ?
+        const_iterator(I) : const_iterator(mLocations.end());
   }
 
-  /// \brief Returns true if there is a location in this set which contains
-  /// the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return true if there are location in this set which contains
+  /// a specified location.
   template<class Ty> bool contain(const Ty &Loc) const {
     return findContaining(Loc) != end();
   }
 
-  /// \brief Returns a location which is contained in the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return location which is contained in a specified location.
   template<class Ty> iterator findCoveredBy(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second)) ?
-      iterator(I) : iterator(mLocations.end());
+      MemoryInfo::getLowerBound(Loc) <= MemoryInfo::getLowerBound(I->second) &&
+      MemoryInfo::getUpperBound(Loc) >= MemoryInfo::getUpperBound(I->second)) ?
+        iterator(I) : iterator(mLocations.end());
   }
 
-  /// \brief Returns a location which is contained in the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return location which is contained in a specified location.
   template<class Ty> const_iterator findCoveredBy(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     return (I != mLocations.end() &&
-        MemoryInfo::getSize(Loc) >= MemoryInfo::getSize(*I->second)) ?
-      const_iterator(I) : const_iterator(mLocations.end());
+      MemoryInfo::getLowerBound(Loc) <= MemoryInfo::getLowerBound(I->second) &&
+      MemoryInfo::getUpperBound(Loc) >= MemoryInfo::getUpperBound(I->second)) ?
+        const_iterator(I) : const_iterator(mLocations.end());
   }
 
-  /// \brief Returns true if there is a location in this set which is contained
-  /// in the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) and getPtr(Ty) for each location type used.
+  /// Return true if there is location in this set which is contained
+  /// in a specified location.
   template<class Ty> bool cover(const Ty &Loc) const {
     return findCoveredBy(Loc) != end();
   }
 
-  /// \brief Returns a location which may overlap with the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods getPtr(Ty)
-  /// for each location type used.
+  /// Return location which may overlap with a specified location.
   template<class Ty> iterator findOverlappedWith(const Ty &Loc) {
-    return iterator(mLocations.find(MemoryInfo::getPtr(Loc)));
+    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
+    return (I != mLocations.end() &&
+      MemoryInfo::getUpperBound(I->second) > MemoryInfo::getLowerBound(Loc) &&
+      MemoryInfo::getLowerBound(I->second) < MemoryInfo::getUpperBound(Loc)) ?
+        iterator(I) : iterator(mLocations.end());
   }
 
-  /// \brief Returns a location which may overlap with the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods getPtr(Ty)
-  /// for each location type used.
+  /// Return location which may overlap with a specified location.
   template<class Ty> const_iterator findOverlappedWith(const Ty &Loc) const {
-    return const_iterator(mLocations.find(MemoryInfo::getPtr(Loc)));
+    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
+    return (I != mLocations.end() &&
+      MemoryInfo::getUpperBound(I->second) > MemoryInfo::getLowerBound(Loc) &&
+      MemoryInfo::getLowerBound(I->second) < MemoryInfo::getUpperBound(Loc)) ?
+        const_iterator(I) : const_iterator(mLocations.end());
   }
 
-  /// \brief Returns true if there is a location in this set which may overlap
-  /// with the specified location.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods getPtr(Ty)
-  /// for each location type used.
+  /// Return true if there is a location in this set which may overlap
+  /// with a specified location.
   template<class Ty> bool overlap(const Ty &Loc) const {
     return findOverlappedWith(Loc) != end();
   }
 
-  /// Returns true if this set does not contain any location.
+  /// Return true if this set does not contain any location.
   bool empty() const { return mLocations.empty(); }
 
   /// Removes all locations from this set.
-  void clear() {
-    for (auto Pair : mLocations)
-      delete Pair.second;
-    mLocations.clear();
-  }
+  void clear() { mLocations.clear(); }
 
-  /// \brief Inserts a new location into this set, returns false if it already
+  /// Insert a new location into this set, returns false if it already
   /// exists.
   ///
   /// If the specified value contains some value in this set, the appropriate
   /// value will be updated. In this case, this method also returns true.
   ///
   /// \attention This method updates AATags for an existing location. So,
-  /// us `sanitizeAAInfo()` method to obtain correct value. Note, that alias
+  /// use `sanitizeAAInfo()` method to obtain correct value. Note, that alias
   /// analysis may not work if AATages is corrupted.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods make(Ty),
-  /// getPtr(Ty), getSize(Ty), setSize(Ty &, uint64_t),
-  /// getAATags(Ty), setAATags(Ty &, AAMDNodes) for each location type used.
   template<class Ty> std::pair<iterator, bool> insert(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end()) {
-      LocationTy *NewLoc = MemoryInfo::make(Loc);
+      LocationTy NewLoc = MemoryInfo::make(Loc);
       auto Pair = mLocations.insert(
         std::make_pair(MemoryInfo::getPtr(Loc), NewLoc));
       return std::make_pair(iterator(Pair.first), true);
     }
     bool isChanged = true;
-    if (MemoryInfo::getAATags(*I->second) != MemoryInfo::getAATags(Loc))
-      if (MemoryInfo::getAATags(*I->second) ==
+    if (MemoryInfo::getAATags(I->second) != MemoryInfo::getAATags(Loc))
+      if (MemoryInfo::getAATags(I->second) ==
           llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey())
-        MemoryInfo::setAATags(*I->second, MemoryInfo::getAATags(Loc));
+        MemoryInfo::setAATags(I->second, MemoryInfo::getAATags(Loc));
       else
         MemoryInfo::setAATags(
-          *I->second, llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey());
+          I->second, llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey());
     else
       isChanged = false;
-    if (MemoryInfo::getSize(*I->second) < MemoryInfo::getSize(Loc)) {
-      MemoryInfo::setSize(*I->second, MemoryInfo::getSize(Loc));
+    if (MemoryInfo::getUpperBound(I->second) < MemoryInfo::getUpperBound(Loc)) {
+      MemoryInfo::setUpperBound(I->second, MemoryInfo::getUpperBound(Loc));
+      isChanged = true;
+    }
+    if (MemoryInfo::getLowerBound(I->second) > MemoryInfo::getLowerBound(Loc)) {
+      MemoryInfo::setLowerBound(I->second, MemoryInfo::getLowerBound(Loc));
       isChanged = true;
     }
     return std::make_pair(iterator(I), isChanged);
   }
 
-  /// Inserts all locations from the range into this set, returns false
+  /// Insert all locations from the range into this set, returns false
   /// if nothing has been added and updated.
   template<class location_iterator >
   bool insert(
@@ -282,11 +270,7 @@ public:
     return isChanged;
   }
 
-  /// \brief Realizes intersection between two sets.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods make(Ty),
-  /// getPtr(Ty), getSize(Ty), setSize(Ty &, uint64_t),
-  /// getAATags(Ty), setAATags(Ty &, AAMDNodes) for each location type used.
+  /// Realize intersection between two sets.
   template<class Ty> bool intersect(const MemorySet<Ty> &with) {
     if (this == &with)
       return false;
@@ -294,48 +278,36 @@ public:
     mLocations.swap(PrevLocations);
     bool isChanged = false;
     for (auto Pair : PrevLocations) {
-      auto I = with.findContaining(*Pair.second);
+      auto I = with.findContaining(Pair.second);
       if (I != with.end()) {
-        insert(*Pair.second);
+        insert(Pair.second);
         continue;
       }
-      I = with.findCoveredBy(*Pair.second);
+      I = with.findCoveredBy(Pair.second);
       if (I != with.end()) {
         insert(*I);
         isChanged = true;
       }
     }
-    for (auto Pair : PrevLocations)
-      delete Pair.second;
     return isChanged;
   }
 
-  /// \brief Realizes merger between two sets.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods make(Ty),
-  /// getPtr(Ty), getSize(Ty), setSize(Ty &, uint64_t),
-  /// getAATags(Ty), setAATags(Ty &, AAMDNodes) for each location type used.
+  /// Realize merger between two sets.
   template<class Ty> bool merge(const MemorySet<Ty> &with) {
     if (this == &with)
       return false;
     bool isChanged = false;
     for (auto Pair : with.mLocations)
-      isChanged = insert(*Pair.second).second || isChanged;
+      isChanged = insert(Pair.second).second || isChanged;
     return isChanged;
   }
 
-  /// \brief Compares two sets.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) for each location type used.
+  /// Compare two sets.
   template<class Ty> bool operator!=(const MemorySet<Ty> &RHS) const {
     return !(*this == RHS);
   }
 
-  /// \brief Compares two sets.
-  ///
-  /// The MemorySetInfo is responsible for supplying methods
-  /// getSize(Ty), getAATags(Ty) for each location type used.
+  /// Compare two sets.
   template<class Ty> bool operator==(const MemorySet<Ty> &RHS) const {
     if (this == &RHS)
       return true;
@@ -344,8 +316,11 @@ public:
     for (auto Pair : mLocations) {
       auto I = RHS.mLocations.find(Pair.first);
       if (I == RHS.mLocations.end() ||
-        MemoryInfo::getSize(*I->second) != MemoryInfo::getSize(*Pair.second) ||
-        MemoryInfo::getAATags(*I->second) != MemoryInfo::getAATags(*Pair.second))
+        MemoryInfo::getUpperBound(I->second) !=
+          MemoryInfo::getUpperBound(Pair.second) ||
+        MemoryInfo::getLowerBound(I->second) !=
+          MemoryInfo::getLowerBound(Pair.second) ||
+        MemoryInfo::getAATags(I->second) != MemoryInfo::getAATags(Pair.second))
         return false;
     }
     return true;

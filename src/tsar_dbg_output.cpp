@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar_dbg_output.h"
+#include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "Attributes.h"
 #include "DIEstimateMemory.h"
 #include "DIMemoryLocation.h"
@@ -48,6 +49,23 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
     O << "?";
   else
     O << Loc.Size;
+  O << ">";
+}
+
+void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
+    const DominatorTree *DT) {
+  O << "<";
+  printLocationSource(O, Loc.Ptr, DT);
+  O << ", ";
+  if (Loc.LowerBound == MemoryLocation::UnknownSize)
+    O << "?";
+  else
+    O << Loc.LowerBound;
+  O << ", ";
+  if (Loc.UpperBound == MemoryLocation::UnknownSize)
+    O << "?";
+  else
+    O << Loc.UpperBound;
   O << ">";
 }
 

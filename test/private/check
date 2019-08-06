@@ -10,6 +10,10 @@ private_9
 private_10
 private_11.safe
 private_12
+private_array_1
+private_array_2
+private_array_3
+private_array_4.safe
 shared_1
 shared_2
 shared_3
@@ -45,5 +49,8 @@ redundant_1
 redundant_2
 redundant_3
 redundant_4
-
-
+malloc_1
+struct_1
+struct_2
+struct_3
+struct_4

@@ -10,6 +10,10 @@ private_9.init
 private_10.init
 private_11.safe.init
 private_12.init
+private_array_1.init
+private_array_2.init
+private_array_3.init
+private_array_4.safe.init
 shared_1.init
 shared_2.init
 shared_3.init
@@ -45,3 +49,8 @@ redundant_1.init
 redundant_2.init
 redundant_3.init
 redundant_4.init
+malloc_1.init
+struct_1.init
+struct_2.init
+struct_3.init
+struct_4.init

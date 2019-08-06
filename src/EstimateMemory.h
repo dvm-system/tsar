@@ -37,6 +37,7 @@
 #ifndef TSAR_ESTIMATE_MEMORY_H
 #define TSAR_ESTIMATE_MEMORY_H
 
+#include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar_df_graph.h"
 #include "tsar_pass.h"
 #include "tsar_utility.h"
@@ -53,7 +54,6 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/Analysis/AliasAnalysis.h>
-#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
 #include <array>
 #include <iterator>
@@ -1069,6 +1069,22 @@ public:
   /// Returns the smallest estimate memory location which covers a specified
   /// memory location or nullptr.
   EstimateMemory * find(const llvm::MemoryLocation &Loc) {
+    return const_cast<EstimateMemory *>(
+      static_cast<const AliasTree *>(this)->find(Loc));
+  }
+
+  /// Returns the smallest estimate memory location which covers a specified
+  /// memory location or nullptr.
+  ///
+  /// TODO (kaniandr@gmail.com): implement accurate search do not ignore lower
+  /// bound.
+  const EstimateMemory * find(const MemoryLocationRange &Loc) const {
+    return find(llvm::MemoryLocation(Loc.Ptr, Loc.UpperBound, Loc.AATags));
+  }
+
+  /// Returns the smallest estimate memory location which covers a specified
+  /// memory location or nullptr.
+  EstimateMemory * find(const MemoryLocationRange &Loc) {
     return const_cast<EstimateMemory *>(
       static_cast<const AliasTree *>(this)->find(Loc));
   }

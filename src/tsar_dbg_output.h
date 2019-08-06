@@ -24,6 +24,7 @@ class Value;
 }
 
 namespace tsar {
+struct MemoryLocationRange;
 struct DIMemoryLocation;
 class DIMemory;
 
@@ -53,6 +54,11 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc,
 /// Prints information available from a source code for the specified memory
 /// location and its size (<location, size>).
 void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
+    const llvm::DominatorTree *DT = nullptr);
+
+/// Prints information available from a source code for the specified memory
+/// location and its size (<location, size>).
+void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
     const llvm::DominatorTree *DT = nullptr);
 
 /// Prints source level representation (in a specified language 'DWLang')
