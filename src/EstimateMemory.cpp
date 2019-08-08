@@ -50,17 +50,6 @@ Value * stripPointer(const DataLayout &DL, Value *Ptr) {
 
 void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
-  // Try to strip zero offset, to avoid construction of different location for
-  // &X and &X + 0. Different locations produce the same metadata-level location
-  // &X, but this location can not be inserted in metadata-level alias tree
-  // twice.
-  if (auto *I = dyn_cast<Instruction>(Loc.Ptr)) {
-    auto &DL = I->getModule()->getDataLayout();
-    int64_t Offset;
-    auto *Base = GetPointerBaseWithConstantOffset(Loc.Ptr, Offset, DL);
-    if (Offset == 0)
-      Loc.Ptr = Base;
-  }
   // GepUnderlyingObject() will strip `getelementptr` instruction, so ignore such
   // behavior.
   if (auto  GEP = dyn_cast<const GEPOperator>(Loc.Ptr))
@@ -135,9 +124,25 @@ bool isSameBase(const DataLayout &DL,
     const llvm::Value *BasePtr1, const llvm::Value *BasePtr2) {
   if (BasePtr1 == BasePtr2)
     return true;
-  if (!BasePtr1 || !BasePtr2 ||
-      BasePtr1->getValueID() != BasePtr2->getValueID())
+  if (!BasePtr1 || !BasePtr2)
     return false;
+  // Try to strip constant offset, to avoid construction of different location
+  // for &X and &X + 0 and other similar cases. Different locations produce the
+  // same metadata-level location &X, but this location can not be inserted in
+  // metadata-level alias tree twice.
+  int64_t Offset1 = 0, Offset2 = 0;
+  if (auto *I = dyn_cast<Instruction>(BasePtr1)) {
+    auto &DL = I->getModule()->getDataLayout();
+    BasePtr1 = GetPointerBaseWithConstantOffset(BasePtr1, Offset1, DL);
+  }
+  if (auto *I = dyn_cast<Instruction>(BasePtr2)) {
+    auto &DL = I->getModule()->getDataLayout();
+    BasePtr2 = GetPointerBaseWithConstantOffset(BasePtr2, Offset2, DL);
+  }
+  if (Offset1 != Offset2 ||  BasePtr1->getValueID() != BasePtr2->getValueID())
+    return false;
+  if (BasePtr1 == BasePtr2)
+    return true;
   auto Opcode1 = Operator::getOpcode(BasePtr1);
   auto Opcode2 = Operator::getOpcode(BasePtr2);
   // Value::getValueID() does not distinguish instructions (constant
@@ -153,49 +158,6 @@ bool isSameBase(const DataLayout &DL,
   if (auto LI = dyn_cast<const LoadInst>(BasePtr1))
     return isSameBase(DL, LI->getPointerOperand(),
       cast<const LoadInst>(BasePtr2)->getPointerOperand());
-  if (auto GEP1 = dyn_cast<const GEPOperator>(BasePtr1)) {
-    auto GEP2 = dyn_cast<const GEPOperator>(BasePtr2);
-    if (!isSameBase(DL, GEP1->getPointerOperand(), GEP2->getPointerOperand()))
-      return false;
-    if (GEP1->getSourceElementType() != GEP2->getSourceElementType())
-      return false;
-    if (GEP1->getNumIndices() != GEP2->getNumIndices())
-      return false;
-    auto I1 = gep_type_begin(GEP1), E1 = gep_type_end(GEP1);
-    auto I2 = gep_type_begin(GEP2);
-    auto BitWidth1 = DL.getPointerSizeInBits(GEP1->getPointerAddressSpace());
-    auto BitWidth2 = DL.getPointerSizeInBits(GEP2->getPointerAddressSpace());
-    for (; I1 != E1; ++I1, I2++) {
-      if (I1.getOperand() == I2.getOperand())
-        continue;
-      auto OpC1 = dyn_cast<ConstantInt>(I1.getOperand());
-      auto OpC2 = dyn_cast<ConstantInt>(I2.getOperand());
-      if (!OpC1 || !OpC2)
-        return false;
-      APInt Offset1, Offset2;
-      if (auto STy1 = I1.getStructTypeOrNull()) {
-        assert(I2.getStructTypeOrNull() && "It must be a structure!");
-        auto Idx1 = static_cast<unsigned>(OpC1->getZExtValue());
-        auto SL1 = DL.getStructLayout(STy1);
-        Offset1 = APInt(BitWidth1, SL1->getElementOffset(Idx1));
-        auto STy2 = I2.getStructType();
-        auto Idx2 = static_cast<unsigned>(OpC2->getZExtValue());
-        auto SL2 = DL.getStructLayout(STy2);
-        Offset2 = APInt(BitWidth2, SL2->getElementOffset(Idx2));
-      } else {
-        assert(!I2.getStructTypeOrNull() && "It must not be a structure!");
-        APInt Idx1 = OpC1->getValue().sextOrTrunc(BitWidth1);
-        Offset1 = Idx1 *
-          APInt(BitWidth1, DL.getTypeAllocSize(I1.getIndexedType()));
-        APInt Idx2 = OpC2->getValue().sextOrTrunc(BitWidth2);
-        Offset2 = Idx2 *
-          APInt(BitWidth2, DL.getTypeAllocSize(I2.getIndexedType()));
-      }
-      if (Offset1 != Offset2)
-        return false;
-    }
-    return true;
-  }
   return false;
 }
 
