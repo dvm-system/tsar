@@ -93,8 +93,8 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     }
     // In case of sequence of GEPs try to subsequently strip all GEPs to build
     // a single estimate memory tree with the whole array as a root.
-    // It is not safe to extend GEP memory location if its current size Loc.Ptr
-    // is known and it is greater the size of element because if we do not known
+    // It is not safe to extend GEP memory location if its current size Loc.Size
+    // is known and it is greater then size of element because if we do not known
     // the size of the whole array we can not check that <Loc.Ptr, Loc.Size> is
     // inside <pointer to array, size of array>. However, we assume that
     // unknown size can not be greater than allocated size.
@@ -105,20 +105,27 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       return false;
   }
   if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
-    if (!GEP->isInBounds())
-      return false;
     LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
     Loc.Ptr = GEP->getPointerOperand();
     Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
-    Loc.Size = MemoryLocation::UnknownSize;
-    Type *SrcTy = GEP->getSourceElementType();
-    // We can to precise location size, if this instruction is used to
-    // access element of array or structure without shifting of a pointer.
-    if ((SrcTy->isArrayTy() || SrcTy->isStructTy()) &&
-        GEP->getNumOperands() > 2)
-      if (auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(1)))
-        if (OpC->isZero())
-          Loc.Size = DL.getTypeStoreSize(SrcTy);
+    if (!GEP->isInBounds()) {
+      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip not 'inbounds' offset\n");
+      Loc.Size = MemoryLocation::UnknownSize;
+      return true;
+    }
+    if (Loc.Size != MemoryLocation::UnknownSize) {
+      auto StashSize = Loc.Size;
+      Loc.Size = MemoryLocation::UnknownSize;
+      Type *SrcTy = GEP->getSourceElementType();
+      // We can to precise location size, if this instruction is used to
+      // access element of array or structure without shifting of a pointer.
+      if ((SrcTy->isArrayTy() || SrcTy->isStructTy()) &&
+          GEP->getNumOperands() > 2)
+        if (auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(1)))
+          if (OpC->isZero())
+            Loc.Size = DL.getTypeStoreSize(SrcTy);
+      assert(StashSize <= Loc.Size && "Too small size of striped location must!");
+    }
     return true;
   }
   return false;
