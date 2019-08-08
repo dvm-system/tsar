@@ -751,21 +751,34 @@ public:
   /// Returns number of estimate memory locations in the tree.
   size_type memory_size() const { return mFragments.size(); }
 
-  /// Creates new node and attaches a specified location to it. The location
-  /// must not be previously attached to this alias tree.
-  DIEstimateMemory & addNewNode(
+  /// Creates new node and attaches a specified location to it.
+  ///
+  /// \return On success the first member in pair points to the added memory and
+  /// second member is null. Otherwise (if location has been previously attached
+  /// to this alias tree) the second member is a pointer to a memory which has
+  /// been passed as a parameter.
+  std::pair<memory_iterator, std::unique_ptr<DIEstimateMemory>> addNewNode(
     std::unique_ptr<DIEstimateMemory> &&EM, DIAliasNode &Parent);
 
-  /// Creates new node and attaches a specified location to it. The location
-  /// must not be previously attached to this alias tree.
-  DIMemory & addNewUnknownNode(
+  /// Creates new node and attaches a specified location to it.
+  ///
+  /// \return On success the first member in pair points to the added memory and
+  /// second member is null. Otherwise (if location has been previously attached
+  /// to this alias tree) the second member is a pointer to a memory which has
+  /// been passed as a parameter.
+  std::pair<memory_iterator, std::unique_ptr<DIMemory>> addNewUnknownNode(
     std::unique_ptr<DIMemory> &&M, DIAliasNode &Parent);
 
-  /// Attaches a specified location to a specified alias node. The location
-  /// must not be previously attached to this alias tree.
+  /// Attaches a specified location to a specified alias node.
   ///
   /// \pre Alias estimate node may contain estimate memory locations only.
-  DIMemory & addToNode(std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N);
+  ///
+  /// \return On success the first member in pair points to the added memory and
+  /// second member is null. Otherwise (if location has been previously attached
+  /// to this alias tree) the second member is a pointer to a memory which has
+  /// been passed as a parameter.
+  std::pair<memory_iterator, std::unique_ptr<DIMemory>> addToNode(
+    std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N);
 
   /// \brief Removes specified node from the alias tree and deletes it.
   ///

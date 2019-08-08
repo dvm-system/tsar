@@ -470,32 +470,64 @@ DIAliasTree::DIAliasTree(llvm::Function &F) :
   mNodes.push_back(mTopLevelNode);
 }
 
-DIEstimateMemory & DIAliasTree::addNewNode(
+std::pair<DIAliasTree::memory_iterator, std::unique_ptr<DIEstimateMemory>>
+DIAliasTree::addNewNode(
     std::unique_ptr<DIEstimateMemory> &&EM, DIAliasNode &Parent) {
+  assert(EM && "Memory must not be null!");
+  auto *Tmp = EM.release();
+  memory_iterator Itr = mFragments.end();
+  bool IsInserted = false;
+  std::tie(Itr, IsInserted) = mFragments.insert(Tmp);
+  if (!IsInserted)
+    return std::make_pair(Itr, std::unique_ptr<DIEstimateMemory>(Tmp));
+  assert(!Itr->getAliasNode() &&
+    "Memory location is already attached to a node!");
   ++NumAliasNode, ++NumEstimateNode;
   auto *N = new DIAliasEstimateNode;
   mNodes.push_back(N);
   N->setParent(Parent);
-  return cast<DIEstimateMemory>(addToNode(std::move(EM), *N));
+  Itr->setAliasNode(*N);
+  N->push_back(*Itr);
+  return std::make_pair(Itr, nullptr);
 }
 
-DIMemory & DIAliasTree::addNewUnknownNode(
+std::pair<DIAliasTree::memory_iterator, std::unique_ptr<DIMemory>>
+DIAliasTree::addNewUnknownNode(
     std::unique_ptr<DIMemory> &&M, DIAliasNode &Parent) {
+  assert(M && "Memory must not be null!");
+  auto *Tmp = M.release();
+  memory_iterator Itr = mFragments.end();
+  bool IsInserted = false;
+  std::tie(Itr, IsInserted) = mFragments.insert(Tmp);
+  if (!IsInserted)
+    return std::make_pair(Itr, std::unique_ptr<DIMemory>(Tmp));
+  assert(!Itr->getAliasNode() &&
+    "Memory location is already attached to a node!");
   ++NumAliasNode, ++NumUnknownNode;
   auto *N = new DIAliasUnknownNode;
   mNodes.push_back(N);
   N->setParent(Parent);
-  return addToNode(std::move(M), *N);
+  Itr->setAliasNode(*N);
+  N->push_back(*Itr);
+  return std::make_pair(Itr, nullptr);
 }
 
-DIMemory & DIAliasTree::addToNode(
-    std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N) {
-  auto Pair = mFragments.insert(M.release());
-  assert(Pair.second && !(*Pair.first)->getAliasNode() &&
+std::pair<DIAliasTree::memory_iterator, std::unique_ptr<DIMemory>>
+DIAliasTree::addToNode(std::unique_ptr<DIMemory> &&M, DIAliasMemoryNode &N) {
+  assert(M && "Memory must not be null!");
+  assert((!isa<DIAliasEstimateNode>(N) || isa<DIEstimateMemory>(M)) &&
+    "Alias estimate node may contain estimate memory locations only!");
+  auto *Tmp = M.release();
+  memory_iterator Itr = mFragments.end();
+  bool IsInserted = false;
+  std::tie(Itr, IsInserted) = mFragments.insert(Tmp);
+  if (!IsInserted)
+    return std::make_pair(Itr, std::unique_ptr<DIMemory>(Tmp));
+  assert(!Itr->getAliasNode() &&
     "Memory location is already attached to a node!");
-  (*Pair.first)->setAliasNode(N);
-  N.push_back(**Pair.first);
-  return **Pair.first;
+  Itr->setAliasNode(N);
+  N.push_back(*Itr);
+  return std::make_pair(Itr, nullptr);
 }
 
 void DIAliasTree::erase(DIAliasMemoryNode &N) {
@@ -638,13 +670,33 @@ DIAliasNode * addCorruptedNode(
     LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
     auto DIM = Corrupted->pop();
     LLVM_DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
-    DIParent = DIAT.addNewUnknownNode(std::move(DIM), *DIParent).getAliasNode();
+    auto Info = DIAT.addNewUnknownNode(std::move(DIM), *DIParent);
+    /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+    /// For example, it is possible to add count of duplicates into memory
+    /// representation and reference to the first location.
+    if (Info.second)
+      llvm_unreachable("Construction of duplicates is not supported yet!");
+    DIParent = Info.first->getAliasNode();
   }
   CorruptedNodes.try_emplace(Corrupted, cast<DIAliasUnknownNode>(DIParent));
   for (CorruptedMemoryItem::size_type I = 0, E = Corrupted->size(); I < E; ++I) {
     auto DIM = Corrupted->pop();
     LLVM_DEBUG(addCorruptedLog(DIAT.getFunction(), *DIM));
-    DIAT.addToNode(std::move(DIM), cast<DIAliasUnknownNode>(*DIParent));
+    auto Info =
+      DIAT.addToNode(std::move(DIM), cast<DIAliasUnknownNode>(*DIParent));
+    if (Info.second) {
+      if (Info.first->getAliasNode() == DIParent) {
+        for (auto &VH : *Info.second)
+          Info.first->bindValue(VH);
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
+          "one in the current node\n");
+      } else {
+        /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+        /// For example, it is possible to add count of duplicates into memory
+        /// representation and reference to the first location.
+        llvm_unreachable("Construction of duplicates is not supported yet!");
+      }
+    }
   }
   return DIParent;
 }
@@ -717,23 +769,60 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       if (!isa<DIAliasUnknownNode>(DIN)) {
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias unknown node\n");
         LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *Unknown.back()));
-        DIN = DIAT.addNewUnknownNode(
-          std::move(Unknown.back()), *DIN).getAliasNode();
+        auto Info = DIAT.addNewUnknownNode(std::move(Unknown.back()), *DIN);
+        /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+        /// For example, it is possible to add count of duplicates into memory
+        /// representation and reference to the first location.
+        if (Info.second)
+          llvm_unreachable("Construction of duplicates is not supported yet!");
+        DIN = Info.first->getAliasNode();
         Unknown.pop_back();
       }
       for (auto &M : Unknown) {
         LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *M));
-        DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
+        auto Info = DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
+        if (Info.second) {
+          if (Info.first->getAliasNode() == DIN) {
+            for (auto &VH : *Info.second)
+              Info.first->bindValue(VH);
+            LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
+              "one in the current node\n");
+          } else {
+            /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+            /// For example, it is possible to add count of duplicates into memory
+            /// representation and reference to the first location.
+            llvm_unreachable("Construction of duplicates is not supported yet!");
+          }
+        }
       }
     }
     if (!Known.empty()) {
       LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add new debug alias estimate node\n");
       LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *Known.back()));
-      DIN = DIAT.addNewNode(std::move(Known.back()), *DIN).getAliasNode();
+      auto Info = DIAT.addNewNode(std::move(Known.back()), *DIN);
+      /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+      /// For example, it is possible to add count of duplicates into memory
+      /// representation and reference to the first location.
+      if (Info.second)
+        llvm_unreachable("Construction of duplicates is not supported yet!");
+      DIN = Info.first->getAliasNode();
       Known.pop_back();
       for (auto &M : Known) {
         LLVM_DEBUG(addMemoryLog(DIAT.getFunction(), *M));
-        DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
+        auto Info = DIAT.addToNode(std::move(M), cast<DIAliasMemoryNode>(*DIN));
+        if (Info.second) {
+          if (Info.first->getAliasNode() == DIN) {
+            for (auto &VH : *Info.second)
+              Info.first->bindValue(VH);
+            LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
+              "one in the current node\n");
+          } else {
+            /// TODO (kaniandr@gmail.com): implement construction of duplicates.
+            /// For example, it is possible to add count of duplicates into memory
+            /// representation and reference to the first location.
+            llvm_unreachable("Construction of duplicates is not supported yet!");
+          }
+        }
       }
     }
     buildDIAliasTree(DL, DT, Env, RootOffsets, CMR, DIAT, Child, *DIN, Nodes);
@@ -809,10 +898,11 @@ public:
         eraseAndReplaceCorrupted(DIMVar.get(), Parent);
       }
       LLVM_DEBUG(addFragmentLog(DIEmptyExpr));
-      auto &DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
+      auto DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
+      assert(!DIM.second && "Memory location is already attached to a node!");
       if (auto M = mCMR->beforePromotion(DIMemoryLocation(mVar, DIEmptyExpr)))
-        M->replaceAllUsesWith(&DIM);
-      DIM.setProperties(DIMemory::Explicit);
+        M->replaceAllUsesWith(&*DIM.first);
+      DIM.first->setProperties(DIMemory::Explicit);
       return;
     }
     auto LastInfo = mSortedFragments.back()->getFragmentInfo();
@@ -844,14 +934,15 @@ private:
     for (unsigned I = BeginIdx; I < EndIdx; ++I) {
       LLVM_DEBUG(addFragmentLog(mSortedFragments[I]));
       Parent = addUnknownParentIfNecessary(Parent, mSortedFragments[I]);
-      auto &DIM = mDIAT->addNewNode(
+      auto DIM = mDIAT->addNewNode(
         DIEstimateMemory::get(*mContext, *mEnv, mVar, mSortedFragments[I],
           DIEstimateMemory::NoFlags, mDbgLocs),
         *Parent);
+      assert(!DIM.second && "Memory location is already attached to a node!");
       if (auto M = mCMR->beforePromotion(
             DIMemoryLocation(mVar, mSortedFragments[I])))
-        M->replaceAllUsesWith(&DIM);
-      DIM.setProperties(DIMemory::Explicit);
+        M->replaceAllUsesWith(&*DIM.first);
+      DIM.first->setProperties(DIMemory::Explicit);
     }
   }
 
@@ -926,18 +1017,21 @@ private:
         bool IsErased = eraseAndReplaceCorrupted(DIMTmp.get(), Parent);
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
         LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
-        auto &NewM = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
+        auto NewM = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
+        assert(!NewM.second && "Memory location is already attached to a node!");
         // The corrupted has not been inserted into alias tree yet.
         // So it should be remembered to prevent such insertion later.
         if (!IsErased)
-          mCorruptedReplacement.insert(NewM.getAsMDNode());
-        Parent = NewM.getAliasNode();
+          mCorruptedReplacement.insert(NewM.first->getAsMDNode());
+        Parent = NewM.first->getAliasNode();
       }
     } else {
       Parent = addUnknownParentIfNecessary(Parent, Expr);
       LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: add internal fragment\n");
       LLVM_DEBUG(addFragmentLog(DIMTmp->getExpression()));
-      Parent = mDIAT->addNewNode(std::move(DIMTmp), *Parent).getAliasNode();
+      auto Info = mDIAT->addNewNode(std::move(DIMTmp), *Parent);
+      assert(!Info.second && "Memory location is already attached to a node!");
+      Parent = Info.first->getAliasNode();
     }
     switch (Ty->getTag()) {
     default:
@@ -1615,7 +1709,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getBaseAsMDNode() != M.getBaseAsMDNode())
       return false;
-    // Different estimate memory locations produces the same debug-level memory.
+    // Different estimate memory locations produce the same debug-level memory.
     // For example, P = ...; ... P = ...; ... .
     if (RAUWd && RAUWd != Cashed.first->second.get())
       return false;
@@ -1652,8 +1746,9 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
     LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
     if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
-    assert((!RAUWd || RAUWd == Cashed.first->second.get()) &&
-      "Different estimate memory locations produces the same debug-level memory!");
+    // Different memory locations produce the same debug-level memory.
+    if (RAUWd && RAUWd != Cashed.first->second.get())
+      return false;
     RAUWd = Cashed.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
