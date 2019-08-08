@@ -248,6 +248,11 @@ void intializeDefUseSetLog(
   dbgs() << "Outward exposed uses:\n";
   for (auto &Loc : DU.getUses())
     printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+  dbgs() << "Explicitly accessed locations:\n";
+  for (auto &Loc : DU.getExplicitAccesses())
+    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+  for (auto *I : DU.getExplicitUnknowns())
+    I->print(dbgs()), dbgs() << "\n";
   dbgs() << "[END DEFUSE]\n";
 };
 

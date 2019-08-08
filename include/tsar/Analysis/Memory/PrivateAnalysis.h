@@ -215,7 +215,7 @@ private:
 
   /// Set HeaderAccess trait for memory locations explicitly accessed in a
   /// loop header.
-  void collectHeaderAccesses(Loop *L,
+  void collectHeaderAccesses(Loop *L, const tsar::DefUseSet &DefUse,
     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns);
 
   /// \brief Evaluates explicitly accessed variables in a loop.

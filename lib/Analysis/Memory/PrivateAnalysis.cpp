@@ -325,23 +325,48 @@ static inline MemoryLocation getLoadOrStoreLocation(Instruction *I) {
   return MemoryLocation();
 }
 
-void PrivateRecognitionPass::collectHeaderAccesses(Loop *L,
-    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns) {
+void PrivateRecognitionPass::collectHeaderAccesses(
+     Loop *L, const DefUseSet &DefUse,
+     TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns) {
   assert(L && "Loop must not be null!");
   for (auto &I : *L->getHeader()) {
     if (!I.mayReadOrWriteMemory())
       continue;
     for_each_memory(I, *mTLI,
-      [this, &ExplicitAccesses](Instruction &I, MemoryLocation &&Loc,
+      [this, &ExplicitAccesses, &DefUse](Instruction &I, MemoryLocation &&Loc,
           unsigned, AccessInfo R, AccessInfo W) {
         if (R == AccessInfo::No &&  W == AccessInfo::No)
           return;
         auto *EM = mAliasTree->find(Loc);
         assert(EM && "Estimate memory location must not be null!");
-        auto Itr = ExplicitAccesses.find(EM);
-        assert(Itr != ExplicitAccesses.end() &&
-          "Explicitly accessed memory must be stored in a list of explicit accesses!");
-        *Itr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
+#ifdef LLVM_DEBUG
+        bool ExplicitAccessFound = false;
+#endif
+        // List of ambiguous pointer in EM may not contain Loc, because it
+        // contains only one pointer for each set of must alias locations.
+        // So, we search appropriate pointers because only this pointers
+        // are presented in Def-Use set.
+        auto &AA = mAliasTree->getAliasAnalysis();
+        auto &DL = I.getModule()->getDataLayout();
+        for (auto *APtr : *EM) {
+          MemoryLocation ALoc(APtr, EM->getSize(), EM->getAAInfo());
+          auto AR = aliasRelation(AA, DL, Loc, ALoc);
+          if (AR.template is<trait::CoincideAlias>()) {
+            auto ExplicitItr = DefUse.getExplicitAccesses().findContaining(ALoc);
+            assert(ExplicitItr != DefUse.getExplicitAccesses().end() &&
+              "Explicitly accessed memory must be stored in a list of explicit accesses!");
+            auto *ExplicitEM = mAliasTree->find(*ExplicitItr);
+            assert(ExplicitEM && "Estimate memory location must not be null!");
+            auto Itr = ExplicitAccesses.find(ExplicitEM);
+            assert(Itr != ExplicitAccesses.end() &&
+              "Explicitly accessed memory must be stored in a list of explicit accesses!");
+            *Itr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
+#ifdef LLVM_DEBUG
+            ExplicitAccessFound = true;
+#endif
+          }
+        }
+        assert(ExplicitAccessFound && "At least one explicit access must be found!");
       },
       [this, &ExplicitUnknowns](Instruction &I, AccessInfo, AccessInfo) {
         auto Itr = ExplicitUnknowns.find(&I);
@@ -383,9 +408,10 @@ void PrivateRecognitionPass::resolveCandidats(
     resolveAccesses(R->getLatchNode(), R->getExitNode(),
       *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps,
       ExplicitAccesses, ExplicitUnknowns, NodeTraits);
-    collectHeaderAccesses(L->getLoop(), ExplicitAccesses, ExplicitUnknowns);
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
+    collectHeaderAccesses(L->getLoop(), *DefItr->get<DefUseSet>(),
+      ExplicitAccesses, ExplicitUnknowns);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
       Deps, PrivInfo.first->get<DependenceSet>());
   }
