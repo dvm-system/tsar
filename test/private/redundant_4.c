@@ -15,25 +15,25 @@ void foo() {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 redundant_4.c:5:3
 //CHECK:    output:
-//CHECK:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <X:6:10, 8>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <X:6:10, 8>
 //CHECK:    anti:
-//CHECK:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <X:6:10, 8>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <X:6:10, 8>
 //CHECK:    flow:
-//CHECK:     <A, 40> <B, 44>:[1,1] <X[0]:{12:7|6:10}, 4> bar():8:11 | <X:6:10, 8>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44>:[1,1] bar():8:11 | <X:6:10, 8>
 //CHECK:    induction:
 //CHECK:     <I:5:12, 4>:[Int,0,10,1]
 //CHECK:    redundant:
-//CHECK:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <X:6:10, 8>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <X:6:10, 8>
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4>
 //CHECK:    header access:
-//CHECK:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <I:5:12, 4>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <I:5:12, 4>
 //CHECK:    explicit access:
-//CHECK:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <I:5:12, 4> | <X:6:10, 8>
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <I:5:12, 4> | <X:6:10, 8>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:5:12, 4> <X:6:10, 8> <X[0]:{12:7|6:10}, 4> bar():8:11
+//CHECK:     <I:5:12, 4> <X:6:10, 8> bar():8:11
 //CHECK:    redundant (separate):
-//CHECK:     <X:6:10, 8> <X[0]:{12:7|6:10}, 4> bar():8:11
+//CHECK:     <*X:{12:7|6:10}, ?> <X:6:10, 8> bar():8:11
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 redundant_4.c:5:3
 //REDUNDANT:    shared:
@@ -43,7 +43,7 @@ void foo() {
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:5:12, 4>:[Int,0,10,1]
 //REDUNDANT:    redundant:
-//REDUNDANT:     <A, 40> <B, 44> <X[0]:{12:7|6:10}, 4> bar():8:11 | <X:6:10, 8>
+//REDUNDANT:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <X:6:10, 8>
 //REDUNDANT:    lock:
 //REDUNDANT:     <I:5:12, 4>
 //REDUNDANT:    header access:
@@ -51,6 +51,6 @@ void foo() {
 //REDUNDANT:    explicit access:
 //REDUNDANT:     <I:5:12, 4>
 //REDUNDANT:    explicit access (separate):
-//REDUNDANT:     <I:5:12, 4> <X:6:10, 8> <X[0]:{12:7|6:10}, 4> bar():8:11
+//REDUNDANT:     <I:5:12, 4> <X:6:10, 8> bar():8:11
 //REDUNDANT:    redundant (separate):
-//REDUNDANT:     <X:6:10, 8> <X[0]:{12:7|6:10}, 4> bar():8:11
+//REDUNDANT:     <*X:{12:7|6:10}, ?> <X:6:10, 8> bar():8:11
