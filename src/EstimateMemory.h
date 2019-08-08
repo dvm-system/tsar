@@ -311,10 +311,12 @@ private:
   ///    0       5            0       5
   ///   / \     / \          / \     /
   ///  1   2   6   7        1   2   6
-  ///     / \     / \          /|\
-  ///    3   4   8   9        7 3 4
-  ///                        / \
-  ///                       8   9
+  ///     / \     / \          / \
+  ///    3   4   8   9        3   7
+  ///                            /
+  ///                           4   8   9
+  /// If (4) and (7) has the same base, otherwise (7) will be added to the end
+  /// of (2) children list.
   void splicePrev(Chain *N);
 
   /// \brief Sets a specified node as a previous node for this one.
@@ -324,9 +326,9 @@ private:
   ///   / \     / \          / \     /
   ///  1   2   6   7        1   2   6
   ///     / \     / \          /|\
-  ///    3   4   8   9        7 3 4
-  ///                        / \
-  ///                       8   9
+  ///    3   4   8   9        3 4 7
+  ///                            / \
+  ///                           8   9
   void mergePrev(Chain *N);
 
   /// Returns a next node.
@@ -1299,14 +1301,39 @@ inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::splicePrev(
     if (Prev->mParent)
       Prev->mParent->mChildren.remove(*Prev);
     Prev->mParent = Chain;
-    Chain->mChildren.push_front(*Prev);
+    for (auto &Child : Prev->mChildren)
+      Child.mParent = nullptr;
+    Prev->mChildren.clear();
+    for (auto I = Chain->mChildren.begin(), EI = Chain->mChildren.end();
+         I != EI; ++I) {
+      if (I->isSameBase(*Prev)) {
+        auto &Curr = *I;
+        Curr.mParent = Prev;
+        Chain->mChildren.insert(I, *Prev);
+        Chain->mChildren.remove(Curr);
+        Prev->mChildren.push_back(Curr);
+        return;
+      }
+    }
+    Chain->mChildren.push_back(*Prev);
   }
 }
 
 inline void bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy>::mergePrev(
     bcl::Chain<tsar::EstimateMemory, tsar::Hierarchy> *N) {
-  return splicePrev(N);
+  assert(N != this && "A node must not precede itself!");
+  auto Chain = static_cast<tsar::EstimateMemory *>(this);
+  auto Prev = static_cast<tsar::EstimateMemory *>(N);
+  if (Prev && Prev->getParent() == Chain)
+    return;
+  if (Prev) {
+    if (Prev->mParent)
+      Prev->mParent->mChildren.remove(*Prev);
+    Prev->mParent = Chain;
+    Chain->mChildren.push_back(*Prev);
+  }
 }
+
 namespace llvm {
 //===----------------------------------------------------------------------===//
 // GraphTraits specializations for estimate memory tree (EstimateMemory)
