@@ -800,41 +800,52 @@ AliasTree::insert(const MemoryLocation &Base) {
         Chain->getAmbiguousList()->push_back(Base.Ptr);
         break;
       }
-      auto StripedBase = Base;
-      MemoryLocation StripedChain(
-        Chain->front(), Chain->getSize(), Chain->getAAInfo());
-      bool IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
-      bool IsStripedChain = stripMemoryLevel(*mDL, StripedChain);
+      using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+      EstimateMemory *Prev = nullptr, *UpdateChain = nullptr;
+      do {
+        if (Base.Size <= Chain->getSize() && !UpdateChain)
+          UpdateChain = Chain;
+      } while (Prev = Chain, Chain = CT::getNext(Chain));
       // This condition checks that it is safe to insert a specified location
       // Base into the estimate memory tree which contains location Chain.
       // The following cases lead to building new estimate memory tree:
       // 1. Base and Chain are x.y.z but striped locations are x.y and x.
       // It is possible due to implementation of stripMemoryLevel() function.
-      // 2. Size of Base or Chain are greater than getTypeStoreSize(). In this
-      // case it is not possible to strip such location. Note, that if both
-      // Base and Chain have such problem they can be inserted in a single tree.
-      if ((IsStripedBase || IsStripedChain) &&
-          !isSameBase(*mDL, StripedBase.Ptr, StripedChain.Ptr))
-        continue;
-      using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-      EstimateMemory *Prev = nullptr;
-      do {
-        if (Base.Size == Chain->getSize()) {
-          Chain->updateAAInfo(Base.AATags);
-          return std::make_tuple(Chain, false, AddAmbiguous);
+      // 2. Inconsistent sizes after execution of stripMemrmoyLevel() function.
+      // For example, let's consider a chain <dum[1], 8> with parent
+      // <dum, 24>-<dum, ?>. Try to insert <dum[1], ?>. If we insert it after
+      // <dum[1], 8> we will obtain incorrect sequence of sizes (? < 24)
+      // <dum[1], 8>-<dum[1],?>-<dum, 24>-<dum, ?>. So, we should create a new
+      // chain <dum[1],?> with parent <dum,?>.
+      if (auto Parent = Prev->getParent()) {
+        bool IsStripedBase = false;
+        auto StripedBase = Base;
+        do {
+          IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
+        } while (IsStripedBase && isSameBase(*mDL, StripedBase.Ptr, Base.Ptr));
+        if (IsStripedBase) {
+          if (!isSameBase(*mDL, Parent->front(), StripedBase.Ptr) ||
+              Parent->getSize() < StripedBase.Size) {
+            continue;
+          }
         }
-        if (Base.Size < Chain->getSize()) {
-          auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
-          ++NumEstimateMemory;
-          CT::splicePrev(EM, Chain);
-          if (ChainBegin == Chain)
-            ChainBegin = EM; // update start point of this chain in a base list
-          return std::make_tuple(EM, true, AddAmbiguous);
-        }
-      } while (Prev = Chain, Chain = CT::getNext(Chain));
-      auto EM = new EstimateMemory(*Prev, Base.Size, Base.AATags);
+      }
+      if (!UpdateChain) {
+        auto EM = new EstimateMemory(*Prev, Base.Size, Base.AATags);
+        ++NumEstimateMemory;
+        CT::spliceNext(EM, Prev);
+        return std::make_tuple(EM, true, AddAmbiguous);
+      }
+      if (Base.Size == UpdateChain->getSize()) {
+        UpdateChain->updateAAInfo(Base.AATags);
+        return std::make_tuple(UpdateChain, false, AddAmbiguous);
+      }
+      assert(Base.Size < UpdateChain->getSize() && "Invariant broken!");
+      auto EM = new EstimateMemory(*UpdateChain, Base.Size, Base.AATags);
       ++NumEstimateMemory;
-      CT::spliceNext(EM, Prev);
+      CT::splicePrev(EM, UpdateChain);
+      if (ChainBegin == UpdateChain)
+        ChainBegin = EM; // update start point of this chain in a base list
       return std::make_tuple(EM, true, AddAmbiguous);
     }
   } else {
