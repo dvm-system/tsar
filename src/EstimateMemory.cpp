@@ -827,7 +827,8 @@ AliasTree::insert(const MemoryLocation &Base) {
           auto EM = new EstimateMemory(*Chain, Base.Size, Base.AATags);
           ++NumEstimateMemory;
           CT::splicePrev(EM, Chain);
-          ChainBegin = EM; // update start point of this chain in a base list
+          if (ChainBegin == Chain)
+            ChainBegin = EM; // update start point of this chain in a base list
           return std::make_tuple(EM, true, AddAmbiguous);
         }
       } while (Prev = Chain, Chain = CT::getNext(Chain));
