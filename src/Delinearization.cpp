@@ -260,7 +260,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       return;
     }
     for (auto &Range : ArrayInfo) {
-      if (Range.isElement() && NumberOfDims < Range.Subscripts.size())
+      if (Range.isElement() && NumberOfDims > Range.Subscripts.size())
         Range.setProperty(Array::Range::NeedExtraZero);
     }
     ArrayInfo.setNumberOfDims(NumberOfDims);
