@@ -967,6 +967,7 @@ private:
     Parent = addCorruptedNode(*mDIAT, Corrupted, Parent, *mCorruptedNodes);
     if (auto N = dyn_cast<DIAliasUnknownNode>(Parent))
       mVisitedCorrupted.insert(N);
+    return Parent;
   }
 
   /// \brief Removes corrupted node equal to a specified node and replace its
