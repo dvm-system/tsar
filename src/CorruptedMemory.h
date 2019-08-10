@@ -90,9 +90,10 @@ public:
 
   /// Removes locations with MDNode metadata equal to one of specified values.
   template<class ItrTy> void erase(ItrTy I, ItrTy E) {
-    for (size_type Idx = size(); Idx > 0; --Idx)
-      if (mMemory[Idx - 1]->getAsMDNode() == *I)
-        mMemory.erase(&mMemory[Idx - 1]);
+    for (; I != E; ++I)
+      for (size_type Idx = size(); Idx > 0; --Idx)
+        if (mMemory[Idx - 1]->getAsMDNode() == *I)
+          mMemory.erase(&mMemory[Idx - 1]);
   }
 private:
   CorruptedList mMemory;
