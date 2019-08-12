@@ -140,6 +140,19 @@ Value * cloneChainImpl(Value *From, Instruction *BoundInst, DominatorTree *DT,
 }
 
 namespace tsar {
+Optional<uint64_t> getConstantCount(const llvm::DISubrange &Range) {
+  auto DICount = Range.getCount();
+  if (!DICount)
+    return None;
+  if (!DICount.is<ConstantInt*>())
+    return None;
+  auto Count = DICount.get<ConstantInt *>()->getValue();
+  if (!Count.isStrictlyPositive())
+    return None;;
+  return Count.getSExtValue();
+}
+
+
 std::vector<StringRef> tokenize(StringRef Str, StringRef Pattern) {
   std::vector<StringRef> Tokens;
   std::regex Rgx(Pattern.data());

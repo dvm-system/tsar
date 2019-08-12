@@ -839,6 +839,15 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
 /// constructed S -> S.X -> S.X[2]. However, the last one only will be marked as
 /// explicitly accessed memory location.
 class DIAliasTreeBuilder {
+  /// Projection of an array to an array with less number of dimensions.
+  ///
+  /// In case of array A[2][3][4] there are two levels of planes.
+  /// First level contains 2 planes of size 3 * 4 = 12.
+  /// The second level contains 3 planes of size 4.
+  struct PlaneTy {
+    uint64_t NumberOfPlanes;
+    uint64_t SizeOfPlane;
+  };
 public:
   /// Creates a builder of subtree which contains specified fragments of a
   /// variable.
@@ -998,16 +1007,12 @@ private:
     return false;
   }
 
-  /// \brief Add subtypes of a specified type into the alias tree.
+  /// Add new node with a specified parent into alias tree.
   ///
-  /// A pair of `mVar` and `Expr` will represent a specified type in the tree.
-  /// \pre A specified type `Ty` must full cover a specified fragments
-  /// from range [Fragments.first, Fragments.second).
-  /// Fragments from this range can not cross bounds of this type.
-  void evaluateTy(DIExpression *Expr, DIType *Ty, uint64_t Offset,
-      std::pair<unsigned, unsigned> Fragments, DIAliasNode *Parent) {
+  /// A specified 'Expr' determines location which will contain a node.
+  /// If appropriate memory location is corrupted new node is not created.
+  DIAliasNode * addNewNode(DIExpression *Expr, DIAliasNode *Parent) {
     assert(Expr && "Expression must not be null!");
-    assert(Ty && "Type must not be null!");
     assert(Parent && "Alias node must not be null!");
     auto DIMTmp = DIEstimateMemory::get(*mContext, *mEnv, mVar, Expr,
       DIEstimateMemory::NoFlags, mDbgLocs);
@@ -1023,7 +1028,7 @@ private:
         // The corrupted has not been inserted into alias tree yet.
         // So it should be remembered to prevent such insertion later.
         if (!IsErased)
-          mCorruptedReplacement.insert(NewM.first->getAsMDNode());
+          mCorruptedReplacement.insert(NewM.first->getBaseAsMDNode());
         Parent = NewM.first->getAliasNode();
       }
     } else {
@@ -1034,6 +1039,19 @@ private:
       assert(!Info.second && "Memory location is already attached to a node!");
       Parent = Info.first->getAliasNode();
     }
+    return Parent;
+  }
+
+  /// \brief Add subtypes of a specified type into the alias tree.
+  ///
+  /// A pair of `mVar` and `Expr` will represent a specified type in the tree.
+  /// \pre A specified type `Ty` must full cover a specified fragments
+  /// from range [Fragments.first, Fragments.second).
+  /// Fragments from this range can not cross bounds of this type.
+  void evaluateTy(DIExpression *Expr, DIType *Ty, uint64_t Offset,
+      std::pair<unsigned, unsigned> Fragments, DIAliasNode *Parent) {
+    Parent = addNewNode(Expr, Parent);
+    assert(Ty && "Type must not be null!");
     switch (Ty->getTag()) {
     default:
       addFragments(Parent, Fragments.first, Fragments.second);
@@ -1071,10 +1089,36 @@ private:
     evaluateTy(Expr, Ty, Offset, Fragments, Parent);
   }
 
+  /// Determine fragments covered by a specified range [Offset, Offset+Size].
+  ///
+  /// \return True if at least one covered fragment has been found. The second
+  /// returned value as an index of a fragment after the last covered.
+  /// If returned value is `false` then second value contains an index of
+  /// fragment which cross border of a checked range.
+  std::pair<bool, unsigned> findCoveredFragments(uint64_t Offset, uint64_t Size,
+    unsigned FragmentIdx, unsigned FragmentIdxE) {
+    bool IsFragmentsCoverage = false;
+    for (; FragmentIdx < FragmentIdxE;
+      ++FragmentIdx, IsFragmentsCoverage = true) {
+      auto FInfo = mSortedFragments[FragmentIdx]->getFragmentInfo();
+      auto FOffset = FInfo->OffsetInBits / 8;
+      auto FSize = (FInfo->SizeInBits + 7) / 8;
+      // If condition is true than fragments in
+      // [FirstFragmentIdx, FragmentIdx) is covered.
+      if (FOffset >= Offset + Size)
+        return std::make_pair(IsFragmentsCoverage, FragmentIdx);
+      // If condition is true than FragmentIdx cross the border of a checked
+      // range and it is necessary to extend coverage.
+      if (FOffset + FSize > Offset + Size)
+        return std::make_pair(false, FragmentIdx);
+    }
+    return std::make_pair(IsFragmentsCoverage, FragmentIdx);
+  }
+
   /// \brief Build coverage of fragments from a specified range
   /// [Fragments.first, Fragments.second) and update alias tree.
   ///
-  /// The range of elements will be spitted into subranges. Each subrange
+  /// The range of elements will be splitted into subranges. Each subrange
   /// is covered by some subsequence of elements.
   /// Adds a specified element into alias tree if it full covers some fragments
   /// from a specified range and evaluates its base type recursively.
@@ -1092,23 +1136,9 @@ private:
       std::pair<unsigned, unsigned> Fragments, DIAliasNode *Parent,
       DIType *ElTy, unsigned ElIdx, uint64_t ElOffset, uint64_t ElSize,
       unsigned &FirstElIdx, unsigned &FirstFragmentIdx, unsigned &FragmentIdx) {
-    bool IsFragmentsCoverage = false;
-    for (; FragmentIdx < Fragments.second;
-         ++FragmentIdx, IsFragmentsCoverage = true) {
-      auto FInfo = mSortedFragments[FragmentIdx]->getFragmentInfo();
-      auto FOffset = FInfo->OffsetInBits / 8;
-      auto FSize = (FInfo->SizeInBits + 7) / 8;
-      // If condition is true than elements in [FirstElIdx, ElIdx] cover
-      // fragments in [FirstFragmentIdx, FragmentIdx).
-      if (FOffset >= Offset + ElOffset + ElSize)
-        break;
-      // If condition is true than FragmentIdx cross the border of ElIdx and
-      // it is necessary include the next element in coverage.
-      if (FOffset + FSize > Offset + ElOffset + ElSize) {
-        IsFragmentsCoverage = false;
-        break;
-      }
-    }
+    bool IsFragmentsCoverage;
+    std::tie(IsFragmentsCoverage, FragmentIdx) = findCoveredFragments(
+      Offset + ElOffset, ElSize, FragmentIdx, Fragments.second);
     if (!IsFragmentsCoverage)
       return;
     if (FirstElIdx == ElIdx) {
@@ -1122,6 +1152,105 @@ private:
     }
     FirstElIdx = ElIdx + 1;
     FirstFragmentIdx = FragmentIdx;
+  }
+
+  /// Determine number of projections, number of planes at each projection and
+  /// number of each planes.
+  bool buildPlanes(const DICompositeType &DICTy, uint64_t ElSize,
+    SmallVectorImpl<PlaneTy> &Planes) {
+    assert(DICTy.getTag() == dwarf::DW_TAG_array_type &&
+      "Type to evaluate must be a structure or class!");
+    auto ArrayDims = DICTy.getElements();
+    Planes.resize(ArrayDims.size(), { 0, ElSize });
+    auto processDim = [&ArrayDims, &Planes](unsigned DimIdx) {
+      auto *DIDim = dyn_cast<DISubrange>(ArrayDims[DimIdx]);
+      if (!DIDim)
+        return false;
+      auto Size = getConstantCount(*DIDim);
+      if (!Size)
+        return false;
+      Planes[DimIdx].NumberOfPlanes = *Size;
+      for (auto I = 0; I < DimIdx; ++I)
+        Planes[I].SizeOfPlane *= *Size;
+    };
+    auto DWLang = getLanguage(mDIAT->getFunction());
+    if (!DWLang)
+      return false;
+    if (isForwardDim(*DWLang)) {
+      for (unsigned DimIdx = 0, DimIdxE = ArrayDims.size();
+           DimIdx < DimIdxE; ++DimIdx)
+        processDim(DimIdx);
+    } else {
+      for (unsigned DimIdxE = 0, DimIdx = ArrayDims.size();
+           DimIdx > DimIdxE; ++DimIdx)
+        processDim(DimIdx - 1);
+    }
+    Planes.pop_back();
+    return !Planes.empty();
+  }
+
+  /// Recursively add projection of an array to an array with less number
+  /// of dimensions.
+  ///
+  /// The main goal is to build coverage of fragments from a specified range
+  /// [Fragments.first, Fragments.second) and update alias tree. Add a plane
+  /// (projection) into alias tree if it full covers some fragments from a
+  /// specified range.
+  /// If fragments cross border of a plane then this plane will not be added
+  /// into the alias tree. In this case only fragments will be inserted.
+  /// \param [in] Planes List of pairs: number of planes, size of each plane.
+  /// \param [in] Level Currently processed projection.
+  /// In case of array A[2][3][4] there are two levels. First level contains
+  /// 2 planes of size 3 * 4 = 12. The second level contains 3 planes of size 4.
+  /// \param [in, out] FragmentIdx Index of a fragment in the range. It will be
+  /// increased after function call.
+  /// \param [in, out] FirstFragmentIdx Index of a first fragment in a range
+  /// which is not covered yet.
+  void evaluatePlaneLevel(uint64_t Offset,
+      std::pair<unsigned, unsigned> Fragments, DIAliasNode *Parent,
+      DIType *ElTy, uint64_t ElSize, ArrayRef<PlaneTy> Planes, unsigned Level,
+      unsigned &FirstFragmentIdx, unsigned &FragmentIdx) {
+    assert(Level < Planes.size() && "Level does not exist!");
+    for (uint64_t  CoverageSize = 0, PrevPlaneIdx = 0, PlaneIdx = 0,
+         PlaneIdxE = Planes[Level].NumberOfPlanes; PlaneIdx < PlaneIdxE; ++PlaneIdx) {
+      CoverageSize += Planes[Level].SizeOfPlane;
+      bool IsFragmentsCoverage;
+      std::tie(IsFragmentsCoverage, FragmentIdx) = findCoveredFragments(
+        Offset, CoverageSize, FragmentIdx, Fragments.second);
+      if (!IsFragmentsCoverage)
+        continue;
+      // Check that fragments is covered by a single plane.
+      if (PrevPlaneIdx == PlaneIdx) {
+        LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: build plane at level " << Level << "\n");
+        auto Expr = DIExpression::get(*mContext, {
+          dwarf::DW_OP_LLVM_fragment, Offset * 8, CoverageSize * 8 });
+        auto Plane = addNewNode(Expr, Parent);
+        auto CoveredFragments = std::make_pair(FirstFragmentIdx, FragmentIdx);
+        FragmentIdx = FirstFragmentIdx;
+        if (Level + 1 == Planes.size()) {
+          // All planes have been processed. So, add elements of an array.
+          unsigned FirstElIdx = 0, ElIdx = 0;
+          for (uint64_t ElOffset = 0;
+               ElOffset < CoverageSize && FragmentIdx < CoveredFragments.second;
+               ElOffset += ElSize, ElIdx++)
+            evaluateElement(Offset, CoveredFragments, Plane, ElTy, ElIdx,
+              ElOffset, ElSize, FirstElIdx, FirstFragmentIdx, FragmentIdx);
+        } else {
+          evaluatePlaneLevel(Offset, CoveredFragments, Plane, ElTy, ElSize,
+            Planes, Level + 1, FirstFragmentIdx, FragmentIdx);
+        }
+        addFragments(Plane, FirstFragmentIdx, FragmentIdx);
+      } else {
+        // A single plane does not cover set of fragments.
+        // In this case planes that comprises a coverage will not be added
+        // into alias tree. Instead only fragments will be inserted.
+        addFragments(Parent, FirstFragmentIdx, FragmentIdx);
+      }
+      PrevPlaneIdx = PlaneIdx + 1;
+      Offset += CoverageSize;
+      CoverageSize = 0;
+      FirstFragmentIdx = FragmentIdx;
+    }
   }
 
   /// \brief Splits array type into its elements and adds them into
@@ -1138,15 +1267,21 @@ private:
     auto DICTy = cast<DICompositeType>(Ty);
     auto ElTy = stripDIType(DICTy->getBaseType()).resolve();
     auto ElSize = getSize(ElTy);
-    unsigned FirstElIdx = 0;
-    unsigned ElIdx = 0;
     auto FirstFragmentIdx = Fragments.first;
     auto FragmentIdx = Fragments.first;
-    for (uint64_t ElOffset = 0, E = DICTy->getSizeInBits();
-         ElOffset < E && FragmentIdx < Fragments.second;
-         ElOffset += ElSize, ElIdx++) {
-      evaluateElement(Offset, Fragments, Parent, ElTy,
-        ElIdx, ElOffset, ElSize, FirstElIdx, FirstFragmentIdx, FragmentIdx);
+    SmallVector<PlaneTy, 4> Planes;
+    if (buildPlanes(*DICTy, ElSize, Planes)) {
+      evaluatePlaneLevel(Offset, Fragments, Parent, ElTy, ElSize, Planes, 0,
+        FirstFragmentIdx, FragmentIdx);
+    } else {
+      unsigned FirstElIdx = 0;
+      unsigned ElIdx = 0;
+      for (uint64_t ElOffset = 0, E = DICTy->getSizeInBits();
+           ElOffset < E && FragmentIdx < Fragments.second;
+           ElOffset += ElSize, ElIdx++) {
+        evaluateElement(Offset, Fragments, Parent, ElTy,
+          ElIdx, ElOffset, ElSize, FirstElIdx, FirstFragmentIdx, FragmentIdx);
+      }
     }
     addFragments(Parent, FirstFragmentIdx, FragmentIdx);
   }
@@ -1221,8 +1356,6 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
       auto CurrEM = &EM;
       while (Base == Root->front() && CurrEM != Root) {
         auto ParentEM = CurrEM->getParent();
-        auto PtrTy =
-          dyn_cast_or_null<PointerType>(CurrEM->front()->getType());
         if (Offset != 0 || CurrEM->getSize() != ParentEM->getSize())
           RootOffsets.try_emplace(CurrEM->front(), Offset);
         CurrEM = ParentEM;

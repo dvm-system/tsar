@@ -92,7 +92,7 @@ public:
   template<class ItrTy> void erase(ItrTy I, ItrTy E) {
     for (; I != E; ++I)
       for (size_type Idx = size(); Idx > 0; --Idx)
-        if (mMemory[Idx - 1]->getAsMDNode() == *I)
+        if (mMemory[Idx - 1]->getBaseAsMDNode() == *I)
           mMemory.erase(&mMemory[Idx - 1]);
   }
 private:

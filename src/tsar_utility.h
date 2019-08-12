@@ -194,6 +194,13 @@ inline bool isFortran(unsigned DWLang) noexcept {
   }
 }
 
+/// Return `true` in case of forward direction of dimensions of arrays in memory.
+////
+/// For example, `true` in case of C and `false` in case of Fortran.
+inline bool isForwardDim(unsigned DWLang) noexcept {
+  return isC(DWLang) || isCXX(DWLang);
+}
+
 /// Returns number of dimensions in a specified type or 0 if it is not an array.
 inline unsigned dimensionsNum(const llvm::Type *Ty) {
   unsigned Dims = 0;
@@ -224,6 +231,9 @@ inline uint64_t getSize(llvm::DIType *Ty) {
 inline uint64_t getSize(llvm::DITypeRef DITy) {
   return getSize(DITy.resolve());
 }
+
+/// Return number of elements in a subrange in address units if size is constant.
+llvm::Optional<uint64_t> getConstantCount(const llvm::DISubrange &Range);
 
 /// \brief Strips types that do not change representation of appropriate
 /// expression in a source language.
