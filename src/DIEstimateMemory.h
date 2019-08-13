@@ -424,6 +424,11 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
     const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
 
 /// Builds debug memory location for a specified memory location.
+std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
+    uint64_t Size, llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
+
+/// Builds debug memory location for a specified memory location.
 std::unique_ptr<DIMemory> buildDIMemory(llvm::Value &V,
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     const llvm::DominatorTree &DT,

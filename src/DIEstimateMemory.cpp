@@ -1824,6 +1824,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
   assert(M.getBinding() == DIMemory::Consistent &&
     "Inconsistent memory is always corrupted and can not be the same after rebuild!");
   DIMemory *RAUWd = nullptr;
+  DIMemoryCash LocalCash;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
@@ -1832,10 +1833,25 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
     // tree.
     if (!EM)
       return false;
-    auto Cashed = mCashedMemory.try_emplace(EM);
+    std::pair<DIMemoryCash::iterator, bool> Cashed;
+    // If size of IR-level location is larger then size of metadata-level
+    // location then original metadata-level location will not be added
+    // to metadata alias tree. However, it is safe do not consider it as a
+    // corrupted memory because there is other location differs only in
+    // size argument. Such case is a result of instcombine pass.
+    // Originally X[0][1] is represented with 2 GEPs. However, after instcombine
+    // there is a single GEP with multiple operands and <X[0], size of dim>
+    // will not be constructed. So, we ignore this case if <X[0], array size>
+    // exist.
+    if (EM->getSize() > M.getSize())
+      Cashed = LocalCash.try_emplace(EM);
+    else if (EM->getSize() != M.getSize())
+      return false;
+    else
+      Cashed = mCashedMemory.try_emplace(EM);
     if (Cashed.second) {
-      Cashed.first->second =
-        tsar::buildDIMemory(*EM, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
+      Cashed.first->second = tsar::buildDIMemoryWithNewSize(
+        *EM, M.getSize(), mFunc->getContext(), M.getEnv(), *mDL, *mDT);
       LLVM_DEBUG(buildMemoryLog(
         mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
     }
@@ -1955,8 +1971,14 @@ llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
 std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
     LLVMContext &Ctx, DIMemoryEnvironment &Env,
     const DataLayout &DL, const DominatorTree &DT) {
+  return buildDIMemoryWithNewSize(EM, EM.getSize(), Ctx, Env, DL, DT);
+}
+
+std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
+  LocationSize Size, LLVMContext &Ctx, DIMemoryEnvironment &Env,
+  const DataLayout &DL, const DominatorTree &DT) {
   auto DILoc = buildDIMemory(
-    MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
+    MemoryLocation(EM.front(), Size), Ctx, DL, DT);
   std::unique_ptr<DIMemory> DIM;
   auto VItr = EM.begin();
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
