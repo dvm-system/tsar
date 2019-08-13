@@ -80,20 +80,51 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       Loc.Size = Size;
       return true;
     }
+    auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr);
+    if (!GEP)
+      return false;
+    unsigned ZeroTailIdx = GEP->getNumOperands();
+    for (; ZeroTailIdx > 1; --ZeroTailIdx) {
+      auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(ZeroTailIdx - 1));
+      if (!OpC || !OpC->isZero())
+        break;
+    }
+    if (ZeroTailIdx < GEP->getNumOperands()) {
+      unsigned Idx = 1;
+      for (auto OpTy = gep_type_begin(GEP), OpTyE = gep_type_end(GEP);
+           OpTy != OpTyE; ++OpTy, ++Idx) {
+        if (Idx < ZeroTailIdx - 1)
+          continue;
+        auto ITy = OpTy.getIndexedType();
+        if (Loc.Size >= DL.getTypeStoreSize(ITy)) {
+          // If ZeroTailIdx == 1 and Idx == 1 we should also brake the loop.
+          if (Idx == 1 || Idx == ZeroTailIdx - 1) {
+            Size = DL.getTypeStoreSize(ITy);
+            break;
+          }
+          if (Idx < GEP->getNumOperands()) {
+            LLVM_DEBUG(dbgs()
+                       << "[ALIAS TREE]: strip zero offset in GEP from size "
+                       << Loc.Size << " to size " << Size << "\n");
+            Loc.Size = Size;
+            return true;
+          }
+        }
+        Size = DL.getTypeStoreSize(ITy);
+      }
+    }
     // In case of sequence of GEPs try to subsequently strip all GEPs to build
     // a single estimate memory tree with the whole array as a root.
     // It is not safe to extend GEP memory location if its current size Loc.Size
-    // is known and it is greater then size of element because if we do not known
+    // is known and it is greater then size of known subrange (element,
+    // size of structure or array dimension) because if we do not known
     // the size of the whole array we can not check that <Loc.Ptr, Loc.Size> is
     // inside <pointer to array, size of array>. However, we assume that
     // unknown size can not be greater than allocated size.
     // Note, if array dimensions have constant size than Size == Loc.Size and
     // level will be striped.
-    if (Size < Loc.Size &&
-        (!isa<GEPOperator>(Loc.Ptr) || Loc.Size != MemoryLocation::UnknownSize))
+    if (Size < Loc.Size && Loc.Size != MemoryLocation::UnknownSize)
       return false;
-  }
-  if (auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr)) {
     LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
     Loc.Ptr = GEP->getPointerOperand();
     Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
@@ -113,7 +144,7 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
         if (auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(1)))
           if (OpC->isZero())
             Loc.Size = DL.getTypeStoreSize(SrcTy);
-      assert(StashSize <= Loc.Size && "Too small size of striped location must!");
+      assert(StashSize <= Loc.Size && "Too small size of striped location!");
     }
     return true;
   }
