@@ -445,7 +445,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
     EM->setExplicit(EM->isExplicit() || !PrevChainEnd);
     LLVM_DEBUG(updateEMTreeLog(EM, IsNew, AddAmbiguous, getDomTree()));
     assert(EM && "New estimate memory must not be null!");
-    if (PrevChainEnd && PrevChainEnd != EM) {
+    if (PrevChainEnd && !PrevChainEnd->isSameBase(*EM)) {
       assert((!PrevChainEnd->getParent() || PrevChainEnd->getParent() == EM) &&
         "Inconsistent parent of a node in estimate memory tree!");
       LLVM_DEBUG(mergeChainBeforeLog(EM, PrevChainEnd, getDomTree()));
@@ -459,8 +459,6 @@ void AliasTree::add(const MemoryLocation &Loc) {
     PrevChainEnd = EM;
     while (CT::getNext(PrevChainEnd))
       PrevChainEnd = CT::getNext(PrevChainEnd);
-    // Already evaluated locations should be omitted to avoid loops in chain.
-    Base.Size = PrevChainEnd->getSize();
     if (AddAmbiguous) {
       /// TODO (kaniandr@gmail.com): optimize duplicate search.
       if (IsNew) {
