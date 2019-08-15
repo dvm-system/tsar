@@ -26,6 +26,8 @@ int foo(int Y) {
 //CHECK:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:2:7, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 private_6.c:3:3
 //SAFE:    output:
@@ -46,3 +48,5 @@ int foo(int Y) {
 //SAFE:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
 //SAFE:    explicit access (separate):
 //SAFE:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//SAFE:    lock (separate):
+//SAFE:     <I:2:7, 4>

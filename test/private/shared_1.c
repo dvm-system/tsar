@@ -20,3 +20,5 @@ void foo(int I) {
 //CHECK:     <I:3:14, 4> | <J:4:12, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:3:14, 4> <J:4:12, 4>
+//CHECK:    lock (separate):
+//CHECK:     <J:4:12, 4>

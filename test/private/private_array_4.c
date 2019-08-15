@@ -30,6 +30,8 @@ void foo(double *X, int N) {
 //CHECK:     <I:3:12, 4> <N:1:25, 4> <X:1:18, 8>
 //CHECK:    redundant (separate):
 //CHECK:     <T:2:10, ?>
+//CHECK:    lock (separate):
+//CHECK:     <I:3:12, 4> <N:1:25, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 private_array_4.c:3:3
 //SAFE:    output:
@@ -54,3 +56,5 @@ void foo(double *X, int N) {
 //SAFE:     <I:3:12, 4> <N:1:25, 4> <X:1:18, 8>
 //SAFE:    redundant (separate):
 //SAFE:     <T:2:10, ?>
+//SAFE:    lock (separate):
+//SAFE:     <I:3:12, 4> <N:1:25, 4>

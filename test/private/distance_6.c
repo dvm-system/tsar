@@ -22,6 +22,8 @@ void foo() {
 //CHECK:     <I:4:12, 4> | <J:5:14, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:4:12, 4> <J:5:14, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:4:12, 4>
 //CHECK:   loop at depth 2 distance_6.c:5:5
 //CHECK:     output:
 //CHECK:      <U, 800>
@@ -37,3 +39,5 @@ void foo() {
 //CHECK:      <I:4:12, 4> | <J:5:14, 4>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:4:12, 4> <J:5:14, 4>
+//CHECK:     lock (separate):
+//CHECK:      <J:5:14, 4>

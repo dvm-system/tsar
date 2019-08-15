@@ -25,6 +25,8 @@ double foo(int JStart) {
 //CHECK:     <I:5:12, 4> | <J:3:10, 4> | <JStart:1:16, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <J:3:10, 4> <JStart:1:16, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4>
 //CHECK:   loop at depth 2 distance_5.c:6:5
 //CHECK:     flow:
 //CHECK:      <U:2:10, 800>:[1,1]
@@ -40,6 +42,8 @@ double foo(int JStart) {
 //CHECK:      <I:5:12, 4> | <J:3:10, 4>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:5:12, 4> <J:3:10, 4>
+//CHECK:     lock (separate):
+//CHECK:      <J:3:10, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 distance_5.c:5:3
 //SAFE:    shared:
@@ -58,6 +62,8 @@ double foo(int JStart) {
 //SAFE:     <I:5:12, 4> | <J:3:10, 4> | <JStart:1:16, 4>
 //SAFE:    explicit access (separate):
 //SAFE:     <I:5:12, 4> <J:3:10, 4> <JStart:1:16, 4>
+//SAFE:    lock (separate):
+//SAFE:     <I:5:12, 4>
 //SAFE:   loop at depth 2 distance_5.c:6:5
 //SAFE:     flow:
 //SAFE:      <U:2:10, 800>
@@ -73,3 +79,5 @@ double foo(int JStart) {
 //SAFE:      <I:5:12, 4> | <J:3:10, 4>
 //SAFE:     explicit access (separate):
 //SAFE:      <I:5:12, 4> <J:3:10, 4>
+//SAFE:     lock (separate):
+//SAFE:      <J:3:10, 4>

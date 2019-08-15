@@ -35,3 +35,5 @@ void foo(int Flag) {
 //CHECK:     <Flag:4:14, 4> | <I:5:12, 4> | <X, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <Flag:4:14, 4> <I:5:12, 4> <X, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4>

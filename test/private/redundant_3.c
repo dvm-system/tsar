@@ -31,6 +31,8 @@ void foo() {
 //CHECK:     <I:5:12, 4> bar():7:7
 //CHECK:    redundant (separate):
 //CHECK:     <bar():7:7,?> bar():7:7
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 redundant_3.c:5:3
 //REDUNDANT:    shared:
@@ -51,3 +53,5 @@ void foo() {
 //REDUNDANT:     <I:5:12, 4> bar():7:7
 //REDUNDANT:    redundant (separate):
 //REDUNDANT:     <bar():7:7,?> bar():7:7
+//REDUNDANT:    lock (separate):
+//REDUNDANT:     <I:5:12, 4>

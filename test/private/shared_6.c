@@ -23,6 +23,8 @@ void foo(double * restrict U) {
 //CHECK:     <I:7:12, 4> | <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <IEnd, 4> <IStep, 4> <U:3:28, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:7:12, 4> <IEnd, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 shared_6.c:7:3
 //SAFE:    output:
@@ -41,3 +43,5 @@ void foo(double * restrict U) {
 //SAFE:     <I:7:12, 4> | <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
 //SAFE:    explicit access (separate):
 //SAFE:     <I:7:12, 4> <IEnd, 4> <IStep, 4> <U:3:28, 8>
+//SAFE:    lock (separate):
+//SAFE:     <I:7:12, 4> <IEnd, 4>

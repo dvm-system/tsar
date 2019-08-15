@@ -25,6 +25,8 @@ void foo(double (* restrict U)[100]) {
 //CHECK:     <I:5:12, 4> | <IEnd, 4> | <J:4:10, 4> | <JEnd, 4> | <JStart, 4> | <U:3:29, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <IEnd, 4> <J:4:10, 4> <JEnd, 4> <JStart, 4> <U:3:29, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4> <IEnd, 4>
 //CHECK:   loop at depth 2 shared_17.c:6:5
 //CHECK:     shared:
 //CHECK:      <*U:3:29, ?>
@@ -40,3 +42,5 @@ void foo(double (* restrict U)[100]) {
 //CHECK:      <I:5:12, 4> | <J:4:10, 4> | <JEnd, 4> | <U:3:29, 8>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:5:12, 4> <J:4:10, 4> <JEnd, 4> <U:3:29, 8>
+//CHECK:     lock (separate):
+//CHECK:      <J:4:10, 4> <JEnd, 4>

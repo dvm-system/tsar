@@ -28,3 +28,5 @@ void foo() {
 //CHECK:     <I:7:12, 4> | <P:6:9, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <P:6:9, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:7:12, 4>

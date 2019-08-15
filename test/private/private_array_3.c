@@ -30,3 +30,5 @@ double foo(double *X, int N) {
 //CHECK:     <I:4:12, 4> | <N:1:27, 4> | <X:1:20, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:4:12, 4> <N:1:27, 4> <X:1:20, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:4:12, 4> <N:1:27, 4>

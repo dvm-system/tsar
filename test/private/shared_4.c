@@ -20,3 +20,5 @@ void foo(double * restrict U) {
 //CHECK:     <I:4:12, 4> | <IEnd, 4> | <U:3:28, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:4:12, 4> <IEnd, 4> <U:3:28, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:4:12, 4> <IEnd, 4>

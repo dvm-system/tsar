@@ -27,13 +27,15 @@ void foo(double *U) {
 //CHECK:    read only:
 //CHECK:     <U:5:18, 8>
 //CHECK:    lock:
-//CHECK:     <I:7:12, 4>
+//CHECK:     <*U:5:18, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:7:12, 4>
 //CHECK:    header access:
 //CHECK:     <*U:5:18, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:7:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <IEnd, 4> <JEnd, 4> <JStart, 4> | <J:6:10, 4> | <U:5:18, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:18, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:7:12, 4> <IEnd, 4>
 //CHECK:   loop at depth 2 shared_14.c:11:5
 //CHECK:     shared:
 //CHECK:      <*U:5:18, ?> <JEnd, 4>
@@ -42,13 +44,15 @@ void foo(double *U) {
 //CHECK:     read only:
 //CHECK:      <I:7:12, 4> | <U:5:18, 8>
 //CHECK:     lock:
-//CHECK:      <J:6:10, 4>
+//CHECK:      <*U:5:18, ?> <JEnd, 4> | <J:6:10, 4>
 //CHECK:     header access:
 //CHECK:      <*U:5:18, ?> <JEnd, 4> | <J:6:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:7:12, 4> | <J:6:10, 4> | <JEnd, 4> | <U:5:18, 8>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:18, 8>
+//CHECK:     lock (separate):
+//CHECK:      <J:6:10, 4> <JEnd, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 shared_14.c:7:3
 //SAFE:    private:
@@ -64,13 +68,15 @@ void foo(double *U) {
 //SAFE:    read only:
 //SAFE:     <U:5:18, 8>
 //SAFE:    lock:
-//SAFE:     <I:7:12, 4>
+//SAFE:     <*U:5:18, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:7:12, 4>
 //SAFE:    header access:
 //SAFE:     <*U:5:18, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:7:12, 4>
 //SAFE:    explicit access:
 //SAFE:     <*U:5:18, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:7:12, 4> | <J:6:10, 4> | <U:5:18, 8>
 //SAFE:    explicit access (separate):
 //SAFE:     <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:18, 8>
+//SAFE:    lock (separate):
+//SAFE:     <I:7:12, 4> <IEnd, 4>
 //SAFE:   loop at depth 2 shared_14.c:11:5
 //SAFE:     output:
 //SAFE:      <*U:5:18, ?> <JEnd, 4>
@@ -83,10 +89,12 @@ void foo(double *U) {
 //SAFE:     read only:
 //SAFE:      <I:7:12, 4> | <U:5:18, 8>
 //SAFE:     lock:
-//SAFE:      <J:6:10, 4>
+//SAFE:      <*U:5:18, ?> <JEnd, 4> | <J:6:10, 4>
 //SAFE:     header access:
 //SAFE:      <*U:5:18, ?> <JEnd, 4> | <J:6:10, 4>
 //SAFE:     explicit access:
 //SAFE:      <*U:5:18, ?> <JEnd, 4> | <I:7:12, 4> | <J:6:10, 4> | <U:5:18, 8>
 //SAFE:     explicit access (separate):
 //SAFE:      <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:18, 8>
+//SAFE:     lock (separate):
+//SAFE:      <J:6:10, 4> <JEnd, 4>

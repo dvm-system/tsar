@@ -23,6 +23,8 @@ void foo (int N) {
 //CHECK:     <X:4:10, ?> bar():6:5 | <I:5:12, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 address_1.c:5:3
 //SAFE:    output:
@@ -41,3 +43,5 @@ void foo (int N) {
 //SAFE:     <?,?> <X:4:10, ?> bar():6:5 | <I:5:12, 4>
 //SAFE:    explicit access (separate):
 //SAFE:     <I:5:12, 4> <X:4:10, ?> bar():6:5
+//SAFE:    lock (separate):
+//SAFE:     <I:5:12, 4>

@@ -21,3 +21,5 @@ void foo() {
 //CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <IEnd, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:5:12, 4> <IEnd, 4>

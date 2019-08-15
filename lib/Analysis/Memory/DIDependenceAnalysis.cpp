@@ -941,7 +941,7 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
       else if (TS.is<trait::Redundant>())
         TM.value<trait::Redundant>().push_back(&TS);
     }
-    TraitPrinter<trait::ExplicitAccess, trait::Redundant>
+    TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock>
       Printer(OS, DIAT, Offset, *DWLang);
     TM.for_each(Printer);
     Printer.printSeparateTraits();

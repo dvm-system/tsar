@@ -31,6 +31,8 @@ double foo() {
 //CHECK:     <I:6:12, 4> | <J:8:14, 4> | <JStart, 4> bar():7:5
 //CHECK:    explicit access (separate):
 //CHECK:     <I:6:12, 4> <J:8:14, 4> <JStart, 4> bar():7:5
+//CHECK:    lock (separate):
+//CHECK:     <I:6:12, 4>
 //CHECK:   loop at depth 2 distance_7.c:8:5
 //CHECK:     output:
 //CHECK:      <U:5:10, 800>
@@ -46,3 +48,5 @@ double foo() {
 //CHECK:      <I:6:12, 4> | <J:8:14, 4>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:6:12, 4> <J:8:14, 4>
+//CHECK:     lock (separate):
+//CHECK:      <J:8:14, 4>

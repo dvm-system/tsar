@@ -25,6 +25,8 @@ int foo(int Y) {
 //CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
 //CHECK:    redundant (separate):
 //CHECK:     <X:2:10, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:2:7, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 private_3.c:3:3
 //REDUNDANT:    induction:
@@ -43,3 +45,5 @@ int foo(int Y) {
 //REDUNDANT:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
 //REDUNDANT:    redundant (separate):
 //REDUNDANT:     <X:2:10, 4>
+//REDUNDANT:    lock (separate):
+//REDUNDANT:     <I:2:7, 4>

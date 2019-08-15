@@ -23,6 +23,8 @@ double foo() {
 //CHECK:     <I:4:12, 4> | <J:3:10, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:4:12, 4> <J:3:10, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:4:12, 4>
 //CHECK:   loop at depth 2 shared_19.c:5:5
 //CHECK:     shared:
 //CHECK:      <U:2:10, 800>
@@ -38,3 +40,5 @@ double foo() {
 //CHECK:      <I:4:12, 4> | <J:3:10, 4>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:4:12, 4> <J:3:10, 4>
+//CHECK:     lock (separate):
+//CHECK:      <J:3:10, 4>

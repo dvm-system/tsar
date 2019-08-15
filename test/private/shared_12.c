@@ -34,6 +34,8 @@ double foo() {
 //CHECK:     <I:7:12, 4> | <J:6:10, 4> | <JStart, 4> bar():11:5
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> bar():11:5
+//CHECK:    lock (separate):
+//CHECK:     <I:7:12, 4>
 //CHECK:   loop at depth 2 shared_12.c:12:5
 //CHECK:     shared:
 //CHECK:      <U:5:10, 800>
@@ -49,3 +51,5 @@ double foo() {
 //CHECK:      <I:7:12, 4> | <J:6:10, 4>
 //CHECK:     explicit access (separate):
 //CHECK:      <I:7:12, 4> <J:6:10, 4>
+//CHECK:     lock (separate):
+//CHECK:      <J:6:10, 4>

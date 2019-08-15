@@ -25,3 +25,5 @@ double foo(int N) {
 //CHECK:     <I:6:12, 4> | <N:3:16, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:6:12, 4> <N:3:16, 4>
+//CHECK:    lock (separate):
+//CHECK:     <I:6:12, 4> <N:3:16, 4>

@@ -13,10 +13,12 @@ void foo(double *U) {
 //CHECK:    read only:
 //CHECK:     <U:3:18, 8>
 //CHECK:    lock:
-//CHECK:     <I:4:12, 4>
+//CHECK:     <*U:3:18, ?> <IEnd, 4> | <I:4:12, 4>
 //CHECK:    header access:
 //CHECK:     <*U:3:18, ?> <IEnd, 4> | <I:4:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <*U:3:18, ?> <IEnd, 4> | <I:4:12, 4> | <U:3:18, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:4:12, 4> <IEnd, 4> <U:3:18, 8>
+//CHECK:    lock (separate):
+//CHECK:     <I:4:12, 4> <IEnd, 4>
