@@ -16,36 +16,14 @@ void foo (int N) {
 //CHECK:    induction:
 //CHECK:     <I:5:12, 4>:[Int,0,10,1]
 //CHECK:    lock:
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5:12, 4> | <X:4:10, ?> bar():6:5
 //CHECK:    header access:
 //CHECK:     <I:5:12, 4>
 //CHECK:    explicit access:
-//CHECK:     <X:4:10, ?> bar():6:5 | <I:5:12, 4>
+//CHECK:     <I:5:12, 4> | <X:4:10, ?> bar():6:5
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
 //CHECK:    lock (separate):
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5:12, 4> <X:4:10, ?>
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <X:4:10, ?>
-//SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
-//SAFE:  loop at depth 1 address_1.c:5:3
-//SAFE:    output:
-//SAFE:     <?,?> <X:4:10, ?> bar():6:5
-//SAFE:    anti:
-//SAFE:     <?,?> <X:4:10, ?> bar():6:5
-//SAFE:    flow:
-//SAFE:     <?,?> <X:4:10, ?> bar():6:5
-//SAFE:    induction:
-//SAFE:     <I:5:12, 4>:[Int,0,10,1]
-//SAFE:    lock:
-//SAFE:     <I:5:12, 4>
-//SAFE:    header access:
-//SAFE:     <I:5:12, 4>
-//SAFE:    explicit access:
-//SAFE:     <?,?> <X:4:10, ?> bar():6:5 | <I:5:12, 4>
-//SAFE:    explicit access (separate):
-//SAFE:     <I:5:12, 4> <X:4:10, ?> bar():6:5
-//SAFE:    lock (separate):
-//SAFE:     <I:5:12, 4>
-//SAFE:    no promoted scalar (separate):
-//SAFE:     <X:4:10, ?>

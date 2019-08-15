@@ -167,10 +167,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
   Passes.add(createNotPromotedDIMemoryTraitPass());
+  Passes.add(createLockDIMemoryTraitPass(is<trait::NoPromotedScalar>));
   Passes.add(createEarlyCSEPass());
   Passes.add(createCFGSimplificationPass());
-  // This is necessary to combine multiple GEPs into a single GEP. This allows
-  // dependency analysis works without delinearization.
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
   Passes.add(createSCEVAAWrapperPass());

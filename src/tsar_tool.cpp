@@ -288,6 +288,23 @@ void Options::printVersion(raw_ostream &OS) {
   OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
 }
 
+/// Add special arguments for LLVM passes. This arguments should not be
+/// inserted manually in a command line.
+///
+/// It seems that there is no other way to set options for LLVM passes
+/// because '-mllvm <arg>' option works only for Clang.
+static std::vector<const char *> addInternalArgs(int Argc, const char **Argv) {
+  std::vector<const char *> Args(Argc);
+  std::copy(Argv, Argv + Argc, Args.begin());
+  if (!std::count_if(Argv, Argv + Argc, [](const char *Arg) {
+    const char Opt[] = "-instcombine-lower-dbg-declare";
+    return bcl::array_sizeof(Opt) - 1 < std::strlen(Arg) &&
+      std::strncmp(Opt, Arg, bcl::array_sizeof(Opt) - 1) == 0;
+  }))
+    Args.emplace_back("-instcombine-lower-dbg-declare=0");
+  return Args;
+}
+
 Tool::Tool(int Argc, const char **Argv) {
   assert(Argv && "List of command line arguments must not be null!");
   Options::get(); // At first, initialize command line options.
@@ -295,7 +312,8 @@ Tool::Tool(int Argc, const char **Argv) {
   // Passes should be initialized previously then command line options are
   // parsed, due to initialize list of available passes.
   initializeTSAR(*PassRegistry::getPassRegistry());
-  cl::ParseCommandLineOptions(Argc, Argv, Descr);
+  auto Args = addInternalArgs(Argc, Argv);
+  cl::ParseCommandLineOptions(Args.size(), Args.data(), Descr);
   storeCLOptions();
   InitializeAllTargetInfos();
   InitializeAllTargetMCs();
