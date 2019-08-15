@@ -156,6 +156,8 @@ std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
       Dptr.set<trait::NoPromotedScalar>();
     if (!DIMTraitItr->is<trait::HeaderAccess>())
       Dptr.unset<trait::HeaderAccess>();
+    if (DIMTraitItr->is<trait::AddressAccess>())
+      Dptr.set<trait::AddressAccess>();
     *DIMTraitItr = Dptr;
   } else {
     return std::make_pair(DIMTraitItr, false);
