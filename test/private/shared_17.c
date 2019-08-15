@@ -20,7 +20,7 @@ void foo(double (* restrict U)[100]) {
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <I:5:12, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
+//CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:12, 4> | <IEnd, 4> | <J:4:10, 4> | <JEnd, 4> | <JStart, 4> | <U:3:29, 8>
 //CHECK:    explicit access (separate):
@@ -37,7 +37,7 @@ void foo(double (* restrict U)[100]) {
 //CHECK:     lock:
 //CHECK:      <J:4:10, 4> | <JEnd, 4>
 //CHECK:     header access:
-//CHECK:      <*U:3:29, ?> | <J:4:10, 4> | <JEnd, 4>
+//CHECK:      <J:4:10, 4> | <JEnd, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:5:12, 4> | <J:4:10, 4> | <JEnd, 4> | <U:3:29, 8>
 //CHECK:     explicit access (separate):

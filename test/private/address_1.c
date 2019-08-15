@@ -18,7 +18,7 @@ void foo (int N) {
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4>
 //CHECK:    header access:
-//CHECK:     <X:4:10, ?> bar():6:5 | <I:5:12, 4>
+//CHECK:     <I:5:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <X:4:10, ?> bar():6:5 | <I:5:12, 4>
 //CHECK:    explicit access (separate):
@@ -40,7 +40,7 @@ void foo (int N) {
 //SAFE:    lock:
 //SAFE:     <I:5:12, 4>
 //SAFE:    header access:
-//SAFE:     <?,?> <X:4:10, ?> bar():6:5 | <I:5:12, 4>
+//SAFE:     <I:5:12, 4>
 //SAFE:    explicit access:
 //SAFE:     <?,?> <X:4:10, ?> bar():6:5 | <I:5:12, 4>
 //SAFE:    explicit access (separate):

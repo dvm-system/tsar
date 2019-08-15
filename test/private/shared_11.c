@@ -22,7 +22,7 @@ void foo() {
 //CHECK:    lock:
 //CHECK:     <I:5:7, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <I:5:7, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
+//CHECK:     <I:5:7, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:7, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4>
 //CHECK:    explicit access (separate):
@@ -41,7 +41,7 @@ void foo() {
 //CHECK:     lock:
 //CHECK:      <J:5:10, 4> | <JEnd, 4>
 //CHECK:     header access:
-//CHECK:      <J:5:10, 4> | <JEnd, 4> | <KEnd, 4> | <KStart, 4>
+//CHECK:      <J:5:10, 4> | <JEnd, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:5:7, 4> | <J:5:10, 4> | <JEnd, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4>
 //CHECK:     explicit access (separate):
@@ -77,7 +77,7 @@ void foo() {
 //CHECK:       lock:
 //CHECK:        <M:5:16, 4>
 //CHECK:       header access:
-//CHECK:        <M:5:16, 4> | <U, 40000000>
+//CHECK:        <M:5:16, 4>
 //CHECK:       explicit access:
 //CHECK:        <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4> | <M:5:16, 4>
 //CHECK:       explicit access (separate):

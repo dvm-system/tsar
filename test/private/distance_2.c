@@ -36,7 +36,7 @@ void foo() {
 //CHECK:     lock:
 //CHECK:      <J:6:14, 4>
 //CHECK:     header access:
-//CHECK:      <J:6:14, 4> | <U, 80000>
+//CHECK:      <J:6:14, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:5:12, 4> | <J:6:14, 4>
 //CHECK:     explicit access (separate):

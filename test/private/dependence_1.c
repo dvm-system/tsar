@@ -22,7 +22,7 @@ void foo(int N) {
 //CHECK:    lock:
 //CHECK:     <I:8:12, 4>
 //CHECK:    header access:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
+//CHECK:     <I:8:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
 //CHECK:    explicit access (separate):

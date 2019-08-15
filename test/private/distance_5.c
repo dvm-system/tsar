@@ -37,7 +37,7 @@ double foo(int JStart) {
 //CHECK:     lock:
 //CHECK:      <J:3:10, 4>
 //CHECK:     header access:
-//CHECK:      <J:3:10, 4> | <U:2:10, 800>
+//CHECK:      <J:3:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:5:12, 4> | <J:3:10, 4>
 //CHECK:     explicit access (separate):
@@ -74,7 +74,7 @@ double foo(int JStart) {
 //SAFE:     lock:
 //SAFE:      <J:3:10, 4>
 //SAFE:     header access:
-//SAFE:      <J:3:10, 4> | <U:2:10, 800>
+//SAFE:      <J:3:10, 4>
 //SAFE:     explicit access:
 //SAFE:      <I:5:12, 4> | <J:3:10, 4>
 //SAFE:     explicit access (separate):

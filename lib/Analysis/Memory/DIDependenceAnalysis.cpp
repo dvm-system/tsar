@@ -154,6 +154,8 @@ std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
   } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
     if (DIMTraitItr->is<trait::NoPromotedScalar>())
       Dptr.set<trait::NoPromotedScalar>();
+    if (!DIMTraitItr->is<trait::HeaderAccess>())
+      Dptr.unset<trait::HeaderAccess>();
     *DIMTraitItr = Dptr;
   } else {
     return std::make_pair(DIMTraitItr, false);

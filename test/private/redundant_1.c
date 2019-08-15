@@ -27,7 +27,7 @@ void foo() {
 //CHECK:    lock:
 //CHECK:     <I:6:12, 4>
 //CHECK:    header access:
-//CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4>
+//CHECK:     <I:6:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4> | <Nx1:7:9, 4>
 //CHECK:    explicit access (separate):
@@ -49,7 +49,7 @@ void foo() {
 //REDUNDANT:    lock:
 //REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    header access:
-//REDUNDANT:     <A, 40> | <B, 44> | <I:6:12, 4>
+//REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    explicit access:
 //REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    explicit access (separate):

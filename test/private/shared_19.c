@@ -35,7 +35,7 @@ double foo() {
 //CHECK:     lock:
 //CHECK:      <J:3:10, 4>
 //CHECK:     header access:
-//CHECK:      <J:3:10, 4> | <U:2:10, 800>
+//CHECK:      <J:3:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:4:12, 4> | <J:3:10, 4>
 //CHECK:     explicit access (separate):

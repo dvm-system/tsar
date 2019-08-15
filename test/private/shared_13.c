@@ -25,7 +25,7 @@ void foo(double (* restrict U)[100]) {
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <I:7:12, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
+//CHECK:     <I:7:12, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <IEnd, 4> | <J:6:10, 4> | <JEnd, 4> | <JStart, 4> | <U:5:29, 8>
 //CHECK:    explicit access (separate):
@@ -42,7 +42,7 @@ void foo(double (* restrict U)[100]) {
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4> | <JEnd, 4>
 //CHECK:     header access:
-//CHECK:      <*U:5:29, ?> | <J:6:10, 4> | <JEnd, 4>
+//CHECK:      <J:6:10, 4> | <JEnd, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:7:12, 4> | <J:6:10, 4> | <JEnd, 4> | <U:5:29, 8>
 //CHECK:     explicit access (separate):
@@ -66,7 +66,7 @@ void foo(double (* restrict U)[100]) {
 //SAFE:    lock:
 //SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    header access:
-//SAFE:     <I:7:12, 4> | <IEnd, 4> | <JEnd, 4> | <JStart, 4>
+//SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    explicit access:
 //SAFE:     <I:7:12, 4> | <IEnd, 4> | <J:6:10, 4> | <JEnd, 4> | <JStart, 4> | <U:5:29, 8>
 //SAFE:    explicit access (separate):
@@ -83,7 +83,7 @@ void foo(double (* restrict U)[100]) {
 //SAFE:     lock:
 //SAFE:      <J:6:10, 4> | <JEnd, 4>
 //SAFE:     header access:
-//SAFE:      <*U:5:29, ?> | <J:6:10, 4> | <JEnd, 4>
+//SAFE:      <J:6:10, 4> | <JEnd, 4>
 //SAFE:     explicit access:
 //SAFE:      <I:7:12, 4> | <J:6:10, 4> | <JEnd, 4> | <U:5:29, 8>
 //SAFE:     explicit access (separate):

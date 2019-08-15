@@ -18,7 +18,7 @@ void foo(double * restrict U) {
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <*U:3:28, ?> | <I:7:12, 4> | <IEnd, 4> | <IStep, 4>
+//CHECK:     <I:7:12, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
 //CHECK:    explicit access (separate):
@@ -38,7 +38,7 @@ void foo(double * restrict U) {
 //SAFE:    lock:
 //SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    header access:
-//SAFE:     <*U:3:28, ?> | <I:7:12, 4> | <IEnd, 4> | <IStep, 4>
+//SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    explicit access:
 //SAFE:     <I:7:12, 4> | <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
 //SAFE:    explicit access (separate):

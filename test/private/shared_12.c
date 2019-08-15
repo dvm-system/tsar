@@ -29,7 +29,7 @@ double foo() {
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4>
 //CHECK:    header access:
-//CHECK:     <I:7:12, 4> | <JStart, 4> bar():11:5
+//CHECK:     <I:7:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <J:6:10, 4> | <JStart, 4> bar():11:5
 //CHECK:    explicit access (separate):
@@ -46,7 +46,7 @@ double foo() {
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4>
 //CHECK:     header access:
-//CHECK:      <J:6:10, 4> | <U:5:10, 800>
+//CHECK:      <J:6:10, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:7:12, 4> | <J:6:10, 4>
 //CHECK:     explicit access (separate):

@@ -19,7 +19,7 @@ void foo(int JStart) {
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <I:5:12, 4> | <IEnd, 4> | <JEnd, 4>
+//CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:12, 4> | <IEnd, 4> | <J:6:14, 4> | <JEnd, 4> | <JStart:4:14, 4>
 //CHECK:    explicit access (separate):
@@ -36,7 +36,7 @@ void foo(int JStart) {
 //CHECK:     lock:
 //CHECK:      <J:6:14, 4> | <JEnd, 4>
 //CHECK:     header access:
-//CHECK:      <J:6:14, 4> | <JEnd, 4> | <U, 80000>
+//CHECK:      <J:6:14, 4> | <JEnd, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:5:12, 4> | <J:6:14, 4> | <JEnd, 4>
 //CHECK:     explicit access (separate):

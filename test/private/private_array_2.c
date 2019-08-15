@@ -22,7 +22,7 @@ void foo(double *X, int N) {
 //CHECK:    lock:
 //CHECK:     <I:4:12, 4> | <N:1:25, 4>
 //CHECK:    header access:
-//CHECK:     <*X:1:18, ?> | <I:4:12, 4> | <N:1:25, 4>
+//CHECK:     <I:4:12, 4> | <N:1:25, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:4:12, 4> | <N:1:25, 4> | <X:1:18, 8>
 //CHECK:    explicit access (separate):

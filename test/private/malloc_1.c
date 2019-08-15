@@ -23,7 +23,7 @@ void foo() {
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4>
 //CHECK:    header access:
-//CHECK:     <*P:{6:22|6:9}, ?> | <I:7:12, 4>
+//CHECK:     <I:7:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <P:6:9, 8>
 //CHECK:    explicit access (separate):

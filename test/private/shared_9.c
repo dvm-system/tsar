@@ -18,7 +18,7 @@ void foo(int N, int JStart, double * restrict * restrict U) {
 //CHECK:    lock:
 //CHECK:     <I:4:12, 4> | <IEnd, 4>
 //CHECK:    header access:
-//CHECK:     <*U[?]:{6:17|3:58}, ?> | <IEnd, 4> | <JEnd, 4> | <I:4:12, 4>
+//CHECK:     <IEnd, 4> | <I:4:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:4:12, 4> | <IEnd, 4> | <J:5:14, 4> | <JEnd, 4> | <JStart:3:21, 4> | <U:3:58, 8>
 //CHECK:    explicit access (separate):
@@ -35,7 +35,7 @@ void foo(int N, int JStart, double * restrict * restrict U) {
 //CHECK:     lock:
 //CHECK:      <J:5:14, 4> | <JEnd, 4>
 //CHECK:     header access:
-//CHECK:      <*U:3:58, ?> | <*U[?]:{6:17|3:58}, ?> | <JEnd, 4> | <J:5:14, 4>
+//CHECK:      <JEnd, 4> | <J:5:14, 4>
 //CHECK:     explicit access:
 //CHECK:      <I:4:12, 4> | <J:5:14, 4> | <JEnd, 4> | <U:3:58, 8>
 //CHECK:     explicit access (separate):
@@ -80,7 +80,7 @@ void foo(int N, int JStart, double * restrict * restrict U) {
 //SAFE:     lock:
 //SAFE:      <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <J:5:14, 4>
 //SAFE:     header access:
-//SAFE:      <*U:3:58, ?> | <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <J:5:14, 4>
+//SAFE:      <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <J:5:14, 4>
 //SAFE:     explicit access:
 //SAFE:      <*U[?]:{6:17|3:58}, ?> <JEnd, 4> | <I:4:12, 4> | <J:5:14, 4> | <U:3:58, 8>
 //SAFE:     explicit access (separate):
