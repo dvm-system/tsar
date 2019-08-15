@@ -210,7 +210,7 @@ Options::Options() :
   IgnoreRedundantMemory("fignore-redundant-memory", cl::cat(AnalysisCategory),
     cl::desc("Try to discard influence of redundant memory on the analysis results")),
   NoIgnoreRedundantMemory("fno-ignore-redundant-memory", cl::cat(AnalysisCategory),
-    cl::desc("Try to discard influence of redundant memory on the analysis results")),
+    cl::desc("Do not discard influence of redundant memory on the analysis results(default)")),
   UnsafeTfmAnalysis("funsafe-tfm-analysis", cl::cat(AnalysisCategory),
     cl::desc("Perform analysis after unsafe transformations")),
   NoUnsafeTfmAnalysis("fno-unsafe-tfm-analysis", cl::cat(AnalysisCategory),
