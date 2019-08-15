@@ -511,15 +511,15 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       printDILocationSource(*DWLang, M, dbgs());
       dbgs() << "\n";
     });
-    if (M.isOriginal() || M.emptyBinding()) {
+    if (M.isOriginal() || M.emptyBinding() || ATraitItr == DepSet.end()) {
       auto DIMTraitItr = Pool.find_as(&M);
       if (DIMTraitItr == Pool.end())
         continue;
       LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
-      if (M.isOriginal() &&
-          !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR) &&
-          (ATraitItr == DepSet.end() ||
-           isRedundantCorrupted(M, *ATraitItr, *mAT))) {
+      if (((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
+           (M.isOriginal()  && (ATraitItr == DepSet.end() ||
+            isRedundantCorrupted(M, *ATraitItr, *mAT)))) &&
+          !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
         DIMTraitItr->set<trait::Redundant>();
         DIMTraitItr->unset<trait::NoRedundant>();
       }
@@ -528,12 +528,6 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIATraitItr->insert(DIMTraitItr);
       continue;
     }
-    // If memory from this metadata alias node is not accessed in the region
-    // then do not process memory from this node. Note, that some corrupted
-    // memory covered by this metadata-level node may be accessed in the region.
-    // So, exit from loop but not from a function.
-    if (ATraitItr == DepSet.end())
-      break;
     auto &VH = *M.begin();
     assert(VH && !isa<UndefValue>(VH) &&
       "Metadata-level alias tree is corrupted!");
