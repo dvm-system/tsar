@@ -63,5 +63,12 @@ void initializeLockDIMemoryTraitPassPass(PassRegistry &Registry);
 /// Create a pass to mark traits in a loop as locked.
 Pass * createLockDIMemoryTraitPass(
   const std::function<bool(const tsar::DIMemoryTrait &)> &Lock);
+
+/// Initialize a pass to collect locations which have not been promoted.
+void initializeNotPromotedDIMemoryTraitPassPass(PassRegistry &Registry);
+
+/// Create a pass to collect locations which have not been promoted.
+Pass *createNotPromotedDIMemoryTraitPass();
+
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

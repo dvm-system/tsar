@@ -143,18 +143,21 @@ template<class Tag> void convertIf(
 /// If traits for `M` already exist in a pool and should not be updated
 /// (for example, should be locked) the second returned value is `false`.
 std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
-    const MemoryDescriptor &Dptr, ArrayRef<const DIMemory *> LockedTraits,
+    MemoryDescriptor Dptr, ArrayRef<const DIMemory *> LockedTraits,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     DIMemoryTraitRegionPool &Pool) {
   auto DIMTraitItr = Pool.find_as(&M);
   LLVM_DEBUG(if (DIMTraitItr == Pool.end())
     dbgs() << "[DA DI]: add new trait to pool\n");
-  if (DIMTraitItr == Pool.end())
+  if (DIMTraitItr == Pool.end()) {
     DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
-  else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
+  } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
+    if (DIMTraitItr->is<trait::NoPromotedScalar>())
+      Dptr.set<trait::NoPromotedScalar>();
     *DIMTraitItr = Dptr;
-  else
+  } else {
     return std::make_pair(DIMTraitItr, false);
+  }
   return std::make_pair(DIMTraitItr, true);
 }
 
@@ -318,17 +321,24 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       DIATrait.set<trait::NoAccess>();
       DIATrait.unset<trait::HeaderAccess, trait::AddressAccess>();
     }
+    if (!(DIMTraitItr->is<trait::NoPromotedScalar>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::NoPromotedScalar>();
     LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
       DIATrait.print(dbgs()); dbgs() << "\n");
     return;
   }
   BitMemoryTrait CombinedTrait;
   bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
+  bool NoPromotedScalar = false;
   for (auto &DIMTraitItr : DIATrait) {
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       ExplicitAccess = true;
+    if (DIMTraitItr->is<trait::NoPromotedScalar>() &&
+        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+      NoPromotedScalar = true;
     assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
     if (DIMTraitItr->is<trait::Redundant>()) {
@@ -353,6 +363,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
   if (!ExplicitAccess)
     Dptr.unset<trait::ExplicitAccess>();
+  if (!NoPromotedScalar)
+    Dptr.unset<trait::NoPromotedScalar>();
   if (!Redundant)
     Dptr.unset<trait::Redundant>();
   if (!NoRedundant)
@@ -941,8 +953,8 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
       else if (TS.is<trait::Redundant>())
         TM.value<trait::Redundant>().push_back(&TS);
     }
-    TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock>
-      Printer(OS, DIAT, Offset, *DWLang);
+    TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock,
+      trait::NoPromotedScalar> Printer(OS, DIAT, Offset, *DWLang);
     TM.for_each(Printer);
     Printer.printSeparateTraits();
   });

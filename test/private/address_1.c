@@ -25,6 +25,8 @@ void foo (int N) {
 //CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4>
+//CHECK:    no promoted scalar (separate):
+//CHECK:     <X:4:10, ?>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 address_1.c:5:3
 //SAFE:    output:
@@ -45,3 +47,5 @@ void foo (int N) {
 //SAFE:     <I:5:12, 4> <X:4:10, ?> bar():6:5
 //SAFE:    lock (separate):
 //SAFE:     <I:5:12, 4>
+//SAFE:    no promoted scalar (separate):
+//SAFE:     <X:4:10, ?>

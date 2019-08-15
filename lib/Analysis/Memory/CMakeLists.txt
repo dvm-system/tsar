@@ -1,5 +1,6 @@
 set(ANALYSIS_SOURCES Passes.cpp DependenceAnalysis.cpp PrivateAnalysis.cpp
-  DIDependenceAnalysis.cpp BitMemoryTrait.cpp LockTraitPass.cpp Utils.cpp)
+  DIDependenceAnalysis.cpp BitMemoryTrait.cpp LockTraitPass.cpp Utils.cpp
+  NotPromotedTraitPass.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

@@ -166,6 +166,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // lost after SROA (for example, if a promoted variable is a structure).
   // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
+  Passes.add(createNotPromotedDIMemoryTraitPass());
   Passes.add(createEarlyCSEPass());
   Passes.add(createCFGSimplificationPass());
   // This is necessary to combine multiple GEPs into a single GEP. This allows

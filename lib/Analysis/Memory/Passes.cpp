@@ -31,4 +31,5 @@ void llvm::initializeMemoryAnalysis(PassRegistry &Registry) {
   initializePrivateRecognitionPassPass(Registry);
   initializeDIDependencyAnalysisPassPass(Registry);
   initializeLockDIMemoryTraitPassPass(Registry);
+  initializeNotPromotedDIMemoryTraitPassPass(Registry);
 }
