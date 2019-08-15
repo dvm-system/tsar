@@ -14,6 +14,7 @@
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
+#include "GlobalOptions.h"
 #include "Instrumentation.h"
 #include "tsar_query.h"
 #include "tsar_pass.h"
@@ -167,7 +168,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
   Passes.add(createNotPromotedDIMemoryTraitPass());
-  Passes.add(createLockDIMemoryTraitPass(is<trait::NoPromotedScalar>));
+  if (!mGlobalOptions->UnsafeTfmAnalysis)
+    Passes.add(createLockDIMemoryTraitPass(is<trait::NoPromotedScalar>));
   Passes.add(createEarlyCSEPass());
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());

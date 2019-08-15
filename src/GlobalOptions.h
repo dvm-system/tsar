@@ -35,6 +35,13 @@ struct GlobalOptions {
   /// Try to discard influence of redundant memory locations on the analysis
   /// results for other memory locations.
   bool IgnoreRedundantMemory = false;
+  /// Try to analyze memory locations after unsafe transformations of related
+  /// instructions.
+  ///
+  /// For example, 'instcombine' may remove some memory accesses and clobber
+  /// metadata. So, some results may be lost. However analysis after
+  /// transformation proposes more accurate results in some cases.
+  bool UnsafeTfmAnalysis = false;
 };
 }
 

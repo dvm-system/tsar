@@ -118,6 +118,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoAnalyzeLibFunc;
   llvm::cl::opt<bool> IgnoreRedundantMemory;
   llvm::cl::opt<bool> NoIgnoreRedundantMemory;
+  llvm::cl::opt<bool> UnsafeTfmAnalysis;
+  llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
   llvm::cl::opt<std::string> AnalysisUse;
 
   llvm::cl::OptionCategory TransformCategory;
@@ -209,6 +211,10 @@ Options::Options() :
     cl::desc("Try to discard influence of redundant memory on the analysis results")),
   NoIgnoreRedundantMemory("fno-ignore-redundant-memory", cl::cat(AnalysisCategory),
     cl::desc("Try to discard influence of redundant memory on the analysis results")),
+  UnsafeTfmAnalysis("funsafe-tfm-analysis", cl::cat(AnalysisCategory),
+    cl::desc("Perform analysis after unsafe transformations")),
+  NoUnsafeTfmAnalysis("fno-unsafe-tfm-analysis", cl::cat(AnalysisCategory),
+    cl::desc("Disable analysis after unsafe transformations(default)")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -481,6 +487,14 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoIgnoreRedundantMemory.ArgStr);
     Options::get().IgnoreRedundantMemory.error(Msg);
+    exit(1);
+  }
+  getGlobalOptions()->UnsafeTfmAnalysis = Options::get().UnsafeTfmAnalysis;
+  if (Options::get().UnsafeTfmAnalysis &&
+      Options::get().NoUnsafeTfmAnalysis) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoUnsafeTfmAnalysis.ArgStr);
+    Options::get().UnsafeTfmAnalysis.error(Msg);
     exit(1);
   }
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
