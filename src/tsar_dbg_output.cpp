@@ -14,6 +14,7 @@
 #include "DIEstimateMemory.h"
 #include "DIMemoryLocation.h"
 #include "DIUnparser.h"
+#include "EstimateMemory.h"
 #include "GlobalOptions.h"
 #include "tsar_pass.h"
 #include "SourceUnparserUtils.h"
@@ -67,6 +68,10 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   else
     O << Loc.UpperBound;
   O << ">";
+}
+void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,
+    const DominatorTree *DT) {
+  printLocationSource(O, MemoryLocation(EM.front(), EM.getSize()), DT);
 }
 
 void printDILocationSource(unsigned DWLang,
