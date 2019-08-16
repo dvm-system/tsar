@@ -137,11 +137,12 @@ template<class Tag> void convertIf(
   }
 }
 
-/// Store traits for a specified memory `M` in a specified pool. Add new
+/// Update traits for a specified memory `M` in a specified pool. Add new
 /// trait if `M` is not stored in pool.
 ///
 /// If traits for `M` already exist in a pool and should not be updated
 /// (for example, should be locked) the second returned value is `false`.
+/// If existing trait is already accurate it will not be updated.
 std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
     MemoryDescriptor Dptr, ArrayRef<const DIMemory *> LockedTraits,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
@@ -152,13 +153,37 @@ std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
   if (DIMTraitItr == Pool.end()) {
     DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
   } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
-    if (DIMTraitItr->is<trait::NoPromotedScalar>())
-      Dptr.set<trait::NoPromotedScalar>();
-    if (!DIMTraitItr->is<trait::HeaderAccess>())
-      Dptr.unset<trait::HeaderAccess>();
-    if (DIMTraitItr->is<trait::AddressAccess>())
-      Dptr.set<trait::AddressAccess>();
-    *DIMTraitItr = Dptr;
+    auto *Dep = DIMTraitItr->get<trait::Flow>();
+    auto needUpdate = [](const trait::Dependence *Dep) {
+      return !Dep || Dep->isMay() || !Dep->isKnownDistance() || true;
+    };
+    if (DIMTraitItr->is<trait::Flow>() &&
+            needUpdate(DIMTraitItr->get<trait::Flow>()) ||
+        DIMTraitItr->is<trait::Anti>() &&
+            needUpdate(DIMTraitItr->get<trait::Anti>()) ||
+        DIMTraitItr->is<trait::Output>() &&
+            needUpdate(DIMTraitItr->get<trait::Output>()) ||
+        !Dptr.is_any<trait::Flow, trait::Anti, trait::Output>()) {
+      if (DIMTraitItr->is<trait::NoPromotedScalar>())
+        Dptr.set<trait::NoPromotedScalar>();
+      if (!DIMTraitItr->is<trait::HeaderAccess>())
+        Dptr.unset<trait::HeaderAccess>();
+      if (DIMTraitItr->is<trait::AddressAccess>())
+        Dptr.set<trait::AddressAccess>();
+      // Do not change 'second to last private' to 'last private'. This occurs
+      // after loop rotate.
+      if (DIMTraitItr->is<trait::SecondToLastPrivate>() &&
+          Dptr.is<trait::LastPrivate>()) {
+        Dptr.set<trait::SecondToLastPrivate>();
+        if (DIMTraitItr->is<trait::FirstPrivate>())
+          Dptr.set<trait::FirstPrivate>();
+        if (DIMTraitItr->is<trait::Shared>())
+          Dptr.set<trait::Shared>();
+      }
+      *DIMTraitItr = Dptr;
+    } else {
+      return std::make_pair(DIMTraitItr, false);
+    }
   } else {
     return std::make_pair(DIMTraitItr, false);
   }

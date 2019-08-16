@@ -10,7 +10,7 @@ void foo(int * restrict A) {
 //CHECK:     <*A:3:25, ?>
 //CHECK:    first private:
 //CHECK:     <*A:3:25, ?>
-//CHECK:    last private:
+//CHECK:    second to last private:
 //CHECK:     <*A:3:25, ?>
 //CHECK:    induction:
 //CHECK:     <I:4:12, 4>:[Int,,,-1]
