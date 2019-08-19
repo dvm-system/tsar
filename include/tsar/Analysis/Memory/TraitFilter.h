@@ -18,9 +18,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines some filters which check whether a trait is set.
-// These filters can be used in `LockTraitPass` and as a parameters for
-// `createLockTraitPass()` function to define which traits should be locked.
+// This file defines some filters which marks memory location if some
+// traits are set. These filters can be used in `ProcessDIMemoryTraitPass` and
+// as a parameters for `createProcessDIMemoryTraitPass()` function to define
+// which traits should be marked.
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,19 +30,27 @@
 
 #include <tsar/Analysis/Memory/DIMemoryTrait.h>
 
-namespace tsar {
-/// Return true if all specified traits `Traits` is set for `T`.
-template<class... Traits> bool is(const DIMemoryTrait &T) {
-  if (T.is<Traits...>())
-    return true;
-  return false;
+namespace llvm {
+class DataLayout;
 }
 
-/// Return true if at least one of specified traits `Traits` is set for `T`.
-template<class... Traits> bool isAny(const DIMemoryTrait &T) {
-  if (T.is_any<Traits...>())
-    return true;
-  return false;
+namespace tsar {
+/// Set `WhatT` trait if all specified traits `Traits` is set for `T`.
+template<class WhatT, class... Traits> void markIf(DIMemoryTrait &T) {
+  if (T.is<Traits...>())
+    T.set<WhatT>();
 }
+
+/// Set `WhatT` trait if at least one of specified traits `Traits` is set for `T`.
+template<class WhatT, class... Traits> void markIfAny(DIMemoryTrait &T) {
+  if (T.is_any<Traits...>())
+    T.set<WhatT>();
+}
+
+/// This filter marks locations which have not been promoted yet.
+///
+/// Actually this filter looks for `dbg.declare` metadata and if it
+/// exist the filter marks appropriate location as a not promoted.
+void markIfNotPromoted(const llvm::DataLayout &DL, DIMemoryTrait &T);
 }
 #endif//TSAR_MEMORY_TRAIT_FILTER_H

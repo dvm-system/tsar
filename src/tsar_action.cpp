@@ -167,9 +167,11 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // lost after SROA (for example, if a promoted variable is a structure).
   // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
-  Passes.add(createNotPromotedDIMemoryTraitPass());
+  Passes.add(createProcessDIMemoryTraitPass(
+    [M](DIMemoryTrait &T) { markIfNotPromoted(M->getDataLayout(), T); }));
   if (!mGlobalOptions->UnsafeTfmAnalysis)
-    Passes.add(createLockDIMemoryTraitPass(is<trait::NoPromotedScalar>));
+    Passes.add(createProcessDIMemoryTraitPass(
+      markIf<trait::Lock, trait::NoPromotedScalar>));
   Passes.add(createEarlyCSEPass());
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());
@@ -181,7 +183,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
   // Perform loop rotation to enable reduction recognition if for-loops.
-  Passes.add(createLockDIMemoryTraitPass(is<trait::HeaderAccess>));
+  Passes.add(createProcessDIMemoryTraitPass(
+    markIf<trait::Lock, trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());

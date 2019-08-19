@@ -57,18 +57,11 @@ void initializeDIDependencyAnalysisPassPass(PassRegistry &Registry);
 /// and flow/anti/output dependencies exploration.
 FunctionPass * createDIDependencyAnalysisPass();
 
-/// Initialize a pass to mark traits in a loop as locked.
-void initializeLockDIMemoryTraitPassPass(PassRegistry &Registry);
+/// Initialize a pass to process traits in a region.
+void initializeProcessDIMemoryTraitPassPass(PassRegistry &Registry);
 
-/// Create a pass to mark traits in a loop as locked.
-Pass * createLockDIMemoryTraitPass(
-  const std::function<bool(const tsar::DIMemoryTrait &)> &Lock);
-
-/// Initialize a pass to collect locations which have not been promoted.
-void initializeNotPromotedDIMemoryTraitPassPass(PassRegistry &Registry);
-
-/// Create a pass to collect locations which have not been promoted.
-Pass *createNotPromotedDIMemoryTraitPass();
-
+/// Create a pass to process traits in a region.
+Pass * createProcessDIMemoryTraitPass(
+  const std::function<void(tsar::DIMemoryTrait &)> &Lock);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H
