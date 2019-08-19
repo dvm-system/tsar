@@ -44,6 +44,8 @@ void foo(double *X, int N) {
 //SAFE:     <I:3:12, 4>:[Int,1,,1]
 //SAFE:    read only:
 //SAFE:     <N:1:25, 4> | <X:1:18, 8>
+//SAFE:    direct access:
+//SAFE:     <I:3:12, 4> | <N:1:25, 4> | <T:2:10, 24> <T:2:10, ?> | <X:1:18, 8>
 //SAFE:    redundant:
 //SAFE:     <T:2:10, 24> <T:2:10, ?>
 //SAFE:    lock:
@@ -58,3 +60,5 @@ void foo(double *X, int N) {
 //SAFE:     <T:2:10, ?>
 //SAFE:    lock (separate):
 //SAFE:     <I:3:12, 4> <N:1:25, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <*X:1:18, ?> <I:3:12, 4> <N:1:25, 4> <T:2:10, 24> <T:2:10, ?> <X:1:18, 8>

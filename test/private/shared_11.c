@@ -19,6 +19,8 @@ void foo() {
 //CHECK:     <I:5:7, 4>:[Int,,,1]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4> | <JEnd, 4> | <JStart, 4> | <KEnd, 4> | <KStart, 4>
+//CHECK:    direct access:
+//CHECK:     <I:5:7, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:    lock:
 //CHECK:     <I:5:7, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -29,6 +31,8 @@ void foo() {
 //CHECK:     <I:5:7, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4> <K:5:13, 4> <KEnd, 4> <KStart, 4> <M:5:16, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:5:7, 4> <IEnd, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:5:7, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4> <K:5:13, 4> <KEnd, 4> <KStart, 4> <M:5:16, 4> <U, 40000000>
 //CHECK:   loop at depth 2 shared_11.c:7:5
 //CHECK:     shared:
 //CHECK:      <U, 40000000>
@@ -38,6 +42,8 @@ void foo() {
 //CHECK:      <J:5:10, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:5:7, 4> | <JEnd, 4> | <KEnd, 4> | <KStart, 4>
+//CHECK:     direct access:
+//CHECK:      <I:5:7, 4> | <J:5:10, 4> | <JEnd, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:     lock:
 //CHECK:      <J:5:10, 4> | <JEnd, 4>
 //CHECK:     header access:
@@ -48,6 +54,8 @@ void foo() {
 //CHECK:      <I:5:7, 4> <J:5:10, 4> <JEnd, 4> <K:5:13, 4> <KEnd, 4> <KStart, 4> <M:5:16, 4>
 //CHECK:     lock (separate):
 //CHECK:      <J:5:10, 4> <JEnd, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <I:5:7, 4> <J:5:10, 4> <JEnd, 4> <K:5:13, 4> <KEnd, 4> <KStart, 4> <M:5:16, 4> <U, 40000000>
 //CHECK:    loop at depth 3 shared_11.c:8:7
 //CHECK:      shared:
 //CHECK:       <U, 40000000>
@@ -57,6 +65,8 @@ void foo() {
 //CHECK:       <K:5:13, 4>:[Int,,,1]
 //CHECK:      read only:
 //CHECK:       <I:5:7, 4> | <J:5:10, 4> | <KEnd, 4>
+//CHECK:      direct access:
+//CHECK:       <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4> | <KEnd, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:      lock:
 //CHECK:       <K:5:13, 4> | <KEnd, 4>
 //CHECK:      header access:
@@ -67,6 +77,8 @@ void foo() {
 //CHECK:       <I:5:7, 4> <J:5:10, 4> <K:5:13, 4> <KEnd, 4> <M:5:16, 4>
 //CHECK:      lock (separate):
 //CHECK:       <K:5:13, 4> <KEnd, 4>
+//CHECK:      direct access (separate):
+//CHECK:       <I:5:7, 4> <J:5:10, 4> <K:5:13, 4> <KEnd, 4> <M:5:16, 4> <U, 40000000>
 //CHECK:     loop at depth 4 shared_11.c:9:9
 //CHECK:       shared:
 //CHECK:        <U, 40000000>
@@ -74,6 +86,8 @@ void foo() {
 //CHECK:        <M:5:16, 4>:[Int,0,5,1]
 //CHECK:       read only:
 //CHECK:        <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4>
+//CHECK:       direct access:
+//CHECK:        <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:       lock:
 //CHECK:        <M:5:16, 4>
 //CHECK:       header access:
@@ -84,3 +98,5 @@ void foo() {
 //CHECK:        <I:5:7, 4> <J:5:10, 4> <K:5:13, 4> <M:5:16, 4>
 //CHECK:       lock (separate):
 //CHECK:        <M:5:16, 4>
+//CHECK:       direct access (separate):
+//CHECK:        <I:5:7, 4> <J:5:10, 4> <K:5:13, 4> <M:5:16, 4> <U, 40000000>

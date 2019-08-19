@@ -63,6 +63,8 @@ void foo(double (* restrict U)[100]) {
 //SAFE:     <I:7:12, 4>:[Int,,,1]
 //SAFE:    read only:
 //SAFE:     <IEnd, 4> | <JEnd, 4> | <U:5:29, 8>
+//SAFE:    direct access:
+//SAFE:     <*U:5:29, ?> | <I:7:12, 4> | <IEnd, 4> | <J:6:10, 4> | <JEnd, 4> | <JStart, 4> | <U:5:29, 8>
 //SAFE:    lock:
 //SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    header access:
@@ -73,6 +75,8 @@ void foo(double (* restrict U)[100]) {
 //SAFE:     <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:29, 8>
 //SAFE:    lock (separate):
 //SAFE:     <I:7:12, 4> <IEnd, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <*U:5:29, ?> <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:29, 8>
 //SAFE:   loop at depth 2 shared_13.c:11:5
 //SAFE:     shared:
 //SAFE:      <*U:5:29, ?>
@@ -80,6 +84,8 @@ void foo(double (* restrict U)[100]) {
 //SAFE:      <J:6:10, 4>:[Int,,,1]
 //SAFE:     read only:
 //SAFE:      <I:7:12, 4> | <JEnd, 4> | <U:5:29, 8>
+//SAFE:     direct access:
+//SAFE:      <*U:5:29, ?> | <I:7:12, 4> | <J:6:10, 4> | <JEnd, 4> | <U:5:29, 8>
 //SAFE:     lock:
 //SAFE:      <J:6:10, 4> | <JEnd, 4>
 //SAFE:     header access:
@@ -90,3 +96,5 @@ void foo(double (* restrict U)[100]) {
 //SAFE:      <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:29, 8>
 //SAFE:     lock (separate):
 //SAFE:      <J:6:10, 4> <JEnd, 4>
+//SAFE:     direct access (separate):
+//SAFE:      <*U:5:29, ?> <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:29, 8>

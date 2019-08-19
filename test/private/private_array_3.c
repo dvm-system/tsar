@@ -22,6 +22,8 @@ double foo(double *X, int N) {
 //CHECK:     <I:4:12, 4>:[Int,1,,1]
 //CHECK:    read only:
 //CHECK:     <N:1:27, 4> | <X:1:20, 8>
+//CHECK:    direct access:
+//CHECK:     <I:4:12, 4> | <N:1:27, 4> | <T:2:10, 24> | <X:1:20, 8>
 //CHECK:    lock:
 //CHECK:     <I:4:12, 4> | <N:1:27, 4>
 //CHECK:    header access:
@@ -32,3 +34,5 @@ double foo(double *X, int N) {
 //CHECK:     <I:4:12, 4> <N:1:27, 4> <X:1:20, 8>
 //CHECK:    lock (separate):
 //CHECK:     <I:4:12, 4> <N:1:27, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <*X:1:20, ?> <I:4:12, 4> <N:1:27, 4> <T:2:10, 24> <X:1:20, 8>

@@ -27,6 +27,8 @@ void foo(int Flag) {
 //CHECK:     <I:5:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <Flag:4:14, 4>
+//CHECK:    direct access:
+//CHECK:     <A, 800> | <Flag:4:14, 4> | <I:5:12, 4> | <X, 4>
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4>
 //CHECK:    header access:
@@ -37,3 +39,5 @@ void foo(int Flag) {
 //CHECK:     <Flag:4:14, 4> <I:5:12, 4> <X, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <A, 800> <Flag:4:14, 4> <I:5:12, 4> <X, 4>

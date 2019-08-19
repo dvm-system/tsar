@@ -69,6 +69,8 @@ void foo() {
 //SAFE:     <I:6:12, 4>:[Int,,,1]
 //SAFE:    read only:
 //SAFE:     <IEnd, 4> | <JEnd, 4>
+//SAFE:    direct access:
+//SAFE:     <I:6:12, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4> | <U, 80000>
 //SAFE:    lock:
 //SAFE:     <I:6:12, 4> | <IEnd, 4>
 //SAFE:    header access:
@@ -79,6 +81,8 @@ void foo() {
 //SAFE:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:6:12, 4> <IEnd, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4> <U, 80000>
 //SAFE:   loop at depth 2 shared_15.c:11:5
 //SAFE:     shared:
 //SAFE:      <U, 80000>
@@ -86,6 +90,8 @@ void foo() {
 //SAFE:      <J:5:10, 4>:[Int,,,1]
 //SAFE:     read only:
 //SAFE:      <I:6:12, 4> | <JEnd, 4>
+//SAFE:     direct access:
+//SAFE:      <I:6:12, 4> | <J:5:10, 4> | <JEnd, 4> | <U, 80000>
 //SAFE:     lock:
 //SAFE:      <J:5:10, 4> | <JEnd, 4>
 //SAFE:     header access:
@@ -96,3 +102,5 @@ void foo() {
 //SAFE:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4>
 //SAFE:     lock (separate):
 //SAFE:      <J:5:10, 4> <JEnd, 4>
+//SAFE:     direct access (separate):
+//SAFE:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4> <U, 80000>

@@ -63,6 +63,8 @@ double foo() {
 //SAFE:     <I:7:12, 4>:[Int,0,100,10]
 //SAFE:    read only:
 //SAFE:     <JStart, 4>
+//SAFE:    direct access:
+//SAFE:     <I:7:12, 4> | <J:5:10, 4> | <JStart, 4> | <U:4:10, 800>
 //SAFE:    lock:
 //SAFE:     <I:7:12, 4>
 //SAFE:    header access:
@@ -73,6 +75,8 @@ double foo() {
 //SAFE:     <I:7:12, 4> <J:5:10, 4> <JStart, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:7:12, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:7:12, 4> <J:5:10, 4> <JStart, 4> <U:4:10, 800>
 //SAFE:   loop at depth 2 shared_20.c:10:5
 //SAFE:     shared:
 //SAFE:      <U:4:10, 800>
@@ -80,6 +84,8 @@ double foo() {
 //SAFE:      <J:5:10, 4>:[Int,,,1]
 //SAFE:     read only:
 //SAFE:      <I:7:12, 4>
+//SAFE:     direct access:
+//SAFE:      <I:7:12, 4> | <J:5:10, 4> | <U:4:10, 800>
 //SAFE:     lock:
 //SAFE:      <J:5:10, 4>
 //SAFE:     header access:
@@ -90,3 +96,5 @@ double foo() {
 //SAFE:      <I:7:12, 4> <J:5:10, 4>
 //SAFE:     lock (separate):
 //SAFE:      <J:5:10, 4>
+//SAFE:     direct access (separate):
+//SAFE:      <I:7:12, 4> <J:5:10, 4> <U:4:10, 800>

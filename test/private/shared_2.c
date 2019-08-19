@@ -13,6 +13,8 @@ void foo() {
 //CHECK:     <I:5:12, 4>:[Int,,,5]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4>
+//CHECK:    direct access:
+//CHECK:     <I:5:12, 4> | <IEnd, 4> | <U, 800>
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -23,3 +25,5 @@ void foo() {
 //CHECK:     <I:5:12, 4> <IEnd, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4> <IEnd, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:5:12, 4> <IEnd, 4> <U, 800>

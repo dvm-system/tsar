@@ -35,6 +35,11 @@ class DataLayout;
 }
 
 namespace tsar {
+/// Set `WhatT` trait.
+template<class WhatT, class... Traits> void mark(DIMemoryTrait &T) {
+  T.set<WhatT>();
+}
+
 /// Set `WhatT` trait if all specified traits `Traits` is set for `T`.
 template<class WhatT, class... Traits> void markIf(DIMemoryTrait &T) {
   if (T.is<Traits...>())

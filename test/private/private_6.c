@@ -40,6 +40,8 @@ int foo(int Y) {
 //SAFE:     <I:2:7, 4>:[Int,0,10,1]
 //SAFE:    read only:
 //SAFE:     <Y:1:13, 4>
+//SAFE:    direct access:
+//SAFE:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
 //SAFE:    lock:
 //SAFE:     <I:2:7, 4>
 //SAFE:    header access:
@@ -50,3 +52,5 @@ int foo(int Y) {
 //SAFE:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:2:7, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>

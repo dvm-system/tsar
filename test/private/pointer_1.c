@@ -60,6 +60,8 @@ void foo(double * restrict A) {
 //SAFE:     <I:6:12, 4>:[Int,1,,1]
 //SAFE:    read only:
 //SAFE:     <A:3:28, 8>
+//SAFE:    direct access:
+//SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <A:3:28, 8> | <I:6:12, 4> | <P:4:8, 8>
 //SAFE:    redundant:
 //SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <X, 4>
 //SAFE:    lock:
@@ -76,6 +78,8 @@ void foo(double * restrict A) {
 //SAFE:     <P[0]:{10:17|4:8}, 4> <X, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:6:12, 4> <N, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 pointer_1.c:6:3
 //REDUNDANT:    shared:
@@ -90,6 +94,8 @@ void foo(double * restrict A) {
 //REDUNDANT:     <I:6:12, 4>:[Int,1,,1]
 //REDUNDANT:    read only:
 //REDUNDANT:     <A:3:28, 8> | <N, 4>
+//REDUNDANT:    direct access:
+//REDUNDANT:     <*A:3:28, ?> | <A:3:28, 8> | <I:6:12, 4> | <N, 4> | <P:4:8, 8> | <Y, 4>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <X, 4>
 //REDUNDANT:    lock:
@@ -106,3 +112,5 @@ void foo(double * restrict A) {
 //REDUNDANT:     <P[0]:{10:17|4:8}, 4> <X, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:6:12, 4> <N, 4>
+//REDUNDANT:    direct access (separate):
+//REDUNDANT:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>

@@ -39,6 +39,8 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
     mId &= Redundant;
   if (Dptr.is<trait::NoRedundant>())
     mId &= NoRedundant;
+  if (Dptr.is<trait::DirectAccess>())
+    mId &= DirectAccess;
   if (Dptr.is<trait::Lock>())
     mId &= Lock;
   if (Dptr.is<trait::NoAccess>())
@@ -101,6 +103,10 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
   if (!(get() & ~NoRedundant)) {
     Dptr.set<trait::NoRedundant>();
     Stat.get<trait::NoRedundant>() += TraitNumber;
+  }
+  if (!(get() & ~DirectAccess)) {
+    Dptr.set<trait::DirectAccess>();
+    Stat.get<trait::DirectAccess>() += TraitNumber;
   }
   switch (dropUnitFlag(get())) {
   case Readonly:

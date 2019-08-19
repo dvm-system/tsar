@@ -71,6 +71,7 @@ TSAR_TRAIT_DECL(Lock, "lock")
 TSAR_TRAIT_DECL(Redundant, "redundant")
 TSAR_TRAIT_DECL(NoRedundant, "no redundant")
 TSAR_TRAIT_DECL(NoPromotedScalar, "no promoted scalar")
+TSAR_TRAIT_DECL(DirectAccess, "direct access")
 
 #undef TSAR_TRAIT_DECL
 
@@ -178,7 +179,8 @@ private:
 /// - is it a location with locked traits which should not be further analyzed;
 /// - is it a redundant location which can be removed after some transformations;
 /// - is it a location which is not redundant;
-/// - is it a scalar which has not been promoted to registers.
+/// - is it a scalar which has not been promoted to registers;
+/// - is it a directly accessed location.
 ///
 /// If location is not accessed in a region it will be marked as 'no access'
 /// only if it has some other traits, otherwise it can be omitted in a list
@@ -190,9 +192,10 @@ private:
 ///
 /// There are difference of meaning of some traits for a separate memory
 /// location and for a node in alias tree. This relates to explicitly accessed,
-/// redundant and not redundant locations. An alias node has one of these
-/// traits only if it contains at least one location which has an appropriate
-/// trait (locations from descendant nodes are not analyzed in this case).
+/// redundant, not redundant and direct locations. An alias node has
+/// one of these traits only if it contains at least one location which has an
+/// appropriate trait (locations from descendant nodes are not analyzed
+/// in this case).
 ///
 /// Calculation of a last private variables differs depending on internal
 /// representation of a loop. There are two type of representations.
@@ -226,6 +229,7 @@ private:
 using MemoryDescriptor = bcl::TraitDescriptor<
   trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess, trait::Lock,
   trait::Redundant, trait::NoRedundant, trait::NoPromotedScalar,
+  trait::DirectAccess,
   bcl::TraitAlternative<
     trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
     bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
@@ -254,7 +258,8 @@ using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::Lock>,
   bcl::tagged<llvm::Statistic &, trait::Redundant>,
   bcl::tagged<llvm::Statistic &, trait::NoRedundant>,
-  bcl::tagged<llvm::Statistic &, trait::NoPromotedScalar>>;
+  bcl::tagged<llvm::Statistic &, trait::NoPromotedScalar>,
+  bcl::tagged<llvm::Statistic &, trait::DirectAccess>>;
 
 /// A macro to make definition of statistics really simple.
 ///
@@ -281,13 +286,15 @@ using MemoryStatistic = bcl::tagged_tuple<
   STATISTIC(VARNAME##Redundant, "Number of redundant locations"); \
   STATISTIC(VARNAME##NoRedundant, "Number of not redundant locations"); \
   STATISTIC(VARNAME##NoPromotedScalar, "Number of not promoted scalars"); \
+  STATISTIC(VARNAME##DirectAccess, "Number of not directly accessed locations"); \
   static ::tsar::MemoryStatistic VARNAME = {\
     VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
     VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
     VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate, VARNAME##LastPrivate, \
     VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
     VARNAME##Flow, VARNAME##Anti, VARNAME##Output, VARNAME##Lock, \
-    VARNAME##Redundant, VARNAME##NoRedundant, VARNAME##NoPromotedScalar};
+    VARNAME##Redundant, VARNAME##NoRedundant, VARNAME##NoPromotedScalar, \
+    VARNAME##DirectAccess };
 }
 #endif//TSAR_MEMORY_TRAIT_H
 

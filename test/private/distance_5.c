@@ -54,6 +54,8 @@ double foo(int JStart) {
 //SAFE:     <I:5:12, 4>:[Int,0,100,10]
 //SAFE:    read only:
 //SAFE:     <JStart:1:16, 4>
+//SAFE:    direct access:
+//SAFE:     <I:5:12, 4> | <J:3:10, 4> | <JStart:1:16, 4> | <U:2:10, 800>
 //SAFE:    lock:
 //SAFE:     <I:5:12, 4>
 //SAFE:    header access:
@@ -64,6 +66,8 @@ double foo(int JStart) {
 //SAFE:     <I:5:12, 4> <J:3:10, 4> <JStart:1:16, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:5:12, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:5:12, 4> <J:3:10, 4> <JStart:1:16, 4> <U:2:10, 800>
 //SAFE:   loop at depth 2 distance_5.c:6:5
 //SAFE:     flow:
 //SAFE:      <U:2:10, 800>
@@ -71,6 +75,8 @@ double foo(int JStart) {
 //SAFE:      <J:3:10, 4>:[Int,1,10,1]
 //SAFE:     read only:
 //SAFE:      <I:5:12, 4>
+//SAFE:     direct access:
+//SAFE:      <I:5:12, 4> | <J:3:10, 4> | <U:2:10, 800>
 //SAFE:     lock:
 //SAFE:      <J:3:10, 4>
 //SAFE:     header access:
@@ -81,3 +87,5 @@ double foo(int JStart) {
 //SAFE:      <I:5:12, 4> <J:3:10, 4>
 //SAFE:     lock (separate):
 //SAFE:      <J:3:10, 4>
+//SAFE:     direct access (separate):
+//SAFE:      <I:5:12, 4> <J:3:10, 4> <U:2:10, 800>

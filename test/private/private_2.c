@@ -29,6 +29,8 @@ int main() {
 //SAFE:     <X:2:10, 4>
 //SAFE:    induction:
 //SAFE:     <I:2:7, 4>:[Int,0,10,1]
+//SAFE:    direct access:
+//SAFE:     <I:2:7, 4> | <X:2:10, 4>
 //SAFE:    lock:
 //SAFE:     <I:2:7, 4>
 //SAFE:    header access:
@@ -39,3 +41,5 @@ int main() {
 //SAFE:     <I:2:7, 4> <X:2:10, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:2:7, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:2:7, 4> <X:2:10, 4>

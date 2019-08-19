@@ -22,6 +22,8 @@ void foo() {
 //CHECK:     <A, 40> <B, 44>:[1,1] <Nx, 4>
 //CHECK:    induction:
 //CHECK:     <I:6:12, 4>:[Int,0,10,1]
+//CHECK:    direct access:
+//CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4> | <Nx1:7:9, 4>
 //CHECK:    redundant:
 //CHECK:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
 //CHECK:    lock:
@@ -36,6 +38,8 @@ void foo() {
 //CHECK:     <Nx, 4> <Nx1:7:9, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <A, 40> <B, 44> <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 redundant_1.c:6:3
 //REDUNDANT:    shared:
@@ -44,6 +48,8 @@ void foo() {
 //REDUNDANT:     <B, 44>:[1,1]
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:6:12, 4>:[Int,0,10,1]
+//REDUNDANT:    direct access:
+//REDUNDANT:     <A, 40> | <B, 44> | <I:6:12, 4>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
 //REDUNDANT:    lock:
@@ -58,3 +64,5 @@ void foo() {
 //REDUNDANT:     <Nx, 4> <Nx1:7:9, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:6:12, 4>
+//REDUNDANT:    direct access (separate):
+//REDUNDANT:     <A, 40> <B, 44> <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>

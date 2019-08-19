@@ -23,6 +23,8 @@ double foo() {
 //CHECK:     <JStart, 4> bar():7:5 | <U:5:10, 800>:[1,1]
 //CHECK:    induction:
 //CHECK:     <I:6:12, 4>:[Int,1,100,1]
+//CHECK:    direct access:
+//CHECK:     <I:6:12, 4> | <J:8:14, 4> | <JStart, 4> bar():7:5 | <U:5:10, 800>
 //CHECK:    lock:
 //CHECK:     <I:6:12, 4>
 //CHECK:    header access:
@@ -33,6 +35,8 @@ double foo() {
 //CHECK:     <I:6:12, 4> <J:8:14, 4> <JStart, 4> bar():7:5
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:6:12, 4> <J:8:14, 4> <JStart, 4> <U:5:10, 800> bar():7:5
 //CHECK:   loop at depth 2 distance_7.c:8:5
 //CHECK:     output:
 //CHECK:      <U:5:10, 800>
@@ -40,6 +44,8 @@ double foo() {
 //CHECK:      <J:8:14, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:6:12, 4>
+//CHECK:     direct access:
+//CHECK:      <I:6:12, 4> | <J:8:14, 4> | <U:5:10, 800>
 //CHECK:     lock:
 //CHECK:      <J:8:14, 4>
 //CHECK:     header access:
@@ -50,3 +56,5 @@ double foo() {
 //CHECK:      <I:6:12, 4> <J:8:14, 4>
 //CHECK:     lock (separate):
 //CHECK:      <J:8:14, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <I:6:12, 4> <J:8:14, 4> <U:5:10, 800>

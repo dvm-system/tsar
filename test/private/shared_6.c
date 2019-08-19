@@ -35,6 +35,8 @@ void foo(double * restrict U) {
 //SAFE:     <*U:3:28, ?> | <I:7:12, 4>
 //SAFE:    read only:
 //SAFE:     <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
+//SAFE:    direct access:
+//SAFE:     <*U:3:28, ?> | <I:7:12, 4> | <IEnd, 4> | <IStep, 4> | <U:3:28, 8>
 //SAFE:    lock:
 //SAFE:     <I:7:12, 4> | <IEnd, 4>
 //SAFE:    header access:
@@ -45,3 +47,5 @@ void foo(double * restrict U) {
 //SAFE:     <I:7:12, 4> <IEnd, 4> <IStep, 4> <U:3:28, 8>
 //SAFE:    lock (separate):
 //SAFE:     <I:7:12, 4> <IEnd, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <*U:3:28, ?> <I:7:12, 4> <IEnd, 4> <IStep, 4> <U:3:28, 8>

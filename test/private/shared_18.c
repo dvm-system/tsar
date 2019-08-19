@@ -26,6 +26,8 @@ void foo(double * restrict U) {
 //CHECK:     <I:7:12, 4>:[Int,,,1]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4> | <JEnd, 4> | <JStart, 4> | <U:5:28, 8>
+//CHECK:    direct access:
+//CHECK:     <*U:5:28, ?> | <I:7:12, 4> | <IEnd, 4> | <J:6:10, 4> | <JEnd, 4> | <JStart, 4> | <U:5:28, 8>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -36,6 +38,8 @@ void foo(double * restrict U) {
 //CHECK:     <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:28, 8>
 //CHECK:    lock (separate):
 //CHECK:     <I:7:12, 4> <IEnd, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <*U:5:28, ?> <I:7:12, 4> <IEnd, 4> <J:6:10, 4> <JEnd, 4> <JStart, 4> <U:5:28, 8>
 //CHECK:   loop at depth 2 shared_18.c:11:5
 //CHECK:     shared:
 //CHECK:      <*U:5:28, ?>
@@ -43,6 +47,8 @@ void foo(double * restrict U) {
 //CHECK:      <J:6:10, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:7:12, 4> | <JEnd, 4> | <U:5:28, 8>
+//CHECK:     direct access:
+//CHECK:      <*U:5:28, ?> | <I:7:12, 4> | <J:6:10, 4> | <JEnd, 4> | <U:5:28, 8>
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4> | <JEnd, 4>
 //CHECK:     header access:
@@ -53,3 +59,5 @@ void foo(double * restrict U) {
 //CHECK:      <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:28, 8>
 //CHECK:     lock (separate):
 //CHECK:      <J:6:10, 4> <JEnd, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <*U:5:28, ?> <I:7:12, 4> <J:6:10, 4> <JEnd, 4> <U:5:28, 8>

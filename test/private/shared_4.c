@@ -12,6 +12,8 @@ void foo(double * restrict U) {
 //CHECK:     <I:4:12, 4>:[Int,,,5]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4> | <U:3:28, 8>
+//CHECK:    direct access:
+//CHECK:     <*U:3:28, ?> | <I:4:12, 4> | <IEnd, 4> | <U:3:28, 8>
 //CHECK:    lock:
 //CHECK:     <I:4:12, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -22,3 +24,5 @@ void foo(double * restrict U) {
 //CHECK:     <I:4:12, 4> <IEnd, 4> <U:3:28, 8>
 //CHECK:    lock (separate):
 //CHECK:     <I:4:12, 4> <IEnd, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <*U:3:28, ?> <I:4:12, 4> <IEnd, 4> <U:3:28, 8>

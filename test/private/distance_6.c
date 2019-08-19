@@ -14,6 +14,8 @@ void foo() {
 //CHECK:     <U, 800>:[1,1]
 //CHECK:    induction:
 //CHECK:     <I:4:12, 4>:[Int,1,100,1]
+//CHECK:    direct access:
+//CHECK:     <I:4:12, 4> | <J:5:14, 4> | <U, 800>
 //CHECK:    lock:
 //CHECK:     <I:4:12, 4>
 //CHECK:    header access:
@@ -24,6 +26,8 @@ void foo() {
 //CHECK:     <I:4:12, 4> <J:5:14, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:4:12, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:4:12, 4> <J:5:14, 4> <U, 800>
 //CHECK:   loop at depth 2 distance_6.c:5:5
 //CHECK:     output:
 //CHECK:      <U, 800>
@@ -31,6 +35,8 @@ void foo() {
 //CHECK:      <J:5:14, 4>:[Int,0,5,1]
 //CHECK:     read only:
 //CHECK:      <I:4:12, 4>
+//CHECK:     direct access:
+//CHECK:      <I:4:12, 4> | <J:5:14, 4> | <U, 800>
 //CHECK:     lock:
 //CHECK:      <J:5:14, 4>
 //CHECK:     header access:
@@ -41,3 +47,5 @@ void foo() {
 //CHECK:      <I:4:12, 4> <J:5:14, 4>
 //CHECK:     lock (separate):
 //CHECK:      <J:5:14, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <I:4:12, 4> <J:5:14, 4> <U, 800>

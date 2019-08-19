@@ -19,6 +19,8 @@ int foo(int Y) {
 //CHECK:     <X:2:10, 4> | <Y:1:13, 4>
 //CHECK:    induction:
 //CHECK:     <I:2:7, 4>:[Int,0,10,1]
+//CHECK:    direct access:
+//CHECK:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
 //CHECK:    lock:
 //CHECK:     <I:2:7, 4>
 //CHECK:    header access:
@@ -29,3 +31,5 @@ int foo(int Y) {
 //CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:2:7, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>

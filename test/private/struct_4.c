@@ -17,6 +17,8 @@ double foo(int N) {
 //CHECK:     <S:4:14, 16>
 //CHECK:    read only:
 //CHECK:     <N:3:16, 4>
+//CHECK:    direct access:
+//CHECK:     <I:6:12, 4> | <N:3:16, 4> | <S:4:14, 16>
 //CHECK:    lock:
 //CHECK:     <I:6:12, 4> | <N:3:16, 4>
 //CHECK:    header access:
@@ -27,3 +29,5 @@ double foo(int N) {
 //CHECK:     <I:6:12, 4> <N:3:16, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4> <N:3:16, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:6:12, 4> <N:3:16, 4> <S:4:14, 16>

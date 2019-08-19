@@ -14,6 +14,8 @@ double foo(int N) {
 //CHECK:     <I:7:12, 4>:[Int,0,,1] | <Res:5:10, 8>:[Fp,,,]
 //CHECK:    read only:
 //CHECK:     <S:4:14, 16>
+//CHECK:    direct access:
+//CHECK:     <I:7:12, 4> | <Res:5:10, 8> | <S:4:14, 16>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <S:4:14, 16>
 //CHECK:    header access:
@@ -24,3 +26,5 @@ double foo(int N) {
 //CHECK:     <I:7:12, 4> <Res:5:10, 8>
 //CHECK:    lock (separate):
 //CHECK:     <I:7:12, 4> <S:4:14, 16>
+//CHECK:    direct access (separate):
+//CHECK:     <I:7:12, 4> <Res:5:10, 8> <S:4:14, 16>

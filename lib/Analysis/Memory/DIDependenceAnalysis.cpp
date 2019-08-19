@@ -269,6 +269,8 @@ std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
         Dptr.unset<trait::HeaderAccess>();
       if (DIMTraitItr->is<trait::AddressAccess>())
         Dptr.set<trait::AddressAccess>();
+      if (DIMTraitItr->is<trait::DirectAccess>())
+        Dptr.set<trait::DirectAccess>();
       // Do not change 'second to last private' to 'last private'. This occurs
       // after loop rotate.
       if (DIMTraitItr->is<trait::SecondToLastPrivate>() &&
@@ -532,13 +534,16 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (!(DIMTraitItr->is<trait::NoPromotedScalar>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::NoPromotedScalar>();
+    if (!(DIMTraitItr->is<trait::DirectAccess>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::DirectAccess>();
     LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
       DIATrait.print(dbgs()); dbgs() << "\n");
     return;
   }
   BitMemoryTrait CombinedTrait;
   bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
-  bool NoPromotedScalar = false;
+  bool NoPromotedScalar = false, DirectAccess = false;
   for (auto &DIMTraitItr : DIATrait) {
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
@@ -547,6 +552,9 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (DIMTraitItr->is<trait::NoPromotedScalar>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       NoPromotedScalar = true;
+    if (DIMTraitItr->is<trait::DirectAccess>() &&
+        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+      DirectAccess = true;
     assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
     if (DIMTraitItr->is<trait::Redundant>()) {
@@ -577,6 +585,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     Dptr.unset<trait::Redundant>();
   if (!NoRedundant)
     Dptr.unset<trait::NoRedundant>();
+  if (!DirectAccess)
+    Dptr.unset<trait::DirectAccess>();
   DIATrait = Dptr;
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
@@ -1127,7 +1137,8 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
         TM.value<trait::Redundant>().push_back(&TS);
     }
     TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock,
-      trait::NoPromotedScalar> Printer(OS, DIAT, Offset, *DWLang);
+      trait::NoPromotedScalar, trait::DirectAccess>
+        Printer(OS, DIAT, Offset, *DWLang);
     TM.for_each(Printer);
     Printer.printSeparateTraits();
   });

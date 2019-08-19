@@ -26,6 +26,8 @@ double foo() {
 //CHECK:     <JStart, 4> bar():11:5 | <U:5:10, 800>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,100,10]
+//CHECK:    direct access:
+//CHECK:     <I:7:12, 4> | <J:6:10, 4> | <JStart, 4> bar():11:5 | <U:5:10, 800>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4>
 //CHECK:    header access:
@@ -36,6 +38,8 @@ double foo() {
 //CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> bar():11:5
 //CHECK:    lock (separate):
 //CHECK:     <I:7:12, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> <U:5:10, 800> bar():11:5
 //CHECK:   loop at depth 2 shared_12.c:12:5
 //CHECK:     shared:
 //CHECK:      <U:5:10, 800>
@@ -43,6 +47,8 @@ double foo() {
 //CHECK:      <J:6:10, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:7:12, 4>
+//CHECK:     direct access:
+//CHECK:      <I:7:12, 4> | <J:6:10, 4> | <U:5:10, 800>
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4>
 //CHECK:     header access:
@@ -53,3 +59,5 @@ double foo() {
 //CHECK:      <I:7:12, 4> <J:6:10, 4>
 //CHECK:     lock (separate):
 //CHECK:      <J:6:10, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <I:7:12, 4> <J:6:10, 4> <U:5:10, 800>

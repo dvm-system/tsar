@@ -48,6 +48,8 @@ void foo() {
 //SAFE:     <U, 80000>
 //SAFE:    induction:
 //SAFE:     <I:4:12, 4>:[Int,1,100,1]
+//SAFE:    direct access:
+//SAFE:     <I:4:12, 4> | <J:5:14, 4> | <U, 80000>
 //SAFE:    lock:
 //SAFE:     <I:4:12, 4>
 //SAFE:    header access:
@@ -58,6 +60,8 @@ void foo() {
 //SAFE:     <I:4:12, 4> <J:5:14, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:4:12, 4>
+//SAFE:    direct access (separate):
+//SAFE:     <I:4:12, 4> <J:5:14, 4> <U, 80000>
 //SAFE:   loop at depth 2 distance_3.c:5:5
 //SAFE:     shared:
 //SAFE:      <U, 80000>
@@ -65,6 +69,8 @@ void foo() {
 //SAFE:      <J:5:14, 4>:[Int,0,99,1]
 //SAFE:     read only:
 //SAFE:      <I:4:12, 4>
+//SAFE:     direct access:
+//SAFE:      <I:4:12, 4> | <J:5:14, 4> | <U, 80000>
 //SAFE:     lock:
 //SAFE:      <J:5:14, 4>
 //SAFE:     header access:
@@ -75,3 +81,5 @@ void foo() {
 //SAFE:      <I:4:12, 4> <J:5:14, 4>
 //SAFE:     lock (separate):
 //SAFE:      <J:5:14, 4>
+//SAFE:     direct access (separate):
+//SAFE:      <I:4:12, 4> <J:5:14, 4> <U, 80000>

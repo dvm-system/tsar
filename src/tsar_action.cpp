@@ -155,6 +155,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
   Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   if (!mAnalysisUse.empty())
     Passes.add(createAnalysisReader(mAnalysisUse));
   addPrint(BeforeTfmAnalysis);
