@@ -91,7 +91,7 @@ public:
     /// At least one of dependence causes is unknown instruction which accesses
     /// a memory.
     UnknownCause = 1u << 3,
-    /// At least one of dependence causes is impossibility  to analyze some of
+    /// At least one of dependence causes is impossibility to analyze some of
     /// surrounding loop nests (for example, unable to check that some
     /// expressions is loop invariant).
     ConfusedCause = 1u << 4,
@@ -102,7 +102,7 @@ public:
 
   /// This returns bitwise OR of possible dependence causes.
   static Flag possibleCauses() noexcept {
-    return LoadStoreCause | CallCause | UnknownCause;
+    return LoadStoreCause | CallCause | UnknownCause | ConfusedCause;
   }
 
   /// Creates dependence and set its properties to `F`.
@@ -118,7 +118,6 @@ public:
   /// instruction.
   bool isLoadStore() const noexcept { return mFlags & LoadStoreCause; }
 
-
   /// Returns true if all dependence causes are load/store instructions.
   bool isLoadStoreOnly() const noexcept {
     return (mFlags & possibleCauses()) == LoadStoreCause;
@@ -126,7 +125,6 @@ public:
 
   /// Returns true if at least one of dependence causes is call instruction.
   bool isCall() const noexcept { return mFlags & CallCause; }
-
 
   /// Returns true if all dependence causes are call instructions.
   bool isCallOnly() const noexcept {
@@ -140,6 +138,16 @@ public:
   /// Returns true if all dependence causes are unknown accesses to a memory.
   bool isUnknownOnly() const noexcept {
     return (mFlags & possibleCauses()) == UnknownCause;
+  }
+
+  /// Returns true if at least one of dependence causes is impossibility to
+  //// analyze some of surrounding loop nests.
+  bool isConfused() const noexcept { return mFlags & ConfusedCause; }
+
+  /// Returns true if all dependence causes is impossibility to
+  //// analyze some of surrounding loop nests.
+  bool isConfusedOnly() const noexcept {
+    return (mFlags & possibleCauses()) == ConfusedCause;
   }
 
   /// Returns true if both the lowest and highest distances are known.
