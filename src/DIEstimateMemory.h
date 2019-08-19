@@ -114,7 +114,8 @@ public:
     NoProperty = 0,
     Explicit = 1u << 0,
     Original = 1u << 1,
-    LLVM_MARK_AS_BITMASK_ENUM(Original)
+    Merged = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(Merged)
   };
 
   /// This is used to iterate over all values bound to this memory location.
@@ -147,6 +148,9 @@ public:
   /// Returns true if this location represents memory before transformation that
   /// has corrupted this location.
    bool isOriginal() const { return Original & getProperies(); }
+
+   /// Return true if this location has been merged with some other location.
+   bool isMerged() const { return Merged & getProperies(); }
 
   /// Returns MDNode which represents this memory location.
   llvm::MDNode * getAsMDNode() noexcept { return mMD; }

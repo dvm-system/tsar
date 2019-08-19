@@ -688,6 +688,9 @@ DIAliasNode * addCorruptedNode(
       if (Info.first->getAliasNode() == DIParent) {
         for (auto &VH : *Info.second)
           Info.first->bindValue(VH);
+        // Mark location as merged in RAUW.
+        Info.first->setProperties(DIMemory::Merged);
+        Info.second->replaceAllUsesWith(&*Info.first);
         LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
           "one in the current node\n");
       } else {
@@ -785,6 +788,9 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           if (Info.first->getAliasNode() == DIN) {
             for (auto &VH : *Info.second)
               Info.first->bindValue(VH);
+            // Mark location as merged in RAUW.
+            Info.first->setProperties(DIMemory::Merged);
+            Info.second->replaceAllUsesWith(&*Info.first);
             LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
               "one in the current node\n");
           } else {
@@ -814,6 +820,9 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           if (Info.first->getAliasNode() == DIN) {
             for (auto &VH : *Info.second)
               Info.first->bindValue(VH);
+            // Mark location as merged in RAUW.
+            Info.first->setProperties(DIMemory::Merged);
+            Info.second->replaceAllUsesWith(&*Info.first);
             LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: merge location with existent "
               "one in the current node\n");
           } else {
