@@ -162,14 +162,8 @@ bool isSameBase(const DataLayout &DL,
   // same metadata-level location &X, but this location can not be inserted in
   // metadata-level alias tree twice.
   int64_t Offset1 = 0, Offset2 = 0;
-  if (auto *I = dyn_cast<Instruction>(BasePtr1)) {
-    auto &DL = I->getModule()->getDataLayout();
-    BasePtr1 = GetPointerBaseWithConstantOffset(BasePtr1, Offset1, DL);
-  }
-  if (auto *I = dyn_cast<Instruction>(BasePtr2)) {
-    auto &DL = I->getModule()->getDataLayout();
-    BasePtr2 = GetPointerBaseWithConstantOffset(BasePtr2, Offset2, DL);
-  }
+  BasePtr1 = GetPointerBaseWithConstantOffset(BasePtr1, Offset1, DL);
+  BasePtr2 = GetPointerBaseWithConstantOffset(BasePtr2, Offset2, DL);
   if (Offset1 != Offset2 ||  BasePtr1->getValueID() != BasePtr2->getValueID())
     return false;
   if (BasePtr1 == BasePtr2)
