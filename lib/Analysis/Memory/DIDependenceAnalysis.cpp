@@ -308,30 +308,7 @@ Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
   assert(V && !isa<UndefValue>(V) &&
     "Metadata-level alias tree is corrupted!");
   DIMemoryTraitRef DIMTraitItr;
-  if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
-    auto EM = AT.find(MemoryLocation(V, DIEM->getSize()));
-    assert(EM && "Estimate memory must be presented in the alias tree!");
-    auto MTraitItr = ATraitItr->find(EM);
-    // If memory location is not explicitly accessed in the region and if it
-    // does not cover any explicitly accessed location then go to the next
-    // location.
-    if (MTraitItr == ATraitItr->end())
-      return None;
-    bool IsNotLocked = false;
-    std::tie(DIMTraitItr, IsNotLocked) =
-      addOrUpdateInPool<Combine>(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
-    if (IsNotLocked) {
-      if (Combine) {
-        combineIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-        combineIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-        combineIf<trait::Output>(*MTraitItr, *DIMTraitItr);
-      } else {
-        convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-        convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-        convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
-      }
-    }
-  } else if (cast<DIUnknownMemory>(M).isExec()) {
+  if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M).isExec()) {
     auto MTraitItr = ATraitItr->find(cast<Instruction>(V));
     // If memory location is not explicitly accessed in the region and if it
     // does not cover any explicitly accessed location then go to the next
@@ -340,33 +317,63 @@ Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
       return None;
     std::tie(DIMTraitItr, std::ignore) =
       addOrUpdateInPool<Combine>(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
-  } else {
-    bool IsTraitFound = false;
-    for (auto &T : *ATraitItr) {
-      auto Itr = std::find(T.getMemory()->begin(), T.getMemory()->end(), V);
-      if (Itr != T.getMemory()->end()) {
-        bool IsNotLocked = false;
-        std::tie(DIMTraitItr, IsNotLocked) =
-          addOrUpdateInPool<Combine>(M, T, LockedTraits, DIAliasSTR, Pool);
-        if (IsNotLocked) {
-          if (Combine) {
-            combineIf<trait::Flow>(T, *DIMTraitItr);
-            combineIf<trait::Anti>(T, *DIMTraitItr);
-            combineIf<trait::Output>(T, *DIMTraitItr);
-          } else {
-            convertIf<trait::Flow>(T, *DIMTraitItr);
-            convertIf<trait::Anti>(T, *DIMTraitItr);
-            convertIf<trait::Output>(T, *DIMTraitItr);
-          }
-        }
-        IsTraitFound = true;
+    return DIMTraitItr;
+  }
+  AliasTrait::iterator MTraitItr = ATraitItr->end();
+  if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
+    auto EM = AT.find(MemoryLocation(V, DIEM->getSize()));
+    // For example, alias tree may not contain global variable if it become
+    // unused after transformation.
+    assert((M.isOriginal() || EM) &&
+      "Estimate memory must be presented in the alias tree!");
+    if (!EM)
+      return None;
+    MTraitItr = ATraitItr->find(EM);
+    if (M.isOriginal()) {
+      EM = EM->getParent();
+      while (MTraitItr == ATraitItr->end() && EM) {
+        MTraitItr = ATraitItr->find(EM);
+        EM = EM->getParent();
       }
     }
-    // If memory location is not explicitly accessed in the region and if it
-    // does not cover any explicitly accessed location then go to the next
-    // location.
-    if (!IsTraitFound)
+  } else {
+    auto EM = AT.find(MemoryLocation(V, 0));
+    assert((M.isOriginal() || EM) &&
+      "Estimate memory must be presented in the alias tree!");
+    if (!EM)
       return None;
+    // We do not known size of DIMemory, so bounded node (in alias tree) related
+    // to it must contain all possible memory in chain. ATraitItr represents
+    // traits for memory in this bounded node, so it could not contain memory
+    // smaller than the last node in chain.
+    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    while (auto Next = CT::getNext(EM))
+      EM = Next;
+    MTraitItr = ATraitItr->find(EM);
+    EM = EM->getParent();
+    while (MTraitItr == ATraitItr->end() && EM) {
+      MTraitItr = ATraitItr->find(EM);
+      EM = EM->getParent();
+    }
+  }
+  // If memory location is not explicitly accessed in the region and if it
+  // does not cover any explicitly accessed location then go to the next
+  // location.
+  if (MTraitItr == ATraitItr->end())
+    return None;
+  bool IsNotLocked = false;
+  std::tie(DIMTraitItr, IsNotLocked) =
+    addOrUpdateInPool<Combine>(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
+  if (IsNotLocked) {
+    if (Combine) {
+      combineIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
+      combineIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
+      combineIf<trait::Output>(*MTraitItr, *DIMTraitItr);
+    } else {
+      convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
+      convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
+      convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
+    }
   }
   return DIMTraitItr;
 }
