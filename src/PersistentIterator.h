@@ -158,21 +158,37 @@ public:
 
   PersistentIteratorC & operator=(const PersistentIteratorC &Itr) {
     if (Itr) {
-      mPtr = Itr.mPtr;
-      addToList();
+      if (mPtr != Itr.mPtr) {
+        mPtr = Itr.mPtr;
+        addToList();
+      }
     } else {
-      invalidate();
+      // We should distinguish empty and tombstone iterators and we also
+      // should allow to compare such invalid operators after assignment.
+      mPtr = Itr.mPtr;
+      if (isValid())
+        removeFromList();
+      else
+        invalidate();
     }
     return *this;
   }
 
   PersistentIteratorC & operator=(PersistentIteratorC &&Itr) {
     if (Itr) {
-      mPtr = Itr.mPtr;
-      addToList();
+      if (mPtr != Itr.mPtr) {
+        mPtr = Itr.mPtr;
+        addToList();
+      }
       Itr.removeFromList();
     } else {
-      invalidate();
+      // We should distinguish empty and tombstone iterators and we also
+      // should allow to compare such invalid operators after assignment.
+      mPtr = Itr.mPtr;
+      if (isValid())
+        removeFromList();
+      else
+        invalidate();
     }
     return *this;
   }
