@@ -63,7 +63,7 @@ void foo(double * restrict A) {
 //SAFE:    direct access:
 //SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <A:3:28, 8> | <I:6:12, 4> | <P:4:8, 8>
 //SAFE:    redundant:
-//SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <X, 4>
+//SAFE:     <X, 4>
 //SAFE:    lock:
 //SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <I:6:12, 4>
 //SAFE:    header access:
@@ -75,41 +75,41 @@ void foo(double * restrict A) {
 //SAFE:    explicit access (separate):
 //SAFE:     <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <Y, 4>
 //SAFE:    redundant (separate):
-//SAFE:     <P[0]:{10:17|4:8}, 4> <X, 4>
+//SAFE:     <X, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:6:12, 4> <N, 4>
 //SAFE:    direct access (separate):
 //SAFE:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 pointer_1.c:6:3
-//REDUNDANT:    shared:
-//REDUNDANT:     <*A:3:28, ?>
-//REDUNDANT:    first private:
-//REDUNDANT:     <*A:3:28, ?> | <Y, 4>
-//REDUNDANT:    second to last private:
-//REDUNDANT:     <*A:3:28, ?> | <Y, 4>
 //REDUNDANT:    private:
 //REDUNDANT:     <P:4:8, 8>
+//REDUNDANT:    output:
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
+//REDUNDANT:    anti:
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
+//REDUNDANT:    flow:
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:6:12, 4>:[Int,1,,1]
 //REDUNDANT:    read only:
-//REDUNDANT:     <A:3:28, 8> | <N, 4>
+//REDUNDANT:     <A:3:28, 8>
 //REDUNDANT:    direct access:
-//REDUNDANT:     <*A:3:28, ?> | <A:3:28, 8> | <I:6:12, 4> | <N, 4> | <P:4:8, 8> | <Y, 4>
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <A:3:28, 8> | <I:6:12, 4> | <P:4:8, 8>
 //REDUNDANT:    redundant:
-//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <X, 4>
+//REDUNDANT:     <X, 4>
 //REDUNDANT:    lock:
-//REDUNDANT:     <I:6:12, 4> | <N, 4>
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <I:6:12, 4>
 //REDUNDANT:    header access:
-//REDUNDANT:     <I:6:12, 4> | <N, 4>
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <I:6:12, 4>
 //REDUNDANT:    explicit access:
-//REDUNDANT:     <A:3:28, 8> | <I:6:12, 4> | <N, 4> | <P:4:8, 8> | <Y, 4>
+//REDUNDANT:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <A:3:28, 8> | <I:6:12, 4> | <P:4:8, 8>
 //REDUNDANT:    address access:
-//REDUNDANT:     <Y, 4>
+//REDUNDANT:     <X, 4> <Y, 4>
 //REDUNDANT:    explicit access (separate):
 //REDUNDANT:     <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <Y, 4>
 //REDUNDANT:    redundant (separate):
-//REDUNDANT:     <P[0]:{10:17|4:8}, 4> <X, 4>
+//REDUNDANT:     <X, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:6:12, 4> <N, 4>
 //REDUNDANT:    direct access (separate):

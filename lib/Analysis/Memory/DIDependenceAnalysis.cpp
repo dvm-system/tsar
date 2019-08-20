@@ -271,6 +271,8 @@ std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
         Dptr.set<trait::AddressAccess>();
       if (DIMTraitItr->is<trait::DirectAccess>())
         Dptr.set<trait::DirectAccess>();
+      if (DIMTraitItr->is<trait::ExplicitAccess>())
+        Dptr.set<trait::ExplicitAccess>();
       // Do not change 'second to last private' to 'last private'. This occurs
       // after loop rotate.
       if (DIMTraitItr->is<trait::SecondToLastPrivate>() &&
@@ -388,10 +390,11 @@ AliasNode * findBoundAliasNode(AliasTree &AT,
     DIAliasUnknownNode &DIN) {
   SmallPtrSet<AliasNode *, 4> BoundNodes;
   for (auto &M : DIN) {
-    if (M.isOriginal() || M.emptyBinding())
+    if (M.emptyBinding())
       continue;
     findBoundAliasNodes(M, AT, BoundNodes);
-    assert(!BoundNodes.empty() && "Metadata-level alias tree is corrupted!");
+    assert((M.isOriginal() || !BoundNodes.empty()) &&
+      "Metadata-level alias tree is corrupted!");
   }
   if (BoundNodes.empty())
     return nullptr;
@@ -417,7 +420,7 @@ AliasNode * findBoundAliasNode(AliasTree &AT,
 AliasNode * findBoundAliasNode(AliasTree &AT, DIAliasEstimateNode &DIN) {
   SmallPtrSet<AliasNode *, 1> BoundNodes;
   for (auto &M : DIN) {
-    if (M.isOriginal() || M.emptyBinding())
+    if (M.emptyBinding())
       continue;
     findBoundAliasNodes(M, AT, BoundNodes);
     assert(BoundNodes.size() == 1 &&
@@ -598,36 +601,6 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
 }
-
-/// Check that a specified corrupted memory location `M` is redundant.
-bool isRedundantCorrupted(const DIMemory &M, const AliasTrait &ATrait,
-    const AliasTree &AT) {
-  if (M.emptyBinding())
-    return true;
-  auto &VH = *M.begin();
-  assert(VH && !isa<UndefValue>(VH) &&
-    "Metadata-level alias tree is corrupted!");
-  if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
-    auto EM = AT.find(MemoryLocation(VH, DIEM->getSize()));
-    if (!EM)
-      return true;
-    auto MTraitItr = ATrait.find(EM);
-    if (MTraitItr == ATrait.end())
-      return true;
-  } else if (cast<DIUnknownMemory>(M).isExec()) {
-      auto MTraitItr = ATrait.find(cast<Instruction>(VH));
-      if (MTraitItr == ATrait.unknown_end())
-        return true;
-  } else {
-    for (auto &T : ATrait) {
-      auto Itr = std::find(T.getMemory()->begin(), T.getMemory()->end(), VH);
-      if (Itr != T.getMemory()->end())
-        return false;
-    }
-    return true;
-  }
-  return false;
-}
 }
 
 void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
@@ -733,16 +706,41 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       dbgs() << "\n";
     });
     if (M.isOriginal() || M.emptyBinding() || ATraitItr == DepSet.end()) {
-      auto DIMTraitItr = Pool.find_as(&M);
-      if (DIMTraitItr == Pool.end())
+      auto Itr = Pool.find_as(&M);
+      if (Itr == Pool.end())
         continue;
-      LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
-      if (((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
-           (M.isOriginal()  && (ATraitItr == DepSet.end() ||
-            isRedundantCorrupted(M, *ATraitItr, *mAT)))) &&
-          !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
-        DIMTraitItr->set<trait::Redundant>();
-        DIMTraitItr->unset<trait::NoRedundant>();
+      DIMemoryTraitRef DIMTraitItr = Itr;
+      if (M.isOriginal() && ATraitItr != DepSet.end()) {
+        auto BindItr = M.begin();
+        auto NewTraitItr = addOrUpdateInPool<false>(
+          *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
+        LLVM_DEBUG(dbgs() << "[DA DI]: find traits for corrupted location\n");
+        auto BindItrE = M.end();
+        for (++BindItr; BindItr != BindItrE; ++BindItr) {
+          if (NewTraitItr) {
+            auto Itr = addOrUpdateInPool<true>(
+              *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
+            assert(!Itr || *Itr == NewTraitItr &&
+              "Multiple traits for the same memory in pool is not allowed!");
+          } else {
+            NewTraitItr = addOrUpdateInPool<false>(
+              *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
+          }
+        }
+        if (NewTraitItr) {
+          DIMTraitItr = std::move(*NewTraitItr);
+        } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
+          DIMTraitItr->set<trait::Redundant>();
+          DIMTraitItr->unset<trait::NoRedundant>();
+        }
+      } else {
+        LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
+        if (((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
+             (M.emptyBinding() && M.isOriginal())) &&
+            !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
+          DIMTraitItr->set<trait::Redundant>();
+          DIMTraitItr->unset<trait::NoRedundant>();
+        }
       }
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;

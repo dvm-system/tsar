@@ -102,8 +102,6 @@ void foo(double * restrict A) {
 //UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //UNSAFE_TFM:    no promoted scalar:
 //UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
-//UNSAFE_TFM:    redundant:
-//UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    lock:
 //UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <I:8:12, 4>
 //UNSAFE_TFM:    header access:
@@ -114,8 +112,6 @@ void foo(double * restrict A) {
 //UNSAFE_TFM:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    explicit access (separate):
 //UNSAFE_TFM:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
-//UNSAFE_TFM:    redundant (separate):
-//UNSAFE_TFM:     <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM:    lock (separate):
 //UNSAFE_TFM:     <I:8:12, 4> <N, 4>
 //UNSAFE_TFM:    no promoted scalar (separate):
@@ -124,36 +120,32 @@ void foo(double * restrict A) {
 //UNSAFE_TFM:     <*A:5:28, ?> <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //UNSAFE_TFM_and_REDUNDANT:  loop at depth 1 pointer_2.c:8:3
-//UNSAFE_TFM_and_REDUNDANT:    shared:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?>
-//UNSAFE_TFM_and_REDUNDANT:    first private:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <Y:6:10, ?>
-//UNSAFE_TFM_and_REDUNDANT:    second to last private:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    private:
 //UNSAFE_TFM_and_REDUNDANT:     <P:6:14, 8>
+//UNSAFE_TFM_and_REDUNDANT:    output:
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:    anti:
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:    flow:
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    induction:
 //UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4>:[Int,1,,1]
 //UNSAFE_TFM_and_REDUNDANT:    read only:
-//UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> | <N, 4> | <X:6:7, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8>
 //UNSAFE_TFM_and_REDUNDANT:    direct access:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <A:5:28, 8> | <I:8:12, 4> | <N, 4> | <P:6:14, 8> | <X:6:7, ?> | <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //UNSAFE_TFM_and_REDUNDANT:    no promoted scalar:
-//UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> | <Y:6:10, ?>
-//UNSAFE_TFM_and_REDUNDANT:    redundant:
 //UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    lock:
-//UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4> | <N, 4>
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <I:8:12, 4>
 //UNSAFE_TFM_and_REDUNDANT:    header access:
-//UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4> | <N, 4>
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <I:8:12, 4>
 //UNSAFE_TFM_and_REDUNDANT:    explicit access:
-//UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> | <I:8:12, 4> | <N, 4> | <P:6:14, 8>
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //UNSAFE_TFM_and_REDUNDANT:    address access:
-//UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> | <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    explicit access (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
-//UNSAFE_TFM_and_REDUNDANT:    redundant (separate):
-//UNSAFE_TFM_and_REDUNDANT:     <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM_and_REDUNDANT:    lock (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4> <N, 4>
 //UNSAFE_TFM_and_REDUNDANT:    no promoted scalar (separate):
