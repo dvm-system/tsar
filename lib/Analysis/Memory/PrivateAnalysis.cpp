@@ -873,7 +873,11 @@ void PrivateRecognitionPass::checkFirstPrivate(
   /// locations.
   if (cover(*mAliasTree, Numbers, *EM, DefLeafs.begin(), DefLeafs.end()))
     return;
-  TraitItr->get<BitMemoryTrait>() &= BitMemoryTrait::FirstPrivate;
+  if (hasSharedJoin(TraitItr->get<BitMemoryTrait>()))
+    TraitItr->get<BitMemoryTrait>() &=
+      BitMemoryTrait::FirstPrivate | BitMemoryTrait::SharedJoin;
+  else
+    TraitItr->get<BitMemoryTrait>() &= BitMemoryTrait::FirstPrivate;
   Dptr.set<trait::FirstPrivate>();
 }
 
