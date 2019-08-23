@@ -429,14 +429,26 @@ private:
   ///
   /// If not the same memory location will be built it means that a specified
   /// location is corrupted.
-  bool isSameAfterRebuild(DIEstimateMemory &M);
+  ///
+  /// \pre Memory bound to a specified location must be estimate.
+  bool isSameAfterRebuildEstimate(DIMemory &M);
 
   /// \brief Returns true if a specified memory location will be the same after
   /// its rebuilding for any bound memory.
   ///
   /// If not the same memory location will be built it means that a specified
   /// location is corrupted.
-  bool isSameAfterRebuild(DIUnknownMemory &M);
+  ///
+  /// \pre Memory bound to a specified location must be unknown.
+  bool isSameAfterRebuildUnknown(DIUnknownMemory &M);
+
+  /// Returns true if a specified memory location will be the same after
+  /// its rebuilding for any bound memory.
+  bool isSameAfterRebuild(DIUnknownMemory &M) {
+    if (M.isExec())
+      return isSameAfterRebuildUnknown(M);
+    return isSameAfterRebuildEstimate(M);
+  }
 
 #ifndef NDEBUG
   void pomotedCandidatesLog() {

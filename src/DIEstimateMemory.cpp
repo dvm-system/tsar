@@ -1435,7 +1435,7 @@ std::pair<DIVariable *, DILocation *> buildDIExpression(
 
 std::unique_ptr<DIMemory> CorruptedMemoryResolver::popFromCash(
     const Value *V, bool IsExec) {
-  auto Itr = mCashedUnknownMemory.find({ stripIntToPtr(V), IsExec });
+  auto Itr = mCashedUnknownMemory.find({ V, IsExec });
   if (Itr == mCashedUnknownMemory.end())
     return nullptr;
   auto M = std::move(Itr->second);
@@ -1803,7 +1803,7 @@ void CorruptedMemoryResolver::updateWorkLists(
           mSmallestFragments.erase(Loc);
         }
       } else if (Binding != DIMemory::Consistent ||
-          !isSameAfterRebuild(*DIEM)) {
+          !isSameAfterRebuildEstimate(*DIEM)) {
         LLVM_DEBUG(corruptedFoundLog(M));
         Info.CorruptedWL.push_back(&M);
         auto Pair = mCorruptedSet.insert({
@@ -1829,38 +1829,52 @@ void CorruptedMemoryResolver::updateWorkLists(
   }
 }
 
-bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
+bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
   assert(M.getBinding() == DIMemory::Consistent &&
     "Inconsistent memory is always corrupted and can not be the same after rebuild!");
+  assert(isa<DIEstimateMemory>(M) ||
+    isa<DIUnknownMemory>(M) && !cast<DIUnknownMemory>(M).isExec() &&
+    "Bound memory location must be estimate!");
   DIMemory *RAUWd = nullptr;
   DIMemoryCash LocalCash;
+  uint64_t Size = isa<DIEstimateMemory>(M) ?
+    cast<DIEstimateMemory>(M).getSize() : 0;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
-    auto EM = mAT->find(MemoryLocation(VH, M.getSize()));
+    auto EM = mAT->find(MemoryLocation(VH, Size));
     // Memory becomes unused after transformation and is not presented in alias
     // tree.
     if (!EM)
       return false;
     std::pair<DIMemoryCash::iterator, bool> Cashed;
-    // If size of IR-level location is larger then size of metadata-level
-    // location then original metadata-level location will not be added
-    // to metadata alias tree. However, it is safe do not consider it as a
-    // corrupted memory because there is other location differs only in
-    // size argument. Such case is a result of instcombine pass.
-    // Originally X[0][1] is represented with 2 GEPs. However, after instcombine
-    // there is a single GEP with multiple operands and <X[0], size of dim>
-    // will not be constructed. So, we ignore this case if <X[0], array size>
-    // exist.
-    if (EM->getSize() > M.getSize())
-      Cashed = LocalCash.try_emplace(EM);
-    else if (EM->getSize() != M.getSize())
-      return false;
-    else
+    if (isa<DIEstimateMemory>(M)) {
+      // If size of IR-level location is larger then size of metadata-level
+      // location then original metadata-level location will not be added
+      // to metadata alias tree. However, it is safe do not consider it as a
+      // corrupted memory because there is other location differs only in
+      // size argument. Such case is a result of instcombine pass.
+      // Originally X[0][1] is represented with 2 GEPs. However, after instcombine
+      // there is a single GEP with multiple operands and <X[0], size of dim>
+      // will not be constructed. So, we ignore this case if <X[0], array size>
+      // exist.
+      if (EM->getSize() > Size)
+        Cashed = LocalCash.try_emplace(EM);
+      else if (EM->getSize() != Size)
+        return false;
+      else
+        Cashed = mCashedMemory.try_emplace(EM);
+    } else {
+      // Unknown node does not contain size, so use the largest possible size.
+      using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+      while (auto Next = CT::getNext(EM))
+        EM = Next;
       Cashed = mCashedMemory.try_emplace(EM);
+      Size = EM->getSize();
+    }
     if (Cashed.second) {
       Cashed.first->second = tsar::buildDIMemoryWithNewSize(
-        *EM, M.getSize(), mFunc->getContext(), M.getEnv(), *mDL, *mDT);
+        *EM, Size, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
       LLVM_DEBUG(buildMemoryLog(
         mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
     }
@@ -1879,23 +1893,17 @@ bool CorruptedMemoryResolver::isSameAfterRebuild(DIEstimateMemory &M) {
   return true;
 }
 
-bool CorruptedMemoryResolver::isSameAfterRebuild(DIUnknownMemory &M) {
+bool CorruptedMemoryResolver::isSameAfterRebuildUnknown(DIUnknownMemory &M) {
   assert(M.getBinding() == DIMemory::Consistent &&
     "Inconsistent memory is always corrupted and can not be the same after rebuild!");
+  assert(M.isExec() && "Bound memory location must be unknown!");
   if (M.isDistinct())
     return false;
   DIMemory *RAUWd = nullptr;
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
-    // In case of 'inttoptr' different values may have the same base.
-    // The following values will be binded to the same DIMemory:
-    // 'inttoptr i64 %Y to i64*'
-    // 'inttoptr i64 %Y to %struct.S*'
-    // So, we use %Y as a key in cash instead of each of values. Otherwise, cash
-    // will be contained different keys (Value) with the same value (DIMemory).
-    auto Cashed =
-      mCashedUnknownMemory.try_emplace({ stripIntToPtr(VH), M.isExec() });
+    auto Cashed = mCashedUnknownMemory.try_emplace({ VH, M.isExec() });
     if (Cashed.second) {
       Cashed.first->second = tsar::buildDIMemory(*VH, mFunc->getContext(),
         M.getEnv(), *mDT, M.getProperies(), M.getFlags());
