@@ -131,7 +131,7 @@ private:
     llvm::SmallVector<std::unique_ptr<CorruptedMemoryItem>, 8>;
 
   /// Already constructed memory locations for a new debug alias tree.
-  using DIMemoryCash =
+  using DIMemoryCache =
     llvm::DenseMap<const EstimateMemory *, std::unique_ptr<DIMemory>>;
 
   /// Already constructed memory locations for a new debug alias tree.
@@ -144,7 +144,7 @@ private:
     DIMemory::Property = DIMemory::Explicit,
     DIUnknownMemory::Flags = DIUnknownMemory::NoFlags);
 
-  using DIUnknownMemoryCash = llvm::DenseMap<
+  using DIUnknownMemoryCache = llvm::DenseMap<
     llvm::PointerIntPair<const llvm::Value *, 1, bool>,
     std::unique_ptr<DIMemory>>;
 
@@ -179,7 +179,7 @@ private:
   using FragmentUnknownChildren =
     llvm::DenseMap<DIMemoryLocation, CorruptedMemoryItem *>;
 
-  /// Cashed information about traversed nodes.
+  /// Cached information about traversed nodes.
   struct NodeInfo {
     NodeInfo() = default;
 
@@ -300,17 +300,17 @@ public:
   }
 
   /// Returns already constructed debug memory location for a specified memory.
-  std::unique_ptr<DIMemory> popFromCash(const EstimateMemory *EM) {
-    auto Itr = mCashedMemory.find(EM);
-    if (Itr == mCashedMemory.end())
+  std::unique_ptr<DIMemory> popFromCache(const EstimateMemory *EM) {
+    auto Itr = mCachedMemory.find(EM);
+    if (Itr == mCachedMemory.end())
       return nullptr;
     auto M = std::move(Itr->second);
-    mCashedMemory.erase(Itr);
+    mCachedMemory.erase(Itr);
     return M;
   }
 
   /// Returns already constructed debug memory location for a specified memory.
-  std::unique_ptr<DIMemory> popFromCash(const llvm::Value *V, bool IsExec);
+  std::unique_ptr<DIMemory> popFromCache(const llvm::Value *V, bool IsExec);
 
   /// Returns memory location which has represented a specified promoted
   /// location before promotion.
@@ -485,8 +485,8 @@ private:
   AliasTree *mAT;
   DIFragmentMap mVarToFragments;
   DIMemorySet mSmallestFragments;
-  DIMemoryCash mCashedMemory;
-  DIUnknownMemoryCash mCashedUnknownMemory;
+  DIMemoryCache mCachedMemory;
+  DIUnknownMemoryCache mCachedUnknownMemory;
   CorruptedSet mCorruptedSet;
   CorruptedPool mCorrupted;
   llvm::SmallVector<NodeInfo, 8> mChildStack;

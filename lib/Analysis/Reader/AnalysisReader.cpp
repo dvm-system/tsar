@@ -110,7 +110,7 @@ LoopCache buildLoopCache(const trait::Info &Info) {
   LoopCache Res;
   for (std::size_t I = 0, EI = Info[trait::Info::Loops].size(); I < EI; ++I) {
     auto &L = Info[trait::Info::Loops][I];
-    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add loop to cash "
+    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add loop to cache"
                       << L[trait::Loop::File] << ":" << L[trait::Loop::Line]
                       << ":" << L[trait::Loop::Column] << "\n");
     Res.emplace(LocationT{

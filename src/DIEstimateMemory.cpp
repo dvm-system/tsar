@@ -739,7 +739,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
           continue;
         }
         std::unique_ptr<DIMemory> DIM;
-        if (!(DIM = CMR.popFromCash(&EM))) {
+        if (!(DIM = CMR.popFromCache(&EM))) {
           DIM = buildDIMemory(EM, DIAT.getFunction().getContext(), Env, DL, DT);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), DT, *DIM, EM));
         }
@@ -757,7 +757,7 @@ void buildDIAliasTree(const DataLayout &DL, const DominatorTree &DT,
       LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: process alias unknown node\n");
       for (auto Inst : cast<AliasUnknownNode>(Child)) {
         std::unique_ptr<DIMemory> DIM;
-        if (!(DIM = CMR.popFromCash(Inst, true))) {
+        if (!(DIM = CMR.popFromCache(Inst, true))) {
           DIM = buildDIMemory(*Inst, DIAT.getFunction().getContext(), Env, DT);
           LLVM_DEBUG(buildMemoryLog(DIAT.getFunction(), *DIM, *Inst));
         }
@@ -1433,13 +1433,13 @@ std::pair<DIVariable *, DILocation *> buildDIExpression(
 };
 }
 
-std::unique_ptr<DIMemory> CorruptedMemoryResolver::popFromCash(
+std::unique_ptr<DIMemory> CorruptedMemoryResolver::popFromCache(
     const Value *V, bool IsExec) {
-  auto Itr = mCashedUnknownMemory.find({ V, IsExec });
-  if (Itr == mCashedUnknownMemory.end())
+  auto Itr = mCachedUnknownMemory.find({ V, IsExec });
+  if (Itr == mCachedUnknownMemory.end())
     return nullptr;
   auto M = std::move(Itr->second);
-  mCashedUnknownMemory.erase(Itr);
+  mCachedUnknownMemory.erase(Itr);
   return M;
 }
 
@@ -1836,7 +1836,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
     isa<DIUnknownMemory>(M) && !cast<DIUnknownMemory>(M).isExec() &&
     "Bound memory location must be estimate!");
   DIMemory *RAUWd = nullptr;
-  DIMemoryCash LocalCash;
+  DIMemoryCache LocalCache;
   uint64_t Size = isa<DIEstimateMemory>(M) ?
     cast<DIEstimateMemory>(M).getSize() : 0;
   for (auto &VH : M) {
@@ -1847,7 +1847,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
     // tree.
     if (!EM)
       return false;
-    std::pair<DIMemoryCash::iterator, bool> Cashed;
+    std::pair<DIMemoryCache::iterator, bool> Cached;
     if (isa<DIEstimateMemory>(M)) {
       // If size of IR-level location is larger then size of metadata-level
       // location then original metadata-level location will not be added
@@ -1859,34 +1859,34 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
       // will not be constructed. So, we ignore this case if <X[0], array size>
       // exist.
       if (EM->getSize() > Size)
-        Cashed = LocalCash.try_emplace(EM);
+        Cached = LocalCache.try_emplace(EM);
       else if (EM->getSize() != Size)
         return false;
       else
-        Cashed = mCashedMemory.try_emplace(EM);
+        Cached = mCachedMemory.try_emplace(EM);
     } else {
       // Unknown node does not contain size, so use the largest possible size.
       using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
       while (auto Next = CT::getNext(EM))
         EM = Next;
-      Cashed = mCashedMemory.try_emplace(EM);
+      Cached = mCachedMemory.try_emplace(EM);
       Size = EM->getSize();
     }
-    if (Cashed.second) {
-      Cashed.first->second = tsar::buildDIMemoryWithNewSize(
+    if (Cached.second) {
+      Cached.first->second = tsar::buildDIMemoryWithNewSize(
         *EM, Size, mFunc->getContext(), M.getEnv(), *mDL, *mDT);
       LLVM_DEBUG(buildMemoryLog(
-        mDIAT->getFunction(), *mDT, *Cashed.first->second, *EM));
+        mDIAT->getFunction(), *mDT, *Cached.first->second, *EM));
     }
-    assert(Cashed.first->second || "Debug memory location must not be null!");
-    LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
-    if (Cashed.first->second->getBaseAsMDNode() != M.getBaseAsMDNode())
+    assert(Cached.first->second || "Debug memory location must not be null!");
+    LLVM_DEBUG(afterRebuildLog(*Cached.first->second));
+    if (Cached.first->second->getBaseAsMDNode() != M.getBaseAsMDNode())
       return false;
     // Different estimate memory locations produce the same debug-level memory.
     // For example, P = ...; ... P = ...; ... .
-    if (RAUWd && RAUWd != Cashed.first->second.get())
+    if (RAUWd && RAUWd != Cached.first->second.get())
       return false;
-    RAUWd = Cashed.first->second.get();
+    RAUWd = Cached.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
   M.replaceAllUsesWith(RAUWd);
@@ -1903,20 +1903,20 @@ bool CorruptedMemoryResolver::isSameAfterRebuildUnknown(DIUnknownMemory &M) {
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
-    auto Cashed = mCashedUnknownMemory.try_emplace({ VH, M.isExec() });
-    if (Cashed.second) {
-      Cashed.first->second = tsar::buildDIMemory(*VH, mFunc->getContext(),
+    auto Cached = mCachedUnknownMemory.try_emplace({ VH, M.isExec() });
+    if (Cached.second) {
+      Cached.first->second = tsar::buildDIMemory(*VH, mFunc->getContext(),
         M.getEnv(), *mDT, M.getProperies(), M.getFlags());
-      LLVM_DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cashed.first->second, *VH));
+      LLVM_DEBUG(buildMemoryLog(mDIAT->getFunction(), *Cached.first->second, *VH));
     }
-    assert(Cashed.first->second || "Debug memory location must not be null!");
-    LLVM_DEBUG(afterRebuildLog(*Cashed.first->second));
-    if (Cashed.first->second->getAsMDNode() != M.getAsMDNode())
+    assert(Cached.first->second || "Debug memory location must not be null!");
+    LLVM_DEBUG(afterRebuildLog(*Cached.first->second));
+    if (Cached.first->second->getAsMDNode() != M.getAsMDNode())
       return false;
     // Different memory locations produce the same debug-level memory.
-    if (RAUWd && RAUWd != Cashed.first->second.get())
+    if (RAUWd && RAUWd != Cached.first->second.get())
       return false;
-    RAUWd = Cashed.first->second.get();
+    RAUWd = Cached.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
   M.replaceAllUsesWith(RAUWd);

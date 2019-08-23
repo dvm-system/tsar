@@ -114,7 +114,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
   while (FID.isValid()) {
     // Warning, we use getFileEntryForID() to check that buffer is valid
     // because it seems that dereference of nullptr may occur in getBuffer()
-    // (getFile().getContentCash() may return nullptr). It seems that there is
+    // (getFile().getContentCache() may return nullptr). It seems that there is
     // an error in getBuffer() method.
     if (auto Entry = mSM.getFileEntryForID(FID)) {
       auto Info = mFiles.insert(Entry);
