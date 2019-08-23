@@ -554,6 +554,7 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   BitMemoryTrait CombinedTrait;
   bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
   bool NoPromotedScalar = false, DirectAccess = false;
+  unsigned NumberOfCombined = 0;
   for (auto &DIMTraitItr : DIATrait) {
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
@@ -579,13 +580,16 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
         NoRedundant = true;
     }
+    ++NumberOfCombined;
     CombinedTrait &= *DIMTraitItr;
   }
-  CombinedTrait &=
-    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
-      BitMemoryTrait::Readonly :
-        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
-          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
+  // It may be 1, if some traits have been ignored (for example, redundant).
+  if (NumberOfCombined > 1)
+    CombinedTrait &=
+      dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+        BitMemoryTrait::Readonly :
+          dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
+            BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
   if (!ExplicitAccess)
     Dptr.unset<trait::ExplicitAccess>();
