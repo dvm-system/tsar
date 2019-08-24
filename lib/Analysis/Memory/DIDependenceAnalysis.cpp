@@ -33,15 +33,20 @@
 #include "EstimateMemory.h"
 #include "GlobalOptions.h"
 #include "tsar_query.h"
+#include "PersistentMap.h"
 #include "SourceUnparser.h"
 #include "SpanningTreeRelation.h"
+#include "tsar_utility.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include <bcl/tagged.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
+#include <tuple>
+#include <utility>
 
 using namespace llvm;
 using namespace tsar;
@@ -605,6 +610,457 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
 }
+
+/// Representation of a IR-level memory locations binded to a specified one.
+template<class BindRef> struct BindingT {
+  explicit BindingT(const DIMemory *M) : Memory(M) {}
+  const DIMemory * Memory;
+  SmallVector<BindRef, 4> BindedMemory;
+};
+
+/// Tag for TraitsSanitizer (see TraitsSanitizer::EstimateCoverageT for example).
+struct LastSwapOffset {};
+
+/// Check relation between memory locations and update traits for location
+/// which is covered by some other location with the same binded IR-level
+/// memory representation.
+///
+/// Use CRTP do determine sanitizeImpl() and initializeImpl() methods.
+template<class Impl> class TraitsSanitizer {
+protected:
+  /// Estimate memory coverage.
+  ///
+  /// Locations from these containers should be checked to determine whether
+  /// some other location is covered.
+  /// The key in the map is an IR-level estimate memory location binded to
+  /// a list of metadata-level locations from a value. The second argument of
+  /// a value (in tuple) is utility value which is used to sort locations during
+  /// search.
+  using EstimateCoverageT = PersistentMap<const EstimateMemory *,
+    std::tuple<SmallVector<const DIMemory *, 1>, unsigned>,
+    DenseMapInfo<const EstimateMemory *>,
+    TaggedDenseMapTuple<
+      bcl::tagged<const EstimateMemory *, EstimateMemory>,
+      bcl::tagged<SmallVector<const DIMemory *, 1>, DIMemory>,
+      bcl::tagged<unsigned, LastSwapOffset>>>;
+
+  /// Unknown memory coverage.
+  using UnknownCoverageT = PersistentMap<const Value *,
+    std::tuple<SmallVector<const DIMemory *, 1>, unsigned>,
+    DenseMapInfo<const Value *>,
+    TaggedDenseMapTuple<
+      bcl::tagged<const Value *, Value>,
+      bcl::tagged<SmallVector<const DIMemory *, 1>, DIMemory>,
+      bcl::tagged<unsigned, LastSwapOffset>>>;
+public:
+  TraitsSanitizer(const AliasTree &AT, Optional<unsigned> DWLang) :
+    mAT(AT), mDWLang(DWLang) {}
+
+  /// Sanitize traits.
+  void exec() {
+    initialize();
+    sanitizeTraits();
+  }
+
+  /// Should be implemented in derived class.
+  void sanitizeImpl(const DIMemory *) {}
+
+  /// Should be implemented in derived class.
+  void initializeImpl() {}
+
+private:
+  void sanitize(const DIMemory *M) {static_cast<Impl *>(this)->sanitizeImpl(M);}
+  void initialize() { static_cast<Impl *>(this)->initializeImpl(); }
+
+  /// Check that there is a location in estimate coverage which covers a
+  /// specified one. These two locations must be from the same estimate memory
+  /// tree.
+  EstimateCoverageT::iterator isCovered(const EstimateMemory *EM) {
+    while (EM) {
+      auto Itr = mEstimateCoverage.find(EM);
+      if (Itr != mEstimateCoverage.end())
+        return Itr;
+     EM = EM->getParent();
+    }
+    return mEstimateCoverage.end();
+  };
+
+  /// Return true if there is metadata-level memory location which differs from
+  /// a specified one and covers IR-level estimate memory location binded to
+  /// a specified location `M`.
+  ///
+  /// Use this after sort() only.
+  bool isCovered(const DIMemory *M,
+      const EstimateCoverageT::persistent_iterator &EMCoverageItr) {
+    auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>());
+    // If location is sorted it is safe to check front() location only.
+    return Itr != mEstimateCoverage.end() && Itr->get<DIMemory>().front() != M;
+  }
+
+  /// Return true if there is metadata-level memory location which differs from
+  /// a specified one and covers IR-level unknown memory location binded to
+  /// a specified location `M`.
+  ///
+  /// Use this after sort() only.
+  bool isCovered(const DIMemory *M,
+      const UnknownCoverageT::persistent_iterator &UMCoverageItr) {
+    // If location is sorted it is safe to check front() location only.
+    return UMCoverageItr->get<DIMemory>().front() != M;
+  }
+
+  /// Return true if there are metadata-level locations which covers a specified
+  /// one.
+  ///
+  /// Note, that found and a specified locations may be equal.
+  /// So, for the safety, call this method for a location if it is not stored
+  /// in coverage containers.
+  bool isCovered(const DIMemory &M) {
+    if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M).isExec()) {
+      for (auto &VH : M)
+        if (!mUnknownCoverage.count(VH))
+          return false;
+    } else {
+      auto Size = isa<DIEstimateMemory>(M) ?
+        cast<DIEstimateMemory>(M).getSize() : 0;
+      for (auto &VH : M) {
+        auto *EM = mAT.find(MemoryLocation(VH, Size));
+        if (isCovered(EM) == mEstimateCoverage.end())
+          return false;
+      }
+    }
+    return true;
+  }
+
+  void sanitizeTraits() {
+    for (auto *M : mAccesses) {
+      if (isCovered(*M)) {
+        LLVM_DEBUG(if (mDWLang) {
+          dbgs() << "[DA DI]: sanitize covered access ";
+          printDILocationSource(*mDWLang, *M, dbgs());
+          dbgs() << "\n";
+        });
+        sanitize(M);
+      }
+    }
+    sanitizeCorrupted(mCorruptedEMs.rbegin(), mCorruptedEMs.rend());
+    sanitizeCorrupted(mCorruptedUMs.rbegin(), mCorruptedUMs.rend());
+  }
+
+  template<class ItrT> void resetLastSwapOffset(
+      const ItrT &BeginItr, const ItrT &EndItr) {
+    for (auto &Binding : make_range(BeginItr, EndItr))
+      for (auto &BindItr : Binding.BindedMemory)
+        BindItr->get<LastSwapOffset>() = 0;
+  }
+
+  /// Sort corrupted locations from a specified range.
+  ///
+  /// For example, BeginItr points to a location from mCorruptedEMs (it also
+  /// may be from mCorruptedUMs):
+  /// {
+  ///   M, {
+  ///     EM1 -> {M1, M2, M, M3},
+  ///     EM2 -> {M4, M}
+  ///   }
+  /// }
+  /// EM1 and EM2 are binded to `M`, they also binded to M1, M2, M3 and M4
+  /// correspondingly.
+  /// This method move M to the end of the list of memory locations attached
+  /// to IR-level memory location in coverage:
+  /// {
+  ///   M, {
+  ///     EM1 -> {M1, M2, M3, M},
+  ///     EM2 -> {M4, M}
+  ///   }
+  /// }
+  /// If BeginItr + 1 points to M2:
+  /// {
+  ///   M2, {
+  ///     EM1 -> {M1, M2, M3, M},
+  ///     EM3 -> {M2}
+  ///   }
+  /// }
+  /// it will be sorted in the following way
+  /// {
+  ///   M2, {
+  ///     EM1 -> {M1, M3, M2, M},
+  ///     EM3 -> {M2}
+  ///   }
+  /// }
+  /// So, M is always the last one location in a list (if list contains it),
+  /// M2 is always stored before M (if a list contains both and is the last
+  /// one if a list does not contain M, etc.).
+  template<class ItrT> void sort(const ItrT &BeginItr, const ItrT &EndItr) {
+    resetLastSwapOffset(BeginItr, EndItr);
+    for (auto &Binding : make_range(BeginItr, EndItr)) {
+      for (auto &BindItr : Binding.BindedMemory) {
+        auto MItr = std::find(BindItr->get<DIMemory>().begin(),
+          BindItr->get<DIMemory>().end(), Binding.Memory);
+        std::swap(*MItr,
+          BindItr->get<DIMemory>()[
+            BindItr->get<DIMemory>().size() -
+              (++BindItr->get<LastSwapOffset>())]);
+      }
+    }
+    resetLastSwapOffset(BeginItr, EndItr);
+  }
+
+  /// Sanitize corrupted locations from a specified range.
+  ///
+  /// At first, locations from a specified range will be sorted (see sort()).
+  /// Let us consider an example presented in a sort() description. We have
+  /// already sorted locations M, M2:
+  /// {
+  ///   M, {
+  ///     EM1 -> {M1, M3, M2, M},
+  ///     EM2 -> {M4, M}
+  ///   }
+  /// }
+  /// {
+  ///   M2, {
+  ///     EM1 -> {M1, M3, M2, M},
+  ///     EM3 -> {M2}
+  ///   }
+  /// }
+  /// At first, we check `M` and find that it is covered by M1 (EM1)
+  /// and M4 (EM2). So, it can be sanitized. Then we remove at from related
+  /// lists because sanitized location should not be used in a coverage for
+  /// other locations.
+  /// {
+  ///   M, {
+  ///     EM1 -> {M1, M3, M2},
+  ///     EM2 -> {M4}
+  ///   }
+  /// }
+  /// {
+  ///   M2, {
+  ///     EM1 -> {M1, M3, M2},
+  ///     EM3 -> {M2}
+  ///   }
+  /// }
+  /// Now, we check M2. Note, that EM3 can be covered by M2 only. Hence M2
+  /// could not be sanitized. So we swap M2 with (list size - swap offset)
+  /// location and increment offset (swap should be performed for each list,
+  /// swap offset may be different for different lists).
+  /// {
+  ///   M, {
+  ///     EM1 -> {M1, M2, M3},
+  ///     EM2 -> {M4}
+  ///   }
+  /// }
+  /// {
+  ///   M2, {
+  ///     EM1 -> {M1, M2, M3},
+  ///     EM3 -> {M2}
+  ///   }
+  /// }
+  /// Now, we check the next location, for example M3. It is at the end of
+  /// all lists, so it can be safely removed using pop_back() if necessary.
+  template<class ItrT>
+  void sanitizeCorrupted(const ItrT &BeginItr, const ItrT &EndItr) {
+    if (BeginItr == EndItr)
+      return;
+    sort(BeginItr, EndItr);
+    for (auto &Binding : make_range(BeginItr, EndItr)) {
+      bool IsCovered = true;
+      for (auto &BindItr : Binding.BindedMemory) {
+        if (!(IsCovered == isCovered(Binding.Memory, BindItr))) {
+          IsCovered = false;
+          break;
+        }
+      }
+      if (IsCovered) {
+        LLVM_DEBUG(if (mDWLang) {
+          dbgs() << "[DA DI]: sanitize covered corrupted ";
+          printDILocationSource(*mDWLang, *Binding.Memory, dbgs());
+          dbgs() << "\n";
+        });
+        sanitize(Binding.Memory);
+        for (auto &BindItr : Binding.BindedMemory) {
+          assert(BindItr->get<DIMemory>().back() == Binding.Memory &&
+            "Invariant broken!");
+          BindItr->get<DIMemory>().pop_back();
+        }
+      } else {
+        for (auto &BindItr: Binding.BindedMemory) {
+          assert(BindItr->get<DIMemory>().back() == Binding.Memory &&
+            "Invariant broken!");
+          assert(BindItr->get<DIMemory>().size() >=
+            BindItr->get<LastSwapOffset>() && "Too much swaps!");
+          const DIMemory *M1;
+          std::swap(BindItr->get<DIMemory>().back(),
+            BindItr->get<DIMemory>()[
+              BindItr->get<DIMemory>().size() -
+                (++BindItr->get<LastSwapOffset>())]);
+        }
+      }
+    }
+  }
+
+protected:
+  Optional<unsigned> mDWLang;
+  const AliasTree &mAT;
+
+  EstimateCoverageT mEstimateCoverage;
+  UnknownCoverageT mUnknownCoverage;
+  /// Locations which should be check and which should not be presented in
+  /// coverage (this is precondition).
+  std::vector<const DIMemory *> mAccesses;
+  /// Corrupted locations which are presented in coverage but also should
+  /// be checked.
+  std::vector<BindingT<EstimateCoverageT::persistent_iterator>> mCorruptedEMs;
+  /// Corrupted locations which are presented in coverage but also should
+  /// be checked.
+  std::vector<BindingT<UnknownCoverageT::persistent_iterator>> mCorruptedUMs;
+};
+
+/// Determine redundant corrupted locations (if no redundant cover some other
+/// location than this covered location is redundant).
+class RedundantSearch : public TraitsSanitizer<RedundantSearch> {
+public:
+  RedundantSearch(const AliasTree &AT, Optional<unsigned> DWLang,
+    DIAliasTrait &DIATrait) :
+    TraitsSanitizer<RedundantSearch>(AT, DWLang), mDIATrait(DIATrait) {}
+
+  void sanitizeImpl(const DIMemory *M) {
+    (**mDIATrait.find(M)).set<trait::Redundant>();
+    (**mDIATrait.find(M)).unset<trait::NoRedundant>();
+  }
+
+  void initializeImpl() {
+    for (auto &DIMTraitItr : mDIATrait) {
+      assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+        "Conflict in traits for a memory location!");
+      assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+        "One of traits must be set!");
+      auto *M = DIMTraitItr->getMemory();
+      if (M->emptyBinding() || DIMTraitItr->is<trait::Redundant>())
+        continue;
+      if (M->isOriginal())
+        mAccesses.push_back(M);
+      if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M)->isExec()) {
+        if (M->isOriginal())
+          mCorruptedUMs.emplace_back(M);
+        SmallPtrSet<const Value *, 8> Binding;
+        for (auto &VH : *M) {
+          if (Binding.insert(VH).second) {
+            auto Itr = mUnknownCoverage.try_emplace(VH).first;
+            Itr->get<DIMemory>().push_back(M);
+            Itr->get<LastSwapOffset>() = 0;
+            if (M->isOriginal())
+              mCorruptedUMs.back().BindedMemory.emplace_back(Itr);
+          }
+        }
+      } else {
+        if (M->isOriginal())
+          mCorruptedEMs.emplace_back(M);
+        auto Size = isa<DIEstimateMemory>(M) ?
+          cast<DIEstimateMemory>(M)->getSize() : 0;
+        SmallPtrSet<const EstimateMemory *, 8> Binding;
+        for (auto &VH : *M) {
+          auto *EM = mAT.find(MemoryLocation(VH, Size));
+          if (!EM)
+            continue;
+          if (isa<DIUnknownMemory>(M)) {
+            using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+            while (auto Next = CT::getNext(EM))
+              EM = Next;
+          }
+          if (Binding.insert(EM).second) {
+            auto Itr = mEstimateCoverage.try_emplace(EM).first;
+            Itr->get<DIMemory>().push_back(M);
+            Itr->get<LastSwapOffset>() = 0;
+            if (M->isOriginal())
+              mCorruptedEMs.back().BindedMemory.emplace_back(Itr);
+          }
+        }
+      }
+    }
+  }
+
+private:
+DIAliasTrait mDIATrait;
+};
+
+/// Perform search for memory which is not directly accessed in a loop and
+/// which is covered by some other corrupted location.
+///
+/// This means that such corrupted location is used instead of a covered
+/// location in the original program. Hence, this covered location can be
+/// ignored in description of loop traits. Redundant locations will be ignored
+/// if option is set.
+class IndirectAccessSanitizer :
+  public TraitsSanitizer<IndirectAccessSanitizer> {
+public:
+  IndirectAccessSanitizer(const AliasTree &AT, Optional<unsigned> DWLang,
+    DIAliasTrait &DIATrait, bool IgnoreRedundant) :
+    TraitsSanitizer<IndirectAccessSanitizer>(AT, DWLang),
+    mDIATrait(DIATrait), mIgnoreRedundant(IgnoreRedundant) {}
+
+  void sanitizeImpl(const DIMemory *M) { mDIATrait.erase(M); }
+
+  void initializeImpl() {
+    for (auto &DIMTraitItr : mDIATrait) {
+      auto *M = DIMTraitItr->getMemory();
+      assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+        "Conflict in traits for a memory location!");
+      assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+        "One of traits must be set!");
+      if (M->emptyBinding() ||
+          mIgnoreRedundant && DIMTraitItr->is<trait::Redundant>())
+        continue;
+      if (!DIMTraitItr->is<trait::DirectAccess>() && !M->isOriginal())
+        mAccesses.push_back(M);
+      if (!M->isOriginal())
+        continue;
+      if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M)->isExec()) {
+        if (!DIMTraitItr->is<trait::DirectAccess>())
+          mCorruptedUMs.emplace_back(M);
+        SmallPtrSet<const Value *, 8> Binding;
+        for (auto &VH : *M) {
+          if (Binding.insert(VH).second) {
+            auto Itr = mUnknownCoverage.try_emplace(VH).first;
+            Itr->get<DIMemory>().push_back(M);
+            Itr->get<LastSwapOffset>() = 0;
+            if (!DIMTraitItr->is<trait::DirectAccess>())
+              mCorruptedUMs.back().BindedMemory.emplace_back(Itr);
+          }
+        }
+      } else {
+        bool NeedCheck = !DIMTraitItr->is<trait::DirectAccess>();
+        if (NeedCheck)
+          mCorruptedEMs.emplace_back(M);
+        auto Size = isa<DIEstimateMemory>(M) ?
+          cast<DIEstimateMemory>(M)->getSize() : 0;
+        SmallPtrSet<const EstimateMemory *, 8> Binding;
+        for (auto &VH : *M) {
+          auto *EM = mAT.find(MemoryLocation(VH, Size));
+          if (!EM) {
+            if (NeedCheck)
+              mCorruptedEMs.pop_back();
+            NeedCheck = false;
+            continue;
+          }
+          if (isa<DIUnknownMemory>(M)) {
+            using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+            while (auto Next = CT::getNext(EM))
+              EM = Next;
+          }
+          if (Binding.insert(EM).second) {
+            auto Itr = mEstimateCoverage.try_emplace(EM).first;
+            Itr->get<DIMemory>().push_back(M);
+            Itr->get<LastSwapOffset>() = 0;
+            if (NeedCheck)
+              mCorruptedEMs.back().BindedMemory.emplace_back(Itr);
+          }
+        }
+      }
+    }
+  }
+private:
+  DIAliasTrait &mDIATrait;
+  bool mIgnoreRedundant;
+};
 }
 
 void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
@@ -851,8 +1307,14 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     DIMTraitItr->unset<trait::ExplicitAccess>();
     assert(DIATraitItr != DIDepSet.end() && "Trait must be already exist!");
     DIATraitItr->insert(DIMTraitItr);
-  } else if (DIATraitItr == DIDepSet.end())
+  } else if (DIATraitItr == DIDepSet.end()) {
     return;
+  }
+  LLVM_DEBUG(dbgs() << "[DA DI]: search for redundant memory\n");
+  RedundantSearch(*mAT, DWLang, *DIATraitItr).exec();
+  LLVM_DEBUG(dbgs() << "[DA DI]: sanitize indirect accesses\n");
+  IndirectAccessSanitizer(*mAT, DWLang, *DIATraitItr,
+    GlobalOpts.IgnoreRedundantMemory).exec();
   combineTraits(GlobalOpts.IgnoreRedundantMemory, *DIATraitItr);
   // We do not update traits for each memory location (as in private recognition
   // pass) because these traits should be updated early (during analysis of
