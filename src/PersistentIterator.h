@@ -198,9 +198,11 @@ public:
   template<bool IsConst>
   PersistentIteratorC & operator=(
     const NotPersistentIterator<IsConst, PersistentT, MapT> &Itr) {
-    removeFromList();
+    if (isValid())
+      removeFromList();
     mPtr = const_cast<PersistentBucket *>(&*Itr.mItr);
     addToList();
+    return *this;
   }
 
   reference operator*() const {
