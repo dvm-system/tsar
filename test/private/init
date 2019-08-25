@@ -51,6 +51,8 @@ redundant_2.init
 redundant_3.init
 redundant_4.init
 malloc_1.init
+malloc_2.init
+malloc_3.init
 struct_1.init
 struct_2.init
 struct_3.init

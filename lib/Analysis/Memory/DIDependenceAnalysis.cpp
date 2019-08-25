@@ -112,33 +112,22 @@ bool isLockedTrait(const DIMemoryTrait &T,
   return false;
 }
 
-/// Convert IR-level representation of a dependence of
-/// a specified type `Tag` to metadata-level representation.
+/// Move representation of a dependence of a specified type `Tag` to
+/// metadata-level representation if it is more accurate.
 ///
 /// \pre `Tag` must be one of `trait::Flow`, `trait::Anti`, `trati::Output`.
-template<class Tag> void convertIf(
-    const EstimateMemoryTrait &IRTrait, DIMemoryTrait &DITrait) {
+template<class Tag> void moveIf(
+    DIMemoryTrait &FromDIMTrait, DIMemoryTrait &DIMTrait) {
   static_assert(std::is_same<Tag, trait::Flow>::value ||
     std::is_same<Tag, trait::Anti>::value ||
     std::is_same<Tag, trait::Output>::value, "Unknown type of dependence!");
-  if (auto IRDep = IRTrait.template get<Tag>()) {
-    if (auto *DIDep = DITrait.template get<Tag>()) {
+  if (auto *FromDep = FromDIMTrait.template get<Tag>()) {
+    if (auto *DIDep = DIMTrait.template get<Tag>())
       if (DIDep->isKnownDistance())
         return;
-    }
-    LLVM_DEBUG(dbgs() << "[DA DI]: update " << Tag::toString()
+    LLVM_DEBUG(dbgs() << "[DA DI]: move " << Tag::toString()
                       << " dependence\n");
-    auto Dist = IRDep->getDistance();
-    trait::DIDependence::DistanceRange DIDistRange;
-    if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
-      DIDistRange.first = APSInt(ConstDist->getAPInt());
-    if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
-      DIDistRange.second = APSInt(ConstDist->getAPInt());
-    auto F = IRDep->getFlags();
-    if (IRDep->isKnownDistance() &&
-      (!DIDistRange.first || !DIDistRange.second))
-      F |= trait::Dependence::UnknownDistance;
-    DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
+    DIMTrait.template set<Tag>(FromDIMTrait.template release<Tag>());
   }
 }
 
@@ -157,10 +146,21 @@ template<class Tag> void combineIf(
     dbgs() << "[DA DI]: combine " << Tag::toString() << " dependence\n");
   if (IRDep) {
     if (!DIDep) {
-      auto F = IRDep->getFlags() | trait::Dependence::UnknownCause;
-      if (F & trait::Dependence::May)
-        F &= ~trait::Dependence::May;
-      DITrait.template set<Tag>(new trait::DIDependence(F));
+      if (!hasSpuriousDep(DITrait) && !DITrait.template is<Tag>()) {
+        trait::DIDependence::DistanceRange DIDistRange;
+        auto Dist = IRDep->getDistance();
+        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
+          DIDistRange.first = APSInt(ConstDist->getAPInt());
+        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
+          DIDistRange.second = APSInt(ConstDist->getAPInt());
+        DITrait.template set<Tag>(
+          new trait::DIDependence(IRDep->getFlags(), DIDistRange));
+      } else {
+        auto F = IRDep->getFlags() | trait::Dependence::UnknownCause;
+        if (F & trait::Dependence::May)
+          F &= ~trait::Dependence::May;
+        DITrait.template set<Tag>(new trait::DIDependence(F));
+      }
     } else {
       auto F = IRDep->getFlags() | DIDep->getFlags();
       if (!IRDep->isMay() || !DIDep->isMay())
@@ -179,7 +179,7 @@ template<class Tag> void combineIf(
               APSInt(ConstDist->getAPInt()) : DIDep->getDistance().second;
       DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
     }
-  } else if (DIDep) {
+  } else if (DIDep && (hasSpuriousDep(IRTrait) || IRTrait.template is<Tag>())) {
     auto F = DIDep->getFlags() | trait::Dependence::UnknownCause;
     if (F & trait::Dependence::May)
       F &= ~trait::Dependence::May;
@@ -202,10 +202,14 @@ template<class Tag> void combineIf(
     dbgs() << "[DA DI]: combine " << Tag::toString() << " dependence\n");
   if (FromDIDep) {
     if (!DIDep) {
-      auto F = FromDIDep->getFlags() | trait::Dependence::UnknownCause;
-      if (F & trait::Dependence::May)
-        F &= ~trait::Dependence::May;
-      DITrait.template set<Tag>(new trait::DIDependence(F));
+      if (!hasSpuriousDep(DITrait) && !DITrait.template is<Tag>()) {
+        DITrait.template set<Tag>(new trait::DIDependence(*FromDIDep));
+      } else {
+        auto F = FromDIDep->getFlags() | trait::Dependence::UnknownCause;
+        if (F & trait::Dependence::May)
+          F &= ~trait::Dependence::May;
+        DITrait.template set<Tag>(new trait::DIDependence(F));
+      }
     } else {
       auto F = FromDIDep->getFlags() | DIDep->getFlags();
       if (!FromDIDep->isMay() || !DIDep->isMay())
@@ -222,7 +226,8 @@ template<class Tag> void combineIf(
               FromDIDep->getDistance().second : DIDep->getDistance().second;
       DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
     }
-  } else if (DIDep) {
+  } else if (DIDep && (hasSpuriousDep(FromDITrait) ||
+             FromDITrait.template is<Tag>())) {
     auto F = DIDep->getFlags() | trait::Dependence::UnknownCause;
     if (F & trait::Dependence::May)
       F &= ~trait::Dependence::May;
@@ -230,101 +235,101 @@ template<class Tag> void combineIf(
   }
 }
 
+/// Update traits `DIMTrait` according a specified traits `FromDIMTrait`.
+///
+/// Note, that `FromDIMTrait` may be changed according to traits in `DIMTrait`
+/// which should not be updated. Attached representation of traits would not
+/// be changed if appropriate trait tag will not be removed.
+/// \return `true` if something has been updated.
+///
+/// TODO (kaniandr@gmail.com): at this moment this function always update
+/// `DIMTrait`. Hence, such update may degrade analysis results in some cases.
+/// Whether these cases are possible? Should we add some checks to avoid a such
+/// behavior.
+template<class TraitT>
+bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
+  if (DIMTrait.is<trait::NoPromotedScalar>())
+    FromDIMTrait.template set<trait::NoPromotedScalar>();
+  if (!DIMTrait.is<trait::HeaderAccess>())
+    FromDIMTrait.template unset<trait::HeaderAccess>();
+  if (DIMTrait.is<trait::AddressAccess>())
+    FromDIMTrait.template set<trait::AddressAccess>();
+  if (DIMTrait.is<trait::DirectAccess>())
+    FromDIMTrait.template set<trait::DirectAccess>();
+  if (DIMTrait.is<trait::ExplicitAccess>())
+    FromDIMTrait.template set<trait::ExplicitAccess>();
+  // Do not change 'second to last private' to 'last private'. This occurs
+  // after loop rotate.
+  if (DIMTrait.is<trait::SecondToLastPrivate>() &&
+    FromDIMTrait.template is<trait::LastPrivate>()) {
+    FromDIMTrait.template set<trait::SecondToLastPrivate>();
+    if (DIMTrait.is<trait::FirstPrivate>())
+      FromDIMTrait.template set<trait::FirstPrivate>();
+    if (DIMTrait.is<trait::Shared>())
+      FromDIMTrait.template set<trait::Shared>();
+  }
+  // Do not use `operator=` because attached values should not be lost.
+  bcl::trait::update(FromDIMTrait, DIMTrait);
+  LLVM_DEBUG(dbgs() << "[DA DI]: update existing trait to ";
+             DIMTrait.print(dbgs()); dbgs() << "\n");
+  return true;
+}
+
+/// Update traits `DIMTrait` according a specified traits `FromDIMTrait`.
+///
+/// Note, that `FromDIMTrait` may be invalidated to avoid redundant copy
+/// operations.
+void clarify(DIMemoryTrait &FromDIMTrait, DIMemoryTrait &DIMTrait) {
+  clarifyDescriptor(FromDIMTrait, DIMTrait);
+  moveIf<trait::Flow>(FromDIMTrait, DIMTrait);
+  moveIf<trait::Anti>(FromDIMTrait, DIMTrait);
+  moveIf<trait::Output>(FromDIMTrait, DIMTrait);
+}
+
 /// Update traits for a specified memory `M` in a specified pool. Add new
 /// trait if `M` is not stored in pool.
-///
-/// \tparam Combine If false then replace existing trait (if necessary and
-/// allowed), otherwise combine a specified traits `Dptr` with existing ones.
 ///
 /// If traits for `M` already exist in a pool and should not be updated
 /// (for example, should be locked) the second returned value is `false`.
 /// If existing trait is already accurate it will not be updated.
-template<bool Combine>
-std::pair<DIMemoryTraitRef, bool> addOrUpdateInPool(DIMemory &M,
-    MemoryDescriptor Dptr, ArrayRef<const DIMemory *> LockedTraits,
+std::pair<DIMemoryTraitRegionPool::iterator, bool>
+addOrUpdateInPool(DIMemory &M, MemoryDescriptor Dptr,
+    ArrayRef<const DIMemory *> LockedTraits,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     DIMemoryTraitRegionPool &Pool) {
   auto DIMTraitItr = Pool.find_as(&M);
   if (DIMTraitItr == Pool.end()) {
     LLVM_DEBUG(dbgs() << "[DA DI]: add new trait to pool\n");
     DIMTraitItr = Pool.try_emplace({ &M, &Pool }, Dptr).first;
-  } else if (Combine) {
-    LLVM_DEBUG(dbgs() << "[DA DI]: combine trait with existing one\n");
-    auto CombinedTrait = BitMemoryTrait(*DIMTraitItr);
-    CombinedTrait &= Dptr;
-    // Do not use `operator=` because already attached values should not be lost.
-    bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), *DIMTraitItr);
-    if (DIMTraitItr->is<trait::NoRedundant>())
-      DIMTraitItr->unset<trait::Redundant>();
-  } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
-    auto *Dep = DIMTraitItr->get<trait::Flow>();
-    auto needUpdate = [](const trait::Dependence *Dep) {
-      return !Dep || Dep->isMay() || !Dep->isKnownDistance() || true;
-    };
-    if (DIMTraitItr->is<trait::Flow>() &&
-            needUpdate(DIMTraitItr->get<trait::Flow>()) ||
-        DIMTraitItr->is<trait::Anti>() &&
-            needUpdate(DIMTraitItr->get<trait::Anti>()) ||
-        DIMTraitItr->is<trait::Output>() &&
-            needUpdate(DIMTraitItr->get<trait::Output>()) ||
-        !Dptr.is_any<trait::Flow, trait::Anti, trait::Output>()) {
-      if (DIMTraitItr->is<trait::NoPromotedScalar>())
-        Dptr.set<trait::NoPromotedScalar>();
-      if (!DIMTraitItr->is<trait::HeaderAccess>())
-        Dptr.unset<trait::HeaderAccess>();
-      if (DIMTraitItr->is<trait::AddressAccess>())
-        Dptr.set<trait::AddressAccess>();
-      if (DIMTraitItr->is<trait::DirectAccess>())
-        Dptr.set<trait::DirectAccess>();
-      if (DIMTraitItr->is<trait::ExplicitAccess>())
-        Dptr.set<trait::ExplicitAccess>();
-      // Do not change 'second to last private' to 'last private'. This occurs
-      // after loop rotate.
-      if (DIMTraitItr->is<trait::SecondToLastPrivate>() &&
-          Dptr.is<trait::LastPrivate>()) {
-        Dptr.set<trait::SecondToLastPrivate>();
-        if (DIMTraitItr->is<trait::FirstPrivate>())
-          Dptr.set<trait::FirstPrivate>();
-        if (DIMTraitItr->is<trait::Shared>())
-          Dptr.set<trait::Shared>();
-      }
-      LLVM_DEBUG(dbgs() << "[DA DI]: update existing trait\n");
-      // Do not use `operator=` because attached values should not be lost.
-      bcl::trait::update(Dptr, *DIMTraitItr);
-    } else {
-      return std::make_pair(DIMTraitItr, false);
-    }
-  } else {
-    return std::make_pair(DIMTraitItr, false);
+    return std::make_pair(DIMTraitItr, true);
   }
-  return std::make_pair(DIMTraitItr, true);
+  bool IsChanged = !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR) &&
+    clarifyDescriptor(Dptr, *DIMTraitItr);
+  return std::make_pair(DIMTraitItr, !IsChanged);
 }
 
-/// Update traits for a specified memory `M` in a specified pool according to
-/// alias traits related to a value V. Add new trait if `M` is not stored
-/// in pool.
+/// Update traits `DIMTrait` according to alias traits related to a value V
+/// which is binded to a specified memory `M`.
 ///
-/// \return Iterator to updated traits or None.
-/// \tparam Combine If false then replace existing trait (if necessary and
-/// allowed), otherwise combine traits for V with existing ones.
-template<bool Combine>
-Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
-    const AliasTree &AT, const DependenceSet::iterator &ATraitItr,
-    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
-    ArrayRef<const DIMemory *> LockedTraits, DIMemoryTraitRegionPool &Pool) {
-  assert(V && !isa<UndefValue>(V) &&
-    "Metadata-level alias tree is corrupted!");
-  DIMemoryTraitRef DIMTraitItr;
+/// \return `true` if traits have been updated..
+bool combineWith(Value *V, DIMemory &M, const AliasTree &AT,
+  const DependenceSet::iterator &ATraitItr, DIMemoryTrait &DIMTrait) {
+  assert(V && !isa<UndefValue>(V) && "Metadata-level alias tree is corrupted!");
   if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M).isExec()) {
     auto MTraitItr = ATraitItr->find(cast<Instruction>(V));
     // If memory location is not explicitly accessed in the region and if it
     // does not cover any explicitly accessed location then go to the next
     // location.
     if (MTraitItr == ATraitItr->unknown_end())
-      return None;
-    std::tie(DIMTraitItr, std::ignore) =
-      addOrUpdateInPool<Combine>(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
-    return DIMTraitItr;
+      return false;
+    LLVM_DEBUG(dbgs() << "[DA DI]: combine traits\n");
+    auto CombinedTrait = BitMemoryTrait(DIMTrait);
+    CombinedTrait &= *MTraitItr;
+    // Do not use `operator=` because already attached values should not be lost.
+    bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), DIMTrait);
+    if (DIMTrait.is<trait::NoRedundant>())
+      DIMTrait.unset<trait::Redundant>();
+    return true;
   }
   AliasTrait::iterator MTraitItr = ATraitItr->end();
   if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
@@ -334,7 +339,7 @@ Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
     assert((M.isOriginal() || EM) &&
       "Estimate memory must be presented in the alias tree!");
     if (!EM)
-      return None;
+      return false;
     MTraitItr = ATraitItr->find(EM);
     if (M.isOriginal()) {
       EM = EM->getParent();
@@ -348,7 +353,7 @@ Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
     assert((M.isOriginal() || EM) &&
       "Estimate memory must be presented in the alias tree!");
     if (!EM)
-      return None;
+      return false;
     // We do not known size of DIMemory, so bounded node (in alias tree) related
     // to it must contain all possible memory in chain. ATraitItr represents
     // traits for memory in this bounded node, so it could not contain memory
@@ -367,22 +372,32 @@ Optional<DIMemoryTraitRef> addOrUpdateInPool(Value *V, DIMemory &M,
   // does not cover any explicitly accessed location then go to the next
   // location.
   if (MTraitItr == ATraitItr->end())
-    return None;
-  bool IsNotLocked = false;
-  std::tie(DIMTraitItr, IsNotLocked) =
-    addOrUpdateInPool<Combine>(M, *MTraitItr, LockedTraits, DIAliasSTR, Pool);
-  if (IsNotLocked) {
-    if (Combine) {
-      combineIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-      combineIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-      combineIf<trait::Output>(*MTraitItr, *DIMTraitItr);
-    } else {
-      convertIf<trait::Flow>(*MTraitItr, *DIMTraitItr);
-      convertIf<trait::Anti>(*MTraitItr, *DIMTraitItr);
-      convertIf<trait::Output>(*MTraitItr, *DIMTraitItr);
-    }
+    return false;
+  auto HasSpuriousDep = hasSpuriousDep(*MTraitItr) || hasSpuriousDep(DIMTrait);
+  bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output> DepDptr;
+  if (!HasSpuriousDep) {
+    bcl::trait::set(DIMTrait, DepDptr);
+    bcl::trait::set(*MTraitItr, DepDptr);
   }
-  return DIMTraitItr;
+  // Do not move combineIf() after update() of DIMTrait because initial value
+  // of DIMTrait is necessary to accurately combine attached values.
+  combineIf<trait::Flow>(*MTraitItr, DIMTrait);
+  combineIf<trait::Anti>(*MTraitItr, DIMTrait);
+  combineIf<trait::Output>(*MTraitItr, DIMTrait);
+  auto CombinedTrait = BitMemoryTrait(DIMTrait);
+  CombinedTrait &= *MTraitItr;
+  // Do not use `operator=` because already attached values should not be lost.
+  bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), DIMTrait);
+  // Do not set dependence if it have not been set in any descriptor.
+  if (!HasSpuriousDep)
+    bcl::trait::update(DepDptr, DIMTrait);
+  if (DIMTrait.is<trait::NoRedundant>())
+    DIMTrait.unset<trait::Redundant>();
+  LLVM_DEBUG(dbgs() << "[DA DI]: combine traits with IR-level traits ";
+             MTraitItr->print(dbgs()); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "[DA DI]: combine traits to ";
+             DIMTrait.print(dbgs()); dbgs() << "\n");
+  return true;
 }
 
 /// Find IR-level memory node which relates to a specified metadata-level node.
@@ -552,7 +567,7 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (!(DIMTraitItr->is<trait::DirectAccess>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::DirectAccess>();
-    LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
+    LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait for single location to ";
       DIATrait.print(dbgs()); dbgs() << "\n");
     return;
   }
@@ -560,6 +575,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
   bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
   bool NoPromotedScalar = false, DirectAccess = false;
   unsigned NumberOfCombined = 0;
+  bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output> DepDptr;
+  bool HasSpuriousDep = false;
   for (auto &DIMTraitItr : DIATrait) {
     if (DIMTraitItr->is<trait::ExplicitAccess>() &&
         !DIMTraitItr->is<trait::NoAccess>() &&
@@ -587,6 +604,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     }
     ++NumberOfCombined;
     CombinedTrait &= *DIMTraitItr;
+    HasSpuriousDep |= hasSpuriousDep(*DIMTraitItr);
+    bcl::trait::set(*DIMTraitItr, DepDptr);
   }
   // It may be 1, if some traits have been ignored (for example, redundant).
   if (NumberOfCombined > 1)
@@ -596,6 +615,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
           dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
             BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
+  if (!HasSpuriousDep)
+    bcl::trait::update(DepDptr, Dptr);
   if (!ExplicitAccess)
     Dptr.unset<trait::ExplicitAccess>();
   if (!NoPromotedScalar)
@@ -694,7 +715,8 @@ private:
       const EstimateCoverageT::persistent_iterator &EMCoverageItr) {
     auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>());
     // If location is sorted it is safe to check front() location only.
-    return Itr != mEstimateCoverage.end() && Itr->get<DIMemory>().front() != M;
+    return Itr != mEstimateCoverage.end() &&
+      Itr->template get<DIMemory>().front() != M;
   }
 
   /// Return true if there is metadata-level memory location which differs from
@@ -750,7 +772,7 @@ private:
       const ItrT &BeginItr, const ItrT &EndItr) {
     for (auto &Binding : make_range(BeginItr, EndItr))
       for (auto &BindItr : Binding.BindedMemory)
-        BindItr->get<LastSwapOffset>() = 0;
+        BindItr->template get<LastSwapOffset>() = 0;
   }
 
   /// Sort corrupted locations from a specified range.
@@ -794,12 +816,12 @@ private:
     resetLastSwapOffset(BeginItr, EndItr);
     for (auto &Binding : make_range(BeginItr, EndItr)) {
       for (auto &BindItr : Binding.BindedMemory) {
-        auto MItr = std::find(BindItr->get<DIMemory>().begin(),
-          BindItr->get<DIMemory>().end(), Binding.Memory);
+        auto MItr = std::find(BindItr->template get<DIMemory>().begin(),
+          BindItr->template get<DIMemory>().end(), Binding.Memory);
         std::swap(*MItr,
-          BindItr->get<DIMemory>()[
-            BindItr->get<DIMemory>().size() -
-              (++BindItr->get<LastSwapOffset>())]);
+          BindItr->template get<DIMemory>()[
+            BindItr->template get<DIMemory>().size() -
+              (++BindItr->template get<LastSwapOffset>())]);
       }
     }
     resetLastSwapOffset(BeginItr, EndItr);
@@ -879,19 +901,19 @@ private:
         for (auto &BindItr : Binding.BindedMemory) {
           assert(BindItr->get<DIMemory>().back() == Binding.Memory &&
             "Invariant broken!");
-          BindItr->get<DIMemory>().pop_back();
+          BindItr->template get<DIMemory>().pop_back();
         }
       } else {
         for (auto &BindItr: Binding.BindedMemory) {
-          assert(BindItr->get<DIMemory>().back() == Binding.Memory &&
+          assert(BindItr->template get<DIMemory>().back() == Binding.Memory &&
             "Invariant broken!");
-          assert(BindItr->get<DIMemory>().size() >=
-            BindItr->get<LastSwapOffset>() && "Too much swaps!");
+          assert(BindItr->template get<DIMemory>().size() >=
+            BindItr->template get<LastSwapOffset>() && "Too much swaps!");
           const DIMemory *M1;
-          std::swap(BindItr->get<DIMemory>().back(),
-            BindItr->get<DIMemory>()[
-              BindItr->get<DIMemory>().size() -
-                (++BindItr->get<LastSwapOffset>())]);
+          std::swap(BindItr->template get<DIMemory>().back(),
+            BindItr->template get<DIMemory>()[
+              BindItr->template get<DIMemory>().size() -
+                (++BindItr->template get<LastSwapOffset>())]);
         }
       }
     }
@@ -1170,74 +1192,79 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       printDILocationSource(*DWLang, M, dbgs());
       dbgs() << "\n";
     });
+    auto DIMTraitItr = Pool.find_as(&M);
     if (M.isOriginal() || M.emptyBinding() || ATraitItr == DepSet.end()) {
-      auto Itr = Pool.find_as(&M);
-      if (Itr == Pool.end())
+      if (DIMTraitItr == Pool.end())
         continue;
-      DIMemoryTraitRef DIMTraitItr = Itr;
-      if (M.isOriginal() && ATraitItr != DepSet.end()) {
-        auto BindItr = M.begin();
-        auto NewTraitItr = addOrUpdateInPool<false>(
-          *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
-        LLVM_DEBUG(dbgs() << "[DA DI]: find traits for corrupted location\n");
-        auto BindItrE = M.end();
-        for (++BindItr; BindItr != BindItrE; ++BindItr) {
-          if (NewTraitItr) {
-            auto Itr = addOrUpdateInPool<true>(
-              *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
-            assert(!Itr || *Itr == NewTraitItr &&
-              "Multiple traits for the same memory in pool is not allowed!");
+      if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
+        if (M.isOriginal() && ATraitItr != DepSet.end()) {
+          LLVM_DEBUG(dbgs() << "[DA DI]: find traits for corrupted location\n");
+          DIMemoryTrait DIMTrait(&M);
+          DIMTrait.set<trait::NoAccess>();
+          bool IsChanged = false;
+          for (auto &Bind : M)
+            IsChanged |= combineWith(Bind, M, *mAT, ATraitItr, DIMTrait);
+          if (IsChanged) {
+            clarify(DIMTrait, *DIMTraitItr);
           } else {
-            NewTraitItr = addOrUpdateInPool<false>(
-              *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
+            LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
+            LLVM_DEBUG(dbgs() << "[DA DI]: mark as redundant\n");
+            DIMTraitItr->set<trait::Redundant>();
+            DIMTraitItr->unset<trait::NoRedundant>();
+          }
+        } else {
+          LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
+          if ((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
+              (M.emptyBinding() && M.isOriginal())) {
+            LLVM_DEBUG(dbgs() << "[DA DI]: mark as redundant\n");
+            DIMTraitItr->set<trait::Redundant>();
+            DIMTraitItr->unset<trait::NoRedundant>();
           }
         }
-        if (NewTraitItr) {
-          DIMTraitItr = std::move(*NewTraitItr);
-        } else if (!isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
-          DIMTraitItr->set<trait::Redundant>();
-          DIMTraitItr->unset<trait::NoRedundant>();
-        }
       } else {
-        LLVM_DEBUG(dbgs() << "[DA DI]: use existent traits\n");
-        if (((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
-             (M.emptyBinding() && M.isOriginal())) &&
-            !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
-          DIMTraitItr->set<trait::Redundant>();
-          DIMTraitItr->unset<trait::NoRedundant>();
-        }
+          LLVM_DEBUG(dbgs() << "[DA DI]: use existing locked traits\n");
       }
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
       DIATraitItr->insert(DIMTraitItr);
       continue;
     }
-    auto BindItr = M.begin();
-    auto DIMTraitItr = addOrUpdateInPool<false>(
-      *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
-    // Values binded to merged locations may be related to different estimate
-    // memory locations with different traits. So, it is necessary to check
-    // all binded values.
-    if (M.isMerged()) {
-      LLVM_DEBUG(dbgs() << "[DA DI]: find traits for merged location\n");
-      auto BindItrE = M.end();
-      for (++BindItr; BindItr != BindItrE; ++BindItr) {
-        if (DIMTraitItr) {
-         auto Itr = addOrUpdateInPool<true>(
-           *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
-         assert(!Itr || *Itr == DIMTraitItr &&
-           "Multiple traits for the same memory in pool is not allowed!");
+    if (DIMTraitItr == Pool.end() ||
+        !isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR)) {
+      auto BindItr = M.begin();
+      DIMemoryTrait DIMTrait(&M);
+      DIMTrait.set<trait::NoAccess>();
+      bool IsChanged = combineWith(*BindItr, M, *mAT, ATraitItr, DIMTrait);
+      // Values binded to merged locations may be related to different estimate
+      // memory locations with different traits. So, it is necessary to check
+      // all binded values.
+      if (M.isMerged()) {
+        LLVM_DEBUG(dbgs() << "[DA DI]: find traits for merged location\n");
+        auto BindItrE = M.end();
+        for (++BindItr; BindItr != BindItrE; ++BindItr)
+          IsChanged |= combineWith(*BindItr, M, *mAT, ATraitItr, DIMTrait);
+      }
+      if (IsChanged) {
+        if (DIMTraitItr == Pool.end()) {
+          LLVM_DEBUG(dbgs() << "[DA DI]: add new trait to pool\n");
+          DIMTraitItr =
+            Pool.try_emplace({ &M, &Pool }, std::move(DIMTrait)).first;
         } else {
-          DIMTraitItr = addOrUpdateInPool<false>(
-            *BindItr, M, *mAT, ATraitItr, DIAliasSTR, LockedTraits, Pool);
+          clarify(DIMTrait, *DIMTraitItr);
         }
+      } else {
+        if (DIMTraitItr == Pool.end())
+          continue;
+        LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
+        LLVM_DEBUG(dbgs() << "[DA DI]: mark as redundant\n");
+        DIMTraitItr->set<trait::Redundant>();
+        DIMTraitItr->unset<trait::NoRedundant>();
       }
     }
-    if (!DIMTraitItr)
-      continue;
+    assert(DIMTraitItr != Pool.end() && "Trait must not be null!");
     if (DIATraitItr == DIDepSet.end())
       DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
-    DIATraitItr->insert(*DIMTraitItr);
+    DIATraitItr->insert(DIMTraitItr);
   }
   // We will collapse traits for promoted location only if this location is
   // used in a region. If location is explicitly used traits for locations
@@ -1306,7 +1333,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
   if (CurrentPromoted.Memory && CurrentPromoted.Collapse) {
     DIMemoryTraitRef DIMTraitItr;
     std::tie(DIMTraitItr, std::ignore) =
-      addOrUpdateInPool<false>(*CurrentPromoted.Memory,
+      addOrUpdateInPool(*CurrentPromoted.Memory,
         CurrentPromoted.Trait.toDescriptor(1, NumTraits),
         LockedTraits, DIAliasSTR, Pool);
     DIMTraitItr->unset<trait::ExplicitAccess>();
@@ -1658,7 +1685,7 @@ void DIMemoryTraitHandle::allUsesReplacedWith(DIMemory *M) {
   DIMemoryTraitRegionPool::persistent_iterator OldItr =
     mPool->find_as(getMemoryPtr());
   LLVM_DEBUG(dbgs() << "[DA DI]: " << (M->isMerged() ? "merge" : "replace")
-                    << "in pool metadata-level memory location ";
+                    << " in pool metadata-level memory location ";
              printDILocationSource(dwarf::DW_LANG_C, *getMemoryPtr(), dbgs());
              dbgs() << " with ";
              printDILocationSource(dwarf::DW_LANG_C, *M, dbgs());
@@ -1667,15 +1694,28 @@ void DIMemoryTraitHandle::allUsesReplacedWith(DIMemory *M) {
     auto DIMTraitItr = mPool->find_as(M);
     if (DIMTraitItr != mPool->end()) {
       LLVM_DEBUG(dbgs() << "[DA DI]: target location exist in pool\n");
-      auto CombinedTrait = BitMemoryTrait(*DIMTraitItr);
-      CombinedTrait &= *OldItr;
-      // Do not use `operator=` because attached values should not be lost.
-      bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), *DIMTraitItr);
-      if (DIMTraitItr->is<trait::NoRedundant>())
-        DIMTraitItr->unset<trait::Redundant>();
+      auto HasSpuriousDep =
+          hasSpuriousDep(*OldItr) || hasSpuriousDep(*DIMTraitItr);
+      bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output> DepDptr;
+      if (!HasSpuriousDep) {
+        bcl::trait::set(*DIMTraitItr, DepDptr);
+        bcl::trait::set(*OldItr, DepDptr);
+      }
+      // Do not move combineIf() after update() of DIMTrait because initial
+      // value of DIMTrait is necessary to accurately combine attached values.
       combineIf<trait::Flow>(*OldItr, *DIMTraitItr);
       combineIf<trait::Anti>(*OldItr, *DIMTraitItr);
       combineIf<trait::Output>(*OldItr, *DIMTraitItr);
+      auto CombinedTrait = BitMemoryTrait(*DIMTraitItr);
+      CombinedTrait &= *OldItr;
+      // Do not use `operator=` because already attached values should not be
+      // lost.
+      bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), *DIMTraitItr);
+      // Do not set dependence if it have not been set in any descriptor.
+      if (!HasSpuriousDep)
+        bcl::trait::update(DepDptr, *DIMTraitItr);
+      if (DIMTraitItr->is<trait::NoRedundant>())
+        DIMTraitItr->unset<trait::Redundant>();
       mPool->erase(OldItr);
       return;
     }

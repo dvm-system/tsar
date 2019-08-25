@@ -238,6 +238,18 @@ using MemoryDescriptor = bcl::TraitDescriptor<
     bcl::TraitUnion<trait::SecondToLastPrivate, trait::FirstPrivate, trait::Shared>,
     bcl::TraitUnion<trait::DynamicPrivate, trait::FirstPrivate, trait::Shared>>>;
 
+/// Return true if there is no any dependencies.
+inline bool hasNoDep(const MemoryDescriptor &Dptr) {
+  return Dptr.is_any<trait::NoAccess, trait::Readonly, trait::Shared>();
+}
+
+/// Return true if there is spurious dependence which could be removed in some
+/// cases.
+inline bool hasSpuriousDep(const MemoryDescriptor &Dptr) {
+  return !hasNoDep(Dptr) &&
+    !Dptr.is_any<trait::Flow, trait::Anti, trait::Output>();
+}
+
 /// Statistic of collected memory traits.
 using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::AddressAccess>,

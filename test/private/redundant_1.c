@@ -14,10 +14,6 @@ void foo() {
 //CHECK:  loop at depth 1 redundant_1.c:6:3
 //CHECK:    private:
 //CHECK:     <Nx1:7:9, 4>
-//CHECK:    output:
-//CHECK:     <A, 40> <B, 44> <Nx, 4>
-//CHECK:    anti:
-//CHECK:     <A, 40> <B, 44> <Nx, 4>
 //CHECK:    flow:
 //CHECK:     <A, 40> <B, 44>:[1,1] <Nx, 4>
 //CHECK:    induction:
