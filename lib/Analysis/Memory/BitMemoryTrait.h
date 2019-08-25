@@ -55,12 +55,12 @@ public:
   /// to mark absence of dependence. For example Private | SharedJoin means
   /// that a privatizable variable is not caused dependency. Use `|` with
   /// `SharedJoin` instead of `&`. To drop it use `dropSharedFlag()` method
-  /// (note, this method change NoAccess and Readonly to invalid flags).
+  /// (note, this method change NoAccess, Readonly and Shared to invalid flags).
   enum Id : unsigned long long {
     NoAccess =            11111111111111111_b,
     Readonly =            10011110111111111_b,
     SharedJoin =          00000000111111111_b,
-    Shared =              10000010011111111_b,
+    Shared =              10000010111111111_b,
     Private =             00001111011111111_b,
     FirstPrivate =        00001110011111111_b,
     SecondToLastPrivate = 00001011011111111_b,

@@ -58,18 +58,21 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
   } else {
     auto SharedFlag = Dptr.is<trait::Shared>() ? SharedJoin : ~NoAccess;
     auto SharedTrait = Dptr.is<trait::Shared>() ? Shared : Dependency;
-    if (Dptr.is<trait::FirstPrivate>())
-      mId &= FirstPrivate | SharedFlag;
-    if (Dptr.is<trait::Private>())
+    if (Dptr.is<trait::Private>()) {
       mId &= Private | SharedFlag;
-    else if (Dptr.is<trait::LastPrivate>())
-      mId &= LastPrivate;
-    else if (Dptr.is<trait::SecondToLastPrivate>())
-      mId &= SecondToLastPrivate | SharedFlag;
-    else if (Dptr.is<trait::DynamicPrivate>())
-      mId &= DynamicPrivate | SharedFlag;
-    else
-      mId &= SharedTrait;
+    }  else {
+      if (Dptr.is<trait::FirstPrivate>())
+        mId &= FirstPrivate | SharedFlag;
+      if (Dptr.is<trait::LastPrivate>())
+        mId &= LastPrivate | SharedFlag;
+      else if (Dptr.is<trait::SecondToLastPrivate>())
+        mId &= SecondToLastPrivate | SharedFlag;
+      else if (Dptr.is<trait::DynamicPrivate>())
+        mId &= DynamicPrivate | SharedFlag;
+      else if (!Dptr.is<trait::FirstPrivate>()) {
+        mId &= SharedTrait;
+      }
+    }
   }
 }
 
@@ -116,6 +119,10 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
   case NoAccess:
     Dptr.set<trait::NoAccess>();
     return Dptr;
+  case Shared:
+    Dptr.set<trait::Shared>();
+    Stat.get<trait::Shared>() += TraitNumber;
+    return Dptr;
   }
   if (hasSharedJoin(get())) {
     Dptr.set<trait::Shared>();
@@ -125,8 +132,6 @@ MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
   default:
     llvm_unreachable("Unknown type of memory location dependency!");
     break;
-  case Shared: Dptr.set<trait::Shared>();
-    Stat.get<trait::Shared>() += TraitNumber; break;
   case Private: Dptr.set<trait::Private>();
     Stat.get<trait::Private>() += TraitNumber; break;
   case FirstPrivate: Dptr.set<trait::FirstPrivate>();
