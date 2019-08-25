@@ -919,8 +919,10 @@ protected:
 class RedundantSearch : public TraitsSanitizer<RedundantSearch> {
 public:
   RedundantSearch(const AliasTree &AT, Optional<unsigned> DWLang,
-    DIAliasTrait &DIATrait) :
-    TraitsSanitizer<RedundantSearch>(AT, DWLang), mDIATrait(DIATrait) {}
+      DIAliasTrait &DIATrait, ArrayRef<const DIMemory *> LockedTraits,
+      const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR) :
+    TraitsSanitizer<RedundantSearch>(AT, DWLang),
+    mDIATrait(DIATrait), mLockedTraits(LockedTraits), mDIAliasSTR(DIAliasSTR) {}
 
   void sanitizeImpl(const DIMemory *M) {
     (**mDIATrait.find(M)).set<trait::Redundant>();
@@ -934,7 +936,8 @@ public:
       assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
         "One of traits must be set!");
       auto *M = DIMTraitItr->getMemory();
-      if (M->emptyBinding() || DIMTraitItr->is<trait::Redundant>())
+      if (M->emptyBinding() || DIMTraitItr->is<trait::Redundant>() ||
+          isLockedTrait(*DIMTraitItr, mLockedTraits, mDIAliasSTR))
         continue;
       if (M->isOriginal())
         mAccesses.push_back(M);
@@ -979,7 +982,9 @@ public:
   }
 
 private:
-DIAliasTrait mDIATrait;
+  DIAliasTrait mDIATrait;
+  ArrayRef<const DIMemory *> mLockedTraits;
+  const SpanningTreeRelation<const tsar::DIAliasTree *> &mDIAliasSTR;
 };
 
 /// Perform search for memory which is not directly accessed in a loop and
@@ -1311,7 +1316,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     return;
   }
   LLVM_DEBUG(dbgs() << "[DA DI]: search for redundant memory\n");
-  RedundantSearch(*mAT, DWLang, *DIATraitItr).exec();
+  RedundantSearch(*mAT, DWLang, *DIATraitItr, LockedTraits, DIAliasSTR).exec();
   LLVM_DEBUG(dbgs() << "[DA DI]: sanitize indirect accesses\n");
   IndirectAccessSanitizer(*mAT, DWLang, *DIATraitItr,
     GlobalOpts.IgnoreRedundantMemory).exec();
