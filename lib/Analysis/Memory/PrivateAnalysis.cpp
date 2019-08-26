@@ -681,9 +681,18 @@ void PrivateRecognitionPass::resolvePointers(
         continue;
       const EstimateMemory *Ptr = mAliasTree->find(MemoryLocation::get(LI));
       assert(Ptr && "Estimate memory location must not be null!");
+      // DefUse.getExplicitAccesses() contains largest memory location, so
+      // if there are two instructions which access <P,8> and <P,?> then
+      // <P,?> will be stored in DefUse.getExplicitlyAccesses() and related
+      // estimate memory will be stored in ExplisitAccesses. So, we traverse
+      // estimate memory chain to determine which memory is analyzed.
       auto PtrTraits = ExplicitAccesses.find(Ptr);
-      assert(PtrTraits != ExplicitAccesses.end() &&
-        "Traits of location must be initialized!");
+      while (PtrTraits == ExplicitAccesses.end()) {
+        using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+        Ptr = CT::getNext(Ptr);
+        assert(Ptr && "It seems that traits does not exist!");
+        PtrTraits = ExplicitAccesses.find(Ptr);
+      }
       if (dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
             == BitMemoryTrait::Readonly)
         continue;
