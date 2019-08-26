@@ -469,7 +469,8 @@ std::pair<const SCEV *, bool> computeSCEVAddRec(
   SCEVBionmialSearch Search(SE);
   Search.visit(Expr);
   bool IsSafe = true;
-  if (Search.L) {
+  if (Search.L && SE.isLoopInvariant(Search.Coef, Search.L) &&
+      SE.isLoopInvariant(Search.FreeTerm, Search.L)) {
     Expr = SE.getAddRecExpr(
       Search.FreeTerm, Search.Coef, Search.L, SCEV::FlagAnyWrap);
     IsSafe = Search.IsSafeCast;
