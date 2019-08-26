@@ -929,13 +929,15 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   // TODO (kaniandr@gmail.com): `AccessedMemory` does not contain locations
   // which have been added implicitly. For example, if stripMemoryLevel() has
   // been called.
-  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation](const Value *V) {
+  auto addPointeeIfNeed = [&DL, &AccessedMemory, &addLocation, &F](
+      const Value *V) {
     if (isa<UndefValue>(V))
       return;
     if (!V->getType() || !V->getType()->isPointerTy())
       return;
-    if (isa<Constant>(V) && cast<Constant>(V)->isNullValue())
-      return;
+    if (const auto *CPN = dyn_cast<ConstantPointerNull>(V))
+      if (!NullPointerIsDefined(&F, CPN->getType()->getAddressSpace()))
+        return;
     if (auto F = dyn_cast<Function>(V))
       if (isDbgInfoIntrinsic(F->getIntrinsicID()) ||
           isMemoryMarkerIntrinsic(F->getIntrinsicID()))

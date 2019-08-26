@@ -45,24 +45,36 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
   using llvm::IntrinsicInst;
   using llvm::MemoryLocation;
   using llvm::StoreInst;
-  auto traverseActualParams = [&TLI, &Func, &UnknownFunc](CallSite CS) {
+  auto *F = I.getFunction();
+  auto isValidPtr = [F](const llvm::Value *Ptr) {
+    if (llvm::isa<llvm::UndefValue>(Ptr))
+      return false;
+    if (const auto *CPN = llvm::dyn_cast<llvm::ConstantPointerNull>(Ptr))
+      if (!llvm::NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
+        return false;
+    return true;
+  };
+  auto traverseActualParams =
+      [&TLI, &Func, &UnknownFunc, &isValidPtr](CallSite CS) {
     auto Callee =
       llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
     llvm::LibFunc LibId;
     if (auto II = llvm::dyn_cast<IntrinsicInst>(CS.getInstruction())) {
       bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
-      foreachIntrinsicMemArg(*II, [IsMarker, &CS, &TLI, &Func](unsigned Idx) {
+      foreachIntrinsicMemArg(*II,
+          [IsMarker, &CS, &TLI, &Func, &isValidPtr](unsigned Idx) {
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
+        if (!isValidPtr(Loc.Ptr))
           return;
         Func(*CS.getInstruction(), std::move(Loc), Idx,
           (CS.doesNotReadMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May,
           (CS.onlyReadsMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May);
       });
     } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
-      foreachLibFuncMemArg(LibId, [&CS, &TLI, &Func](unsigned Idx) {
+      foreachLibFuncMemArg(LibId,
+          [&CS, &TLI, &Func, &isValidPtr](unsigned Idx) {
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
+        if (!isValidPtr(Loc.Ptr))
           return;
         Func(*CS.getInstruction(), std::move(Loc), Idx,
           CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
@@ -75,7 +87,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!CS.getArgument(Idx)->getType()->isPointerTy())
           continue;
         auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
-        if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
+        if (!isValidPtr(Loc.Ptr))
           continue;
         Func(*CS.getInstruction(), std::move(Loc),
          Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
@@ -101,7 +113,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     auto Loc = MemoryLocation::get(&I);
     assert(Loc.Ptr == I.getOperand(0) &&
       "Operand with a specified number must be a specified memory location!");
-    if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
+    if (!isValidPtr(Loc.Ptr))
       return;
     Func(I, std::move(Loc), 0,
       I.mayReadFromMemory() ? AccessInfo::Must : AccessInfo::No,
@@ -113,7 +125,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     auto Loc = MemoryLocation::get(&I);
     assert(Loc.Ptr == I.getOperand(1) &&
       "Operand with a specified number must be a specified memory location!");
-    if (llvm::isa<llvm::UndefValue>(Loc.Ptr))
+    if (!isValidPtr(Loc.Ptr))
       return;
     Func(I, MemoryLocation::get(cast<StoreInst>(&I)), 1,
       AccessInfo::No, AccessInfo::Must);

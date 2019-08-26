@@ -322,13 +322,19 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   if (!DFB)
     return;
   BasicBlock *BB = DFB->getBlock();
+  Function *F = BB->getParent();
   assert(BB && "Basic block must not be null!");
   for (Instruction &I : BB->getInstList()) {
     if (I.getType() && I.getType()->isPointerTy())
       DU->addAddressAccess(&I);
     for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
-      if (isa<UndefValue>(Op) || !Op->getType() || !Op->getType()->isPointerTy())
+      if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(Op))
+        if (!NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
+          continue;
+      if (isa<UndefValue>(Op) || isa<ConstantPointerNull>(Op) ||
+          !Op->getType() || !Op->getType()->isPointerTy())
         continue;
+
       // Function is a first parameter of 'call' instruction, so we should
       // ignore intrinsics here.
       if (auto F = dyn_cast<Function>(Op))
