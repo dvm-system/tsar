@@ -43,6 +43,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
 #include <tuple>
@@ -1620,8 +1621,10 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
     Offset.append("  ");
     auto DILoop = L->getLoopID();
     if (!DILoop) {
-      M->getContext().emitError("loop has not been analyzed"
-        " due to absence of debug information");
+      DiagnosticInfoUnsupported Diag(DIAT.getFunction(),
+        "loop has not been analyzed due to absence of debug information",
+        Loc, DS_Warning);
+      M->getContext().diagnose(Diag);
       return;
     }
     auto Info = mDeps.find(DILoop);
