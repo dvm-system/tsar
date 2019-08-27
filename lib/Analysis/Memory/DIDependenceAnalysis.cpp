@@ -257,6 +257,8 @@ bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
     FromDIMTrait.template set<trait::AddressAccess>();
   if (DIMTrait.is<trait::DirectAccess>())
     FromDIMTrait.template set<trait::DirectAccess>();
+  if (DIMTrait.is<trait::IndirectAccess>())
+    FromDIMTrait.template set<trait::IndirectAccess>();
   if (DIMTrait.is<trait::ExplicitAccess>())
     FromDIMTrait.template set<trait::ExplicitAccess>();
   // Do not change 'second to last private' to 'last private'. This occurs
@@ -330,6 +332,8 @@ bool combineWith(Value *V, DIMemory &M, const AliasTree &AT,
     bcl::trait::update(CombinedTrait.toDescriptor(1, NumTraits), DIMTrait);
     if (DIMTrait.is<trait::NoRedundant>())
       DIMTrait.unset<trait::Redundant>();
+    if (DIMTrait.is<trait::DirectAccess>())
+      DIMTrait.unset<trait::IndirectAccess>();
     return true;
   }
   AliasTrait::iterator MTraitItr = ATraitItr->end();
@@ -394,6 +398,8 @@ bool combineWith(Value *V, DIMemory &M, const AliasTree &AT,
     bcl::trait::update(DepDptr, DIMTrait);
   if (DIMTrait.is<trait::NoRedundant>())
     DIMTrait.unset<trait::Redundant>();
+  if (DIMTrait.is<trait::DirectAccess>())
+    DIMTrait.unset<trait::IndirectAccess>();
   LLVM_DEBUG(dbgs() << "[DA DI]: combine traits with IR-level traits ";
              MTraitItr->print(dbgs()); dbgs() << "\n");
   LLVM_DEBUG(dbgs() << "[DA DI]: combine traits to ";
@@ -568,13 +574,16 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (!(DIMTraitItr->is<trait::DirectAccess>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::DirectAccess>();
+    if (!(DIMTraitItr->is<trait::IndirectAccess>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::IndirectAccess>();
     LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait for single location to ";
       DIATrait.print(dbgs()); dbgs() << "\n");
     return;
   }
   BitMemoryTrait CombinedTrait;
   bool ExplicitAccess = false, Redundant = false, NoRedundant = false;
-  bool NoPromotedScalar = false, DirectAccess = false;
+  bool NoPromotedScalar = false, DirectAccess = false, IndirectAccess = false;
   unsigned NumberOfCombined = 0;
   bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output> DepDptr;
   bool HasSpuriousDep = false;
@@ -589,8 +598,13 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (DIMTraitItr->is<trait::DirectAccess>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       DirectAccess = true;
+    if (DIMTraitItr->is<trait::IndirectAccess>() &&
+        DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
+      IndirectAccess = true;
     assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
+    assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      "One of traits must be set!");
     if (DIMTraitItr->is<trait::Redundant>()) {
       if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()) {
         Redundant = true;
@@ -602,6 +616,21 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       assert(DIMTraitItr->is<trait::NoRedundant>() && "Trait must be set!");
       if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
         NoRedundant = true;
+    }
+    if (DIMTraitItr->is<trait::IndirectAccess>() &&
+        !DIMTraitItr->is<trait::DirectAccess>()) {
+      bool Ignore = true;
+      for (auto MH : *DIMTraitItr->get<trait::IndirectAccess>()) {
+        assert(MH && "Memory must not be null!");
+        auto CoverItr = DIATrait.find(MH);
+        if (CoverItr == DIATrait.end() ||
+            IgnoreRedundant && (**CoverItr).is<trait::Redundant>()) {
+          Ignore = false;
+          break;
+        }
+      }
+      if (Ignore)
+        continue;
     }
     ++NumberOfCombined;
     CombinedTrait &= *DIMTraitItr;
@@ -628,6 +657,8 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     Dptr.unset<trait::NoRedundant>();
   if (!DirectAccess)
     Dptr.unset<trait::DirectAccess>();
+  if (!IndirectAccess)
+    Dptr.unset<trait::IndirectAccess>();
   DIATrait = Dptr;
   LLVM_DEBUG(dbgs() << "[DA DI]: set combined trait to ";
     Dptr.print(dbgs()); dbgs() << "\n");
@@ -635,6 +666,7 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
 
 /// Representation of a IR-level memory locations binded to a specified one.
 template<class BindRef> struct BindingT {
+  using BindRefT = BindRef;
   explicit BindingT(const DIMemory *M) : Memory(M) {}
   const DIMemory * Memory;
   SmallVector<BindRef, 4> BindedMemory;
@@ -659,20 +691,20 @@ protected:
   /// a value (in tuple) is utility value which is used to sort locations during
   /// search.
   using EstimateCoverageT = PersistentMap<const EstimateMemory *,
-    std::tuple<SmallVector<const DIMemory *, 1>, unsigned>,
+    std::tuple<SmallVector<DIMemory *, 1>, unsigned>,
     DenseMapInfo<const EstimateMemory *>,
     TaggedDenseMapTuple<
       bcl::tagged<const EstimateMemory *, EstimateMemory>,
-      bcl::tagged<SmallVector<const DIMemory *, 1>, DIMemory>,
+      bcl::tagged<SmallVector<DIMemory *, 1>, DIMemory>,
       bcl::tagged<unsigned, LastSwapOffset>>>;
 
   /// Unknown memory coverage.
   using UnknownCoverageT = PersistentMap<const Value *,
-    std::tuple<SmallVector<const DIMemory *, 1>, unsigned>,
+    std::tuple<SmallVector<DIMemory *, 1>, unsigned>,
     DenseMapInfo<const Value *>,
     TaggedDenseMapTuple<
       bcl::tagged<const Value *, Value>,
-      bcl::tagged<SmallVector<const DIMemory *, 1>, DIMemory>,
+      bcl::tagged<SmallVector<DIMemory *, 1>, DIMemory>,
       bcl::tagged<unsigned, LastSwapOffset>>>;
 public:
   TraitsSanitizer(const AliasTree &AT, Optional<unsigned> DWLang) :
@@ -685,13 +717,18 @@ public:
   }
 
   /// Should be implemented in derived class.
-  void sanitizeImpl(const DIMemory *) {}
+  template<class CoverageItrT>
+  void sanitizeImpl(const DIMemory *, CoverageItrT, CoverageItrT) {}
 
   /// Should be implemented in derived class.
   void initializeImpl() {}
 
 private:
-  void sanitize(const DIMemory *M) {static_cast<Impl *>(this)->sanitizeImpl(M);}
+  template<class CoverageItrT>
+  void sanitize(const DIMemory *M, CoverageItrT BeginItr, CoverageItrT EndItr) {
+    static_cast<Impl *>(this)->sanitizeImpl(M, BeginItr, EndItr);
+  }
+
   void initialize() { static_cast<Impl *>(this)->initializeImpl(); }
 
   /// Check that there is a location in estimate coverage which covers a
@@ -712,12 +749,13 @@ private:
   /// a specified location `M`.
   ///
   /// Use this after sort() only.
-  bool isCovered(const DIMemory *M,
+  EstimateCoverageT::persistent_iterator isCovered(const DIMemory *M,
       const EstimateCoverageT::persistent_iterator &EMCoverageItr) {
     auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>());
     // If location is sorted it is safe to check front() location only.
     return Itr != mEstimateCoverage.end() &&
-      Itr->template get<DIMemory>().front() != M;
+      Itr->template get<DIMemory>().front() != M ? Itr :
+      EstimateCoverageT::persistent_iterator();
   }
 
   /// Return true if there is metadata-level memory location which differs from
@@ -725,10 +763,11 @@ private:
   /// a specified location `M`.
   ///
   /// Use this after sort() only.
-  bool isCovered(const DIMemory *M,
+  UnknownCoverageT::persistent_iterator isCovered(const DIMemory *M,
       const UnknownCoverageT::persistent_iterator &UMCoverageItr) {
     // If location is sorted it is safe to check front() location only.
-    return UMCoverageItr->get<DIMemory>().front() != M;
+    return UMCoverageItr->get<DIMemory>().front() != M ? UMCoverageItr :
+      UnknownCoverageT::persistent_iterator();
   }
 
   /// Return true if there are metadata-level locations which covers a specified
@@ -737,32 +776,44 @@ private:
   /// Note, that found and a specified locations may be equal.
   /// So, for the safety, call this method for a location if it is not stored
   /// in coverage containers.
-  bool isCovered(const DIMemory &M) {
+  bool isCovered(const DIMemory &M, SmallPtrSetImpl<DIMemory *> &Coverage) {
     if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M).isExec()) {
-      for (auto &VH : M)
-        if (!mUnknownCoverage.count(VH))
+      SmallVector<UnknownCoverageT::iterator, 4> ItrCoverage;
+      for (auto &VH : M) {
+        auto Itr = mUnknownCoverage.find(VH);
+        if (Itr == mUnknownCoverage.end())
           return false;
+        ItrCoverage.push_back(Itr);
+      }
+      for (auto &I : ItrCoverage)
+        Coverage.insert(I->get<DIMemory>().begin(), I->get<DIMemory>().end());
     } else {
+      SmallVector<EstimateCoverageT::iterator, 4> ItrCoverage;
       auto Size = isa<DIEstimateMemory>(M) ?
         cast<DIEstimateMemory>(M).getSize() : 0;
       for (auto &VH : M) {
         auto *EM = mAT.find(MemoryLocation(VH, Size));
-        if (isCovered(EM) == mEstimateCoverage.end())
+        auto Itr = isCovered(EM);
+        if (Itr == mEstimateCoverage.end())
           return false;
+        ItrCoverage.push_back(Itr);
       }
+      for (auto &I : ItrCoverage)
+        Coverage.insert(I->get<DIMemory>().begin(), I->get<DIMemory>().end());
     }
     return true;
   }
 
   void sanitizeTraits() {
     for (auto *M : mAccesses) {
-      if (isCovered(*M)) {
+      SmallPtrSet<DIMemory *, 4> Coverage;
+      if (isCovered(*M, Coverage)) {
         LLVM_DEBUG(if (mDWLang) {
           dbgs() << "[DA DI]: sanitize covered access ";
           printDILocationSource(*mDWLang, *M, dbgs());
           dbgs() << "\n";
         });
-        sanitize(M);
+        sanitize(M, Coverage.begin(), Coverage.end());
       }
     }
     sanitizeCorrupted(mCorruptedEMs.rbegin(), mCorruptedEMs.rend());
@@ -886,11 +937,14 @@ private:
     sort(BeginItr, EndItr);
     for (auto &Binding : make_range(BeginItr, EndItr)) {
       bool IsCovered = true;
+      SmallVector<typename std::decay<decltype(Binding)>::type::BindRefT, 4> ItrCoverage;
       for (auto &BindItr : Binding.BindedMemory) {
-        if (!(IsCovered == isCovered(Binding.Memory, BindItr))) {
+        auto Itr = isCovered(Binding.Memory, BindItr);
+        if (!Itr) {
           IsCovered = false;
           break;
         }
+        ItrCoverage.push_back(std::move(Itr));
       }
       if (IsCovered) {
         LLVM_DEBUG(if (mDWLang) {
@@ -898,9 +952,16 @@ private:
           printDILocationSource(*mDWLang, *Binding.Memory, dbgs());
           dbgs() << "\n";
         });
-        sanitize(Binding.Memory);
+        SmallPtrSet<DIMemory *, 4> Coverage;
+        for (auto &I : ItrCoverage) {
+          auto CopyEndItr = I->template get<DIMemory>().end();
+          if (I->template get<DIMemory>().back() == Binding.Memory)
+            --CopyEndItr;
+          Coverage.insert(I->template get<DIMemory>().begin(), CopyEndItr);
+        }
+        sanitize(Binding.Memory, Coverage.begin(), Coverage.end());
         for (auto &BindItr : Binding.BindedMemory) {
-          assert(BindItr->get<DIMemory>().back() == Binding.Memory &&
+          assert(BindItr->template get<DIMemory>().back() == Binding.Memory &&
             "Invariant broken!");
           BindItr->template get<DIMemory>().pop_back();
         }
@@ -947,8 +1008,9 @@ public:
     TraitsSanitizer<RedundantSearch>(AT, DWLang),
     mDIATrait(DIATrait), mLockedTraits(LockedTraits), mDIAliasSTR(DIAliasSTR) {}
 
-  void sanitizeImpl(const DIMemory *M) {
-    (**mDIATrait.find(M)).set<trait::Redundant>();
+  template<class CoverageItrT>
+  void sanitizeImpl(const DIMemory *M, CoverageItrT I, CoverageItrT EI) {
+    (**mDIATrait.find(M)).set<trait::Redundant>(new trait::DICoverage(I, EI));
     (**mDIATrait.find(M)).unset<trait::NoRedundant>();
   }
 
@@ -971,7 +1033,7 @@ public:
         for (auto &VH : *M) {
           if (Binding.insert(VH).second) {
             auto Itr = mUnknownCoverage.try_emplace(VH).first;
-            Itr->get<DIMemory>().push_back(M);
+            Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (M->isOriginal())
               mCorruptedUMs.back().BindedMemory.emplace_back(Itr);
@@ -994,7 +1056,7 @@ public:
           }
           if (Binding.insert(EM).second) {
             auto Itr = mEstimateCoverage.try_emplace(EM).first;
-            Itr->get<DIMemory>().push_back(M);
+            Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (M->isOriginal())
               mCorruptedEMs.back().BindedMemory.emplace_back(Itr);
@@ -1025,7 +1087,11 @@ public:
     TraitsSanitizer<IndirectAccessSanitizer>(AT, DWLang),
     mDIATrait(DIATrait), mIgnoreRedundant(IgnoreRedundant) {}
 
-  void sanitizeImpl(const DIMemory *M) { mDIATrait.erase(M); }
+  template<class CoverageItrT>
+  void sanitizeImpl(const DIMemory *M, CoverageItrT I, CoverageItrT EI) {
+    (**mDIATrait.find(M)).set<trait::IndirectAccess>(
+      new trait::DICoverage(I, EI));
+  }
 
   void initializeImpl() {
     for (auto &DIMTraitItr : mDIATrait) {
@@ -1048,7 +1114,7 @@ public:
         for (auto &VH : *M) {
           if (Binding.insert(VH).second) {
             auto Itr = mUnknownCoverage.try_emplace(VH).first;
-            Itr->get<DIMemory>().push_back(M);
+            Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (!DIMTraitItr->is<trait::DirectAccess>())
               mCorruptedUMs.back().BindedMemory.emplace_back(Itr);
@@ -1076,7 +1142,7 @@ public:
           }
           if (Binding.insert(EM).second) {
             auto Itr = mEstimateCoverage.try_emplace(EM).first;
-            Itr->get<DIMemory>().push_back(M);
+            Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (NeedCheck)
               mCorruptedEMs.back().BindedMemory.emplace_back(Itr);
@@ -1489,7 +1555,8 @@ struct TraitPrinter {
 
   template<class Trait> void operator()(
       ArrayRef<const DIAliasTrait *> TraitVector) {
-    if (TraitVector.empty() || std::is_same<Trait, trait::NoRedundant>())
+    if (TraitVector.empty() || std::is_same<Trait, trait::NoRedundant>() ||
+        std::is_same<Trait, trait::IndirectAccess>())
       return;
     mOS << mOffset << Trait::toString() << ":\n";
     /// Sort traits to print their in algoristic order.
@@ -1643,7 +1710,7 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
         TM.value<trait::Redundant>().push_back(&TS);
     }
     TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock,
-      trait::NoPromotedScalar, trait::DirectAccess>
+      trait::NoPromotedScalar, trait::DirectAccess, trait::IndirectAccess>
         Printer(OS, DIAT, Offset, *DWLang);
     TM.for_each(Printer);
     Printer.printSeparateTraits();

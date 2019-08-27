@@ -136,6 +136,29 @@ public:
 private:
   ReductionKind mRK;
 };
+
+/// List of locations which covers some other location.
+class DICoverage {
+public:
+  using CoverageT = llvm::SmallVector<WeakDIMemoryHandle, 1 >;
+  using iterator = CoverageT::iterator;
+  using const_iterator = CoverageT::const_iterator;
+
+  template<class ItrT> DICoverage(ItrT BeginItr, ItrT EndItr) :
+    mCoverage(BeginItr, EndItr) {}
+
+  /// Return list of locations which are used to access location.
+  llvm::ArrayRef<WeakDIMemoryHandle> getCoverage() const { return mCoverage; }
+
+  iterator begin() { return mCoverage.begin(); }
+  iterator end() { return mCoverage.end(); }
+
+  const_iterator begin() const { return mCoverage.begin(); }
+  const_iterator end() const { return mCoverage.end(); }
+
+private:
+   CoverageT mCoverage;
+};
 }
 
 /// Correspondence between memory traits and their metadata-level descriptions.
@@ -144,7 +167,9 @@ using DIMemoryTraitTaggeds = bcl::TypeList<
   bcl::tagged<trait::DIDependence, trait::Anti>,
   bcl::tagged<trait::DIDependence, trait::Output>,
   bcl::tagged<trait::DIInduction, trait::Induction>,
-  bcl::tagged<trait::DIReduction, trait::Reduction>>;
+  bcl::tagged<trait::DIReduction, trait::Reduction>,
+  bcl::tagged<trait::DICoverage, trait::Redundant>,
+  bcl::tagged<trait::DICoverage, trait::IndirectAccess>>;
 
 /// Set of descriptions of metadata-level memory traits.
 using DIMemoryTraitSet = bcl::TraitSet<MemoryDescriptor,

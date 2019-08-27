@@ -72,6 +72,7 @@ TSAR_TRAIT_DECL(Redundant, "redundant")
 TSAR_TRAIT_DECL(NoRedundant, "no redundant")
 TSAR_TRAIT_DECL(NoPromotedScalar, "no promoted scalar")
 TSAR_TRAIT_DECL(DirectAccess, "direct access")
+TSAR_TRAIT_DECL(IndirectAccess, "indirect access")
 
 #undef TSAR_TRAIT_DECL
 
@@ -180,7 +181,9 @@ private:
 /// - is it a redundant location which can be removed after some transformations;
 /// - is it a location which is not redundant;
 /// - is it a scalar which has not been promoted to registers;
-/// - is it a directly accessed location.
+/// - is it a directly accessed location;
+/// - is it an indirectly accessed location with known list of locations which
+///   are used to access it.
 ///
 /// If location is not accessed in a region it will be marked as 'no access'
 /// only if it has some other traits, otherwise it can be omitted in a list
@@ -229,7 +232,7 @@ private:
 using MemoryDescriptor = bcl::TraitDescriptor<
   trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess, trait::Lock,
   trait::Redundant, trait::NoRedundant, trait::NoPromotedScalar,
-  trait::DirectAccess,
+  trait::DirectAccess, trait::IndirectAccess,
   bcl::TraitAlternative<
     trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
     bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
@@ -271,7 +274,8 @@ using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::Redundant>,
   bcl::tagged<llvm::Statistic &, trait::NoRedundant>,
   bcl::tagged<llvm::Statistic &, trait::NoPromotedScalar>,
-  bcl::tagged<llvm::Statistic &, trait::DirectAccess>>;
+  bcl::tagged<llvm::Statistic &, trait::DirectAccess>,
+  bcl::tagged<llvm::Statistic &, trait::IndirectAccess>>;
 
 /// A macro to make definition of statistics really simple.
 ///
@@ -299,6 +303,7 @@ using MemoryStatistic = bcl::tagged_tuple<
   STATISTIC(VARNAME##NoRedundant, "Number of not redundant locations"); \
   STATISTIC(VARNAME##NoPromotedScalar, "Number of not promoted scalars"); \
   STATISTIC(VARNAME##DirectAccess, "Number of not directly accessed locations"); \
+  STATISTIC(VARNAME##IndirectAccess, "Number of not indirectly accessed locations"); \
   static ::tsar::MemoryStatistic VARNAME = {\
     VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
     VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
@@ -306,7 +311,7 @@ using MemoryStatistic = bcl::tagged_tuple<
     VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
     VARNAME##Flow, VARNAME##Anti, VARNAME##Output, VARNAME##Lock, \
     VARNAME##Redundant, VARNAME##NoRedundant, VARNAME##NoPromotedScalar, \
-    VARNAME##DirectAccess };
+    VARNAME##DirectAccess, VARNAME##IndirectAccess };
 }
 #endif//TSAR_MEMORY_TRAIT_H
 

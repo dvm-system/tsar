@@ -11,19 +11,19 @@ void foo() {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 malloc_2.c:7:3
 //CHECK:    shared:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?>
+//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    first private:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?>
+//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    second to last private:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?>
+//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <P:6:8, 8>
 //CHECK:    direct access:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?> | <I:7:12, 4> | <P:6:8, 8>
+//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?> | <I:7:12, 4> | <P:6:8, 8>
 //CHECK:    redundant:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?>
+//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4>
 //CHECK:    header access:
@@ -38,6 +38,8 @@ void foo() {
 //CHECK:     <I:7:12, 4>
 //CHECK:    direct access (separate):
 //CHECK:     <*P:{8:5|9:7|6:8}, ?> <I:7:12, 4> <P:6:8, 8>
+//CHECK:    indirect access (separate):
+//CHECK:     <malloc():6:20,?>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //REDUNDANT:  loop at depth 1 malloc_2.c:7:3
 //REDUNDANT:    shared:
