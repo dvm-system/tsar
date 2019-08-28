@@ -104,12 +104,12 @@ public:
   }
 
   BitMemoryTrait & operator|=(const BitMemoryTrait &With) noexcept {
-    mId != With.mId;
+    mId |= With.mId;
     return *this;
   }
 
   BitMemoryTrait & operator|=(const MemoryDescriptor &With) noexcept {
-    mId != BitMemoryTrait(With).mId;
+    mId |= BitMemoryTrait(With).mId;
     return *this;
   }
 
