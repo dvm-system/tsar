@@ -18,8 +18,6 @@ void foo() {
 //CHECK:     <A, 40> <B, 44>:[1,1] <Nx, 4>
 //CHECK:    induction:
 //CHECK:     <I:6:12, 4>:[Int,0,10,1]
-//CHECK:    direct access:
-//CHECK:     <A, 40> <B, 44> <Nx, 4> | <I:6:12, 4> | <Nx1:7:9, 4>
 //CHECK:    redundant:
 //CHECK:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
 //CHECK:    lock:
@@ -44,8 +42,6 @@ void foo() {
 //REDUNDANT:     <B, 44>:[1,1]
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:6:12, 4>:[Int,0,10,1]
-//REDUNDANT:    direct access:
-//REDUNDANT:     <A, 40> | <B, 44> | <I:6:12, 4>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <A, 40> <B, 44> <Nx, 4> | <Nx1:7:9, 4>
 //REDUNDANT:    lock:
@@ -55,10 +51,10 @@ void foo() {
 //REDUNDANT:    explicit access:
 //REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    explicit access (separate):
-//REDUNDANT:     <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>
+//REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    redundant (separate):
 //REDUNDANT:     <Nx, 4> <Nx1:7:9, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:6:12, 4>
 //REDUNDANT:    direct access (separate):
-//REDUNDANT:     <A, 40> <B, 44> <I:6:12, 4> <Nx, 4> <Nx1:7:9, 4>
+//REDUNDANT:     <A, 40> <B, 44> <I:6:12, 4>

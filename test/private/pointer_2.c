@@ -50,6 +50,8 @@ void foo(double * restrict A) {
 //CHECK:     <I:8:12, 4>  <N, 4>
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//CHECK:    direct access (separate):
+//CHECK:     <*A:5:28, ?> <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 pointer_2.c:8:3
 //SAFE:    private:
@@ -64,8 +66,6 @@ void foo(double * restrict A) {
 //SAFE:     <I:8:12, 4>:[Int,1,,1]
 //SAFE:    read only:
 //SAFE:     <A:5:28, 8>
-//SAFE:    direct access:
-//SAFE:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //SAFE:    no promoted scalar:
 //SAFE:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //SAFE:    lock:
@@ -98,8 +98,6 @@ void foo(double * restrict A) {
 //UNSAFE_TFM:     <I:8:12, 4>:[Int,1,,1]
 //UNSAFE_TFM:    read only:
 //UNSAFE_TFM:     <A:5:28, 8>
-//UNSAFE_TFM:    direct access:
-//UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //UNSAFE_TFM:    no promoted scalar:
 //UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    redundant:
@@ -136,8 +134,6 @@ void foo(double * restrict A) {
 //UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4>:[Int,1,,1]
 //UNSAFE_TFM_and_REDUNDANT:    read only:
 //UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> | <N, 4> | <X:6:7, ?>
-//UNSAFE_TFM_and_REDUNDANT:    direct access:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <A:5:28, 8> | <I:8:12, 4> | <N, 4> | <P:6:14, 8> | <X:6:7, ?> | <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    no promoted scalar:
 //UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> | <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    redundant:
@@ -151,12 +147,12 @@ void foo(double * restrict A) {
 //UNSAFE_TFM_and_REDUNDANT:    address access:
 //UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> | <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    explicit access (separate):
-//UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
+//UNSAFE_TFM_and_REDUNDANT:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8>
 //UNSAFE_TFM_and_REDUNDANT:    redundant (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM_and_REDUNDANT:    lock (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4> <N, 4>
 //UNSAFE_TFM_and_REDUNDANT:    no promoted scalar (separate):
-//UNSAFE_TFM_and_REDUNDANT:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    direct access (separate):
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <X:6:7, ?> <Y:6:10, ?>

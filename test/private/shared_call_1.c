@@ -13,8 +13,6 @@ int foo() {
 //CHECK:     <I:5:12, 4>:[Int,0,10,1]
 //CHECK:    reduction:
 //CHECK:     <S:4:7, 4>:add
-//CHECK:    direct access:
-//CHECK:     <I:5:12, 4> | <S:4:7, 4>
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4>
 //CHECK:    header access:

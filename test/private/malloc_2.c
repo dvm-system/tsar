@@ -20,8 +20,6 @@ void foo() {
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <P:6:8, 8>
-//CHECK:    direct access:
-//CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?> | <I:7:12, 4> | <P:6:8, 8>
 //CHECK:    redundant:
 //CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    lock:
@@ -52,8 +50,6 @@ void foo() {
 //REDUNDANT:     <I:7:12, 4>:[Int,0,100,1]
 //REDUNDANT:    read only:
 //REDUNDANT:     <P:6:8, 8>
-//REDUNDANT:    direct access:
-//REDUNDANT:     <I:7:12, 4> | <P:6:8, 8>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //REDUNDANT:    lock:

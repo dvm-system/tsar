@@ -20,8 +20,6 @@ void foo() {
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <P:6:9, 8>
-//CHECK:    direct access:
-//CHECK:     <I:7:12, 4> | <P:6:9, 8>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4>
 //CHECK:    header access:

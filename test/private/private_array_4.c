@@ -32,6 +32,8 @@ void foo(double *X, int N) {
 //CHECK:     <T:2:10, ?>
 //CHECK:    lock (separate):
 //CHECK:     <I:3:12, 4> <N:1:25, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <*X:1:18, ?> <I:3:12, 4> <N:1:25, 4> <T:2:10, 24> <T:2:10, ?> <X:1:18, 8>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 private_array_4.c:3:3
 //SAFE:    output:
@@ -44,8 +46,6 @@ void foo(double *X, int N) {
 //SAFE:     <I:3:12, 4>:[Int,1,,1]
 //SAFE:    read only:
 //SAFE:     <N:1:25, 4> | <X:1:18, 8>
-//SAFE:    direct access:
-//SAFE:     <I:3:12, 4> | <N:1:25, 4> | <T:2:10, 24> <T:2:10, ?> | <X:1:18, 8>
 //SAFE:    redundant:
 //SAFE:     <T:2:10, 24> <T:2:10, ?>
 //SAFE:    lock:

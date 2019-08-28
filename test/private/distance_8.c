@@ -19,8 +19,6 @@ void foo() {
 //CHECK:     <A, 80000>:[1,1]
 //CHECK:    induction:
 //CHECK:     <I:6:7, 4>:[Int,1,100,1]
-//CHECK:    direct access:
-//CHECK:     <A, 80000> | <I:6:7, 4> | <J:6:10, 4>
 //CHECK:    lock:
 //CHECK:     <I:6:7, 4>
 //CHECK:    header access:
@@ -40,8 +38,6 @@ void foo() {
 //CHECK:      <J:6:10, 4>:[Int,1,100,1]
 //CHECK:     read only:
 //CHECK:      <I:6:7, 4>
-//CHECK:     direct access:
-//CHECK:      <A, 80000> | <I:6:7, 4> | <J:6:10, 4>
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4>
 //CHECK:     header access:
@@ -61,8 +57,6 @@ void foo() {
 //CHECK:      <J:6:10, 4>:[Int,0,100,1]
 //CHECK:     read only:
 //CHECK:      <I:6:7, 4>
-//CHECK:     direct access:
-//CHECK:      <A, 80000> | <I:6:7, 4> | <J:6:10, 4>
 //CHECK:     lock:
 //CHECK:      <J:6:10, 4>
 //CHECK:     header access:

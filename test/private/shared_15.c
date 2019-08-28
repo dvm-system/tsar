@@ -38,6 +38,8 @@ void foo() {
 //CHECK:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4> <IEnd, 4>
+//CHECK:    direct access (separate):
+//CHECK:     <I:6:12, 4> <IEnd, 4> <J:5:10, 4> <JEnd, 4> <JStart, 4> <U, 80000>
 //CHECK:   loop at depth 2 shared_15.c:11:5
 //CHECK:     shared:
 //CHECK:      <U, 80000>
@@ -55,6 +57,8 @@ void foo() {
 //CHECK:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4>
 //CHECK:     lock (separate):
 //CHECK:      <J:5:10, 4> <JEnd, 4>
+//CHECK:     direct access (separate):
+//CHECK:      <I:6:12, 4> <J:5:10, 4> <JEnd, 4> <U, 80000>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 shared_15.c:6:3
 //SAFE:    private:
@@ -69,8 +73,6 @@ void foo() {
 //SAFE:     <I:6:12, 4>:[Int,,,1]
 //SAFE:    read only:
 //SAFE:     <IEnd, 4> | <JEnd, 4>
-//SAFE:    direct access:
-//SAFE:     <I:6:12, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4> | <U, 80000>
 //SAFE:    lock:
 //SAFE:     <I:6:12, 4> | <IEnd, 4>
 //SAFE:    header access:
@@ -90,8 +92,6 @@ void foo() {
 //SAFE:      <J:5:10, 4>:[Int,,,1]
 //SAFE:     read only:
 //SAFE:      <I:6:12, 4> | <JEnd, 4>
-//SAFE:     direct access:
-//SAFE:      <I:6:12, 4> | <J:5:10, 4> | <JEnd, 4> | <U, 80000>
 //SAFE:     lock:
 //SAFE:      <J:5:10, 4> | <JEnd, 4>
 //SAFE:     header access:

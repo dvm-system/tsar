@@ -19,8 +19,6 @@ void foo() {
 //CHECK:     <I:5:7, 4>:[Int,,,1]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4> | <JEnd, 4> | <JStart, 4> | <KEnd, 4> | <KStart, 4>
-//CHECK:    direct access:
-//CHECK:     <I:5:7, 4> | <IEnd, 4> | <J:5:10, 4> | <JEnd, 4> | <JStart, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:    lock:
 //CHECK:     <I:5:7, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -42,8 +40,6 @@ void foo() {
 //CHECK:      <J:5:10, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:5:7, 4> | <JEnd, 4> | <KEnd, 4> | <KStart, 4>
-//CHECK:     direct access:
-//CHECK:      <I:5:7, 4> | <J:5:10, 4> | <JEnd, 4> | <K:5:13, 4> | <KEnd, 4> | <KStart, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:     lock:
 //CHECK:      <J:5:10, 4> | <JEnd, 4>
 //CHECK:     header access:
@@ -65,8 +61,6 @@ void foo() {
 //CHECK:       <K:5:13, 4>:[Int,,,1]
 //CHECK:      read only:
 //CHECK:       <I:5:7, 4> | <J:5:10, 4> | <KEnd, 4>
-//CHECK:      direct access:
-//CHECK:       <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4> | <KEnd, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:      lock:
 //CHECK:       <K:5:13, 4> | <KEnd, 4>
 //CHECK:      header access:
@@ -86,8 +80,6 @@ void foo() {
 //CHECK:        <M:5:16, 4>:[Int,0,5,1]
 //CHECK:       read only:
 //CHECK:        <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4>
-//CHECK:       direct access:
-//CHECK:        <I:5:7, 4> | <J:5:10, 4> | <K:5:13, 4> | <M:5:16, 4> | <U, 40000000>
 //CHECK:       lock:
 //CHECK:        <M:5:16, 4>
 //CHECK:       header access:

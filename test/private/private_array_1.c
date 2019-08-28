@@ -18,8 +18,6 @@ void foo(double *X, int N) {
 //CHECK:     <I:3:12, 4>:[Int,1,,1]
 //CHECK:    read only:
 //CHECK:     <N:1:25, 4> | <X:1:18, 8>
-//CHECK:    direct access:
-//CHECK:     <I:3:12, 4> | <N:1:25, 4> | <T:2:10, 16> | <X:1:18, 8>
 //CHECK:    lock:
 //CHECK:     <I:3:12, 4> | <N:1:25, 4>
 //CHECK:    header access:

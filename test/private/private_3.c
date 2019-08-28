@@ -13,8 +13,6 @@ int foo(int Y) {
 //CHECK:     <I:2:7, 4>:[Int,0,10,1]
 //CHECK:    read only:
 //CHECK:     <Y:1:13, 4>
-//CHECK:    direct access:
-//CHECK:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
 //CHECK:    redundant:
 //CHECK:     <X:2:10, 4>
 //CHECK:    lock:
@@ -37,8 +35,6 @@ int foo(int Y) {
 //REDUNDANT:     <I:2:7, 4>:[Int,0,10,1]
 //REDUNDANT:    read only:
 //REDUNDANT:     <Y:1:13, 4>
-//REDUNDANT:    direct access:
-//REDUNDANT:     <I:2:7, 4> | <Y:1:13, 4>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <X:2:10, 4>
 //REDUNDANT:    lock:
@@ -48,10 +44,10 @@ int foo(int Y) {
 //REDUNDANT:    explicit access:
 //REDUNDANT:     <I:2:7, 4> | <Y:1:13, 4>
 //REDUNDANT:    explicit access (separate):
-//REDUNDANT:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//REDUNDANT:     <I:2:7, 4> <Y:1:13, 4>
 //REDUNDANT:    redundant (separate):
 //REDUNDANT:     <X:2:10, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:2:7, 4>
 //REDUNDANT:    direct access (separate):
-//REDUNDANT:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//REDUNDANT:     <I:2:7, 4> <Y:1:13, 4>

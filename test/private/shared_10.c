@@ -16,8 +16,6 @@ void foo() {
 //CHECK:     <I:5:12, 4>:[Int,,,1]
 //CHECK:    read only:
 //CHECK:     <IEnd, 4> | <JEnd, 4> | <JStart, 4>
-//CHECK:    direct access:
-//CHECK:     <I:5:12, 4> | <IEnd, 4> | <J:6:14, 4> | <JEnd, 4> | <JStart, 4> | <U, 80000>
 //CHECK:    lock:
 //CHECK:     <I:5:12, 4> | <IEnd, 4>
 //CHECK:    header access:
@@ -37,8 +35,6 @@ void foo() {
 //CHECK:      <J:6:14, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:5:12, 4> | <JEnd, 4>
-//CHECK:     direct access:
-//CHECK:      <I:5:12, 4> | <J:6:14, 4> | <JEnd, 4> | <U, 80000>
 //CHECK:     lock:
 //CHECK:      <J:6:14, 4> | <JEnd, 4>
 //CHECK:     header access:

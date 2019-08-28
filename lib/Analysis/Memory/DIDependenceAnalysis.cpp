@@ -1497,66 +1497,18 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
 }
 
 namespace {
-/// If TraitT is set and its tag is presented in SeparateTraitListT then store
-/// a specified value in a list of traits.
-template<class TraitT, class ValueT, class SeparateTraitListT>
-struct StoreIfSet {
-  template<class Trait> void operator()() {
-    if (T.template is<Trait>())
-      Traits.template get<Trait>().insert(V);
-  }
-
-  const TraitT &T;
-  const ValueT &V;
-  SeparateTraitListT &Traits;
-};
-
-template<class TraitT, class ValueT, class SeparateTraitListT>
-StoreIfSet<TraitT, ValueT, SeparateTraitListT> getStoreIfSetFunctor(
-    const TraitT &T, const ValueT &V, SeparateTraitListT &Traits) {
-  return StoreIfSet<TraitT, ValueT, SeparateTraitListT>{ T, V, Traits};
-}
-
-template<class... SeparateTraits>
+template<class IgnoreTraitList>
 struct TraitPrinter {
   /// Sorted list of traits to (print their in algoristic order).
   using SortedVarListT = std::set<std::string, std::less<std::string>>;
-
-  /// Container of traits which should be printed if they have been set for
-  /// a memory location separately (it may not be set for the whole alias node).
-  using SeparateTraitList =
-    bcl::tags::get_tagged_tuple_t<SortedVarListT, SeparateTraits...>;
-
-  /// Functor to print some traits for memory locations separately.
-  struct SeparatePrinter {
-    template<class TagT> void operator()() {
-      if (Traits.template get<TagT>().empty())
-        return;
-      OS << Offset << TagT::toString() << " (separate):\n" << Offset;
-      for (auto &T : Traits.template get<TagT>())
-        OS << " " << T;
-      OS << "\n";
-    }
-    SeparateTraitList &Traits;
-    std::string Offset;
-    llvm::raw_ostream &OS;
-  };
 
   explicit TraitPrinter(raw_ostream &OS, const DIAliasTree &DIAT,
     StringRef Offset, unsigned DWLang) :
     mOS(OS), mDIAT(&DIAT), mOffset(Offset), mDWLang(DWLang) {}
 
-  /// Print traits from `SeparateTraits` if they have been set for
-  /// a memory location separately (it may not be set for the whole alias node).
-  void printSeparateTraits() {
-    bcl::TypeList<SeparateTraits...>::template for_each_type(
-      SeparatePrinter{ mSeparateTraits, mOffset, mOS });
-  }
-
   template<class Trait> void operator()(
       ArrayRef<const DIAliasTrait *> TraitVector) {
-    if (TraitVector.empty() || std::is_same<Trait, trait::NoRedundant>() ||
-        std::is_same<Trait, trait::IndirectAccess>())
+    if (bcl::IsTypeExist<Trait, IgnoreTraitList>::value || TraitVector.empty())
       return;
     mOS << mOffset << Trait::toString() << ":\n";
     /// Sort traits to print their in algoristic order.
@@ -1576,8 +1528,6 @@ struct TraitPrinter {
         std::string Str;
         raw_string_ostream TmpOS(Str);
         printDILocationSource(mDWLang, *T->getMemory(), TmpOS);
-        bcl::TypeList<SeparateTraits...>::template for_each_type(
-          getStoreIfSetFunctor(*T, TmpOS.str(), mSeparateTraits));
         traitToStr(T->get<Trait>(), TmpOS);
         VarLists.back().insert(TmpOS.str());
       }
@@ -1661,7 +1611,60 @@ struct TraitPrinter {
   const DIAliasTree *mDIAT;
   std::string mOffset;
   unsigned mDWLang;
-  SeparateTraitList mSeparateTraits;
+};
+/// If trait is set and its tag is presented in TraitList then store
+/// string representation of a trait in a list of traits.
+template<class TraitList, class StorageTraitList = TraitList>
+struct StoreIfInList {
+  /// Sorted list of traits to (print their in algoristic order).
+  using SortedVarListT = std::set<std::string, std::less<std::string>>;
+
+  /// Map from tag to a sorted list of traits.
+  using TraitMap =
+    bcl::tags::get_tagged_tuple_t<SortedVarListT, StorageTraitList>;
+
+  StoreIfInList(unsigned DWLang, const DIMemoryTrait &T, TraitMap &Map) :
+    mDWLang(DWLang), mTrait(T), mTraits(Map) {}
+
+  template<class Trait> void operator()() {
+    insert<Trait>(bcl::IsTypeExist<Trait, TraitList>());
+  }
+
+  template<class Trait> void insert(std::true_type) {
+    if (mTraitStr.empty()) {
+      raw_string_ostream TmpOS(mTraitStr);
+      printDILocationSource(mDWLang, *mTrait.getMemory(), TmpOS);
+    }
+    mTraits.template get<Trait>().insert(mTraitStr);
+  }
+
+  template<class Trait> void insert(std::false_type) {}
+
+private:
+  unsigned mDWLang;
+  const DIMemoryTrait &mTrait;
+  TraitMap &mTraits;
+  std::string mTraitStr;
+};
+
+/// Functor to print some traits for memory locations which are stored in a
+/// specified list.
+template<class TraitList>
+struct TraitListPrinter {
+  using TraitMap = typename StoreIfInList<TraitList>::TraitMap;
+
+  template<class TagT> void operator()() {
+    if (Traits.template get<TagT>().empty())
+      return;
+    OS << Offset << TagT::toString() << " (separate):\n" << Offset;
+    for (auto &T : Traits.template get<TagT>())
+      OS << " " << T;
+    OS << "\n";
+  }
+
+  llvm::raw_ostream &OS;
+  std::string Offset;
+  TraitMap &Traits;
 };
 }
 
@@ -1699,21 +1702,42 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
     using TraitMap = bcl::StaticTraitMap<
       std::vector<const DIAliasTrait *>, MemoryDescriptor>;
     TraitMap TM;
-    DenseSet<const DIAliasNode *> Coverage;
-    accessCoverage<bcl::SimpleInserter>(Info->get<DIDependenceSet> (),
+    DenseSet<const DIAliasNode *> Coverage, RedundantCoverage;
+    accessCoverage<bcl::SimpleInserter>(Info->get<DIDependenceSet>(),
       DIAT, Coverage, GlobalOpts.IgnoreRedundantMemory);
+    if (GlobalOpts.IgnoreRedundantMemory)
+      accessCoverage<bcl::SimpleInserter>(Info->get<DIDependenceSet>(),
+        DIAT, RedundantCoverage, false);
+    // List of traits which should be printed if they have been set for
+    // a memory location separately (it may not be set for the whole alias node).
+    using SeparateTrateList = bcl::TypeList<
+      trait::ExplicitAccess, trait::Redundant, trait::Lock,
+      trait::NoPromotedScalar, trait::DirectAccess, trait::IndirectAccess>;
+    StoreIfInList<SeparateTrateList>::TraitMap SeparateTraits;
     for (auto &TS : Info->get<DIDependenceSet>()) {
-      if (Coverage.count(TS.getNode()))
+      if (Coverage.count(TS.getNode())) {
         TS.for_each(
           bcl::TraitMapConstructor<const DIAliasTrait, TraitMap>(TS, TM));
-      else if (TS.is<trait::Redundant>())
+        for (auto &DIMTraitItr : TS)
+          DIMTraitItr->for_each(
+            StoreIfInList<SeparateTrateList>{
+              *DWLang, *DIMTraitItr, SeparateTraits});
+
+      } else if (GlobalOpts.IgnoreRedundantMemory &&
+                 RedundantCoverage.count(TS.getNode())) {
         TM.value<trait::Redundant>().push_back(&TS);
+        for (auto &DIMTraitItr : TS)
+          DIMTraitItr->for_each(
+            StoreIfInList<bcl::TypeList<trait::Redundant>, SeparateTrateList>{
+              *DWLang, *DIMTraitItr, SeparateTraits});
+      }
     }
-    TraitPrinter<trait::ExplicitAccess, trait::Redundant, trait::Lock,
-      trait::NoPromotedScalar, trait::DirectAccess, trait::IndirectAccess>
-        Printer(OS, DIAT, Offset, *DWLang);
-    TM.for_each(Printer);
-    Printer.printSeparateTraits();
+    using IgnoreTrateList = bcl::TypeList<trait::NoRedundant,
+      trait::DirectAccess, trait::IndirectAccess>;
+    TM.for_each(
+      TraitPrinter<IgnoreTrateList>{OS, DIAT, Offset, *DWLang});
+    SeparateTrateList::for_each_type(
+      TraitListPrinter<SeparateTrateList>{ OS, Offset, SeparateTraits });
   });
 }
 

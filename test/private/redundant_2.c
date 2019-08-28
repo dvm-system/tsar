@@ -19,8 +19,6 @@ void foo() {
 //CHECK:     <A, 40> <B, 44>:[1,1] bar():7:7
 //CHECK:    induction:
 //CHECK:     <I:5:12, 4>:[Int,0,10,1]
-//CHECK:    direct access:
-//CHECK:     <A, 40> <B, 44> bar():7:7 | <I:5:12, 4>
 //CHECK:    redundant:
 //CHECK:     <A, 40> <B, 44> bar():7:7
 //CHECK:    lock:
@@ -45,8 +43,6 @@ void foo() {
 //REDUNDANT:     <B, 44>:[1,1]
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:5:12, 4>:[Int,0,10,1]
-//REDUNDANT:    direct access:
-//REDUNDANT:     <A, 40> | <B, 44> | <I:5:12, 4>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <A, 40> <B, 44> bar():7:7
 //REDUNDANT:    lock:
@@ -56,10 +52,10 @@ void foo() {
 //REDUNDANT:    explicit access:
 //REDUNDANT:     <I:5:12, 4>
 //REDUNDANT:    explicit access (separate):
-//REDUNDANT:     <I:5:12, 4> bar():7:7
+//REDUNDANT:     <I:5:12, 4>
 //REDUNDANT:    redundant (separate):
 //REDUNDANT:     bar():7:7
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:5:12, 4>
 //REDUNDANT:    direct access (separate):
-//REDUNDANT:     <A, 40> <B, 44> <I:5:12, 4> bar():7:7
+//REDUNDANT:     <A, 40> <B, 44> <I:5:12, 4>

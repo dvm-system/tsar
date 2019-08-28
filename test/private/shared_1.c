@@ -12,8 +12,6 @@ void foo(int I) {
 //CHECK:     <J:4:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <I:3:14, 4>
-//CHECK:    direct access:
-//CHECK:     <I:3:14, 4> | <J:4:12, 4> | <U, 80000>
 //CHECK:    lock:
 //CHECK:     <J:4:12, 4>
 //CHECK:    header access:

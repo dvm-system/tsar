@@ -18,8 +18,6 @@ double foo(int N) {
 //CHECK:     <I:7:12, 4>:[Int,0,,1]
 //CHECK:    reduction:
 //CHECK:     <Res:5:10, 8>:add
-//CHECK:    direct access:
-//CHECK:     <I:7:12, 4> | <Res:5:10, 8> | <S:4:14, 16>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <S:4:14, 16>
 //CHECK:    header access:

@@ -19,8 +19,6 @@ void foo(int N) {
 //CHECK:     <A:{4:3|4:10}, ?> bar():9:5
 //CHECK:    induction:
 //CHECK:     <I:8:12, 4>:[Int,0,10,1]
-//CHECK:    direct access:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
 //CHECK:    lock:
 //CHECK:     <I:8:12, 4>
 //CHECK:    header access:

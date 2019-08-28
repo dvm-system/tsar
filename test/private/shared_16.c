@@ -22,8 +22,6 @@ void foo(double (*U)[100]) {
 //CHECK:     <I:5:12, 4>:[Int,,,1]
 //CHECK:    read only:
 //CHECK:     <U:3:19, 8>
-//CHECK:    direct access:
-//CHECK:     <*U:3:19, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:5:12, 4> | <J:4:10, 4> | <U:3:19, 8>
 //CHECK:    lock:
 //CHECK:     <*U:3:19, ?> <IEnd, 4> <JEnd, 4> <JStart, 4> | <I:5:12, 4>
 //CHECK:    header access:
@@ -43,8 +41,6 @@ void foo(double (*U)[100]) {
 //CHECK:      <J:4:10, 4>:[Int,,,1]
 //CHECK:     read only:
 //CHECK:      <I:5:12, 4> | <U:3:19, 8>
-//CHECK:     direct access:
-//CHECK:      <*U:3:19, ?> <JEnd, 4> | <I:5:12, 4> | <J:4:10, 4> | <U:3:19, 8>
 //CHECK:     lock:
 //CHECK:      <*U:3:19, ?> <JEnd, 4> | <J:4:10, 4>
 //CHECK:     header access:

@@ -19,8 +19,6 @@ double foo(int N) {
 //CHECK:     <S:4:14, 16>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,,1]
-//CHECK:    direct access:
-//CHECK:     <I:7:12, 4> | <S:4:14, 16>
 //CHECK:    lock:
 //CHECK:     <I:7:12, 4> | <S:4:14, 16>
 //CHECK:    header access:

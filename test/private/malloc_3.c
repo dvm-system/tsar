@@ -24,8 +24,6 @@ void foo() {
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
 //CHECK:    read only:
 //CHECK:     <P:6:9, 8>
-//CHECK:    direct access:
-//CHECK:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?> | <I:7:12, 4> | <P:6:9, 8>
 //CHECK:    redundant:
 //CHECK:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    lock:
@@ -55,8 +53,6 @@ void foo() {
 //CHECK:     <I:11:12, 4>:[Int,0,10,1]
 //CHECK:    read only:
 //CHECK:     <P:6:9, 8>
-//CHECK:    direct access:
-//CHECK:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?> | <I:11:12, 4> | <P:6:9, 8>
 //CHECK:    redundant:
 //CHECK:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    lock:
@@ -87,8 +83,6 @@ void foo() {
 //REDUNDANT:     <I:7:12, 4>:[Int,0,100,1]
 //REDUNDANT:    read only:
 //REDUNDANT:     <P:6:9, 8>
-//REDUNDANT:    direct access:
-//REDUNDANT:     <I:7:12, 4> | <P:6:9, 8>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //REDUNDANT:    lock:
@@ -104,7 +98,7 @@ void foo() {
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:7:12, 4>
 //REDUNDANT:    direct access (separate):
-//REDUNDANT:     <*P:{8:5|9:7|12:5|13:7|6:9}, ?> <I:7:12, 4> <P:6:9, 8>
+//REDUNDANT:     <I:7:12, 4> <P:6:9, 8>
 //REDUNDANT:  loop at depth 1 malloc_3.c:11:3
 //REDUNDANT:    shared:
 //REDUNDANT:     <*P:{10:16|6:9}, ?>
@@ -116,8 +110,6 @@ void foo() {
 //REDUNDANT:     <I:11:12, 4>:[Int,0,10,1]
 //REDUNDANT:    read only:
 //REDUNDANT:     <P:6:9, 8>
-//REDUNDANT:    direct access:
-//REDUNDANT:     <I:11:12, 4> | <P:6:9, 8>
 //REDUNDANT:    redundant:
 //REDUNDANT:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //REDUNDANT:    lock:
@@ -133,4 +125,4 @@ void foo() {
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:11:12, 4>
 //REDUNDANT:    direct access (separate):
-//REDUNDANT:     <*P:{8:5|9:7|12:5|13:7|6:9}, ?> <I:11:12, 4> <P:6:9, 8>
+//REDUNDANT:     <I:11:12, 4> <P:6:9, 8>
