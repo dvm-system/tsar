@@ -557,9 +557,11 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
          !DIMTraitItr->is<trait::NoAccess>() &&
          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::ExplicitAccess>();
-    assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+    assert(!(DIMTraitItr->is<trait::Redundant>() &&
+             DIMTraitItr->is<trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
-    assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+    assert((DIMTraitItr->is<trait::Redundant>() ||
+           DIMTraitItr->is<trait::NoRedundant>()) &&
       "One of traits must be set!");
     if (!(DIMTraitItr->is<trait::Redundant>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
@@ -601,9 +603,11 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (DIMTraitItr->is<trait::IndirectAccess>() &&
         DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode())
       IndirectAccess = true;
-    assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+    assert(!(DIMTraitItr->is<trait::Redundant>() &&
+             DIMTraitItr->is<trait::NoRedundant>()) &&
       "Conflict in traits for a memory location!");
-    assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+    assert((DIMTraitItr->is<trait::Redundant>() ||
+           DIMTraitItr->is<trait::NoRedundant>()) &&
       "One of traits must be set!");
     if (DIMTraitItr->is<trait::Redundant>()) {
       if (DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()) {
@@ -1022,9 +1026,11 @@ public:
 
   void initializeImpl() {
     for (auto &DIMTraitItr : mDIATrait) {
-      assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      assert(!(DIMTraitItr->is<trait::Redundant>() &&
+               DIMTraitItr->is<trait::NoRedundant>()) &&
         "Conflict in traits for a memory location!");
-      assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      assert((DIMTraitItr->is<trait::Redundant>() ||
+             DIMTraitItr->is<trait::NoRedundant>()) &&
         "One of traits must be set!");
       auto *M = DIMTraitItr->getMemory();
       if (M->emptyBinding() || DIMTraitItr->is<trait::Redundant>() ||
@@ -1102,9 +1108,11 @@ public:
   void initializeImpl() {
     for (auto &DIMTraitItr : mDIATrait) {
       auto *M = DIMTraitItr->getMemory();
-      assert(!DIMTraitItr->is<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      assert(!(DIMTraitItr->is<trait::Redundant>() &&
+               DIMTraitItr->is<trait::NoRedundant>()) &&
         "Conflict in traits for a memory location!");
-      assert(DIMTraitItr->is_any<BCL_JOIN(trait::Redundant, trait::NoRedundant>()) &&
+      assert((DIMTraitItr->is<trait::Redundant>() ||
+             DIMTraitItr->is<trait::NoRedundant>()) &&
         "One of traits must be set!");
       if (M->emptyBinding() ||
           mIgnoreRedundant && DIMTraitItr->is<trait::Redundant>())
