@@ -1174,12 +1174,12 @@ private:
     auto processDim = [&ArrayDims, &Planes](unsigned DimIdx) {
       auto *DIDim = dyn_cast<DISubrange>(ArrayDims[DimIdx]);
       if (!DIDim)
-        return false;
+        return;
       auto Size = getConstantCount(*DIDim);
       if (!Size)
-        return false;
+        return;
       Planes[DimIdx].NumberOfPlanes = *Size;
-      for (auto I = 0; I < DimIdx; ++I)
+      for (unsigned I = 0; I < DimIdx; ++I)
         Planes[I].SizeOfPlane *= *Size;
     };
     auto DWLang = getLanguage(mDIAT->getFunction());
