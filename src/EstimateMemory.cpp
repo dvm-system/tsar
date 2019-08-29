@@ -97,7 +97,7 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
           continue;
         auto ITy = OpTy.getIndexedType();
         if (Loc.Size >= DL.getTypeStoreSize(ITy)) {
-          // If ZeroTailIdx == 1 and Idx == 1 we should also brake the loop.
+          // If ZeroTailIdx == 1 and Idx == 1 we should also break the loop.
           if (Idx == 1 || Idx == ZeroTailIdx - 1) {
             Size = DL.getTypeStoreSize(ITy);
             break;
@@ -128,23 +128,50 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
     Loc.Ptr = GEP->getPointerOperand();
     Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
-    if (!GEP->isInBounds()) {
-      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip not 'inbounds' offset\n");
-      Loc.Size = MemoryLocation::UnknownSize;
+    if (Loc.Size != MemoryLocation::UnknownSize) {
+      Type *SrcTy = GEP->getSourceElementType();
+      if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
+        auto SrcSize = DL.getTypeStoreSize(SrcTy);
+        APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (GEP->accumulateConstantOffset(DL, GEPOffset))
+          if (Loc.Size + GEPOffset.getSExtValue() <= SrcSize) {
+            Loc.Size = SrcSize;
+            return true;
+          }
+      }
+    }
+    bool IsInBounds = GEP->isInBounds();
+    for (;;) {
+      auto BasePtr = GetUnderlyingObject(Loc.Ptr, DL, 1);
+      if (BasePtr == Loc.Ptr)
+        break;
+      if (GEP = dyn_cast<GEPOperator>(BasePtr)) {
+        LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
+        IsInBounds &= GEP->isInBounds();
+      } else {
+        LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip not GEP instruction\n");
+      }
+      Loc.Ptr = BasePtr;
+    }
+    if (!IsInBounds || Loc.Size == MemoryLocation::UnknownSize) {
+      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip " << (!IsInBounds ? "not " : "")
+                        << "'inbounds' offset for location with "
+                        << (Loc.Size == MemoryLocation::UnknownSize ? "unknown"
+                                                                    : "known")
+                        << "size\n");
       return true;
     }
-    if (Loc.Size != MemoryLocation::UnknownSize) {
-      auto StashSize = Loc.Size;
-      Loc.Size = MemoryLocation::UnknownSize;
-      Type *SrcTy = GEP->getSourceElementType();
-      // We can to precise location size, if this instruction is used to
-      // access element of array or structure without shifting of a pointer.
-      if ((SrcTy->isArrayTy() || SrcTy->isStructTy()) &&
-          GEP->getNumOperands() > 2)
-        if (auto OpC = dyn_cast<ConstantInt>(GEP->getOperand(1)))
-          if (OpC->isZero())
-            Loc.Size = DL.getTypeStoreSize(SrcTy);
-      assert(StashSize <= Loc.Size && "Too small size of striped location!");
+    Loc.Size = MemoryLocation::UnknownSize;
+    if (auto GV = dyn_cast<GlobalValue>(Loc.Ptr)) {
+      auto Ty = GV->getValueType();
+      if (Ty->isSized())
+        Loc.Size = DL.getTypeStoreSize(Ty);
+    } else if (auto AI = dyn_cast<AllocaInst>(Loc.Ptr)) {
+      auto Ty = AI->getAllocatedType();
+      auto Size = AI->getArraySize();
+      if (Ty->isSized() && isa<ConstantInt>(Size))
+        Loc.Size = cast<ConstantInt>(Size)->getValue().getZExtValue() *
+          DL.getTypeStoreSize(Ty);
     }
     return true;
   }
