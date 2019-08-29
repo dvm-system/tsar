@@ -862,18 +862,25 @@ AliasTree::insert(const MemoryLocation &Base) {
       // 1. Base and Chain are x.y.z but striped locations are x.y and x.
       // It is possible due to implementation of stripMemoryLevel() function.
       // 2. Inconsistent sizes after execution of stripMemrmoyLevel() function.
-      // For example, let's consider a chain <dum[1], 8> with parent
-      // <dum, 24>-<dum, ?>. Try to insert <dum[1], ?>. If we insert it after
-      // <dum[1], 8> we will obtain incorrect sequence of sizes (? < 24)
-      // <dum[1], 8>-<dum[1],?>-<dum, 24>-<dum, ?>. So, we should create a new
-      // chain <dum[1],?> with parent <dum,?>.
-      if (auto Parent = Prev->getParent()) {
-        bool IsStripedBase = false;
-        auto StripedBase = Base;
-        do {
-          IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
-        } while (IsStripedBase && isSameBase(*mDL, StripedBase.Ptr, Base.Ptr));
-        if (IsStripedBase) {
+      bool IsStripedBase = false;
+      auto StripedBase = Base;
+      do {
+        IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
+      } while (IsStripedBase && isSameBase(*mDL, StripedBase.Ptr, Base.Ptr));
+      if (IsStripedBase) {
+        // For example, let's consider a chain <dum[2],?> with parent <dum, ?>.
+        // Try to insert <dum[2], 8>, note that stripMemoryLevel() returns
+        // <dum, 24>. So, if we insert it before <dum[2],?> we will obtain
+        // incorrect sequence of sizes after insertion its parent <dum, 24>:
+        // <dum[2],8>-<dum[2],?>-<dum,24>.
+        if (Prev->getSize() > StripedBase.Size)
+          continue;
+        // For example, let's consider a chain <dum[1], 8> with parent
+        // <dum, 24>-<dum, ?>. Try to insert <dum[1], ?>. If we insert it after
+        // <dum[1], 8> we will obtain incorrect sequence of sizes (? < 24)
+        // <dum[1], 8>-<dum[1],?>-<dum, 24>-<dum, ?>. So, we should create a new
+        // chain <dum[1],?> with parent <dum,?>.
+        if (auto Parent = Prev->getParent()) {
           if (!isSameBase(*mDL, Parent->front(), StripedBase.Ptr) ||
               Parent->getSize() < StripedBase.Size) {
             continue;
