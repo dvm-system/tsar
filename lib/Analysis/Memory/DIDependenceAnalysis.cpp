@@ -637,13 +637,19 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     HasSpuriousDep |= hasSpuriousDep(*DIMTraitItr);
     bcl::trait::set(*DIMTraitItr, DepDptr);
   }
+  assert(NumberOfCombined != 0 && "At least on memory trait must be useful!");
   // It may be 1, if some traits have been ignored (for example, redundant).
-  if (NumberOfCombined > 1)
+  if (NumberOfCombined > 1) {
+    auto OriginalTrait = CombinedTrait;
+    CombinedTrait |= BitMemoryTrait::AllUnitFlags;
     CombinedTrait &=
-      dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+      dropUnitFlag(OriginalTrait) == BitMemoryTrait::NoAccess ?
+        BitMemoryTrait::NoAccess :
+      dropUnitFlag(OriginalTrait) == BitMemoryTrait::Readonly ?
         BitMemoryTrait::Readonly :
-          dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
-            BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
+      hasSharedJoin(OriginalTrait) ? BitMemoryTrait::Shared :
+        BitMemoryTrait::Dependency;
+  }
   auto Dptr = CombinedTrait.toDescriptor(0, NumTraits);
   if (!HasSpuriousDep)
     bcl::trait::update(DepDptr, Dptr);

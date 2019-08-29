@@ -250,7 +250,16 @@ inline bool hasNoDep(const MemoryDescriptor &Dptr) {
 /// cases.
 inline bool hasSpuriousDep(const MemoryDescriptor &Dptr) {
   return !hasNoDep(Dptr) &&
-    !Dptr.is_any<trait::Flow, trait::Anti, trait::Output>();
+           !Dptr.is_any<trait::Flow, trait::Anti, trait::Output>() ||
+         bcl::ForwardTypeList<
+           bcl::trait::IsAny,
+           bcl::RemoveFromTypeList<
+             trait::Shared,
+             bcl::RemoveDuplicate<bcl::ForwardTypeList<
+               bcl::TraitList,
+               bcl::trait::find_union_t<
+                 trait::Shared, MemoryDescriptor>>::Type::Type>::Type>::
+                   Type>::Type::is_any(Dptr);
 }
 
 /// Statistic of collected memory traits.

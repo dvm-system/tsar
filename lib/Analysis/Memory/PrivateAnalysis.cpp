@@ -1047,11 +1047,15 @@ void PrivateRecognitionPass::storeResults(
     NodeTraitItr->insert(
       UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
+  auto OriginalTrait = CombinedTrait;
+  CombinedTrait |= BitMemoryTrait::AllUnitFlags;
   CombinedTrait &=
-    dropUnitFlag(CombinedTrait) == BitMemoryTrait::Readonly ?
+    dropUnitFlag(OriginalTrait) == BitMemoryTrait::NoAccess ?
+      BitMemoryTrait::NoAccess :
+    dropUnitFlag(OriginalTrait) == BitMemoryTrait::Readonly ?
       BitMemoryTrait::Readonly :
-        dropUnitFlag(CombinedTrait) == BitMemoryTrait::Shared ?
-          BitMemoryTrait::Shared : BitMemoryTrait::Dependency;
+    hasSharedJoin(OriginalTrait) ? BitMemoryTrait::Shared :
+      BitMemoryTrait::Dependency;
   if (NodeTraitItr->is<trait::ExplicitAccess>()) {
     *NodeTraitItr = CombinedTrait.toDescriptor(NodeTraitItr->count(), NumTraits);
       bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);
