@@ -30,6 +30,7 @@
 #include "BitMemoryTrait.h"
 #include "tsar_dbg_output.h"
 #include "DIEstimateMemory.h"
+#include "DFRegionInfo.h"
 #include "EstimateMemory.h"
 #include "GlobalOptions.h"
 #include "tsar_query.h"
@@ -46,6 +47,7 @@
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
+#include <llvm/Transforms/Utils/Local.h>
 #include <tuple>
 #include <utility>
 
@@ -62,6 +64,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(DIDependencyAnalysisPass, "da-di",
   "Dependency Analysis (Metadata)", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
+  INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass);
   INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass);
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
   INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
@@ -1250,10 +1253,160 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
         }
         T.set<trait::Induction>(new trait::DIInduction(ID.getKind()));
       });
+    } else {
+      propagateReduction(Phi, L, DWLang, DIAliasSTR, LockedTraits, Pool);
     }
   }
   if (!HasFunNoNaNAttr)
     F.addFnAttr("no-nans-fp-math", "false");
+}
+
+void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
+    Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const tsar::DIMemory *> LockedTraits,
+    tsar::DIMemoryTraitRegionPool &Pool) {
+  // Collect reduction candidates.
+  SmallVector<DIMemoryLocation, 2> DILocs;
+  for (const auto &Incoming : Phi->incoming_values()) {
+    if (!L->contains(Phi->getIncomingBlock(Incoming)))
+      continue;
+    LLVM_DEBUG(dbgs() << "[DA DI]: check whether promoted location ";
+    printLocationSource(dbgs(), Incoming, mDT); dbgs() << " is reduction\n");
+    Instruction * Users[] = { &Phi->getIncomingBlock(Incoming)->back() };
+    findMetadata(Incoming, Users, *mDT, DILocs);
+  }
+  if (DILocs.empty())
+    return;
+  // This check whether there is a copy (X=Y) from some of reduction candidates
+  // to a variable which is not presented in a list of reduction candidates.
+  auto hasCopyFromReduction = [&DILocs](Instruction *I) {
+    SmallVector<DbgValueInst *, 2> DbgValues;
+    findDbgValues(DbgValues, I);
+    return any_of(DbgValues, [&DILocs](DbgValueInst *DVI) {
+      return hasDeref(*DVI->getExpression()) ||
+        !is_contained(DILocs, DIMemoryLocation::get(DVI));
+    });
+  };
+  if (hasCopyFromReduction(Phi))
+    return;
+  SmallVector<DIMemoryTraitRegionPool::iterator, 2> Traits;
+  auto allowToUpdate =
+    [&Pool, &LockedTraits, &DIAliasSTR, &Traits](DIMemoryLocation &DILoc) {
+    auto *MD = getRawDIMemoryIfExists(DILoc.Var->getContext(), DILoc);
+    if (!MD)
+      return false;
+    auto DIMTraitItr = Pool.find_as(MD);
+    if (DIMTraitItr == Pool.end() ||
+      DIMTraitItr->getMemory()->isOriginal() ||
+      !DIMTraitItr->getMemory()->emptyBinding() ||
+      !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
+      isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
+      return false;
+    Traits.push_back(DIMTraitItr);
+    return true;
+  };
+  if (!all_of(DILocs, allowToUpdate))
+    return;
+  // This check whether result of this instruction is a value of some
+  // of reduction candidates (To) or this instruction is associated
+  // with copy from (From) reduction candidates
+  // to a variable which is not presented in a list of reduction candidates.
+  struct ReductionCopy { bool To, From; };
+  auto useReduction = [&DILocs](Instruction *I) -> ReductionCopy {
+    SmallVector<DbgValueInst *, 2> DbgValues;
+    findDbgValues(DbgValues, I);
+    ReductionCopy Copy{ false, false };
+    any_of(DbgValues, [&DILocs, &Copy](DbgValueInst *DVI) {
+      bool Tmp = !hasDeref(*DVI->getExpression()) &&
+        is_contained(DILocs, DIMemoryLocation::get(DVI));
+      Copy.To |= Tmp;
+      Copy.From |= !Tmp;
+      return Copy.To && Copy.From;
+    });
+    return Copy;
+  };
+  SmallPtrSet<Loop *, 1> ReductionLoops;
+  SmallPtrSet<Instruction *, 8> LCSSAPhis{ Phi };
+  Optional<trait::DIReduction::ReductionKind> RedKind;
+  // Check whether inner loop does not allow some of candidates be a
+  // reduction variable in outer loop.
+  //
+  // If candidate is a reduction in the inner loop update reduction kind,
+  // remember loop and LCSSA Phi node which is associated with reduction.
+  auto isLoopPreventReduction =
+    [this, &useReduction, &Traits, &ReductionLoops, &LCSSAPhis, &RedKind](
+      Loop *InnerL) {
+    if (!InnerL->getLoopID())
+      return false;
+    auto &InnerPool = *(*mTraitPool)[InnerL->getLoopID()];
+    for (auto &DIMTraitItr : Traits) {
+      auto InnerTraitItr = InnerPool.find_as(DIMTraitItr->getMemory());
+      if (InnerTraitItr == InnerPool.end())
+        return false;
+      if (!InnerTraitItr->is<trait::Reduction>())
+        return true;
+      auto *Red = InnerTraitItr->get<trait::Reduction>();
+      if (!Red || !*Red)
+        RedKind = trait::DIReduction::RK_NoReduction;
+      else if (!RedKind)
+        RedKind = Red->getKind();
+      else if (*RedKind != Red->getKind())
+        RedKind = trait::DIReduction::RK_NoReduction;
+      ReductionLoops.insert(InnerL);
+      for (auto *BB : InnerL->blocks())
+        for (const auto &I : *BB)
+          for (auto &U : I.uses())
+            if (auto *UI = dyn_cast<PHINode>(U.getUser())) {
+              auto *UserBB = UI->getParent();
+              if (InnerL->contains(UserBB))
+                continue;
+              auto Copy = useReduction(UI);
+              if (!Copy.To)
+                continue;
+              if (Copy.From)
+                return true;
+              LCSSAPhis.insert(UI);
+            }
+    }
+    return false;
+  };
+  if (any_of(*L, isLoopPreventReduction) || !RedKind)
+    return;
+  // Check whether some of reduction candidates are accessed
+  // in a loop except  inner loops in which these candidates
+  // are reductions.
+  auto isUsedInLoop =
+    [this, &DILocs, &ReductionLoops, Phi, L](Instruction *I) {
+    for (const auto &U : I->uses()) {
+      if (!isa<Instruction>(U))
+        return true;
+      auto *UI = cast<Instruction>(U.getUser());
+      if (UI == Phi)
+        continue;
+      if (!L->contains(UI->getParent()))
+        continue;
+      auto *UseL = mLI->getLoopFor(UI->getParent());
+      if (UseL == L || !ReductionLoops.count(UseL))
+        return true;
+    }
+    return false;
+  };
+  if (any_of(LCSSAPhis, isUsedInLoop))
+    return;
+  for (auto &DIMTraitItr : Traits) {
+    LLVM_DEBUG(if (DWLang) {
+      dbgs() << "[DA DI]: update traits for ";
+      printDILocationSource(*DWLang, *DIMTraitItr->getMemory(), dbgs());
+      dbgs() << "\n";
+    });
+    if (*RedKind != trait::DIReduction::RK_NoReduction)
+      DIMTraitItr->set<trait::Reduction>(new trait::DIReduction(*RedKind));
+    else
+      DIMTraitItr->set<trait::Reduction>();
+    LLVM_DEBUG(dbgs() << "[DA DI]: reduction found\n");
+    ++NumTraits.get<trait::Reduction>();
+  }
 }
 
 void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
@@ -1434,6 +1587,15 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
   // promoted locations or by the private recognition pass).
 }
 
+/// Recurse through all subloops and all loops  into LQ.
+static void addLoopIntoQueue(DFNode *DFN, std::deque<DFLoop *> &LQ) {
+  if (auto *DFL = dyn_cast<DFLoop>(DFN)) {
+    LQ.push_front(DFL);
+    for (auto *I : DFL->getRegions())
+      addLoopIntoQueue(I, LQ);
+  }
+}
+
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
@@ -1442,17 +1604,21 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mAT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
+  mLI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  mTraitPool = &getAnalysis<DIMemoryTraitPoolWrapper>().get();
+  auto &DFI = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &PI = getAnalysis<PrivateRecognitionPass>().getPrivateInfo();
   auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
-  auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
   auto &DL = F.getParent()->getDataLayout();
   auto DWLang = getLanguage(F);
   SpanningTreeRelation<AliasTree *> AliasSTR(mAT);
   SpanningTreeRelation<const DIAliasTree *> DIAliasSTR(&DIAT);
-  for (auto &Info : PI) {
-    if (!isa<DFLoop>(Info.get<DFNode>()))
-      continue;
-    auto L = cast<DFLoop>(Info.get<DFNode>())->getLoop();
+  auto *DFF = cast<DFFunction>(DFI.getTopLevelRegion());
+  std::deque<DFLoop *> LQ;
+  for (auto *DFN : DFF->getRegions())
+    addLoopIntoQueue(DFN, LQ);
+  for (auto *DFL : LQ) {
+    auto L = DFL->getLoop();
     /// TODO (kaniandr@gmail.com): use other identifier because LLVM identifier
     /// may be lost.
     if (!L->getLoopID())
@@ -1463,7 +1629,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       if (DebugLoc DbgLoc = L->getStartLoc()) {
         dbgs() << "[DA DI]: loop at ";  DbgLoc.print(dbgs()); dbgs() << "\n";
       });
-    auto &Pool = TraitPool[DILoop];
+    auto &Pool = (*mTraitPool)[DILoop];
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     SmallVector<const DIMemory *, 4> LockedTraits;
     if (!Pool) {
@@ -1473,7 +1639,8 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
         if (T.is<trait::Lock>())
           LockedTraits.push_back(T.getMemory());
     }
-    auto &DepSet = Info.get<DependenceSet>();
+    assert(PI.count(DFL) && "IR-level traits must be available for a loop!");
+    auto &DepSet = PI.find(DFL)->get<DependenceSet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
     analyzePromoted(L, DWLang, DIAliasSTR, LockedTraits, *Pool);
     for (auto *DIN : post_order(&DIAT)) {
@@ -1757,6 +1924,7 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
 
 void DIDependencyAnalysisPass::getAnalysisUsage(AnalysisUsage &AU)  const {
   AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<EstimateMemoryPass>();

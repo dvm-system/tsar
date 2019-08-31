@@ -38,6 +38,8 @@
 
 namespace llvm {
 class DominatorTree;
+class LoopInfo;
+class PHINode;
 class ScalarEvolution;
 class MDNode;
 }
@@ -129,6 +131,14 @@ private:
     ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DIMemoryTraitRegionPool &Pool);
 
+  /// Propagate reduction from inner loops if possible.
+  ///
+  /// Check whether a specified Phi node represents reduction in the loop.
+  void propagateReduction(PHINode *Phi, Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const tsar::DIMemory *> LockedTraits,
+    tsar::DIMemoryTraitRegionPool &Pool);
+
   /// Perform analysis of a specified metadata-level alias node.
   ///
   /// Descendant alias node must be already analyzed. This method use results
@@ -144,6 +154,8 @@ private:
 
   tsar::DIDependencInfo mDeps;
   tsar::AliasTree *mAT;
+  tsar::DIMemoryTraitPool *mTraitPool;
+  LoopInfo *mLI;
   DominatorTree *mDT;
   ScalarEvolution *mSE;
 };
