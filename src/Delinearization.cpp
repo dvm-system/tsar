@@ -189,7 +189,8 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     return;
   }
   for (auto &Range : ArrayInfo) {
-    assert(ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size()
+    assert((!Range.isElement() ||
+      ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size())
       && "Unknown subscripts in right dimensions with constant sizes!");
     // In some cases zero subscript is dropping out by optimization passes.
     // So, we try to add extra zero subscripts.
