@@ -652,6 +652,10 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       Ptr.get<EstimateMemory *>()->getAliasNode(*this);
   };
   for (;;) {
+    // This condition is necessary due to alias node which contains full memory
+    // should not be descendant of a node which contains part of this memory.
+    if (ChildrenNodes.count(Current))
+      return cast<AliasEstimateNode>(Current);
     Aliases.clear();
     for (auto &Ch : make_range(Current->child_begin(), Current->child_end())) {
       auto Result = Ch.slowMayAlias(NewEM, *mAA);
@@ -692,10 +696,7 @@ AliasEstimateNode * AliasTree::addEmptyNode(
         Node->setParent(*NewNode, *this);
         return NewNode;
       }
-      // The second condition is necessary due to alias node which contains
-      // full memory should not be descendant of a node which contains part
-      // of this memory.
-      if (!AD.is<trait::ContainedAlias>() || ChildrenNodes.count(Node))
+      if (!AD.is<trait::ContainedAlias>())
         return Node;
       Current = Node;
       continue;
