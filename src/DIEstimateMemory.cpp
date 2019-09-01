@@ -1363,7 +1363,7 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
       auto CurrEM = &EM;
-      while (Base == Root->front() && CurrEM != Root) {
+      while (isSameBase(DL, Base, Root->front()) && CurrEM != Root) {
         auto ParentEM = CurrEM->getParent();
         if (Offset != 0 || CurrEM->getSize() != ParentEM->getSize())
           RootOffsets.try_emplace(CurrEM->front(), Offset);
