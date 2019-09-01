@@ -1422,10 +1422,12 @@ std::pair<DIVariable *, DILocation *> buildDIExpression(
     return buildDIExpression(DL, DT, LI->getPointerOperand(), Expr, IsTemplate);
   }
   SmallVector<DIMemoryLocation, 4> DILocs;
+  MDSearch Status;
+  auto Info = findMetadata(Base, DILocs, &DT, MDSearch::Any, &Status);
   auto DILoc = findMetadata(Base, DILocs, &DT);
   if (!DILoc || (DILoc->Expr && !DILoc->Expr->isValid()))
     return std::make_pair(nullptr, nullptr);
-  if (!isa<AllocaInst>(Base) && !isa<GlobalVariable>(Base))
+  if (Status != MDSearch::AddressOfVariable)
     Expr.push_back(dwarf::DW_OP_deref);
   if (DILoc->Expr)
     Expr.append(DILoc->Expr->elements_begin(), DILoc->Expr->elements_end());

@@ -422,9 +422,11 @@ enum class MDSearch { AddressOfVariable, ValueOfVariable, Any };
 /// \return A variable from `DILocs`, llvm.dbg.value for this
 /// variable dominates llvm.dbg.value for other variables from `DILocs`. If
 /// there is no such variable, None is returned.
+/// `Status` will be set if it is not nullptr.
 llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value * V,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs,
-  const llvm::DominatorTree *DT = nullptr, MDSearch MDS = MDSearch::Any);
+  const llvm::DominatorTree *DT = nullptr, MDSearch MDS = MDSearch::Any,
+  MDSearch *Status = nullptr);
 
 /// Return meta information for a specified value or None.
 ///

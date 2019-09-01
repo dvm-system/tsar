@@ -348,9 +348,11 @@ Optional<DIMemoryLocation> findMetadata(const Value *V,
 
 Optional<DIMemoryLocation> findMetadata(const Value * V,
     SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT,
-    MDSearch MDS) {
+    MDSearch MDS, MDSearch *Status) {
   assert(V && "Value must not be null!");
   DILocs.clear();
+  if (Status)
+    *Status = MDSearch::AddressOfVariable;
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
     if ((MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) &&
         findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
@@ -380,6 +382,8 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
   }
   if (!DT || MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
     return None;
+  if (Status)
+    *Status = MDSearch::ValueOfVariable;
   SmallVector<Instruction *, 8> Users;
   // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
   // If `V` is a declaration of a function then call of this function will

@@ -57,6 +57,8 @@ struct_1.init
 struct_2.init
 struct_3.init
 struct_4.init
+struct_5.init
+struct_6.safe.init
 address_1.init
 pointer_1.safe.init
 pointer_2.safe.init
