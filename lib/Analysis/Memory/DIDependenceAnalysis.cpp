@@ -1564,7 +1564,8 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIATraitItr->insert(DIMTraitItr);
     }
   }
-  if (CurrentPromoted.Memory && CurrentPromoted.Collapse) {
+  if (CurrentPromoted.Memory && CurrentPromoted.Collapse &&
+      CurrentPromoted.Trait != BitMemoryTrait::NoAccess) {
     DIMemoryTraitRef DIMTraitItr;
     std::tie(DIMTraitItr, std::ignore) =
       addOrUpdateInPool(*CurrentPromoted.Memory,
