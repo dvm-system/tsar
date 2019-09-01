@@ -155,10 +155,9 @@ bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &MemInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
   for (auto &Match : MemInfo.Matcher) {
-    auto SearchType = isa<GlobalVariable>(Match.get<IR>()) ?
-      MDSearch::ValueOfVariable : MDSearch::AddressOfVariable;
     SmallVector<DIMemoryLocation, 1> DILocs;
-    auto MD = findMetadata(Match.get<IR>(), DILocs, &DT, SearchType);
+    auto MD = findMetadata(Match.get<IR>(), DILocs, &DT,
+      MDSearch::AddressOfVariable);
     if (MD && MD->isValid() && MD->Expr->getNumElements() == 0) {
       mMatcher.emplace(Match.get<AST>(), MD->Var);
       if (mUnmatchedAST.erase(Match.get<AST>()))

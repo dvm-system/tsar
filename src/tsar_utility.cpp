@@ -352,7 +352,7 @@ Optional<DIMemoryLocation> findMetadata(const Value * V,
   assert(V && "Value must not be null!");
   DILocs.clear();
   if (auto GV = dyn_cast<GlobalVariable>(V)) {
-    if ((MDS == MDSearch::Any || MDS == MDSearch::ValueOfVariable) &&
+    if ((MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) &&
         findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
       return DILocs.back();
     else
