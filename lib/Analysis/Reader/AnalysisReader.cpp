@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include <bcl/cell.h>
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
 #include <llvm/IR/Function.h>
@@ -74,11 +75,35 @@ using TraitT = bcl::tagged_tuple<
     Optional<trait::json_::LoopImpl::Private::ValueType::const_iterator>,
       trait::Private>,
   bcl::tagged<
+    Optional<trait::json_::LoopImpl::UseAfterLoop::ValueType::const_iterator>,
+      trait::UseAfterLoop>,
+  bcl::tagged<
     Optional<trait::json_::LoopImpl::Anti::ValueType::const_iterator>,
       trait::Anti>,
   bcl::tagged<
     Optional<trait::json_::LoopImpl::Flow::ValueType::const_iterator>,
-      trait::Flow>>;
+      trait::Flow>
+>;
+
+template<std::size_t Idx, class... Tags> struct IsOnlyImpl {
+  static bool is(const TraitT &Traits) {
+    if (bcl::is_contained<typename bcl::tagged_tuple_tag<Idx, TraitT>::type,
+                          Tags...>::value)
+      return std::get<Idx>(Traits) && IsOnlyImpl<Idx + 1, Tags...>::is(Traits);
+    else
+      return !std::get<Idx>(Traits) && IsOnlyImpl<Idx + 1, Tags...>::is(Traits);
+  }
+};
+
+template<class... Tags>
+struct IsOnlyImpl<bcl::tagged_tuple_size<TraitT>::value, Tags...> {
+  static bool is(const TraitT &) noexcept { return true; }
+};
+
+/// Return true if only specified traits are set.
+template<class... Tags> bool isOnly(const TraitT &Traits) {
+  return IsOnlyImpl<0, Tags...>::is(Traits);
+}
 
 /// Map from variable to its traits in some loop.
 using TraitCache = std::map<VariableT, TraitT>;
@@ -110,7 +135,7 @@ LoopCache buildLoopCache(const trait::Info &Info) {
   LoopCache Res;
   for (std::size_t I = 0, EI = Info[trait::Info::Loops].size(); I < EI; ++I) {
     auto &L = Info[trait::Info::Loops][I];
-    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add loop to cache"
+    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add loop to cache "
                       << L[trait::Loop::File] << ":" << L[trait::Loop::Line]
                       << ":" << L[trait::Loop::Column] << "\n");
     Res.emplace(LocationT{
@@ -135,6 +160,14 @@ TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
        EI = L[trait::Loop::Private].cend(); I != EI; ++I) {
     auto Pair = Res.emplace(createVar(*I), TraitT());
     Pair.first->second.get<trait::Private>() = I;
+  }
+  for (auto I = L[trait::Loop::UseAfterLoop].cbegin(),
+       EI = L[trait::Loop::UseAfterLoop].cend(); I != EI; ++I) {
+    auto Var = createVar(*I);
+    auto ResItr = Res.find(Var);
+    if (ResItr == Res.end())
+      ResItr = Res.emplace(std::move(Var), TraitT()).first;
+    ResItr->second.get<trait::UseAfterLoop>() = I;
   }
   for (auto I = L[trait::Loop::Anti].cbegin(),
        EI = L[trait::Loop::Anti].cend(); I != EI; ++I) {
@@ -248,7 +281,8 @@ bool AnalysisReader::runOnFunction(Function &F) {
                       << (*L)[trait::Loop::Column] << "\n");
     auto TraitCache = buildTraitCache(Info, *L);
     for (auto &DITrait : *TraitLoop.get<Pool>()) {
-      if (DITrait.is<trait::NoAccess>())
+      if (DITrait.is_any<trait::NoAccess, trait::Readonly, trait::Reduction,
+                         trait::Induction>())
         continue;
       auto *DIEM = dyn_cast<DIEstimateMemory>(DITrait.getMemory());
       if (!DIEM)
@@ -284,19 +318,19 @@ bool AnalysisReader::runOnFunction(Function &F) {
                         << Var.get<File>() << ":" << Var.get<Line>() << ":"
                         << Var.get<Column>() << "\n");
       auto TraitItr = TraitCache.find(Var);
-      if (TraitItr == TraitCache.end()) {
+      if (TraitItr == TraitCache.end() ||
+          isOnly<trait::UseAfterLoop>(TraitItr->second)) {
         // It may not be readonly. In the following example `A` is
         // not privatizable, however there is no dependence in this loop.
         // for (int I = 0; I < N; I += 2)
         //   A[I] = A[I + 1];
         // TODO (kaniandr@gmail.com): add readonly property to external
         // analysis results.
-        if (DITrait.is<trait::Anti>() || DITrait.is<trait::Flow>() ||
-            DITrait.is<trait::Output>())
-          DITrait.set<trait::Shared>();
+        DITrait.set<trait::Shared>();
       } else if (TraitItr->second.get<trait::Private>()) {
-        if (DITrait.is<trait::Anti>() || DITrait.is<trait::Flow>() ||
-            DITrait.is<trait::Output>())
+        if (!TraitItr->second.get<trait::UseAfterLoop>())
+          DITrait.set<trait::Private>();
+        else if (DITrait.is_any<trait::Flow, trait::Anti, trait::Output>())
           DITrait.set<trait::DynamicPrivate>();
         // TODO (kaniandr@gmail.com): it is not possible to set shared property
         // here, because there is no 'output' property in external analysis
@@ -308,9 +342,15 @@ bool AnalysisReader::runOnFunction(Function &F) {
         // Set 'shared' property after if-stmt, because 'shared' property unset
         // anti/flow/output properties.
         if (!TraitItr->second.get<Flow>() &&
-            !TraitItr->second.get<Anti>())
+            !TraitItr->second.get<Anti>() &&
+            !TriatItr->second.get<Output>()))
           DITrait.set<Shared>();
 #endif
+      } else if (DITrait.is<trait::FirstPrivate>()) {
+        if (!TraitItr->second.get<trait::UseAfterLoop>())
+          DITrait.unset<trait::LastPrivate, trait::SecondToLastPrivate,
+                        trait::DynamicPrivate>();
+
       } else {
         updateDependence<trait::Anti>(TraitItr, DITrait);
         updateDependence<trait::Flow>(TraitItr, DITrait);
@@ -319,6 +359,8 @@ bool AnalysisReader::runOnFunction(Function &F) {
         if (!TraitItr->second.get<trait::Anti>())
           DITrait.unset<trait::Anti>();
       }
+      LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set traits to ";
+                 DITrait.print(dbgs()); dbgs() << "\n");
     }
   }
   return false;

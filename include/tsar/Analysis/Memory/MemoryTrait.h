@@ -73,6 +73,7 @@ TSAR_TRAIT_DECL(NoRedundant, "no redundant")
 TSAR_TRAIT_DECL(NoPromotedScalar, "no promoted scalar")
 TSAR_TRAIT_DECL(DirectAccess, "direct access")
 TSAR_TRAIT_DECL(IndirectAccess, "indirect access")
+TSAR_TRAIT_DECL(UseAfterLoop, "use after loop")
 
 #undef TSAR_TRAIT_DECL
 

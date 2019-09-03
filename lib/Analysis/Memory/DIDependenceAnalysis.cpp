@@ -119,12 +119,14 @@ bool isLockedTrait(const DIMemoryTrait &T,
 /// Move representation of a dependence of a specified type `Tag` to
 /// metadata-level representation if it is more accurate.
 ///
-/// \pre `Tag` must be one of `trait::Flow`, `trait::Anti`, `trati::Output`.
+/// \pre `Tag` must be one of `trait::Flow`, `trait::Anti`, `trait::Output`.
 template<class Tag> void moveIf(
     DIMemoryTrait &FromDIMTrait, DIMemoryTrait &DIMTrait) {
   static_assert(std::is_same<Tag, trait::Flow>::value ||
     std::is_same<Tag, trait::Anti>::value ||
     std::is_same<Tag, trait::Output>::value, "Unknown type of dependence!");
+  if (!DIMTrait.is<Tag>())
+    return;
   if (auto *FromDep = FromDIMTrait.template get<Tag>()) {
     if (auto *DIDep = DIMTrait.template get<Tag>())
       if (DIDep->isKnownDistance())
@@ -245,11 +247,6 @@ template<class Tag> void combineIf(
 /// which should not be updated. Attached representation of traits would not
 /// be changed if appropriate trait tag will not be removed.
 /// \return `true` if something has been updated.
-///
-/// TODO (kaniandr@gmail.com): at this moment this function always update
-/// `DIMTrait`. Hence, such update may degrade analysis results in some cases.
-/// Whether these cases are possible? Should we add some checks to avoid a such
-/// behavior.
 template<class TraitT>
 bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
   if (DIMTrait.is<trait::NoPromotedScalar>())
@@ -264,20 +261,47 @@ bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
     FromDIMTrait.template set<trait::IndirectAccess>();
   if (DIMTrait.is<trait::ExplicitAccess>())
     FromDIMTrait.template set<trait::ExplicitAccess>();
+  if (DIMTrait.is_any<trait::NoAccess, trait::Readonly>())
+    return false;
+  if (DIMTrait.is<trait::Shared>() &&
+      !FromDIMTrait.template is_any<trait::NoAccess, trait::Readonly>())
+    return false;
+  if (DIMTrait.is_any<trait::Private, trait::Induction, trait::Reduction>() &&
+      !FromDIMTrait.template is_any<trait::NoAccess, trait::Readonly,
+                                    trait::Shared>())
+    return false;
   // Do not change 'second to last private' to 'last private'. This occurs
   // after loop rotate.
   if (DIMTrait.is<trait::SecondToLastPrivate>() &&
-    FromDIMTrait.template is<trait::LastPrivate>()) {
-    FromDIMTrait.template set<trait::SecondToLastPrivate>();
-    if (DIMTrait.is<trait::FirstPrivate>())
-      FromDIMTrait.template set<trait::FirstPrivate>();
-    if (DIMTrait.is<trait::Shared>())
-      FromDIMTrait.template set<trait::Shared>();
+      FromDIMTrait.template is<trait::LastPrivate>()) {
+    if (FromDIMTrait.template is<trait::Shared>() &&
+        !DIMTrait.is<trait::Shared>()) {
+      DIMTrait.set<trait::Shared>();
+      return true;
+    }
+    return false;
   }
+  bool IsChanged = false;
+  if (!FromDIMTrait.template is<trait::FirstPrivate>() &&
+      DIMTrait.is<trait::FirstPrivate>()) {
+    LLVM_DEBUG(dbgs() << "[DA DI]: drop first private\n");
+    DIMTrait.unset<trait::FirstPrivate>();
+    IsChanged = true;
+  }
+  if (DIMTrait.is_any<trait::SecondToLastPrivate, trait::LastPrivate>() &&
+      !FromDIMTrait.template is_any<trait::NoAccess, trait::Readonly,
+                                    trait::Shared, trait::Private>())
+    return IsChanged;
+  if (DIMTrait.is_any<trait::DynamicPrivate>() &&
+      !FromDIMTrait.template is_any<
+          trait::NoAccess, trait::Readonly, trait::Shared, trait::Private,
+          trait::SecondToLastPrivate, trait::LastPrivate>())
+    return IsChanged;
   // Do not use `operator=` because attached values should not be lost.
   bcl::trait::update(FromDIMTrait, DIMTrait);
   LLVM_DEBUG(dbgs() << "[DA DI]: update existing trait to ";
              DIMTrait.print(dbgs()); dbgs() << "\n");
+
   return true;
 }
 
@@ -286,7 +310,8 @@ bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
 /// Note, that `FromDIMTrait` may be invalidated to avoid redundant copy
 /// operations.
 void clarify(DIMemoryTrait &FromDIMTrait, DIMemoryTrait &DIMTrait) {
-  clarifyDescriptor(FromDIMTrait, DIMTrait);
+  if (!clarifyDescriptor(FromDIMTrait, DIMTrait))
+    return;
   moveIf<trait::Flow>(FromDIMTrait, DIMTrait);
   moveIf<trait::Anti>(FromDIMTrait, DIMTrait);
   moveIf<trait::Output>(FromDIMTrait, DIMTrait);
