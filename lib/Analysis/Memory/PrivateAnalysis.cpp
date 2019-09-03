@@ -339,34 +339,14 @@ void PrivateRecognitionPass::collectHeaderAccesses(
           return;
         auto *EM = mAliasTree->find(Loc);
         assert(EM && "Estimate memory location must not be null!");
-#ifdef LLVM_DEBUG
-        bool ExplicitAccessFound = false;
-#endif
-        // List of ambiguous pointer in EM may not contain Loc, because it
-        // contains only one pointer for each set of must alias locations.
-        // So, we search appropriate pointers because only this pointers
-        // are presented in Def-Use set.
-        auto &AA = mAliasTree->getAliasAnalysis();
-        auto &DL = I.getModule()->getDataLayout();
-        for (auto *APtr : *EM) {
-          MemoryLocation ALoc(APtr, EM->getSize(), EM->getAAInfo());
-          auto AR = aliasRelation(AA, DL, Loc, ALoc);
-          if (AR.template is<trait::CoincideAlias>()) {
-            auto ExplicitItr = DefUse.getExplicitAccesses().findContaining(ALoc);
-            assert(ExplicitItr != DefUse.getExplicitAccesses().end() &&
-              "Explicitly accessed memory must be stored in a list of explicit accesses!");
-            auto *ExplicitEM = mAliasTree->find(*ExplicitItr);
-            assert(ExplicitEM && "Estimate memory location must not be null!");
-            auto Itr = ExplicitAccesses.find(ExplicitEM);
-            assert(Itr != ExplicitAccesses.end() &&
-              "Explicitly accessed memory must be stored in a list of explicit accesses!");
-            *Itr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
-#ifdef LLVM_DEBUG
-            ExplicitAccessFound = true;
-#endif
-          }
+        auto EMTraitItr = ExplicitAccesses.find(EM);
+        while (EMTraitItr == ExplicitAccesses.end()) {
+          using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+          EM = CT::getNext(EM);
+          assert(EM && "It seems that traits does not exist!");
+          EMTraitItr = ExplicitAccesses.find(EM);
         }
-        assert(ExplicitAccessFound && "At least one explicit access must be found!");
+        *EMTraitItr->get<BitMemoryTrait>() &= BitMemoryTrait::HeaderAccess;
       },
       [this, &ExplicitUnknowns](Instruction &I, AccessInfo, AccessInfo) {
         auto Itr = ExplicitUnknowns.find(&I);
