@@ -27,6 +27,7 @@
 
 namespace llvm {
 class Instruction;
+class BasicBlock;
 class Loop;
 class ScalarEvolution;
 class SCEV;
@@ -40,8 +41,23 @@ template<class GraphType> class SpanningTreeRelation;
 
 /// Return 'true' if values in memory accessed in a specified instruction 'I'
 /// is region invariant.
-bool isRegionInvariant(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
+bool accessInvariantMemory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
   const DefUseSet &DUS, const AliasTree &AT,
+  const SpanningTreeRelation<const AliasTree *> &STR);
+
+/// Return 'true' if result of a specified instruction is loop invariant.
+bool isLoopInvariant(llvm::Instruction &I, const llvm::Loop &L,
+  llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+  const SpanningTreeRelation<const AliasTree *> &STR);
+
+/// Return 'true' if result of a specified instruction is function invariant.
+bool isFunctionInvariant(llvm::Instruction &I,
+  llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+  const SpanningTreeRelation<const AliasTree *> &STR);
+
+/// Return 'true' if result of a specified instruction is block invariant.
+bool isBlockInvariant(llvm::Instruction &I, const llvm::BasicBlock &BB,
+  llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
   const SpanningTreeRelation<const AliasTree *> &STR);
 
 /// Return 'true' if a specified expression 'Expr' is loop invariant. If loop is

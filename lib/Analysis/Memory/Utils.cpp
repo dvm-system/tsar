@@ -27,6 +27,7 @@
 #include "EstimateMemory.h"
 #include "MemoryAccessUtils.h"
 #include "SpanningTreeRelation.h"
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
@@ -57,15 +58,56 @@ bool tsar::isLoopInvariant(const SCEV *Expr, const Loop *L,
         isLoopInvariant(UDiv->getRHS(), L, TLI, SE, DUS, AT, STR);
     } else {
       if (auto *I = dyn_cast<Instruction>(cast<SCEVUnknown>(Expr)->getValue()))
-        return (L && !L->contains(I)) ||
-          isRegionInvariant(*I, TLI, DUS, AT, STR);
+        return (L && isLoopInvariant(*I, *L, TLI, DUS, AT, STR)) ||
+               (!L && isFunctionInvariant(*I, TLI, DUS, AT, STR));
       return true;
     }
   }
   return true;
 }
 
-bool tsar::isRegionInvariant(Instruction &I, TargetLibraryInfo &TLI,
+template<class FunctionT>
+static inline bool isRegionInvariant(Instruction &I,
+    TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+    const SpanningTreeRelation<const AliasTree *> &STR, FunctionT &&Contains) {
+  if (!Contains(I))
+    return true;
+  if (isa<PHINode>(I))
+    return false;
+  if (!accessInvariantMemory(I, TLI, DUS, AT, STR))
+    return false;
+  for (auto &Op : I.operands()) {
+    if (auto *I = dyn_cast<Instruction>(Op)) {
+      if (!isRegionInvariant(*I, TLI, DUS, AT, STR, Contains))
+        return false;
+    }
+  }
+  return true;
+}
+
+namespace tsar {
+bool isLoopInvariant(llvm::Instruction &I, const llvm::Loop &L,
+    llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+    const SpanningTreeRelation<const AliasTree *> &STR) {
+  return isRegionInvariant(I, TLI, DUS, AT, STR,
+    [&L](const Instruction &I) {return L.contains(&I); });
+}
+
+bool isFunctionInvariant(llvm::Instruction &I,
+    llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+    const SpanningTreeRelation<const AliasTree *> &STR) {
+  return isRegionInvariant(I, TLI, DUS, AT, STR,
+    [](const Instruction &) {return true; });
+}
+
+bool isBlockInvariant(llvm::Instruction &I, const BasicBlock &BB,
+    llvm::TargetLibraryInfo &TLI, const DefUseSet &DUS, const AliasTree &AT,
+    const SpanningTreeRelation<const AliasTree *> &STR) {
+  return isRegionInvariant(I, TLI, DUS, AT, STR,
+    [&BB](const Instruction &I) {return I.getParent() == &BB; });
+}
+
+bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
     const DefUseSet &DUS, const AliasTree &AT,
     const SpanningTreeRelation<const AliasTree *> &STR) {
   bool Result = true;
@@ -105,4 +147,5 @@ bool tsar::isRegionInvariant(Instruction &I, TargetLibraryInfo &TLI,
     }
   });
   return Result;
+}
 }
