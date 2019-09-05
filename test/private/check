@@ -16,6 +16,8 @@ private_array_2
 private_array_3
 private_array_4
 private_array_5
+private_array_6.safe
+private_array_7.safe
 shared_1
 shared_2
 shared_3
@@ -72,3 +74,6 @@ reduction_5
 reduction_6
 reduction_7
 global_1
+Jacobi
+Jacobi.func
+Adi.func

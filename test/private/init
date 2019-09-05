@@ -16,6 +16,8 @@ private_array_2.init
 private_array_3.init
 private_array_4.init
 private_array_5.init
+private_array_6.safe.init
+private_array_7.safe.init
 shared_1.init
 shared_2.init
 shared_3.init
@@ -72,3 +74,6 @@ reduction_5.init
 reduction_6.init
 reduction_7.init
 global_1.init
+Jacobi.init
+Jacobi.func
+Adi.func.init
