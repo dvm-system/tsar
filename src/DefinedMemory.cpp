@@ -196,6 +196,8 @@ public:
           //--------------------|ALoc.Ptr|--| ------ addMust(...) ------ |
           MemoryLocationRange Range(ALoc.Ptr, OffsetLoc - OffsetALoc,
             OffsetLoc - OffsetALoc + mLoc.Size, ALoc.AATags);
+          if (this->mDU.hasDef(Range))
+            continue;
           addMust(Range);
         } else {
           addMay(ALoc);

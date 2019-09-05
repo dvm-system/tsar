@@ -25,10 +25,13 @@
 #ifndef TSAR_MEMORY_SET_H
 #define TSAR_MEMORY_SET_H
 
+#include "MemorySetInfo.h"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/iterator_range.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Value.h>
-#include "MemorySetInfo.h"
+#include <algorithm>
 
 namespace tsar {
 /// \brief This implements a set of memory locations.
@@ -41,8 +44,11 @@ template<class LocationTy, class MemoryInfo = MemorySetInfo<LocationTy>>
 class MemorySet {
   template<class Ty, class Info> friend class MemorySet;
 
+  /// List of locations.
+  using LocationList = llvm::SmallVector<LocationTy, 2>;
+
   /// Map from pointers to locations.
-  typedef llvm::DenseMap<const llvm::Value *, LocationTy> MapTy;
+  using MapTy = llvm::DenseMap<const llvm::Value *, LocationList>;
 public:
   /// \brief Calculate the difference between two sets of locations.
   ///
@@ -74,22 +80,30 @@ public:
   template<class map_iterator, class value_type> class LocationItr :
     public std::iterator<std::forward_iterator_tag, value_type> {
   public:
-    explicit LocationItr(const map_iterator &I) : mCurItr(I) {}
+    LocationItr(const map_iterator &I, std::size_t Idx) :
+      mCurItr(I), mIdx(Idx) {}
 
     bool operator==(const LocationItr &RHS) const {
-      return mCurItr == RHS.mCurItr;
+      return mCurItr == RHS.mCurItr && mIdx == RHS.mIdx;
     }
 
     bool operator!=(const LocationItr &RHS) const {
       return !operator==(RHS);
     }
 
-    value_type & operator*() const { return mCurItr->second; }
+    value_type & operator*() const { return mCurItr->second[mIdx]; }
 
     value_type * operator->() const { return &operator*(); }
 
     /// Preincrement
-    LocationItr & operator++() { ++mCurItr; return *this; }
+    LocationItr & operator++() {
+      ++mIdx;
+      if (mCurItr->second.size() == mIdx) {
+        ++mCurItr;
+        mIdx = 0;
+      }
+      return *this;
+    }
 
     /// Postincrement
     LocationItr operator++(int) {
@@ -98,6 +112,7 @@ public:
 
   private:
     map_iterator mCurItr;
+    std::size_t mIdx;
   };
 
   /// This type used to iterate over all locations in this set.
@@ -132,81 +147,153 @@ public:
   }
 
   /// Return iterator that points to the beginning of locations.
-  iterator begin() { return iterator(mLocations.begin()); }
+  iterator begin() { return iterator(mLocations.begin(), 0); }
 
   /// Return iterator that points to the ending of locations.
-  iterator end() { return iterator(mLocations.end()); }
+  iterator end() { return iterator(mLocations.end(), 0); }
 
   /// Return iterator that points to the beginning of locations.
-  const_iterator begin() const { return const_iterator(mLocations.begin()); }
+  const_iterator begin() const { return const_iterator(mLocations.begin(), 0); }
 
   /// Return iterator that points to the ending of locations.
-  const_iterator end() const { return const_iterator(mLocations.end()); }
+  const_iterator end() const { return const_iterator(mLocations.end(), 0); }
 
-  /// Return location which contains a specified location.
-  template<class Ty> iterator findContaining(const Ty &Loc) {
+  /// Union of returned locations contains a specified location.
+  template<class Ty>
+  llvm::iterator_range<iterator> findContaining(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getLowerBound(Loc) >= MemoryInfo::getLowerBound(I->second) &&
-      MemoryInfo::getUpperBound(Loc) <= MemoryInfo::getUpperBound(I->second)) ?
-        iterator(I) : iterator(mLocations.end());
+    if (I == mLocations.end())
+      return make_range(iterator(mLocations.end(), 0),
+                        iterator(mLocations.end(), 0));
+    auto Tail(Loc);
+    bool KnownStartIdx = false;
+    for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
+         Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Tail))
+        continue;
+      if (!KnownStartIdx)
+        StartIdx = Idx;
+      if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Tail))
+        return make_range(iterator(mLocations.end(), 0),
+                          iterator(mLocations.end(), 0));
+      MemoryInfo::setLowerBound(MemoryInfo::getUpperBound(Curr) + 1, Tail);
+      if (MemoryInfo::getUpperBound(Tail) < MemoryInfo::getLowerBound(Tail))
+        return make_range(iterator(I, StartIdx), iterator(I, Idx));
+    }
+    return make_range(iterator(mLocations.end(), 0),
+                      iterator(mLocations.end(), 0));
   }
 
-  /// Return location which contains a specified location.
-  template<class Ty> const_iterator findContaining(const Ty &Loc) const {
+  /// Union of returned locations contains a specified location.
+  template<class Ty>
+  llvm::iterator_range<const_iterator> findContaining(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getLowerBound(Loc) >= MemoryInfo::getLowerBound(I->second) &&
-      MemoryInfo::getUpperBound(Loc) <= MemoryInfo::getUpperBound(I->second)) ?
-        const_iterator(I) : const_iterator(mLocations.end());
+    if (I == mLocations.end())
+      return make_range(const_iterator(mLocations.end(), 0),
+                        const_iterator(mLocations.end(), 0));
+    auto Tail(Loc);
+    bool KnownStartIdx = false;
+    for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
+         Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Tail))
+        continue;
+      if (!KnownStartIdx)
+        StartIdx = Idx;
+      if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Tail))
+        return make_range(const_iterator(mLocations.end(), 0),
+                          const_iterator(mLocations.end(), 0));
+      MemoryInfo::setLowerBound(MemoryInfo::getUpperBound(Curr) + 1, Tail);
+      if (MemoryInfo::getUpperBound(Tail) < MemoryInfo::getLowerBound(Tail))
+        return make_range(const_iterator(I, StartIdx), const_iterator(I, Idx));
+    }
+    return make_range(const_iterator(mLocations.end(), 0),
+                      const_iterator(mLocations.end(), 0));
   }
 
-  /// Return true if there are location in this set which contains
+  /// Return true if there are locations in this set which contain
   /// a specified location.
   template<class Ty> bool contain(const Ty &Loc) const {
-    return findContaining(Loc) != end();
+    return findContaining(Loc).begin() != end();
   }
 
-  /// Return location which is contained in a specified location.
-  template<class Ty> iterator findCoveredBy(const Ty &Loc) {
+  /// Find list of locations which are contained in a specified location.
+  template<class Ty> void findCoveredBy(const Ty &Loc,
+      llvm::SmallVectorImpl<LocationTy> &Locs) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getLowerBound(Loc) <= MemoryInfo::getLowerBound(I->second) &&
-      MemoryInfo::getUpperBound(Loc) >= MemoryInfo::getUpperBound(I->second)) ?
-        iterator(I) : iterator(mLocations.end());
+    if (I == mLocations.end())
+      return;
+    bool IsEmptyList = true;
+    for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Loc))
+        continue;
+      if (MemoryInfo::getLowerBound(Curr) >= MemoryInfo::getUpperBound(Loc))
+        return;
+      LocationTy CoveredLoc(Loc);
+      MemoryInfo::setLowerBound(std::max(MemoryInfo::getLowerBound(Curr),
+                                         MemoryInfo::getLowerBound(Loc)),
+                                CoveredLoc);
+      MemoryInfo::setUpperBound(std::min(MemoryInfo::getUpperBound(Curr),
+                                         MemoryInfo::getUpperBound(Loc)),
+                                CoveredLoc);
+
+      if (IsEmptyList) {
+        Locs.push_back(std::move(CoveredLoc));
+        IsEmptyList = false;
+      } else {
+        if (MemoryInfo::getLowerBound(CoveredLoc) <=
+                MemoryInfo::getUpperBound(Locs.back()) &&
+            MemoryInfo::getUpperBound(CoveredLoc) >=
+                MemoryInfo::getLowerBound(Locs.back())) {
+          MemoryInfo::setLowerBound(
+              std::min(MemoryInfo::getLowerBound(CoveredLoc),
+                       MemoryInfo::getLowerBound(Locs.back())),
+              Locs.back());
+          MemoryInfo::setUpperBound(
+              std::max(MemoryInfo::getUpperBound(CoveredLoc),
+                       MemoryInfo::getUpperBound(Locs.back())),
+              Locs.back());
+        }
+      }
+    }
   }
 
-  /// Return location which is contained in a specified location.
-  template<class Ty> const_iterator findCoveredBy(const Ty &Loc) const {
-    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getLowerBound(Loc) <= MemoryInfo::getLowerBound(I->second) &&
-      MemoryInfo::getUpperBound(Loc) >= MemoryInfo::getUpperBound(I->second)) ?
-        const_iterator(I) : const_iterator(mLocations.end());
-  }
-
-  /// Return true if there is location in this set which is contained
+  /// Return true if there are locations in this set which are contained
   /// in a specified location.
   template<class Ty> bool cover(const Ty &Loc) const {
-    return findCoveredBy(Loc) != end();
+    llvm::SmallVector<LocationTy, 2> CoveredBy;
+    findCoveredBy(Loc, CoveredBy);
+    return !CoveredBy.empty();
   }
 
   /// Return location which may overlap with a specified location.
   template<class Ty> iterator findOverlappedWith(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getUpperBound(I->second) > MemoryInfo::getLowerBound(Loc) &&
-      MemoryInfo::getLowerBound(I->second) < MemoryInfo::getUpperBound(Loc)) ?
-        iterator(I) : iterator(mLocations.end());
+    if (I == mLocations.end())
+      return iterator(mLocations.end(), 0);
+    for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) > MemoryInfo::getLowerBound(Loc) &&
+          MemoryInfo::getLowerBound(Curr) < MemoryInfo::getUpperBound(Loc))
+        return iterator(I, Idx);
+    }
+    return iterator(mLocations.end(), 0);
   }
 
   /// Return location which may overlap with a specified location.
   template<class Ty> const_iterator findOverlappedWith(const Ty &Loc) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    return (I != mLocations.end() &&
-      MemoryInfo::getUpperBound(I->second) > MemoryInfo::getLowerBound(Loc) &&
-      MemoryInfo::getLowerBound(I->second) < MemoryInfo::getUpperBound(Loc)) ?
-        const_iterator(I) : const_iterator(mLocations.end());
+    if (I == mLocations.end())
+      return const_iterator(mLocations.end(), 0);
+    for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) > MemoryInfo::getLowerBound(Loc) &&
+          MemoryInfo::getLowerBound(Curr) < MemoryInfo::getUpperBound(Loc))
+        return const_iterator(I, Idx);
+    }
+    return const_iterator(mLocations.end(), 0);
   }
 
   /// Return true if there is a location in this set which may overlap
@@ -224,7 +311,7 @@ public:
   /// Insert a new location into this set, returns false if it already
   /// exists.
   ///
-  /// If the specified value contains some value in this set, the appropriate
+  /// If the specified value overlaps with value in this set, the appropriate
   /// value will be updated. In this case, this method also returns true.
   ///
   /// \attention This method updates AATags for an existing location. So,
@@ -233,30 +320,43 @@ public:
   template<class Ty> std::pair<iterator, bool> insert(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end()) {
-      LocationTy NewLoc = MemoryInfo::make(Loc);
-      auto Pair = mLocations.insert(
-        std::make_pair(MemoryInfo::getPtr(Loc), NewLoc));
-      return std::make_pair(iterator(Pair.first), true);
+      auto Pair = mLocations.try_emplace(MemoryInfo::getPtr(Loc));
+      auto NewLoc = MemoryInfo::make(Loc);
+      Pair.first->second.push_back(std::move(NewLoc));
+      return std::make_pair(iterator(Pair.first, 0), true);
     }
-    bool isChanged = true;
-    if (MemoryInfo::getAATags(I->second) != MemoryInfo::getAATags(Loc))
-      if (MemoryInfo::getAATags(I->second) ==
-          llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey())
-        MemoryInfo::setAATags(I->second, MemoryInfo::getAATags(Loc));
-      else
-        MemoryInfo::setAATags(
-          I->second, llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey());
-    else
-      isChanged = false;
-    if (MemoryInfo::getUpperBound(I->second) < MemoryInfo::getUpperBound(Loc)) {
-      MemoryInfo::setUpperBound(I->second, MemoryInfo::getUpperBound(Loc));
-      isChanged = true;
+    std::size_t Idx = 0;
+    auto InsertItr = I->second.begin();
+    for (auto EIdx = I->second.size(); Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getUpperBound(Curr) >= MemoryInfo::getLowerBound(Loc) &&
+          MemoryInfo::getLowerBound(Curr) <= MemoryInfo::getUpperBound(Loc)) {
+        bool isChanged = true;
+        if (MemoryInfo::getAATags(Curr) != MemoryInfo::getAATags(Loc))
+          if (MemoryInfo::getAATags(Curr) ==
+              llvm::DenseMapInfo<llvm::AAMDNodes>::getEmptyKey())
+            MemoryInfo::setAATags(MemoryInfo::getAATags(Loc), Curr);
+          else
+            MemoryInfo::setAATags(
+              llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey(), Curr);
+        else
+          isChanged = false;
+        if (MemoryInfo::getUpperBound(Curr) < MemoryInfo::getUpperBound(Loc)) {
+          MemoryInfo::setUpperBound(MemoryInfo::getUpperBound(Loc), Curr);
+          isChanged = true;
+        }
+        if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Loc)) {
+          MemoryInfo::setLowerBound(MemoryInfo::getLowerBound(Loc), Curr);
+          isChanged = true;
+        }
+        return std::make_pair(iterator(I, Idx), isChanged);
+      }
+      if (MemoryInfo::getLowerBound(*InsertItr) <=
+          MemoryInfo::getLowerBound(Loc))
+        ++InsertItr;
     }
-    if (MemoryInfo::getLowerBound(I->second) > MemoryInfo::getLowerBound(Loc)) {
-      MemoryInfo::setLowerBound(I->second, MemoryInfo::getLowerBound(Loc));
-      isChanged = true;
-    }
-    return std::make_pair(iterator(I), isChanged);
+    I->second.insert(InsertItr, Loc);
+    return std::make_pair(iterator(I, Idx), true);
   }
 
   /// Insert all locations from the range into this set, returns false
@@ -271,35 +371,36 @@ public:
   }
 
   /// Realize intersection between two sets.
-  template<class Ty> bool intersect(const MemorySet<Ty> &with) {
-    if (this == &with)
+  template<class Ty> bool intersect(const MemorySet<Ty> &With) {
+    if (this == &With)
       return false;
     MapTy PrevLocations;
     mLocations.swap(PrevLocations);
-    bool isChanged = false;
-    for (auto Pair : PrevLocations) {
-      auto I = with.findContaining(Pair.second);
-      if (I != with.end()) {
-        insert(Pair.second);
-        continue;
-      }
-      I = with.findCoveredBy(Pair.second);
-      if (I != with.end()) {
-        insert(*I);
-        isChanged = true;
+    bool IsChanged = false;
+    for (auto &Pair : PrevLocations) {
+      for (auto &Loc : Pair.second) {
+        if (With.contain(Loc)) {
+          insert(Loc);
+          continue;
+        }
+        llvm::SmallVector<LocationTy, 2> CoveredBy;
+        With.findCoveredBy(Loc, CoveredBy);
+        if (!CoveredBy.empty())
+          IsChanged |= insert(CoveredBy.begin(), CoveredBy.end());
       }
     }
-    return isChanged;
+    return IsChanged;
   }
 
   /// Realize merger between two sets.
-  template<class Ty> bool merge(const MemorySet<Ty> &with) {
-    if (this == &with)
+  template<class Ty> bool merge(const MemorySet<Ty> &With) {
+    if (this == &With)
       return false;
-    bool isChanged = false;
-    for (auto Pair : with.mLocations)
-      isChanged = insert(Pair.second).second || isChanged;
-    return isChanged;
+    bool IsChanged = false;
+    for (auto &Pair : With.mLocations)
+      for (auto &Loc : Pair.second)
+        IsChanged |= insert(Loc).second;
+    return IsChanged;
   }
 
   /// Compare two sets.
@@ -313,19 +414,40 @@ public:
       return true;
     if (mLocations.size() != RHS.mLocations.size())
       return false;
-    for (auto Pair : mLocations) {
+    auto sanitize = [](typename LocationList::const_iterator RangeItr,
+                       typename LocationList::const_iterator RangeItrE,
+                       LocationList &Locs) {
+      Locs.push_back(*RangeItr);
+      for (; RangeItr != RangeItrE; ++RangeItr) {
+        if (MemoryInfo::getUpperBound(Locs.back()) >
+                MemoryInfo::getLowerBound(*RangeItr) &&
+            MemoryInfo::getLowerBound(Locs.back()) <
+                MemoryInfo::getUpperBound(*RangeItr)) {
+          MemoryInfo::setLowerBound(
+              std::min(MemoryInfo::getLowerBound(*RangeItr),
+                       MemoryInfo::getLowerBound(Locs.back())),
+              Locs.back());
+          MemoryInfo::setUpperBound(
+              std::max(MemoryInfo::getUpperBound(*RangeItr),
+                       MemoryInfo::getUpperBound(Locs.back())),
+              Locs.back());
+        } else {
+          Locs.push_back(*RangeItr);
+        }
+      }
+    };
+    for (auto &Pair : mLocations) {
       auto I = RHS.mLocations.find(Pair.first);
-      if (I == RHS.mLocations.end() ||
-        MemoryInfo::getUpperBound(I->second) !=
-          MemoryInfo::getUpperBound(Pair.second) ||
-        MemoryInfo::getLowerBound(I->second) !=
-          MemoryInfo::getLowerBound(Pair.second) ||
-        MemoryInfo::getAATags(I->second) != MemoryInfo::getAATags(Pair.second))
+      if (I == RHS.mLocations.end())
+        return false;
+      LocationList LHSSet, RHSSet;
+      sanitize(Pair.second.begin(), Pair.second.end(), LHSSet);
+      sanitize(I->second.begin(), I->second.end(), RHSSet);
+      if (LHSSet != RHSSet)
         return false;
     }
     return true;
   }
-
 private:
   MapTy mLocations;
 };

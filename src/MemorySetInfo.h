@@ -41,14 +41,15 @@ namespace tsar {
 ///     Return the upper bound (offset) of a memory location.
 /// - static llvm::AAMDNodes & getAATags(const Ty &) -
 ///     Return the metadata nodes which describes the aliasing of the location.
-/// - static void setLowerBound(LocationTy &, uint64_t)
+/// - static void setLowerBound(uint64_t, LocationTy &)
 ///     Set the lower bound for a specified location.
-/// - static void setUpperBound(LocationTy &, uint64_t)
+/// - static void setUpperBound(uint64_t, LocationTy &)
 ///     Set the upper bound for a specified location.
-/// - static void setAATags(LocationTy &, const llvm::AAMDNodes &)
+/// - static void setAATags(const llvm::AAMDNodes &, LocationTy &)
 ///     Set the metadata nodes for a specified location.
 /// - static LocationTy make(Ty &)
 ///     Construct new memory location from the other one.
+/// - Copy-constructor must be also available.
 /// In methods presented above the following denotements are used:
 /// - LocationTy is a type of memory locations which are stored in memory set.
 /// - Ty is a type of memory locations which is used for insertion the new one
@@ -69,14 +70,14 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     return 0;
   }
   static inline void setLowerBound(
-      llvm::MemoryLocation &Loc, llvm::LocationSize Size) noexcept {
+      llvm::LocationSize Size, llvm::MemoryLocation &Loc) noexcept {
   }
   static inline llvm::LocationSize getUpperBound(
       const llvm::MemoryLocation &Loc) noexcept {
     return Loc.Size;
   }
   static inline void setUpperBound(
-      llvm::MemoryLocation &Loc, llvm::LocationSize Size) noexcept {
+      llvm::LocationSize Size, llvm::MemoryLocation &Loc)  noexcept {
     Loc.Size = Size;
   }
     static inline const llvm::AAMDNodes & getAATags(
@@ -84,7 +85,7 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     return Loc.AATags;
   }
   static inline void setAATags(
-    llvm::MemoryLocation &Loc, const llvm::AAMDNodes &AATags) noexcept {
+     const llvm::AAMDNodes &AATags, llvm::MemoryLocation &Loc) noexcept {
     Loc.AATags = AATags;
   }
   static inline llvm::MemoryLocation make(const llvm::MemoryLocation &Loc) {
@@ -103,7 +104,8 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
     return Loc.LowerBound;
   }
   static inline void setLowerBound(
-      MemoryLocationRange &Loc, LocationSize Size) noexcept {
+      LocationSize Size, MemoryLocationRange &Loc) noexcept {
+
     Loc.LowerBound = Size;
   }
   static inline LocationSize getUpperBound(
@@ -111,7 +113,7 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
     return Loc.UpperBound;
   }
   static inline void setUpperBound(
-    MemoryLocationRange &Loc, LocationSize Size) noexcept {
+      LocationSize Size, MemoryLocationRange &Loc) noexcept {
     Loc.UpperBound = Size;
   }
     static inline const llvm::AAMDNodes & getAATags(
@@ -119,7 +121,7 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
     return Loc.AATags;
   }
   static inline void setAATags(
-    MemoryLocationRange &Loc, const llvm::AAMDNodes &AATags) noexcept {
+      const llvm::AAMDNodes &AATags,  MemoryLocationRange &Loc) noexcept {
     Loc.AATags = AATags;
   }
   static inline MemoryLocationRange make(const MemoryLocationRange &Loc) {
