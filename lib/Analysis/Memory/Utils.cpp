@@ -46,6 +46,10 @@ bool tsar::isLoopInvariant(const SCEV *Expr, const Loop *L,
     if (auto *Cast = dyn_cast<SCEVCastExpr>(Expr))
       Expr = Cast->getOperand();
     if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(Expr)) {
+      if (!L || AddRec->getLoop() == L || L->contains(AddRec->getLoop()))
+        return false;
+      if (AddRec->getLoop()->contains(L))
+        return true;
       for (auto *Op : AddRec->operands())
         if (!isLoopInvariant(Op, L, TLI, SE, DUS, AT, STR))
           return false;
