@@ -14,7 +14,7 @@ void foo() {
 //CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    first private:
 //CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
-//CHECK:    second to last private:
+//CHECK:    dynamic private:
 //CHECK:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
@@ -44,7 +44,7 @@ void foo() {
 //REDUNDANT:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //REDUNDANT:    first private:
 //REDUNDANT:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
-//REDUNDANT:    second to last private:
+//REDUNDANT:    dynamic private:
 //REDUNDANT:     <*P:{8:5|9:7|6:8}, ?> <malloc():6:20,?>
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:7:12, 4>:[Int,0,100,1]

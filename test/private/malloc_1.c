@@ -14,7 +14,7 @@ void foo() {
 //CHECK:     <*P:{6:22|6:9}, ?>
 //CHECK:    first private:
 //CHECK:     <*P:{6:22|6:9}, ?>
-//CHECK:    second to last private:
+//CHECK:    dynamic private:
 //CHECK:     <*P:{6:22|6:9}, ?>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]

@@ -20,7 +20,7 @@ void foo(double * restrict A) {
 //CHECK:     <*A:5:28, ?>
 //CHECK:    first private:
 //CHECK:     <*A:5:28, ?>
-//CHECK:    second to last private:
+//CHECK:    dynamic private:
 //CHECK:     <*A:5:28, ?>
 //CHECK:    private:
 //CHECK:     <P:6:14, 8>
@@ -126,8 +126,10 @@ void foo(double * restrict A) {
 //UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?>
 //UNSAFE_TFM_and_REDUNDANT:    first private:
 //UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:    dynamic private:
+//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?>
 //UNSAFE_TFM_and_REDUNDANT:    second to last private:
-//UNSAFE_TFM_and_REDUNDANT:     <*A:5:28, ?> | <Y:6:10, ?>
+//UNSAFE_TFM_and_REDUNDANT:     <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    private:
 //UNSAFE_TFM_and_REDUNDANT:     <P:6:14, 8>
 //UNSAFE_TFM_and_REDUNDANT:    induction:

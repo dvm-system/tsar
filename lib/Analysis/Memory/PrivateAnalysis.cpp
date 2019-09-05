@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "Attributes.h"
 #include "BitMemoryTrait.h"
 #include "tsar_config.h"
@@ -35,6 +36,7 @@
 #include "LiveMemory.h"
 #include "MemoryCoverage.h"
 #include "MemoryAccessUtils.h"
+#include "SpanningTreeRelation.h"
 #include "tsar_query.h"
 #include "tsar_utility.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
@@ -105,7 +107,8 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   GraphNumbering<const AliasNode *> Numbers;
   numberGraph(mAliasTree, &Numbers);
-  resolveCandidats(Numbers, DFF);
+  AliasTreeRelation AliasSTR(mAliasTree);
+  resolveCandidats(Numbers, AliasSTR, DFF);
   return false;
 }
 
@@ -358,7 +361,8 @@ void PrivateRecognitionPass::collectHeaderAccesses(
 }
 
 void PrivateRecognitionPass::resolveCandidats(
-    const GraphNumbering<const AliasNode *> &Numbers, DFRegion *R) {
+    const GraphNumbering<const AliasNode *> &Numbers,
+    const AliasTreeRelation &AliasSTR, DFRegion *R) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop ";
@@ -385,8 +389,8 @@ void PrivateRecognitionPass::resolveCandidats(
         std::make_pair(&N, std::make_tuple(TraitList(), UnknownList())));
     DependenceMap Deps;
     collectDependencies(L->getLoop(), Deps);
-    resolveAccesses(R->getLatchNode(), R->getExitNode(),
-      *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps,
+    resolveAccesses(L->getLoop(), R->getLatchNode(), R->getExitNode(),
+      *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps, AliasSTR,
       ExplicitAccesses, ExplicitUnknowns, NodeTraits);
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
     resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
@@ -396,7 +400,7 @@ void PrivateRecognitionPass::resolveCandidats(
       Deps, PrivInfo.first->get<DependenceSet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
-    resolveCandidats(Numbers, *I);
+    resolveCandidats(Numbers, AliasSTR, *I);
 }
 
 void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
@@ -555,11 +559,11 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
   }
 }
 
-void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
+void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
     const DFNode *ExitNode, const tsar::DefUseSet &DefUse,
     const tsar::LiveSet &LS, const DependenceMap &Deps,
-    TraitMap &ExplicitAccesses,  UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits) {
+    const AliasTreeRelation &AliasSTR, TraitMap &ExplicitAccesses,
+    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits) {
   assert(LatchNode && "Latch node must not be null!");
   assert(ExitNode && "Exit node must not be null!");
   auto LatchDefItr = mDefInfo->find(const_cast<DFNode *>(LatchNode));
@@ -599,26 +603,31 @@ void PrivateRecognitionPass::resolveAccesses(const DFNode *LatchNode,
     if (!DefUse.hasUse(Loc)) {
       if (!LS.getOut().overlap(Loc))
         CurrTraits &= BitMemoryTrait::Private | SharedTrait;
-      else if (DefUse.hasDef(Loc))
-        CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
-      else if (LatchDefs.MustReach.contain(Loc) &&
-        !ExitingDefs.MayReach.overlap(Loc))
-        // These location will be stored as second to last private, i.e.
-        // the last definition of these locations is executed on the
-        // second to the last loop iteration (on the last iteration the
-        // loop condition check is executed only).
-        // It is possible that there is only one (last) iteration in
-        // the loop. In this case the location has not been assigned and
-        // must be declared as a first private.
-        CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
+      else {
+        auto *Expr = mSE->getSCEV(const_cast<Value *>(Loc.Ptr));
+        bool IsInvariant =
+          isLoopInvariant(Expr, L, *mTLI, *mSE, DefUse, *mAliasTree, AliasSTR);
+        if (IsInvariant && DefUse.hasDef(Loc))
+          CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
+        else if (IsInvariant && LatchDefs.MustReach.contain(Loc) &&
+                 !ExitingDefs.MayReach.overlap(Loc))
+          // These location will be stored as second to last private, i.e.
+          // the last definition of these locations is executed on the
+          // second to the last loop iteration (on the last iteration the
+          // loop condition check is executed only).
+          // It is possible that there is only one (last) iteration in
+          // the loop. In this case the location has not been assigned and
+          // must be declared as a first private.
+          CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
           BitMemoryTrait::FirstPrivate | SharedTrait;
-      else
-        // There is no certainty that the location is always assigned
-        // the value in the loop. Therefore, it must be declared as a
-        // first private, to preserve the value obtained before the loop
-        // if it has not been assigned.
-        CurrTraits &= BitMemoryTrait::DynamicPrivate &
+        else
+          // There is no certainty that the location is always assigned
+          // the value in the loop. Therefore, it must be declared as a
+          // first private, to preserve the value obtained before the loop
+          // if it has not been assigned.
+          CurrTraits &= BitMemoryTrait::DynamicPrivate &
           BitMemoryTrait::FirstPrivate | SharedTrait;
+      }
     } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))) {
       CurrTraits &= DefTrait;
     } else {

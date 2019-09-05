@@ -18,7 +18,7 @@ void foo() {
 //CHECK:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    first private:
 //CHECK:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
-//CHECK:    second to last private:
+//CHECK:    dynamic private:
 //CHECK:     <*P:{6:22|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    induction:
 //CHECK:     <I:7:12, 4>:[Int,0,100,1]
@@ -47,7 +47,7 @@ void foo() {
 //CHECK:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    first private:
 //CHECK:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
-//CHECK:    second to last private:
+//CHECK:    dynamic private:
 //CHECK:     <*P:{10:16|6:9}, ?> <*P:{8:5|9:7|12:5|13:7|6:9}, ?>
 //CHECK:    induction:
 //CHECK:     <I:11:12, 4>:[Int,0,10,1]
@@ -77,7 +77,7 @@ void foo() {
 //REDUNDANT:     <*P:{6:22|6:9}, ?>
 //REDUNDANT:    first private:
 //REDUNDANT:     <*P:{6:22|6:9}, ?>
-//REDUNDANT:    second to last private:
+//REDUNDANT:    dynamic private:
 //REDUNDANT:     <*P:{6:22|6:9}, ?>
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:7:12, 4>:[Int,0,100,1]
@@ -104,7 +104,7 @@ void foo() {
 //REDUNDANT:     <*P:{10:16|6:9}, ?>
 //REDUNDANT:    first private:
 //REDUNDANT:     <*P:{10:16|6:9}, ?>
-//REDUNDANT:    second to last private:
+//REDUNDANT:    dynamic private:
 //REDUNDANT:     <*P:{10:16|6:9}, ?>
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:11:12, 4>:[Int,0,10,1]

@@ -211,7 +211,7 @@ private:
   /// must be available from mLiveInfo and mDefInfo.
   void resolveCandidats(
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
-    tsar::DFRegion *R);
+    const tsar::AliasTreeRelation &AliasSTR, tsar::DFRegion *R);
 
   /// Set HeaderAccess trait for memory locations explicitly accessed in a
   /// loop header.
@@ -222,11 +222,11 @@ private:
   ///
   /// Preliminary results will be stored in ExplicitAccesses and NodeTraits
   /// parameters.
-  void resolveAccesses(const tsar::DFNode *LatchNode,
+  void resolveAccesses(Loop *L, const tsar::DFNode *LatchNode,
     const tsar::DFNode *ExitNode, const tsar::DefUseSet &DefUse,
     const tsar::LiveSet &LS, const DependenceMap &Deps,
-    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
-    AliasMap &NodeTraits);
+    const tsar::AliasTreeRelation &AliasSTR, TraitMap &ExplicitAccesses,
+    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits);
 
   /// Evaluates cases when location access is performed by pointer in a loop.
   void resolvePointers(const tsar::DefUseSet &DefUse,

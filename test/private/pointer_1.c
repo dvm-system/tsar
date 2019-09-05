@@ -16,8 +16,10 @@ void foo(double * restrict A) {
 //CHECK:     <*A:3:28, ?>
 //CHECK:    first private:
 //CHECK:     <*A:3:28, ?> | <Y, 4>
+//CHEKC:    dynamic private:
+//CHECK:     <*A:3:28, ?>
 //CHECK:    second to last private:
-//CHECK:     <*A:3:28, ?> | <Y, 4>
+//CHECK:     <Y, 4>
 //CHECK:    private:
 //CHECK:     <P:4:8, 8>
 //CHECK:    output:
@@ -86,8 +88,10 @@ void foo(double * restrict A) {
 //REDUNDANT:     <*A:3:28, ?>
 //REDUNDANT:    first private:
 //REDUNDANT:     <*A:3:28, ?> | <Y, 4>
+//REDUNDANT:    dynamic private:
+//REDUNDANT:     <*A:3:28, ?>
 //REDUNDANT:    second to last private:
-//REDUNDANT:     <*A:3:28, ?> | <Y, 4>
+//REDUNDANT:     <Y, 4>
 //REDUNDANT:    private:
 //REDUNDANT:     <P:4:8, 8>
 //REDUNDANT:    induction:
