@@ -1359,9 +1359,9 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
   //
   // If candidate is a reduction in the inner loop update reduction kind,
   // remember loop and LCSSA Phi node which is associated with reduction.
-  auto isLoopPreventReduction =
-    [this, &useReduction, &Traits, &ReductionLoops, &LCSSAPhis, &RedKind](
-      Loop *InnerL) {
+  auto isLoopPreventReduction = [this, &useReduction, &hasCopyFromReduction,
+                                 &Traits, &ReductionLoops, &LCSSAPhis,
+                                 &RedKind](Loop *InnerL) {
     if (!InnerL->getLoopID())
       return false;
     auto &InnerPool = *(*mTraitPool)[InnerL->getLoopID()];
@@ -1386,8 +1386,18 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
               auto *UserBB = UI->getParent();
               if (InnerL->contains(UserBB))
                 continue;
-              auto Copy = useReduction(UI);
-              if (!Copy.To)
+              ReductionCopy Copy;
+              do {
+                Copy = useReduction(UI);
+                // Skip intermediate phi-nodes which only forward value.
+                if (!Copy.To && !Copy.From && UI->hasNUses(1) &&
+                    UI->getNumIncomingValues() == 1 &&
+                    !InnerL->contains(UserBB = UI->getParent()))
+                  UI = dyn_cast<PHINode>(*UI->user_begin());
+                else
+                  break;
+              } while (UI);
+              if (!UI || !Copy.To)
                 continue;
               if (Copy.From)
                 return true;
@@ -1402,17 +1412,15 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
   // in a loop except  inner loops in which these candidates
   // are reductions.
   auto isUsedInLoop =
-    [this, &DILocs, &ReductionLoops, Phi, L](Instruction *I) {
+    [this, &DILocs, &ReductionLoops, &LCSSAPhis, Phi, L](Instruction *I) {
     for (const auto &U : I->uses()) {
       if (!isa<Instruction>(U))
         return true;
       auto *UI = cast<Instruction>(U.getUser());
-      if (UI == Phi)
-        continue;
       if (!L->contains(UI->getParent()))
         continue;
       auto *UseL = mLI->getLoopFor(UI->getParent());
-      if (UseL == L || !ReductionLoops.count(UseL))
+      if (!LCSSAPhis.count(UI) && (UseL == L || !ReductionLoops.count(UseL)))
         return true;
     }
     return false;
