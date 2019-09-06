@@ -711,7 +711,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
     // isa<LoadInst>(Root->front()), locations are analyzed separately;
     // * if it points to a temporary location and should not be analyzed:
     // for example, a result of a call can be a pointer.
-    if (!isa<AllocaInst>(Root->front()) && !isa<GlobalVariable>(Root->front()))
+    if (!isa<AllocaInst>(Root->front()) && !isa<GlobalValue>(Root->front()))
       continue;
     Loop *Lp = L->getLoop();
     // If this is an address of a location declared in the loop do not
@@ -719,16 +719,22 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
     if (auto AI = dyn_cast<AllocaInst>(Root->front()))
       if (Lp->contains(AI->getParent()))
         continue;
-    for (auto User : Ptr->users()) {
-      auto UI = dyn_cast<Instruction>(User);
+    for (auto *U : Ptr->users()) {
+      if (auto II = dyn_cast<IntrinsicInst>(U))
+        if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+            isDbgInfoIntrinsic(II->getIntrinsicID()))
+          continue;
+      auto UI = dyn_cast<Instruction>(U);
       if (!UI || !Lp->contains(UI->getParent()))
         continue;
       // The address is used inside the loop.
       // Remember it if it is used for computation instead of memory access or
       // if we do not know how it will be used.
-      if (isa<PtrToIntInst>(User) ||
-          (isa<StoreInst>(User) &&
-          cast<StoreInst>(User)->getValueOperand() == Ptr)) {
+      // Address should be also remembered if it is a function parameter because
+      // it is not known how it is used inside a function.
+      ImmutableCallSite CS(UI);
+      if (isa<PtrToIntInst>(U) || CS && CS.getCalledValue() != Ptr ||
+         (isa<StoreInst>(U) && cast<StoreInst>(U)->getValueOperand() == Ptr)) {
         auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
         if (!Pair.second) {
           *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;

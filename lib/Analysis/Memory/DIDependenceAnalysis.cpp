@@ -1947,10 +1947,10 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
               *DWLang, *DIMTraitItr, SeparateTraits});
       }
     }
-    using IgnoreTrateList = bcl::TypeList<trait::NoRedundant,
+    using IgnoreTraitList = bcl::TypeList<trait::NoRedundant, trait::NoAccess,
       trait::DirectAccess, trait::IndirectAccess>;
     TM.for_each(
-      TraitPrinter<IgnoreTrateList>{OS, DIAT, Offset, *DWLang});
+      TraitPrinter<IgnoreTraitList>{OS, DIAT, Offset, *DWLang});
     SeparateTrateList::for_each_type(
       TraitListPrinter<SeparateTrateList>{ OS, Offset, SeparateTraits });
   });

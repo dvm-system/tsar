@@ -21,6 +21,8 @@ void foo (int N) {
 //CHECK:     <I:5:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:12, 4> | <X:4:10, ?> bar():6:5
+//CHECK:    address access:
+//CHECK:     <X:4:10, ?>
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
 //CHECK:    lock (separate):
