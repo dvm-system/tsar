@@ -1414,7 +1414,7 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
   auto isUsedInLoop =
     [this, &DILocs, &ReductionLoops, &LCSSAPhis, Phi, L](Instruction *I) {
     for (const auto &U : I->uses()) {
-      if (!isa<Instruction>(U))
+      if (!isa<Instruction>(U.getUser()))
         return true;
       auto *UI = cast<Instruction>(U.getUser());
       if (!L->contains(UI->getParent()))
