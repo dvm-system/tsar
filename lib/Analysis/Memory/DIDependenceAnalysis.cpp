@@ -1736,9 +1736,9 @@ struct TraitPrinter {
     for (auto *AT : TraitVector) {
       VarLists.emplace_back();
       for (auto &T : *AT) {
-        if (!std::is_same<Trait, trait::AddressAccess>::value &&
-            T->is<trait::NoAccess>() ||
-            std::is_same<Trait, trait::AddressAccess>::value && !T->is<Trait>())
+        if (!bcl::is_contained<Trait, trait::AddressAccess,
+                               trait::Redundant>::value &&
+            T->is<trait::NoAccess>())
           continue;
         std::string Str;
         raw_string_ostream TmpOS(Str);
@@ -1926,7 +1926,7 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
     // List of traits which should be printed if they have been set for
     // a memory location separately (it may not be set for the whole alias node).
     using SeparateTrateList = bcl::TypeList<
-      trait::ExplicitAccess, trait::Redundant, trait::Lock,
+      trait::ExplicitAccess, trait::Redundant, trait::Lock, trait::AddressAccess,
       trait::NoPromotedScalar, trait::DirectAccess, trait::IndirectAccess>;
     StoreIfInList<SeparateTrateList>::TraitMap SeparateTraits;
     for (auto &TS : Info->get<DIDependenceSet>()) {

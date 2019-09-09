@@ -27,6 +27,8 @@ void foo (int N) {
 //CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4> <X:4:10, ?>
+//CHECK:    address access (separate):
+//CHECK:     <X:4:10, ?> bar():6:5
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <X:4:10, ?>
 //CHECK:    direct access (separate):

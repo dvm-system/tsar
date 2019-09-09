@@ -33,11 +33,13 @@ double foo() {
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <J:6:10, 4> | <JStart, 4> bar():11:5
 //CHECK:    address access:
-//CHECK:     bar():11:5
+//CHECK:     <JStart, 4> bar():11:5
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> bar():11:5
 //CHECK:    lock (separate):
 //CHECK:     <I:7:12, 4>
+//CHECK:    address access (separate):
+//CHECK:     bar():11:5
 //CHECK:    direct access (separate):
 //CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> <U:5:10, 800> bar():11:5
 //CHECK:   loop at depth 2 shared_12.c:12:5

@@ -26,5 +26,7 @@ long long foo() {
 //CHECK:     <I:6:12, 4> <S:5:13, 8>
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4>
+//CHECK:    address access (separate):
+//CHECK:     bar():7:10
 //CHECK:    direct access (separate):
 //CHECK:     <I:6:12, 4> <S:5:13, 8> bar():7:10

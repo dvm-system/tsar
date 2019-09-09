@@ -43,11 +43,13 @@ void foo(double * restrict A) {
 //CHECK:    explicit access:
 //CHECK:     <A:5:28, 8> | <I:8:12, 4> | <N, 4> | <P:6:14, 8> | <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //CHECK:    address access:
-//CHECK:     <X:6:7, ?> <Y:6:10, ?>
+//CHECK:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //CHECK:    explicit access (separate):
 //CHECK:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:8:12, 4>  <N, 4>
+//CHECK:    address access (separate):
+//CHECK:     <X:6:7, ?> <Y:6:10, ?>
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //CHECK:    direct access (separate):
@@ -75,11 +77,13 @@ void foo(double * restrict A) {
 //SAFE:    explicit access:
 //SAFE:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //SAFE:    address access:
-//SAFE:     <X:6:7, ?> <Y:6:10, ?>
+//SAFE:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //SAFE:    explicit access (separate):
 //SAFE:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:8:12, 4> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
+//SAFE:    address access (separate):
+//SAFE:     <X:6:7, ?> <Y:6:10, ?>
 //SAFE:    no promoted scalar (separate):
 //SAFE:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //SAFE:    direct access (separate):
@@ -109,13 +113,15 @@ void foo(double * restrict A) {
 //UNSAFE_TFM:    explicit access:
 //UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?> | <A:5:28, 8> | <I:8:12, 4> | <P:6:14, 8>
 //UNSAFE_TFM:    address access:
-//UNSAFE_TFM:     <X:6:7, ?> <Y:6:10, ?>
+//UNSAFE_TFM:     <*A:5:28, ?> <N, 4> <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    explicit access (separate):
 //UNSAFE_TFM:     <A:5:28, 8> <I:8:12, 4> <N, 4> <P:6:14, 8> <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM:    redundant (separate):
 //UNSAFE_TFM:     <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM:    lock (separate):
 //UNSAFE_TFM:     <I:8:12, 4> <N, 4>
+//UNSAFE_TFM:    address access (separate):
+//UNSAFE_TFM:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    no promoted scalar (separate):
 //UNSAFE_TFM:     <P[0]:{12:17|6:14}, 4> <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM:    direct access (separate):
@@ -154,6 +160,8 @@ void foo(double * restrict A) {
 //UNSAFE_TFM_and_REDUNDANT:     <P[0]:{12:17|6:14}, 4>
 //UNSAFE_TFM_and_REDUNDANT:    lock (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <I:8:12, 4> <N, 4>
+//UNSAFE_TFM_and_REDUNDANT:    address access (separate):
+//UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    no promoted scalar (separate):
 //UNSAFE_TFM_and_REDUNDANT:     <X:6:7, ?> <Y:6:10, ?>
 //UNSAFE_TFM_and_REDUNDANT:    direct access (separate):

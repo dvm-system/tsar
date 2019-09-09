@@ -41,13 +41,15 @@ void foo(double * restrict A) {
 //CHECK:    explicit access:
 //CHECK:     <A:3:28, 8> | <I:6:12, 4> | <N, 4> | <P:4:8, 8> | <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //CHECK:    address access:
-//CHECK:     <X, 4> <Y, 4>
+//CHECK:      <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <Y, 4>
 //CHECK:    redundant (separate):
 //CHECK:     <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:6:12, 4> <N, 4>
+//CHECK:    address access (separate)
+//CHECK:     <X, 4> <Y, 4>
 //CHECK:    direct access (separate):
 //CHECK:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
@@ -73,13 +75,15 @@ void foo(double * restrict A) {
 //SAFE:    explicit access:
 //SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4> | <A:3:28, 8> | <I:6:12, 4> | <P:4:8, 8>
 //SAFE:    address access:
-//SAFE:     <X, 4> <Y, 4>
+//SAFE:     <*A:3:28, ?> <N, 4> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //SAFE:    explicit access (separate):
 //SAFE:     <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <Y, 4>
 //SAFE:    redundant (separate):
 //SAFE:     <P[0]:{10:17|4:8}, 4> <X, 4>
 //SAFE:    lock (separate):
 //SAFE:     <I:6:12, 4> <N, 4>
+//SAFE:    address access (separate):
+//SAFE:     <X, 4> <Y, 4>
 //SAFE:    direct access (separate):
 //SAFE:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <P[0]:{10:17|4:8}, 4> <X, 4> <Y, 4>
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
@@ -114,5 +118,7 @@ void foo(double * restrict A) {
 //REDUNDANT:     <P[0]:{10:17|4:8}, 4> <X, 4>
 //REDUNDANT:    lock (separate):
 //REDUNDANT:     <I:6:12, 4> <N, 4>
+//REDUNDANT:    address access (separate):
+//REDUNDANT:     <Y, 4>
 //REDUNDANT:    direct access (separate):
 //REDUNDANT:     <*A:3:28, ?> <A:3:28, 8> <I:6:12, 4> <N, 4> <P:4:8, 8> <Y, 4>

@@ -34,7 +34,7 @@ int main() {
 //CHECK:    reduction:
 //CHECK:     <S:6:7, 4>:add
 //CHECK:    redundant:
-//CHECK:     <X, 4>
+//CHECK:     <X, 4> foo():14:9
 //CHECK:    lock:
 //CHECK:     <I:11:12, 4>
 //CHECK:    header access:
@@ -42,13 +42,15 @@ int main() {
 //CHECK:    explicit access:
 //CHECK:     <I:11:12, 4> | <P:5:8, 8> | <S:6:7, 4>
 //CHECK:    address access:
-//CHECK:     foo():14:9
+//CHECK:     <X, 4> foo():14:9
 //CHECK:    explicit access (separate):
 //CHECK:     <I:11:12, 4> <P:5:8, 8> <S:6:7, 4> <X, 4>
 //CHECK:    redundant (separate):
 //CHECK:     foo():14:9
 //CHECK:    lock (separate):
 //CHECK:     <I:11:12, 4>
+//CHECK:    address access (separate):
+//CHECK:     foo():14:9
 //CHECK:    direct access (separate):
 //CHECK:     <I:11:12, 4> <P:5:8, 8> <S:6:7, 4> <X, 4> foo():14:9
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
@@ -63,7 +65,7 @@ int main() {
 //REDUNDANT:    reduction:
 //REDUNDANT:     <S:6:7, 4>:add
 //REDUNDANT:    redundant:
-//REDUNDANT:     <X, 4>
+//REDUNDANT:     <X, 4> foo():14:9
 //REDUNDANT:    lock:
 //REDUNDANT:     <I:11:12, 4>
 //REDUNDANT:    header access:

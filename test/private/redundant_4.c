@@ -31,13 +31,15 @@ void foo() {
 //CHECK:    explicit access:
 //CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11 | <I:5:12, 4> | <X:6:10, 8>
 //CHECK:    address access:
-//CHECK:     bar():8:11
+//CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> bar():8:11
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <X:6:10, 8> bar():8:11
 //CHECK:    redundant (separate):
 //CHECK:     <*X:{12:7|6:10}, ?> <X:6:10, 8> bar():8:11
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4>
+//CHECK:    address access (separate):
+//CHECK:     bar():8:11
 //CHECK:    direct access (separate):
 //CHECK:     <*X:{12:7|6:10}, ?> <A, 40> <B, 44> <I:5:12, 4> <X:6:10, 8> bar():8:11
 //REDUNDANT: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':

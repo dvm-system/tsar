@@ -114,13 +114,15 @@ int main() {
 //CHECK:    explicit access:
 //CHECK:     <?,?> | <A, 512> <B, 512> printf():40:5 | <Eps:30:12, 8> | <I:31:14, 4> | <I:37:14, 4> | <It:29:12, 4> | <J:32:16, 4> | <J:38:16, 4> | <Tmp:33:16, 8>
 //CHECK:    address access:
-//CHECK:     printf():40:5
+//CHECK:     <A, 512> <B, 512> printf():40:5
 //CHECK:    explicit access (separate):
 //CHECK:     <?,?> <Eps:30:12, 8> <I:31:14, 4> <I:37:14, 4> <It:29:12, 4> <J:32:16, 4> <J:38:16, 4> <Tmp:33:16, 8> printf():40:5
 //CHECK:    redundant (separate):
 //CHECK:     <?,?>
 //CHECK:    lock (separate):
 //CHECK:     <It:29:12, 4>
+//CHECK:    address access (separate):
+//CHECK:     printf():40:5
 //CHECK:    direct access (separate):
 //CHECK:     <?,?> <A, 512> <B, 512> <Eps:30:12, 8> <I:31:14, 4> <I:37:14, 4> <It:29:12, 4> <J:32:16, 4> <J:38:16, 4> <Tmp:33:16, 8> printf():40:5
 //CHECK:   loop at depth 2 Jacobi.c:37:5
