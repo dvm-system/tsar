@@ -1050,8 +1050,11 @@ void PrivateRecognitionPass::storeResults(
   // read-only, shared or dependency.
   BitMemoryTrait CombinedTrait;
   DependenceImp::Descriptor CombinedDepDptr;
+  unsigned NumberOfCombined = 0;
   for (; EMI != EME; ++EMI) {
     CombinedTrait &= EMI->get<BitMemoryTrait>();
+    if (dropUnitFlag(EMI->get<BitMemoryTrait>()) != BitMemoryTrait::NoAccess)
+      ++NumberOfCombined;
     auto Dptr = EMI->get<BitMemoryTrait>().toDescriptor(0, NumTraits);
     checkFirstPrivate(Numbers, R, EMI, Dptr);
     auto ExplicitItr = ExplicitAccesses.find(EMI->get<EstimateMemory>());
@@ -1073,6 +1076,8 @@ void PrivateRecognitionPass::storeResults(
   }
   for (auto &U : *Traits.get<UnknownList>()) {
     CombinedTrait &= U.get<BitMemoryTrait>();
+    if (dropUnitFlag(U.get<BitMemoryTrait>()) != BitMemoryTrait::NoAccess)
+      ++NumberOfCombined;
     auto Dptr = U.get<BitMemoryTrait>().toDescriptor(0, NumTraits);
     auto ExplicitItr = ExplicitUnknowns.find(U.get<Instruction>());
     if (ExplicitItr != ExplicitUnknowns.end() &&
@@ -1088,15 +1093,19 @@ void PrivateRecognitionPass::storeResults(
     NodeTraitItr->insert(
       UnknownMemoryTrait(U.get<Instruction>(), std::move(Dptr)));
   }
-  auto OriginalTrait = CombinedTrait;
-  CombinedTrait |= BitMemoryTrait::AllUnitFlags;
-  CombinedTrait &=
-    dropUnitFlag(OriginalTrait) == BitMemoryTrait::NoAccess ?
+  // It may be 0 or 1 because address accesses (with no access property) does
+  // not considered.
+  if (NumberOfCombined > 1) {
+    auto OriginalTrait = CombinedTrait;
+    CombinedTrait |= BitMemoryTrait::AllUnitFlags;
+    CombinedTrait &=
+      dropUnitFlag(OriginalTrait) == BitMemoryTrait::NoAccess ?
       BitMemoryTrait::NoAccess :
-    dropUnitFlag(OriginalTrait) == BitMemoryTrait::Readonly ?
+      dropUnitFlag(OriginalTrait) == BitMemoryTrait::Readonly ?
       BitMemoryTrait::Readonly :
-    hasSharedJoin(OriginalTrait) ? BitMemoryTrait::Shared :
+      hasSharedJoin(OriginalTrait) ? BitMemoryTrait::Shared :
       BitMemoryTrait::Dependency;
+  }
   if (NodeTraitItr->is<trait::ExplicitAccess>()) {
     *NodeTraitItr = CombinedTrait.toDescriptor(NodeTraitItr->count(), NumTraits);
       bcl::trait::unset<DependenceImp::Descriptor>(*NodeTraitItr);

@@ -20,15 +20,9 @@ int main() {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'main':
 //CHECK:  loop at depth 1 redundant_5.c:11:3
 //CHECK:    first private:
-//CHECK:     <P:5:8, 8>
+//CHECK:     <P:5:8, 8> | <X, 4>
 //CHECK:    second to last private:
-//CHECK:     <P:5:8, 8>
-//CHECK:    output:
-//CHECK:     <X, 4>
-//CHECK:    anti:
-//CHECK:     <X, 4>
-//CHECK:    flow:
-//CHECK:     <X, 4>
+//CHECK:     <P:5:8, 8> | <X, 4>
 //CHECK:    induction:
 //CHECK:     <I:11:12, 4>:[Int,0,10,1]
 //CHECK:    reduction:

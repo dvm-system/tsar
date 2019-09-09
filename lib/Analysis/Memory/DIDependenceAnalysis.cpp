@@ -664,13 +664,15 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
       if (Ignore)
         continue;
     }
-    ++NumberOfCombined;
+    if (!DIMTraitItr->is<trait::NoAccess>())
+      ++NumberOfCombined;
     CombinedTrait &= *DIMTraitItr;
     HasSpuriousDep |= hasSpuriousDep(*DIMTraitItr);
     bcl::trait::set(*DIMTraitItr, DepDptr);
   }
-  assert(NumberOfCombined != 0 && "At least on memory trait must be useful!");
   // It may be 1, if some traits have been ignored (for example, redundant).
+  // It may be 0, if there are no memory accesses (for example,
+  // address accesses only).
   if (NumberOfCombined > 1) {
     auto OriginalTrait = CombinedTrait;
     CombinedTrait |= BitMemoryTrait::AllUnitFlags;
