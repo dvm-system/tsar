@@ -721,34 +721,57 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
     if (auto AI = dyn_cast<AllocaInst>(Root->front()))
       if (Lp->contains(AI->getParent()))
         continue;
-    for (auto *U : Ptr->users()) {
-      if (auto II = dyn_cast<IntrinsicInst>(U))
+    for (auto &U : Ptr->uses()) {
+      auto *User = U.getUser();
+      if (auto II = dyn_cast<IntrinsicInst>(User))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           continue;
-      auto UI = dyn_cast<Instruction>(U);
-      if (!UI || !Lp->contains(UI->getParent()))
+      SmallDenseMap<Instruction *, Use *, 1> UseInsts;
+      if (auto *CE = dyn_cast<ConstantExpr>(User)) {
+        SmallVector<ConstantExpr *, 4> WorkList{ CE };
+        do {
+          auto *Expr = WorkList.pop_back_val();
+          for (auto &ExprU : Expr->uses()) {
+            auto ExprUse = ExprU.getUser();
+            if (auto ExprUseInst = dyn_cast<Instruction>(ExprUse))
+              UseInsts.try_emplace(ExprUseInst, &ExprU);
+            else if (auto ExprUseExpr = dyn_cast<ConstantExpr>(ExprUse))
+              WorkList.push_back(ExprUseExpr);
+          }
+        } while (!WorkList.empty());
+      } else if (auto UI = dyn_cast<Instruction>(User)) {
+        UseInsts.try_emplace(UI, &U);
+      }
+      if (UseInsts.empty())
         continue;
-      // The address is used inside the loop.
-      // Remember it if it is used for computation instead of memory access or
-      // if we do not know how it will be used.
-      // Address should be also remembered if it is a function parameter because
-      // it is not known how it is used inside a function.
-      ImmutableCallSite CS(UI);
-      if (isa<PtrToIntInst>(U) || CS && CS.getCalledValue() != Ptr ||
-         (isa<StoreInst>(U) && cast<StoreInst>(U)->getValueOperand() == Ptr)) {
-        auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
-        if (!Pair.second) {
-          *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;
-        } else {
-          auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
-          I->get<TraitList>().push_front(
-            std::make_pair(Base, BitMemoryTrait(BitMemoryTrait::NoRedundant &
-              BitMemoryTrait::NoAccess & BitMemoryTrait::AddressAccess)));
-          Pair.first->get<BitMemoryTrait>() =
-            &I->get<TraitList>().front().get<BitMemoryTrait>();
-        }
-        break;
+      if (!any_of(UseInsts, [Lp, User](std::pair<Instruction *, Use *> &I) {
+            if (!Lp->contains(I.first->getParent()))
+              return false;
+            // The address is used inside the loop.
+            // Remember it if it is used for computation instead of memory
+            // access or if we do not know how it will be used.
+            if (isa<PtrToIntOperator>(User))
+              return true;
+            if (auto *SI = dyn_cast<StoreInst>(I.first))
+              return I.second->getOperandNo() !=
+                     StoreInst::getPointerOperandIndex();
+            // Address should be also remembered if it is a function parameter
+            // because it is not known how it is used inside a function.
+            ImmutableCallSite CS(I.first);
+            return CS && CS.getCalledValue() != I.second->get();
+          }))
+        continue;
+      auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
+      if (!Pair.second) {
+        *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;
+      } else {
+        auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
+        I->get<TraitList>().push_front(
+          std::make_pair(Base, BitMemoryTrait(BitMemoryTrait::NoRedundant &
+            BitMemoryTrait::NoAccess & BitMemoryTrait::AddressAccess)));
+        Pair.first->get<BitMemoryTrait>() =
+          &I->get<TraitList>().front().get<BitMemoryTrait>();
       }
     }
   }

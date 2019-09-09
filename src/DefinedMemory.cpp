@@ -337,19 +337,35 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         continue;
     if (I.getType() && I.getType()->isPointerTy())
       DU->addAddressAccess(&I);
-    for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
-      if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(Op)) {
+    auto isAddressAccess = [&F](const Value *V) {
+      if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(V)) {
         if (!NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
-          continue;
-      } else if (isa<UndefValue>(Op) || !Op->getType() ||
-                 !Op->getType()->isPointerTy()) {
-        continue;
-      } else if (auto F = dyn_cast<Function>(Op)) {
+          return false;
+      } else if (isa<UndefValue>(V) || !V->getType() ||
+                 !V->getType()->isPointerTy()) {
+        return false;
+      } else if (auto F = dyn_cast<Function>(V)) {
         // In LLVM it is not possible to take address of intrinsic function.
         if (F->isIntrinsic())
-          continue;
+          return false;
       }
-      DU->addAddressAccess(Op);
+      return true;
+    };
+    for (auto *Op : I.operand_values()) {
+      if (isAddressAccess(Op))
+        DU->addAddressAccess(Op);
+      if (auto *CE = dyn_cast<ConstantExpr>(Op)) {
+        SmallVector<ConstantExpr *, 4> WorkList{ CE };
+        do {
+          auto *Expr = WorkList.pop_back_val();
+          for (auto *ExprOp : Expr->operand_values()) {
+            if (isAddressAccess(ExprOp))
+              DU->addAddressAccess(ExprOp);
+            if (auto ExprCEOp = dyn_cast<ConstantExpr>(ExprOp))
+              WorkList.push_back(ExprCEOp);
+          }
+        } while (!WorkList.empty());
+      }
     }
     // Any call may access some addresses even if it does not access memory.
     // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list

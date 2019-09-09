@@ -994,8 +994,22 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     addPointeeIfNeed(&Arg);
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
     addPointeeIfNeed(&I);
-    for (auto *Op : make_range(I.value_op_begin(), I.value_op_end()))
+    for (auto *Op : I.operand_values()) {
       addPointeeIfNeed(Op);
+      /// Constant expression may access addresses of some locations, so
+      /// add this locations into the alias tree.
+      if (auto *CE = dyn_cast<ConstantExpr>(Op)) {
+        SmallVector<ConstantExpr *, 4> WorkList{ CE };
+        do {
+          auto *Expr = WorkList.pop_back_val();
+          for (auto *ExprOp : Expr->operand_values()) {
+            addPointeeIfNeed(ExprOp);
+            if (auto ExprCEOp = dyn_cast<ConstantExpr>(ExprOp))
+              WorkList.push_back(ExprCEOp);
+          }
+        } while (!WorkList.empty());
+      }
+    }
   }
   return false;
 }
