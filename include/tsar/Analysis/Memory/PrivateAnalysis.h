@@ -244,7 +244,8 @@ private:
   /// ..X = ...;
   /// \endcode
   void resolveAddresses(tsar::DFLoop *L, const tsar::DefUseSet &DefUse,
-    TraitMap &ExplicitAccesses, AliasMap &NodeTraits);
+    TraitMap &ExplicitAccesses, UnknownMap &ExplicitUnknowns,
+    AliasMap &NodeTraits);
 
   /// \brief Propagates traits of explicitly accessed locations to all nodes of
   /// an alias tree.

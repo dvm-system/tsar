@@ -27,6 +27,8 @@ void foo() {
 //CHECK:     <I:5:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <A, 40> <B, 44> bar():7:7 | <I:5:12, 4>
+//CHECK:    address access:
+//CHECK:     bar():7:7
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> bar():7:7
 //CHECK:    redundant (separate):

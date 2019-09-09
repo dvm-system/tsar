@@ -220,6 +220,8 @@ int main(int Argc, char **Argv) {
 //CHECK:     <ITMAX:43:7, 4> | <It:47:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> iter():48:18 printf():49:5 | <?,?> | <A:44:12, 8> | <B:45:12, 8> | <Eps:48:12, 8> | <ITMAX:43:7, 4> | <It:47:12, 4> | <L:42:7, 4>
+//CHECK:    address access:
+//CHECK:     iter():48:18 printf():49:5
 //CHECK:    explicit access (separate):
 //CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <?,?> <A:44:12, 8> <B:45:12, 8> <Eps:48:12, 8> <ITMAX:43:7, 4> <It:47:12, 4> <L:42:7, 4> iter():48:18 printf():49:5
 //CHECK:    redundant (separate):

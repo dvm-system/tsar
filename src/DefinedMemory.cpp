@@ -327,33 +327,37 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   Function *F = BB->getParent();
   assert(BB && "Basic block must not be null!");
   for (Instruction &I : BB->getInstList()) {
-    if (I.getType() && I.getType()->isPointerTy())
-      DU->addAddressAccess(&I);
-    for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
-      if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(Op))
-        if (!NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
-          continue;
-      if (isa<UndefValue>(Op) || isa<ConstantPointerNull>(Op) ||
-          !Op->getType() || !Op->getType()->isPointerTy())
-        continue;
-
-      // Function is a first parameter of 'call' instruction, so we should
-      // ignore intrinsics here.
-      if (auto F = dyn_cast<Function>(Op))
-        if (isDbgInfoIntrinsic(F->getIntrinsicID()) ||
-            isMemoryMarkerIntrinsic(F->getIntrinsicID()))
-          continue;
-      DU->addAddressAccess(Op);
-    }
-    if (!I.mayReadOrWriteMemory())
-      continue;
     // TODO (kaniandr@gmail.com): LLVM analysis says that memory marker
     // intrinsics may access memory, so we exclude these intrinsics from
     // analysis manually. Is it correct? For example, may be we should set that
     // 'lifetime' intrinsics write memory?
     if (auto II = llvm::dyn_cast<IntrinsicInst>(&I))
-      if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+      if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+          isDbgInfoIntrinsic(II->getIntrinsicID()))
         continue;
+    if (I.getType() && I.getType()->isPointerTy())
+      DU->addAddressAccess(&I);
+    for (auto Op : make_range(I.value_op_begin(), I.value_op_end())) {
+      if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(Op)) {
+        if (!NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
+          continue;
+      } else if (isa<UndefValue>(Op) || !Op->getType() ||
+                 !Op->getType()->isPointerTy()) {
+        continue;
+      } else if (auto F = dyn_cast<Function>(Op)) {
+        // In LLVM it is not possible to take address of intrinsic function.
+        if (F->isIntrinsic())
+          continue;
+      }
+      DU->addAddressAccess(Op);
+    }
+    // Any call may access some addresses even if it does not access memory.
+    // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list
+    // of unknown address accesses.
+    if (ImmutableCallSite(&I))
+      DU->addAddressUnknowns(&I);
+    if (!I.mayReadOrWriteMemory())
+      continue;
     // 1. Must/may def-use information will be set for location accessed in a
     // current instruction.
     // 2. Must/may def-use information will be set for all explicitly mentioned
@@ -539,6 +543,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
     for (auto Loc : DU->getAddressAccesses())
       DefUse->addAddressAccess(Loc);
+    for (auto Loc : DU->getAddressUnknowns())
+      DefUse->addAddressUnknowns(Loc);
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }

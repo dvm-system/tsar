@@ -1055,9 +1055,13 @@ public:
 
   /// \brief Inserts unknown memory access.
   ///
-  /// If a specified instruction does not access memory or reads/writes memory
-  /// from objects pointed to by their pointer-typed arguments only this
-  /// instruction will be ignored.
+  /// If a specified instruction is not a call and does not access memory or
+  /// reads/writes memory from objects pointed to by their pointer-typed
+  /// arguments only this instruction will be ignored.
+  ///
+  /// Calls which does not access memory are not ignored because this calls
+  /// may access addresses of some memory locations (which is not known) and
+  /// such address accesses should be underlined in analysis results.
   void addUnknown(llvm::Instruction *I);
 
   /// Removes node from the graph, note that this class manages memory

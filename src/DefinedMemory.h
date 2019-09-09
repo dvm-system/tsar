@@ -284,6 +284,25 @@ public:
     mExplicitUnknowns.insert(Accesses.begin(), Accesses.end());
   }
 
+  /// Returns list of instructions which may access address of unknown memory.
+  ///
+  /// For example, even if a function call does not access any memory location
+  /// it may accesses some addresses of a memory location.
+  const InstructionSet & getAddressUnknowns() const { return mAddressUnknowns; }
+
+  /// Returns true if there are evaluation of an unknown address in the node.
+  bool hasAddressUnknowns(llvm::Instruction *I) const {
+    assert(I && "Instruction must not be null!");
+    return mAddressUnknowns.count(I) != 0;
+  }
+
+  /// Specifies that there are evaluation of an unknown address in the node.
+  ///
+  /// \return False if it has been already specified.
+  bool addAddressUnknowns(llvm::Instruction *I) {
+    assert(I && "Instruction must not be null!");
+    return mAddressUnknowns.insert(I).second;
+  }
 
 private:
   LocationSet mDefs;
@@ -293,6 +312,7 @@ private:
   PointerSet mAddressAccesses;
   InstructionSet mUnknownInsts;
   InstructionSet mExplicitUnknowns;
+  InstructionSet mAddressUnknowns;
 };
 
 /// This presents information whether a location has definition after a node

@@ -32,6 +32,8 @@ double foo() {
 //CHECK:     <I:7:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:7:12, 4> | <J:6:10, 4> | <JStart, 4> bar():11:5
+//CHECK:    address access:
+//CHECK:     bar():11:5
 //CHECK:    explicit access (separate):
 //CHECK:     <I:7:12, 4> <J:6:10, 4> <JStart, 4> bar():11:5
 //CHECK:    lock (separate):

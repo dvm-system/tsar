@@ -39,6 +39,7 @@ shared_18.init
 shared_19.init
 shared_20.safe.init
 shared_call_1.init
+shared_call_2.init
 distance_1.init
 distance_2.init
 distance_3.safe.init
@@ -54,6 +55,7 @@ redundant_1.init
 redundant_2.init
 redundant_3.init
 redundant_4.init
+redundant_5.init
 malloc_1.init
 malloc_2.init
 malloc_3.init
@@ -76,5 +78,5 @@ reduction_6.init
 reduction_7.init
 global_1.init
 Jacobi.init
-Jacobi.func
+Jacobi.func.init
 Adi.func.init

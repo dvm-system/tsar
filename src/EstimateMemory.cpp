@@ -541,12 +541,18 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   assert(I && "Instruction which accesses unknown memory must not be null!");
   LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add unknown memory location\n");
   if (auto *II = dyn_cast<IntrinsicInst>(I))
-    if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+    if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+        isDbgInfoIntrinsic(II->getIntrinsicID()))
       return;
-  if (!I->mayReadOrWriteMemory())
-    return;
+  /// Calls which does not access memory are not ignored because this calls
+  /// may access addresses of some memory locations (which is not known) and
+  /// such address accesses should be underlined in analysis results.
+  ///
+  /// Is it safe to ignore intrinsics here? It seems that all intrinsics in
+  /// LLVM does not use addresses to perform  computations instead of
+  /// memory accesses (see, PrivateAnalysis pass for details).
   ImmutableCallSite CS(I);
-  if (CS && AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
+  if ((!CS || isa<IntrinsicInst>(I)) && !I->mayReadOrWriteMemory())
     return;
   SmallVector<AliasNode *, 4> UnknownAliases, EstimateAliases;
   auto Children = make_range(

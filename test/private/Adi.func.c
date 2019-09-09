@@ -101,6 +101,8 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:     <It:24:7, 4> | <ItMax:24:11, 4>
 //CHECK:    explicit access:
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> iter():30:11 printf():31:5 | <A:23:11, 8> | <Eps:22:18, 8> | <It:24:7, 4> | <ItMax:24:11, 4> | <MaxEps:22:10, 8>
+//CHECK:    address access:
+//CHECK:     iter():30:11 printf():31:5
 //CHECK:    explicit access (separate):
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23:11, 8> <Eps:22:18, 8> <It:24:7, 4> <ItMax:24:11, 4> <MaxEps:22:10, 8> iter():30:11 printf():31:5
 //CHECK:    redundant (separate):

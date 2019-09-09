@@ -393,7 +393,8 @@ void PrivateRecognitionPass::resolveCandidats(
       *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps, AliasSTR,
       ExplicitAccesses, ExplicitUnknowns, NodeTraits);
     resolvePointers(*DefItr->get<DefUseSet>(), ExplicitAccesses);
-    resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses, NodeTraits);
+    resolveAddresses(L, *DefItr->get<DefUseSet>(), ExplicitAccesses,
+      ExplicitUnknowns, NodeTraits);
     collectHeaderAccesses(L->getLoop(), *DefItr->get<DefUseSet>(),
       ExplicitAccesses, ExplicitUnknowns);
     propagateTraits(Numbers, *R, ExplicitAccesses, ExplicitUnknowns, NodeTraits,
@@ -700,7 +701,8 @@ void PrivateRecognitionPass::resolvePointers(
 }
 
 void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
-    const DefUseSet &DefUse, TraitMap &ExplicitAccesses, AliasMap &NodeTraits) {
+    const DefUseSet &DefUse, TraitMap &ExplicitAccesses,
+    UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits) {
   assert(L && "Loop must not be null!");
   for (Value *Ptr : DefUse.getAddressAccesses()) {
     const EstimateMemory* Base = mAliasTree->find(MemoryLocation(Ptr, 0));
@@ -748,6 +750,27 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
         }
         break;
       }
+    }
+  }
+  for (auto *Unknown : DefUse.getAddressUnknowns()) {
+    /// Is it safe to ignore intrinsics here? It seems that all intrinsics in
+    /// LLVM does not use addresses to perform  computations instead of
+    /// memory accesses.
+    if (isa<IntrinsicInst>(Unknown))
+      continue;
+    const auto *N = mAliasTree->findUnknown(Unknown);
+    assert(N && "Alias node for unknown memory location must not be null!");
+    auto Pair = ExplicitUnknowns.try_emplace(Unknown);
+    if (!Pair.second) {
+      *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;
+    } else {
+      auto I = NodeTraits.find(N);
+      I->get<UnknownList>().push_front(std::make_pair(
+          Unknown, BitMemoryTrait::NoRedundant & BitMemoryTrait::NoAccess &
+                       BitMemoryTrait::AddressAccess));
+    Pair.first->get<BitMemoryTrait>() =
+      &I->get<UnknownList>().front().get<BitMemoryTrait>();
+    Pair.first->get<AliasNode>() = N;
     }
   }
 }
