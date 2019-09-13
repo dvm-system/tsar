@@ -208,7 +208,7 @@ void APCArrayInfoPass::print(raw_ostream &OS, const Module *M) const {
         OS << "unknown";
       else
         OS << format("[%d, %d)", DimSizes[I].first, DimSizes[I].second);
-      OS << ", may be " << (A->IsDimMapped(I) ? "" : "not") << " mapped\n";
+      OS << ", may" << (A->IsDimMapped(I) ? "" : " not") << " be mapped\n";
     }
     OS << "  parallel regions: ";
     for (auto &PR : A->GetRegionsName())
