@@ -65,6 +65,7 @@ public:
 
 private:
   std::vector<apc::Array *> mArrays;
+  bool mMultipleLaunch = false;
 };
 }
 
@@ -146,7 +147,15 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),
       Filename, ShrinkedDeclLoc, std::move(DeclScope), APCSymbol,
       { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
-    auto IsNew = APCCtx.addArray(RawDIM, APCArray);
+    if (!APCCtx.addArray(RawDIM, APCArray)) {
+      // This pass may be executed in analysis mode. It depends on -print-only
+      // and -print-step options. In case of parallelization pass manager must
+      // invokes this pass only once for each function.
+      delete APCArray;
+      mArrays.push_back(APCCtx.findArray(RawDIM));
+      mMultipleLaunch = true;
+      continue;
+    }
     mArrays.push_back(APCArray);
     auto Sizes = APCArray->GetSizes();
     for (std::size_t I = 0, EI = A->getNumberOfDims(); I < EI; ++I) {
@@ -165,6 +174,9 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
 }
 
 void APCArrayInfoPass::print(raw_ostream &OS, const Module *M) const {
+  if (mMultipleLaunch)
+    OS << "warning: possible multiple launches of the pass for the same "
+          "function: print merged results\n";
   for (auto *A : mArrays) {
     OS << format("%s [short=%s, unique=%s, id=%d]\n", A->GetName().c_str(),
       A->GetShortName().c_str(), A->GetArrayUniqKey().c_str(), A->GetId());

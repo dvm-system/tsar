@@ -106,6 +106,9 @@ public:
   bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   void print(raw_ostream &OS, const Module *M) const override;
+
+private:
+  bool mMultipleLaunch = false;
 };
 
 using APCDataDistributionProvider = FunctionPassProvider<
@@ -173,6 +176,11 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     [&GlobalOpts](GlobalOptionsImmutableWrapper &GO) {
       GO.setOptions(&GlobalOpts);
   });
+  auto &APCRegion = APCCtx.getDefaultRegion();
+  if (!APCRegion.GetDataDir().distrRules.empty()) {
+    mMultipleLaunch = true;
+    return false;
+  }
   // TODO (kaniandr@gmail.com): what should we do if an array is a function
   // parameter, however it is not accessed in a function. In this case,
   // this array is not processed by this pass and it will not be added in
@@ -239,7 +247,6 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual, ArrayRWs);
   processLoopInformationForFunction(Accesses);
   addToDistributionGraph(Accesses, FormalToActual);
-  auto &APCRegion = APCCtx.getDefaultRegion();
   auto &G = APCRegion.GetGraphToModify();
   auto &ReducedG = APCRegion.GetReducedGraphToModify();
   auto &AllArrays = APCRegion.GetAllArraysToModify();
@@ -261,6 +268,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
 }
 
 void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
+  if (mMultipleLaunch)
+    OS << "warning: possible multiple launches of the pass for the same "
+          "module: print results for the first successful launch\n";
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   auto &APCRegion = APCCtx.getDefaultRegion();
   auto &DataDirs = APCRegion.GetDataDir();

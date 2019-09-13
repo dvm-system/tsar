@@ -70,6 +70,7 @@ public:
 
 private:
   std::vector<apc::FuncInfo *> mFunctions;
+  bool mMultipleLaunch = false;
 };
 
 /// Try to determine start and end source location for a specified function.
@@ -100,7 +101,7 @@ std::pair<DebugLoc, DebugLoc> getFunctionRange(const Function &F) {
 }
 
 /// Add new function to the APCContext.
-apc::FuncInfo & registerFunction(Function &F, APCContext &APCCtx) {
+std::pair<apc::FuncInfo *, bool> registerFunction(Function &F, APCContext &APCCtx) {
   auto Range = getFunctionRange(F);
   decltype(std::declval<apc::FuncInfo>().linesNum) Lines(0, 0);
   if (Range.first && !bcl::shrinkPair(
@@ -110,9 +111,11 @@ apc::FuncInfo & registerFunction(Function &F, APCContext &APCCtx) {
         Range.second.getLine(), Range.second.getCol(), Lines.second))
     emitUnableShrink(F.getContext(), F, Range.second, DS_Warning);
   auto FI = new apc::FuncInfo(F.getName().str(), Lines);
-  auto Res = APCCtx.addFunction(F, FI);
-  assert(Res && "Can not add function to APC context!"); (void)(Res);
-  return *FI;
+  if (!APCCtx.addFunction(F, FI)) {
+    delete FI;
+    return std::make_pair(APCCtx.findFunction(F), false);
+  }
+  return std::make_pair(FI, true);
 }
 }
 
@@ -152,8 +155,16 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     /// TODO (kaniandr@gmail.com): should we collect functions without body?
     if (!Caller.first || Caller.first->isDeclaration())
       continue;
-    auto &FI = registerFunction(const_cast<Function &>(*Caller.first), APCCtx);
-    mFunctions.push_back(&FI);
+    auto Pair = registerFunction(const_cast<Function &>(*Caller.first), APCCtx);
+    mFunctions.push_back(Pair.first);
+    if (!Pair.second) {
+      // This pass may be executed in analysis mode. It depends on -print-only
+      // and -print-step options. In case of parallelization pass manager must
+      // invokes this pass only once for each function.
+      mMultipleLaunch = true;
+      continue;
+    }
+    auto &FI = *Pair.first;
     auto DIFunc = Caller.first->getSubprogram();
     /// TODO (kaniandr@gmail.com): should we emit warning or error if filename
     /// is not available from debug information.
@@ -299,6 +310,9 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
 }
 
 void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
+  if (mMultipleLaunch)
+    OS << "warning: possible multiple launches of the pass for the same "
+          "module: print merged results\n";
   auto printParams = [&OS](const apc::FuncParam &Params) {
     for (std::size_t I = 0, EI = Params.countOfPars; I < EI; ++I) {
       OS << "    idx: " << I << "\n";
