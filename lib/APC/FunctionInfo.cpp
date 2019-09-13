@@ -45,6 +45,16 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+class APCFunctionInfoPassInfo final : public PassGroupInfo {
+  bool isNecessaryPass(llvm::AnalysisID ID) const override {
+    static llvm::AnalysisID Passes[] = {
+      getPassIDAndErase(createAPCLoopInfoBasePass()),
+      getPassIDAndErase(createAPCArrayInfoPass()),
+    };
+    return count(Passes, ID);
+  }
+};
+
 class APCFunctionInfoPass: public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
@@ -111,6 +121,7 @@ char APCFunctionInfoPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
   "Function Collector (APC)", true, true
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
+  INITIALIZE_PASS_IN_GROUP_INFO(APCFunctionInfoPassInfo);
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)

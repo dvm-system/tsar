@@ -165,6 +165,20 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
       Passes.add(PI->getNormalCtor()());
     }
   };
+  // Add pass to a manager if it is necessary for some of pases in a list.
+  // Properties of this passes will be looked up in a specified group of passes.
+  auto addIfNecessary =
+    [](Pass *P, ArrayRef<const PassInfo *> PL, PassGroupRegistry &GR,
+      legacy::PassManager &Passes) {
+    for (auto *PI : PL) {
+      if (auto *GI = GR.groupInfo(*PI))
+        if (GI->isNecessaryPass(P->getPassID())) {
+          Passes.add(P);
+          return;
+        }
+    }
+    delete P;
+  };
   Passes.add(createMemoryMatcherPass());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
@@ -172,7 +186,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createDIMemoryEnvironmentStorage());
 #ifdef APC_FOUND
   Passes.add(createAPCContextStorage());
-  Passes.add(createAPCLoopInfoBasePass());
+  addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,
+                 PrintPassGroup::getPassRegistry(), Passes);
 #endif
   // Preliminary analysis of privatizable variables. This analysis is necessary
   // to prevent lost of result of optimized values. The memory promotion
@@ -211,8 +226,10 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
 #ifdef APC_FOUND
-  Passes.add(createAPCFunctionInfoPass());
-  Passes.add(createAPCArrayInfoPass());
+  addIfNecessary(createAPCFunctionInfoPass(), mPrintPasses,
+                 PrintPassGroup::getPassRegistry(), Passes);
+  addIfNecessary(createAPCArrayInfoPass(), mPrintPasses,
+                 PrintPassGroup::getPassRegistry(), Passes);
 #endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);

@@ -19,6 +19,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Type.h>
+#include <llvm/Pass.h>
 #include <tuple>
 #include <bcl/convertible_pair.h>
 #include <bcl/tagged.h>
@@ -74,6 +75,13 @@ struct Region {};
 
 /// Identifier of an object, for example, loops.
 using ObjectID = llvm::MDNode *;
+
+/// Return identifier of a specified pass and destroy the pass.
+inline llvm::AnalysisID getPassIDAndErase(llvm::Pass *P) {
+  auto ID = P->getPassID();
+  delete P;
+  return ID;
+}
 
 /// Merges elements from a specified range using a specified delimiter, put
 /// result to a specified buffer and returns reference to it.

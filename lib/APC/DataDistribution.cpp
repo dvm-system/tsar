@@ -54,6 +54,17 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+class APCDataDistributionPassInfo final : public PassGroupInfo {
+  bool isNecessaryPass(llvm::AnalysisID ID) const override {
+    static llvm::AnalysisID Passes[] = {
+      getPassIDAndErase(createAPCLoopInfoBasePass()),
+      getPassIDAndErase(createAPCArrayInfoPass()),
+      getPassIDAndErase(createAPCFunctionInfoPass()),
+    };
+    return count(Passes, ID);
+  }
+};
+
 /// Pool of descriptions of arrays accesses.
 ///
 /// We should use pointer to apc::ArrayInfo in APC library. However, it is not
@@ -132,6 +143,7 @@ INITIALIZE_PROVIDER_END(APCDataDistributionProvider, "apc-dd-provider",
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCDataDistributionPass, "apc-data-distribution",
   "Data Distribution Builder (APC)", true, true,
    DefaultQueryManager::PrintPassGroup::getPassRegistry())
+  INITIALIZE_PASS_IN_GROUP_INFO(APCDataDistributionPassInfo);
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCDataDistributionProvider)

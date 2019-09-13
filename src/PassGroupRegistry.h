@@ -25,7 +25,16 @@ namespace tsar {
 class PassGroupInfo {
 public:
   virtual ~PassGroupInfo() {}
+
   virtual void addBeforePass(llvm::legacy::PassManager &PM) const {}
+
+  /// Return true if a specified past should be executed before the current pass.
+  ///
+  /// This method may be useful if there is no explicit dependence between two
+  /// passes, however results of the necessary pass drastically influence on
+  /// the results of the current one. So, there are no reasons to execute
+  /// the current pass if necessary passes has not been executed.
+  virtual bool isNecessaryPass(const void * ID) const { return false; }
 };
 
 /// Group of passes, which stores already allocated and registered PassInfo.
