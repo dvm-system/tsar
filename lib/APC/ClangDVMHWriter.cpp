@@ -35,6 +35,7 @@
 #include "tsar_memory_matcher.h"
 #include "tsar_pass_provider.h"
 #include "tsar_pragma.h"
+#include "tsar_query.h"
 #include "tsar_transformation.h"
 #include <apc/Distribution/DvmhDirective.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
@@ -42,13 +43,19 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/Lex/Lexer.h>
-#include <llvm/Pass.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/Analysis/GlobalsModRef.h>
+#include <llvm/Analysis/ScalarEvolutionAliasAnalysis.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Pass.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils.h>
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "apc-dvmh-writer"
+#define DEBUG_TYPE "clang-experimental-apc-dvmh"
 
 using namespace clang;
 using namespace llvm;
@@ -286,16 +293,47 @@ using APCClangDVMHWriterProvider = FunctionPassProvider<
 
 char APCClangDVMHWriter::ID = 0;
 
-INITIALIZE_PROVIDER_BEGIN(APCClangDVMHWriterProvider, "apc-dvmh-writer-provider",
-  "DVMH Writer (APC, Provider")
+namespace {
+class APCClangDVMHWriterInfo final : public PassGroupInfo {
+  void addBeforePass(legacy::PassManager &Passes) const override {
+    // First step analysis.
+    Passes.add(createMemoryMatcherPass());
+    Passes.add(createDIMemoryEnvironmentStorage());
+    Passes.add(createAPCContextStorage());
+    Passes.add(createAPCLoopInfoBasePass());
+    Passes.add(createDIEstimateMemoryPass());
+    Passes.add(createCFGSimplificationPass());
+    // Second step analysis.
+    Passes.add(createSROAPass());
+    Passes.add(createEarlyCSEPass());
+    Passes.add(createCFGSimplificationPass());
+    Passes.add(createInstructionCombiningPass());
+    Passes.add(createLoopSimplifyPass());
+    Passes.add(createSCEVAAWrapperPass());
+    Passes.add(createGlobalsAAWrapperPass());
+    Passes.add(createRPOFunctionAttrsAnalysis());
+    Passes.add(createPOFunctionAttrsAnalysis());
+    Passes.add(createMemoryMatcherPass());
+    Passes.add(createDIEstimateMemoryPass());
+    Passes.add(createAPCFunctionInfoPass());
+    Passes.add(createAPCArrayInfoPass());
+    Passes.add(createAPCDataDistributionPass());
+  }
+};
+}
+
+INITIALIZE_PROVIDER_BEGIN(APCClangDVMHWriterProvider, "clang-apc-dvmh-provider",
+  "DVMH Parallelization (APC, Provider)")
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
-INITIALIZE_PROVIDER_END(APCClangDVMHWriterProvider, "apc-dvmh-writer-provider",
-  "DVMH Writer (APC, Provider")
+INITIALIZE_PROVIDER_END(APCClangDVMHWriterProvider, "clang-apc-dvmh-provider",
+  "DVMH Parallelization (APC, Provider)")
 
-INITIALIZE_PASS_BEGIN(APCClangDVMHWriter, "apc-dvmh-writer",
-  "DVMH Writer (APC)", true, true)
+INITIALIZE_PASS_IN_GROUP_BEGIN(APCClangDVMHWriter, "clang-experimental-apc-dvmh",
+  "DVMH Parallelization (Clang, APC, Experimental)", false, false,
+  TransformationQueryManager::getPassRegistry())
+  INITIALIZE_PASS_IN_GROUP_INFO(APCClangDVMHWriterInfo);
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
@@ -303,8 +341,9 @@ INITIALIZE_PASS_BEGIN(APCClangDVMHWriter, "apc-dvmh-writer",
   INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
   INITIALIZE_PASS_DEPENDENCY(APCClangDVMHWriterProvider)
   INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_END(APCClangDVMHWriter, "apc-dvmh-writer",
-  "DVMH Writer (APC)", true, true)
+INITIALIZE_PASS_IN_GROUP_END(APCClangDVMHWriter, "clang-experimental-apc-dvmh",
+  "DVMH Parallelization (Clang, APC, Experimental)", false, false,
+  TransformationQueryManager::getPassRegistry())
 
 ModulePass * llvm::createAPCClangDVMHWriter() { return new APCClangDVMHWriter; }
 

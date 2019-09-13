@@ -34,6 +34,7 @@
 #include "MemoryAccessUtils.h"
 #include "tsar_pass_provider.h"
 #include "tsar_utility.h"
+#include "tsar_query.h"
 #include <apc/Distribution/CreateDistributionDirs.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphCall/graph_calls_func.h>
@@ -128,14 +129,16 @@ INITIALIZE_PROVIDER_BEGIN(APCDataDistributionProvider, "apc-dd-provider",
 INITIALIZE_PROVIDER_END(APCDataDistributionProvider, "apc-dd-provider",
   "Data Distribution Builder (APC, Provider")
 
-INITIALIZE_PASS_BEGIN(APCDataDistributionPass, "apc-data-distribution",
-  "Data Distribution Builder (APC)", true, true)
+INITIALIZE_PASS_IN_GROUP_BEGIN(APCDataDistributionPass, "apc-data-distribution",
+  "Data Distribution Builder (APC)", true, true,
+   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCDataDistributionProvider)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_END(APCDataDistributionPass, "apc-data-distribution",
-  "Data Distribution Builder (APC)", true, true)
+INITIALIZE_PASS_IN_GROUP_END(APCDataDistributionPass, "apc-data-distribution",
+  "Data Distribution Builder (APC)", true, true,
+  DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 ModulePass * llvm::createAPCDataDistributionPass() {
   return new APCDataDistributionPass;

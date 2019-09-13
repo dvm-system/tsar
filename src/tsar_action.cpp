@@ -213,8 +213,6 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
 #ifdef APC_FOUND
   Passes.add(createAPCFunctionInfoPass());
   Passes.add(createAPCArrayInfoPass());
-  Passes.add(createAPCDataDistributionPass());
-  Passes.add(createAPCClangDVMHWriter());
 #endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
@@ -230,9 +228,6 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
   addOutput(AfterLoopRotateAnalysis);
-#ifdef APC_FOUND
-  Passes.add(createClangFormatPass());
-#endif
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }
