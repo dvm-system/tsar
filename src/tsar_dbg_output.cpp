@@ -234,9 +234,7 @@ void print(llvm::raw_ostream &OS, llvm::DebugLoc Loc, bool FilenameOnly) {
 }
 
 namespace {
-/// \brief Prints analysis info for function passes.
-///
-/// This class is similar to printers which is used in the opt tool.
+/// Print analysis info for function passes.
 class FunctionPassPrinter : public FunctionPass, public bcl::Uncopyable {
 public:
   static char ID;
@@ -249,9 +247,9 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  if (!GlobalOpts.AnalyzeLibFunc && tsar::hasFnAttr(F, tsar::AttrKind::LibFunc))
-    return false;
+    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+    if (!GO.AnalyzeLibFunc && tsar::hasFnAttr(F, tsar::AttrKind::LibFunc))
+      return false;
     mOut << "Printing analysis '" << mPassToPrint->getPassName()
       << "' for function '" << F.getName() << "':\n";
     getAnalysisID<Pass>(mPassToPrint->getTypeInfo()).
@@ -262,6 +260,11 @@ public:
   StringRef getPassName() const override { return mPassName; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<GlobalOptionsImmutableWrapper>();
+    // Pass manager releases memory which has been used in passes that are not
+    // used any longer. So, if we want to use some of analysis available in
+    // the printed pass, we should specify necessary analysis passes for the
+    // print pass.
     auto *P = mPassToPrint->getNormalCtor()();
     P->getAnalysisUsage(AU);
     delete P;
@@ -276,14 +279,53 @@ private:
 };
 
 char FunctionPassPrinter::ID = 0;
+
+/// Print analysis info for module passes.
+class ModulePassPrinter : public ModulePass {
+public:
+  static char ID;
+
+  ModulePassPrinter(const PassInfo *PI, raw_ostream &out)
+      : ModulePass(ID), mPassToPrint(PI), mOut(out) {
+    assert(PI && "PassInfo must not be null!");
+    std::string PassToPrintName = mPassToPrint->getPassName();
+    mPassName = "ModulePass Printer: " + PassToPrintName;
+  }
+
+  bool runOnModule(Module &M) override {
+    mOut << "Printing analysis '" << mPassToPrint->getPassName() << "':\n";
+    getAnalysisID<Pass>(mPassToPrint->getTypeInfo()).print(mOut, &M);
+    return false;
+  }
+
+  StringRef getPassName() const override { return mPassName; }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    // Pass manager releases memory which has been used in passes that are not
+    // used any longer. So, if we want to use some of analysis available in
+    // the printed pass, we should specify necessary analysis passes for the
+    // print pass.
+    auto *P = mPassToPrint->getNormalCtor()();
+    P->getAnalysisUsage(AU);
+    delete P;
+    AU.addRequiredID(mPassToPrint->getTypeInfo());
+    AU.setPreservesAll();
+  }
+
+private:
+  const PassInfo *mPassToPrint;
+  raw_ostream &mOut;
+  std::string mPassName;
+};
+
+char ModulePassPrinter::ID = 0;
 }
 
-/// \brief Creates a pass to print analysis info for function passes.
-///
-/// To use this function it is necessary to override
-/// void `llvm::Pass::print(raw_ostream &O, const Module *M) const` method for
-/// a function pass internal state of which must be printed.
 FunctionPass *llvm::createFunctionPassPrinter(
     const PassInfo *PI, raw_ostream &OS) {
   return new FunctionPassPrinter(PI, OS);
+}
+
+ModulePass *llvm::createModulePassPrinter(const PassInfo *PI, raw_ostream &OS) {
+  return new ModulePassPrinter(PI, OS);
 }

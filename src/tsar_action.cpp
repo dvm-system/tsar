@@ -78,44 +78,14 @@ void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
   Passes.add(P);
 };
 
-void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
-  assert(M && "Module must not be null!");
-  legacy::PassManager Passes;
-  if (Ctx) {
-    auto TEP = static_cast<TransformationEnginePass *>(
-      createTransformationEnginePass());
-    TEP->setContext(*M, Ctx);
-    Passes.add(TEP);
-  }
-  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
-  Passes.add(createImmutableASTImportInfoPass(mImportInfo));
-  auto addInitialAliasAanalysis = [&Passes]() {
-    Passes.add(createCFLSteensAAWrapperPass());
-    Passes.add(createCFLAndersAAWrapperPass());
-    Passes.add(createTypeBasedAAWrapperPass());
-    Passes.add(createScopedNoAliasAAWrapperPass());
-  };
-  auto addPrint = [&Passes, this](ProcessingStep CurrentStep) {
-    if (CurrentStep & mPrintSteps)
-      for (auto PI : mPrintPasses)
-        Passes.add(createFunctionPassPrinter(PI, errs()));
-  };
-  auto addOutput = [&Passes, this](ProcessingStep CurrentStep) {
-    if (!(CurrentStep & mPrintSteps))
-      return;
-    for (auto PI : mOutputPasses) {
-      if (!PI->getNormalCtor()) {
-        /// TODO (kainadnr@gmail.com): add a name of executable before
-        /// diagnostic.
-        errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
-        continue;
-      }
-      if (auto *GI = OutputPassGroup::getPassRegistry().groupInfo(*PI))
-        GI->addBeforePass(Passes);
-      Passes.add(PI->getNormalCtor()());
-    }
-  };
-  addInitialAliasAanalysis();
+static void addInitialAnalysis(const GlobalOptions * GO,
+    legacy::PassManager &Passes) {
+  Passes.add(createGlobalOptionsImmutableWrapper(GO));
+  // Add initial alias analysis.
+  Passes.add(createCFLSteensAAWrapperPass());
+  Passes.add(createCFLAndersAAWrapperPass());
+  Passes.add(createTypeBasedAAWrapperPass());
+  Passes.add(createScopedNoAliasAAWrapperPass());
   // The 'unreachableblockelim' pass is necessary because implementation
   // of data-flow analysis relies on suggestion that control-flow graph does
   // not contain unreachable basic blocks.
@@ -143,6 +113,58 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createNoMetadataDSEPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDIGlobalRetrieverPass());
+}
+
+void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
+  assert(M && "Module must not be null!");
+  legacy::PassManager Passes;
+  if (Ctx) {
+    auto TEP = static_cast<TransformationEnginePass *>(
+      createTransformationEnginePass());
+    TEP->setContext(*M, Ctx);
+    Passes.add(TEP);
+    Passes.add(createImmutableASTImportInfoPass(mImportInfo));
+  }
+  addInitialAnalysis(mGlobalOptions, Passes);
+  auto addPrint = [&Passes, this](ProcessingStep CurrentStep) {
+    if (!(CurrentStep & mPrintSteps))
+      return;
+    for (auto PI : mPrintPasses) {
+      if (!PI->getNormalCtor()) {
+        errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
+        continue;
+      }
+      if (auto *GI = PrintPassGroup::getPassRegistry().groupInfo(*PI))
+        GI->addBeforePass(Passes);
+      auto *P = PI->getNormalCtor()();
+      auto Kind = P->getPassKind();
+      Passes.add(P);
+      switch (Kind) {
+      default:
+        llvm_unreachable("Printers does not support this kind of passes yet!");
+        break;
+      case PT_Function:
+        Passes.add(createFunctionPassPrinter(PI, errs()));
+        break;
+      case PT_Module:
+        Passes.add(createModulePassPrinter(PI, errs()));
+        break;
+      }
+    }
+  };
+  auto addOutput = [&Passes, this](ProcessingStep CurrentStep) {
+    if (!(CurrentStep & mPrintSteps))
+      return;
+    for (auto PI : mOutputPasses) {
+      if (!PI->getNormalCtor()) {
+        errs() << "warning: cannot create pass: " << PI->getPassName() << "\n";
+        continue;
+      }
+      if (auto *GI = OutputPassGroup::getPassRegistry().groupInfo(*PI))
+        GI->addBeforePass(Passes);
+      Passes.add(PI->getNormalCtor()());
+    }
+  };
   Passes.add(createMemoryMatcherPass());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
@@ -257,16 +279,9 @@ void TransformationQueryManager::run(llvm::Module *M,
   auto TEP = static_cast<TransformationEnginePass *>(
     createTransformationEnginePass());
   TEP->setContext(*M, Ctx);
-  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
-  Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   Passes.add(TEP);
-  Passes.add(createUnreachableBlockEliminationPass());
-  Passes.add(createInferFunctionAttrsLegacyPass());
-  Passes.add(createPostOrderFunctionAttrsLegacyPass());
-  Passes.add(createReversePostOrderFunctionAttrsPass());
-  Passes.add(createRPOFunctionAttrsAnalysis());
-  Passes.add(createPOFunctionAttrsAnalysis());
-  Passes.add(createNoMetadataDSEPass());
+  Passes.add(createImmutableASTImportInfoPass(mImportInfo));
+  addInitialAnalysis(mGlobalOptions, Passes);
   if (!mTfmPass->getNormalCtor()) {
     M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
     return;

@@ -189,7 +189,19 @@ FunctionPass * createClangExprMatcherPass();
 
 /// Creates a pass to print internal state of the specified pass after the
 /// last execution.
+///
+/// To use this function it is necessary to override
+/// void `llvm::Pass::print(raw_ostream &O, const Module *M) const` method for
+/// a function pass internal state of which must be printed.
 FunctionPass * createFunctionPassPrinter(const PassInfo *PI, raw_ostream &OS);
+
+/// Creates a pass to print internal state of the specified pass after the
+/// last execution.
+///
+/// To use this function it is necessary to override
+/// void `llvm::Pass::print(raw_ostream &O, const Module *M) const` method for
+/// a function pass internal state of which must be printed.
+ModulePass * createModulePassPrinter(const PassInfo *PI, raw_ostream &OS);
 
 /// Initializes a pass to print results of a test.
 void initializeTestPrinterPassPass(PassRegistry &Registry);
