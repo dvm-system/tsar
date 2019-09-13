@@ -45,8 +45,6 @@ namespace {
 ///
 /// This pass enable access to function passes from a module pass without
 /// re-execution of function passes.
-/// \attention Only single object of a specialized template can be exist at the
-/// same time. For this reason this template is defined in anonymous namespace.
 ///
 /// To access passes P1 and P2 from a module pass P do the following.
 ///
@@ -93,10 +91,12 @@ namespace {
 /// }
 /// \endcode
 template<class... Analysis>
-class FunctionPassProvider :
-  public llvm::FunctionPass, bcl::Uncopyable {
-  typedef bcl::StaticTypeMap<typename std::add_pointer<Analysis>::type...>
-    AnalysisMap;
+class FunctionPassProvider : public llvm::FunctionPass, bcl::Uncopyable {
+  /// List of registered providers.
+  using ProviderListT = llvm::SmallVector<FunctionPassProvider *, 6>;
+
+  using AnalysisMap =
+    bcl::StaticTypeMap<typename std::add_pointer<Analysis>::type...>;
 
   struct AddRequiredFunctor {
     AddRequiredFunctor(llvm::AnalysisUsage &AU) : mAU(AU) {}
@@ -134,22 +134,25 @@ public:
   /// \pre Analysis passes had to be created. The most safe place to call this
   /// function is a runOnModule() function of a module pass that want to access
   /// results of provided analyzes.
+  /// \post AnalysisType passes will be initialized for all existing providers
+  /// of the current type.
   template<class AnalysisType, class Function>
   static void initialize(Function F) {
-    assert(getProvider() && "At least one provider must be created!");
-    auto Provider = getProvider();
-    auto Resolver = Provider->getResolver();
-    auto &PM = Resolver->getPMDataManager();
-    auto P = PM.findAnalysisPass(
-      static_cast<void *>(&AnalysisType::ID), true);
-    F(static_cast<AnalysisType &>(*P));
+    assert(!ProviderList.empty() && "At least one provider must be created!");
+    for (auto *Provider : ProviderList) {
+      auto Resolver = Provider->getResolver();
+      auto &PM = Resolver->getPMDataManager();
+      auto P = PM.findAnalysisPass(
+        static_cast<void *>(&AnalysisType::ID), true);
+      F(static_cast<AnalysisType &>(*P));
+    }
   }
 
   /// \brief Default constructor.
   ///
   /// This pass is not initialized in constructor and must be initialized
   /// separately. But this should not cause a problem because a provider pass
-  /// is always used as required pass for some other pass to it is
+  /// is always used as required pass for some other pass so it is
   /// initialized when dependencies is described:
   /// \code
   /// INITIALIZE_PASS_BEGIN(...)
@@ -162,11 +165,15 @@ public:
   FunctionPassProvider() : FunctionPass(ID) {
     InitializeFunctor Initialize;
     mPasses.for_each(Initialize);
-    registerProvider(this);
+    ProviderList.push_back(this);
   }
 
   /// Destructor.
-  ~FunctionPassProvider() { registerProvider(nullptr); }
+  ~FunctionPassProvider() {
+    auto *This = this;
+    llvm::erase_if(ProviderList,
+      [This](FunctionPassProvider *FPP) { return FPP == This; });
+  }
 
   /// Run all required analyzes and make these analyzes available with get()
   /// method.
@@ -200,28 +207,16 @@ public:
   }
 
 private:
-  /// Returns a registered provider.
-  static FunctionPassProvider *& getProvider() {
-    static FunctionPassProvider *Provider;
-    return Provider;
-  }
-
-  /// \brief Registers provider or disable registration if nullptr is specified.
-  ///
-  /// \pre More then one providers can not be available at the same time.
-  /// If not `nullptr` is specified than there is no providers that have
-  /// been registered.
-  static void registerProvider(FunctionPassProvider *Provider) {
-    assert((!getProvider() || !Provider) &&
-      "More then one providers can not be available at the same time!");
-    getProvider() = Provider;
-  }
-
+  static ProviderListT ProviderList;
   AnalysisMap mPasses;
 };
 
 template<class... Analysis>
 char FunctionPassProvider<Analysis...>::ID = 0;
+
+template <class... Analysis>
+typename FunctionPassProvider<Analysis...>::ProviderListT
+  FunctionPassProvider<Analysis...>::ProviderList;
 }
 
 #define INITIALIZE_PROVIDER_BEGIN(passName, arg, name) \
