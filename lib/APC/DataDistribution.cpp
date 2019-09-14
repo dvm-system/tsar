@@ -29,6 +29,7 @@
 #include "tsar/Support/Diagnostic.h"
 #include "Delinearization.h"
 #include "DIEstimateMemory.h"
+#include "EstimateMemory.h"
 #include "GlobalOptions.h"
 #include "KnownFunctionTraits.h"
 #include "MemoryAccessUtils.h"
@@ -115,7 +116,10 @@ using APCDataDistributionProvider = FunctionPassProvider<
   DominatorTreeWrapperPass,
   DelinearizationPass,
   LoopInfoWrapperPass,
-  ScalarEvolutionWrapperPass>;
+  ScalarEvolutionWrapperPass,
+  EstimateMemoryPass,
+  DIEstimateMemoryPass
+>;
 
 /// Convert representation of array access in LLVM IR to apc::ArrayInfo.
 struct IRToArrayInfoFunctor {
@@ -140,6 +144,8 @@ INITIALIZE_PROVIDER_BEGIN(APCDataDistributionProvider, "apc-dd-provider",
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PROVIDER_END(APCDataDistributionProvider, "apc-dd-provider",
   "Data Distribution Builder (APC, Provider")
 
@@ -151,6 +157,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCDataDistributionPass, "apc-data-distribution",
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCDataDistributionProvider)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
 INITIALIZE_PASS_IN_GROUP_END(APCDataDistributionPass, "apc-data-distribution",
   "Data Distribution Builder (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -164,6 +171,7 @@ void APCDataDistributionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<APCDataDistributionProvider>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.setPreservesAll();
 }
 
@@ -175,6 +183,11 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   APCDataDistributionProvider::initialize<GlobalOptionsImmutableWrapper>(
     [&GlobalOpts](GlobalOptionsImmutableWrapper &GO) {
       GO.setOptions(&GlobalOpts);
+  });
+  auto &MemEnv = getAnalysis<DIMemoryEnvironmentWrapper>().get();
+  APCDataDistributionProvider::initialize<DIMemoryEnvironmentWrapper>(
+    [&MemEnv](DIMemoryEnvironmentWrapper &Env) {
+    Env.set(MemEnv);
   });
   auto &APCRegion = APCCtx.getDefaultRegion();
   if (!APCRegion.GetDataDir().distrRules.empty()) {
@@ -204,18 +217,15 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     auto &Provider = getAnalysis<APCDataDistributionProvider>(F);
     auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
     auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
+    auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();
+    auto &DIAT = Provider.get<DIEstimateMemoryPass>().getAliasTree();
     for (auto *A : DI.getArrays()) {
       if (!A->isDelinearized() || !A->hasMetadata())
         continue;
-      SmallVector<DIMemoryLocation, 4> DILocs;
-      // TODO (kaniandr@gmail.com): add processing of array-members of structures.
-      // Note, that delinearization of such array-member should be implemented
-      // first. We can use GEP to determine which member of a structure
-      // is accessed.
-      auto DIM = findMetadata(A->getBase(), DILocs, &DT,
-        A->isAddressOfVariable() ? MDSearch::AddressOfVariable : MDSearch::Any);
-      assert(DIM && DIM->isValid() && "Metadata must be available for an array!");
-      auto RawDIM = getRawDIMemoryIfExists(F.getContext(), *DIM);
+      auto *EM = AT.find(MemoryLocation(A->getBase(), 0));
+      assert(EM && "Estimate memory must be presented in alias tree!");
+      auto RawDIM =
+        getRawDIMemoryIfExists(*EM->getTopLevelParent(), F.getContext(), DL, DT);
       if (!RawDIM)
         continue;
       auto *APCArray = APCCtx.findArray(RawDIM);

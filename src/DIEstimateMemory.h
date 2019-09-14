@@ -376,6 +376,15 @@ public:
     DIMemoryEnvironment &Env, llvm::MDNode *MD,
     Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
 
+  /// Returns existent location. Note, it will not be attached to an alias node.
+  static std::unique_ptr<DIUnknownMemory> getIfExists(llvm::LLVMContext &Ctx,
+    DIMemoryEnvironment &Env, llvm::MDNode *MD,
+    Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
+
+  /// Returns raw representation of existent location.
+  static llvm::MDNode * getRawIfExists(llvm::LLVMContext &Ctx, llvm::MDNode *MD,
+    Flags F = NoFlags, llvm::ArrayRef<llvm::DILocation *> DbgLocs = {});
+
   /// Returns underlying metadata.
   llvm::MDNode * getMetadata();
 
@@ -448,6 +457,17 @@ llvm::Optional<DIMemoryLocation> buildDIMemory(const llvm::MemoryLocation &Loc,
 /// location if it exist.
 llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
     DIMemoryLocation DILoc);
+
+/// Returns metadata-level raw representation for a specified memory location.
+llvm::MDNode * getRawDIMemoryIfExists(llvm::Value &V,
+  llvm::LLVMContext &Ctx, const llvm::DominatorTree &DT,
+  DIUnknownMemory::Flags = DIUnknownMemory::NoFlags);
+
+/// Returns metadata-level raw representation for a specified memory location
+/// if it exist.
+llvm::MDNode * getRawDIMemoryIfExists(const EstimateMemory &EM,
+    llvm::LLVMContext &Ctx, const llvm::DataLayout &DL,
+    const llvm::DominatorTree &DT);
 
 /// This represents debug info node in an alias tree which refers
 /// an alias sequence of estimate memory locations.

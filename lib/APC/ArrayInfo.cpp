@@ -31,6 +31,7 @@
 #include <tsar/Support/NumericUtils.h>
 #include "Delinearization.h"
 #include "DIEstimateMemory.h"
+#include "EstimateMemory.h"
 #include "MemoryAccessUtils.h"
 #include "tsar_query.h"
 #include "tsar_utility.h"
@@ -77,6 +78,8 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PASS_IN_GROUP_END(APCArrayInfoPass, "apc-array-info",
   "Array Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -87,13 +90,18 @@ void APCArrayInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DelinearizationPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<APCContextWrapper>();
+  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<DIEstimateMemoryPass>();
   AU.setPreservesAll();
 }
 
 bool APCArrayInfoPass::runOnFunction(Function &F) {
   releaseMemory();
+  auto &DL = F.getParent()->getDataLayout();
   auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
+  auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   for (auto *A: DI.getArrays()) {
     if (!A->isDelinearized() || !A->hasMetadata())
@@ -103,19 +111,20 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     // Note, that delinearization of such array-member should be implemented
     // first. We can use GEP to determine which member of a structure
     // is accessed.
-    auto DIM = findMetadata(A->getBase(), DILocs, &DT,
+    auto DILoc = findMetadata(A->getBase(), DILocs, &DT,
       A->isAddressOfVariable() ? MDSearch::AddressOfVariable : MDSearch::Any);
-    assert(DIM && DIM->isValid() && "Metadata must be available for an array!");
-    auto DIElementTy = arrayElementDIType(DIM->Var->getType());
+    assert(DILoc && DILoc->isValid() &&
+      "Metadata must be available for an array!");
+    auto DIElementTy = arrayElementDIType(DILoc->Var->getType());
     if (!DIElementTy)
       continue;
-    auto DeclLoc = DIM->Loc ?
-      std::make_pair(DIM->Loc->getLine(), DIM->Loc->getColumn()) :
-      std::make_pair(DIM->Var->getLine(), 0);
-    auto Filename = (DIM->Var->getFilename().empty() ?
-      StringRef(F.getParent()->getSourceFileName()) : DIM->Var->getFilename());
+    auto DeclLoc = DILoc->Loc ?
+      std::make_pair(DILoc->Loc->getLine(), DILoc->Loc->getColumn()) :
+      std::make_pair(DILoc->Var->getLine(), 0);
+    auto Filename = (DILoc->Var->getFilename().empty() ?
+      StringRef(F.getParent()->getSourceFileName()) : DILoc->Var->getFilename());
     auto DeclScope = std::make_pair(Distribution::l_COMMON, std::string(""));
-    if (auto DILocalVar = dyn_cast<DILocalVariable>(DIM->Var)) {
+    if (auto DILocalVar = dyn_cast<DILocalVariable>(DILoc->Var)) {
       if (DILocalVar->isParameter())
         DeclScope.first = Distribution::l_PARAMETER;
       else
@@ -125,12 +134,12 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     // Unique name is '<file>:line:column:@<function>%<variable>.<member>'.
     auto UniqueName =
       (Filename + ":" + Twine(DeclLoc.first) + ":" + Twine(DeclLoc.second) +
-        "@" + F.getName() + "%" + DIM->Var->getName()).str();
+        "@" + F.getName() + "%" + DILoc->Var->getName()).str();
     std::decay<
       decltype(std::declval<apc::Array>().GetDeclInfo())>
         ::type::value_type::second_type ShrinkedDeclLoc;
-    auto getDbgLoc = [&F, &DIM, &DeclLoc]() {
-      DebugLoc DbgLoc(DIM->Loc);
+    auto getDbgLoc = [&F, &DILoc, &DeclLoc]() {
+      DebugLoc DbgLoc(DILoc->Loc);
       if (!DbgLoc && F.getSubprogram()) {
         DbgLoc = DILocation::get(
           F.getContext(), DeclLoc.first, DeclLoc.second, F.getSubprogram());
@@ -139,11 +148,18 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     };
     if (!bcl::shrinkPair(DeclLoc.first, DeclLoc.second, ShrinkedDeclLoc))
       emitUnableShrink(F.getContext(), F, getDbgLoc(), DS_Warning);
-    auto RawDIM = getRawDIMemoryIfExists(F.getContext(), *DIM);
+    // TODO (kaniandr@gmail.com): what should we do in case of multiple
+    // allocation of the same array. There are different memory locations
+    // and different MDNodes for such arrays. Howevere, declaration points
+    // for these locations are identical.
+    auto *EM = AT.find(MemoryLocation(A->getBase(), 0));
+    assert(EM && "Estimate memory must be presented in alias tree!");
+    auto RawDIM =
+      getRawDIMemoryIfExists(*EM->getTopLevelParent(), F.getContext(), DL, DT);
     assert(RawDIM && "Unknown raw memory!");
-    auto APCSymbol = new apc::Symbol(*DIM);
+    auto APCSymbol = new apc::Symbol(*DILoc);
     APCCtx.addSymbol(APCSymbol);
-    auto APCArray = new apc::Array(UniqueName, DIM->Var->getName(),
+    auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName(),
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),
       Filename, ShrinkedDeclLoc, std::move(DeclScope), APCSymbol,
       { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));

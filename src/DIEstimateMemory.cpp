@@ -128,6 +128,35 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, NewMD));
 }
 
+llvm::MDNode * DIUnknownMemory::getRawIfExists(llvm::LLVMContext &Ctx,
+    llvm::MDNode *MD, Flags F, llvm::ArrayRef<llvm::DILocation *> DbgLocs ) {
+  if (!MD)
+    return nullptr;
+  auto *FlagMD = llvm::ConstantAsMetadata::getIfExists(
+    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
+  if (!FlagMD)
+    return nullptr;
+  SmallVector<Metadata *, 2> BasicMDs{ MD, FlagMD };
+  auto BasicMD = llvm::MDNode::getIfExists(Ctx, BasicMDs);
+  if (!BasicMD)
+    return nullptr;
+  SmallVector<Metadata *, 2> MDs{ BasicMD };
+  for (auto DbgLoc : DbgLocs)
+    if (DbgLoc)
+      MDs.push_back(DbgLoc);
+  return llvm::MDNode::getIfExists(Ctx, MDs);
+}
+
+std::unique_ptr<DIUnknownMemory> DIUnknownMemory::getIfExists(
+    llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env, llvm::MDNode *MD,
+    Flags F, llvm::ArrayRef<llvm::DILocation *> DbgLocs) {
+  auto *Node = getRawIfExists(Ctx, MD, F, DbgLocs);
+  if (!Node)
+    return nullptr;
+  ++NumUnknownMemory;
+  return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, Node));
+}
+
 void DIMemory::getDebugLoc(SmallVectorImpl<DebugLoc> &DbgLocs) const {
   auto MD = getAsMDNode();
   for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
@@ -161,19 +190,7 @@ DIEstimateMemory::getIfExists(
     llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     llvm::DIVariable *Var, llvm::DIExpression *Expr, Flags F,
     ArrayRef<DILocation *> DbgLocs) {
-  assert(Var && "Variable must not be null!");
-  assert(Expr && "Expression must not be null!");
-  auto *FlagMD = llvm::ConstantAsMetadata::get(
-    llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
-  SmallVector<Metadata *, 3> BasicMDs{ Var, Expr, FlagMD};
-  auto *BasicMD = llvm::MDNode::getIfExists(Ctx, BasicMDs);
-  if (!BasicMD)
-    return nullptr;
-  SmallVector<Metadata *, 2> MDs{ BasicMD};
-  for (auto DbgLoc : DbgLocs)
-    if (DbgLoc)
-      MDs.push_back(DbgLoc);
-  if (auto MD = llvm::MDNode::getIfExists(Ctx, MDs)) {
+  if (auto MD = getRawIfExists(Ctx, Var, Expr, F, DbgLocs)) {
     ++NumEstimateMemory;
     return std::unique_ptr<DIEstimateMemory>(new DIEstimateMemory(Env, MD));
   }
@@ -2025,6 +2042,29 @@ std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
   return DIM;
 }
 
+llvm::MDNode * getRawDIMemoryIfExists(const EstimateMemory &EM,
+  llvm::LLVMContext &Ctx, const llvm::DataLayout &DL,
+  const llvm::DominatorTree &DT) {
+  auto DILoc = buildDIMemory(
+    MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
+  if (!DILoc) {
+    auto F = ImmutableCallSite(EM.front()) ? DIUnknownMemory::Result
+      : DIUnknownMemory::Object;
+    return getRawDIMemoryIfExists(const_cast<Value &>(*EM.front()), Ctx, DT, F);
+  } else {
+    auto Flags = DILoc->Template ?
+      DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+    SmallVector<DILocation *, 1> Dbgs;
+    for (auto *V : EM)
+      if (auto *I = dyn_cast_or_null<Instruction>(V))
+        if (auto DbgLoc = I->getDebugLoc())
+          Dbgs.push_back(DbgLoc.get());
+    if (DILoc->Loc)
+      Dbgs.push_back(DILoc->Loc);
+    return DIEstimateMemory::getRawIfExists(Ctx, DILoc->Var, DILoc->Expr, Flags, Dbgs);
+  }
+}
+
 std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
     DIMemoryEnvironment &Env, const DominatorTree &DT,
     DIMemory::Property P, DIUnknownMemory::Flags F) {
@@ -2056,6 +2096,35 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
   DIM->bindValue(&V);
   DIM->setProperties(P);
   return std::move(DIM);
+}
+
+llvm::MDNode * getRawDIMemoryIfExists(llvm::Value &V, llvm::LLVMContext &Ctx,
+    const llvm::DominatorTree &DT, DIUnknownMemory::Flags F) {
+  MDNode *MD = nullptr;
+  DILocation *Loc = nullptr;
+  auto IntExpr = stripIntToPtr(&V);
+  if (IntExpr != &V) {
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    if (auto ConstInt = dyn_cast<ConstantInt>(IntExpr)) {
+      auto ConstV = llvm::ConstantAsMetadata::getIfExists(
+        llvm::ConstantInt::get(Type::getInt64Ty(Ctx), ConstInt->getValue()));
+      return ConstV ? MDNode::getIfExists(Ctx, { ConstV }) : nullptr;
+    } else if (auto DILoc = findMetadata(
+      IntExpr, DILocs, &DT, MDSearch::ValueOfVariable)) {
+      MD = DILoc->Var;
+    } else if (isa<Instruction>(V)) {
+      Loc = cast<Instruction>(V).getDebugLoc().get();
+    }
+  } else {
+    CallSite CS(&V);
+    auto Callee = !CS ? dyn_cast_or_null<Function>(&V)
+      : dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    if (Callee)
+      MD = findMetadata(Callee);
+    if (isa<Instruction>(V))
+      Loc = cast<Instruction>(V).getDebugLoc().get();
+  }
+  return DIUnknownMemory::getRawIfExists(Ctx, MD, F, Loc);
 }
 }
 
