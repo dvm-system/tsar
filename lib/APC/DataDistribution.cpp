@@ -253,16 +253,17 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       }
     }
   }
+  // TODO (kaniandr@gmail.com): should it be a global container?
+  std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
-  createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual, ArrayRWs);
+  createLinksBetweenFormalAndActualParams(
+    FileToFunc, FormalToActual, ArrayRWs, APCMsgs);
   processLoopInformationForFunction(Accesses);
   addToDistributionGraph(Accesses, FormalToActual);
   auto &G = APCRegion.GetGraphToModify();
   auto &ReducedG = APCRegion.GetReducedGraphToModify();
   auto &AllArrays = APCRegion.GetAllArraysToModify();
   createOptimalDistribution(G, ReducedG, AllArrays, APCRegion.GetId(), false);
-  // TODO (kaniandr@gmail.com): should it be a global container?
-  std::map<std::string, std::vector<Messages>> APCMsgs;
   auto &DataDirs = APCRegion.GetDataDirToModify();
   createDistributionDirs(
     ReducedG, AllArrays, DataDirs, APCMsgs, FormalToActual);

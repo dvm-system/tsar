@@ -51,6 +51,7 @@ std::map<std::string, std::vector<Messages>> SPF_messages;
 void sendMessage_1lvl(const std::wstring &toSend) {}
 void sendMessage_2lvl(const std::wstring &toSend) {}
 
+int langOfMessages = 1; // 0 - ENG, 1 - RUS
 //===----------------------------------------------------------------------===//
 
 APCContext::APCContext() : mImpl(new APCContextImpl) {}
