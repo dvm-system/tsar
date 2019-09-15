@@ -30,3 +30,4 @@ class Attribute<string name> {
 def NoIO : Attribute<"sapfor.noio">;
 def AlwaysReturn : Attribute<"sapfor.alwaysreturn">;
 def LibFunc : Attribute<"sapfor.libfunc">;
+def DirectUserCallee : Attribute<"sapfor.direct-user-callee">;

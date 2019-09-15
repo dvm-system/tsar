@@ -42,6 +42,7 @@ using namespace llvm;
 STATISTIC(NumLibFunc, "Number of functions marked as sapfor.libfunc");
 STATISTIC(NumNoIOFunc, "Number of functions marked as sapfor.noio");
 STATISTIC(NumAlwaysRetFunc, "Number of functions marked as sapfor.alwaysreturn");
+STATISTIC(NumDirectUserCalleFunc, "Number of funstions marked as sapfor.direct-user-callee");
 STATISTIC(NumNoIOLoop, "Number of loops marked as sapfor.noio");
 STATISTIC(NumAlwaysRetLoop, "Number of loops marked as sapfor.alwaysreturn");
 STATISTIC(NumNoUnwindLoop, "Number of loops marked as nounwind");
@@ -98,6 +99,11 @@ private:
   /// currently processed SCC and returns this attribute, otherwise return
   /// `not_attribute`.
   AttrKind addAlwaysReturnAttr();
+
+  /// Checks is it necessary to add an attribute to the whole functions from
+  /// currently processed SCC and returns this attribute, otherwise return
+  /// `not_attribute`.
+  AttrKind addDirectUserCalleeAttr();
 
   TargetLibraryInfo *mTLI = nullptr;
   SmallPtrSet<Function *, 4> mSCCFuncs;
@@ -194,6 +200,9 @@ bool POFunctionAttrsAnalysis::runOnSCC(CallGraphSCC &SCC) {
   Kind = addAlwaysReturnAttr();
   if (Kind != AttrKind::not_attribute)
     AddAttrs.push_back(Kind);
+  Kind = addDirectUserCalleeAttr();
+  if (Kind != AttrKind::not_attribute)
+    AddAttrs.push_back(Kind);
   for (auto *SCCF : mSCCFuncs)
     for (auto Attr : AddAttrs)
       addFnAttr(*SCCF, Attr);
@@ -220,6 +229,21 @@ AttrKind POFunctionAttrsAnalysis::addNoIOAttr() {
       return AttrKind::not_attribute;
   NumNoIOFunc += mSCCFuncs.size();
   return AttrKind::NoIO;
+}
+
+AttrKind POFunctionAttrsAnalysis::addDirectUserCalleeAttr() {
+  for (auto *SCCF : mSCCFuncs) {
+    if (SCCF->isIntrinsic())
+      continue;
+    LibFunc LibId;
+    if (mTLI->getLibFunc(*SCCF, LibId))
+      continue;
+  }
+  for (auto *CF : mCalleeFuncs)
+    if (!hasFnAttr(*CF, AttrKind::DirectUserCallee))
+      return AttrKind::not_attribute;
+  NumDirectUserCalleFunc += mSCCFuncs.size();
+  return AttrKind::DirectUserCallee;
 }
 
 AttrKind POFunctionAttrsAnalysis::addAlwaysReturnAttr() {
