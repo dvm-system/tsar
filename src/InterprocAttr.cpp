@@ -170,14 +170,23 @@ Pass * llvm::createPOFunctionAttrsAnalysis() {
 
 bool POFunctionAttrsAnalysis::runOnSCC(CallGraphSCC &SCC) {
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  for (auto *CGN : SCC)
-    if(auto F = CGN->getFunction())
-      mSCCFuncs.insert(F);
+  mSCCFuncs.clear();
+  mCalleeFuncs.clear();
   for (auto *CGN : SCC)
     if (auto F = CGN->getFunction())
-      for (auto &CFGTo : *CGN)
-        if (auto FTo = CFGTo.second->getFunction())
+      mSCCFuncs.insert(F);
+    else
+      return false;
+  for (auto *CGN : SCC) {
+    auto F = CGN->getFunction();
+    for (auto &CFGTo : *CGN)
+      if (auto FTo = CFGTo.second->getFunction()) {
+        if (!mSCCFuncs.count(FTo))
           mCalleeFuncs.insert(FTo);
+      } else {
+        return false;
+      }
+  }
   SmallVector<AttrKind, 4> AddAttrs;;
   auto Kind = addNoIOAttr();
   if (Kind != AttrKind::not_attribute)
