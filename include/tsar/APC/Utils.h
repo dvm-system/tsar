@@ -35,4 +35,4 @@ namespace tsar {
 /// Print version of auto-parallelizing compiler to a specified stream.
 void printAPCVersion(llvm::raw_ostream &OS);
 }
-#endif TSAR_APC_UTILS_H
+#endif//TSAR_APC_UTILS_H

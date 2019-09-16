@@ -52,6 +52,7 @@ struct ASTImportInfo {
       for (auto &Locs : mRedeclLocs)
         if (Locs[0] == Loc)
           return Locs;
+      llvm_unreachable("Declaration must exist!");
     }
 
     /// Add list of all locations attached to single redeclaration for a current

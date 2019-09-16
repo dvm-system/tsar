@@ -177,7 +177,7 @@ inline namespace tsar_impl {
     /// these dependence is confused.
     ///
     /// Note, that for these loops presented results of analysis may be
-    /// invalid and dependence should conservarively assumed by the user
+    /// invalid and dependence should conservatively assumed by the user
     /// manually.
     virtual unsigned getConfusedLevels() const { return 0; }
 
@@ -267,9 +267,9 @@ inline namespace tsar_impl {
     /// these dependence is confused.
     ///
     /// Note, that for these loops presented results of analysis may be
-    /// invalid and dependence should conservarively assumed by the user
+    /// invalid and dependence should conservatively assumed by the user
     /// manually.
-    virtual unsigned getConfusedLevels() const { return ConfusedLevels; }
+    unsigned getConfusedLevels() const override { return ConfusedLevels; }
 
     /// getDirection - Returns the direction associated with a particular
     /// level.
