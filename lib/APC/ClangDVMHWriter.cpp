@@ -491,7 +491,7 @@ void APCClangDVMHWriter::initializeDeclInfo(const TranslationUnitDecl &Unit,
           }
     } else if (auto *VD = dyn_cast<VarDecl>(D)) {
       CanonicalDecls.insert(VD->getCanonicalDecl());
-      auto &MergedLocItr = ImportInfo.RedeclLocs.find(VD);
+      auto MergedLocItr = ImportInfo.RedeclLocs.find(VD);
       if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
         checkSingleDecl(VD->getLocStart(), VD->getLocation());
       } else {

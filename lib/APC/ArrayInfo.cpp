@@ -73,7 +73,7 @@ private:
 char APCArrayInfoPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
-  "Array Collector (APC)", true, true
+  "Array Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
@@ -118,9 +118,9 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     auto DIElementTy = arrayElementDIType(DILoc->Var->getType());
     if (!DIElementTy)
       continue;
-    auto DeclLoc = DILoc->Loc ?
-      std::make_pair(DILoc->Loc->getLine(), DILoc->Loc->getColumn()) :
-      std::make_pair(DILoc->Var->getLine(), 0);
+    auto DeclLoc = std::make_pair(DILoc->Var->getLine(), 0);
+    if (DILoc->Loc)
+      DeclLoc = std::make_pair(DILoc->Loc->getLine(), DILoc->Loc->getColumn());
     auto Filename = (DILoc->Var->getFilename().empty() ?
       StringRef(F.getParent()->getSourceFileName()) : DILoc->Var->getFilename());
     auto DeclScope = std::make_pair(Distribution::l_COMMON, std::string(""));

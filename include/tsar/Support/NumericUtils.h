@@ -40,11 +40,11 @@ inline bool isOverflow(const llvm::APInt &Const, bool IsSigned) {
   return
     std::numeric_limits<IntT>::is_signed ?
       IsSigned ?
-        !Const.isSignedIntN(sizeof IntT * CHAR_BIT - 1) :
-        !Const.isIntN(sizeof IntT * CHAR_BIT - 1) :
+        !Const.isSignedIntN(sizeof(IntT) * CHAR_BIT - 1) :
+        !Const.isIntN(sizeof(IntT) * CHAR_BIT - 1) :
       IsSigned ?
         true : // it is not possible to represent signed as unsigned
-        !Const.isIntN(sizeof IntT * CHAR_BIT);
+        !Const.isIntN(sizeof(IntT) * CHAR_BIT);
 }
 
 /// Cast a specified value `Const` to a specified type `IntT`, returns `true`
@@ -65,7 +65,7 @@ inline bool castAPInt(const llvm::APInt &Const, bool IsSigned, IntT &Out) {
 template<class IntT>
 inline bool castSCEV(const llvm::SCEV *Expr, bool IsSigned,  IntT &Out) {
   assert(Expr && "Expression must not be null!");
-  if (auto Const = dyn_cast<SCEVConstant>(Expr))
+  if (auto Const = llvm::dyn_cast<llvm::SCEVConstant>(Expr))
     return castAPInt(Const->getAPInt(), IsSigned, Out);
   return false;
 }

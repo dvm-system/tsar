@@ -122,7 +122,7 @@ std::pair<apc::FuncInfo *, bool> registerFunction(Function &F, APCContext &APCCt
 char APCFunctionInfoPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
-  "Function Collector (APC)", true, true
+  "Function Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_IN_GROUP_INFO(APCFunctionInfoPassInfo);
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)

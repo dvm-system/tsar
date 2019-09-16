@@ -266,7 +266,7 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
 }
 
 /// Returns type of an array element or nullptr if type is unknown.
-inline llvm::DITypeRef arrayElementDIType(llvm::DITypeRef &DITy) {
+inline llvm::DITypeRef arrayElementDIType(llvm::DITypeRef DITy) {
   using namespace llvm;
   auto ElTy = stripDIType(DITy);
   if (!ElTy.resolve())
