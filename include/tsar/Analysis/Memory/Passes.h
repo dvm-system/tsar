@@ -63,5 +63,11 @@ void initializeProcessDIMemoryTraitPassPass(PassRegistry &Registry);
 /// Create a pass to process traits in a region.
 Pass * createProcessDIMemoryTraitPass(
   const std::function<void(tsar::DIMemoryTrait &)> &Lock);
+
+/// Initialized a pass to look for not initialized memory locations.
+void initializeNotInitializedMemoryAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass to look for not initialized memory locations.
+FunctionPass * createNotInitializedMemoryAnalysis(PassRegistry &Registry);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H
