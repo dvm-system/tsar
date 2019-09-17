@@ -1894,8 +1894,10 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
     return;
   auto DWLang = getLanguage(DIAT.getFunction());
   if (!DWLang) {
-    M->getContext().emitError(
-      "unknown source language for function " + DIAT.getFunction().getName());
+    DiagnosticInfoUnsupported Diag(DIAT.getFunction(),
+     "unknown source language for function", findMetadata(&DIAT.getFunction()),
+      DS_Warning);
+    M->getContext().diagnose(Diag);
     return;
   }
   for_each_loop(LpInfo, [this, M, &GlobalOpts, &DIAT, &OS, &DWLang](Loop *L) {
