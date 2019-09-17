@@ -72,6 +72,11 @@ class NotInitializedMemoryAnalysis :
     template<class T> void operator()(typename T::type &El) { El.clear(); }
   };
 
+  struct EraseFunctor {
+    template<class T> void operator()(typename T::type &El) { El.erase(DIM); }
+    DIMemory *DIM;
+  };
+
   struct PrintFunctor {
     template<class T> void operator()(const typename T::type &El) {
       if (!El.empty()) {
@@ -111,6 +116,11 @@ public:
 private:
   /// Remove all variables from a specified tuple.
   void clear(Variables &Vars) { bcl::for_each(Vars, ClearFunctor{}); }
+
+  /// Remove a specified variable from a specified tuple.
+  void erase(DIMemory *DIM, Variables &Vars) {
+    bcl::for_each(Vars, EraseFunctor{ DIM });
+  }
 
   /// Insert variable into an appropriate list into a specified tuple.
   void insert(DIMemory *M, Variables &Vars);
@@ -163,6 +173,7 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
   auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
   auto FuncItr = DU.find(DFI.getTopLevelRegion());
+  DenseMap<EstimateMemory *, DIMemory *> NotInitializedLocs;
   for (auto &Loc : FuncItr->get<DefUseSet>()->getUses()) {
     auto *EM = AT.find(Loc);
     assert(EM && "Estimate memory must not be null!");
@@ -196,6 +207,21 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
       insert(&*DIMItr, mNotInitScalars);
     else
       insert(&*DIMItr, mNotInitAggregates);
+    NotInitializedLocs.try_emplace(EM, &*DIMItr);
+  }
+  // We want to remember the largest memory only. So, check whether a parent
+  // for a not initialized memory is not initialized also.
+  for (auto &EMToM : NotInitializedLocs) {
+    auto *Parent = EMToM.first->getParent();
+    while (Parent) {
+      auto Itr = NotInitializedLocs.find(Parent);
+      if (Itr != NotInitializedLocs.end()) {
+        erase(EMToM.second, mNotInitScalars);
+        erase(EMToM.second, mNotInitAggregates);
+        break;
+      }
+      Parent = Parent->getParent();
+    }
   }
   return false;
 }
