@@ -42,6 +42,9 @@
 using namespace llvm;
 using namespace tsar;
 
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "no-init-di"
+
 namespace {
 #define TSAR_TRAIT_DECL(name_, string_) \
 struct name_ { \
@@ -140,7 +143,7 @@ private:
 
 char NotInitializedMemoryAnalysis::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(NotInitializedMemoryAnalysis, "di-no-init",
+INITIALIZE_PASS_IN_GROUP_BEGIN(NotInitializedMemoryAnalysis, "no-init-di",
   "Not Initialized Memory Checker (Metadata)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
@@ -148,7 +151,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(NotInitializedMemoryAnalysis, "di-no-init",
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
-INITIALIZE_PASS_IN_GROUP_END(NotInitializedMemoryAnalysis, "di-no-init",
+INITIALIZE_PASS_IN_GROUP_END(NotInitializedMemoryAnalysis, "no-init-di",
   "Not Initialized Memory Checker (Metadata)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
