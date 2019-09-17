@@ -28,20 +28,68 @@
 #include <DefinedMemory.h>
 #include <DFRegionInfo.h>
 #include <EstimateMemory.h>
+#include "tsar_dbg_output.h"
 #include <tsar_query.h>
 #include <bcl/utility.h>
+#include <bcl/tagged.h>
+#include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>
 
-#include "tsar_dbg_output.h"
-
 using namespace llvm;
 using namespace tsar;
 
 namespace {
-class NotInitializedMemoryAnalysis : public FunctionPass, private bcl::Uncopyable {
+#define TSAR_TRAIT_DECL(name_, string_) \
+struct name_ { \
+static llvm::StringRef toString() { \
+  static std::string Str(string_); \
+  return Str; \
+} \
+};
+
+TSAR_TRAIT_DECL(Argument, "argument")
+TSAR_TRAIT_DECL(Unknown, "unknown")
+TSAR_TRAIT_DECL(Global, "global")
+TSAR_TRAIT_DECL(Local, "local")
+
+#undef TSAR_DRAIT_DECL
+
+/// This pass which looks for a memory which has not been initialized
+/// before uses.
+class NotInitializedMemoryAnalysis :
+    public FunctionPass, private bcl::Uncopyable {
+  using Variables = bcl::tagged_tuple<
+    bcl::tagged<DenseSet<DIMemory *>, Local>,
+    bcl::tagged<DenseSet<DIMemory *>, Global>,
+    bcl::tagged<SmallPtrSet<DIMemory *, 4>, Argument>,
+    bcl::tagged<SmallPtrSet<DIMemory *, 1>, Unknown>>;
+
+  struct ClearFunctor {
+    template<class T> void operator()(typename T::type &El) { El.clear(); }
+  };
+
+  struct PrintFunctor {
+    template<class T> void operator()(const typename T::type &El) {
+      if (!El.empty()) {
+        OS << Offset << Prefix << T::tag::toString() << ":\n" << Offset << " ";
+        for (auto *M : El) {
+          printDILocationSource(DWLang, *M, OS);
+          OS << " ";
+        }
+        OS << "\n";
+      }
+    }
+
+    StringRef Prefix;
+    StringRef Offset;
+    unsigned DWLang;
+    raw_ostream &OS;
+  };
+
 public:
   static char ID;
 
@@ -51,17 +99,28 @@ public:
 
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-  void print(raw_ostream &OS, const Module *M) const;
+  void print(raw_ostream &OS, const Module *M) const override;
 
   void releaseMemory() override {
-    mNotInitScalars.clear();
-    mNotInitAggregates.clear();
+    clear(mNotInitScalars);
+    clear(mNotInitAggregates);
     mDWLang.reset();
     mFunc = nullptr;
   }
 private:
-  DenseSet<DIMemory *> mNotInitScalars;
-  DenseSet<DIMemory *> mNotInitAggregates;
+  /// Removes all variables from a specified tuple.
+  void clear(Variables &Vars) { bcl::for_each(Vars, ClearFunctor{}); }
+
+  /// Insert variable into an appropriate list into a specified tuple.
+  void insert(DIMemory *M, Variables &Vars);
+
+  void print(StringRef Prefix, const Variables &Vars, raw_ostream &OS) const {
+    assert(mDWLang && "Language must be specified!");
+    bcl::for_each(Vars, PrintFunctor{ Prefix, "  ", *mDWLang, OS });
+  }
+
+  Variables mNotInitScalars;
+  Variables mNotInitAggregates;
   Optional<unsigned> mDWLang;
   Function *mFunc = nullptr;
 };
@@ -129,11 +188,26 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
     if (DIMItr == DIAT.memory_end())
       continue;
     if (EM->isLeaf())
-      mNotInitScalars.insert(&*DIMItr);
+      insert(&*DIMItr, mNotInitScalars);
     else
-      mNotInitAggregates.insert(&*DIMItr);
+      insert(&*DIMItr, mNotInitAggregates);
   }
   return false;
+}
+
+void NotInitializedMemoryAnalysis::insert(DIMemory *M, Variables &Vars) {
+  if (auto *DIEM = dyn_cast<DIEstimateMemory>(M)) {
+    if (auto *DILocalVar = dyn_cast<DILocalVariable>(DIEM->getVariable())) {
+      if (DILocalVar->isParameter())
+        Vars.get<Argument>().insert(M);
+      else
+        Vars.get<Local>().insert(M);
+    } else {
+      Vars.get<Global>().insert(M);
+    }
+  } else {
+    Vars.get<Unknown>().insert(M);
+  }
 }
 
 void NotInitializedMemoryAnalysis::print(
@@ -145,20 +219,6 @@ void NotInitializedMemoryAnalysis::print(
     M->getContext().diagnose(Diag);
     return;
   }
-  if (!mNotInitScalars.empty()) {
-    OS << "  scalar memory:\n   ";
-      for (auto *M : mNotInitScalars) {
-        printDILocationSource(*mDWLang, *M, OS);
-        OS << " ";
-      }
-    OS << "\n";
-  }
-  if (!mNotInitAggregates.empty()) {
-    OS << "  aggregate memory:\n   ";
-    for (auto *M : mNotInitAggregates) {
-      printDILocationSource(*mDWLang, *M, OS);
-      OS << " ";
-    }
-    OS << "\n";
-  }
+  print("scalar ", mNotInitScalars, OS);
+  print("aggregate ", mNotInitAggregates, OS);
 }
