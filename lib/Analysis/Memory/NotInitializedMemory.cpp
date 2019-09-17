@@ -106,9 +106,10 @@ public:
     clear(mNotInitAggregates);
     mDWLang.reset();
     mFunc = nullptr;
+    mNoMetadataLocs = false;
   }
 private:
-  /// Removes all variables from a specified tuple.
+  /// Remove all variables from a specified tuple.
   void clear(Variables &Vars) { bcl::for_each(Vars, ClearFunctor{}); }
 
   /// Insert variable into an appropriate list into a specified tuple.
@@ -123,6 +124,7 @@ private:
   Variables mNotInitAggregates;
   Optional<unsigned> mDWLang;
   Function *mFunc = nullptr;
+  bool mNoMetadataLocs = false;
 };
 }
 
@@ -182,8 +184,11 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
     // Before memory promotion estimate memory is created for function arguments
     // which are pointers. However, there are no metadata attached to these
     // arguments (metadata are attached to a related 'alloca' instructions).
-    if (!RawDIM)
+    if (!RawDIM) {
+      if (!isa<llvm::Argument>(Object))
+        mNoMetadataLocs = true;
       continue;
+    }
     auto DIMItr = DIAT.find(*RawDIM);
     if (DIMItr == DIAT.memory_end())
       continue;
@@ -218,6 +223,12 @@ void NotInitializedMemoryAnalysis::print(
       findMetadata(mFunc), DS_Warning);
     M->getContext().diagnose(Diag);
     return;
+  }
+  if (mNoMetadataLocs) {
+    DiagnosticInfoUnsupported Diag(*mFunc,
+      "some memory locations without attached metadata have not been analyzed",
+      findMetadata(mFunc), DS_Warning);
+    M->getContext().diagnose(Diag);
   }
   print("scalar ", mNotInitScalars, OS);
   print("aggregate ", mNotInitAggregates, OS);
