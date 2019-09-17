@@ -11,6 +11,7 @@
 
 #include "SourceUnparserUtils.h"
 #include "CSourceUnparser.h"
+#include "FortranSourceUnparser.h"
 #include "DIEstimateMemory.h"
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/BinaryFormat/Dwarf.h>
@@ -40,7 +41,8 @@ bool unparseToString(unsigned DWLang,
   case dwarf::DW_LANG_Fortran90:
   case dwarf::DW_LANG_Fortran03:
   case dwarf::DW_LANG_Fortran08:
-    llvm_unreachable("Unparsing of Fortran metadata is not implemented yet!");
+    FortranSourceUnparser U(Loc, IsMinimal);
+    return U.toString(S);
   }
   return false;
 }
@@ -64,7 +66,8 @@ bool unparsePrint(unsigned DWLang,
   case dwarf::DW_LANG_Fortran90:
   case dwarf::DW_LANG_Fortran03:
   case dwarf::DW_LANG_Fortran08:
-    llvm_unreachable("Unparsing of Fortran metadata is not implemented yet!");
+    FortranSourceUnparser U(Loc, IsMinimal);
+    return U.print(OS);
   }
   return false;
 }
@@ -87,7 +90,8 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc, bool IsMinimal) {
   case dwarf::DW_LANG_Fortran90:
   case dwarf::DW_LANG_Fortran03:
   case dwarf::DW_LANG_Fortran08:
-    llvm_unreachable("Unparsing of Fortran metadata is not implemented yet!");
+    FortranSourceUnparser U(Loc, IsMinimal);
+    return U.dump();
   }
   return false;
 }
