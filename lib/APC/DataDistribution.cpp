@@ -244,7 +244,8 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
           if (!isa<Instruction>(U))
             continue;
           LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: access at ";
-            cast<Instruction>(U)->getDebugLoc().dump(); dbgs() << "\n");
+            TSAR_LLVM_DUMP(cast<Instruction>(U)->getDebugLoc().dump());
+            dbgs() << "\n");
           for_each_memory(cast<Instruction>(*U), TLI,
             IRToArrayInfoFunctor{APCCtx, GlobalOpts, Provider,
               AccessPool, Accesses, APCArray, Range },
