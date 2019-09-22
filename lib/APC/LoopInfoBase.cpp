@@ -26,19 +26,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "LoopGraphTraits.h"
+#include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
+#include "tsar/Analysis/Clang/CanonicalLoop.h"
+#include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/Utils.h"
+#include "tsar/Core/Query.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Support/Diagnostic.h"
-#include "Attributes.h"
-#include "DFRegionInfo.h"
-#include "DIEstimateMemory.h"
-#include "CanonicalLoop.h"
-#include "KnownFunctionTraits.h"
-#include "PerfectLoop.h"
-#include "tsar_query.h"
-#include "SourceUnparserUtils.h"
+#include "tsar/Support/MetadataUtils.h"
+#include "tsar/Unparse/SourceUnparserUtils.h"
 #include <apc/GraphLoop/graph_loops.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
 #include <bcl/utility.h>

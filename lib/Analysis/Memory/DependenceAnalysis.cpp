@@ -50,15 +50,15 @@
 //                                                                            //
 //===----------------------------------------------------------------------===//
 
-#include "Delinearization.h"
-#include "DefinedMemory.h"
-#include "EstimateMemory.h"
-#include "GlobalOptions.h"
-#include "DFRegionInfo.h"
-#include "SpanningTreeRelation.h"
+#include "tsar/ADT/SpanningTreeRelation.h"
+#include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/SCEVUtils.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"

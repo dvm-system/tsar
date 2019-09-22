@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // It contains declarations of functions that initialize and create an instances
-// of TSAR passes which is necessary for program parallelization. Declarations
+// of TSAR passes which are necessary for program parallelization. Declarations
 // of appropriate methods for an each new pass should be added to this file.
 //
 //===----------------------------------------------------------------------===//

@@ -239,7 +239,7 @@ message(STATUS "${LLVM_STATUS} - done")
 # Set additional include directories and definitions
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_BINARY_DIR}/include)
+  ${CMAKE_CURRENT_BINARY_DIR})
 if(MSVC)
   file(GLOB_RECURSE TSAR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch)
 endif()
@@ -261,6 +261,8 @@ if(DEFINED LLVM_BUILD_TYPE)
 endif()
 
 add_subdirectory(utils/TableGen)
-add_subdirectory(lib)
-add_subdirectory(src tsar)
+add_subdirectory(lib tsar)
 add_subdirectory(test)
+add_subdirectory(tools)
+
+set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")

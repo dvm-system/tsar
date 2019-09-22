@@ -23,10 +23,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/FormatPass.h"
-#include "ClangUtils.h"
-#include "Diagnostic.h"
-#include "GlobalOptions.h"
-#include "tsar_transformation.h"
+#include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/Lex/Lexer.h>

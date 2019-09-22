@@ -28,8 +28,14 @@
 using namespace llvm;
 
 void llvm::initializeClangAnalysis(PassRegistry &Registry) {
+  initializeClangGlobalInfoPassPass(Registry);
   initializeClangDIMemoryMatcherPassPass(Registry);
   initializeClangDIGlobalMemoryMatcherPassPass(Registry);
+  initializeClangExprMatcherPassPass(Registry);
+  initializeLoopMatcherPassPass(Registry);
+  initializeClangPerfectLoopPassPass(Registry);
+  initializeCanonicalLoopPassPass(Registry);
+  initializeClangCFTraitsPassPass(Registry);
   // Initialize checkers.
   initializeClangNoMacroAssertPass(Registry);
 }

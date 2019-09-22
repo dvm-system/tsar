@@ -29,4 +29,7 @@ using namespace llvm;
 
 void llvm::initializeIRTransform(PassRegistry &Registry) {
   initializeNoMetadataDSEPassPass(Registry);
+  initializePOFunctionAttrsAnalysisPass(Registry);
+  initializeRPOFunctionAttrsAnalysisPass(Registry);
+  initializeLoopAttributesDeductionPassPass(Registry);
 }

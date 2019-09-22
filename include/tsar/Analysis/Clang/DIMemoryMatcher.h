@@ -26,9 +26,9 @@
 #ifndef TSAR_CLANG_DI_MEMORY_MATCHER_H
 #define TSAR_CLANG_DI_MEMORY_MATCHER_H
 
+#include "tsar/ADT/Bimap.h"
 #include "tsar/Analysis/Clang/Passes.h"
-#include "tsar_bimap.h"
-#include "tsar_utility.h"
+#include "tsar/Support/Tags.h"
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
 #include <llvm/ADT/DenseSet.h>

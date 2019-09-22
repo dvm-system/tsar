@@ -26,8 +26,10 @@
 
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include "tsar/Support/Tags.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
 #include <bcl/tagged.h>

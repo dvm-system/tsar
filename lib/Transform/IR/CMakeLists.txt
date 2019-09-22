@@ -1,4 +1,5 @@
-set(TRANSFORM_SOURCES Passes.cpp DeadCodeElimination.cpp)
+set(TRANSFORM_SOURCES Passes.cpp DeadCodeElimination.cpp InterprocAttr.cpp
+  MetadataUtils.cpp Utils.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -11,12 +12,11 @@ endif()
 add_library(TSARTransformIR STATIC
   ${TRANSFORM_SOURCES} ${TRANSFORM_HEADERS} ${TRANSFORM_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARTransformIR ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARTransformIR ${LLVM_LIBS} BCL::Core)
+add_dependencies(TSARTransformIR TSARAnalysisMemory IntrinsicsGen AttributesGen)
+target_link_libraries(TSARTransformIR BCL::Core)
 
 set_target_properties(TSARTransformIR PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"

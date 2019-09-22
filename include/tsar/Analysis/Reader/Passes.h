@@ -1,4 +1,4 @@
-//===- Passes.h - Create and Initialize Analysis Passes (Clang) -*- C++ -*-===//
+//=== Passes.h - Create and Initialize Analysis Passes (Reader) -*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // It contains declarations of functions that initialize and create an instances
-// of TSAR passes which is necessary to load external analysis results.
+// of TSAR passes which are necessary to load external analysis results.
 // Declarations of appropriate methods for an each new pass should
 // be added to this file.
 //

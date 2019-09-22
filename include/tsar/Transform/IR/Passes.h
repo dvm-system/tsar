@@ -27,9 +27,14 @@
 #ifndef TSAR_IR_TRANSFORM_PASSES_H
 #define TSAR_IR_TRANSFORM_PASSES_H
 
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/StringRef.h>
+
 namespace llvm {
+class Pass;
 class PassRegistry;
 class FunctionPass;
+class ModulePass;
 
 /// Initialize all IR-level transformation passes.
 void initializeIRTransform(PassRegistry &Registry);
@@ -41,5 +46,23 @@ void initializeNoMetadataDSEPassPass(PassRegistry &Registry);
 /// Create a pass which eliminates dead stores which accesses values without
 /// attached metadata.
 FunctionPass * createNoMetadataDSEPass();
+
+/// Initialize a pass which deduce function attributes in PO.
+void initializePOFunctionAttrsAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass which deduce function attributes in PO.
+Pass * createPOFunctionAttrsAnalysis();
+
+/// Initialize a pass which deduce function attributes in RPO.
+void initializeRPOFunctionAttrsAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass which deduce function attributes in RPO.
+ModulePass * createRPOFunctionAttrsAnalysis();
+
+/// Initialize a pass which deduce loop attributes.
+void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
+
+/// Create a pass which deduce loop attributes.
+FunctionPass * createLoopAttributesDeductionPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H

@@ -9,16 +9,16 @@ if(MSVC_IDE)
   source_group(bcl FILES ${BCL_CORE_HEADERS})
 endif()
 
-add_library(TSARClangTransform STATIC
+add_library(TSARTransformClang STATIC
   ${TRANSFORM_SOURCES} ${TRANSFORM_HEADERS} ${TRANSFORM_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARClangTransform ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARTransformClang ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARClangTransform ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+add_dependencies(TSARTransformClang DirectivesGen DiagnosticKinds
+  IntrinsicsGen AttributesGen)
+target_link_libraries(TSARTransformClang TSARAnalysisClang TSARTool BCL::Core)
 
-set_target_properties(TSARClangTransform PROPERTIES
+set_target_properties(TSARTransformClang PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)

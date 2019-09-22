@@ -22,20 +22,24 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <tsar/APC/APCContext.h>
-#include <tsar/APC/Passes.h>
-#include <tsar/Support/Diagnostic.h>
-#include "Attributes.h"
-#include "DIEstimateMemory.h"
-#include "KnownFunctionTraits.h"
-#include "tsar_query.h"
-#include "SourceUnparserUtils.h"
+#include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/APC/APCContext.h"
+#include "tsar/APC/Passes.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Support/Diagnostic.h"
+#include "tsar/Support/MetadataUtils.h"
+#include "tsar/Support/Utils.h"
+#include "tsar/Unparse/SourceUnparserUtils.h"
 #include <apc/GraphCall/graph_calls.h>
 #include <bcl/utility.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/CallGraph.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Pass.h>
 
 #undef DEBUG_TYPE

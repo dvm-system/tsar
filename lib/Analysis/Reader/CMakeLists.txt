@@ -11,12 +11,12 @@ endif()
 add_library(TSARAnalysisReader STATIC
   ${ANALYSIS_SOURCES} ${ANALYSIS_HEADERS} ${ANALYSIS_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARAnalysisReader ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARAnalysisReader ${LLVM_LIBS} BCL::Core)
+add_dependencies(TSARAnalysisReader IntrinsicsGen AttributesGen)
+target_link_libraries(TSARAnalysisReader
+  TSARAnalysis TSARAnalysisMemory TSARSupport BCL::Core)
 
 set_target_properties(TSARAnalysisReader PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"

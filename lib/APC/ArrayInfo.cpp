@@ -25,16 +25,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "AstWrapperImpl.h"
-#include <tsar/APC/APCContext.h>
-#include <tsar/APC/Passes.h>
-#include <tsar/Support/Diagnostic.h>
-#include <tsar/Support/NumericUtils.h>
-#include "Delinearization.h"
-#include "DIEstimateMemory.h"
-#include "EstimateMemory.h"
-#include "MemoryAccessUtils.h"
-#include "tsar_query.h"
-#include "tsar_utility.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/APC/APCContext.h"
+#include "tsar/APC/Passes.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Support/Diagnostic.h"
+#include "tsar/Support/MetadataUtils.h"
+#include "tsar/Support/NumericUtils.h"
+#include "tsar/Support/Tags.h"
 #include <apc/Distribution/Array.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
 #include <apc/Utils/types.h>

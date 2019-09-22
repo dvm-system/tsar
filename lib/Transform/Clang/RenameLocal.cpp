@@ -23,13 +23,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/RenameLocal.h"
+#include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
-#include "DFRegionInfo.h"
-#include "Diagnostic.h"
-#include "GlobalInfoExtractor.h"
-#include "tsar_pragma.h"
-#include "tsar_query.h"
-#include "tsar_transformation.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/Clang/Pragma.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>

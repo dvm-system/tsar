@@ -1,4 +1,4 @@
-//===- Passes.h - Create and Initialize Analysis Passes (Clang) -*- C++ -*-===//
+//===- Passes.h - Create and Initialize Memory Analysis Passes  -*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // It contains declarations of functions that initialize and create an instances
-// of TSAR passes which is necessary for analysis of memory accesses.
+// of TSAR passes which are necessary for analysis of memory accesses.
 // Declarations of appropriate methods for an each new pass should
 // be added to this file.
 //
@@ -38,9 +38,88 @@ namespace llvm {
 class Pass;
 class PassRegistry;
 class FunctionPass;
+class ImmutablePass;
 
-/// Initialize all passes to perfrom anlysis of memory accesses.
+/// Initialize all passes to perform analysis of memory accesses.
 void initializeMemoryAnalysis(PassRegistry &Registry);
+
+/// Initialize a pass to find defined locations for each data-flow region.
+void initializeDefinedMemoryPassPass(PassRegistry &Registry);
+
+/// Create a pass to find defined locations for each data-flow region.
+FunctionPass * createDefinedMemoryPass();
+
+/// Initialize a pass to find live locations for each data-flow region.
+void initializeLiveMemoryPassPass(PassRegistry &Registry);
+
+/// Create a pass to find live locations for each data-flow region.
+FunctionPass * createLiveMemoryPass();
+
+/// Initialize a pass to build hierarchy of accessed memory.
+void initializeEstimateMemoryPassPass(PassRegistry &Registry);
+
+/// Create a pass to build hierarchy of accessed memory.
+FunctionPass * createEstimateMemoryPass();
+
+/// Initialize a pass to build hierarchy of accessed memory.
+void initializeDIEstimateMemoryPassPass(PassRegistry &Registry);
+
+/// Create a pass to build hierarchy of accessed memory.
+FunctionPass * createDIEstimateMemoryPass();
+
+/// Initializes storage of debug-level memory environment.
+void initializeDIMemoryEnvironmentStoragePass(PassRegistry &Registry);
+
+/// Create storage of debug-level memory environment.
+ImmutablePass * createDIMemoryEnvironmentStorage();
+
+/// Initialize wrapper to access debug-level memory environment.
+void initializeDIMemoryEnvironmentWrapperPass(PassRegistry &Registry);
+
+/// Initialize a pass to display alias tree.
+void initializeAliasTreeViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display alias tree.
+FunctionPass * createAliasTreeViewerPass();
+
+/// Initialize a pass to display alias tree (alias summary only).
+void initializeAliasTreeOnlyViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display alias tree (alias summary only).
+FunctionPass * createAliasTreeOnlyViewerPass();
+
+/// Initialize a pass to display alias tree.
+void initializeDIAliasTreeViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display alias tree.
+FunctionPass * createDIAliasTreeViewerPass();
+
+/// Initialize a pass to print alias tree to 'dot' file.
+void initializeAliasTreePrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print alias tree to 'dot' file.
+FunctionPass * createAliasTreePrinterPass();
+
+/// Initialize a pass to print alias tree to 'dot' file (alias summary only).
+void initializeAliasTreeOnlyPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print alias tree to 'dot' file (alias summary only).
+FunctionPass * createAliasTreeOnlyPrinterPass();
+
+/// Initialize a pass to print alias tree to 'dot' file.
+void initializeDIAliasTreePrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print alias tree to 'dot' file.
+FunctionPass * createDIAliasTreePrinterPass();
+
+/// Initialize storage of metadata-level pool of memory traits.
+void initializeDIMemoryTraitPoolStoragePass(PassRegistry &Registry);
+
+/// Create storage of metadata-level pool of memory traits.
+ImmutablePass * createDIMemoryTraitPoolStorage();
+
+/// Initialize wrapper to access metadata-level pool of memory traits.
+void initializeDIMemoryTraitPoolWrapperPass(PassRegistry &Registry);
 
 /// Initialize a pass to determine privatizable variables.
 void initializePrivateRecognitionPassPass(PassRegistry &Registry);
@@ -69,5 +148,11 @@ void initializeNotInitializedMemoryAnalysisPass(PassRegistry &Registry);
 
 /// Create a pass to look for not initialized memory locations.
 FunctionPass * createNotInitializedMemoryAnalysis(PassRegistry &Registry);
+
+/// Initialize a pass to delinearize array accesses.
+void initializeDelinearizationPassPass(PassRegistry &Registry);
+
+/// Create a pass to delinearize array accesses.
+FunctionPass * createDelinearizationPass();
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

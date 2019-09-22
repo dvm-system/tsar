@@ -24,9 +24,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
-#include "tsar_memory_matcher.h"
-#include "tsar_matcher.h"
-#include "tsar_transformation.h"
+#include "tsar/Analysis/Clang/Matcher.h"
+#include "tsar/Analysis/Clang/MemoryMatcher.h"
+#include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Core/TransformationContext.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/Support/Debug.h>

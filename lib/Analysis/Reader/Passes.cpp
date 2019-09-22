@@ -1,4 +1,4 @@
-//=== Passes.cpp - Create and Initialize Analysis Passes (Clang) *- C++ -*-===//
+//=== Passes.cpp  Create and Initialize Analysis Passes (Reader) *- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //

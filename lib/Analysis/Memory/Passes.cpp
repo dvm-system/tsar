@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This contains functions to initialize passes which are necessary for
-// analysis of memory accessess.
+// analysis of memory accesses.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,8 +28,19 @@
 using namespace llvm;
 
 void llvm::initializeMemoryAnalysis(PassRegistry &Registry) {
+  initializeDefinedMemoryPassPass(Registry);
+  initializeLiveMemoryPassPass(Registry);
+  initializeEstimateMemoryPassPass(Registry);
+  initializeDIEstimateMemoryPassPass(Registry);
+  initializeAliasTreeViewerPass(Registry);
+  initializeAliasTreeOnlyViewerPass(Registry);
+  initializeDIAliasTreeViewerPass(Registry);
+  initializeAliasTreePrinterPass(Registry);
+  initializeAliasTreeOnlyPrinterPass(Registry);
+  initializeDIAliasTreePrinterPass(Registry);
   initializePrivateRecognitionPassPass(Registry);
   initializeDIDependencyAnalysisPassPass(Registry);
   initializeProcessDIMemoryTraitPassPass(Registry);
   initializeNotInitializedMemoryAnalysisPass(Registry);
+  initializeDelinearizationPassPass(Registry);
 }

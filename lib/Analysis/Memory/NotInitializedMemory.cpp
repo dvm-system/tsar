@@ -23,13 +23,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include <DIEstimateMemory.h>
-#include <DefinedMemory.h>
-#include <DFRegionInfo.h>
-#include <EstimateMemory.h>
-#include "tsar_dbg_output.h"
-#include <tsar_query.h>
+#include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Support/MetadataUtils.h"
+#include "tsar/Unparse/Utils.h"
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
 #include <llvm/ADT/DenseSet.h>

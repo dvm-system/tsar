@@ -22,20 +22,21 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/KnownFunctionTraits.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
-#include "tsar/Support/SCEVUtils.h"
-#include "tsar/Support/NumericUtils.h"
+#include "tsar/Core/Query.h"
 #include "tsar/Support/Diagnostic.h"
-#include "Delinearization.h"
-#include "DIEstimateMemory.h"
-#include "EstimateMemory.h"
-#include "GlobalOptions.h"
-#include "KnownFunctionTraits.h"
-#include "MemoryAccessUtils.h"
-#include "tsar_pass_provider.h"
-#include "tsar_utility.h"
-#include "tsar_query.h"
+#include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/NumericUtils.h"
+#include "tsar/Support/PassProvider.h"
+#include "tsar/Support/SCEVUtils.h"
+#include "tsar/Support/Tags.h"
+#include "tsar/Support/Utils.h"
 #include <apc/Distribution/CreateDistributionDirs.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphCall/graph_calls_func.h>

@@ -12,12 +12,11 @@ endif()
 
 add_library(APC STATIC ${APC_SOURCES} ${APC_HEADERS} ${APC_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
   add_dependencies(APC ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(APC ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core APC::APCCore)
+add_dependencies(APC DirectivesGen DiagnosticKinds IntrinsicsGen AttributesGen)
+target_link_libraries(APC TSARTransformClang BCL::Core APC::APCCore)
 
 add_definitions("-D__SPC")
 set_target_properties(APC PROPERTIES

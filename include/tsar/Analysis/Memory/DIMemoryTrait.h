@@ -22,16 +22,18 @@
 // recognized by the analyzer.
 //
 //===----------------------------------------------------------------------===//
+
 #ifndef TSAR_DI_MEMORY_TRAIT_H
 #define TSAR_DI_MEMORY_TRAIT_H
 
-#include "AnalysisWrapperPass.h"
-#include "DIEstimateMemory.h"
-#include "DIMemoryHandle.h"
-#include "PersistentMap.h"
-#include "PersistentIteratorInfo.h"
-#include "tsar_utility.h"
+#include "tsar/ADT/DenseMapTraits.h"
+#include "tsar/ADT/PersistentMap.h"
+#include "tsar/ADT/PersistentIteratorInfo.h"
+#include "tsar/Analysis/AnalysisWrapperPass.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/DIMemoryHandle.h"
 #include "tsar/Analysis/Memory/MemoryTrait.h"
+#include "tsar/Support/Tags.h"
 #include <llvm/ADT/APSInt.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>

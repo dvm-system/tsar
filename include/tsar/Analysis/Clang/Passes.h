@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // It contains declarations of functions that initialize and create an instances
-// of TSAR passes which is necessary for source-based analysis of C programs.
+// of TSAR passes which are necessary for source-based analysis of C programs.
 // Declarations of appropriate methods for an each new pass should
 // be added to this file.
 //
@@ -36,6 +36,12 @@ class ModulePass;
 /// Initialize all passes to perfrom source-base analysis of C programs.
 void initializeClangAnalysis(PassRegistry &Registry);
 
+/// Initialize a pass which collects information about source-level globals.
+void initializeClangGlobalInfoPassPass(PassRegistry &Registry);
+
+/// Create a pass which collects information about source-level globals.
+llvm::ModulePass * createClangGlobalInfoPass();
+
 /// Initialize a pass to match variable in a source high-level code
 /// and appropriate metadata-level representations of variables.
 void initializeClangDIMemoryMatcherPassPass(PassRegistry &Registry);
@@ -44,13 +50,25 @@ void initializeClangDIMemoryMatcherPassPass(PassRegistry &Registry);
 /// and appropriate metadata-level representations of variables.
 FunctionPass *createDIMemoryMatcherPass();
 
-/// Initializes pass to check absence of a macro in source ranges which
+/// Initialize pass to check absence of a macro in source ranges which
 /// are marked with `assert nomacro` directive.
 void initializeClangNoMacroAssertPass(PassRegistry& Registry);
 
-/// Initializes pass to check absence of a macro in source ranges which
+/// Initialize pass to check absence of a macro in source ranges which
 /// are marked with `assert nomacro` directive.
 llvm::FunctionPass * createClangNoMacroAssert(bool *IsInvalid = nullptr);
+
+/// Initialize a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherPassPass(PassRegistry &Registry);
+
+/// Initialize a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherImmutableStoragePass(PassRegistry &Registry);
+
+/// Initialize a pass to match variables and allocas (or global variables).
+void initializeMemoryMatcherImmutableWrapperPass(PassRegistry &Registry);
+
+/// Create a pass to match variables and allocas (or global variables).
+ModulePass * createMemoryMatcherPass();
 
 /// Initialize a pass to match only global variable in a source high-level code
 /// and appropriate metadata-level representations of variables.
@@ -59,5 +77,37 @@ void initializeClangDIGlobalMemoryMatcherPassPass(PassRegistry &Registry);
 /// Create a pass to match only global variable in a source high-level code
 /// and appropriate metadata-level representations of variables.
 ModulePass *createDIGlobalMemoryMatcherPass();
+
+/// Initialize a pass to match high-level and low-level expressions.
+void initializeClangExprMatcherPassPass(PassRegistry &Registry);
+
+/// Create a pass to match high-level and low-level expressions.
+FunctionPass * createClangExprMatcherPass();
+
+/// Initialize a pass to match high-level and low-level loops.
+void initializeLoopMatcherPassPass(PassRegistry &Registry);
+
+/// Create a pass to match high-level and low-level loops.
+FunctionPass * createLoopMatcherPass();
+
+/// Initialize a pass to determine perfect for-loops in a source code.
+void initializeClangPerfectLoopPassPass(PassRegistry &Registry);
+
+/// Create a pass to determine perfect for-loops in a source code.
+FunctionPass * createClangPerfectLoopPass();
+
+/// Initialize a pass to determine canonical for-loops in a source code.
+void initializeCanonicalLoopPassPass(PassRegistry &Registry);
+
+/// Create a pass to determine canonical for-loops in a source code.
+FunctionPass * createCanonicalLoopPass();
+
+/// Initialize an AST-level pass which collects control-flow traits
+/// for function and its loops.
+void initializeClangCFTraitsPassPass(PassRegistry &Registry);
+
+/// Create an AST-level pass which collects control-flow traits
+/// for function and its loops.
+FunctionPass * createClangCFTraitsPass();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H

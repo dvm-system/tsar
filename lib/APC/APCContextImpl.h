@@ -26,7 +26,7 @@
 #define TSAR_APC_CONTEXT_IMPL_H
 
 #include "AstWrapperImpl.h"
-#include "tsar_utility.h"
+#include "tsar/Support/Tags.h"
 #include <apc/Distribution/Array.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphLoop/graph_loops.h>

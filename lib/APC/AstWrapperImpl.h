@@ -26,7 +26,7 @@
 #ifndef TSAR_AST_WRAPPER_IMPL_H
 #define TSAR_AST_WRAPPER_IMPL_H
 
-#include "DIMemoryLocation.h"
+#include "tsar/Analysis/Memory/DIMemoryLocation.h"
 
 class Symbol {
 public:

@@ -26,7 +26,7 @@
 #ifndef TSAR_CLANG_INLINER_H
 #define TSAR_CLANG_INLINER_H
 
-#include "GlobalInfoExtractor.h"
+#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>

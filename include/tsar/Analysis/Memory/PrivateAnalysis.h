@@ -30,13 +30,13 @@
 #ifndef TSAR_PRIVATE_ANALYSIS_H
 #define TSAR_PRIVATE_ANALYSIS_H
 
-#include "tsar_df_graph.h"
-#include "tsar_df_location.h"
-#include "DefinedMemory.h"
-#include "GraphNumbering.h"
-#include "LiveMemory.h"
-#include "tsar_utility.h"
+#include "tsar/Analysis/DataFlowGraph.h"
+#include "tsar/ADT/DenseMapTraits.h"
+#include "tsar/ADT/GraphNumbering.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/IRMemoryTrait.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/MemoryLocation.h>

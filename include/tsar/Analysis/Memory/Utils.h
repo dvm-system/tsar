@@ -25,19 +25,98 @@
 #ifndef TSAR_MEMORY_UTILS_H
 #define TSAR_MEMORY_UTILS_H
 
+#include "tsar/Analysis/Memory/DIMemoryLocation.h"
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/Optional.h>
+
 namespace llvm {
 class Instruction;
 class BasicBlock;
+class DataLayout;
+class DominatorTree;
+class GlobalVariable;
 class Loop;
 class ScalarEvolution;
 class SCEV;
 class TargetLibraryInfo;
+class DIExpression;
+class DISubprogram;
+class Value;
 }
 
 namespace tsar {
 class AliasTree;
 class DefUseSet;
 template<class GraphType> class SpanningTreeRelation;
+
+/// This function strips off any GEP address adjustments and pointer casts from
+/// the specified value while it is possible or until the object with attached
+/// metadata describing a value will be found. The second returned value is
+/// true if a returned object has attached metadata.
+std::pair<llvm::Value *, bool> GetUnderlyingObjectWithMetadata(llvm::Value *V,
+  const llvm::DataLayout &DL);
+
+/// Returns a meta information for function or nullptr;
+llvm::DISubprogram * findMetadata(const llvm::Function *F);
+
+/// Find meta information available a global variable.
+/// Returns 'true' if at least one valid metadata has been found.
+bool findGlobalMetadata(const llvm::GlobalVariable *Var,
+  llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
+
+/// \brief Checks that two fragments of a variable may overlap.
+///
+/// Two fragments of zero size may not overlap. Note that there is no reason
+/// to invoke this functions for fragments of different variables. Complex
+/// expressions which contains elements other then dwarf::DW_OP_LLVM_fragment
+/// does not analyzed accurately. In this case overlapping is conservatively
+/// assumed.
+bool mayAliasFragments(
+  const llvm::DIExpression &LHS, const llvm::DIExpression &RHS);
+
+/// Return true if a specified expression contains dereference.
+bool hasDeref(const llvm::DIExpression &Expr);
+
+/// Specify kind of metadata which should be found.
+enum class MDSearch { AddressOfVariable, ValueOfVariable, Any };
+
+/// \brief Returns a meta information for a specified value or nullptr.
+///
+/// \param [in] V Analyzed value.
+/// \param [in] DT If it is specified then llvm.dbg.value will be analyzed if
+/// necessary. Otherwise llvm.dbg.declare, llvm.dbg.address and global
+/// variables will be analyzed only.
+/// \param [in] MDS Kind of metadata which should be found. If AddressOfVariable
+/// is used then `V` is an address of a variable and dbg.declare, dbg.address
+/// should be found only. If ValueOfVariable is used then `V` is a value of a
+/// variable and dbg.value should be found only.
+/// \param [out] DILocs This will contain all metadata-level locations which are
+/// associated with a specified value. For this reason llvm.dbg. ...
+/// intrinsics will be analyzed. Intrinsics which dominates all
+/// uses of `V` will be only considered. The condition mentioned bellow is also
+/// checked. Let us consider some llvm.dbg.value `I` which dominates all uses of
+/// `V` and associates a metadata-level `DILoc` with `V`. Paths from `I` to each
+/// use of V will be checked. There should be no other intrinsics which
+/// associates `DILoc` with some other value on these paths.
+/// \return A variable from `DILocs`, llvm.dbg.value for this
+/// variable dominates llvm.dbg.value for other variables from `DILocs`. If
+/// there is no such variable, None is returned.
+/// `Status` will be set if it is not nullptr.
+llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value * V,
+  llvm::SmallVectorImpl<DIMemoryLocation> &DILocs,
+  const llvm::DominatorTree *DT = nullptr, MDSearch MDS = MDSearch::Any,
+  MDSearch *Status = nullptr);
+
+/// Return meta information for a specified value or None.
+///
+/// This function is similar to previously defined function findMetadata(),
+/// however it performs only MDSearch::ValueOfVariable search. The main
+/// difference is it consider a specified users 'Users' of a specified value `V'.
+/// A general findMetadata() function consider all users of `V` instead.
+llvm::Optional<DIMemoryLocation> findMetadata(const llvm::Value *V,
+  llvm::ArrayRef<llvm::Instruction *> Users, const llvm::DominatorTree &DT,
+  llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
 
 /// Return 'true' if values in memory accessed in a specified instruction 'I'
 /// is region invariant.

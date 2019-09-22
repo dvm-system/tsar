@@ -24,8 +24,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/TraitFilter.h"
-#include "EstimateMemory.h"
 #include <llvm/Transforms/Utils/Local.h>
 
 using namespace llvm;

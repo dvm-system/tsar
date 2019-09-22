@@ -23,8 +23,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MemoryAccessUtils.h"
-#include "tsar_utility.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Transform/IR/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseSet.h>

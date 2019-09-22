@@ -1,4 +1,7 @@
-set(ANALYSIS_SOURCES Passes.cpp DIMemoryMatcher.cpp NoMacroAssert.cpp)
+set(ANALYSIS_SOURCES Passes.cpp DIMemoryMatcher.cpp NoMacroAssert.cpp
+  MemoryMatcher.cpp LoopMatcher.cpp ExpressionMatcher.cpp CanonicalLoop.cpp
+  PerfectLoop.cpp GlobalInfoExtractor.cpp ControlFlowTraits.cpp)
+
 
 if(MSVC_IDE)
   file(GLOB_RECURSE ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -8,16 +11,17 @@ if(MSVC_IDE)
   source_group(bcl FILES ${BCL_CORE_HEADERS})
 endif()
 
-add_library(TSARClangAnalysis STATIC
+add_library(TSARAnalysisClang STATIC
   ${ANALYSIS_SOURCES} ${ANALYSIS_HEADERS} ${ANALYSIS_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARClangAnalysis ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARAnalysisClang ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARClangAnalysis ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+add_dependencies(TSARAnalysisClang DirectivesGen DiagnosticKinds
+  IntrinsicsGen AttributesGen)
+target_link_libraries(TSARAnalysisClang
+  TSARAnalysisMemory TSARSupportClang TSARTool BCL::Core)
 
-set_target_properties(TSARClangAnalysis PROPERTIES
+set_target_properties(TSARAnalysisClang PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"
   COMPILE_DEFINITIONS $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)

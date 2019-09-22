@@ -1,6 +1,9 @@
 set(ANALYSIS_SOURCES Passes.cpp DependenceAnalysis.cpp PrivateAnalysis.cpp
   DIDependenceAnalysis.cpp BitMemoryTrait.cpp ProcessTraitPass.cpp Utils.cpp
-  TraitFilter.cpp NotInitializedMemory.cpp)
+  TraitFilter.cpp NotInitializedMemory.cpp DIEstimateMemory.cpp
+  EstimateMemory.cpp DefinedMemory.cpp LiveMemory.cpp AliasTreePrinter.cpp
+  DIAliasTreePrinter.cpp DIMemoryLocation.cpp DFMemoryLocation.cpp
+  Delinearization.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -13,12 +16,11 @@ endif()
 add_library(TSARAnalysisMemory STATIC
   ${ANALYSIS_SOURCES} ${ANALYSIS_HEADERS} ${ANALYSIS_INTERNAL_HEADERS})
 
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_BINARY_DIR}/tsar)
-
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARAnalysisMemory ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARAnalysisMemory ${LLVM_LIBS} BCL::Core)
+add_dependencies(TSARAnalysisMemory IntrinsicsGen AttributesGen)
+target_link_libraries(TSARAnalysisMemory TSARUnparse TSARAnalysis BCL::Core)
 
 set_target_properties(TSARAnalysisMemory PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"

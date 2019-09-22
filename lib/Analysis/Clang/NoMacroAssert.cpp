@@ -25,11 +25,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
-#include "Diagnostic.h"
-#include "GlobalInfoExtractor.h"
-#include "tsar_query.h"
-#include "PassGroupRegistry.h"
-#include "tsar_transformation.h"
+#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/PassGroupRegistry.h"
+#include "tsar/Support/Clang/Diagnostic.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>

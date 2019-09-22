@@ -23,19 +23,315 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/Utils.h"
-#include "DefinedMemory.h"
-#include "EstimateMemory.h"
-#include "MemoryAccessUtils.h"
-#include "SpanningTreeRelation.h"
+#include "tsar/ADT/SpanningTreeRelation.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Analysis/ValueTracking.h>
+#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/IR/Dominators.h>
 
 using namespace llvm;
 using namespace tsar;
 
-bool tsar::isLoopInvariant(const SCEV *Expr, const Loop *L,
+namespace {
+void findConstDbgValues(
+    SmallVectorImpl<DbgValueInst *> &DbgValues, Constant *C) {
+  assert(C && "Value must not be null!");
+  if (auto *CMD = ConstantAsMetadata::getIfExists(C))
+    if (auto *MDV = MetadataAsValue::getIfExists(C->getContext(), CMD))
+      for (User *U : MDV->users())
+        if (DbgValueInst *DVI = dyn_cast<DbgValueInst>(U))
+          DbgValues.push_back(DVI);
+}
+
+void findAllDbgValues(SmallVectorImpl<DbgValueInst *> &DbgValues, Value *V) {
+  if (auto *C = dyn_cast<Constant>(V))
+    findConstDbgValues(DbgValues, C);
+  else
+    findDbgValues(DbgValues, V);
+}
+
+/// Computes a list of basic blocks which dominates a list of specified uses of
+/// a value `V` and contains some of `llvm.dbg.value` which associate value
+/// of `V` with a variable (not an address of a variable).
+DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>>
+findDomDbgValues(const Value *V, const DominatorTree &DT,
+    ArrayRef<Instruction *> Users) {
+  SmallVector<DbgValueInst *, 1> AllDbgValues;
+  findAllDbgValues(AllDbgValues, const_cast<Value *>(V));
+  DenseMap<DIMemoryLocation, SmallPtrSet<BasicBlock *, 8>> Dominators;
+  for (auto *DVI : AllDbgValues) {
+    if (!DVI->getVariable() || hasDeref(*DVI->getExpression()))
+      continue;
+    bool IsDbgDom = true;
+    auto UI = Users.begin(), UE = Users.end();
+    for (; UI != UE; ++UI)
+      if (!DT.dominates(DVI, *UI))
+        break;
+    if (UI != UE)
+      continue;
+    auto Pair = Dominators.try_emplace(DIMemoryLocation::get(DVI));
+    Pair.first->second.insert(DVI->getParent());
+  }
+  return Dominators;
+}
+
+/// \brief Determines all basic blocks which contains metadata-level locations
+/// aliases with a specified one.
+///
+/// Two conditions is going to be checked. At first it means that such block
+/// should contain llvm.dbg.value intrinsic which is associated with a
+/// specified metadata-level location `Loc` and a register other then `V`.
+/// The second condition is that there is no llvm.dbg.values after this
+/// intrinsic in the basic block which is associated with `Loc` and `V`.
+SmallPtrSet<BasicBlock *, 16>
+findAliasBlocks(const Value * V, const DIMemoryLocation &Loc) {
+  assert(Loc.isValid() && "Location must be valid!");
+  SmallPtrSet<BasicBlock *, 16> Aliases;
+  auto *MDV = MetadataAsValue::getIfExists(
+    Loc.Var->getContext(), const_cast<DIVariable *>(Loc.Var));
+  if (!MDV)
+    return Aliases;
+  for (User *U : MDV->users()) {
+    DbgValueInst *DVI = dyn_cast<DbgValueInst>(U);
+    if (!DVI)
+      continue;
+    assert(DVI->getExpression() && "Expression must not be null!");
+    if (hasDeref(*DVI->getExpression()) ||
+        !mayAliasFragments(*DIMemoryLocation::get(DVI).Expr, *Loc.Expr))
+      continue;
+    auto I = DVI->getIterator(), E = DVI->getParent()->end();
+    for (; I != E; ++I) {
+      if (auto *SuccDVI = dyn_cast<DbgValueInst>(&*I))
+        if (SuccDVI->getValue() == V && DIMemoryLocation::get(SuccDVI) == Loc) {
+          break;
+        }
+    }
+    if (I == E)
+      Aliases.insert(DVI->getParent());
+  }
+  return Aliases;
+}
+}
+
+namespace tsar {
+std::pair<Value *, bool> GetUnderlyingObjectWithMetadata(
+    Value *V, const DataLayout &DL) {
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    SmallVector<DIMemoryLocation, 1> DILocs;
+    if (findGlobalMetadata(GV, DILocs))
+      return std::make_pair(V, true);
+  } else {
+    if (V->isUsedByMetadata())
+      return std::make_pair(V, true);
+  }
+  auto BasePtr = GetUnderlyingObject(V, DL, 1);
+  return V == BasePtr ? std::make_pair(V, false) :
+    GetUnderlyingObjectWithMetadata(BasePtr, DL);
+}
+
+DISubprogram *findMetadata(const Function *F) {
+  assert(F && "Function must not be null!");
+  if (auto *SP = F->getSubprogram())
+    return SP;
+  return dyn_cast_or_null<DISubprogram>(F->getMetadata("sapfor.dbg"));
+}
+
+bool findGlobalMetadata(const GlobalVariable *Var,
+    SmallVectorImpl<DIMemoryLocation> &DILocs) {
+  assert(Var && "Variable must not be null!");
+  SmallVector<MDNode *, 1> MDs;
+  Var->getMetadata(LLVMContext::MD_dbg, MDs);
+  if (MDs.empty())
+    Var->getMetadata("sapfor.dbg", MDs);
+  bool IsChanged = false;
+  for (auto *MD : MDs) {
+    if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD)) {
+      DILocs.emplace_back(DIExpr->getVariable(), DIExpr->getExpression());
+      IsChanged = true;
+    }
+  }
+  return IsChanged;
+}
+
+Optional<DIMemoryLocation> findMetadata(const Value *V,
+    ArrayRef<Instruction *> Users,  const DominatorTree &DT,
+    SmallVectorImpl<DIMemoryLocation> &DILocs) {
+  auto Dominators = findDomDbgValues(V, DT, Users);
+  for (auto &DILocToDom : Dominators) {
+    auto DILoc = DILocToDom.first;
+    // If Aliases is empty it does not mean that a current variable can be used
+    // because if there are usage of V between two llvm.dbg.value (the first is
+    // associated with some other variable and the second is associated with the
+    // DILoc) the appropriate basic block will not be inserted into Aliases.
+    auto Aliases = findAliasBlocks(V, DILoc);
+    // Checks that each definition of a variable `DILoc` in `DILocToDom.second`
+    // reaches each uses of `V` in `Users`.
+    bool IsReached = false;
+    for (auto *I : Users) {
+      auto BB = I->getParent();
+      auto ReverseItr = I->getReverseIterator(), ReverseItrE = BB->rend();
+      for (IsReached = false; ReverseItr != ReverseItrE; ++ReverseItr) {
+        if (auto *DVI = dyn_cast<DbgValueInst>(&*ReverseItr))
+          if (!hasDeref(*DVI->getExpression()) &&
+              DIMemoryLocation::get(DVI) == DILoc) {
+            if (DVI->getValue() == V)
+              IsReached = true;
+            break;
+          }
+      }
+      if (IsReached)
+        continue;
+      if (ReverseItr != ReverseItrE)
+        break;
+      // A backward traverse of CFG will be performed. It is started in a `BB`.
+      SmallPtrSet<BasicBlock *, 8> VisitedPreds;
+      std::vector<BasicBlock *> Worklist;
+      Worklist.push_back(BB);
+      IsReached = true;
+      while (!Worklist.empty()) {
+        auto WorkBB = Worklist.back();
+        Worklist.pop_back();
+        auto PredItr = pred_begin(WorkBB), PredItrE = pred_end(WorkBB);
+        for (; PredItr != PredItrE; ++PredItr) {
+          if (VisitedPreds.count(*PredItr))
+            continue;
+          if (Aliases.count(*PredItr))
+            break;
+          if (DILocToDom.second.count(*PredItr))
+            continue;
+          Worklist.push_back(*PredItr);
+          VisitedPreds.insert(*PredItr);
+        }
+        if (PredItr != PredItrE) {
+          IsReached = false;
+          break;
+        }
+      }
+      if (!IsReached)
+        break;
+    }
+    if (IsReached)
+      DILocs.push_back(DILoc);
+  }
+  auto DILocItr = DILocs.begin(), DILocItrE = DILocs.end();
+  for (; DILocItr != DILocItrE; ++DILocItr) {
+    if ([&V, &DILocs, &DILocItr, &DILocItrE, &Dominators, &DT]() {
+      auto DILocToDom = Dominators.find(*DILocItr);
+      for (auto I = DILocs.begin(), E = DILocItrE; I != E; ++I) {
+        if (I == DILocItr)
+          continue;
+        for (auto BB : Dominators.find(*I)->second)
+          for (auto DILocBB : DILocToDom->second)
+            if (DILocBB == BB) {
+              for (auto &Inst : *DILocBB)
+                if (auto DVI = dyn_cast<DbgValueInst>(&Inst))
+                  if (DVI->getValue() == V && !hasDeref(*DVI->getExpression()))
+                    if (DIMemoryLocation::get(DVI) == *DILocItr)
+                      break;
+                    else if (DIMemoryLocation::get(DVI) == *I)
+                      return false;
+            } else if (!DT.dominates(DILocBB, BB)) {
+              return false;
+            }
+      }
+      return true;
+    }())
+      return *DILocItr;
+  }
+  return None;
+}
+
+Optional<DIMemoryLocation> findMetadata(const Value * V,
+    SmallVectorImpl<DIMemoryLocation> &DILocs, const DominatorTree *DT,
+    MDSearch MDS, MDSearch *Status) {
+  assert(V && "Value must not be null!");
+  DILocs.clear();
+  if (Status)
+    *Status = MDSearch::AddressOfVariable;
+  if (auto GV = dyn_cast<GlobalVariable>(V)) {
+    if ((MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) &&
+        findGlobalMetadata(GV, DILocs) && DILocs.size() == 1)
+      return DILocs.back();
+    else
+      return None;
+  }
+  if ((MDS == MDSearch::Any || MDS == MDSearch::AddressOfVariable) &&
+      !isa<Constant>(V)) {
+    auto AddrUses = FindDbgAddrUses(const_cast<Value *>(V));
+    if (!AddrUses.empty()) {
+      auto DIVar = AddrUses.front()->getVariable();
+      if (DIVar) {
+        for (auto DbgI : AddrUses) {
+          if (DbgI->getVariable() != DIVar ||
+            DbgI->getExpression() != AddrUses.front()->getExpression())
+            return None;
+        }
+        auto DIM = DIMemoryLocation::get(AddrUses.front());
+        if (!DIM.isValid())
+          return None;
+        DILocs.push_back(std::move(DIM));
+        return DILocs.back();
+      }
+      return None;
+    }
+  }
+  if (!DT || MDS != MDSearch::Any && MDS != MDSearch::ValueOfVariable)
+    return None;
+  if (Status)
+    *Status = MDSearch::ValueOfVariable;
+  SmallVector<Instruction *, 8> Users;
+  // TODO (kaniandr@gmail.com): User is not an `Instruction` sometimes.
+  // If `V` is a declaration of a function then call of this function will
+  // be a `ConstantExpr`. May be some other cases exist.
+  for (User *U : const_cast<Value *>(V)->users()) {
+    if (auto Phi = dyn_cast<PHINode>(U)) {
+      if (auto I = dyn_cast<Instruction>(const_cast<Value *>(V)))
+        if (auto BB = I->getParent()) {
+          Users.push_back(&BB->back());
+          continue;
+        }
+    }
+    if (auto I = dyn_cast<Instruction>(U))
+      Users.push_back(I);
+    else
+      return None;
+  }
+  return findMetadata(V, Users, *DT, DILocs);
+}
+
+bool hasDeref(const DIExpression &Expr) {
+  for (auto I = Expr.expr_op_begin(), E = Expr.expr_op_end(); I != E; ++I)
+    if (I->getOp() == dwarf::DW_OP_deref || I->getOp() == dwarf::DW_OP_xderef)
+      return true;
+  return false;
+}
+
+
+bool mayAliasFragments(const DIExpression &LHS, const DIExpression &RHS) {
+  if (LHS.getNumElements() != 3 || RHS.getNumElements() != 3)
+    return true;
+  auto LHSFragment = LHS.getFragmentInfo();
+  auto RHSFragment = RHS.getFragmentInfo();
+  if (!LHSFragment || !RHSFragment)
+    return true;
+  if (LHSFragment->SizeInBits == 0 || RHSFragment->SizeInBits == 0)
+    return false;
+  return ((LHSFragment->OffsetInBits == RHSFragment->OffsetInBits) ||
+          (LHSFragment->OffsetInBits < RHSFragment->OffsetInBits &&
+          LHSFragment->OffsetInBits + LHSFragment->SizeInBits >
+            RHSFragment->OffsetInBits) ||
+          (RHSFragment->OffsetInBits < LHSFragment->OffsetInBits &&
+          RHSFragment->OffsetInBits + RHSFragment->SizeInBits >
+            LHSFragment->OffsetInBits));
+}
+
+bool isLoopInvariant(const SCEV *Expr, const Loop *L,
     TargetLibraryInfo &TLI, ScalarEvolution &SE, const DefUseSet &DUS,
     const AliasTree &AT, const SpanningTreeRelation<const AliasTree *> &STR) {
   assert(Expr && "Expression must not be null!");
@@ -68,6 +364,7 @@ bool tsar::isLoopInvariant(const SCEV *Expr, const Loop *L,
     }
   }
   return true;
+}
 }
 
 template<class FunctionT>

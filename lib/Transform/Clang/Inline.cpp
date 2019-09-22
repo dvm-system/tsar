@@ -22,22 +22,24 @@
 //
 // TODO (kaniander@gmail.com): ASTImporter can break mapping
 //   node->source (VLAs, etc) (comments from Jury Zykov).
+//
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/Inline.h"
-#include "ASTImportInfo.h"
-#include "ClangUtils.h"
-#include "Diagnostic.h"
-#include "tsar_pragma.h"
-#include "tsar_query.h"
-#include "SourceLocationTraverse.h"
-#include "tsar_transformation.h"
-#include "tsar_utility.h"
+#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/ASTImportInfo.h"
+#include "tsar/Support/Utils.h"
+#include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Analysis/CallGraph.h>
 #include <clang/Analysis/CFG.h>
 #include <clang/Lex/Lexer.h>
 #include <llvm/ADT/PostOrderIterator.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <algorithm>
