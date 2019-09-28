@@ -52,13 +52,15 @@ JSON_OBJECT_END(Distance)
 
 /// Definition of a JSON-object which represents a loop and its properties.
 JSON_OBJECT_BEGIN(Loop)
-JSON_OBJECT_PAIR_7(Loop,
+JSON_OBJECT_PAIR_9(Loop,
   File, std::string,
   Line, LineTy,
   Column, ColumnTy,
   Private, std::set<IdTy>,
   Flow, std::map<BCL_JOIN(IdTy, Distance)>,
   Anti, std::map<BCL_JOIN(IdTy, Distance)>,
+  Output, std::set<IdTy>,
+  WriteOccurred, std::set<IdTy>,
   UseAfterLoop, std::set<IdTy>)
 JSON_OBJECT_END(Loop)
 

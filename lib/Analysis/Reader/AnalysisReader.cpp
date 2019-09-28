@@ -80,6 +80,12 @@ using TraitT = bcl::tagged_tuple<
     Optional<trait::json_::LoopImpl::UseAfterLoop::ValueType::const_iterator>,
       trait::UseAfterLoop>,
   bcl::tagged<
+    Optional<trait::json_::LoopImpl::WriteOccurred::ValueType::const_iterator>,
+      trait::WriteOccurred>,
+  bcl::tagged<
+    Optional<trait::json_::LoopImpl::Output::ValueType::const_iterator>,
+      trait::Output>,
+  bcl::tagged<
     Optional<trait::json_::LoopImpl::Anti::ValueType::const_iterator>,
       trait::Anti>,
   bcl::tagged<
@@ -102,9 +108,30 @@ struct IsOnlyImpl<bcl::tagged_tuple_size<TraitT>::value, Tags...> {
   static bool is(const TraitT &) noexcept { return true; }
 };
 
+template<std::size_t Idx, class... Tags> struct IsOnlyAnyOfImpl {
+  static bool is(const TraitT &Traits) {
+    if (bcl::is_contained<typename bcl::tagged_tuple_tag<Idx, TraitT>::type,
+                          Tags...>::value)
+      return IsOnlyImpl<Idx + 1, Tags...>::is(Traits);
+    return !std::get<Idx>(Traits) &&
+      IsOnlyAnyOfImpl<Idx + 1, Tags...>::is(Traits);
+  }
+};
+
+template<class... Tags>
+struct IsOnlyAnyOfImpl<bcl::tagged_tuple_size<TraitT>::value, Tags...> {
+  static bool is(const TraitT &) noexcept { return true; }
+};
+
 /// Return true if only specified traits are set.
 template<class... Tags> bool isOnly(const TraitT &Traits) {
   return IsOnlyImpl<0, Tags...>::is(Traits);
+}
+
+/// Return true if only some of specified traits are set or
+/// specified traits is not set at all.
+template<class... Tags> bool isOnlyAnyOf(const TraitT &Traits) {
+  return IsOnlyAnyOfImpl<0, Tags...>::is(Traits);
 }
 
 /// Map from variable to its traits in some loop.
@@ -146,47 +173,46 @@ LoopCache buildLoopCache(const trait::Info &Info) {
   return Res;
 }
 
+VariableT createVar(trait::IdTy I, const trait::Info &Info) {
+  VariableT Var;
+  Var.get<File>() = Info[trait::Info::Vars][I][trait::Var::File];
+  Var.get<Line>() = Info[trait::Info::Vars][I][trait::Var::Line];
+  Var.get<Column>() = Info[trait::Info::Vars][I][trait::Var::Column];
+  Var.get<Identifier>() = Info[trait::Info::Vars][I][trait::Var::Name];
+  return Var;
+}
+
+trait::IdTy getVariableIdx(
+    std::set<trait::IdTy>::const_iterator I) {
+  return *I;
+}
+
+trait::IdTy getVariableIdx(
+    std::map<trait::IdTy, trait::Distance>::const_iterator I) {
+  return I->first;
+}
+
+template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
+    const trait::Info &Info, const trait::Loop &L, TraitCache &Cache) {
+  for (auto I = L[Key].cbegin(), EI = L[Key].cend(); I != EI; ++I) {
+    auto Var = createVar(getVariableIdx(I), Info);
+    auto CacheItr = Cache.find(Var);
+    if (CacheItr == Cache.end())
+      CacheItr = Cache.emplace(std::move(Var), TraitT()).first;
+    CacheItr->second.get<Tag>() = I;
+  }
+}
+
 /// Extract a list of traits for a specified loop `L` from external analysis
 /// results.
 TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
-  auto createVar = [&Info](std::size_t I) {
-    VariableT Var;
-    Var.get<File>() = Info[trait::Info::Vars][I][trait::Var::File];
-    Var.get<Line>() = Info[trait::Info::Vars][I][trait::Var::Line];
-    Var.get<Column>() = Info[trait::Info::Vars][I][trait::Var::Column];
-    Var.get<Identifier>() = Info[trait::Info::Vars][I][trait::Var::Name];
-    return Var;
-  };
   TraitCache Res;
-  for (auto I = L[trait::Loop::Private].cbegin(),
-       EI = L[trait::Loop::Private].cend(); I != EI; ++I) {
-    auto Pair = Res.emplace(createVar(*I), TraitT());
-    Pair.first->second.get<trait::Private>() = I;
-  }
-  for (auto I = L[trait::Loop::UseAfterLoop].cbegin(),
-       EI = L[trait::Loop::UseAfterLoop].cend(); I != EI; ++I) {
-    auto Var = createVar(*I);
-    auto ResItr = Res.find(Var);
-    if (ResItr == Res.end())
-      ResItr = Res.emplace(std::move(Var), TraitT()).first;
-    ResItr->second.get<trait::UseAfterLoop>() = I;
-  }
-  for (auto I = L[trait::Loop::Anti].cbegin(),
-       EI = L[trait::Loop::Anti].cend(); I != EI; ++I) {
-    auto Var = createVar(I->first);
-    auto ResItr = Res.find(Var);
-    if (ResItr == Res.end())
-      ResItr = Res.emplace(std::move(Var), TraitT()).first;
-    ResItr->second.get<trait::Anti>() = I;
-  }
-  for (auto I = L[trait::Loop::Flow].cbegin(),
-       EI = L[trait::Loop::Flow].cend(); I != EI; ++I) {
-    auto Var = createVar(I->first);
-    auto ResItr = Res.find(Var);
-    if (ResItr == Res.end())
-      ResItr = Res.emplace(std::move(Var), TraitT()).first;
-    ResItr->second.get<trait::Flow>() = I;
-  }
+  addToCache<trait::Private>(trait::Loop::Private, Info, L, Res);
+  addToCache<trait::UseAfterLoop>(trait::Loop::UseAfterLoop, Info, L, Res);
+  addToCache<trait::WriteOccurred>(trait::Loop::WriteOccurred, Info, L, Res);
+  addToCache<trait::Output>(trait::Loop::Output, Info, L, Res);
+  addToCache<trait::Anti>(trait::Loop::Anti, Info, L, Res);
+  addToCache<trait::Flow>(trait::Loop::Flow, Info, L, Res);
   return Res;
 }
 
@@ -208,11 +234,10 @@ const trait::Loop * findLoop(const MDNode *LoopID, const LoopCache &Cache,
 
 /// Update description `DITrait` of a specified trait `TraitTag` according to
 /// external information `TraitItr`.
-template<class TraitTag> void updateDependence(
+template<class TraitTag> void updateAntiFlowDep(
     const TraitCache::iterator &TraitItr, DIMemoryTrait &DITrait) {
   static_assert(std::is_same<TraitTag, trait::Flow>::value ||
-    std::is_same<TraitTag, trait::Anti>::value ||
-    std::is_same<TraitTag, trait::Output>::value, "Unknown type of dependence!");
+    std::is_same<TraitTag, trait::Anti>::value, "Unknown type of dependence!");
   if (!TraitItr->second.template get<TraitTag>() ||
       !DITrait.template is<TraitTag>())
     return;
@@ -233,6 +258,23 @@ template<class TraitTag> void updateDependence(
   DITrait.template set<TraitTag>(new trait::DIDependence(F, std::move(Range)));
   LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set distance to [" << Min << ", "
                     << Max << "]\n");
+}
+
+/// Update description of output dependence in `DITrait` according to
+/// external information `TraitItr`.
+void updateOutputDep(
+  const TraitCache::iterator &TraitItr, DIMemoryTrait &DITrait) {
+  if (!TraitItr->second.template get<trait::Output>() ||
+    !DITrait.template is<trait::Output>())
+    return;
+  LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update " << trait::Output::toString()
+    << " dependence\n");
+  auto F = trait::Dependence::Flag::No;
+  auto Dep = DITrait.get<trait::Output>();
+  if (F)
+    F = Dep->getFlags();
+  F &= (~trait::Dependence::Flag::May);
+  DITrait.template set<trait::Output>(new trait::DIDependence(F, Dep->getDistance()));
 }
 }
 
@@ -321,45 +363,38 @@ bool AnalysisReader::runOnFunction(Function &F) {
                         << Var.get<Column>() << "\n");
       auto TraitItr = TraitCache.find(Var);
       if (TraitItr == TraitCache.end() ||
-          isOnly<trait::UseAfterLoop>(TraitItr->second)) {
-        // It may not be readonly. In the following example `A` is
-        // not privatizable, however there is no dependence in this loop.
-        // for (int I = 0; I < N; I += 2)
-        //   A[I] = A[I + 1];
-        // TODO (kaniandr@gmail.com): add readonly property to external
-        // analysis results.
-        DITrait.set<trait::Shared>();
+          isOnlyAnyOf<trait::UseAfterLoop, trait::WriteOccurred>(
+            TraitItr->second)) {
+        if (TraitItr->second.get<trait::WriteOccurred>())
+          DITrait.set<trait::Shared>();
+        else
+          DITrait.set<trait::Readonly>();
       } else if (TraitItr->second.get<trait::Private>()) {
         if (!TraitItr->second.get<trait::UseAfterLoop>())
           DITrait.set<trait::Private>();
         else if (DITrait.is_any<trait::Flow, trait::Anti, trait::Output>())
           DITrait.set<trait::DynamicPrivate>();
-        // TODO (kaniandr@gmail.com): it is not possible to set shared property
-        // here, because there is no 'output' property in external analysis
-        // results. In the following example, there is 'output' dependence and
-        // there is no any information about A in external analysis results.
-        // for (int I = 0; I < N; ++I)
-        //   A[5] = I;
-#if 0
         // Set 'shared' property after if-stmt, because 'shared' property unset
         // anti/flow/output properties.
-        if (!TraitItr->second.get<Flow>() &&
-            !TraitItr->second.get<Anti>() &&
-            !TriatItr->second.get<Output>()))
-          DITrait.set<Shared>();
-#endif
+        if (!TraitItr->second.get<trait::Flow>() &&
+            !TraitItr->second.get<trait::Anti>() &&
+            !TraitItr->second.get<trait::Output>())
+          DITrait.set<trait::Shared>();
       } else if (DITrait.is<trait::FirstPrivate>()) {
         if (!TraitItr->second.get<trait::UseAfterLoop>())
           DITrait.unset<trait::LastPrivate, trait::SecondToLastPrivate,
                         trait::DynamicPrivate>();
 
       } else {
-        updateDependence<trait::Anti>(TraitItr, DITrait);
-        updateDependence<trait::Flow>(TraitItr, DITrait);
+        updateAntiFlowDep<trait::Anti>(TraitItr, DITrait);
+        updateAntiFlowDep<trait::Flow>(TraitItr, DITrait);
+        updateOutputDep(TraitItr, DITrait);
         if (!TraitItr->second.get<trait::Flow>())
           DITrait.unset<trait::Flow>();
         if (!TraitItr->second.get<trait::Anti>())
           DITrait.unset<trait::Anti>();
+        if (!TraitItr->second.get<trait::Output>())
+          DITrait.unset<trait::Output>();
       }
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set traits to ";
                  DITrait.print(dbgs()); dbgs() << "\n");
