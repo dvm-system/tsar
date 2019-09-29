@@ -199,7 +199,7 @@ template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
     auto CacheItr = Cache.find(Var);
     if (CacheItr == Cache.end())
       CacheItr = Cache.emplace(std::move(Var), TraitT()).first;
-    CacheItr->second.get<Tag>() = I;
+    CacheItr->second.template get<Tag>() = I;
   }
 }
 

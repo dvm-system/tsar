@@ -39,4 +39,4 @@ public:
 };
 }
 }
-#endif TSAR_PATCH_LPNP_H
+#endif //TSAR_PATCH_LPNP_H
