@@ -26,12 +26,12 @@ set_target_properties(TSARTool PROPERTIES
 
 if(APC_FOUND)
    add_dependencies(TSARTool APC)
-   target_link_libraries(TSARTool APC)
+   target_link_libraries(TSARTool PRIVATE APC)
 endif()
 
 if(lp_solve_FOUND)
   add_dependencies(TSARTool lp_solve)
-  target_link_libraries(TSARTool lp_solve)
+  target_link_libraries(TSARTool PRIVATE lp_solve)
 endif()
 
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
@@ -43,12 +43,12 @@ if(NOT PACKAGE_LLVM)
     TSARUnparse TSARSupportClang TSARSupport
     ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 endif()
-target_link_libraries(TSARTool
+target_link_libraries(TSARTool PRIVATE
   TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
   TSARAnalysisClang TSARAnalysisReader TSARAnalysisMemory TSARAnalysis
   TSARUnparse TSARSupportClang TSARSupport BCL::Core)
 
 if(WIN32)
   # clangDriver uses version.dll.
-  target_link_libraries(TSARTool version)
+  target_link_libraries(TSARTool PRIVATE version)
 endif()
