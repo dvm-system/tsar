@@ -234,6 +234,22 @@ if(DEFINED LLVM_BUILD_TYPE)
   endif()
 endif()
 
+# To avoid conflicts between linked library appropriate run-time library
+# must be specified manually.
+if (MSVC)
+  option(LLVM_PACKAGE_DEBUG
+   "LLVM package has debug build type (useful only if PACKAGE_LLVM is set)" OFF)
+  if (PACKAGE_LLVM)
+    if (LLVM_PACKAGE_DEBUG)
+      set(LLVM_DEBUG_BUILD "\"\"")
+      add_compile_options("/MDd")
+    else()
+      set(LLVM_RELEASE_BUILD "\"\"")
+      add_compile_options("/MD")
+    endif()
+  endif()
+endif()
+
 add_subdirectory(utils/TableGen)
 add_subdirectory(lib tsar)
 add_subdirectory(test)
