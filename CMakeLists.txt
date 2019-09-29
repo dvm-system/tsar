@@ -34,11 +34,16 @@ include(BCLCompilerOptions)
 include(BCLUtils)
 include(llvm-utility)
 
-# There are four steps to configure LLVM and Clang:
-# 1. Check out a working copies ${LLVM_SOURCE_DIR}, ${CLANG_SOURCE_DIR}
+# There are three steps to configure LLVM and Clang:
+# 1.a (DOWNLOAD_LLVM is ON, SVN is currently supported only):
+#    check out a working copies ${LLVM_SOURCE_DIR}, ${CLANG_SOURCE_DIR}
 #    and ${COMPILER_RT_SOURCE_DIR} (or update if it already exists)
 #    from LLVM repository ${LLVM_REPO}.
-# 3. Configure LLVM project.
+# 1.b (LOCAL_LLVM is ON, SVN multirepo or GIT multi/mono repo are supported):
+#    Use LLVM as TSAR subproject (add_subdirectory() is used to build LLVM).
+# 1.c (PACKAGE_LLVM is ON):
+#    Use previously installed LLVM package.
+# 2. Configure LLVM project ((in case of 1.a and 1.b only).
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
 option(DOWNLOAD_LLVM "Download LLVM from subversion repository" OFF)
@@ -69,9 +74,17 @@ option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 option(TSAR_SERVER "Build TSAR server shared library" OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
+option(LLVM_MONO_REPO
+  "Use LLVM monolithic repository (useful only if LOCAL_LLVM is set)" ON)
 
-set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
-set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/projects/compiler-rt")
+if(NOT LLVM_MONO_REPO)
+  set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
+  set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/projects/compiler-rt")
+else()
+  set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/../clang")
+  set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/../compiler-rt")
+endif()
+
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
 
@@ -84,6 +97,12 @@ endif()
 if(NOT LOCAL_LLVM AND NOT DOWNLOAD_LLVM AND NOT PACKAGE_LLVM)
   message(FATAL_ERROR
     "One of options LOCAL_LLVM, DOWNLOAD_LLVM, PACKAGE_LLVM should be specified.")
+endif()
+if (DOWNLOAD_LLVM AND LLVM_MONO_REPO)
+  message(FATAL_ERROR
+    "Options DOWNLOAD_LLVM and LLVM_MONO_REPO are not compatible: "
+    "download monolithic repository manually "
+    "or use Subversion umbrella repository")
 endif()
 
 # Download LLVM if need
@@ -113,6 +132,13 @@ else()
   endif()
   set(LLVM_STATUS "Configuring LLVM project")
   message(STATUS ${LLVM_STATUS})
+  if (LLVM_MONO_REPO)
+    set(LLVM_PROJECTS clang)
+    if (BUILD_PROFILE)
+      set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
+    endif()
+    set(LLVM_ENABLE_PROJECTS ${LLVM_PROJECTS} CACHE STRING "" FORCE)
+  endif()
   add_subdirectory(${LLVM_SOURCE_DIR} ${LLVM_BINARY_DIR} EXCLUDE_FROM_ALL)
   find_package(LLVM CONFIG HINTS ${LLVM_BINARY_DIR} NO_DEFAULT_PATH)
   if(NOT LLVM_FOUND)
@@ -120,7 +146,7 @@ else()
   else()
    message(STATUS "${LLVM_STATUS} - done")
   endif()
-  set(LLVM_VERSION ${LLVM_VERSION} CACHE "" "" FORCE)
+  set(LLVM_VERSION ${LLVM_VERSION} CACHE STRING "" FORCE)
   if(BUILD_PROFILE AND (NOT LLVM_TOOL_COMPILER_RT_BUILD))
     message(FATAL_ERROR
       "To build profile runtime LLVM_TOOL_COMPILER_RT_BUILD must be set to ON.")
