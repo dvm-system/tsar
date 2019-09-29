@@ -47,24 +47,24 @@ include(llvm-utility)
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
 option(DOWNLOAD_LLVM "Download LLVM from subversion repository" OFF)
-option(LOCAL_LLVM "Use existing LLVM installation" OFF)
+option(LOCAL_LLVM "Use existing LLVM sources" OFF)
 option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
 
 set(LLVM_REPO
   "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_700/final/" CACHE STRING
-  "URL of LLVM subversion repository (usefull only if DOWNLOAD_LLVM is set)")
+  "URL of LLVM subversion repository (useful only if DOWNLOAD_LLVM is set)")
 set(CLANG_REPO
   "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_700/final/" CACHE STRING
-  "URL of Clang subversion repository (usefull only if DOWNLOAD_LLVM is set)")
+  "URL of Clang subversion repository (useful only if DOWNLOAD_LLVM is set)")
 set(COMPILER_RT_REPO
   "http://llvm.org/svn/llvm-project/compiler-rt/tags/RELEASE_700/final/" CACHE STRING
-  "URL of Compiler-RT subversion repository (usefull only if DOWNLOAD_LLVM is set)")
+  "URL of Compiler-RT subversion repository (useful only if DOWNLOAD_LLVM is set)")
 
 set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH
    "Root of LLVM source tree")
 
 set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
-  "Version of installed LLVM package (usefull only if PACKAGE_LLVM is set)")
+  "Version of installed LLVM package (useful only if PACKAGE_LLVM is set)")
 
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
