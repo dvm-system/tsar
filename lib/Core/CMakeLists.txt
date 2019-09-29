@@ -47,3 +47,8 @@ target_link_libraries(TSARTool
   TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
   TSARAnalysisClang TSARAnalysisReader TSARAnalysisMemory TSARAnalysis
   TSARUnparse TSARSupportClang TSARSupport BCL::Core)
+
+if(WIN32)
+  # clangDriver uses version.dll.
+  target_link_libraries(TSARTool version)
+endif()
