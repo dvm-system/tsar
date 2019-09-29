@@ -38,17 +38,6 @@ include(llvm-utility)
 # 1. Check out a working copies ${LLVM_SOURCE_DIR}, ${CLANG_SOURCE_DIR}
 #    and ${COMPILER_RT_SOURCE_DIR} (or update if it already exists)
 #    from LLVM repository ${LLVM_REPO}.
-# 2. Apply patch in ${CMAKE_SOURCE_DIR}/patches/ to the working copies
-#    ${LLVM_SOURCE_DIR} and ${CLANG_SOURCE_DIR}.
-#    The patches for LLVN have names
-#      llvm.patch or
-#      llvm-${LLVM_VERSION_MAJOR}.patch (example llvm-3.patch) or
-#      llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch (example
-#        llvm-3.4.patch) or
-#      llvm-${LLVM_VERSION}.patch (example llvm-3.4.2.patch)
-#    The similar names of patches are used for Clang (use 'clang-' suffix
-#    instead 'llvm-').
-#    All suitable patches will be applied simultaneously.
 # 3. Configure LLVM project.
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
@@ -115,10 +104,6 @@ if(PACKAGE_LLVM)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
   set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
   set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
-  set(TSAR_PATCH_PATCH_OPTIONS "-p2")
-  set(TSAR_PATCH_SUBVERSION_OPTIONS "")
-  set(TSAR_PATCH_IGNORE "IGNORE")
-  set(TSAR_PATCH_COMMAND "PATCH")
 else()
   if(NOT EXISTS ${LLVM_SOURCE_DIR})
     message(FATAL_ERROR "LLVM_SOURCE_DIR '${LLVM_SOURCE_DIR}' does not exist")
@@ -136,10 +121,6 @@ else()
    message(STATUS "${LLVM_STATUS} - done")
   endif()
   set(LLVM_VERSION ${LLVM_VERSION} CACHE "" "" FORCE)
-  set(TSAR_PATCH_PATCH_OPTIONS -p0)
-  set(TSAR_PATCH_SUBVERSION_OPTIONS "")
-  set(TSAR_PATCH_IGNORE IGNORE)
-  set(TSAR_PATCH_COMMAND "")
   if(BUILD_PROFILE AND (NOT LLVM_TOOL_COMPILER_RT_BUILD))
     message(FATAL_ERROR
       "To build profile runtime LLVM_TOOL_COMPILER_RT_BUILD must be set to ON.")
@@ -147,42 +128,12 @@ else()
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
 
-include(BCLPatch)
-
 if(BUILD_TSAR)
   if("${LLVM_VERSION}" VERSION_LESS "${LLVM_MIN_VERSION}")
-  message(FATAL_ERROR
-    "To build TSAR at least LLVM ${LLVM_MIN_VERSION} is required.")
-endif()
-  set(TSAR_PATCH_REVERSE "")
+    message(FATAL_ERROR
+      "To build TSAR at least LLVM ${LLVM_MIN_VERSION} is required.")
+  endif()
 else()
-  set(TSAR_PATCH_REVERSE "REVERSE")
-endif()
-
-set(TSAR_LLVM_PATCHES
-  "${PROJECT_SOURCE_DIR}/patches/llvm.patch"
-  "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.patch"
-  "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch"
-  "${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION}.patch")
-set(TSAR_CLANG_PATCHES
-  "${PROJECT_SOURCE_DIR}/patches/clang.patch"
-  "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.patch"
-  "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.patch"
-  "${PROJECT_SOURCE_DIR}/patches/clang-${LLVM_VERSION}.patch")
-foreach(PATCH ${TSAR_LLVM_PATCHES})
-  bcl_patch(PATCHFILE ${PATCH} TARGET ${LLVM_SOURCE_DIR}
-    ${TSAR_PATCH_REVERSE} ${TSAR_PATCH_IGNORE} ${TSAR_PATCH_COMMAND}
-    PATCH_OPTIONS ${TSAR_PATCH_PATCH_OPTIONS}
-    SUBVERSION_OPTIONS ${TSAR_PATCH_SUBVERSION_OPTIONS})
-endforeach()
-foreach(PATCH ${TSAR_CLANG_PATCHES})
-  bcl_patch(PATCHFILE ${PATCH} TARGET ${CLANG_SOURCE_DIR}
-    ${TSAR_PATCH_REVERSE} ${TSAR_PATCH_IGNORE} ${TSAR_PATCH_COMMAND}
-    PATCH_OPTIONS ${TSAR_PATCH_PATCH_OPTIONS}
-    SUBVERSION_OPTIONS ${TSAR_PATCH_SUBVERSION_OPTIONS})
-endforeach()
-
-if(NOT BUILD_TSAR)
   return()
 endif()
 
@@ -240,9 +191,6 @@ message(STATUS "${LLVM_STATUS} - done")
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_BINARY_DIR})
-if(MSVC)
-  file(GLOB_RECURSE TSAR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch)
-endif()
 
 if(NOT LLVM_ENABLE_RTTI)
   if(BCL_COMPILER_IS_GCC_COMPATIBLE)

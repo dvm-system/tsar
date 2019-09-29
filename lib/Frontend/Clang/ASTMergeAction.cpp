@@ -26,11 +26,11 @@
 #include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Frontend/Clang/Passes.h"
+#include "tsar/Patch/clang/AST/ASTImporter.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>
-#include <clang/AST/ASTImporter.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>

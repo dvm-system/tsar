@@ -31,6 +31,7 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
+#include "tsar/Patch/llvm/ADT/iterator.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/tagged.h>
 #include <llvm/ADT/BitmaskEnum.h>
@@ -873,7 +874,7 @@ template<> struct GraphTraits<tsar::DIAliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    pointer_iterator<tsar::DIAliasNode::child_iterator>;
+    patch::pointer_iterator<tsar::DIAliasNode::child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -888,7 +889,7 @@ template<> struct GraphTraits<const tsar::DIAliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    pointer_iterator<tsar::DIAliasNode::const_child_iterator>;
+    patch::pointer_iterator<tsar::DIAliasNode::const_child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -902,7 +903,8 @@ template<> struct GraphTraits<tsar::DIAliasTree *> :
   static NodeRef getEntryNode(tsar::DIAliasTree *AT) noexcept {
     return AT->getTopLevelNode();
   }
-  using nodes_iterator = pointer_iterator<tsar::DIAliasTree::iterator>;
+  using nodes_iterator =
+    patch::pointer_iterator<tsar::DIAliasTree::iterator>;
   static nodes_iterator nodes_begin(tsar::DIAliasTree *AT) {
     return nodes_iterator(AT->begin());
   }
@@ -917,7 +919,8 @@ template<> struct GraphTraits<const tsar::DIAliasTree *> :
   static NodeRef getEntryNode(const tsar::DIAliasTree *AT) noexcept {
     return AT->getTopLevelNode();
   }
-  using nodes_iterator = pointer_iterator<tsar::DIAliasTree::const_iterator>;
+  using nodes_iterator =
+    patch::pointer_iterator<tsar::DIAliasTree::const_iterator>;
   static nodes_iterator nodes_begin(const tsar::DIAliasTree *AT) {
     return nodes_iterator(AT->begin());
   }

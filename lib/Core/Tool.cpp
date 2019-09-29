@@ -30,6 +30,7 @@
 #include "tsar/Core/tsar-config.h"
 #include "tsar/Frontend/Clang/Action.h"
 #include "tsar/Frontend/Clang/ASTMergeAction.h"
+#include "tsar/Patch/llvm/IR/LegacyPassNameParser.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Clang/Pragma.h"
 #ifdef APC_FOUND
@@ -37,7 +38,6 @@
 #endif
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/Tooling.h>
-#include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
@@ -82,12 +82,12 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::list<std::string> Sources;
 
   llvm::cl::list<const llvm::PassInfo*, bool,
-    llvm::FilteredPassNameParser<
+    llvm::patch::FilteredPassNameParser<
       PassFromGroupFilter<DefaultQueryManager,
         DefaultQueryManager::OutputPassGroup>>> OutputPasses;
 
   llvm::cl::opt<const llvm::PassInfo *, false,
-    llvm::FilteredPassNameParser<
+    llvm::patch::FilteredPassNameParser<
       PassFromGroupFilter<TransformationQueryManager>>> TfmPass;
 
   llvm::cl::OptionCategory CompileCategory;
@@ -116,7 +116,7 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::opt<bool> PrintAll;
   llvm::cl::list<const PassInfo *, bool,
-    llvm::FilteredPassNameParser<
+    llvm::patch::FilteredPassNameParser<
       PassFromGroupFilter<DefaultQueryManager,
         DefaultQueryManager::PrintPassGroup>>> PrintOnly;
   llvm::cl::list<unsigned> PrintStep;

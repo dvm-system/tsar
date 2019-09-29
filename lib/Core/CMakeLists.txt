@@ -9,7 +9,6 @@ if(MSVC_IDE)
   file(GLOB_RECURSE CORE_INTERNAL_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
   source_group(bcl FILES ${BCL_CORE_HEADERS})
-  source_group(patches FILES ${TSAR_PATCHES})
   if (APC_FOUND)
     source_group(apc FILES ${APC_CORE_HEADERS})
   endif()
