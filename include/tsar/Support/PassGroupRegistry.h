@@ -42,6 +42,8 @@ public:
 
   virtual void addBeforePass(llvm::legacy::PassManager &PM) const {}
 
+  virtual void addAfterPass(llvm::legacy::PassManager& PM) const {}
+
   /// Return true if a specified past should be executed before the current pass.
   ///
   /// This method may be useful if there is no explicit dependence between two
