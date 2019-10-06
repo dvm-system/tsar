@@ -1,7 +1,7 @@
 set(TSAR_SHARED_SOURCES Server.cpp PrivateServerPass.cpp ClangMessages.cpp)
 
 if(MSVC_IDE)
-  file(GLOB ANALYSIS_INTERNAL_HEADERS
+  file(GLOB TSAR_SHARED_INTERNAL_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
   source_group(bcl FILES ${BCL_CORE_HEADERS})
   if (APC_FOUND)
@@ -17,7 +17,8 @@ set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
   TSARAnalysisClang TSARFrontendClang TSARSupportClang TSARUnparse
   PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-add_library(TSARServer SHARED ${TSAR_SHARED_SOURCES})
+add_library(TSARServer SHARED
+  ${TSAR_SHARED_SOURCES} ${TSAR_SHARED_INTERNAL_HEADERS})
 
 add_dependencies(TSARServer TSARTool)
 if(NOT PACKAGE_LLVM)
