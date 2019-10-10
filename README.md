@@ -14,11 +14,11 @@ The main golden rule is following ([LLVM Coding Standards][LLVM CS]):
 > **If you are extending, enhancing, or bug fixing already implemented code, use the style
 that is already being used so that the source is uniform and easy to follow.**
 
-The standards are based on [LLVM Coding Standards][LLVM CS] and [Google C++ Style Guide][Google CS] and are partially described in [TSAR Wiki][TSAR CS].
+The standards are based on [LLVM Coding Standards][LLVM CS] and [Google C++ Style Guide][Google CS] and are partially described in [TSAR Wiki][TSAR Wiki].
 
 [LLVM]: http://llvm.org/ "LLVM ompiler Infrastructure"
 [LLVM IR]: http://llvm.org/docs/LangRef.html "LLVM Intermediate Representation"
 [Clang]: http://clang.llvm.org/ "Clang Compiler"
 [LLVM CS]: http://llvm.org/docs/CodingStandards.html "LLVM Coding Standards"
 [Google CS]: https://google.github.io/styleguide/cppguide.html "Google C++ Style Guide"
-[TSAR CS]: https://bitbucket.org/dvm-system/tsar/wiki/ "TSAR Coding Standards"
+[TSAR Wiki]: https://github.com/dvm-system/tsar/wiki "TSAR Wiki"
