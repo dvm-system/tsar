@@ -157,6 +157,7 @@ public:
       auto &PM = Resolver->getPMDataManager();
       auto P = PM.findAnalysisPass(
         static_cast<void *>(&AnalysisType::ID), true);
+      assert(P && "Try to initialize a pass which is not required!");
       F(static_cast<AnalysisType &>(*P));
     }
   }
