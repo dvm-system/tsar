@@ -448,10 +448,16 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   } else {
     auto *NewBB = BasicBlock::Create(Header->getContext(),
       "preheader", Header->getParent(), Header);
-    for (auto *PredBB : predecessors(Header)) {
-      if (L->contains(PredBB))
+    const auto Predecessors = predecessors(Header);
+    auto PredBB = Predecessors.begin();
+    while (PredBB != Predecessors.end()) {
+      if (L->contains(*PredBB)) {
+        PredBB++;
         continue;
-      auto *PredBranch = PredBB->getTerminator();
+      }
+      auto Pred = PredBB;
+      PredBB++;
+      auto *PredBranch = (*Pred)->getTerminator();
       for (unsigned SuccIdx = 0, SuccIdxE = PredBranch->getNumSuccessors();
            SuccIdx < SuccIdxE; ++SuccIdx)
         if (PredBranch->getSuccessor(SuccIdx) ==  Header)
@@ -459,6 +465,18 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
     }
     InsertBefore = BranchInst::Create(Header, NewBB);
     InsertBefore->setMetadata("sapfor.da", InstrMD);
+    for(auto &Phi : Header->phis()) {
+      unsigned IncomingIdx = 0;
+      for (auto IncomingBB: Phi.blocks()) {
+        for (auto PredBB : predecessors(NewBB)) {
+          if (PredBB == IncomingBB) {
+            Phi.setIncomingBlock(IncomingIdx, NewBB);
+            break;
+          }
+        }
+        IncomingIdx++;
+      }
+    }
   }
   auto DbgLoc = L->getLocRange();
   std::string StartLoc = DbgLoc.getStart() ?
@@ -642,7 +660,8 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     Type *ArgType = nullptr;
     Value *ArraySize = nullptr;
     DIStringRegister::IdTy Idx = 0;
-    BasicBlock::iterator InsertBefore = F.begin()->begin();
+    BasicBlock::iterator InsertBefore = BasicBlock::iterator(DIFunc);
+    InsertBefore++;
     if (!DIM) {
       LLVM_DEBUG(dbgs() << "[INSTR]: search for 'alloca' which stores argument value\n");
       if (Arg.getNumUses() != 1)
@@ -667,6 +686,8 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
       continue;
     } else {
       ArgType = ArgValue->getType();
+      if (ArgType->getTypeID() != Type::TypeID::PointerTyID)
+        continue;
       ArraySize = ConstantInt::get(Type::getInt64Ty(F.getContext()), 1);
       Idx = mDIStrings.regItem(ArgValue).first;
     }
