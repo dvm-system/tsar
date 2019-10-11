@@ -135,6 +135,6 @@ FunctionPass * llvm::createDIAliasTreePrinterPass() {
 }
 
 void DIAliasTree::view() const {
-  llvm::ViewGraph(this, "em-di", true,
+  llvm::ViewGraph(const_cast<DIAliasTree *>(this), "em-di", true,
     llvm::DOTGraphTraits<DIAliasTree *>::getGraphName(this));
 }
