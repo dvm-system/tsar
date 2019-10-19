@@ -28,22 +28,57 @@
 #define TSAR_ANALYSIS_SOCKET_H
 
 #include "tsar/Analysis/AnalysisWrapperPass.h"
+#include <bcl/cell.h>
 #include <bcl/IntrusiveConnection.h>
+#include <bcl/Json.h>
 #include <bcl/Socket.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/ErrorHandling.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/Support/raw_ostream.h>
 
 namespace tsar {
+JSON_OBJECT_BEGIN(AnalysisRequest)
+  JSON_OBJECT_ROOT_PAIR_2(AnalysisRequest,
+    AnalysisIDs, std::vector<llvm::AnalysisID>,
+    Function, llvm::Function *)
+  AnalysisRequest() : JSON_INIT_ROOT {}
+JSON_OBJECT_END(AnalysisRequest)
+
+JSON_OBJECT_BEGIN(AnalysisResponse)
+  JSON_OBJECT_ROOT_PAIR(AnalysisResponse, Analysis, std::vector<void *>)
+  AnalysisResponse() : JSON_INIT_ROOT {}
+JSON_OBJECT_END(AnalysisResponse)
+
 /// This class allows to establish connection to analysis server and to obtain
 /// analysis results and perform synchronization between a client and a server.
 class AnalysisSocket final : public bcl::Socket<std::string> {
+  /// Add requested analysis to the end of request.
+  struct PushBackAnalysisID {
+    template <class AnalysisType> void operator()() {
+      Request[AnalysisRequest::AnalysisIDs].push_back(&AnalysisType::ID);
+    }
+    AnalysisRequest &Request;
+  };
+
+  /// Copy analysis to a map `Result`.
+  template<class ResultT>
+  struct InsertAnalysis {
+    template <class AnalysisType> void operator()() {
+      Result.template value<AnalysisType *>() =
+          static_cast<AnalysisType *>(Analysis[Idx++]);
+
+    }
+    std::size_t &Idx;
+    std::vector<void *> &Analysis;
+    ResultT &Result;
+  };
+
 public:
   static constexpr const char Delimiter = '$';
-  static constexpr const char Space = ' ';
   static constexpr const char *Wait = "wait";
 
   ~AnalysisSocket() noexcept {
@@ -72,14 +107,13 @@ public:
   /// representation.
   void send(const std::string &Response) const override {
     assert(Response.back() == Delimiter && "Last character must be a delimiter!");
-    llvm::StringRef RawPtr(Response.data(), Response.size() - 1);
-    llvm::Pass *P = nullptr;
-    if (!RawPtr.empty()) {
-      std::uintptr_t IntToPtr;
-      llvm::to_integer(RawPtr, IntToPtr, 10);
-      P = reinterpret_cast<llvm::Pass*>(IntToPtr);
-    }
-    mAnalysisPass = P;
+    llvm::StringRef Json(Response.data(), Response.size() - 1);
+    json::Parser<AnalysisResponse> Parser(Json);
+    AnalysisResponse R;
+    if (!Parser.parse(R))
+      mAnalysis.clear();
+    else
+      mAnalysis = std::move(R[AnalysisResponse::Analysis]);
   }
 
   /// Register a callback which is invoked whenever a server receive data.
@@ -94,28 +128,55 @@ public:
   }
 
   /// Retrieve a specified analysis results from a server.
-  template<class AnalysisType> AnalysisType * getAnalysis() {
-    std::string RawID;
-    llvm::raw_string_ostream OS(RawID);
-    OS << reinterpret_cast<uintptr_t>(&AnalysisType::ID) << Delimiter;
+  template<class... AnalysisType>
+  llvm::Optional<
+    bcl::StaticTypeMap<typename std::add_pointer<AnalysisType>::type...>>
+  getAnalysis() {
+    using ResultT =
+        bcl::StaticTypeMap<typename std::add_pointer<AnalysisType>::type...>;
+    AnalysisRequest R;
+    R[AnalysisRequest::Function] = nullptr;
+    bcl::TypeList<AnalysisType...>::for_each_type(PushBackAnalysisID{R});
+    auto Request =
+        json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
     for (auto &Callback : mReceiveCallbacks)
-      Callback(OS.str());
+      Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
-    return static_cast<AnalysisType *>(mAnalysisPass);
+    if (mAnalysis.size() == sizeof...(AnalysisType)) {
+      ResultT Result;
+      std::size_t Idx = 0;
+      bcl::TypeList<AnalysisType...>::for_each_type(
+          InsertAnalysis<ResultT>{Idx, mAnalysis, Result});
+      return Result;
+    }
+    return llvm::None;
   }
 
   /// Retrieve a specified analysis results from a server.
-  template<class AnalysisType> AnalysisType * getAnalysis(llvm::Function &F) {
-    std::string RawID;
-    llvm::raw_string_ostream OS(RawID);
-    OS << reinterpret_cast<uintptr_t>(&AnalysisType::ID) << Space
-       << reinterpret_cast<uintptr_t>(&F) << Delimiter;
+  template<class... AnalysisType>
+  llvm::Optional<
+    bcl::StaticTypeMap<typename std::add_pointer<AnalysisType>::type...>>
+  getAnalysis(llvm::Function &F) {
+    using ResultT =
+        bcl::StaticTypeMap<typename std::add_pointer<AnalysisType>::type...>;
+    AnalysisRequest R;
+    R[AnalysisRequest::Function] = &F;
+    bcl::TypeList<AnalysisType...>::for_each_type(PushBackAnalysisID{R});
+    auto Request =
+        json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
     for (auto &Callback : mReceiveCallbacks)
-      Callback(OS.str());
+      Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
-    return static_cast<AnalysisType *>(mAnalysisPass);
+    if (mAnalysis.size() == sizeof...(AnalysisType)) {
+      ResultT Result;
+      std::size_t Idx = 0;
+      bcl::TypeList<AnalysisType...>::for_each_type(
+          InsertAnalysis<ResultT>{Idx, mAnalysis, Result});
+      return Result;
+    }
+    return llvm::None;
   }
 
   /// Wait notification from a server.
@@ -125,16 +186,103 @@ public:
         Callback(Wait);
         // Note, that callback run send() in client, so mAnalysisPass is already
         // set here.
-    } while (mAnalysisPass !=
+    } while (mAnalysis.empty() && mAnalysis.front() !=
              llvm::DenseMapInfo<llvm::Pass *>::getTombstoneKey());
   }
 
 private:
   mutable llvm::SmallVector<ReceiveCallback, 1> mReceiveCallbacks;
   mutable llvm::SmallVector<ClosedCallback, 1> mClosedCallbacks;
-  mutable llvm::Pass *mAnalysisPass;
+  mutable std::vector<void *> mAnalysis;
 };
 }
+
+namespace json {
+template <> struct CellTraits<tsar::json_::AnalysisRequestImpl::Function> {
+  using CellKey = tsar::json_::AnalysisRequestImpl::Function;
+  using ValueType = CellKey::ValueType;
+  inline static bool parse(ValueType &Dest, Lexer &Lex)
+      noexcept(
+        noexcept(Traits<ValueType>::parse(Dest, Lex))) {
+    uintptr_t RawDest;
+    auto Res = Traits<uintptr_t>::parse(RawDest, Lex);
+    if (Res)
+      Dest = reinterpret_cast<llvm::Function *>(RawDest);
+    return Res;
+  }
+  inline static void unparse(String &JSON, const ValueType &Obj)
+      noexcept(
+        noexcept(Traits<ValueType>::unparse(JSON, Obj))) {
+    Traits<uintptr_t>::unparse(JSON, reinterpret_cast<uintptr_t>(Obj));
+  }
+  inline static typename std::result_of<
+    decltype(&CellKey::name)()>::type name()
+      noexcept(noexcept(CellKey::name())) {
+    return CellKey::name();
+  }
+};
+
+template <> struct CellTraits<tsar::json_::AnalysisRequestImpl::AnalysisIDs> {
+  using CellKey = tsar::json_::AnalysisRequestImpl::AnalysisIDs;
+  using ValueType = CellKey::ValueType;
+  inline static bool parse(ValueType &Dest, Lexer &Lex) {
+    std::vector<uintptr_t> RawDest;
+    auto Res = Traits<std::vector<uintptr_t>>::parse(RawDest, Lex);
+    if (Res) {
+      Dest.clear();
+      std::transform(RawDest.begin(), RawDest.end(), std::back_inserter(Dest),
+                     [](uintptr_t RawPtr) {
+                       return reinterpret_cast<llvm::AnalysisID>(RawPtr);
+                     });
+    }
+    return Res;
+  }
+  inline static void unparse(String &JSON, const ValueType &Obj) {
+    std::vector<uintptr_t> RawObj;
+    std::transform(
+        Obj.begin(), Obj.end(), std::back_inserter(RawObj),
+        [](llvm::AnalysisID ID) { return reinterpret_cast<uintptr_t>(ID); });
+    Traits<std::vector<uintptr_t>>::unparse(JSON, RawObj);
+  }
+  inline static typename std::result_of<
+    decltype(&CellKey::name)()>::type name()
+      noexcept(noexcept(CellKey::name())) {
+    return CellKey::name();
+  }
+};
+
+template <> struct CellTraits<tsar::json_::AnalysisResponseImpl::Analysis> {
+  using CellKey = tsar::json_::AnalysisResponseImpl::Analysis;
+  using ValueType = CellKey::ValueType;
+  inline static bool parse(ValueType &Dest, Lexer &Lex) {
+    std::vector<uintptr_t> RawDest;
+    auto Res = Traits<std::vector<uintptr_t>>::parse(RawDest, Lex);
+    if (Res) {
+      Dest.clear();
+      std::transform(RawDest.begin(), RawDest.end(), std::back_inserter(Dest),
+                     [](uintptr_t RawPtr) {
+                       return reinterpret_cast<void *>(RawPtr);
+                     });
+    }
+    return Res;
+  }
+  inline static void unparse(String &JSON, const ValueType &Obj) {
+    std::vector<uintptr_t> RawObj;
+    std::transform(
+        Obj.begin(), Obj.end(), std::back_inserter(RawObj),
+        [](void *P) { return reinterpret_cast<uintptr_t>(P); });
+    Traits<std::vector<uintptr_t>>::unparse(JSON, RawObj);
+  }
+  inline static typename std::result_of<
+    decltype(&CellKey::name)()>::type name()
+      noexcept(noexcept(CellKey::name())) {
+    return CellKey::name();
+  }
+};
+}
+
+JSON_DEFAULT_TRAITS(tsar::, AnalysisRequest)
+JSON_DEFAULT_TRAITS(tsar::, AnalysisResponse)
 
 namespace llvm {
 /// Wrapper to allow client passes access analysis socket.

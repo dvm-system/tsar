@@ -70,12 +70,12 @@ public:
            Connection->answer(
                [&IsNotified](const std::string &Request) -> std::string {
                  if (Request == AnalysisSocket::Wait) {
-                   std::string Response;
-                   raw_string_ostream OS(Response);
-                   OS << reinterpret_cast<uintptr_t>(
-                       DenseMapInfo<Pass *>::getTombstoneKey());
+                   AnalysisResponse Response;
+                   Response[AnalysisResponse::Analysis].push_back(
+                       DenseMapInfo<void *>::getTombstoneKey());
                    IsNotified = true;
-                   return OS.str();
+                   return json::Parser<AnalysisResponse>::unparseAsObject(
+                       Response);
                  }
                  return "";
                }))

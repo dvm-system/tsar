@@ -32,10 +32,14 @@
 //     (e) use socket (getAnalysis<AnalsysisSocketImmutableWrapper>) to access
 //         results of analysis in server (Socket->getAnalysis<...>(...)).
 //         It is possible to use provider on server at this moment:
-//           - use Socket->getAnalysis<...>(...) to get necessary passes to
+//           - use Socket->getAnalysis<...>() to get necessary passes to
 //             initialize provider,
 //           - initialize provider (in general way),
-//           - use Socket->getAnalysis<Provider>(...) to access provider.
+//           - use Socket->getAnalysis<...>(F) to access passes from provider.
+//             This function looks up for an appropriate provider which contains
+//             all required passes and returns related analysis results. It is
+//             also possible to access provider explicitly
+//             Socket->getAnalysis<...>(F).
 //     (f) close connection (createAnalysisCloseConnectionPass()).
 //
 //===----------------------------------------------------------------------===//
@@ -46,6 +50,7 @@
 #include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Analysis/AnalysisWrapperPass.h"
 #include "tsar/Analysis/Passes.h"
+#include "tsar/Support/PassProvider.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/cell.h>
 #include <bcl/utility.h>
@@ -61,12 +66,12 @@ void initializeAnalysisClientServerMatcherWrapperPass(PassRegistry &Registry);
 
 /// Create a wrapper pass to access mapping from a client module to
 /// a server module.
-ImmutablePass * createAnalysisClientServerMatcherWrapper(
-  ValueToValueMapTy &OriginalToClone);
+ImmutablePass *
+createAnalysisClientServerMatcherWrapper(ValueToValueMapTy &OriginalToClone);
 
 /// Wrapper pass to access mapping from a client module to a server module.
 using AnalysisClientServerMatcherWrapper =
-  AnalysisWrapperPass<ValueToValueMapTy>;
+    AnalysisWrapperPass<ValueToValueMapTy>;
 
 /// Abstract class which implement analysis server base.
 ///
@@ -84,25 +89,26 @@ public:
   /// Run server.
   bool runOnModule(Module &M) override {
     auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>().get();
-    bcl::IntrusiveConnection::connect(&Socket, tsar::AnalysisSocket::Delimiter,
-      [this, &M](bcl::IntrusiveConnection C) {
-        ValueToValueMapTy CloneMap;
-        prepareToClone(M, CloneMap);
-        auto CloneM = CloneModule(M, CloneMap);
-        legacy::PassManager PM;
-        PM.add(createAnalysisConnectionImmutableWrapper(C));
-        PM.add(createAnalysisClientServerMatcherWrapper(CloneMap));
-        initializeServer(M, *CloneM, CloneMap, PM);
-        PM.add(createAnalysisNotifyClientPass());
-        addServerPasses(*CloneM, PM);
-        PM.run(*CloneM);
-      });
+    bcl::IntrusiveConnection::connect(
+        &Socket, tsar::AnalysisSocket::Delimiter,
+        [this, &M](bcl::IntrusiveConnection C) {
+          ValueToValueMapTy CloneMap;
+          prepareToClone(M, CloneMap);
+          auto CloneM = CloneModule(M, CloneMap);
+          legacy::PassManager PM;
+          PM.add(createAnalysisConnectionImmutableWrapper(C));
+          PM.add(createAnalysisClientServerMatcherWrapper(CloneMap));
+          initializeServer(M, *CloneM, CloneMap, PM);
+          PM.add(createAnalysisNotifyClientPass());
+          addServerPasses(*CloneM, PM);
+          PM.run(*CloneM);
+        });
     return false;
   }
 
   /// Override this function if additional passes required to initialize server
   /// (see initializeServer()).
-  void getAnalysisUsage(AnalysisUsage& AU) const override {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AnalysisSocketImmutableWrapper>();
     AU.setPreservesAll();
   }
@@ -125,7 +131,8 @@ public:
   /// `ClientToServer` map. If some initialization passes must be run on server,
   /// add these passes to the server pass manager `PM`.
   virtual void initializeServer(Module &ClientM, Module &ServerM,
-    ValueToValueMapTy &ClientToServer, legacy::PassManager &PM) = 0;
+                                ValueToValueMapTy &ClientToServer,
+                                legacy::PassManager &PM) = 0;
 
   /// Add passes to execute on server and to process requests from client.
   ///
@@ -139,63 +146,128 @@ public:
 /// This pass should be run on server (use AnalysisServer::addServerPasses).
 /// List of types ResponseT... specifies passes which may be interested for
 /// a client.
-template<class... ResponseT>
-class AnalysisRespnosePass : public ModulePass, private bcl::Uncopyable {
+template <class... ResponseT>
+class AnalysisResponsePass : public ModulePass, private bcl::Uncopyable {
+
   struct AddRequiredFunctor {
     AddRequiredFunctor(llvm::AnalysisUsage &AU) : mAU(AU) {}
-    template<class AnalysisType> void operator()() {
+    template <class AnalysisType> void operator()() {
       mAU.addRequired<typename std::remove_pointer<AnalysisType>::type>();
     }
+
   private:
     llvm::AnalysisUsage &mAU;
   };
+
+  /// Look up for analysis with a specified ID in a liast of analysis.
+  ///
+  /// Set `Exists` to true if analysis is found.
+  struct FindAnalysis {
+    template <class T> void operator()() { Exist |= (ID == &T::ID); }
+    AnalysisID ID;
+    bool &Exist;
+  };
+
+  /// This functor looks up for a provider which allows to access required
+  /// analysis mentioned in AnalysisRequest.
+  ///
+  /// If provider is found results of required analysis will be stored in
+  /// analysis response.
+  struct FindProvider {
+    /// Perform search while response is empty.
+    template <class T> void operator()() {
+      if (Response[tsar::AnalysisResponse::Analysis].empty())
+        processAsProvider<T>(tsar::is_pass_provider<T>());
+    }
+
+    /// Process `T` as a provider.
+    template <class T> void processAsProvider(std::true_type) {
+      bool ExistInProvider = true;
+      for (auto &ID : Request[tsar::AnalysisRequest::AnalysisIDs]) {
+        bool E = false;
+        tsar::pass_provider_analysis<T>::for_each_type(FindAnalysis{ID, E});
+        ExistInProvider &= E;
+      }
+      if (ExistInProvider) {
+        auto &Provider = This->getAnalysis<T>(CloneF);
+        for (auto &ID : Request[tsar::AnalysisRequest::AnalysisIDs]) {
+          Response[tsar::AnalysisResponse::Analysis].push_back(
+              Provider.getWithID(ID));
+        }
+      }
+    }
+
+    /// Do not process `T` as a provider.
+    template <class T> void processAsProvider(std::false_type) {}
+
+    AnalysisResponsePass<ResponseT...> *This;
+    Function &CloneF;
+    tsar::AnalysisRequest &Request;
+    tsar::AnalysisResponse &Response;
+  };
+
 public:
   static char ID;
 
-  AnalysisRespnosePass() : ModulePass(ID) {}
+  AnalysisResponsePass() : ModulePass(ID) {}
 
   /// Wait for responses in infinite loop.
   bool runOnModule(Module &M) {
     auto &C = getAnalysis<AnalysisConnectionImmutableWrapper>();
     auto &OriginalToClone =
-      getAnalysis<AnalysisClientServerMatcherWrapper>().get();
-    while (C->answer([this, &OriginalToClone](
-        std::string &Request) -> std::string {
-      auto SpacePos = Request.find(tsar::AnalysisSocket::Space);
-      StringRef RawID(Request), RawF;
-      if (SpacePos != std::string::npos) {
-        RawF = RawID.substr(SpacePos + 1);
-        RawID = RawID.substr(0, SpacePos);
-      }
-      std::uintptr_t IntToPtr;
-      llvm::to_integer(RawID, IntToPtr, 10);
-      auto ID = reinterpret_cast<llvm::AnalysisID>(IntToPtr);
-      // Use implementation of getAnalysisID() from llvm/PassAnalysisSupport.h.
-      // Pass::getAnalysisID() is a template, however be do not know type of
-      // required pass. So, copy body of getAnalysisID() without type cast.
-      assert(getResolver() &&
-             "Pass has not been inserted into a PassManager object!");
-      Pass *ResultPass = nullptr;
-      if (RawF.empty()) {
-        ResultPass = getResolver()->findImplPass(ID);
-      } else {
-        llvm::to_integer(RawF, IntToPtr, 10);
-        auto *F = reinterpret_cast<llvm::Function *>(IntToPtr);
-        assert(F && "Function must be specified!");
+        getAnalysis<AnalysisClientServerMatcherWrapper>().get();
+    while (C->answer([this,
+                      &OriginalToClone](std::string &Request) -> std::string {
+      json::Parser<tsar::AnalysisRequest> Parser(Request);
+      tsar::AnalysisRequest R;
+      if (!Parser.parse(R))
+        return "";
+      tsar::AnalysisResponse Response;
+      if (auto *F = R[tsar::AnalysisRequest::Function]) {
         auto &CloneF = OriginalToClone[F];
         if (!CloneF)
           return "";
-        ResultPass = getResolver()->findImplPass(this, ID,
-                                                 *cast<llvm::Function>(CloneF));
+        // If only one function-level analysis is required, then try to find
+        // it in the list of available responses (ResponseT...). Otherwise,
+        // try to find in the list of responses a provider which provides
+        // access to required analysis results.
+        if (R[tsar::AnalysisRequest::AnalysisIDs].size() == 1) {
+          auto ID = R[tsar::AnalysisRequest::AnalysisIDs].front();
+          bool E = false;
+          bcl::TypeList<ResponseT...>::for_each_type(FindAnalysis{ID, E});
+          if (E) {
+            auto ResultPass =
+                getResolver()->findImplPass(this, ID, *cast<Function>(CloneF));
+            assert(ResultPass && "getAnalysis*() called on an analysis that "
+                                 "was not 'required' by pass!");
+            Response[tsar::AnalysisResponse::Analysis].push_back(
+                ResultPass->getAdjustedAnalysisPointer(ID));
+          }
+        }
+        if (Response[tsar::AnalysisResponse::Analysis].empty()) {
+          FindProvider FindImpl{this, *cast<Function>(CloneF), R, Response};
+          bcl::TypeList<ResponseT...>::for_each_type(FindImpl);
+          if (Response[tsar::AnalysisResponse::Analysis].empty())
+            return "";
+        }
+      } else {
+        // Use implementation of getAnalysisID() from
+        // llvm/PassAnalysisSupport.h. Pass::getAnalysisID() is a template,
+        // however it does not know a  type of required pass. So, copy body of
+        // getAnalysisID() without type cast.
+        assert(getResolver() &&
+               "Pass has not been inserted into a PassManager object!");
+        for (auto &ID : R[tsar::AnalysisRequest::AnalysisIDs]) {
+          auto ResultPass = getResolver()->findImplPass(ID);
+          assert(ResultPass && "getAnalysis*() called on an analysis that was "
+                               "not 'required' by pass!");
+          Response[tsar::AnalysisResponse::Analysis].push_back(
+              ResultPass->getAdjustedAnalysisPointer(ID));
+        }
       }
-      assert(ResultPass && "getAnalysis*() called on an analysis that was not "
-             "'required' by pass!");
-      void *P = ResultPass->getAdjustedAnalysisPointer(ID);
-      std::string PassPtr;
-      llvm::raw_string_ostream OS(PassPtr);
-      OS << reinterpret_cast<uintptr_t>(P);
-      return OS.str();
-    }));
+      return json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
+    }))
+      ;
     return false;
   }
 
@@ -207,5 +279,5 @@ public:
     AU.setPreservesAll();
   }
 };
-}
-#endif//TSAR_ANALYSIS_SERVER_H
+} // namespace llvm
+#endif // TSAR_ANALYSIS_SERVER_H
