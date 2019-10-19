@@ -242,5 +242,32 @@ INITIALIZE_PASS_BEGIN(passName, arg, name, true, true)
 #define INITIALIZE_PROVIDER_END(passName, arg, name) \
 INITIALIZE_PASS_END(passName, arg, name, true, true)
 
+namespace tsar {
+namespace detail {
+/// Helpful function declaration to recognize passes inherited from provider.
+template <class... Analysis>
+bcl::TypeList<Analysis...>
+check_pass_provider(FunctionPassProvider<Analysis...> &&);
+}
+
+/// Similar to std::enable_if with condition evaluated to true if P is provider.
+template <class P, class T = void,
+          class = decltype(detail::check_pass_provider(std::declval<P>()))>
+using enable_if_pass_provider = T;
+
+/// Provide constant value equal to `true` if `T` is a provider.
+template <class T, class Enable = void>
+struct is_pass_provider : std::false_type {};
+
+/// Provide constant value equal to `true` if `T` is a provider.
+template <class T>
+struct is_pass_provider<T, enable_if_pass_provider<T>> : std::true_type {};
+
+/// Provide a list (`bcl::TypeList<...>`) of analysis for a provider of type T.
+template<class T>
+using pass_provider_analysis =
+    decltype(detail::check_pass_provider(std::declval<T>()));
+}
+
 #endif//TSAR_PASS_PROVIDER_H
 
