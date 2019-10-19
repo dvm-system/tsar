@@ -136,6 +136,17 @@ class FunctionPassProvider : public llvm::FunctionPass, bcl::Uncopyable {
     FunctionPassProvider *mProvider;
   };
 
+  template<class RequiredType>
+  struct GetWithIDFunctor {
+    template <class AnalysisType> void operator()(AnalysisType *A) {
+      if (ID == &std::remove_pointer<decltype(A)>::type::ID)
+        Result = static_cast<RequiredType>(A);
+    }
+    llvm::AnalysisID &ID;
+    RequiredType &Result;
+  };
+
+
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -218,6 +229,14 @@ public:
       "Analysis pass is not available!");
     return *mPasses.template value<
       typename std::add_pointer<AnalysisType>::type>();
+  }
+
+  /// Return result of analysis with a specified ID.
+  template<class AnalysisType = void>
+  void *getWithID(llvm::AnalysisID ID) const {
+    AnalysisType *Result = nullptr;
+    mPasses.for_each(GetWithIDFunctor<AnalysisType *>{ID, Result});
+    return Result;
   }
 
 private:
