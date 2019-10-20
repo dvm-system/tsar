@@ -142,6 +142,24 @@ DISubprogram *findMetadata(const Function *F) {
   return dyn_cast_or_null<DISubprogram>(F->getMetadata("sapfor.dbg"));
 }
 
+
+bool findGlobalDIExpression(const GlobalObject *GO,
+    SmallVectorImpl<DIGlobalVariableExpression *> &DIExprs) {
+  assert(GO && "Global must not be null!");
+  SmallVector<MDNode *, 1> MDs;
+  GO->getMetadata(LLVMContext::MD_dbg, MDs);
+  if (MDs.empty())
+    GO->getMetadata("sapfor.dbg", MDs);
+  bool IsChanged = false;
+  for (auto *MD : MDs) {
+    if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD)) {
+      DIExprs.push_back(DIExpr);
+      IsChanged = true;
+    }
+  }
+  return IsChanged;
+}
+
 bool findGlobalMetadata(const GlobalVariable *Var,
     SmallVectorImpl<DIMemoryLocation> &DILocs) {
   assert(Var && "Variable must not be null!");
@@ -152,6 +170,16 @@ bool findGlobalMetadata(const GlobalVariable *Var,
   bool IsChanged = false;
   for (auto *MD : MDs) {
     if (auto DIExpr = dyn_cast_or_null<DIGlobalVariableExpression>(MD)) {
+      auto *Expr = DIExpr->getExpression();
+      if (auto Frag = Expr->getFragmentInfo()) {
+        if (Expr->getNumElements() != 3)
+          continue;
+        Expr = DIExpression::get(
+            Expr->getContext(),
+            {dwarf::DW_OP_LLVM_fragment, Frag->OffsetInBits, Frag->SizeInBits});
+      } else if (Expr->getNumElements() > 0) {
+        continue;
+      }
       DILocs.emplace_back(DIExpr->getVariable(), DIExpr->getExpression());
       IsChanged = true;
     }

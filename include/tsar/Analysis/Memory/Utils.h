@@ -34,7 +34,9 @@ namespace llvm {
 class Instruction;
 class BasicBlock;
 class DataLayout;
+class DIGlobalVariableExpression;
 class DominatorTree;
+class GlobalObject;
 class GlobalVariable;
 class Loop;
 class ScalarEvolution;
@@ -64,6 +66,12 @@ llvm::DISubprogram * findMetadata(const llvm::Function *F);
 /// Returns 'true' if at least one valid metadata has been found.
 bool findGlobalMetadata(const llvm::GlobalVariable *Var,
   llvm::SmallVectorImpl<DIMemoryLocation> &DILocs);
+
+/// Find meta expressions attached to a specified global object.
+///
+/// Return `true` if at least one expression has been found.
+bool findGlobalDIExpression(const llvm::GlobalObject *GO,
+  llvm::SmallVectorImpl<llvm::DIGlobalVariableExpression *> &DIExprs);
 
 /// \brief Checks that two fragments of a variable may overlap.
 ///
