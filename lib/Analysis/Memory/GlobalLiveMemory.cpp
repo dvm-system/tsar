@@ -1,13 +1,16 @@
-#include "LiveMemory.h"
+#include <tsar/Analysis/Memory/GlobalLiveMemory.h>
+#include <tsar/Support/PassProvider.h>
+#include <tsar/Analysis/Memory/LiveMemory.h>
+
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/Function.h>
-#include "GlobalLiveMemory.h"
-#include "tsar_pass_provider.h"
+
 #include <Vector>
 #include <map>
+
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Dominators.h>
 #endif
@@ -199,7 +202,7 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
 
             //get liveset current call(if recursion is nullptr)
             if (CurrÑall->second != nullptr) {
-              MemorySet<MemoryLocation> DFFLSout;
+              MemorySet<MemoryLocationRange> DFFLSout;
               DFFLSout = CurrÑall->second->getOut();
               //update LS out
               Fout.merge(DFFLSout);

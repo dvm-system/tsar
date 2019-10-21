@@ -39,7 +39,7 @@ class Pass;
 class PassRegistry;
 class FunctionPass;
 class ImmutablePass;
-
+class ModulePass;
 /// Initialize all passes to perform analysis of memory accesses.
 void initializeMemoryAnalysis(PassRegistry &Registry);
 
@@ -154,5 +154,15 @@ void initializeDelinearizationPassPass(PassRegistry &Registry);
 
 /// Create a pass to delinearize array accesses.
 FunctionPass * createDelinearizationPass();
+
+void initializeGlobalLiveMemoryPass(PassRegistry& Registry);
+
+ModulePass * createGlobalLiveMemoryPass();
+
+
+void initializeGlobalDefinedMemoryPass(PassRegistry& Registry);
+
+ModulePass * createGlobalDefinedMemoryPass();
+
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

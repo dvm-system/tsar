@@ -1,4 +1,4 @@
-#include "tsar_pass.h"
+#include <tsar/Analysis/Memory/Passes.h>
 #include <llvm/Pass.h>
 #include <bcl/utility.h>
 
@@ -7,14 +7,14 @@ namespace llvm {
   public:
     static char ID;
     GlobalDefinedMemory() : ModulePass(ID) {
-      initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
+      initializeGlobalDefinedMemoryPass(*PassRegistry::getPassRegistry());
     }
 
     bool runOnModule(Module &SCC) override;
     void getAnalysisUsage(AnalysisUsage& AU) const override;
 
-  private:
-    tsar::DefinedMemoryInfo mDefInfo;
+  //private:
+    //tsar::DefinedMemoryInfo mDefInfo;
     //tsar::InterprocDefInfo mInterprocDefInfo;
   };
 
