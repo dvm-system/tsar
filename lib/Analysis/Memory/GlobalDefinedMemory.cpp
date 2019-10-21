@@ -1,13 +1,14 @@
-//#include "GetNameFunctionsPass.h"
-#include "LiveMemory.h"
-#include "EstimateMemory.h"
+#include <tsar/Analysis/Memory/GlobalDefinedMemory.h>
+#include <tsar/Support/PassProvider.h>
+#include <tsar/Analysis/Memory/LiveMemory.h>
+#include <tsar/Analysis/Memory/EstimateMemory.h>
+
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/Function.h>
-#include "GlobalDefinedMemory.h"
-#include "tsar_pass_provider.h"
+
 #include <Vector>
 #include <map>
 #ifdef LLVM_DEBUG
@@ -46,7 +47,7 @@ void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.setPreservesAll();
 }
 
-ModulePass* llvm::createGlobalDefinedMemoryPass() {
+ModulePass * llvm::createGlobalDefinedMemoryPass() {
   return new GlobalDefinedMemory();
 }
 

@@ -1,4 +1,4 @@
-#include "tsar_pass.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include <llvm/Pass.h>
 #include <bcl/utility.h>
 
