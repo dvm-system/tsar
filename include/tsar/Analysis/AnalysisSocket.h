@@ -78,8 +78,34 @@ class AnalysisSocket final : public bcl::Socket<std::string> {
   };
 
 public:
-  static constexpr const char Delimiter = '$';
-  static constexpr const char *Wait = "wait";
+  enum MessageKind : char {
+    Delimiter = '$',
+    Wait = 'w',
+    Release = 'r',
+    Notify = 'n',
+    Analysis = 'a',
+    Invalid = 'i',
+  };
+
+  friend inline bool operator==(const MessageTy &R, MessageKind K) {
+    return R.size() == 1 && R.front() == K;
+  }
+  friend inline bool operator==(MessageKind K, const MessageTy &R) {
+    return operator==(R, K);
+  }
+  friend inline bool operator!=(const MessageTy &R, MessageKind K) {
+    return !operator==(R, K);
+  }
+  friend inline bool operator!=(MessageKind K, const MessageTy &R) {
+    return !operator==(R, K);
+  }
+
+  friend inline std::string operator+(const MessageTy &R, MessageKind K) {
+    return R + std::string({ K });
+  }
+  friend inline std::string operator+(MessageKind K, const MessageTy &R) {
+    return std::string({ K }) + R;
+  }
 
   ~AnalysisSocket() noexcept {
     // Avoid exception in destructor.
@@ -107,13 +133,16 @@ public:
   /// representation.
   void send(const std::string &Response) const override {
     assert(Response.back() == Delimiter && "Last character must be a delimiter!");
-    llvm::StringRef Json(Response.data(), Response.size() - 1);
-    json::Parser<AnalysisResponse> Parser(Json);
-    AnalysisResponse R;
-    if (!Parser.parse(R))
-      mAnalysis.clear();
-    else
-      mAnalysis = std::move(R[AnalysisResponse::Analysis]);
+    mResponseKind = static_cast<MessageKind>(Response.front());
+    if (mResponseKind == Analysis) {
+      llvm::StringRef Json(Response.data() + 1, Response.size() - 2);
+      json::Parser<AnalysisResponse> Parser(Json);
+      AnalysisResponse R;
+      if (!Parser.parse(R))
+        mAnalysis.clear();
+      else
+        mAnalysis = std::move(R[AnalysisResponse::Analysis]);
+    }
   }
 
   /// Register a callback which is invoked whenever a server receive data.
@@ -143,6 +172,7 @@ public:
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
+    assert(mResponseKind == Analysis && "Unknown response: wait for analysis!");
     if (mAnalysis.size() == sizeof...(AnalysisType)) {
       ResultT Result;
       std::size_t Idx = 0;
@@ -169,6 +199,7 @@ public:
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
+    assert(mResponseKind == Analysis && "Unknown response: wait for analysis!");
     if (mAnalysis.size() == sizeof...(AnalysisType)) {
       ResultT Result;
       std::size_t Idx = 0;
@@ -183,16 +214,26 @@ public:
   void wait() {
     do {
       for (auto &Callback : mReceiveCallbacks)
-        Callback(Wait);
+        Callback({ Wait });
         // Note, that callback run send() in client, so mAnalysisPass is already
         // set here.
-    } while (mAnalysis.empty() && mAnalysis.front() !=
-             llvm::DenseMapInfo<llvm::Pass *>::getTombstoneKey());
+    } while (mResponseKind != Notify);
   }
 
+  /// Notify server that all requests have been processed and it may execute
+  /// further passes.
+  void release() {
+    do {
+      for (auto &Callback : mReceiveCallbacks)
+        Callback({ Release });
+        // Note, that callback run send() in client, so mAnalysisPass is already
+        // set here.
+    } while (mResponseKind != Notify);
+  }
 private:
   mutable llvm::SmallVector<ReceiveCallback, 1> mReceiveCallbacks;
   mutable llvm::SmallVector<ClosedCallback, 1> mClosedCallbacks;
+  mutable MessageKind mResponseKind;
   mutable std::vector<void *> mAnalysis;
 };
 }

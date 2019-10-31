@@ -86,6 +86,14 @@ void initializeAnalysisNotifyClientPassPass(PassRegistry &Registry);
 /// Notify client as soon as server receives 'wait' request.
 ModulePass * createAnalysisNotifyClientPass();
 
+/// Initialize a pass to notify server that all requests have been processed
+/// and it may execute further passes.
+void initializeAnalysisReleaseServerPassPass(PassRegistry &Registry);
+
+/// Notify server that all requests have been processed and it may execute
+/// further passes.
+ModulePass * createAnalysisReleaseServerPass();
+
 /// Initialize a pass to block client until server send notification.
 void initializeAnalysisWaitServerPassPass(PassRegistry &Registry);
 
@@ -95,7 +103,8 @@ ModulePass * createAnalysisWaitServerPass();
 /// Initialize a pass to close connection with server.
 void initializeAnalysisCloseConnectionPassPass(PassRegistry &Registry);
 
-/// Close connection with server (it should be run on client).
+/// Close connection with server (it should be run on client). Client will
+/// be blocked until server confirms that connection can be closed.
 ModulePass *createAnalysisCloseConnectionPass();
 }
 #endif//TSAR_ANALYSIS_PASSES_H

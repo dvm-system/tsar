@@ -46,6 +46,8 @@ struct ClientToServerMemory {
     llvm::Module &ServerM, llvm::ValueToValueMapTy &ClientToServer,
     llvm::legacy::PassManager &PM);
 
+  static void prepareToClose(llvm::legacy::PassManager &PM);
+
   static void getAnalysisUsage(llvm::AnalysisUsage &AU);
 };
 }

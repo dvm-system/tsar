@@ -70,14 +70,11 @@ public:
            Connection->answer(
                [&IsNotified](const std::string &Request) -> std::string {
                  if (Request == AnalysisSocket::Wait) {
-                   AnalysisResponse Response;
-                   Response[AnalysisResponse::Analysis].push_back(
-                       DenseMapInfo<void *>::getTombstoneKey());
                    IsNotified = true;
-                   return json::Parser<AnalysisResponse>::unparseAsObject(
-                       Response);
+                   return { AnalysisSocket::Notify };
                  }
-                 return "";
+                 llvm_unreachable("Unknown request: listen for wait request!");
+                 return { AnalysisSocket::Invalid };
                }))
       ;
     return false;
@@ -85,6 +82,27 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AnalysisConnectionImmutableWrapper>();
+    AU.setPreservesAll();
+  }
+};
+
+class AnalysisReleaseServerPass :
+  public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  AnalysisReleaseServerPass() : ModulePass(ID) {
+    initializeAnalysisReleaseServerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module& M) override {
+    auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>();
+    Socket->release();
+    return false;
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<AnalysisSocketImmutableWrapper>();
     AU.setPreservesAll();
   }
 };
@@ -121,6 +139,7 @@ public:
 
   bool runOnModule(Module& M) override {
     auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>();
+    Socket->wait();
     Socket->close();
     return false;
   }
@@ -134,10 +153,10 @@ public:
 
 char AnalysisSocketImmutableStorage::ID = 0;
 INITIALIZE_PASS_BEGIN(AnalysisSocketImmutableStorage, "analysis-socket-is",
-  "Analysis Thread (Socket Immutable Storage)", true, true)
+  "Analysis Thread (Socket Immutable Storage)", true, false)
 INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisSocketImmutableStorage, "analysis-socket-is",
-  "Analysis Thread (Socket Immutable Storage)", true, true)
+  "Analysis Thread (Socket Immutable Storage)", true, false)
 
 template<> char AnalysisSocketImmutableWrapper::ID = 0;
 INITIALIZE_PASS(AnalysisSocketImmutableWrapper, "analysis-socket-iw",
@@ -149,24 +168,31 @@ INITIALIZE_PASS(AnalysisConnectionImmutableWrapper, "analysis-connection-iw",
 
 char AnalysisNotifyClientPass::ID = 0;
 INITIALIZE_PASS_BEGIN(AnalysisNotifyClientPass, "analysis-notify",
-  "Analysis Thread (Notification)", true, true)
+  "Analysis Thread (Notification)", true, false)
 INITIALIZE_PASS_DEPENDENCY(AnalysisConnectionImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisNotifyClientPass, "analysis-notify",
-  "Analysis Thread (Notification)", true, true)
+  "Analysis Thread (Notification)", true, false)
+
+char AnalysisReleaseServerPass::ID = 0;
+INITIALIZE_PASS_BEGIN(AnalysisReleaseServerPass, "analysis-release",
+  "Analysis Thread (Release)", true, false)
+INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
+INITIALIZE_PASS_END(AnalysisReleaseServerPass, "analysis-release",
+  "Analysis Thread (Release)", true, false)
 
 char AnalysisWaitServerPass::ID = 0;
 INITIALIZE_PASS_BEGIN(AnalysisWaitServerPass, "analysis-wait",
-  "Analysis Thread (Wait)", true, true)
+  "Analysis Thread (Wait)", true, false)
 INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisWaitServerPass, "analysis-wait",
-  "Analysis Thread (Wait)", true, true)
+  "Analysis Thread (Wait)", true, false)
 
 char AnalysisCloseConnectionPass::ID = 0;
 INITIALIZE_PASS_BEGIN(AnalysisCloseConnectionPass, "analysis-socket-close",
-  "Analysis Thread (Close)", true, true)
+  "Analysis Thread (Close)", true, false)
 INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisCloseConnectionPass, "analysis-socket-close",
-  "Analysis Thread (Close)", true, true)
+  "Analysis Thread (Close)", true, false)
 
 ImmutablePass * llvm::createAnalysisSocketImmutableStorage() {
   return new AnalysisSocketImmutableStorage;
@@ -185,6 +211,10 @@ ImmutablePass * llvm::createAnalysisConnectionImmutableWrapper(
 
 ModulePass * llvm::createAnalysisNotifyClientPass() {
   return new AnalysisNotifyClientPass;
+}
+
+ModulePass * llvm::createAnalysisReleaseServerPass() {
+  return new AnalysisReleaseServerPass;
 }
 
 ModulePass * llvm::createAnalysisWaitServerPass() {

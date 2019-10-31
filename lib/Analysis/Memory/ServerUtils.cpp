@@ -30,6 +30,7 @@
 #include "llvm/IR/InstVisitor.h"
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -123,6 +124,49 @@ void ClientToServerMemory::initializeServer(
   PM.add(createClonedDIMemoryMatcherStorage());
   PM.add(createDIMemoryEnvironmentStorage());
   PM.add(createClonedDIMemoryMatcher(std::move(CloneToOrigin)));
+}
+
+namespace llvm {
+static void initializeDestroyCSMemoryHandlesPassPass(PassRegistry &Registry);
+}
+
+namespace {
+/// Allow server to force destruction of memory handles which is used
+/// to track metadata-level memory locations on client.
+///
+/// Handles should be destroyed before metadata-level memory environment is
+/// destroyed. However, if connection is closed before a such destruction the
+/// order of further destructions is not specified. This may lead to undefined
+/// behavior including analyzer aborting.
+class DestroyCSMemoryHandlesPass : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+  DestroyCSMemoryHandlesPass() : ModulePass(ID) {
+    initializeDestroyCSMemoryHandlesPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module &) override {
+    auto & Matcher = getAnalysis<ClonedDIMemoryMatcherWrapper>();
+    Matcher->clear();
+    return false;
+  }
+
+  void getAnalysisUsage(AnalysisUsage & AU) const override {
+    AU.addRequired<ClonedDIMemoryMatcherWrapper>();
+    AU.setPreservesAll();
+  }
+};
+}
+
+char DestroyCSMemoryHandlesPass::ID = 0;
+INITIALIZE_PASS_BEGIN(DestroyCSMemoryHandlesPass, "cs-close-di-memory-matcher",
+                      "Destroy Client To Server Memory Handles", true, true)
+INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
+INITIALIZE_PASS_END(DestroyCSMemoryHandlesPass, "cs-close-di-memory-matcher",
+                    "Destroy Client To Server Memory Handles", true, true)
+
+void ClientToServerMemory::prepareToClose(legacy::PassManager &PM) {
+  PM.add(new DestroyCSMemoryHandlesPass());
 }
 
 void ClientToServerMemory::getAnalysisUsage(AnalysisUsage& AU) {

@@ -22,7 +22,10 @@
 // which could be used to send response.
 //
 // There are following steps to create and run server.
-// (1) Inherit AnalysisServer class and override virtual methods,
+// (1) Inherit AnalysisServer class and override virtual methods. The last pass
+//     executed on the server notifies the client that connection can be closed.
+//     So, before this pass all shared data should be freed, for example all
+//     handles should be destroyed to avoid undefined behavior.
 // (2) On client:
 //     (a) create socket (createAnalysisSocketImmutableStorage()),
 //     (b) create server pass inherited from AnalysisServer to run server,
@@ -40,7 +43,10 @@
 //             all required passes and returns related analysis results. It is
 //             also possible to access provider explicitly
 //             Socket->getAnalysis<...>(F).
-//     (f) close connection (createAnalysisCloseConnectionPass()).
+//     (f) notify server that all analysis requests have been received
+//         (createAnalysisReleaseServerPass()),
+//     (g) close connection (createAnalysisCloseConnectionPass()). Client will
+//         be blocked until server confirms that connection can be closed.
 //
 //===----------------------------------------------------------------------===//
 
@@ -101,6 +107,8 @@ public:
           initializeServer(M, *CloneM, CloneMap, PM);
           PM.add(createAnalysisNotifyClientPass());
           addServerPasses(*CloneM, PM);
+          prepareToClose(PM);
+          PM.add(createAnalysisNotifyClientPass());
           PM.run(*CloneM);
         });
     return false;
@@ -139,6 +147,10 @@ public:
   /// Note, AnalysisResponsePass<...> template could be used to process
   /// requests in simple cases.
   virtual void addServerPasses(Module &ServerM, legacy::PassManager &PM) = 0;
+
+  /// Add passes to execute until connection is not closed, for example
+  /// shared data are freed.
+  virtual void prepareToClose(legacy::PassManager & PM) = 0;
 };
 
 /// This pass waits for requests from client and send responses from server.
@@ -211,22 +223,30 @@ public:
 
   AnalysisResponsePass() : ModulePass(ID) {}
 
-  /// Wait for responses in infinite loop.
+  /// Wait for requests in infinite loop. Stop waiting after incorrect request.
   bool runOnModule(Module &M) {
     auto &C = getAnalysis<AnalysisConnectionImmutableWrapper>();
     auto &OriginalToClone =
         getAnalysis<AnalysisClientServerMatcherWrapper>().get();
-    while (C->answer([this,
-                      &OriginalToClone](std::string &Request) -> std::string {
+    bool WaitForRequest = true;
+    while (WaitForRequest && C->answer([this, &OriginalToClone,
+                                        &WaitForRequest](std::string &Request)
+                                           -> std::string {
+      if (Request == tsar::AnalysisSocket::Release) {
+        WaitForRequest = false;
+        return { tsar::AnalysisSocket::Notify };
+      }
       json::Parser<tsar::AnalysisRequest> Parser(Request);
       tsar::AnalysisRequest R;
-      if (!Parser.parse(R))
-        return "";
+      if (!Parser.parse(R)) {
+        llvm_unreachable("Unknown request: listen for analysis request!");
+        return { tsar::AnalysisSocket::Invalid };
+      }
       tsar::AnalysisResponse Response;
       if (auto *F = R[tsar::AnalysisRequest::Function]) {
         auto &CloneF = OriginalToClone[F];
         if (!CloneF)
-          return "";
+          return { tsar::AnalysisSocket::Analysis };
         // If only one function-level analysis is required, then try to find
         // it in the list of available responses (ResponseT...). Otherwise,
         // try to find in the list of responses a provider which provides
@@ -248,7 +268,7 @@ public:
           FindProvider FindImpl{this, *cast<Function>(CloneF), R, Response};
           bcl::TypeList<ResponseT...>::for_each_type(FindImpl);
           if (Response[tsar::AnalysisResponse::Analysis].empty())
-            return "";
+            return { tsar::AnalysisSocket::Analysis };
         }
       } else {
         // Use implementation of getAnalysisID() from
@@ -265,7 +285,8 @@ public:
               ResultPass->getAdjustedAnalysisPointer(ID));
         }
       }
-      return json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
+      return tsar::AnalysisSocket::Analysis +
+             json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
     }))
       ;
     return false;
