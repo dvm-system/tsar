@@ -33,7 +33,7 @@ class PassRegistry;
 class FunctionPass;
 class ModulePass;
 
-/// Initialize all passes to perfrom source-base analysis of C programs.
+/// Initialize all passes to perform source-base analysis of C programs.
 void initializeClangAnalysis(PassRegistry &Registry);
 
 /// Initialize a pass which collects information about source-level globals.
