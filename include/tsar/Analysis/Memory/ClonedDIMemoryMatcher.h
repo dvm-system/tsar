@@ -27,10 +27,10 @@
 
 #include "tsar/ADT/Bimap.h"
 #include "tsar/ADT/DenseMapTraits.h"
-#include "tsar/Analysis/AnalysisWrapperPass.h"
 #include "tsar/Analysis/Memory/BimapDIMemoryHandle.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryHandle.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/tagged.h>
 #include <llvm/ADT/DenseMapInfo.h>

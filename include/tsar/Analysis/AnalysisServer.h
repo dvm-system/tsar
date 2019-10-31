@@ -48,8 +48,8 @@
 #define TSAR_ANALYSIS_SERVER_H
 
 #include "tsar/Analysis/AnalysisSocket.h"
-#include "tsar/Analysis/AnalysisWrapperPass.h"
 #include "tsar/Analysis/Passes.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/PassProvider.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/cell.h>

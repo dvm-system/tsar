@@ -29,10 +29,10 @@
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/ADT/PersistentMap.h"
 #include "tsar/ADT/PersistentIteratorInfo.h"
-#include "tsar/Analysis/AnalysisWrapperPass.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryHandle.h"
 #include "tsar/Analysis/Memory/MemoryTrait.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <llvm/ADT/APSInt.h>
 #include <llvm/ADT/DenseMap.h>

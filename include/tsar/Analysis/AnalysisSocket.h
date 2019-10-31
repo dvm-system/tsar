@@ -27,7 +27,7 @@
 #ifndef TSAR_ANALYSIS_SOCKET_H
 #define TSAR_ANALYSIS_SOCKET_H
 
-#include "tsar/Analysis/AnalysisWrapperPass.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include <bcl/cell.h>
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/Json.h>

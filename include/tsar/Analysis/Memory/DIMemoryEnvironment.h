@@ -27,7 +27,7 @@
 #ifndef TSAR_DI_MEMORY_ENVIRONMENT_H
 #define TSAR_DI_MEMORY_ENVIRONMENT_H
 
-#include "tsar/Analysis/AnalysisWrapperPass.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/ValueHandle.h>
