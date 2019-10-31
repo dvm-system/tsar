@@ -355,12 +355,27 @@ public:
       bcl::tagged<DFNode *, DFNode>,
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>,
       bcl::tagged<std::unique_ptr<ReachSet>, ReachSet>>> DefinedMemoryInfo;
+  
+  typedef llvm::DenseMap<const  llvm::Function*, std::unique_ptr<DefUseSet>> InterprocDefInfo;
+
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) { }
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) {
+    mInterprocDefInfo = nullptr;
+  }
 
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+    const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
+    InterprocDefInfo &InterprocDefInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo),
+    mInterprocDefInfo(&InterprocDefInfo){ }
+
+  InterprocDefInfo* getInterprocdefInfo() {
+    return mInterprocDefInfo;
+  }
   /// Returns representation of reach definition analysis results.
   DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
 
@@ -381,11 +396,16 @@ public:
   void collapse(DFRegion *R);
 
 private:
+  //F->defUseSet
+  InterprocDefInfo *mInterprocDefInfo;
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
   const llvm::DominatorTree *mDT;
   DefinedMemoryInfo *mDefInfo;
 };
+
+typedef ReachDFFwk::InterprocDefInfo InterprocDefInfo;
+
 
 /// This covers IN and OUT value for a must/may reach definition analysis.
 typedef ReachDFFwk::ReachSet ReachSet;
