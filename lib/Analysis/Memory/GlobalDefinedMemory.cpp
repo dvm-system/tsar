@@ -75,7 +75,7 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     CallGraphNode* CGN = *CurrNode;
     if (Function* F = CGN->getFunction()) {
       if (F->hasName() && !F->empty()) {
-          errs() << "===============\n";
+        errs() << "===============\n";
         errs() << F->getName() << "\n";
         errs() << "===============\n";
 
@@ -93,9 +93,9 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
         LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
         auto *DFF = cast<DFFunction>(RegionInfoForF.getTopLevelRegion());
         DefinedMemoryInfo DefInfo;
-        //ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
-        //solveDataFlowUpward(&ReachDefFwk, DFF);
-       // mInterprocDefInfo.insert(std::make_pair(F, ReachDefFwk.getDefInfo()[]));
+        ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
+        solveDataFlowUpward(&ReachDefFwk, DFF);
+        mInterprocDefInfo.insert(std::make_pair(F, std::get<0>(ReachDefFwk.getDefInfo()[DFF])));
       }
     }
   }

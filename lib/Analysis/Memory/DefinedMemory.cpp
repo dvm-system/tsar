@@ -26,6 +26,7 @@
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
@@ -64,8 +65,15 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
-  solveDataFlowUpward(&ReachDefFwk, DFF);
+  auto GDM = getAnalysisIfAvailable<GlobalDefinedMemory>();
+  if (GDM == nullptr) {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  }
+  else {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, GDM->getInterprocDefInfo());
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  }
   return false;
 }
 
@@ -74,6 +82,7 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalDefinedMemory>();
   AU.setPreservesAll();
 }
 
@@ -317,6 +326,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
     llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
+
+  auto *InterprocDefInfo = DFF->getInterprocdefInfo();
+
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
@@ -384,7 +396,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // 3. Unknown instructions will be remembered in DefUseSet.
     auto &DL = I.getModule()->getDataLayout();
     for_each_memory(I, DFF->getTLI(),
-      [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
+      [&DL, &AT, InterprocDefInfo, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
@@ -406,11 +418,33 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         assert(AN && "Alias node must not be null!");
         ImmutableCallSite CS(&I);
         if (CS) {
-          switch (AA.getArgModRefInfo(CS, Idx)) {
-          case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
-          case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
-          case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
-          case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
+          //получаю функцию F (CS~f(args))
+          auto F = CS.getCalledFunction();
+          //если информаци€ по ней уже есть
+          //нова€ переменна§ в захвате у л€мбды
+          if (InterprocDefInfo != nullptr && (*InterprocDefInfo).count(F)) {
+            //инициализаци€
+            W = R = AccessInfo::No;
+            auto defUseSet = std::move((*InterprocDefInfo)[F]);
+            //получаю текущий аргумент
+            const Value *arg = CS.getArgument(Idx);
+            // заполн€ю W,R
+            if ((defUseSet->getDefs()).contain(arg)) {
+              W = AccessInfo::Must;;
+            } else if ((defUseSet->getMayDefs()).contain(arg)) {
+              W = AccessInfo::May;
+            }
+            if ((defUseSet->getUses()).contain(arg)) {
+              R = AccessInfo::Must;;
+            }
+          }
+          else {
+            switch (AA.getArgModRefInfo(CS, Idx)) {
+            case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
+            case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
+            case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
+            case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
+            }
           }
         }
         switch (W) {
