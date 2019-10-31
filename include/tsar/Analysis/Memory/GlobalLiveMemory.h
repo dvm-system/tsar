@@ -1,18 +1,15 @@
-#include "tsar/Analysis/Memory/Passes.h"
+#include <tsar/Analysis/Memory/Passes.h>
+#include <tsar/Analysis/Memory/LiveMemory.h>
 #include <llvm/Pass.h>
 #include <bcl/utility.h>
 
-namespace tsar {
-  typedef llvm::GlobalLiveMemory::IterprocLiveMemoryInfo IterprocLiveMemoryInfo;
-}
-
 namespace llvm {
-	
+
   class GlobalLiveMemory : public ModulePass, private bcl::Uncopyable {
 	public:
 		static char ID;
 
-    typedef DenseMap<const llvm::Function*, std::unique_ptr<LiveMemoryInfo>> IterprocLiveMemoryInfo;
+    typedef DenseMap<const llvm::Function*, std::unique_ptr<tsar::LiveMemoryInfo>> IterprocLiveMemoryInfo;
 
 		GlobalLiveMemory() : ModulePass(ID){
 			initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
@@ -33,4 +30,7 @@ namespace llvm {
   private:
     IterprocLiveMemoryInfo *mIterprocLiveMemoryInfo;
 	};
+
+  typedef GlobalLiveMemory::IterprocLiveMemoryInfo IterprocLiveMemoryInfo;
+
 }

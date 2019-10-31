@@ -64,5 +64,9 @@ void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
 
 /// Create a pass which deduce loop attributes.
 FunctionPass * createLoopAttributesDeductionPass();
+
+void initializeSplitBasicBlocksWithCallInstPassPass(PassRegistry& Registry);
+
+FunctionPass* createSplitBasicBlocksWithCallInstPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
