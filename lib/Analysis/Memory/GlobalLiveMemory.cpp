@@ -210,8 +210,8 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
           }
           LS->setOut(Fout);
         }
-       // mIterprocLiveMemoryInfo->insert(std::make_pair(F, LiveInfo));
-
+        mIterprocLiveMemoryInfo->insert(std::make_pair(F, std::make_unique<LiveMemoryInfo>(LiveInfo)));
+		
         //run Live Memory Analysis
         LiveDFFwk LiveFwk(LiveInfo, DefInfo, DT);
         solveDataFlowDownward(&LiveFwk, TopBBFforF);

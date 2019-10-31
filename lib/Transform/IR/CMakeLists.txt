@@ -1,5 +1,5 @@
 set(TRANSFORM_SOURCES Passes.cpp DeadCodeElimination.cpp InterprocAttr.cpp
-  MetadataUtils.cpp Utils.cpp)
+  MetadataUtils.cpp Utils.cpp SplitBasicBlocksWithCallInst.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
