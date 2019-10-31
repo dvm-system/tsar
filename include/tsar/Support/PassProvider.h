@@ -252,6 +252,12 @@ typename FunctionPassProvider<Analysis...>::ProviderListT
   FunctionPassProvider<Analysis...>::ProviderList;
 }
 
+#define INITIALIZE_PROVIDER(passName, arg, name) \
+namespace llvm { \
+static void initialize##passName##Pass(PassRegistry &Registry); \
+} \
+INITIALIZE_PASS(passName, arg, name, true, true)
+
 #define INITIALIZE_PROVIDER_BEGIN(passName, arg, name) \
 namespace llvm { \
 static void initialize##passName##Pass(PassRegistry &Registry); \
