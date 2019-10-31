@@ -448,10 +448,13 @@ bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
     if (!Result)
       return;
     ImmutableCallSite CS(&I);
+    if (CS && AT.getAliasAnalysis().doesNotAccessMemory(CS))
+      return;
     Result &= CS && AT.getAliasAnalysis().onlyReadsMemory(CS);
     if (!Result)
       return;
     auto *AN = AT.findUnknown(I);
+    assert(AN && "Unknown memory access must be presented in alias tree!");
     for (auto &Loc : DUS.getExplicitAccesses()) {
       if (!DUS.hasDef(Loc) && !DUS.hasMayDef(Loc))
         continue;
