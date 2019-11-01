@@ -60,6 +60,8 @@
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/cell.h>
 #include <bcl/utility.h>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Pass.h>
 #include <llvm/Transforms/Utils/Cloning.h>
@@ -171,13 +173,28 @@ class AnalysisResponsePass : public ModulePass, private bcl::Uncopyable {
     llvm::AnalysisUsage &mAU;
   };
 
-  /// Look up for analysis with a specified ID in a liast of analysis.
+  /// Look up for analysis with a specified ID in a list of analysis.
   ///
   /// Set `Exists` to true if analysis is found.
   struct FindAnalysis {
     template <class T> void operator()() { Exist |= (ID == &T::ID); }
     AnalysisID ID;
     bool &Exist;
+  };
+
+  /// List of analysis results (ID to Analysis).
+  using AnalysisCache =
+      llvm::SmallVector<std::pair<llvm::AnalysisID, void *>, 8>;
+
+  /// Get all available analysis from a specified provider and store their
+  /// into a specified cache.
+  template <class ProviderT> struct GetAllFromProvider {
+    template <class T> void operator()() {
+      auto &P = Provider.template get<T>();
+      Cache.emplace_back(&T::ID, static_cast<void *>(&P));
+    }
+    ProviderT &Provider;
+    AnalysisCache &Cache;
   };
 
   /// This functor looks up for a provider which allows to access required
@@ -206,6 +223,8 @@ class AnalysisResponsePass : public ModulePass, private bcl::Uncopyable {
           Response[tsar::AnalysisResponse::Analysis].push_back(
               Provider.getWithID(ID));
         }
+        tsar::pass_provider_analysis<T>::for_each_type(
+            GetAllFromProvider<T>{Provider, Cache});
       }
     }
 
@@ -216,6 +235,7 @@ class AnalysisResponsePass : public ModulePass, private bcl::Uncopyable {
     Function &CloneF;
     tsar::AnalysisRequest &Request;
     tsar::AnalysisResponse &Response;
+    AnalysisCache &Cache;
   };
 
 public:
@@ -229,7 +249,10 @@ public:
     auto &OriginalToClone =
         getAnalysis<AnalysisClientServerMatcherWrapper>().get();
     bool WaitForRequest = true;
-    while (WaitForRequest && C->answer([this, &OriginalToClone,
+    llvm::Function *ActiveFunc = nullptr;
+    AnalysisCache ActiveIDs;
+    while (WaitForRequest && C->answer([this, &OriginalToClone, &ActiveFunc,
+                                        &ActiveIDs,
                                         &WaitForRequest](std::string &Request)
                                            -> std::string {
       if (Request == tsar::AnalysisSocket::Release) {
@@ -247,28 +270,50 @@ public:
         auto &CloneF = OriginalToClone[F];
         if (!CloneF)
           return { tsar::AnalysisSocket::Analysis };
-        // If only one function-level analysis is required, then try to find
-        // it in the list of available responses (ResponseT...). Otherwise,
-        // try to find in the list of responses a provider which provides
-        // access to required analysis results.
-        if (R[tsar::AnalysisRequest::AnalysisIDs].size() == 1) {
-          auto ID = R[tsar::AnalysisRequest::AnalysisIDs].front();
-          bool E = false;
-          bcl::TypeList<ResponseT...>::for_each_type(FindAnalysis{ID, E});
-          if (E) {
-            auto ResultPass =
-                getResolver()->findImplPass(this, ID, *cast<Function>(CloneF));
-            assert(ResultPass && "getAnalysis*() called on an analysis that "
-                                 "was not 'required' by pass!");
-            Response[tsar::AnalysisResponse::Analysis].push_back(
-                ResultPass->getAdjustedAnalysisPointer(ID));
+        // Check whether we already have required analysis.
+        if (ActiveFunc == &*CloneF) {
+          for (auto ID : R[tsar::AnalysisRequest::AnalysisIDs]) {
+            auto Itr =
+                llvm::find_if(ActiveIDs, [ID](AnalysisCache::value_type &V) {
+                  return V.first == ID;
+                });
+            if (Itr == ActiveIDs.end()) {
+              Response[tsar::AnalysisResponse::Analysis].clear();
+              ActiveIDs.clear();
+              break;
+            }
+            Response[tsar::AnalysisResponse::Analysis].push_back(Itr->second);
           }
+        } else {
+          ActiveFunc = cast<Function>(CloneF);
         }
         if (Response[tsar::AnalysisResponse::Analysis].empty()) {
-          FindProvider FindImpl{this, *cast<Function>(CloneF), R, Response};
-          bcl::TypeList<ResponseT...>::for_each_type(FindImpl);
-          if (Response[tsar::AnalysisResponse::Analysis].empty())
-            return { tsar::AnalysisSocket::Analysis };
+          // If only one function-level analysis is required, then try to find
+          // it in the list of available responses (ResponseT...). Otherwise,
+          // try to find in the list of providers which provides
+          // access to required analysis results.
+          if (R[tsar::AnalysisRequest::AnalysisIDs].size() == 1) {
+            auto ID = R[tsar::AnalysisRequest::AnalysisIDs].front();
+            bool E = false;
+            bcl::TypeList<ResponseT...>::for_each_type(FindAnalysis{ID, E});
+            if (E) {
+              auto ResultPass = getResolver()->findImplPass(
+                  this, ID, *cast<Function>(CloneF));
+              assert(ResultPass && "getAnalysis*() called on an analysis that "
+                                   "was not 'required' by pass!");
+              Response[tsar::AnalysisResponse::Analysis].push_back(
+                  ResultPass->getAdjustedAnalysisPointer(ID));
+              ActiveIDs.emplace_back(
+                  ID, Response[tsar::AnalysisResponse::Analysis].back());
+            }
+          }
+          if (Response[tsar::AnalysisResponse::Analysis].empty()) {
+            FindProvider FindImpl{this, *cast<Function>(CloneF), R, Response,
+                                  ActiveIDs};
+            bcl::TypeList<ResponseT...>::for_each_type(FindImpl);
+            if (Response[tsar::AnalysisResponse::Analysis].empty())
+              return {tsar::AnalysisSocket::Analysis};
+          }
         }
       } else {
         // Use implementation of getAnalysisID() from
