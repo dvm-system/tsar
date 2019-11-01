@@ -72,5 +72,11 @@ FunctionPass * createClangDeadDeclsElimination();
 
 /// Initializes a pass to perform elimination of dead declarations.
 void initializeClangDeadDeclsEliminationPass(PassRegistry &Registry);
+
+/// Initialize a pass to perform OpenMP-based parallelization.
+void initializeClangOpenMPParalleizationPass(PassRegistry &Registry);
+
+/// Create a pass to perform OpenMP-based parallelization.
+ModulePass* createClangOpenMPParallelization();
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H
