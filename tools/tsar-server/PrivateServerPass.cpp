@@ -34,7 +34,8 @@
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include "tsar/Core/TransformationContext.h"
-#include "tsar/Support/PassProvider.h"
+#include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/RedirectIO.h>
@@ -324,8 +325,7 @@ template<> struct Traits<CFFlags> {
 };
 }
 
-using ServerPrivateProvider = FunctionPassProvider<
-  BasicAAWrapperPass,
+using ServerPrivateProvider = FunctionPassAAProvider<
   EstimateMemoryPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
@@ -460,6 +460,8 @@ INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
 INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -768,6 +770,16 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
     Wrapper.set(*MMWrapper);
   });
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  ServerPrivateProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
+    Wrapper.setOptions(&GO);
+  });
+  auto &GlobalsAA = getAnalysis<GlobalsAAWrapperPass>().getResult();
+  ServerPrivateProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [&GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
+    Wrapper.set(GlobalsAA);
+  });
   while (mConnection->answer(
       [this, &M](const std::string &Request) -> std::string {
     msg::Diagnostic Diag(msg::Status::Error);
@@ -796,6 +808,8 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<GlobalsAAWrapperPass>();
   AU.setPreservesAll();
 }
 

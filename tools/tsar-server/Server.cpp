@@ -38,6 +38,7 @@
 #include "tsar/Core/Tool.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Transform/IR/Passes.h"
+#include "tsar/Support/GlobalOptions.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/Json.h>
 #include <bcl/RedirectIO.h>
@@ -109,26 +110,31 @@ public:
   void run(llvm::Module *M, TransformationContext *Ctx) override {
     assert(M && "Module must not be null!");
     legacy::PassManager Passes;
+    Passes.add(createGlobalOptionsImmutableWrapper(&mGlobalOptions));
     if (Ctx) {
       auto TEP = static_cast<TransformationEnginePass *>(
         createTransformationEnginePass());
       TEP->setContext(*M, Ctx);
       Passes.add(TEP);
+      Passes.add(createImmutableASTImportInfoPass(mImportInfo));
     }
-    Passes.add(createUnreachableBlockEliminationPass());
-    Passes.add(createPostOrderFunctionAttrsLegacyPass());
-    Passes.add(createRPOFunctionAttrsAnalysis());
-    Passes.add(createPOFunctionAttrsAnalysis());
+    addImmutableAliasAnalysis(Passes);
+    addInitialTransformations(Passes);
     Passes.add(createMemoryMatcherPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
     Passes.run(*M);
   }
+
+  ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
+
 private:
   IntrusiveConnection &mConnection;
   RedirectIO &mStdIn;
   RedirectIO &mStdOut;
   RedirectIO &mStdErr;
+  ASTImportInfo mImportInfo;
+  GlobalOptions mGlobalOptions;
 };
 
 void run(IntrusiveConnection C) {
