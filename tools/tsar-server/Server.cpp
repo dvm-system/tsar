@@ -66,8 +66,9 @@ namespace msg {
 /// - list of arguments which contains options and input data,
 /// - specification of an input/output redirection.
 JSON_OBJECT_BEGIN(CommandLine)
-JSON_OBJECT_ROOT_PAIR_4(CommandLine,
+JSON_OBJECT_ROOT_PAIR_5(CommandLine,
   Args, std::vector<const char *>,
+  Query, const char *,
   Input, const char *,
   Output, const char *,
   Error, const char *)
@@ -75,13 +76,15 @@ JSON_OBJECT_ROOT_PAIR_4(CommandLine,
   CommandLine() :
     JSON_INIT_ROOT,
     JSON_INIT(CommandLine,
-      std::vector<const char *>(), nullptr, nullptr, nullptr) {}
+      std::vector<const char *>(), nullptr, nullptr, nullptr, nullptr) {}
 
   ~CommandLine() {
     auto &This = *this;
     for (auto &Arg : This[CommandLine::Args])
       if (Arg)
         delete[] Arg;
+    if (This[CommandLine::Query])
+      delete[] This[CommandLine::Query];
     if (This[CommandLine::Input])
       delete[] This[CommandLine::Input];
     if (This[CommandLine::Output])
@@ -142,7 +145,8 @@ void run(IntrusiveConnection C) {
   llvm::llvm_shutdown_obj ShutdownObj;
   std::unique_ptr<Tool> Analyzer;
   RedirectIO StdIn, StdOut, StdErr;
-  C.answer([&Analyzer, &StdIn, &StdOut, &StdErr](
+  bool IsQuerySet = false;
+  C.answer([&Analyzer, &StdIn, &StdOut, &StdErr, &IsQuerySet](
       const std::string &Request) -> std::string {
     Parser P(Request);
     msg::CommandLine CL;
@@ -172,6 +176,11 @@ void run(IntrusiveConnection C) {
     InOutError(Diag);
     if (!Diag[msg::Diagnostic::Error].empty())
       return Parser::unparseAsObject(Diag);
+    if (IsQuerySet = CL[msg::CommandLine::Query]) {
+      CL[msg::CommandLine::Args].push_back(CL[msg::CommandLine::Query]);
+      // Set query to nullptr to avoid multiple memory deletion.
+      CL[msg::CommandLine::Query] = nullptr;
+    }
     Analyzer = std::move(llvm::make_unique<Tool>(
       CL[msg::CommandLine::Args].size(),
       CL[msg::CommandLine::Args].data()));
@@ -186,15 +195,19 @@ void run(IntrusiveConnection C) {
   });
   if (!Analyzer)
     return;
-  ServerQueryManager QM(C, StdIn, StdOut, StdErr);
-  Analyzer->run(&QM);
-  if (StdErr.isDiff()) {
-    C.answer([&StdErr](const std::string &) {
-      msg::Diagnostic Diag(msg::Status::Error);
-      Diag[msg::Diagnostic::Terminal] += StdErr.diff();
-      return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
-    });
+  if (IsQuerySet) {
+    Analyzer->run();
+  } else {
+    ServerQueryManager QM(C, StdIn, StdOut, StdErr);
+    Analyzer->run(&QM);
   }
+  C.answer([&StdErr](const std::string &) {
+    msg::Diagnostic Diag(StdErr.isDiff() ? msg::Status::Error
+                                         : msg::Status::Done);
+    if (StdErr.isDiff())
+      Diag[msg::Diagnostic::Terminal] += StdErr.diff();
+    return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
+  });
 }
 }
 

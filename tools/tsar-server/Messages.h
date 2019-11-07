@@ -71,6 +71,7 @@ struct OtherFile {
 enum class Status : short {
   First = 0,
   Success = First,
+  Done,
   Error,
   Last = Error,
   Invalid,
@@ -151,6 +152,7 @@ template<> struct Traits<tsar::msg::Status> {
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
       Dest = llvm::StringSwitch<tsar::msg::Status>(S)
         .Case("Success", tsar::msg::Status::Success)
+        .Case("Done", tsar::msg::Status::Done)
         .Case("Error", tsar::msg::Status::Error)
         .Default(tsar::msg::Status::Invalid);
     }
@@ -163,6 +165,7 @@ template<> struct Traits<tsar::msg::Status> {
     JSON += '"';
     switch (Obj) {
       case tsar::msg::Status::Success: JSON += "Success"; break;
+      case tsar::msg::Status::Done: JSON += "Done"; break;
       case tsar::msg::Status::Error: JSON += "Error"; break;
       default: JSON += "Invalid"; break;
     }
