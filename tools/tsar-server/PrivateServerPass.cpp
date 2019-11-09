@@ -724,6 +724,8 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     } else {
       Info = &FuncInfo;
     }
+    if (!Info)
+      return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
     for (auto &T : *Info) {
       if (!(T.Flags & StmtList[msg::CalleeFuncList::Attr]))
         continue;
