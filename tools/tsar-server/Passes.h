@@ -35,13 +35,19 @@ namespace llvm {
 class ModulePass;
 class PassRegistry;
 
-/// Creates an interaction pass to obtain results of private variables analysis.
+/// Create an interaction pass to obtain results of private variables analysis.
 ModulePass * createPrivateServerPass(
   bcl::IntrusiveConnection &IC, bcl::RedirectIO &StdErr);
 
-/// Initializes an interaction pass to obtain results of private variables
+/// Initialize an interaction pass to obtain results of private variables
 /// analysis.
 void initializePrivateServerPassPass(PassRegistry &Registry);
+
+/// Create internal transformation-based analysis server.
+ModulePass * createTraitsAnalysisServer();
+
+/// Initialize internal transformation-based analysis server.
+void initializeTraitsAnalysisServerPass(PassRegistry & Registry);
 }
 
 #endif//TSAR_SERVER_PASSES_H
