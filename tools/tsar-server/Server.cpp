@@ -49,7 +49,9 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/PrettyStackTrace.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/Signals.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <map>
 #include <vector>
@@ -142,6 +144,10 @@ private:
 
 void run(IntrusiveConnection C) {
   typedef json::Parser<msg::Diagnostic> Parser;
+  char *ArgvForStackTrace[] = {"TSARServer"};
+  sys::PrintStackTraceOnErrorSignal(ArgvForStackTrace[0]);
+  PrettyStackTraceProgram StackTraceProgram(1, ArgvForStackTrace);
+  EnableDebugBuffering = true;
   llvm::llvm_shutdown_obj ShutdownObj;
   std::unique_ptr<Tool> Analyzer;
   RedirectIO StdIn, StdOut, StdErr;
