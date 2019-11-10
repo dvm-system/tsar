@@ -26,13 +26,21 @@
 #include "ClangMessages.h"
 #include "Passes.h"
 #include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/ControlFlowTraits.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
+#include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
+#include "tsar/Analysis/Memory/ServerUtils.h"
+#include "tsar/Analysis/Parallel/ParallelLoop.h"
+#include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -44,6 +52,7 @@
 #include <clang/AST/Expr.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 
@@ -85,16 +94,17 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
 JSON_OBJECT_END(Statistic)
 
 JSON_OBJECT_BEGIN(LoopTraits)
-JSON_OBJECT_PAIR_5(LoopTraits,
+JSON_OBJECT_PAIR_6(LoopTraits,
   IsAnalyzed, Analysis,
   Perfect, Analysis,
   InOut, Analysis,
   Canonical, Analysis,
-  UnsafeCFG, Analysis)
+  UnsafeCFG, Analysis,
+  Parallel, Analysis)
 
-  LoopTraits() :
-    JSON_INIT(LoopTraits,
-      Analysis::No, Analysis::No, Analysis::Yes, Analysis::No, Analysis::Yes) {}
+  LoopTraits()
+    : JSON_INIT(LoopTraits, Analysis::No, Analysis::No, Analysis::Yes,
+                Analysis::No, Analysis::Yes, Analysis::No) {}
   ~LoopTraits() = default;
 
   LoopTraits(const LoopTraits &) = default;
@@ -147,15 +157,16 @@ JSON_OBJECT_ROOT_PAIR_2(LoopTree,
 JSON_OBJECT_END(LoopTree)
 
 JSON_OBJECT_BEGIN(FunctionTraits)
-JSON_OBJECT_PAIR_4(FunctionTraits,
+JSON_OBJECT_PAIR_5(FunctionTraits,
   Readonly, Analysis,
   UnsafeCFG, Analysis,
   InOut, Analysis,
+  Parallel, Analysis,
   Loops, Analysis)
 
-  FunctionTraits() :
-    JSON_INIT(FunctionTraits,
-      Analysis::No, Analysis::Yes, Analysis::Yes, Analysis::No) {}
+  FunctionTraits()
+    : JSON_INIT(FunctionTraits, Analysis::No, Analysis::Yes, Analysis::Yes,
+                Analysis::No, Analysis::No) {}
   ~FunctionTraits() = default;
 
   FunctionTraits(const FunctionTraits &) = default;
@@ -326,6 +337,8 @@ template<> struct Traits<CFFlags> {
 }
 
 using ServerPrivateProvider = FunctionPassAAProvider<
+  AnalysisSocketImmutableWrapper,
+  ParallelLoopPass,
   EstimateMemoryPass,
   PrivateRecognitionPass,
   TransformationEnginePass,
@@ -354,7 +367,73 @@ INITIALIZE_PASS_DEPENDENCY(ClangCFTraitsPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
+namespace llvm {
+static void initializeTraitsAnalysisServerResponsePass(PassRegistry &);
+}
+
 namespace {
+/// This provides access to function-level analysis results on server.
+using TraitsAnalysisServerProvider =
+    FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
+
+/// List of responses available from server (client may request corresponding
+/// analysis, in case of provider all analysis related to a provider may
+/// be requested separately).
+using TraitsAnalysisServerResponse = AnalysisResponsePass<
+    GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
+    ClonedDIMemoryMatcherWrapper, TraitsAnalysisServerProvider>;
+
+/// This analysis server performs transformation-based analysis which is
+/// necessary to answer user requests.
+class TraitsAnalysisServer final : public AnalysisServer {
+public:
+  static char ID;
+  TraitsAnalysisServer() : AnalysisServer(ID) {
+    initializeTraitsAnalysisServerPass(*PassRegistry::getPassRegistry());
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AnalysisServer::getAnalysisUsage(AU);
+    tsar::ClientToServerMemory::getAnalysisUsage(AU);
+    AU.addRequired<GlobalOptionsImmutableWrapper>();
+  }
+
+  void prepareToClone(Module &ClientM,
+                      ValueToValueMapTy &ClientToServer) override {
+    ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
+  }
+
+  void initializeServer(Module &CM, Module &SM, ValueToValueMapTy &CToS,
+                        legacy::PassManager &PM) override {
+    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
+    PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
+    PM.add(createDIMemoryTraitPoolStorage());
+    ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
+  }
+
+  void addServerPasses(Module &M, legacy::PassManager &PM) override {
+    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+    // TODO(kaniandr@gmail.com): add analysis-use to global options and allow
+    // to use it on analysis server.
+    StringRef AnalysisUse("");
+    addImmutableAliasAnalysis(PM);
+    addBeforeTfmAnalysis(AnalysisUse, PM);
+    addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
+    addAfterLoopRotateAnalysis(PM);
+    // Notify client that analysis is performed. Analysis changes metadata-level
+    // alias tree and invokes corresponding handles to update client to server
+    // mapping. So, metadata-level memory mapping is a shared resource and
+    // synchronization is necessary.
+    PM.add(createAnalysisNotifyClientPass());
+    PM.add(createVerifierPass());
+    PM.add(new TraitsAnalysisServerResponse);
+  }
+
+  void prepareToClose(legacy::PassManager &PM) override {
+    ClientToServerMemory::prepareToClose(PM);
+  }
+};
+
 /// Interacts with a client and sends result of analysis on request.
 class PrivateServerPass :
   public ModulePass, private bcl::Uncopyable {
@@ -381,6 +460,9 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
+  /// Initialize provider before on the fly passes will be run on server.
+  void initializeProviderOnServer();
+
   std::string answerStatistic(llvm::Module &M);
   std::string answerFunctionList(llvm::Module &M);
   std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
@@ -391,6 +473,9 @@ private:
   bcl::RedirectIO *mStdErr;
 
   TransformationContext *mTfmCtx  = nullptr;
+  const GlobalOptions *mGlobalOpts = nullptr;
+  AnalysisSocket *mSocket = nullptr;
+  GlobalsAAResult * mGlobalsAA = nullptr;
 };
 
 /// Increments count of analyzed traits in a specified map TM.
@@ -454,6 +539,18 @@ msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
 }
 }
 
+INITIALIZE_PROVIDER(TraitsAnalysisServerProvider, "traits-server-provider",
+                    "Source-Level Traits Server (Traits, Server, Provider)")
+
+template <> char TraitsAnalysisServerResponse::ID = 0;
+INITIALIZE_PASS(TraitsAnalysisServerResponse, "traits-server-response",
+                "Source-Level Traits Server (Traits, Server, Response)", true,
+                false)
+
+char TraitsAnalysisServer::ID = 0;
+INITIALIZE_PASS(TraitsAnalysisServer, "traits-server",
+                "Source-Level Traits Server (Traits, Server)", false, false)
+
 char PrivateServerPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
@@ -462,6 +559,17 @@ INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
+INITIALIZE_PASS_DEPENDENCY(TraitsAnalysisServerProvider)
+INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
+INITIALIZE_PASS_DEPENDENCY(TraitsAnalysisServerResponse)
+INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
 
@@ -544,6 +652,7 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       getCanonicalLoopInfo();
     auto &AttrsInfo = Provider.get<LoopAttributesDeductionPass>();
     auto &CFLoopInfo = Provider.get<ClangCFTraitsPass>().getLoopInfo();
+    auto &ParallelInfo = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
     for (auto &Match : Matcher) {
       auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
       auto &LT = Loop[msg::Loop::Traits];
@@ -564,6 +673,8 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
         if (Match.get<IR>()->isLoopExiting(BB))
           ++*Loop[msg::Loop::Exit];
       }
+      if (ParallelInfo.count(Match.get<IR>()))
+        LT[msg::LoopTraits::Parallel] = msg::Analysis::Yes;
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher) {
@@ -660,6 +771,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
       auto &Provider = getAnalysis<ServerPrivateProvider>(F);
       auto &LMP = Provider.get<LoopMatcherPass>();
       auto &AA = Provider.get<AAResultsWrapperPass>().getAAResults();
+      auto &PI = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
       if (!LMP.getMatcher().empty() || !LMP.getUnmatchedAST().empty())
         Func[msg::Function::Traits][msg::FunctionTraits::Loops]
         = msg::Analysis::Yes;
@@ -672,6 +784,9 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
         for (auto &I : instructions(F))
           if (isa<ReturnInst>(I))
             ++*Func[msg::Function::Exit];
+      if (!PI.empty())
+        Func[msg::Function::Traits][msg::FunctionTraits::Parallel] =
+          msg::Analysis::Yes;
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
@@ -752,12 +867,40 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
   return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
 }
 
+void PrivateServerPass::initializeProviderOnServer() {
+  TraitsAnalysisServerProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [this](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(mGlobalOpts);
+      });
+  auto R = mSocket->getAnalysis<GlobalsAAWrapperPass,
+      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper>();
+  assert(R && "Immutable passes must be available on server!");
+  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
+  TraitsAnalysisServerProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(**DIMEnvServer);
+      });
+  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
+  TraitsAnalysisServerProvider::initialize<DIMemoryTraitPoolWrapper>(
+      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
+        Wrapper.set(**DIMTraitPoolServer);
+      });
+  auto &GlobalsAAServer = R->value<GlobalsAAWrapperPass *>()->getResult();
+  TraitsAnalysisServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(GlobalsAAServer);
+      });
+}
+
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
   if (!mConnection) {
     M.getContext().emitError("intrusive connection is not established");
     return false;
   }
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  mSocket = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
+  mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not access sources"
         ": transformation context is not available");
@@ -767,21 +910,29 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     [this, &M](TransformationEnginePass &TEP) {
       TEP.setContext(M, mTfmCtx);
   });
+  ServerPrivateProvider::initialize<AnalysisSocketImmutableWrapper>(
+      [this](AnalysisSocketImmutableWrapper &Wrapper) {
+        Wrapper.set(*mSocket);
+      });
+  ServerPrivateProvider::initialize<
+      GlobalsAAResultImmutableWrapper>(
+      [this](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(*mGlobalsAA);
+      });
   auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
   ServerPrivateProvider::initialize<MemoryMatcherImmutableWrapper>(
       [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
     Wrapper.set(*MMWrapper);
   });
-  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   ServerPrivateProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
-    Wrapper.setOptions(&GO);
+      [this](GlobalOptionsImmutableWrapper &Wrapper) {
+    Wrapper.setOptions(mGlobalOpts);
   });
-  auto &GlobalsAA = getAnalysis<GlobalsAAWrapperPass>().getResult();
   ServerPrivateProvider::initialize<GlobalsAAResultImmutableWrapper>(
-      [&GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
-    Wrapper.set(GlobalsAA);
+      [this](GlobalsAAResultImmutableWrapper &Wrapper) {
+    Wrapper.set(*mGlobalsAA);
   });
+  initializeProviderOnServer();
   while (mConnection->answer(
       [this, &M](const std::string &Request) -> std::string {
     msg::Diagnostic Diag(msg::Status::Error);
@@ -807,6 +958,7 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
 }
 
 void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
   AU.addRequired<ServerPrivateProvider>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
@@ -818,4 +970,8 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
 ModulePass * llvm::createPrivateServerPass(
     bcl::IntrusiveConnection &IC, bcl::RedirectIO &StdErr) {
   return new PrivateServerPass(IC, StdErr);
+}
+
+ModulePass * llvm::createTraitsAnalysisServer() {
+  return new TraitsAnalysisServer;
 }

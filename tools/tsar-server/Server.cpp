@@ -34,6 +34,8 @@
 #include "Messages.h"
 #include "Passes.h"
 #include "tsar/Analysis/Clang/Passes.h"
+#include "tsar/Analysis/Passes.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/Tool.h"
 #include "tsar/Core/TransformationContext.h"
@@ -126,6 +128,18 @@ public:
     addImmutableAliasAnalysis(Passes);
     addInitialTransformations(Passes);
     Passes.add(createMemoryMatcherPass());
+    Passes.add(createAnalysisSocketImmutableStorage());
+    Passes.add(createDIMemoryTraitPoolStorage());
+    Passes.add(createDIMemoryEnvironmentStorage());
+    Passes.add(createDIEstimateMemoryPass());
+    Passes.add(createTraitsAnalysisServer());
+    Passes.add(createAnalysisWaitServerPass());
+    Passes.add(createMemoryMatcherPass());
+    // Analysis on server changes metadata-level
+    // alias tree and invokes corresponding handles to update client to server
+    // mapping. So, metadata-level memory mapping is a shared resource and
+    // synchronization is necessary.
+    Passes.add(createAnalysisWaitServerPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
     Passes.run(*M);
