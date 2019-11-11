@@ -176,9 +176,10 @@ JSON_OBJECT_PAIR_5(FunctionTraits,
 JSON_OBJECT_END(FunctionTraits)
 
 JSON_OBJECT_BEGIN(Function)
-JSON_OBJECT_PAIR_7(Function,
+JSON_OBJECT_PAIR_8(Function,
   ID, unsigned,
   Name, std::string,
+  User, bool,
   StartLocation, Location,
   EndLocation, Location,
   Loops, std::vector<Loop>,
@@ -207,13 +208,23 @@ JSON_OBJECT_ROOT_PAIR(FunctionList,
   FunctionList & operator=(FunctionList &&) = default;
 JSON_OBJECT_END(FunctionList)
 
+enum class StmtKind : uint8_t {
+  First = 0,
+  Break = First,
+  Goto,
+  Return,
+  Call,
+  Invalid,
+  Number = Invalid
+};
+
 JSON_OBJECT_BEGIN(CalleeFuncInfo)
 JSON_OBJECT_PAIR_3(CalleeFuncInfo,
-  ID, std::string,
-  Name, std::string,
-  Locations, std::vector<Location>)
+  Kind, StmtKind,
+  CalleeID, unsigned,
+  StartLocation, std::vector<Location>)
 
-  CalleeFuncInfo() = default;
+  CalleeFuncInfo() : JSON_INIT(CalleeFuncInfo, StmtKind::Invalid, 0) {}
   ~CalleeFuncInfo() = default;
 
   CalleeFuncInfo(const CalleeFuncInfo &) = default;
@@ -276,6 +287,37 @@ template<> struct Traits<tsar::msg::LoopType> {
       case tsar::msg::LoopType::While: JSON += "While"; break;
       case tsar::msg::LoopType::DoWhile: JSON += "DoWhile"; break;
       case tsar::msg::LoopType::Implicit: JSON += "Implicit"; break;
+      default: JSON += "Invalid"; break;
+    }
+    JSON += '"';
+  }
+};
+
+/// Specialization of JSON serialization traits for tsar::msg::StmtKind type.
+template<> struct Traits<tsar::msg::StmtKind> {
+  static bool parse(tsar::msg::StmtKind &Dest, json::Lexer &Lex) noexcept {
+    try {
+      auto Value = Lex.discardQuote();
+      auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
+      Dest = llvm::StringSwitch<tsar::msg::StmtKind>(Lex.json())
+        .Case("Break", tsar::msg::StmtKind::Break)
+        .Case("Goto", tsar::msg::StmtKind::Goto)
+        .Case("Return", tsar::msg::StmtKind::Return)
+        .Case("Call", tsar::msg::StmtKind::Call)
+        .Default(tsar::msg::StmtKind::Invalid);
+    }
+    catch (...) {
+      return false;
+    }
+    return true;
+  }
+  static void unparse(String &JSON, tsar::msg::StmtKind Obj) {
+    JSON += '"';
+    switch (Obj) {
+      case tsar::msg::StmtKind::Break: JSON += "Break"; break;
+      case tsar::msg::StmtKind::Goto: JSON += "Goto"; break;
+      case tsar::msg::StmtKind::Return: JSON += "Return"; break;
+      case tsar::msg::StmtKind::Call: JSON += "Call"; break;
       default: JSON += "Invalid"; break;
     }
     JSON += '"';
@@ -747,14 +789,14 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     if (!Decl)
       continue;
     auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
-    if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
-        != clang::SrcMgr::C_User)
-      continue;
     auto FuncDecl = Decl->getAsFunction();
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
     Func[msg::Function::Name] = FuncDecl->getName();
     Func[msg::Function::ID] = FuncDecl->getLocStart().getRawEncoding();
+    Func[msg::Function::User] =
+        (SrcMgr.getFileCharacteristic(Decl->getLocStart()) ==
+         clang::SrcMgr::C_User);
     Func[msg::Function::StartLocation] =
         getLocation(FuncDecl->getLocStart(), SrcMgr);
     Func[msg::Function::EndLocation] =
@@ -841,27 +883,43 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     }
     if (!Info)
       return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+    DenseMap<const clang::FunctionDecl *, msg::CalleeFuncInfo> FuncMap;
+    std::array<msg::CalleeFuncInfo,
+               static_cast<std::size_t>(msg::StmtKind::Number)>
+        StmtMap;
     for (auto &T : *Info) {
       if (!(T.Flags & StmtList[msg::CalleeFuncList::Attr]))
         continue;
-      msg::CalleeFuncInfo F;
-      if (isa<clang::BreakStmt>(T))
-        F[msg::CalleeFuncInfo::Name] = "break";
-      else if (isa<clang::ReturnStmt>(T))
-        F[msg::CalleeFuncInfo::Name] = "return";
-      else if (isa<clang::GotoStmt>(T))
-        F[msg::CalleeFuncInfo::Name] = "goto";
-      else if (auto CE = dyn_cast<clang::CallExpr>(T))
-        if (auto FD = CE->getDirectCallee())
-          F[msg::CalleeFuncInfo::Name] = FD->getName();
-        else
-          F[msg::CalleeFuncInfo::Name] = "call";
-      F[msg::CalleeFuncInfo::ID] =
-        utostr(T.Stmt->getLocStart().getRawEncoding());
-      F[msg::CalleeFuncInfo::Locations].
-            push_back(getLocation(T.Stmt->getLocStart(), SrcMgr));
-      StmtList[msg::CalleeFuncList::Functions].push_back(std::move(F));
+      msg::CalleeFuncInfo *F = nullptr;
+      if (isa<clang::BreakStmt>(T)) {
+        F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Break)];
+        (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Break;
+      } else if (isa<clang::ReturnStmt>(T)) {
+        F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Return)];
+        (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Return;
+      } else if (isa<clang::GotoStmt>(T)) {
+        F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Return)];
+        (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Goto;
+      } else if (auto CE = dyn_cast<clang::CallExpr>(T)) {
+        if (auto FD = CE->getDirectCallee()) {
+          F = &FuncMap[FD];
+          (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
+          (*F)[msg::CalleeFuncInfo::CalleeID] =
+              FD->getLocStart().getRawEncoding();
+        } else {
+          F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Call)];
+          (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
+        }
+      }
+      if (F)
+        (*F)[msg::CalleeFuncInfo::StartLocation].push_back(
+          getLocation(T.Stmt->getLocStart(), SrcMgr));
     }
+    for (auto &CFI: StmtMap)
+      if (CFI[msg::CalleeFuncInfo::Kind] != msg::StmtKind::Invalid)
+        StmtList[msg::CalleeFuncList::Functions].push_back(std::move(CFI));
+    for (auto &CFI: FuncMap)
+      StmtList[msg::CalleeFuncList::Functions].push_back(std::move(CFI.second));
     return json::Parser<msg::CalleeFuncList>::unparseAsObject(StmtList);
   }
   return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
