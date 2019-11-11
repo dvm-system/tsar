@@ -110,9 +110,10 @@ JSON_DEFAULT_TRAITS(tsar::msg::, CommandLine)
 namespace {
 class ServerQueryManager : public QueryManager {
 public:
-  explicit ServerQueryManager(IntrusiveConnection &C,
-      RedirectIO &StdIn, RedirectIO &StdOut, RedirectIO &StdErr) :
-    mConnection(C), mStdIn(StdIn), mStdOut(StdOut), mStdErr(StdErr) {}
+  explicit ServerQueryManager(const GlobalOptions &GO, IntrusiveConnection &C,
+      RedirectIO &StdIn, RedirectIO &StdOut, RedirectIO &StdErr)
+    : mGlobalOptions(GO), mConnection(C), mStdIn(StdIn), mStdOut(StdOut),
+      mStdErr(StdErr) {}
 
   void run(llvm::Module *M, TransformationContext *Ctx) override {
     assert(M && "Module must not be null!");
@@ -148,12 +149,12 @@ public:
   ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
 
 private:
+  const GlobalOptions &mGlobalOptions;
   IntrusiveConnection &mConnection;
   RedirectIO &mStdIn;
   RedirectIO &mStdOut;
   RedirectIO &mStdErr;
   ASTImportInfo mImportInfo;
-  GlobalOptions mGlobalOptions;
 };
 
 void run(IntrusiveConnection C) {
@@ -218,7 +219,8 @@ void run(IntrusiveConnection C) {
   if (IsQuerySet) {
     Analyzer->run();
   } else {
-    ServerQueryManager QM(C, StdIn, StdOut, StdErr);
+    ServerQueryManager QM(Analyzer->getGlobalOptions(),
+      C, StdIn, StdOut, StdErr);
     Analyzer->run(&QM);
   }
   C.answer([&StdErr](const std::string &) {
