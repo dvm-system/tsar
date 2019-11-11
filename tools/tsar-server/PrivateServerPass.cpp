@@ -25,8 +25,10 @@
 
 #include "ClangMessages.h"
 #include "Passes.h"
+#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/ControlFlowTraits.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
@@ -35,9 +37,8 @@
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
-#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
@@ -381,8 +382,6 @@ template<> struct Traits<CFFlags> {
 using ServerPrivateProvider = FunctionPassAAProvider<
   AnalysisSocketImmutableWrapper,
   ParallelLoopPass,
-  EstimateMemoryPass,
-  PrivateRecognitionPass,
   TransformationEnginePass,
   LoopMatcherPass,
   DFRegionInfoPass,
@@ -395,8 +394,6 @@ using ServerPrivateProvider = FunctionPassAAProvider<
 
 INITIALIZE_PROVIDER_BEGIN(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
-INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
-INITIALIZE_PASS_DEPENDENCY(PrivateRecognitionPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
@@ -522,39 +519,44 @@ private:
 
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
-void incrementTraitCount(ServerPrivateProvider &P, TraitMap &TM) {
+unsigned incrementTraitCount(Function &F, const GlobalOptions &GO,
+    ServerPrivateProvider &P, AnalysisSocket &S, TraitMap &TM) {
+  auto RF =  S.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
+  assert(RF && "Dependence analysis must be available!");
+  auto RM = S.getAnalysis<AnalysisClientServerMatcherWrapper>();
+  assert(RM && "Client to server IR-matcher must be available!");
+  auto &DIAT = RF->value<DIEstimateMemoryPass *>()->getAliasTree();
+  SpanningTreeRelation<DIAliasTree *> STR(&DIAT);
+  auto &DIDepInfo = RF->value<DIDependencyAnalysisPass *>()->getDependencies();
+  auto &CToS = **RM->value<AnalysisClientServerMatcherWrapper *>();
   auto &LMP = P.get<LoopMatcherPass>();
-  auto &PI = P.get<PrivateRecognitionPass>().getPrivateInfo();
-  auto &RI = P.get<DFRegionInfoPass>().getRegionInfo();
-  auto &AT = P.get<EstimateMemoryPass>().getAliasTree();
+  unsigned NotAnalyzedLoops = 0;
   for (auto &Match : LMP.getMatcher()) {
-    auto N = RI.getRegionFor(Match.get<IR>());
-    auto DSItr = PI.find(N);
-    assert(DSItr != PI.end() &&  "Loop traits must be specified!");
-    auto ATRoot = AT.getTopLevelNode();
-    for (auto &AT : DSItr->get<DependenceSet>()) {
-      if (ATRoot == AT.getNode())
+    auto *L = Match.get<IR>();
+    if (!L->getLoopID()) {
+      ++NotAnalyzedLoops;
+      continue;
+    }
+    auto ServerLoopID = cast<MDNode>(*CToS.getMappedMD(L->getLoopID()));
+    auto DIDepSet = DIDepInfo[ServerLoopID];
+    DenseSet<const DIAliasNode *> Coverage;
+    accessCoverage<bcl::SimpleInserter>(DIDepSet, DIAT, Coverage,
+                                        GO.IgnoreRedundantMemory);
+    for (auto &TS : DIDepSet) {
+      if (!Coverage.count(TS.getNode()))
         continue;
-      for (auto &T : make_range(AT.begin(), AT.end())) {
-        if (T.is<trait::NoAccess>()) {
-          if (T.is<trait::AddressAccess>())
+      for (auto &T : make_range(TS.begin(), TS.end())) {
+        if (T->is<trait::NoAccess>()) {
+          if (T->is<trait::AddressAccess>())
             ++TM.template value<trait::AddressAccess>();
           continue;
         }
-        AT.for_each(bcl::TraitMapConstructor<
-          MemoryDescriptor, TraitMap, bcl::CountInserter>(AT, TM));
-      }
-      for (auto &T : make_range(AT.unknown_begin(), AT.unknown_end())) {
-        if (T.is<trait::NoAccess>()) {
-          if (T.is<trait::AddressAccess>())
-            ++TM.template value<trait::AddressAccess>();
-          continue;
-        }
-        AT.for_each(bcl::TraitMapConstructor<
-          MemoryDescriptor, TraitMap, bcl::CountInserter>(AT, TM));
+        TS.for_each(bcl::TraitMapConstructor<
+          MemoryDescriptor, TraitMap, bcl::CountInserter>(TS, TM));
       }
     }
   }
+  return NotAnalyzedLoops;
 }
 
 msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
@@ -660,7 +662,10 @@ std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
     auto &LMP = Provider.get<LoopMatcherPass>();
     Loops.first += LMP.getMatcher().size();
     Loops.second += LMP.getUnmatchedAST().size();
-    incrementTraitCount(Provider, Stat[msg::Statistic::Traits]);
+    auto NotAnalyzedLoops = incrementTraitCount(
+        F, *mGlobalOpts, Provider, *mSocket, Stat[msg::Statistic::Traits]);
+    Loops.first -= NotAnalyzedLoops;
+    Loops.second += NotAnalyzedLoops;
   }
   Stat[msg::Statistic::Loops].insert(
     std::make_pair(msg::Analysis::Yes, Loops.first));
