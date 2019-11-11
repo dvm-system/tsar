@@ -806,8 +806,8 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
         getLocation(FuncDecl->getLocStart(), SrcMgr);
     Func[msg::Function::EndLocation] =
         getLocation(FuncDecl->getLocEnd(), SrcMgr);
-    if (hasFnAttr(F, AttrKind::AlwaysReturn) ||
-        F.hasFnAttribute(Attribute::NoUnwind) ||
+    if (hasFnAttr(F, AttrKind::AlwaysReturn) &&
+        F.hasFnAttribute(Attribute::NoUnwind) &&
         !F.hasFnAttribute(Attribute::ReturnsTwice))
       Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
         = msg::Analysis::No;
