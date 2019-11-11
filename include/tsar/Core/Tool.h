@@ -27,6 +27,7 @@
 #ifndef TSAR_TOOL_H
 #define TSAR_TOOL_H
 
+#include "tsar/Support/GlobalOptions.h"
 #include <bcl/utility.h>
 #include <clang/Tooling/CompilationDatabase.h>
 #include <llvm/ADT/SmallVector.h>
@@ -64,6 +65,9 @@ public:
   /// \return Zero on success.
   int run(QueryManager *QM = nullptr);
 
+  /// Return analysis options specified in a command line.
+  const GlobalOptions &getGlobalOptions() const noexcept { return mGlobalOpts; }
+
 private:
   /// \brief Stores command line options.
   ///
@@ -92,6 +96,7 @@ private:
   ///
   void storePrintOptions(OptionList &IncompatibleOpts);
 
+  GlobalOptions mGlobalOpts;
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
   std::vector<const llvm::PassInfo *> mOutputPasses;
