@@ -51,6 +51,8 @@
 #include <bcl/utility.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Expr.h>
+#include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Basic/Builtins.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Verifier.h>
@@ -680,8 +682,8 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
-    auto FuncDecl = Decl->getAsFunction();
-    if (FuncDecl->getLocStart().getRawEncoding() !=
+    auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
+    if (CanonicalFD->getLocStart().getRawEncoding() !=
         Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
@@ -787,18 +789,24 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
   return json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
+
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
+  auto &ASTCtx = mTfmCtx->getContext();
+  auto &SrcMgr = ASTCtx.getSourceManager();
+  DenseSet<clang::FunctionDecl *> VisitedCanonicals;
   for (Function &F : M) {
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
-    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
     auto FuncDecl = Decl->getAsFunction();
+    auto *CanonicalD = FuncDecl->getCanonicalDecl();
+    VisitedCanonicals.insert(CanonicalD);
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
     Func[msg::Function::Name] = FuncDecl->getName();
-    Func[msg::Function::ID] = FuncDecl->getLocStart().getRawEncoding();
+    // Canonical declaration may differs from declaration which has a body.
+    Func[msg::Function::ID] = CanonicalD->getLocStart().getRawEncoding();
     Func[msg::Function::User] =
         (SrcMgr.getFileCharacteristic(Decl->getLocStart()) ==
          clang::SrcMgr::C_User);
@@ -837,6 +845,30 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
+  for (auto *D : ASTCtx.getTranslationUnitDecl()->decls())
+    if (auto *FD = dyn_cast<clang::FunctionDecl>(D)) {
+      auto ID = FD->getBuiltinID();
+      if (ID == 0)
+        continue;
+      FD = FD->getCanonicalDecl();
+      if (VisitedCanonicals.count(FD))
+        continue;
+      msg::Function Func;
+      Func[msg::Function::Name] = FD->getName();
+      // Canonical declaration may differs from declaration which has a body.
+      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
+      Func[msg::Function::User] = false;
+      Func[msg::Function::StartLocation] =
+          getLocation(FD->getLocStart(), SrcMgr);
+      Func[msg::Function::EndLocation] =
+          getLocation(FD->getLocEnd(), SrcMgr);
+      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
+          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
+          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
+        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
+          = msg::Analysis::No;
+      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+    }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
@@ -846,8 +878,8 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
-    auto FuncDecl = Decl->getAsFunction();
-    if (FuncDecl->getLocStart().getRawEncoding() !=
+    auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
+    if (CanonicalFD->getLocStart().getRawEncoding() !=
         Request[msg::CalleeFuncList::FuncID])
       continue;
     if (F.isDeclaration())
@@ -907,6 +939,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Goto;
       } else if (auto CE = dyn_cast<clang::CallExpr>(T)) {
         if (auto FD = CE->getDirectCallee()) {
+          FD = FD->getCanonicalDecl();
           F = &FuncMap[FD];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
           (*F)[msg::CalleeFuncInfo::CalleeID] =
