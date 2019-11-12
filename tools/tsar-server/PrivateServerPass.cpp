@@ -925,7 +925,9 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
                static_cast<std::size_t>(msg::StmtKind::Number)>
         StmtMap;
     for (auto &T : *Info) {
-      if (!(T.Flags & StmtList[msg::CalleeFuncList::Attr]))
+      if (!(T.Flags & StmtList[msg::CalleeFuncList::Attr]) &&
+          !(StmtList[msg::CalleeFuncList::Attr] == DefaultFlags &&
+            isa<clang::CallExpr>(T)))
         continue;
       msg::CalleeFuncInfo *F = nullptr;
       if (isa<clang::BreakStmt>(T)) {
