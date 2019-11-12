@@ -137,7 +137,8 @@ public:
   bool VisitCallExpr(CallExpr *CE) {
     auto *Callee = CE->getCalleeDecl();
     auto Flags = CFFlags::DefaultFlags;
-   if (Callee) {
+    if (Callee) {
+      Callee = Callee->getCanonicalDecl();
       auto FuncItr = mCallees->find(Callee);
       if (FuncItr != mCallees->end()) {
         if (!hasFnAttr(*FuncItr->second, AttrKind::AlwaysReturn))
