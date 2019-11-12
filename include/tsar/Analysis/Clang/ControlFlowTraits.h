@@ -316,7 +316,7 @@ public:
   /// exist.
   std::pair<iterator, bool> insert_call(const FuncT &F, CFTraits &&T) {
     auto Info = mTraits.insert(std::move(T));
-    if (Info.second) {
+    if (F && Info.second) {
       auto &Calls = mCalls.try_emplace(F).first->second;
       Calls.emplace_back(Info.first);
     }
