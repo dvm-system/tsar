@@ -453,10 +453,10 @@ public:
   /// \return Iterator following the removed element.
   iterator erase(iterator I) {
     assert(I != end() && "Iterator must refer element in the container!");
-    auto Node = const_cast<pointer>(*I);
+    auto *Node = const_cast<BimapNode *>(&*I.mCurItr);
     mFirstToSecond.erase(Node);
     mSecondToFirst.erase(Node);
-    return mColl.erase(Node);
+    return InternalItrC(mColl.erase(Node));
   }
 
   /// \brief Removes the elements in the range [I; EI), which must be

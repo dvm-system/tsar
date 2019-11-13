@@ -27,9 +27,14 @@
 #ifndef TSAR_ANALYSIS_PASSES_H
 #define TSAR_ANALYSIS_PASSES_H
 
+namespace bcl {
+class IntrusiveConnection;
+}
+
 namespace llvm {
 class PassRegistry;
 class PassInfo;
+class ImmutablePass;
 class FunctionPass;
 class ModulePass;
 class raw_ostream;
@@ -59,6 +64,47 @@ void initializeDFRegionInfoPassPass(PassRegistry &Registry);
 /// Create a pass to build hierarchy of data-flow regions.
 FunctionPass * createDFRegionInfoPass();
 
+/// Initialize a wrapper to access analysis socket.
+void initializeAnalysisSocketImmutableWrapperPass(PassRegistry &Registry);
 
+/// Initialize immutable storage for analysis socket.
+void initializeAnalysisSocketImmutableStoragePass(PassRegistry &Registry);
+
+/// Create immutable storage for analysis socket.
+ImmutablePass *createAnalysisSocketImmutableStorage();
+
+/// Initialize immutable pass to access analysis connection.
+void initializeAnalysisConnectionImmutableWrapperPass(PassRegistry& Registry);
+
+/// Create immutable pass to access analysis connection.
+ImmutablePass *createAnalysisConnectionImmutableWrapper(
+  bcl::IntrusiveConnection &C);
+
+/// Initialize a pass to notify client as soon as server receives 'wait' request.
+void initializeAnalysisNotifyClientPassPass(PassRegistry &Registry);
+
+/// Notify client as soon as server receives 'wait' request.
+ModulePass * createAnalysisNotifyClientPass();
+
+/// Initialize a pass to notify server that all requests have been processed
+/// and it may execute further passes.
+void initializeAnalysisReleaseServerPassPass(PassRegistry &Registry);
+
+/// Notify server that all requests have been processed and it may execute
+/// further passes.
+ModulePass * createAnalysisReleaseServerPass();
+
+/// Initialize a pass to block client until server send notification.
+void initializeAnalysisWaitServerPassPass(PassRegistry &Registry);
+
+/// Block client until server sends notification.
+ModulePass * createAnalysisWaitServerPass();
+
+/// Initialize a pass to close connection with server.
+void initializeAnalysisCloseConnectionPassPass(PassRegistry &Registry);
+
+/// Close connection with server (it should be run on client). Client will
+/// be blocked until server confirms that connection can be closed.
+ModulePass *createAnalysisCloseConnectionPass();
 }
 #endif//TSAR_ANALYSIS_PASSES_H

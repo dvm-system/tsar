@@ -29,10 +29,10 @@
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/ADT/PersistentMap.h"
 #include "tsar/ADT/PersistentIteratorInfo.h"
-#include "tsar/Analysis/AnalysisWrapperPass.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryHandle.h"
 #include "tsar/Analysis/Memory/MemoryTrait.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <llvm/ADT/APSInt.h>
 #include <llvm/ADT/DenseMap.h>
@@ -116,14 +116,16 @@ class DIReduction {
 public:
   /// This represents available kinds of a reduction.
   enum ReductionKind : uint8_t {
-    RK_NoReduction,
-    RK_Add,
+    RK_First,
+    RK_Add = RK_First,
     RK_Mult,
     RK_Or,
     RK_And,
     RK_Xor,
     RK_Max,
     RK_Min,
+    RK_NoReduction,
+    RK_NumberOf = RK_NoReduction,
   };
 
   /// Creates reduction with a specified kind.

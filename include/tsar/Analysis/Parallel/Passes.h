@@ -1,8 +1,8 @@
-//=== Passes.h - Create and Initialize Analysis Passes (Reader) -*- C++ -*-===//
+//===- Passes.h - Create and Initialize Parallelization Passes --*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2019 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,30 +19,29 @@
 //===----------------------------------------------------------------------===//
 //
 // It contains declarations of functions that initialize and create an instances
-// of TSAR passes which are necessary to load external analysis results.
-// Declarations of appropriate methods for an each new pass should
-// be added to this file.
+// of TSAR analysis passes which determine opportunities of program
+// parallelization. Declarations of appropriate methods for an each new pass
+// should be added to this file.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_ANALYSIS_READER_PASSES_H
-#define TSAR_ANALYSIS_READER_PASSES_H
-
-#include <llvm/ADT/StringRef.h>
+#ifndef TSAR_PARALLEL_ANALYSIS_PASSES_H
+#define TSAR_PARALLEL_ANALYSIS_PASSES_H
 
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
 
-/// Initialize all passes which is necessary to load external analysis results.
-void initializeAnalysisReader(PassRegistry &Registry);
+/// Initialize analysis passes which determine opportunities of program
+/// parallelization.
+void initializeParallelizationAnalysis(PassRegistry &Registry);
 
-/// Create a reader of external analysis results stored in a specified file.
-///
-/// If `Filename` is empty `GlobalOptions::AnalysisUse` value is used.
-FunctionPass * createAnalysisReader(llvm::StringRef Filename = "");
+/// Initialize a pass to determine loops which could be executed
+/// in a parallel way.
+void initializeParallelLoopPassPass(PassRegistry &Registry);
 
-/// Initialize a reader of external analysis results.
-void initializeAnalysisReaderPass(PassRegistry &Registry);
+/// Initialize a pass to determine loops which could be executed
+/// in a parallel way.
+FunctionPass *createParallelLoopPass();
 }
-#endif//TSAR_ANALYSIS_READER_PASSES_H
+#endif//TSAR_PARALLEL_ANALYSIS_PASSES_H

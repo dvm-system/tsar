@@ -237,11 +237,11 @@ FunctionPass * llvm::createAliasTreeOnlyPrinterPass() {
 }
 
 void AliasTree::view() const {
-  llvm::ViewGraph(this, "em", true,
+  llvm::ViewGraph(const_cast<AliasTree *>(this), "em", false,
     llvm::DOTGraphTraits<AliasTree *>::getGraphName(this));
 }
 
 void AliasTree::viewOnly() const {
-  llvm::ViewGraph(this, "emonly", false,
+  llvm::ViewGraph(const_cast<AliasTree *>(this), "emonly", true,
     llvm::DOTGraphTraits<AliasTree *>::getGraphName(this));
 }

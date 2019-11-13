@@ -26,7 +26,7 @@
 #ifndef TSAR_APC_CONTEXT_H
 #define TSAR_APC_CONTEXT_H
 
-#include "tsar/Analysis/AnalysisWrapperPass.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <apc/apc-config.h>
 #include <bcl/utility.h>

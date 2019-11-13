@@ -1,8 +1,8 @@
-//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
+//===--- AnalysisServer.cpp ---- Analysis Server ----------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2019 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,20 +18,25 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This contains functions to initialize passes which are necessary for
-// source-to-source transformation of C programs.
+// This file implements base representation of analysis server and a server pass
+// which could be used to send response.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Analysis/AnalysisServer.h"
 
 using namespace llvm;
 
-void llvm::initializeClangTransform(PassRegistry &Registry) {
-  initializeClangFormatPassPass(Registry);
-  initializeClangExprPropagationPass(Registry);
-  initializeClangInlinerPassPass(Registry);
-  initializeClangRenameLocalPassPass(Registry);
-  initializeClangDeadDeclsEliminationPass(Registry);
-  initializeClangOpenMPParalleizationPass(Registry);
+template<> char AnalysisClientServerMatcherWrapper::ID = 0;
+INITIALIZE_PASS(AnalysisClientServerMatcherWrapper, "analysis-cs-matcher-iw",
+  "Analysis Client Server Matcher (Wrapper)", true, true)
+
+ImmutablePass * llvm::createAnalysisClientServerMatcherWrapper(
+    ValueToValueMapTy &OriginToClone) {
+  initializeAnalysisClientServerMatcherWrapperPass(
+    *PassRegistry::getPassRegistry());
+  auto P = new AnalysisClientServerMatcherWrapper;
+  P->set(OriginToClone);
+  return P;
 }
+

@@ -25,6 +25,7 @@
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/MetadataUtils.h"
+#include "tsar/Support/PassAAProvider.h"
 #include <regex>
 
 using namespace llvm;
@@ -90,3 +91,8 @@ llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo) {
   return ArgItr != ArgItrE ? &*ArgItr : nullptr;
 }
 }
+
+template <> char GlobalsAAResultImmutableWrapper::ID = 0;
+using namespace llvm;
+INITIALIZE_PASS(GlobalsAAResultImmutableWrapper, "globals-aa-iw",
+                "Globals Alias Analysis Wrapper", true, true)

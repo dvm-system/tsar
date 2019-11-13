@@ -136,6 +136,17 @@ class FunctionPassProvider : public llvm::FunctionPass, bcl::Uncopyable {
     FunctionPassProvider *mProvider;
   };
 
+  template<class RequiredType>
+  struct GetWithIDFunctor {
+    template <class AnalysisType> void operator()(AnalysisType *A) {
+      if (ID == &std::remove_pointer<decltype(A)>::type::ID)
+        Result = static_cast<RequiredType>(A);
+    }
+    llvm::AnalysisID &ID;
+    RequiredType &Result;
+  };
+
+
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -157,6 +168,7 @@ public:
       auto &PM = Resolver->getPMDataManager();
       auto P = PM.findAnalysisPass(
         static_cast<void *>(&AnalysisType::ID), true);
+      assert(P && "Try to initialize a pass which is not required!");
       F(static_cast<AnalysisType &>(*P));
     }
   }
@@ -219,6 +231,14 @@ public:
       typename std::add_pointer<AnalysisType>::type>();
   }
 
+  /// Return result of analysis with a specified ID.
+  template<class AnalysisType = void>
+  void *getWithID(llvm::AnalysisID ID) const {
+    AnalysisType *Result = nullptr;
+    mPasses.for_each(GetWithIDFunctor<AnalysisType *>{ID, Result});
+    return Result;
+  }
+
 private:
   static ProviderListT ProviderList;
   AnalysisMap mPasses;
@@ -232,6 +252,12 @@ typename FunctionPassProvider<Analysis...>::ProviderListT
   FunctionPassProvider<Analysis...>::ProviderList;
 }
 
+#define INITIALIZE_PROVIDER(passName, arg, name) \
+namespace llvm { \
+static void initialize##passName##Pass(PassRegistry &Registry); \
+} \
+INITIALIZE_PASS(passName, arg, name, true, true)
+
 #define INITIALIZE_PROVIDER_BEGIN(passName, arg, name) \
 namespace llvm { \
 static void initialize##passName##Pass(PassRegistry &Registry); \
@@ -240,6 +266,33 @@ INITIALIZE_PASS_BEGIN(passName, arg, name, true, true)
 
 #define INITIALIZE_PROVIDER_END(passName, arg, name) \
 INITIALIZE_PASS_END(passName, arg, name, true, true)
+
+namespace tsar {
+namespace detail {
+/// Helpful function declaration to recognize passes inherited from provider.
+template <class... Analysis>
+bcl::TypeList<Analysis...>
+check_pass_provider(FunctionPassProvider<Analysis...> &&);
+}
+
+/// Similar to std::enable_if with condition evaluated to true if P is provider.
+template <class P, class T = void,
+          class = decltype(detail::check_pass_provider(std::declval<P>()))>
+using enable_if_pass_provider = T;
+
+/// Provide constant value equal to `true` if `T` is a provider.
+template <class T, class Enable = void>
+struct is_pass_provider : std::false_type {};
+
+/// Provide constant value equal to `true` if `T` is a provider.
+template <class T>
+struct is_pass_provider<T, enable_if_pass_provider<T>> : std::true_type {};
+
+/// Provide a list (`bcl::TypeList<...>`) of analysis for a provider of type T.
+template<class T>
+using pass_provider_analysis =
+    decltype(detail::check_pass_provider(std::declval<T>()));
+}
 
 #endif//TSAR_PASS_PROVIDER_H
 

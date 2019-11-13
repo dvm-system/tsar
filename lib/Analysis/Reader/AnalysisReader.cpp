@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
@@ -56,7 +57,7 @@ struct Identifier {};
 
 /// Position in a source code.
 using LocationT = bcl::tagged_tuple<
-  bcl::tagged<std::string, File>,
+  bcl::tagged<sys::fs::UniqueID, File>,
   bcl::tagged<trait::LineTy, Line>,
   bcl::tagged<trait::ColumnTy, Column>>;
 
@@ -66,7 +67,7 @@ using LoopCache = std::map<LocationT, std::size_t>;
 
 /// Position of a variable in a source code.
 using VariableT = bcl::tagged_tuple<
-  bcl::tagged<std::string, File>,
+  bcl::tagged<sys::fs::UniqueID, File>,
   bcl::tagged<trait::LineTy, Line>,
   bcl::tagged<trait::ColumnTy, Column>,
   bcl::tagged<std::string, Identifier>>;
@@ -143,11 +144,7 @@ class AnalysisReader : public FunctionPass, bcl::Uncopyable {
 public:
   static char ID;
 
-  AnalysisReader() : FunctionPass(ID) {
-    initializeAnalysisReaderPass(*PassRegistry::getPassRegistry());
-  }
-
-  explicit AnalysisReader(StringRef DataFile) :
+  explicit AnalysisReader(StringRef DataFile = "") :
     mDataFile(DataFile), FunctionPass(ID) {
     initializeAnalysisReaderPass(*PassRegistry::getPassRegistry());
   }
@@ -165,17 +162,27 @@ LoopCache buildLoopCache(const trait::Info &Info) {
   for (std::size_t I = 0, EI = Info[trait::Info::Loops].size(); I < EI; ++I) {
     auto &L = Info[trait::Info::Loops][I];
     LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add loop to cache "
-                      << L[trait::Loop::File] << ":" << L[trait::Loop::Line]
-                      << ":" << L[trait::Loop::Column] << "\n");
-    Res.emplace(LocationT{
-      L[trait::Loop::File], L[trait::Loop::Line], L[trait::Loop::Column]}, I);
+      << L[trait::Loop::File] << ":" << L[trait::Loop::Line]
+      << ":" << L[trait::Loop::Column] << "\n");
+    sys::fs::UniqueID ID;
+    if (sys::fs::getUniqueID(L[trait::Loop::File], ID))
+      continue;
+    Res.emplace(LocationT{ID, L[trait::Loop::Line], L[trait::Loop::Column]}, I);
   }
   return Res;
 }
 
 VariableT createVar(trait::IdTy I, const trait::Info &Info) {
   VariableT Var;
-  Var.get<File>() = Info[trait::Info::Vars][I][trait::Var::File];
+  sys::fs::UniqueID ID;
+  if (sys::fs::getUniqueID(Info[trait::Info::Vars][I][trait::Var::File], ID)) {
+    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: ignore variable "
+                      << Info[trait::Info::Vars][I][trait::Var::Name]
+                      << ", unable to build unique ID for a file "
+                      << Info[trait::Info::Vars][I][trait::Var::File] << "\n");
+    return Var;
+  }
+  Var.get<File>() = ID;
   Var.get<Line>() = Info[trait::Info::Vars][I][trait::Var::Line];
   Var.get<Column>() = Info[trait::Info::Vars][I][trait::Var::Column];
   Var.get<Identifier>() = Info[trait::Info::Vars][I][trait::Var::Name];
@@ -196,6 +203,8 @@ template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
     const trait::Info &Info, const trait::Loop &L, TraitCache &Cache) {
   for (auto I = L[Key].cbegin(), EI = L[Key].cend(); I != EI; ++I) {
     auto Var = createVar(getVariableIdx(I), Info);
+    if (Var.get<Identifier>().empty())
+      continue;
     auto CacheItr = Cache.find(Var);
     if (CacheItr == Cache.end())
       CacheItr = Cache.emplace(std::move(Var), TraitT()).first;
@@ -225,8 +234,11 @@ const trait::Loop * findLoop(const MDNode *LoopID, const LoopCache &Cache,
       break;
   if (!Loc)
     return nullptr;
+  sys::fs::UniqueID ID;
+  if (sys::fs::getUniqueID(Loc->getFilename(), ID))
+    return nullptr;
   auto LoopKey =
-    LocationT{ Loc->getFilename().str(), Loc->getLine(), Loc->getColumn() };
+    LocationT{ ID, Loc->getLine(), Loc->getColumn() };
   auto LoopItr = Cache.find(LoopKey);
   return (LoopItr == Cache.end() ? nullptr :
     &Info[trait::Info::Loops][LoopItr->second]);
@@ -281,6 +293,7 @@ void updateOutputDep(
 INITIALIZE_PASS_BEGIN(AnalysisReader, "analysis-reader",
   "External Analysis Results Reader", true, true)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisReader, "analysis-reader",
   "External Analysis Results Reader", true, true)
 
@@ -292,9 +305,17 @@ FunctionPass * llvm::createAnalysisReader(StringRef DataFile) {
 
 void AnalysisReader::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIMemoryTraitPoolWrapper>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
 }
 
 bool AnalysisReader::runOnFunction(Function &F) {
+  if (mDataFile.empty()) {
+    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+    if (!GO.AnalysisUse.empty())
+      mDataFile = GO.AnalysisUse;
+    else
+      return false;
+  }
   auto FileOrErr = MemoryBuffer::getFile(mDataFile);
   if (auto EC = FileOrErr.getError()) {
     F.getContext().diagnose(DiagnosticInfoPGOProfile(mDataFile.data(),
@@ -356,16 +377,25 @@ bool AnalysisReader::runOnFunction(Function &F) {
       }
       Var.get<Identifier>() =
         ((DIExpr->startsWithDeref() ? "^" : "") + DIVar->getName()).str();
-      Var.get<File>() = DIVar->getFilename();
+      sys::fs::UniqueID FileID;
+      if (sys::fs::getUniqueID(DIVar->getFilename(), FileID)) {
+        LLVM_DEBUG(
+            dbgs() << "[ANALYSIS READER]: can not find traits for variable "
+                   << DIVar->getName() << " unable build unique ID for file"
+                   << DIVar->getFilename() << "\n");
+        continue;
+      }
+      Var.get<File>() = FileID;
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update traits for a variable "
                         << Var.get<Identifier>() << " defined at "
-                        << Var.get<File>() << ":" << Var.get<Line>() << ":"
+                        << DIVar->getFilename() << ":" << Var.get<Line>() << ":"
                         << Var.get<Column>() << "\n");
       auto TraitItr = TraitCache.find(Var);
       if (TraitItr == TraitCache.end() ||
           isOnlyAnyOf<trait::UseAfterLoop, trait::WriteOccurred>(
             TraitItr->second)) {
-        if (TraitItr->second.get<trait::WriteOccurred>())
+        if (TraitItr == TraitCache.end() ||
+            TraitItr->second.get<trait::WriteOccurred>())
           DITrait.set<trait::Shared>();
         else
           DITrait.set<trait::Readonly>();

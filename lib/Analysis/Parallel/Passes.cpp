@@ -1,8 +1,8 @@
-//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
+//=== Passes.cpp - Create and Initialize Parallelization Passes -*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2019 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,20 +18,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This contains functions to initialize passes which are necessary for
-// source-to-source transformation of C programs.
+// This contains functions to initialize analysis passes which determine
+// opportunities of program parallelization.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Analysis/Parallel/Passes.h"
 
 using namespace llvm;
 
-void llvm::initializeClangTransform(PassRegistry &Registry) {
-  initializeClangFormatPassPass(Registry);
-  initializeClangExprPropagationPass(Registry);
-  initializeClangInlinerPassPass(Registry);
-  initializeClangRenameLocalPassPass(Registry);
-  initializeClangDeadDeclsEliminationPass(Registry);
-  initializeClangOpenMPParalleizationPass(Registry);
+void llvm::initializeParallelizationAnalysis(PassRegistry &Registry) {
+  initializeParallelLoopPassPass(Registry);
 }

@@ -116,7 +116,7 @@ bool DIMemoryLocation::isValid() const {
 DIMemoryLocation DIMemoryLocation::get(DbgInfoIntrinsic *Inst) {
   assert(Inst && "Instruction must not be null!");
   auto *Expr = Inst->getExpression();
-  assert(Expr && Expr->isValid() && "Expression must not be valid!");
+  assert(Expr && Expr->isValid() && "Expression must be valid!");
   if (auto Frag = Expr->getFragmentInfo())
     Expr = DIExpression::get(Expr->getContext(),
       { dwarf::DW_OP_LLVM_fragment, Frag->OffsetInBits, Frag->SizeInBits });

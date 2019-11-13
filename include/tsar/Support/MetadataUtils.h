@@ -158,7 +158,7 @@ inline llvm::AAMDNodes sanitizeAAInfo(llvm::AAMDNodes AAInfo) {
 }
 
 /// Additional types may be necessary for metadata-level analysis. This function
-/// returns 'true' if a specified type is one of thes types and it has not bee
+/// returns 'true' if a specified type is one of these types and it has not been
 /// accurately generated.
 ///
 /// TODO (kaniandr@gmail.com): may be we should use other way to distinguish

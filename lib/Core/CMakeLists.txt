@@ -39,14 +39,14 @@ endif()
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARTool
     TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
-    TSARAnalysisClang TSARAnalysisReader TSARAnalysisMemory TSARAnalysis
-    TSARUnparse TSARSupportClang TSARSupport
+    TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory
+    TSARAnalysis TSARUnparse TSARSupportClang TSARSupport
     ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 endif()
 target_link_libraries(TSARTool PRIVATE
   TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
-  TSARAnalysisClang TSARAnalysisReader TSARAnalysisMemory TSARAnalysis
-  TSARUnparse TSARSupportClang TSARSupport BCL::Core)
+  TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory
+  TSARAnalysis TSARUnparse TSARSupportClang TSARSupport BCL::Core)
 
 if(WIN32)
   # clangDriver uses version.dll.

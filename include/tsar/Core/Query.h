@@ -33,6 +33,7 @@
 #include <vector>
 
 namespace llvm {
+class DataLayout;
 class Pass;
 class PassInfo;
 class Module;
@@ -53,6 +54,37 @@ struct GlobalOptions;
 class TransformationContext;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
+/// Add immutable alias analysis passes.
+void addImmutableAliasAnalysis(llvm::legacy::PassManager &Passes);
+
+/// Add transformations which do not influence source-level to IR-level
+/// correspondence (add some attributes, remove unreachable code, etc).
+void addInitialTransformations(llvm::legacy::PassManager &Passes);
+
+/// Add preliminary analysis of privatizable variables.
+///
+/// This analysis is necessary to prevent lost of result of optimized values.
+/// The memory promotion may remove some variables with attached source-level
+/// debug information. Consider an example:
+/// `int *P, X; P = &X; for (...) { *P = 0; X = 1; }`
+/// Memory promotion removes P, so X will be recognized as private variable.
+/// However in the original program data-dependency exists because different
+/// pointers refer the same memory.
+/// \param AnalysisUse External analysis results which should be used to
+/// clarify analysis. If it is empty GlobalOptions::AnalysisUse value is used
+/// if not empty.
+void addBeforeTfmAnalysis(llvm::legacy::PassManager &Passes,
+                          llvm::StringRef AnalysisUse = "");
+
+/// Perform SROA and repeat variable privatization. After that reduction and
+/// induction recognition will be performed. Flow/anti/output dependencies
+/// also analyses.
+void addAfterSROAAnalysis(const GlobalOptions &GO, const llvm::DataLayout &DL,
+                          llvm::legacy::PassManager &Passes);
+
+/// Perform loop rotation to enable reduction recognition if for-loops.
+void addAfterLoopRotateAnalysis(llvm::legacy::PassManager &Passes);
 
 /// This is a query manager that controls construction of response when analysis
 /// and transformation tool is launched.
@@ -179,7 +211,7 @@ public:
       llvm::StringRef AnalysisUse = "") :
     mGlobalOptions(Options),
     mOutputPasses(OutputPasses), mPrintPasses(PrintPasses),
-    mPrintSteps(PrintSteps), mAnalysisUse(AnalysisUse) {}
+    mPrintSteps(PrintSteps) {}
 
   /// Runs default sequence of passes.
   void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
@@ -197,7 +229,6 @@ private:
   PassList mPrintPasses;
   ProcessingStep mPrintSteps;
   const GlobalOptions *mGlobalOptions;
-  std::string mAnalysisUse;
   ASTImportInfo mImportInfo;
 };
 

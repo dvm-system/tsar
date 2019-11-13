@@ -59,31 +59,15 @@ using namespace clang;
 using namespace llvm;
 using namespace tsar;
 
-void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
-    llvm::legacy::PassManager &Passes) {
-  assert(P->getPotentialPassManagerType() == PMT_FunctionPassManager &&
-    "Results of function passes can be printed at this moment only!");
-  // PassInfo should be obtained before a pass is added into a pass manager
-  // because in some cases pass manager delete this pass. After that pointer
-  // becomes invalid. For example, the reason is existence of the same pass in
-  // a pass sequence.
-  if (PrintResult) {
-    auto PI = PassRegistry::getPassRegistry()->getPassInfo(P->getPassID());
-    Passes.add(P);
-    Passes.add(createFunctionPassPrinter(PI, errs()));
-    return;
-  }
-  Passes.add(P);
-};
-
-static void addInitialAnalysis(const GlobalOptions * GO,
-    legacy::PassManager &Passes) {
-  Passes.add(createGlobalOptionsImmutableWrapper(GO));
-  // Add initial alias analysis.
+namespace tsar {
+void addImmutableAliasAnalysis(legacy::PassManager &Passes) {
   Passes.add(createCFLSteensAAWrapperPass());
   Passes.add(createCFLAndersAAWrapperPass());
   Passes.add(createTypeBasedAAWrapperPass());
   Passes.add(createScopedNoAliasAAWrapperPass());
+}
+
+void addInitialTransformations(legacy::PassManager &Passes) {
   // The 'unreachableblockelim' pass is necessary because implementation
   // of data-flow analysis relies on suggestion that control-flow graph does
   // not contain unreachable basic blocks.
@@ -113,9 +97,70 @@ static void addInitialAnalysis(const GlobalOptions * GO,
   Passes.add(createDIGlobalRetrieverPass());
 }
 
+void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
+  Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
+  Passes.add(createAnalysisReader());
+}
+
+void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
+                          legacy::PassManager &Passes) {
+  Passes.add(createCFGSimplificationPass());
+  // Do not add 'instcombine' here, because in this case some metadata may be
+  // lost after SROA (for example, if a promoted variable is a structure).
+  // Passes.add(createInstructionCombiningPass());
+  Passes.add(createSROAPass());
+  Passes.add(createProcessDIMemoryTraitPass(
+    [&DL](DIMemoryTrait &T) { markIfNotPromoted(DL, T); }));
+  if (!GO.UnsafeTfmAnalysis)
+    Passes.add(createProcessDIMemoryTraitPass(
+      markIf<trait::Lock, trait::NoPromotedScalar>));
+  Passes.add(createEarlyCSEPass());
+  Passes.add(createCFGSimplificationPass());
+  Passes.add(createInstructionCombiningPass());
+  Passes.add(createLoopSimplifyPass());
+  Passes.add(createSCEVAAWrapperPass());
+  Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createRPOFunctionAttrsAnalysis());
+  Passes.add(createPOFunctionAttrsAnalysis());
+  Passes.add(createMemoryMatcherPass());
+  Passes.add(createDIDependencyAnalysisPass());
+}
+
+void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
+  Passes.add(
+      createProcessDIMemoryTraitPass(markIf<trait::Lock, trait::HeaderAccess>));
+  Passes.add(createLoopRotatePass());
+  Passes.add(createCFGSimplificationPass());
+  Passes.add(createInstructionCombiningPass());
+  Passes.add(createLoopSimplifyPass());
+  Passes.add(createLCSSAPass());
+  Passes.add(createMemoryMatcherPass());
+  Passes.add(createDIDependencyAnalysisPass());
+}
+} // namespace tsar
+
+void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
+    llvm::legacy::PassManager &Passes) {
+  assert(P->getPotentialPassManagerType() == PMT_FunctionPassManager &&
+    "Results of function passes can be printed at this moment only!");
+  // PassInfo should be obtained before a pass is added into a pass manager
+  // because in some cases pass manager delete this pass. After that pointer
+  // becomes invalid. For example, the reason is existence of the same pass in
+  // a pass sequence.
+  if (PrintResult) {
+    auto PI = PassRegistry::getPassRegistry()->getPassInfo(P->getPassID());
+    Passes.add(P);
+    Passes.add(createFunctionPassPrinter(PI, errs()));
+    return;
+  }
+  Passes.add(P);
+};
+
 void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
+  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
   if (Ctx) {
     auto TEP = static_cast<TransformationEnginePass *>(
       createTransformationEnginePass());
@@ -123,7 +168,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     Passes.add(TEP);
     Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   }
-  addInitialAnalysis(mGlobalOptions, Passes);
+  addImmutableAliasAnalysis(Passes);
+  addInitialTransformations(Passes);
   auto addPrint = [&Passes, this](ProcessingStep CurrentStep) {
     if (!(CurrentStep & mPrintSteps))
       return;
@@ -187,42 +233,10 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
 #endif
-  // Preliminary analysis of privatizable variables. This analysis is necessary
-  // to prevent lost of result of optimized values. The memory promotion
-  // may remove some variables with attached source-level debug information.
-  // Consider an example: int *P, X; P = &X; for (...) { *P = 0; X = 1; }
-  // Memory promotion removes P, so X will be recognized as private variable.
-  // However in the original program data-dependency exists because different
-  // pointers refer the same memory.
-  Passes.add(createDIDependencyAnalysisPass());
-  Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
-  if (!mAnalysisUse.empty())
-    Passes.add(createAnalysisReader(mAnalysisUse));
+  addBeforeTfmAnalysis(Passes);
   addPrint(BeforeTfmAnalysis);
   addOutput(BeforeTfmAnalysis);
-  // Perform SROA and repeat variable privatization. After that reduction and
-  // induction recognition will be performed. Flow/anti/output dependencies
-  // also analyses.
-  Passes.add(createCFGSimplificationPass());
-  // Do not add 'instcombine' here, because in this case some metadata may be
-  // lost after SROA (for example, if a promoted variable is a structure).
-  // Passes.add(createInstructionCombiningPass());
-  Passes.add(createSROAPass());
-  Passes.add(createProcessDIMemoryTraitPass(
-    [M](DIMemoryTrait &T) { markIfNotPromoted(M->getDataLayout(), T); }));
-  if (!mGlobalOptions->UnsafeTfmAnalysis)
-    Passes.add(createProcessDIMemoryTraitPass(
-      markIf<trait::Lock, trait::NoPromotedScalar>));
-  Passes.add(createEarlyCSEPass());
-  Passes.add(createCFGSimplificationPass());
-  Passes.add(createInstructionCombiningPass());
-  Passes.add(createLoopSimplifyPass());
-  Passes.add(createSCEVAAWrapperPass());
-  Passes.add(createGlobalsAAWrapperPass());
-  Passes.add(createRPOFunctionAttrsAnalysis());
-  Passes.add(createPOFunctionAttrsAnalysis());
-  Passes.add(createMemoryMatcherPass());
-  Passes.add(createDIDependencyAnalysisPass());
+  addAfterSROAAnalysis(*mGlobalOptions, M->getDataLayout(), Passes);
 #ifdef APC_FOUND
   addIfNecessary(createAPCFunctionInfoPass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
@@ -231,16 +245,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
 #endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
-  // Perform loop rotation to enable reduction recognition if for-loops.
-  Passes.add(createProcessDIMemoryTraitPass(
-    markIf<trait::Lock, trait::HeaderAccess>));
-  Passes.add(createLoopRotatePass());
-  Passes.add(createCFGSimplificationPass());
-  Passes.add(createInstructionCombiningPass());
-  Passes.add(createLoopSimplifyPass());
-  Passes.add(createLCSSAPass());
-  Passes.add(createMemoryMatcherPass());
-  Passes.add(createDIDependencyAnalysisPass());
+  addAfterLoopRotateAnalysis(Passes);
   addPrint(AfterLoopRotateAnalysis);
   addOutput(AfterLoopRotateAnalysis);
   Passes.add(createVerifierPass());
@@ -284,6 +289,7 @@ void TransformationQueryManager::run(llvm::Module *M,
     TransformationContext* Ctx) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
+  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
   if (!Ctx)
     report_fatal_error("transformation context is not available");
   auto TEP = static_cast<TransformationEnginePass *>(
@@ -291,7 +297,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   TEP->setContext(*M, Ctx);
   Passes.add(TEP);
   Passes.add(createImmutableASTImportInfoPass(mImportInfo));
-  addInitialAnalysis(mGlobalOptions, Passes);
+  addInitialTransformations(Passes);
   if (!mTfmPass->getNormalCtor()) {
     M->getContext().emitError("cannot create pass " + mTfmPass->getPassName());
     return;

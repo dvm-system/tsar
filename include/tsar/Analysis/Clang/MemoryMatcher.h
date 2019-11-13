@@ -28,7 +28,7 @@
 #define TSAR_MEMORY_MATCHER_H
 
 #include "tsar/ADT/Bimap.h"
-#include "tsar/Analysis/AnalysisWrapperPass.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/utility.h>
 #include <set>

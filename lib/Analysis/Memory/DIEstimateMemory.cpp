@@ -34,7 +34,6 @@
 #include "tsar/Unparse/Utils.h"
 #include <bcl/IteratorDataAdaptor.h>
 #include <llvm/ADT/DepthFirstIterator.h>
-#include <llvm/ADT/PointerSumType.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ValueTracking.h>

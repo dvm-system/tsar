@@ -1,5 +1,5 @@
 set(ANALYSIS_SOURCES Passes.cpp PrintUtils.cpp DFRegionInfo.cpp Attributes.cpp
-  Intrinsics.cpp)
+  Intrinsics.cpp AnalysisSocket.cpp AnalysisServer.cpp)
 
 if(MSVC_IDE)
   file(GLOB ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -34,3 +34,4 @@ add_dependencies(TSARAnalysis IntrinsicsGen AttributesGen)
 add_subdirectory(Clang)
 add_subdirectory(Memory)
 add_subdirectory(Reader)
+add_subdirectory(Parallel)

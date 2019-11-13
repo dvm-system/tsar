@@ -26,6 +26,7 @@
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Clang/Passes.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Core/tsar-config.h"
@@ -45,6 +46,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeAnalysisBase(Registry);
   initializeMemoryAnalysis(Registry);
   initializeAnalysisReader(Registry);
+  initializeParallelizationAnalysis(Registry);
   initializeClangAnalysis(Registry);
   initializeIRTransform(Registry);
   initializeMixedTransform(Registry);

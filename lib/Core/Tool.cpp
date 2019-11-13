@@ -333,18 +333,13 @@ Tool::Tool(int Argc, const char **Argv) {
   cl::PrintOptionValues();
 }
 
-inline static GlobalOptions * getGlobalOptions() {
-  static GlobalOptions Options;
-  return &Options;
-}
-
 inline static QueryManager * getDefaultQM(
     const DefaultQueryManager::PassList &OutputPasses,
     const DefaultQueryManager::PassList &PrintPasses,
     const DefaultQueryManager::ProcessingStep PrintSteps,
-    StringRef AnalysisUse) {
-  static DefaultQueryManager QM(getGlobalOptions(),
-    OutputPasses, PrintPasses, PrintSteps, AnalysisUse);
+    const GlobalOptions &GlobalOpts) {
+  static DefaultQueryManager QM(&GlobalOpts,
+    OutputPasses, PrintPasses, PrintSteps);
   return &QM;
 }
 
@@ -360,8 +355,8 @@ inline static InstrLLVMQueryManager * getInstrLLVMQM(
 }
 
 inline static TransformationQueryManager * getTransformationQM(
-    const llvm::PassInfo *TfmPass) {
-  static TransformationQueryManager QM(TfmPass, getGlobalOptions());
+    const llvm::PassInfo *TfmPass, const GlobalOptions &GlobalOpts) {
+  static TransformationQueryManager QM(TfmPass, &GlobalOpts);
   return &QM;
 }
 
@@ -384,8 +379,8 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
       DefaultQueryManager::PrintPassGroup::getPassRegistry().begin(),
       DefaultQueryManager::PrintPassGroup::getPassRegistry().end());
   }
-  getGlobalOptions()->PrintFilenameOnly = Options::get().PrintFilename;
-  if (getGlobalOptions()->PrintFilenameOnly && !mPrint)
+  mGlobalOpts.PrintFilenameOnly = Options::get().PrintFilename;
+  if (mGlobalOpts.PrintFilenameOnly && !mPrint)
     errs() << "WARNING: The -print-filename option is ignored when "
       "passes to be printed are not set.\n";
   if (Options::get().PrintStep.empty()) {
@@ -460,28 +455,28 @@ void Tool::storeCLOptions() {
     LLIncompatibleOpts.push_back(&Options::get().TfmPass);
     IncompatibleOpts.push_back(&Options::get().TfmPass);
   }
-  getGlobalOptions()->IsSafeTypeCast = Options::get().SafeTypeCast;
+  mGlobalOpts.IsSafeTypeCast = Options::get().SafeTypeCast;
   if (Options::get().SafeTypeCast && Options::get().NoSafeTypeCast) {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoSafeTypeCast.ArgStr);
     Options::get().SafeTypeCast.error(Msg);
     exit(1);
   }
-  getGlobalOptions()->InBoundsSubscripts = Options::get().InBoundsSubscripts;
+  mGlobalOpts.InBoundsSubscripts = Options::get().InBoundsSubscripts;
   if (Options::get().InBoundsSubscripts && Options::get().NoInBoundsSubscripts) {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoInBoundsSubscripts.ArgStr);
     Options::get().InBoundsSubscripts.error(Msg);
     exit(1);
   }
-  getGlobalOptions()->AnalyzeLibFunc = Options::get().AnalyzeLibFunc;
+  mGlobalOpts.AnalyzeLibFunc = Options::get().AnalyzeLibFunc;
   if (Options::get().AnalyzeLibFunc && Options::get().NoAnalyzeLibFunc) {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoAnalyzeLibFunc.ArgStr);
     Options::get().AnalyzeLibFunc.error(Msg);
     exit(1);
   }
-  getGlobalOptions()->IgnoreRedundantMemory =
+  mGlobalOpts.IgnoreRedundantMemory =
     Options::get().IgnoreRedundantMemory;
   if (Options::get().IgnoreRedundantMemory &&
       Options::get().NoIgnoreRedundantMemory) {
@@ -490,7 +485,7 @@ void Tool::storeCLOptions() {
     Options::get().IgnoreRedundantMemory.error(Msg);
     exit(1);
   }
-  getGlobalOptions()->UnsafeTfmAnalysis = Options::get().UnsafeTfmAnalysis;
+  mGlobalOpts.UnsafeTfmAnalysis = Options::get().UnsafeTfmAnalysis;
   if (Options::get().UnsafeTfmAnalysis &&
       Options::get().NoUnsafeTfmAnalysis) {
     std::string Msg("error - this option is incompatible with");
@@ -498,6 +493,7 @@ void Tool::storeCLOptions() {
     Options::get().UnsafeTfmAnalysis.error(Msg);
     exit(1);
   }
+  mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?
     addLLIfSet(addIfSet(Options::get().MergeAST)) :
@@ -513,7 +509,6 @@ void Tool::storeCLOptions() {
     errs() << "WARNING: Instrumentation options are ignored when "
               "-instr-llvm is not set.\n";
   mCheck = addLLIfSet(Options::get().Check);
-  mAnalysisUse = Options::get().AnalysisUse;
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
@@ -524,9 +519,9 @@ void Tool::storeCLOptions() {
 #else
   bool NoTfmPass = !mTfmPass;
 #endif
-  getGlobalOptions()->NoFormat = addIfSetIf(Options::get().NoFormat, NoTfmPass);
-  getGlobalOptions()->OutputSuffix = Options::get().OutputSuffix;
-  if (NoTfmPass && !getGlobalOptions()->OutputSuffix.empty()) {
+  mGlobalOpts.NoFormat = addIfSetIf(Options::get().NoFormat, NoTfmPass);
+  mGlobalOpts.OutputSuffix = Options::get().OutputSuffix;
+  if (NoTfmPass && !mGlobalOpts.OutputSuffix.empty()) {
     IncompatibleOpts.push_back(&Options::get().OutputSuffix);
     LLIncompatibleOpts.push_back(&Options::get().OutputSuffix);
   }
@@ -627,12 +622,12 @@ int Tool::run(QueryManager *QM) {
     else if (mInstrLLVM)
       QM = getInstrLLVMQM(mInstrEntry, mInstrStart);
     else if (mTfmPass)
-      QM = getTransformationQM(mTfmPass);
+      QM = getTransformationQM(mTfmPass, mGlobalOpts);
     else if (mCheck)
       QM = getCheckQM();
     else
       QM = getDefaultQM(mOutputPasses, mPrintPasses,
-        (DefaultQueryManager::ProcessingStep)mPrintSteps, mAnalysisUse);
+        (DefaultQueryManager::ProcessingStep)mPrintSteps, mGlobalOpts);
   }
   auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {

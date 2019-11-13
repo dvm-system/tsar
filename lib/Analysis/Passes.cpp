@@ -28,4 +28,5 @@ using namespace llvm;
 
 void llvm::initializeAnalysisBase(PassRegistry &Registry) {
   initializeDFRegionInfoPassPass(Registry);
+  initializeAnalysisConnectionImmutableWrapperPass(Registry);
 }

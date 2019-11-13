@@ -54,6 +54,12 @@ struct Pool {};
 /// This tag is used to provide access to a set of traits of a region.
 struct Region {};
 
+/// This tag is used to provide access to entities related to a original object.
+struct Origin {};
+
+/// This tag is used to provide access to entities related to a cloned object.
+struct Clone {};
+
 /// Identifier of an object, for example, loops.
 using ObjectID = llvm::MDNode *;
 }
