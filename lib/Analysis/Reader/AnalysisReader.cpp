@@ -394,7 +394,8 @@ bool AnalysisReader::runOnFunction(Function &F) {
       if (TraitItr == TraitCache.end() ||
           isOnlyAnyOf<trait::UseAfterLoop, trait::WriteOccurred>(
             TraitItr->second)) {
-        if (TraitItr->second.get<trait::WriteOccurred>())
+        if (TraitItr == TraitCache.end() ||
+            TraitItr->second.get<trait::WriteOccurred>())
           DITrait.set<trait::Shared>();
         else
           DITrait.set<trait::Readonly>();
