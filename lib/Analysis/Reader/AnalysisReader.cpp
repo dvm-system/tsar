@@ -203,7 +203,7 @@ template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
     const trait::Info &Info, const trait::Loop &L, TraitCache &Cache) {
   for (auto I = L[Key].cbegin(), EI = L[Key].cend(); I != EI; ++I) {
     auto Var = createVar(getVariableIdx(I), Info);
-    if (Var.get<Identifier>().empty())
+    if (Var.template get<Identifier>().empty())
       continue;
     auto CacheItr = Cache.find(Var);
     if (CacheItr == Cache.end())
