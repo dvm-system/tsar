@@ -38,7 +38,9 @@ class FunctionPass;
 void initializeAnalysisReader(PassRegistry &Registry);
 
 /// Create a reader of external analysis results stored in a specified file.
-FunctionPass * createAnalysisReader(llvm::StringRef Filename);
+///
+/// If `Filename` is empty `GlobalOptions::AnalysisUse` value is used.
+FunctionPass * createAnalysisReader(llvm::StringRef Filename = "");
 
 /// Initialize a reader of external analysis results.
 void initializeAnalysisReaderPass(PassRegistry &Registry);

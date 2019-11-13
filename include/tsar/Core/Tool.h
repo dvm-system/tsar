@@ -117,7 +117,6 @@ private:
   std::string mLanguage;
   std::string mInstrEntry;
   std::vector<std::string> mInstrStart;
-  std::string mAnalysisUse;
 };
 }
 #endif//TSAR_TOOL_H

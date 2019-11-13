@@ -71,8 +71,11 @@ void addInitialTransformations(llvm::legacy::PassManager &Passes);
 /// Memory promotion removes P, so X will be recognized as private variable.
 /// However in the original program data-dependency exists because different
 /// pointers refer the same memory.
-void addBeforeTfmAnalysis(llvm::StringRef AnalysisUse,
-                          llvm::legacy::PassManager &Passes);
+/// \param AnalysisUse External analysis results which should be used to
+/// clarify analysis. If it is empty GlobalOptions::AnalysisUse value is used
+/// if not empty.
+void addBeforeTfmAnalysis(llvm::legacy::PassManager &Passes,
+                          llvm::StringRef AnalysisUse = "");
 
 /// Perform SROA and repeat variable privatization. After that reduction and
 /// induction recognition will be performed. Flow/anti/output dependencies
@@ -208,7 +211,7 @@ public:
       llvm::StringRef AnalysisUse = "") :
     mGlobalOptions(Options),
     mOutputPasses(OutputPasses), mPrintPasses(PrintPasses),
-    mPrintSteps(PrintSteps), mAnalysisUse(AnalysisUse) {}
+    mPrintSteps(PrintSteps) {}
 
   /// Runs default sequence of passes.
   void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
@@ -226,7 +229,6 @@ private:
   PassList mPrintPasses;
   ProcessingStep mPrintSteps;
   const GlobalOptions *mGlobalOptions;
-  std::string mAnalysisUse;
   ASTImportInfo mImportInfo;
 };
 

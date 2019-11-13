@@ -337,9 +337,9 @@ inline static QueryManager * getDefaultQM(
     const DefaultQueryManager::PassList &OutputPasses,
     const DefaultQueryManager::PassList &PrintPasses,
     const DefaultQueryManager::ProcessingStep PrintSteps,
-    StringRef AnalysisUse, const GlobalOptions &GlobalOpts) {
+    const GlobalOptions &GlobalOpts) {
   static DefaultQueryManager QM(&GlobalOpts,
-    OutputPasses, PrintPasses, PrintSteps, AnalysisUse);
+    OutputPasses, PrintPasses, PrintSteps);
   return &QM;
 }
 
@@ -493,6 +493,7 @@ void Tool::storeCLOptions() {
     Options::get().UnsafeTfmAnalysis.error(Msg);
     exit(1);
   }
+  mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?
     addLLIfSet(addIfSet(Options::get().MergeAST)) :
@@ -508,7 +509,6 @@ void Tool::storeCLOptions() {
     errs() << "WARNING: Instrumentation options are ignored when "
               "-instr-llvm is not set.\n";
   mCheck = addLLIfSet(Options::get().Check);
-  mAnalysisUse = Options::get().AnalysisUse;
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
@@ -627,8 +627,7 @@ int Tool::run(QueryManager *QM) {
       QM = getCheckQM();
     else
       QM = getDefaultQM(mOutputPasses, mPrintPasses,
-                        (DefaultQueryManager::ProcessingStep)mPrintSteps,
-                        mAnalysisUse, mGlobalOpts);
+        (DefaultQueryManager::ProcessingStep)mPrintSteps, mGlobalOpts);
   }
   auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {

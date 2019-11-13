@@ -106,11 +106,8 @@ public:
 
   void addServerPasses(Module &M, legacy::PassManager &PM) override {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-    // TODO(kaniandr@gmail.com): add analysis-use to global options and allow
-    // to use it on analysis server.
-    StringRef AnalysisUse("");
     addImmutableAliasAnalysis(PM);
-    addBeforeTfmAnalysis(AnalysisUse, PM);
+    addBeforeTfmAnalysis(PM);
     addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
     addAfterLoopRotateAnalysis(PM);
     PM.add(createVerifierPass());

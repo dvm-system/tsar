@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
@@ -143,11 +144,7 @@ class AnalysisReader : public FunctionPass, bcl::Uncopyable {
 public:
   static char ID;
 
-  AnalysisReader() : FunctionPass(ID) {
-    initializeAnalysisReaderPass(*PassRegistry::getPassRegistry());
-  }
-
-  explicit AnalysisReader(StringRef DataFile) :
+  explicit AnalysisReader(StringRef DataFile = "") :
     mDataFile(DataFile), FunctionPass(ID) {
     initializeAnalysisReaderPass(*PassRegistry::getPassRegistry());
   }
@@ -281,6 +278,7 @@ void updateOutputDep(
 INITIALIZE_PASS_BEGIN(AnalysisReader, "analysis-reader",
   "External Analysis Results Reader", true, true)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(AnalysisReader, "analysis-reader",
   "External Analysis Results Reader", true, true)
 
@@ -292,9 +290,17 @@ FunctionPass * llvm::createAnalysisReader(StringRef DataFile) {
 
 void AnalysisReader::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIMemoryTraitPoolWrapper>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
 }
 
 bool AnalysisReader::runOnFunction(Function &F) {
+  if (mDataFile.empty()) {
+    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+    if (!GO.AnalysisUse.empty())
+      mDataFile = GO.AnalysisUse;
+    else
+      return false;
+  }
   auto FileOrErr = MemoryBuffer::getFile(mDataFile);
   if (auto EC = FileOrErr.getError()) {
     F.getContext().diagnose(DiagnosticInfoPGOProfile(mDataFile.data(),

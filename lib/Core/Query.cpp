@@ -97,11 +97,10 @@ void addInitialTransformations(legacy::PassManager &Passes) {
   Passes.add(createDIGlobalRetrieverPass());
 }
 
-void addBeforeTfmAnalysis(StringRef AnalysisUse, legacy::PassManager &Passes) {
+void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
   Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
-  if (!AnalysisUse.empty())
-    Passes.add(createAnalysisReader(AnalysisUse));
+  Passes.add(createAnalysisReader());
 }
 
 void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
@@ -234,7 +233,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
 #endif
-  addBeforeTfmAnalysis(mAnalysisUse, Passes);
+  addBeforeTfmAnalysis(Passes);
   addPrint(BeforeTfmAnalysis);
   addOutput(BeforeTfmAnalysis);
   addAfterSROAAnalysis(*mGlobalOptions, M->getDataLayout(), Passes);
