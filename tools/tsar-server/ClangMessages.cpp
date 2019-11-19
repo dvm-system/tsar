@@ -26,6 +26,7 @@
 #include "ClangMessages.h"
 #include <clang/Basic/SourceLocation.h>
 #include <clang/Basic/SourceManager.h>
+#include <llvm/IR/DebugLoc.h>
 
 namespace tsar {
 msg::Location getLocation(
@@ -35,6 +36,16 @@ msg::Location getLocation(
   MsgLoc[msg::Location::Column] = SrcMgr.getExpansionColumnNumber(SLoc);
   MsgLoc[msg::Location::MacroLine] = SrcMgr.getSpellingLineNumber(SLoc);
   MsgLoc[msg::Location::MacroColumn] = SrcMgr.getSpellingColumnNumber(SLoc);
+  return MsgLoc;
+}
+
+msg::Location getLocation(llvm::DebugLoc &Loc) {
+  assert(Loc && "Debug location must be valid!");
+  msg::Location MsgLoc;
+  MsgLoc[msg::Location::Line] = Loc.getLine();
+  MsgLoc[msg::Location::Column] = Loc.getCol();
+  MsgLoc[msg::Location::MacroLine] = Loc.getLine();
+  MsgLoc[msg::Location::MacroColumn] = Loc.getCol();
   return MsgLoc;
 }
 }
