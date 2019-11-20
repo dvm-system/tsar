@@ -525,9 +525,35 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // We calculate a set of locations (Uses)
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
-    for (auto &Loc : DU->getUses())
-      if (!RS->getIn().MustReach.contain(Loc))
-        DefUse->addUse(Loc);
+    for (auto &Loc : DU->getUses()) {
+      bool startsInLoop = false;
+      auto *EM = AT.find(Loc);
+      EM = EM->getTopLevelParent();
+      auto *V = EM->front();
+      if (auto *AI = dyn_cast<AllocaInst>(V)) {
+        for (auto *V1 : AI->users()) {
+          for (auto *V2 : V1->users()) {
+            if (auto *II = dyn_cast<IntrinsicInst>(V2)) {
+              if (II->getIntrinsicID() == llvm::Intrinsic::lifetime_start) {
+                auto *BB = II->getParent();
+                if (auto *DFL = dyn_cast<DFLoop>(R)) {
+                  auto *L = DFL->getLoop();
+                  if (L->contains(BB)) {
+                    startsInLoop = true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          if (startsInLoop) {
+            break;
+          }
+        }
+        if (!RS->getIn().MustReach.contain(Loc) && !startsInLoop)
+          DefUse->addUse(Loc);
+      }
+    }
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
     // they are located at set of node defs.
