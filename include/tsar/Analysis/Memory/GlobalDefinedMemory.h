@@ -24,7 +24,6 @@ namespace llvm {
 
 
   private:
-    //tsar::DefinedMemoryInfo mDefInfo;
     tsar::InterprocDefInfo mInterprocDefInfo;
   };
 

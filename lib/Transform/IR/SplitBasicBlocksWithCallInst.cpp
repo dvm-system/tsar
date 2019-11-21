@@ -21,42 +21,53 @@ FunctionPass * llvm::createSplitBasicBlocksWithCallInstPass() {
 }
 
 bool SplitBasicBlocksWithCallInstPass::runOnFunction(Function& F) {
-  //errs() << "==========\nSplitter\n";
-  //errs() << F.getName();
-  //errs() << "\n==========\n";
-  if (F.hasName() && !F.empty()) {
-    for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {
-      //errs() << "BBname: " << currBB->getName() << "\n";
-      for (auto currInstr = currBB->begin(), lastInstr = currBB->end();
-        currInstr != lastInstr; ++currInstr) {
-        Instruction *i = &*currInstr;
-        Instruction *li = &*lastInstr;
-        BasicBlock* newBB;
-        if (auto* callInst = dyn_cast<CallInst>(i)) {
-          if (i != li  && currBB->getTerminator()) {
-            //errs() << "Befor split\n";
-            //F.dump();
-            if (i == &*(currBB->begin())) {
-              newBB = &*currBB;
-            } else {
-              newBB = currBB->splitBasicBlock(callInst);
-              //errs() << "After first split\n";
-              //F.dump();
-            }
-          }
-          auto nextInstr = callInst->getNextNonDebugInstruction();
-          if (nextInstr != &*(newBB->end()) && newBB->getTerminator()) {
-            newBB->splitBasicBlock(nextInstr);
-            //errs() << "After second split\n";
-            //F.dump();
-            currBB++;
-            break;
-          }         
-        }
-      }
-    }
-    //F.dump();
-  }
+	errs() << "==========\nSplitter\n";
+	errs() << F.getName();
+	errs() << "\n==========\n";
+	F.dump();
+	errs() << "\n==========\n";
+	if (F.hasName() && !F.empty()) {
+		for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {
+			errs() << "Current BBname: " << currBB->getName() << "\n";
+			TerminatorInst* ti = currBB->getTerminator();
 
-  return true;
+			for (auto currInstr = currBB->begin(), lastInstr = currBB->end();
+				currInstr != lastInstr; ++currInstr) {
+				if (ti != nullptr ) {
+					errs() << "Current Instr:\n";
+					currInstr->dump();
+					Instruction* i = &*currInstr;
+					if (i == ti)
+						break;
+					BasicBlock* newBB;
+					errs() << "Is callInst?\n";
+					if (auto* callInst = dyn_cast<CallInst>(i)) {
+						errs() << "Is not last inst?\n";
+						if (i != ti) {
+							errs() << "Befor split\n";
+							if (i == &*(currBB->begin())) {
+								errs() << "Is First";
+								newBB = &*currBB;
+							}
+							else {
+								newBB = currBB->splitBasicBlock(callInst);
+							}
+						}
+						errs() << "get next";
+						auto nextInstr = callInst->getNextNonDebugInstruction();
+						errs() << "Is not last inst?\n";
+						if (nextInstr != ti) {
+							newBB->splitBasicBlock(nextInstr);
+							currBB++;
+							break;
+						}
+					}
+				}
+			}
+		}
+		errs() << "\n==========\n";
+		F.dump();
+	}
+
+	return true;
 }

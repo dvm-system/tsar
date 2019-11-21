@@ -194,6 +194,11 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // Memory promotion removes P, so X will be recognized as private variable.
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
+  /////add my passes
+  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createGlobalDefinedMemoryPass());
+  Passes.add(createGlobalLiveMemoryPass());
+
   Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   if (!mAnalysisUse.empty())
@@ -217,6 +222,11 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
+  
+  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createGlobalDefinedMemoryPass());
+  Passes.add(createGlobalLiveMemoryPass());
+
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createRPOFunctionAttrsAnalysis());
@@ -239,6 +249,11 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
   Passes.add(createLCSSAPass());
+
+  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createGlobalDefinedMemoryPass());
+  Passes.add(createGlobalLiveMemoryPass());
+
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDIDependencyAnalysisPass());
   addPrint(AfterLoopRotateAnalysis);
