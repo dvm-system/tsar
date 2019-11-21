@@ -146,85 +146,87 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
     CurrNode++) {
 		CallGraphNode* CGN = *CurrNode;
 		if (auto F = CGN->getFunction()) {
-      if (F->hasName() && !F->empty()) {
-        LLVM_DEBUG(
-          errs() << "===============\n";
-          errs() << F->getName() << "\n";
-          errs() << "===============\n";
-          F->dump();
-          errs() << "===============\n";
-        );
-        
-        //get result of help passes
-        auto& PassesInfo = getAnalysis<passes>(*F);
-        auto& RegInfoForF = PassesInfo.get<DFRegionInfoPass>().getRegionInfo();
-        auto *TopBBFforF = cast<DFFunction>(RegInfoForF.getTopLevelRegion());
-        auto &DefInfo = PassesInfo.get<DefinedMemoryPass>().getDefInfo();
+			if (F->hasName() && !F->empty()) {
+				LLVM_DEBUG(
+					errs() << "===============\n";
+				errs() << F->getName() << "\n";
+				errs() << "===============\n";
+				F->dump();
+				errs() << "===============\n";
+				);
 
-        DominatorTree *DT = nullptr;
-        LLVM_DEBUG(
-          auto& DTPass = PassesInfo.get<DominatorTreeWrapperPass>();
-          DT = &DTPass.getDomTree();
-        );
-        
-        LiveMemoryInfo LiveInfo;
-        auto LiveItr = LiveInfo.insert(
-            std::make_pair(TopBBFforF, llvm::make_unique<LiveSet>())
-          ).first;
-        auto &LS = LiveItr->get<LiveSet>();
-        
+				//get result of help passes
+				auto& PassesInfo = getAnalysis<passes>(*F);
+				auto& RegInfoForF = PassesInfo.get<DFRegionInfoPass>().getRegionInfo();
+				auto* TopBBFforF = cast<DFFunction>(RegInfoForF.getTopLevelRegion());
+				auto& DefInfo = PassesInfo.get<DefinedMemoryPass>().getDefInfo();
 
-        //build function(F)->caller F intsruction 
-        for (auto CurrCallRecord = CGN->begin(), LastCallRecord = CGN->end(); 
-          CurrCallRecord != LastCallRecord; CurrCallRecord++) {
-          addFuncInMap(MapOfFuncAndCallInstWithLiveSet, CurrCallRecord);
-        }
-        LLVM_DEBUG(
-          //printFuncToCAllInstLiveSet(&MapOfFuncAndCallInstWithLiveSet);
-        );
-        //build OUT for F
-        //for F vector of caller function is build
-        // ÌÂ ÔÓÎÛ˜ËÎÓÒ¸ ‚˚ÌÂÒÚË ‚ ÙÛÌÍˆË˛ ÚÍ ˇ ÌÂ ÒÏÓ„ Ì‡ÈÚË ÚËÔ LS
-        auto Fout = LS->getOut();
-        if (F->getName() != "main") {
-          //for main null
-          //circle by instructions
-          for (auto Curr—all = MapOfFuncAndCallInstWithLiveSet[F].begin(), 
-                LastCall = MapOfFuncAndCallInstWithLiveSet[F].end(); 
-                Curr—all != LastCall; Curr—all++) {
-            LLVM_DEBUG(
-              errs()<< "ColledFunc: "
-                <<(Curr—all->first)->getCalledFunction()->getName()<<"\n";
-            );
-            //if true than smth is bad
-            if ((Curr—all->first)->getCalledFunction() != F)
-              continue;
+				DominatorTree* DT = nullptr;
+				LLVM_DEBUG(
+					auto & DTPass = PassesInfo.get<DominatorTreeWrapperPass>();
+				DT = &DTPass.getDomTree();
+				);
 
-            //get liveset current call(if recursion is nullptr)
-            if (Curr—all->second != nullptr) {
-              MemorySet<MemoryLocationRange> DFFLSout;
-              DFFLSout = Curr—all->second->getOut();
-              //update LS out
-              Fout.merge(DFFLSout);
-            }
-          }
-          LS->setOut(Fout);
-        }
-        mIterprocLiveMemoryInfo->insert(std::make_pair(F, std::make_unique<LiveMemoryInfo>(LiveInfo)));
-		
-        //run Live Memory Analysis
-        LiveDFFwk LiveFwk(LiveInfo, DefInfo, DT);
-        solveDataFlowDownward(&LiveFwk, TopBBFforF);
+				LiveMemoryInfo LiveInfo;
+				auto LiveItr = LiveInfo.insert(
+					std::make_pair(TopBBFforF, llvm::make_unique<LiveSet>())
+				).first;
+				auto& LS = LiveItr->get<LiveSet>();
 
-        //update MapOfFuncAndCallInstWithLiveSet
-        updateFuncToCallInstLiveSet(
-          MapOfFuncAndCallInstWithLiveSet, LiveFwk, RegInfoForF, F);
-      }
-      else {
-        LLVM_DEBUG(
-          errs() << "function without name\n";
-        );
-      }
+
+				//build function(F)->caller F intsruction 
+				for (auto CurrCallRecord = CGN->begin(), LastCallRecord = CGN->end();
+					CurrCallRecord != LastCallRecord; CurrCallRecord++) {
+					addFuncInMap(MapOfFuncAndCallInstWithLiveSet, CurrCallRecord);
+				}
+				LLVM_DEBUG(
+					//printFuncToCAllInstLiveSet(&MapOfFuncAndCallInstWithLiveSet);
+				);
+				//build OUT for F
+				//for F vector of caller function is build
+				// ÌÂ ÔÓÎÛ˜ËÎÓÒ¸ ‚˚ÌÂÒÚË ‚ ÙÛÌÍˆË˛ ÚÍ ˇ ÌÂ ÒÏÓ„ Ì‡ÈÚË ÚËÔ LS
+				auto Fout = LS->getOut();
+				if (F->getName() != "main") {
+					//for main null
+					//circle by instructions
+					for (auto Curr—all = MapOfFuncAndCallInstWithLiveSet[F].begin(),
+						LastCall = MapOfFuncAndCallInstWithLiveSet[F].end();
+						Curr—all != LastCall; Curr—all++) {
+						LLVM_DEBUG(
+							errs() << "ColledFunc: "
+							<< (Curr—all->first)->getCalledFunction()->getName() << "\n";
+						);
+						//if true than smth is bad
+						if ((Curr—all->first)->getCalledFunction() != F)
+							continue;
+
+						//get liveset current call(if recursion is nullptr)
+						if (Curr—all->second != nullptr) {
+							MemorySet<MemoryLocationRange> DFFLSout;
+							DFFLSout = Curr—all->second->getOut();
+							//update LS out
+							Fout.merge(DFFLSout);
+						}
+					}
+					LS->setOut(Fout);
+				}
+				//mIterprocLiveMemoryInfo->try_emplace(F, std::make_unique<LiveMemoryInfo>(LiveInfo));
+
+				//run Live Memory Analysis
+				LiveDFFwk LiveFwk(LiveInfo, DefInfo, DT);
+				solveDataFlowDownward(&LiveFwk, TopBBFforF);
+
+				//update MapOfFuncAndCallInstWithLiveSet
+				updateFuncToCallInstLiveSet(
+					MapOfFuncAndCallInstWithLiveSet, LiveFwk, RegInfoForF, F);
+
+				mIterprocLiveMemoryInfo->try_emplace(F, std::move(LiveInfo[TopBBFforF]));
+			}
+			else {
+				LLVM_DEBUG(
+					errs() << "function without name\n";
+				);
+			}
 
 		}
     else {

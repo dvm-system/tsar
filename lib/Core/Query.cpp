@@ -232,11 +232,12 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createAPCContextStorage());
   addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
-#endif
+
   addBeforeTfmAnalysis(Passes);
   addPrint(BeforeTfmAnalysis);
   addOutput(BeforeTfmAnalysis);
   addAfterSROAAnalysis(*mGlobalOptions, M->getDataLayout(), Passes);
+
 #ifdef APC_FOUND
   addIfNecessary(createAPCFunctionInfoPass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
@@ -246,6 +247,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
   addAfterLoopRotateAnalysis(Passes);
+
   addPrint(AfterLoopRotateAnalysis);
   addOutput(AfterLoopRotateAnalysis);
   Passes.add(createVerifierPass());

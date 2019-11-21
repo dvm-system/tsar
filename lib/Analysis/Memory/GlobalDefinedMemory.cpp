@@ -32,18 +32,22 @@ typedef FunctionPassProvider <
 
 INITIALIZE_PROVIDER_BEGIN(passes, "", "")
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
-INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PROVIDER_END(passes, "", "")
 
 INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem", "", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+//INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(passes)
 INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem", "", true, true)
 
 
 
 void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<CallGraphWrapperPass>();
+  //AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<passes>();
   AU.setPreservesAll();
 }
 
@@ -95,7 +99,10 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
         DefinedMemoryInfo DefInfo;
         ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
         solveDataFlowUpward(&ReachDefFwk, DFF);
-        mInterprocDefInfo.insert(std::make_pair(F, std::get<0>(ReachDefFwk.getDefInfo()[DFF])));
+		auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
+		assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
+			"Def-use set must exist for a function!");
+        mInterprocDefInfo.try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
       }
     }
   }

@@ -65,6 +65,7 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
+  
   auto GDM = getAnalysisIfAvailable<GlobalDefinedMemory>();
   if (GDM == nullptr) {
     ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
@@ -328,7 +329,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
 
   auto *InterprocDefInfo = DFF->getInterprocdefInfo();
-
+  auto &TLI = DFF->getTLI();
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
@@ -395,8 +396,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // set for locations which are accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseSet.
     auto &DL = I.getModule()->getDataLayout();
-    for_each_memory(I, DFF->getTLI(),
-      [&DL, &AT, InterprocDefInfo, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
+    for_each_memory(I, TLI,
+      [&DL, &AT, InterprocDefInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
@@ -427,8 +428,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
             W = R = AccessInfo::No;
             auto defUseSet = std::move((*InterprocDefInfo)[F]);
             //получаю текущий аргумент
-            const Value *arg = CS.getArgument(Idx);
+            //const Value *arg = CS.getArgument(Idx);
             // заполняю W,R
+			MemoryLocationRange arg = MemoryLocationRange::getForArgument(CS, Idx, TLI);
             if ((defUseSet->getDefs()).contain(arg)) {
               W = AccessInfo::Must;;
             } else if ((defUseSet->getMayDefs()).contain(arg)) {

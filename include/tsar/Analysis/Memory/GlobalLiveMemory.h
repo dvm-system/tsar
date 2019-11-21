@@ -9,7 +9,7 @@ namespace llvm {
 	public:
 		static char ID;
 
-    typedef DenseMap<const llvm::Function*, std::unique_ptr<tsar::LiveMemoryInfo>> IterprocLiveMemoryInfo;
+    typedef DenseMap<const llvm::Function*, std::unique_ptr<tsar::LiveSet>> IterprocLiveMemoryInfo;
 
 		GlobalLiveMemory() : ModulePass(ID){
 			initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
