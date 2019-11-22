@@ -468,6 +468,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   assert(!isa<UndefValue>(Loc.Ptr) && "Pointer to memory location must be valid!");
   LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
+  mSearchCache.clear();
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
   EstimateMemory *PrevChainEnd = nullptr;
@@ -581,6 +582,7 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
       else
         EstimateAliases.push_back(&Child);
   }
+  mSearchCache.clear();
   AliasUnknownNode *Node;
   if (!UnknownAliases.empty()) {
     auto AI = UnknownAliases.begin(), EI = UnknownAliases.end();
@@ -801,6 +803,9 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
   stripToBase(*mDL, Base);
+  auto SearchInfo = mSearchCache.try_emplace(Base, nullptr);
+  if (!SearchInfo.second)
+    return SearchInfo.first->second;
   Value *StrippedPtr = stripPointer(*mDL, const_cast<Value *>(Base.Ptr));
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
@@ -823,6 +828,7 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
     do {
       if (Base.Size > Chain->getSize())
         continue;
+      SearchInfo.first->second = Chain;
       return Chain;
     } while (Prev = Chain, Chain = CT::getNext(Chain));
   }
