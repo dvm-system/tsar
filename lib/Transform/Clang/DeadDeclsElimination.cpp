@@ -123,9 +123,10 @@ public:
           I = mDeadDecls.erase(I);
           continue;
         } else if (VD->hasInit()) {
-          if (auto Call = findCallExpr(*VD->getInit())) {
+          if (auto SideEffect = findSideEffect(*VD->getInit())) {
             toDiag(Diags, VD->getLocation(), diag::warn_disable_de);
-            toDiag(Diags, Call->getLocStart(), diag::note_de_call_prevent);
+            toDiag(Diags, SideEffect->getLocStart(),
+                   diag::note_de_side_effect_prevent);
             I = mDeadDecls.erase(I);
             continue;
           }
@@ -197,16 +198,27 @@ public:
 #endif
 
 private:
-  /// Returns true if there is a call expression inside a specified statement.
-  const CallExpr * findCallExpr(const Stmt &S) {
-    if (!isa<CallExpr>(S)) {
+  /// Return current scope.
+  Stmt *getScope() {
+    for (auto I = mScopes.rbegin(), EI = mScopes.rend(); I != EI; ++I)
+      if (isa<ForStmt>(*I) || isa<CompoundStmt>(*I))
+        return *I;
+    return nullptr;
+  }
+
+  /// Return true if there is a side effect inside a specified statement.
+  const Stmt * findSideEffect(const Stmt &S) {
+    if (!isa<CallExpr>(S) &&
+        !(isa<BinaryOperator>(S) && cast<BinaryOperator>(S).isAssignmentOp()) &&
+        !(isa<UnaryOperator>(S) &&
+          cast<UnaryOperator>(S).isIncrementDecrementOp())) {
       for (auto Child : make_range(S.child_begin(), S.child_end()))
         if (Child)
-          if (auto Call = findCallExpr(*Child))
-          return Call;
+          if (auto SideEffect = findSideEffect(*Child))
+          return SideEffect;
       return nullptr;
     }
-    return cast<CallExpr>(&S);
+    return &S;
   }
 
   std::map<NamedDecl *, Stmt *> mDeadDecls;
