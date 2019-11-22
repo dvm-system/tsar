@@ -26,28 +26,29 @@ char GlobalDefinedMemory::ID = 0;
 
 typedef FunctionPassProvider <
   DFRegionInfoPass,
-  TargetLibraryInfoWrapperPass,
-  EstimateMemoryPass>
+  EstimateMemoryPass,
+  DominatorTreeWrapperPass
+  >
   passes;
 
-INITIALIZE_PROVIDER_BEGIN(passes, "", "")
+INITIALIZE_PROVIDER_BEGIN(passes, "test", "test")
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
-INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
-INITIALIZE_PROVIDER_END(passes, "", "")
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PROVIDER_END(passes, "test", "test")
 
-INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem", "", true, true)
+INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem", "GDM", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(passes)
-INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem", "", true, true)
+INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem", "GDM", true, true)
 
 
 
 void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage& AU) const {
-  AU.addRequired<CallGraphWrapperPass>();
-  //AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<passes>();
+  AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -73,6 +74,7 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     errs() << "Begin of GlobalDefinedMemoryPass\n";
   //);
   auto& CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  auto& TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (auto& CurrNode = po_begin(&CG), LastNode = po_end(&CG);
     CurrNode != LastNode;
     CurrNode++) {
@@ -87,14 +89,11 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
         auto &RegionInfoForF = PassesInfo
           .getAnalysis<DFRegionInfoPass>()
           .getRegionInfo();
-        auto &TLI = PassesInfo
-          .getAnalysis<TargetLibraryInfoWrapperPass>()
-          .getTLI();
         auto &AliasTree = PassesInfo.
           getAnalysis<EstimateMemoryPass>()
           .getAliasTree();
         const DominatorTree *DT = nullptr;
-        LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
+        LLVM_DEBUG(DT = &PassesInfo.getAnalysis<DominatorTreeWrapperPass>().getDomTree());
         auto *DFF = cast<DFFunction>(RegionInfoForF.getTopLevelRegion());
         DefinedMemoryInfo DefInfo;
         ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
