@@ -7,6 +7,12 @@ void function_29()
 		i = 67;
 	#endif	
 }
+//CHECK: de_decls_29.c:6:7: warning: disable dead code elimination
+//CHECK:                 int i, j, k;
+//CHECK:                     ^
+//CHECK: de_decls_29.c:8:2: warning: macro prevent dead code elimination
+//CHECK:         #endif  
+//CHECK:         ^
 //CHECK: de_decls_29.c:6:10: warning: disable dead code elimination
 //CHECK:                 int i, j, k;
 //CHECK:                        ^
@@ -19,4 +25,4 @@ void function_29()
 //CHECK: de_decls_29.c:8:2: warning: macro prevent dead code elimination
 //CHECK:         #endif  
 //CHECK:         ^
-//CHECK: 4 warnings generated.
+//CHECK: 6 warnings generated.

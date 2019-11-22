@@ -1,8 +1,9 @@
-void function_4()
+int function_4()
 {
 	int a, b, c;
 	a = 0;
 	c = 98;	
+        return a + c;
 }
 //CHECK: de_decls_4.c:3:9: warning: disable dead code elimination
 //CHECK:         int a, b, c;
