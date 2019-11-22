@@ -39,7 +39,6 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <vector>
-#include <stack>
 
 using namespace clang;
 using namespace llvm;
@@ -61,18 +60,22 @@ INITIALIZE_PASS_IN_GROUP_END(ClangDeadDeclsElimination, "clang-de-decls",
 
 namespace {
 class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
+  struct DeclarationInfo {
+    DeclarationInfo(Stmt *S) : Scope(S) {}
+
+    Stmt *Scope;
+    SmallVector<Stmt *, 16> DeadAccesses;
+  };
 public:
-  explicit DeclVisitor(clang::Rewriter &Rewriter) : mRewriter(&Rewriter) {
-    mScopes.push(nullptr); // push global scope
-  }
+  explicit DeclVisitor(clang::Rewriter &Rewriter) : mRewriter(&Rewriter) {}
 
   bool VisitVarDecl(VarDecl *D) {
-    mDeadDecls.emplace(D, mScopes.top());
+    mDeadDecls.emplace(D, getScope());
     return true;
   }
 
   bool VisitTypeDecl(TypeDecl *D) {
-    auto Itr = mDeadDecls.emplace(D, mScopes.top()).first;
+    auto Itr = mDeadDecls.emplace(D, getScope()).first;
     assert(Itr != mDeadDecls.end() &&
       "Unable to insert declaration in the map!");
     mTypeDecls.try_emplace(D->getTypeForDecl(), Itr);
@@ -80,7 +83,8 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *D) {
-    mDeadDecls.erase(D->getFoundDecl());
+    if (D != mSimpleAssignLHS)
+      mDeadDecls.erase(D->getFoundDecl());
     return true;
   }
 
@@ -100,16 +104,33 @@ public:
     return true;
   }
 
+  bool TraverseBinAssign(BinaryOperator *BO) {
+    if (!BO->isCompoundAssignmentOp()) {
+      auto ParentItr = mScopes.rbegin() + 1; // mScopes.back() is BO
+      if (isa<CompoundStmt>(*ParentItr))
+        if (auto *Ref = dyn_cast<DeclRefExpr>(BO->getLHS()))
+          if (!findSideEffect(*BO->getRHS())) {
+            auto Itr = mDeadDecls.find(Ref->getFoundDecl());
+            if (Itr != mDeadDecls.end()) {
+              Itr->second.DeadAccesses.push_back(BO);
+              auto Stash = mSimpleAssignLHS;
+              mSimpleAssignLHS = Ref;
+              auto Res = RecursiveASTVisitor::TraverseBinAssign(BO);
+              mSimpleAssignLHS = Stash;
+              return Res;
+            }
+          }
+    }
+    return RecursiveASTVisitor::TraverseBinAssign(BO);
+  }
+
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
-    if (isa<ForStmt>(S) || isa<CompoundStmt>(S)) {
-      mScopes.push(S);
-      auto Res = RecursiveASTVisitor::TraverseStmt(S);
-      mScopes.pop();
-      return Res;
-    }
-    return RecursiveASTVisitor::TraverseStmt(S);
+    mScopes.push_back(S);
+    auto Res = RecursiveASTVisitor::TraverseStmt(S);
+    mScopes.pop_back();
+    return Res;
   }
 
   /// Checks precondition and performs elimination of dead declarations.
@@ -132,14 +153,14 @@ public:
           }
         }
       }
-      assert(I->second && "Scope must not be global!");
+      assert(I->second.Scope && "Scope must not be global!");
       SourceLocation MacroLoc;
-      auto MacroItr = ScopeWithMacro.find(I->second);
+      auto MacroItr = ScopeWithMacro.find(I->second.Scope);
       if (MacroItr == ScopeWithMacro.end()) {
-        for_each_macro(I->second, mRewriter->getSourceMgr(),
+        for_each_macro(I->second.Scope, mRewriter->getSourceMgr(),
           mRewriter->getLangOpts(), RawInfo.Macros,
           [&MacroLoc](SourceLocation Loc) { MacroLoc = Loc; });
-        ScopeWithMacro.try_emplace(I->second, MacroLoc);
+        ScopeWithMacro.try_emplace(I->second.Scope, MacroLoc);
       } else {
         MacroLoc = MacroItr->second;
       }
@@ -172,16 +193,26 @@ public:
         }
       }
     }
+    auto &SrcMgr = mRewriter->getSourceMgr();
+    auto &LangOpts = mRewriter->getLangOpts();
+    Rewriter::RewriteOptions RemoveEmptyLine;
+    /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+    /// set to true then removing (in RewriterBuffer) works incorrect.
+    RemoveEmptyLine.RemoveLineIfEmpty = false;
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI; I++) {
       mRewriter->RemoveText(I->first->getSourceRange());
-      if (I->second && isa<CompoundStmt>(I->second)) {
+      for (auto S : I->second.DeadAccesses) {
+        mRewriter->RemoveText(S->getSourceRange());
+        // TODO (kaniandr@gmail.com): at this moment dead assignments could be
+        // removed inside a compound statement only, so it is safe to remove
+        // ending semicolon.
         Token SemiTok;
-        auto &SrcMgr = mRewriter->getSourceMgr();
-        auto &LangOpts = mRewriter->getLangOpts();
-        Rewriter::RewriteOptions RemoveEmptyLine;
-        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
-        /// set to true then removing (in RewriterBuffer) works incorrect.
-        RemoveEmptyLine.RemoveLineIfEmpty = false;
+        if (!getRawTokenAfter(SrcMgr.getFileLoc(S->getLocEnd()),
+            SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
+          mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
+      }
+      if (I->second.Scope && isa<CompoundStmt>(I->second.Scope)) {
+        Token SemiTok;
         if (!getRawTokenAfter(SrcMgr.getFileLoc(I->first->getLocEnd()),
             SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
@@ -221,11 +252,12 @@ private:
     return &S;
   }
 
-  std::map<NamedDecl *, Stmt *> mDeadDecls;
-  std::stack<Stmt*> mScopes;
+  std::map<NamedDecl *, DeclarationInfo> mDeadDecls;
+  std::vector<Stmt*> mScopes;
   clang::Rewriter *mRewriter;
   DenseSet<DeclStmt*> mMultipleDecls;
   DenseMap<const clang::Type *, decltype(mDeadDecls)::const_iterator> mTypeDecls;
+  DeclRefExpr *mSimpleAssignLHS = nullptr;
 };
 }
 
