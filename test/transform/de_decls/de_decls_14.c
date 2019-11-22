@@ -13,13 +13,13 @@ void function_14()
 //CHECK: de_decls_14.c:7:17: warning: disable dead code elimination
 //CHECK:         for(int I = 0, p = foo_14(); I < n; ++I) {
 //CHECK:                        ^
-//CHECK: de_decls_14.c:7:21: warning: function call prevent dead code elimination
+//CHECK: de_decls_14.c:7:21: warning: side effect prevent dead code elimination
 //CHECK:         for(int I = 0, p = foo_14(); I < n; ++I) {
 //CHECK:                            ^
 //CHECK: de_decls_14.c:9:12: warning: disable dead code elimination
 //CHECK:                 for (int j = foo_14(), J = 0; J < n; ++J) {
 //CHECK:                          ^
-//CHECK: de_decls_14.c:9:16: warning: function call prevent dead code elimination
+//CHECK: de_decls_14.c:9:16: warning: side effect prevent dead code elimination
 //CHECK:                 for (int j = foo_14(), J = 0; J < n; ++J) {
 //CHECK:                              ^
 //CHECK: 4 warnings generated.
