@@ -377,6 +377,7 @@ struct VariableCollector
       if (!CanonicalLocals.count(Search.first))
         VarNames.insert(Search.first->getName());
     } else if (Search.second == VariableCollector::CoincideGlobal) {
+      VarNames.insert(Search.first->getName());
       GlobalRefs.insert(const_cast<DIAliasNode *>(&DIN));
     } else if (Search.second != VariableCollector::Unknown) {
       return false;
