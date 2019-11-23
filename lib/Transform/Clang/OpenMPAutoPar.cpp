@@ -492,9 +492,15 @@ bool ClangOpenMPParalleization::findParallelLoops(
                     bcl::tagged<SortedVarListT, trait::LastPrivate>,
                     bcl::tagged<ReductionVarListT, trait::Reduction>>
       Clauses;
-  DenseSet<const DIAliasNode *> Coverage;
+  DenseSet<const DIAliasNode *> Coverage, RedundantCoverage;
+  DenseSet<const DIAliasNode *> *RedundantCoverageRef = &Coverage;
   accessCoverage<bcl::SimpleInserter>(DIDepSet, DIAT, Coverage,
                                       mGlobalOpts->IgnoreRedundantMemory);
+  if (mGlobalOpts->IgnoreRedundantMemory) {
+    accessCoverage<bcl::SimpleInserter>(DIDepSet, DIAT,
+      RedundantCoverage, false);
+    RedundantCoverageRef = &RedundantCoverage;
+  }
   VariableCollector ASTVars;
   ASTVars.TraverseStmt(
       const_cast<clang::ForStmt *>((*CanonicalItr)->getASTLoop()));
@@ -511,71 +517,74 @@ bool ClangOpenMPParalleization::findParallelLoops(
             DirectSideEffect.insert(
                 const_cast<DIAliasMemoryNode *>(DIUM->getAliasNode()));
       }
-    if (!Coverage.count(TS.getNode()))
-      continue;
-    if (TS.is_any<trait::Shared, trait::Readonly>()) {
+    MemoryDescriptor Dptr = TS;
+    // This should be set to true if current node is redundant and could be
+    // ignored.
+    bool IgnoreRedundant = false;
+    if (!Coverage.count(TS.getNode())) {
+      if (mGlobalOpts->IgnoreRedundantMemory && TS.size() == 1 &&
+        RedundantCoverageRef->count(TS.getNode())) {
+        IgnoreRedundant = true;
+        // If -fignore-redundant-memory option is set then traits for redundant
+        // alias node is set to 'no access'. However, we want to consider traits
+        // of redundant memory if these traits do not prevent parallelization.
+        // So, if redundant node contains only single redundant memory location
+        // we use traits of this location as traits of the whole node.
+        Dptr = **TS.begin();
+      } else {
+        continue;
+      }
+    }
+    if (Dptr.is_any<trait::Shared, trait::Readonly>()) {
       /// Remember memory locations for variables for further analysis.
       for (auto &T : TS)
-        ASTVars.findDecl(*T->getMemory(), ASTToClient, DIMemoryMatcher);
-    } else if (TS.is<trait::Induction>()) {
+        auto S = ASTVars.findDecl(*T->getMemory(), ASTToClient, DIMemoryMatcher);
+    } else if (Dptr.is<trait::Induction>()) {
       if (TS.size() > 1) {
-        toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
-        toDiag(Diags, ForStmt->getLocStart(),
-               clang::diag::note_parallel_multiple_induction);
-        return findParallelLoops(L.begin(), L.end(), F, Provider);
-      }
-      auto Search = ASTVars.findDecl(*(*TS.begin())->getMemory(), ASTToClient,
-                                     DIMemoryMatcher);
-      if (Search.second != VariableCollector::CoincideLocal ||
-          Search.first != ASTVars.Induction) {
-        toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
-        if (ASTVars.Induction && Search.first &&
-            ASTVars.Induction != Search.first) {
-          toDiag(Diags, ASTVars.Induction->getLocation(),
-                 clang::diag::note_parallel_multiple_induction);
-          toDiag(Diags, Search.first->getLocation(),
-                 clang::diag::note_parallel_multiple_induction);
-        } else {
+        if (!IgnoreRedundant) {
+          toDiag(Diags, ForStmt->getLocStart(),
+                 clang::diag::warn_parallel_loop);
           toDiag(Diags, ForStmt->getLocStart(),
                  clang::diag::note_parallel_multiple_induction);
+          return findParallelLoops(L.begin(), L.end(), F, Provider);
         }
-        return findParallelLoops(L.begin(), L.end(), F, Provider);
+      } else {
+        auto Search = ASTVars.findDecl(*(*TS.begin())->getMemory(), ASTToClient,
+                                       DIMemoryMatcher);
+        if (Search.second != VariableCollector::CoincideLocal ||
+            Search.first != ASTVars.Induction) {
+          if (!IgnoreRedundant) {
+            toDiag(Diags, ForStmt->getLocStart(),
+                   clang::diag::warn_parallel_loop);
+            if (ASTVars.Induction && Search.first &&
+                ASTVars.Induction != Search.first) {
+              toDiag(Diags, ASTVars.Induction->getLocation(),
+                     clang::diag::note_parallel_multiple_induction);
+              toDiag(Diags, Search.first->getLocation(),
+                     clang::diag::note_parallel_multiple_induction);
+            } else {
+              toDiag(Diags, ForStmt->getLocStart(),
+                     clang::diag::note_parallel_multiple_induction);
+            }
+            return findParallelLoops(L.begin(), L.end(), F, Provider);
+          }
+        }
       }
-    } else if (TS.is<trait::Private>()) {
+    } else if (Dptr.is<trait::Private>()) {
       clang::VarDecl *Status = nullptr;
       if (!ASTVars.localize(TS, ASTToClient, DIMemoryMatcher,
-                            Clauses.get<trait::Private>(), &Status)) {
+                            Clauses.get<trait::Private>(), &Status) &&
+          !IgnoreRedundant) {
         toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
         toDiag(Diags, Status ? Status->getLocation() : ForStmt->getLocStart(),
           clang::diag::note_parallel_localize_private_unable);
         return findParallelLoops(L.begin(), L.end(), F, Provider);
       }
-    } else if (TS.is<trait::Reduction>()) {
+    } else if (Dptr.is<trait::Reduction>()) {
       auto I = TS.begin(), EI = TS.end();
       auto *Red = (**I).get<trait::Reduction>();
       if (!Red || Red->getKind() == trait::DIReduction::RK_NoReduction) {
-        toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
-        auto Search =
-            ASTVars.findDecl(*(*I)->getMemory(), ASTToClient, DIMemoryMatcher);
-        toDiag(Diags,
-               Search.first ? Search.first->getLocation()
-                            : ForStmt->getLocStart(),
-               clang::diag::note_parallel_reduction_unknown);
-        return findParallelLoops(L.begin(), L.end(), F, Provider);
-      }
-      auto CurrentKind = Red->getKind();
-      auto &ReductionList = Clauses.get<trait::Reduction>()[CurrentKind];
-      clang::VarDecl *Status = nullptr;
-      if (!ASTVars.localize(**I, *TS.getNode(), ASTToClient, DIMemoryMatcher,
-                            ReductionList, &Status)) {
-        toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
-        toDiag(Diags, Status ? Status->getLocation() : ForStmt->getLocStart(),
-          clang::diag::note_parallel_localize_reduction_unable);
-        return findParallelLoops(L.begin(), L.end(), F, Provider);
-      }
-      for (++I; I != EI; ++I) {
-        auto *Red = (**I).get<trait::Reduction>();
-        if (!Red || Red->getKind() != CurrentKind) {
+        if (!IgnoreRedundant) {
           toDiag(Diags, ForStmt->getLocStart(),
                  clang::diag::warn_parallel_loop);
           auto Search = ASTVars.findDecl(*(*I)->getMemory(), ASTToClient,
@@ -586,20 +595,54 @@ bool ClangOpenMPParalleization::findParallelLoops(
                  clang::diag::note_parallel_reduction_unknown);
           return findParallelLoops(L.begin(), L.end(), F, Provider);
         }
+      } else {
+        auto CurrentKind = Red->getKind();
+        auto &ReductionList = Clauses.get<trait::Reduction>()[CurrentKind];
         clang::VarDecl *Status = nullptr;
         if (!ASTVars.localize(**I, *TS.getNode(), ASTToClient, DIMemoryMatcher,
-                              ReductionList)) {
-          toDiag(Diags, ForStmt->getLocStart(), clang::diag::warn_parallel_loop);
+                              ReductionList, &Status) &&
+            !IgnoreRedundant) {
+          toDiag(Diags, ForStmt->getLocStart(),
+                 clang::diag::warn_parallel_loop);
           toDiag(Diags, Status ? Status->getLocation() : ForStmt->getLocStart(),
-            clang::diag::note_parallel_localize_reduction_unable);
+                 clang::diag::note_parallel_localize_reduction_unable);
           return findParallelLoops(L.begin(), L.end(), F, Provider);
+        }
+        for (++I; I != EI; ++I) {
+          auto *Red = (**I).get<trait::Reduction>();
+          if (!Red || Red->getKind() != CurrentKind) {
+            if (!IgnoreRedundant) {
+              toDiag(Diags, ForStmt->getLocStart(),
+                clang::diag::warn_parallel_loop);
+              auto Search = ASTVars.findDecl(*(*I)->getMemory(), ASTToClient,
+                DIMemoryMatcher);
+              toDiag(Diags,
+                Search.first ? Search.first->getLocation()
+                : ForStmt->getLocStart(),
+                clang::diag::note_parallel_reduction_unknown);
+              return findParallelLoops(L.begin(), L.end(), F, Provider);
+            }
+          } else {
+            clang::VarDecl *Status = nullptr;
+            if (!ASTVars.localize(**I, *TS.getNode(), ASTToClient,
+                                  DIMemoryMatcher, ReductionList) &&
+                !IgnoreRedundant) {
+              toDiag(Diags, ForStmt->getLocStart(),
+                     clang::diag::warn_parallel_loop);
+              toDiag(Diags,
+                     Status ? Status->getLocation() : ForStmt->getLocStart(),
+                     clang::diag::note_parallel_localize_reduction_unable);
+              return findParallelLoops(L.begin(), L.end(), F, Provider);
+            }
+          }
         }
       }
     } else {
-      if (TS.is<trait::SecondToLastPrivate>()) {
+      if (Dptr.is<trait::SecondToLastPrivate>()) {
         clang::VarDecl *Status = nullptr;
         if (!ASTVars.localize(TS, ASTToClient, DIMemoryMatcher,
-                              Clauses.get<trait::LastPrivate>())) {
+                              Clauses.get<trait::LastPrivate>()) &&
+            !IgnoreRedundant) {
           toDiag(Diags, ForStmt->getLocStart(),
                  clang::diag::warn_parallel_loop);
           toDiag(Diags, Status ? Status->getLocation() : ForStmt->getLocStart(),
@@ -607,10 +650,11 @@ bool ClangOpenMPParalleization::findParallelLoops(
           return findParallelLoops(L.begin(), L.end(), F, Provider);
         }
       }
-      if (TS.is<trait::FirstPrivate>()) {
+      if (Dptr.is<trait::FirstPrivate>()) {
         clang::VarDecl *Status = nullptr;
         if (!ASTVars.localize(TS, ASTToClient, DIMemoryMatcher,
-                              Clauses.get<trait::FirstPrivate>())) {
+                              Clauses.get<trait::FirstPrivate>()) &&
+            !IgnoreRedundant) {
           toDiag(Diags, ForStmt->getLocStart(),
                  clang::diag::warn_parallel_loop);
           toDiag(Diags, Status ? Status->getLocation() : ForStmt->getLocStart(),
