@@ -124,3 +124,13 @@ def err_apc_insert_template : Error<"unable to create template definition for '%
 def err_apc_not_distr_decl_directive : Error<"distribution of declaration depends on usage location">;
 
 def note_decl_insert_macro_prevent : Note<"unable to create declaration '%0' in macro">;
+
+def remark_parallel_loop : Remark<"parallel execution of loop is possible">;
+def warn_parallel_loop : Warning<"unable to create parallel directive">;
+def warn_parallel_not_canonical : Warning<"unable to create parallel directive for loop not in canonical form">;
+def note_parallel_multiple_induction : Note<"loop has multiple inducition variables">;
+def note_parallel_localize_private_unable : Note<"unable to localize privatizable variable">;
+def note_parallel_localize_reduction_unable : Note<"unable to localize reduction variable">;
+def note_parallel_localize_global_unable : Note<"unable to localize global variable">;
+def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents parallel execution">;
+def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
