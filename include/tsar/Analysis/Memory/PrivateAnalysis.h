@@ -66,6 +66,7 @@ using PrivateInfo =
 
 namespace detail {
 class DependenceImp;
+struct DependenceCache;
 }
 }
 
@@ -189,7 +190,8 @@ public:
 private:
   /// Uses dependence analysis pass to collect loop-carried dependencies in
   /// a specified loop.
-  void collectDependencies(Loop *L, DependenceMap &Deps);
+  void collectDependencies(Loop *L, DependenceMap &Deps,
+    tsar::detail::DependenceCache &Cache);
 
   /// Update collection `Deps` of loop-carried dependencies in a specified loop.
   void insertDependence(const Dependence &Dep,
@@ -211,7 +213,8 @@ private:
   /// must be available from mLiveInfo and mDefInfo.
   void resolveCandidats(
     const tsar::GraphNumbering<const tsar::AliasNode *> &Numbers,
-    const tsar::AliasTreeRelation &AliasSTR, tsar::DFRegion *R);
+    const tsar::AliasTreeRelation &AliasSTR, tsar::DFRegion *R,
+    tsar::detail::DependenceCache &Cache);
 
   /// Set HeaderAccess trait for memory locations explicitly accessed in a
   /// loop header.
