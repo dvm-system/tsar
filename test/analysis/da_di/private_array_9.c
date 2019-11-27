@@ -11,7 +11,7 @@ void test(int *a) {
 }
 
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'test':
-//CHECK:  loop at depth 1 /home/curage/Desktop/test/2.c:4:5
+//CHECK:  loop at depth 1 private_array_9.c:4:5
 //CHECK:    private:
 //CHECK:     <b:{5:9|5:17}, 8> | <i:6:18, 4>
 //CHECK:    output:
@@ -40,7 +40,7 @@ void test(int *a) {
 //CHECK:     <j:4:14, 4>
 //CHECK:    direct access (separate):
 //CHECK:     <*a:{9:9|3:16}, ?> <a:3:16, 8> <a[0]:3:16, 4> <b:{5:9|5:17}, 8> <i:6:18, 4> <j:4:14, 4>
-//CHECK:   loop at depth 2 /home/curage/Desktop/test/2.c:6:9
+//CHECK:   loop at depth 2 private_array_9.c:6:9
 //CHECK:     shared:
 //CHECK:      <b:{5:9|5:17}, 8>
 //CHECK:     first private:
