@@ -30,6 +30,7 @@
 
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
+#include <vector>
 
 namespace tsar {
 struct GlobalOptions {
@@ -57,6 +58,8 @@ struct GlobalOptions {
   bool UnsafeTfmAnalysis = false;
   /// Pass to external analysis results which is used to clarify analysis/
   std::string AnalysisUse = "";
+  /// List of regions which should be optimized.
+  std::vector<std::string> OptRegions;
   /// This suffix should be add to transformed sources before extension.
   std::string OutputSuffix = "";
   /// Disable formatting of a source code after transformation.

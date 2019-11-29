@@ -1,6 +1,7 @@
 set(ANALYSIS_SOURCES Passes.cpp DIMemoryMatcher.cpp NoMacroAssert.cpp
   MemoryMatcher.cpp LoopMatcher.cpp ExpressionMatcher.cpp CanonicalLoop.cpp
-  PerfectLoop.cpp GlobalInfoExtractor.cpp ControlFlowTraits.cpp)
+  PerfectLoop.cpp GlobalInfoExtractor.cpp ControlFlowTraits.cpp
+  RegionDirectiveInfo.cpp)
 
 
 if(MSVC_IDE)

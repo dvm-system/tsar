@@ -135,6 +135,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> UnsafeTfmAnalysis;
   llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
   llvm::cl::opt<std::string> AnalysisUse;
+  llvm::cl::list<std::string> OptRegion;
 
   llvm::cl::OptionCategory TransformCategory;
   llvm::cl::opt<bool> NoFormat;
@@ -230,6 +231,9 @@ Options::Options() :
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
+  OptRegion("foptimize-only", cl::cat(AnalysisCategory), cl::value_desc("regions"),
+    cl::ZeroOrMore, cl::ValueRequired, cl::CommaSeparated,
+    cl::desc("Allow optimization of specified regions (comma separated list of region names")),
   TransformCategory("Transformation options"),
   NoFormat("no-format", cl::cat(TransformCategory),
     cl::desc("Disable format of transformed sources")),
@@ -493,6 +497,7 @@ void Tool::storeCLOptions() {
     Options::get().UnsafeTfmAnalysis.error(Msg);
     exit(1);
   }
+  mGlobalOpts.OptRegions = Options::get().OptRegion;
   mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?

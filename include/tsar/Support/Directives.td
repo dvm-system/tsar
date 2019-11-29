@@ -79,6 +79,7 @@ class Directive<string name, Namespace parent = Spf> {
 def Analysis   : Directive<"analysis">;
 def Transform  : Directive<"transform">;
 def Assert     : Directive<"assert">;
+def Region     : Directive<"region">;
 
 def DvmTemplate: Directive<"template", Dvm>;
 def DvmArray   : Directive<"array", Dvm>;
@@ -106,5 +107,8 @@ def Induction : Clause<"induction", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
 def AssertNoMacro : Clause<"nomacro", Assert>;
+
+def RegionName : Clause<"name", Region,
+  [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
 def DvmAlign : Clause<"align", DvmArray>;
