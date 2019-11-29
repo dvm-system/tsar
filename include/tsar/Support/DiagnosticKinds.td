@@ -134,3 +134,7 @@ def note_parallel_localize_reduction_unable : Note<"unable to localize reduction
 def note_parallel_localize_global_unable : Note<"unable to localize global variable">;
 def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents parallel execution">;
 def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
+
+def warn_region_add_loop_unable : Warning<"unable to mark loop for optimization">;
+def warn_region_add_call_unable : Warning<"unable to mark function call for optimization">;
+def warn_region_not_found : Warning<"optimization region with name '%0' not found">;
