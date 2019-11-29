@@ -526,7 +526,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses()) {
-      bool startsInLoop = false;
+      bool StartInLoop = false, EndInLoop = false;
       auto *EM = AT.find(Loc);
       EM = EM->getTopLevelParent();
       auto *V = EM->front();
@@ -534,23 +534,26 @@ void ReachDFFwk::collapse(DFRegion *R) {
         for (auto *V1 : AI->users()) {
           for (auto *V2 : V1->users()) {
             if (auto *II = dyn_cast<IntrinsicInst>(V2)) {
-              if (II->getIntrinsicID() == llvm::Intrinsic::lifetime_start) {
-                auto *BB = II->getParent();
-                if (auto *DFL = dyn_cast<DFLoop>(R)) {
-                  auto *L = DFL->getLoop();
-                  if (L->contains(BB)) {
-                    startsInLoop = true;
-                    break;
+              auto *BB = II->getParent();
+              if (auto *DFL = dyn_cast<DFLoop>(R)) {
+                auto *L = DFL->getLoop();
+                if (L->contains(BB)) {
+                  auto ID = II->getIntrinsicID();
+                  if (!StartInLoop && ID == llvm::Intrinsic::lifetime_start) {
+                    StartInLoop = true;
+                  } else if (!EndInLoop && ID == llvm::Intrinsic::lifetime_end) {
+                    EndInLoop = true;
                   }
+                  if (StartInLoop && EndInLoop)
+                    break;
                 }
               }
             }
           }
-          if (startsInLoop) {
+          if (StartInLoop && EndInLoop)
             break;
-          }
         }
-        if (!RS->getIn().MustReach.contain(Loc) && !startsInLoop)
+        if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop))
           DefUse->addUse(Loc);
       }
     }
