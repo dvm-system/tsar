@@ -31,6 +31,7 @@ def EK_Anchor       : ExprKind<1>;
 
 // Single tokens.
 def EK_Identifier   : ExprKind<1, "identifier">;
+def EK_PPIdentifier : ExprKind<1, "identifier">;
 def EK_Comma        : ExprKind<1, "comma">;
 def EK_LParen       : ExprKind<1, "l_paren">;
 def EK_RParen       : ExprKind<1, "r_paren">;
@@ -50,6 +51,7 @@ class Expr<ExprKind kind, list<Expr> expr_list = []> {
 // Warning: generator automaticaly inserts anchors, do not use it manually.
 def Anchor : Expr<EK_Anchor>;
 def Identifier : Expr<EK_Identifier>;
+def PPIdentifier : Expr<EK_PPIdentifier>;
 def Comma : Expr<EK_Comma>;
 def LParen : Expr<EK_LParen>;
 def RParen : Expr<EK_RParen>;
