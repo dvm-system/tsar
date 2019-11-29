@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
+#include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
@@ -148,6 +149,7 @@ public:
 
   void releaseMemory() override {
     mSkippedFuncs.clear();
+    mRegions.clear();
     mTfmCtx = nullptr;
     mGlobalOpts = nullptr;
     mMemoryMatcher = nullptr;
@@ -183,6 +185,7 @@ private:
   GlobalsAAResult * mGlobalsAA = nullptr;
   AnalysisSocket *mSocket = nullptr;
   DenseSet<Function *> mSkippedFuncs;
+  SmallVector<const OptimizationRegion *, 4> mRegions;
 };
 
 /// This specifies additional passes which must be run on client.
@@ -455,6 +458,10 @@ struct ClausePrinter {
 
 bool ClangOpenMPParalleization::findParallelLoops(
     Loop &L, Function &F, ClangOpenMPParalleizationProvider &Provider) {
+  if (!mRegions.empty() &&
+      std::none_of(mRegions.begin(), mRegions.end(),
+                   [&L](const OptimizationRegion *R) { return R->contain(L); }))
+    return findParallelLoops(L.begin(), L.end(), F, Provider);
   auto &PL = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
   auto &CL = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
   auto &RI = Provider.get<DFRegionInfoPass>().getRegionInfo();
@@ -759,6 +766,18 @@ bool ClangOpenMPParalleization::runOnModule(Module &M) {
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   initializeProviderOnClient(M);
   initializeProviderOnServer();
+  auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
+  if (mGlobalOpts->OptRegions.empty()) {
+    transform(RegionInfo, std::back_inserter(mRegions),
+              [](const OptimizationRegion &R) { return &R; });
+  } else {
+    for (auto &Name : mGlobalOpts->OptRegions)
+      if (auto *R = RegionInfo.get(Name))
+        mRegions.push_back(R);
+      else
+        toDiag(mTfmCtx->getContext().getDiagnostics(),
+               clang::diag::warn_region_not_found) << Name;
+  }
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
     if (I->size() > 1)
@@ -766,6 +785,12 @@ bool ClangOpenMPParalleization::runOnModule(Module &M) {
     auto *F = I->front()->getFunction();
     if (!F || F->isIntrinsic() || F->isDeclaration() ||
         hasFnAttr(*F, AttrKind::LibFunc) || mSkippedFuncs.count(F))
+      continue;
+    if (!mRegions.empty() && std::all_of(mRegions.begin(), mRegions.end(),
+                                         [F](const OptimizationRegion *R) {
+                                           return R->contain(*F) ==
+                                                  OptimizationRegion::CS_No;
+                                         }))
       continue;
     LLVM_DEBUG(dbgs() << "[OPENMP PARALLEL]: process function " << F->getName()
                       << "\n");
@@ -788,6 +813,7 @@ void ClangOpenMPParalleization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<ClangRegionCollector>();
   AU.setPreservesAll();
 }
 
@@ -830,6 +856,7 @@ INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
 INITIALIZE_PASS_DEPENDENCY(ClangOpenMPServerResponse)
 INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)
 INITIALIZE_PASS_IN_GROUP_END(ClangOpenMPParalleization, "clang-openmp-parallel",
                              "OpenMP Based Parallelization (Clang)", false,
                              false,
