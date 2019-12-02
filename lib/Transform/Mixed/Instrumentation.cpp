@@ -187,7 +187,7 @@ static void collectCallee(CallGraphNode &CGN,
     if (Callee.second->getFunction()) {
       if (TransitiveCallees.insert(Callee.second->getFunction()).second)
         collectCallee(*Callee.second, TransitiveCallees);
-    } else {
+    } else if (Callee.first) {
       CallSite CS(Callee.first);
       if (!CS)
         continue;
