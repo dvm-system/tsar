@@ -83,7 +83,6 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
-  AU.addRequired<GlobalDefinedMemory>();
   AU.setPreservesAll();
 }
 
