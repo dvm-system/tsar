@@ -87,8 +87,9 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
 	  solveDataFlowDownward(&LiveFwk, DFF);
   }
   else {
-	  auto *interprocLiveInfo = GLM->getIterprocLiveMemoryInfo();
-	  mLiveInfo.try_emplace(DFF, std::move((*interprocLiveInfo)[&F]));
+    auto& interprocLiveInfo = GLM->getIterprocLiveMemoryInfo();
+    //??!!##$$ HOW TO COPY
+	  mLiveInfo.try_emplace(DFF, std::move(interprocLiveInfo[&F]));
 
 	  LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
 	  solveDataFlowDownward(&LiveFwk, DFF);

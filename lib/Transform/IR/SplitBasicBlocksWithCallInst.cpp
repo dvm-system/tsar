@@ -1,3 +1,21 @@
+//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -6,6 +24,9 @@
 #include <tsar/Transform/IR/SplitBasicBlocksWithCallInst.h>
 
 using namespace llvm;
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "Split-BB"
 
 char SplitBasicBlocksWithCallInstPass::ID = 0;
 INITIALIZE_PASS_BEGIN(SplitBasicBlocksWithCallInstPass, "Split-BB",
@@ -21,53 +42,46 @@ FunctionPass * llvm::createSplitBasicBlocksWithCallInstPass() {
 }
 
 bool SplitBasicBlocksWithCallInstPass::runOnFunction(Function& F) {
-	errs() << "==========\nSplitter\n";
-	errs() << F.getName();
-	errs() << "\n==========\n";
-	F.dump();
-	errs() << "\n==========\n";
-	if (F.hasName() && !F.empty()) {
-		for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {
-			errs() << "Current BBname: " << currBB->getName() << "\n";
-			TerminatorInst* ti = currBB->getTerminator();
+  LLVM_DEBUG(
+    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: "
+      << "Begin of SplitBasicBlocksWithCallInstPass\n";
+    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName();
+  );
+  if (F.hasName() && !F.empty()) {
+    for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {
+      LLVM_DEBUG(
+        dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: "
+          << "Current BBname: " << currBB->getName() << "\n";
+      );
+      TerminatorInst* ti = currBB->getTerminator();
 
-			for (auto currInstr = currBB->begin(), lastInstr = currBB->end();
-				currInstr != lastInstr; ++currInstr) {
-				if (ti != nullptr ) {
-					errs() << "Current Instr:\n";
-					currInstr->dump();
-					Instruction* i = &*currInstr;
-					if (i == ti)
-						break;
-					BasicBlock* newBB;
-					errs() << "Is callInst?\n";
-					if (auto* callInst = dyn_cast<CallInst>(i)) {
-						errs() << "Is not last inst?\n";
-						if (i != ti) {
-							errs() << "Befor split\n";
-							if (i == &*(currBB->begin())) {
-								errs() << "Is First";
-								newBB = &*currBB;
-							}
-							else {
-								newBB = currBB->splitBasicBlock(callInst);
-							}
-						}
-						errs() << "get next";
-						auto nextInstr = callInst->getNextNonDebugInstruction();
-						errs() << "Is not last inst?\n";
-						if (nextInstr != ti) {
-							newBB->splitBasicBlock(nextInstr);
-							currBB++;
-							break;
-						}
-					}
-				}
-			}
-		}
-		errs() << "\n==========\n";
-		F.dump();
-	}
+      for (auto currInstr = currBB->begin(), lastInstr = currBB->end();
+        currInstr != lastInstr; ++currInstr) {
+        if (ti != nullptr ) {
+          Instruction* i = &*currInstr;
+          if (i == ti)
+            break;
+          BasicBlock* newBB;
+          if (auto* callInst = dyn_cast<CallInst>(i)) {
+            if (i != ti) {
+              if (i == &*(currBB->begin())) {
+                newBB = &*currBB;
+              }
+              else {
+                newBB = currBB->splitBasicBlock(callInst);
+              }
+            }
+            auto nextInstr = callInst->getNextNonDebugInstruction();
+            if (nextInstr != ti) {
+              newBB->splitBasicBlock(nextInstr);
+              currBB++;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
 
-	return true;
+  return true;
 }

@@ -1,3 +1,21 @@
+//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 #include <tsar/Analysis/Memory/GlobalDefinedMemory.h>
 #include <tsar/Support/PassProvider.h>
 #include <tsar/Analysis/Memory/LiveMemory.h>
@@ -16,7 +34,7 @@
 #endif
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "def-mem"
+#define DEBUG_TYPE "GDM"
 
 
 using namespace llvm;
@@ -31,17 +49,17 @@ typedef FunctionPassProvider <
   >
   passes;
 
-INITIALIZE_PROVIDER_BEGIN(passes, "test", "test")
+INITIALIZE_PROVIDER_BEGIN(passes, "GDM-FP", "global-def-mem-func-provider")
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PROVIDER_END(passes, "test", "test")
+INITIALIZE_PROVIDER_END(passes, "GDM-FP", "global-def-mem-func-provider")
 
-INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem", "GDM", true, true)
+INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "GDM", "global-def-mem",  true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(passes)
-INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem", "GDM", true, true)
+INITIALIZE_PASS_END(GlobalDefinedMemory, "GDM", "global-def-mem", true, true)
 
 
 
@@ -56,57 +74,51 @@ ModulePass * llvm::createGlobalDefinedMemoryPass() {
   return new GlobalDefinedMemory();
 }
 
-/*void printInterprocDefInfo(InterprocDefInfo& IPDefInfo) {
-  for(auto& currPair = IPDefInfo.begin(), lastPair = IPDefInfo.end();
-    currPair!=lastPair;
-    currPair++)
-  {
-    errs() << "Function: " << currPair->first->getName();
-    for each (auto var in currPair->getSecond->)
-    {
-
-    }
-  }
-}*/
-
 bool GlobalDefinedMemory::runOnModule(Module &SCC) {
-  //LLVM_DEBUG(
-    errs() << "Begin of GlobalDefinedMemoryPass\n";
-  //);
+  LLVM_DEBUG(
+    dbgs() << "[GLOBAL_DEFINED_MEMORY]: Begin of GlobalDefinedMemoryPass\n";
+  );
   auto& CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto& TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (auto& CurrNode = po_begin(&CG), LastNode = po_end(&CG);
     CurrNode != LastNode;
     CurrNode++) {
+
     CallGraphNode* CGN = *CurrNode;
     if (Function* F = CGN->getFunction()) {
+
       if (F->hasName() && !F->empty()) {
-        errs() << "===============\n";
-        errs() << F->getName() << "\n";
-        errs() << "===============\n";
+        LLVM_DEBUG(
+          dbgs() <<"[GLOBAL_DEFINED_MEMORY]: " << F->getName() << "\n";
+        );
 
         auto& PassesInfo = getAnalysis<passes>(*F);
         auto &RegionInfoForF = PassesInfo
-          .getAnalysis<DFRegionInfoPass>()
+          .get<DFRegionInfoPass>()
           .getRegionInfo();
         auto &AliasTree = PassesInfo.
-          getAnalysis<EstimateMemoryPass>()
+          get<EstimateMemoryPass>()
           .getAliasTree();
         const DominatorTree *DT = nullptr;
-        LLVM_DEBUG(DT = &PassesInfo.getAnalysis<DominatorTreeWrapperPass>().getDomTree());
+        LLVM_DEBUG(
+          DT = &PassesInfo.get<DominatorTreeWrapperPass>().getDomTree()
+        );
         auto *DFF = cast<DFFunction>(RegionInfoForF.getTopLevelRegion());
+
         DefinedMemoryInfo DefInfo;
         ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
         solveDataFlowUpward(&ReachDefFwk, DFF);
-		auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
-		assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
-			"Def-use set must exist for a function!");
-        mInterprocDefInfo.try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
+        auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
+        assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
+          "Def-use set must exist for a function!");
+        mInterprocDefInfo
+          .try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
       }
     }
   }
-  //printInterprocDefInfo(mInterprocDefInfo);
-  
+  LLVM_DEBUG(
+    dbgs() << "[GLOBAL_DEFINED_MEMORY]: End of GlobalDefinedMemoryPass\n";
+  );
   return false;
 
 }
