@@ -34,7 +34,7 @@
 #endif
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "GLM"
+#define DEBUG_TYPE "live-mem"
 
 
 using namespace llvm;
