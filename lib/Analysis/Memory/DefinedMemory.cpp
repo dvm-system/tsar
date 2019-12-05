@@ -28,8 +28,6 @@
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Unparse/Utils.h"
-#include <functional>
-#include <iostream>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
@@ -38,9 +36,10 @@
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/Support/Debug.h>
+#include <functional>
 
 using namespace llvm;
 using namespace tsar;
