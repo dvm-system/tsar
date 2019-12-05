@@ -28,6 +28,8 @@
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Unparse/Utils.h"
+#include <functional>
+#include <iostream>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
@@ -36,10 +38,9 @@
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/Instructions.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Support/Debug.h>
-#include <functional>
 
 using namespace llvm;
 using namespace tsar;
@@ -530,22 +531,28 @@ void ReachDFFwk::collapse(DFRegion *R) {
       auto *EM = AT.find(Loc);
       EM = EM->getTopLevelParent();
       auto *V = EM->front();
+      // We're looking for alloca->bitcast->lifetime.start/end instructions
+      // in loops to exclude arrays that can be marked private
       if (auto *AI = dyn_cast<AllocaInst>(V)) {
         for (auto *V1 : AI->users()) {
-          for (auto *V2 : V1->users()) {
-            if (auto *II = dyn_cast<IntrinsicInst>(V2)) {
-              auto *BB = II->getParent();
-              if (auto *DFL = dyn_cast<DFLoop>(R)) {
-                auto *L = DFL->getLoop();
-                if (L->contains(BB)) {
-                  auto ID = II->getIntrinsicID();
-                  if (!StartInLoop && ID == llvm::Intrinsic::lifetime_start) {
-                    StartInLoop = true;
-                  } else if (!EndInLoop && ID == llvm::Intrinsic::lifetime_end) {
-                    EndInLoop = true;
+          if (auto *BC = dyn_cast<BitCastInst>(V1)) {
+            for (auto *V2 : BC->users()) {
+              if (auto *II = dyn_cast<IntrinsicInst>(V2)) {
+                auto *BB = II->getParent();
+                if (auto *DFL = dyn_cast<DFLoop>(R)) {
+                  auto *L = DFL->getLoop();
+                  if (L->contains(BB)) {
+                    auto ID = II->getIntrinsicID();
+                    if (!StartInLoop &&
+                        ID == llvm::Intrinsic::lifetime_start) {
+                      StartInLoop = true;
+                    } else if (!EndInLoop &&
+                               ID == llvm::Intrinsic::lifetime_end) {
+                      EndInLoop = true;
+                    }
+                    if (StartInLoop && EndInLoop)
+                      break;
                   }
-                  if (StartInLoop && EndInLoop)
-                    break;
                 }
               }
             }
@@ -553,9 +560,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
           if (StartInLoop && EndInLoop)
             break;
         }
-        if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop))
-          DefUse->addUse(Loc);
       }
+      if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop))
+        DefUse->addUse(Loc);
     }
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
