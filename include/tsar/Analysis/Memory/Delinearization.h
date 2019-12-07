@@ -78,7 +78,10 @@ public:
       NeedExtraZero = 1u << 2,
       /// Set if delinearization ignores some beginning GEPs.
       IgnoreGEP = 1u << 3,
-      LLVM_MARK_AS_BITMASK_ENUM(IgnoreGEP)
+      /// Set if GEPs are not used to calculate address of the sub-range
+      /// beginning. For example, if int to pointer conversion is used.
+      NoGEP = 1u << 4,
+      LLVM_MARK_AS_BITMASK_ENUM(NoGEP)
     };
 
     /// Pointer to the beginning of array sub-range.
