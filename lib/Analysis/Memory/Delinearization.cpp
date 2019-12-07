@@ -112,14 +112,15 @@ bool extractSubscriptsFromGEPs(
   return true;
 }
 
-std::pair<Value *, bool> GetUnderlyingArray(Value *Ptr, const DataLayout &DL) {
+std::tuple<Value *, Value *, bool> GetUnderlyingArray(Value *Ptr,
+                                                     const DataLayout &DL) {
   auto BasePtrInfo = GetUnderlyingObjectWithMetadata(Ptr, DL);
   if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first))
     Ptr = cast<LoadInst>(BasePtrInfo.first)->getPointerOperand();
   else
     Ptr = BasePtrInfo.first;
   bool IsAddressOfVariable = (Ptr != BasePtrInfo.first);
-  return std::make_pair(Ptr, IsAddressOfVariable);
+  return std::make_tuple(Ptr, BasePtrInfo.first, IsAddressOfVariable);
 }
 
 #ifdef LLVM_DEBUG
@@ -173,7 +174,7 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
 const Array *DelinearizeInfo::findArray(const Value *Ptr,
     const DataLayout &DL) const {
   auto Info = GetUnderlyingArray(const_cast<Value *>(Ptr), DL);
-  return findArray(Info.first, Info.second);
+  return findArray(std::get<0>(Info), std::get<2>(Info));
 }
 
 void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
@@ -191,6 +192,8 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     return;
   }
   for (auto &Range : ArrayInfo) {
+    if (Range.is(Array::Range::NoGEP))
+      continue;
     assert((!Range.isElement() ||
       ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size())
       && "Unknown subscripts in right dimensions with constant sizes!");
@@ -446,8 +449,10 @@ void DelinearizationPass::collectArrays(Function &F) {
         TSAR_LLVM_DUMP(I.dump()));
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
+      auto *DataPtr = BasePtr;
       bool IsAddressOfVariable;
-      std::tie(BasePtr, IsAddressOfVariable) = GetUnderlyingArray(BasePtr, DL);
+      std::tie(BasePtr, DataPtr, IsAddressOfVariable) =
+        GetUnderlyingArray(BasePtr, DL);
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: strip to "
                << (IsAddressOfVariable ? "address of " : "")
@@ -460,12 +465,25 @@ void DelinearizationPass::collectArrays(Function &F) {
       }
       auto NumberOfDims = ArrayPtr->getNumberOfDims();
       SmallVector<GEPOperator *, 4> GEPs;
-      auto *GEP = dyn_cast<GEPOperator>(const_cast<Value *>(Loc.Ptr));
+      auto RangePtr = Loc.Ptr;
+      auto *GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
+      while (!GEP) {
+        if (Operator::getOpcode(RangePtr) == Instruction::BitCast ||
+            Operator::getOpcode(RangePtr) == Instruction::AddrSpaceCast)
+          RangePtr = cast<Operator>(RangePtr)->getOperand(0);
+        else
+          break;
+        GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
+      }
       while (GEP && (NumberOfDims == 0 || GEPs.size() < NumberOfDims)) {
         GEPs.push_back(GEP);
         GEP = dyn_cast<GEPOperator>(GEP->getPointerOperand());
       }
       auto &Range = ArrayPtr->addRange(const_cast<Value *>(Loc.Ptr));
+      if (!isa<GEPOperator>(RangePtr) &&
+          !(RangePtr == BasePtr && !IsAddressOfVariable) &&
+          !(RangePtr == DataPtr && IsAddressOfVariable))
+        Range.setProperty(Array::Range::NoGEP);
       SmallVector<Value *, 4> SubscriptValues;
       bool UseAllSubscripts = extractSubscriptsFromGEPs(
         GEPs.rbegin(), GEPs.rend(), NumberOfDims, SubscriptValues);
@@ -498,6 +516,8 @@ void DelinearizationPass::collectArrays(Function &F) {
           dbgs() << "[DELINEARIZE]: need extra zero subscripts\n";
         if (Range.is(Array::Range::IgnoreGEP))
           dbgs() << "[DELINEARIZE]: ignore some beginning GEPs\n";
+        if (Range.is(Array::Range::NoGEP))
+          dbgs() << "[DELINEARIZE]: no GEPs found\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : Range.Subscripts) {
           dbgs() << "  "; TSAR_LLVM_DUMP( Subscript->dump());

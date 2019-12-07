@@ -45,7 +45,7 @@ shared_call_1.init
 shared_call_2.init
 distance_1.init
 distance_2.init
-distance_3.safe.init
+distance_3.init
 distance_4.init
 distance_5.safe.init
 distance_6.init
