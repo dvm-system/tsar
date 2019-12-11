@@ -60,39 +60,43 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
 
   auto GLM = getAnalysisIfAvailable<GlobalLiveMemory>();
   if (GLM == nullptr) {
-	  auto LiveItr = mLiveInfo.insert(
-		  std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
-	  auto& LS = LiveItr->get<LiveSet>();
-	  auto DefItr = DefInfo.find(DFF);
-	  assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
-		  "Def-use set must not be null!");
-	  auto& DefUse = DefItr->get<DefUseSet>();
-	  auto& DL = F.getParent()->getDataLayout();
-	  // If inter-procedural analysis is not performed conservative assumption for
-	  // live variable analysis should be made. All locations except 'alloca' are
-	  // considered as alive before exit from this function.
-	  DataFlowTraits<LiveDFFwk*>::ValueType MayLives;
-	  for (auto& Loc : DefUse->getDefs()) {
-		  assert(Loc.Ptr && "Pointer to location must not be null!");
-		  if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
-			  MayLives.insert(Loc);
-	  }
-	  for (auto& Loc : DefUse->getMayDefs()) {
-		  assert(Loc.Ptr && "Pointer to location must not be null!");
-		  if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
-			  MayLives.insert(Loc);
-	  }
-	  LS->setOut(std::move(MayLives));
-	  LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
-	  solveDataFlowDownward(&LiveFwk, DFF);
+    auto LiveItr = mLiveInfo.insert(
+      std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
+    auto& LS = LiveItr->get<LiveSet>();
+    auto DefItr = DefInfo.find(DFF);
+    assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
+      "Def-use set must not be null!");
+    auto& DefUse = DefItr->get<DefUseSet>();
+    auto& DL = F.getParent()->getDataLayout();
+    // If inter-procedural analysis is not performed conservative assumption for
+    // live variable analysis should be made. All locations except 'alloca' are
+    // considered as alive before exit from this function.
+    DataFlowTraits<LiveDFFwk*>::ValueType MayLives;
+    for (auto& Loc : DefUse->getDefs()) {
+      assert(Loc.Ptr && "Pointer to location must not be null!");
+      if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+        MayLives.insert(Loc);
+    }
+    for (auto& Loc : DefUse->getMayDefs()) {
+      assert(Loc.Ptr && "Pointer to location must not be null!");
+      if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+        MayLives.insert(Loc);
+    }
+    LS->setOut(std::move(MayLives));
+    LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
+    solveDataFlowDownward(&LiveFwk, DFF);
   }
   else {
     auto& interprocLiveInfo = GLM->getIterprocLiveMemoryInfo();
-    //??!!##$$ HOW TO COPY
-	  mLiveInfo.try_emplace(DFF, std::move(interprocLiveInfo[&F]));
+    auto& ILIF = interprocLiveInfo[&F];
+    LiveSet LLS;
+    auto ULLS = std::make_unique<LiveSet>(LLS);
+    ULLS->setOut(ILIF->getOut());
+    ULLS->setIn(ILIF->getIn());
+    mLiveInfo.try_emplace(DFF, std::move(ULLS));
 
-	  LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
-	  solveDataFlowDownward(&LiveFwk, DFF);
+    LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
+    solveDataFlowDownward(&LiveFwk, DFF);
   }
   return false;
 }

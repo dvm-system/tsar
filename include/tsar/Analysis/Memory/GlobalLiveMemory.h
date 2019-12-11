@@ -1,4 +1,4 @@
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- GlobalLiveMemory.h --- Global Live Memory Analysis ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,6 +16,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+//===----------------------------------------------------------------------===//
+//
+// This file implements passes to determine global live memory locations.
+//
+//===----------------------------------------------------------------------===//
 #ifndef TSAR_GLOBAL_LIVE_MEMORY_H
 #define TSAR_GLOBAL_LIVE_MEMORY_H
 

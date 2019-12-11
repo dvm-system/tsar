@@ -1,4 +1,4 @@
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- SplitBasicBlocksWithCallInst.h ---  Split Basic Block Tranform ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,6 +16,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+//===----------------------------------------------------------------------===//
+//
+// This file implements passe to do split basik block on call instr.
+//
+//===----------------------------------------------------------------------===//
 #ifndef TSAR_SPLIT_BASIC_BLOCK_WITH_CALL_INST_H
 #define TSAR_SPLIT_BASIC_BLOCK_WITH_CALL_INST_H
 
