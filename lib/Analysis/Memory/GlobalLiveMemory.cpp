@@ -1,10 +1,4 @@
-#include <tsar/Analysis/Memory/GlobalLiveMemory.h>
-#include <tsar/Support/PassProvider.h>
-#include <tsar/Analysis/Memory/LiveMemory.h>
-
-#include <llvm/Analysis/CallGraphSCCPass.h>
-#include <llvm/Support/raw_ostream.h>
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- GlobalLiveMemory.cpp --- Global Live Memory Analysis ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -22,6 +16,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+//===----------------------------------------------------------------------===//
+//
+// This file implements passes to determine global live memory locations.
+//
+//===----------------------------------------------------------------------===//
+#include <tsar/Analysis/Memory/GlobalLiveMemory.h>
+#include <tsar/Support/PassProvider.h>
+#include <tsar/Analysis/Memory/LiveMemory.h>
+#include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/Function.h>
@@ -162,7 +166,6 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
   ReversePostOrderTraversal<CallGraph*> RPOT(&CG);
   FuncToCallInstLiveSet MapOfFuncAndCallInstWithLiveSet;
   
-  //öèêë ïî óçëàì CallGraph
   for (auto& CurrNode = RPOT.begin(), LastNode = RPOT.end(); 
     CurrNode != LastNode; 
     CurrNode++) {
@@ -173,7 +176,6 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
           dbgs() << "[GLOBAL_LIVE_MEMORY]: analyzing " << F->getName() << "\n";
         );
 
-        //get result of help passes
         auto& PassesInfo = getAnalysis<passes>(*F);
         auto& RegInfoForF = PassesInfo.get<DFRegionInfoPass>().getRegionInfo();
         auto* TopBBFforF = cast<DFFunction>(RegInfoForF.getTopLevelRegion());
@@ -192,41 +194,32 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
         auto& LS = LiveItr->get<LiveSet>();
 
 
-        //build function(F)->caller F intsruction 
         for (auto CurrCallRecord = CGN->begin(), LastCallRecord = CGN->end();
           CurrCallRecord != LastCallRecord; CurrCallRecord++) {
           addFuncInMap(MapOfFuncAndCallInstWithLiveSet, CurrCallRecord);
         }
-        //build OUT for F
-        //for F vector of caller function is build
-        // íå ïîëó÷èëîñü âûíåñòè â ôóíêöèþ òê ÿ íå ñìîã íàéòè òèï LS
+        
         auto Fout = LS->getOut();
         if (F->getName() != "main") {
-          //for main null
-          //circle by instructions
+          
           for (auto CurrÑall = MapOfFuncAndCallInstWithLiveSet[F].begin(),
             LastCall = MapOfFuncAndCallInstWithLiveSet[F].end();
             CurrÑall != LastCall; CurrÑall++) {
-            //if true than smth is bad
             if ((CurrÑall->first)->getCalledFunction() != F)
               continue;
 
-            //get liveset current call(if recursion is nullptr)
             if (CurrÑall->second != nullptr) {
               MemorySet<MemoryLocationRange> DFFLSout;
               DFFLSout = CurrÑall->second->getOut();
-              //update LS out
               Fout.merge(DFFLSout);
             }
           }
           LS->setOut(Fout);
         }
 
-        //run Live Memory Analysis
         LiveDFFwk LiveFwk(LiveInfo, DefInfo, DT);
         solveDataFlowDownward(&LiveFwk, TopBBFforF);
 
-        //update MapOfFuncAndCallInstWithLiveSet
         updateFuncToCallInstLiveSet(
           MapOfFuncAndCallInstWithLiveSet, LiveFwk, RegInfoForF, F);
 

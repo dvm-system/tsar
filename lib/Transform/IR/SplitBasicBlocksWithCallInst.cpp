@@ -1,4 +1,4 @@
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- SplitBasicBlocksWithCallInst.cpp --- Split Basic Block Tranform ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,6 +16,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+//===----------------------------------------------------------------------===//
+//
+// This file implements passe to do split basik block on call instr.
+//
+//===----------------------------------------------------------------------===//
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -45,7 +50,7 @@ bool SplitBasicBlocksWithCallInstPass::runOnFunction(Function& F) {
   LLVM_DEBUG(
     dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: "
       << "Begin of SplitBasicBlocksWithCallInstPass\n";
-    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName();
+    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName() << "\n";
   );
   if (F.hasName() && !F.empty()) {
     for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {

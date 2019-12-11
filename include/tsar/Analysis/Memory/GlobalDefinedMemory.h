@@ -1,4 +1,4 @@
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- GlobalDefinedMemory.h --- Global Defined Memory Analysis ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,6 +16,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+//===----------------------------------------------------------------------===//
+//
+// This file implements pass to determine global defined memory locations.
+//
+//===----------------------------------------------------------------------===//
 #ifndef TSAR_GLOBAL_DEFINED_MEMORY_H
 #define TSAR_GLOBAL_DEFINED_MEMORY_H
 

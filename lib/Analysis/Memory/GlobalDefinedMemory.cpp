@@ -1,4 +1,4 @@
-//===--- DefinedMemory.cpp --- Defined Memory Analysis ----------*- C++ -*-===//
+//===--- GlobalDefinedMemory.cpp --- Global Defined Memory Analysis ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -15,7 +15,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//===----------------------------------------------------------------------===//
 //
+// This file implements pass to determine global defined memory locations.
+//
+//===----------------------------------------------------------------------===//
 #include <tsar/Analysis/Memory/GlobalDefinedMemory.h>
 #include <tsar/Support/PassProvider.h>
 #include <tsar/Analysis/Memory/LiveMemory.h>
@@ -120,5 +124,4 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     dbgs() << "[GLOBAL_DEFINED_MEMORY]: End of GlobalDefinedMemoryPass\n";
   );
   return false;
-
 }
