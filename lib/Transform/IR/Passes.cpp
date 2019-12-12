@@ -32,5 +32,5 @@ void llvm::initializeIRTransform(PassRegistry &Registry) {
   initializePOFunctionAttrsAnalysisPass(Registry);
   initializeRPOFunctionAttrsAnalysisPass(Registry);
   initializeLoopAttributesDeductionPassPass(Registry);
-  initializeSplitBasicBlocksWithCallInstPassPass(Registry);
+  initializeCallExtractorPassPass(Registry);
 }

@@ -195,7 +195,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   // However in the original program data-dependency exists because different
   // pointers refer the same memory.
   /////add my passes
-  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
 
@@ -223,7 +223,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
   
-  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
 
@@ -250,7 +250,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createLoopSimplifyPass());
   Passes.add(createLCSSAPass());
 
-  Passes.add(createSplitBasicBlocksWithCallInstPass());
+  Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
 
