@@ -1,4 +1,4 @@
-//===--- SplitBasicBlocksWithCallInst.cpp --- Split Basic Block Tranform ----------*- C++ -*-===//
+//===-- CallExtractor.cpp - Extract each call into a new block -*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,11 +16,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 //
-// This file implements a pass to extract each call instruction (except debug instructions) into its own new basic block.
+// This file implements a pass to extract each call instruction 
+//(except debug instructions) into its own new basic block.
 //
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 #include "tsar/Transform/IR/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -31,15 +32,15 @@
 using namespace llvm;
 
 namespace {
-  class CallExtractorPass : public FunctionPass, private bcl::Uncopyable {
-  public:
-    static char ID;
-    CallExtractorPass() : FunctionPass(ID) {
-      initializeCallExtractorPassPass(*PassRegistry::getPassRegistry());
-    }
+class CallExtractorPass : public FunctionPass, private bcl::Uncopyable {
+public:
+  static char ID;
+  CallExtractorPass() : FunctionPass(ID) {
+    initializeCallExtractorPassPass(*PassRegistry::getPassRegistry());
+  }
 
-    bool runOnFunction(Function& F) override;
-  };
+  bool runOnFunction(Function& F) override;
+};
 }
 
 #undef DEBUG_TYPE
@@ -58,13 +59,11 @@ FunctionPass* llvm::createCallExtractorPass() {
 bool CallExtractorPass::runOnFunction(Function& F) {
   LLVM_DEBUG(
     dbgs() << "[EXTRACT CALL]: "
-    << "Start processing of the function \n" << F.getName();
-    dbgs() << "[EXTRACT CALL]: Befor transformation:\n";
-    F.dump();
+    << "start processing of the function " << F.getName() << "\n";
   );
-  if (F.hasName() && !F.empty()) {
+  if (!F.empty()) {
     for (auto CurrBB = F.begin(), LastBB = F.end();
-      CurrBB != LastBB; ++CurrBB) {
+        CurrBB != LastBB; ++CurrBB) {
       TerminatorInst* TermInst = CurrBB->getTerminator();
       if (TermInst == nullptr)
         continue;
@@ -73,11 +72,10 @@ bool CallExtractorPass::runOnFunction(Function& F) {
         auto NextInstr = CallCurrInst->getNextNonDebugInstruction();
         if (NextInstr != TermInst)
           CurrBB->splitBasicBlock(NextInstr);
-      }
-      else {
-        for (Instruction* i = &*(++CurrInstr); i != TermInst;
-          ++CurrInstr, i = &*CurrInstr) {
-          if (auto* CallCurrInst = dyn_cast<CallInst>(i)) {
+      } else {
+        for (Instruction* I = &*(++CurrInstr); I != TermInst;
+          ++CurrInstr, I = &*CurrInstr) {
+          if (auto* CallCurrInst = dyn_cast<CallInst>(I)) {
             BasicBlock* NewBB = CurrBB->splitBasicBlock(CallCurrInst);
             auto NextInstr = CallCurrInst->getNextNonDebugInstruction();
             if (NextInstr != TermInst)
@@ -89,11 +87,8 @@ bool CallExtractorPass::runOnFunction(Function& F) {
     }
   }
   LLVM_DEBUG(
-    dbgs() << "[EXTRACT CALL]: " << F.getName() 
-    << " After transformation:\n";
-    F.dump();
     dbgs() << "[EXTRACT CALL]: "
-      << "End processing of the function \n" << F.getName();
+      << "end processing of the function " << F.getName() << "\n";
   );
   return true;
 }
