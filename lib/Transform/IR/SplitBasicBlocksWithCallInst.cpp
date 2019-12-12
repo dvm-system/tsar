@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements passe to do split basik block on call instr.
+// This file implements a pass to extract each call instruction (except debug instructions) into its own new basic block.
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/ADT/STLExtras.h>
