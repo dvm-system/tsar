@@ -54,7 +54,7 @@ char SplitBasicBlocksWithCallInstPass::ID = 0;
 INITIALIZE_PASS_BEGIN(SplitBasicBlocksWithCallInstPass, "Split-BB",
   "Split BB in call instraction", false, true)
 INITIALIZE_PASS_END(SplitBasicBlocksWithCallInstPass, "Split-BB",
-    "Split BB in call instraction", false, true)
+    "Split BB in call instraction", false, false)
 
 FunctionPass * llvm::createSplitBasicBlocksWithCallInstPass() {
   return new SplitBasicBlocksWithCallInstPass();
