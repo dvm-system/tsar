@@ -65,8 +65,10 @@ void initializeLoopAttributesDeductionPassPass(PassRegistry &Registry);
 /// Create a pass which deduce loop attributes.
 FunctionPass * createLoopAttributesDeductionPass();
 
+/// Initialize a pass which extract each call instruction (except debug instructions) into its own new basic block.
 void initializeSplitBasicBlocksWithCallInstPassPass(PassRegistry& Registry);
 
+/// Create a pass which extract each call instruction (except debug instructions) into its own new basic block.
 FunctionPass* createSplitBasicBlocksWithCallInstPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
