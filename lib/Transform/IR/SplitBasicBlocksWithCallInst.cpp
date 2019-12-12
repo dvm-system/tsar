@@ -31,19 +31,19 @@
 using namespace llvm;
 
 namespace {
-class SplitBasicBlocksWithCallInstPass : public FunctionPass, private bcl::Uncopyable {
-public:
-  static char ID;
-  SplitBasicBlocksWithCallInstPass() :FunctionPass(ID) {
-    initializeSplitBasicBlocksWithCallInstPassPass(*PassRegistry::getPassRegistry());
-  }
+  class SplitBasicBlocksWithCallInstPass : public FunctionPass, private bcl::Uncopyable {
+  public:
+    static char ID;
+    SplitBasicBlocksWithCallInstPass() : FunctionPass(ID) {
+      initializeSplitBasicBlocksWithCallInstPassPass(*PassRegistry::getPassRegistry());
+    }
 
-  bool runOnFunction(Function& F) override;
+    bool runOnFunction(Function& F) override;
 
-  /// Specifies a list of analyzes  that are necessary for this pass.
-  void getAnalysisUsage(AnalysisUsage& AU) const {};
+    /// Specifies a list of analyzes  that are necessary for this pass.
+    void getAnalysisUsage(AnalysisUsage& AU) const {};
 
-};
+  };
 }
 
 
@@ -52,54 +52,53 @@ public:
 
 char SplitBasicBlocksWithCallInstPass::ID = 0;
 INITIALIZE_PASS_BEGIN(SplitBasicBlocksWithCallInstPass, "Split-BB",
-  "Split BB in call instraction", false, true)
-INITIALIZE_PASS_END(SplitBasicBlocksWithCallInstPass, "Split-BB",
+  "Split BB in call instraction", false, false)
+  INITIALIZE_PASS_END(SplitBasicBlocksWithCallInstPass, "Split-BB",
     "Split BB in call instraction", false, false)
 
-FunctionPass * llvm::createSplitBasicBlocksWithCallInstPass() {
+  FunctionPass* llvm::createSplitBasicBlocksWithCallInstPass() {
   return new SplitBasicBlocksWithCallInstPass();
 }
 
 bool SplitBasicBlocksWithCallInstPass::runOnFunction(Function& F) {
   LLVM_DEBUG(
     dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: "
-      << "Begin of SplitBasicBlocksWithCallInstPass\n";
-    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName() << " Befor transform\n";
+    << "Begin of SplitBasicBlocksWithCallInstPass\n";
+    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName()
+      << " Befor transform\n";
     F.dump();
   );
   if (F.hasName() && !F.empty()) {
-    for (auto currBB = F.begin(), lastBB = F.end(); currBB != lastBB; ++currBB) {
-      LLVM_DEBUG(
-        dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: "
-          << "Current BBname: " << currBB->getName() << "\n";
-      );
+    for (auto currBB = F.begin(), lastBB = F.end();
+      currBB != lastBB; ++currBB) {
       TerminatorInst* ti = currBB->getTerminator();
-
-      if (ti != nullptr) {
-        for (auto currInstr = currBB->begin(), lastInstr = currBB->end();
-          currInstr != lastInstr; ++currInstr) {
-          Instruction* i = &*currInstr;
-          if (i == ti)
-            break;
-          BasicBlock* newBB;
+      if (ti == nullptr)
+        continue;
+      auto currInstr = currBB->begin();
+      if (auto* callInst = dyn_cast<CallInst>(&*currInstr)) {
+        auto nextInstr = callInst->getNextNonDebugInstruction();
+        if (nextInstr != ti)
+          currBB->splitBasicBlock(nextInstr);
+      }
+      else {
+        for (Instruction* i = &*(++currInstr); i != ti;
+          ++currInstr, i = &*currInstr) {
           if (auto* callInst = dyn_cast<CallInst>(i)) {
-              if (i == &*(currBB->begin()))
-                newBB = &*currBB;
-              else
-                newBB = currBB->splitBasicBlock(callInst);
+            BasicBlock* newBB = currBB->splitBasicBlock(callInst);
             auto nextInstr = callInst->getNextNonDebugInstruction();
-            if (nextInstr != ti) {
+            if (nextInstr != ti)
               newBB->splitBasicBlock(nextInstr);
-              currBB++;
-              break;
-            }
+            break;
           }
         }
       }
     }
   }
-  dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName() << " After transform\n";
-  F.dump();
+  LLVM_DEBUG(
+    dbgs() << "[SPLIT_BASIC_BLOCK_WITH_CALL_INST]: " << F.getName() 
+    << " After transform\n";
+    F.dump();
+  );
   return true;
 }
 
