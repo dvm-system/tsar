@@ -47,10 +47,9 @@ public:
 #define DEBUG_TYPE "extract-call"
 
 char CallExtractorPass::ID = 0;
-INITIALIZE_PASS_BEGIN(CallExtractorPass, "extract-call",
+INITIALIZE_PASS(CallExtractorPass, "extract-call",
   "Extract calls into new basic block", false, false)
-INITIALIZE_PASS_END(CallExtractorPass, "extract-call",
-  "Extract calls into new basic block", false, false)
+
 
 FunctionPass* llvm::createCallExtractorPass() {
   return new CallExtractorPass();
