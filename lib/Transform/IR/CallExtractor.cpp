@@ -50,7 +50,6 @@ char CallExtractorPass::ID = 0;
 INITIALIZE_PASS(CallExtractorPass, "extract-call",
   "Extract calls into new basic block", false, false)
 
-
 FunctionPass* llvm::createCallExtractorPass() {
   return new CallExtractorPass();
 }
