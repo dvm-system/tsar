@@ -970,17 +970,21 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL, DT);
-  DenseSet<const Value *> AccessedMemory;
+  DenseSet<const Value *> AccessedMemory, AccessedUnknown;
   auto addLocation = [&AccessedMemory, this](MemoryLocation &&Loc) {
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(Loc);
+  };
+  auto addUnknown = [&AccessedUnknown, this](Instruction &I) {
+    AccessedUnknown.insert(&I);
+    mAliasTree->addUnknown(&I);
   };
   for_each_memory(F, TLI, [&addLocation](
     Instruction &, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
       addLocation(std::move(Loc));
   },
-    [this](Instruction &I, AccessInfo, AccessInfo) {
-      mAliasTree->addUnknown(&I);
+    [&addUnknown](Instruction &I, AccessInfo, AccessInfo) {
+      addUnknown(I);
   });
   // If there are some pointers to memory locations which are not accessed
   // then such memory locations also should be inserted in the alias tree.
@@ -1028,6 +1032,8 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
               WorkList.push_back(ExprCEOp);
           }
         } while (!WorkList.empty());
+      } else if (ImmutableCallSite(&I) && !AccessedUnknown.count(&I)) {
+        mAliasTree->addUnknown(&I);
       }
     }
   }

@@ -43,6 +43,7 @@ shared_19.init
 shared_20.safe.init
 shared_call_1.init
 shared_call_2.init
+stdlib_1.safe.init
 distance_1.init
 distance_2.init
 distance_3.init
