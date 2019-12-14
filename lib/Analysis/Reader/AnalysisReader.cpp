@@ -391,11 +391,14 @@ bool AnalysisReader::runOnFunction(Function &F) {
                         << DIVar->getFilename() << ":" << Var.get<Line>() << ":"
                         << Var.get<Column>() << "\n");
       auto TraitItr = TraitCache.find(Var);
-      if (TraitItr == TraitCache.end() ||
-          isOnlyAnyOf<trait::UseAfterLoop, trait::WriteOccurred>(
-            TraitItr->second)) {
-        if (TraitItr == TraitCache.end() ||
-            TraitItr->second.get<trait::WriteOccurred>())
+      if (TraitItr == TraitCache.end()) {
+        LLVM_DEBUG(
+            dbgs() << "[ANALYSIS READER]: no external traits are provided\n");
+        continue;
+      }
+      if (isOnlyAnyOf<trait::UseAfterLoop, trait::WriteOccurred,
+                      trait::ReadOccurred>(TraitItr->second)) {
+        if (TraitItr->second.get<trait::WriteOccurred>())
           DITrait.set<trait::Shared>();
         else
           DITrait.set<trait::Readonly>();

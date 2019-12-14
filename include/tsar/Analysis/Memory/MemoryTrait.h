@@ -75,6 +75,7 @@ TSAR_TRAIT_DECL(DirectAccess, "direct access")
 TSAR_TRAIT_DECL(IndirectAccess, "indirect access")
 TSAR_TRAIT_DECL(UseAfterLoop, "use after loop")
 TSAR_TRAIT_DECL(WriteOccurred, "write")
+TSAR_TRAIT_DECL(ReadOccurred, "read")
 
 #undef TSAR_TRAIT_DECL
 
