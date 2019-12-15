@@ -1250,9 +1250,9 @@ bool DependenceInfo::testZIV(const SCEV *Src, const SCEV *Dst,
 //
 // Return true if dependence disproved.
 bool DependenceInfo::strongSIVtest(const SCEV *Coeff, const SCEV *SrcConst,
-                                   const SCEV *DstConst, const Loop *CurLoop,
-                                   unsigned Level, FullDependence &Result,
-                                   Constraint &NewConstraint) const {
+  const SCEV *DstConst, const Loop *CurLoop,
+  unsigned Level, FullDependence &Result,
+  Constraint &NewConstraint) const {
   LLVM_DEBUG(dbgs() << "\tStrong SIV test\n");
   LLVM_DEBUG(dbgs() << "\t    Coeff = " << *Coeff);
   LLVM_DEBUG(dbgs() << ", " << *Coeff->getType() << "\n");
@@ -2276,6 +2276,23 @@ bool DependenceInfo::testSIV(const SCEV *Src, const SCEV *Dst, unsigned &Level,
   LLVM_DEBUG(dbgs() << "    dst = " << *Dst << "\n");
   const SCEVAddRecExpr *SrcAddRec = dyn_cast<SCEVAddRecExpr>(Src);
   const SCEVAddRecExpr *DstAddRec = dyn_cast<SCEVAddRecExpr>(Dst);
+  // The following case is possible:
+  // for (int I = 0; I < 10; ++I) {
+  //   ...A[I + 1] ...
+  //   if (...) { ...A[I]...; break; }
+  // }
+  // In this case recurrence expression will be constructed for A[I] and
+  // its corresponding loop will be 'for'. However, the 'for' loop is not
+  // actually contain A[I] access due to occurrence of 'break' statement.
+  // So, we assume dependencies in this case because the further analysis
+  // does not support that case and produces runtime error.
+  bool InCommonNest = true;
+  if (SrcAddRec)
+    InCommonNest &= SrcAddRec->getLoop()->contains(Result.getSrc()->getParent());
+  if (DstAddRec)
+    InCommonNest &= DstAddRec->getLoop()->contains(Result.getDst()->getParent());
+  if (!InCommonNest)
+    return false;
   if (SrcAddRec && DstAddRec) {
     const SCEV *SrcConst = SrcAddRec->getStart();
     const SCEV *DstConst = DstAddRec->getStart();
@@ -2602,9 +2619,18 @@ bool DependenceInfo::gcdMIVtest(const SCEV *Src, const SCEV *Dst,
       Remainder = ConstDelta.srem(RunningGCD);
       LLVM_DEBUG(dbgs() << "\tRemainder = " << Remainder << "\n");
       if (Remainder != 0) {
-        unsigned Level = mapSrcLoop(CurLoop);
-        Result.DV[Level - 1].Direction &= unsigned(~Dependence::DVEntry::EQ);
-        Improved = true;
+        // The following case is possible:
+        // for (int I = 0; I < 10; ++I) {
+        //   ...A[I + 1] ...
+        //   if (...) { ...A[I]...; break; }
+        // }
+        bool InCommonNest = CurLoop->contains(Result.getSrc()->getParent()) &&
+          CurLoop->contains(Result.getDst()->getParent());
+        if (InCommonNest) {
+          unsigned Level = mapSrcLoop(CurLoop);
+          Result.DV[Level - 1].Direction &= unsigned(~Dependence::DVEntry::EQ);
+          Improved = true;
+        }
       }
     }
   }
@@ -3618,6 +3644,16 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
     Pair[P].GroupLoops.resize(MaxLevels + 1);
     Pair[P].Group.resize(Pairs);
     removeMatchingExtensions(&Pair[P]);
+    // The following case is possible:
+    // for (int I = 0; I < 10; ++I) {
+    //   ...A[I + 1] ...
+    //   if (...) { ...A[I]...; break; }
+    // }
+    // So, we try to substitute I in A[I] with accurate expression.
+    auto SrcLoopNest = LI->getLoopFor(Src->getParent());
+    Pair[P].Src = SE->getSCEVAtScope(Pair[P].Src, SrcLoopNest);
+    auto DstLoopNest = LI->getLoopFor(Dst->getParent());
+    Pair[P].Dst = SE->getSCEVAtScope(Pair[P].Dst, DstLoopNest);
     unsigned short Levels = 0;
     Pair[P].Classification =
       classifyPair(Pair[P].Src, LI->getLoopFor(Src->getParent()),
