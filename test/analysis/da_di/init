@@ -54,6 +54,8 @@ distance_7.init
 distance_8.init
 dependence_1.init
 dependence_2.init
+dependence_3.init
+dependence_4.init
 induction_1.init
 redundant_1.init
 redundant_2.init
