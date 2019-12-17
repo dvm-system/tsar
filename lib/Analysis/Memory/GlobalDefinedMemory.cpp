@@ -1,4 +1,4 @@
-//===--- GlobalDefinedMemory.cpp --- Global Defined Memory Analysis ----------*- C++ -*-===//
+//===- GlobalDefinedMemory.cpp - Global Defined Memory Analysis-*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -15,30 +15,31 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 //
 // This file implements pass to determine global defined memory locations.
 //
-//===----------------------------------------------------------------------===//
-#include <tsar/Analysis/Memory/GlobalDefinedMemory.h>
-#include <tsar/Support/PassProvider.h>
-#include <tsar/Analysis/Memory/LiveMemory.h>
-#include <tsar/Analysis/Memory/EstimateMemory.h>
+//===---------------------------------------------------------------------===//
+#include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Support/PassProvider.h"
 
 #include <llvm/Analysis/CallGraphSCCPass.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/Function.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <Vector>
 #include <map>
+
 #ifdef LLVM_DEBUG
 #include <llvm/IR/Dominators.h>
 #endif
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "GDM"
+#define DEBUG_TYPE "gl-def-mem"
 
 
 using namespace llvm;
@@ -49,21 +50,23 @@ char GlobalDefinedMemory::ID = 0;
 typedef FunctionPassProvider <
   DFRegionInfoPass,
   EstimateMemoryPass,
-  DominatorTreeWrapperPass
-  >
-  passes;
+  DominatorTreeWrapperPass> passes;
 
-INITIALIZE_PROVIDER_BEGIN(passes, "GDM-FP", "global-def-mem-func-provider")
+INITIALIZE_PROVIDER_BEGIN(passes, "gl-def-mem-fp",
+  "global defined memory func-provider")
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PROVIDER_END(passes, "GDM-FP", "global-def-mem-func-provider")
+INITIALIZE_PROVIDER_END(passes, "gl-def-mem-fp",
+  "global defined memory func-provider")
 
-INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "GDM", "global-def-mem",  true, true)
+INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "gl-def-mem",
+  "global defined memory analysis",  true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(passes)
-INITIALIZE_PASS_END(GlobalDefinedMemory, "GDM", "global-def-mem", true, true)
+INITIALIZE_PASS_END(GlobalDefinedMemory, "gl-def-mem",
+  "global defined memory analysis", true, true)
 
 
 
@@ -86,7 +89,7 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
   auto& TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (auto& CurrNode = po_begin(&CG), LastNode = po_end(&CG);
     CurrNode != LastNode;
-    CurrNode++) {
+    ++CurrNode) {
 
     CallGraphNode* CGN = *CurrNode;
     if (Function* F = CGN->getFunction()) {
@@ -108,10 +111,11 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
           DT = &PassesInfo.get<DominatorTreeWrapperPass>().getDomTree()
         );
         auto *DFF = cast<DFFunction>(RegionInfoForF.getTopLevelRegion());
-
         DefinedMemoryInfo DefInfo;
         ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, DefInfo, mInterprocDefInfo);
+
         solveDataFlowUpward(&ReachDefFwk, DFF);
+
         auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
         assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
           "Def-use set must exist for a function!");

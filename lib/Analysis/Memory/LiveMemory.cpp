@@ -85,16 +85,14 @@ bool llvm::LiveMemoryPass::runOnFunction(Function & F) {
     LS->setOut(std::move(MayLives));
     LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, DFF);
-  }
-  else {
-    auto& interprocLiveInfo = GLM->getIterprocLiveMemoryInfo();
-    auto& ILIF = interprocLiveInfo[&F];
+  } else {
+    auto& InterprocLiveInfo = GLM->getIterprocLiveMemoryInfo();
+    auto& ILIF = InterprocLiveInfo[&F];
     LiveSet LLS;
     auto ULLS = std::make_unique<LiveSet>(LLS);
     ULLS->setOut(ILIF->getOut());
     ULLS->setIn(ILIF->getIn());
     mLiveInfo.try_emplace(DFF, std::move(ULLS));
-
     LiveDFFwk LiveFwk(mLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, DFF);
   }

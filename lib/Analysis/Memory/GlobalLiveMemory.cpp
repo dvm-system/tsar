@@ -1,4 +1,4 @@
-//===--- GlobalLiveMemory.cpp --- Global Live Memory Analysis ----------*- C++ -*-===//
+//===--- GlobalLiveMemory.cpp --- Global Live Memory Analysis --*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -16,19 +16,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-//===----------------------------------------------------------------------===//
+//===---------------------------------------------------------------------===//
 //
 // This file implements passes to determine global live memory locations.
 //
-//===----------------------------------------------------------------------===//
-#include <tsar/Analysis/Memory/GlobalLiveMemory.h>
-#include <tsar/Support/PassProvider.h>
-#include <tsar/Analysis/Memory/LiveMemory.h>
+//===---------------------------------------------------------------------===//
+#include "tsar/Analysis/Memory/GlobalLiveMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
+#include "tsar/Support/PassProvider.h"
+
 #include <llvm/Analysis/CallGraphSCCPass.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/IR/Function.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <Vector>
 #include <map>
@@ -62,16 +63,20 @@ typedef FunctionPassProvider <
 
 char GlobalLiveMemory::ID = 0;
 
-INITIALIZE_PROVIDER_BEGIN(passes, "GLM-FP", "global-live-mem-func-provider")
+INITIALIZE_PROVIDER_BEGIN(passes, "gl-live-mem-fp",
+  "global live mem func provider")
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PROVIDER_END(passes, "GLM-FP", "global-live-mem-func-provider")
+INITIALIZE_PROVIDER_END(passes, "gl-live-mem-fp",
+  "global live mem func provider")
 
-INITIALIZE_PASS_BEGIN(GlobalLiveMemory, "GLM", "global-live-mem", true, true)
+INITIALIZE_PASS_BEGIN(GlobalLiveMemory, "gl-live-mem-fp",
+  "global live memory analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(passes)
-INITIALIZE_PASS_END(GlobalLiveMemory, "GLM", "global-live-mem", true, true)
+INITIALIZE_PASS_END(GlobalLiveMemory, "gl-live-mem-fp",
+  "global live memory analysis", true, true)
 
 
 
@@ -111,17 +116,14 @@ void addFuncInMap(
 
   Function* CalledFunc = CurrCallRecord->second->getFunction();
   if (!Map.count(CalledFunc)) {
-
     std::vector< 
       std::pair<CallInst*, std::unique_ptr<LiveSet>>
     > CallInstLiveSet;
-    CallInstLiveSet.
-      push_back(
+    CallInstLiveSet.push_back(
         std::make_pair(cast<CallInst>(CurrCallRecord->first), nullptr)
       );
     Map.insert(std::make_pair(CalledFunc, std::move(CallInstLiveSet)));
-  }
-  else {
+  } else {
     Map[CalledFunc].push_back(
       std::make_pair(cast<CallInst>(CurrCallRecord->first), nullptr));
   }
@@ -134,23 +136,19 @@ void updateFuncToCallInstLiveSet(FuncToCallInstLiveSet& Map,
   for (auto& RegMemSet = LiveFwk.getLiveInfo().begin(),
     LastRegMemSet = LiveFwk.getLiveInfo().end();
     RegMemSet != LastRegMemSet; ++RegMemSet) {
-
     for (auto& FuncVector = Map.begin(),
       LastFuncVector = Map.end();
       FuncVector != LastFuncVector; ++FuncVector) {
-
       for (auto CurrCall = FuncVector->second.begin(),
         LastCall = FuncVector->second.end();
         CurrCall != LastCall; ++CurrCall) {
-
         DFBlock* DFF;
         if (CurrCall->first->getFunction() == F) {
           DFF = cast<DFBlock>(
             RegInfoForF.getRegionFor(CurrCall->first->getParent())
           );
-          if (DFF == RegMemSet->first) {
+          if (DFF == RegMemSet->first) 
             CurrCall->second = std::move(RegMemSet->second);
-          }
         }
       }
     }
@@ -162,7 +160,6 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
     dbgs() << "[GLOBAL_LIVE_MEMORY]: Begin of GlobalLiveMemoryPass\n";
   );
   auto& CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-
   ReversePostOrderTraversal<CallGraph*> RPOT(&CG);
   FuncToCallInstLiveSet MapOfFuncAndCallInstWithLiveSet;
   
@@ -171,43 +168,36 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
     CurrNode++) {
     CallGraphNode* CGN = *CurrNode;
     if (auto F = CGN->getFunction()) {
-      if (F->hasName() && !F->empty()) {
+      if (!F->empty()) {
         LLVM_DEBUG(
           dbgs() << "[GLOBAL_LIVE_MEMORY]: analyzing " << F->getName() << "\n";
         );
-
         auto& PassesInfo = getAnalysis<passes>(*F);
         auto& RegInfoForF = PassesInfo.get<DFRegionInfoPass>().getRegionInfo();
         auto* TopBBFforF = cast<DFFunction>(RegInfoForF.getTopLevelRegion());
         auto& DefInfo = PassesInfo.get<DefinedMemoryPass>().getDefInfo();
-
         DominatorTree* DT = nullptr;
         LLVM_DEBUG(
           auto & DTPass = PassesInfo.get<DominatorTreeWrapperPass>();
           DT = &DTPass.getDomTree();
         );
-
         LiveMemoryInfo LiveInfo;
         auto LiveItr = LiveInfo.insert(
           std::make_pair(TopBBFforF, llvm::make_unique<LiveSet>())
         ).first;
         auto& LS = LiveItr->get<LiveSet>();
 
-
         for (auto CurrCallRecord = CGN->begin(), LastCallRecord = CGN->end();
           CurrCallRecord != LastCallRecord; CurrCallRecord++) {
           addFuncInMap(MapOfFuncAndCallInstWithLiveSet, CurrCallRecord);
         }
-        
         auto Fout = LS->getOut();
         if (F->getName() != "main") {
-          
           for (auto CurrÑall = MapOfFuncAndCallInstWithLiveSet[F].begin(),
             LastCall = MapOfFuncAndCallInstWithLiveSet[F].end();
             CurrÑall != LastCall; CurrÑall++) {
             if ((CurrÑall->first)->getCalledFunction() != F)
               continue;
-
             if (CurrÑall->second != nullptr) {
               MemorySet<MemoryLocationRange> DFFLSout;
               DFFLSout = CurrÑall->second->getOut();
@@ -219,10 +209,8 @@ bool GlobalLiveMemory::runOnModule(Module &SCC) {
 
         LiveDFFwk LiveFwk(LiveInfo, DefInfo, DT);
         solveDataFlowDownward(&LiveFwk, TopBBFforF);
-
         updateFuncToCallInstLiveSet(
           MapOfFuncAndCallInstWithLiveSet, LiveFwk, RegInfoForF, F);
-
         mIterprocLiveMemoryInfo.try_emplace(F, std::move(LiveInfo[TopBBFforF]));
       }
     }

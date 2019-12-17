@@ -30,33 +30,32 @@
 #include <bcl/utility.h>
 
 namespace llvm {
+class GlobalLiveMemory : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
 
-  class GlobalLiveMemory : public ModulePass, private bcl::Uncopyable {
-  public:
-    static char ID;
+  typedef DenseMap<const llvm::Function*, std::unique_ptr<tsar::LiveSet>> IterprocLiveMemoryInfo;
 
-    typedef DenseMap<const llvm::Function*, std::unique_ptr<tsar::LiveSet>> IterprocLiveMemoryInfo;
+  GlobalLiveMemory() : ModulePass(ID){
+    initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
+  }
 
-    GlobalLiveMemory() : ModulePass(ID){
-      initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
-    }
+  bool runOnModule(Module &SCC) override;
+  void getAnalysisUsage(AnalysisUsage& AU) const override;
 
-    bool runOnModule(Module &SCC) override;
-    void getAnalysisUsage(AnalysisUsage& AU) const override;
+  const IterprocLiveMemoryInfo& getIterprocLiveMemoryInfo() const noexcept {
+    return mIterprocLiveMemoryInfo;
+  }
 
-    const IterprocLiveMemoryInfo& getIterprocLiveMemoryInfo() const noexcept {
-      return mIterprocLiveMemoryInfo;
-    }
+  IterprocLiveMemoryInfo& getIterprocLiveMemoryInfo() noexcept {
+    return mIterprocLiveMemoryInfo;
+  }
 
-    IterprocLiveMemoryInfo& getIterprocLiveMemoryInfo() noexcept {
-      return mIterprocLiveMemoryInfo;
-    }
+private:
+  IterprocLiveMemoryInfo mIterprocLiveMemoryInfo;
+};
 
-  private:
-    IterprocLiveMemoryInfo mIterprocLiveMemoryInfo;
-  };
-
-  typedef GlobalLiveMemory::IterprocLiveMemoryInfo IterprocLiveMemoryInfo;
+typedef GlobalLiveMemory::IterprocLiveMemoryInfo IterprocLiveMemoryInfo;
 
 }
 #endif//TSAR_GLOBAL_LIVE_MEMORY_H

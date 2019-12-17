@@ -232,7 +232,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   Passes.add(createAPCContextStorage());
   addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,
                  PrintPassGroup::getPassRegistry(), Passes);
-
+#endif
   addBeforeTfmAnalysis(Passes);
   addPrint(BeforeTfmAnalysis);
   addOutput(BeforeTfmAnalysis);

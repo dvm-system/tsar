@@ -70,8 +70,7 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   if (GDM == nullptr) {
     ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
     solveDataFlowUpward(&ReachDefFwk, DFF);
-  }
-  else {
+  } else {
     ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, GDM->getInterprocDefInfo());
     solveDataFlowUpward(&ReachDefFwk, DFF);
   }
@@ -396,7 +395,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // 3. Unknown instructions will be remembered in DefUseSet.
     auto &DL = I.getModule()->getDataLayout();
     for_each_memory(I, TLI,
-      [&DL, &AT, InterprocDefInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
+      [&DL, &AT, InterprocDefInfo, &TLI, &DU]
+      (Instruction &I, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
@@ -418,33 +418,35 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         assert(AN && "Alias node must not be null!");
         ImmutableCallSite CS(&I);
         if (CS) {
-          //получаю функцию F (CS~f(args))
           auto F = CS.getCalledFunction();
-          //если информаци€ по ней уже есть
-          //нова€ переменна§ в захвате у л€мбды
           if (InterprocDefInfo != nullptr && (*InterprocDefInfo).count(F)) {
-            //инициализаци€
             W = R = AccessInfo::No;
-            auto defUseSet = std::move((*InterprocDefInfo)[F]);
-            //получаю текущий аргумент
-            //const Value *arg = CS.getArgument(Idx);
-            // заполн€ю W,R
-			MemoryLocationRange arg = MemoryLocationRange::getForArgument(CS, Idx, TLI);
-            if ((defUseSet->getDefs()).contain(arg)) {
-              W = AccessInfo::Must;;
-            } else if ((defUseSet->getMayDefs()).contain(arg)) {
+            auto DefUseSet = std::move((*InterprocDefInfo)[F]);
+			      auto Arg = MemoryLocationRange::getForArgument(CS, Idx, TLI);
+            if ((DefUseSet->getDefs()).contain(Arg)) {
+              W = AccessInfo::Must;
+            } else if ((DefUseSet->getMayDefs()).contain(Arg)) {
               W = AccessInfo::May;
             }
-            if ((defUseSet->getUses()).contain(arg)) {
-              R = AccessInfo::Must;;
+            if ((DefUseSet->getUses()).contain(Arg)) {
+              R = AccessInfo::Must;
             }
-          }
-          else {
+          } else {
             switch (AA.getArgModRefInfo(CS, Idx)) {
-            case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
-            case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
-            case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
-            case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
+              case ModRefInfo::NoModRef: 
+                W = R = AccessInfo::No; 
+                break;
+              case ModRefInfo::Mod: 
+                W = AccessInfo::May; 
+                R = AccessInfo::No; 
+                break;
+              case ModRefInfo::Ref: 
+                W = AccessInfo::No; 
+                R = AccessInfo::May; 
+                break;
+              case ModRefInfo::ModRef: 
+                W = R = AccessInfo::May; 
+                break;
             }
           }
         }
