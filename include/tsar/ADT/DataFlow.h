@@ -521,17 +521,17 @@ public:
   void removeSuccessor(NodeTy *Node) { removeAdjacentNode(Node, SUCC); }
 
   /// Returns number of adjacent nodes in the specified direction.
-  size_type numberOfAdjacentNodes(Direction Dir) {
+  size_type numberOfAdjacentNodes(Direction Dir) const {
     assert(FIRST_DIRECTION <= Dir && Dir <= LAST_DIRECTION &&
       "Direction is out of range!");
     return mAdjacentNodes[Dir].size();
   }
 
   /// Returns number of successors for the specified node.
-  size_type numberOfSuccessors() { return numberOfAdjacentNodes(SUCC); }
+  size_type numberOfSuccessors() const { return numberOfAdjacentNodes(SUCC); }
 
   /// Returns number of predecessors for the specified node.
-  size_type numberOfPredecessors() { return numberOfAdjacentNodes(PRED); }
+  size_type numberOfPredecessors() const { return numberOfAdjacentNodes(PRED); }
 
 private:
   llvm::SmallVector<NodeTy *, N> mAdjacentNodes[NUMBER_DIRECTION];
