@@ -1071,8 +1071,6 @@ public:
       if (M->emptyBinding() || DIMTraitItr->is<trait::Redundant>() ||
           isLockedTrait(*DIMTraitItr, mLockedTraits, mDIAliasSTR))
         continue;
-      if (M->isOriginal())
-        mAccesses.push_back(M);
       if (isa<DIUnknownMemory>(M) && cast<DIUnknownMemory>(M)->isExec()) {
         if (M->isOriginal())
           mCorruptedUMs.emplace_back(M);
