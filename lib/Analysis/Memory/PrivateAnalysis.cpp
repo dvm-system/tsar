@@ -703,13 +703,14 @@ void PrivateRecognitionPass::resolvePointers(
       // estimate memory will be stored in ExplisitAccesses. So, we traverse
       // estimate memory chain to determine which memory is analyzed.
       auto PtrTraits = ExplicitAccesses.find(Ptr);
-      while (PtrTraits == ExplicitAccesses.end()) {
-        using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-        Ptr = CT::getNext(Ptr);
-        assert(Ptr && "It seems that traits does not exist!");
+      using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+      while (PtrTraits == ExplicitAccesses.end() && (Ptr = CT::getNext(Ptr)))
         PtrTraits = ExplicitAccesses.find(Ptr);
-      }
-      if (dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
+      // If Ptr is null it means that it has been dereferenced outside the loop.
+      // int **P, *V = *P; for(...) { ...V... }
+      // In this case after memory promotion V becomes *P, however corresponding
+      // 'load' remains outside the loop.
+      if (!Ptr || dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
             == BitMemoryTrait::Readonly)
         continue;
       // Location can not be declared as copy in or copy out without
