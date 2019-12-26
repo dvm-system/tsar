@@ -367,7 +367,7 @@ bool isLoopInvariant(const SCEV *Expr, const Loop *L,
   if (isa<SCEVCouldNotCompute>(Expr))
     return false;
   if (!SE.isLoopInvariant(Expr, L)) {
-    if (auto *Cast = dyn_cast<SCEVCastExpr>(Expr))
+    while (auto *Cast = dyn_cast<SCEVCastExpr>(Expr))
       Expr = Cast->getOperand();
     if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(Expr)) {
       if (!L || AddRec->getLoop() == L || L->contains(AddRec->getLoop()))
