@@ -316,7 +316,7 @@ public:
   ///
   /// \attention This method updates AATags for an existing location. So,
   /// use `sanitizeAAInfo()` method to obtain correct value. Note, that alias
-  /// analysis may not work if AATages is corrupted.
+  /// analysis may not work if AATags is corrupted.
   template<class Ty> std::pair<iterator, bool> insert(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end()) {

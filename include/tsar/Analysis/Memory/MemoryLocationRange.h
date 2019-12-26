@@ -108,7 +108,7 @@ struct MemoryLocationRange {
   explicit MemoryLocationRange(const llvm::Value *Ptr = nullptr,
                                LocationSize LowerBound = 0,
                                LocationSize UpperBound = UnknownSize,
-                               const llvm::AAMDNodes &AATages = llvm::AAMDNodes())
+                               const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
         AATags(AATags) {}
 
