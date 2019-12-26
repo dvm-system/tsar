@@ -63,6 +63,13 @@ class DIMemory;
 void printLocationSource(llvm::raw_ostream &O, const llvm::Value *Loc,
     const llvm::DominatorTree *DT = nullptr);
 
+/// Print information available from a source code for the
+/// specified memory location.
+inline void printLocationSource(llvm::raw_ostream &O, const llvm::Value &Loc,
+    const llvm::DominatorTree *DT = nullptr) {
+  printLocationSource(O, &Loc, DT);
+}
+
 /// Print information available from a source code for the specified memory
 /// location and its size (<location, size>).
 void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
