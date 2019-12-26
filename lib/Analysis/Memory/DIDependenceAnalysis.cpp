@@ -734,7 +734,9 @@ protected:
   /// The key in the map is an IR-level estimate memory location binded to
   /// a list of metadata-level locations from a value. The second argument of
   /// a value (in tuple) is utility value which is used to sort locations during
-  /// search.
+  /// search. Note, to avoid out of range swaps the size of list is greater than
+  /// a number of locations it contains and the first element is a poison value
+  /// which should not be dereferenced.
   using EstimateCoverageT = PersistentMap<const EstimateMemory *,
     std::tuple<SmallVector<DIMemory *, 1>, unsigned>,
     DenseMapInfo<const EstimateMemory *>,
@@ -784,7 +786,7 @@ private:
       auto Itr = mEstimateCoverage.find(EM);
       if (Itr != mEstimateCoverage.end())
         return Itr;
-     EM = EM->getParent();
+      EM = EM->getParent();
     }
     return mEstimateCoverage.end();
   };
@@ -797,9 +799,10 @@ private:
   EstimateCoverageT::persistent_iterator isCovered(const DIMemory *M,
       const EstimateCoverageT::persistent_iterator &EMCoverageItr) {
     auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>());
-    // If location is sorted it is safe to check front() location only.
+    // If location is sorted it is safe to check first valid location only.
+    // Note, that the front() location is poison and should not be accessed.
     return Itr != mEstimateCoverage.end() &&
-      Itr->template get<DIMemory>().front() != M ? Itr :
+      Itr->template get<DIMemory>()[1] != M ? Itr :
       EstimateCoverageT::persistent_iterator();
   }
 
@@ -810,8 +813,9 @@ private:
   /// Use this after sort() only.
   UnknownCoverageT::persistent_iterator isCovered(const DIMemory *M,
       const UnknownCoverageT::persistent_iterator &UMCoverageItr) {
-    // If location is sorted it is safe to check front() location only.
-    return UMCoverageItr->get<DIMemory>().front() != M ? UMCoverageItr :
+    // If location is sorted it is safe to check first valid location only.
+    // Note, that the front() location is poison and should not be accessed.
+    return UMCoverageItr->get<DIMemory>()[1] != M ? UMCoverageItr :
       UnknownCoverageT::persistent_iterator();
   }
 
@@ -831,7 +835,8 @@ private:
         ItrCoverage.push_back(Itr);
       }
       for (auto &I : ItrCoverage)
-        Coverage.insert(I->get<DIMemory>().begin(), I->get<DIMemory>().end());
+        Coverage.insert(I->get<DIMemory>().begin() + 1,
+          I->get<DIMemory>().end());
     } else {
       SmallVector<EstimateCoverageT::iterator, 4> ItrCoverage;
       auto Size = isa<DIEstimateMemory>(M) ?
@@ -844,7 +849,8 @@ private:
         ItrCoverage.push_back(Itr);
       }
       for (auto &I : ItrCoverage)
-        Coverage.insert(I->get<DIMemory>().begin(), I->get<DIMemory>().end());
+        Coverage.insert(I->get<DIMemory>().begin() + 1,
+          I->get<DIMemory>().end());
     }
     return true;
   }
@@ -866,7 +872,7 @@ private:
   }
 
   template<class ItrT> void resetLastSwapOffset(
-      const ItrT &BeginItr, const ItrT &EndItr) {
+    const ItrT &BeginItr, const ItrT &EndItr) {
     for (auto &Binding : make_range(BeginItr, EndItr))
       for (auto &BindItr : Binding.BindedMemory)
         BindItr->template get<LastSwapOffset>() = 0;
@@ -924,6 +930,27 @@ private:
     resetLastSwapOffset(BeginItr, EndItr);
   }
 
+#ifdef LLVM_DEBUG
+  template <class ItrT>
+  void dumpCandidates(const ItrT &BeginItr, const ItrT &EndItr) {
+    for (auto &Binding : make_range(BeginItr, EndItr)) {
+      printDILocationSource(*mDWLang, *Binding.Memory, dbgs());
+      dbgs() << "\n";
+      for (auto &BindItr : Binding.BindedMemory) {
+        dbgs() << "  ";
+        printLocationSource(dbgs(), *BindItr->first, &mAT.getDomTree());
+        dbgs() << " -> ";
+        for (auto I = BindItr->template get<DIMemory>().begin() + 1,
+             EI = BindItr->template get<DIMemory>().end(); I != EI; ++I) {
+          printDILocationSource(*mDWLang, **I, dbgs());
+          dbgs() << " ";
+        }
+        dbgs() << "\n";
+      }
+    }
+  }
+#endif
+
   /// Sanitize corrupted locations from a specified range.
   ///
   /// At first, locations from a specified range will be sorted (see sort()).
@@ -944,7 +971,9 @@ private:
   /// At first, we check `M` and find that it is covered by M1 (EM1)
   /// and M4 (EM2). So, it can be sanitized. Then we remove at from related
   /// lists because sanitized location should not be used in a coverage for
-  /// other locations.
+  /// other locations. We also swap it with (list size - swap offset - 1)
+  /// location. This is necessary to preserve the right order of locations
+  /// if there were swaps already.
   /// {
   ///   M, {
   ///     EM1 -> {M1, M3, M2},
@@ -958,9 +987,12 @@ private:
   ///   }
   /// }
   /// Now, we check M2. Note, that EM3 can be covered by M2 only. Hence M2
-  /// could not be sanitized. So we swap M2 with (list size - swap offset)
+  /// could not be sanitized. So we swap M2 with (list size - swap offset - 2)
   /// location and increment offset (swap should be performed for each list,
-  /// swap offset may be different for different lists).
+  /// swap offset may be different for different lists). Then we increase swap
+  /// offset. Note, to avoid out of range swaps the size of list is greater than
+  /// a number of locations it contains and the first element is a poison value
+  /// which should not be dereferenced.
   /// {
   ///   M, {
   ///     EM1 -> {M1, M2, M3},
@@ -980,9 +1012,12 @@ private:
     if (BeginItr == EndItr)
       return;
     sort(BeginItr, EndItr);
+    LLVM_DEBUG(dbgs() << "[DA DI]: sorted list of covered and corrupted "
+                         "candidates:\n"; dumpCandidates(BeginItr, EndItr));
     for (auto &Binding : make_range(BeginItr, EndItr)) {
       bool IsCovered = true;
-      SmallVector<typename std::decay<decltype(Binding)>::type::BindRefT, 4> ItrCoverage;
+      SmallVector<typename std::decay<decltype(Binding)>::type::BindRefT, 4>
+          ItrCoverage;
       for (auto &BindItr : Binding.BindedMemory) {
         auto Itr = isCovered(Binding.Memory, BindItr);
         if (!Itr) {
@@ -1002,25 +1037,30 @@ private:
           auto CopyEndItr = I->template get<DIMemory>().end();
           if (I->template get<DIMemory>().back() == Binding.Memory)
             --CopyEndItr;
-          Coverage.insert(I->template get<DIMemory>().begin(), CopyEndItr);
+          Coverage.insert(I->template get<DIMemory>().begin() + 1, CopyEndItr);
         }
         sanitize(Binding.Memory, Coverage.begin(), Coverage.end());
         for (auto &BindItr : Binding.BindedMemory) {
+          assert(BindItr->template get<DIMemory>().size() >
+            BindItr->template get<LastSwapOffset>() && "Too much swaps!");
           assert(BindItr->template get<DIMemory>().back() == Binding.Memory &&
             "Invariant broken!");
           BindItr->template get<DIMemory>().pop_back();
+          std::swap(BindItr->template get<DIMemory>().back(),
+            BindItr->template get<DIMemory>()[
+              BindItr->template get<DIMemory>().size() -
+                BindItr->template get<LastSwapOffset>() - 1]);
         }
       } else {
         for (auto &BindItr: Binding.BindedMemory) {
           assert(BindItr->template get<DIMemory>().back() == Binding.Memory &&
             "Invariant broken!");
-          assert(BindItr->template get<DIMemory>().size() >=
-            BindItr->template get<LastSwapOffset>() && "Too much swaps!");
-          const DIMemory *M1;
+          assert(BindItr->template get<DIMemory>().size() >
+            BindItr->template get<LastSwapOffset>() + 1 && "Too much swaps!");
           std::swap(BindItr->template get<DIMemory>().back(),
             BindItr->template get<DIMemory>()[
               BindItr->template get<DIMemory>().size() -
-                (++BindItr->template get<LastSwapOffset>())]);
+                (++BindItr->template get<LastSwapOffset>()) - 1]);
         }
       }
     }
@@ -1030,8 +1070,20 @@ protected:
   Optional<unsigned> mDWLang;
   const AliasTree &mAT;
 
-  EstimateCoverageT mEstimateCoverage;
-  UnknownCoverageT mUnknownCoverage;
+  EstimateCoverageT::iterator getEstimateCoverage(const EstimateMemory *EM) {
+    auto Info = mEstimateCoverage.try_emplace(EM);
+    if (Info.second)
+      Info.first->get<DIMemory>().push_back(nullptr);
+    return Info.first;
+  }
+
+  UnknownCoverageT::iterator getUnknownCoverage(const Value *V) {
+    auto Info = mUnknownCoverage.try_emplace(V);
+    if (Info.second)
+      Info.first->get<DIMemory>().push_back(nullptr);
+    return Info.first;
+  }
+
   /// Locations which should be check and which should not be presented in
   /// coverage (this is precondition).
   std::vector<const DIMemory *> mAccesses;
@@ -1041,6 +1093,10 @@ protected:
   /// Corrupted locations which are presented in coverage but also should
   /// be checked.
   std::vector<BindingT<UnknownCoverageT::persistent_iterator>> mCorruptedUMs;
+
+private:
+  EstimateCoverageT mEstimateCoverage;
+  UnknownCoverageT mUnknownCoverage;
 };
 
 /// Determine redundant corrupted locations (if no redundant cover some other
@@ -1077,7 +1133,7 @@ public:
         SmallPtrSet<const Value *, 8> Binding;
         for (auto &VH : *M) {
           if (Binding.insert(VH).second) {
-            auto Itr = mUnknownCoverage.try_emplace(VH).first;
+            auto Itr = getUnknownCoverage(VH);
             Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (M->isOriginal())
@@ -1100,7 +1156,7 @@ public:
               EM = Next;
           }
           if (Binding.insert(EM).second) {
-            auto Itr = mEstimateCoverage.try_emplace(EM).first;
+            auto Itr = getEstimateCoverage(EM);
             Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (M->isOriginal())
@@ -1160,7 +1216,7 @@ public:
         SmallPtrSet<const Value *, 8> Binding;
         for (auto &VH : *M) {
           if (Binding.insert(VH).second) {
-            auto Itr = mUnknownCoverage.try_emplace(VH).first;
+            auto Itr = getUnknownCoverage(VH);
             Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (!DIMTraitItr->is<trait::DirectAccess>())
@@ -1188,7 +1244,7 @@ public:
               EM = Next;
           }
           if (Binding.insert(EM).second) {
-            auto Itr = mEstimateCoverage.try_emplace(EM).first;
+            auto Itr = getEstimateCoverage(EM);
             Itr->get<DIMemory>().push_back(const_cast<DIMemory *>(M));
             Itr->get<LastSwapOffset>() = 0;
             if (NeedCheck)
