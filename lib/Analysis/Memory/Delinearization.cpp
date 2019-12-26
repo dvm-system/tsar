@@ -256,7 +256,6 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   auto LastUnknownDim = NumberOfDims;
   if (NumberOfDims == 0) {
     for (auto &Range : ArrayInfo)
-      if (Range.isElement())
         NumberOfDims = std::max(Range.Subscripts.size(), NumberOfDims);
     if (NumberOfDims == 0) {
       LLVM_DEBUG(
