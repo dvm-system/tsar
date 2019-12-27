@@ -437,6 +437,7 @@ private:
   tsar::DelinearizeInfo mDelinearizeInfo;
   DominatorTree *mDT = nullptr;
   ScalarEvolution *mSE = nullptr;
+  LoopInfo *mLI = nullptr;
   TargetLibraryInfo *mTLI = nullptr;
   bool mIsSafeTypeCast = true;
   Type *mIndexTy = nullptr;

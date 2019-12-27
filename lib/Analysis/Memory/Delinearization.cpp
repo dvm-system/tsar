@@ -58,6 +58,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(DelinearizationPass, "delinearize",
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   "Array Access Delinearizer", false, true,
@@ -338,6 +339,40 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         setUnknownDims(DimIdx);
         return;
       }
+      // Exclude not loop-invariant factors from the dimension size.
+      SmallPtrSet<const Loop *, 4> LoopsToCheck;
+      for (auto &Range: ArrayInfo)
+        if (auto *Inst = dyn_cast<Instruction>(Range.Ptr)) {
+          auto *BB = Inst->getParent();
+          auto *L = mLI->getLoopFor(BB);
+          while (L) {
+            LoopsToCheck.insert(L);
+            L = L->getParentLoop();
+          }
+        }
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: found " << LoopsToCheck.size()
+                        << "loops related to array uses\n");
+      if (!LoopsToCheck.empty()) {
+        SmallVector<const SCEV *, 4> InvariantFactors;
+        if (auto *Factors = dyn_cast<SCEVMulExpr>(DimSize)) {
+          for (auto *Expr : Factors->operands())
+            if (all_of(LoopsToCheck, [this, Expr](const Loop *L) {
+                  return mSE->isLoopInvariant(Expr, L);
+                }))
+              InvariantFactors.push_back(Expr);
+        } else if (all_of(LoopsToCheck, [this, DimSize](const Loop *L) {
+                     return mSE->isLoopInvariant(DimSize, L);
+                   })) {
+          InvariantFactors.push_back(DimSize);
+        }
+        if (InvariantFactors.empty()) {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: size is not invariant\n");
+          DimSize = mSE->getCouldNotCompute();
+          setUnknownDims(DimIdx);
+          return;
+        }
+        DimSize = mSE->getMulExpr(InvariantFactors);
+      }
       auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, mIsSafeTypeCast);
       DimSize = Div.Quotient;
       LLVM_DEBUG(
@@ -545,6 +580,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   releaseMemory();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  mLI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   mIsSafeTypeCast =
     getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
@@ -571,6 +607,7 @@ void DelinearizationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
