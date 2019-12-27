@@ -387,7 +387,7 @@ private:
   ///
   /// \post Reset number of dimensions if known and set sizes of known
   /// dimensions. Sizes of other dimensions are not initialized.
-  void findArrayDimesionsFromDbgInfo(tsar::Array &ArrayInfo);
+  void findArrayDimensionsFromDbgInfo(tsar::Array &ArrayInfo);
 
   /// Collect arrays accessed in a specified function.
   ///
