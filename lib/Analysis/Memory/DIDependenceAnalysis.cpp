@@ -798,9 +798,11 @@ private:
   /// Use this after sort() only.
   EstimateCoverageT::persistent_iterator isCovered(const DIMemory *M,
       const EstimateCoverageT::persistent_iterator &EMCoverageItr) {
-    auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>());
     // If location is sorted it is safe to check first valid location only.
     // Note, that the front() location is poison and should not be accessed.
+    if (EMCoverageItr->template get<DIMemory>()[1] != M)
+      return EMCoverageItr;
+    auto Itr = isCovered(EMCoverageItr->get<EstimateMemory>()->getParent());
     return Itr != mEstimateCoverage.end() &&
       Itr->template get<DIMemory>()[1] != M ? Itr :
       EstimateCoverageT::persistent_iterator();
