@@ -393,7 +393,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
     ArrayInfo.setDelinearized();
 }
 
-void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
+void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   if (auto *AI = dyn_cast<AllocaInst>(ArrayInfo.getBase()))
     if (!ArrayInfo.isAddressOfVariable() &&
         !AI->isArrayAllocation() && !AI->getAllocatedType()->isArrayTy())
@@ -495,7 +495,7 @@ void DelinearizationPass::collectArrays(Function &F) {
       if (!ArrayPtr) {
         ArrayPtr = *mDelinearizeInfo.getArrays().insert(
           new Array(BasePtr, IsAddressOfVariable)).first;
-        findArrayDimesionsFromDbgInfo(*ArrayPtr);
+        findArrayDimensionsFromDbgInfo(*ArrayPtr);
       }
       auto NumberOfDims = ArrayPtr->getNumberOfDims();
       SmallVector<GEPOperator *, 4> GEPs;
