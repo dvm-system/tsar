@@ -471,14 +471,17 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
 }
 
 void DelinearizationPass::collectArrays(Function &F) {
+  DenseSet<const Value *> Visited;
   for (auto &I : instructions(F)) {
-    auto processMemory = [this](Instruction &I, MemoryLocation Loc,
+    auto processMemory = [this, &Visited](Instruction &I, MemoryLocation Loc,
         unsigned,  AccessInfo, AccessInfo) {
       if (auto II = dyn_cast<IntrinsicInst>(&I)) {
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           return;
       }
+      if (!Visited.insert(Loc.Ptr).second)
+        return;
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction ";
         TSAR_LLVM_DUMP(I.dump()));
       auto &DL = I.getModule()->getDataLayout();
