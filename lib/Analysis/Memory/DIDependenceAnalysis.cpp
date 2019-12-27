@@ -1107,9 +1107,11 @@ class RedundantSearch : public TraitsSanitizer<RedundantSearch> {
 public:
   RedundantSearch(const AliasTree &AT, Optional<unsigned> DWLang,
       DIAliasTrait &DIATrait, ArrayRef<const DIMemory *> LockedTraits,
-      const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR) :
+      const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+      const SmallPtrSetImpl<const Value *> &NoAccessValues) :
     TraitsSanitizer<RedundantSearch>(AT, DWLang),
-    mDIATrait(DIATrait), mLockedTraits(LockedTraits), mDIAliasSTR(DIAliasSTR) {}
+    mDIATrait(DIATrait), mLockedTraits(LockedTraits), mDIAliasSTR(DIAliasSTR),
+    mNoAccessValues(NoAccessValues) {}
 
   template<class CoverageItrT>
   void sanitizeImpl(const DIMemory *M, CoverageItrT I, CoverageItrT EI) {
@@ -1149,6 +1151,8 @@ public:
           cast<DIEstimateMemory>(M)->getSize() : 0;
         SmallPtrSet<const EstimateMemory *, 8> Binding;
         for (auto &VH : *M) {
+          if (mNoAccessValues.count(VH))
+            continue;
           auto *EM = mAT.find(MemoryLocation(VH, Size));
           if (!EM)
             continue;
@@ -1173,6 +1177,7 @@ private:
   DIAliasTrait mDIATrait;
   ArrayRef<const DIMemory *> mLockedTraits;
   const SpanningTreeRelation<const tsar::DIAliasTree *> &mDIAliasSTR;
+  const SmallPtrSetImpl<const Value *> &mNoAccessValues;
 };
 
 /// Perform search for memory which is not directly accessed in a loop and
@@ -1516,6 +1521,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
   auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
   auto ATraitItr = AN ? DepSet.find_as(AN) : DepSet.end();
   DIDependenceSet::iterator DIATraitItr = DIDepSet.end();
+  SmallPtrSet<const Value *, 16> MustNoAccessValues;
   for (auto &M : DIN) {
     LLVM_DEBUG(if (DWLang) {
       dbgs() << "[DA DI]: extract traits for ";
@@ -1533,7 +1539,11 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
           DIMTrait.set<trait::NoAccess>();
           bool IsChanged = false;
           for (auto &Bind : M)
-            IsChanged |= combineWith(Bind, M, *mAT, ATraitItr, DIMTrait);
+            if (combineWith(Bind, M, *mAT, ATraitItr, DIMTrait))
+              IsChanged = true;
+            else if (!isa<DIUnknownMemory>(M) ||
+                     !cast<DIUnknownMemory>(M).isExec())
+              MustNoAccessValues.insert(Bind);
           if (IsChanged) {
             clarify(DIMTrait, *DIMTraitItr);
           } else {
@@ -1565,6 +1575,9 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       DIMemoryTrait DIMTrait(&M);
       DIMTrait.set<trait::NoAccess>();
       bool IsChanged = combineWith(*BindItr, M, *mAT, ATraitItr, DIMTrait);
+      if (!IsChanged &&
+          (!isa<DIUnknownMemory>(M) || !cast<DIUnknownMemory>(M).isExec()))
+        MustNoAccessValues.insert(*BindItr);
       // Values binded to merged locations may be related to different estimate
       // memory locations with different traits. So, it is necessary to check
       // all binded values.
@@ -1572,7 +1585,11 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
         LLVM_DEBUG(dbgs() << "[DA DI]: find traits for merged location\n");
         auto BindItrE = M.end();
         for (++BindItr; BindItr != BindItrE; ++BindItr)
-          IsChanged |= combineWith(*BindItr, M, *mAT, ATraitItr, DIMTrait);
+          if (combineWith(*BindItr, M, *mAT, ATraitItr, DIMTrait))
+            IsChanged = true;
+          else if (!isa<DIUnknownMemory>(M) ||
+                   !cast<DIUnknownMemory>(M).isExec())
+            MustNoAccessValues.insert(*BindItr);
       }
       if (IsChanged) {
         if (DIMTraitItr == Pool.end()) {
@@ -1674,7 +1691,8 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     return;
   }
   LLVM_DEBUG(dbgs() << "[DA DI]: search for redundant memory\n");
-  RedundantSearch(*mAT, DWLang, *DIATraitItr, LockedTraits, DIAliasSTR).exec();
+  RedundantSearch(*mAT, DWLang, *DIATraitItr, LockedTraits, DIAliasSTR,
+    MustNoAccessValues).exec();
   LLVM_DEBUG(dbgs() << "[DA DI]: sanitize indirect accesses\n");
   IndirectAccessSanitizer(*mAT, DWLang, *DIATraitItr,
     GlobalOpts.IgnoreRedundantMemory).exec();
