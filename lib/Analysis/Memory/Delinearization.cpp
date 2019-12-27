@@ -627,6 +627,7 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info,
     RawInfo[RawDelinearizeInfo::Sizes].emplace(NameStr, std::move(DimSizes));
     RawInfo[RawDelinearizeInfo::Accesses].emplace(
       std::move(NameStr), std::move(Accesses));
+    RawInfo[RawDelinearizeInfo::IsDelinearized] = ArrayInfo->isDelinearized();
   }
   return RawInfo;
 }

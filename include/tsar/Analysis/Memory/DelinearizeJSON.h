@@ -36,10 +36,11 @@ class DelinearizeInfo;
 
 /// Description of delinearized array accesses.
 JSON_OBJECT_BEGIN(RawDelinearizeInfo)
-JSON_OBJECT_ROOT_PAIR_2(RawDelinearizeInfo,
+JSON_OBJECT_ROOT_PAIR_3(RawDelinearizeInfo,
   Accesses, std::map<BCL_JOIN(std::string,
     std::vector<std::vector<std::vector<std::string>>>)>,
-  Sizes, std::map<BCL_JOIN(std::string, std::vector<std::string>)>)
+  Sizes, std::map<BCL_JOIN(std::string, std::vector<std::string>)>,
+  IsDelinearized, int)
 
   RawDelinearizeInfo() : JSON_INIT_ROOT{}
 
