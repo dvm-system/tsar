@@ -41,7 +41,9 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/TinyPtrVector.h>
+#include <llvm/ADT/PointerUnion.h>
 #include <llvm/Support/Debug.h>
+#include <llvm/Support/GraphWriter.h>
 #include <memory>
 
 namespace llvm {
@@ -115,6 +117,76 @@ public:
 private:
   CorruptedList mMemory;
   CorruptedMemoryItem *mForward = nullptr;
+};
+
+/// Represent a node in a replacement graph.
+///
+/// Replacement graph is constructed while memory from the previous alias tree
+/// is rebuilt for the new alias tree. This graph describes memory locations
+/// which should be RAUWd. A node contains two memory locations with the same
+/// raw metadata-level base. The first one (getSuccessorFrom()) is from
+/// the previous alias tree and the second one (getPredecessorTo()) is build
+/// for the new alias tree.
+///
+/// An edge from node A(From, To) to B(From, To) means that A(From) memory
+/// should be RAUWd with B(To) memory. An edge from A to A is also possible.
+/// If B(To) is null this means that A(From) is corrupted.
+///
+/// Replacement graph is built for a single node in a previous alias tree and
+/// it may contains separate subgraphs which is joined with an utility root
+/// node. Each subgraph determines sequence of RAUW operations which do not
+/// depend to other subgraphs.
+class ReplacementNode : public SmallDFNode<ReplacementNode, 4> {
+public:
+  explicit ReplacementNode(llvm::Optional<unsigned> DWLang) :
+    mDWLang(DWLang ? *DWLang : llvm::dwarf::DW_LANG_C) {}
+
+  DIMemory * getSuccessorFrom() noexcept { return mSuccFrom; }
+  const DIMemory * getSuccessorFrom() const noexcept { return mSuccFrom; }
+
+  void setSuccessorFrom(DIMemory *SuccFrom) noexcept {
+    assert(!getSuccessorFrom() && SuccFrom && (!getPredecessorTo() ||
+     getPredecessorTo()->getAsMDNode() == SuccFrom->getAsMDNode()) &&
+     "Invalid replacement!");
+    mSuccFrom = SuccFrom;
+  }
+
+  DIMemory *getPredecessorTo() { return mPredTo.getPointer(); }
+  const DIMemory *getPredecessorTo() const { return mPredTo.getPointer(); }
+
+  void setPredecessorTo(DIMemory *PredTo) {
+    assert(!getPredecessorTo() && PredTo && (!getSuccessorFrom() ||
+      PredTo->getAsMDNode() == getSuccessorFrom()->getAsMDNode()) &&
+      "Invalid replacement!");
+    mPredTo.setPointer(PredTo);
+  }
+
+  bool isCorrupted() const {
+    return getSuccessorFrom() && numberOfSuccessors() == 0;
+  }
+
+  bool isRoot() const { return !getSuccessorFrom() && !getPredecessorTo(); }
+
+  bool isSelfReplacement() const {
+    return numberOfSuccessors() == 1 && mSuccFrom &&
+           (*succ_begin())->getPredecessorTo() &&
+           mSuccFrom->getAsMDNode() ==
+               (*succ_begin())->getPredecessorTo()->getAsMDNode();
+  }
+
+  bool isActiveReplacement() const { return mPredTo.getInt(); }
+  void activateReplacement() { mPredTo.setInt(true); }
+
+  unsigned getLanguage() const noexcept { return mDWLang; }
+
+  void view(const llvm::Twine &Name = "emr") const;
+  std::string write(const llvm::Twine &Name = "emr") const;
+private:
+  // This memory should be changed to (succ::mPredTo) a memory in a successor.
+  DIMemory * mSuccFrom = nullptr;
+  // A memory from (pred::mSuccFrom) predecessor must be change to this one.
+  llvm::PointerIntPair<DIMemory *, 1, bool> mPredTo = { nullptr, false };
+  unsigned mDWLang;
 };
 
 /// Determines insertion hints for nodes containing promoted and corrupted
@@ -441,6 +513,17 @@ private:
   /// presented into a current alias tree.
   void updateWorkLists(DIAliasMemoryNode &N, NodeInfo &Info);
 
+  /// Determine correct sequence of replacements.
+  ///
+  /// (1) Build replacement graph which consists of subgraphs for independent
+  /// replacements of memory.
+  /// (2) Traverse SCCs of each subgraph in the post-order and perform
+  /// replacement. Complex SCCs with multiple nodes prevent replacement
+  /// and produce corrupted memory.
+  void replaceAllMemoryUses(
+    llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement,
+    NodeInfo &Info);
+
   /// \brief Returns true if a specified memory location will be the same after
   /// its rebuilding for any bound memory.
   ///
@@ -448,7 +531,8 @@ private:
   /// location is corrupted.
   ///
   /// \pre Memory bound to a specified location must be estimate.
-  bool isSameAfterRebuildEstimate(DIMemory &M);
+  bool isSameAfterRebuildEstimate(DIMemory &M,
+    llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement);
 
   /// \brief Returns true if a specified memory location will be the same after
   /// its rebuilding for any bound memory.
@@ -457,14 +541,16 @@ private:
   /// location is corrupted.
   ///
   /// \pre Memory bound to a specified location must be unknown.
-  bool isSameAfterRebuildUnknown(DIUnknownMemory &M);
+  bool isSameAfterRebuildUnknown(DIUnknownMemory &M,
+    llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement);
 
   /// Returns true if a specified memory location will be the same after
   /// its rebuilding for any bound memory.
-  bool isSameAfterRebuild(DIUnknownMemory &M) {
+  bool isSameAfterRebuild(DIUnknownMemory &M,
+      llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement) {
     if (M.isExec())
-      return isSameAfterRebuildUnknown(M);
-    return isSameAfterRebuildEstimate(M);
+      return isSameAfterRebuildUnknown(M, Replacement);
+    return isSameAfterRebuildEstimate(M, Replacement);
   }
 
 #ifndef NDEBUG
@@ -522,5 +608,95 @@ template<> struct GraphTraits<tsar::CorruptedMemoryItem *> {
   static ChildIteratorType child_begin(NodeRef I) { return I->succ_begin(); }
   static ChildIteratorType child_end(NodeRef I) { return I->succ_end(); }
 };
+
+template <> struct GraphTraits<tsar::ReplacementNode *> {
+  using NodeRef = tsar::ReplacementNode *;
+  static NodeRef getEntryNode(NodeRef I) noexcept { return I; }
+
+  using nodes_iterator = df_iterator<tsar::ReplacementNode *>;
+  static nodes_iterator nodes_begin(tsar::ReplacementNode *G) {
+    return df_begin(G);
+  }
+  static nodes_iterator nodes_end(tsar::ReplacementNode *G) {
+    return df_end(G);
+  }
+
+  using ChildIteratorType = tsar::ReplacementNode::succ_iterator;
+  static ChildIteratorType child_begin(NodeRef I) { return I->succ_begin(); }
+  static ChildIteratorType child_end(NodeRef I) { return I->succ_end(); }
+};
+
+template<> struct DOTGraphTraits<tsar::ReplacementNode *> :
+    public DefaultDOTGraphTraits {
+  using GT = GraphTraits<tsar::ReplacementNode *>;
+  using EdgeItr = typename GT::ChildIteratorType;
+
+  explicit DOTGraphTraits(bool IsSimple = false) :
+    DefaultDOTGraphTraits(IsSimple) {}
+
+  static std::string getGraphName(const tsar::ReplacementNode *) {
+    return "Replacement Tree";
+  }
+
+  std::string getNodeLabel(tsar::ReplacementNode *N, tsar::ReplacementNode *R) {
+    if (N->isRoot())
+      return "ROOT";
+    if (N->isSelfReplacement())
+      return "[[self]]";
+    if (N->isCorrupted())
+      return "[[corrupted]]";
+    return "";
+  }
+
+  static std::string getGraphProperties(const tsar::ReplacementNode*) {
+    return "rankdir=LR";
+  }
+
+  static std::string getEdgeSourceLabel(const tsar::ReplacementNode *N,
+      EdgeItr) {
+    std::string Str;
+    llvm::raw_string_ostream OS(Str);
+    if (auto *SuccFrom = N->getSuccessorFrom())
+      printDILocationSource(N->getLanguage(), *SuccFrom, OS);
+    return OS.str();
+  }
+
+
+  static bool hasEdgeDestLabels() { return true; }
+
+  static unsigned numEdgeDestLabels(const tsar::ReplacementNode *N) {
+    return N->isRoot() ? 0 : 1;
+  }
+
+  static std::string getEdgeDestLabel(const tsar::ReplacementNode *N,
+      unsigned) {
+    std::string Str;
+    llvm::raw_string_ostream OS(Str);
+    if (auto *PredTo = N->getPredecessorTo())
+      printDILocationSource(N->getLanguage(), *PredTo, OS);
+    return OS.str();
+  }
+
+  static bool edgeTargetsEdgeSource(const tsar::ReplacementNode *N, EdgeItr) {
+    return !N->isRoot();
+  }
+
+  static EdgeItr getEdgeTarget(const void *, EdgeItr I) {
+    return GT::child_begin(*I);
+  }
+};
+}
+
+namespace tsar {
+void ReplacementNode::view(const llvm::Twine &Name) const {
+  llvm::ViewGraph(const_cast<ReplacementNode *>(this), Name, false,
+    llvm::DOTGraphTraits<ReplacementNode *>::getGraphName(this));
+}
+
+std::string ReplacementNode::write(const llvm::Twine &Name) const {
+  return llvm::WriteGraph(
+      const_cast<ReplacementNode *>(this), Name, false,
+      llvm::DOTGraphTraits<ReplacementNode *>::getGraphName(this));
+}
 }
 #endif//TSAR_CORRUPTED_MEMORY_H

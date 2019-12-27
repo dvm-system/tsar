@@ -35,6 +35,7 @@
 #include <bcl/IteratorDataAdaptor.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/Statistic.h>
+#include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -1808,7 +1809,9 @@ void CorruptedMemoryResolver::merge(
 }
 
 void CorruptedMemoryResolver::updateWorkLists(
-    DIAliasMemoryNode &N, NodeInfo &Info) {
+  DIAliasMemoryNode &N, NodeInfo &Info) {
+  llvm::SmallVector<std::pair<DIMemory *, DIMemory *>, 16> Replacement;
+  Replacement.reserve(N.size());
   for (auto &M : N) {
     LLVM_DEBUG(checkLog(M));
     auto Binding = M.getBinding();
@@ -1818,16 +1821,14 @@ void CorruptedMemoryResolver::updateWorkLists(
       auto FragmentItr = mSmallestFragments.find(Loc);
       if (FragmentItr != mSmallestFragments.end()) {
         if (Binding == DIMemory::Destroyed ||
-            Binding == DIMemory::Empty) {
+          Binding == DIMemory::Empty) {
           Info.PromotedWL.push_back(Loc);
           FragmentItr->second = DIEM;
           continue;
         } else {
-          LLVM_DEBUG(corruptedFoundLog(M));
+          //LLVM_DEBUG(corruptedFoundLog(M));
           LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: safely promoted candidate is discarded\n");
-          Info.CorruptedWL.push_back(&M);
-          mCorruptedSet.insert({ M.getAsMDNode(), true });
-          mCorruptedSet.insert({ M.getBaseAsMDNode(), true });
+          Replacement.emplace_back(&M, nullptr);
           // This is rare case, so we do not take care about overheads and
           // remove an expression from a vector.
           auto VToF = mVarToFragments.find(Loc.Var);
@@ -1837,39 +1838,132 @@ void CorruptedMemoryResolver::updateWorkLists(
           VToF->get<DIExpression>().erase(ExprItr);
           mSmallestFragments.erase(Loc);
         }
-      } else if (Binding != DIMemory::Consistent ||
-          !isSameAfterRebuildEstimate(*DIEM)) {
-        LLVM_DEBUG(corruptedFoundLog(M));
-        Info.CorruptedWL.push_back(&M);
-        auto Pair = mCorruptedSet.insert({
-          M.getAsMDNode(),
-          Binding == DIMemory::Empty ||
-            Binding == DIMemory::Destroyed ? false : true
-        });
-        mCorruptedSet.insert({ M.getBaseAsMDNode(), (*Pair.first).getInt() });
+      } else if (Binding != DIMemory::Consistent) {
+        Replacement.emplace_back(&M, nullptr);
+      } else {
+        isSameAfterRebuildEstimate(*DIEM, Replacement);
       }
-    } else if (Binding != DIMemory::Consistent ||
-        !isSameAfterRebuild(cast<DIUnknownMemory>(M))) {
-      LLVM_DEBUG(corruptedFoundLog(M));
-      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: unknown corrupted is found\n");
-      Info.CorruptedWL.push_back(&M);
-      auto Pair = mCorruptedSet.insert({
-        M.getAsMDNode(),
-        Binding == DIMemory::Empty ||
-          Binding == DIMemory::Destroyed ? false : true
-      });
-      mCorruptedSet.insert({ M.getBaseAsMDNode(), (*Pair.first).getInt() });
+    } else if (Binding != DIMemory::Consistent) {
+      Replacement.emplace_back(&M, nullptr);
+    } else {
+      isSameAfterRebuild(cast<DIUnknownMemory>(M), Replacement);
     }
     findBoundAliasNodes(M, *mAT, Info.NodesWL);
   }
+  replaceAllMemoryUses(Replacement, Info);
 }
 
-bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
+void CorruptedMemoryResolver::replaceAllMemoryUses(
+    llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement,
+    NodeInfo &Info) {
+  DenseMap<MDNode*, std::size_t> MemoryToNode;
+  std::vector<ReplacementNode> NodePool;
+  NodePool.reserve(Replacement.size());
+  for (auto &FromTo : Replacement) {
+    auto Info = MemoryToNode.try_emplace(FromTo.first->getAsMDNode());
+    ReplacementNode *Node = nullptr;
+    if (Info.second) {
+      Info.first->second = NodePool.size();
+      NodePool.emplace_back(getLanguage(*mFunc));
+    }
+    Node = &NodePool[Info.first->second];
+    Node->setSuccessorFrom(FromTo.first);
+    if (!FromTo.second)
+      continue;
+    Info = MemoryToNode.try_emplace(FromTo.second->getAsMDNode());
+    if (Info.second) {
+      Info.first->second = NodePool.size();
+      NodePool.emplace_back(getLanguage(*mFunc));
+      Node = &NodePool.back();
+      Node->setPredecessorTo(FromTo.second);
+    } else {
+      Node = &NodePool[Info.first->second];
+      if (Node->getPredecessorTo()) {
+        if (Node->getPredecessorTo() != FromTo.second)
+          for (auto &VH : *FromTo.second)
+            Node->getPredecessorTo()->bindValue(VH);
+      } else {
+        Node->setPredecessorTo(FromTo.second);
+      }
+    }
+  }
+  // Insert entry node which is necessary for search of SCCs.
+  NodePool.emplace_back(getLanguage(*mFunc));
+  auto *Root = &NodePool.back();
+  // WARNING: do not insert new nodes after construction of edges, because
+  // insertion of a new element inside a std::vector may lead to memory
+  // reallocation. In this case pointers to nodes are going to be changed.
+  // So, edges become invalid.
+  for (auto &FromTo : Replacement) {
+    if (!FromTo.second)
+      continue;
+    auto *PredNode = &NodePool[MemoryToNode[FromTo.first->getAsMDNode()]];
+    auto *SuccNode = &NodePool[MemoryToNode[FromTo.second->getAsMDNode()]];
+    PredNode->addSuccessor(SuccNode);
+    SuccNode->addPredecessor(PredNode);
+  }
+  for (auto I = NodePool.begin(), EI = NodePool.end() - 1; I != EI; ++I)
+    if (I->numberOfPredecessors() == 0 ||
+        I->numberOfSuccessors() == 1 && I->isSelfReplacement()) {
+      I->addPredecessor(Root);
+      Root->addSuccessor(&*I);
+    }
+  LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: size of replacement graph "
+                    << NodePool.size() << "\n");
+  // Now, we process all subgraphs of replacement tree and perform replacement
+  // in down-top order (or mark nodes in a whole subtree as corrupted).
+  bool IsCorrupted = false;
+  for (scc_iterator<ReplacementNode *> I = scc_begin(Root); !I.isAtEnd(); ++I) {
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: size of SCC in replacement subgraph "
+                      << I->size() << "\n");
+    // Check whether all subtrees have been processed.
+    if (I->front()->isRoot())
+      break;
+    // Reset IsCorrupted flag if we start to process a new replacement subgraph
+    // without a corrupted leaf an SCC with multiple nodes.
+    if (I->size() == 1 &&
+        (I->front()->isSelfReplacement() ||
+         I->front()->numberOfSuccessors() == 0 && !I->front()->isCorrupted()))
+      IsCorrupted = false;
+    if (IsCorrupted || I->size() > 1 || I->front()->isCorrupted()) {
+      IsCorrupted = true;
+      for (auto *N : *I) {
+        auto *M = N->getSuccessorFrom();
+        assert(M &&
+               "Corrupted memory from previous alias tree must not be null!");
+        LLVM_DEBUG(corruptedFoundLog(*M));
+        LLVM_DEBUG(if (isa<DIUnknownMemory>(M)) dbgs()
+                   << "[DI ALIAS TREE]: unknown corrupted is found\n");
+        Info.CorruptedWL.push_back(M);
+        auto Binding = M->getBinding();
+        auto Pair = mCorruptedSet.insert({
+          N->getSuccessorFrom()->getAsMDNode(),
+          Binding == DIMemory::Empty ||
+            Binding == DIMemory::Destroyed ? false : true
+        });
+        mCorruptedSet.insert({ M->getBaseAsMDNode(), (*Pair.first).getInt() });
+      }
+    } else {
+      if (I->front()->numberOfSuccessors() == 0)
+        continue;
+      auto *ToReplace = *I->front()->succ_begin();
+      auto *NewM = ToReplace->getPredecessorTo();
+      if (ToReplace->isActiveReplacement())
+        NewM->setProperties(DIMemory::Merged);
+      ToReplace->activateReplacement();
+      I->front()->getSuccessorFrom()->replaceAllUsesWith(NewM);
+    }
+  }
+}
+
+bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M,
+  llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement) {
   assert(M.getBinding() == DIMemory::Consistent &&
     "Inconsistent memory is always corrupted and can not be the same after rebuild!");
   assert(isa<DIEstimateMemory>(M) ||
     isa<DIUnknownMemory>(M) && !cast<DIUnknownMemory>(M).isExec() &&
     "Bound memory location must be estimate!");
+  Replacement.emplace_back(&M, nullptr);
   DIMemory *RAUWd = nullptr;
   DIMemoryCache LocalCache;
   uint64_t Size = isa<DIEstimateMemory>(M) ?
@@ -1924,14 +2018,42 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M) {
     RAUWd = Cached.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
-  M.replaceAllUsesWith(RAUWd);
+  // It may be unsafe to replace all uses of a memory location M with a new one.
+  // If raw representation of replacer has been presented in previous alias
+  // tree and it was located in a node differs from a node which owns a location
+  // M. For example, existed raw representation may be corrupted.
+  // TODO (kaniandr@gmail.com): is it possible to relax this condition, for
+  // example, whether the knowledge of alias tree traversal is important here.
+  if (RAUWd->getAsMDNode() != M.getAsMDNode()) {
+    auto PrevDIMItr = mDIAT->find(*RAUWd->getAsMDNode());
+    if (PrevDIMItr != mDIAT->memory_end() &&
+        PrevDIMItr->getAliasNode() != M.getAliasNode()) {
+      LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: replacement has been located in a "
+                           "distinct node in a previous tree\n");
+      return false;
+    }
+  }
+  // The new alias tree will not contain RAUWd (see discussion above).
+  // This means that a new representation will be deleted soon and appropriate
+  // handles will be invoked. So, remove it from replacement and replace all
+  // uses (the new memory will be deleted on exist from this function, so
+  // corresponding handles will be also invoked for replacement).
+  if (!LocalCache.empty()) {
+    LLVM_DEBUG(dbgs() << "[DI ALIAS TREE]: ignore covered original location\n");
+    Replacement.pop_back();
+    M.replaceAllUsesWith(RAUWd);
+    return true;
+  }
+  Replacement.back().second = RAUWd;
   return true;
 }
 
-bool CorruptedMemoryResolver::isSameAfterRebuildUnknown(DIUnknownMemory &M) {
+bool CorruptedMemoryResolver::isSameAfterRebuildUnknown(DIUnknownMemory &M,
+    llvm::SmallVectorImpl<std::pair<DIMemory *, DIMemory *>> &Replacement) {
   assert(M.getBinding() == DIMemory::Consistent &&
     "Inconsistent memory is always corrupted and can not be the same after rebuild!");
   assert(M.isExec() && "Bound memory location must be unknown!");
+  Replacement.emplace_back(&M, nullptr);
   if (M.isDistinct())
     return false;
   DIMemory *RAUWd = nullptr;
@@ -1954,7 +2076,7 @@ bool CorruptedMemoryResolver::isSameAfterRebuildUnknown(DIUnknownMemory &M) {
     RAUWd = Cached.first->second.get();
   }
   assert(RAUWd && "Must not be null for consistent memory location!");
-  M.replaceAllUsesWith(RAUWd);
+  Replacement.back().second = RAUWd;
   return true;
 }
 

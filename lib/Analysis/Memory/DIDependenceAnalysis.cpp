@@ -2052,9 +2052,6 @@ void DIMemoryTraitHandle::allUsesReplacedWith(DIMemory *M) {
   assert(M != getMemoryPtr() &&
     "Old and new memory locations must not be equal!");
   assert(mPool && "Pool of traits must not be null!");
-  assert((mPool->find_as(M) == mPool->end() ||
-    mPool->find_as(M)->getMemory() != M) &&
-    "New memory location is already presented in the memory trait pool!");
   DIMemoryTraitRegionPool::persistent_iterator OldItr =
     mPool->find_as(getMemoryPtr());
   LLVM_DEBUG(dbgs() << "[DA DI]: " << (M->isMerged() ? "merge" : "replace")
@@ -2063,6 +2060,9 @@ void DIMemoryTraitHandle::allUsesReplacedWith(DIMemory *M) {
              dbgs() << " with ";
              printDILocationSource(dwarf::DW_LANG_C, *M, dbgs());
              dbgs() << "\n");
+  assert((mPool->find_as(M) == mPool->end() ||
+    mPool->find_as(M)->getMemory() != M || M->isMerged()) &&
+    "New memory location is already presented in the memory trait pool!");
   if (M->isMerged()) {
     auto DIMTraitItr = mPool->find_as(M);
     if (DIMTraitItr != mPool->end()) {
@@ -2098,7 +2098,8 @@ void DIMemoryTraitHandle::allUsesReplacedWith(DIMemory *M) {
   // Do not use members of handle after the call of erase(), because
   // it destroys this.
   Pool->erase(OldItr);
-  Pool->try_emplace({ M, Pool }, std::move(TS));
+  auto IsOk = Pool->try_emplace({ M, Pool }, std::move(TS)).second;
+  assert(IsOk && "Unable to insert memory location in a pool!");
 }
 
 namespace {
