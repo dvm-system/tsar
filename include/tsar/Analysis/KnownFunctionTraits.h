@@ -98,7 +98,7 @@ inline void foreachLibFuncMemArg(Function &&F) {
 // IntrinsicTraits specializations for LLVM intrinsics
 //===----------------------------------------------------------------------===//
 template<> struct IntrinsicTraits<llvm::Intrinsic::memset> :
-  public KnownFunctionMemoryArgument<0, 1> {};
+  public KnownFunctionMemoryArgument<0> {};
 template<> struct IntrinsicTraits<llvm::Intrinsic::memcpy> :
   public KnownFunctionMemoryArgument<0, 1> {};
 template<> struct IntrinsicTraits<llvm::Intrinsic::memmove> :
