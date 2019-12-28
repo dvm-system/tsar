@@ -1036,10 +1036,18 @@ private:
         });
         SmallPtrSet<DIMemory *, 4> Coverage;
         for (auto &I : ItrCoverage) {
+          auto CopyBeginItr = I->template get<DIMemory>().begin() + 1;
           auto CopyEndItr = I->template get<DIMemory>().end();
-          if (I->template get<DIMemory>().back() == Binding.Memory)
+          if (I->template get<DIMemory>().back() == Binding.Memory) {
             --CopyEndItr;
-          Coverage.insert(I->template get<DIMemory>().begin() + 1, CopyEndItr);
+          } else if (!I->template get<DIMemory>().back()) {
+            // The last possible swap operation relates to the first element
+            // which is a poison value and the last element. So, the last
+            // element becomes poison and the first one becomes valid.
+            --CopyBeginItr;
+            --CopyEndItr;
+          }
+          Coverage.insert(CopyBeginItr, CopyEndItr);
         }
         sanitize(Binding.Memory, Coverage.begin(), Coverage.end());
         for (auto &BindItr : Binding.BindedMemory) {
