@@ -753,7 +753,7 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       }
       if (!Opposite) {
         if (isa<AliasUnknownNode>(Current))
-          continue;
+          break;
       } else {
         if (!isa<AliasUnknownNode>(Opposite))
           std::swap(Current, Opposite);
@@ -761,6 +761,9 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       }
       return cast<AliasEstimateNode>(Current);
     }
+    // If all nodes at the current level are unknown then go down.
+    if (isa<AliasUnknownNode>(Current))
+      continue;
     auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
         *Current, {&NumAliasNode, &NumEstimateNode});
     for (auto &Alias : Aliases)
