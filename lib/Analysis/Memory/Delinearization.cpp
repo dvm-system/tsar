@@ -196,6 +196,7 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     if (Range.is(Array::Range::NoGEP))
       continue;
     assert((!Range.isElement() ||
+      Range.Subscripts.size() == 0 && Range.is(Array::Range::NeedExtraZero) ||
       ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size())
       && "Unknown subscripts in right dimensions with constant sizes!");
     // In some cases zero subscript is dropping out by optimization passes.
