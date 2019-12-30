@@ -32,9 +32,16 @@ class SourceLocation;
 class SourceManager;
 }
 
+namespace llvm {
+class DebugLoc;
+}
+
 namespace tsar {
 /// Converts a specified location to JSON.
 msg::Location getLocation(
   const clang::SourceLocation &SLoc, const clang::SourceManager &SrcMgr);
+
+/// Convert a specified location to JSON.
+msg::Location getLocation(llvm::DebugLoc &Loc);
 }
 #endif//TSAR_CLANG_MESSAGES_H

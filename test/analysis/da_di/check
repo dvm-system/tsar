@@ -43,9 +43,10 @@ shared_19
 shared_20.safe
 shared_call_1
 shared_call_2
+stdlib_1.safe
 distance_1
 distance_2
-distance_3.safe
+distance_3
 distance_4
 distance_5.safe
 distance_6
@@ -53,6 +54,8 @@ distance_7
 distance_8
 dependence_1
 dependence_2
+dependence_3
+dependence_4
 induction_1
 redundant_1
 redundant_2
@@ -75,6 +78,8 @@ address_4
 address_5
 pointer_1.safe
 pointer_2.safe
+pointer_3
+pointer_4
 reduction_1
 reduction_2
 reduction_3

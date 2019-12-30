@@ -43,9 +43,10 @@ shared_19.init
 shared_20.safe.init
 shared_call_1.init
 shared_call_2.init
+stdlib_1.safe.init
 distance_1.init
 distance_2.init
-distance_3.safe.init
+distance_3.init
 distance_4.init
 distance_5.safe.init
 distance_6.init
@@ -53,6 +54,8 @@ distance_7.init
 distance_8.init
 dependence_1.init
 dependence_2.init
+dependence_3.init
+dependence_4.init
 induction_1.init
 redundant_1.init
 redundant_2.init
@@ -75,6 +78,8 @@ address_4.init
 address_5.init
 pointer_1.safe.init
 pointer_2.safe.init
+pointer_3.init
+pointer_4.init
 reduction_1.init
 reduction_2.init
 reduction_3.init

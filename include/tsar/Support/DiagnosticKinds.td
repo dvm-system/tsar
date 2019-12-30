@@ -111,7 +111,7 @@ def note_propagate_new_value : Note<"value may differs in definition and propaga
 def warn_disable_de_parameter : Warning<"disable dead code elimination for function parameters">;
 def warn_disable_de : Warning<"disable dead code elimination">;
 def note_de_macro_prevent : Warning<"macro prevent dead code elimination">;
-def note_de_call_prevent : Warning<"function call prevent dead code elimination">;
+def note_de_side_effect_prevent : Warning<"side effect prevent dead code elimination">;
 def note_de_multiple_prevent : Warning<"live declaration prevent dead code elimination">;
 
 def err_apc_insert_dvm_directive : Error<"unable to insert DVMH directive '%0'">;
@@ -124,3 +124,17 @@ def err_apc_insert_template : Error<"unable to create template definition for '%
 def err_apc_not_distr_decl_directive : Error<"distribution of declaration depends on usage location">;
 
 def note_decl_insert_macro_prevent : Note<"unable to create declaration '%0' in macro">;
+
+def remark_parallel_loop : Remark<"parallel execution of loop is possible">;
+def warn_parallel_loop : Warning<"unable to create parallel directive">;
+def warn_parallel_not_canonical : Warning<"unable to create parallel directive for loop not in canonical form">;
+def note_parallel_multiple_induction : Note<"loop has multiple inducition variables">;
+def note_parallel_localize_private_unable : Note<"unable to localize privatizable variable">;
+def note_parallel_localize_reduction_unable : Note<"unable to localize reduction variable">;
+def note_parallel_localize_global_unable : Note<"unable to localize global variable">;
+def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents parallel execution">;
+def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
+
+def warn_region_add_loop_unable : Warning<"unable to mark loop for optimization">;
+def warn_region_add_call_unable : Warning<"unable to mark function call for optimization">;
+def warn_region_not_found : Warning<"optimization region with name '%0' not found">;

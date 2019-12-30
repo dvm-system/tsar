@@ -13,9 +13,9 @@ if(MSVC_IDE)
 endif()
 
 set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
-  TSARAnalysisMemory TSARTransformIR TSARTransformMixed TSARTransformClang
-  TSARAnalysisClang TSARFrontendClang TSARSupportClang TSARUnparse
-  PROPERTY POSITION_INDEPENDENT_CODE ON)
+  TSARAnalysisMemory TSARAnalysisParallel TSARTransformIR TSARTransformMixed
+  TSARTransformClang TSARAnalysisClang TSARFrontendClang TSARSupportClang
+  TSARUnparse PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_library(TSARServer SHARED
   ${TSAR_SHARED_SOURCES} ${TSAR_SHARED_INTERNAL_HEADERS})

@@ -34,10 +34,13 @@
 #include "Messages.h"
 #include "Passes.h"
 #include "tsar/Analysis/Clang/Passes.h"
+#include "tsar/Analysis/Passes.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/Tool.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Transform/IR/Passes.h"
+#include "tsar/Support/GlobalOptions.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/Json.h>
 #include <bcl/RedirectIO.h>
@@ -48,7 +51,9 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/PrettyStackTrace.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/Signals.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
 #include <map>
 #include <vector>
@@ -65,8 +70,9 @@ namespace msg {
 /// - list of arguments which contains options and input data,
 /// - specification of an input/output redirection.
 JSON_OBJECT_BEGIN(CommandLine)
-JSON_OBJECT_ROOT_PAIR_4(CommandLine,
+JSON_OBJECT_ROOT_PAIR_5(CommandLine,
   Args, std::vector<const char *>,
+  Query, const char *,
   Input, const char *,
   Output, const char *,
   Error, const char *)
@@ -74,13 +80,15 @@ JSON_OBJECT_ROOT_PAIR_4(CommandLine,
   CommandLine() :
     JSON_INIT_ROOT,
     JSON_INIT(CommandLine,
-      std::vector<const char *>(), nullptr, nullptr, nullptr) {}
+      std::vector<const char *>(), nullptr, nullptr, nullptr, nullptr) {}
 
   ~CommandLine() {
     auto &This = *this;
     for (auto &Arg : This[CommandLine::Args])
       if (Arg)
         delete[] Arg;
+    if (This[CommandLine::Query])
+      delete[] This[CommandLine::Query];
     if (This[CommandLine::Input])
       delete[] This[CommandLine::Input];
     if (This[CommandLine::Output])
@@ -102,41 +110,64 @@ JSON_DEFAULT_TRAITS(tsar::msg::, CommandLine)
 namespace {
 class ServerQueryManager : public QueryManager {
 public:
-  explicit ServerQueryManager(IntrusiveConnection &C,
-      RedirectIO &StdIn, RedirectIO &StdOut, RedirectIO &StdErr) :
-    mConnection(C), mStdIn(StdIn), mStdOut(StdOut), mStdErr(StdErr) {}
+  explicit ServerQueryManager(const GlobalOptions &GO, IntrusiveConnection &C,
+      RedirectIO &StdIn, RedirectIO &StdOut, RedirectIO &StdErr)
+    : mGlobalOptions(GO), mConnection(C), mStdIn(StdIn), mStdOut(StdOut),
+      mStdErr(StdErr) {}
 
   void run(llvm::Module *M, TransformationContext *Ctx) override {
     assert(M && "Module must not be null!");
     legacy::PassManager Passes;
+    Passes.add(createGlobalOptionsImmutableWrapper(&mGlobalOptions));
     if (Ctx) {
       auto TEP = static_cast<TransformationEnginePass *>(
         createTransformationEnginePass());
       TEP->setContext(*M, Ctx);
       Passes.add(TEP);
+      Passes.add(createImmutableASTImportInfoPass(mImportInfo));
     }
-    Passes.add(createUnreachableBlockEliminationPass());
-    Passes.add(createPostOrderFunctionAttrsLegacyPass());
-    Passes.add(createRPOFunctionAttrsAnalysis());
-    Passes.add(createPOFunctionAttrsAnalysis());
+    addImmutableAliasAnalysis(Passes);
+    addInitialTransformations(Passes);
     Passes.add(createMemoryMatcherPass());
+    Passes.add(createAnalysisSocketImmutableStorage());
+    Passes.add(createDIMemoryTraitPoolStorage());
+    Passes.add(createDIMemoryEnvironmentStorage());
+    Passes.add(createDIEstimateMemoryPass());
+    Passes.add(createTraitsAnalysisServer());
+    Passes.add(createAnalysisWaitServerPass());
+    Passes.add(createMemoryMatcherPass());
+    // Analysis on server changes metadata-level
+    // alias tree and invokes corresponding handles to update client to server
+    // mapping. So, metadata-level memory mapping is a shared resource and
+    // synchronization is necessary.
+    Passes.add(createAnalysisWaitServerPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
     Passes.add(createVerifierPass());
     Passes.run(*M);
   }
+
+  ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
+
 private:
+  const GlobalOptions &mGlobalOptions;
   IntrusiveConnection &mConnection;
   RedirectIO &mStdIn;
   RedirectIO &mStdOut;
   RedirectIO &mStdErr;
+  ASTImportInfo mImportInfo;
 };
 
 void run(IntrusiveConnection C) {
   typedef json::Parser<msg::Diagnostic> Parser;
+  char *ArgvForStackTrace[] = {"TSARServer"};
+  sys::PrintStackTraceOnErrorSignal(ArgvForStackTrace[0]);
+  PrettyStackTraceProgram StackTraceProgram(1, ArgvForStackTrace);
+  EnableDebugBuffering = true;
   llvm::llvm_shutdown_obj ShutdownObj;
   std::unique_ptr<Tool> Analyzer;
   RedirectIO StdIn, StdOut, StdErr;
-  C.answer([&Analyzer, &StdIn, &StdOut, &StdErr](
+  bool IsQuerySet = false;
+  C.answer([&Analyzer, &StdIn, &StdOut, &StdErr, &IsQuerySet](
       const std::string &Request) -> std::string {
     Parser P(Request);
     msg::CommandLine CL;
@@ -166,6 +197,11 @@ void run(IntrusiveConnection C) {
     InOutError(Diag);
     if (!Diag[msg::Diagnostic::Error].empty())
       return Parser::unparseAsObject(Diag);
+    if (IsQuerySet = CL[msg::CommandLine::Query]) {
+      CL[msg::CommandLine::Args].push_back(CL[msg::CommandLine::Query]);
+      // Set query to nullptr to avoid multiple memory deletion.
+      CL[msg::CommandLine::Query] = nullptr;
+    }
     Analyzer = std::move(llvm::make_unique<Tool>(
       CL[msg::CommandLine::Args].size(),
       CL[msg::CommandLine::Args].data()));
@@ -180,15 +216,20 @@ void run(IntrusiveConnection C) {
   });
   if (!Analyzer)
     return;
-  ServerQueryManager QM(C, StdIn, StdOut, StdErr);
-  Analyzer->run(&QM);
-  if (StdErr.isDiff()) {
-    C.answer([&StdErr](const std::string &) {
-      msg::Diagnostic Diag(msg::Status::Error);
-      Diag[msg::Diagnostic::Terminal] += StdErr.diff();
-      return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
-    });
+  if (IsQuerySet) {
+    Analyzer->run();
+  } else {
+    ServerQueryManager QM(Analyzer->getGlobalOptions(),
+      C, StdIn, StdOut, StdErr);
+    Analyzer->run(&QM);
   }
+  C.answer([&StdErr](const std::string &) {
+    msg::Diagnostic Diag(StdErr.isDiff() ? msg::Status::Error
+                                         : msg::Status::Done);
+    if (StdErr.isDiff())
+      Diag[msg::Diagnostic::Terminal] += StdErr.diff();
+    return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
+  });
 }
 }
 

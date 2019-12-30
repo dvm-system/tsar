@@ -58,6 +58,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(DelinearizationPass, "delinearize",
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_IN_GROUP_END(DelinearizationPass, "delinearize",
   "Array Access Delinearizer", false, true,
@@ -112,14 +113,15 @@ bool extractSubscriptsFromGEPs(
   return true;
 }
 
-std::pair<Value *, bool> GetUnderlyingArray(Value *Ptr, const DataLayout &DL) {
+std::tuple<Value *, Value *, bool> GetUnderlyingArray(Value *Ptr,
+                                                     const DataLayout &DL) {
   auto BasePtrInfo = GetUnderlyingObjectWithMetadata(Ptr, DL);
   if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first))
     Ptr = cast<LoadInst>(BasePtrInfo.first)->getPointerOperand();
   else
     Ptr = BasePtrInfo.first;
   bool IsAddressOfVariable = (Ptr != BasePtrInfo.first);
-  return std::make_pair(Ptr, IsAddressOfVariable);
+  return std::make_tuple(Ptr, BasePtrInfo.first, IsAddressOfVariable);
 }
 
 #ifdef LLVM_DEBUG
@@ -173,7 +175,7 @@ void delinearizationLog(const DelinearizeInfo &Info, ScalarEvolution &SE,
 const Array *DelinearizeInfo::findArray(const Value *Ptr,
     const DataLayout &DL) const {
   auto Info = GetUnderlyingArray(const_cast<Value *>(Ptr), DL);
-  return findArray(Info.first, Info.second);
+  return findArray(std::get<0>(Info), std::get<2>(Info));
 }
 
 void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
@@ -191,7 +193,10 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
     return;
   }
   for (auto &Range : ArrayInfo) {
+    if (Range.is(Array::Range::NoGEP))
+      continue;
     assert((!Range.isElement() ||
+      Range.Subscripts.size() == 0 && Range.is(Array::Range::NeedExtraZero) ||
       ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size())
       && "Unknown subscripts in right dimensions with constant sizes!");
     // In some cases zero subscript is dropping out by optimization passes.
@@ -253,7 +258,6 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   auto LastUnknownDim = NumberOfDims;
   if (NumberOfDims == 0) {
     for (auto &Range : ArrayInfo)
-      if (Range.isElement())
         NumberOfDims = std::max(Range.Subscripts.size(), NumberOfDims);
     if (NumberOfDims == 0) {
       LLVM_DEBUG(
@@ -336,6 +340,40 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         setUnknownDims(DimIdx);
         return;
       }
+      // Exclude not loop-invariant factors from the dimension size.
+      SmallPtrSet<const Loop *, 4> LoopsToCheck;
+      for (auto &Range: ArrayInfo)
+        if (auto *Inst = dyn_cast<Instruction>(Range.Ptr)) {
+          auto *BB = Inst->getParent();
+          auto *L = mLI->getLoopFor(BB);
+          while (L) {
+            LoopsToCheck.insert(L);
+            L = L->getParentLoop();
+          }
+        }
+      LLVM_DEBUG(dbgs() << "[DELINEARIZE]: found " << LoopsToCheck.size()
+                        << "loops related to array uses\n");
+      if (!LoopsToCheck.empty()) {
+        SmallVector<const SCEV *, 4> InvariantFactors;
+        if (auto *Factors = dyn_cast<SCEVMulExpr>(DimSize)) {
+          for (auto *Expr : Factors->operands())
+            if (all_of(LoopsToCheck, [this, Expr](const Loop *L) {
+                  return mSE->isLoopInvariant(Expr, L);
+                }))
+              InvariantFactors.push_back(Expr);
+        } else if (all_of(LoopsToCheck, [this, DimSize](const Loop *L) {
+                     return mSE->isLoopInvariant(DimSize, L);
+                   })) {
+          InvariantFactors.push_back(DimSize);
+        }
+        if (InvariantFactors.empty()) {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: size is not invariant\n");
+          DimSize = mSE->getCouldNotCompute();
+          setUnknownDims(DimIdx);
+          return;
+        }
+        DimSize = mSE->getMulExpr(InvariantFactors);
+      }
       auto Div = divide(*mSE, DimSize, PrevDimSizesProduct, mIsSafeTypeCast);
       DimSize = Div.Quotient;
       LLVM_DEBUG(
@@ -356,7 +394,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
     ArrayInfo.setDelinearized();
 }
 
-void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
+void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   if (auto *AI = dyn_cast<AllocaInst>(ArrayInfo.getBase()))
     if (!ArrayInfo.isAddressOfVariable() &&
         !AI->isArrayAllocation() && !AI->getAllocatedType()->isArrayTy())
@@ -434,20 +472,25 @@ void DelinearizationPass::findArrayDimesionsFromDbgInfo(Array &ArrayInfo) {
 }
 
 void DelinearizationPass::collectArrays(Function &F) {
+  DenseSet<const Value *> Visited;
   for (auto &I : instructions(F)) {
-    auto processMemory = [this](Instruction &I, MemoryLocation Loc,
+    auto processMemory = [this, &Visited](Instruction &I, MemoryLocation Loc,
         unsigned,  AccessInfo, AccessInfo) {
       if (auto II = dyn_cast<IntrinsicInst>(&I)) {
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           return;
       }
+      if (!Visited.insert(Loc.Ptr).second)
+        return;
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction ";
         TSAR_LLVM_DUMP(I.dump()));
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
+      auto *DataPtr = BasePtr;
       bool IsAddressOfVariable;
-      std::tie(BasePtr, IsAddressOfVariable) = GetUnderlyingArray(BasePtr, DL);
+      std::tie(BasePtr, DataPtr, IsAddressOfVariable) =
+        GetUnderlyingArray(BasePtr, DL);
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: strip to "
                << (IsAddressOfVariable ? "address of " : "")
@@ -456,16 +499,29 @@ void DelinearizationPass::collectArrays(Function &F) {
       if (!ArrayPtr) {
         ArrayPtr = *mDelinearizeInfo.getArrays().insert(
           new Array(BasePtr, IsAddressOfVariable)).first;
-        findArrayDimesionsFromDbgInfo(*ArrayPtr);
+        findArrayDimensionsFromDbgInfo(*ArrayPtr);
       }
       auto NumberOfDims = ArrayPtr->getNumberOfDims();
       SmallVector<GEPOperator *, 4> GEPs;
-      auto *GEP = dyn_cast<GEPOperator>(const_cast<Value *>(Loc.Ptr));
+      auto RangePtr = Loc.Ptr;
+      auto *GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
+      while (!GEP) {
+        if (Operator::getOpcode(RangePtr) == Instruction::BitCast ||
+            Operator::getOpcode(RangePtr) == Instruction::AddrSpaceCast)
+          RangePtr = cast<Operator>(RangePtr)->getOperand(0);
+        else
+          break;
+        GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
+      }
       while (GEP && (NumberOfDims == 0 || GEPs.size() < NumberOfDims)) {
         GEPs.push_back(GEP);
         GEP = dyn_cast<GEPOperator>(GEP->getPointerOperand());
       }
       auto &Range = ArrayPtr->addRange(const_cast<Value *>(Loc.Ptr));
+      if (!isa<GEPOperator>(RangePtr) &&
+          !(RangePtr == BasePtr && !IsAddressOfVariable) &&
+          !(RangePtr == DataPtr && IsAddressOfVariable))
+        Range.setProperty(Array::Range::NoGEP);
       SmallVector<Value *, 4> SubscriptValues;
       bool UseAllSubscripts = extractSubscriptsFromGEPs(
         GEPs.rbegin(), GEPs.rend(), NumberOfDims, SubscriptValues);
@@ -498,6 +554,8 @@ void DelinearizationPass::collectArrays(Function &F) {
           dbgs() << "[DELINEARIZE]: need extra zero subscripts\n";
         if (Range.is(Array::Range::IgnoreGEP))
           dbgs() << "[DELINEARIZE]: ignore some beginning GEPs\n";
+        if (Range.is(Array::Range::NoGEP))
+          dbgs() << "[DELINEARIZE]: no GEPs found\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : Range.Subscripts) {
           dbgs() << "  "; TSAR_LLVM_DUMP( Subscript->dump());
@@ -526,6 +584,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   releaseMemory();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  mLI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   mIsSafeTypeCast =
     getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
@@ -552,6 +611,7 @@ void DelinearizationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
@@ -608,6 +668,7 @@ RawDelinearizeInfo tsar::toJSON(const DelinearizeInfo &Info,
     RawInfo[RawDelinearizeInfo::Sizes].emplace(NameStr, std::move(DimSizes));
     RawInfo[RawDelinearizeInfo::Accesses].emplace(
       std::move(NameStr), std::move(Accesses));
+    RawInfo[RawDelinearizeInfo::IsDelinearized] = ArrayInfo->isDelinearized();
   }
   return RawInfo;
 }

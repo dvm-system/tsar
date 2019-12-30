@@ -1195,6 +1195,7 @@ private:
   AliasNode *mTopLevelNode;
   tsar::AmbiguousRef::AmbiguousPool mAmbiguousPool;
   StrippedMap mBases;
+  mutable llvm::DenseMap<llvm::MemoryLocation, EstimateMemory *> mSearchCache;
 };
 
 inline void EstimateMemory::setAliasNode(

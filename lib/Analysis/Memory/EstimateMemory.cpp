@@ -468,6 +468,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   assert(!isa<UndefValue>(Loc.Ptr) && "Pointer to memory location must be valid!");
   LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
+  mSearchCache.clear();
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
   EstimateMemory *PrevChainEnd = nullptr;
@@ -581,6 +582,7 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
       else
         EstimateAliases.push_back(&Child);
   }
+  mSearchCache.clear();
   AliasUnknownNode *Node;
   if (!UnknownAliases.empty()) {
     auto AI = UnknownAliases.begin(), EI = UnknownAliases.end();
@@ -751,7 +753,7 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       }
       if (!Opposite) {
         if (isa<AliasUnknownNode>(Current))
-          continue;
+          break;
       } else {
         if (!isa<AliasUnknownNode>(Opposite))
           std::swap(Current, Opposite);
@@ -759,6 +761,9 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       }
       return cast<AliasEstimateNode>(Current);
     }
+    // If all nodes at the current level are unknown then go down.
+    if (isa<AliasUnknownNode>(Current))
+      continue;
     auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
         *Current, {&NumAliasNode, &NumEstimateNode});
     for (auto &Alias : Aliases)
@@ -801,6 +806,9 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
   stripToBase(*mDL, Base);
+  auto SearchInfo = mSearchCache.try_emplace(Base, nullptr);
+  if (!SearchInfo.second)
+    return SearchInfo.first->second;
   Value *StrippedPtr = stripPointer(*mDL, const_cast<Value *>(Base.Ptr));
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
@@ -823,6 +831,7 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
     do {
       if (Base.Size > Chain->getSize())
         continue;
+      SearchInfo.first->second = Chain;
       return Chain;
     } while (Prev = Chain, Chain = CT::getNext(Chain));
   }
@@ -964,17 +973,21 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL, DT);
-  DenseSet<const Value *> AccessedMemory;
+  DenseSet<const Value *> AccessedMemory, AccessedUnknown;
   auto addLocation = [&AccessedMemory, this](MemoryLocation &&Loc) {
     AccessedMemory.insert(Loc.Ptr);
     mAliasTree->add(Loc);
+  };
+  auto addUnknown = [&AccessedUnknown, this](Instruction &I) {
+    AccessedUnknown.insert(&I);
+    mAliasTree->addUnknown(&I);
   };
   for_each_memory(F, TLI, [&addLocation](
     Instruction &, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
       addLocation(std::move(Loc));
   },
-    [this](Instruction &I, AccessInfo, AccessInfo) {
-      mAliasTree->addUnknown(&I);
+    [&addUnknown](Instruction &I, AccessInfo, AccessInfo) {
+      addUnknown(I);
   });
   // If there are some pointers to memory locations which are not accessed
   // then such memory locations also should be inserted in the alias tree.
@@ -1022,6 +1035,8 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
               WorkList.push_back(ExprCEOp);
           }
         } while (!WorkList.empty());
+      } else if (ImmutableCallSite(&I) && !AccessedUnknown.count(&I)) {
+        mAliasTree->addUnknown(&I);
       }
     }
   }

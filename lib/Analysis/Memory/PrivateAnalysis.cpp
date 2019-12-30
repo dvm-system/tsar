@@ -86,6 +86,19 @@ INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
   "Private Variable Analysis", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
+namespace tsar {
+namespace detail {
+/// Internal representation of cache which stores dependence analysis results.
+struct DependenceCache {
+  using SrcDstPair = std::pair<Instruction *, Instruction *>;
+  using DependenceConfusedPair =
+    std::pair<std::unique_ptr<Dependence>, unsigned short>;
+  using CacheT = DenseMap<SrcDstPair, DependenceConfusedPair>;
+  CacheT Impl;
+};
+}
+}
+
 bool PrivateRecognitionPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
@@ -109,7 +122,8 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   GraphNumbering<const AliasNode *> Numbers;
   numberGraph(mAliasTree, &Numbers);
   AliasTreeRelation AliasSTR(mAliasTree);
-  resolveCandidats(Numbers, AliasSTR, DFF);
+  DependenceCache Cache;
+  resolveCandidats(Numbers, AliasSTR, DFF, Cache);
   return false;
 }
 
@@ -363,7 +377,7 @@ void PrivateRecognitionPass::collectHeaderAccesses(
 
 void PrivateRecognitionPass::resolveCandidats(
     const GraphNumbering<const AliasNode *> &Numbers,
-    const AliasTreeRelation &AliasSTR, DFRegion *R) {
+    const AliasTreeRelation &AliasSTR, DFRegion *R, DependenceCache &Cache) {
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop ";
@@ -389,7 +403,7 @@ void PrivateRecognitionPass::resolveCandidats(
       NodeTraits.insert(
         std::make_pair(&N, std::make_tuple(TraitList(), UnknownList())));
     DependenceMap Deps;
-    collectDependencies(L->getLoop(), Deps);
+    collectDependencies(L->getLoop(), Deps, Cache);
     resolveAccesses(L->getLoop(), R->getLatchNode(), R->getExitNode(),
       *DefItr->get<DefUseSet>(), *LiveItr->get<LiveSet>(), Deps, AliasSTR,
       ExplicitAccesses, ExplicitUnknowns, NodeTraits);
@@ -402,7 +416,7 @@ void PrivateRecognitionPass::resolveCandidats(
       Deps, PrivInfo.first->get<DependenceSet>());
   }
   for (auto I = R->region_begin(), E = R->region_end(); I != E; ++I)
-    resolveCandidats(Numbers, AliasSTR, *I);
+    resolveCandidats(Numbers, AliasSTR, *I, Cache);
 }
 
 void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
@@ -462,7 +476,8 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
     Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
 }
 
-void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
+void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
+    DependenceCache &Cache) {
   auto &AA = mAliasTree->getAliasAnalysis();
   std::vector<Instruction *> LoopInsts;
   for (auto *BB : L->getBlocks())
@@ -531,12 +546,22 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
             LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore input dependence\n");
             continue;
           }
+          auto CacheItr = Cache.Impl.find(std::make_pair(*SrcItr, *DstItr));
           unsigned short ConfusedLevels;
-          auto D = mDepInfo->depends(*SrcItr, *DstItr, true, &ConfusedLevels);
-          if (D) {
+          Dependence *Dep = nullptr;
+          if (CacheItr != Cache.Impl.end()) {
+            Dep = CacheItr->second.first.get();
+            ConfusedLevels = CacheItr->second.second;
+          } else {
+            auto D = mDepInfo->depends(*SrcItr, *DstItr, true, &ConfusedLevels);
+            Dep = D.get();
+            Cache.Impl.try_emplace(std::make_pair(*SrcItr, *DstItr),
+              std::move(D), ConfusedLevels);
+          }
+          if (Dep) {
             LLVM_DEBUG(
               dbgs() << "[PRIVATE]: dependence found: ";
-              TSAR_LLVM_DUMP(D->dump(dbgs()));
+              TSAR_LLVM_DUMP(Dep->dump(dbgs()));
               TSAR_LLVM_DUMP((**SrcItr).dump());
               TSAR_LLVM_DUMP((**DstItr).dump());
             );
@@ -544,7 +569,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps) {
             // independent dependencies. This method returns `may` instead of
             // `must`. This means that if it returns `true` than dependency
             // may be loop-carried or may arise inside a single iteration.
-            insertDependence(*D, Src, Dst, trait::Dependence::No, *L, Deps);
+            insertDependence(*Dep, Src, Dst, trait::Dependence::No, *L, Deps);
           } else if (L->getLoopDepth() <= ConfusedLevels) {
             LLVM_DEBUG(dbgs() << "[PRIVATE]: assume confused dependence"
               " (confused levels " << ConfusedLevels << ")\n");
@@ -678,13 +703,14 @@ void PrivateRecognitionPass::resolvePointers(
       // estimate memory will be stored in ExplisitAccesses. So, we traverse
       // estimate memory chain to determine which memory is analyzed.
       auto PtrTraits = ExplicitAccesses.find(Ptr);
-      while (PtrTraits == ExplicitAccesses.end()) {
-        using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-        Ptr = CT::getNext(Ptr);
-        assert(Ptr && "It seems that traits does not exist!");
+      using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+      while (PtrTraits == ExplicitAccesses.end() && (Ptr = CT::getNext(Ptr)))
         PtrTraits = ExplicitAccesses.find(Ptr);
-      }
-      if (dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
+      // If Ptr is null it means that it has been dereferenced outside the loop.
+      // int **P, *V = *P; for(...) { ...V... }
+      // In this case after memory promotion V becomes *P, however corresponding
+      // 'load' remains outside the loop.
+      if (!Ptr || dropUnitFlag(*PtrTraits->get<BitMemoryTrait>())
             == BitMemoryTrait::Readonly)
         continue;
       // Location can not be declared as copy in or copy out without

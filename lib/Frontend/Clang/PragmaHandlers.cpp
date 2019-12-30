@@ -63,6 +63,7 @@ public:
 
   using BaseT::getReplacement;
   using BaseT::getLevelKind;
+  using BaseT::getPreprocessor;
 
   void visitEK_Anchor(Token &Tok) {
     if (getLevelKind() == ClauseExpr::EK_One) {
@@ -105,6 +106,18 @@ public:
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
+  }
+
+  /// Assume that a current token is an preprocessor-level identifier and append
+  /// to replacement something similar to `"name";`.
+  ///
+  /// Preprocessor-level identifiers are used to mark some common information
+  /// for different directives (for example name of a region or interval).
+  void visitEK_PPIdentifier(Token &Tok) {
+    assert(Tok.is(tok::identifier) && "Token must be an identifier!");
+    AddStringToken(Tok.getIdentifierInfo()->getName(), Tok.getLocation(),
+                   getPreprocessor(), getReplacement());
     AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
   }
 };

@@ -20,7 +20,7 @@ void function_20()
 //CHECK: de_decls_20.c:14:9: warning: disable dead code elimination
 //CHECK:                                 int d = (1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(foo_20(&a, &b, &k))))))))))));
 //CHECK:                                     ^
-//CHECK: de_decls_20.c:14:44: warning: function call prevent dead code elimination
+//CHECK: de_decls_20.c:14:44: warning: side effect prevent dead code elimination
 //CHECK:                                 int d = (1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(foo_20(&a, &b, &k))))))))))));
 //CHECK:                                                                        ^
 //CHECK: 2 warnings generated.

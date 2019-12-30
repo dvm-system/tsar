@@ -59,7 +59,8 @@ void ClientToServerMemory::prepareToClone(
     // metadata attached to a function will be used and this metadata is always
     // points to the original DISubprogram.
     if (auto *MD = findMetadata(&F))
-      (*ClientToServer.getMDMap())[MD].reset(MD);
+      if (ClientToServer.getMDMap())
+        (*ClientToServer.getMDMap())[MD].reset(MD);
   }
 }
 

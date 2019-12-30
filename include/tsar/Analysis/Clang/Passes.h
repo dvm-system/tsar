@@ -109,5 +109,11 @@ void initializeClangCFTraitsPassPass(PassRegistry &Registry);
 /// Create an AST-level pass which collects control-flow traits
 /// for function and its loops.
 FunctionPass * createClangCFTraitsPass();
+
+// Initialize a pass to collect '#pragma spf region' directives.
+void initializeClangRegionCollectorPass(PassRegistry &Registry);
+
+// Create a pass to collect '#pragma spf region' directives.
+ModulePass * createClangRegionCollector();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H
