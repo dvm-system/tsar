@@ -30,19 +30,19 @@ class ExprKind<bit is_single = 0, string clang_tok="unknown"> {
 def EK_Anchor       : ExprKind<1>;
 
 // Single tokens.
-def EK_Identifier   : ExprKind<1, "identifier">;
-def EK_PPIdentifier : ExprKind<1, "identifier">;
+def EK_Identifier       : ExprKind<1, "identifier">;
+def EK_PPIdentifier     : ExprKind<1, "identifier">;
 def EK_NumericConstant  : ExprKind<1, "numeric_constant">;
-def EK_Comma        : ExprKind<1, "comma">;
-def EK_LParen       : ExprKind<1, "l_paren">;
-def EK_RParen       : ExprKind<1, "r_paren">;
+def EK_Comma            : ExprKind<1, "comma">;
+def EK_LParen           : ExprKind<1, "l_paren">;
+def EK_RParen           : ExprKind<1, "r_paren">;
 
 // Blocks of tokens.
-def EK_ZeroOrOne    : ExprKind;
-def EK_ZeroOrMore   : ExprKind;
-def EK_OneOrMore    : ExprKind;
-def EK_OneOf        : ExprKind;
-def EK_One          : ExprKind;
+def EK_ZeroOrOne        : ExprKind;
+def EK_ZeroOrMore       : ExprKind;
+def EK_OneOrMore        : ExprKind;
+def EK_OneOf            : ExprKind;
+def EK_One              : ExprKind;
 
 class Expr<ExprKind kind, list<Expr> expr_list = []> {
   ExprKind Kind = kind;
