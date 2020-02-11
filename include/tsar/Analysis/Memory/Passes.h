@@ -156,6 +156,12 @@ void initializeDelinearizationPassPass(PassRegistry &Registry);
 /// Create a pass to delinearize array accesses.
 FunctionPass * createDelinearizationPass();
 
+/// Initialize a pass to perform iterprocedural live memory analysis.
+void initializeGlobalLiveMemoryPass(PassRegistry& Registry);
+
+/// Create a pass to perform iterprocedural live memory analysis.
+ModulePass * createGlobalLiveMemoryPass();
+
 /// Initialize a pass to perform iterprocedural analysis of defined memory
 /// locations.
 void initializeGlobalDefinedMemoryPass(PassRegistry& Registry);
