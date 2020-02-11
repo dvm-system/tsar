@@ -18,13 +18,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements passes to determine must/may defined locations.
+// This file implements GlobalLiveMemoryProvider to determine must/may defined locations.
 //
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Unparse/Utils.h"
@@ -64,8 +65,15 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
-  solveDataFlowUpward(&ReachDefFwk, DFF);
+  auto *GDM = getAnalysisIfAvailable<GlobalDefinedMemory>();
+  if (GDM) {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo,
+      GDM->getInterprocDefUseInfo());
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  } else {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  }
   return false;
 }
 
@@ -317,6 +325,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
     llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
+  auto *InterDUInfo = DFF->getInterprocDefUseInfo();
+  auto &TLI = DFF->getTLI();
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
@@ -383,9 +393,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // set for locations which are accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseSet.
     auto &DL = I.getModule()->getDataLayout();
-    for_each_memory(I, DFF->getTLI(),
-      [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
-          AccessInfo R, AccessInfo W) {
+    for_each_memory(I, TLI,
+      [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
+          unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         auto &AA = AT.getAliasAnalysis();
@@ -406,12 +416,35 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         assert(AN && "Alias node must not be null!");
         ImmutableCallSite CS(&I);
         if (CS) {
-          switch (AA.getArgModRefInfo(CS, Idx)) {
-          case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
-          case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
-          case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
-          case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
+          auto F = CS.getCalledFunction();
+          bool InterprocAvailable = false;
+          if (InterDUInfo) {
+            auto InterDUItr = InterDUInfo->find(F);
+            if (InterDUItr != InterDUInfo->end()) {
+              InterprocAvailable = true;
+              W = R = AccessInfo::No;
+              auto &DUS = InterDUItr->get<DefUseSet>();
+              auto Arg = MemoryLocationRange::getForArgument(CS, Idx, TLI);
+              if (DUS->getDefs().contain(Arg))
+                W = AccessInfo::Must;
+              else if (DUS->getDefs().overlap(Arg) ||
+                       DUS->getMayDefs().overlap(Arg)) 
+                W = AccessInfo::May;
+              if (DUS->getUses().overlap(Arg))
+                R = AccessInfo::Must;
+            }
           }
+          if (!InterprocAvailable)
+            switch (AA.getArgModRefInfo(CS, Idx)) {
+              case ModRefInfo::NoModRef:
+                W = R = AccessInfo::No; break;
+              case ModRefInfo::Mod:
+                W = AccessInfo::May; R = AccessInfo::No; break;
+              case ModRefInfo::Ref:
+                W = AccessInfo::No; R = AccessInfo::May; break;
+              case ModRefInfo::ModRef:
+                W = R = AccessInfo::May; break;
+            }
         }
         switch (W) {
         case AccessInfo::No:
