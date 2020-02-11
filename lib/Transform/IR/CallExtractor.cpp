@@ -23,6 +23,7 @@
 //
 //===---------------------------------------------------------------------===//
 #include "tsar/Transform/IR/Passes.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/BasicBlock.h>
@@ -31,6 +32,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 using namespace llvm;
+using namespace tsar;
 
 namespace {
 class CallExtractorPass : public FunctionPass, private bcl::Uncopyable {
@@ -55,6 +57,24 @@ FunctionPass * llvm::createCallExtractorPass() {
   return new CallExtractorPass();
 }
 
+inline static CallInst * needToExtract(Instruction *Inst) {
+  if (auto *II = dyn_cast<IntrinsicInst>(Inst))
+    return isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+      isDbgInfoIntrinsic(II->getIntrinsicID()) ? nullptr : cast<CallInst>(Inst);
+  return dyn_cast<CallInst>(Inst);
+}
+
+inline static Instruction *getNextUsefulInstruction(Instruction *Inst) {
+  for (Instruction *I = Inst->getNextNode(); I; I = I->getNextNode()) {
+    if (auto *II = dyn_cast<IntrinsicInst>(Inst))
+      if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+          isDbgInfoIntrinsic(II->getIntrinsicID()))
+        continue;
+    return I;
+  }
+  return nullptr;
+}
+
 bool CallExtractorPass::runOnFunction(Function& F) {
   LLVM_DEBUG(dbgs() << "[EXTRACT CALL]: start processing of the function "
                     << F.getName() << "\n");
@@ -65,16 +85,18 @@ bool CallExtractorPass::runOnFunction(Function& F) {
       if (TermInst == nullptr)
         continue;
       auto CurrInstr = CurrBB->begin();
-      if (auto CallCurrInst = dyn_cast<CallInst>(&*CurrInstr)) {
-        auto NextInstr = CallCurrInst->getNextNonDebugInstruction();
+      if (auto CallCurrInst = needToExtract(&*CurrInstr)) {
+        auto NextInstr = getNextUsefulInstruction(CallCurrInst);
+        assert(NextInstr && "Instruction must not be null!");
         if (NextInstr != TermInst)
           CurrBB->splitBasicBlock(NextInstr);
       } else {
         for (Instruction* I = &*(++CurrInstr); I != TermInst;
              ++CurrInstr, I = &*CurrInstr) {
-          if (auto* CallCurrInst = dyn_cast<CallInst>(I)) {
+          if (auto* CallCurrInst = needToExtract(I)) {
             BasicBlock* NewBB = CurrBB->splitBasicBlock(CallCurrInst);
-            auto NextInstr = CallCurrInst->getNextNonDebugInstruction();
+            auto NextInstr = getNextUsefulInstruction(CallCurrInst);
+            assert(NextInstr && "Instruction must not be null!");
             if (NextInstr != TermInst)
               NewBB->splitBasicBlock(NextInstr);
             break;
