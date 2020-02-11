@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines passes to determine must/may defined locations for each
+// This file defines GlobalLiveMemoryProvider to determine must/may defined locations for each
 // data-flow region. We use data-flow framework to implement this kind of
 // analysis. This filecontains elements which is necessary to determine this
 // framework.
@@ -356,10 +356,34 @@ public:
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>,
       bcl::tagged<std::unique_ptr<ReachSet>, ReachSet>>> DefinedMemoryInfo;
 
+  /// This represents results of interprocedural analysis.
+  typedef llvm::DenseMap<llvm::Function *, std::unique_ptr<DefUseSet>,
+    llvm::DenseMapInfo<llvm::Function *>,
+    tsar::TaggedDenseMapPair<
+      bcl::tagged<llvm::Function *, llvm::Function>,
+      bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>>> InterprocDefUseInfo;
+
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) { }
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) {}
+
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
+      InterprocDefUseInfo &InterprocDUInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo),
+    mInterprocDUInfo(&InterprocDUInfo) {}
+
+  /// Return results of interprocedural analysis or nullptr.
+  InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
+    return mInterprocDUInfo;
+  }
+
+  /// Return results of interprocedural analysis or nullptr.
+  InterprocDefUseInfo * getInterprocDefUseInfo() const noexcept {
+    return mInterprocDUInfo;
+  }
 
   /// Returns representation of reach definition analysis results.
   DefinedMemoryInfo & getDefInfo() noexcept { return *mDefInfo; }
@@ -385,7 +409,11 @@ private:
   llvm::TargetLibraryInfo *mTLI;
   const llvm::DominatorTree *mDT;
   DefinedMemoryInfo *mDefInfo;
+  InterprocDefUseInfo *mInterprocDUInfo = nullptr;
 };
+
+/// This represents results of interprocedural reach definition analysis.
+typedef ReachDFFwk::InterprocDefUseInfo InterprocDefUseInfo;
 
 /// This covers IN and OUT value for a must/may reach definition analysis.
 typedef ReachDFFwk::ReachSet ReachSet;
