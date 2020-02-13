@@ -22,6 +22,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Support/PassProvider.h"
@@ -84,7 +85,12 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
        CurrNode != LastNode; ++CurrNode) {
     CallGraphNode *CGN = *CurrNode;
     auto F = CGN->getFunction();
-    if (!F || F->empty())
+    // Indirect calls or calls to functions without body may lead to implicit
+    // recursion. So, disable analysis in this case.
+    // TODO (kaniandr@gmail.com): sapfor.direct-user-callee is not set for
+    // library functions, may be analysis of these functions is a special case
+    // and these functions should be pre-analyzed.
+    if (!F || F->empty() || !hasFnAttr(*F, AttrKind::DirectUserCallee))
       continue;
     LLVM_DEBUG(dbgs() << "[GLOBAL DEFINED MEMORY]: analyze " << F->getName()
                       << "\n";);
