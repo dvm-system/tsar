@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Support/PassProvider.h"
 #include <llvm/ADT/PostOrderIterator.h>
+#include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/IR/Function.h>
@@ -81,9 +82,11 @@ ModulePass *llvm::createGlobalDefinedMemoryPass() {
 bool GlobalDefinedMemory::runOnModule(Module &SCC) {
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  for (auto &CurrNode = po_begin(&CG), LastNode = po_end(&CG);
-       CurrNode != LastNode; ++CurrNode) {
-    CallGraphNode *CGN = *CurrNode;
+  for (scc_iterator<CallGraph *> SCC = scc_begin(&CG); !SCC.isAtEnd(); ++SCC) {
+    /// TODO (kaniandr@gmail.com): implement analysis in case of recursion.
+    if (SCC->size() > 1)
+      continue;
+    CallGraphNode *CGN = *SCC->begin();
     auto F = CGN->getFunction();
     // Indirect calls or calls to functions without body may lead to implicit
     // recursion. So, disable analysis in this case.
