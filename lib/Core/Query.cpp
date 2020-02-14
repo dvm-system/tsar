@@ -30,6 +30,7 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/PassBarrier.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
@@ -108,6 +109,11 @@ void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
 
 void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
                           legacy::PassManager &Passes) {
+  // Some function passes (for example DefinedMemoryPass) may use results of
+  // module passes and these results becomes invalid after transformations.
+  // So, to prevent access to invalid (destroyed) values we finish processing of
+  // all functions.
+  Passes.add(createPassBarrier());
   Passes.add(createCFGSimplificationPass());
   // Do not add 'instcombine' here, because in this case some metadata may be
   // lost after SROA (for example, if a promoted variable is a structure).
@@ -134,6 +140,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
 }
 
 void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
+  Passes.add(createPassBarrier());
   Passes.add(
       createProcessDIMemoryTraitPass(markIf<trait::Lock, trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
@@ -233,6 +240,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     delete P;
   };
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createGlobalDefinedMemoryStorage());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
   Passes.add(createDIMemoryTraitPoolStorage());
