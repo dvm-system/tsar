@@ -470,7 +470,24 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
           break;
         }
       },
-      [&DL, &AT, &DU](Instruction &I, AccessInfo, AccessInfo) {
+      [&DL, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo, AccessInfo) {
+          ImmutableCallSite CS(&I);
+        auto F =
+          llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+        if (F && InterDUInfo) {
+          auto InterDUItr = InterDUInfo->find(F);
+          if (InterDUItr != InterDUInfo->end()) {
+            auto &DUS = InterDUItr->get<DefUseSet>();
+            if (DUS->getExplicitUnknowns().empty()) {
+              bool HasGlobalAccess = false;
+              for (auto &Range : DUS->getExplicitAccesses())
+                HasGlobalAccess |= isa<GlobalValue>(
+                  stripPointer(DL, const_cast<Value *>(Range.Ptr)));
+              if (!HasGlobalAccess)
+                return;
+            }
+          }
+        }
         auto *AN = AT.findUnknown(I);
         if (!AN)
           return;
