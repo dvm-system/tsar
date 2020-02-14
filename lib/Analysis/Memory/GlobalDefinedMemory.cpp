@@ -21,16 +21,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
 #include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
-#include "tsar/Analysis/Memory/LiveMemory.h"
+#include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Support/PassProvider.h"
-#include <llvm/ADT/PostOrderIterator.h>
+#include <bcl/utility.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/IR/Function.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
 #ifdef LLVM_DEBUG
 #include <llvm/IR/Dominators.h>
@@ -42,9 +43,50 @@
 using namespace llvm;
 using namespace tsar;
 
-char GlobalDefinedMemory::ID = 0;
-
 namespace {
+class GlobalDefinedMemory : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  GlobalDefinedMemory() : ModulePass(ID) {
+    initializeGlobalDefinedMemoryPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module &SCC) override;
+  void getAnalysisUsage(AnalysisUsage& AU) const override;
+};
+
+class GlobalDefinedMemoryStorage :
+  public ImmutablePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  GlobalDefinedMemoryStorage() : ImmutablePass(ID) {
+    initializeGlobalDefinedMemoryStoragePass(*PassRegistry::getPassRegistry());
+  }
+
+  void initializePass() override {
+    getAnalysis<GlobalDefinedMemoryWrapper>().set(mInterprocDUInfo);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<GlobalDefinedMemoryWrapper>();
+  }
+
+  /// Return results of interprocedural reach definition analysis.
+  tsar::InterprocDefUseInfo & getInterprocDefUseInfo() noexcept {
+    return mInterprocDUInfo;
+  }
+
+  /// Return results of interprocedural reach definition analysis.
+  const tsar::InterprocDefUseInfo & getInterprocDefUseInfo() const noexcept {
+    return mInterprocDUInfo;
+  }
+
+private:
+  tsar::InterprocDefUseInfo mInterprocDUInfo;
+};
+
 using GlobalDefinedMemoryProvider = FunctionPassProvider<
   DFRegionInfoPass,
   EstimateMemoryPass,
@@ -60,26 +102,48 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PROVIDER_END(GlobalDefinedMemoryProvider, "global-def-mem-provider",
                         "Global Defined Memory Analysis (Provider)")
 
+char GlobalDefinedMemoryStorage::ID = 0;
+INITIALIZE_PASS_BEGIN(GlobalDefinedMemoryStorage, "global-def-mem-is",
+  "Global Defined Memory Analysis (Immutable Storage)", true, true)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_END(GlobalDefinedMemoryStorage, "global-def-mem-is",
+  "Global Defined Memory Analysis (Immutable Storage)", true, true)
+
+template<> char GlobalDefinedMemoryWrapper::ID = 0;
+INITIALIZE_PASS(GlobalDefinedMemoryWrapper, "global-def-mem-iw",
+  "Global Defined Memory Analysis (Immutable Wrapper)", true, true)
+
+char GlobalDefinedMemory::ID = 0;
 INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem",
-                      "Global Defined Memory Analysis", true, true)
+                      "Global Defined Memory Analysis"true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryProvider)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem",
                     "Global Defined Memory Analysis", true, true)
 
 void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalDefinedMemoryProvider>();
+  AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
 ModulePass *llvm::createGlobalDefinedMemoryPass() {
-  return new GlobalDefinedMemory();
+  return new GlobalDefinedMemory;
+}
+
+ImmutablePass *llvm::createGlobalDefinedMemoryStorage() {
+  return new GlobalDefinedMemoryStorage;
 }
 
 bool GlobalDefinedMemory::runOnModule(Module &SCC) {
+  auto &Wrapper = getAnalysis<GlobalDefinedMemoryWrapper>();
+  if (!Wrapper)
+    return false;
+  Wrapper->clear();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (scc_iterator<CallGraph *> SCC = scc_begin(&CG); !SCC.isAtEnd(); ++SCC) {
@@ -104,12 +168,12 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     LLVM_DEBUG(DT = &Provider.get<DominatorTreeWrapperPass>().getDomTree());
     auto *DFF = cast<DFFunction>(RegInfo.getTopLevelRegion());
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, DT, DefInfo, mInterprocDUInfo);
+    ReachDFFwk ReachDefFwk(AT, TLI, DT, DefInfo, *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
            "Def-use set must exist for a function!");
-    mInterprocDUInfo.try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
+    Wrapper->try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
   }
   return false;
 }

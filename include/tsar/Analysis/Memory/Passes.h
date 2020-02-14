@@ -164,10 +164,22 @@ ModulePass * createGlobalLiveMemoryPass();
 
 /// Initialize a pass to perform iterprocedural analysis of defined memory
 /// locations.
-void initializeGlobalDefinedMemoryPass(PassRegistry& Registry);
+void initializeGlobalDefinedMemoryPass(PassRegistry &Registry);
 
 /// Create a pass to perform iterprocedural analysis of defined memory
 /// locations.
 ModulePass * createGlobalDefinedMemoryPass();
+
+/// Initialize a pass to store restulrt of interprocedural reaching definition
+/// analysis.
+void initializeGlobalDefinedMemoryStoragePass(PassRegistry &Registry);
+
+/// Create a pass to store restults of interprocedural reaching definition
+/// analysis.
+ImmutablePass *createGlobalDefinedMemoryStorage();
+
+/// Initialize a pass to access restults of interprocedural reaching definition
+/// analysis.
+void initializeGlobalDefinedMemoryWrapperPass(PassRegistry &Registry);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H
