@@ -378,11 +378,30 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         } while (!WorkList.empty());
       }
     }
+    auto &DL = I.getModule()->getDataLayout();
     // Any call may access some addresses even if it does not access memory.
     // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list
-    // of unknown address accesses.
-    if (ImmutableCallSite(&I))
-      DU->addAddressUnknowns(&I);
+    // of unknown address accesses. Now, accesses to global memory
+    // in a function call leads to unknown address access.
+    ImmutableCallSite CS(&I);
+    if (CS) {
+      bool UnknownAddressAccess = true;
+      auto F =
+        llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      if (F && InterDUInfo) {
+        auto InterDUItr = InterDUInfo->find(F);
+        if (InterDUItr != InterDUInfo->end()) {
+          auto &DUS = InterDUItr->get<DefUseSet>();
+          if (DUS->getAddressUnknowns().empty()) {
+            UnknownAddressAccess = false;
+            for (auto *Ptr : DUS->getAddressAccesses())
+              UnknownAddressAccess |= isa<GlobalValue>(stripPointer(DL, Ptr));
+          }
+        }
+      }
+      if (UnknownAddressAccess)
+        DU->addAddressUnknowns(&I);
+    }
     if (!I.mayReadOrWriteMemory())
       continue;
     // 1. Must/may def-use information will be set for location accessed in a
@@ -392,7 +411,6 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // accessed in a current instruction. Note that this attribute will be also
     // set for locations which are accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseSet.
-    auto &DL = I.getModule()->getDataLayout();
     for_each_memory(I, TLI,
       [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
           unsigned Idx, AccessInfo R, AccessInfo W) {
