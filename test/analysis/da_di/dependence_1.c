@@ -11,12 +11,8 @@ void foo(int N) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'bar':
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 dependence_1.c:8:3
-//CHECK:    output:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5
-//CHECK:    anti:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5
-//CHECK:    flow:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5
+//CHECK:    private:
+//CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    induction:
 //CHECK:     <I:8:12, 4>:[Int,0,10,1]
 //CHECK:    lock:
@@ -24,14 +20,14 @@ void foo(int N) {
 //CHECK:    header access:
 //CHECK:     <I:8:12, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5 | <I:8:12, 4>
+//CHECK:     <I:8:12, 4>
 //CHECK:    address access:
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5
+//CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:8:12, 4> bar():9:5
+//CHECK:     <I:8:12, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:8:12, 4>
 //CHECK:    address access (separate):
-//CHECK:     <A:{4:3|4:10}, ?> bar():9:5
+//CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    direct access (separate):
-//CHECK:     <A:{4:3|4:10}, ?> <I:8:12, 4> bar():9:5
+//CHECK:     <A:{4:3|4:10}, ?> <I:8:12, 4>
