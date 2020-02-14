@@ -416,21 +416,26 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         assert(AN && "Alias node must not be null!");
         ImmutableCallSite CS(&I);
         if (CS) {
-          auto F = CS.getCalledFunction();
+          auto F =
+            llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
           bool InterprocAvailable = false;
-          if (InterDUInfo) {
+          if (F && InterDUInfo) {
             auto InterDUItr = InterDUInfo->find(F);
             if (InterDUItr != InterDUInfo->end()) {
               InterprocAvailable = true;
               W = R = AccessInfo::No;
               auto &DUS = InterDUItr->get<DefUseSet>();
-              auto Arg = MemoryLocationRange::getForArgument(CS, Idx, TLI);
-              if (DUS->getDefs().contain(Arg))
+              auto ActualArg =
+                  MemoryLocationRange::getForArgument(CS, Idx, TLI);
+              auto Arg = F->arg_begin() + Idx;
+              MemoryLocationRange ArgLoc(Arg, 0,
+                ActualArg.UpperBound - ActualArg.LowerBound);
+              if (DUS->getDefs().contain(ArgLoc))
                 W = AccessInfo::Must;
-              else if (DUS->getDefs().overlap(Arg) ||
-                       DUS->getMayDefs().overlap(Arg)) 
+              else if (DUS->getDefs().overlap(ArgLoc) ||
+                       DUS->getMayDefs().overlap(ArgLoc))
                 W = AccessInfo::May;
-              if (DUS->getUses().overlap(Arg))
+              if (DUS->getUses().overlap(ArgLoc))
                 R = AccessInfo::Must;
             }
           }
