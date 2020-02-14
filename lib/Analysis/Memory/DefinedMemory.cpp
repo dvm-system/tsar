@@ -25,7 +25,6 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
-#include "tsar/Analysis/Memory/GlobalDefinedMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Unparse/Utils.h"
@@ -55,6 +54,7 @@ INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
 
@@ -65,10 +65,9 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  auto *GDM = getAnalysisIfAvailable<GlobalDefinedMemory>();
+  auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo,
-      GDM->getInterprocDefUseInfo());
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   } else {
     ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
@@ -82,6 +81,7 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.setPreservesAll();
 }
 

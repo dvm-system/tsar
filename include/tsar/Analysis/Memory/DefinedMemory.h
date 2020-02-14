@@ -39,6 +39,7 @@
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -512,5 +513,9 @@ public:
 private:
   tsar::DefinedMemoryInfo mDefInfo;
 };
+
+/// Wrapper to access results of interprocedural reaching definitions analysis.
+using GlobalDefinedMemoryWrapper =
+  AnalysisWrapperPass<tsar::InterprocDefUseInfo>;
 }
 #endif//TSAR_DEFINED_MEMORY_H

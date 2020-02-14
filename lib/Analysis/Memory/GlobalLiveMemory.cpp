@@ -70,12 +70,14 @@ INITIALIZE_PASS_BEGIN(GlobalLiveMemory, "global-live-mem",
                       "Global Live Memory Analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryProvider)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_END(GlobalLiveMemory, "global-live-mem",
                     "Global Live Memory Analysis", true, true)
 
 void GlobalLiveMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<GlobalLiveMemoryProvider>();
+  AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.setPreservesAll();
 }
 
@@ -95,7 +97,12 @@ void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
 }
 #endif
 
-bool GlobalLiveMemory::runOnModule(Module &SCC) {
+bool GlobalLiveMemory::runOnModule(Module &M) {
+  auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
+  if (GDM) {
+    GlobalLiveMemoryProvider::initialize<GlobalDefinedMemoryWrapper>(
+        [&GDM](GlobalDefinedMemoryWrapper &Wrapper) { Wrapper.set(*GDM); });
+  }
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
   LiveMemoryForCalls LiveSetForCalls;
