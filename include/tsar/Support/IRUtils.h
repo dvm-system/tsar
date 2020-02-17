@@ -52,6 +52,22 @@ arraySize(llvm::Type *Ty) {
   return std::make_tuple(Dims, NumElements, Ty);
 }
 
+/// Return true if a specified type is a pointer type or contains sub-types
+/// which are pointer types.
+inline bool hasUnderlyingPointer(llvm::Type *Ty) {
+  assert(Ty && "Type must not be null!");
+  if (Ty->isPointerTy())
+    return true;
+  if (Ty->isArrayTy())
+    return hasUnderlyingPointer(Ty->getArrayElementType());
+  if (Ty->isVectorTy())
+    return hasUnderlyingPointer(Ty->getVectorElementType());
+  if (Ty->isStructTy())
+    for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
+      return hasUnderlyingPointer(Ty->getStructElementType(I));
+  return false;
+}
+
 namespace detail {
 /// Applies a specified function object to each loop in a loop tree.
 template<class Function>

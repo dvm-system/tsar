@@ -26,7 +26,9 @@
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/Utils.h"
+#include "tsar/Support/IRUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -494,17 +496,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
           llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
         if (F && InterDUInfo) {
           auto InterDUItr = InterDUInfo->find(F);
-          if (InterDUItr != InterDUInfo->end()) {
-            auto &DUS = InterDUItr->get<DefUseSet>();
-            if (DUS->getExplicitUnknowns().empty()) {
-              bool HasGlobalAccess = false;
-              for (auto &Range : DUS->getExplicitAccesses())
-                HasGlobalAccess |= isa<GlobalValue>(
-                  stripPointer(DL, const_cast<Value *>(Range.Ptr)));
-              if (!HasGlobalAccess)
-                return;
-            }
-          }
+          if (InterDUItr != InterDUInfo->end())
+            if (isPure(*F, *InterDUItr->get<DefUseSet>()))
+              return;
         }
         auto *AN = AT.findUnknown(I);
         if (!AN)
