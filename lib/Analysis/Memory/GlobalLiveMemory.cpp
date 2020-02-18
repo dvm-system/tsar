@@ -25,10 +25,12 @@
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/GlobalLiveMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/PassProvider.h"
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Support/raw_ostream.h>
 #ifdef LLVM_DEBUG
@@ -72,6 +74,7 @@ INITIALIZE_PASS_BEGIN(GlobalLiveMemory, "global-live-mem",
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryProvider)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(GlobalLiveMemory, "global-live-mem",
                     "Global Live Memory Analysis", true, true)
 
@@ -79,6 +82,7 @@ void GlobalLiveMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<GlobalLiveMemoryProvider>();
   AU.addRequired<GlobalDefinedMemoryWrapper>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -90,7 +94,7 @@ ModulePass *llvm::createGlobalLiveMemoryPass() {
 void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
   dbgs() << "[GLOBAL LIVE MEMORY]: list of visited functions\n";
   for (auto &FInfo : Info) {
-    dbgs() << FInfo.first->getName() << "has calls from:\n";
+    dbgs() << FInfo.first->getName() << " has calls from:\n";
     for (auto &CallTo : FInfo.second)
       dbgs() << "  " << CallTo.get<Instruction>()->getFunction()->getName()
              << "\n";
@@ -99,6 +103,7 @@ void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
 #endif
 
 bool GlobalLiveMemory::runOnModule(Module &M) {
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<CallGraphNode *> Worklist;
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
@@ -121,6 +126,7 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     GlobalLiveMemoryProvider::initialize<GlobalDefinedMemoryWrapper>(
         [&GDM](GlobalDefinedMemoryWrapper &Wrapper) { Wrapper.set(*GDM); });
   }
+  auto &DL = M.getDataLayout();
   LiveMemoryForCalls LiveSetForCalls;
   for (auto *CGN : llvm::reverse(Worklist)) {
     auto F = CGN->getFunction();
@@ -146,7 +152,30 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
                "Live set must be already constructed for a call!");
           FOut.merge(CallInfo.get<LiveSet>()->getOut());
       }
-      LS->setOut(FOut);
+      DataFlowTraits<LiveDFFwk *>::ValueType MayLives;
+      auto init = [&DL, F, &FOut, &MayLives](const MemoryLocationRange &Loc) {
+        assert(Loc.Ptr && "Pointer to location must not be null!");
+        auto Ptr = GetUnderlyingObject(Loc.Ptr, DL, 0);
+        if (isa<AllocaInst>(Ptr))
+          return;
+        if (find_if(F->args(), [Ptr](Argument &Arg) { return Ptr == &Arg; }) !=
+                F->arg_end() ||
+            isa<GlobalValue>(Ptr)) {
+          if (Ptr == Loc.Ptr && !FOut.overlap(Loc) ||
+              !FOut.overlap(MemoryLocation(Ptr)))
+            return;
+        }
+        MayLives.insert(Loc);
+      };
+      auto DefItr = DefInfo.find(TopRegion);
+      assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
+        "Def-use set must not be null!");
+      auto &DefUse = DefItr->get<DefUseSet>();
+      for (auto &Loc : DefUse->getDefs())
+        init(Loc);
+      for (auto &Loc : DefUse->getMayDefs())
+        init(Loc);
+      LS->setOut(MayLives);
     }
     LiveDFFwk LiveFwk(IntraLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, TopRegion);
@@ -161,6 +190,20 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
       FuncInfo.first->second.push_back(
           std::make_pair(cast<Instruction>(CallRecord.first),
                          std::move(LiveFwk.getLiveInfo()[DFB])));
+      auto &CallLS = FuncInfo.first->second.back().get<LiveSet>();
+      auto &CallLiveOut =
+          const_cast<MemorySet<MemoryLocationRange> &>(CallLS->getOut());
+      if (!Callee->isVarArg())
+        for_each_memory(*cast<Instruction>(CallRecord.first), TLI,
+          [Callee, &CallLiveOut](Instruction &I, MemoryLocation &&Loc,
+              unsigned Idx, AccessInfo, AccessInfo) {
+            auto OverlapItr = CallLiveOut.findOverlappedWith(Loc);
+            if (OverlapItr == CallLiveOut.end())
+              return;
+            auto *Arg = Callee->arg_begin() + Idx;
+            CallLiveOut.insert(MemoryLocationRange(Arg, 0, Loc.Size));
+          },
+          [](Instruction &, AccessInfo, AccessInfo) {});
     }
     mInterprocLiveMemory.try_emplace(F, std::move(IntraLiveInfo[TopRegion]));
   }
