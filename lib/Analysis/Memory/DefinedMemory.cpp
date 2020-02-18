@@ -445,11 +445,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
               InterprocAvailable = true;
               W = R = AccessInfo::No;
               auto &DUS = InterDUItr->get<DefUseSet>();
-              auto ActualArg =
-                  MemoryLocationRange::getForArgument(CS, Idx, TLI);
               auto Arg = F->arg_begin() + Idx;
-              MemoryLocationRange ArgLoc(Arg, 0,
-                ActualArg.UpperBound - ActualArg.LowerBound);
+              MemoryLocationRange ArgLoc(Arg, 0, Loc.Size);
               if (DUS->getDefs().contain(ArgLoc))
                 W = AccessInfo::Must;
               else if (DUS->getDefs().overlap(ArgLoc) ||
