@@ -22,10 +22,11 @@
 //
 //===---------------------------------------------------------------------===//
 
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/GlobalLiveMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Support/PassProvider.h"
-#include <llvm/ADT/PostOrderIterator.h>
+#include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/IR/Function.h>
@@ -98,17 +99,30 @@ void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
 #endif
 
 bool GlobalLiveMemory::runOnModule(Module &M) {
+  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  std::vector<CallGraphNode *> Worklist;
+  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
+    // TODO (kaniandr@gmail.com): implement analysis in case of recursion.
+    if (I->size() > 1)
+      return false;
+    CallGraphNode *CGN = I->front();
+    auto F = CGN->getFunction();
+    // Avoid analysis of a library function because we must ensure that
+    // all callers will be analyzed earlier. However, in general a library
+    // function without body may call another library function.
+    if (!F || hasFnAttr(*F, AttrKind::LibFunc))
+      continue;
+    if (F->empty() || !hasFnAttr(*F, AttrKind::DirectUserCallee))
+      return false;
+    Worklist.push_back(CGN);
+  }
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
     GlobalLiveMemoryProvider::initialize<GlobalDefinedMemoryWrapper>(
         [&GDM](GlobalDefinedMemoryWrapper &Wrapper) { Wrapper.set(*GDM); });
   }
-  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  ReversePostOrderTraversal<CallGraph *> RPOT(&CG);
   LiveMemoryForCalls LiveSetForCalls;
-  for (auto &CurrNode = RPOT.begin(), LastNode = RPOT.end();
-       CurrNode != LastNode; CurrNode++) {
-    CallGraphNode *CGN = *CurrNode;
+  for (auto *CGN : llvm::reverse(Worklist)) {
     auto F = CGN->getFunction();
     if (!F || F->empty())
       continue;
