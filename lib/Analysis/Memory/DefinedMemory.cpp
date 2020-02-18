@@ -439,7 +439,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
           auto F =
             llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
           bool InterprocAvailable = false;
-          if (F && InterDUInfo) {
+          if (F && !F->isVarArg() && InterDUInfo) {
             auto InterDUItr = InterDUInfo->find(F);
             if (InterDUItr != InterDUInfo->end()) {
               InterprocAvailable = true;
