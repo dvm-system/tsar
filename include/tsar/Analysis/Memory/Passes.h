@@ -179,15 +179,15 @@ void initializeGlobalDefinedMemoryPass(PassRegistry &Registry);
 /// locations.
 ModulePass * createGlobalDefinedMemoryPass();
 
-/// Initialize a pass to store restulrt of interprocedural reaching definition
+/// Initialize a pass to store results of interprocedural reaching definition
 /// analysis.
 void initializeGlobalDefinedMemoryStoragePass(PassRegistry &Registry);
 
-/// Create a pass to store restults of interprocedural reaching definition
+/// Create a pass to store results of interprocedural reaching definition
 /// analysis.
 ImmutablePass *createGlobalDefinedMemoryStorage();
 
-/// Initialize a pass to access restults of interprocedural reaching definition
+/// Initialize a pass to access results of interprocedural reaching definition
 /// analysis.
 void initializeGlobalDefinedMemoryWrapperPass(PassRegistry &Registry);
 }
