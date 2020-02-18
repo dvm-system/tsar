@@ -23,7 +23,6 @@
 //===---------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Attributes.h"
-#include "tsar/Analysis/Memory/GlobalLiveMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/PassProvider.h"
@@ -45,6 +44,54 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+class GlobalLiveMemory : public ModulePass, private bcl::Uncopyable {
+public:
+  using IterprocLiveMemoryInfo =
+    DenseMap<Function *, std::unique_ptr<tsar::LiveSet>,
+      DenseMapInfo<Function *>,
+      tsar::TaggedDenseMapPair<
+        bcl::tagged<Function *, Function>,
+        bcl::tagged<std::unique_ptr<tsar::LiveSet>, tsar::LiveSet>>>;
+
+  static char ID;
+
+  GlobalLiveMemory() : ModulePass(ID) {
+    initializeGlobalLiveMemoryPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+};
+
+class GlobalLiveMemoryStorage :
+  public ImmutablePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  GlobalLiveMemoryStorage() : ImmutablePass(ID) {
+    initializeGlobalLiveMemoryStoragePass(*PassRegistry::getPassRegistry());
+  }
+
+  void initializePass() override {
+    getAnalysis<GlobalLiveMemoryWrapper>().set(mInterprocLiveMemory);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<GlobalLiveMemoryWrapper>();
+  }
+
+  const InterprocLiveMemoryInfo &getLiveMemoryInfo() const noexcept {
+    return mInterprocLiveMemory;
+  }
+
+  InterprocLiveMemoryInfo &getLiveMemoryInfo() noexcept {
+    return mInterprocLiveMemory;
+  }
+
+private:
+  InterprocLiveMemoryInfo mInterprocLiveMemory;
+};
+
 using CallList = std::vector<
     bcl::tagged_pair<bcl::tagged<Instruction *, Instruction>,
                      bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>>;
@@ -59,7 +106,6 @@ using GlobalLiveMemoryProvider = FunctionPassProvider<
   DominatorTreeWrapperPass>;
 }
 
-char GlobalLiveMemory::ID = 0;
 
 INITIALIZE_PROVIDER_BEGIN(GlobalLiveMemoryProvider, "global-live-mem-provider",
                           "Global Live Memory Analysis (Provider)")
@@ -69,12 +115,25 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PROVIDER_END(GlobalLiveMemoryProvider, "global-live-mem-provider",
                         "Global Live Memory Analysis (Provider)")
 
+char GlobalLiveMemoryStorage::ID = 0;
+INITIALIZE_PASS_BEGIN(GlobalLiveMemoryStorage, "global-live-mem-is",
+  "Global Live Memory Analysis (Immutable Storage)", true, true)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
+INITIALIZE_PASS_END(GlobalLiveMemoryStorage, "global-live-mem-is",
+  "Global Live Memory Analysis (Immutable Storage)", true, true)
+
+template<> char GlobalLiveMemoryWrapper::ID = 0;
+INITIALIZE_PASS(GlobalLiveMemoryWrapper, "global-live-mem-iw",
+  "Global Live Memory Analysis (Immutable Wrapper)", true, true)
+
+char GlobalLiveMemory::ID = 0;
 INITIALIZE_PASS_BEGIN(GlobalLiveMemory, "global-live-mem",
                       "Global Live Memory Analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryProvider)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_END(GlobalLiveMemory, "global-live-mem",
                     "Global Live Memory Analysis", true, true)
 
@@ -83,11 +142,16 @@ void GlobalLiveMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalLiveMemoryProvider>();
   AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalLiveMemoryWrapper>();
   AU.setPreservesAll();
 }
 
 ModulePass *llvm::createGlobalLiveMemoryPass() {
-  return new GlobalLiveMemory();
+  return new GlobalLiveMemory;
+}
+
+ImmutablePass *llvm::createGlobalLiveMemoryStorage() {
+  return new GlobalLiveMemoryStorage;
 }
 
 #ifdef LLVM_DEBUG
@@ -103,6 +167,10 @@ void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
 #endif
 
 bool GlobalLiveMemory::runOnModule(Module &M) {
+  auto &Wrapper = getAnalysis<GlobalLiveMemoryWrapper>();
+  if (!Wrapper)
+    return false;
+  Wrapper->clear();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<CallGraphNode *> Worklist;
@@ -205,7 +273,7 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
           },
           [](Instruction &, AccessInfo, AccessInfo) {});
     }
-    mInterprocLiveMemory.try_emplace(F, std::move(IntraLiveInfo[TopRegion]));
+    Wrapper->try_emplace(F, std::move(IntraLiveInfo[TopRegion]));
   }
   LLVM_DEBUG(visitedFunctionsLog(LiveSetForCalls));
   return false;
