@@ -162,6 +162,15 @@ void initializeGlobalLiveMemoryPass(PassRegistry& Registry);
 /// Create a pass to perform iterprocedural live memory analysis.
 ModulePass * createGlobalLiveMemoryPass();
 
+/// Initialize a pass to store results of interprocedural live memory analysis.
+void initializeGlobalLiveMemoryStoragePass(PassRegistry &Registry);
+
+/// Create a pass to store results of interprocedural live memory analysis.
+ImmutablePass *createGlobalLiveMemoryStorage();
+
+/// Initialize a pass to access results of interprocedural live memory analysis.
+void initializeGlobalLiveMemoryWrapperPass(PassRegistry &Registry);
+
 /// Initialize a pass to perform iterprocedural analysis of defined memory
 /// locations.
 void initializeGlobalDefinedMemoryPass(PassRegistry &Registry);

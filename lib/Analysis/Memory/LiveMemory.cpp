@@ -24,7 +24,6 @@
 
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
-#include "tsar/Analysis/Memory/GlobalLiveMemory.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/ValueTracking.h>
@@ -44,6 +43,7 @@ INITIALIZE_PASS_BEGIN(LiveMemoryPass, "live-mem",
   "Live Memory Analysis", false, true)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
   "Live Memory Analysis", false, true)
 
@@ -57,20 +57,21 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
     DT = &DTPass->getDomTree();
   );
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  auto GLM = getAnalysisIfAvailable<GlobalLiveMemory>();
+  auto &GLM = getAnalysis<GlobalLiveMemoryWrapper>();
   auto LiveItr = mLiveInfo.insert(
     std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
   auto &LS = LiveItr->get<LiveSet>();
+  bool IsIPOAvailable = false;
   if (GLM) {
-    auto &InterprocLiveInfo = GLM->getLiveMemoryInfo();
-    auto InfoItr = InterprocLiveInfo.find(&F);
+    auto InfoItr = GLM->find(&F);
     // If it is not safe to perform interprocedural analysis for a function,
     // results won't be available.
-    if (InfoItr != InterprocLiveInfo.end())
+    if (InfoItr != GLM->end()) {
       LS->setOut(InfoItr->get<LiveSet>()->getOut());
-    else GLM = nullptr;
+      IsIPOAvailable = true;
+    }
   }
-  if (!GLM) {
+  if (!IsIPOAvailable) {
     auto DefItr = DefInfo.find(DFF);
     assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
       "Def-use set must not be null!");
@@ -100,6 +101,7 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
 void LiveMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<DefinedMemoryPass>();
+  AU.addRequired<GlobalLiveMemoryWrapper>();
   AU.setPreservesAll();
 }
 

@@ -22,11 +22,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Core/tsar-config.h"
 #include "tsar/Analysis/Clang/Passes.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/TraitFilter.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#ifdef APC_FOUND
+# include "tsar/APC/Passes.h"
+#endif
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -241,6 +245,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   };
   Passes.add(createMemoryMatcherPass());
   Passes.add(createGlobalDefinedMemoryStorage());
+  Passes.add(createGlobalLiveMemoryStorage());
   // It is necessary to destroy DIMemoryTraitPool before DIMemoryEnvironment to
   // avoid dangling handles. So, we add pool before environment in the manager.
   Passes.add(createDIMemoryTraitPoolStorage());

@@ -31,6 +31,7 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Support/AnalysisWrapperPass.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 
@@ -49,6 +50,14 @@ public:
     tsar::TaggedDenseMapPair<
       bcl::tagged<DFNode *, DFNode>,
       bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>> LiveMemoryInfo;
+
+  /// This represents results of interprocedural analysis.
+  typedef llvm::DenseMap<llvm::Function *, std::unique_ptr<LiveSet>,
+    llvm::DenseMapInfo<llvm::Function *>,
+    tsar::TaggedDenseMapPair<
+    bcl::tagged<llvm::Function *, llvm::Function>,
+    bcl::tagged<std::unique_ptr<LiveSet>, LiveSet>>> InterprocLiveMemoryInfo;
+
   LiveDFFwk(LiveMemoryInfo &LiveInfo, DefinedMemoryInfo &DefInfo,
       const llvm::DominatorTree *DT) :
     mLiveInfo(&LiveInfo), mDefInfo(&DefInfo), mDT(DT) {}
@@ -68,6 +77,10 @@ typedef LiveDFFwk::LiveSet LiveSet;
 
 /// Representation of live memory analysis results.
 typedef LiveDFFwk::LiveMemoryInfo LiveMemoryInfo;
+
+/// Results of inter-procedural live memory analysis for an each function in a
+/// call graph.
+typedef LiveDFFwk::InterprocLiveMemoryInfo InterprocLiveMemoryInfo;
 
 /// Traits for a data-flow framework which is used to find live locations.
 template<> struct DataFlowTraits<LiveDFFwk *> {
@@ -179,6 +192,10 @@ public:
 private:
   tsar::LiveMemoryInfo mLiveInfo;
 };
+
+/// Wrapper to access results of interprocedural live memory analysis.
+using GlobalLiveMemoryWrapper =
+  AnalysisWrapperPass<tsar::InterprocLiveMemoryInfo>;
 }
 
 #endif//TSAR_LIVE_MEMORY_H
