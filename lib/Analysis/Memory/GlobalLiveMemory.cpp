@@ -183,7 +183,9 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     // Avoid analysis of a library function because we must ensure that
     // all callers will be analyzed earlier. However, in general a library
     // function without body may call another library function.
-    if (!F || hasFnAttr(*F, AttrKind::LibFunc))
+    if (!F || hasFnAttr(*F, AttrKind::LibFunc) ||
+        isDbgInfoIntrinsic(F->getIntrinsicID()) ||
+        isMemoryMarkerIntrinsic(F->getIntrinsicID()))
       continue;
     if (F->empty() || !hasFnAttr(*F, AttrKind::DirectUserCallee))
       return false;
