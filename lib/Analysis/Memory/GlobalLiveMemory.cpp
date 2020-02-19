@@ -32,6 +32,7 @@
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Support/raw_ostream.h>
 #ifdef LLVM_DEBUG
@@ -142,6 +143,32 @@ void initMayLivesWithIPO(Function &F, LiveMemoryForCalls &LiveSetForCalls,
     init(Loc);
 }
 
+/// Return true if each call is extracted to its own basic block.
+bool checkCallsFrom(CallGraphNode &CGN) {
+  assert(CGN.getFunction() && "Function must not be null!");
+  for (auto &CallInfo : CGN) {
+    assert(CallInfo.first && "Call instruction must not be null!");
+    bool HasUsefulInstr = false;
+    for (auto &I : *cast<Instruction>(*CallInfo.first).getParent()) {
+      if (auto *II = dyn_cast<IntrinsicInst>(&I))
+        if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
+            isDbgInfoIntrinsic(II->getIntrinsicID()))
+          continue;
+      ImmutableCallSite CS(&I);
+      if (CS && HasUsefulInstr) {
+        llvm::DiagnosticInfoOptimizationFailure Diag(
+            *CGN.getFunction(), I.getDebugLoc(),
+            "inter-procedural live memory analysis was disabled: unable to "
+            "extract function call into its own basic block");
+        I.getContext().diagnose(Diag);
+        return false;
+      }
+      HasUsefulInstr = true;
+    }
+  }
+  return true;
+}
+
 #ifdef LLVM_DEBUG
 void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
   dbgs() << "[GLOBAL LIVE MEMORY]: list of visited functions\n";
@@ -231,6 +258,8 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
         isMemoryMarkerIntrinsic(F->getIntrinsicID()))
       continue;
     if (F->empty() || !hasFnAttr(*F, AttrKind::DirectUserCallee))
+      return false;
+    if (!checkCallsFrom(*CGN))
       return false;
     Worklist.push_back(CGN);
   }
