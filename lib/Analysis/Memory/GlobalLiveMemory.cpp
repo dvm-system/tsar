@@ -141,6 +141,18 @@ void initMayLivesWithIPO(Function &F, LiveMemoryForCalls &LiveSetForCalls,
   for (auto &Loc : DefUse.getMayDefs())
     init(Loc);
 }
+
+#ifdef LLVM_DEBUG
+void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
+  dbgs() << "[GLOBAL LIVE MEMORY]: list of visited functions\n";
+  for (auto &FInfo : Info) {
+    dbgs() << FInfo.first->getName() << " has calls from:\n";
+    for (auto &CallTo : FInfo.second)
+      dbgs() << "  " << CallTo.get<Instruction>()->getFunction()->getName()
+             << "\n";
+  }
+}
+#endif
 }
 
 INITIALIZE_PROVIDER_BEGIN(GlobalLiveMemoryProvider, "global-live-mem-provider",
@@ -191,18 +203,6 @@ ModulePass *llvm::createGlobalLiveMemoryPass() {
 ImmutablePass *llvm::createGlobalLiveMemoryStorage() {
   return new GlobalLiveMemoryStorage;
 }
-
-#ifdef LLVM_DEBUG
-void visitedFunctionsLog(const LiveMemoryForCalls &Info) {
-  dbgs() << "[GLOBAL LIVE MEMORY]: list of visited functions\n";
-  for (auto &FInfo : Info) {
-    dbgs() << FInfo.first->getName() << " has calls from:\n";
-    for (auto &CallTo : FInfo.second)
-      dbgs() << "  " << CallTo.get<Instruction>()->getFunction()->getName()
-             << "\n";
-  }
-}
-#endif
 
 bool GlobalLiveMemory::runOnModule(Module &M) {
   auto &Wrapper = getAnalysis<GlobalLiveMemoryWrapper>();
