@@ -25,8 +25,10 @@
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassProvider.h"
 #include <llvm/ADT/SCCIterator.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/ValueTracking.h>
@@ -104,8 +106,42 @@ using GlobalLiveMemoryProvider = FunctionPassProvider<
   DFRegionInfoPass,
   DefinedMemoryPass,
   DominatorTreeWrapperPass>;
-}
 
+void initMayLivesWithIPO(Function &F, LiveMemoryForCalls &LiveSetForCalls,
+    DefUseSet &DefUse, DataFlowTraits<LiveDFFwk *>::ValueType &MayLives) {
+  auto FInfoItr = LiveSetForCalls.find(&F);
+  // Check that a current function is entry point or that it is never called.
+  // In this case list of live locations after exist from this function is empty.
+  // This assumption is safe if -fno-external-calls option is set.
+  if (FInfoItr == LiveSetForCalls.end())
+    return;
+  MemorySet<MemoryLocationRange> FOut;
+  auto &DL = F.getParent()->getDataLayout();
+  for (auto &CallInfo : FInfoItr->second) {
+    assert(CallInfo.get<LiveSet>() &&
+      "Live set must be already constructed for a call!");
+    FOut.merge(CallInfo.get<LiveSet>()->getOut());
+  }
+  auto init = [&DL, &F, &FOut, &MayLives](const MemoryLocationRange &Loc) {
+    assert(Loc.Ptr && "Pointer to location must not be null!");
+    auto Ptr = GetUnderlyingObject(Loc.Ptr, DL, 0);
+    if (isa<AllocaInst>(Ptr))
+      return;
+    if (find_if(F.args(), [Ptr](Argument &Arg) { return Ptr == &Arg; }) !=
+            F.arg_end() ||
+        isa<GlobalValue>(Ptr)) {
+      if (Ptr == Loc.Ptr && !FOut.overlap(Loc) ||
+          !FOut.overlap(MemoryLocation(Ptr)))
+        return;
+    }
+    MayLives.insert(Loc);
+  };
+  for (auto &Loc : DefUse.getDefs())
+    init(Loc);
+  for (auto &Loc : DefUse.getMayDefs())
+    init(Loc);
+}
+}
 
 INITIALIZE_PROVIDER_BEGIN(GlobalLiveMemoryProvider, "global-live-mem-provider",
                           "Global Live Memory Analysis (Provider)")
@@ -134,6 +170,7 @@ INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryProvider)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(GlobalLiveMemory, "global-live-mem",
                     "Global Live Memory Analysis", true, true)
 
@@ -143,6 +180,7 @@ void GlobalLiveMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalLiveMemoryWrapper>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -172,14 +210,19 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     return false;
   Wrapper->clear();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<CallGraphNode *> Worklist;
+  SmallPtrSet<CallGraphNode *, 32> HasExternalCalls;
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
     // TODO (kaniandr@gmail.com): implement analysis in case of recursion.
     if (I->size() > 1)
       return false;
     CallGraphNode *CGN = I->front();
     auto F = CGN->getFunction();
+    if (!F && !GO.NoExternalCalls)
+      for (auto Callee : *CGN)
+        HasExternalCalls.insert(Callee.second);
     // Avoid analysis of a library function because we must ensure that
     // all callers will be analyzed earlier. However, in general a library
     // function without body may call another library function.
@@ -210,43 +253,28 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     auto &DefInfo = Provider.get<DefinedMemoryPass>().getDefInfo();
     DominatorTree *DT = nullptr;
     LLVM_DEBUG(DT = &Provider.get<DominatorTreeWrapperPass>().getDomTree());
+    DataFlowTraits<LiveDFFwk *>::ValueType MayLives;
+    auto DefItr = DefInfo.find(TopRegion);
+    assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
+      "Def-use set must not be null!");
+    auto &DefUse = DefItr->get<DefUseSet>();
+    if (!HasExternalCalls.count(CGN)) {
+      initMayLivesWithIPO(*F, LiveSetForCalls, *DefUse, MayLives);
+    } else {
+      LLVM_DEBUG(dbgs() << "[GLOBAL LIVE MEMORY]: "
+        "use conservative boundary conditions\n");
+      for (auto &Loc : DefUse->getDefs())
+        if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+          MayLives.insert(Loc);
+      for (auto &Loc : DefUse->getMayDefs())
+        if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+          MayLives.insert(Loc);
+    }
     LiveMemoryInfo IntraLiveInfo;
     auto LiveItr =
-        IntraLiveInfo.try_emplace(TopRegion, llvm::make_unique<LiveSet>()).first;
+      IntraLiveInfo.try_emplace(TopRegion, llvm::make_unique<LiveSet>()).first;
     auto &LS = LiveItr->get<LiveSet>();
-    auto FOut = LS->getOut();
-    auto FInfoItr = LiveSetForCalls.find(F);
-    if (FInfoItr != LiveSetForCalls.end()) {
-      for (auto &CallInfo : FInfoItr->second) {
-        assert(CallInfo.get<LiveSet>() &&
-               "Live set must be already constructed for a call!");
-          FOut.merge(CallInfo.get<LiveSet>()->getOut());
-      }
-      DataFlowTraits<LiveDFFwk *>::ValueType MayLives;
-      auto init = [&DL, F, &FOut, &MayLives](const MemoryLocationRange &Loc) {
-        assert(Loc.Ptr && "Pointer to location must not be null!");
-        auto Ptr = GetUnderlyingObject(Loc.Ptr, DL, 0);
-        if (isa<AllocaInst>(Ptr))
-          return;
-        if (find_if(F->args(), [Ptr](Argument &Arg) { return Ptr == &Arg; }) !=
-                F->arg_end() ||
-            isa<GlobalValue>(Ptr)) {
-          if (Ptr == Loc.Ptr && !FOut.overlap(Loc) ||
-              !FOut.overlap(MemoryLocation(Ptr)))
-            return;
-        }
-        MayLives.insert(Loc);
-      };
-      auto DefItr = DefInfo.find(TopRegion);
-      assert(DefItr != DefInfo.end() && DefItr->get<DefUseSet>() &&
-        "Def-use set must not be null!");
-      auto &DefUse = DefItr->get<DefUseSet>();
-      for (auto &Loc : DefUse->getDefs())
-        init(Loc);
-      for (auto &Loc : DefUse->getMayDefs())
-        init(Loc);
-      LS->setOut(MayLives);
-    }
+    LS->setOut(MayLives);
     LiveDFFwk LiveFwk(IntraLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, TopRegion);
     for (auto &CallRecord : *CGN) {
