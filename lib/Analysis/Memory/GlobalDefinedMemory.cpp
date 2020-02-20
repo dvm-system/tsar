@@ -115,7 +115,7 @@ INITIALIZE_PASS(GlobalDefinedMemoryWrapper, "global-def-mem-iw",
 
 char GlobalDefinedMemory::ID = 0;
 INITIALIZE_PASS_BEGIN(GlobalDefinedMemory, "global-def-mem",
-                      "Global Defined Memory Analysis"true, true)
+                      "Global Defined Memory Analysis", true, true)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryProvider)
