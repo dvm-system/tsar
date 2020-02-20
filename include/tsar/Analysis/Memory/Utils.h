@@ -36,6 +36,7 @@ class BasicBlock;
 class DataLayout;
 class DIGlobalVariableExpression;
 class DominatorTree;
+class Function;
 class GlobalObject;
 class GlobalVariable;
 class Loop;
@@ -153,5 +154,9 @@ bool isLoopInvariant(const llvm::SCEV *Expr, const llvm::Loop *L,
   llvm::TargetLibraryInfo &TLI, llvm::ScalarEvolution &SE,
   const DefUseSet &DUS, const AliasTree &AT,
   const SpanningTreeRelation<const AliasTree *> &STR);
+
+/// Return 'true' if calls of a specified function has no side effects and
+/// do not access global memory.
+bool isPure(const llvm::Function &F, const DefUseSet &DUS);
 }
 #endif//TSAR_MEMORY_UTILS_H

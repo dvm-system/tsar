@@ -1,8 +1,8 @@
-//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
+//===--- PassBarrier.h ---------- Pass Barrier ------------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2020 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,22 +15,25 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
 //===----------------------------------------------------------------------===//
 //
-// This contains functions to initialize passes which performs transformation
-// of LLVM IR.
+// Some function passes (for example DefinedMemoryPass) may use results of
+// module passes and these results becomes invalid after transformations.
+// A pass in this file do nothing but allow us to finish processing of
+// all functions before transformations.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/IR/Passes.h"
+#ifndef TSAR_PASS_BARRIER_H
+#define TSAR_PASS_BARRIER_H
 
-using namespace llvm;
+namespace llvm {
+class ModulePass;
+class PassRegistry;
 
-void llvm::initializeIRTransform(PassRegistry &Registry) {
-  initializeNoMetadataDSEPassPass(Registry);
-  initializePOFunctionAttrsAnalysisPass(Registry);
-  initializeRPOFunctionAttrsAnalysisPass(Registry);
-  initializeLoopAttributesDeductionPassPass(Registry);
-  initializeCallExtractorPassPass(Registry);
+void initializePassBarrierPass(PassRegistry &Registry);
+
+ModulePass *createPassBarrier();
 }
+
+#endif//TSAR_PASS_BARRIER_H

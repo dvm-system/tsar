@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Support/IRUtils.h"
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
@@ -479,5 +480,23 @@ bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
     }
   });
   return Result;
+}
+
+bool isPure(const llvm::Function &F, const DefUseSet &DUS) {
+  if (!DUS.getExplicitUnknowns().empty())
+    return false;
+  if (find_if(instructions(F), [](const Instruction &I) {
+        return isa<IntToPtrInst>(I);
+      }) != inst_end(F))
+    return false;
+  for (auto &Arg : F.args())
+    if (auto Ty = dyn_cast<PointerType>(Arg.getType()))
+      if (hasUnderlyingPointer(Ty->getElementType()))
+        return false;
+  auto &DL = F.getParent()->getDataLayout();
+  for (auto &Range : DUS.getExplicitAccesses())
+    if (isa<GlobalValue>(stripPointer(DL, const_cast<Value *>(Range.Ptr))))
+      return false;
+  return true;
 }
 }

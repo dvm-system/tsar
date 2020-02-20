@@ -26,7 +26,9 @@
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/Utils.h"
+#include "tsar/Support/IRUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -54,6 +56,7 @@ INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
 
@@ -64,8 +67,14 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
-  ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
-  solveDataFlowUpward(&ReachDefFwk, DFF);
+  auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
+  if (GDM) {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, *GDM);
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  } else {
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
+    solveDataFlowUpward(&ReachDefFwk, DFF);
+  }
   return false;
 }
 
@@ -74,6 +83,7 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.setPreservesAll();
 }
 
@@ -317,6 +327,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
   auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
     llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
+  auto *InterDUInfo = DFF->getInterprocDefUseInfo();
+  auto &TLI = DFF->getTLI();
   // DefUseSet will be calculated here for nodes different to regions.
   // For nodes which represented regions this attribute has been already
   // calculated in collapse() function.
@@ -368,11 +380,30 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         } while (!WorkList.empty());
       }
     }
+    auto &DL = I.getModule()->getDataLayout();
     // Any call may access some addresses even if it does not access memory.
     // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list
-    // of unknown address accesses.
-    if (ImmutableCallSite(&I))
-      DU->addAddressUnknowns(&I);
+    // of unknown address accesses. Now, accesses to global memory
+    // in a function call leads to unknown address access.
+    ImmutableCallSite CS(&I);
+    if (CS) {
+      bool UnknownAddressAccess = true;
+      auto F =
+        llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      if (F && InterDUInfo) {
+        auto InterDUItr = InterDUInfo->find(F);
+        if (InterDUItr != InterDUInfo->end()) {
+          auto &DUS = InterDUItr->get<DefUseSet>();
+          if (DUS->getAddressUnknowns().empty()) {
+            UnknownAddressAccess = false;
+            for (auto *Ptr : DUS->getAddressAccesses())
+              UnknownAddressAccess |= isa<GlobalValue>(stripPointer(DL, Ptr));
+          }
+        }
+      }
+      if (UnknownAddressAccess)
+        DU->addAddressUnknowns(&I);
+    }
     if (!I.mayReadOrWriteMemory())
       continue;
     // 1. Must/may def-use information will be set for location accessed in a
@@ -382,10 +413,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // accessed in a current instruction. Note that this attribute will be also
     // set for locations which are accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseSet.
-    auto &DL = I.getModule()->getDataLayout();
-    for_each_memory(I, DFF->getTLI(),
-      [&DL, &AT, &DU](Instruction &I, MemoryLocation &&Loc, unsigned Idx,
-          AccessInfo R, AccessInfo W) {
+    for_each_memory(I, TLI,
+      [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
+          unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         assert(EM && "Estimate memory location must not be null!");
         auto &AA = AT.getAliasAnalysis();
@@ -406,12 +436,37 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         assert(AN && "Alias node must not be null!");
         ImmutableCallSite CS(&I);
         if (CS) {
-          switch (AA.getArgModRefInfo(CS, Idx)) {
-          case ModRefInfo::NoModRef: W = R = AccessInfo::No; break;
-          case ModRefInfo::Mod: W = AccessInfo::May; R = AccessInfo::No; break;
-          case ModRefInfo::Ref: W = AccessInfo::No; R = AccessInfo::May; break;
-          case ModRefInfo::ModRef: W = R = AccessInfo::May; break;
+          auto F =
+            llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+          bool InterprocAvailable = false;
+          if (F && !F->isVarArg() && InterDUInfo) {
+            auto InterDUItr = InterDUInfo->find(F);
+            if (InterDUItr != InterDUInfo->end()) {
+              InterprocAvailable = true;
+              W = R = AccessInfo::No;
+              auto &DUS = InterDUItr->get<DefUseSet>();
+              auto Arg = F->arg_begin() + Idx;
+              MemoryLocationRange ArgLoc(Arg, 0, Loc.Size);
+              if (DUS->getDefs().contain(ArgLoc))
+                W = AccessInfo::Must;
+              else if (DUS->getDefs().overlap(ArgLoc) ||
+                       DUS->getMayDefs().overlap(ArgLoc))
+                W = AccessInfo::May;
+              if (DUS->getUses().overlap(ArgLoc))
+                R = AccessInfo::Must;
+            }
           }
+          if (!InterprocAvailable)
+            switch (AA.getArgModRefInfo(CS, Idx)) {
+              case ModRefInfo::NoModRef:
+                W = R = AccessInfo::No; break;
+              case ModRefInfo::Mod:
+                W = AccessInfo::May; R = AccessInfo::No; break;
+              case ModRefInfo::Ref:
+                W = AccessInfo::No; R = AccessInfo::May; break;
+              case ModRefInfo::ModRef:
+                W = R = AccessInfo::May; break;
+            }
         }
         switch (W) {
         case AccessInfo::No:
@@ -432,7 +487,16 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
           break;
         }
       },
-      [&DL, &AT, &DU](Instruction &I, AccessInfo, AccessInfo) {
+      [&DL, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo, AccessInfo) {
+          ImmutableCallSite CS(&I);
+        auto F =
+          llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+        if (F && InterDUInfo) {
+          auto InterDUItr = InterDUInfo->find(F);
+          if (InterDUItr != InterDUInfo->end())
+            if (isPure(*F, *InterDUItr->get<DefUseSet>()))
+              return;
+        }
         auto *AN = AT.findUnknown(I);
         if (!AN)
           return;

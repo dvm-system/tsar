@@ -88,6 +88,12 @@ reduction_5.init
 reduction_6.init
 reduction_7.init
 global_1.init
+interproc_1.init
+interproc_2.init
+interproc_3.init
+interproc_4.init
+interproc_5.init
+interproc_6.init
 Jacobi.init
 Jacobi.func.init
 Adi.func.init

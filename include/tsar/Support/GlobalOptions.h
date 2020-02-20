@@ -56,6 +56,8 @@ struct GlobalOptions {
   /// metadata. So, some results may be lost. However analysis after
   /// transformation proposes more accurate results in some cases.
   bool UnsafeTfmAnalysis = false;
+  /// Assume that functions are never called outside the analyzed module.
+  bool NoExternalCalls = false;
   /// Pass to external analysis results which is used to clarify analysis/
   std::string AnalysisUse = "";
   /// List of regions which should be optimized.

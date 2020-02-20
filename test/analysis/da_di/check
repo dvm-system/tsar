@@ -88,6 +88,12 @@ reduction_5
 reduction_6
 reduction_7
 global_1
+interproc_1
+interproc_2
+interproc_3
+interproc_4
+interproc_5
+interproc_6
 Jacobi
 Jacobi.func
 Adi.func

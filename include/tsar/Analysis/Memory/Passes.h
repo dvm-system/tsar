@@ -39,6 +39,7 @@ class Pass;
 class PassRegistry;
 class FunctionPass;
 class ImmutablePass;
+class ModulePass;
 
 /// Initialize all passes to perform analysis of memory accesses.
 void initializeMemoryAnalysis(PassRegistry &Registry);
@@ -154,5 +155,40 @@ void initializeDelinearizationPassPass(PassRegistry &Registry);
 
 /// Create a pass to delinearize array accesses.
 FunctionPass * createDelinearizationPass();
+
+/// Initialize a pass to perform iterprocedural live memory analysis.
+void initializeGlobalLiveMemoryPass(PassRegistry& Registry);
+
+/// Create a pass to perform iterprocedural live memory analysis.
+ModulePass * createGlobalLiveMemoryPass();
+
+/// Initialize a pass to store results of interprocedural live memory analysis.
+void initializeGlobalLiveMemoryStoragePass(PassRegistry &Registry);
+
+/// Create a pass to store results of interprocedural live memory analysis.
+ImmutablePass *createGlobalLiveMemoryStorage();
+
+/// Initialize a pass to access results of interprocedural live memory analysis.
+void initializeGlobalLiveMemoryWrapperPass(PassRegistry &Registry);
+
+/// Initialize a pass to perform iterprocedural analysis of defined memory
+/// locations.
+void initializeGlobalDefinedMemoryPass(PassRegistry &Registry);
+
+/// Create a pass to perform iterprocedural analysis of defined memory
+/// locations.
+ModulePass * createGlobalDefinedMemoryPass();
+
+/// Initialize a pass to store results of interprocedural reaching definition
+/// analysis.
+void initializeGlobalDefinedMemoryStoragePass(PassRegistry &Registry);
+
+/// Create a pass to store results of interprocedural reaching definition
+/// analysis.
+ImmutablePass *createGlobalDefinedMemoryStorage();
+
+/// Initialize a pass to access results of interprocedural reaching definition
+/// analysis.
+void initializeGlobalDefinedMemoryWrapperPass(PassRegistry &Registry);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

@@ -1,4 +1,5 @@
-set(SUPPORT_SOURCES SCEVUtils.cpp GlobalOptions.cpp Utils.cpp Directives.cpp)
+set(SUPPORT_SOURCES SCEVUtils.cpp GlobalOptions.cpp Utils.cpp Directives.cpp
+  PassBarrier.cpp)
 
 if(MSVC_IDE)
   file(GLOB SUPPORT_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

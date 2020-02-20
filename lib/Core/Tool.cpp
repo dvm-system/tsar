@@ -134,6 +134,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoIgnoreRedundantMemory;
   llvm::cl::opt<bool> UnsafeTfmAnalysis;
   llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
+  llvm::cl::opt<bool> ExternalCalls;
+  llvm::cl::opt<bool> NoExternalCalls;
   llvm::cl::opt<std::string> AnalysisUse;
   llvm::cl::list<std::string> OptRegion;
 
@@ -228,6 +230,10 @@ Options::Options() :
     cl::desc("Perform analysis after unsafe transformations")),
   NoUnsafeTfmAnalysis("fno-unsafe-tfm-analysis", cl::cat(AnalysisCategory),
     cl::desc("Disable analysis after unsafe transformations(default)")),
+  ExternalCalls("fexternal-calls", cl::cat(AnalysisCategory),
+    cl::desc("Check whether a function could be called outside the analyzed module(default)")),
+  NoExternalCalls("fno-external-calls", cl::cat(AnalysisCategory),
+    cl::desc("Assume that functions are never called outside the analyzed module")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -495,6 +501,13 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoUnsafeTfmAnalysis.ArgStr);
     Options::get().UnsafeTfmAnalysis.error(Msg);
+    exit(1);
+  }
+  mGlobalOpts.NoExternalCalls = Options::get().NoExternalCalls;
+  if (Options::get().ExternalCalls && Options::get().NoExternalCalls) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoExternalCalls.ArgStr);
+    Options::get().ExternalCalls.error(Msg);
     exit(1);
   }
   mGlobalOpts.OptRegions = Options::get().OptRegion;

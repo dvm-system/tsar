@@ -19,13 +19,9 @@ int foo() {
 //CHECK:     <I:5:12, 4>
 //CHECK:    explicit access:
 //CHECK:     <I:5:12, 4> | <S:4:7, 4>
-//CHECK:    address access:
-//CHECK:     bar():6:10
 //CHECK:    explicit access (separate):
 //CHECK:     <I:5:12, 4> <S:4:7, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:5:12, 4>
-//CHECK:    address access (separate):
-//CHECK:     bar():6:10
 //CHECK:    direct access (separate):
-//CHECK:     <I:5:12, 4> <S:4:7, 4> bar():6:10
+//CHECK:     <I:5:12, 4> <S:4:7, 4>
