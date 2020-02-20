@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines GlobalLiveMemoryProvider to determine must/may defined locations for each
+// This file defines passes to determine must/may defined locations for each
 // data-flow region. We use data-flow framework to implement this kind of
 // analysis. This filecontains elements which is necessary to determine this
 // framework.

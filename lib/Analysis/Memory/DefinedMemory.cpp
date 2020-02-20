@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements GlobalLiveMemoryProvider to determine must/may defined locations.
+// This file implements passes to determine must/may defined locations.
 //
 //===----------------------------------------------------------------------===//
 
