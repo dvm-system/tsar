@@ -36,8 +36,10 @@
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
@@ -887,6 +889,7 @@ using TraitsAnalysisServerProvider =
 /// be requested separately).
 using TraitsAnalysisServerResponse = AnalysisResponsePass<
     GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
+    GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper,
     ClonedDIMemoryMatcherWrapper, TraitsAnalysisServerProvider>;
 
 /// This analysis server performs transformation-based analysis which is
@@ -913,6 +916,8 @@ public:
                         legacy::PassManager &PM) override {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
     PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
+    PM.add(createGlobalDefinedMemoryStorage());
+    PM.add(createGlobalLiveMemoryStorage());
     PM.add(createDIMemoryTraitPoolStorage());
     ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
   }
@@ -1071,6 +1076,8 @@ INITIALIZE_PASS_DEPENDENCY(ServerPrivateProvider)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
@@ -1586,7 +1593,8 @@ void PrivateServerPass::initializeProviderOnServer() {
         Wrapper.setOptions(mGlobalOpts);
       });
   auto R = mSocket->getAnalysis<GlobalsAAWrapperPass,
-      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper>();
+      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper,
+      GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper>();
   assert(R && "Immutable passes must be available on server!");
   auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
   TraitsAnalysisServerProvider::initialize<DIMemoryEnvironmentWrapper>(
@@ -1603,6 +1611,16 @@ void PrivateServerPass::initializeProviderOnServer() {
       [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
         Wrapper.set(GlobalsAAServer);
       });
+  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
+  TraitsAnalysisServerProvider::initialize<GlobalDefinedMemoryWrapper>(
+    [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
+      Wrapper.set(**GlobalDefUseServer);
+    });
+  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
+  TraitsAnalysisServerProvider::initialize<GlobalLiveMemoryWrapper>(
+    [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
+      Wrapper.set(**GlobalLiveMemoryServer);
+    });
 }
 
 bool PrivateServerPass::runOnModule(llvm::Module &M) {

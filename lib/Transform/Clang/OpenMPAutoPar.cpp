@@ -31,8 +31,10 @@
 #include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
@@ -77,6 +79,7 @@ using ClangOpenMPServerProvider =
 /// be requested separately).
 using ClangOpenMPServerResponse = AnalysisResponsePass<
     GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
+    GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper,
     ClonedDIMemoryMatcherWrapper, ClangOpenMPServerProvider>;
 
 /// This analysis server performs transformation-based analysis which is
@@ -103,6 +106,8 @@ public:
                         legacy::PassManager &PM) override {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
     PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
+    PM.add(createGlobalDefinedMemoryStorage());
+    PM.add(createGlobalLiveMemoryStorage());
     PM.add(createDIMemoryTraitPoolStorage());
     ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
   }
@@ -733,7 +738,8 @@ void ClangOpenMPParalleization::initializeProviderOnServer() {
         Wrapper.setOptions(mGlobalOpts);
       });
   auto R = mSocket->getAnalysis<GlobalsAAWrapperPass,
-      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper>();
+      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper,
+      GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper>();
   assert(R && "Immutable passes must be available on server!");
   auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
   ClangOpenMPServerProvider::initialize<DIMemoryEnvironmentWrapper>(
@@ -750,6 +756,16 @@ void ClangOpenMPParalleization::initializeProviderOnServer() {
       [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
         Wrapper.set(GlobalsAAServer);
       });
+  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
+  ClangOpenMPServerProvider::initialize<GlobalDefinedMemoryWrapper>(
+    [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
+      Wrapper.set(**GlobalDefUseServer);
+    });
+  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
+  ClangOpenMPServerProvider::initialize<GlobalLiveMemoryWrapper>(
+    [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
+      Wrapper.set(**GlobalLiveMemoryServer);
+    });
 }
 
 bool ClangOpenMPParalleization::runOnModule(Module &M) {
@@ -848,6 +864,8 @@ INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
 INITIALIZE_PASS_DEPENDENCY(ClangOpenMPParalleizationProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
