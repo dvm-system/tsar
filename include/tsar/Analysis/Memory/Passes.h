@@ -40,6 +40,7 @@ class PassRegistry;
 class FunctionPass;
 class ImmutablePass;
 class ModulePass;
+class CallGraphSCCPass;
 
 /// Initialize all passes to perform analysis of memory accesses.
 void initializeMemoryAnalysis(PassRegistry &Registry);
@@ -211,5 +212,15 @@ void initializeDIArrayAccessCollectorPass(PassRegistry &Registry);
 
 /// Create a pass to collect array accesses.
 ModulePass *createDIArrayAccessCollector();
+
+/// Initialize a pass calculating preserved parameters
+void initializeAddressAccessAnalyserPass(PassRegistry &Registry);
+
+/// Initialize a pass to access results of interprocedural
+/// address preservation analysis
+void initializeAddressAccessAnalyserWrapperPass(PassRegistry &Registry);
+
+/// Create a pass calculating preserved parameters
+Pass * createAddressAccessAnalyserPass();
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

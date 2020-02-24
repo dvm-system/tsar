@@ -37,6 +37,7 @@
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Analysis/Memory/AddressAccess.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/IRUtils.h"
@@ -84,6 +85,7 @@ INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyserWrapper)
 INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
   "Private Variable Analysis", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -120,6 +122,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   mDL = &F.getParent()->getDataLayout();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  mAA= &getAnalysis<AddressAccessAnalyserWrapper>().get();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   GraphNumbering<const AliasNode *> Numbers;
   numberGraph(mAliasTree, &Numbers);
@@ -925,7 +928,8 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
       }
       if (UseInsts.empty())
         continue;
-      if (!any_of(UseInsts, [Lp, User](std::pair<Instruction *, Use *> &I) {
+      if (!any_of(UseInsts,
+              [Lp, User, this](std::pair<Instruction *, Use *> &I) {
             if (!Lp->contains(I.first->getParent()))
               return false;
             // The address is used inside the loop.
@@ -937,7 +941,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
               return I.second->getOperandNo() !=
                      StoreInst::getPointerOperandIndex();
             // Address should be also remembered if it is a function parameter
-            // because it is not known how it is used inside a function.
+            // and this parameter is preserved within this function
             auto *Call = dyn_cast<CallBase>(I.first);
             if (Call && Call->isArgOperand(I.second)) {
               if (auto Callee = llvm::dyn_cast<Function>(
@@ -1376,6 +1380,7 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DependenceAnalysisWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequired<AddressAccessAnalyserWrapper>();
   AU.setPreservesAll();
 }
 

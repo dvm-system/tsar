@@ -33,6 +33,7 @@
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
 #include "tsar/Analysis/Memory/TraitFilter.h"
+#include "tsar/Analysis/Memory/AddressAccess.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -51,8 +52,8 @@ static void initializeDIMemoryAnalysisServerResponsePass(PassRegistry &);
 
 namespace {
 /// This provides access to function-level analysis results on server.
-using DIMemoryAnalysisServerProvider =
-FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
+using DIMemoryAnalysisServerProvider = FunctionPassAAProvider<
+  DIEstimateMemoryPass, DIDependencyAnalysisPass, AddressAccessAnalyserWrapper>;
 
 /// List of responses available from server (client may request corresponding
 /// analysis, in case of provider all analysis related to a provider may
@@ -104,6 +105,11 @@ public:
       [&GlobalLiveMemory](GlobalLiveMemoryWrapper &Wrapper) {
         Wrapper.set(GlobalLiveMemory);
       });
+    auto &AAInfo = getAnalysis<AddressAccessAnalyserWrapper>().get();
+    DIMemoryAnalysisServerProvider::initialize<AddressAccessAnalyserWrapper>(
+      [&AAInfo](AddressAccessAnalyserWrapper &Wrapper) {
+        Wrapper.set(AAInfo);
+      });
     return false;
   }
 
@@ -114,6 +120,7 @@ public:
     AU.addRequired<DIMemoryTraitPoolWrapper>();
     AU.addRequired<GlobalDefinedMemoryWrapper>();
     AU.addRequired<GlobalLiveMemoryWrapper>();
+    AU.addRequired<AddressAccessAnalyserWrapper>();
     AU.setPreservesAll();
   }
 };
@@ -223,6 +230,7 @@ INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServerProviderPass,
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
   INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
   INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
-  INITIALIZE_PASS_END(DIMemoryAnalysisServerProviderPass,
-    "di-memory-server-provider-init",
-    "Metadata-Level Memory Server (Provider, Initialize)", true, true)
+  INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyserWrapper)
+INITIALIZE_PASS_END(DIMemoryAnalysisServerProviderPass,
+  "di-memory-server-provider-init",
+  "Metadata-Level Memory Server (Provider, Initialize)", true, true)
