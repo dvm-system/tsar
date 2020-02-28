@@ -14,11 +14,11 @@ using namespace tsar;
 char PointerReductionPass::ID = 0;
 
 INITIALIZE_PASS_BEGIN(PointerReductionPass, "ptr-red",
-"Pointer Reduction Pass", false, false)
+    "Pointer Reduction Pass", false, false)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass);
 INITIALIZE_PASS_END(PointerReductionPass, "ptr-red",
-"Pointer Reduction Pass", false, false)
+    "Pointer Reduction Pass", false, false)
 
 void PointerReductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
@@ -35,8 +35,6 @@ Value *getFirstAssociativeOp(Value *V) {
   }
   return nullptr;
 }
-
-
 
 void eraseAllStoreInstFromLoop(Value *V, Loop *L) {
   for (auto *User : V->users()) {
@@ -132,7 +130,7 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       Phi->addIncoming(BeforeInstr, L->getLoopPreheader());
 
       Value *lastVal = Phi;
-      for (auto *Load: Loads) {
+      for (auto *Load : Loads) {
         if (auto *Instr = getFirstAssociativeOp(Load)) {
           Load->replaceAllUsesWith(lastVal);
           lastVal = Instr;
@@ -152,4 +150,3 @@ bool PointerReductionPass::runOnFunction(Function &F) {
   });
   return false;
 }
-
