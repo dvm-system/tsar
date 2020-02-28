@@ -1,15 +1,14 @@
-#include "tsar/Analysis/Memory/PointerReduction.h"
-#include <iostream>
+#include <tsar/Analysis/DFRegionInfo.h>
+#include <tsar/Analysis/Memory/DIMemoryTrait.h>
+#include <tsar/Analysis/Memory/PointerReduction.h>
+#include <tsar/Core/Query.h>
+#include <tsar/Support/IRUtils.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/PassSupport.h>
 #include <llvm/Transforms/Scalar.h>
-#include <tsar/Analysis/DFRegionInfo.h>
-#include <tsar/Analysis/Memory/DIMemoryTrait.h>
-#include <tsar/Core/Query.h>
-#include <tsar/Support/IRUtils.h>
 
-using namespace llvm;
 using namespace tsar;
+using namespace llvm;
 
 char PointerReductionPass::ID = 0;
 
