@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
+#include "tsar/Analysis/Clang/VariableCollector.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
@@ -134,7 +135,7 @@ using ClangOpenMPParalleizationProvider =
                            DFRegionInfoPass, ClangDIMemoryMatcherPass>;
 
 // Sorted list of variables (to print their in algoristic order).
-using SortedVarListT = std::set<std::string, std::less<std::string>>;
+using SortedVarListT = VariableCollector::SortedVarListT;
 
 // Lists of reduction variables.
 using ReductionVarListT =
@@ -210,204 +211,6 @@ class ClangOpenMPParallelizationInfo final : public PassGroupInfo {
     Passes.add(createAnalysisReleaseServerPass());
     Passes.add(createAnalysisCloseConnectionPass());
   }
-};
-
-/// Return number of nested pointer-like types.
-unsigned numberOfPointerTypes(const clang::Type *T) {
-  if (auto PtrT = dyn_cast<clang::PointerType>(T))
-    return numberOfPointerTypes(PtrT->getPointeeType().getTypePtr()) + 1;
-  if (auto RefT = dyn_cast<clang::ReferenceType>(T))
-    return numberOfPointerTypes(RefT->getPointeeType().getTypePtr()) + 1;
-  if (auto ArrayT = dyn_cast<clang::ArrayType>(T))
-    return numberOfPointerTypes(ArrayT->getElementType().getTypePtr());
-  return 0;
-}
-
-/// Look up for locations referenced and declared in the scope.
-struct VariableCollector
-    : public clang::RecursiveASTVisitor<VariableCollector> {
-  enum DeclSearch : uint8_t {
-    /// Set if memory safely represent a local variable.
-    CoincideLocal,
-    /// Set if memory safely represent a local variable.
-    CoincideGlobal,
-    /// Set if memory does not represent the whole variable, however
-    /// a corresponding variable can be used to describe a memory location.
-    Derived,
-    /// Set if corresponding variable does not exist.
-    Invalid,
-    /// Set if a found declaration is not explicitly mentioned in a loop body.
-    /// For example, global variables may be used in called functions instead
-    /// of a loop body.
-    Implicit,
-    /// Set if memory does not represent a variable. For example, it may
-    /// represent a memory used in a function call or result of a function.
-    Useless,
-    /// Set if it is not known whether corresponding variable must exist or not.
-    /// For example, a memory may represent some internal object which is not
-    /// referenced in the original source code.
-    Unknown,
-  };
-  
-  static const clang::Type *getCanonicalUnqualifiedType(clang::VarDecl *VD) {
-    return VD->getType()
-        .getTypePtr()
-        ->getCanonicalTypeUnqualified()
-        ->getTypePtr();
-  }
-
-  /// Remember all referenced canonical declarations and compute number of
-  /// estimate memory locations which should be built for this variable.
-  bool VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
-    auto *ND = DRE->getFoundDecl();
-    assert(ND && "Declaration must not be null!");
-    if (isa<clang::VarDecl>(ND)) {
-      auto *VD = cast<clang::VarDecl>(ND->getCanonicalDecl());
-      if (!Induction)
-        Induction = VD;
-      auto T = getCanonicalUnqualifiedType(VD);
-      CanonicalRefs.try_emplace(VD).first->second.resize(
-        numberOfPointerTypes(T) + 1, nullptr);
-    }
-    return true;
-  }
-
-  /// Remember all canonical declarations declared inside the loop.
-  bool VisitDeclStmt(clang::DeclStmt *DS) {
-    for (auto *D : DS->decls())
-      if (auto *Var = dyn_cast<clang::VarDecl>(D->getCanonicalDecl()))
-        CanonicalLocals.insert(Var);
-    return true;
-  }
-
-  /// Find declaration for a specified memory, remember memory if it safely
-  /// represent a found variable or its part (update `CanonicalRefs` map).
-  std::pair<clang::VarDecl *, DeclSearch>
-  findDecl(const DIMemory &DIM,
-           const ClangDIMemoryMatcherPass::DIMemoryMatcher &ASTToClient,
-           const ClonedDIMemoryMatcher &ClientToServer) {
-    auto *M = const_cast<DIMemory *>(&DIM);
-    if (auto *DIEM = dyn_cast<DIEstimateMemory>(M)) {
-      auto CSMemoryItr = ClientToServer.find<Clone>(DIEM);
-      assert(CSMemoryItr != ClientToServer.end() &&
-             "Metadata-level memory must exist on on client!");
-      auto *DIVar =
-          cast<DIEstimateMemory>(CSMemoryItr->get<Origin>())->getVariable();
-      assert(DIVar && "Variable must not be null!");
-      auto MatchItr = ASTToClient.find<MD>(DIVar);
-      if (MatchItr == ASTToClient.end())
-        return std::make_pair(nullptr, Invalid);
-      auto ASTRefItr = CanonicalRefs.find(MatchItr->get<AST>());
-      if (ASTRefItr == CanonicalRefs.end())
-        return std::make_pair(MatchItr->get<AST>(), Implicit);
-      if (DIEM->getExpression()->getNumElements() > 0) {
-        auto *Expr = DIEM->getExpression();
-        auto NumDeref = llvm::count(Expr->getElements(), dwarf::DW_OP_deref);
-        auto *T = getCanonicalUnqualifiedType(ASTRefItr->first);
-        // We want to be sure that current memory location describes all
-        // possible memory locations which can be represented with a
-        // corresponding variable and a specified number of its dereferences.
-        // For example:
-        // - <A,10> is sufficient to represent all memory defined by
-        //   `int A[10]` (0 deref),
-        // - <A,8> and <*A,?> are sufficient to represent all memory defined by
-        //   `int (*A)[10]` (0 deref and 1 deref respectively).
-        // - <A,8>, <*A,?>, <*A[?],?> are sufficient to represent all memory
-        //   defined by `int **A` (0, 1 and 2 deref respectively).
-        if (NumDeref < ASTRefItr->second.size() && !DIEM->isSized())
-          if ((NumDeref == 1 && (NumDeref == Expr->getNumElements() ||
-                                 Expr->isFragment() &&
-                                     NumDeref == Expr->getNumElements() - 3)) ||
-              (DIEM->isTemplate() && [](DIExpression *Expr) {
-                // Now we check whether all offsets are zero. On success,
-                // this means that all possible offsets are represented by
-                // the template memory location DIEM.
-                for (auto &Op : Expr->expr_ops())
-                  switch (Op.getOp()) {
-                  default:
-                    llvm_unreachable("Unsupported kind of operand!");
-                    return false;
-                  case dwarf::DW_OP_deref:
-                    break;
-                  case dwarf::DW_OP_LLVM_fragment:
-                  case dwarf::DW_OP_constu:
-                  case dwarf::DW_OP_plus_uconst:
-                  case dwarf::DW_OP_plus:
-                  case dwarf::DW_OP_minus:
-                    if (Op.getArg(0) == 0)
-                      return false;
-                  }
-              }(Expr)))
-            ASTRefItr->second[NumDeref] = DIEM;
-        return std::make_pair(MatchItr->get<AST>(), Derived);
-      }
-      ASTRefItr->second.front() = DIEM;
-      return std::make_pair(MatchItr->get<AST>(), isa<DILocalVariable>(DIVar)
-                                                      ? CoincideLocal
-                                                      : CoincideGlobal);
-    }
-    if (cast<DIUnknownMemory>(M)->isDistinct())
-      return std::make_pair(nullptr, Unknown);
-    return std::make_pair(nullptr, Useless);
-  }
-
-  /// Check whether it is possible to use high-level syntax to create copy for
-  /// all memory locations in `TS` for each thread.
-  ///
-  /// On failure if `Error` not nullptr set it to the first variable which
-  /// prevents localization (or to nullptr if variable not found).
-  bool localize(DIAliasTrait &TS,
-                const ClangDIMemoryMatcherPass::DIMemoryMatcher &ASTToClient,
-                const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr) {
-    for (auto &T : TS)
-      if (!localize(*T, *TS.getNode(), ASTToClient, ClientToServer, VarNames))
-        return false;
-    return true;
-  }
-
-  /// Check whether it is possible to use high-level syntax to create copy of a
-  /// specified memory `T` for each thread.
-  ///
-  /// On success to create a local copy of a memory source-level variable
-  /// should be mentioned in a clauses like private or reduction.
-  /// This variable will be stored in a list of variables `VarNames`.
-  /// \attention  This method does not check whether it is valid to create a
-  /// such copy, for example global variables must be checked later.
-  /// Localized global variables breaks relation with original global variables.
-  /// And program may become invalid if such variables are used in calls inside
-  /// the loop body.
-  /// \post On failure if `Error` not nullptr set it to the first variable which
-  /// prevents localization (or to nullptr if variable not found).
-  bool localize(DIMemoryTrait &T, const DIAliasNode &DIN,
-                const ClangDIMemoryMatcherPass::DIMemoryMatcher &ASTToClient,
-                const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr) {
-    auto Search = findDecl(*T.getMemory(), ASTToClient, ClientToServer);
-    if (Search.second == VariableCollector::CoincideLocal) {
-      // Do no specify traits for variables declared in a loop body
-      // these variables are private by default. Moreover, these variables are
-      // not visible outside the loop and could not be mentioned in clauses
-      // before loop.
-      if (!CanonicalLocals.count(Search.first))
-        VarNames.insert(Search.first->getName());
-    } else if (Search.second == VariableCollector::CoincideGlobal) {
-      VarNames.insert(Search.first->getName());
-      GlobalRefs.try_emplace(const_cast<DIAliasNode *>(&DIN), Search.first);
-    } else if (Search.second != VariableCollector::Unknown) {
-      if (Error)
-        *Error = Search.first;
-      return false;
-    }
-    return true;
-  }
-
-  clang::VarDecl * Induction = nullptr;
-  DenseMap<clang::VarDecl *, SmallVector<DIEstimateMemory *, 2>> CanonicalRefs;
-  DenseSet<clang::VarDecl *> CanonicalLocals;
-  /// Map from alias node which contains global memory to one of global
-  /// variables which represents this memory.
-  DenseMap<DIAliasNode *, clang::VarDecl *> GlobalRefs;
 };
 
 struct ClausePrinter {
