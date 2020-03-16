@@ -135,19 +135,19 @@ public:
       return false;
     if (mStatus == GET_REFERENCES) {
       auto LI = getLoopInfo(FS);
-      // to get name necessary match IR Value* to AST ValueDecl*, it is possible
-      // that on Linux 'Value->getName()' doesn't works
       bool IsCanonical;
       bool IsPerfect;
       if (LI) {
         IsCanonical = LI->isCanonical();
         IsPerfect = mPerfectLoopInfo->count(LI->getLoop());
+        // to get Value name it is necessary to match IR Value* to AST
+        // ValueDecl*, it is possible that on Linux 'Value->getName()' doesn't
+        // works
         mInductions.push_back(std::pair<clang::ValueDecl *, clang::ForStmt *>(
             mMemMatcher->find<IR>(LI->getInduction())->get<AST>(), FS));
       } else {
         // if it's not canonical loop, gathering induction is difficult, there
-        // may be no induction at all; so just set a stub; '0' can't be an
-        // identifier
+        // may be no induction at all; so just set a NULL stub
         IsCanonical = false;
         IsPerfect = false; // don't need this if not canonical
         mInductions.push_back(
@@ -259,14 +259,12 @@ public:
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
         mNewAnalisysRequired = false;
       }
+      // collect inductions
       mStatus = GET_REFERENCES;
       auto res = TraverseForStmt((ForStmt *)S);
       mStatus = SEARCH_PRAGMA;
-      errs() << "INDUCTIONS\n";
-      for (auto ind : mInductions) {
-        errs() << ind.first->getNameAsString() << "\n";
-      }
 
+      // match inductions from clauses to real inductions
       int MaxIdx = 0;
       llvm::SmallVector<clang::ValueDecl *, 2> mValueSwaps;
       for (int i = 0; i < mSwaps.size(); i++) {
@@ -295,7 +293,8 @@ public:
           return RecursiveASTVisitor::TraverseStmt(S);
         }
       }
-      errs() << "MAXIDX " << MaxIdx << "\n";
+
+      // check that loops was canonical and perfect
       bool IsPossible = true;
       for (int i = 0; i < MaxIdx; i++) {
         if (mLoopsKinds[i] == NOT_CANONICAL_AND_PERFECT) {
@@ -316,32 +315,24 @@ public:
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-
+      // copy inductions to new 'Order' vector
       clang::SmallVector<clang::ValueDecl *, 2> Order;
       for (int i = 0; i < MaxIdx + 1; i++) {
         Order.push_back(mInductions[i].first);
       }
+      // perform transpositions
       for (int i = 0; i < mValueSwaps.size(); i += 2) {
         auto FirstIdx = findIdx(Order, mValueSwaps[i]);
         auto SecondIdx = findIdx(Order, mValueSwaps[i + 1]);
-        errs() << "swap " << mValueSwaps[i]->getNameAsString() << " "
-               << mValueSwaps[i + 1]->getNameAsString() << "\n";
         auto Buf = Order[FirstIdx];
         Order[FirstIdx] = Order[SecondIdx];
         Order[SecondIdx] = Buf;
       }
-      errs() << "ORDER\n";
-      for (int i = 0; i < MaxIdx + 1; i++) {
-        errs() << Order[i]->getNameAsString() << "\n";
-      }
 
-      // replace
+      // perform code replace
       for (int i = 0; i < MaxIdx + 1; i++) {
         if (Order[i] != mInductions[i].first) {
           auto Idx = findIdx(mInductions, Order[i]);
-
-          errs() << "replace " << mInductions[i].first->getNameAsString() << " "
-                 << mInductions[Idx].first->getNameAsString() << "\n";
           clang::SourceRange Destination(
               mInductions[i].second->getInit()->getBeginLoc(),
               mInductions[i].second->getInc()->getEndLoc());
@@ -373,7 +364,7 @@ public:
   }
 
 private:
-  // use only if sure there is an Item
+  // use this only if sure there is an Item
   int findIdx(llvm::SmallVectorImpl<clang::ValueDecl *> &Vec, ValueDecl *Item) {
     for (int i = 0; i < Vec.size(); i++) {
       if (Vec[i] == Item)
