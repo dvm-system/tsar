@@ -13,6 +13,7 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <string>
+#include <unordered_set>
 #include <vector>
 // required for function pass
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
@@ -29,7 +30,6 @@
 #include "tsar/Support/GlobalOptions.h"
 //
 #include "tsar/Analysis/Clang/PerfectLoop.h"
-#include "llvm/Analysis/LoopInfo.h"
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
@@ -97,89 +97,34 @@ void ClangLoopSwapPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-ModulePass *llvm::createClangLoopSwapPass() {
-  return new ClangLoopSwapPass();
-}
+ModulePass *llvm::createClangLoopSwapPass() { return new ClangLoopSwapPass(); }
 
 namespace {
-class SwapClauseInfo {
+class SwapClauseVisitor : public RecursiveASTVisitor<SwapClauseVisitor> {
 public:
-  SwapClauseInfo(clang::DeclRefExpr *Array,
-               llvm::SmallVector<Expr *, 1> Dimensions, bool Strict)
-      : mStrict(Strict), mArray(Array), mDimensions(Dimensions),
-        mHasError(false), mDiagKind(0) {}
-  llvm::SmallVector<clang::DeclRefExpr *, 1> &getDeclRefs() {
-    return mDeclRefs;
-  }
-  clang::DeclRefExpr *getDRE() { return mArray; }
-  clang::ValueDecl *getDecl() { return mArray->getDecl(); }
-  llvm::SmallVector<DeclRefExpr *, 1> &getRefs() { return mDeclRefs; }
-  llvm::SmallVector<Expr *, 1> &getDims() { return mDimensions; }
-  llvm::Value *getValue() { return mValue; }
-  void setValue(llvm::Value *Value) { mValue = Value; }
-  void setDiag(clang::SourceLocation SL, unsigned DiagKind) {
-    if (!mHasError) {
-      mDiagSL = SL;
-      mDiagKind = DiagKind;
-      mHasError = true;
-    }
-  }
-  bool hasError() { return mHasError; }
-  unsigned getDiagKind() { return mDiagKind; }
-  void addDRE(clang::DeclRefExpr *DRE) { mDeclRefs.push_back(DRE); }
-  clang::SourceLocation &getDiagSL() { return mDiagSL; }
-  void addInduction(clang::ValueDecl *Induction) {
-    mInductions.push_back(Induction);
-  }
-  llvm::SmallVector<clang::ValueDecl *, 1> &getInductions() {
-    return mInductions;
-  }
-  bool isStrict() { return mStrict; }
-
-private:
-  bool mStrict;
-  bool mHasError;
-  unsigned mDiagKind;
-  clang::SourceLocation mDiagSL;
-  clang::DeclRefExpr *mArray;
-  llvm::Value *mValue;
-  llvm::SmallVector<DeclRefExpr *, 1> mDeclRefs;
-  llvm::SmallVector<Expr *, 1> mDimensions;
-  llvm::SmallVector<clang::ValueDecl *, 1> mInductions;
-};
-// use this for collecting info about clause
-class LoopSwapPragmaVisitor : public RecursiveASTVisitor<LoopSwapPragmaVisitor> {
-public:
-  LoopSwapPragmaVisitor() : mArray(NULL) {}
-  bool VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
-    if (!mArray)
-      mArray = DRE;
-    else
-      mDimensions.push_back(DRE);
+  bool VisitStringLiteral(clang::StringLiteral *SL) {
+    if (SL->getString() != "swap")
+      mLiterals.push_back(SL);
     return true;
   }
-  bool VisitIntegerLiteral(clang::IntegerLiteral *IL) {
-    mDimensions.push_back(IL);
-    return true;
+  llvm::SmallVectorImpl<clang::StringLiteral *> &getLiterals() {
+    return mLiterals;
   }
-  clang::DeclRefExpr *getArray() { return mArray; }
-  llvm::SmallVector<Expr *, 1> getDimensions() { return mDimensions; }
 
 private:
-  llvm::SmallVector<Expr *, 1> mDimensions;
-  clang::DeclRefExpr *mArray;
+  llvm::SmallVector<clang::StringLiteral *, 2> mLiterals;
 };
-
 class ClangLoopSwapVisitor : public RecursiveASTVisitor<ClangLoopSwapVisitor> {
 public:
-  ClangLoopSwapVisitor(TransformationContext *TfmCtx, ClangGlobalInfoPass::RawInfo &RawInfo,
-          ClangLoopSwapPass &Pass, llvm::Module &M)
+  ClangLoopSwapVisitor(TransformationContext *TfmCtx,
+                       ClangGlobalInfoPass::RawInfo &RawInfo,
+                       ClangLoopSwapPass &Pass, llvm::Module &M)
       : mTfmCtx(TfmCtx), mRawInfo(RawInfo), mRewriter(TfmCtx->getRewriter()),
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
         mLangOpts(mRewriter.getLangOpts()), mPass(Pass), mModule(M),
         mStatus(SEARCH_PRAGMA), mGO(NULL), mDIAT(NULL), mDIDepInfo(NULL),
-        mLoopDepth(0), mMemMatcher(NULL), mStrictFlag(false),
-        mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
+        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
+        mStub("0") {}
   const CanonicalLoopInfo *getLoopInfo(ForStmt *FS) {
     if (!FS)
       return NULL;
@@ -194,64 +139,36 @@ public:
     if (!FS)
       return false;
     if (mStatus == GET_REFERENCES) {
-      mLoopDepth++;
-      auto *LoopInfo = getLoopInfo(FS);
-      if (!LoopInfo->isCanonical()) {
-        toDiag(mSrcMgr.getDiagnostics(), FS->getLocStart(),
-               diag::err_expand_not_canonical);
-        resetVisitor();
-        return RecursiveASTVisitor::TraverseForStmt(FS);
+      auto LI = getLoopInfo(FS);
+      // to get name necessary match IR Value* to AST ValueDecl*, it is possible
+      // that on Linux 'Value->getName()' doesn't works
+      bool IsCanonical;
+      bool IsPerfect;
+      if (LI) {
+        IsCanonical = LI->isCanonical();
+        IsPerfect = mPerfectLoopInfo->count(LI->getLoop());
+        mInductions.push_back(std::pair<clang::StringRef, clang::ForStmt *>(
+            mMemMatcher->find<IR>(LI->getInduction())->get<AST>()->getName(),
+            FS));
+      } else {
+        // if it's not canonical loop, gathering induction is difficult, there
+        // may be no induction at all; so just set a stub; '0' can't be an
+        // identifier
+        IsCanonical = false;
+        IsPerfect = false; // don't need this if not canonical
+        mInductions.push_back(
+            std::pair<clang::StringRef, clang::ForStmt *>(mStub, FS));
       }
+      if (IsCanonical && IsPerfect)
+        mLoopsKinds.push_back(CANONICAL_AND_PERFECT);
+      else if (IsCanonical && !IsPerfect)
+        mLoopsKinds.push_back(NOT_PERFECT);
+      else if (!IsCanonical && IsPerfect)
+        mLoopsKinds.push_back(NOT_CANONICAL);
+      else
+        mLoopsKinds.push_back(NOT_CANONICAL_AND_PERFECT);
 
-      for (auto A : mExpandClauses) {
-        if (mLoopDepth < A.second->getDims().size()) {
-          if (!mPerfectLoopInfo->count(LoopInfo->getLoop())) {
-            A.second->setDiag(FS->getLocStart(),
-                              diag::err_expand_perfect_expected);
-            continue;
-          }
-          A.second->addInduction(
-              mMemMatcher->find<IR>(LoopInfo->getInduction())->get<AST>());
-        } else if (mLoopDepth == A.second->getDims().size()) {
-          A.second->addInduction(
-              mMemMatcher->find<IR>(LoopInfo->getInduction())->get<AST>());
-        }
-        // if strict then check array is private
-        if (A.second->isStrict()) {
-          bool PrivateFlag = false;
-          std::string ArrayName = A.first->getNameAsString();
-          auto *Loop = LoopInfo->getLoop()->getLoop();
-          auto *LoopID = Loop->getLoopID();
-          // what if there no analysis
-          auto DepItr = mDIDepInfo->find(LoopID);
-          auto &DIDepSet = DepItr->get<DIDependenceSet>();
-          DenseSet<const DIAliasNode *> Coverage;
-          accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
-                                              mGO->IgnoreRedundantMemory);
-          if (!Coverage.empty()) {
-            for (auto &DIAT : DIDepSet) {
-              if (!Coverage.count(DIAT.getNode()))
-                continue;
-              if (DIAT.is<trait::Private>()) {
-                for (auto DIMTR : DIAT) {
-                  for (auto WTVH : *DIMTR->getMemory()) {
-                    if (WTVH == A.second->getValue()) {
-                      PrivateFlag = true;
-                    }
-                  }
-                }
-              }
-            }
-          } // else what?
-          if (!PrivateFlag) {
-            // change diag kind
-            A.second->setDiag(FS->getLocStart(), diag::err_expand_not_private);
-          }
-        }
-      }
-      bool Ret = RecursiveASTVisitor::TraverseForStmt(FS);
-      mLoopDepth--;
-      return Ret;
+      return RecursiveASTVisitor::TraverseForStmt(FS);
     } else {
       return RecursiveASTVisitor::TraverseForStmt(FS);
     }
@@ -260,8 +177,8 @@ public:
     if (!D)
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
-      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-             diag::err_expand_not_forstmt);
+      errs() << "NOT FOR STMT\n";
+      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(), diag::err_assert);
       resetVisitor();
     }
     return RecursiveASTVisitor::TraverseDecl(D);
@@ -275,20 +192,34 @@ public:
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
       // if found expand clause
       bool Found = false;
-      if (findClause(P, ClauseId::Expand, Clauses)) {
-        if (!handleClauses(P, Clauses, true))
-          return true;
-        Found = true;
-      }
-      Clauses.clear();
-      if (findClause(P, ClauseId::ExpandNostrict, Clauses)) {
-        if (!handleClauses(P, Clauses, false))
-          return true;
-        Found = true;
-      }
-      Clauses.clear();
-      if (Found) {
-        mLoopDepth = 0;
+      if (findClause(P, ClauseId::LoopSwap, Clauses)) {
+        llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
+        auto IsPossible =
+            pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, ToRemove);
+        if (!IsPossible.first)
+          if (IsPossible.second & PragmaFlags::IsInMacro)
+            toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+                   diag::warn_remove_directive_in_macro);
+          else if (IsPossible.second & PragmaFlags::IsInHeader)
+            toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+                   diag::warn_remove_directive_in_include);
+          else
+            toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+                   diag::warn_remove_directive);
+        Rewriter::RewriteOptions RemoveEmptyLine;
+        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+        /// set to true then removing (in RewriterBuffer) works incorrect.
+        RemoveEmptyLine.RemoveLineIfEmpty = false;
+        for (auto SR : ToRemove)
+          mRewriter.RemoveText(SR, RemoveEmptyLine);
+        SwapClauseVisitor SCV;
+        for (auto C : Clauses)
+          SCV.TraverseStmt(C);
+        auto &Literals = SCV.getLiterals();
+        for (auto L : Literals) {
+          mSwaps.push_back(L);
+        }
+        Clauses.clear();
         mStatus = Status::TRAVERSE_STMT;
         return true;
       } else {
@@ -298,16 +229,10 @@ public:
 
     case Status::TRAVERSE_STMT: {
       if (!isa<ForStmt>(S)) {
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
-               diag::err_expand_not_forstmt);
+        errs() << "NOT FOR STMT\n";
+        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(), diag::err_assert);
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
-      }
-      // check ArrayType
-      for (auto A : mExpandClauses) {
-        if (!A.first->getType().getTypePtr()->isArrayType()) {
-          A.second->setDiag(A.first->getLocation(), diag::err_expand_not_array);
-        }
       }
       // Macro check
       bool HasMacro = false;
@@ -340,85 +265,111 @@ public:
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
         mNewAnalisysRequired = false;
       }
-      // get IR Value* according AST VarDecl* through memorymatcher pass
-      for (auto A : mExpandClauses) {
-        A.second->setValue(
-            mMemMatcher->find<AST>((VarDecl *)A.first)->get<IR>());
-      }
       mStatus = GET_REFERENCES;
       auto res = TraverseForStmt((ForStmt *)S);
       mStatus = SEARCH_PRAGMA;
+      errs() << "INDUCTIONS\n";
+      for (auto ind : mInductions) {
+        errs() << ind.first << "\n";
+      }
 
       bool Changed = false;
-      for (auto A : mExpandClauses) {
-        if (A.second->hasError()) {
-          toDiag(mSrcMgr.getDiagnostics(), A.second->getDiagSL(),
-                 A.second->getDiagKind());
-          continue;
-        }
-        if (!A.second->getDeclRefs().size()) {
-          toDiag(mSrcMgr.getDiagnostics(), A.first->getLocation(),
-                 diag::err_expand_array_not_used);
-          continue;
-        }
-        Changed = true;
-        std::string ExpandName = addSuffix(A.first->getNameAsString());
-        std::string Typename, OldSizeDim, ExpandSizeDim, ExpandIterDim,
-            Dimension;
-        SplitType(A.first->getType().getAsString(), Typename, OldSizeDim);
-        bool Positive = true;
-        for (auto Dim : A.second->getDims()) {
-          if (isa<IntegerLiteral>(Dim)) {
-            Dimension =
-                to_string(((IntegerLiteral *)Dim)->getValue().getZExtValue());
 
-          } else if (isa<DeclRefExpr>(Dim)) {
-            Dimension = ((DeclRefExpr *)Dim)->getDecl()->getNameAsString();
+      int MaxIdx = 0;
+
+      for (int i = 0; i < mSwaps.size(); i++) {
+        bool Found = false;
+        auto Str = mSwaps[i]->getString();
+        for (int j = 0; j < mInductions.size(); j++) {
+          if (mInductions[j].first == mStub) {
+            errs() << "EXPECTED CANONICAL LOOP\n";
+            toDiag(mSrcMgr.getDiagnostics(),
+                   mInductions[j].second->getBeginLoc(), diag::err_assert);
+            resetVisitor();
+            return RecursiveASTVisitor::TraverseStmt(S);
           }
-          ExpandSizeDim = (ExpandSizeDim + Twine("[") + Dimension + "]").str();
+          if (mInductions[j].first == Str) {
+            if (j > MaxIdx)
+              MaxIdx = j;
+            Found = true;
+            break;
+          }
         }
-        // insert definition
-        mRewriter.InsertText(
-            S->getLocStart(),
-            (Twine(Typename) + ExpandName + ExpandSizeDim + OldSizeDim + ";\n")
-                .str());
-        // prepare new dimensions
-        for (auto Ind : A.second->getInductions()) {
-          ExpandIterDim =
-              (ExpandIterDim + Twine("[") + Ind->getName() + "]").str();
+        if (!Found) {
+          errs() << "INDUCTION NOT FOUND " << Str << "\n";
+          toDiag(mSrcMgr.getDiagnostics(), mSwaps[i]->getBeginLoc(),
+                 diag::err_assert);
+          resetVisitor();
+          return RecursiveASTVisitor::TraverseStmt(S);
         }
-        // replace old array to new array with new dimensions
-        std::string ArrayCall = (Twine(ExpandName) + ExpandIterDim).str();
-        for (auto DRE : A.second->getDeclRefs())
-          mRewriter.ReplaceText(DRE->getSourceRange(), ArrayCall);
       }
-      if (Changed) {
-        // insert brackets
-        mRewriter.InsertTextBefore(S->getLocStart(), "{");
-        mRewriter.InsertTextAfterToken(S->getLocEnd(), "}");
+      errs() << "MAXIDX " << MaxIdx << "\n";
+      bool IsPossible = true;
+      for (int i = 0; i < MaxIdx; i++) {
+        if (mLoopsKinds[i] == NOT_CANONICAL_AND_PERFECT) {
+          errs() << "EXPECTED CANONICAL AND PERFECT LOOP "
+                 << mInductions[i].first << "\n";
+          IsPossible = false;
+          toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
+                 diag::err_assert);
+        } else if (mLoopsKinds[i] == NOT_CANONICAL) {
+          errs() << "EXPECTED CANONICAL LOOP " << mInductions[i].first << "\n";
+          IsPossible = false;
+          toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
+                 diag::err_assert);
+        } else if (mLoopsKinds[i] == NOT_PERFECT) {
+          errs() << "EXPECTED PERFECT LOOP " << mInductions[i].first << "\n";
+          IsPossible = false;
+          toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
+                 diag::err_assert);
+        }
       }
+      if (!IsPossible) {
+        resetVisitor();
+        return RecursiveASTVisitor::TraverseStmt(S);
+      }
+
+      std::string *Order = new std::string[MaxIdx + 1];
+      for (int i = 0; i < MaxIdx + 1; i++) {
+        Order[i] = mInductions[i].first;
+      }
+      for (int i = 0; i < mSwaps.size(); i += 2) {
+        auto FirstIdx = findIdx(Order, MaxIdx + 1, mSwaps[i]->getString());
+        auto SecondIdx = findIdx(Order, MaxIdx + 1, mSwaps[i + 1]->getString());
+        errs() << "swap " << mSwaps[i]->getString() << " "
+               << mSwaps[i + 1]->getString() << "\n";
+        auto Buf = Order[FirstIdx];
+        Order[FirstIdx] = Order[SecondIdx];
+        Order[SecondIdx] = Buf;
+      }
+      errs() << "ORDER\n";
+      for (int i = 0; i < MaxIdx + 1; i++) {
+        errs() << Order[i] << "\n";
+      }
+
+      // replace
+      for (int i = 0; i < MaxIdx + 1; i++) {
+        if (Order[i] != mInductions[i].first) {
+          auto Idx = findIdx(mInductions, Order[i]);
+
+          errs() << "replace " << mInductions[i].first << " "
+                 << mInductions[Idx].first << "\n";
+          clang::SourceRange Destination(
+              mInductions[i].second->getInit()->getBeginLoc(),
+              mInductions[i].second->getInc()->getEndLoc());
+          clang::SourceRange Source(
+              mInductions[Idx].second->getInit()->getBeginLoc(),
+              mInductions[Idx].second->getInc()->getEndLoc());
+          mRewriter.ReplaceText(Destination, Source);
+        }
+      }
+
+      delete[] Order;
       resetVisitor();
       return res;
     }
     }
     return RecursiveASTVisitor::TraverseStmt(S);
-  }
-  bool VisitDeclRefExpr(DeclRefExpr *DRE) {
-    if (!DRE)
-      return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
-    if (mStatus == GET_REFERENCES) {
-      auto Decl = DRE->getDecl();
-      auto It = mExpandClauses.find(Decl);
-      if (It != mExpandClauses.end()) {
-        if (mLoopDepth <= It->second->getDims().size()) {
-          It->second->setDiag(DRE->getLocation(),
-                              diag::err_expand_not_deep_enough);
-          return true;
-        }
-        It->second->addDRE(DRE);
-      }
-    }
-    return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
   }
   bool VisitFunctionDecl(FunctionDecl *FD) {
     if (!FD)
@@ -427,94 +378,30 @@ public:
     mNewAnalisysRequired = true;
     return RecursiveASTVisitor::VisitFunctionDecl(FD);
   }
-  /// splits type from decl to typename and dimensions
-  /// for example (int[10][M] => Typename = int, OldSizeDim = [10][M])
-  // maybe there is adequate analog for this function in QualType
-  void SplitType(string Type, string &Typename, string &Dimensions) {
-    SmallVector<StringRef, 8> fragments;
-    StringRef separators = "[";
-    SplitString(Type, fragments, separators);
-    Typename = fragments[0];
-    fragments[0] = "";
-    string buf = "";
-    for (auto f : fragments) {
-      if (f != "")
-        buf += "[";
-      buf += f;
-    }
-    Dimensions = buf;
-  }
-  std::string addSuffix(std::string Name) {
-    SmallString<32> Buf;
-    for (unsigned Count = 0;
-         mRawInfo.Identifiers.count((Name + Twine(Count)).toStringRef(Buf));
-         ++Count, Buf.clear())
-      ;
-    StringRef NewName(Buf.data(), Buf.size());
-    mRawInfo.Identifiers.insert(NewName);
-    return NewName;
-  }
-  // returns this object parameters to initial state
   void resetVisitor() {
     mStatus = SEARCH_PRAGMA;
-    for (auto A : mExpandClauses) {
-      delete A.second;
-    }
-    mExpandClauses.clear();
-    mLoopDepth = 0;
-    mStrictFlag = false;
+    mSwaps.clear();
+    mInductions.clear();
+    mLoopsKinds.clear();
   }
 
 private:
-  // returns false if there is array duplicate
-  bool handleClauses(Pragma &P, llvm::SmallVector<clang::Stmt *, 1> &Clauses,
-                     bool Strict) {
-    llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-    auto IsPossible =
-        pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, ToRemove);
-    if (!IsPossible.first)
-      if (IsPossible.second & PragmaFlags::IsInMacro)
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-               diag::warn_remove_directive_in_macro);
-      else if (IsPossible.second & PragmaFlags::IsInHeader)
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-               diag::warn_remove_directive_in_include);
-      else
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-               diag::warn_remove_directive);
-    Rewriter::RewriteOptions RemoveEmptyLine;
-    /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
-    /// set to true then removing (in RewriterBuffer) works incorrect.
-    RemoveEmptyLine.RemoveLineIfEmpty = false;
-    for (auto SR : ToRemove)
-      mRewriter.RemoveText(SR, RemoveEmptyLine);
-    // gathering clause info
-    for (auto C : Clauses) {
-      LoopSwapPragmaVisitor PV;
-      PV.TraverseStmt(C);
-      auto Decl = PV.getArray()->getDecl();
-      if (mExpandClauses.count(Decl)) {
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-               diag::err_expand_twice);
-        resetVisitor();
-        return false;
-      }
-      auto Pair =
-          mExpandClauses.insert(std::pair<clang::ValueDecl *, SwapClauseInfo *>(
-              Decl,
-              new SwapClauseInfo(PV.getArray(), PV.getDimensions(), Strict)));
-      // check integer literals positive
-      for (auto Lit : Pair.first->second->getDims()) {
-        if (isa<IntegerLiteral>(Lit)) {
-          if (cast<IntegerLiteral>(Lit)->getValue().getZExtValue() <= 0)
-            Pair.first->second->setDiag(Lit->getLocStart(),
-                                        diag::err_expand_not_positive);
-        }
-      }
+  // use carefully
+  int findIdx(std::string *Array, int Size, std::string Item) {
+    for (int i = 0; i < Size; i++) {
+      if (Array[i] == Item)
+        return i;
     }
-    return true;
   }
-
+  int findIdx(
+      llvm::SmallVectorImpl<std::pair<clang::StringRef, clang::ForStmt *>>
+          &Array,
+      std::string Item) {
+    for (int i = 0; i < Array.size(); i++) {
+      if (Array[i].first == Item)
+        return i;
+    }
+  }
   TransformationContext *mTfmCtx;
   ClangGlobalInfoPass::RawInfo &mRawInfo;
   Rewriter &mRewriter;
@@ -534,13 +421,19 @@ private:
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
 
-  bool mStrictFlag;
-  // it must be reset manually
-  int mLoopDepth;
-  // llvm::SmallVector<Value *, 3> mInductions;
-  std::map<ValueDecl *, SwapClauseInfo *> mExpandClauses;
+  enum LoopKind {
+    CANONICAL_AND_PERFECT,
+    NOT_PERFECT,
+    NOT_CANONICAL,
+    NOT_CANONICAL_AND_PERFECT
+  };
+  llvm::SmallVector<LoopKind, 2> mLoopsKinds;
+  llvm::SmallVector<std::pair<clang::StringRef, clang::ForStmt *>, 2>
+      mInductions;
+  std::vector<clang::StringLiteral *> mSwaps;
   enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, GET_REFERENCES } mStatus;
-};
+  const std::string mStub;
+}; // namespace
 
 } // namespace
 
