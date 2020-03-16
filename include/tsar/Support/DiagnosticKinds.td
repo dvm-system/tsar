@@ -189,3 +189,8 @@ def note_declared_here: Note<"declared here">;
 
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
+
+def warn_loopswap_not_canonical: Warning<"expected canonical loop">;
+def warn_loopswap_not_perfect: Warning<"expected perfect loop">;
+def warn_loopswap_id_not_found: Warning<"induction not found">;
+def warn_loopswap_not_forstmt: Warning<"expected for loop">;

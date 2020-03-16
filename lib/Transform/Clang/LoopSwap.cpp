@@ -177,8 +177,8 @@ public:
     if (!D)
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
-      errs() << "NOT FOR STMT\n";
-      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(), diag::err_assert);
+      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
+             diag::warn_loopswap_not_forstmt);
       resetVisitor();
     }
     return RecursiveASTVisitor::TraverseDecl(D);
@@ -229,8 +229,8 @@ public:
 
     case Status::TRAVERSE_STMT: {
       if (!isa<ForStmt>(S)) {
-        errs() << "NOT FOR STMT\n";
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(), diag::err_assert);
+        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
+               diag::warn_loopswap_not_forstmt);
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
@@ -282,9 +282,9 @@ public:
         auto Str = mSwaps[i]->getString();
         for (int j = 0; j < mInductions.size(); j++) {
           if (mInductions[j].first == mStub) {
-            errs() << "EXPECTED CANONICAL LOOP\n";
             toDiag(mSrcMgr.getDiagnostics(),
-                   mInductions[j].second->getBeginLoc(), diag::err_assert);
+                   mInductions[j].second->getBeginLoc(),
+                   diag::warn_loopswap_not_canonical);
             resetVisitor();
             return RecursiveASTVisitor::TraverseStmt(S);
           }
@@ -296,9 +296,8 @@ public:
           }
         }
         if (!Found) {
-          errs() << "INDUCTION NOT FOUND " << Str << "\n";
           toDiag(mSrcMgr.getDiagnostics(), mSwaps[i]->getBeginLoc(),
-                 diag::err_assert);
+                 diag::warn_loopswap_id_not_found);
           resetVisitor();
           return RecursiveASTVisitor::TraverseStmt(S);
         }
@@ -307,21 +306,17 @@ public:
       bool IsPossible = true;
       for (int i = 0; i < MaxIdx; i++) {
         if (mLoopsKinds[i] == NOT_CANONICAL_AND_PERFECT) {
-          errs() << "EXPECTED CANONICAL AND PERFECT LOOP "
-                 << mInductions[i].first << "\n";
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::err_assert);
+                 diag::warn_loopswap_not_canonical);
         } else if (mLoopsKinds[i] == NOT_CANONICAL) {
-          errs() << "EXPECTED CANONICAL LOOP " << mInductions[i].first << "\n";
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::err_assert);
+                 diag::warn_loopswap_not_canonical);
         } else if (mLoopsKinds[i] == NOT_PERFECT) {
-          errs() << "EXPECTED PERFECT LOOP " << mInductions[i].first << "\n";
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::err_assert);
+                 diag::warn_loopswap_not_perfect);
         }
       }
       if (!IsPossible) {
