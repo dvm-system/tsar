@@ -1,11 +1,23 @@
 #include "tsar/Transform/Clang/LoopSwap.h"
+#include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
+#include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
+#include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/PassGroupRegistry.h"
+#include "tsar/Support/PassProvider.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -13,23 +25,7 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <string>
-#include <unordered_set>
 #include <vector>
-// required for function pass
-#include "tsar/Analysis/Clang/CanonicalLoop.h"
-#include "tsar/Analysis/Clang/MemoryMatcher.h"
-#include "tsar/Support/PassGroupRegistry.h"
-#include "tsar/Support/PassProvider.h"
-#include "llvm/IR/LegacyPassManager.h"
-//
-#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
-#include "tsar/Analysis/Memory/DIEstimateMemory.h"
-#include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
-#include "tsar/Analysis/Memory/DIMemoryTrait.h"
-#include "tsar/Analysis/Memory/MemoryTraitUtils.h"
-#include "tsar/Support/GlobalOptions.h"
-//
-#include "tsar/Analysis/Clang/PerfectLoop.h"
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
@@ -123,8 +119,7 @@ public:
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
         mLangOpts(mRewriter.getLangOpts()), mPass(Pass), mModule(M),
         mStatus(SEARCH_PRAGMA), mGO(NULL), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
-        mStub("0") {}
+        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
   const CanonicalLoopInfo *getLoopInfo(ForStmt *FS) {
     if (!FS)
       return NULL;
@@ -147,9 +142,8 @@ public:
       if (LI) {
         IsCanonical = LI->isCanonical();
         IsPerfect = mPerfectLoopInfo->count(LI->getLoop());
-        mInductions.push_back(std::pair<clang::StringRef, clang::ForStmt *>(
-            mMemMatcher->find<IR>(LI->getInduction())->get<AST>()->getName(),
-            FS));
+        mInductions.push_back(std::pair<clang::ValueDecl *, clang::ForStmt *>(
+            mMemMatcher->find<IR>(LI->getInduction())->get<AST>(), FS));
       } else {
         // if it's not canonical loop, gathering induction is difficult, there
         // may be no induction at all; so just set a stub; '0' can't be an
@@ -157,7 +151,7 @@ public:
         IsCanonical = false;
         IsPerfect = false; // don't need this if not canonical
         mInductions.push_back(
-            std::pair<clang::StringRef, clang::ForStmt *>(mStub, FS));
+            std::pair<clang::ValueDecl *, clang::ForStmt *>(NULL, FS));
       }
       if (IsCanonical && IsPerfect)
         mLoopsKinds.push_back(CANONICAL_AND_PERFECT);
@@ -270,25 +264,24 @@ public:
       mStatus = SEARCH_PRAGMA;
       errs() << "INDUCTIONS\n";
       for (auto ind : mInductions) {
-        errs() << ind.first << "\n";
+        errs() << ind.first->getNameAsString() << "\n";
       }
 
-      bool Changed = false;
-
       int MaxIdx = 0;
-
+      llvm::SmallVector<clang::ValueDecl *, 2> mValueSwaps;
       for (int i = 0; i < mSwaps.size(); i++) {
         bool Found = false;
         auto Str = mSwaps[i]->getString();
         for (int j = 0; j < mInductions.size(); j++) {
-          if (mInductions[j].first == mStub) {
+          if (mInductions[j].first == NULL) {
             toDiag(mSrcMgr.getDiagnostics(),
                    mInductions[j].second->getBeginLoc(),
                    diag::warn_loopswap_not_canonical);
             resetVisitor();
             return RecursiveASTVisitor::TraverseStmt(S);
           }
-          if (mInductions[j].first == Str) {
+          if (mInductions[j].first->getName() == Str) {
+            mValueSwaps.push_back(mInductions[j].first);
             if (j > MaxIdx)
               MaxIdx = j;
             Found = true;
@@ -324,22 +317,22 @@ public:
         return RecursiveASTVisitor::TraverseStmt(S);
       }
 
-      std::string *Order = new std::string[MaxIdx + 1];
+      clang::SmallVector<clang::ValueDecl *, 2> Order;
       for (int i = 0; i < MaxIdx + 1; i++) {
-        Order[i] = mInductions[i].first;
+        Order.push_back(mInductions[i].first);
       }
-      for (int i = 0; i < mSwaps.size(); i += 2) {
-        auto FirstIdx = findIdx(Order, MaxIdx + 1, mSwaps[i]->getString());
-        auto SecondIdx = findIdx(Order, MaxIdx + 1, mSwaps[i + 1]->getString());
-        errs() << "swap " << mSwaps[i]->getString() << " "
-               << mSwaps[i + 1]->getString() << "\n";
+      for (int i = 0; i < mValueSwaps.size(); i += 2) {
+        auto FirstIdx = findIdx(Order, mValueSwaps[i]);
+        auto SecondIdx = findIdx(Order, mValueSwaps[i + 1]);
+        errs() << "swap " << mValueSwaps[i]->getNameAsString() << " "
+               << mValueSwaps[i + 1]->getNameAsString() << "\n";
         auto Buf = Order[FirstIdx];
         Order[FirstIdx] = Order[SecondIdx];
         Order[SecondIdx] = Buf;
       }
       errs() << "ORDER\n";
       for (int i = 0; i < MaxIdx + 1; i++) {
-        errs() << Order[i] << "\n";
+        errs() << Order[i]->getNameAsString() << "\n";
       }
 
       // replace
@@ -347,8 +340,8 @@ public:
         if (Order[i] != mInductions[i].first) {
           auto Idx = findIdx(mInductions, Order[i]);
 
-          errs() << "replace " << mInductions[i].first << " "
-                 << mInductions[Idx].first << "\n";
+          errs() << "replace " << mInductions[i].first->getNameAsString() << " "
+                 << mInductions[Idx].first->getNameAsString() << "\n";
           clang::SourceRange Destination(
               mInductions[i].second->getInit()->getBeginLoc(),
               mInductions[i].second->getInc()->getEndLoc());
@@ -359,7 +352,6 @@ public:
         }
       }
 
-      delete[] Order;
       resetVisitor();
       return res;
     }
@@ -381,17 +373,17 @@ public:
   }
 
 private:
-  // use carefully
-  int findIdx(std::string *Array, int Size, std::string Item) {
-    for (int i = 0; i < Size; i++) {
-      if (Array[i] == Item)
+  // use only if sure there is an Item
+  int findIdx(llvm::SmallVectorImpl<clang::ValueDecl *> &Vec, ValueDecl *Item) {
+    for (int i = 0; i < Vec.size(); i++) {
+      if (Vec[i] == Item)
         return i;
     }
   }
   int findIdx(
-      llvm::SmallVectorImpl<std::pair<clang::StringRef, clang::ForStmt *>>
+      llvm::SmallVectorImpl<std::pair<clang::ValueDecl *, clang::ForStmt *>>
           &Array,
-      std::string Item) {
+      clang::ValueDecl *Item) {
     for (int i = 0; i < Array.size(); i++) {
       if (Array[i].first == Item)
         return i;
@@ -423,11 +415,10 @@ private:
     NOT_CANONICAL_AND_PERFECT
   };
   llvm::SmallVector<LoopKind, 2> mLoopsKinds;
-  llvm::SmallVector<std::pair<clang::StringRef, clang::ForStmt *>, 2>
+  llvm::SmallVector<std::pair<clang::ValueDecl *, clang::ForStmt *>, 2>
       mInductions;
   std::vector<clang::StringLiteral *> mSwaps;
   enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, GET_REFERENCES } mStatus;
-  const std::string mStub;
 }; // namespace
 
 } // namespace
