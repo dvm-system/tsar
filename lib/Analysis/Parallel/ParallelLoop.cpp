@@ -25,6 +25,7 @@
 
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
@@ -97,7 +98,7 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
     LLVM_DEBUG(
         dbgs() << "[PARALLEL LOOP]: use dependence analysis from client\n");
   }
-  for_each_loop(LI, [this, &F, &GO, &LoopAttr, &getLoopID, DIAT,
+  for_each_loop(LI, [this, &F, &GO, &LoopAttr, &getLoopID, &getValue, DIAT,
                      DIDepInfo](Loop *L) {
     auto SLoc = L->getStartLoc();
     if (!LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn) ||
@@ -109,6 +110,7 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
           SLoc.print(dbgs()); dbgs() << "\n");
       return;
     }
+    bool AllowGPU = true;
     for (auto *BB : L->getBlocks())
       for (auto &I : *BB) {
         CallSite CS(&I);
@@ -121,6 +123,13 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
                                "function prevents parallelization: ";
                      SLoc.print(dbgs()); dbgs() << "\n");
           return;
+        } else {
+          if (!Callee->doesNotReadMemory() && !Callee->isSpeculatable() &&
+              (!isa<IntrinsicInst>(I) ||
+               !isDbgInfoIntrinsic(Callee->getIntrinsicID()) &&
+                   !isMemoryMarkerIntrinsic(Callee->getIntrinsicID())))
+            AllowGPU &=
+                cast<Function>(getValue(Callee))->onlyAccessesArgMemory();
         }
       }
     auto *LoopID = L->getLoopID();
@@ -184,7 +193,7 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
     }
     LLVM_DEBUG(dbgs() << "[PARALLEL LOOP]: parallel loop found: ";
                SLoc.print(dbgs()); dbgs() << "\n");
-    mParallelLoops.insert(L);
+    mParallelLoops.try_emplace(L, !AllowGPU);
   });
   return false;
 }

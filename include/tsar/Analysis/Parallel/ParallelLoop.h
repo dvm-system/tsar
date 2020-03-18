@@ -27,7 +27,7 @@
 
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "bcl/utility.h"
-#include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
 
 namespace llvm {
@@ -35,8 +35,16 @@ class Loop;
 }
 
 namespace tsar {
+class ParallelInfo {
+public:
+  ParallelInfo(bool HostOnly = true) : mHostOnly(HostOnly) {}
+  bool isHostOnly() const noexcept { return mHostOnly; }
+private:
+  bool mHostOnly;
+};
+
 /// List of loops which could be executed in a parallel way.
-using ParallelLoopInfo = llvm::DenseSet<llvm::Loop *>;
+using ParallelLoopInfo = llvm::DenseMap<const llvm::Loop *, ParallelInfo>;
 }
 
 namespace llvm {
