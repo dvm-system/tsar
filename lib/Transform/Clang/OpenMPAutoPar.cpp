@@ -160,7 +160,7 @@ public:
     mGlobalOpts = nullptr;
     mMemoryMatcher = nullptr;
     mGlobalsAA = nullptr;
-    mSocket = nullptr;
+    mSocketInfo = nullptr;
   }
 
 private:
@@ -189,7 +189,7 @@ private:
   const GlobalOptions *mGlobalOpts = nullptr;
   MemoryMatchInfo *mMemoryMatcher = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
-  AnalysisSocket *mSocket = nullptr;
+  AnalysisSocketInfo *mSocketInfo = nullptr;
   DenseSet<Function *> mSkippedFuncs;
   SmallVector<const OptimizationRegion *, 4> mRegions;
 };
@@ -289,14 +289,16 @@ bool ClangOpenMPParalleization::findParallelLoops(
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   }
   auto *ForStmt = (**CanonicalItr).getASTLoop();
+  auto *Socket = mSocketInfo->getActiveSocket();
+  assert(Socket && "Active socket must be set!");
   auto RF =
-      mSocket->getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
+      Socket->getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
   assert(RF && "Dependence analysis must be available for a parallel loop!");
   auto &DIAT = RF->value<DIEstimateMemoryPass *>()->getAliasTree();
   SpanningTreeRelation<DIAliasTree *> STR(&DIAT);
   auto &DIDepInfo = RF->value<DIDependencyAnalysisPass *>()->getDependencies();
-  auto RM = mSocket->getAnalysis<AnalysisClientServerMatcherWrapper,
-                                 ClonedDIMemoryMatcherWrapper>();
+  auto RM = Socket->getAnalysis<AnalysisClientServerMatcherWrapper,
+                               ClonedDIMemoryMatcherWrapper>();
   assert(RM && "Client to server IR-matcher must be available!");
   auto &ClientToServer = **RM->value<AnalysisClientServerMatcherWrapper *>();
   assert(L.getLoopID() && "ID must be available for a parallel loop!");
@@ -518,7 +520,7 @@ void ClangOpenMPParalleization::initializeProviderOnClient(Module &M) {
       });
   ClangOpenMPParalleizationProvider::initialize<AnalysisSocketImmutableWrapper>(
       [this](AnalysisSocketImmutableWrapper &Wrapper) {
-        Wrapper.set(*mSocket);
+        Wrapper.set(*mSocketInfo);
       });
   ClangOpenMPParalleizationProvider::initialize<TransformationEnginePass>(
       [this, &M](TransformationEnginePass &Wrapper) {
@@ -540,7 +542,7 @@ void ClangOpenMPParalleization::initializeProviderOnServer() {
       [this](GlobalOptionsImmutableWrapper &Wrapper) {
         Wrapper.setOptions(mGlobalOpts);
       });
-  auto R = mSocket->getAnalysis<GlobalsAAWrapperPass,
+  auto R = mSocketInfo->getActiveSocket()->getAnalysis<GlobalsAAWrapperPass,
       DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper,
       GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper>();
   assert(R && "Immutable passes must be available on server!");
@@ -579,7 +581,7 @@ bool ClangOpenMPParalleization::runOnModule(Module &M) {
                              ": transformation context is not available");
     return false;
   }
-  mSocket = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  mSocketInfo = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
   mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   mMemoryMatcher = &getAnalysis<MemoryMatcherImmutableWrapper>().get();
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();

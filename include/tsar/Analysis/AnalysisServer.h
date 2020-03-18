@@ -96,7 +96,8 @@ public:
 
   /// Run server.
   bool runOnModule(Module &M) override {
-    auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    auto &Socket = SocketInfo.emplace(getPassID(), true).first->second;
     bcl::IntrusiveConnection::connect(
         &Socket, tsar::AnalysisSocket::Delimiter,
         [this, &M](bcl::IntrusiveConnection C) {

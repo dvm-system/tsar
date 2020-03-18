@@ -1629,7 +1629,9 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     return false;
   }
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  mSocket = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  mSocket = SocketInfo.getActiveSocket();
+  assert(mSocket && "Active socket must be specified!");
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
@@ -1642,8 +1644,8 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       TEP.setContext(M, mTfmCtx);
   });
   ServerPrivateProvider::initialize<AnalysisSocketImmutableWrapper>(
-      [this](AnalysisSocketImmutableWrapper &Wrapper) {
-        Wrapper.set(*mSocket);
+      [&SocketInfo](AnalysisSocketImmutableWrapper &Wrapper) {
+        Wrapper.set(SocketInfo);
       });
   ServerPrivateProvider::initialize<
       GlobalsAAResultImmutableWrapper>(

@@ -236,6 +236,82 @@ private:
   mutable MessageKind mResponseKind;
   mutable std::vector<void *> mAnalysis;
 };
+
+/// This is a container to store sockets.
+class AnalysisSocketInfo {
+public:
+  using ServerToSocket = std::pair<llvm::AnalysisID, AnalysisSocket>;
+  using iterator = llvm::SmallVectorImpl<ServerToSocket>::iterator;
+  using const_iterator = llvm::SmallVectorImpl<ServerToSocket>::const_iterator;
+
+  /// Add new socket, return true on success and false if there is a socket
+  /// for a specified `ServerID` in the list.
+  std::pair<iterator, bool> emplace(llvm::AnalysisID ServerID, bool IsActive) {
+    auto Itr = find(ServerID);
+    if (Itr != end()) {
+      if (IsActive)
+        mActiveIdx = std::distance(mAnalysis.begin(), Itr) + 1;
+      return std::make_pair(Itr, false);
+    }
+    mAnalysis.emplace_back();
+    mAnalysis.back().first = ServerID;
+    if (IsActive)
+      mActiveIdx = size();
+    return std::make_pair(end() - 1, true);
+  }
+
+  iterator begin() { return mAnalysis.begin(); }
+  iterator end() { return mAnalysis.end(); }
+
+  const_iterator begin() const { return mAnalysis.begin(); }
+  const_iterator end() const { return mAnalysis.end(); }
+
+  /// Return socket to access a specified server.
+  iterator find(llvm::AnalysisID ServerID) {
+    return llvm::find_if(mAnalysis, [ServerID](const ServerToSocket &Info) {
+      return Info.first == ServerID;
+    });
+  }
+
+  /// Return socket to access a specified server.
+  const_iterator get(llvm::AnalysisID ServerID) const {
+    return llvm::find_if(mAnalysis, [ServerID](const ServerToSocket &Info) {
+      return Info.first == ServerID;
+    });
+  }
+
+  unsigned size() const { return mAnalysis.size(); }
+  bool empty() const { return mAnalysis.empty(); }
+  operator bool() const { return !empty(); }
+
+  /// Return socket to access a specified server, create a new socket if it is
+  /// not exist.
+  AnalysisSocket & operator[](llvm::AnalysisID ServerID) {
+    return emplace(ServerID, false).first->second;
+  }
+
+  iterator getActive() { return mAnalysis.begin() + mActiveIdx - 1; }
+  const_iterator getActive() const { return mAnalysis.begin() + mActiveIdx - 1; }
+
+  bool setActive(llvm::AnalysisID ServerID) {
+    auto Itr = find(ServerID);
+    if (Itr == end())
+      return false;
+    mActiveIdx = std::distance(mAnalysis.begin(), Itr) + 1;
+  }
+
+  AnalysisSocket * getActiveSocket() {
+    return getActive() == end() ? nullptr : &getActive()->second;
+  }
+
+  const AnalysisSocket * getActiveSocket() const {
+    return getActive() == end() ? nullptr : &getActive()->second;
+  }
+
+private:
+  llvm::SmallVector<ServerToSocket, 2> mAnalysis;
+  unsigned mActiveIdx = 0;
+};
 }
 
 namespace json {
@@ -328,7 +404,7 @@ JSON_DEFAULT_TRAITS(tsar::, AnalysisResponse)
 namespace llvm {
 /// Wrapper to allow client passes access analysis socket.
 using AnalysisSocketImmutableWrapper =
-  AnalysisWrapperPass<tsar::AnalysisSocket>;
+    AnalysisWrapperPass<tsar::AnalysisSocketInfo>;
 
 /// Wrapper to allow server passes access analysis connection.
 ///
