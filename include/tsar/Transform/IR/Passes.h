@@ -72,5 +72,11 @@ void initializeCallExtractorPassPass(PassRegistry& Registry);
 /// Create a pass which extract each call instruction
 /// (except debug instructions) into its own new basic block.
 FunctionPass* createCallExtractorPass();
+
+/// Initialize a pass which deduces function memory attributes.
+void initializeFunctionMemoryAttrsAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass which deduces function memory attributes.
+FunctionPass *createFunctionMemoryAttrsAnalysis();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H

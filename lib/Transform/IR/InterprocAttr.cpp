@@ -23,6 +23,8 @@
 //
 //===----------------------------------------------------------------------===//
 #include "tsar/Transform/IR/InterprocAttr.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/IRUtils.h"
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -43,6 +45,7 @@ STATISTIC(NumLibFunc, "Number of functions marked as sapfor.libfunc");
 STATISTIC(NumNoIOFunc, "Number of functions marked as sapfor.noio");
 STATISTIC(NumAlwaysRetFunc, "Number of functions marked as sapfor.alwaysreturn");
 STATISTIC(NumDirectUserCalleFunc, "Number of funstions marked as sapfor.direct-user-callee");
+STATISTIC(NumArgMemOnlyFunc, "Number of functions marked as argmemonly");
 STATISTIC(NumNoIOLoop, "Number of loops marked as sapfor.noio");
 STATISTIC(NumAlwaysRetLoop, "Number of loops marked as sapfor.alwaysreturn");
 STATISTIC(NumNoUnwindLoop, "Number of loops marked as nounwind");
@@ -326,3 +329,47 @@ bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
   });
   return false;
 }
+
+namespace {
+class FunctionMemoryAttrsAnalysis : public FunctionPass, bcl::Uncopyable {
+public:
+  static char ID;
+  FunctionMemoryAttrsAnalysis() : FunctionPass(ID) {
+    initializeFunctionMemoryAttrsAnalysisPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnFunction(Function &F) override {
+    auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
+    auto &RegInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
+    auto DefItr = DefInfo.find(RegInfo.getTopLevelRegion());
+    assert(DefItr != DefInfo.end() &&
+           "Defined memory analysis must be available for function!");
+    /// TODO (kaniandr@gmail.com): deduce other useful attributes, such as,
+    /// readonly, writeonly, readnone and speculatable.
+    if (isPure(F, *DefItr->get<DefUseSet>())) {
+      F.setOnlyAccessesArgMemory();
+      ++NumArgMemOnlyFunc;
+      return true;
+    }
+    return false;
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+    AU.addRequired<DefinedMemoryPass>();
+    AU.addRequired<DFRegionInfoPass>();
+  }
+};
+}
+
+FunctionPass *llvm::createFunctionMemoryAttrsAnalysis() {
+  return new FunctionMemoryAttrsAnalysis;
+}
+
+char FunctionMemoryAttrsAnalysis::ID = 0;
+INITIALIZE_PASS_BEGIN(FunctionMemoryAttrsAnalysis, "memory-functionattr",
+  "Deduce Function Memory Attributes", true, false)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
+INITIALIZE_PASS_END(FunctionMemoryAttrsAnalysis, "memory-functionattr",
+  "Deduce Function Memory Attributes", true, false)
