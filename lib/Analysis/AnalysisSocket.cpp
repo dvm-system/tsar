@@ -42,7 +42,7 @@ public:
   }
 
   void initializePass() override {
-    getAnalysis<AnalysisSocketImmutableWrapper>().set(mSocket);
+    getAnalysis<AnalysisSocketImmutableWrapper>().set(mSocketInfo);
   }
 
   void getAnalysisUsage(AnalysisUsage& AU) const override {
@@ -50,7 +50,7 @@ public:
   }
 
 private:
-  AnalysisSocket mSocket;
+  AnalysisSocketInfo mSocketInfo;
 };
 
 class AnalysisNotifyClientPass :
@@ -91,13 +91,30 @@ class AnalysisReleaseServerPass :
 public:
   static char ID;
 
-  AnalysisReleaseServerPass() : ModulePass(ID) {
+  AnalysisReleaseServerPass(bool ActiveOnly = false)
+      : ModulePass(ID), mActiveOnly(ActiveOnly) {
+    initializeAnalysisReleaseServerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  AnalysisReleaseServerPass(AnalysisID ServerID)
+      : ModulePass(ID), mServerID(ServerID) {
     initializeAnalysisReleaseServerPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module& M) override {
-    auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>();
-    Socket->release();
+    auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    if (mActiveOnly) {
+      auto Itr = SocketInfo.getActive();
+      if (Itr != SocketInfo.end())
+        Itr->second.release();
+    } else if (mServerID) {
+      auto Itr = SocketInfo.find(*mServerID);
+      if (Itr != SocketInfo.end())
+        Itr->second.release();
+    } else {
+      for (auto &Socket : *getAnalysis<AnalysisSocketImmutableWrapper>())
+        Socket.second.release();
+    }
     return false;
   }
 
@@ -105,6 +122,10 @@ public:
     AU.addRequired<AnalysisSocketImmutableWrapper>();
     AU.setPreservesAll();
   }
+
+private:
+  Optional<AnalysisID> mServerID;
+  bool mActiveOnly;
 };
 
 class AnalysisWaitServerPass :
@@ -112,13 +133,30 @@ class AnalysisWaitServerPass :
 public:
   static char ID;
 
-  AnalysisWaitServerPass() : ModulePass(ID) {
+  AnalysisWaitServerPass(bool ActiveOnly = false)
+      : ModulePass(ID), mActiveOnly(ActiveOnly) {
+    initializeAnalysisWaitServerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  AnalysisWaitServerPass(AnalysisID ServerID)
+      : ModulePass(ID), mServerID(ServerID) {
     initializeAnalysisWaitServerPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module& M) override {
-    auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>();
-    Socket->wait();
+    auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    if (mActiveOnly) {
+      auto Itr = SocketInfo.getActive();
+      if (Itr != SocketInfo.end())
+        Itr->second.wait();
+    } else if (mServerID) {
+      auto Itr = SocketInfo.find(*mServerID);
+      if (Itr != SocketInfo.end())
+        Itr->second.wait();
+    } else {
+      for (auto &Socket : *getAnalysis<AnalysisSocketImmutableWrapper>())
+        Socket.second.wait();
+    }
     return false;
   }
 
@@ -126,6 +164,10 @@ public:
     AU.addRequired<AnalysisSocketImmutableWrapper>();
     AU.setPreservesAll();
   }
+
+private:
+  Optional<AnalysisID> mServerID;
+  bool mActiveOnly;
 };
 
 class AnalysisCloseConnectionPass :
@@ -133,14 +175,36 @@ class AnalysisCloseConnectionPass :
 public:
   static char ID;
 
-  AnalysisCloseConnectionPass() : ModulePass(ID) {
+  AnalysisCloseConnectionPass(bool ActiveOnly = false)
+      : ModulePass(ID), mActiveOnly(ActiveOnly) {
+    initializeAnalysisCloseConnectionPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  AnalysisCloseConnectionPass(AnalysisID ServerID)
+      : ModulePass(ID), mServerID(ServerID) {
     initializeAnalysisCloseConnectionPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module& M) override {
-    auto &Socket = getAnalysis<AnalysisSocketImmutableWrapper>();
-    Socket->wait();
-    Socket->close();
+    auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    if (mActiveOnly) {
+      auto Itr = SocketInfo.getActive();
+      if (Itr != SocketInfo.end()) {
+        Itr->second.wait();
+        Itr->second.close();
+      }
+    } else if (mServerID) {
+      auto Itr = SocketInfo.find(*mServerID);
+      if (Itr != SocketInfo.end()) {
+        Itr->second.wait();
+        Itr->second.close();
+      }
+    } else {
+      for (auto &Socket : *getAnalysis<AnalysisSocketImmutableWrapper>()) {
+        Socket.second.wait();
+        Socket.second.close();
+      }
+    }
     return false;
   }
 
@@ -148,6 +212,9 @@ public:
     AU.addRequired<AnalysisSocketImmutableWrapper>();
     AU.setPreservesAll();
   }
+private:
+  Optional<AnalysisID> mServerID;
+  bool mActiveOnly;
 };
 }
 
@@ -213,14 +280,26 @@ ModulePass * llvm::createAnalysisNotifyClientPass() {
   return new AnalysisNotifyClientPass;
 }
 
-ModulePass * llvm::createAnalysisReleaseServerPass() {
-  return new AnalysisReleaseServerPass;
+ModulePass * llvm::createAnalysisReleaseServerPass(bool ActiveOnly) {
+  return new AnalysisReleaseServerPass(ActiveOnly);
 }
 
-ModulePass * llvm::createAnalysisWaitServerPass() {
-  return new AnalysisWaitServerPass;
+ModulePass * llvm::createAnalysisReleaseServerPass(llvm::AnalysisID ServerID) {
+  return new AnalysisReleaseServerPass(ServerID);
 }
 
-ModulePass * llvm::createAnalysisCloseConnectionPass() {
+ModulePass * llvm::createAnalysisWaitServerPass(bool ActiveOnly) {
+  return new AnalysisWaitServerPass(ActiveOnly);
+}
+
+ModulePass * llvm::createAnalysisWaitServerPass(AnalysisID ServerID) {
+  return new AnalysisWaitServerPass(ServerID);
+}
+
+ModulePass * llvm::createAnalysisCloseConnectionPass(bool ActiveOnly) {
   return new AnalysisCloseConnectionPass;
+}
+
+ModulePass * llvm::createAnalysisCloseConnectionPass(AnalysisID ServerID) {
+  return new AnalysisCloseConnectionPass(ServerID);
 }

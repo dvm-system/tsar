@@ -92,19 +92,30 @@ void initializeAnalysisReleaseServerPassPass(PassRegistry &Registry);
 
 /// Notify server that all requests have been processed and it may execute
 /// further passes.
-ModulePass * createAnalysisReleaseServerPass();
+ModulePass * createAnalysisReleaseServerPass(bool ActiveOnly = false);
+
+/// Notify server that all requests have been processed and it may execute
+/// further passes.
+ModulePass * createAnalysisReleaseServerPass(const void * ServerID);
 
 /// Initialize a pass to block client until server send notification.
 void initializeAnalysisWaitServerPassPass(PassRegistry &Registry);
 
 /// Block client until server sends notification.
-ModulePass * createAnalysisWaitServerPass();
+ModulePass * createAnalysisWaitServerPass(bool ActiveOnly = false);
+
+/// Block client until server sends notification.
+ModulePass * createAnalysisWaitServerPass(const void * ServerID);
 
 /// Initialize a pass to close connection with server.
 void initializeAnalysisCloseConnectionPassPass(PassRegistry &Registry);
 
 /// Close connection with server (it should be run on client). Client will
 /// be blocked until server confirms that connection can be closed.
-ModulePass *createAnalysisCloseConnectionPass();
+ModulePass *createAnalysisCloseConnectionPass(bool ActiveOnly = false);
+
+/// Close connection with server (it should be run on client). Client will
+/// be blocked until server confirms that connection can be closed.
+ModulePass *createAnalysisCloseConnectionPass(const void * ServerID);
 }
 #endif//TSAR_ANALYSIS_PASSES_H

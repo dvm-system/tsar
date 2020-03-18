@@ -64,17 +64,23 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
   DIAliasTree *DIAT = nullptr;
   DIDependencInfo *DIDepInfo = nullptr;
   std::function<ObjectID(ObjectID)> getLoopID = [](ObjectID ID) { return ID; };
-  if (auto *Socket = getAnalysisIfAvailable<AnalysisSocketImmutableWrapper>()) {
-    if (auto R = (*Socket)->getAnalysis<AnalysisClientServerMatcherWrapper>()) {
-      auto *Matcher = R->value<AnalysisClientServerMatcherWrapper *>();
-      getLoopID = [Matcher](ObjectID ID) {
-        auto ServerID = (*Matcher)->getMappedMD(ID);
-        return ServerID ? cast<MDNode>(*ServerID) : nullptr;
-      };
-      if (auto R =(*Socket)->getAnalysis<
-            DIEstimateMemoryPass, DIDependencyAnalysisPass>(F)) {
-        DIAT = &R->value<DIEstimateMemoryPass *>()->getAliasTree();
-        DIDepInfo = &R->value<DIDependencyAnalysisPass *>()->getDependencies();
+  std::function<Value * (Value *)> getValue = [](Value *V) { return V; };
+  if (auto *SInfo = getAnalysisIfAvailable<AnalysisSocketImmutableWrapper>()) {
+    if (auto *Socket = (*SInfo)->getActiveSocket()) {
+      if (auto R = Socket->getAnalysis<AnalysisClientServerMatcherWrapper>()) {
+        auto *Matcher = R->value<AnalysisClientServerMatcherWrapper *>();
+        getLoopID = [Matcher](ObjectID ID) {
+          auto ServerID = (*Matcher)->getMappedMD(ID);
+          return ServerID ? cast<MDNode>(*ServerID) : nullptr;
+        };
+        getValue = [Matcher](Value *V) {
+          return (**Matcher)[V];
+        };
+        if (auto R = Socket->getAnalysis<
+          DIEstimateMemoryPass, DIDependencyAnalysisPass>(F)) {
+          DIAT = &R->value<DIEstimateMemoryPass *>()->getAliasTree();
+          DIDepInfo = &R->value<DIDependencyAnalysisPass *>()->getDependencies();
+        }
       }
     }
   }
