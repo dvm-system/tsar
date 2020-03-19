@@ -145,7 +145,8 @@ bool VariableCollector::localize(DIAliasTrait &TS,
               const ClonedDIMemoryMatcher &ClientToServer,
               SortedVarListT &VarNames, clang::VarDecl **Error) {
   for (auto &T : TS)
-    if (!localize(*T, *TS.getNode(), ASTToClient, ClientToServer, VarNames))
+    if (!localize(*T, *TS.getNode(),
+          ASTToClient, ClientToServer, VarNames, Error))
       return false;
   return true;
 }

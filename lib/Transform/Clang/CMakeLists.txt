@@ -1,5 +1,6 @@
 set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp Inline.cpp RenameLocal.cpp
-  DeadDeclsElimination.cpp FormatPass.cpp OpenMPAutoPar.cpp)
+  DeadDeclsElimination.cpp FormatPass.cpp OpenMPAutoPar.cpp
+  SharedMemoryAutoPar.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

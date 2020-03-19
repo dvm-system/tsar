@@ -131,6 +131,7 @@ def warn_parallel_not_canonical : Warning<"unable to create parallel directive f
 def note_parallel_multiple_induction : Note<"loop has multiple inducition variables">;
 def note_parallel_localize_private_unable : Note<"unable to localize privatizable variable">;
 def note_parallel_localize_reduction_unable : Note<"unable to localize reduction variable">;
+def note_parallel_localize_inout_unable : Note<"unable to localize inout variable">;
 def note_parallel_localize_global_unable : Note<"unable to localize global variable">;
 def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents parallel execution">;
 def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
