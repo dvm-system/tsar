@@ -34,4 +34,5 @@ void llvm::initializeClangTransform(PassRegistry &Registry) {
   initializeClangRenameLocalPassPass(Registry);
   initializeClangDeadDeclsEliminationPass(Registry);
   initializeClangOpenMPParallelizationPass(Registry);
+  initializeClangDVMHSMParallelizationPass(Registry);
 }
