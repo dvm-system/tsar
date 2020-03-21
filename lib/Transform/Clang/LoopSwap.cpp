@@ -33,6 +33,7 @@ using namespace std;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-swap"
+#define DEBUG_PREFIX "[LoopSwap]: "
 
 char ClangLoopSwapPass::ID = 0;
 
@@ -96,6 +97,9 @@ void ClangLoopSwapPass::getAnalysisUsage(AnalysisUsage &AU) const {
 ModulePass *llvm::createClangLoopSwapPass() { return new ClangLoopSwapPass(); }
 
 namespace {
+inline void dbgPrintln(const char * Msg) {
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
+}
 class SwapClauseVisitor : public RecursiveASTVisitor<SwapClauseVisitor> {
 public:
   bool VisitStringLiteral(clang::StringLiteral *SL) {
@@ -119,7 +123,8 @@ public:
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
         mLangOpts(mRewriter.getLangOpts()), mPass(Pass), mModule(M),
         mStatus(SEARCH_PRAGMA), mGO(NULL), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
+        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
+        mIsStrict(false) {}
   const CanonicalLoopInfo *getLoopInfo(ForStmt *FS) {
     if (!FS)
       return NULL;
@@ -137,14 +142,16 @@ public:
       auto LI = getLoopInfo(FS);
       bool IsCanonical;
       bool IsPerfect;
+      clang::ValueDecl *VD = NULL;
       if (LI) {
         IsCanonical = LI->isCanonical();
         IsPerfect = mPerfectLoopInfo->count(LI->getLoop());
         // to get Value name it is necessary to match IR Value* to AST
         // ValueDecl*, it is possible that on Linux 'Value->getName()' doesn't
         // works
-        mInductions.push_back(std::pair<clang::ValueDecl *, clang::ForStmt *>(
-            mMemMatcher->find<IR>(LI->getInduction())->get<AST>(), FS));
+        VD = mMemMatcher->find<IR>(LI->getInduction())->get<AST>();
+        mInductions.push_back(
+            std::pair<clang::ValueDecl *, clang::ForStmt *>(VD, FS));
       } else {
         // if it's not canonical loop, gathering induction is difficult, there
         // may be no induction at all; so just set a NULL stub
@@ -161,6 +168,30 @@ public:
         mLoopsKinds.push_back(NOT_CANONICAL);
       else
         mLoopsKinds.push_back(NOT_CANONICAL_AND_PERFECT);
+      // check only if canonical and perfect, otherwise it's not necessary or
+      // there is no LoopInfo
+      if (mIsStrict && IsCanonical && IsPerfect) {
+        bool Dependency = false;
+        auto *Loop = LI->getLoop()->getLoop();
+        auto *LoopID = Loop->getLoopID();
+        auto DepItr = mDIDepInfo->find(LoopID);
+        auto &DIDepSet = DepItr->get<DIDependenceSet>();
+        DenseSet<const DIAliasNode *> Coverage;
+        accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
+                                            mGO->IgnoreRedundantMemory);
+        if (!Coverage.empty()) {
+          for (auto &DIAT : DIDepSet) {
+            if (!Coverage.count(DIAT.getNode()))
+              continue;
+            if (DIAT.is_any<trait::Output, trait::Anti, trait::Flow>()) {
+              Dependency = true;
+            }
+          }
+        }
+        if (Dependency) {
+          mLoopsKinds[mLoopsKinds.size() - 1] = HAS_DEPENDENCY;
+        }
+      }
 
       return RecursiveASTVisitor::TraverseForStmt(FS);
     } else {
@@ -184,9 +215,25 @@ public:
     case Status::SEARCH_PRAGMA: {
       Pragma P(*S);
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
-      // if found expand clause
-      bool Found = false;
       if (findClause(P, ClauseId::LoopSwap, Clauses)) {
+        dbgPrintln("Pragma -> start");
+        // collect info from clauses
+        SwapClauseVisitor SCV;
+        for (auto C : Clauses)
+          SCV.TraverseStmt(C);
+        auto &Literals = SCV.getLiterals();
+        for (auto L : Literals) {
+          mSwaps.push_back(L);
+        }
+        // also check for nostrict clause
+        mIsStrict = true;
+        auto Csize = Clauses.size();
+        findClause(P, ClauseId::NoStrict, Clauses);
+        if (Csize != Clauses.size()) {
+          mIsStrict = false;
+          dbgPrintln("Found nostrict clause");
+        }
+        // remove clauses
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
         auto IsPossible =
             pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, ToRemove);
@@ -206,13 +253,6 @@ public:
         RemoveEmptyLine.RemoveLineIfEmpty = false;
         for (auto SR : ToRemove)
           mRewriter.RemoveText(SR, RemoveEmptyLine);
-        SwapClauseVisitor SCV;
-        for (auto C : Clauses)
-          SCV.TraverseStmt(C);
-        auto &Literals = SCV.getLiterals();
-        for (auto L : Literals) {
-          mSwaps.push_back(L);
-        }
         Clauses.clear();
         mStatus = Status::TRAVERSE_STMT;
         return true;
@@ -309,6 +349,10 @@ public:
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
                  diag::warn_loopswap_not_perfect);
+        } else if (mLoopsKinds[i] == HAS_DEPENDENCY) {
+          IsPossible = false;
+          toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
+                 diag::err_loopswap_dependency);
         }
       }
       if (!IsPossible) {
@@ -343,6 +387,7 @@ public:
         }
       }
 
+      dbgPrintln("Pragma -> done");
       resetVisitor();
       return res;
     }
@@ -361,6 +406,7 @@ public:
     mSwaps.clear();
     mInductions.clear();
     mLoopsKinds.clear();
+    mIsStrict = false;
   }
 
 private:
@@ -398,12 +444,13 @@ private:
   const tsar::GlobalOptions *mGO;
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
-
+  bool mIsStrict;
   enum LoopKind {
     CANONICAL_AND_PERFECT,
     NOT_PERFECT,
     NOT_CANONICAL,
-    NOT_CANONICAL_AND_PERFECT
+    NOT_CANONICAL_AND_PERFECT,
+    HAS_DEPENDENCY
   };
   llvm::SmallVector<LoopKind, 2> mLoopsKinds;
   llvm::SmallVector<std::pair<clang::ValueDecl *, clang::ForStmt *>, 2>
@@ -415,7 +462,7 @@ private:
 } // namespace
 
 bool ClangLoopSwapPass::runOnModule(llvm::Module &M) {
-  errs() << "Start loop swap pass\n";
+  dbgPrintln( "Start Loop Swap pass");
   auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
@@ -446,6 +493,6 @@ bool ClangLoopSwapPass::runOnModule(llvm::Module &M) {
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   ClangLoopSwapVisitor vis(TfmCtx, GIP.getRawInfo(), *this, M);
   vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  errs() << "Finish loop swap pass\n";
+  dbgPrintln("Finish Loop Swap pass");
   return false;
 }

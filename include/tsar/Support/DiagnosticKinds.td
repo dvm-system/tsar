@@ -194,3 +194,4 @@ def warn_loopswap_not_canonical: Warning<"expected canonical loop">;
 def warn_loopswap_not_perfect: Warning<"expected perfect loop">;
 def warn_loopswap_id_not_found: Warning<"induction not found">;
 def warn_loopswap_not_forstmt: Warning<"expected for loop">;
+def err_loopswap_dependency: Error<"loop contains dependence. use 'nostrict' clause to skip this check">;
