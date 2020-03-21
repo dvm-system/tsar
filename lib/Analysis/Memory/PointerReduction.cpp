@@ -1,8 +1,9 @@
-#include <tsar/Analysis/DFRegionInfo.h>
-#include <tsar/Analysis/Memory/DIMemoryTrait.h>
-#include <tsar/Analysis/Memory/PointerReduction.h>
-#include <tsar/Core/Query.h>
-#include <tsar/Support/IRUtils.h>
+#include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/PointerReduction.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Support/IRUtils.h"
+
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/PassSupport.h>
 #include <llvm/Transforms/Scalar.h>
@@ -24,15 +25,42 @@ void PointerReductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIMemoryTraitPoolWrapper>();
 }
 
-Value *getFirstAssociativeOp(Value *V) {
+bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
   for (auto *User : V->users()) {
-    if (auto *I = dyn_cast<Instruction>(User)) {
-      if (I->isAssociative()) {
-        return I;
+    if (auto *SI = dyn_cast<LoadInst>(User)) {
+      if (L->contains(SI) && SI->isVolatile()) {
+        return true;
       }
     }
   }
-  return nullptr;
+  return false;
+}
+
+bool hasPossibleReductionUses(Instruction *Instr) {
+  const static auto opCodes = {
+      BinaryOperator::Add,
+      BinaryOperator::FAdd,
+      BinaryOperator::Sub,
+      BinaryOperator::FSub,
+      BinaryOperator::Mul,
+      BinaryOperator::FMul,
+      BinaryOperator::UDiv,
+      BinaryOperator::SDiv,
+      BinaryOperator::FDiv,
+
+  };
+  for (auto *User : Instr->users()) {
+    if (auto *Op = dyn_cast<Instruction>(User)) {
+      if (Op->isAssociative()) {
+        for (auto opCode : opCodes) {
+          if (Op->getOpcode() == opCode) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 void eraseAllStoreInstFromLoop(Value *V, Loop *L) {
@@ -56,6 +84,88 @@ bool validateValue(Value *V, Loop *L) {
   return true;
 }
 
+void handleLoadsInBB(BasicBlock *BB, DenseMap<BasicBlock *, Instruction *> &lastInstructions) {
+  Instruction *lastVal = lastInstructions[BB];
+  for (auto &Instr : BB->getInstList()) {
+    if (auto *Load = dyn_cast<LoadInst>(&Instr)) {
+      auto *oldLastVal = lastVal;
+      if (Load->user_empty()) {
+        continue;
+      }
+      if (!Load->isUsedOutsideOfBlock(BB)) {
+        lastVal = Load->user_back();
+      } else {
+        for (auto *User : Load->users()) {
+          if (auto *I = dyn_cast<Instruction>(User)) {
+            if (I->getParent() == BB) {
+              lastVal = I;
+            } else {
+              lastInstructions[I->getParent()] = I;
+            }
+          }
+        }
+      }
+      Load->replaceAllUsesWith(oldLastVal);
+//      Load->dropAllReferences();
+//      Load->eraseFromParent();
+    }
+  }
+  lastInstructions[BB] = lastVal;
+}
+
+void handleLoads(
+    Loop *L,
+    BasicBlock *BB,
+    DenseMap<BasicBlock *, Instruction *> &lastInstructions,
+    DenseSet<BasicBlock *> &completedBlocks,
+    bool init = false)
+{
+  if (completedBlocks.find(BB) != completedBlocks.end()) {
+    return;
+  }
+  if (!init) {
+    handleLoadsInBB(BB, lastInstructions);
+  }
+  completedBlocks.insert(BB);
+  for (auto *Succ : successors(BB)) {
+    if (L->contains(Succ)) {
+      handleLoads(L, Succ, lastInstructions, completedBlocks);
+    }
+  }
+}
+
+void insertPhiNodes(
+    BasicBlock *BB,
+    DenseMap<BasicBlock *, PHINode *> &phiNodes,
+    DenseMap<BasicBlock *, Instruction *> &lastInstructions,
+    DenseSet<PHINode *> &uniqueNodes,
+    Value *V,
+    bool init = false)
+{
+  if (phiNodes.find(BB) != phiNodes.end()) {
+    return;
+  }
+  bool needsCreate = false;
+  if (pred_size(BB) == 1 && !init) {
+    if (phiNodes.find(BB->getSinglePredecessor()) != phiNodes.end()) {
+      phiNodes[BB] = phiNodes.find(BB->getSinglePredecessor())->second;
+    } else {
+      needsCreate = true;
+    }
+  } else if (!init) {
+    needsCreate = true;
+  }
+  if (needsCreate) {
+    auto *phi = PHINode::Create(V->getType()->getPointerElementType(), 0,
+        "phi." + BB->getName(), &BB->front());
+    phiNodes[BB] = phi;
+    uniqueNodes.insert(phi);
+  }
+  for (auto *Succ : successors(BB)) {
+    insertPhiNodes(Succ, phiNodes, lastInstructions, uniqueNodes, V);
+  }
+}
+
 bool PointerReductionPass::runOnFunction(Function &F) {
   auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
@@ -69,7 +179,7 @@ bool PointerReductionPass::runOnFunction(Function &F) {
 
   for_each_loop(LI, [this, &TraitPool](Loop *L) {
     auto &Pool = TraitPool[L->getLoopID()];
-    SmallDenseMap<Value *, SetVector<LoadInst *>> Values;
+    SmallDenseSet<Value *> Values;
     if (!Pool) {
       Pool = make_unique<DIMemoryTraitRegionPool>();
     } else {
@@ -79,8 +189,9 @@ bool PointerReductionPass::runOnFunction(Function &F) {
             if (V.pointsToAliveValue()) {
               for (auto *User : V->users()) {
                 if (auto *LI = dyn_cast<LoadInst>(User)) {
-                  if (L->contains(LI)) {
-                    Values[LI->getPointerOperand()].insert(LI);
+                  if (L->contains(LI) && hasPossibleReductionUses(LI)) {
+                    Values.insert(LI->getPointerOperand());
+                    break;
                   }
                 }
               }
@@ -90,60 +201,43 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       }
     }
 
-    for (auto &Pair : Values) {
-      auto *V = Pair.first;
-      auto &Loads = Pair.second;
-
-      if (Loads.empty()) {
-        continue;
-      }
-
+    for (auto *V : Values) {
       // we cannot replace anything if the pointer value can change somehow
       if (!validateValue(V, L)) {
         break;
       }
 
-      // check that instructions that use Loads are all in the same basic block
-      bool hasSameBB = true;
-      for (auto *Load : Loads) {
-        for (auto *User : Load->users()) {
-          if (auto *Instr = dyn_cast<Instruction>(User)) {
-            if (Load->getParent() != Instr->getParent()) {
-              hasSameBB = false;
-              break;
-            }
-          }
-        }
-        if (!hasSameBB) {
-          break;
-        }
-      }
-      if (!hasSameBB) {
-        continue;
+      // Load instructions that are marked volatile cannot be removed
+      if (hasVolatileLoadInstInLoop(V, L)) {
+        break;
       }
 
-      auto *BeforeInstr = new LoadInst(V, "tmp_name", &L->getLoopPredecessor()->back());
-      BeforeInstr->copyMetadata(*Loads[0]);
+      auto *BeforeInstr = new LoadInst(V, "LoadPtr", &L->getLoopPredecessor()->back());
+      DenseMap<BasicBlock *, PHINode *> phiNodes;
+      DenseSet<PHINode *> uniqueNodes;
+      DenseMap<BasicBlock *, Instruction *> lastInstructions;
+      insertPhiNodes(L->getLoopPredecessor(), phiNodes, lastInstructions, uniqueNodes, V, true);
 
-      auto *Phi = PHINode::Create(V->getType()->getPointerElementType(), 0, "123", &L->getBlocks().front()->front());
-      Phi->addIncoming(BeforeInstr, L->getLoopPreheader());
+      lastInstructions[L->getLoopPredecessor()] = BeforeInstr;
+      for (auto &P : phiNodes) {
+        lastInstructions[P.first] = P.second;
+      }
 
-      Value *lastVal = Phi;
-      for (auto *Load : Loads) {
-        if (auto *Instr = getFirstAssociativeOp(Load)) {
-          Load->replaceAllUsesWith(lastVal);
-          lastVal = Instr;
-          Load->eraseFromParent();
+      DenseSet<BasicBlock *> processedBlocks;
+      handleLoads(L, L->getLoopPredecessor(), lastInstructions, processedBlocks, true);
+
+      for (auto *Phi : uniqueNodes) {
+        auto *BB = Phi->getParent();
+        for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
+          phiNodes[BB]->addIncoming(lastInstructions[*Pred], *Pred);
         }
       }
-      Phi->addIncoming(lastVal, L->getBlocks().back());
 
       SmallVector<BasicBlock *, 8> ExitBlocks;
       L->getExitBlocks(ExitBlocks);
       for (auto *BB : ExitBlocks) {
-        new StoreInst(Phi, V, &BB->front());
+        new StoreInst(phiNodes[BB], V, BB->getFirstNonPHI());
       }
-
       eraseAllStoreInstFromLoop(V, L);
     }
   });
