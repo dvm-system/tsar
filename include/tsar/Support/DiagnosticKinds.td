@@ -195,5 +195,8 @@ def warn_interchange_not_for_loop: Warning<"unable to interchange not for-loop">
 def warn_interchange_dependency: Warning<"unable to interchange loop with data dependencies (use the 'nostrict' clause to force transformation)">;
 def warn_interchange_no_analysis: Warning<"absence of analysis results prevents loop interchange (use the 'nostrict' clause to force transformation">;
 
+def err_reverse_not_forstmt : Error<"for loop expected">;
+def err_reverse_not_canonical : Error<"expected canonical loop form">;
+
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
