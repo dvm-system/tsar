@@ -225,7 +225,7 @@ public:
                   break;
                 }
                 case clang::BinaryOperator::Opcode::BO_Sub: {
-                  IncExprSR = BO->getRHS()->getSourceRange();
+                  IncExprSR = OP->getRHS()->getSourceRange();
                   IncrLoc = OP->getOperatorLoc();
                   Offset = 0;
                   NewIncrOp = "+";
@@ -284,7 +284,7 @@ public:
             auto *Left = BO->getLHS();
             auto *Right = BO->getRHS();
             MiniVisitor MV;
-            MV.VisitStmt(Right);
+            MV.TraverseStmt(Right);
             bool Flag = false;
             if (auto *DRE = MV.getDRE()) {
               if (DRE->getDecl() == ASTInd) {
@@ -348,32 +348,39 @@ public:
           auto TextInitExpr = mRewriter.getRewrittenText(InitExprSR);
           auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR);
           std::string TextIncrExpr;
-          if (UnaryIncr) {
-            TextIncrExpr = "1";
-          } else {
-            TextIncrExpr = mRewriter.getRewrittenText(IncExprSR);
-          }
           std::string TextNewInitExpr;
-          if (CondExclude) {
-            if (IndSign) {
-              TextNewInitExpr = "((" + TextInitExpr + ")+(((" +
-                                TextCondExpr + ")-1)-(" + TextInitExpr +
-                                "))/(" + TextIncrExpr + ")*(" + TextIncrExpr +
-                                "))";
+          if (UnaryIncr) {
+            if (CondExclude) {
+              if (IndSign) {
+                TextNewInitExpr = "((" + TextCondExpr + ")-1)";
+              } else {
+                TextNewInitExpr = "((" + TextCondExpr + ")+1)";
+              }
             } else {
-              TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
-                                ")-((" + TextCondExpr + ")+1))/(" + TextIncrExpr +
-                                ")*(" + TextIncrExpr + "))";
+              TextNewInitExpr = "(" + TextCondExpr + ")";
             }
           } else {
-            if (IndSign) {
-              TextNewInitExpr = "((" + TextInitExpr + ")+((" + TextCondExpr +
-                                ")-(" + TextInitExpr + "))/(" + TextIncrExpr +
-                                ")*(" + TextIncrExpr + "))";
+            TextIncrExpr = mRewriter.getRewrittenText(IncExprSR);
+            if (CondExclude) {
+              if (IndSign) {
+                TextNewInitExpr = "((" + TextInitExpr + ")+(((" + TextCondExpr +
+                                  ")-1)-(" + TextInitExpr + "))/(" +
+                                  TextIncrExpr + ")*(" + TextIncrExpr + "))";
+              } else {
+                TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                                  ")-((" + TextCondExpr + ")+1))/(" +
+                                  TextIncrExpr + ")*(" + TextIncrExpr + "))";
+              }
             } else {
-              TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
-                                ")-(" + TextCondExpr + "))/(" + TextIncrExpr +
-                                ")*(" + TextIncrExpr + "))";
+              if (IndSign) {
+                TextNewInitExpr = "((" + TextInitExpr + ")+((" + TextCondExpr +
+                                  ")-(" + TextInitExpr + "))/(" + TextIncrExpr +
+                                  ")*(" + TextIncrExpr + "))";
+              } else {
+                TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                                  ")-(" + TextCondExpr + "))/(" + TextIncrExpr +
+                                  ")*(" + TextIncrExpr + "))";
+              }
             }
           }
           // swap incr expr i = b + i -> i = i + b
