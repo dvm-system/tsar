@@ -104,6 +104,33 @@ namespace {
 inline void dbgPrintln(const char *Msg) {
   LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
 }
+class ClauseVisitor : public RecursiveASTVisitor<ClauseVisitor> {
+public:
+  ClauseVisitor() : mSL(NULL), mIL(NULL) {}
+  bool VisitStringLiteral(clang::StringLiteral *SL) {
+    if (!SL)
+      return true;
+    if (SL->getString() != "reverse")
+      mSL = SL;
+    return true;
+  }
+  bool VisitIntegerLiteral(clang::IntegerLiteral *IL) {
+    if (!IL)
+      return true;
+    mIL = IL;
+    return true;
+  }
+  clang::StringLiteral *getSL() { return mSL; }
+  clang::IntegerLiteral *getIL() { return mIL; }
+  void clear() {
+    mSL = NULL;
+    mIL = NULL;
+  }
+
+private:
+  clang::StringLiteral *mSL;
+  clang::IntegerLiteral *mIL;
+};
 class MiniVisitor : public RecursiveASTVisitor<MiniVisitor> {
 public:
   MiniVisitor() : mDRE(NULL) {}
@@ -139,280 +166,29 @@ public:
     }
     return NULL;
   }
-  bool VisitForStmt(ForStmt *FS) {
+  bool TraverseForStmt(ForStmt *FS) {
     if (!FS)
       return false;
-    if (mStatus == TRAVERSE_STMT) {
-      // get analisis from provider for current fucntion, if it not done
-      // already
-      if (mNewAnalisysRequired) {
-        Function *F = mModule.getFunction(mCurrentFD->getNameAsString());
-        mProvider = &mPass.getAnalysis<LoopReversePassProvider>(*F);
-        mCurrentLoops =
-            &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
-        mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
-        mGO = &mProvider->get<GlobalOptionsImmutableWrapper>().getOptions();
-        mDIDepInfo =
-            &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
-        mMemMatcher =
-            &mProvider->get<MemoryMatcherImmutableWrapper>().get().Matcher;
-        mPerfectLoopInfo =
-            &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
-        mNewAnalisysRequired = false;
-      }
-      auto LI = getLoopInfo(FS);
+    if (mStatus == TRAVERSE_LOOPS) {
       if (auto *LI = getLoopInfo(FS)) {
-        if (LI->isCanonical()) {
-          auto *InitExpr = FS->getInit();
-          auto *CondExpr = FS->getCond();
-          auto *IncrExpr = FS->getInc();
-          auto *IRInd = LI->getInduction();
-          auto *ASTInd = mMemMatcher->find<IR>(IRInd)->get<AST>();
-          bool IndSign = true;
-          clang::SourceLocation IncrLoc;
-          const char *NewIncrOp;
-          clang::SourceRange IncExprSR;
-          // if i = b + i -> i = i - b
-          bool IncrSwapReq = false;
-          bool UnaryIncr = false;
-          clang::SourceRange IncrRightExprSR;
-          clang::SourceRange IncrLeftExprSR;
-          int Offset;
-          // Increment expression transform
-          if (auto *BO = dyn_cast<clang::BinaryOperator>(IncrExpr)) {
-            switch (BO->getOpcode()) {
-            case clang::BinaryOperator::Opcode::BO_AddAssign: {
-              IncExprSR = BO->getRHS()->getSourceRange();
-              NewIncrOp = "-=";
-              Offset = 1;
-              IncrLoc = BO->getOperatorLoc();
-              IndSign = true;
-              break;
-            }
-            case clang::BinaryOperator::Opcode::BO_SubAssign: {
-              IncExprSR = BO->getRHS()->getSourceRange();
-              NewIncrOp = "+=";
-              Offset = 1;
-              IncrLoc = BO->getOperatorLoc();
-              IndSign = false;
-              break;
-            }
-            case clang::BinaryOperator::Opcode::BO_Assign: {
-              if (auto *OP = dyn_cast<clang::BinaryOperator>(BO->getRHS())) {
-                switch (OP->getOpcode()) {
-                case clang::BinaryOperator::Opcode::BO_Add: {
-                  auto *Left = OP->getLHS();
-                  auto *Right = OP->getRHS();
-                  MiniVisitor MV;
-                  MV.TraverseStmt(Right);
-                  if (auto *DRE = MV.getDRE()) {
-                    if (DRE->getDecl() == ASTInd) {
-                      dbgPrintln("SWAP REQUIRED");
-                      IncrSwapReq = true;
-                    }
-                  }
-                  IncrRightExprSR = Right->getSourceRange();
-                  IncrLeftExprSR = Left->getSourceRange();
-                  if (IncrSwapReq) {
-                    IncExprSR = IncrLeftExprSR;
-                  } else {
-                    IncExprSR = IncrRightExprSR;
-                  }
-                  Offset = 0;
-                  NewIncrOp = "-";
-                  IndSign = true;
-                  IncrLoc = OP->getOperatorLoc();
-                  break;
-                }
-                case clang::BinaryOperator::Opcode::BO_Sub: {
-                  IncExprSR = OP->getRHS()->getSourceRange();
-                  IncrLoc = OP->getOperatorLoc();
-                  Offset = 0;
-                  NewIncrOp = "+";
-                  IndSign = false;
-                  break;
-                }
-                default: {
-                  llvm_unreachable("Not canonical loop. Kind 1\n");
-                }
-                }
-              } else {
-                llvm_unreachable("Not canonical loop. Kind 2\n");
-              }
-              break;
-            }
-            default: {
-              llvm_unreachable("Not canonical loop. Kind 3\n");
-            }
-            }
-
-          } else if (auto *UO = dyn_cast<clang::UnaryOperator>(IncrExpr)) {
-            UnaryIncr = true;
-            switch (UO->getOpcode()) {
-            case clang::UnaryOperator::Opcode::UO_PostInc:
-            case clang::UnaryOperator::Opcode::UO_PreInc: {
-              NewIncrOp = "--";
-              Offset = 1;
-              IncrLoc = UO->getOperatorLoc();
-              IndSign = true;
-              break;
-            }
-            case clang::UnaryOperator::Opcode::UO_PostDec:
-            case clang::UnaryOperator::Opcode::UO_PreDec: {
-              NewIncrOp = "++";
-              Offset = 1;
-              IncrLoc = UO->getOperatorLoc();
-              IndSign = false;
-              break;
-            }
-            default: {
-              llvm_unreachable("Not canonical loop. Kind 5\n");
-            }
-            }
-          } else {
-            llvm_unreachable("Not canonical loop. Kind 4\n");
-          }
-
-          clang::SourceRange CondExprSR;
-          clang::SourceRange CondIndSR;
-          bool CondExclude = false;
-
-          const char *NewCondOp;
-          clang::SourceLocation CondOpLoc;
-          if (auto *BO = dyn_cast<clang::BinaryOperator>(CondExpr)) {
-            CondOpLoc = BO->getOperatorLoc();
-            auto *Left = BO->getLHS();
-            auto *Right = BO->getRHS();
-            MiniVisitor MV;
-            MV.TraverseStmt(Right);
-            bool Flag = false;
-            if (auto *DRE = MV.getDRE()) {
-              if (DRE->getDecl() == ASTInd) {
-                CondIndSR = Right->getSourceRange();
-                CondExprSR = Left->getSourceRange();
-                Flag = true;
-              }
-            }
-            if (!Flag) {
-              CondIndSR = Left->getSourceRange();
-              CondExprSR = Right->getSourceRange();
-            }
-            switch (BO->getOpcode()) {
-            case clang::BinaryOperator::Opcode::BO_LE: {
-              NewCondOp = ">=";
-              Offset = 1;
-              CondExclude = false;
-              break;
-            }
-            case clang::BinaryOperator::Opcode::BO_LT: {
-              NewCondOp = ">=";
-              Offset = 0;
-              CondExclude = true;
-              break;
-            }
-            case clang::BinaryOperator::Opcode::BO_GE: {
-              NewCondOp = "<=";
-              Offset = 1;
-              CondExclude = false;
-              break;
-            }
-            case clang::BinaryOperator::Opcode::BO_GT: {
-              NewCondOp = "<=";
-              Offset = 0;
-              CondExclude = true;
-              break;
-            }
-            default: {
-              llvm_unreachable("Not canonical loop. Kind 7\n");
-            }
-            }
-          } else {
-            llvm_unreachable("Not canonical loop. Kind 6\n");
-          }
-          clang::SourceRange InitExprSR;
-          if (auto *BO = dyn_cast<clang::BinaryOperator>(InitExpr)) {
-            InitExprSR = BO->getRHS()->getSourceRange();
-          } else if (auto *DS = dyn_cast<clang::DeclStmt>(InitExpr)) {
-            InitExprSR = DS->child_begin()->getSourceRange();
-          } else {
-            llvm_unreachable("Not canonical loop. Kind 8\n");
-          }
-
-          // source ranges for old operator signs to replace
-          clang::SourceRange IncrOperatorSR(IncrLoc,
-                                            IncrLoc.getLocWithOffset(Offset));
-
-          clang::SourceRange CondOperatorSR(CondOpLoc,
-                                            CondOpLoc.getLocWithOffset(Offset));
-          // get strings from none transformed code
-          auto TextInitExpr = mRewriter.getRewrittenText(InitExprSR);
-          auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR);
-          std::string TextIncrExpr;
-          std::string TextNewInitExpr;
-          if (UnaryIncr) {
-            if (CondExclude) {
-              if (IndSign) {
-                TextNewInitExpr = "((" + TextCondExpr + ")-1)";
-              } else {
-                TextNewInitExpr = "((" + TextCondExpr + ")+1)";
-              }
-            } else {
-              TextNewInitExpr = "(" + TextCondExpr + ")";
-            }
-          } else {
-            TextIncrExpr = mRewriter.getRewrittenText(IncExprSR);
-            if (CondExclude) {
-              if (IndSign) {
-                TextNewInitExpr = "((" + TextInitExpr + ")+(((" + TextCondExpr +
-                                  ")-1)-(" + TextInitExpr + "))/(" +
-                                  TextIncrExpr + ")*(" + TextIncrExpr + "))";
-              } else {
-                TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
-                                  ")-((" + TextCondExpr + ")+1))/(" +
-                                  TextIncrExpr + ")*(" + TextIncrExpr + "))";
-              }
-            } else {
-              if (IndSign) {
-                TextNewInitExpr = "((" + TextInitExpr + ")+((" + TextCondExpr +
-                                  ")-(" + TextInitExpr + "))/(" + TextIncrExpr +
-                                  ")*(" + TextIncrExpr + "))";
-              } else {
-                TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
-                                  ")-(" + TextCondExpr + "))/(" + TextIncrExpr +
-                                  ")*(" + TextIncrExpr + "))";
-              }
-            }
-          }
-          // swap incr expr i = b + i -> i = i + b
-          if (IncrSwapReq) {
-            auto TextRightIncrExpr =
-                mRewriter.getRewrittenText(IncrRightExprSR);
-            auto TextLeftIncrExpr = mRewriter.getRewrittenText(IncrLeftExprSR);
-            mRewriter.ReplaceText(IncrRightExprSR, TextLeftIncrExpr);
-            mRewriter.ReplaceText(IncrLeftExprSR, TextRightIncrExpr);
-          }
-          // replace incr operator i++ -> i-- ; i+=k -> i-=k; etc
-          mRewriter.ReplaceText(IncrOperatorSR, NewIncrOp);
-          // replace cond operator
-          mRewriter.ReplaceText(CondOperatorSR, NewCondOp);
-          // replace init expression
-          mRewriter.ReplaceText(InitExprSR, TextNewInitExpr);
-          // replace cond expression
-          mRewriter.ReplaceText(CondExprSR, TextInitExpr);
-          resetVisitor();
+        auto *Ind = mMemMatcher->find<IR>(LI->getInduction())->get<AST>();
+        if (mPerfectLoopInfo->count(LI->getLoop())) {
+          mLoops.push_back(
+              std::pair<const tsar::CanonicalLoopInfo *, clang::VarDecl *>(
+                  LI, Ind));
+          // traverse further
+          return RecursiveASTVisitor::TraverseForStmt(FS);
         } else {
-          resetVisitor();
-          toDiag(mSrcMgr.getDiagnostics(), FS->getBeginLoc(),
-                 diag::err_reverse_not_canonical);
-          return RecursiveASTVisitor::VisitForStmt(FS);
+          mLoops.push_back(
+              std::pair<const tsar::CanonicalLoopInfo *, clang::VarDecl *>(
+                  LI, Ind));
+          // no traverse further
+          return true;
         }
       } else {
-        resetVisitor();
-        toDiag(mSrcMgr.getDiagnostics(), FS->getBeginLoc(),
-               diag::err_reverse_not_canonical);
-        return RecursiveASTVisitor::VisitForStmt(FS);
+        // no traverse further
+        return true;
       }
-      return RecursiveASTVisitor::VisitForStmt(FS);
     } else {
       return RecursiveASTVisitor::VisitForStmt(FS);
     }
@@ -436,6 +212,18 @@ public:
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
       if (findClause(P, ClauseId::LoopReverse, Clauses)) {
         dbgPrintln("Pragma -> start");
+        // collect info from clauses
+        ClauseVisitor CV;
+        for (auto *C : Clauses) {
+          CV.TraverseStmt(C);
+          if (auto *SL = CV.getSL()) {
+            mStringLiterals.push_back(SL);
+          } else if (auto *IL = CV.getIL()) {
+            mIntegerLiterals.push_back(IL);
+          }
+          CV.clear();
+        }
+
         // check for nostrict clause
         mIsStrict = true;
         auto Csize = Clauses.size();
@@ -480,7 +268,59 @@ public:
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      return RecursiveASTVisitor::TraverseStmt(S);
+      if (mNewAnalisysRequired) {
+        Function *F = mModule.getFunction(mCurrentFD->getNameAsString());
+        mProvider = &mPass.getAnalysis<LoopReversePassProvider>(*F);
+        mCurrentLoops =
+            &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
+        mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
+        mGO = &mProvider->get<GlobalOptionsImmutableWrapper>().getOptions();
+        mDIDepInfo =
+            &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
+        mMemMatcher =
+            &mProvider->get<MemoryMatcherImmutableWrapper>().get().Matcher;
+        mPerfectLoopInfo =
+            &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+        mNewAnalisysRequired = false;
+      }
+
+      mStatus = TRAVERSE_LOOPS;
+      auto Ret = RecursiveASTVisitor::TraverseStmt(S);
+
+      llvm::SmallSet<int, 1> mToTransform;
+
+      for (int i = 0; i < mStringLiterals.size(); i++) {
+        bool Matched = false;
+        for (int j = 0; j < mLoops.size(); j++) {
+          if (mStringLiterals[i]->getString() == mLoops[j].second->getName()) {
+            mToTransform.insert(j);
+            Matched = true;
+            break;
+          }
+        }
+        if (!Matched)
+          toDiag(mSrcMgr.getDiagnostics(), mStringLiterals[i]->getLocStart(),
+                 diag::warn_reverse_cant_match);
+      }
+
+      for (int i = 0; i < mIntegerLiterals.size(); i++) {
+        auto Num = mIntegerLiterals[i]->getValue().getZExtValue() - 1;
+        if (Num < mLoops.size()) {
+          mToTransform.insert(Num);
+        } else {
+          toDiag(mSrcMgr.getDiagnostics(), mIntegerLiterals[i]->getLocStart(),
+                 diag::warn_reverse_cant_match);
+        }
+      }
+
+      for (auto Num : mToTransform) {
+        if (transformLoop(mLoops[Num].first)) {
+          errs() << "Transformed " << mLoops[Num].second->getName() << "\n";
+        } else
+          errs() << "Not transformed " << mLoops[Num].second->getName() << "\n";
+      }
+      resetVisitor();
+      return Ret;
     }
     }
     return RecursiveASTVisitor::TraverseStmt(S);
@@ -495,9 +335,259 @@ public:
   void resetVisitor() {
     mStatus = SEARCH_PRAGMA;
     mIsStrict = false;
+    mStringLiterals.clear();
+    mStringLiterals.clear();
+    mLoops.clear();
   }
 
 private:
+  bool transformLoop(const tsar::CanonicalLoopInfo *LI) {
+    if (!LI)
+      return false;
+    auto *FS = LI->getASTLoop();
+    if (LI->isCanonical()) {
+      auto *InitExpr = FS->getInit();
+      auto *CondExpr = FS->getCond();
+      auto *IncrExpr = FS->getInc();
+      auto *IRInd = LI->getInduction();
+      auto *ASTInd = mMemMatcher->find<IR>(IRInd)->get<AST>();
+      bool IndSign = true;
+      clang::SourceLocation IncrLoc;
+      const char *NewIncrOp;
+      clang::SourceRange IncExprSR;
+      // if i = b + i -> i = i - b
+      bool IncrSwapReq = false;
+      bool UnaryIncr = false;
+      clang::SourceRange IncrRightExprSR;
+      clang::SourceRange IncrLeftExprSR;
+      int Offset;
+      // Increment expression transform
+      if (auto *BO = dyn_cast<clang::BinaryOperator>(IncrExpr)) {
+        switch (BO->getOpcode()) {
+        case clang::BinaryOperator::Opcode::BO_AddAssign: {
+          IncExprSR = BO->getRHS()->getSourceRange();
+          NewIncrOp = "-=";
+          Offset = 1;
+          IncrLoc = BO->getOperatorLoc();
+          IndSign = true;
+          break;
+        }
+        case clang::BinaryOperator::Opcode::BO_SubAssign: {
+          IncExprSR = BO->getRHS()->getSourceRange();
+          NewIncrOp = "+=";
+          Offset = 1;
+          IncrLoc = BO->getOperatorLoc();
+          IndSign = false;
+          break;
+        }
+        case clang::BinaryOperator::Opcode::BO_Assign: {
+          if (auto *OP = dyn_cast<clang::BinaryOperator>(BO->getRHS())) {
+            switch (OP->getOpcode()) {
+            case clang::BinaryOperator::Opcode::BO_Add: {
+              auto *Left = OP->getLHS();
+              auto *Right = OP->getRHS();
+              MiniVisitor MV;
+              MV.TraverseStmt(Right);
+              if (auto *DRE = MV.getDRE()) {
+                if (DRE->getDecl() == ASTInd) {
+                  IncrSwapReq = true;
+                }
+              }
+              IncrRightExprSR = Right->getSourceRange();
+              IncrLeftExprSR = Left->getSourceRange();
+              if (IncrSwapReq) {
+                IncExprSR = IncrLeftExprSR;
+              } else {
+                IncExprSR = IncrRightExprSR;
+              }
+              Offset = 0;
+              NewIncrOp = "-";
+              IndSign = true;
+              IncrLoc = OP->getOperatorLoc();
+              break;
+            }
+            case clang::BinaryOperator::Opcode::BO_Sub: {
+              IncExprSR = OP->getRHS()->getSourceRange();
+              IncrLoc = OP->getOperatorLoc();
+              Offset = 0;
+              NewIncrOp = "+";
+              IndSign = false;
+              break;
+            }
+            default: {
+              llvm_unreachable("Not canonical loop. Kind 1\n");
+            }
+            }
+          } else {
+            llvm_unreachable("Not canonical loop. Kind 2\n");
+          }
+          break;
+        }
+        default: {
+          llvm_unreachable("Not canonical loop. Kind 3\n");
+        }
+        }
+
+      } else if (auto *UO = dyn_cast<clang::UnaryOperator>(IncrExpr)) {
+        UnaryIncr = true;
+        switch (UO->getOpcode()) {
+        case clang::UnaryOperator::Opcode::UO_PostInc:
+        case clang::UnaryOperator::Opcode::UO_PreInc: {
+          NewIncrOp = "--";
+          Offset = 1;
+          IncrLoc = UO->getOperatorLoc();
+          IndSign = true;
+          break;
+        }
+        case clang::UnaryOperator::Opcode::UO_PostDec:
+        case clang::UnaryOperator::Opcode::UO_PreDec: {
+          NewIncrOp = "++";
+          Offset = 1;
+          IncrLoc = UO->getOperatorLoc();
+          IndSign = false;
+          break;
+        }
+        default: {
+          llvm_unreachable("Not canonical loop. Kind 5\n");
+        }
+        }
+      } else {
+        llvm_unreachable("Not canonical loop. Kind 4\n");
+      }
+
+      clang::SourceRange CondExprSR;
+      clang::SourceRange CondIndSR;
+      bool CondExclude = false;
+
+      const char *NewCondOp;
+      clang::SourceLocation CondOpLoc;
+      if (auto *BO = dyn_cast<clang::BinaryOperator>(CondExpr)) {
+        CondOpLoc = BO->getOperatorLoc();
+        auto *Left = BO->getLHS();
+        auto *Right = BO->getRHS();
+        MiniVisitor MV;
+        MV.TraverseStmt(Right);
+        bool Flag = false;
+        if (auto *DRE = MV.getDRE()) {
+          if (DRE->getDecl() == ASTInd) {
+            CondIndSR = Right->getSourceRange();
+            CondExprSR = Left->getSourceRange();
+            Flag = true;
+          }
+        }
+        if (!Flag) {
+          CondIndSR = Left->getSourceRange();
+          CondExprSR = Right->getSourceRange();
+        }
+        switch (BO->getOpcode()) {
+        case clang::BinaryOperator::Opcode::BO_LE: {
+          NewCondOp = ">=";
+          Offset = 1;
+          CondExclude = false;
+          break;
+        }
+        case clang::BinaryOperator::Opcode::BO_LT: {
+          NewCondOp = ">=";
+          Offset = 0;
+          CondExclude = true;
+          break;
+        }
+        case clang::BinaryOperator::Opcode::BO_GE: {
+          NewCondOp = "<=";
+          Offset = 1;
+          CondExclude = false;
+          break;
+        }
+        case clang::BinaryOperator::Opcode::BO_GT: {
+          NewCondOp = "<=";
+          Offset = 0;
+          CondExclude = true;
+          break;
+        }
+        default: {
+          llvm_unreachable("Not canonical loop. Kind 7\n");
+        }
+        }
+      } else {
+        llvm_unreachable("Not canonical loop. Kind 6\n");
+      }
+      clang::SourceRange InitExprSR;
+      if (auto *BO = dyn_cast<clang::BinaryOperator>(InitExpr)) {
+        InitExprSR = BO->getRHS()->getSourceRange();
+      } else if (auto *DS = dyn_cast<clang::DeclStmt>(InitExpr)) {
+        InitExprSR = DS->child_begin()->getSourceRange();
+      } else {
+        llvm_unreachable("Not canonical loop. Kind 8\n");
+      }
+
+      // source ranges for old operator signs to replace
+      clang::SourceRange IncrOperatorSR(IncrLoc,
+                                        IncrLoc.getLocWithOffset(Offset));
+
+      clang::SourceRange CondOperatorSR(CondOpLoc,
+                                        CondOpLoc.getLocWithOffset(Offset));
+      // get strings from none transformed code
+      auto TextInitExpr = mRewriter.getRewrittenText(InitExprSR);
+      auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR);
+      std::string TextIncrExpr;
+      std::string TextNewInitExpr;
+      if (UnaryIncr) {
+        if (CondExclude) {
+          if (IndSign) {
+            TextNewInitExpr = "((" + TextCondExpr + ")-1)";
+          } else {
+            TextNewInitExpr = "((" + TextCondExpr + ")+1)";
+          }
+        } else {
+          TextNewInitExpr = "(" + TextCondExpr + ")";
+        }
+      } else {
+        TextIncrExpr = mRewriter.getRewrittenText(IncExprSR);
+        if (CondExclude) {
+          if (IndSign) {
+            TextNewInitExpr = "((" + TextInitExpr + ")+(((" + TextCondExpr +
+                              ")-1)-(" + TextInitExpr + "))/(" + TextIncrExpr +
+                              ")*(" + TextIncrExpr + "))";
+          } else {
+            TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                              ")-((" + TextCondExpr + ")+1))/(" + TextIncrExpr +
+                              ")*(" + TextIncrExpr + "))";
+          }
+        } else {
+          if (IndSign) {
+            TextNewInitExpr = "((" + TextInitExpr + ")+((" + TextCondExpr +
+                              ")-(" + TextInitExpr + "))/(" + TextIncrExpr +
+                              ")*(" + TextIncrExpr + "))";
+          } else {
+            TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                              ")-(" + TextCondExpr + "))/(" + TextIncrExpr +
+                              ")*(" + TextIncrExpr + "))";
+          }
+        }
+      }
+      // swap incr expr i = b + i -> i = i + b
+      if (IncrSwapReq) {
+        auto TextRightIncrExpr = mRewriter.getRewrittenText(IncrRightExprSR);
+        auto TextLeftIncrExpr = mRewriter.getRewrittenText(IncrLeftExprSR);
+        mRewriter.ReplaceText(IncrRightExprSR, TextLeftIncrExpr);
+        mRewriter.ReplaceText(IncrLeftExprSR, TextRightIncrExpr);
+      }
+      // replace incr operator i++ -> i-- ; i+=k -> i-=k; etc
+      mRewriter.ReplaceText(IncrOperatorSR, NewIncrOp);
+      // replace cond operator
+      mRewriter.ReplaceText(CondOperatorSR, NewCondOp);
+      // replace init expression
+      mRewriter.ReplaceText(InitExprSR, TextNewInitExpr);
+      // replace cond expression
+      mRewriter.ReplaceText(CondExprSR, TextInitExpr);
+      return true;
+    } else {
+      toDiag(mSrcMgr.getDiagnostics(), FS->getBeginLoc(),
+             diag::err_reverse_not_canonical);
+      return false;
+    }
+    return false;
+  }
   TransformationContext *mTfmCtx;
   ClangGlobalInfoPass::RawInfo &mRawInfo;
   Rewriter &mRewriter;
@@ -517,7 +607,13 @@ private:
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
   bool mIsStrict;
-  enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, GET_REFERENCES } mStatus;
+
+  llvm::SmallVector<clang::StringLiteral *, 1> mStringLiterals;
+  llvm::SmallVector<clang::IntegerLiteral *, 1> mIntegerLiterals;
+  llvm::SmallVector<
+      std::pair<const tsar::CanonicalLoopInfo *, clang::VarDecl *>, 1>
+      mLoops;
+  enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, TRAVERSE_LOOPS } mStatus;
 }; // namespace
 
 } // namespace

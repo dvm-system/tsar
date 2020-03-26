@@ -140,7 +140,8 @@ def Replace : Clause<"replace", Transform,
 
 def With : Clause<"with", Transform, [LParen, Identifier, RParen]>;
 
-def LoopReverse: Clause<"reverse", Transform>;
+def LoopReverse: Clause<"reverse", Transform,
+  [LParen, OneOf<[PPIdentifier,NumericConstant]>, RParen]>;
 
 def Private : Clause<"private", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
