@@ -171,11 +171,18 @@ public:
           bool IndSign = true;
           clang::SourceLocation IncrLoc;
           const char *NewIncrOp;
+          clang::SourceRange IncExprSR;
+          // if i = b + i -> i = i - b
+          bool IncrSwapReq = false;
+          bool UnaryIncr = false;
+          clang::SourceRange IncrRightExprSR;
+          clang::SourceRange IncrLeftExprSR;
           int Offset;
           // Increment expression transform
           if (auto *BO = dyn_cast<clang::BinaryOperator>(IncrExpr)) {
             switch (BO->getOpcode()) {
             case clang::BinaryOperator::Opcode::BO_AddAssign: {
+              IncExprSR = BO->getRHS()->getSourceRange();
               NewIncrOp = "-=";
               Offset = 1;
               IncrLoc = BO->getOperatorLoc();
@@ -183,6 +190,7 @@ public:
               break;
             }
             case clang::BinaryOperator::Opcode::BO_SubAssign: {
+              IncExprSR = BO->getRHS()->getSourceRange();
               NewIncrOp = "+=";
               Offset = 1;
               IncrLoc = BO->getOperatorLoc();
@@ -195,21 +203,20 @@ public:
                 case clang::BinaryOperator::Opcode::BO_Add: {
                   auto *Left = OP->getLHS();
                   auto *Right = OP->getRHS();
-                  bool SwapReq = false;
                   MiniVisitor MV;
                   MV.TraverseStmt(Right);
                   if (auto *DRE = MV.getDRE()) {
                     if (DRE->getDecl() == ASTInd) {
-                      SwapReq = true;
+                      dbgPrintln("SWAP REQUIRED");
+                      IncrSwapReq = true;
                     }
                   }
-                  if (SwapReq) {
-                    auto RightText =
-                        mRewriter.getRewrittenText(Right->getSourceRange());
-                    auto LeftText =
-                        mRewriter.getRewrittenText(Left->getSourceRange());
-                    mRewriter.ReplaceText(Left->getSourceRange(), RightText);
-                    mRewriter.ReplaceText(Right->getSourceRange(), LeftText);
+                  IncrRightExprSR = Right->getSourceRange();
+                  IncrLeftExprSR = Left->getSourceRange();
+                  if (IncrSwapReq) {
+                    IncExprSR = IncrLeftExprSR;
+                  } else {
+                    IncExprSR = IncrRightExprSR;
                   }
                   Offset = 0;
                   NewIncrOp = "-";
@@ -218,6 +225,7 @@ public:
                   break;
                 }
                 case clang::BinaryOperator::Opcode::BO_Sub: {
+                  IncExprSR = BO->getRHS()->getSourceRange();
                   IncrLoc = OP->getOperatorLoc();
                   Offset = 0;
                   NewIncrOp = "+";
@@ -239,6 +247,7 @@ public:
             }
 
           } else if (auto *UO = dyn_cast<clang::UnaryOperator>(IncrExpr)) {
+            UnaryIncr = true;
             switch (UO->getOpcode()) {
             case clang::UnaryOperator::Opcode::UO_PostInc:
             case clang::UnaryOperator::Opcode::UO_PreInc: {
@@ -329,23 +338,59 @@ public:
             llvm_unreachable("Not canonical loop. Kind 8\n");
           }
 
-          std::string ExclExpr;
-          if (CondExclude) {
-            if (IndSign)
-              ExclExpr = "-1";
-            else
-              ExclExpr = "+1";
-          }
+          // source ranges for old operator signs to replace
           clang::SourceRange IncrOperatorSR(IncrLoc,
                                             IncrLoc.getLocWithOffset(Offset));
-          mRewriter.ReplaceText(IncrOperatorSR, NewIncrOp);
 
           clang::SourceRange CondOperatorSR(CondOpLoc,
                                             CondOpLoc.getLocWithOffset(Offset));
-          mRewriter.ReplaceText(CondOperatorSR, NewCondOp);
+          // get strings from none transformed code
           auto TextInitExpr = mRewriter.getRewrittenText(InitExprSR);
-          auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR) + ExclExpr;
-          mRewriter.ReplaceText(InitExprSR, TextCondExpr);
+          auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR);
+          std::string TextIncrExpr;
+          if (UnaryIncr) {
+            TextIncrExpr = "1";
+          } else {
+            TextIncrExpr = mRewriter.getRewrittenText(IncExprSR);
+          }
+          std::string TextNewInitExpr;
+          if (CondExclude) {
+            if (IndSign) {
+              TextNewInitExpr = "((" + TextInitExpr + ")+(((" +
+                                TextCondExpr + ")-1)-(" + TextInitExpr +
+                                "))/(" + TextIncrExpr + ")*(" + TextIncrExpr +
+                                "))";
+            } else {
+              TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                                ")-((" + TextCondExpr + ")+1))/(" + TextIncrExpr +
+                                ")*(" + TextIncrExpr + "))";
+            }
+          } else {
+            if (IndSign) {
+              TextNewInitExpr = "((" + TextInitExpr + ")+((" + TextCondExpr +
+                                ")-(" + TextInitExpr + "))/(" + TextIncrExpr +
+                                ")*(" + TextIncrExpr + "))";
+            } else {
+              TextNewInitExpr = "((" + TextInitExpr + ")-((" + TextInitExpr +
+                                ")-(" + TextCondExpr + "))/(" + TextIncrExpr +
+                                ")*(" + TextIncrExpr + "))";
+            }
+          }
+          // swap incr expr i = b + i -> i = i + b
+          if (IncrSwapReq) {
+            auto TextRightIncrExpr =
+                mRewriter.getRewrittenText(IncrRightExprSR);
+            auto TextLeftIncrExpr = mRewriter.getRewrittenText(IncrLeftExprSR);
+            mRewriter.ReplaceText(IncrRightExprSR, TextLeftIncrExpr);
+            mRewriter.ReplaceText(IncrLeftExprSR, TextRightIncrExpr);
+          }
+          // replace incr operator i++ -> i-- ; i+=k -> i-=k; etc
+          mRewriter.ReplaceText(IncrOperatorSR, NewIncrOp);
+          // replace cond operator
+          mRewriter.ReplaceText(CondOperatorSR, NewCondOp);
+          // replace init expression
+          mRewriter.ReplaceText(InitExprSR, TextNewInitExpr);
+          // replace cond expression
           mRewriter.ReplaceText(CondExprSR, TextInitExpr);
           resetVisitor();
         } else {
