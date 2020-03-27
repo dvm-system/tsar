@@ -84,71 +84,103 @@ bool validateValue(Value *V, Loop *L) {
   return true;
 }
 
-void handleLoadsInBB(BasicBlock *BB, DenseMap<BasicBlock *, Instruction *> &lastInstructions) {
-  Instruction *lastVal = lastInstructions[BB];
+bool getAllStoreOperandInstructions(Instruction *Inst, DenseSet<Instruction *> &Storage) {
+  if (dyn_cast<StoreInst>(Inst)) {
+    return true;
+  }
+  for (auto *User : Inst->users()) {
+    if (auto *ChildInst = dyn_cast<Instruction>(User)) {
+      if (getAllStoreOperandInstructions(ChildInst, Storage)) {
+        Storage.insert(Inst);
+      }
+    }
+  }
+  return false;
+}
+
+void handleLoadsInBB(BasicBlock *BB, DenseMap<BasicBlock *, Instruction *> &lastInstructions, DenseSet<BasicBlock *> &changedLastInst) {
   for (auto &Instr : BB->getInstList()) {
     if (auto *Load = dyn_cast<LoadInst>(&Instr)) {
-      auto *oldLastVal = lastVal;
+      Instruction *lastVal = lastInstructions[BB];
       if (Load->user_empty()) {
         continue;
       }
-      if (!Load->isUsedOutsideOfBlock(BB)) {
-        lastVal = Load->user_back();
-      } else {
-        for (auto *User : Load->users()) {
-          if (auto *I = dyn_cast<Instruction>(User)) {
-            if (I->getParent() == BB) {
-              lastVal = I;
-            } else {
-              lastInstructions[I->getParent()] = I;
-            }
-          }
-        }
+      DenseSet<Instruction *> instructions;
+      getAllStoreOperandInstructions(Load, instructions);
+      for (auto *Inst : instructions) {
+          lastInstructions[Inst->getParent()] = Inst;
+          changedLastInst.insert(Inst->getParent());
       }
-      Load->replaceAllUsesWith(oldLastVal);
+      Load->replaceAllUsesWith(lastVal);
 //      Load->dropAllReferences();
 //      Load->eraseFromParent();
     }
   }
-  lastInstructions[BB] = lastVal;
+  if (pred_size(BB) == 1 && changedLastInst.find(BB) == changedLastInst.end()) {
+      lastInstructions[BB] = lastInstructions[BB->getSinglePredecessor()];
+  }
 }
+
+struct phiNodeLink {
+  PHINode *phiNode;
+  phiNodeLink *parent;
+
+  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) { }
+
+  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) { }
+
+  PHINode *getPhi() {
+    if (phiNode) {
+        return phiNode;
+    }
+    return parent->getPhi();
+  }
+};
 
 void handleLoads(
     Loop *L,
     BasicBlock *BB,
     DenseMap<BasicBlock *, Instruction *> &lastInstructions,
     DenseSet<BasicBlock *> &completedBlocks,
+    DenseSet<BasicBlock *> &changedLastInst,
     bool init = false)
 {
   if (completedBlocks.find(BB) != completedBlocks.end()) {
     return;
   }
   if (!init) {
-    handleLoadsInBB(BB, lastInstructions);
+    handleLoadsInBB(BB, lastInstructions, changedLastInst);
   }
   completedBlocks.insert(BB);
   for (auto *Succ : successors(BB)) {
     if (L->contains(Succ)) {
-      handleLoads(L, Succ, lastInstructions, completedBlocks);
+      handleLoads(L, Succ, lastInstructions, completedBlocks, changedLastInst);
     }
+  }
+}
+
+void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &phiLinks) {
+  for (auto It : phiLinks) {
+      delete It.second;
   }
 }
 
 void insertPhiNodes(
     BasicBlock *BB,
-    DenseMap<BasicBlock *, PHINode *> &phiNodes,
+    DenseMap<BasicBlock *, phiNodeLink *> &phiLinks,
     DenseMap<BasicBlock *, Instruction *> &lastInstructions,
     DenseSet<PHINode *> &uniqueNodes,
     Value *V,
     bool init = false)
 {
-  if (phiNodes.find(BB) != phiNodes.end()) {
+  if (phiLinks.find(BB) != phiLinks.end()) {
     return;
   }
   bool needsCreate = false;
   if (pred_size(BB) == 1 && !init) {
-    if (phiNodes.find(BB->getSinglePredecessor()) != phiNodes.end()) {
-      phiNodes[BB] = phiNodes.find(BB->getSinglePredecessor())->second;
+    if (phiLinks.find(BB->getSinglePredecessor()) != phiLinks.end()) {
+        auto *parentLink = phiLinks.find(BB->getSinglePredecessor())->second;
+        phiLinks[BB] = new phiNodeLink(parentLink);
     } else {
       needsCreate = true;
     }
@@ -158,11 +190,35 @@ void insertPhiNodes(
   if (needsCreate) {
     auto *phi = PHINode::Create(V->getType()->getPointerElementType(), 0,
         "phi." + BB->getName(), &BB->front());
-    phiNodes[BB] = phi;
+    phiLinks[BB] = new phiNodeLink(phi);
     uniqueNodes.insert(phi);
   }
   for (auto *Succ : successors(BB)) {
-    insertPhiNodes(Succ, phiNodes, lastInstructions, uniqueNodes, V);
+    insertPhiNodes(Succ, phiLinks, lastInstructions, uniqueNodes, V);
+  }
+}
+
+void deleteRedundantPhiNodes(
+    DenseMap<BasicBlock *, phiNodeLink *> &phiLinks,
+    DenseSet<PHINode *> &uniqueNodes)
+{
+  for (auto *Phi : uniqueNodes) {
+    bool hasSameOperands = true;
+    auto *operand = Phi->getOperand(0);
+      for (int i = 0; i < Phi->getNumOperands(); ++i) {
+        if (operand != Phi->getOperand(i)) {
+          hasSameOperands = false;
+          break;
+        }
+      }
+      if (hasSameOperands) {
+        Phi->replaceAllUsesWith(operand);
+        uniqueNodes.erase(Phi);
+        phiLinks[Phi->getParent()]->phiNode = nullptr;
+        auto *Instr = dyn_cast<Instruction>(operand);
+        phiLinks[Phi->getParent()]->parent = phiLinks[Instr->getParent()];
+        Phi->eraseFromParent();
+      }
   }
 }
 
@@ -212,33 +268,36 @@ bool PointerReductionPass::runOnFunction(Function &F) {
         break;
       }
 
-      auto *BeforeInstr = new LoadInst(V, "LoadPtr", &L->getLoopPredecessor()->back());
-      DenseMap<BasicBlock *, PHINode *> phiNodes;
+      auto *BeforeInstr = new LoadInst(V, "load.ptr." + V->getName(), &L->getLoopPredecessor()->back());
+      DenseMap<BasicBlock *, phiNodeLink *> phiLinks;
       DenseSet<PHINode *> uniqueNodes;
       DenseMap<BasicBlock *, Instruction *> lastInstructions;
-      insertPhiNodes(L->getLoopPredecessor(), phiNodes, lastInstructions, uniqueNodes, V, true);
+      insertPhiNodes(L->getLoopPredecessor(), phiLinks, lastInstructions, uniqueNodes, V, true);
 
       lastInstructions[L->getLoopPredecessor()] = BeforeInstr;
-      for (auto &P : phiNodes) {
-        lastInstructions[P.first] = P.second;
+      for (auto &P : phiLinks) {
+        lastInstructions[P.getFirst()] = P.getSecond()->getPhi();
       }
 
       DenseSet<BasicBlock *> processedBlocks;
-      handleLoads(L, L->getLoopPredecessor(), lastInstructions, processedBlocks, true);
+      DenseSet<BasicBlock *> changedLastInst;
+      handleLoads(L, L->getLoopPredecessor(), lastInstructions, processedBlocks, changedLastInst,true);
 
       for (auto *Phi : uniqueNodes) {
         auto *BB = Phi->getParent();
         for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
-          phiNodes[BB]->addIncoming(lastInstructions[*Pred], *Pred);
+          Phi->addIncoming(lastInstructions[*Pred], *Pred);
         }
       }
+      deleteRedundantPhiNodes(phiLinks, uniqueNodes);
 
       SmallVector<BasicBlock *, 8> ExitBlocks;
       L->getExitBlocks(ExitBlocks);
       for (auto *BB : ExitBlocks) {
-        new StoreInst(phiNodes[BB], V, BB->getFirstNonPHI());
+        new StoreInst(phiLinks[BB]->getPhi(), V, BB->getFirstNonPHI());
       }
       eraseAllStoreInstFromLoop(V, L);
+      freeLinks(phiLinks);
     }
   });
   return false;
