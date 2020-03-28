@@ -49,6 +49,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
@@ -879,6 +880,7 @@ void PrivateRecognitionPass::propagateTraits(
     ChildTraits.push(std::move(NT));
     Prev = N;
   }
+  sanitizeCombinedTraits(DS);
   std::vector<const AliasNode *> Coverage;
   explicitAccessCoverage(DS, *mAliasTree, Coverage);
   // All descendant nodes for nodes in `Coverage` access some part of
@@ -891,6 +893,59 @@ void PrivateRecognitionPass::propagateTraits(
         if (I != DS.end() && !I->is<trait::NoAccess>())
           I->set<trait::Flow, trait::Anti, trait::Output>();
       }
+}
+
+static EstimateMemoryTrait *mayIgnoreDereference(AliasTrait &Trait,
+    const AliasTree &Tree, DependenceSet &DS) {
+  EstimateMemoryTrait *MainMemory = nullptr;
+  for (auto &T : Trait) {
+    auto *TopEM = T.getMemory()->getTopLevelParent();
+    if (auto *LI = dyn_cast<LoadInst>(TopEM->front())) {
+      const EstimateMemory *Ptr = Tree.find(MemoryLocation::get(LI));
+      assert(Ptr && "Estimate memory location must not be null!");
+      auto Itr = DS.find_as(Ptr->getAliasNode(Tree));
+      if (Itr->is<trait::Private>())
+        continue;
+      return nullptr;
+    }
+    if (MainMemory)
+      return nullptr;
+    MainMemory = &T;
+  }
+  return MainMemory;
+}
+
+void PrivateRecognitionPass::sanitizeCombinedTraits(DependenceSet &DS) {
+  for (auto &AT : DS) {
+    if (AT.unknown_empty() && AT.count() == 1)
+      continue;
+    if (AT.is_any<trait::Anti, trait::Flow, trait::Output>()) {
+      if (auto *T = mayIgnoreDereference(AT, *mAliasTree, DS)) {
+        BitMemoryTrait BitTrait(*T);
+        BitTrait = dropUnitFlag(BitTrait);
+        bcl::trait::set(BitTrait.toDescriptor(0, NumTraits), AT);
+      }
+      /// Due to conservativeness of analysis type of dependencies must be the
+      /// same for all locations in the node.
+      /// Let us consider an example.
+      /// for (...) X[...] = Y[...];
+      /// Analysis can not be performed accurately if X and Y may alias.
+      /// Dependence analysis pass tests the following pairs of accesses:
+      /// W(X)-W(X), W(X)-R(Y), R(Y)-R(Y) (W means 'write' and R means 'read').
+      /// So, if X produces 'output' dependence there is no way to understand
+      /// that Y is also produced 'output' dependence (due to memory
+      /// overlapping). Then it is necessary to iterate over all accessed
+      /// locations and to update their traits.
+      DependenceImp::Descriptor Dptr;
+      bcl::trait::set(AT, Dptr);
+      for (auto &T : AT) {
+        bcl::trait::set(Dptr, T);
+        LLVM_DEBUG(dbgs() << "[PRIVATE]: conservatively update trait of ";
+        printLocationSource(dbgs(), *T.getMemory()); dbgs() << " to ";
+        T.get().print(dbgs()); dbgs() << "\n";);
+      }
+    }
+  }
 }
 
 void PrivateRecognitionPass::checkFirstPrivate(
@@ -1146,26 +1201,6 @@ void PrivateRecognitionPass::storeResults(
   }
   LLVM_DEBUG(dbgs() << "[PRIVATE]: set combined trait to ";
     NodeTraitItr->print(dbgs()); dbgs() << "\n";);
-  /// Due to conservativeness of analysis type of dependencies must be the
-  /// same for all locations in the node.
-  /// Let us consider an example.
-  /// for (...) X[...] = Y[...];
-  /// Analysis can not be performed accurately if X and Y may alias.
-  /// Dependence analysis pass tests the following pairs of accesses:
-  /// W(X)-W(X), W(X)-R(Y), R(Y)-R(Y) (W means 'write' and R means 'read').
-  /// So, if X produces 'output' dependence there is no way to understand that
-  /// Y is also produced 'output' dependence (due to memory overlapping). Then
-  /// it is necessary to iterate over all accessed locations and to update their
-  /// traits.
-  for (auto &T : *NodeTraitItr) {
-    bcl::trait::set(CombinedDepDptr, T);
-    LLVM_DEBUG(
-      dbgs() << "[PRIVATE]: conservatively update trait of ";
-      printLocationSource(dbgs(), MemoryLocation(T.getMemory()->front(),
-        T.getMemory()->getSize(), T.getMemory()->getAAInfo()));
-      dbgs() << " to "; T.get().print(dbgs()); dbgs() << "\n";
-    );
-  }
 }
 
 void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {

@@ -30,6 +30,7 @@
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
@@ -358,7 +359,6 @@ bool combineWith(Value *V, DIMemory &M, const AliasTree &AT,
     // location.
     if (MTraitItr == ATraitItr->unknown_end())
       return false;
-    LLVM_DEBUG(dbgs() << "[DA DI]: combine traits\n");
     auto CombinedTrait = BitMemoryTrait(DIMTrait);
     CombinedTrait &= *MTraitItr;
     // Do not use `operator=` because already attached values should not be lost.
@@ -367,6 +367,8 @@ bool combineWith(Value *V, DIMemory &M, const AliasTree &AT,
       DIMTrait.unset<trait::Redundant>();
     if (DIMTrait.is<trait::DirectAccess>())
       DIMTrait.unset<trait::IndirectAccess>();
+    LLVM_DEBUG(dbgs() << "[DA DI]: combine traits to ";
+               DIMTrait.print(dbgs()); dbgs() << "\n");
     return true;
   }
   AliasTrait::iterator MTraitItr = ATraitItr->end();
@@ -1847,6 +1849,37 @@ static void addLoopIntoQueue(DFNode *DFN, std::deque<DFLoop *> &LQ) {
   }
 }
 
+/// Check nodes with pointer dereference and investigate combined traits to
+/// ignore some of traits for memory locations.
+///
+/// The following case is checked:
+/// Alias Nodes (1): {x, *p}, (2) { ... p ... }.
+/// If traits for (p) is 'private' then traits for *p could be ignored and
+/// traits for (1) could be set to separate traits of x.
+static DIMemoryTraitRef *mayIgnoreDereference(DIAliasTrait &Trait,
+    const DIAliasTree &Tree, DIDependenceSet &DS,
+    const DenseMap<DIVariable *, DIMemory *> &VarToMemory) {
+  DIMemoryTraitRef *MainMemory = nullptr;
+  for (auto &T : Trait) {
+    if (isa<DIUnknownMemory>(T->getMemory()))
+      return nullptr;
+    auto *DIEM = cast<DIEstimateMemory>(T->getMemory());
+    if (DIEM->hasDeref()) {
+      auto MemoryItr = VarToMemory.find(DIEM->getVariable());
+      if (MemoryItr != VarToMemory.end()) {
+        auto TraitItr = DS.find_as(MemoryItr->second->getAliasNode());
+        if (TraitItr != DS.end() && TraitItr->is<trait::Private>())
+          continue;
+      }
+      return nullptr;
+    }
+    if (MainMemory)
+      return nullptr;
+    MainMemory = &T;
+  }
+  return MainMemory;
+}
+
 bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
@@ -1894,11 +1927,16 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     auto &DepSet = PI.find(DFL)->get<DependenceSet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
     analyzePromoted(L, DWLang, DIAliasSTR, LockedTraits, *Pool);
+    DenseMap<DIVariable *, DIMemory *> VarToMemory;
     for (auto *DIN : post_order(&DIAT)) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
       analyzeNode(cast<DIAliasMemoryNode>(*DIN), DWLang, AliasSTR, DIAliasSTR,
         LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool);
+      for (auto &DIM : cast<DIAliasMemoryNode>(*DIN))
+        if (auto *DIEM = dyn_cast<DIEstimateMemory>(&DIM))
+          if (DIEM->getExpression()->getNumElements() == 0)
+            VarToMemory.try_emplace(DIEM->getVariable(), DIEM);
     }
     LLVM_DEBUG(dbgs() << "[DA DI]: set traits for a top level node\n");
     auto TopDIN = DIAT.getTopLevelNode();
@@ -1911,6 +1949,16 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
         TopTraitItr->insert(DIMTraitItr);
     }
     combineTraits(GlobalOpts.IgnoreRedundantMemory, *TopTraitItr);
+    for (auto &AT : DIDepSet) {
+      if (AT.size() == 1 ||
+          !AT.is_any<trait::Anti, trait::Flow, trait::Output>())
+        continue;
+      if (auto *T = mayIgnoreDereference(AT, DIAT, DIDepSet, VarToMemory)) {
+        BitMemoryTrait BitTrait(**T);
+        BitTrait = dropUnitFlag(BitTrait);
+        bcl::trait::set(BitTrait.toDescriptor(0, NumTraits), AT);
+      }
+    }
     std::vector<const DIAliasNode *> Coverage;
     explicitAccessCoverage(DIDepSet, DIAT, Coverage,
       GlobalOpts.IgnoreRedundantMemory);

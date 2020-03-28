@@ -344,6 +344,10 @@ private:
      const DependenceMap &Deps, const TraitPair &Traits,
      tsar::DependenceSet &DS);
 
+  /// Try to clarify combined traits which have been set for alias nodes,
+  /// update traits for some memory locations if necessary.
+  void sanitizeCombinedTraits(tsar::DependenceSet &DS);
+
 private:
   tsar::PrivateInfo mPrivates;
   const tsar::DefinedMemoryInfo *mDefInfo = nullptr;
