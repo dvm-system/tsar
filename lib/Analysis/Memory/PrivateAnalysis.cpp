@@ -681,8 +681,9 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
 void PrivateRecognitionPass::resolvePointers(
     const tsar::DefUseSet &DefUse, TraitMap &ExplicitAccesses) {
   for (const auto &Loc : DefUse.getExplicitAccesses()) {
+    auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
     // *p means that address of location should be loaded from p using 'load'.
-    if (auto *LI = dyn_cast<LoadInst>(Loc.Ptr)) {
+    if (auto *LI = dyn_cast<LoadInst>(BasePtr)) {
       auto *EM = mAliasTree->find(Loc);
       assert(EM && "Estimate memory location must not be null!");
       auto LocTraits = ExplicitAccesses.find(EM);
