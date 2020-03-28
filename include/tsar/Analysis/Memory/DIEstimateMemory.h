@@ -350,6 +350,13 @@ public:
       const_cast<llvm::DIExpression *>(getExpression())).getSize();
   }
 
+  /// If DW_OP_deref exists it returns true.
+  bool hasDeref() const {
+    return DIMemoryLocation(
+      const_cast<llvm::DIVariable *>(getVariable()),
+      const_cast<llvm::DIExpression *>(getExpression())).hasDeref();
+  }
+
 private:
   /// Creates interface to access information about an estimate memory location,
   /// which is represented as a metadata.

@@ -131,6 +131,13 @@ private:
     ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DIMemoryTraitRegionPool &Pool);
 
+  /// Determine promoted memory locations which could be privitized in the
+  /// original program.
+  void analyzePrivatePromoted(Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
+    ArrayRef<const tsar::DIMemory *> LockedTraits,
+    tsar::DIMemoryTraitRegionPool &Pool);
+
   /// Propagate reduction from inner loops if possible.
   ///
   /// Check whether a specified Phi node represents reduction in the loop.
