@@ -27,6 +27,7 @@
 
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Type.h>
+#include <llvm/ADT/SmallVector.h>
 
 namespace tsar {
 /// Returns argument with a specified number or nullptr.
@@ -86,6 +87,71 @@ template<class Function>
 Function for_each_loop(const llvm::LoopInfo &LI, Function F) {
   detail::for_each_loop(LI.rbegin(), LI.rend(), F);
   return std::move(F);
+}
+
+/// Check if predicate is `true` for at least one instruction which uses
+/// result of a specified instruction.
+///
+/// This function tries to find instruction which covers each user of a
+/// specified instruction (a user may be a constant expression for example).
+/// If corresponding instruction is not found then a user is passed to a
+/// functor.
+template<class FunctionT>
+bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
+  for (auto *U : I.users()) {
+    if (auto *UI = dyn_cast<llvm::Instruction>(U)) {
+      if (F(UI))
+        return true;
+    } else if (auto *CE = dyn_cast<llvm::ConstantExpr>(U)) {
+      llvm::SmallVector<llvm::ConstantExpr *, 4> WorkList{CE};
+      do {
+        auto *Expr = WorkList.pop_back_val();
+        for (auto *ExprU : Expr->users()) {
+          if (auto ExprUseInst = dyn_cast<llvm::Instruction>(ExprU)) {
+            if (F(UI))
+              return true;
+          } else if (auto ExprUseExpr = dyn_cast<llvm::ConstantExpr>(ExprU)) {
+            WorkList.push_back(ExprUseExpr);
+          } else if (F(Expr)) {
+            return true;
+          }
+        }
+      } while (!WorkList.empty());
+    } else if (F(UI)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Apply a specified function to each instruction which uses result of a
+/// specified instruction.
+///
+/// This function tries to find instruction which covers each user of a
+/// specified instruction (a user may be a constant expression for example).
+/// If corresponding instruction is not found then a user is passed to a
+/// functor.
+template<class FunctionT>
+void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
+  for (auto *U : I.users()) {
+    if (auto *UI = dyn_cast<llvm::Instruction>(U)) {
+      F(UI);
+    } else if (auto *CE = dyn_cast<llvm::ConstantExpr>(U)) {
+      llvm::SmallVector<llvm::ConstantExpr *, 4> WorkList{ CE };
+      do {
+        auto *Expr = WorkList.pop_back_val();
+        for (auto *ExprU : Expr->users()) {
+          if (auto ExprUseInst = dyn_cast<llvm::Instruction>(ExprU))
+            F(UI);
+          else if (auto ExprUseExpr = dyn_cast<llvm::ConstantExpr>(ExprU))
+            WorkList.push_back(ExprUseExpr);
+          else
+            F(Expr);
+        }
+      } while (!WorkList.empty());
+    } else
+      F(UI);
+  }
 }
 }
 
