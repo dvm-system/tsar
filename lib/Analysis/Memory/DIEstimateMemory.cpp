@@ -2199,7 +2199,8 @@ llvm::MDNode * getRawDIMemoryIfExists(const EstimateMemory &EM,
           Dbgs.push_back(DbgLoc.get());
     if (DILoc->Loc)
       Dbgs.push_back(DILoc->Loc);
-    return DIEstimateMemory::getRawIfExists(Ctx, DILoc->Var, DILoc->Expr, Flags, Dbgs);
+    return DIEstimateMemory::getRawIfExists(
+      Ctx, DILoc->Var, DILoc->Expr, Flags, Dbgs);
   }
 }
 
