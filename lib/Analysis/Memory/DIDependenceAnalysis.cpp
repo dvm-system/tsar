@@ -1083,14 +1083,14 @@ protected:
   EstimateCoverageT::iterator getEstimateCoverage(const EstimateMemory *EM) {
     auto Info = mEstimateCoverage.try_emplace(EM);
     if (Info.second)
-      Info.first->get<DIMemory>().push_back(nullptr);
+      Info.first->template get<DIMemory>().push_back(nullptr);
     return Info.first;
   }
 
   UnknownCoverageT::iterator getUnknownCoverage(const Value *V) {
     auto Info = mUnknownCoverage.try_emplace(V);
     if (Info.second)
-      Info.first->get<DIMemory>().push_back(nullptr);
+      Info.first->template get<DIMemory>().push_back(nullptr);
     return Info.first;
   }
 
