@@ -1,21 +1,16 @@
-#ifndef TSAR_CLANG_RENAME_LOCAL_H
-#define TSAR_CLANG_RENAME_LOCAL_H
+#ifndef TSAR_CLANG_LOOP_SWAP_H
+#define TSAR_CLANG_LOOP_SWAP_H
 
-#include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
-
 namespace llvm {
-class ClangLoopSwapPass : public ModulePass, private bcl::Uncopyable {
+class ClangLoopSwap : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
-
-  ClangLoopSwapPass() : ModulePass(ID) {
-    initializeClangLoopSwapPassPass(*PassRegistry::getPassRegistry());
-  }
-
+  ClangLoopSwap();
   bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 } // namespace llvm
+
 #endif

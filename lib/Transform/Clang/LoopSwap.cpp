@@ -1,106 +1,161 @@
 #include "tsar/Transform/Clang/LoopSwap.h"
+#include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
+#include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
-#include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/ServerUtils.h"
+#include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/PassGroupRegistry.h"
-#include "tsar/Support/PassProvider.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include <clang/AST/Decl.h>
+#include "tsar/Support/PassAAProvider.h"
+#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/IR/InterprocAttr.h"
+#include <algorithm>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
-#include <string>
-#include <vector>
+#include <llvm/ADT/SCCIterator.h>
+#include <llvm/Analysis/CallGraph.h>
+#include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Verifier.h>
+
 using namespace llvm;
-using namespace clang;
 using namespace tsar;
-using namespace std;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-swap"
+#define DEBUG_TYPE "clang-loop-swap"
 #define DEBUG_PREFIX "[LoopSwap]: "
 
-char ClangLoopSwapPass::ID = 0;
-
+// server, providers, passgroupinfo
 namespace {
-using LoopSwapPassProvider =
-    FunctionPassProvider<TransformationEnginePass, CanonicalLoopPass,
-                         DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
-                         DIDependencyAnalysisPass, DIEstimateMemoryPass,
-                         GlobalOptionsImmutableWrapper,
-                         MemoryMatcherImmutableWrapper, ClangPerfectLoopPass>;
-
-class LoopSwapPassGroupInfo final : public PassGroupInfo {
-  void addBeforePass(legacy::PassManager &PM) const override {
-    PM.add(createMemoryMatcherPass());
-    PM.add(createDIMemoryTraitPoolStorage());
-    PM.add(createDIMemoryEnvironmentStorage());
-  }
+// local provider
+using ClangLoopSwapProvider =
+    FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
+                           ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
+                           DFRegionInfoPass, ClangDIMemoryMatcherPass,
+                           ClangPerfectLoopPass>;
+// server provider
+using ClangLoopSwapServerProvider =
+    FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
+// server response
+using ClangLoopSwapServerResponse =
+    AnalysisResponsePass<GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper,
+                         DIMemoryEnvironmentWrapper, GlobalDefinedMemoryWrapper,
+                         GlobalLiveMemoryWrapper, ClonedDIMemoryMatcherWrapper,
+                         ClangLoopSwapServerProvider>;
+// server
+class ClangLoopSwapServer final : public AnalysisServer {
+public:
+  static char ID;
+  ClangLoopSwapServer();
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+  void prepareToClone(Module &ClientM,
+                      ValueToValueMapTy &ClientToServer) override;
+  void initializeServer(Module &CM, Module &SM, ValueToValueMapTy &CToS,
+                        legacy::PassManager &PM) override;
+  void addServerPasses(Module &M, legacy::PassManager &PM) override;
+  void prepareToClose(legacy::PassManager &PM) override;
+};
+// pass info
+class ClangLoopSwapInfo final : public tsar::PassGroupInfo {
+  void addBeforePass(legacy::PassManager &Passes) const override;
+  void addAfterPass(legacy::PassManager &Passes) const override;
 };
 } // namespace
-
-INITIALIZE_PROVIDER_BEGIN(LoopSwapPassProvider, "loop-swap-provider",
-                          "Loop swap provider")
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
-INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
-INITIALIZE_PROVIDER_END(LoopSwapPassProvider, "loop-swap-provider",
-                        "Loop swap provider")
-
-INITIALIZE_PASS_IN_GROUP_BEGIN(
-    ClangLoopSwapPass, "clang-swap", "", false, false,
-    tsar::TransformationQueryManager::getPassRegistry())
-INITIALIZE_PASS_IN_GROUP_INFO(LoopSwapPassGroupInfo)
-INITIALIZE_PASS_DEPENDENCY(LoopSwapPassProvider)
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_IN_GROUP_END(
-    ClangLoopSwapPass, "clang-swap", "", false, false,
-    tsar::TransformationQueryManager::getPassRegistry())
-
-void ClangLoopSwapPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
-  AU.addRequired<LoopSwapPassProvider>();
-  AU.addRequired<DIMemoryTraitPoolWrapper>();
-  AU.addRequired<DIMemoryEnvironmentWrapper>();
+// server methods
+namespace {
+void ClangLoopSwapServer::getAnalysisUsage(AnalysisUsage &AU) const {
+  AnalysisServer::getAnalysisUsage(AU);
+  ClientToServerMemory::getAnalysisUsage(AU);
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+}
+
+void ClangLoopSwapServer::prepareToClone(Module &ClientM,
+                                         ValueToValueMapTy &ClientToServer) {
+  ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
+}
+
+void ClangLoopSwapServer::initializeServer(Module &CM, Module &SM,
+                                           ValueToValueMapTy &CToS,
+                                           legacy::PassManager &PM) {
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
+  PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
+  PM.add(createGlobalDefinedMemoryStorage());
+  PM.add(createGlobalLiveMemoryStorage());
+  PM.add(createDIMemoryTraitPoolStorage());
+  ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
+}
+
+void ClangLoopSwapServer::addServerPasses(Module &M, legacy::PassManager &PM) {
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  addImmutableAliasAnalysis(PM);
+  addBeforeTfmAnalysis(PM);
+  addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
+  addAfterLoopRotateAnalysis(PM);
+  PM.add(createVerifierPass());
+  PM.add(new ClangLoopSwapServerResponse);
+}
+
+void ClangLoopSwapServer::prepareToClose(legacy::PassManager &PM) {
+  ClientToServerMemory::prepareToClose(PM);
+}
+} // namespace
+// passgroupinfo methods
+namespace {
+void ClangLoopSwapInfo::addBeforePass(legacy::PassManager &Passes) const {
+  addImmutableAliasAnalysis(Passes);
+  addInitialTransformations(Passes);
+  Passes.add(createAnalysisSocketImmutableStorage());
+  Passes.add(createDIMemoryTraitPoolStorage());
+  Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createDIEstimateMemoryPass());
+  Passes.add(new ClangLoopSwapServer);
+  Passes.add(createAnalysisWaitServerPass());
+  Passes.add(createMemoryMatcherPass());
+}
+
+void ClangLoopSwapInfo::addAfterPass(legacy::PassManager &Passes) const {
+  Passes.add(createAnalysisReleaseServerPass());
+  Passes.add(createAnalysisCloseConnectionPass());
+}
+} // namespace
+// this pass methods
+void ClangLoopSwap::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<ClangLoopSwapProvider>();
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
+  AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<ClangRegionCollector>();
+  AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
-ModulePass *llvm::createClangLoopSwapPass() { return new ClangLoopSwapPass(); }
-
 namespace {
-inline void dbgPrintln(const char * Msg) {
-  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
-}
-class SwapClauseVisitor : public RecursiveASTVisitor<SwapClauseVisitor> {
+// inline void dbgPrintln(const char *Msg) {
+//  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
+//}
+class SwapClauseVisitor : public clang::RecursiveASTVisitor<SwapClauseVisitor> {
 public:
   bool VisitStringLiteral(clang::StringLiteral *SL) {
     if (SL->getString() != "swap")
@@ -114,18 +169,22 @@ public:
 private:
   llvm::SmallVector<clang::StringLiteral *, 2> mLiterals;
 };
-class ClangLoopSwapVisitor : public RecursiveASTVisitor<ClangLoopSwapVisitor> {
+class ClangLoopSwapVisitor
+    : public clang::RecursiveASTVisitor<ClangLoopSwapVisitor> {
 public:
   ClangLoopSwapVisitor(TransformationContext *TfmCtx,
                        ClangGlobalInfoPass::RawInfo &RawInfo,
-                       ClangLoopSwapPass &Pass, llvm::Module &M)
-      : mTfmCtx(TfmCtx), mRawInfo(RawInfo), mRewriter(TfmCtx->getRewriter()),
+                       MemoryMatchInfo::MemoryMatcher *Matcher,
+                       const GlobalOptions *GO, AnalysisSocketInfo *SocketInfo,
+                       ClangLoopSwap &Pass, llvm::Module &M)
+      : mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()),
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-        mLangOpts(mRewriter.getLangOpts()), mPass(Pass), mModule(M),
-        mStatus(SEARCH_PRAGMA), mGO(NULL), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
+        mLangOpts(mRewriter.getLangOpts()), mRawInfo(RawInfo),
+        mSocketInfo(SocketInfo), mPass(Pass), mModule(M),
+        mStatus(SEARCH_PRAGMA), mGO(GO), mDIAT(NULL), mDIDepInfo(NULL),
+        mMemMatcher(Matcher), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
         mIsStrict(false) {}
-  const CanonicalLoopInfo *getLoopInfo(ForStmt *FS) {
+  const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
     if (!FS)
       return NULL;
     for (auto Info : *mCurrentLoops) {
@@ -135,7 +194,7 @@ public:
     }
     return NULL;
   }
-  bool TraverseForStmt(ForStmt *FS) {
+  bool TraverseForStmt(clang::ForStmt *FS) {
     if (!FS)
       return false;
     if (mStatus == GET_REFERENCES) {
@@ -175,21 +234,26 @@ public:
         auto *Loop = LI->getLoop()->getLoop();
         auto *LoopID = Loop->getLoopID();
         auto DepItr = mDIDepInfo->find(LoopID);
-        auto &DIDepSet = DepItr->get<DIDependenceSet>();
-        DenseSet<const DIAliasNode *> Coverage;
-        accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
-                                            mGO->IgnoreRedundantMemory);
-        if (!Coverage.empty()) {
-          for (auto &DIAT : DIDepSet) {
-            if (!Coverage.count(DIAT.getNode()))
-              continue;
-            if (DIAT.is_any<trait::Output, trait::Anti, trait::Flow>()) {
-              Dependency = true;
+        if (DepItr == mDIDepInfo->end()) {
+          mLoopsKinds[mLoopsKinds.size() - 1] = NO_ANALYSIS;
+        } else {
+          auto &DIDepSet = DepItr->get<DIDependenceSet>();
+          DenseSet<const DIAliasNode *> Coverage;
+          auto &tmp = *mDIAT->getTopLevelNode();
+          accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
+                                              mGO->IgnoreRedundantMemory);
+          if (!Coverage.empty()) {
+            for (auto &Trait : DIDepSet) {
+              if (!Coverage.count(Trait.getNode()))
+                continue;
+              if (Trait.is_any<trait::Output, trait::Anti, trait::Flow>()) {
+                Dependency = true;
+              }
             }
           }
-        }
-        if (Dependency) {
-          mLoopsKinds[mLoopsKinds.size() - 1] = HAS_DEPENDENCY;
+          if (Dependency) {
+            mLoopsKinds[mLoopsKinds.size() - 1] = HAS_DEPENDENCY;
+          }
         }
       }
 
@@ -198,17 +262,17 @@ public:
       return RecursiveASTVisitor::TraverseForStmt(FS);
     }
   }
-  bool TraverseDecl(Decl *D) {
+  bool TraverseDecl(clang::Decl *D) {
     if (!D)
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
       toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-             diag::warn_loopswap_not_forstmt);
+             clang::diag::warn_loopswap_not_forstmt);
       resetVisitor();
     }
     return RecursiveASTVisitor::TraverseDecl(D);
   }
-  bool TraverseStmt(Stmt *S) {
+  bool TraverseStmt(clang::Stmt *S) {
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
     switch (mStatus) {
@@ -216,7 +280,7 @@ public:
       Pragma P(*S);
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
       if (findClause(P, ClauseId::LoopSwap, Clauses)) {
-        dbgPrintln("Pragma -> start");
+        LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Start pass\n");
         // collect info from clauses
         SwapClauseVisitor SCV;
         for (auto C : Clauses)
@@ -231,7 +295,7 @@ public:
         findClause(P, ClauseId::NoStrict, Clauses);
         if (Csize != Clauses.size()) {
           mIsStrict = false;
-          dbgPrintln("Found nostrict clause");
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Pragma found\n");
         }
         // remove clauses
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -240,14 +304,14 @@ public:
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive_in_macro);
+                   clang ::diag::warn_remove_directive_in_macro);
           else if (IsPossible.second & PragmaFlags::IsInHeader)
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive_in_include);
+                   clang::diag::warn_remove_directive_in_include);
           else
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive);
-        Rewriter::RewriteOptions RemoveEmptyLine;
+                   clang::diag::warn_remove_directive);
+        clang::Rewriter::RewriteOptions RemoveEmptyLine;
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
         /// set to true then removing (in RewriterBuffer) works incorrect.
         RemoveEmptyLine.RemoveLineIfEmpty = false;
@@ -262,9 +326,9 @@ public:
     }
 
     case Status::TRAVERSE_STMT: {
-      if (!isa<ForStmt>(S)) {
+      if (!isa<clang::ForStmt>(S)) {
         toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
-               diag::warn_loopswap_not_forstmt);
+               clang::diag::warn_loopswap_not_forstmt);
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
@@ -274,7 +338,7 @@ public:
                      [&HasMacro, this](clang::SourceLocation Loc) {
                        if (!HasMacro) {
                          toDiag(mContext.getDiagnostics(), Loc,
-                                diag::note_assert_no_macro);
+                                clang::diag::note_assert_no_macro);
                          HasMacro = true;
                        }
                      });
@@ -286,22 +350,29 @@ public:
       // get analisis from provider for current fucntion, if it not done already
       if (mNewAnalisysRequired) {
         Function *F = mModule.getFunction(mCurrentFD->getNameAsString());
-        mProvider = &mPass.getAnalysis<LoopSwapPassProvider>(*F);
+        mProvider = &mPass.getAnalysis<ClangLoopSwapProvider>(*F);
         mCurrentLoops =
             &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
-        mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
-        mGO = &mProvider->get<GlobalOptionsImmutableWrapper>().getOptions();
-        mDIDepInfo =
-            &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
-        mMemMatcher =
-            &mProvider->get<MemoryMatcherImmutableWrapper>().get().Matcher;
         mPerfectLoopInfo =
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+        // mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
+        // mDIDepInfo =
+        //    &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
+        auto &Socket = mSocketInfo->getActive()->second;
+        auto RF =
+            Socket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
+                *F);
+        assert(RF &&
+               "Dependence analysis must be available for a parallel loop!");
+        mDIAT = &RF->value<DIEstimateMemoryPass *>()->getAliasTree();
+        mDIDepInfo =
+            &RF->value<DIDependencyAnalysisPass *>()->getDependencies();
         mNewAnalisysRequired = false;
+        errs() << "GOT INFO\n";
       }
       // collect inductions
       mStatus = GET_REFERENCES;
-      auto res = TraverseForStmt((ForStmt *)S);
+      auto res = TraverseForStmt((clang::ForStmt *)S);
       mStatus = SEARCH_PRAGMA;
 
       // match inductions from clauses to real inductions
@@ -314,7 +385,7 @@ public:
           if (mInductions[j].first == NULL) {
             toDiag(mSrcMgr.getDiagnostics(),
                    mInductions[j].second->getBeginLoc(),
-                   diag::warn_loopswap_not_canonical);
+                   clang::diag::warn_loopswap_not_canonical);
             resetVisitor();
             return RecursiveASTVisitor::TraverseStmt(S);
           }
@@ -328,7 +399,7 @@ public:
         }
         if (!Found) {
           toDiag(mSrcMgr.getDiagnostics(), mSwaps[i]->getBeginLoc(),
-                 diag::warn_loopswap_id_not_found);
+                 clang::diag::warn_loopswap_id_not_found);
           resetVisitor();
           return RecursiveASTVisitor::TraverseStmt(S);
         }
@@ -340,19 +411,23 @@ public:
         if (mLoopsKinds[i] == NOT_CANONICAL_AND_PERFECT) {
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::warn_loopswap_not_canonical);
+                 clang::diag::warn_loopswap_not_canonical);
         } else if (mLoopsKinds[i] == NOT_CANONICAL) {
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::warn_loopswap_not_canonical);
+                 clang::diag::warn_loopswap_not_canonical);
         } else if (mLoopsKinds[i] == NOT_PERFECT) {
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::warn_loopswap_not_perfect);
+                 clang::diag::warn_loopswap_not_perfect);
         } else if (mLoopsKinds[i] == HAS_DEPENDENCY) {
           IsPossible = false;
           toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
-                 diag::err_loopswap_dependency);
+                 clang::diag::err_loopswap_dependency);
+        } else if (mLoopsKinds[i] == NO_ANALYSIS) {
+          IsPossible = false;
+          toDiag(mSrcMgr.getDiagnostics(), mInductions[i].second->getBeginLoc(),
+                 clang::diag::warn_loopswap_no_analysis);
         }
       }
       if (!IsPossible) {
@@ -387,14 +462,14 @@ public:
         }
       }
 
-      dbgPrintln("Pragma -> done");
+      LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Pragma -> done\n");
       resetVisitor();
       return res;
     }
     }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
-  bool VisitFunctionDecl(FunctionDecl *FD) {
+  bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     if (!FD)
       return RecursiveASTVisitor::VisitFunctionDecl(FD);
     mCurrentFD = FD;
@@ -411,7 +486,8 @@ public:
 
 private:
   // use this only if sure there is an Item
-  int findIdx(llvm::SmallVectorImpl<clang::ValueDecl *> &Vec, ValueDecl *Item) {
+  int findIdx(llvm::SmallVectorImpl<clang::ValueDecl *> &Vec,
+              clang::ValueDecl *Item) {
     for (int i = 0; i < Vec.size(); i++) {
       if (Vec[i] == Item)
         return i;
@@ -427,72 +503,174 @@ private:
     }
   }
   TransformationContext *mTfmCtx;
+  clang::Rewriter &mRewriter;
+  clang::ASTContext &mContext;
+  clang::SourceManager &mSrcMgr;
+  const clang::LangOptions &mLangOpts;
   ClangGlobalInfoPass::RawInfo &mRawInfo;
-  Rewriter &mRewriter;
-  ASTContext &mContext;
-  SourceManager &mSrcMgr;
-  const LangOptions &mLangOpts;
   // get analysis from provider only if it is required
   bool mNewAnalisysRequired;
-  FunctionDecl *mCurrentFD;
+  clang::FunctionDecl *mCurrentFD;
   const CanonicalLoopSet *mCurrentLoops;
-  ClangLoopSwapPass &mPass;
+  ClangLoopSwap &mPass;
   llvm::Module &mModule;
-  LoopSwapPassProvider *mProvider;
+  ClangLoopSwapProvider *mProvider;
   tsar::DIDependencInfo *mDIDepInfo;
   tsar::DIAliasTree *mDIAT;
   const tsar::GlobalOptions *mGO;
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
+  AnalysisSocketInfo *mSocketInfo;
   bool mIsStrict;
   enum LoopKind {
     CANONICAL_AND_PERFECT,
     NOT_PERFECT,
     NOT_CANONICAL,
     NOT_CANONICAL_AND_PERFECT,
-    HAS_DEPENDENCY
+    HAS_DEPENDENCY,
+    NO_ANALYSIS
   };
   llvm::SmallVector<LoopKind, 2> mLoopsKinds;
   llvm::SmallVector<std::pair<clang::ValueDecl *, clang::ForStmt *>, 2>
       mInductions;
   std::vector<clang::StringLiteral *> mSwaps;
   enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, GET_REFERENCES } mStatus;
-}; // namespace
+};
 
 } // namespace
 
-bool ClangLoopSwapPass::runOnModule(llvm::Module &M) {
-  dbgPrintln( "Start Loop Swap pass");
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+bool ClangLoopSwap::runOnModule(Module &M) {
+  errs() << "Start Loop Swap Pass\n";
+  auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
                              ": transformation context is not available");
     return false;
   }
-  // set provider's wrappers
-  LoopSwapPassProvider::initialize<TransformationEnginePass>(
-      [&M, &TfmCtx](TransformationEnginePass &TEP) {
-        TEP.setContext(M, TfmCtx);
+  auto *SocketInfo = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  auto *GlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto *MemoryMatcher = &getAnalysis<MemoryMatcherImmutableWrapper>().get();
+  auto *GlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
+  // init provider on client
+  ClangLoopSwapProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [GlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(GlobalOpts);
       });
-  auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
-  LoopSwapPassProvider::initialize<MemoryMatcherImmutableWrapper>(
-      [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
-        Wrapper.set(*MMWrapper);
+  ClangLoopSwapProvider::initialize<AnalysisSocketImmutableWrapper>(
+      [SocketInfo](AnalysisSocketImmutableWrapper &Wrapper) {
+        Wrapper.set(*SocketInfo);
       });
-  auto &DIMEW = getAnalysis<DIMemoryEnvironmentWrapper>();
-  LoopSwapPassProvider::initialize<DIMemoryEnvironmentWrapper>(
-      [&DIMEW](DIMemoryEnvironmentWrapper &Wrapper) { Wrapper.set(*DIMEW); });
-  auto &DIMTPW = getAnalysis<DIMemoryTraitPoolWrapper>();
-  LoopSwapPassProvider::initialize<DIMemoryTraitPoolWrapper>(
-      [&DIMTPW](DIMemoryTraitPoolWrapper &Wrapper) { Wrapper.set(*DIMTPW); });
-  auto &mGlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  LoopSwapPassProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [&mGlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
-        Wrapper.setOptions(&mGlobalOpts);
+  ClangLoopSwapProvider::initialize<TransformationEnginePass>(
+      [TfmCtx, &M](TransformationEnginePass &Wrapper) {
+        Wrapper.setContext(M, TfmCtx);
       });
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangLoopSwapVisitor vis(TfmCtx, GIP.getRawInfo(), *this, M);
-  vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  dbgPrintln("Finish Loop Swap pass");
+  ClangLoopSwapProvider::initialize<MemoryMatcherImmutableWrapper>(
+      [MemoryMatcher](MemoryMatcherImmutableWrapper &Wrapper) {
+        Wrapper.set(*MemoryMatcher);
+      });
+  ClangLoopSwapProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(*GlobalsAA);
+      });
+  // init provider on server
+  ClangLoopSwapServerProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [GlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(GlobalOpts);
+      });
+  auto R =
+      SocketInfo->getActive()
+          ->second
+          .getAnalysis<GlobalsAAWrapperPass, DIMemoryEnvironmentWrapper,
+                       DIMemoryTraitPoolWrapper, GlobalDefinedMemoryWrapper,
+                       GlobalLiveMemoryWrapper>();
+  assert(R && "Immutable passes must be available on server!");
+  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
+  ClangLoopSwapServerProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(**DIMEnvServer);
+      });
+  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
+  ClangLoopSwapServerProvider::initialize<DIMemoryTraitPoolWrapper>(
+      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
+        Wrapper.set(**DIMTraitPoolServer);
+      });
+  auto &GlobalsAAServer = R->value<GlobalsAAWrapperPass *>()->getResult();
+  ClangLoopSwapServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(GlobalsAAServer);
+      });
+  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
+  ClangLoopSwapServerProvider::initialize<GlobalDefinedMemoryWrapper>(
+      [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
+        Wrapper.set(**GlobalDefUseServer);
+      });
+  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
+  ClangLoopSwapServerProvider::initialize<GlobalLiveMemoryWrapper>(
+      [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
+        Wrapper.set(**GlobalLiveMemoryServer);
+      });
+  auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
+  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  auto &RawInfo = getAnalysis<ClangGlobalInfoPass>().getRawInfo();
+  ClangLoopSwapVisitor CLSV(TfmCtx, RawInfo, &MemoryMatcher->Matcher,
+                            GlobalOpts, SocketInfo, *this, M);
+  CLSV.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
+  errs() << "Finish Loop Swap Pass\n";
   return false;
+}
+
+namespace llvm {
+static void initializeClangLoopSwapServerPass(PassRegistry &);
+static void initializeClangLoopSwapServerResponsePass(PassRegistry &);
+} // namespace llvm
+
+INITIALIZE_PROVIDER(ClangLoopSwapServerProvider,
+                    "clang-loop-swap-server-provider",
+                    "Loop swap (Clang, Server, Provider)")
+
+template <> char ClangLoopSwapServerResponse::ID = 0;
+INITIALIZE_PASS(ClangLoopSwapServerResponse, "clang-loop-swap-response",
+                "Loop swap (Clang, Server, Response)", true, false)
+
+char ClangLoopSwapServer::ID = 0;
+INITIALIZE_PASS(ClangLoopSwapServer, "clang-loop-swap-server",
+                "Loop swap (Clang, Server)", false, false)
+
+INITIALIZE_PROVIDER(ClangLoopSwapProvider, "clang-loop-swap-provider",
+                    "Loop swap (Clang, Provider)")
+
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangLoopSwap, "clang-loop-swap",
+                               "Clang based loop swap", false, false,
+                               TransformationQueryManager::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP_INFO(ClangLoopSwapInfo)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
+INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
+INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
+INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)
+INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
+INITIALIZE_PASS_IN_GROUP_END(ClangLoopSwap, "clang-loop-swap",
+                             "Clang based loop swap", false, false,
+                             TransformationQueryManager::getPassRegistry())
+
+ClangLoopSwapServer::ClangLoopSwapServer() : AnalysisServer(ID) {
+  initializeClangLoopSwapServerPass(*PassRegistry::getPassRegistry());
+}
+char ClangLoopSwap::ID = '0';
+ClangLoopSwap::ClangLoopSwap() : ModulePass(ID) {
+  initializeClangLoopSwapProviderPass(*PassRegistry::getPassRegistry());
+  initializeClangLoopSwapServerPass(*PassRegistry::getPassRegistry());
+  initializeClangLoopSwapServerProviderPass(*PassRegistry::getPassRegistry());
+  initializeClangLoopSwapServerResponsePass(*PassRegistry::getPassRegistry());
 }
