@@ -1,21 +1,17 @@
-#ifndef TSAR_CLANG_RENAME_LOCAL_H
-#define TSAR_CLANG_RENAME_LOCAL_H
+#ifndef TSAR_CLANG_LOOP_REVERSE_H
+#define TSAR_CLANG_LOOP_REVERSE_H
 
-#include "tsar/Transform/Clang/Passes.h"
-#include <bcl/utility.h>
+#include "tsar/Analysis/AnalysisSocket.h"
 #include <llvm/Pass.h>
 
 namespace llvm {
-class ClangLoopReversePass : public ModulePass, private bcl::Uncopyable {
+class ClangLoopReverse : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
-
-  ClangLoopReversePass() : ModulePass(ID) {
-    initializeClangLoopReversePassPass(*PassRegistry::getPassRegistry());
-  }
-
+  ClangLoopReverse();
   bool runOnModule(Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 } // namespace llvm
+
 #endif

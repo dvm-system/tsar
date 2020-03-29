@@ -1,110 +1,171 @@
 #include "tsar/Transform/Clang/LoopReverse.h"
+#include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
-#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Analysis/Clang/DIMemoryMatcher.h"
+#include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/ServerUtils.h"
+#include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
-#include "tsar/Support/PassProvider.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include <clang/AST/Decl.h>
+#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/IR/InterprocAttr.h"
+#include <algorithm>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include <clang/AST/Decl.h>
+#include <llvm/ADT/SCCIterator.h>
+#include <llvm/Analysis/CallGraph.h>
+#include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/IR/Module.h>
+#include "llvm/IR/LegacyPassManager.h"
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
+
 #include <string>
 #include <vector>
 
-#include "tsar/Support/Clang/Utils.h"
+
 using namespace llvm;
-using namespace clang;
 using namespace tsar;
-using namespace std;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-reverse"
-#define DEBUG_PREFIX "[LoopReverse]: "
+#define DEBUG_TYPE "clang-loop-reverse"
+#define DEBUG_PREFIX "[Loop Reverse]: ";
 
-char ClangLoopReversePass::ID = 0;
-
+// server, providers, passgroupinfo
 namespace {
-using LoopReversePassProvider =
-    FunctionPassProvider<TransformationEnginePass, CanonicalLoopPass,
-                         DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
-                         DIDependencyAnalysisPass, DIEstimateMemoryPass,
-                         GlobalOptionsImmutableWrapper,
-                         MemoryMatcherImmutableWrapper, ClangPerfectLoopPass>;
-
-class LoopReversePassGroupInfo final : public PassGroupInfo {
-  void addBeforePass(legacy::PassManager &PM) const override {
-    PM.add(createMemoryMatcherPass());
-    PM.add(createDIMemoryTraitPoolStorage());
-    PM.add(createDIMemoryEnvironmentStorage());
-  }
+// local provider
+using ClangLoopReverseProvider =
+    FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
+                           ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
+                           DFRegionInfoPass, ClangDIMemoryMatcherPass,
+                           ClangPerfectLoopPass>;
+// server provider
+using ClangLoopReverseServerProvider =
+    FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
+// server response
+using ClangLoopReverseServerResponse =
+    AnalysisResponsePass<GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper,
+                         DIMemoryEnvironmentWrapper, GlobalDefinedMemoryWrapper,
+                         GlobalLiveMemoryWrapper, ClonedDIMemoryMatcherWrapper,
+                         ClangLoopReverseServerProvider>;
+// server
+class ClangLoopReverseServer final : public AnalysisServer {
+public:
+  static char ID;
+  ClangLoopReverseServer();
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+  void prepareToClone(Module &ClientM,
+                      ValueToValueMapTy &ClientToServer) override;
+  void initializeServer(Module &CM, Module &SM, ValueToValueMapTy &CToS,
+                        legacy::PassManager &PM) override;
+  void addServerPasses(Module &M, legacy::PassManager &PM) override;
+  void prepareToClose(legacy::PassManager &PM) override;
+};
+// pass info
+class ClangLoopReverseInfo final : public tsar::PassGroupInfo {
+  void addBeforePass(legacy::PassManager &Passes) const override;
+  void addAfterPass(legacy::PassManager &Passes) const override;
 };
 } // namespace
-
-INITIALIZE_PROVIDER_BEGIN(LoopReversePassProvider, "loop-reverse-provider",
-                          "Loop reverse provider")
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
-INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
-INITIALIZE_PROVIDER_END(LoopReversePassProvider, "loop-reverse-provider",
-                        "Loop reverse provider")
-
-INITIALIZE_PASS_IN_GROUP_BEGIN(
-    ClangLoopReversePass, "clang-reverse", "Reverse loop pass", false, false,
-    tsar::TransformationQueryManager::getPassRegistry())
-INITIALIZE_PASS_IN_GROUP_INFO(LoopReversePassGroupInfo)
-INITIALIZE_PASS_DEPENDENCY(LoopReversePassProvider)
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-INITIALIZE_PASS_IN_GROUP_END(
-    ClangLoopReversePass, "clang-reverse", "Reverse loop pass", false, false,
-    tsar::TransformationQueryManager::getPassRegistry())
-
-void ClangLoopReversePass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
-  AU.addRequired<LoopReversePassProvider>();
-  AU.addRequired<DIMemoryTraitPoolWrapper>();
-  AU.addRequired<DIMemoryEnvironmentWrapper>();
+// server methods
+namespace {
+void ClangLoopReverseServer::getAnalysisUsage(AnalysisUsage &AU) const {
+  AnalysisServer::getAnalysisUsage(AU);
+  ClientToServerMemory::getAnalysisUsage(AU);
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+}
+
+void ClangLoopReverseServer::prepareToClone(Module &ClientM,
+                                            ValueToValueMapTy &ClientToServer) {
+  ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
+}
+
+void ClangLoopReverseServer::initializeServer(Module &CM, Module &SM,
+                                              ValueToValueMapTy &CToS,
+                                              legacy::PassManager &PM) {
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
+  PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
+  PM.add(createGlobalDefinedMemoryStorage());
+  PM.add(createGlobalLiveMemoryStorage());
+  PM.add(createDIMemoryTraitPoolStorage());
+  ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
+}
+
+void ClangLoopReverseServer::addServerPasses(Module &M,
+                                             legacy::PassManager &PM) {
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  addImmutableAliasAnalysis(PM);
+  addBeforeTfmAnalysis(PM);
+  addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
+  addAfterLoopRotateAnalysis(PM);
+  PM.add(createVerifierPass());
+  PM.add(new ClangLoopReverseServerResponse);
+}
+
+void ClangLoopReverseServer::prepareToClose(legacy::PassManager &PM) {
+  ClientToServerMemory::prepareToClose(PM);
+}
+} // namespace
+// passgroupinfo methods
+namespace {
+void ClangLoopReverseInfo::addBeforePass(legacy::PassManager &Passes) const {
+  addImmutableAliasAnalysis(Passes);
+  addInitialTransformations(Passes);
+  Passes.add(createAnalysisSocketImmutableStorage());
+  Passes.add(createDIMemoryTraitPoolStorage());
+  Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createDIEstimateMemoryPass());
+  Passes.add(new ClangLoopReverseServer);
+  Passes.add(createAnalysisWaitServerPass());
+  Passes.add(createMemoryMatcherPass());
+}
+
+void ClangLoopReverseInfo::addAfterPass(legacy::PassManager &Passes) const {
+  Passes.add(createAnalysisReleaseServerPass());
+  Passes.add(createAnalysisCloseConnectionPass());
+}
+} // namespace
+
+void ClangLoopReverse::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<ClangLoopReverseProvider>();
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
+  AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
+  AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<ClangRegionCollector>();
   AU.setPreservesAll();
 }
-
-ModulePass *llvm::createClangLoopReversePass() {
-  return new ClangLoopReversePass();
-}
-
+// pass code
 namespace {
 inline void dbgPrintln(const char *Msg) {
-  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
+  // LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
 }
-class ClauseVisitor : public RecursiveASTVisitor<ClauseVisitor> {
+class ClauseVisitor : public clang::RecursiveASTVisitor<ClauseVisitor> {
 public:
   ClauseVisitor() : mSL(NULL), mIL(NULL) {}
   bool VisitStringLiteral(clang::StringLiteral *SL) {
@@ -131,7 +192,7 @@ private:
   clang::StringLiteral *mSL;
   clang::IntegerLiteral *mIL;
 };
-class MiniVisitor : public RecursiveASTVisitor<MiniVisitor> {
+class MiniVisitor : public clang::RecursiveASTVisitor<MiniVisitor> {
 public:
   MiniVisitor() : mDRE(NULL) {}
   bool VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
@@ -145,18 +206,19 @@ private:
   clang::DeclRefExpr *mDRE;
 };
 class ClangLoopReverseVisitor
-    : public RecursiveASTVisitor<ClangLoopReverseVisitor> {
+    : public clang::RecursiveASTVisitor<ClangLoopReverseVisitor> {
 public:
-  ClangLoopReverseVisitor(TransformationContext *TfmCtx,
-                          ClangGlobalInfoPass::RawInfo &RawInfo,
-                          ClangLoopReversePass &Pass, llvm::Module &M)
-      : mTfmCtx(TfmCtx), mRawInfo(RawInfo), mRewriter(TfmCtx->getRewriter()),
+  ClangLoopReverseVisitor(TransformationContext *TfmCtx, ClangLoopReverse &Pass,
+                          llvm::Module &M,
+                          const tsar::GlobalOptions *GlobalOpts,
+                          tsar::MemoryMatchInfo::MemoryMatcher *MemMatcher)
+      : mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()),
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-        mLangOpts(mRewriter.getLangOpts()), mPass(Pass), mModule(M),
-        mStatus(SEARCH_PRAGMA), mGO(NULL), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(NULL), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
+        mLangOpts(mRewriter.getLangOpts()), mGO(GlobalOpts), mPass(Pass),
+        mModule(M), mStatus(SEARCH_PRAGMA), mDIAT(NULL), mDIDepInfo(NULL),
+        mMemMatcher(MemMatcher), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
         mIsStrict(false) {}
-  const CanonicalLoopInfo *getLoopInfo(ForStmt *FS) {
+  const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
     if (!FS)
       return NULL;
     for (auto Info : *mCurrentLoops) {
@@ -166,7 +228,7 @@ public:
     }
     return NULL;
   }
-  bool TraverseForStmt(ForStmt *FS) {
+  bool TraverseForStmt(clang::ForStmt *FS) {
     if (!FS)
       return false;
     if (mStatus == TRAVERSE_LOOPS) {
@@ -193,17 +255,17 @@ public:
       return RecursiveASTVisitor::VisitForStmt(FS);
     }
   }
-  bool TraverseDecl(Decl *D) {
+  bool TraverseDecl(clang::Decl *D) {
     if (!D)
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
       toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-             diag::err_reverse_not_forstmt);
+             clang::diag::err_reverse_not_forstmt);
       resetVisitor();
     }
     return RecursiveASTVisitor::TraverseDecl(D);
   }
-  bool TraverseStmt(Stmt *S) {
+  bool TraverseStmt(clang::Stmt *S) {
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
     switch (mStatus) {
@@ -239,14 +301,14 @@ public:
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive_in_macro);
+                   clang::diag::warn_remove_directive_in_macro);
           else if (IsPossible.second & PragmaFlags::IsInHeader)
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive_in_include);
+                   clang::diag::warn_remove_directive_in_include);
           else
             toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
-                   diag::warn_remove_directive);
-        Rewriter::RewriteOptions RemoveEmptyLine;
+                   clang::diag::warn_remove_directive);
+        clang::Rewriter::RewriteOptions RemoveEmptyLine;
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty
         /// is set to true then removing (in RewriterBuffer) works
         /// incorrect.
@@ -262,25 +324,22 @@ public:
     }
 
     case Status::TRAVERSE_STMT: {
-      if (!isa<ForStmt>(S)) {
+      if (!isa<clang::ForStmt>(S)) {
         toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
-               diag::err_reverse_not_forstmt);
+               clang::diag::err_reverse_not_forstmt);
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
       if (mNewAnalisysRequired) {
         Function *F = mModule.getFunction(mCurrentFD->getNameAsString());
-        mProvider = &mPass.getAnalysis<LoopReversePassProvider>(*F);
+        mProvider = &mPass.getAnalysis<ClangLoopReverseProvider>(*F);
         mCurrentLoops =
             &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
-        mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
-        mGO = &mProvider->get<GlobalOptionsImmutableWrapper>().getOptions();
-        mDIDepInfo =
-            &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
-        mMemMatcher =
-            &mProvider->get<MemoryMatcherImmutableWrapper>().get().Matcher;
         mPerfectLoopInfo =
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+        // mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
+        // mDIDepInfo =
+        //    &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
         mNewAnalisysRequired = false;
       }
 
@@ -300,7 +359,7 @@ public:
         }
         if (!Matched)
           toDiag(mSrcMgr.getDiagnostics(), mStringLiterals[i]->getLocStart(),
-                 diag::warn_reverse_cant_match);
+                 clang::diag::warn_reverse_cant_match);
       }
 
       for (int i = 0; i < mIntegerLiterals.size(); i++) {
@@ -309,7 +368,7 @@ public:
           mToTransform.insert(Num);
         } else {
           toDiag(mSrcMgr.getDiagnostics(), mIntegerLiterals[i]->getLocStart(),
-                 diag::warn_reverse_cant_match);
+                 clang::diag::warn_reverse_cant_match);
         }
       }
 
@@ -325,7 +384,7 @@ public:
     }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
-  bool VisitFunctionDecl(FunctionDecl *FD) {
+  bool VisitFunctionDecl(clang::FunctionDecl *FD) {
     if (!FD)
       return RecursiveASTVisitor::VisitFunctionDecl(FD);
     mCurrentFD = FD;
@@ -583,24 +642,23 @@ private:
       return true;
     } else {
       toDiag(mSrcMgr.getDiagnostics(), FS->getBeginLoc(),
-             diag::err_reverse_not_canonical);
+             clang::diag::err_reverse_not_canonical);
       return false;
     }
     return false;
   }
   TransformationContext *mTfmCtx;
-  ClangGlobalInfoPass::RawInfo &mRawInfo;
-  Rewriter &mRewriter;
-  ASTContext &mContext;
-  SourceManager &mSrcMgr;
-  const LangOptions &mLangOpts;
+  clang::Rewriter &mRewriter;
+  clang::ASTContext &mContext;
+  clang::SourceManager &mSrcMgr;
+  const clang::LangOptions &mLangOpts;
   // get analysis from provider only if it is required
   bool mNewAnalisysRequired;
-  FunctionDecl *mCurrentFD;
+  clang::FunctionDecl *mCurrentFD;
   const CanonicalLoopSet *mCurrentLoops;
-  ClangLoopReversePass &mPass;
+  ClangLoopReverse &mPass;
   llvm::Module &mModule;
-  LoopReversePassProvider *mProvider;
+  ClangLoopReverseProvider *mProvider;
   tsar::DIDependencInfo *mDIDepInfo;
   tsar::DIAliasTree *mDIAT;
   const tsar::GlobalOptions *mGO;
@@ -614,42 +672,139 @@ private:
       std::pair<const tsar::CanonicalLoopInfo *, clang::VarDecl *>, 1>
       mLoops;
   enum Status { SEARCH_PRAGMA, TRAVERSE_STMT, TRAVERSE_LOOPS } mStatus;
-}; // namespace
+};
 
 } // namespace
-
-bool ClangLoopReversePass::runOnModule(llvm::Module &M) {
-  dbgPrintln("Start Loop Reverse pass");
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+bool ClangLoopReverse::runOnModule(Module &M) {
+  errs() << "Start Loop Reverse Pass\n";
+  releaseMemory();
+  auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
                              ": transformation context is not available");
     return false;
   }
-  // set provider's wrappers
-  LoopReversePassProvider::initialize<TransformationEnginePass>(
-      [&M, &TfmCtx](TransformationEnginePass &TEP) {
-        TEP.setContext(M, TfmCtx);
+  auto *SocketInfo = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  auto *GlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto *MemoryMatcher = &getAnalysis<MemoryMatcherImmutableWrapper>().get();
+  auto *GlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
+  // init provider on client
+  ClangLoopReverseProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [GlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(GlobalOpts);
       });
-  auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
-  LoopReversePassProvider::initialize<MemoryMatcherImmutableWrapper>(
-      [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
-        Wrapper.set(*MMWrapper);
+  ClangLoopReverseProvider::initialize<AnalysisSocketImmutableWrapper>(
+      [SocketInfo](AnalysisSocketImmutableWrapper &Wrapper) {
+        Wrapper.set(*SocketInfo);
       });
-  auto &DIMEW = getAnalysis<DIMemoryEnvironmentWrapper>();
-  LoopReversePassProvider::initialize<DIMemoryEnvironmentWrapper>(
-      [&DIMEW](DIMemoryEnvironmentWrapper &Wrapper) { Wrapper.set(*DIMEW); });
-  auto &DIMTPW = getAnalysis<DIMemoryTraitPoolWrapper>();
-  LoopReversePassProvider::initialize<DIMemoryTraitPoolWrapper>(
-      [&DIMTPW](DIMemoryTraitPoolWrapper &Wrapper) { Wrapper.set(*DIMTPW); });
-  auto &mGlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  LoopReversePassProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [&mGlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
-        Wrapper.setOptions(&mGlobalOpts);
+  ClangLoopReverseProvider::initialize<TransformationEnginePass>(
+      [TfmCtx, &M](TransformationEnginePass &Wrapper) {
+        Wrapper.setContext(M, TfmCtx);
       });
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangLoopReverseVisitor Visitor(TfmCtx, GIP.getRawInfo(), *this, M);
+  ClangLoopReverseProvider::initialize<MemoryMatcherImmutableWrapper>(
+      [MemoryMatcher](MemoryMatcherImmutableWrapper &Wrapper) {
+        Wrapper.set(*MemoryMatcher);
+      });
+  ClangLoopReverseProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(*GlobalsAA);
+      });
+  // init provider on server
+  ClangLoopReverseServerProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [GlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(GlobalOpts);
+      });
+  auto R =
+      SocketInfo->getActive()
+          ->second
+          .getAnalysis<GlobalsAAWrapperPass, DIMemoryEnvironmentWrapper,
+                       DIMemoryTraitPoolWrapper, GlobalDefinedMemoryWrapper,
+                       GlobalLiveMemoryWrapper>();
+  assert(R && "Immutable passes must be available on server!");
+  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
+  ClangLoopReverseServerProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(**DIMEnvServer);
+      });
+  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
+  ClangLoopReverseServerProvider::initialize<DIMemoryTraitPoolWrapper>(
+      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
+        Wrapper.set(**DIMTraitPoolServer);
+      });
+  auto &GlobalsAAServer = R->value<GlobalsAAWrapperPass *>()->getResult();
+  ClangLoopReverseServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
+      [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(GlobalsAAServer);
+      });
+  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
+  ClangLoopReverseServerProvider::initialize<GlobalDefinedMemoryWrapper>(
+      [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
+        Wrapper.set(**GlobalDefUseServer);
+      });
+  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
+  ClangLoopReverseServerProvider::initialize<GlobalLiveMemoryWrapper>(
+      [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
+        Wrapper.set(**GlobalLiveMemoryServer);
+      });
+  ClangLoopReverseVisitor Visitor(TfmCtx, *this, M, GlobalOpts,
+                                  &MemoryMatcher->Matcher);
   Visitor.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  dbgPrintln("Finish Loop Reverse pass");
+  errs() << "Finish Loop Reverse Pass\n";
   return false;
+}
+namespace llvm {
+static void initializeClangLoopReverseServerPass(PassRegistry &);
+static void initializeClangLoopReverseServerResponsePass(PassRegistry &);
+} // namespace llvm
+
+INITIALIZE_PROVIDER(ClangLoopReverseServerProvider,
+                    "clang-loop-reverse-server-provider",
+                    "Loop reverse (Clang, Server, Provider)")
+
+template <> char ClangLoopReverseServerResponse::ID = 0;
+INITIALIZE_PASS(ClangLoopReverseServerResponse, "clang-loop-reverse-response",
+                "Loop reverse (Clang, Server, Response)", true, false)
+
+char ClangLoopReverseServer::ID = 0;
+INITIALIZE_PASS(ClangLoopReverseServer, "clang-loop-reverse-server",
+                "Loop reverse (Clang, Server)", false, false)
+
+INITIALIZE_PROVIDER(ClangLoopReverseProvider, "clang-loop-reverse-provider",
+                    "Loop reverse (Clang, Provider)")
+
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangLoopReverse, "clang-loop-reverse",
+                               "Clang based loop reverse", false, false,
+                               TransformationQueryManager::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP_INFO(ClangLoopReverseInfo)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
+INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
+INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
+INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
+INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
+INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)
+INITIALIZE_PASS_IN_GROUP_END(ClangLoopReverse, "clang-loop-reverse",
+                             "Clang based loop reverse", false, false,
+                             TransformationQueryManager::getPassRegistry())
+
+ClangLoopReverseServer::ClangLoopReverseServer() : AnalysisServer(ID) {
+  initializeClangLoopReverseServerPass(*PassRegistry::getPassRegistry());
+}
+char ClangLoopReverse::ID = '0';
+ClangLoopReverse::ClangLoopReverse() : ModulePass(ID) {
+  initializeClangLoopReverseProviderPass(*PassRegistry::getPassRegistry());
+  initializeClangLoopReverseServerPass(*PassRegistry::getPassRegistry());
+  initializeClangLoopReverseServerProviderPass(
+      *PassRegistry::getPassRegistry());
+  initializeClangLoopReverseServerResponsePass(
+      *PassRegistry::getPassRegistry());
 }
