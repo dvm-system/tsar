@@ -94,6 +94,7 @@ interproc_3.init
 interproc_4.init
 interproc_5.init
 interproc_6.init
+interproc_7.init
 Jacobi.init
 Jacobi.func.init
 Adi.func.init

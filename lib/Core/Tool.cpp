@@ -136,6 +136,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
   llvm::cl::opt<bool> ExternalCalls;
   llvm::cl::opt<bool> NoExternalCalls;
+  llvm::cl::opt<bool> MathErrno;
+  llvm::cl::opt<bool> NoMathErrno;
   llvm::cl::opt<std::string> AnalysisUse;
   llvm::cl::list<std::string> OptRegion;
 
@@ -234,6 +236,10 @@ Options::Options() :
     cl::desc("Check whether a function could be called outside the analyzed module(default)")),
   NoExternalCalls("fno-external-calls", cl::cat(AnalysisCategory),
     cl::desc("Assume that functions are never called outside the analyzed module")),
+  MathErrno("fmath-errno", cl::cat(AnalysisCategory),
+     cl::desc("Require math functions to indicate errors by setting errno")),
+  NoMathErrno("fno-math-errno", cl::cat(AnalysisCategory),
+     cl::desc("Prevent math functions to indicate errors by setting errno")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -441,6 +447,16 @@ void Tool::storeCLOptions() {
     mCommandLine.push_back("-I" + Path);
   for (auto &Macro : Options::get().MacroDefs)
     mCommandLine.push_back("-D" + Macro);
+  if (Options::get().MathErrno && Options::get().NoMathErrno) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoMathErrno.ArgStr);
+    Options::get().MathErrno.error(Msg);
+    exit(1);
+  }
+  if (Options::get().MathErrno)
+    mCommandLine.emplace_back("-fmath-errno");
+  if (Options::get().NoMathErrno)
+    mCommandLine.emplace_back("-fno-math-errno");
   mCompilations = std::unique_ptr<CompilationDatabase>(
     new FixedCompilationDatabase(".", mCommandLine));
   OptionList IncompatibleOpts;
