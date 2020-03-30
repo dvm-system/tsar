@@ -35,6 +35,10 @@
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
+#include <string>
+#include <algorithm>
 
 using namespace clang;
 using namespace llvm;
@@ -52,12 +56,54 @@ public:
   ClangDVMHSMParallelization() : ClangSMParallelization(ID) {
     initializeClangDVMHSMParallelizationPass(*PassRegistry::getPassRegistry());
   }
+
+  using ForVarInfoT = DenseMap<ForStmt const*,
+    std::pair<ClangDependenceAnalyzer::ASTRegionTraitInfo, bool>>;
+
+  using ParentChildInfoT = DenseMap<Stmt const*,
+    std::pair<std::vector<ForStmt const*>, bool>>;
+
 private:
   bool exploitParallelism(const Loop &IR, const clang::ForStmt &AST,
     const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     TransformationContext &TfmCtx) override;
+
+  void optimizeLevel(tsar::TransformationContext& TfmCtx) override;
+
+  ForVarInfoT mForVarInfo;
+  ParentChildInfoT mParentChildInfo;
 };
+using ForVarInfoT = ClangDVMHSMParallelization::ForVarInfoT;
+using ParentChildInfoT = ClangDVMHSMParallelization::ParentChildInfoT;
+using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
+using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
+using UnionLoopsT = std::vector<std::vector<ForStmt const*>>;
+
+template<class T>
+void unionVarSets(const std::vector<ForStmt const*>& Fors,
+    ForVarInfoT& ForVarInfo, SortedVarListT& Result) {
+  for (auto AST : Fors) {
+    for (auto VarName : ForVarInfo[AST].first.get<T>()) {
+      Result.insert(VarName);
+    }
+  }
+}
+
+void unionVarRedSets(const std::vector<ForStmt const*>& Fors, 
+    ForVarInfoT& ForVarInfo, ReductionVarListT& Result) {
+  unsigned I = trait::DIReduction::RK_First;
+  unsigned EI = trait::DIReduction::RK_NumberOf;
+  for (; I < EI; ++I) {
+    SortedVarListT tmp;
+    for (auto AST : Fors) {
+      for (auto VarName : ForVarInfo[AST].first.get<trait::Reduction>()[I]) {
+        tmp.insert(VarName);
+      }
+    }
+    Result[I] = tmp;
+  }
+}
 
 void addVarList(const ClangDependenceAnalyzer::SortedVarListT &VarInfoList,
     SmallVectorImpl<char> &Clause) {
@@ -94,6 +140,7 @@ void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
     ParallelFor.append({ 'r', 'e', 'd', 'u', 'c', 't', 'i', 'o', 'n' });
     ParallelFor.push_back('(');
     auto VarItr = VarInfoList[I].begin(), VarItrE = VarInfoList[I].end();
+    auto k = VarItr->begin();
     ParallelFor.append(RedKind.begin(), RedKind.end());
     ParallelFor.push_back('(');
     ParallelFor.append(VarItr->begin(), VarItr->end());
@@ -108,6 +155,40 @@ void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
     ParallelFor.push_back(')');
   }
 }
+
+void tryUnionLoops(ParentChildInfoT& ParentChildInfo, UnionLoopsT& UnionLoops) {
+  for (auto& PC : ParentChildInfo) {
+    if (!PC.second.second) {
+      auto& P = PC.first;
+      auto& ChLps = PC.second.first;
+      PC.second.second = true;
+      std::sort(ChLps.begin(), ChLps.end(),
+        [](const ForStmt* f1, const ForStmt* f2) {
+          return f1->getBeginLoc() < f2->getBeginLoc();
+        });
+      auto& AllCh = P->children();
+      int LI = 0;
+
+      auto tmpUL = std::vector<ForStmt const*>();
+      for (auto& CI = AllCh.begin(), CE = AllCh.end();
+        CI != CE && LI < ChLps.size(); ++CI) {
+        if (static_cast<Stmt const*>(ChLps[LI]) == *CI) {
+          tmpUL.push_back(ChLps[LI++]);
+        }
+        else {
+          if (!tmpUL.empty()) {
+            UnionLoops.push_back(tmpUL);
+            tmpUL.clear();
+          }
+        }
+      }
+      if (!tmpUL.empty()) {
+        UnionLoops.push_back(tmpUL);
+        tmpUL.clear();
+      }
+    }
+  }
+}
 } // namespace
 
 bool ClangDVMHSMParallelization::exploitParallelism(
@@ -119,57 +200,89 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   if (!ASTDepInfo.get<trait::FirstPrivate>().empty() ||
       !ASTDepInfo.get<trait::LastPrivate>().empty())
     return false;
-  SmallString<128> ParallelFor("#pragma dvm parallel (1)");
-  if (!ASTDepInfo.get<trait::Private>().empty()) {
-    ParallelFor += " private";
-    addVarList(ASTDepInfo.get<trait::Private>(), ParallelFor);
-  }
-  addVarList(ASTDepInfo.get<trait::Reduction>(), ParallelFor);
-  ParallelFor += '\n';
-  SmallString<128> DVMHRegion("#pragma dvm region");
-  SmallString<128> DVMHActual, DVMHGetActual;
-  auto &PI = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
-  if (!PI[&IR].isHostOnly() && ASTRegionAnalysis.evaluateDefUse()) {
-    if (!ASTDepInfo.get<trait::ReadOccurred>().empty()) {
-      DVMHActual += "#pragma dvm actual";
-      addVarList(ASTDepInfo.get<trait::ReadOccurred>(), DVMHActual);
-      DVMHRegion += " in";
-      addVarList(ASTDepInfo.get<trait::ReadOccurred>(), DVMHRegion);
-      DVMHActual += '\n';
-    }
-    if (!ASTDepInfo.get<trait::WriteOccurred>().empty()) {
-      DVMHGetActual += "#pragma dvm get_actual";
-      addVarList(ASTDepInfo.get<trait::WriteOccurred>(), DVMHGetActual);
-      DVMHRegion += " out";
-      addVarList(ASTDepInfo.get<trait::WriteOccurred>(), DVMHRegion);
-      DVMHGetActual += '\n';
-    }
-    if (!ASTDepInfo.get<trait::Private>().empty()) {
-      DVMHRegion += " local";
-      addVarList(ASTDepInfo.get<trait::Private>(), DVMHRegion);
-    }
+  auto& ASTCtx = TfmCtx.getContext();
+  auto Parent = ASTCtx.getParents(AST)[0].get<Stmt>();
+  if (mParentChildInfo.count(Parent)) {
+    mParentChildInfo[Parent].first.push_back(&AST);
   } else {
-    DVMHRegion += " targets(HOST)";
+    mParentChildInfo.try_emplace(Parent, std::make_pair(std::vector<ForStmt const*>({&AST}), false));
   }
-  DVMHRegion += "\n{\n";
-  // Add directives to the source code.
-  auto &Rewriter = TfmCtx.getRewriter();
-  Rewriter.InsertTextBefore(AST.getLocStart(), ParallelFor);
-  Rewriter.InsertTextBefore(AST.getLocStart(), DVMHRegion);
-  if (!DVMHActual.empty())
-    Rewriter.InsertTextBefore(AST.getLocStart(), DVMHActual);
-  auto &ASTCtx = TfmCtx.getContext();
-  Token SemiTok;
-  auto InsertLoc = (!getRawTokenAfter(AST.getLocEnd(),
+  auto & PI = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
+  assert(!mForVarInfo.count(&AST) && "This ForStmt already in DenceMap");
+  mForVarInfo.try_emplace(&AST, std::make_pair(ASTDepInfo,
+    PI[&IR].isHostOnly() || !ASTRegionAnalysis.evaluateDefUse()));
+   return true;
+}
+
+void ClangDVMHSMParallelization::optimizeLevel(
+    tsar::TransformationContext& TfmCtx) {
+  UnionLoopsT UnionLoops;
+  tryUnionLoops(mParentChildInfo, UnionLoops);
+  for (auto& UL : UnionLoops) {
+    auto& FL = UL[0];
+    auto& LL = UL[UL.size() - 1];
+    bool IsHost = mForVarInfo[FL].second;
+    SmallString<128> ParallelFor("#pragma dvm parallel (1)");
+    SortedVarListT UnionPrivateVarSet;
+    unionVarSets<trait::Private>(UL, mForVarInfo, UnionPrivateVarSet);
+    if (!UnionPrivateVarSet.empty()) {
+      ParallelFor += " private";
+      addVarList(UnionPrivateVarSet, ParallelFor);
+    }
+    ReductionVarListT UnionRedVarSet;
+    unionVarRedSets(UL, mForVarInfo, UnionRedVarSet);
+    addVarList(UnionRedVarSet, ParallelFor);
+    ParallelFor += '\n';
+    SmallString<128> DVMHRegion("#pragma dvm region");
+    SmallString<128> DVMHActual, DVMHGetActual;
+    if (IsHost) {
+      DVMHRegion += " targets(HOST)";
+    }
+    else {
+      SortedVarListT UnionVarSet;
+      unionVarSets<trait::ReadOccurred>(UL, mForVarInfo, UnionVarSet);
+      if (!UnionVarSet.empty()) {
+        DVMHActual += "#pragma dvm actual";
+        addVarList(UnionVarSet, DVMHActual);
+        DVMHRegion += " in";
+        addVarList(UnionVarSet, DVMHRegion);
+        DVMHActual += '\n';
+        UnionVarSet.clear();
+      }
+      unionVarSets<trait::WriteOccurred>(UL, mForVarInfo, UnionVarSet);
+      if (!UnionVarSet.empty()) {
+        DVMHGetActual += "#pragma dvm get_actual";
+        addVarList(UnionVarSet, DVMHGetActual);
+        DVMHRegion += " out";
+        addVarList(UnionVarSet, DVMHRegion);
+        DVMHGetActual += '\n';
+        UnionVarSet.clear();
+      }
+      if (!UnionPrivateVarSet.empty()) {
+        DVMHRegion += " local";
+        addVarList(UnionPrivateVarSet, DVMHRegion);
+      }
+    }
+    DVMHRegion += "\n{\n";
+
+    // Add directives to the source code.
+    auto& Rewriter = TfmCtx.getRewriter();
+    Rewriter.InsertTextBefore(FL->getLocStart(), ParallelFor);
+    Rewriter.InsertTextBefore(FL->getLocStart(), DVMHRegion);
+    if (!DVMHActual.empty())
+      Rewriter.InsertTextBefore(FL->getLocStart(), DVMHActual);
+    auto& ASTCtx = TfmCtx.getContext();
+    Token SemiTok;
+    auto InsertLoc = (!getRawTokenAfter(LL->getLocEnd(),
       ASTCtx.getSourceManager(), ASTCtx.getLangOpts(), SemiTok)
-    && SemiTok.is(tok::semi))
-    ? SemiTok.getLocation() : AST.getLocEnd();
-  Rewriter.InsertTextAfterToken(InsertLoc, "}");
-  if (!DVMHGetActual.empty()) {
-    Rewriter.InsertTextAfterToken(InsertLoc, "\n");
-    Rewriter.InsertTextAfterToken(InsertLoc, DVMHGetActual);
+      && SemiTok.is(tok::semi))
+      ? SemiTok.getLocation() : LL->getLocEnd();
+    Rewriter.InsertTextAfterToken(InsertLoc, "}");
+    if (!DVMHGetActual.empty()) {
+      Rewriter.InsertTextAfterToken(InsertLoc, "\n");
+      Rewriter.InsertTextAfterToken(InsertLoc, DVMHGetActual);
+    }
   }
-  return true;
 }
 
 ModulePass *llvm::createClangDVMHSMParallelization() {
