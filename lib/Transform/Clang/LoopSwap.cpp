@@ -152,9 +152,6 @@ void ClangLoopSwap::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 namespace {
-// inline void dbgPrintln(const char *Msg) {
-//  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
-//}
 class SwapClauseVisitor : public clang::RecursiveASTVisitor<SwapClauseVisitor> {
 public:
   bool VisitStringLiteral(clang::StringLiteral *SL) {
@@ -175,19 +172,21 @@ public:
   ClangLoopSwapVisitor(TransformationContext *TfmCtx,
                        ClangGlobalInfoPass::RawInfo &RawInfo,
                        MemoryMatchInfo::MemoryMatcher *Matcher,
-                       const GlobalOptions *GO, AnalysisSocketInfo *SocketInfo,
+                       const GlobalOptions *GO, AnalysisSocket &Socket,
                        ClangLoopSwap &Pass, llvm::Module &M)
       : mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()),
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-        mLangOpts(mRewriter.getLangOpts()), mRawInfo(RawInfo),
-        mSocketInfo(SocketInfo), mPass(Pass), mModule(M),
-        mStatus(SEARCH_PRAGMA), mGO(GO), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(Matcher), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
-        mIsStrict(false) {}
+        mLangOpts(mRewriter.getLangOpts()), mRawInfo(RawInfo), mSocket(Socket),
+        mPass(Pass), mModule(M), mMemMatcher(Matcher), mGO(GO),
+        mClientToServer(
+            **mSocket.getAnalysis<AnalysisClientServerMatcherWrapper>()
+                  ->value<AnalysisClientServerMatcherWrapper *>()),
+        mStatus(SEARCH_PRAGMA), mIsStrict(false), mDIAT(NULL), mDIDepInfo(NULL),
+        mPerfectLoopInfo(NULL), mCanonicalLoopInfo(NULL) {}
   const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
     if (!FS)
       return NULL;
-    for (auto Info : *mCurrentLoops) {
+    for (auto Info : *mCanonicalLoopInfo) {
       if (Info->getASTLoop() == FS) {
         return Info;
       }
@@ -233,7 +232,8 @@ public:
         bool Dependency = false;
         auto *Loop = LI->getLoop()->getLoop();
         auto *LoopID = Loop->getLoopID();
-        auto DepItr = mDIDepInfo->find(LoopID);
+        auto ServerLoopID = cast<MDNode>(*mClientToServer.getMappedMD(LoopID));
+        auto DepItr = mDIDepInfo->find(ServerLoopID);
         if (DepItr == mDIDepInfo->end()) {
           mLoopsKinds[mLoopsKinds.size() - 1] = NO_ANALYSIS;
         } else {
@@ -280,7 +280,7 @@ public:
       Pragma P(*S);
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
       if (findClause(P, ClauseId::LoopSwap, Clauses)) {
-        LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Start pass\n");
+        LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Found swap clause\n");
         // collect info from clauses
         SwapClauseVisitor SCV;
         for (auto C : Clauses)
@@ -295,7 +295,7 @@ public:
         findClause(P, ClauseId::NoStrict, Clauses);
         if (Csize != Clauses.size()) {
           mIsStrict = false;
-          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Pragma found\n");
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Found nostrict clause\n");
         }
         // remove clauses
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -351,16 +351,12 @@ public:
       if (mNewAnalisysRequired) {
         Function *F = mModule.getFunction(mCurrentFD->getNameAsString());
         mProvider = &mPass.getAnalysis<ClangLoopSwapProvider>(*F);
-        mCurrentLoops =
+        mCanonicalLoopInfo =
             &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
         mPerfectLoopInfo =
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
-        // mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
-        // mDIDepInfo =
-        //    &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
-        auto &Socket = mSocketInfo->getActive()->second;
         auto RF =
-            Socket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
+            mSocket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
                 *F);
         assert(RF &&
                "Dependence analysis must be available for a parallel loop!");
@@ -368,7 +364,6 @@ public:
         mDIDepInfo =
             &RF->value<DIDependencyAnalysisPass *>()->getDependencies();
         mNewAnalisysRequired = false;
-        errs() << "GOT INFO\n";
       }
       // collect inductions
       mStatus = GET_REFERENCES;
@@ -511,16 +506,18 @@ private:
   // get analysis from provider only if it is required
   bool mNewAnalisysRequired;
   clang::FunctionDecl *mCurrentFD;
-  const CanonicalLoopSet *mCurrentLoops;
   ClangLoopSwap &mPass;
   llvm::Module &mModule;
+  const tsar::GlobalOptions *mGO;
   ClangLoopSwapProvider *mProvider;
+  tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
+  const CanonicalLoopSet *mCanonicalLoopInfo;
+  tsar::PerfectLoopInfo *mPerfectLoopInfo;
   tsar::DIDependencInfo *mDIDepInfo;
   tsar::DIAliasTree *mDIAT;
-  const tsar::GlobalOptions *mGO;
-  tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
-  tsar::PerfectLoopInfo *mPerfectLoopInfo;
-  AnalysisSocketInfo *mSocketInfo;
+  AnalysisSocket &mSocket;
+  llvm::ValueToValueMapTy &mClientToServer;
+
   bool mIsStrict;
   enum LoopKind {
     CANONICAL_AND_PERFECT,
@@ -540,7 +537,7 @@ private:
 } // namespace
 
 bool ClangLoopSwap::runOnModule(Module &M) {
-  errs() << "Start Loop Swap Pass\n";
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Start\n");
   auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
@@ -613,9 +610,10 @@ bool ClangLoopSwap::runOnModule(Module &M) {
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto &RawInfo = getAnalysis<ClangGlobalInfoPass>().getRawInfo();
   ClangLoopSwapVisitor CLSV(TfmCtx, RawInfo, &MemoryMatcher->Matcher,
-                            GlobalOpts, SocketInfo, *this, M);
+                            GlobalOpts, SocketInfo->getActive()->second, *this,
+                            M);
   CLSV.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  errs() << "Finish Loop Swap Pass\n";
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Finish\n");
   return false;
 }
 
