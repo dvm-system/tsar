@@ -29,30 +29,29 @@
 #include "tsar/Support/PassGroupRegistry.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include <algorithm>
+#include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include <clang/AST/Decl.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/LoopInfo.h>
-#include <llvm/IR/Verifier.h>
 #include <llvm/IR/Module.h>
-#include "llvm/IR/LegacyPassManager.h"
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <string>
 #include <vector>
 
-
 using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-loop-reverse"
-#define DEBUG_PREFIX "[Loop Reverse]: ";
+const char *DEBUG_PREFIX = "[Loop Reverse]: ";
 
 // server, providers, passgroupinfo
 namespace {
@@ -162,9 +161,6 @@ void ClangLoopReverse::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 // pass code
 namespace {
-inline void dbgPrintln(const char *Msg) {
-  // LLVM_DEBUG(dbgs() << DEBUG_PREFIX << Msg << "\n");
-}
 class ClauseVisitor : public clang::RecursiveASTVisitor<ClauseVisitor> {
 public:
   ClauseVisitor() : mSL(NULL), mIL(NULL) {}
@@ -211,13 +207,17 @@ public:
   ClangLoopReverseVisitor(TransformationContext *TfmCtx, ClangLoopReverse &Pass,
                           llvm::Module &M,
                           const tsar::GlobalOptions *GlobalOpts,
-                          tsar::MemoryMatchInfo::MemoryMatcher *MemMatcher)
+                          tsar::MemoryMatchInfo::MemoryMatcher *MemMatcher,
+                          AnalysisSocket &Socket)
       : mTfmCtx(TfmCtx), mRewriter(TfmCtx->getRewriter()),
         mContext(TfmCtx->getContext()), mSrcMgr(mRewriter.getSourceMgr()),
         mLangOpts(mRewriter.getLangOpts()), mGO(GlobalOpts), mPass(Pass),
-        mModule(M), mStatus(SEARCH_PRAGMA), mDIAT(NULL), mDIDepInfo(NULL),
-        mMemMatcher(MemMatcher), mPerfectLoopInfo(NULL), mCurrentLoops(NULL),
-        mIsStrict(false) {}
+        mModule(M), mMemMatcher(MemMatcher), mSocket(Socket),
+        mClientToServer(
+            **mSocket.getAnalysis<AnalysisClientServerMatcherWrapper>()
+                  ->value<AnalysisClientServerMatcherWrapper *>()),
+        mStatus(SEARCH_PRAGMA), mIsStrict(false), mDIAT(NULL), mDIDepInfo(NULL),
+        mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
   const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
     if (!FS)
       return NULL;
@@ -273,7 +273,7 @@ public:
       Pragma P(*S);
       llvm::SmallVector<clang::Stmt *, 1> Clauses;
       if (findClause(P, ClauseId::LoopReverse, Clauses)) {
-        dbgPrintln("Pragma -> start");
+        LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Found reverse clause\n");
         // collect info from clauses
         ClauseVisitor CV;
         for (auto *C : Clauses) {
@@ -292,7 +292,7 @@ public:
         findClause(P, ClauseId::NoStrict, Clauses);
         if (Csize != Clauses.size()) {
           mIsStrict = false;
-          dbgPrintln("Found nostrict clause");
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Found nostrict clause\n");
         }
         // remove clauses
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -337,9 +337,14 @@ public:
             &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
         mPerfectLoopInfo =
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
-        // mDIAT = &mProvider->get<DIEstimateMemoryPass>().getAliasTree();
-        // mDIDepInfo =
-        //    &mProvider->get<DIDependencyAnalysisPass>().getDependencies();
+        auto RF =
+            mSocket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
+                *F);
+        assert(RF &&
+               "Dependence analysis must be available for a loop reverse!");
+        mDIAT = &RF->value<DIEstimateMemoryPass *>()->getAliasTree();
+        mDIDepInfo =
+            &RF->value<DIDependencyAnalysisPass *>()->getDependencies();
         mNewAnalisysRequired = false;
       }
 
@@ -366,17 +371,55 @@ public:
         auto Num = mIntegerLiterals[i]->getValue().getZExtValue() - 1;
         if (Num < mLoops.size()) {
           mToTransform.insert(Num);
+          LLVM_DEBUG(dbgs()
+                     << DEBUG_PREFIX << "Match " << Num + 1 << " as "
+                     << mLoops[Num].first->getInduction()->getName() << "\n");
         } else {
           toDiag(mSrcMgr.getDiagnostics(), mIntegerLiterals[i]->getLocStart(),
                  clang::diag::warn_reverse_cant_match);
         }
       }
-
       for (auto Num : mToTransform) {
+        const CanonicalLoopInfo *LI = mLoops[Num].first;
+        if (mIsStrict) {
+          bool Dependency = false;
+          auto *Loop = LI->getLoop()->getLoop();
+          auto *LoopID = Loop->getLoopID();
+          auto ServerLoopID =
+              cast<MDNode>(*mClientToServer.getMappedMD(LoopID));
+          auto DepItr = mDIDepInfo->find(ServerLoopID);
+          if (DepItr == mDIDepInfo->end()) {
+            toDiag(mSrcMgr.getDiagnostics(),
+                   mLoops[Num].first->getASTLoop()->getBeginLoc(),
+                   clang::diag::err_reverse_no_analysis);
+            continue;
+          } else {
+            auto &DIDepSet = DepItr->get<DIDependenceSet>();
+            DenseSet<const DIAliasNode *> Coverage;
+            accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
+                                                mGO->IgnoreRedundantMemory);
+            if (!Coverage.empty()) {
+              for (auto &Trait : DIDepSet) {
+                if (!Coverage.count(Trait.getNode()))
+                  continue;
+                if (Trait.is_any<trait::Output, trait::Anti, trait::Flow>()) {
+                  Dependency = true;
+                }
+              }
+            }
+            if (Dependency) {
+              toDiag(mSrcMgr.getDiagnostics(), LI->getASTLoop()->getBeginLoc(),
+                     clang::diag::err_reverse_dependency);
+              continue;
+            }
+          }
+        }
         if (transformLoop(mLoops[Num].first)) {
-          errs() << "Transformed " << mLoops[Num].second->getName() << "\n";
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Transformed "
+                            << mLoops[Num].second->getName() << "\n");
         } else
-          errs() << "Not transformed " << mLoops[Num].second->getName() << "\n";
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Not transformed "
+                            << mLoops[Num].second->getName() << "\n");
       }
       resetVisitor();
       return Ret;
@@ -659,10 +702,13 @@ private:
   ClangLoopReverse &mPass;
   llvm::Module &mModule;
   ClangLoopReverseProvider *mProvider;
+  AnalysisSocketInfo *mSocketInfo;
+  AnalysisSocket &mSocket;
   tsar::DIDependencInfo *mDIDepInfo;
   tsar::DIAliasTree *mDIAT;
   const tsar::GlobalOptions *mGO;
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
+  llvm::ValueToValueMapTy &mClientToServer;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
   bool mIsStrict;
 
@@ -676,7 +722,7 @@ private:
 
 } // namespace
 bool ClangLoopReverse::runOnModule(Module &M) {
-  errs() << "Start Loop Reverse Pass\n";
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Start\n");
   releaseMemory();
   auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
@@ -747,9 +793,10 @@ bool ClangLoopReverse::runOnModule(Module &M) {
         Wrapper.set(**GlobalLiveMemoryServer);
       });
   ClangLoopReverseVisitor Visitor(TfmCtx, *this, M, GlobalOpts,
-                                  &MemoryMatcher->Matcher);
+                                  &MemoryMatcher->Matcher,
+                                  SocketInfo->getActive()->second);
   Visitor.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  errs() << "Finish Loop Reverse Pass\n";
+  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Finish\n");
   return false;
 }
 namespace llvm {

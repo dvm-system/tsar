@@ -198,6 +198,8 @@ def warn_interchange_no_analysis: Warning<"absence of analysis results prevents 
 def err_reverse_not_forstmt : Error<"for loop expected">;
 def err_reverse_not_canonical : Error<"expected canonical loop form">;
 def warn_reverse_cant_match: Error<"can't match this to loop">;
+def err_reverse_no_analysis: Error<"No analysis for loop; use 'nostrict' clause to skip this">;
+def err_reverse_dependency: Error<"there is dependence in loop">;
 
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
