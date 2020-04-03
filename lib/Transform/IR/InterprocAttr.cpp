@@ -46,6 +46,7 @@ STATISTIC(NumNoIOFunc, "Number of functions marked as sapfor.noio");
 STATISTIC(NumAlwaysRetFunc, "Number of functions marked as sapfor.alwaysreturn");
 STATISTIC(NumDirectUserCalleFunc, "Number of funstions marked as sapfor.direct-user-callee");
 STATISTIC(NumArgMemOnlyFunc, "Number of functions marked as argmemonly");
+STATISTIC(NumNoCaptureArg, "Number of arguments marked as nocaputre");
 STATISTIC(NumNoIOLoop, "Number of loops marked as sapfor.noio");
 STATISTIC(NumAlwaysRetLoop, "Number of loops marked as sapfor.alwaysreturn");
 STATISTIC(NumNoUnwindLoop, "Number of loops marked as nounwind");
@@ -348,6 +349,13 @@ public:
     /// readonly, writeonly, readnone and speculatable.
     if (isPure(F, *DefItr->get<DefUseSet>())) {
       F.setOnlyAccessesArgMemory();
+      /// TODO (kaniandr@gmail.com): traverse call graph to increase
+      /// quality of deduction of 'nocaputre' attributes.
+      for (auto &Arg : F.args())
+        if (isa<PointerType>(Arg.getType())) {
+          Arg.addAttr(Attribute::NoCapture);
+          ++NumNoCaptureArg;
+        }
       ++NumArgMemOnlyFunc;
       return true;
     }
