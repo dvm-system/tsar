@@ -80,6 +80,8 @@ pointer_1.safe.init
 pointer_2.safe.init
 pointer_3.init
 pointer_4.init
+pointer_5.init
+pointer_6.init
 reduction_1.init
 reduction_2.init
 reduction_3.init
