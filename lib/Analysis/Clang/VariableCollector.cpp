@@ -58,8 +58,10 @@ bool VariableCollector::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
     if (!Induction)
       Induction = VD;
     auto T = getCanonicalUnqualifiedType(VD);
-    CanonicalRefs.try_emplace(VD).first->second.resize(
-      numberOfPointerTypes(T) + 1, nullptr);
+    unsigned PtrTpNum = numberOfPointerTypes(T);
+    if (PtrTpNum == 0 && VD->getType().isConstQualified())
+      return true;
+    CanonicalRefs.try_emplace(VD).first->second.resize(PtrTpNum + 1, nullptr);
   }
   return true;
 }
@@ -156,12 +158,13 @@ bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
     const ClonedDIMemoryMatcher &ClientToServer,
     SortedVarListT &VarNames, clang::VarDecl **Error) {
   auto Search = findDecl(*T.getMemory(), ASTToClient, ClientToServer);
+  // Do no specify traits for variables declared in a loop body
+  // these variables are private by default. Moreover, these variables are
+  // not visible outside the loop and could not be mentioned in clauses
+  // before loop.
+  if (Search.first && CanonicalLocals.count(Search.first))
+    return true;
   if (Search.second == VariableCollector::CoincideLocal) {
-    // Do no specify traits for variables declared in a loop body
-    // these variables are private by default. Moreover, these variables are
-    // not visible outside the loop and could not be mentioned in clauses
-    // before loop.
-    if (!CanonicalLocals.count(Search.first))
       VarNames.insert(Search.first->getName());
   } else if (Search.second == VariableCollector::CoincideGlobal) {
     VarNames.insert(Search.first->getName());

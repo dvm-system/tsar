@@ -45,7 +45,6 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
   }
   mASTVars.TraverseStmt(mRegion);
   DenseSet<DIAliasNode *> DirectSideEffect;
-  SmallVector<DIAliasTrait *, 32> InToLocalize, OutToLocalize;
   for (auto &TS : mDIDepSet) {
     if (TS.is<trait::DirectAccess>())
       for (auto &T : TS) {
@@ -228,7 +227,8 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
   // Check that traits for all variables referenced in the loop are properly
   // specified.
   for (auto &VarRef : mASTVars.CanonicalRefs)
-    if (llvm::count(VarRef.second, nullptr)) {
+    if (!mASTVars.CanonicalLocals.count(VarRef.first) &&
+        llvm::count(VarRef.second, nullptr)) {
       toDiag(mDiags, mRegion->getLocStart(), clang::diag::warn_parallel_loop);
       toDiag(mDiags, VarRef.first->getLocation(),
              clang::diag::note_parallel_variable_not_analyzed)
