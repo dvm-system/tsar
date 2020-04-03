@@ -1409,6 +1409,13 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     ArrayRef<const DIMemory *> LockedTraits, DIMemoryTraitRegionPool &Pool) {
   assert(L && "Loop must not be null!");
   LLVM_DEBUG(dbgs() << "[DA DI]: process loop at " << L->getStartLoc() << "\n");
+  for (auto &DIMTrait : Pool) {
+    if (DIMTrait.getMemory()->isOriginal() ||
+        !DIMTrait.getMemory()->emptyBinding() ||
+        isLockedTrait(DIMTrait, LockedTraits, DIAliasSTR))
+      continue;
+    DIMTrait.unset<trait::AddressAccess>();
+  }
   analyzePrivatePromoted(L, DWLang, DIAliasSTR, LockedTraits, Pool);
   // If there is no preheader induction and reduction analysis will fail.
   if (!L->getLoopPreheader())
