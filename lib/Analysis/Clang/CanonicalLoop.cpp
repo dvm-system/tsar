@@ -392,7 +392,7 @@ private:
           std::get<3>(Tuple) = std::get<3>(T);
           std::get<4>(Tuple) = &Inst;
         }
-      } else if (isa<ConstantData>(Op)) {
+      } else if (isa<ConstantData>(Op) || isa<GlobalValue>(Op)) {
         std::get<3>(Tuple) = Op;
         std::get<4>(Tuple) = &Inst;
       } else {
