@@ -186,12 +186,15 @@ bool ClangSMParallelization::findParallelLoops(
   assert(L.getLoopID() && "ID must be available for a parallel loop!");
   auto ServerLoopID = cast<MDNode>(*ClientToServer.getMappedMD(L.getLoopID()));
   auto DIDepSet = DIDepInfo[ServerLoopID];
-  auto &DIMemoryMatcher = **RM->value<ClonedDIMemoryMatcherWrapper *>();
+  auto *ServerF = cast<Function>(ClientToServer[&F]);
+  auto *DIMemoryMatcher =
+      (**RM->value<ClonedDIMemoryMatcherWrapper *>())[*ServerF];
+  assert(DIMemoryMatcher && "Cloned memory matcher must not be null!");
   auto &ASTToClient = Provider.get<ClangDIMemoryMatcherPass>().getMatcher();
   auto *ForStmt = (**CanonicalItr).getASTLoop();
   assert(ForStmt && "Source-level representation of a loop must be available!");
   ClangDependenceAnalyzer RegionAnalysis(const_cast<clang::ForStmt *>(ForStmt),
-    *mGlobalOpts, Diags, DIAT, DIDepSet, DIMemoryMatcher, ASTToClient);
+    *mGlobalOpts, Diags, DIAT, DIDepSet, *DIMemoryMatcher, ASTToClient);
   if (!RegionAnalysis.evaluateDependency())
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   if (!exploitParallelism(L, *ForStmt, Provider, RegionAnalysis, *mTfmCtx))

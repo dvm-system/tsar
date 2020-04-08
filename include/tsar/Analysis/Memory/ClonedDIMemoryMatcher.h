@@ -42,7 +42,13 @@ class MDNode;
 namespace tsar {
 /// Map from raw metadata-level memory representation to a memory location
 /// in metadata-level alias tree.
-using MDToDIMemoryMap = llvm::DenseMap<llvm::MDNode *, WeakDIMemoryHandle>;
+///
+/// Note, that memory locations in different functions have different
+/// representations in alias tree. However, some locations (for example
+/// globals) have the same raw metadata-level memory representations. Hence,
+/// the key will be a pair (function and raw memory).
+using MDToDIMemoryMap = llvm::DenseMap<
+  std::pair<llvm::Function *, llvm::MDNode *>, WeakDIMemoryHandle>;
 
 /// This is a map from a memory location in original module to a cloned one.
 class ClonedDIMemoryMatcher :
@@ -54,13 +60,88 @@ class ClonedDIMemoryMatcher :
 using OriginDIMemoryHandle = BimapDIMemoryHandle<Origin, ClonedDIMemoryMatcher>;
 using CloneDIMemoryHandle = BimapDIMemoryHandle<Clone, ClonedDIMemoryMatcher>;
 
+/// For each function this matcher contains a map from a memory location in
+/// original module to a cloned one.
+class ClonedDIMemoryMatcherInfo {
+  /// This defines callback that run when underlying function has RAUW
+  /// called on it or destroyed.
+  ///
+  /// This updates map from function to memory matcher.
+  class FunctionCallbackVH final : public llvm::CallbackVH {
+    ClonedDIMemoryMatcherInfo *mInfo;
+    void deleted() override {
+      mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
+    }
+    void allUsesReplacedWith(llvm::Value *V) override {
+      if (auto F = llvm::dyn_cast<llvm::Function>(V)) {
+        auto Itr = mInfo->mMatchers.find_as(
+          llvm::cast<llvm::Function>(getValPtr()));
+        if (Itr == mInfo->mMatchers.end())
+          return;
+        auto Pair = mInfo->insert(*F);
+        if (Pair.second)
+          *Pair.first = std::move(Itr->second);
+        mInfo->mMatchers.erase(Itr);
+      } else {
+        mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
+      }
+    }
+  public:
+    FunctionCallbackVH(llvm::Value *V, ClonedDIMemoryMatcherInfo *I = nullptr) :
+      CallbackVH(V), mInfo(I) {}
+    FunctionCallbackVH & operator=(llvm::Value *V) {
+      return *this = FunctionCallbackVH(V, mInfo);
+    }
+  };
+
+  friend class FunctionCabackVH;
+
+  struct FunctionCallbackVHDenseMapInfo :
+    public llvm::DenseMapInfo<llvm::Value *> {};
+
+  using FunctionToMatcherMap = llvm::DenseMap<FunctionCallbackVH,
+    ClonedDIMemoryMatcher, FunctionCallbackVHDenseMapInfo>;
+
+public:
+  std::pair<ClonedDIMemoryMatcher *, bool> insert(llvm::Function &F) {
+    auto Pair = mMatchers.try_emplace(FunctionCallbackVH(&F, this));
+    return std::make_pair(&Pair.first->second, Pair.second);
+  }
+
+  void erase(llvm::Function &F) {
+    auto Itr = mMatchers.find_as(&F);
+    if (Itr != mMatchers.end())
+      mMatchers.erase(Itr);
+  }
+
+  void clear() { mMatchers.clear(); }
+
+  ClonedDIMemoryMatcher * find(llvm::Function &F) {
+    auto Itr = mMatchers.find_as(&F);
+    return Itr == mMatchers.end() ? nullptr : &Itr->second;
+  }
+
+  const ClonedDIMemoryMatcher * find(llvm::Function &F) const {
+    auto Itr = mMatchers.find_as(&F);
+    return Itr == mMatchers.end() ? nullptr : &Itr->second;
+  }
+
+  ClonedDIMemoryMatcher * operator[](llvm::Function &F) { return find(F); }
+  const ClonedDIMemoryMatcher *operator[](llvm::Function &F) const {
+    return find(F);
+  }
+
+private:
+  FunctionToMatcherMap mMatchers;
+};
+
 } // namespace tsar
 
 namespace llvm {
 /// Wrapper to allow server passes to determine relation between original
 /// and cloned metadata-level memory locations.
 using ClonedDIMemoryMatcherWrapper =
-    AnalysisWrapperPass<tsar::ClonedDIMemoryMatcher>;
+    AnalysisWrapperPass<tsar::ClonedDIMemoryMatcherInfo>;
 
 /// Create immutable storage for matched memory.
 ImmutablePass *createClonedDIMemoryMatcherStorage();
