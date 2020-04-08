@@ -148,6 +148,7 @@ public:
           AddToRegionError = true;
         }
     }
+    return true;
   }
 
 private:
