@@ -110,14 +110,17 @@ void ClientToServerMemory::initializeServer(
   // Prepare to mapping from origin to cloned DIMemory.
   auto &Env = P.getAnalysis<DIMemoryEnvironmentWrapper>();
   MDToDIMemoryMap CloneToOrigin;
-  for (auto &F : ClientM) {
-    auto DIAT = Env->get(F);
+  for (auto &ClientF: ClientM) {
+    auto DIAT = Env->get(ClientF);
     if (!DIAT)
       continue;
     for (auto &DIM : make_range(DIAT->memory_begin(), DIAT->memory_end())) {
+      auto F = ClientToServer[&ClientF];
+      assert(F && "Mapped function for a specified one must exist!");
       auto MD = ClientToServer.getMappedMD(DIM.getAsMDNode());
       assert(MD && "Mapped metadata for a specified memory must exist!");
-      CloneToOrigin.try_emplace(cast<MDNode>(*MD), &DIM);
+      CloneToOrigin.try_emplace(
+        std::make_pair(cast<Function>(F), cast<MDNode>(*MD)), &DIM);
     }
   }
   // Passes are removed in backward direction and handlers should be removed

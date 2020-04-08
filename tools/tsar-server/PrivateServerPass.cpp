@@ -1478,7 +1478,10 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
       auto &DIDepInfo =
           RF->value<DIDependencyAnalysisPass *>()->getDependencies();
       auto &CToS = **RM->value<AnalysisClientServerMatcherWrapper *>();
-      auto &ClonedMemory = **RM->value<ClonedDIMemoryMatcherWrapper *>();
+      auto *ServerF = cast<Function>(CToS[&F]);
+      auto *ClonedMemory =
+        (**RM->value<ClonedDIMemoryMatcherWrapper *>())[*ServerF];
+      assert(ClonedMemory && "Memory matcher must not be null!");
       auto ServerLoopID =
           cast<MDNode>(*CToS.getMappedMD(Loop.get<IR>()->getLoopID()));
       if (!ServerLoopID)
@@ -1509,9 +1512,9 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
             M[msg::MemoryLocation::Locations].push_back(getLocation(DbgLoc));
           M[msg::MemoryLocation::Traits] = &*T;
           if (auto *ClonedDIEM = dyn_cast<DIEstimateMemory>(T->getMemory())) {
-            auto MemoryItr = ClonedMemory.find<Clone>(
+            auto MemoryItr = ClonedMemory->find<Clone>(
               const_cast<DIMemory *>(T->getMemory()));
-            if (MemoryItr != ClonedMemory.end()) {
+            if (MemoryItr != ClonedMemory->end()) {
               auto *DIEM = cast<DIEstimateMemory>(MemoryItr->get<Origin>());
               auto *DIVar = DIEM->getVariable();
               auto Itr = MemoryMatcher.find<MD>(DIVar);
