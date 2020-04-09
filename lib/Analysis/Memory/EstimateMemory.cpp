@@ -489,6 +489,10 @@ void AliasTree::add(const MemoryLocation &Loc) {
       LLVM_DEBUG(mergeChainAfterLog(EM, getDomTree()));
     }
     if (!IsNew && !AddAmbiguous) {
+      if (PrevChainEnd == EM) {
+        LLVM_DEBUG(dbgs() << "[ALIAS TREE]: skip memory level processing\n");
+        continue;
+      }
       LLVM_DEBUG(dbgs() << "[ALIAS TREE]: end memory levels processing\n");
       return;
     }
