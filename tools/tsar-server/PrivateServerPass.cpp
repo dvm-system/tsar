@@ -1668,6 +1668,11 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       [this](GlobalsAAResultImmutableWrapper &Wrapper) {
     Wrapper.set(*mGlobalsAA);
   });
+  auto &DIMEnvWrapper = getAnalysis<DIMemoryEnvironmentWrapper>();
+  ServerPrivateProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [&DIMEnvWrapper](DIMemoryEnvironmentWrapper &Wrapper) {
+    Wrapper.set(*DIMEnvWrapper);
+  });
   initializeProviderOnServer();
   while (mConnection->answer(
       [this, &M](const std::string &Request) -> std::string {
@@ -1701,6 +1706,7 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
   AU.setPreservesAll();
 }
