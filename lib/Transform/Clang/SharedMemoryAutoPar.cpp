@@ -224,6 +224,10 @@ void ClangSMParallelization::initializeProviderOnClient(Module &M) {
       [this](GlobalsAAResultImmutableWrapper &Wrapper) {
         Wrapper.set(*mGlobalsAA);
       });
+  ClangSMParallelProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [this](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(*mDIMEnv);
+      });
 }
 
 void ClangSMParallelization::initializeProviderOnServer() {
@@ -274,6 +278,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
   mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   mMemoryMatcher = &getAnalysis<MemoryMatcherImmutableWrapper>().get();
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
+  mDIMEnv = &getAnalysis<DIMemoryEnvironmentWrapper>().get();
   initializeProviderOnClient(M);
   initializeProviderOnServer();
   auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
@@ -320,6 +325,7 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
   AU.addRequired<ClangRegionCollector>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.setPreservesAll();
 }
 

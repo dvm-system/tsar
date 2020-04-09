@@ -28,7 +28,9 @@
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/PrintUtils.h"
-#include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/DIClientServerInfo.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Core/Query.h"
@@ -63,11 +65,11 @@ char CanonicalLoopPass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(CanonicalLoopPass, "canonical-loop",
   "Canonical Form Loop Analysis", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
-INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
@@ -82,12 +84,13 @@ class CanonicalLoopLabeler : public MatchFinder::MatchCallback {
 public:
   /// Creates visitor.
   explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
-      const LoopMatcherPass::LoopMatcher &LM, DefinedMemoryInfo &DefI,
+      const LoopMatcherPass::LoopMatcher &LM,
       const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
-      TargetLibraryInfo &TLI, ScalarEvolution &SE, CanonicalLoopSet *CLI) :
-      mRgnInfo(&DFRI), mLoopInfo(&LM), mDefInfo(&DefI), mMemoryMatcher(&MM),
-      mAliasTree(&AT), mTLI(&TLI), mSE(&SE), mCanonicalLoopInfo(CLI),
-      mSTR(&AT) {}
+      TargetLibraryInfo &TLI, ScalarEvolution &SE, DominatorTree &DT,
+      DIMemoryClientServerInfo &DIMInfo, CanonicalLoopSet *CLI)
+    : mRgnInfo(&DFRI), mLoopInfo(&LM), mMemoryMatcher(&MM),
+      mAliasTree(&AT), mTLI(&TLI), mSE(&SE),  mDIMInfo(&DIMInfo),
+      mDT(&DT), mCanonicalLoopInfo(CLI), mSTR(DIMInfo.DIAT) {}
 
   /// \brief This function is called each time LoopMatcher finds appropriate
   /// loop.
@@ -259,25 +262,36 @@ private:
 
   /// Finds a last instruction in a specified block which writes memory
   /// from a specified node.
-  Instruction* findLastWrite(AliasEstimateNode *ANI, BasicBlock *BB) {
+  Instruction* findLastWrite(DIMemory &DIMI, BasicBlock *BB) {
+    auto *DINI = DIMI.getAliasNode();
     for (auto I = BB->rbegin(), E = BB->rend(); I != E; ++I) {
       bool RequiredInstruction = false;
       for_each_memory(*I, *mTLI,
-        [this, &ANI, &RequiredInstruction] (Instruction &I,
+        [this, DINI, &RequiredInstruction] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
+          if (W == AccessInfo::No)
+            return;
           auto EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(*mAliasTree);
-          assert(AN && "Alias node must not be null!");
+          auto &DL = I.getModule()->getDataLayout();
+          auto *DIM = mDIMInfo->findFromClient(
+            *EM->getTopLevelParent(), DL, *mDT).get<Clone>();
           RequiredInstruction |=
-            !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
+              (!DIM || !mSTR.isUnreachable(DINI, DIM->getAliasNode()));
         },
-        [this, &ANI, &RequiredInstruction] (Instruction &I, AccessInfo,
+        [this, &DINI, &RequiredInstruction] (Instruction &I, AccessInfo,
             AccessInfo W) {
-          auto AN = mAliasTree->findUnknown(I);
-          assert(AN && "Unknown memory must not be null!");
+          if (W == AccessInfo::No)
+            return;
+          /// TODO (kaniandr@gmail.com): use results from server to check
+          /// that function call doesn't write any memory.
+          if (!(RequiredInstruction =
+                   (ImmutableCallSite(&I) && onlyReadsMemory(I))))
+            return;
+          auto DIM = mDIMInfo->findFromClient(
+            I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
           RequiredInstruction |=
-            !mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No;
+              (!DIM || !mSTR.isUnreachable(DINI, DIM->getAliasNode()));
         }
       );
       if (RequiredInstruction)
@@ -306,7 +320,7 @@ private:
   }
 
   /// \brief Checks whether operands (except inductive variable) of a specified
-  /// instruction are invariant for a specified loop.
+  /// user are invariant for a specified loop.
   ///
   /// \return
   /// - `true` on success,
@@ -316,68 +330,63 @@ private:
   /// induction variable or `nullptr`,
   /// - instruction accesses this operand or `nullptr`.
   std::tuple<bool, unsigned, unsigned, Value *, Value *> isLoopInvariantMemory(
-      DFLoop &DFL, DefUseSet &DUS, EstimateMemory &EMI, Instruction &Inst) {
+      const DIDependenceSet &DIDepSet, DIMemory &DIMI, User &U) {
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
     SmallSet<unsigned, 2> InductIdx;
-    for_each_memory(Inst, *mTLI,
-      [this, &EMI, &DUS, &Result, &InductUseNum, &InductDefNum, &InductIdx] (
+    if (auto Inst = dyn_cast<Instruction>(&U)) {
+      auto &DL = Inst->getModule()->getDataLayout();
+      auto *DINI = DIMI.getAliasNode();
+      for_each_memory(*Inst, *mTLI,
+        [this, Inst, DL, DINI, &DIDepSet,
+        &Result, &InductUseNum, &InductDefNum, &InductIdx](
           Instruction &, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
-        if (!Result)
-          return;
-        auto EM = mAliasTree->find(Loc);
-        assert(EM && "Estimate memory location must not be null!");
-        if (!mSTR.isUnreachable(
-             EM->getAliasNode(*mAliasTree), EMI.getAliasNode(*mAliasTree))) {
-          if (R != AccessInfo::No || W != AccessInfo::No)
-            InductIdx.insert(Idx);
-          if (R != AccessInfo::No)
-            ++InductUseNum;
-          if (W != AccessInfo::No)
-            ++InductDefNum;
-          return;
-        }
-        Result &= !(DUS.hasDef(Loc) || DUS.hasMayDef(Loc));
-      },
-      [this, &DFL, &DUS, &Result](Instruction &I, AccessInfo, AccessInfo) {
-        if (!Result)
-          return;
-        if (!onlyReadsMemory(I)) {
-          Result = false;
-          return;
-        }
-        auto AN = mAliasTree->findUnknown(I);
-        for (auto &Loc : DUS.getExplicitAccesses()) {
-          if (!DUS.hasDef(Loc) && !DUS.hasMayDef(Loc))
-            continue;
-          auto EM = mAliasTree->find(Loc);
-          assert(EM && "Memory location must be presented in alias tree!");
-          if (!mSTR.isUnreachable(EM->getAliasNode(*mAliasTree), AN)) {
-            Result = false;
+            if (!Result)
+              return;
+            auto EM = mAliasTree->find(Loc);
+            assert(EM && "Estimate memory location must not be null!");
+            auto *DIM = mDIMInfo->findFromClient(
+              *EM->getTopLevelParent(), DL, *mDT).get<Clone>();
+            /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
+            if (!(Result = DIM))
+              return;
+            if (!mSTR.isUnreachable(DIM->getAliasNode(), DINI)) {
+              if (R != AccessInfo::No || W != AccessInfo::No)
+                InductIdx.insert(Idx);
+              if (R != AccessInfo::No)
+                ++InductUseNum;
+              if (W != AccessInfo::No)
+                ++InductDefNum;
+              return;
+            }
+            auto TraitItr = DIDepSet.find_as(DIM->getAliasNode());
+            Result &= (TraitItr == DIDepSet.end() ||
+                       TraitItr->is_any<trait::Readonly, trait::NoAccess>());
+        },
+        [this, &DIDepSet, &Result](Instruction &I, AccessInfo, AccessInfo) {
+          if (!Result)
             return;
-          }
-        }
-        for (auto *Loc : DUS.getExplicitUnknowns()) {
-          if (onlyReadsMemory(*Loc))
-            continue;
-          auto UN = mAliasTree->findUnknown(*Loc);
-          assert(UN &&
-            "Unknown memory location must be presented in alias tree!");
-          if (!mSTR.isUnreachable(UN, AN)) {
-            Result = false;
+          /// TODO (kaniandr@gmail.com): use results from server to check
+          /// that function call doesn't write any memory.
+          if (!(Result = (ImmutableCallSite(&I) && onlyReadsMemory(I))))
             return;
-          }
-        }
-      });
+          auto *DIM = mDIMInfo->findFromClient(
+            I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
+          assert(DIM && "Metadata-level memory must be available!");
+          auto TraitItr = DIDepSet.find_as(DIM->getAliasNode());
+          Result &= (TraitItr == DIDepSet.end() ||
+                     TraitItr->is_any<trait::Readonly, trait::NoAccess>());
+        });
+    }
     std::tuple<bool, unsigned, unsigned, Value *, Value *> Tuple(
       Result, InductUseNum, InductDefNum, nullptr, nullptr);
     if (!std::get<0>(Tuple))
       return Tuple;
     bool OpNotAccessInduct = true;
-    for (auto &Op : Inst.operands())
-      if (auto I = dyn_cast<Instruction>(Op)) {
-        auto T = isLoopInvariantMemory(DFL, DUS, EMI, *I);
+    for (auto &Op : U.operands())
+      if (isa<Instruction>(Op) || isa<ConstantExpr>(Op)) {
+        auto T = isLoopInvariantMemory(DIDepSet, DIMI, cast<User>(*Op));
         std::get<0>(Tuple) &= std::get<0>(T);
         if (!std::get<0>(Tuple))
           return Tuple;
@@ -390,17 +399,18 @@ private:
         }
         if (std::get<3>(T) == Op && !InductIdx.count(Op.getOperandNo())) {
           std::get<3>(Tuple) = std::get<3>(T);
-          std::get<4>(Tuple) = &Inst;
+          std::get<4>(Tuple) = &U;
         }
       } else if (isa<ConstantData>(Op) || isa<GlobalValue>(Op)) {
         std::get<3>(Tuple) = Op;
-        std::get<4>(Tuple) = &Inst;
+        std::get<4>(Tuple) = &U;
+      } else if (auto Expr = dyn_cast<ConstantExpr>(Op)) {
       } else {
         std::get<0>(Tuple) = false;
         return Tuple;
       }
    if (OpNotAccessInduct && InductUseNum == 0 && InductDefNum == 0)
-     std::get<3>(Tuple) = &Inst;
+     std::get<3>(Tuple) = &U;
     return Tuple;
   }
 
@@ -409,6 +419,8 @@ private:
   /// \post The`LInfo` parameter will be updated. Start, end, step will be set
   /// is possible, and loop will be marked as canonical on success.
   void checkLoop(tsar::DFLoop* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
+    if (!mDIMInfo->isValid())
+      return;
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
       return;
@@ -422,11 +434,16 @@ private:
     llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree->find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
-    auto ANI = EMI->getAliasNode(*mAliasTree);
-    assert(ANI && "Alias node must not be null!");
     auto *L = Region->getLoop();
     assert(L && "Loop must not be null!");
-    Instruction *Init = findLastWrite(ANI, L->getLoopPreheader());
+    auto &DL = L->getHeader()->getModule()->getDataLayout();
+    auto *DIMI = mDIMInfo->findFromClient(*EMI->getTopLevelParent(), DL, *mDT)
+                     .get<Clone>();
+    if (!DIMI) {
+      LLVM_DEBUG(dbgs() << "Metadata-level is not available for induction!");
+      return;
+    }
+    Instruction *Init = findLastWrite(*DIMI, L->getLoopPreheader());
     assert(Init && "Init instruction should not be nullptr!");
     Instruction *Condition = findLastCmp(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
@@ -439,58 +456,56 @@ private:
       // Note, that equal comparison in LLVM has no sign.
     }
     auto *LatchBB = L->getLoopLatch();
+    auto *DINI = DIMI->getAliasNode();
     Instruction *Increment = nullptr;
     for (auto *BB: L->blocks()) {
-      auto DFN = mRgnInfo->getRegionFor(BB);
-      assert(DFN && "DFNode must not be null!");
-      auto Match = mDefInfo->find(DFN);
-      assert(Match != mDefInfo->end() && Match->get<ReachSet>() &&
-          Match->get<DefUseSet>() && "Data-flow value must be specified!");
-      auto &DUS = Match->get<DefUseSet>();
-      if (!DUS->hasDef(MemLoc) && !DUS->hasMayDef(MemLoc))
-        continue;
-      auto *DFB = llvm::dyn_cast<DFBlock>(DFN);
-      if (!DFB)
-        continue;
-      // Let us check that there is only a single node which contains definition
-      // of induction variable. This node must be a single latch. In case of
-      // multiple latches `LatchBB` will be `nullptr`.
-      if (LatchBB != DFB->getBlock())
-        return;
       int NumOfWrites = 0;
-      for_each_memory(*DFB->getBlock(), *mTLI,
-        [this, ANI, &NumOfWrites, &Increment] (Instruction &I,
+      for_each_memory(*BB, *mTLI,
+        [this, &DL, DINI, &NumOfWrites, &Increment] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
+          if (W == AccessInfo::No)
+            return;
           auto EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto AN = EM->getAliasNode(*mAliasTree);
-          assert(AN && "Alias node must not be null!");
-          if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No) {
+          auto *DIM = mDIMInfo->findFromClient(
+            *EM->getTopLevelParent(), DL, *mDT).get<Clone>();
+          /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
+          if (!DIM) {
+            ++NumOfWrites;
+          } else if (!mSTR.isUnreachable(DINI, DIM->getAliasNode())) {
             ++NumOfWrites;
             Increment = &I;
           }
         },
-        [this, &ANI, &NumOfWrites] (Instruction &I, AccessInfo,
-            AccessInfo W) {
-          auto AN = mAliasTree->findUnknown(I);
-          assert(AN && "Alias node must not be null!");
-          if (!mSTR.isUnreachable(ANI, AN) && W != AccessInfo::No)
+        [this, DINI, &NumOfWrites] (Instruction &I, AccessInfo, AccessInfo W) {
+          if (W == AccessInfo::No)
+            return;
+          auto *DIM = mDIMInfo->findFromClient(
+            I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
+          /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
+          if (!DIM ||!mSTR.isUnreachable(DINI, DIM->getAliasNode()))
             ++NumOfWrites;
         }
       );
-      if (!Increment && NumOfWrites != 1)
+      // Let us check that there is only a single node which contains definition
+      // of induction variable. This node must be a single latch. In case of
+      // multiple latches `LatchBB` will be `nullptr`.
+      if (NumOfWrites == 0)
+        continue;
+      if (NumOfWrites > 0 && LatchBB != BB || !Increment || NumOfWrites != 1)
         return;
     }
-    auto LoopDefItr = mDefInfo->find(Region);
-    assert(LoopDefItr != mDefInfo->end() && LoopDefItr->get<DefUseSet>() &&
-     "Data-flow value must be specified!");
-    auto &LoopDUS = LoopDefItr->get<DefUseSet>();
+    auto *DIDepSet = mDIMInfo->findFromClient(*L);
+    if (!DIDepSet) {
+      LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: loop is not analyzed\n");
+      return;
+    }
     bool Result;
     unsigned InductUseNum, InductDefNum;
     Value *Expr;
     Value *Inst;
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Init);
+      isLoopInvariantMemory(*DIDepSet, *DIMI, *Init);
     if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
     LInfo->setStart(Expr);
@@ -500,7 +515,7 @@ private:
         TSAR_LLVM_DUMP(Expr->dump());
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Increment);
+      isLoopInvariantMemory(*DIDepSet, *DIMI, *Increment);
     if (!Result || InductDefNum != 1 || InductUseNum > 1)
       return;
     assert((!Expr || Inst && isa<llvm::BinaryOperator>(Inst) &&
@@ -520,7 +535,7 @@ private:
         TSAR_LLVM_DUMP(LInfo->getStep()->dump());
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*Region, *LoopDUS, *EMI, *Condition);
+      isLoopInvariantMemory(*DIDepSet, *DIMI, *Condition);
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
     LInfo->setEnd(Expr);
@@ -541,13 +556,14 @@ private:
 
   DFRegionInfo *mRgnInfo;
   const LoopMatcherPass::LoopMatcher *mLoopInfo;
-  DefinedMemoryInfo *mDefInfo;
   const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
   tsar::AliasTree *mAliasTree;
   TargetLibraryInfo *mTLI;
   ScalarEvolution *mSE;
+  DominatorTree *mDT;
+  DIMemoryClientServerInfo *mDIMInfo;
   CanonicalLoopSet *mCanonicalLoopInfo;
-  SpanningTreeRelation<const AliasTree *> mSTR;
+  SpanningTreeRelation<const DIAliasTree *> mSTR;
 };
 
 /// Returns LoopMatcher that matches loops that can be canonical.
@@ -668,15 +684,16 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
     return false;
   auto &RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  auto &DefInfo = getAnalysis<DefinedMemoryPass>().getDefInfo();
   auto &MemInfo =
     getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
   auto &ATree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   DeclarationMatcher LoopMatcher = makeLoopMatcher();
-  CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, DefInfo, MemInfo, ATree,
-      TLI, SE, &mCanonicalLoopInfo);
+  DIMemoryClientServerInfo DIMInfo(*this, F);
+  CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, MemInfo, ATree,
+      TLI, SE, DT, DIMInfo, &mCanonicalLoopInfo);
   auto &Context = FuncDecl->getASTContext();
   auto Nodes = match<DeclarationMatcher, Decl>(LoopMatcher, *FuncDecl, Context);
   while (!Nodes.empty()) {
@@ -701,10 +718,11 @@ void CanonicalLoopPass::print(raw_ostream &OS, const llvm::Module *M) const {
 
 void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<DIEstimateMemoryPass>();
+  AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
-  AU.addRequired<DefinedMemoryPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
