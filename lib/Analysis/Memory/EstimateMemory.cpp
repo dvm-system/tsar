@@ -723,52 +723,53 @@ AliasEstimateNode * AliasTree::addEmptyNode(
       Current = Node;
       continue;
     }
-    for (auto &Alias : Aliases) {
-      if (Alias.is<EstimateMemory *>()) {
-        auto EM = Alias.get<EstimateMemory *>();
+    auto I = Aliases.begin(), EI = Aliases.end();
+    for (; I != EI; ++I) {
+      if (I->is<EstimateMemory *>()) {
+        auto EM = I->get<EstimateMemory *>();
         auto Node = EM->getAliasNode(*this);
         assert(Node && "Alias node for memory location must not be null!");
         auto AD = aliasRelation(*mAA, *mDL, NewEM, Node->begin(), Node->end());
         if (AD.is<trait::CoverAlias>() ||
-          (AD.is<trait::CoincideAlias>() && !AD.is<trait::ContainedAlias>()))
+            (AD.is<trait::CoincideAlias>() && !AD.is<trait::ContainedAlias>()))
           continue;
       }
-      // If the new estimate location aliases with locations from different
-      // alias nodes at the same level and does not cover (or coincide with)
-      // memory described by this nodes, this nodes should be merged.
-      // If the new estimate location aliases with some unknown memory
-      // this nodes should be merged also. However, in this case it is possible
-      // to go down to the next level in the alias tree.
-      auto I = Aliases.begin(), EI = Aliases.end();
-      Current = getAliasNode(*I);
-      AliasNode *Opposite = nullptr;
-      for (++I; I != EI; ++I, ++NumMergedNode) {
-        auto *Node = getAliasNode(*I);
-        if (Node->getKind() == Current->getKind())
-          Current->mergeNodeIn(*Node, *this);
-        else if (Opposite)
-          Opposite->mergeNodeIn(*Node, *this);
-        else
-          Opposite = Node;
-      }
-      if (!Opposite) {
-        if (isa<AliasUnknownNode>(Current))
-          break;
-      } else {
-        if (!isa<AliasUnknownNode>(Opposite))
-          std::swap(Current, Opposite);
-        Current->setParent(*Opposite, *this);
-      }
-      return cast<AliasEstimateNode>(Current);
+      break;
     }
-    // If all nodes at the current level are unknown then go down.
-    if (isa<AliasUnknownNode>(Current))
-      continue;
-    auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
-        *Current, {&NumAliasNode, &NumEstimateNode});
-    for (auto &Alias : Aliases)
-      getAliasNode(Alias)->setParent(*NewNode, *this);
-    return NewNode;
+    if (I == EI) {
+      auto *NewNode = make_node<AliasEstimateNode, llvm::Statistic, 2>(
+          *Current, {&NumAliasNode, &NumEstimateNode});
+      for (auto &Alias : Aliases)
+        getAliasNode(Alias)->setParent(*NewNode, *this);
+      return NewNode;
+    }
+    // If the new estimate location aliases with locations from different
+    // alias nodes at the same level and does not cover (or coincide with)
+    // memory described by this nodes, this nodes should be merged.
+    // If the new estimate location aliases with some unknown memory
+    // this nodes should be merged also. However, in this case it is possible
+    // to go down to the next level in the alias tree.
+    I = Aliases.begin(), EI = Aliases.end();
+    Current = getAliasNode(*I);
+    AliasNode *Opposite = nullptr;
+    for (++I; I != EI; ++I, ++NumMergedNode) {
+      auto *Node = getAliasNode(*I);
+      if (Node->getKind() == Current->getKind())
+        Current->mergeNodeIn(*Node, *this);
+      else if (Opposite)
+        Opposite->mergeNodeIn(*Node, *this);
+      else
+        Opposite = Node;
+    }
+    if (!Opposite) {
+      if (isa<AliasUnknownNode>(Current))
+        continue;
+    } else {
+      if (!isa<AliasUnknownNode>(Opposite))
+        std::swap(Current, Opposite);
+      Current->setParent(*Opposite, *this);
+    }
+    return cast<AliasEstimateNode>(Current);
   }
 }
 
