@@ -707,7 +707,18 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
 
 void CanonicalLoopPass::print(raw_ostream &OS, const llvm::Module *M) const {
   auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  for (auto *Info : mCanonicalLoopInfo) {
+  std::vector<const CanonicalLoopInfo *> Loops(mCanonicalLoopInfo.begin(),
+                                               mCanonicalLoopInfo.end());
+  std::sort(Loops.begin(), Loops.end(), [](const CanonicalLoopInfo *LHS,
+    const CanonicalLoopInfo *RHS) {
+      auto LHSLoc = LHS->getLoop()->getLoop()->getStartLoc();
+      auto RHSLoc = RHS->getLoop()->getLoop()->getStartLoc();
+      return LHSLoc && RHSLoc &&
+        (LHSLoc.getLine() < RHSLoc.getLine() ||
+          LHSLoc.getLine() == RHSLoc.getLine() &&
+            LHSLoc.getCol() < RHSLoc.getCol());
+    });
+  for (auto Info : Loops) {
     auto *DFL = Info->getLoop();
     OS << "loop at ";
     tsar::print(OS, DFL->getLoop()->getStartLoc(),
