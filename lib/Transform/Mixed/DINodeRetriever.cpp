@@ -43,12 +43,12 @@ using namespace tsar;
 namespace {
 /// This retrieves some debug information for global values if it is not
 /// presented in LLVM IR ('sapfor.dbg' metadata will be attached to globals).
-class DIGlobalRetrieverPass : public ModulePass, private bcl::Uncopyable {
+class DINodeRetrieverPass : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  DIGlobalRetrieverPass() : ModulePass(ID) {
-    initializeDIGlobalRetrieverPassPass(*PassRegistry::getPassRegistry());
+  DINodeRetrieverPass() : ModulePass(ID) {
+    initializeDINodeRetrieverPassPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(llvm::Module &M) override;
@@ -93,11 +93,11 @@ private:
 };
 } // namespace
 
-char DIGlobalRetrieverPass::ID = 0;
-INITIALIZE_PASS(DIGlobalRetrieverPass, "global-diretriever",
-                "Global Debug Info Retriever", true, false)
+char DINodeRetrieverPass::ID = 0;
+INITIALIZE_PASS(DINodeRetrieverPass, "di-node-retriever",
+                "Debug Info Retriever", true, false)
 
-bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
+bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
   auto *TEP = getAnalysisIfAvailable<TransformationEnginePass>();
   if (!TEP)
     return false;
@@ -177,6 +177,6 @@ bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
   return true;
 }
 
-ModulePass *llvm::createDIGlobalRetrieverPass() {
-  return new DIGlobalRetrieverPass();
+ModulePass *llvm::createDINodeRetrieverPass() {
+  return new DINodeRetrieverPass();
 }

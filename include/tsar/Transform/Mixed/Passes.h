@@ -57,10 +57,10 @@ Pass * createDILoopRetrieverPass();
 
 /// Initialize a pass which retrieves some debug information for global values
 /// if it is not presented in LLVM IR.
-void initializeDIGlobalRetrieverPassPass(PassRegistry &Registry);
+void initializeDINodeRetrieverPassPass(PassRegistry &Registry);
 
 /// Create a pass which retrieves some debug information for global values
 /// if it is not presented in LLVM IR.
-ModulePass * createDIGlobalRetrieverPass();
+ModulePass * createDINodeRetrieverPass();
 }
 #endif//TSAR_MIXED_TRANSFORM_PASSES_H
