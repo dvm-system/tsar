@@ -246,6 +246,23 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
     }
     delete P;
   };
+  if (mUseServer) {
+    Passes.add(createAnalysisSocketImmutableStorage());
+    Passes.add(createDIMemoryTraitPoolStorage());
+    Passes.add(createDIMemoryEnvironmentStorage());
+    Passes.add(createDIEstimateMemoryPass());
+    Passes.add(createDIMemoryAnalysisServer());
+    Passes.add(createAnalysisWaitServerPass());
+    Passes.add(createMemoryMatcherPass());
+    Passes.add(createAnalysisWaitServerPass());
+    addPrint(BeforeTfmAnalysis);
+    addOutput(BeforeTfmAnalysis);
+    Passes.add(createAnalysisReleaseServerPass());
+    Passes.add(createAnalysisCloseConnectionPass());
+    Passes.add(createVerifierPass());
+    Passes.run(*M);
+    return;
+  }
   Passes.add(createMemoryMatcherPass());
   Passes.add(createGlobalDefinedMemoryStorage());
   Passes.add(createGlobalLiveMemoryStorage());

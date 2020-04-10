@@ -113,6 +113,7 @@ private:
   bool mInstrLLVM = false;
   bool mCheck = false;
   bool mPrint = false;
+  bool mServer = false;
   std::string mOutputFilename;
   std::string mLanguage;
   std::string mInstrEntry;
