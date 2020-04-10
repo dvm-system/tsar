@@ -26,8 +26,8 @@
 #include "ClangMessages.h"
 #include "Passes.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
-#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/ControlFlowTraits.h"
@@ -39,10 +39,10 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include "tsar/Analysis/Memory/ServerUtils.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Unparse/Utils.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
@@ -62,7 +62,6 @@
 #include <llvm/ADT/Optional.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/IR/InstIterator.h>
-#include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 
@@ -875,73 +874,7 @@ INITIALIZE_PASS_DEPENDENCY(ClangCFTraitsPass)
 INITIALIZE_PROVIDER_END(ServerPrivateProvider, "server-private-provider",
   "Server Private Provider")
 
-namespace llvm {
-static void initializeTraitsAnalysisServerResponsePass(PassRegistry &);
-}
-
 namespace {
-/// This provides access to function-level analysis results on server.
-using TraitsAnalysisServerProvider =
-    FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
-
-/// List of responses available from server (client may request corresponding
-/// analysis, in case of provider all analysis related to a provider may
-/// be requested separately).
-using TraitsAnalysisServerResponse = AnalysisResponsePass<
-    GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
-    GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper,
-    ClonedDIMemoryMatcherWrapper, TraitsAnalysisServerProvider>;
-
-/// This analysis server performs transformation-based analysis which is
-/// necessary to answer user requests.
-class TraitsAnalysisServer final : public AnalysisServer {
-public:
-  static char ID;
-  TraitsAnalysisServer() : AnalysisServer(ID) {
-    initializeTraitsAnalysisServerPass(*PassRegistry::getPassRegistry());
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AnalysisServer::getAnalysisUsage(AU);
-    tsar::ClientToServerMemory::getAnalysisUsage(AU);
-    AU.addRequired<GlobalOptionsImmutableWrapper>();
-  }
-
-  void prepareToClone(Module &ClientM,
-                      ValueToValueMapTy &ClientToServer) override {
-    ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
-  }
-
-  void initializeServer(Module &CM, Module &SM, ValueToValueMapTy &CToS,
-                        legacy::PassManager &PM) override {
-    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
-    PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
-    PM.add(createGlobalDefinedMemoryStorage());
-    PM.add(createGlobalLiveMemoryStorage());
-    PM.add(createDIMemoryTraitPoolStorage());
-    ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
-  }
-
-  void addServerPasses(Module &M, legacy::PassManager &PM) override {
-    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-    addImmutableAliasAnalysis(PM);
-    addBeforeTfmAnalysis(PM);
-    addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
-    addAfterLoopRotateAnalysis(PM);
-    // Notify client that analysis is performed. Analysis changes metadata-level
-    // alias tree and invokes corresponding handles to update client to server
-    // mapping. So, metadata-level memory mapping is a shared resource and
-    // synchronization is necessary.
-    PM.add(createAnalysisNotifyClientPass());
-    PM.add(createVerifierPass());
-    PM.add(new TraitsAnalysisServerResponse);
-  }
-
-  void prepareToClose(legacy::PassManager &PM) override {
-    ClientToServerMemory::prepareToClose(PM);
-  }
-};
-
 /// Interacts with a client and sends result of analysis on request.
 class PrivateServerPass :
   public ModulePass, private bcl::Uncopyable {
@@ -968,9 +901,6 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  /// Initialize provider before on the fly passes will be run on server.
-  void initializeProviderOnServer();
-
   std::string answerStatistic(llvm::Module &M);
   std::string answerFunctionList(llvm::Module &M);
   std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
@@ -1057,18 +987,6 @@ msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
 }
 }
 
-INITIALIZE_PROVIDER(TraitsAnalysisServerProvider, "traits-server-provider",
-                    "Source-Level Traits Server (Traits, Server, Provider)")
-
-template <> char TraitsAnalysisServerResponse::ID = 0;
-INITIALIZE_PASS(TraitsAnalysisServerResponse, "traits-server-response",
-                "Source-Level Traits Server (Traits, Server, Response)", true,
-                false)
-
-char TraitsAnalysisServer::ID = 0;
-INITIALIZE_PASS(TraitsAnalysisServer, "traits-server",
-                "Source-Level Traits Server (Traits, Server)", false, false)
-
 char PrivateServerPass::ID = 0;
 INITIALIZE_PASS_BEGIN(PrivateServerPass, "server-private",
   "Server Private Pass", true, true)
@@ -1085,9 +1003,7 @@ INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
-INITIALIZE_PASS_DEPENDENCY(TraitsAnalysisServerProvider)
 INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
-INITIALIZE_PASS_DEPENDENCY(TraitsAnalysisServerResponse)
 INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_END(PrivateServerPass, "server-private",
@@ -1590,42 +1506,6 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
   return json::Parser<msg::AliasTree>::unparseAsObject(Request);
 }
 
-void PrivateServerPass::initializeProviderOnServer() {
-  TraitsAnalysisServerProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [this](GlobalOptionsImmutableWrapper &Wrapper) {
-        Wrapper.setOptions(mGlobalOpts);
-      });
-  auto R = mSocket->getAnalysis<GlobalsAAWrapperPass,
-      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper,
-      GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper>();
-  assert(R && "Immutable passes must be available on server!");
-  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
-  TraitsAnalysisServerProvider::initialize<DIMemoryEnvironmentWrapper>(
-      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
-        Wrapper.set(**DIMEnvServer);
-      });
-  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
-  TraitsAnalysisServerProvider::initialize<DIMemoryTraitPoolWrapper>(
-      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
-        Wrapper.set(**DIMTraitPoolServer);
-      });
-  auto &GlobalsAAServer = R->value<GlobalsAAWrapperPass *>()->getResult();
-  TraitsAnalysisServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
-      [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
-        Wrapper.set(GlobalsAAServer);
-      });
-  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
-  TraitsAnalysisServerProvider::initialize<GlobalDefinedMemoryWrapper>(
-    [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
-      Wrapper.set(**GlobalDefUseServer);
-    });
-  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
-  TraitsAnalysisServerProvider::initialize<GlobalLiveMemoryWrapper>(
-    [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
-      Wrapper.set(**GlobalLiveMemoryServer);
-    });
-}
-
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
   if (!mConnection) {
     M.getContext().emitError("intrusive connection is not established");
@@ -1673,7 +1553,6 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       [&DIMEnvWrapper](DIMemoryEnvironmentWrapper &Wrapper) {
     Wrapper.set(*DIMEnvWrapper);
   });
-  initializeProviderOnServer();
   while (mConnection->answer(
       [this, &M](const std::string &Request) -> std::string {
     msg::Diagnostic Diag(msg::Status::Error);
@@ -1714,8 +1593,4 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
 ModulePass * llvm::createPrivateServerPass(
     bcl::IntrusiveConnection &IC, bcl::RedirectIO &StdErr) {
   return new PrivateServerPass(IC, StdErr);
-}
-
-ModulePass * llvm::createTraitsAnalysisServer() {
-  return new TraitsAnalysisServer;
 }

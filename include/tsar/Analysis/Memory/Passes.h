@@ -190,5 +190,12 @@ ImmutablePass *createGlobalDefinedMemoryStorage();
 /// Initialize a pass to access results of interprocedural reaching definition
 /// analysis.
 void initializeGlobalDefinedMemoryWrapperPass(PassRegistry &Registry);
+
+/// Create analysis server.
+ModulePass *createDIMemoryAnalysisServer();
+
+/// Initialize analysis server.
+void initializeDIMemoryAnalysisServerPass(PassRegistry &Registry);
+
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

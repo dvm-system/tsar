@@ -102,9 +102,6 @@ private:
   /// Initialize provider before on the fly passes will be run on client.
   void initializeProviderOnClient(Module &M);
 
-  /// Initialize provider before on the fly passes will be run on server.
-  void initializeProviderOnServer();
-
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
   bool findParallelLoops(Loop &L, Function &F,
