@@ -274,7 +274,7 @@ public:
   }
 
   /// Return socket to access a specified server.
-  const_iterator get(llvm::AnalysisID ServerID) const {
+  const_iterator find(llvm::AnalysisID ServerID) const {
     return llvm::find_if(mAnalysis, [ServerID](const ServerToSocket &Info) {
       return Info.first == ServerID;
     });
