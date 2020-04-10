@@ -30,5 +30,5 @@ using namespace llvm;
 void llvm::initializeMixedTransform(PassRegistry &Registry) {
   initializeInstrumentationPassPass(Registry);
   initializeDILoopRetrieverPassPass(Registry);
-  initializeDIGlobalRetrieverPassPass(Registry);
+  initializeDINodeRetrieverPassPass(Registry);
 }

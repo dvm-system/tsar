@@ -99,7 +99,7 @@ void addInitialTransformations(legacy::PassManager &Passes) {
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createNoMetadataDSEPass());
   Passes.add(createDILoopRetrieverPass());
-  Passes.add(createDIGlobalRetrieverPass());
+  Passes.add(createDINodeRetrieverPass());
 }
 
 void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
@@ -302,7 +302,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
   }
   Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createNoMetadataDSEPass());
-  Passes.add(createDIGlobalRetrieverPass());
+  Passes.add(createDINodeRetrieverPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createInstrumentationPass(mInstrEntry, mInstrStart));
