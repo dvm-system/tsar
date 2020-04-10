@@ -440,7 +440,8 @@ private:
     auto *DIMI = mDIMInfo->findFromClient(*EMI->getTopLevelParent(), DL, *mDT)
                      .get<Clone>();
     if (!DIMI) {
-      LLVM_DEBUG(dbgs() << "Metadata-level is not available for induction!");
+      LLVM_DEBUG(dbgs() << "[CANONICAL_LOOP]: metadata-level is not available "
+                           "for induction\n");
       return;
     }
     Instruction *Init = findLastWrite(*DIMI, L->getLoopPreheader());

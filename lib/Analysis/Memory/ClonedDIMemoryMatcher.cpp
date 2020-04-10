@@ -25,12 +25,13 @@
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 
-#define DEBUG_TYPE "cloned-di-memory-matcher"
+#define DEBUG_TYPE "di-memory-handle"
 
 using namespace llvm;
 using namespace tsar;
@@ -88,9 +89,10 @@ public:
       // So, this memory locations does not exist in the map.
       if (Itr == mCloneToOrigin.end()) {
         LLVM_DEBUG(dbgs() << "[CLONED DI MEMORY]: original memory location "
-                             "is not found for ";
-                   printDILocationSource(dwarf::DW_LANG_C, DIM, dbgs());
-                   dbgs() << "\n");
+                             "is not found for '";
+                   if (auto DWLang = getLanguage(F))
+                       printDILocationSource(*DWLang, DIM, dbgs());
+                   dbgs() << "'\n");
         continue;
       }
       OriginToClone->emplace(ClonedDIMemoryMatcher::value_type(
