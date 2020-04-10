@@ -201,7 +201,7 @@ int main(int Argc, char **Argv) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'main':
 //CHECK:  loop at depth 1 Jacobi.func.c:47:3
 //CHECK:    private:
-//CHECK:     <?,?> | <Eps:48:12, 8>
+//CHECK:     <Eps:48:12, 8> | <sapfor.var:0:0, 4>
 //CHECK:    output:
 //CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> printf():49:5
 //CHECK:    anti:
@@ -213,24 +213,24 @@ int main(int Argc, char **Argv) {
 //CHECK:    read only:
 //CHECK:     <A:44:12, 8> | <B:45:12, 8> | <ITMAX:43:7, 4> | <L:42:7, 4>
 //CHECK:    redundant:
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> iter():48:18 printf():49:5 | <?,?>
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> iter():48:18 printf():49:5 | <sapfor.var:0:0, 4>
 //CHECK:    lock:
 //CHECK:     <ITMAX:43:7, 4> | <It:47:12, 4>
 //CHECK:    header access:
 //CHECK:     <ITMAX:43:7, 4> | <It:47:12, 4>
 //CHECK:    explicit access:
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> printf():49:5 | <?,?> | <A:44:12, 8> | <B:45:12, 8> | <Eps:48:12, 8> | <ITMAX:43:7, 4> | <It:47:12, 4> | <L:42:7, 4>
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> printf():49:5 | <A:44:12, 8> | <B:45:12, 8> | <Eps:48:12, 8> | <ITMAX:43:7, 4> | <It:47:12, 4> | <L:42:7, 4> | <sapfor.var:0:0, 4>
 //CHECK:    address access:
 //CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <malloc():44:20,?> <malloc():45:20,?> iter():48:18 printf():49:5
 //CHECK:    explicit access (separate):
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <?,?> <A:44:12, 8> <B:45:12, 8> <Eps:48:12, 8> <ITMAX:43:7, 4> <It:47:12, 4> <L:42:7, 4> printf():49:5
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <A:44:12, 8> <B:45:12, 8> <Eps:48:12, 8> <ITMAX:43:7, 4> <It:47:12, 4> <L:42:7, 4> <sapfor.var:0:0, 4> printf():49:5
 //CHECK:    redundant (separate):
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <?,?>
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <sapfor.var:0:0, 4>
 //CHECK:    lock (separate):
 //CHECK:     <ITMAX:43:7, 4> <It:47:12, 4>
 //CHECK:    address access (separate):
 //CHECK:     iter():48:18 printf():49:5
 //CHECK:    direct access (separate):
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <?,?> <A:44:12, 8> <B:45:12, 8> <Eps:48:12, 8> <ITMAX:43:7, 4> <It:47:12, 4> <L:42:7, 4> iter():48:18 printf():49:5
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <A:44:12, 8> <B:45:12, 8> <Eps:48:12, 8> <ITMAX:43:7, 4> <It:47:12, 4> <L:42:7, 4> <sapfor.var:0:0, 4> iter():48:18 printf():49:5
 //CHECK:    indirect access (separate):
 //CHECK:     <malloc():44:20,?> <malloc():45:20,?>
