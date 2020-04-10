@@ -26,11 +26,14 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <llvm/IR/InstIterator.h>
 #include "llvm/IR/InstVisitor.h"
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
+
+#define DEBUG_TYPE "di-memory-handle"
 
 using namespace llvm;
 using namespace tsar;
@@ -114,9 +117,15 @@ void ClientToServerMemory::initializeServer(
     auto DIAT = Env->get(ClientF);
     if (!DIAT)
       continue;
+    auto F = ClientToServer[&ClientF];
+    assert(F && "Mapped function for a specified one must exist!");
+    LLVM_DEBUG(dbgs() << "[CLONED DI MEMORY]: create mapping for function '"
+                      << F->getName() << "'\n");
     for (auto &DIM : make_range(DIAT->memory_begin(), DIAT->memory_end())) {
-      auto F = ClientToServer[&ClientF];
-      assert(F && "Mapped function for a specified one must exist!");
+      LLVM_DEBUG(dbgs() << "[CLONED DI MEMORY]: add to map: ";
+                 if (auto DWLang = getLanguage(ClientF))
+                     printDILocationSource(*DWLang, DIM, dbgs());
+                 dbgs() << "\n");
       auto MD = ClientToServer.getMappedMD(DIM.getAsMDNode());
       assert(MD && "Mapped metadata for a specified memory must exist!");
       CloneToOrigin.try_emplace(
