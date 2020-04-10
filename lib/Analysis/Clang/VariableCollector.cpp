@@ -98,6 +98,20 @@ VariableCollector::findDecl(const DIMemory &DIM,
     if (DIEM->getExpression()->getNumElements() > 0) {
       auto *Expr = DIEM->getExpression();
       auto NumDeref = llvm::count(Expr->getElements(), dwarf::DW_OP_deref);
+      // At first, check that metadata-level memory is larger then allocated
+      // memory. For example:
+      // - metadata memory location is <X, ?>
+      // - `int X`
+      // Size of X will be unknown if there is a call which takes &X as
+      // a parameter: bar(&X).
+      if (NumDeref == 0 && ASTRefItr->second.size() == 1 &&
+          Expr->isFragment() && Expr->getNumElements() == 3 &&
+          !DIEM->isSized()) {
+        ASTRefItr->second.front() = DIEM;
+        return std::make_pair(MatchItr->get<AST>(), isa<DILocalVariable>(DIVar)
+                                                        ? CoincideLocal
+                                                        : CoincideGlobal);
+      }
       auto *T = getCanonicalUnqualifiedType(ASTRefItr->first);
       // We want to be sure that current memory location describes all
       // possible memory locations which can be represented with a
