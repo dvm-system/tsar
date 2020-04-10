@@ -31,6 +31,7 @@
 #include <clang/Basic/LangOptions.h>
 #include <clang/AST/Decl.h>
 #include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include "llvm/Support/Path.h"
@@ -54,6 +55,40 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.getPreservesAll();
+  }
+
+private:
+  DIType *createStubType(llvm::Module &M, unsigned int AS, DIBuilder &DIB) {
+    /// TODO (kaniandr@gmail.com): we create a stub instead of an appropriate
+    /// type because type must not be set to nullptr. We mark such type as
+    /// artificial type with name "sapfor.type", however may be this is not
+    /// a good way to distinguish such types?
+    auto DIBasicTy = DIB.createBasicType(
+      "char", llvm::Type::getInt1Ty(M.getContext())->getScalarSizeInBits(),
+      dwarf::DW_ATE_unsigned_char);
+    auto PtrSize = M.getDataLayout().getPointerSizeInBits(AS);
+    return DIB.createArtificialType(
+      DIB.createPointerType(DIBasicTy, PtrSize, 0, None, "sapfor.type"));
+  }
+
+  /// Insert artificial metadata for allocas.
+  void insertDeclareIfNotExist(Function &F, DIFile *FileCU, DIBuilder &DIB) {
+    for (auto &I : instructions(F))
+      if (auto *AI = dyn_cast<AllocaInst>(&I)) {
+        SmallVector<DIMemoryLocation, 1> DILocs;
+        findMetadata(AI, DILocs, nullptr, MDSearch::AddressOfVariable);
+        if (!DILocs.empty())
+          continue;
+        auto *DITy =
+          createStubType(*F.getParent(), AI->getType()->getAddressSpace(), DIB);
+        auto *DISub = F.getSubprogram();
+        auto &Ctx = AI->getContext();
+        auto *DIVar = DILocalVariable::getDistinct(
+            Ctx, DISub, "sapfor.var", FileCU, 0, DITy, 0,
+            DINode::FlagArtificial, AI->getAlignment());
+        DIB.insertDeclare(AI, DIVar, DIExpression::get(Ctx, {}),
+            DILocation::get(AI->getContext(), 0, 0, DISub), AI->getParent());
+      }
   }
 };
 } // namespace
@@ -99,17 +134,7 @@ bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
       if (auto ND = dyn_cast<NamedDecl>(D))
         Name = ND->getName();
     }
-    /// TODO (kaniandr@gmail.com): we create a stub instead of an appropriate
-    /// type because type must not be set to nullptr. We mark such type as
-    /// artificial type with name "sapfor.type", however may be this is not
-    /// a good way to distinguish such types?
-    auto DIBasicTy = DIB.createBasicType(
-      "char", llvm::Type::getInt1Ty(Ctx)->getScalarSizeInBits(),
-      dwarf::DW_ATE_unsigned_char);
-    auto PtrSize = M.getDataLayout().getPointerSizeInBits(
-      GlobalVar.getType()->getAddressSpace());
-    auto DITy = DIB.createArtificialType(
-      DIB.createPointerType(DIBasicTy, PtrSize, 0, None, "sapfor.type"));
+    auto *DITy = createStubType(M, GlobalVar.getType()->getAddressSpace(), DIB);
     auto *GV = DIGlobalVariable::getDistinct(
       Ctx, File, Name, GlobalVar.getName(), File, Line, DITy,
       GlobalVar.hasLocalLinkage(), GlobalVar.isDeclaration(), nullptr, 0);
@@ -118,8 +143,10 @@ bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
     GlobalVar.setMetadata("sapfor.dbg", GVE);
   }
   for (auto &F : M.functions()) {
-    if (F.getSubprogram())
+    if (F.getSubprogram()) {
+      insertDeclareIfNotExist(F, FileCU, DIB);
       continue;
+    }
     if (F.isIntrinsic() && (isDbgInfoIntrinsic(F.getIntrinsicID()) ||
         isMemoryMarkerIntrinsic(F.getIntrinsicID())))
       continue;
@@ -145,6 +172,7 @@ bool DIGlobalRetrieverPass::runOnModule(llvm::Module &M) {
       !F.isDeclaration(), Line, nullptr, 0, 0, 0, Flags, LangOpts.Optimize,
       !F.isDeclaration() ? CU : nullptr);
     F.setMetadata("sapfor.dbg", SP);
+    insertDeclareIfNotExist(F, FileCU, DIB);
   }
   return true;
 }
