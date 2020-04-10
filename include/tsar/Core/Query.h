@@ -194,6 +194,7 @@ public:
 
   /// Creates query manager.
   ///
+  /// \param [in] UseServer Use analysis server to improve analysis quality.
   /// \param [in] GlobalOptions This specifies a list of global options,
   /// that may be accessed by multiple passes. Global options may be accessed
   /// not only in this query manager, so the manager should not owns their.
@@ -205,10 +206,11 @@ public:
   /// which should be printed. This is a bit list of steps.
   /// \param [in] AnalysisUse Name of a file with external analysis results
   /// which should be used to clarify analysis.
-  DefaultQueryManager(const GlobalOptions *Options,
+  DefaultQueryManager(bool UseServer, const GlobalOptions *Options,
       const PassList &OutputPasses, const PassList &PrintPasses,
       ProcessingStep PrintSteps = allSteps(),
       llvm::StringRef AnalysisUse = "") :
+    mUseServer(UseServer),
     mGlobalOptions(Options),
     mOutputPasses(OutputPasses), mPrintPasses(PrintPasses),
     mPrintSteps(PrintSteps) {}
@@ -225,6 +227,7 @@ private:
   void addWithPrint(llvm::Pass *P, bool PrintResult,
     llvm::legacy::PassManager &Passes);
 
+  bool mUseServer = false;
   PassList mOutputPasses;
   PassList mPrintPasses;
   ProcessingStep mPrintSteps;
