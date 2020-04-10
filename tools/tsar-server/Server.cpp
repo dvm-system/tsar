@@ -133,7 +133,7 @@ public:
     Passes.add(createDIMemoryTraitPoolStorage());
     Passes.add(createDIMemoryEnvironmentStorage());
     Passes.add(createDIEstimateMemoryPass());
-    Passes.add(createTraitsAnalysisServer());
+    Passes.add(createDIMemoryAnalysisServer());
     Passes.add(createAnalysisWaitServerPass());
     Passes.add(createMemoryMatcherPass());
     // Analysis on server changes metadata-level

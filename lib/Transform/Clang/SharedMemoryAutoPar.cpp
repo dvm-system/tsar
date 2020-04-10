@@ -33,14 +33,11 @@
 #include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
-#include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
-#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include "tsar/Analysis/Memory/ServerUtils.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
@@ -64,72 +61,6 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-shared-parallel"
 
-namespace {
-/// This provides access to function-level analysis results on server.
-using ClangSMParallelServerProvider =
-    FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
-
-/// List of responses available from server (client may request corresponding
-/// analysis, in case of provider all analysis related to a provider may
-/// be requested separately).
-using ClangSMParallelServerResponse = AnalysisResponsePass<
-    GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
-    GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper,
-    ClonedDIMemoryMatcherWrapper, ClangSMParallelServerProvider>;
-
-/// This analysis server performs transformation-based analysis which is
-/// necessary for shared memory parallelization.
-class ClangSMParallelServer final : public AnalysisServer {
-public:
-  static char ID;
-  ClangSMParallelServer();
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
-  void prepareToClone(Module &ClientM,
-    ValueToValueMapTy &ClientToServer) override;
-  void initializeServer(Module &CM, Module &SM, ValueToValueMapTy &CToS,
-    legacy::PassManager &PM) override;
-  void addServerPasses(Module &M, legacy::PassManager &PM) override;
-  void prepareToClose(legacy::PassManager &PM) override;
-};
-}
-
-
-void ClangSMParallelServer::getAnalysisUsage(AnalysisUsage &AU) const {
-  AnalysisServer::getAnalysisUsage(AU);
-  ClientToServerMemory::getAnalysisUsage(AU);
-  AU.addRequired<GlobalOptionsImmutableWrapper>();
-}
-
-void ClangSMParallelServer::prepareToClone(Module &ClientM,
-    ValueToValueMapTy &ClientToServer) {
-  ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
-}
-
-void ClangSMParallelServer::initializeServer(Module &CM, Module &SM,
-    ValueToValueMapTy &CToS, legacy::PassManager &PM) {
-  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
-  PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
-  PM.add(createGlobalDefinedMemoryStorage());
-  PM.add(createGlobalLiveMemoryStorage());
-  PM.add(createDIMemoryTraitPoolStorage());
-  ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
-}
-
-void ClangSMParallelServer::addServerPasses(Module &M,
-    legacy::PassManager &PM) {
-  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  addImmutableAliasAnalysis(PM);
-  addBeforeTfmAnalysis(PM);
-  addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
-  addAfterLoopRotateAnalysis(PM);
-  PM.add(createVerifierPass());
-  PM.add(new ClangSMParallelServerResponse);
-}
-
-void ClangSMParallelServer::prepareToClose(legacy::PassManager &PM) {
-  ClientToServerMemory::prepareToClose(PM);
-}
-
 void ClangSMParallelizationInfo::addBeforePass(
     legacy::PassManager &Passes) const {
   addImmutableAliasAnalysis(Passes);
@@ -138,9 +69,10 @@ void ClangSMParallelizationInfo::addBeforePass(
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
   Passes.add(createDIEstimateMemoryPass());
-  Passes.add(new ClangSMParallelServer);
+  Passes.add(createDIMemoryAnalysisServer());
   Passes.add(createAnalysisWaitServerPass());
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createAnalysisWaitServerPass());
 }
 
 void ClangSMParallelizationInfo::addAfterPass(
@@ -230,42 +162,6 @@ void ClangSMParallelization::initializeProviderOnClient(Module &M) {
       });
 }
 
-void ClangSMParallelization::initializeProviderOnServer() {
-  ClangSMParallelServerProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [this](GlobalOptionsImmutableWrapper &Wrapper) {
-        Wrapper.setOptions(mGlobalOpts);
-      });
-  auto R = mSocketInfo->getActive()->second.getAnalysis<GlobalsAAWrapperPass,
-      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper,
-      GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper>();
-  assert(R && "Immutable passes must be available on server!");
-  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
-  ClangSMParallelServerProvider::initialize<DIMemoryEnvironmentWrapper>(
-      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
-        Wrapper.set(**DIMEnvServer);
-      });
-  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
-  ClangSMParallelServerProvider::initialize<DIMemoryTraitPoolWrapper>(
-      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
-        Wrapper.set(**DIMTraitPoolServer);
-      });
-  auto &GlobalsAAServer = R->value<GlobalsAAWrapperPass *>()->getResult();
-  ClangSMParallelServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
-      [&GlobalsAAServer](GlobalsAAResultImmutableWrapper &Wrapper) {
-        Wrapper.set(GlobalsAAServer);
-      });
-  auto *GlobalDefUseServer = R->value<GlobalDefinedMemoryWrapper *>();
-  ClangSMParallelServerProvider::initialize<GlobalDefinedMemoryWrapper>(
-    [GlobalDefUseServer](GlobalDefinedMemoryWrapper &Wrapper) {
-      Wrapper.set(**GlobalDefUseServer);
-    });
-  auto *GlobalLiveMemoryServer = R->value<GlobalLiveMemoryWrapper *>();
-  ClangSMParallelServerProvider::initialize<GlobalLiveMemoryWrapper>(
-    [GlobalLiveMemoryServer](GlobalLiveMemoryWrapper &Wrapper) {
-      Wrapper.set(**GlobalLiveMemoryServer);
-    });
-}
-
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
@@ -280,7 +176,6 @@ bool ClangSMParallelization::runOnModule(Module &M) {
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   mDIMEnv = &getAnalysis<DIMemoryEnvironmentWrapper>().get();
   initializeProviderOnClient(M);
-  initializeProviderOnServer();
   auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
   if (mGlobalOpts->OptRegions.empty()) {
     transform(RegionInfo, std::back_inserter(mRegions),
@@ -329,34 +224,11 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-namespace llvm {
-static void initializeClangSMParallelServerPass(PassRegistry &);
-static void initializeClangSMParallelServerResponsePass(PassRegistry &);
-}
-
-INITIALIZE_PROVIDER(ClangSMParallelServerProvider, "clang-spar-server-provider",
-                    "Shared Memory Parallelization (Clang, Server, Provider)")
-
-template <> char ClangSMParallelServerResponse::ID = 0;
-INITIALIZE_PASS(ClangSMParallelServerResponse, "clang-shared-parallel-response",
-                "Shared Memory Parallelization (Clang, Server, Response)", true,
-                false)
-
-char ClangSMParallelServer::ID = 0;
-INITIALIZE_PASS(ClangSMParallelServer, "clang-shared-parallel-server",
-                "Shared Memory Parallelization (Clang, Server)", false, false)
-
 INITIALIZE_PROVIDER(ClangSMParallelProvider,
                     "clang-shared-parallel-provider",
                     "Shared Memory Parallelization (Clang, Provider)")
 
-ClangSMParallelServer::ClangSMParallelServer() : AnalysisServer(ID) {
-  initializeClangSMParallelServerPass(*PassRegistry::getPassRegistry());
-}
 ClangSMParallelization::ClangSMParallelization(char &ID) : ModulePass(ID) {
   initializeClangSMParallelProviderPass(*PassRegistry::getPassRegistry());
-  initializeClangSMParallelServerPass(*PassRegistry::getPassRegistry());
-  initializeClangSMParallelServerProviderPass(*PassRegistry::getPassRegistry());
-  initializeClangSMParallelServerResponsePass(*PassRegistry::getPassRegistry());
 }
 
