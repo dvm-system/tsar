@@ -99,19 +99,19 @@ Function for_each_loop(const llvm::LoopInfo &LI, Function F) {
 template<class FunctionT>
 bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
   for (auto *U : I.users()) {
-    if (auto *UI = dyn_cast<llvm::Instruction>(U)) {
+    if (auto *UI = llvm::dyn_cast<llvm::Instruction>(U)) {
       if (F(UI))
         return true;
-    } else if (auto *CE = dyn_cast<llvm::ConstantExpr>(U)) {
+    } else if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(U)) {
       llvm::SmallVector<llvm::ConstantExpr *, 4> WorkList{CE};
       do {
         auto *Expr = WorkList.pop_back_val();
         for (auto *ExprU : Expr->users()) {
-          if (auto ExprUseInst = dyn_cast<llvm::Instruction>(ExprU)) {
+          if (auto ExprUseInst = llvm::dyn_cast<llvm::Instruction>(ExprU)) {
             if (F(UI))
               return true;
-          } else if (auto ExprUseExpr = dyn_cast<llvm::ConstantExpr>(ExprU)) {
-            WorkList.push_back(ExprUseExpr);
+          } else if (auto Expr = llvm::dyn_cast<llvm::ConstantExpr>(ExprU)) {
+            WorkList.push_back(Expr);
           } else if (F(Expr)) {
             return true;
           }
@@ -134,16 +134,16 @@ bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
 template<class FunctionT>
 void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
   for (auto *U : I.users()) {
-    if (auto *UI = dyn_cast<llvm::Instruction>(U)) {
+    if (auto *UI = llvm::dyn_cast<llvm::Instruction>(U)) {
       F(UI);
-    } else if (auto *CE = dyn_cast<llvm::ConstantExpr>(U)) {
+    } else if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(U)) {
       llvm::SmallVector<llvm::ConstantExpr *, 4> WorkList{ CE };
       do {
         auto *Expr = WorkList.pop_back_val();
         for (auto *ExprU : Expr->users()) {
-          if (auto ExprUseInst = dyn_cast<llvm::Instruction>(ExprU))
+          if (auto ExprUseInst = llvm::dyn_cast<llvm::Instruction>(ExprU))
             F(UI);
-          else if (auto ExprUseExpr = dyn_cast<llvm::ConstantExpr>(ExprU))
+          else if (auto ExprUseExpr = llvm::dyn_cast<llvm::ConstantExpr>(ExprU))
             WorkList.push_back(ExprUseExpr);
           else
             F(Expr);
