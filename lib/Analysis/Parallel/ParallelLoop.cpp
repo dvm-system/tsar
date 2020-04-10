@@ -139,7 +139,11 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
       return;
     }
     auto DepItr = DIDepInfo->find(LoopID);
-    assert(DepItr != DIDepInfo->end() && "Loop must be analyzed!");
+    // TODO (kaniandr@gmail.com): investigate cases which lead to absence of
+    // analysis results. This situation occurs if CG from NAS NPB 3.3.1 is
+    // analyzed for example.
+    if (DepItr == DIDepInfo->end())
+      return;
     auto &DIDepSet = DepItr->get<DIDependenceSet>();
     DenseSet<const DIAliasNode *> Coverage;
     accessCoverage<bcl::SimpleInserter>(DIDepSet, *DIAT, Coverage,
