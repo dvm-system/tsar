@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Clang/VariableCollector.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Support/MetadataUtils.h"
 
 using namespace clang;
 using namespace llvm;
@@ -87,7 +88,10 @@ VariableCollector::findDecl(const DIMemory &DIM,
     assert(DIVar && "Variable must not be null!");
     auto MatchItr = ASTToClient.find<MD>(DIVar);
     if (MatchItr == ASTToClient.end())
-      return std::make_pair(nullptr, Invalid);
+      if (isStubVariable(*DIVar))
+          return std::make_pair(nullptr, Unknown);
+      else
+        return std::make_pair(nullptr, Invalid);
     auto ASTRefItr = CanonicalRefs.find(MatchItr->get<AST>());
     if (ASTRefItr == CanonicalRefs.end())
       return std::make_pair(MatchItr->get<AST>(), Implicit);

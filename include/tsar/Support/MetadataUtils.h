@@ -167,5 +167,16 @@ inline bool isStubType(llvm::DITypeRef DITy) {
   auto Ty = DITy.resolve();
   return !Ty || (Ty->isArtificial() && Ty->getName() == "sapfor.type");
 }
+
+/// Additional variables may be necessary for metadata-level analysis.
+/// This function returns 'true' if a specified variable is one of these
+/// variables and it has not been accurately generated.
+///
+/// TODO (kaniandr@gmail.com): may be we should use other way to distinguish
+/// such types. How LLVM uses 'artificial' flag on variables?
+inline bool isStubVariable(llvm::DIVariable &DIVar) {
+  return llvm::isa<llvm::DILocalVariable>(DIVar) &&
+         llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial();
+}
 }
 #endif//TSAR_SUPPORT_METADATA_UTILS_H
