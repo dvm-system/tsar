@@ -1,5 +1,5 @@
 void foo() {
-  int X;
+  int X = 10;
   for (int I = 0; I < X; ++I);
 }
 //CHECK: Printing analysis 'Canonical Form Loop Analysis' for function 'foo':
