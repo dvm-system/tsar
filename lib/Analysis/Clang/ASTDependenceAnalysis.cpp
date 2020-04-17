@@ -78,9 +78,8 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       for (auto &T : TS)
         auto S =
             mASTVars.findDecl(*T->getMemory(), mASTToClient, mDIMemoryMatcher);
-      if (Dptr.is_any<trait::Readonly>())
         mInToLocalize.push_back(&TS);
-      else
+      if (Dptr.is<trait::Shared>())
         mOutToLocalize.push_back(&TS);
     } else if (Dptr.is<trait::Induction>()) {
       if (TS.size() > 1) {
