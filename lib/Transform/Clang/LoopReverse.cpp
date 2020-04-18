@@ -381,6 +381,9 @@ public:
       }
       for (auto Num : mToTransform) {
         const CanonicalLoopInfo *LI = mLoops[Num].first;
+        llvm::Optional<llvm::APSInt> StartOpt;
+        llvm::Optional<llvm::APSInt> EndOpt;
+        llvm::Optional<llvm::APSInt> StepOpt;
         if (mIsStrict) {
           bool Dependency = false;
           auto *Loop = LI->getLoop()->getLoop();
@@ -404,7 +407,19 @@ public:
                   continue;
                 if (Trait.is_any<trait::Output, trait::Anti, trait::Flow>()) {
                   Dependency = true;
+                  break;
                 }
+                // no check that it is the Induction what we looking for
+                // trait->getMemory() is empty, moreover it must be matched with
+                // local value
+                if (Trait.is<trait::Induction>())
+                  for (auto T : Trait) {
+                    if (auto *Opts = T->get<trait::Induction>()) {
+                      StartOpt = Opts->getStart();
+                      StepOpt = Opts->getStep();
+                      EndOpt = Opts->getEnd();
+                    }
+                  }
               }
             }
             if (Dependency) {
@@ -414,7 +429,7 @@ public:
             }
           }
         }
-        if (transformLoop(mLoops[Num].first)) {
+        if (transformLoop(mLoops[Num].first, StartOpt, StepOpt, EndOpt)) {
           LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "Transformed "
                             << mLoops[Num].second->getName() << "\n");
         } else
@@ -443,7 +458,10 @@ public:
   }
 
 private:
-  bool transformLoop(const tsar::CanonicalLoopInfo *LI) {
+  bool transformLoop(const tsar::CanonicalLoopInfo *LI,
+                     llvm::Optional<llvm::APSInt> &Start,
+                     llvm::Optional<llvm::APSInt> &Step,
+                     llvm::Optional<llvm::APSInt> &End) {
     if (!LI)
       return false;
     auto *FS = LI->getASTLoop();
@@ -633,7 +651,15 @@ private:
       auto TextCondExpr = mRewriter.getRewrittenText(CondExprSR);
       std::string TextIncrExpr;
       std::string TextNewInitExpr;
-      if (UnaryIncr) {
+      // if have start value from dep analysis
+      if (Start.hasValue())
+        TextInitExpr = std::to_string(Start->getSExtValue());
+      // if have end and step value from dep analysis
+      if (End.hasValue() && Step.hasValue()) {
+        TextNewInitExpr =
+            std::to_string(End->getSExtValue() - Step->getSExtValue());
+        // no analysis -> calculate
+      } else if (UnaryIncr) {
         if (CondExclude) {
           if (IndSign) {
             TextNewInitExpr = "((" + TextCondExpr + ")-1)";
@@ -671,9 +697,19 @@ private:
       if (IncrSwapReq) {
         auto TextRightIncrExpr = mRewriter.getRewrittenText(IncrRightExprSR);
         auto TextLeftIncrExpr = mRewriter.getRewrittenText(IncrLeftExprSR);
+        /*       if (Step.hasValue())
+                 mRewriter.ReplaceText(
+                     IncrRightExprSR,
+                     "(" + std::to_string(abs(Step->getSExtValue())) + ")");
+               else*/
         mRewriter.ReplaceText(IncrRightExprSR, TextLeftIncrExpr);
         mRewriter.ReplaceText(IncrLeftExprSR, TextRightIncrExpr);
-      }
+      } /* else {
+         if (!UnaryIncr && Step.hasValue())
+           mRewriter.ReplaceText(
+               IncExprSR, "(" + std::to_string(abs(Step->getSExtValue())) +
+       ")");
+       }*/
       // replace incr operator i++ -> i-- ; i+=k -> i-=k; etc
       mRewriter.ReplaceText(IncrOperatorSR, NewIncrOp);
       // replace cond operator
@@ -690,6 +726,8 @@ private:
     }
     return false;
   }
+  // written to don't add  math lib
+  static int64_t abs(int64_t x) { return x > 0 ? x : -x; }
   TransformationContext *mTfmCtx;
   clang::Rewriter &mRewriter;
   clang::ASTContext &mContext;
