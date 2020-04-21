@@ -26,6 +26,7 @@
 
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/MemoryTraitJSON.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
@@ -74,6 +75,9 @@ using VariableT = bcl::tagged_tuple<
 
 /// Tuple of iterators of variable traits stored in external analysis results.
 using TraitT = bcl::tagged_tuple<
+  bcl::tagged<
+    Optional<trait::json_::LoopImpl::Reduction::ValueType::const_iterator>,
+      trait::Reduction>,
   bcl::tagged<
     Optional<trait::json_::LoopImpl::Private::ValueType::const_iterator>,
       trait::Private>,
@@ -173,6 +177,8 @@ LoopCache buildLoopCache(const trait::Info &Info) {
 }
 
 VariableT createVar(trait::IdTy I, const trait::Info &Info) {
+  /// TODO (kaniandr@gmail.com): check that index of variable is not out of
+  /// range due to incorrect .json created manually.
   VariableT Var;
   sys::fs::UniqueID ID;
   if (sys::fs::getUniqueID(Info[trait::Info::Vars][I][trait::Var::File], ID)) {
@@ -199,6 +205,11 @@ trait::IdTy getVariableIdx(
   return I->first;
 }
 
+trait::IdTy getVariableIdx(
+    std::map<trait::IdTy, trait::Reduction::Kind>::const_iterator I) {
+  return I->first;
+}
+
 template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
     const trait::Info &Info, const trait::Loop &L, TraitCache &Cache) {
   for (auto I = L[Key].cbegin(), EI = L[Key].cend(); I != EI; ++I) {
@@ -216,6 +227,7 @@ template<class Tag, class ExternalTag> void addToCache(ExternalTag Key,
 /// results.
 TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
   TraitCache Res;
+  addToCache<trait::Reduction>(trait::Loop::Reduction, Info, L, Res);
   addToCache<trait::Private>(trait::Loop::Private, Info, L, Res);
   addToCache<trait::UseAfterLoop>(trait::Loop::UseAfterLoop, Info, L, Res);
   addToCache<trait::WriteOccurred>(trait::Loop::WriteOccurred, Info, L, Res);
@@ -417,7 +429,9 @@ bool AnalysisReader::runOnFunction(Function &F) {
         if (!TraitItr->second.get<trait::UseAfterLoop>())
           DITrait.unset<trait::LastPrivate, trait::SecondToLastPrivate,
                         trait::DynamicPrivate>();
-
+      } else if (TraitItr->second.get<trait::Reduction>()) {
+        auto &T = *TraitItr->second.get<trait::Reduction>();
+        DITrait.set<trait::Reduction>(new trait::DIReduction(T->second));
       } else {
         updateAntiFlowDep<trait::Anti>(TraitItr, DITrait);
         updateAntiFlowDep<trait::Flow>(TraitItr, DITrait);

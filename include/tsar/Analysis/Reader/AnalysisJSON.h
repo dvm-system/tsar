@@ -25,6 +25,7 @@
 #ifndef ANALYSIS_JSON_H
 #define ANALYSIS_JSON_H
 
+#include "tsar/Analysis/Memory/MemoryTrait.h"
 #include <bcl/Json.h>
 
 namespace tsar{
@@ -52,11 +53,12 @@ JSON_OBJECT_END(Distance)
 
 /// Definition of a JSON-object which represents a loop and its properties.
 JSON_OBJECT_BEGIN(Loop)
-JSON_OBJECT_PAIR_10(Loop,
+JSON_OBJECT_PAIR_11(Loop,
   File, std::string,
   Line, LineTy,
   Column, ColumnTy,
   Private, std::set<IdTy>,
+  Reduction, std::map<BCL_JOIN(IdTy, trait::Reduction::Kind)>,
   Flow, std::map<BCL_JOIN(IdTy, Distance)>,
   Anti, std::map<BCL_JOIN(IdTy, Distance)>,
   Output, std::set<IdTy>,

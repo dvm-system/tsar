@@ -75,20 +75,20 @@ void addVarList(const ClangDependenceAnalyzer::SortedVarListT &VarInfoList,
 /// the end of `ParallelFor` pragma.
 void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
     SmallVectorImpl<char> &ParallelFor) {
-  unsigned I = trait::DIReduction::RK_First;
-  unsigned EI = trait::DIReduction::RK_NumberOf;
+  unsigned I = trait::Reduction::RK_First;
+  unsigned EI = trait::Reduction::RK_NumberOf;
   for (; I < EI; ++I) {
     if (VarInfoList[I].empty())
       continue;
     SmallString<7> RedKind;
-    switch (static_cast<trait::DIReduction::ReductionKind>(I)) {
-    case trait::DIReduction::RK_Add: RedKind += "sum"; break;
-    case trait::DIReduction::RK_Mult: RedKind += "product"; break;
-    case trait::DIReduction::RK_Or: RedKind += "or"; break;
-    case trait::DIReduction::RK_And: RedKind += "and"; break;
-    case trait::DIReduction::RK_Xor: RedKind + "xor "; break;
-    case trait::DIReduction::RK_Max: RedKind += "max"; break;
-    case trait::DIReduction::RK_Min: RedKind += "min"; break;
+    switch (static_cast<trait::Reduction::Kind>(I)) {
+    case trait::Reduction::RK_Add: RedKind += "sum"; break;
+    case trait::Reduction::RK_Mult: RedKind += "product"; break;
+    case trait::Reduction::RK_Or: RedKind += "or"; break;
+    case trait::Reduction::RK_And: RedKind += "and"; break;
+    case trait::Reduction::RK_Xor: RedKind + "xor "; break;
+    case trait::Reduction::RK_Max: RedKind += "max"; break;
+    case trait::Reduction::RK_Min: RedKind += "min"; break;
     default: llvm_unreachable("Unknown reduction kind!"); break;
     }
     ParallelFor.append({ 'r', 'e', 'd', 'u', 'c', 't', 'i', 'o', 'n' });

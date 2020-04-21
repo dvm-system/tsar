@@ -510,7 +510,7 @@ AliasNode * findBoundAliasNode(AliasTree &AT,
 /// Convert IR-level reduction kind to metadata-level reduction kind.
 ///
 /// \pre RD represents a valid reduction, RK_NoReduction kind is not permitted.
-trait::DIReduction::ReductionKind getReductionKind(
+trait::Reduction::Kind getReductionKind(
   const RecurrenceDescriptor &RD) {
   switch (const_cast<RecurrenceDescriptor &>(RD).getRecurrenceKind()) {
   case RecurrenceDescriptor::RK_IntegerAdd:
@@ -1566,7 +1566,7 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
   };
   SmallPtrSet<Loop *, 1> ReductionLoops;
   SmallPtrSet<Instruction *, 8> LCSSAPhis{ Phi };
-  Optional<trait::DIReduction::ReductionKind> RedKind;
+  Optional<trait::Reduction::Kind> RedKind;
   // Check whether inner loop does not allow some of candidates be a
   // reduction variable in outer loop.
   //
