@@ -82,10 +82,7 @@ ModulePass * createClangStructureReplacementPass();
 /// with separate variables.
 void initializeClangStructureReplacementPassPass(PassRegistry &Registry);
 
-void initializeClangLoopSwapPassPass(PassRegistry &Registry);
-ModulePass* createClangLoopSwapPass();
-
-void initializeClangLoopSwapPass(PassRegistry &Registry);
-ModulePass* createClangLoopSwap();
+void initializeClangLoopInterchangePass(PassRegistry &Registry);
+ModulePass* createClangLoopInterchange();
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

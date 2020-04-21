@@ -190,9 +190,9 @@ def note_declared_here: Note<"declared here">;
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
 
-def warn_loopswap_not_canonical: Warning<"expected canonical loop">;
-def warn_loopswap_not_perfect: Warning<"expected perfect loop">;
-def warn_loopswap_id_not_found: Warning<"induction not found">;
-def warn_loopswap_not_forstmt: Warning<"expected for loop">;
-def err_loopswap_dependency: Error<"loop contains dependence. use 'nostrict' clause to skip this check">;
-def warn_loopswap_no_analysis: Warning<"loop has no analysis. use 'nostrict' clause to skip this check">;
+def warn_interchange_not_canonical: Warning<"expected canonical loop">;
+def warn_interchange_not_perfect: Warning<"expected perfect loop">;
+def warn_interchange_id_not_found: Warning<"induction not found">;
+def warn_interchange_not_forstmt: Warning<"expected for loop">;
+def err_interchange_dependency: Error<"loop contains dependence. use 'nostrict' clause to skip this check">;
+def warn_interchange_no_analysis: Warning<"loop has no analysis. use 'nostrict' clause to skip this check">;
