@@ -62,7 +62,6 @@ TSAR_TRAIT_DECL(FirstPrivate, "first private")
 TSAR_TRAIT_DECL(SecondToLastPrivate, "second to last private")
 TSAR_TRAIT_DECL(LastPrivate, "last private")
 TSAR_TRAIT_DECL(DynamicPrivate, "dynamic private")
-TSAR_TRAIT_DECL(Reduction, "reduction")
 TSAR_TRAIT_DECL(Induction, "induction")
 TSAR_TRAIT_DECL(Flow, "flow")
 TSAR_TRAIT_DECL(Anti, "anti")
@@ -160,6 +159,38 @@ public:
 
 private:
   Flag mFlags;
+};
+
+/// Description of a reduction memory location.
+class Reduction {
+public:
+  /// This represents available kinds of a reduction.
+  enum Kind : uint8_t {
+    RK_First,
+    RK_Add = RK_First,
+    RK_Mult,
+    RK_Or,
+    RK_And,
+    RK_Xor,
+    RK_Max,
+    RK_Min,
+    RK_NoReduction,
+    RK_NumberOf = RK_NoReduction,
+  };
+
+  TSAR_TRAIT_DECL_STRING(Reduction, "reduction")
+
+  /// Creates reduction with a specified kind.
+  explicit Reduction(Kind RK) : mRK(RK) {}
+
+  /// Returns reduction kind.
+  Kind getKind() const noexcept { return mRK; }
+
+  /// Returns true if kind is valid.
+  operator bool() const noexcept { return getKind() != RK_NoReduction; }
+
+private:
+  Kind mRK;
 };
 }
 

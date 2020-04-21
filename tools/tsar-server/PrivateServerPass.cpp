@@ -42,6 +42,7 @@
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/MemoryTraitJSON.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Unparse/Utils.h"
@@ -342,8 +343,8 @@ JSON_OBJECT_ROOT_PAIR_4(AliasTree,
 JSON_OBJECT_END(AliasTree)
 
 JSON_OBJECT_BEGIN(Reduction)
-JSON_OBJECT_PAIR(Reduction, Kind, trait::DIReduction::ReductionKind)
-  Reduction() : JSON_INIT(Reduction, trait::DIReduction::RK_NoReduction) {}
+JSON_OBJECT_PAIR(Reduction, Kind, trait::Reduction::Kind)
+  Reduction() : JSON_INIT(Reduction, trait::Reduction::RK_NoReduction) {}
 JSON_OBJECT_END(Reduction)
 
 JSON_OBJECT_BEGIN(Induction)
@@ -473,45 +474,6 @@ template<> struct Traits<tsar::DIAliasNode::Kind> {
     case tsar::DIAliasNode::KIND_ESTIMATE: JSON += "Estimate"; break;
     case tsar::DIAliasNode::KIND_UNKNOWN: JSON += "Unknown"; break;
     default: JSON += "Invalid"; break;
-    }
-    JSON += '"';
-  }
-};
-
-/// Specialization of JSON serialization traits for
-/// tsar::trait::DIReduction::ReductionKind type.
-template<> struct Traits<trait::DIReduction::ReductionKind> {
-  static bool parse(trait::DIReduction::ReductionKind&Dest,
-      json::Lexer &Lex) noexcept {
-    try {
-      auto Value = Lex.discardQuote();
-      auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
-      Dest = llvm::StringSwitch<trait::DIReduction::ReductionKind>(Lex.json())
-        .Case("Add", trait::DIReduction::RK_Add)
-        .Case("Mult", trait::DIReduction::RK_Mult)
-        .Case("Or", trait::DIReduction::RK_Or)
-        .Case("Add", trait::DIReduction::RK_Add)
-        .Case("Xor", trait::DIReduction::RK_Xor)
-        .Case("Max", trait::DIReduction::RK_Max)
-        .Case("Min", trait::DIReduction::RK_Min)
-        .Default(trait::DIReduction::RK_NoReduction);
-    }
-    catch (...) {
-      return false;
-    }
-    return true;
-  }
-  static void unparse(String &JSON, trait::DIReduction::ReductionKind Obj) {
-    JSON += '"';
-    switch (Obj) {
-    case trait::DIReduction::RK_Add: JSON += "Add"; break;
-    case trait::DIReduction::RK_Mult: JSON += "Mult"; break;
-    case trait::DIReduction::RK_Or: JSON += "Or"; break;
-    case trait::DIReduction::RK_And: JSON += "And"; break;
-    case trait::DIReduction::RK_Xor: JSON += "Xor"; break;
-    case trait::DIReduction::RK_Max: JSON += "Max"; break;
-    case trait::DIReduction::RK_Min: JSON += "Min"; break;
-    default: JSON += "NoReduction"; break;
     }
     JSON += '"';
   }

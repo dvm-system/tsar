@@ -112,34 +112,7 @@ private:
 };
 
 /// Metadata-level description of a reduction.
-class DIReduction {
-public:
-  /// This represents available kinds of a reduction.
-  enum ReductionKind : uint8_t {
-    RK_First,
-    RK_Add = RK_First,
-    RK_Mult,
-    RK_Or,
-    RK_And,
-    RK_Xor,
-    RK_Max,
-    RK_Min,
-    RK_NoReduction,
-    RK_NumberOf = RK_NoReduction,
-  };
-
-  /// Creates reduction with a specified kind.
-  explicit DIReduction(ReductionKind RK) : mRK(RK) {}
-
-  /// Returns reduction kind.
-  ReductionKind getKind() const noexcept { return mRK; }
-
-  /// Returns true if kind is valid.
-  operator bool() const noexcept { return getKind() != RK_NoReduction; }
-
-private:
-  ReductionKind mRK;
-};
+using DIReduction = tsar::trait::Reduction;
 
 /// List of locations which covers some other location.
 class DICoverage {

@@ -76,21 +76,21 @@ struct ClausePrinter {
   /// the end of `ParallelFor` pragma.
   template <class Trait> void operator()(
       const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList) {
-    unsigned I = trait::DIReduction::RK_First;
-    unsigned EI = trait::DIReduction::RK_NumberOf;
+    unsigned I = trait::Reduction::RK_First;
+    unsigned EI = trait::Reduction::RK_NumberOf;
     for (; I < EI; ++I) {
       if (VarInfoList[I].empty())
         continue;
       ParallelFor += "reduction";
       ParallelFor += '(';
-      switch (static_cast<trait::DIReduction::ReductionKind>(I)) {
-      case trait::DIReduction::RK_Add: ParallelFor += "+:"; break;
-      case trait::DIReduction::RK_Mult: ParallelFor += "*:"; break;
-      case trait::DIReduction::RK_Or: ParallelFor += "|:"; break;
-      case trait::DIReduction::RK_And: ParallelFor += "&:"; break;
-      case trait::DIReduction::RK_Xor: ParallelFor + "^: "; break;
-      case trait::DIReduction::RK_Max: ParallelFor += "max:"; break;
-      case trait::DIReduction::RK_Min: ParallelFor += "min:"; break;
+      switch (static_cast<trait::Reduction::Kind>(I)) {
+      case trait::Reduction::RK_Add: ParallelFor += "+:"; break;
+      case trait::Reduction::RK_Mult: ParallelFor += "*:"; break;
+      case trait::Reduction::RK_Or: ParallelFor += "|:"; break;
+      case trait::Reduction::RK_And: ParallelFor += "&:"; break;
+      case trait::Reduction::RK_Xor: ParallelFor + "^: "; break;
+      case trait::Reduction::RK_Max: ParallelFor += "max:"; break;
+      case trait::Reduction::RK_Min: ParallelFor += "min:"; break;
       default: llvm_unreachable("Unknown reduction kind!"); break;
       }
       auto VarItr = VarInfoList[I].begin(), VarItrE = VarInfoList[I].end();
