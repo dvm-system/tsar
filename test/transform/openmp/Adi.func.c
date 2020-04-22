@@ -77,9 +77,6 @@ double iter(double(*A)[NY][NZ]) {
       }
   return Eps;
 }
-//CHECK: Adi.func.c:48:3: remark: parallel execution of loop is possible
-//CHECK:   for (I = 0; I < NX; I++)
-//CHECK:   ^
 //CHECK: Adi.func.c:70:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
@@ -96,4 +93,7 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK: Adi.func.c:63:5: remark: parallel execution of loop is possible
 //CHECK:     for (J = 1; J < NY - 1; J++)
 //CHECK:     ^
+//CHECK: Adi.func.c:48:3: remark: parallel execution of loop is possible
+//CHECK:   for (I = 0; I < NX; I++)
+//CHECK:   ^
 //CHECK: 1 warning generated.

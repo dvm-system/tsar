@@ -26,11 +26,14 @@
 #ifndef TSAR_CLANG_SHARED_PARALLEL_H
 #define TSAR_CLANG_SHARED_PARALLEL_H
 
+#include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
+#include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/Pass.h>
 
 namespace clang {
@@ -68,6 +71,25 @@ using ClangSMParallelProvider =
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
 class ClangSMParallelization: public ModulePass, private bcl::Uncopyable{
+  struct Preorder {};
+  struct ReversePreorder {};
+  struct Postorder {};
+  struct ReversePostorder {};
+
+  /// Storage for numbers of call graph nodes.
+  using CGNodeNumbering = llvm::DenseMap<
+    Function *,
+    std::tuple<
+      std::size_t, std::size_t,
+      std::size_t, std::size_t>,
+    DenseMapInfo<Function *>,
+    tsar::TaggedDenseMapTuple<
+      bcl::tagged<Function *, Function>,
+      bcl::tagged<std::size_t, Preorder>,
+      bcl::tagged<std::size_t, ReversePreorder>,
+      bcl::tagged<std::size_t, Postorder>,
+      bcl::tagged<std::size_t, ReversePostorder>>>;
+
 public:
   ClangSMParallelization(char &ID);
 
@@ -126,6 +148,8 @@ private:
   tsar::AnalysisSocketInfo *mSocketInfo = nullptr;
   tsar::DIMemoryEnvironment *mDIMEnv = nullptr;
   SmallVector<const tsar::OptimizationRegion *, 4> mRegions;
+  CGNodeNumbering mCGNodes;
+  CGNodeNumbering mParallelCallees;
 };
 
 

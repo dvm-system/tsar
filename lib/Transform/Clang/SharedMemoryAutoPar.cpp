@@ -131,6 +131,19 @@ bool ClangSMParallelization::findParallelLoops(
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   if (!exploitParallelism(L, *ForStmt, Provider, RegionAnalysis, *mTfmCtx))
     return findParallelLoops(L.begin(), L.end(), F, Provider);
+  for (auto *BB : L.blocks())
+    for (auto &I : *BB) {
+      CallSite CS(&I);
+      if (!CS)
+        continue;
+      auto Callee =
+        dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      if (!Callee)
+        continue;
+      auto Info = mParallelCallees.try_emplace(Callee);
+      if (Info.second)
+        Info.first->second = mCGNodes[Callee];
+    }
   return true;
 }
 
@@ -189,10 +202,44 @@ bool ClangSMParallelization::runOnModule(Module &M) {
                clang::diag::warn_region_not_found) << Name;
   }
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
-    if (I->size() > 1)
-      continue;
-    auto *F = I->front()->getFunction();
+  std::vector<
+    bcl::tagged_tuple<
+      bcl::tagged<Function *, Function>,
+      bcl::tagged<std::size_t, Preorder>,
+      bcl::tagged<std::size_t, ReversePreorder>,
+      bcl::tagged<std::size_t, Postorder>,
+      bcl::tagged<std::size_t, ReversePostorder>>> PostorderTraverse;
+  std::size_t LastPostorderNum = 1;
+  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd();
+       ++I, ++LastPostorderNum)
+    if (!I.hasLoop() && I->front()->getFunction()) {
+      PostorderTraverse.emplace_back();
+      PostorderTraverse.back().get<Function>() = I->front()->getFunction();
+      PostorderTraverse.back().get<Postorder>() = LastPostorderNum;
+    }
+  if (PostorderTraverse.empty())
+    return false;
+  std::size_t PrevPostorderNum = 0, LastPreorderNum = 1;
+  for (auto I = PostorderTraverse.rbegin(), EI = PostorderTraverse.rend();
+       I != EI; PrevPostorderNum = I->get<Postorder>(), ++I) {
+    auto Itr = mCGNodes.try_emplace(I->get<Function>()).first;
+    Itr->get<Postorder>() = I->get<Postorder>();
+    Itr->get<ReversePostorder>() = I->get<ReversePostorder>() =
+      LastPostorderNum - I->get<Postorder>();
+    Itr->get<Preorder>() = I->get<Preorder>() =
+      LastPreorderNum + I->get<Postorder>() - PrevPostorderNum;
+    Itr->get<ReversePreorder>() = I->get<ReversePreorder>() =
+      LastPostorderNum - I->get<Preorder>();
+    LLVM_DEBUG(
+        dbgs() << "Numbering for " << I->get<Function>()->getName() << " "
+               << "postorder " << Itr->get<Postorder>() << " "
+               << "reverse postorder " << Itr->get<ReversePostorder>() << " "
+               << "preorder " << Itr->get<Preorder>() << " "
+               << "reverse preorder " << Itr->get<ReversePreorder>()
+               << "\n");
+  }
+  for (auto &Current : llvm::reverse(PostorderTraverse)) {
+    auto *F = Current.get<Function>();
     if (!F || F->isIntrinsic() || F->isDeclaration() ||
         hasFnAttr(*F, AttrKind::LibFunc))
       continue;
@@ -202,6 +249,20 @@ bool ClangSMParallelization::runOnModule(Module &M) {
                                                   OptimizationRegion::CS_No;
                                          }))
       continue;
+    // Check that current function is not reachable from any parallel region.
+    if (mParallelCallees.count(F) ||
+        llvm::any_of(mParallelCallees,
+                     [&Current](const CGNodeNumbering::value_type &Parallel) {
+                       if (Parallel.get<Preorder>() < Current.get<Preorder>() &&
+                           Parallel.get<ReversePostorder>() <
+                               Current.get<ReversePostorder>())
+                         return true;
+                       return false;
+                     })) {
+      LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: ignore function reachable from "
+                           "parallel region " << F->getName() << "\n");
+      continue;
+    }
     LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: process function " << F->getName()
                       << "\n");
     auto &Provider = getAnalysis<ClangSMParallelProvider>(*F);
