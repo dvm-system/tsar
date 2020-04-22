@@ -30,6 +30,7 @@
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
+#include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Clang/RegionDirectiveInfo.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
@@ -99,7 +100,8 @@ bool ClangSMParallelization::findParallelLoops(
   if (LMatchItr != LM.end())
     toDiag(Diags, LMatchItr->get<AST>()->getLocStart(),
            clang::diag::remark_parallel_loop);
-  auto CanonicalItr = CL.find_as(RI.getRegionFor(&L));
+  auto DFL = cast<DFLoop>(RI.getRegionFor(&L));
+  auto CanonicalItr = CL.find_as(DFL);
   if (CanonicalItr == CL.end() || !(**CanonicalItr).isCanonical()) {
     toDiag(Diags, LMatchItr->get<AST>()->getLocStart(),
            clang::diag::warn_parallel_not_canonical);
@@ -129,7 +131,7 @@ bool ClangSMParallelization::findParallelLoops(
     *mGlobalOpts, Diags, DIAT, DIDepSet, *DIMemoryMatcher, ASTToClient);
   if (!RegionAnalysis.evaluateDependency())
     return findParallelLoops(L.begin(), L.end(), F, Provider);
-  if (!exploitParallelism(L, *ForStmt, Provider, RegionAnalysis, *mTfmCtx))
+  if (!exploitParallelism(*DFL, *ForStmt, Provider, RegionAnalysis, *mTfmCtx))
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   for (auto *BB : L.blocks())
     for (auto &I : *BB) {
