@@ -103,10 +103,17 @@ sub copy_files {
   return @copy_list;
 }
 
+sub error
+{
+  our $err_prefix;
+  throw Exception => $err_prefix.join('', @_);
+}
 
 sub process {
   my ($class, $task, $db) = @_;
   my $ret = 1;
+
+  local our $err_prefix = $task->name.': ';
 
   my %comments = (
     '.ll' => ';',
@@ -135,12 +142,12 @@ sub process {
   my $comment = $base_task->get_var('', 'comment');
   unless ($comment) {
     my ($sample_name, $sample_path, $sample_suffix) = fileparse($sample, keys %comments);
-    throw Exception=> $task->name . ": prefix of a single line comment can not be inferred from an extension of the sample, try to set the 'comment' variable manually" unless $sample_suffix;
+    error("prefix of a single line comment can not be inferred from an extension".
+          " of the sample, try to set the 'comment' variable manually") unless $sample_suffix;
     $comment = $comments{$sample_suffix};
   }
   $task->DEBUG("comment is set to '$comment'");
   my @run = $base_task->get_arr('', 'run');
-  @run or throw Exception => $task->name. "unspecified run command";
 
   $task->DEBUG("create temporary output directory");
   my $work_dir = tempdir($task->name.'_XXXX', DIR => $CWD, CLEANUP => 0);
@@ -159,9 +166,9 @@ sub process {
     my ($exec, $check_args) = $_ =~ m/^(.*?)(?:\|\s*(.*)\s*)?$/;
     if ($check_args) {
       (($check_prefix) = $check_args =~ m/^-check-prefix=(.*)$/) or
-        throw Exception => $task->name . ": unknown check option '$check_args'";
+        error("unknown check option '$check_args'");
       ($check_prefix ne '') or
-        throw Exception => $task->name . ": empty check prefix is not allowed";
+        error("empty check prefix is not allowed");
     }
     $task->DEBUG("prefix '$check_prefix' is verified");
     $check_prefixes .= "$comment$check_prefix: |";
@@ -169,8 +176,8 @@ sub process {
   $check_prefixes =~ s/\|$//;
 
   $task->DEBUG("create copy of a sample and discard sample lines with specified prefixes '$check_prefixes'");
-  open(my $sf, '<', $sample) or throw Exception => $task->name . ": unable to open sample file '$sample'";
-  open(my $out, '>', $output_file) or throw Exception => $task->name . ": unable to open output file '$output_file'";
+  open(my $sf, '<', $sample) or error("unable to open sample file '$sample'");
+  open(my $out, '>', $output_file) or error("unable to open output file '$output_file'");
   my $line_idx = 0;
   while (my $line = <$sf>) {
     chomp $line;
@@ -184,11 +191,11 @@ sub process {
 
   $task->DEBUG("backup sample files and discard lines with specified prefixes '$check_prefixes' in the original files");
   my $sample_backup = catfile($work_dir, $sample);
-  copy($sample, $sample_backup) or $action eq 'init' or throw Exception => $task->name . ": unable to backup sample file '$sample'";
+  copy($sample, $sample_backup) or $action eq 'init' or error("unable to backup sample file '$sample'");
   for (@sample_diff) {
-    copy($_, catfile($work_dir, $_)) or $action eq 'init' or throw Exception => $task->name . ": unable to backup sample file '$_'";
+    copy($_, catfile($work_dir, $_)) or $action eq 'init' or error("unable to backup sample file '$_'");
   }
-  copy($output_file, $sample) or throw Exception => $task->name . "unable to remove sample lines from '$sample'";
+  copy($output_file, $sample) or error("unable to remove sample lines from '$sample'");
 
   RUN: for (@run) {
     my $check_prefix = 'CHECK';
@@ -205,7 +212,7 @@ sub process {
     my $output = `$exec`;
     if ($?) {
       my $err_file = catfile($work_dir, 'err.log');
-      open(my $err, '>', $err_file) or throw Exception => $task->name . ": unable to write TSAR executable errors to file";
+      open(my $err, '>', $err_file) or error("unable to write TSAR executable errors to file");
       print $err $output;
       close $err;
       print $task->name . ": TSAR executable error (see '$err_file')";
@@ -219,14 +226,14 @@ sub process {
     $output =~ s/(:?$curr_path|\.)(:?\\|\/)//g;
     $output = "$comment$check_prefix: $output\n";
     $task->DEBUG("write output to a file");
-    open(my $out, '>>', $output_file) or throw Exception => $task->name . ": unable to open output file '$output_file'";
+    open(my $out, '>>', $output_file) or error("unable to open output file '$output_file'");
     print $out $output;
     close $out;
     if ($action eq 'check') {
       $task->DEBUG("start comparison for '$exec'");
       $task->DEBUG("compare output with sample '$sample_backup'");
       my @output = split /\n/, $output;
-      open(my $sf, '<', $sample_backup) or throw Exception => $task->name . ": unable to open sample file '$sample_backup'";
+      open(my $sf, '<', $sample_backup) or error("unable to open sample file '$sample_backup'");
       while (my $line = <$sf>) {
         chomp $line;
         if ($line =~ m/^$comment$check_prefix: /) {
@@ -234,7 +241,8 @@ sub process {
           my $output_row = shift @output;
           if ($line ne $output_row) {
             close $sf;
-            print $task->name . ": output and sample are not equal at line $line_idx with prefix '$check_prefix' (see '$output_file' .vs '$sample')\n";
+            print $task->name . ": output and sample are not equal at line $line_idx with prefix".
+              " '$check_prefix' (see '$output_file' .vs '$sample')\n";
             $ret = 0;
             next RUN;
           }
@@ -243,7 +251,8 @@ sub process {
       close $sf;
       ++$line_idx;
       if (@output) {
-        print $task->name . ": output and sample are not equal at line $line_idx with prefix '$check_prefix' (see '$output_file' .vs '$sample')\n";
+        print $task->name . ": output and sample are not equal at line $line_idx with prefix".
+          " '$check_prefix' (see '$output_file' .vs '$sample')\n";
         $ret = 0;
         next RUN;
       }
@@ -268,15 +277,15 @@ sub process {
     if ($action eq 'init') {
       my @no_changes;
       for (@sample_diff) {
-        throw Exception => $task->name . ": sample '$_' has not been created" unless (-e "$_");
+        error("sample '$_' has not been created") unless (-e "$_");
         my $backup = catfile($work_dir, $_);
         push @no_changes, $_ if (-e $backup && compare($_, $backup) == 0);
       }
       if (-e "$sample_backup" && compare($output_file, $sample_backup) == 0) {
-        copy($sample_backup, $sample) or throw Exception => $task->name . "unable to restore sample file '$sample' from '$sample_backup'";
+        copy($sample_backup, $sample) or error("unable to restore sample file '$sample' from '$sample_backup'");
         push @no_changes, $sample;
       } elsif (!copy($output_file, $sample)) {
-        throw Exception => $task->name . ": can not copy output '$output_file' to sample '$sample'";
+        error("can not copy output '$output_file' to sample '$sample'");
       }
       if (@no_changes) {
         print $task->name . " - no changes in @no_changes";
@@ -284,19 +293,19 @@ sub process {
         print $task->name;
       }
     } elsif ($action eq 'check') {
-      copy($sample_backup, $sample) or throw Exception => $task->name . ": unable to restore sample file '$sample'";
+      copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
       print $task->name;
     } else {
-      throw Exception => $task->name . ": unknown action specified '$action'";
+      error("unknown action specified '$action'");
     }
     remove_tree $work_dir;
     print " - ok\n";
   } else {
-    throw Exception => $task->name . ": unknown action specified '$action'" unless ($action eq 'check');
+    error("unknown action specified '$action'") unless ($action eq 'check');
     $task->DEBUG("restore sample files");
-    copy($sample_backup, $sample) or throw Exception => $task->name . ": unable to restore sample file '$sample'";
+    copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
     for (@sample_diff) {
-      copy(catfile($work_dir, $_), $_) or throw Exception => $task->name . ": unable to restore sample file '$_'";
+      copy(catfile($work_dir, $_), $_) or error("unable to restore sample file '$_'");
     }
   }
   $ret;
