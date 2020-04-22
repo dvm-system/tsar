@@ -31,7 +31,6 @@
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
-#include <llvm/IR/Type.h>
 #include <type_traits>
 
 namespace tsar {
