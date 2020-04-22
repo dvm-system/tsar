@@ -51,6 +51,7 @@
 #===------------------------------------------------------------------------===#
 
 package Plugins::TsarPlugin;
+use Plugins::Base v0.4.1;
 use base qw(Plugins::Base);
 
 use File::Path qw(remove_tree);
@@ -146,10 +147,10 @@ sub process {
           " of the sample, try to set the 'comment' variable manually") unless $sample_suffix;
     $comment = $comments{$sample_suffix};
   }
-  $task->DEBUG("comment is set to '$comment'");
+  dbg1 and dprint("comment is set to '$comment'");
   my @run = $base_task->get_arr('', 'run');
 
-  $task->DEBUG("create temporary output directory");
+  dbg1 and dprint("create temporary output directory");
   my $work_dir = tempdir($task->name.'_XXXX', DIR => $CWD, CLEANUP => 0);
   my $output_file = catfile($work_dir, 'output.log');
 
@@ -158,7 +159,7 @@ sub process {
     $_ =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
   }
 
-  $task->DEBUG("verify prefixes which identify sample lines");
+  dbg1 and dprint("verify prefixes which identify sample lines");
   my $check_prefixes = '';
   for (@run) {
     my $check_prefix = 'CHECK';
@@ -170,12 +171,12 @@ sub process {
       ($check_prefix ne '') or
         error("empty check prefix is not allowed");
     }
-    $task->DEBUG("prefix '$check_prefix' is verified");
+    dbg1 and dprint("prefix '$check_prefix' is verified");
     $check_prefixes .= "$comment$check_prefix: |";
   }
   $check_prefixes =~ s/\|$//;
 
-  $task->DEBUG("create copy of a sample and discard sample lines with specified prefixes '$check_prefixes'");
+  dbg1 and dprint("create copy of a sample and discard sample lines with specified prefixes '$check_prefixes'");
   open(my $sf, '<', $sample) or error("unable to open sample file '$sample'");
   open(my $out, '>', $output_file) or error("unable to open output file '$output_file'");
   my $line_idx = 0;
@@ -189,7 +190,7 @@ sub process {
   close $sf;
   close $out;
 
-  $task->DEBUG("backup sample files and discard lines with specified prefixes '$check_prefixes' in the original files");
+  dbg1 and dprint("backup sample files and discard lines with specified prefixes '$check_prefixes' in the original files");
   my $sample_backup = catfile($work_dir, $sample);
   copy($sample, $sample_backup) or $action eq 'init' or error("unable to backup sample file '$sample'");
   for (@sample_diff) {
@@ -202,20 +203,20 @@ sub process {
     $_ =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
     my ($exec, $check_args) = $_ =~ m/^\s*(.*?)\s*(?:\|\s*(.*)\s*)?$/;
     !$check_args or (($check_prefix) = $check_args =~ m/^-check-prefix=(.*)$/);
-    $task->DEBUG("check prefix is set to '$check_prefix'");
+    dbg1 and dprint("check prefix is set to '$check_prefix'");
     if (!$exec) {
-      $task->DEBUG("ignore empty command");
+      dbg1 and dprint("ignore empty command");
       next RUN;
     }
     $exec .= ' 2>&1';
-    $task->DEBUG("run '$exec'");
+    dbg1 and dprint("run '$exec'");
     my $output = `$exec`;
     if ($?) {
       my $err_file = catfile($work_dir, 'err.log');
       open(my $err, '>', $err_file) or error("unable to write TSAR executable errors to file");
       print $err $output;
       close $err;
-      print $task->name . ": TSAR executable error (see '$err_file')";
+      print_out($task->name . ": TSAR executable error (see '$err_file')");
       $ret = 0;
       next RUN;
     }
@@ -225,13 +226,13 @@ sub process {
     $curr_path =~ s/\\/\\\\/g;
     $output =~ s/(:?$curr_path|\.)(:?\\|\/)//g;
     $output = "$comment$check_prefix: $output\n";
-    $task->DEBUG("write output to a file");
+    dbg1 and dprint("write output to a file");
     open(my $out, '>>', $output_file) or error("unable to open output file '$output_file'");
     print $out $output;
     close $out;
     if ($action eq 'check') {
-      $task->DEBUG("start comparison for '$exec'");
-      $task->DEBUG("compare output with sample '$sample_backup'");
+      dbg1 and dprint("start comparison for '$exec'");
+      dbg1 and dprint("compare output with sample '$sample_backup'");
       my @output = split /\n/, $output;
       open(my $sf, '<', $sample_backup) or error("unable to open sample file '$sample_backup'");
       while (my $line = <$sf>) {
@@ -241,8 +242,10 @@ sub process {
           my $output_row = shift @output;
           if ($line ne $output_row) {
             close $sf;
-            print $task->name . ": output and sample are not equal at line $line_idx with prefix".
-              " '$check_prefix' (see '$output_file' .vs '$sample')\n";
+            print_out(
+              $task->name . ": output and sample are not equal at line $line_idx with prefix".
+              " '$check_prefix' (see '$output_file' .vs '$sample')\n"
+            );
             $ret = 0;
             next RUN;
           }
@@ -251,25 +254,27 @@ sub process {
       close $sf;
       ++$line_idx;
       if (@output) {
-        print $task->name . ": output and sample are not equal at line $line_idx with prefix".
-          " '$check_prefix' (see '$output_file' .vs '$sample')\n";
+        print_out(
+          $task->name . ": output and sample are not equal at line $line_idx with prefix".
+          " '$check_prefix' (see '$output_file' .vs '$sample')\n"
+        );
         $ret = 0;
         next RUN;
       }
       for (@sample_diff) {
         my $backup = catfile($work_dir, $_);
-        $task->DEBUG("compare output with sample '$backup'");
+        dbg1 and dprint("compare output with sample '$backup'");
         my ($name, $path, $dot) = fileparse($_, qw(.dot));
         unless (-e "$_") {
-          print $task->name . ": '$_': output has not been created by '$exec'\n";
+          print_out($task->name . ": '$_': output has not been created by '$exec'\n");
           $ret = 0;
         } elsif (my $diff = $dot ? dot_diff($_, $backup) : diff($_, $backup)) {
-          print $task->name . ": '$_': output and sample are note equal for '$exec'\n";
-          print $diff;
+          print_out($task->name . ": '$_': output and sample are note equal for '$exec'\n");
+          print_out($diff);
           $ret = 0;
         }
       }
-      $task->DEBUG("end comparison for '$exec'");
+      dbg1 and dprint("end comparison for '$exec'");
     }
   }
 
@@ -288,21 +293,21 @@ sub process {
         error("can not copy output '$output_file' to sample '$sample'");
       }
       if (@no_changes) {
-        print $task->name . " - no changes in @no_changes";
+        print_out($task->name . " - no changes in @no_changes");
       } else {
-        print $task->name;
+        print_out($task->name);
       }
     } elsif ($action eq 'check') {
       copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
-      print $task->name;
+      print_out($task->name);
     } else {
       error("unknown action specified '$action'");
     }
     remove_tree $work_dir;
-    print " - ok\n";
+    print_out(" - ok\n");
   } else {
     error("unknown action specified '$action'") unless ($action eq 'check');
-    $task->DEBUG("restore sample files");
+    dbg1 and dprint("restore sample files");
     copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
     for (@sample_diff) {
       copy(catfile($work_dir, $_), $_) or error("unable to restore sample file '$_'");
