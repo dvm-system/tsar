@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
+#include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
@@ -53,7 +54,7 @@ public:
     initializeClangDVMHSMParallelizationPass(*PassRegistry::getPassRegistry());
   }
 private:
-  bool exploitParallelism(const Loop &IR, const clang::ForStmt &AST,
+  bool exploitParallelism(const DFLoop &IR, const clang::ForStmt &AST,
     const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     TransformationContext &TfmCtx) override;
@@ -108,10 +109,27 @@ void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
     ParallelFor.push_back(')');
   }
 }
+
+unsigned getPerfectNestSize(const DFLoop &DFL,
+    const PerfectLoopInfo &PerfectInfo,
+    const CanonicalLoopSet &CanonicalLoops) {
+  auto *CurrDFL = &DFL;
+  unsigned PerfectSize = 1;
+  for (; PerfectInfo.count(CurrDFL) && CurrDFL->getNumRegions() > 0;
+       ++PerfectSize) {
+    CurrDFL = dyn_cast<DFLoop>(*CurrDFL->region_begin());
+    if (!CurrDFL)
+      return PerfectSize;
+    auto CanonicalItr = CanonicalLoops.find_as(const_cast<DFLoop *>(CurrDFL));
+    if (CanonicalItr == CanonicalLoops.end() || !(**CanonicalItr).isCanonical())
+      return PerfectSize;
+  }
+  return PerfectSize;
+}
 } // namespace
 
 bool ClangDVMHSMParallelization::exploitParallelism(
-    const Loop &IR, const clang::ForStmt &AST,
+    const DFLoop &IR, const clang::ForStmt &AST,
     const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTRegionAnalysis,
     TransformationContext &TfmCtx) {
@@ -119,17 +137,11 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   if (!ASTDepInfo.get<trait::FirstPrivate>().empty() ||
       !ASTDepInfo.get<trait::LastPrivate>().empty())
     return false;
-  SmallString<128> ParallelFor("#pragma dvm parallel (1)");
-  if (!ASTDepInfo.get<trait::Private>().empty()) {
-    ParallelFor += " private";
-    addVarList(ASTDepInfo.get<trait::Private>(), ParallelFor);
-  }
-  addVarList(ASTDepInfo.get<trait::Reduction>(), ParallelFor);
-  ParallelFor += '\n';
   SmallString<128> DVMHRegion("#pragma dvm region");
   SmallString<128> DVMHActual, DVMHGetActual;
   auto &PI = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
-  if (!PI[&IR].isHostOnly() && ASTRegionAnalysis.evaluateDefUse()) {
+  bool HostOnly = false;
+  if (!PI[IR.getLoop()].isHostOnly() && ASTRegionAnalysis.evaluateDefUse()) {
     if (!ASTDepInfo.get<trait::ReadOccurred>().empty()) {
       DVMHActual += "#pragma dvm actual";
       addVarList(ASTDepInfo.get<trait::ReadOccurred>(), DVMHActual);
@@ -150,7 +162,23 @@ bool ClangDVMHSMParallelization::exploitParallelism(
     }
   } else {
     DVMHRegion += " targets(HOST)";
+    HostOnly = true;
   }
+  auto &PerfectInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+  auto &CanonicalInfo = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
+  SmallString<128> ParallelFor("#pragma dvm parallel (");
+  if (HostOnly)
+    ParallelFor += "1";
+  else
+    Twine(getPerfectNestSize(IR, PerfectInfo, CanonicalInfo))
+        .toStringRef(ParallelFor);
+  ParallelFor += ")";
+  if (!ASTDepInfo.get<trait::Private>().empty()) {
+    ParallelFor += " private";
+    addVarList(ASTDepInfo.get<trait::Private>(), ParallelFor);
+  }
+  addVarList(ASTDepInfo.get<trait::Reduction>(), ParallelFor);
+  ParallelFor += '\n';
   DVMHRegion += "\n{\n";
   // Add directives to the source code.
   auto &Rewriter = TfmCtx.getRewriter();

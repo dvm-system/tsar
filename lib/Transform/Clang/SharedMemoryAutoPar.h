@@ -41,6 +41,7 @@ class ForStmt;
 }
 
 namespace tsar {
+class DFLoop;
 class AnalysisSocketInfo;
 class ClangDependenceAnalyzer;
 class DIMemoryEnvironment;
@@ -56,6 +57,7 @@ class Function;
 class Loop;
 
 class CanonicalLoopPass;
+class ClangPerfectLoopPass;
 class ClangDIMemoryMatcherPass;
 class DFRegionInfoPass;
 class LoopMatcherPass;
@@ -66,7 +68,8 @@ class ParallelLoopPass;
 using ClangSMParallelProvider =
     FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
                            ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
-                           DFRegionInfoPass, ClangDIMemoryMatcherPass>;
+                           DFRegionInfoPass, ClangDIMemoryMatcherPass,
+                           ClangPerfectLoopPass>;
 
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
@@ -112,8 +115,8 @@ protected:
   /// successfully checked.
   /// \return true if a specified loop could be parallelized and inner loops
   /// should not be processed.
-  virtual bool exploitParallelism(const Loop &IR, const clang::ForStmt &AST,
-    const ClangSMParallelProvider &Provider,
+  virtual bool exploitParallelism(const tsar::DFLoop &IR,
+    const clang::ForStmt &AST, const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     tsar::TransformationContext &TfmCtx) = 0;
 
