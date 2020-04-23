@@ -37,7 +37,6 @@ namespace tsar {
   class TransformationContext;
   class DIAliasNode;
   class DIAliasTree;
-  class MemoryMatchInfo;
 }
 
 namespace clang {
@@ -49,7 +48,6 @@ namespace llvm {
 
 class Loop;
 class MDNode;
-class GlobalsAAResult;
 
 class ClangLoopSwapping : public FunctionPass, private bcl::Uncopyable {
 public:
@@ -63,23 +61,28 @@ public:
   void releaseMemory() override;
 
 private:
-  void initializeProviderOnClient(llvm::Module &M);
   void initializeProviderOnServer();
 
   bool LoadDependenceAnalysisInfo(Function &F);
   void SwapLoops(const std::vector<std::vector<clang::SourceRange>> &mRangePairs,
                  const std::vector<std::vector<Loop *>> &mLoopPairs);
-  bool IsNoLoopID(llvm::MDNode *LoopID);
-  std::vector<tsar::DIAliasNode *> GetLoopNodes(llvm::MDNode *LoopID);
+  std::vector<const tsar::DIAliasTrait *> GetLoopTraits(llvm::MDNode *LoopID);
+  tsar::DIDependenceSet &GetLoopDepSet(MDNode *LoopID);
   bool IsSwappingAvailable(std::vector<Loop *> loops);
 
+  bool HasSameReductionKind(std::vector<const tsar::DIAliasTrait *> &traits0,
+                            std::vector<const tsar::DIAliasTrait *> &traits1,
+                            tsar::SpanningTreeRelation<tsar::DIAliasTree *> &STR);
+  bool HasTrueOrAntiDependence(std::vector<const tsar::DIAliasTrait *> &traits0,
+                         std::vector<const tsar::DIAliasTrait *> &traits1,
+                         tsar::SpanningTreeRelation<tsar::DIAliasTree *> &STR);
+
+  llvm::Function *mFunction = nullptr;
   tsar::TransformationContext *mTfmCtx = nullptr;
   tsar::DIDependencInfo *DIDepInfo = nullptr;
   tsar::DIAliasTree *DIAT = nullptr;
   const tsar::GlobalOptions *mGlobalOpts = nullptr;
-  GlobalsAAResult * mGlobalsAA = nullptr;
   tsar::AnalysisSocket *mSocket = nullptr;
-  tsar::MemoryMatchInfo *mMemoryMatcher = nullptr;
   std::function<tsar::ObjectID(tsar::ObjectID)> getLoopID;
 };
 
