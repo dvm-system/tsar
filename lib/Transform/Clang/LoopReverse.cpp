@@ -349,7 +349,7 @@ public:
       }
 
       mStatus = TRAVERSE_LOOPS;
-      auto Ret = RecursiveASTVisitor::TraverseStmt(S);
+      auto Ret = TraverseForStmt((clang::ForStmt*)(S));
 
       llvm::SmallSet<int, 1> mToTransform;
 
@@ -453,7 +453,7 @@ public:
     mStatus = SEARCH_PRAGMA;
     mIsStrict = false;
     mStringLiterals.clear();
-    mStringLiterals.clear();
+    mIntegerLiterals.clear();
     mLoops.clear();
   }
 
