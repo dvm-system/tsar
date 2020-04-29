@@ -1,15 +1,15 @@
-openmp_1.init
-openmp_2.init
-openmp_3.init
-openmp_4.init
-openmp_5.init
-openmp_6.init
-openmp_7.init
-redundant_1.init
-region_1.init
-region_2.init
-region_3.init
-region_4.init
-region_5.init
-Jacobi.init
-Adi.func.init
+openmp_1: action=init
+openmp_2: action=init
+openmp_3: action=init
+openmp_4: action=init
+openmp_5: action=init
+openmp_6: action=init
+openmp_7: action=init
+redundant_1: action=init
+region_1: action=init
+region_2: action=init
+region_3: action=init
+region_4: action=init
+region_5: action=init
+Jacobi: action=init
+Adi.func: action=init

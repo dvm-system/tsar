@@ -1,23 +1,23 @@
-canonical_loop_1.init
-canonical_loop_2.init
-canonical_loop_3.init
-canonical_loop_4.init
-canonical_loop_5.init
-canonical_loop_6.init
-canonical_loop_7.init
-canonical_loop_8.init
-canonical_loop_9.init
-canonical_loop_10.init
-canonical_loop_11.init
-canonical_loop_12.init
-canonical_loop_13.init
-canonical_loop_14.init
-canonical_loop_15.init
-canonical_loop_16.init
-canonical_loop_17.init
-canonical_loop_18.init
-canonical_loop_19.init
-canonical_loop_20.init
-canonical_loop_21.init
-global_1.init
-global_2.init
+canonical_loop_1: action=init
+canonical_loop_2: action=init
+canonical_loop_3: action=init
+canonical_loop_4: action=init
+canonical_loop_5: action=init
+canonical_loop_6: action=init
+canonical_loop_7: action=init
+canonical_loop_8: action=init
+canonical_loop_9: action=init
+canonical_loop_10: action=init
+canonical_loop_11: action=init
+canonical_loop_12: action=init
+canonical_loop_13: action=init
+canonical_loop_14: action=init
+canonical_loop_15: action=init
+canonical_loop_16: action=init
+canonical_loop_17: action=init
+canonical_loop_18: action=init
+canonical_loop_19: action=init
+canonical_loop_20: action=init
+canonical_loop_21: action=init
+global_1: action=init
+global_2: action=init
