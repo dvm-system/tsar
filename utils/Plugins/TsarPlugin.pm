@@ -129,18 +129,14 @@ sub process {
     '.cdv' => '//',
   );
 
-  my $action = $task->get_var('', 'action');
-  my $base_task = $task;
-  if ($action eq 'check') {
-    my $base_task_id = $task->get_var('', 'base');
-    $base_task = $db->get_task($base_task_id);
-  }
-  $base_task->reload_config(
+  my $action = $task->get_var('', 'action', 'check');
+  grep $action eq $_, qw(check init) or error("'action' variable has wrong value");
+  $task->reload_config(
     multiline => {'' => [qw(sample_diff run)]},
     required  => {'' => [qw(sample run)]});
-  my $sample = $base_task->get_var('', 'sample');
-  my @sample_diff = $base_task->get_arr('', 'sample_diff') if $base_task->has_var('', 'sample_diff');
-  my $comment = $base_task->get_var('', 'comment');
+  my $sample = $task->get_var('', 'sample');
+  my @sample_diff = $task->get_arr('', 'sample_diff') if $task->has_var('', 'sample_diff');
+  my $comment = $task->get_var('', 'comment');
   unless ($comment) {
     my ($sample_name, $sample_path, $sample_suffix) = fileparse($sample, keys %comments);
     error("prefix of a single line comment can not be inferred from an extension".
@@ -148,22 +144,16 @@ sub process {
     $comment = $comments{$sample_suffix};
   }
   dbg1 and dprint("comment is set to '$comment'");
-  my @run = $base_task->get_arr('', 'run');
+  my @run = $task->get_arr('', 'run');
 
   dbg1 and dprint("create temporary output directory");
   my $work_dir = tempdir($task->name.'_XXXX', DIR => $CWD, CLEANUP => 0);
   my $output_file = catfile($work_dir, 'output.log');
 
-  $sample =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
-  for (@sample_diff) {
-    $_ =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
-  }
-
   dbg1 and dprint("verify prefixes which identify sample lines");
   my $check_prefixes = '';
   for (@run) {
     my $check_prefix = 'CHECK';
-    $_ =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
     my ($exec, $check_args) = $_ =~ m/^(.*?)(?:\|\s*(.*)\s*)?$/;
     if ($check_args) {
       (($check_prefix) = $check_args =~ m/^-check-prefix=(.*)$/) or
@@ -200,7 +190,6 @@ sub process {
 
   RUN: for (@run) {
     my $check_prefix = 'CHECK';
-    $_ =~ s/\$(\w+)/$base_task->get_var('', $1)/ge;
     my ($exec, $check_args) = $_ =~ m/^\s*(.*?)\s*(?:\|\s*(.*)\s*)?$/;
     !$check_args or (($check_prefix) = $check_args =~ m/^-check-prefix=(.*)$/);
     dbg1 and dprint("check prefix is set to '$check_prefix'");
