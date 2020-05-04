@@ -110,7 +110,7 @@ void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
   Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   Passes.add(createAnalysisReader());
-  Passes.add(createAddressAccessAnalyserPass());
+  //Passes.add(createAddressAccessAnalyserPass());
 }
 
 void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,

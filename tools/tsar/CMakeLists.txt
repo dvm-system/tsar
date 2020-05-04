@@ -1,6 +1,6 @@
-set(TSAR_EXEC_SOURCES main.cpp ../../include/tsar/Analysis/Memory/AddressAccess.h ../../lib/Analysis/Memory/AddressAccess.cpp)
+set(TSAR_EXEC_SOURCES main.cpp)
 
-add_executable(tsar ${TSAR_EXEC_SOURCES} ../../include/tsar/Analysis/Memory/AddressAccess.h ../../lib/Analysis/Memory/AddressAccess.cpp)
+add_executable(tsar ${TSAR_EXEC_SOURCES})
 
 if(MSVC_IDE)
   file(GLOB ANALYSIS_INTERNAL_HEADERS
