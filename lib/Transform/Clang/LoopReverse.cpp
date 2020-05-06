@@ -216,6 +216,9 @@ public:
         mClientToServer(
             **mSocket.getAnalysis<AnalysisClientServerMatcherWrapper>()
                   ->value<AnalysisClientServerMatcherWrapper *>()),
+        mCDIM(mSocket.getAnalysis<ClonedDIMemoryMatcherWrapper>()
+                  ->value<ClonedDIMemoryMatcherWrapper *>()
+                  ->get()),
         mStatus(SEARCH_PRAGMA), mIsStrict(false), mDIAT(NULL), mDIDepInfo(NULL),
         mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
   const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
@@ -349,7 +352,7 @@ public:
       }
 
       mStatus = TRAVERSE_LOOPS;
-      auto Ret = TraverseForStmt((clang::ForStmt*)(S));
+      auto Ret = TraverseForStmt((clang::ForStmt *)(S));
 
       llvm::SmallSet<int, 1> mToTransform;
 
@@ -409,16 +412,24 @@ public:
                   Dependency = true;
                   break;
                 }
-                // no check that it is the Induction what we looking for
-                // trait->getMemory() is empty, moreover it must be matched with
-                // local value
+                // try to get loop bounds
                 if (Trait.is<trait::Induction>())
                   for (auto T : Trait) {
-                    if (auto *Opts = T->get<trait::Induction>()) {
-                      StartOpt = Opts->getStart();
-                      StepOpt = Opts->getStep();
-                      EndOpt = Opts->getEnd();
+                    DIMemory *Memory =
+                        mCDIM
+                            .find<Clone>(const_cast<DIMemory *>(T->getMemory()))
+                            ->get<Origin>();
+                    bool TargetMemory = false;
+                    for (auto value : *Memory) {
+                      if (value == mLoops[Num].first->getInduction())
+                        TargetMemory = true;
                     }
+                    if (TargetMemory)
+                      if (auto *Opts = T->get<trait::Induction>()) {
+                        StartOpt = Opts->getStart();
+                        StepOpt = Opts->getStep();
+                        EndOpt = Opts->getEnd();
+                      }
                   }
               }
             }
@@ -748,6 +759,7 @@ private:
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   llvm::ValueToValueMapTy &mClientToServer;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
+  ClonedDIMemoryMatcher &mCDIM;
   bool mIsStrict;
 
   llvm::SmallVector<clang::StringLiteral *, 1> mStringLiterals;
