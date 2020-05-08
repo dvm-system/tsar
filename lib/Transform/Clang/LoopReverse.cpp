@@ -60,7 +60,8 @@ using ClangLoopReverseProvider =
     FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
                            ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
                            DFRegionInfoPass, ClangDIMemoryMatcherPass,
-                           ClangPerfectLoopPass>;
+                           ClangPerfectLoopPass, DIMemoryTraitPoolWrapper,
+                           DIMemoryEnvironmentWrapper>;
 // server provider
 using ClangLoopReverseServerProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
@@ -157,6 +158,8 @@ void ClangLoopReverse::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
   AU.addRequired<ClangRegionCollector>();
+  AU.addRequired<DIMemoryTraitPoolWrapper>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.setPreservesAll();
 }
 // pass code
@@ -214,11 +217,12 @@ public:
         mLangOpts(mRewriter.getLangOpts()), mGO(GlobalOpts), mPass(Pass),
         mModule(M), mMemMatcher(MemMatcher), mSocket(Socket),
         mClientToServer(
-            **mSocket.getAnalysis<AnalysisClientServerMatcherWrapper>()
-                  ->value<AnalysisClientServerMatcherWrapper *>()),
-        mCDIM(mSocket.getAnalysis<ClonedDIMemoryMatcherWrapper>()
-                  ->value<ClonedDIMemoryMatcherWrapper *>()
-                  ->get()),
+            mSocket.getAnalysis<AnalysisClientServerMatcherWrapper>()
+                ->value<AnalysisClientServerMatcherWrapper *>()
+                ->get()),
+        mCDIMI(mSocket.getAnalysis<ClonedDIMemoryMatcherWrapper>()
+                   ->value<ClonedDIMemoryMatcherWrapper *>()
+                   ->get()),
         mStatus(SEARCH_PRAGMA), mIsStrict(false), mDIAT(NULL), mDIDepInfo(NULL),
         mPerfectLoopInfo(NULL), mCurrentLoops(NULL) {}
   const CanonicalLoopInfo *getLoopInfo(clang::ForStmt *FS) {
@@ -340,6 +344,9 @@ public:
             &mProvider->get<CanonicalLoopPass>().getCanonicalLoopInfo();
         mPerfectLoopInfo =
             &mProvider->get<ClangPerfectLoopPass>().getPerfectLoopInfo();
+        Value *elem = mClientToServer.find(F)->second;
+        assert(elem && "Cannot map client to server function");
+        mCDIM = mCDIMI.find(*dyn_cast<Function>(elem));
         auto RF =
             mSocket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
                 *F);
@@ -415,10 +422,10 @@ public:
                 // try to get loop bounds
                 if (Trait.is<trait::Induction>())
                   for (auto T : Trait) {
-                    DIMemory *Memory =
-                        mCDIM
-                            .find<Clone>(const_cast<DIMemory *>(T->getMemory()))
-                            ->get<Origin>();
+                    DIMemory *Memory = mCDIM
+                                           ->find<Clone>(const_cast<DIMemory *>(
+                                               T->getMemory()))
+                                           ->get<Origin>();
                     bool TargetMemory = false;
                     for (auto value : *Memory) {
                       if (value == mLoops[Num].first->getInduction())
@@ -759,7 +766,8 @@ private:
   tsar::MemoryMatchInfo::MemoryMatcher *mMemMatcher;
   llvm::ValueToValueMapTy &mClientToServer;
   tsar::PerfectLoopInfo *mPerfectLoopInfo;
-  ClonedDIMemoryMatcher &mCDIM;
+  ClonedDIMemoryMatcher *mCDIM;
+  ClonedDIMemoryMatcherInfo &mCDIMI;
   bool mIsStrict;
 
   llvm::SmallVector<clang::StringLiteral *, 1> mStringLiterals;
@@ -805,6 +813,12 @@ bool ClangLoopReverse::runOnModule(Module &M) {
       [GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
         Wrapper.set(*GlobalsAA);
       });
+  auto &DIMEW = getAnalysis<DIMemoryEnvironmentWrapper>();
+  ClangLoopReverseProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [&DIMEW](DIMemoryEnvironmentWrapper &Wrapper) { Wrapper.set(*DIMEW); });
+  auto &DIMTPW = getAnalysis<DIMemoryTraitPoolWrapper>();
+  ClangLoopReverseProvider::initialize<DIMemoryTraitPoolWrapper>(
+      [&DIMTPW](DIMemoryTraitPoolWrapper &Wrapper) { Wrapper.set(*DIMTPW); });
   // init provider on server
   ClangLoopReverseServerProvider::initialize<GlobalOptionsImmutableWrapper>(
       [GlobalOpts](GlobalOptionsImmutableWrapper &Wrapper) {
