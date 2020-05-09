@@ -90,7 +90,7 @@ public:
       DIMemoryClientServerInfo &DIMInfo, CanonicalLoopSet *CLI)
     : mRgnInfo(&DFRI), mLoopInfo(&LM), mMemoryMatcher(&MM),
       mAliasTree(&AT), mTLI(&TLI), mSE(&SE),  mDIMInfo(&DIMInfo),
-      mDT(&DT), mCanonicalLoopInfo(CLI), mSTR(DIMInfo.DIAT) {}
+      mDT(&DT), mCanonicalLoopInfo(CLI) {}
 
   /// \brief This function is called each time LoopMatcher finds appropriate
   /// loop.
@@ -262,12 +262,13 @@ private:
 
   /// Finds a last instruction in a specified block which writes memory
   /// from a specified node.
-  Instruction* findLastWrite(DIMemory &DIMI, BasicBlock *BB) {
+  Instruction* findLastWrite(DIMemory &DIMI, BasicBlock *BB,
+      const SpanningTreeRelation<const DIAliasTree *> &STR) {
     auto *DINI = DIMI.getAliasNode();
     for (auto I = BB->rbegin(), E = BB->rend(); I != E; ++I) {
       bool RequiredInstruction = false;
       for_each_memory(*I, *mTLI,
-        [this, DINI, &RequiredInstruction] (Instruction &I,
+        [this, &STR, DINI, &RequiredInstruction] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
           if (W == AccessInfo::No)
             return;
@@ -277,9 +278,9 @@ private:
           auto *DIM = mDIMInfo->findFromClient(
             *EM->getTopLevelParent(), DL, *mDT).get<Clone>();
           RequiredInstruction |=
-              (!DIM || !mSTR.isUnreachable(DINI, DIM->getAliasNode()));
+              (!DIM || !STR.isUnreachable(DINI, DIM->getAliasNode()));
         },
-        [this, &DINI, &RequiredInstruction] (Instruction &I, AccessInfo,
+        [this, &STR, &DINI, &RequiredInstruction] (Instruction &I, AccessInfo,
             AccessInfo W) {
           if (W == AccessInfo::No)
             return;
@@ -291,7 +292,7 @@ private:
           auto DIM = mDIMInfo->findFromClient(
             I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
           RequiredInstruction |=
-              (!DIM || !mSTR.isUnreachable(DINI, DIM->getAliasNode()));
+              (!DIM || !STR.isUnreachable(DINI, DIM->getAliasNode()));
         }
       );
       if (RequiredInstruction)
@@ -330,6 +331,7 @@ private:
   /// induction variable or `nullptr`,
   /// - instruction accesses this operand or `nullptr`.
   std::tuple<bool, unsigned, unsigned, Value *, Value *> isLoopInvariantMemory(
+      const SpanningTreeRelation<const DIAliasTree *> &STR,
       const DIDependenceSet &DIDepSet, DIMemory &DIMI, User &U) {
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
@@ -338,7 +340,7 @@ private:
       auto &DL = Inst->getModule()->getDataLayout();
       auto *DINI = DIMI.getAliasNode();
       for_each_memory(*Inst, *mTLI,
-        [this, Inst, DL, DINI, &DIDepSet,
+        [this, &STR, Inst, DL, DINI, &DIDepSet,
         &Result, &InductUseNum, &InductDefNum, &InductIdx](
           Instruction &, MemoryLocation &&Loc, unsigned Idx,
           AccessInfo R, AccessInfo W) {
@@ -351,7 +353,7 @@ private:
             /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
             if (!(Result = DIM))
               return;
-            if (!mSTR.isUnreachable(DIM->getAliasNode(), DINI)) {
+            if (!STR.isUnreachable(DIM->getAliasNode(), DINI)) {
               if (R != AccessInfo::No || W != AccessInfo::No)
                 InductIdx.insert(Idx);
               if (R != AccessInfo::No)
@@ -386,7 +388,7 @@ private:
     bool OpNotAccessInduct = true;
     for (auto &Op : U.operands())
       if (isa<Instruction>(Op) || isa<ConstantExpr>(Op)) {
-        auto T = isLoopInvariantMemory(DIDepSet, DIMI, cast<User>(*Op));
+        auto T = isLoopInvariantMemory(STR, DIDepSet, DIMI, cast<User>(*Op));
         std::get<0>(Tuple) &= std::get<0>(T);
         if (!std::get<0>(Tuple))
           return Tuple;
@@ -444,7 +446,8 @@ private:
                            "for induction\n");
       return;
     }
-    Instruction *Init = findLastWrite(*DIMI, L->getLoopPreheader());
+    SpanningTreeRelation<const DIAliasTree *> STR(mDIMInfo->DIAT);
+    Instruction *Init = findLastWrite(*DIMI, L->getLoopPreheader(), STR);
     assert(Init && "Init instruction should not be nullptr!");
     Instruction *Condition = findLastCmp(L->getHeader());
     assert(Condition && "Condition instruction should not be nullptr!");
@@ -462,7 +465,7 @@ private:
     for (auto *BB: L->blocks()) {
       int NumOfWrites = 0;
       for_each_memory(*BB, *mTLI,
-        [this, &DL, DINI, &NumOfWrites, &Increment] (Instruction &I,
+        [this, &STR, &DL, DINI, &NumOfWrites, &Increment] (Instruction &I,
             MemoryLocation &&Loc, unsigned Idx, AccessInfo, AccessInfo W) {
           if (W == AccessInfo::No)
             return;
@@ -473,18 +476,18 @@ private:
           /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
           if (!DIM) {
             ++NumOfWrites;
-          } else if (!mSTR.isUnreachable(DINI, DIM->getAliasNode())) {
+          } else if (!STR.isUnreachable(DINI, DIM->getAliasNode())) {
             ++NumOfWrites;
             Increment = &I;
           }
         },
-        [this, DINI, &NumOfWrites] (Instruction &I, AccessInfo, AccessInfo W) {
+        [this, &STR, DINI, &NumOfWrites] (Instruction &I, AccessInfo, AccessInfo W) {
           if (W == AccessInfo::No)
             return;
           auto *DIM = mDIMInfo->findFromClient(
             I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
           /// TODO (kaniandr@gmail.com): investigate cases when DIM is nullptr.
-          if (!DIM ||!mSTR.isUnreachable(DINI, DIM->getAliasNode()))
+          if (!DIM ||!STR.isUnreachable(DINI, DIM->getAliasNode()))
             ++NumOfWrites;
         }
       );
@@ -506,7 +509,7 @@ private:
     Value *Expr;
     Value *Inst;
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*DIDepSet, *DIMI, *Init);
+      isLoopInvariantMemory(STR, *DIDepSet, *DIMI, *Init);
     if (!Result || InductDefNum != 1 || InductUseNum > 0)
       return;
     LInfo->setStart(Expr);
@@ -516,7 +519,7 @@ private:
         TSAR_LLVM_DUMP(Expr->dump());
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*DIDepSet, *DIMI, *Increment);
+      isLoopInvariantMemory(STR, *DIDepSet, *DIMI, *Increment);
     if (!Result || InductDefNum != 1 || InductUseNum > 1)
       return;
     assert((!Expr || Inst && isa<llvm::BinaryOperator>(Inst) &&
@@ -536,7 +539,7 @@ private:
         TSAR_LLVM_DUMP(LInfo->getStep()->dump());
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
-      isLoopInvariantMemory(*DIDepSet, *DIMI, *Condition);
+      isLoopInvariantMemory(STR, *DIDepSet, *DIMI, *Condition);
     if (!Result || InductDefNum != 0 || InductUseNum > 1)
       return;
     LInfo->setEnd(Expr);
@@ -564,7 +567,6 @@ private:
   DominatorTree *mDT;
   DIMemoryClientServerInfo *mDIMInfo;
   CanonicalLoopSet *mCanonicalLoopInfo;
-  SpanningTreeRelation<const DIAliasTree *> mSTR;
 };
 
 /// Returns LoopMatcher that matches loops that can be canonical.
