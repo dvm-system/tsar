@@ -89,16 +89,9 @@ DIClientServerInfo::DIClientServerInfo(llvm::Pass &P, llvm::Function &F) {
   }
 }
 
-DIMemoryClientServerInfo::DIMemoryClientServerInfo(
-    llvm::Pass &P, llvm::Function &F) : DIClientServerInfo(P, F) {
-  if (auto *DIATP = P.getAnalysisIfAvailable<DIEstimateMemoryPass>())
-    if (DIATP->isConstructed())
-      ClientDIAT = &DIATP->getAliasTree();
-    else
-      return;
-  else
-    return;
-}
+DIMemoryClientServerInfo::DIMemoryClientServerInfo(DIAliasTree &ClientDIAT,
+    llvm::Pass &P, llvm::Function &F)
+  : DIClientServerInfo(P, F), ClientDIAT(&ClientDIAT) {}
 
 bcl::tagged_pair<
   bcl::tagged<DIMemory *, Origin>, bcl::tagged<DIMemory *, Clone>>

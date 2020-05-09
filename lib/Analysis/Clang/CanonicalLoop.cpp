@@ -694,7 +694,8 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   DeclarationMatcher LoopMatcher = makeLoopMatcher();
-  DIMemoryClientServerInfo DIMInfo(*this, F);
+  DIMemoryClientServerInfo DIMInfo(
+      getAnalysis<DIEstimateMemoryPass>().getAliasTree(), *this, F);
   CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, MemInfo, ATree,
       TLI, SE, DT, DIMInfo, &mCanonicalLoopInfo);
   auto &Context = FuncDecl->getASTContext();
