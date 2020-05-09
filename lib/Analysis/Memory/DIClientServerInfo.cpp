@@ -74,7 +74,10 @@ DIClientServerInfo::DIClientServerInfo(llvm::Pass &P, llvm::Function &F) {
   if (!DIAT || !DIDepInfo) {
     LLVM_DEBUG(dbgs() << "[SERVER INFO]: analysis server is not available\n");
     if (auto *DIATP = P.getAnalysisIfAvailable<DIEstimateMemoryPass>())
-      DIAT = &DIATP->getAliasTree();
+      if (DIATP->isConstructed())
+        DIAT = &DIATP->getAliasTree();
+      else
+        return;
     else
       return;
     if (auto *DIDepP = P.getAnalysisIfAvailable<DIDependencyAnalysisPass>())
@@ -89,7 +92,10 @@ DIClientServerInfo::DIClientServerInfo(llvm::Pass &P, llvm::Function &F) {
 DIMemoryClientServerInfo::DIMemoryClientServerInfo(
     llvm::Pass &P, llvm::Function &F) : DIClientServerInfo(P, F) {
   if (auto *DIATP = P.getAnalysisIfAvailable<DIEstimateMemoryPass>())
-    ClientDIAT = &DIATP->getAliasTree();
+    if (DIATP->isConstructed())
+      ClientDIAT = &DIATP->getAliasTree();
+    else
+      return;
   else
     return;
 }
