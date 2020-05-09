@@ -89,9 +89,8 @@ struct DIClientServerInfo {
 /// it returns information from client.
 struct DIMemoryClientServerInfo : public DIClientServerInfo {
   /// Obtain analysis from client and server.
-  ///
-  /// \post if alias tree is not available on client this class becomes invalid.
-  DIMemoryClientServerInfo(llvm::Pass &P, llvm::Function &F);
+  DIMemoryClientServerInfo(DIAliasTree &ClientDIAT, llvm::Pass &P,
+    llvm::Function &F);
 
   /// Return client-to-server memory pair for a specified estimate memory on
   /// client.
@@ -115,11 +114,6 @@ struct DIMemoryClientServerInfo : public DIClientServerInfo {
   /// If server is not available and analysis results could are available on
   /// client, this function returns analysis results from client.
   DIDependenceSet *findFromClient(const llvm::Loop &L);
-
-  /// Return true if data is available.
-  bool isValid() const noexcept {
-    return DIAT && DIDepInfo && ClientDIAT;
-  }
 
   /// Return true if data is available.
   operator bool () const noexcept { return isValid(); }
