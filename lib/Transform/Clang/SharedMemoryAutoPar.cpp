@@ -144,7 +144,7 @@ bool ClangSMParallelization::findParallelLoops(
         continue;
       auto Info = mParallelCallees.try_emplace(Callee);
       if (Info.second)
-        Info.first->second = mCGNodes[Callee];
+        Info.first->getSecond() = mCGNodes[Callee];
     }
   return true;
 }
