@@ -82,15 +82,19 @@ namespace {
 /// This class visits and analyzes all matched for-loops in a source code.
 class CanonicalLoopLabeler : public MatchFinder::MatchCallback {
 public:
-  /// Creates visitor.
-  explicit CanonicalLoopLabeler(DFRegionInfo &DFRI,
-      const LoopMatcherPass::LoopMatcher &LM,
-      const MemoryMatchInfo::MemoryMatcher &MM, AliasTree &AT,
-      TargetLibraryInfo &TLI, ScalarEvolution &SE, DominatorTree &DT,
-      DIMemoryClientServerInfo &DIMInfo, CanonicalLoopSet *CLI)
-    : mRgnInfo(&DFRI), mLoopInfo(&LM), mMemoryMatcher(&MM),
-      mAliasTree(&AT), mTLI(&TLI), mSE(&SE),  mDIMInfo(&DIMInfo),
-      mDT(&DT), mCanonicalLoopInfo(CLI) {}
+  CanonicalLoopLabeler(FunctionPass &P, Function &F, CanonicalLoopSet &CLI)
+    : mCanonicalLoopInfo(&CLI) {
+      mRgnInfo = &P.getAnalysis<DFRegionInfoPass>().getRegionInfo();
+      mLoopInfo = &P.getAnalysis<LoopMatcherPass>().getMatcher();
+      mMemoryMatcher = &P.getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
+      mAliasTree = &P.getAnalysis<EstimateMemoryPass>().getAliasTree();
+      mTLI = &P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+      mSE = &P.getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+      mDT = &P.getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+      auto &DIEMPass = P.getAnalysis<DIEstimateMemoryPass>();
+      if (DIEMPass.isConstructed())
+        mDIMInfo = DIMemoryClientServerInfo(DIEMPass.getAliasTree(), P, F);
+  }
 
   /// \brief This function is called each time LoopMatcher finds appropriate
   /// loop.
@@ -264,6 +268,8 @@ private:
   /// from a specified node.
   Instruction* findLastWrite(DIMemory &DIMI, BasicBlock *BB,
       const SpanningTreeRelation<const DIAliasTree *> &STR) {
+    assert(mDIMInfo && mDIMInfo->isValid() &&
+      "Client-to-server mapping must be available!");
     auto *DINI = DIMI.getAliasNode();
     for (auto I = BB->rbegin(), E = BB->rend(); I != E; ++I) {
       bool RequiredInstruction = false;
@@ -280,8 +286,8 @@ private:
           RequiredInstruction |=
               (!DIM || !STR.isUnreachable(DINI, DIM->getAliasNode()));
         },
-        [this, &STR, &DINI, &RequiredInstruction] (Instruction &I, AccessInfo,
-            AccessInfo W) {
+        [this, &STR, &DINI, &RequiredInstruction] (Instruction &I,
+            AccessInfo, AccessInfo W) {
           if (W == AccessInfo::No)
             return;
           /// TODO (kaniandr@gmail.com): use results from server to check
@@ -333,6 +339,8 @@ private:
   std::tuple<bool, unsigned, unsigned, Value *, Value *> isLoopInvariantMemory(
       const SpanningTreeRelation<const DIAliasTree *> &STR,
       const DIDependenceSet &DIDepSet, DIMemory &DIMI, User &U) {
+    assert(mDIMInfo && mDIMInfo->isValid() &&
+      "Client-to-server mapping must be available!");
     bool Result = true;
     unsigned InductUseNum = 0, InductDefNum = 0;
     SmallSet<unsigned, 2> InductIdx;
@@ -421,7 +429,7 @@ private:
   /// \post The`LInfo` parameter will be updated. Start, end, step will be set
   /// is possible, and loop will be marked as canonical on success.
   void checkLoop(tsar::DFLoop* Region, VarDecl *Var, CanonicalLoopInfo *LInfo) {
-    if (!mDIMInfo->isValid())
+    if (!mDIMInfo || !mDIMInfo->isValid())
       return;
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
@@ -558,15 +566,15 @@ private:
     LInfo->markAsCanonical();
   }
 
-  DFRegionInfo *mRgnInfo;
-  const LoopMatcherPass::LoopMatcher *mLoopInfo;
-  const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher;
-  tsar::AliasTree *mAliasTree;
-  TargetLibraryInfo *mTLI;
-  ScalarEvolution *mSE;
-  DominatorTree *mDT;
-  DIMemoryClientServerInfo *mDIMInfo;
-  CanonicalLoopSet *mCanonicalLoopInfo;
+  CanonicalLoopSet *mCanonicalLoopInfo = nullptr;
+  DFRegionInfo *mRgnInfo = nullptr;;
+  const LoopMatcherPass::LoopMatcher *mLoopInfo = nullptr;
+  const MemoryMatchInfo::MemoryMatcher *mMemoryMatcher = nullptr;
+  AliasTree *mAliasTree = nullptr;
+  TargetLibraryInfo *mTLI = nullptr;
+  ScalarEvolution *mSE = nullptr;
+  DominatorTree *mDT = nullptr;
+  Optional<DIMemoryClientServerInfo> mDIMInfo;
 };
 
 /// Returns LoopMatcher that matches loops that can be canonical.
@@ -685,19 +693,8 @@ bool CanonicalLoopPass::runOnFunction(Function &F) {
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
-  auto &RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  auto &LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  auto &MemInfo =
-    getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
-  auto &ATree = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   DeclarationMatcher LoopMatcher = makeLoopMatcher();
-  DIMemoryClientServerInfo DIMInfo(
-      getAnalysis<DIEstimateMemoryPass>().getAliasTree(), *this, F);
-  CanonicalLoopLabeler Labeler(RgnInfo, LoopInfo, MemInfo, ATree,
-      TLI, SE, DT, DIMInfo, &mCanonicalLoopInfo);
+  CanonicalLoopLabeler Labeler(*this, F, mCanonicalLoopInfo);
   auto &Context = FuncDecl->getASTContext();
   auto Nodes = match<DeclarationMatcher, Decl>(LoopMatcher, *FuncDecl, Context);
   while (!Nodes.empty()) {
