@@ -51,9 +51,6 @@ class EstimateMemory;
 struct DIClientServerInfo {
   DIClientServerInfo(llvm::Pass &P, llvm::Function &F);
 
-  /// Return analysis results from server for a specified loop on client.
-  DIDependenceSet *findFromClient(const llvm::Loop &L);
-
   /// Return true if data is available.
   bool isValid() const noexcept {
     return DIAT && DIDepInfo;
@@ -98,8 +95,8 @@ struct DIMemoryClientServerInfo : public DIClientServerInfo {
   /// \return Both values will be the same if server is not available.
   bcl::tagged_pair<bcl::tagged<DIMemory *, Origin>,
                    bcl::tagged<DIMemory *, Clone>>
-  findFromClient(EstimateMemory &EM, const llvm::DataLayout &DL,
-                 llvm::DominatorTree &DT);
+  findFromClient(const EstimateMemory &EM, const llvm::DataLayout &DL,
+                 llvm::DominatorTree &DT) const;
 
   /// Return client-to-server memory pair for a specified value on client.
   ///
@@ -107,13 +104,13 @@ struct DIMemoryClientServerInfo : public DIClientServerInfo {
   bcl::tagged_pair<bcl::tagged<DIMemory *, Origin>,
                    bcl::tagged<DIMemory *, Clone>>
   findFromClient(llvm::Value &V, llvm::DominatorTree &DT,
-                 DIUnknownMemory::Flags F);
+                 DIUnknownMemory::Flags F) const;
 
   /// Return analysis results from server for a specified loop on client.
   ///
   /// If server is not available and analysis results could are available on
   /// client, this function returns analysis results from client.
-  DIDependenceSet *findFromClient(const llvm::Loop &L);
+  DIDependenceSet *findFromClient(const llvm::Loop &L) const;
 
   /// Return true if data is available.
   operator bool () const noexcept { return isValid(); }

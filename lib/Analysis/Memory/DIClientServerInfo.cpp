@@ -95,8 +95,8 @@ DIMemoryClientServerInfo::DIMemoryClientServerInfo(DIAliasTree &ClientDIAT,
 
 bcl::tagged_pair<
   bcl::tagged<DIMemory *, Origin>, bcl::tagged<DIMemory *, Clone>>
-DIMemoryClientServerInfo::findFromClient(EstimateMemory &EM,
-    const DataLayout &DL, DominatorTree &DT) {
+DIMemoryClientServerInfo::findFromClient(const EstimateMemory &EM,
+    const DataLayout &DL, DominatorTree &DT) const {
   assert(isValid() && "Results is not available!");
   auto RawDIM = getRawDIMemoryIfExists(EM, EM.front()->getContext(), DL, DT);
   if (!RawDIM)
@@ -110,7 +110,7 @@ DIMemoryClientServerInfo::findFromClient(EstimateMemory &EM,
 bcl::tagged_pair<
   bcl::tagged<DIMemory *, Origin>, bcl::tagged<DIMemory *, Clone>>
 DIMemoryClientServerInfo::findFromClient(Value &V, DominatorTree &DT,
-    DIUnknownMemory::Flags F) {
+    DIUnknownMemory::Flags F) const {
   assert(isValid() && "Results is not available!");
   auto RawDIM = getRawDIMemoryIfExists(V, V.getContext(), DT, F);
   if (!RawDIM)
@@ -121,7 +121,7 @@ DIMemoryClientServerInfo::findFromClient(Value &V, DominatorTree &DT,
   return std::make_pair(&*ClientDIMItr, getMemory(&*ClientDIMItr));
 }
 
-DIDependenceSet *DIMemoryClientServerInfo::findFromClient(const Loop &L) {
+DIDependenceSet *DIMemoryClientServerInfo::findFromClient(const Loop &L) const {
   assert(isValid() && "Results is not available!");
   if (auto ClientID = L.getLoopID())
     if (auto LoopID = getObjectID(ClientID)) {
