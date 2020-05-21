@@ -37,6 +37,34 @@ void PointerReductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetLibraryInfoWrapperPass>();
 }
 
+struct phiNodeLink {
+  PHINode *phiNode;
+  phiNodeLink *parent;
+
+  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) { }
+
+  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) { }
+
+  PHINode *getPhi() {
+    if (phiNode) {
+      return phiNode;
+    }
+    return parent->getPhi();
+  }
+};
+
+struct PtrRedContext {
+  explicit PtrRedContext(Value *v, bool changed) : V(v), ValueChanged(changed) { }
+
+  Value *V;
+  SmallVector<LoadInst *, 2> InsertedLoads;
+  DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
+  DenseSet<PHINode *> UniqueNodes;
+  DenseMap<BasicBlock *, Instruction *> LastInstructions;
+  DenseSet<BasicBlock *> ChangedLastInst;
+  bool ValueChanged;
+};
+
 bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
   for (auto *User : V->users()) {
     if (auto *SI = dyn_cast<LoadInst>(User)) {
@@ -87,6 +115,12 @@ bool hasPathInCFG(BasicBlock *From, BasicBlock *To, DenseSet<BasicBlock *> &Visi
 }
 
 bool validateValue(Value *V, Loop *L) {
+  if (dyn_cast<GEPOperator>(V)) {
+    return false;
+  }
+  if (dyn_cast<GlobalValue>(V) && !V->getType()->getPointerElementType()->isPointerTy()) {
+    return false;
+  }
   for (auto *User : V->users()) {
     auto *GEP = dyn_cast<GetElementPtrInst>(User);
     auto *Call = dyn_cast<CallInst>(User);
@@ -104,7 +138,43 @@ bool validateValue(Value *V, Loop *L) {
   return true;
 }
 
-void getAllStoreOperandInstructions(Instruction *Inst, DenseSet<Instruction *> &Storage, SmallVector<Instruction *, 16> &toErase) {
+void insertLoadInstructions(PtrRedContext &ctx, Loop *L) {
+  auto *BeforeInstr = new LoadInst(ctx.V, "load." + ctx.V->getName());
+//      BeforeInstr->setMetadata("sapfor.da", MDNode::get(V->getContext(), {}));
+//      auto *dbg = DbgValueInst::Create();
+  BeforeInstr->insertBefore(&L->getLoopPredecessor()->back());
+  ctx.InsertedLoads.push_back(BeforeInstr);
+
+  /*   auto func = Intrinsic::getDeclaration(F.getParent(), Intrinsic::dbg_value);
+     auto *tmp = &L->getLoopPredecessor()->back().getDebugLoc();
+   auto *DIB = new DIBuilder(*F.getParent());
+   auto *scope = cast<DIScope>(tmp->getScope());
+   auto *debug = DIB->createAutoVariable(scope, "myvar", nullptr, tmp->getLine() + 1, nullptr);
+   BeforeInstr->setMetadata("sapfor.dbg", debug);
+     SmallVector<Value*, 3> Args(3);
+     Args[0] = dyn_cast<Value>(BeforeInstr->getMetadata("sapfor.dbg"));
+     Args[1] = dyn_cast<Value>(ConstantInt::get(BeforeInstr->getType(), 0));
+     Args[2] = dyn_cast<Value>(debug);
+
+     CallInst::Create(func, Args)->insertAfter(BeforeInstr);*/
+
+  if (ctx.ValueChanged) {
+    BeforeInstr = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
+    BeforeInstr->insertAfter(BeforeInstr);
+    ctx.InsertedLoads.push_back(BeforeInstr);
+  }
+}
+
+void insertStoreInstructions(PtrRedContext &ctx, Loop *L) {
+  SmallVector<BasicBlock *, 8> ExitBlocks;
+  L->getExitBlocks(ExitBlocks);
+  for (auto *BB : ExitBlocks) {
+    auto storeVal = ctx.ValueChanged ? ctx.InsertedLoads.front() : ctx.V;
+    new StoreInst(ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
+  }
+}
+
+void getAllStoreOperands(Instruction *Inst, DenseSet<Instruction *> &Storage, SmallVector<Instruction *, 16> &toErase) {
   for (auto *User : Inst->users()) {
     bool hasStore = false;
     if (auto *ChildInst = dyn_cast<Instruction>(User)) {
@@ -122,34 +192,29 @@ void getAllStoreOperandInstructions(Instruction *Inst, DenseSet<Instruction *> &
   }
 }
 
-void handleLoadsInBB(Value *V,
-    BasicBlock *BB,
-    DenseMap<BasicBlock *, Instruction *> &lastInstructions,
-    DenseSet<BasicBlock *> &changedLastInst,
-    bool changedVal)
-{
+void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
   SmallVector<Instruction *, 16> toErase;
   for (auto &Instr : BB->getInstList()) {
     if (auto *Load = dyn_cast<LoadInst>(&Instr)) {
-      if (Load->getPointerOperand() != V) {
+      if (Load->getPointerOperand() != ctx.V) {
         continue;
       }
       std::cerr << "found load\n";
-      Instruction *lastVal = lastInstructions[BB];
+      Instruction *lastVal = ctx.LastInstructions[BB];
       if (Load->user_empty()) {
         continue;
       }
       auto replaceAllLoadUsers = [&](LoadInst *Load) {
         DenseSet<Instruction *> instructions;
-        getAllStoreOperandInstructions(Load, instructions, toErase);
+        getAllStoreOperands(Load, instructions, toErase);
         for (auto *Inst : instructions) {
-          lastInstructions[Inst->getParent()] = Inst;
-          changedLastInst.insert(Inst->getParent());
+          ctx.LastInstructions[Inst->getParent()] = Inst;
+          ctx.ChangedLastInst.insert(Inst->getParent());
         }
         Load->replaceAllUsesWith(lastVal);
         std::cerr << "replaced load\n";
       };
-      if (!changedVal) {
+      if (!ctx.ValueChanged) {
         replaceAllLoadUsers(Load);
       } else {
         for (auto *user : Load->users()) {
@@ -166,35 +231,15 @@ void handleLoadsInBB(Value *V,
     Load->dropAllReferences();
     Load->eraseFromParent();
   }
-  if (pred_size(BB) == 1 && changedLastInst.find(BB) == changedLastInst.end()) {
-      lastInstructions[BB] = lastInstructions[BB->getSinglePredecessor()];
+  if (pred_size(BB) == 1 && ctx.ChangedLastInst.find(BB) == ctx.ChangedLastInst.end()) {
+    ctx.LastInstructions[BB] = ctx.LastInstructions[BB->getSinglePredecessor()];
   }
 }
 
-struct phiNodeLink {
-  PHINode *phiNode;
-  phiNodeLink *parent;
-
-  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) { }
-
-  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) { }
-
-  PHINode *getPhi() {
-    if (phiNode) {
-        return phiNode;
-    }
-    return parent->getPhi();
-  }
-};
-
 void handleLoads(
-    Value *V,
-    Loop *L,
-    BasicBlock *BB,
-    DenseMap<BasicBlock *, Instruction *> &lastInstructions,
+    PtrRedContext &ctx,
+    Loop *L, BasicBlock *BB,
     DenseSet<BasicBlock *> &completedBlocks,
-    DenseSet<BasicBlock *> &changedLastInst,
-    bool changedVal,
     bool init = false)
 {
   if (completedBlocks.find(BB) != completedBlocks.end()) {
@@ -203,12 +248,12 @@ void handleLoads(
   std::cerr << "now handling loads for " << BB->getName().data() << std::endl;
 
   if (!init) {
-    handleLoadsInBB(V, BB, lastInstructions, changedLastInst, changedVal);
+    handleLoadsInBB(BB, ctx);
   }
   completedBlocks.insert(BB);
   for (auto *Succ : successors(BB)) {
     if (L->contains(Succ)) {
-      handleLoads(V, L, Succ, lastInstructions, completedBlocks, changedLastInst, changedVal);
+      handleLoads(ctx, L, Succ, completedBlocks);
     }
   }
 }
@@ -219,22 +264,15 @@ void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &phiLinks) {
   }
 }
 
-void insertPhiNodes(
-    BasicBlock *BB,
-    DenseMap<BasicBlock *, phiNodeLink *> &phiLinks,
-    DenseMap<BasicBlock *, Instruction *> &lastInstructions,
-    DenseSet<PHINode *> &uniqueNodes,
-    Value *V,
-    bool init = false)
-{
-  if (phiLinks.find(BB) != phiLinks.end()) {
+void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
+  if (ctx.PhiLinks.find(BB) != ctx.PhiLinks.end()) {
     return;
   }
   bool needsCreate = false;
   if (pred_size(BB) == 1 && !init) {
-    if (phiLinks.find(BB->getSinglePredecessor()) != phiLinks.end()) {
-        auto *parentLink = phiLinks.find(BB->getSinglePredecessor())->second;
-        phiLinks[BB] = new phiNodeLink(parentLink);
+    if (ctx.PhiLinks.find(BB->getSinglePredecessor()) != ctx.PhiLinks.end()) {
+        auto *parentLink = ctx.PhiLinks.find(BB->getSinglePredecessor())->second;
+        ctx.PhiLinks[BB] = new phiNodeLink(parentLink);
     } else {
       needsCreate = true;
     }
@@ -242,21 +280,39 @@ void insertPhiNodes(
     needsCreate = true;
   }
   if (needsCreate) {
-    auto *phi = PHINode::Create(V->getType()->getPointerElementType(), 0,
+    auto *phi = PHINode::Create(ctx.V->getType()->getPointerElementType(), 0,
         "phi." + BB->getName(), &BB->front());
-    phiLinks[BB] = new phiNodeLink(phi);
-    uniqueNodes.insert(phi);
+    ctx.PhiLinks[BB] = new phiNodeLink(phi);
+    ctx.UniqueNodes.insert(phi);
   }
   for (auto *Succ : successors(BB)) {
-    insertPhiNodes(Succ, phiLinks, lastInstructions, uniqueNodes, V);
+    insertPhiNodes(ctx, Succ);
+  }
+  // all nodes and links are created at this point and BB = loop predecessor
+  if (init) {
+    ctx.LastInstructions[BB] = ctx.InsertedLoads.back();
+    for (auto &P : ctx.PhiLinks) {
+      ctx.LastInstructions[P.getFirst()] = P.getSecond()->getPhi();
+    }
   }
 }
 
-void deleteRedundantPhiNodes(
-    DenseMap<BasicBlock *, phiNodeLink *> &phiLinks,
-    DenseSet<PHINode *> &uniqueNodes)
-{
-  for (auto *Phi : uniqueNodes) {
+void fillPhiNodes(PtrRedContext &ctx) {
+  for (auto *Phi : ctx.UniqueNodes) {
+    auto *BB = Phi->getParent();
+    for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
+      if (ctx.LastInstructions.find(*Pred) != ctx.LastInstructions.end()) {
+        Phi->addIncoming(ctx.LastInstructions[*Pred], *Pred);
+      } else {
+        auto *load = new LoadInst(ctx.V, "dummy.load." + ctx.V->getName(), *Pred);
+        Phi->addIncoming(load, *Pred);
+      }
+    }
+  }
+}
+
+void deleteRedundantPhiNodes(PtrRedContext &ctx) {
+  for (auto *Phi : ctx.UniqueNodes) {
     bool hasSameOperands = true;
     auto *operand = Phi->getOperand(0);
       for (int i = 0; i < Phi->getNumOperands(); ++i) {
@@ -267,10 +323,10 @@ void deleteRedundantPhiNodes(
       }
       if (hasSameOperands) {
         Phi->replaceAllUsesWith(operand);
-        uniqueNodes.erase(Phi);
-        phiLinks[Phi->getParent()]->phiNode = nullptr;
+        ctx.UniqueNodes.erase(Phi);
+        ctx.PhiLinks[Phi->getParent()]->phiNode = nullptr;
         auto *Instr = dyn_cast<Instruction>(operand);
-        phiLinks[Phi->getParent()]->parent = phiLinks[Instr->getParent()];
+        ctx.PhiLinks[Phi->getParent()]->parent = ctx.PhiLinks[Instr->getParent()];
         Phi->eraseFromParent();
       }
   }
@@ -364,103 +420,42 @@ bool PointerReductionPass::runOnFunction(Function &F) {
     std::cerr << "--------------------\n";
 
     for (auto *Val : Values) {
-
       auto *V = Val;
       if (auto *Load = dyn_cast<LoadInst>(Val)) {
         std::cerr << "changed val for parent\n";
         V = Load->getPointerOperand();
       }
-      bool changedVal = Val != V;
       std::cerr << "now working with " << V->getName().data() << " from " << F.getName().data() << std::endl;
       std::cerr << "type " << V->getType()->getPointerElementType()->getTypeID() << std::endl;
       std::cerr << "global " << dyn_cast<GlobalValue>(V) << std::endl;
-      int count = 0;
-      if (dyn_cast<GEPOperator>(V)) {
-          break;
-      }
-      std::cerr << "Val has " << count << " uses\n";
-      if (dyn_cast<GlobalValue>(V) && !V->getType()->getPointerElementType()->isPointerTy()) {
-          break;
-      }
-      // we cannot replace anything if the pointer value can change somehow
+
       if (!validateValue(V, L)) {
         break;
       }
-      // Load instructions that are marked volatile cannot be removed
       if (hasVolatileLoadInstInLoop(V, L)) {
         break;
       }
-      std::cerr << "validated successfully\n";
-
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         break;
       }
-      std::cerr << "analyzed successfully\n";
+      std::cerr << "validated successfully\n";
+      auto ctx = PtrRedContext(V, Val != V);
 
-      auto *BeforeInstr = new LoadInst(V, "load." + V->getName());
-//      BeforeInstr->setMetadata("sapfor.da", MDNode::get(V->getContext(), {}));
-//      auto *dbg = DbgValueInst::Create();
-        BeforeInstr->insertBefore(&L->getLoopPredecessor()->back());
+      insertLoadInstructions(ctx, L);
+      std::cerr << "inserted instructions\n";
 
-     /*   auto func = Intrinsic::getDeclaration(F.getParent(), Intrinsic::dbg_value);
-        auto *tmp = &L->getLoopPredecessor()->back().getDebugLoc();
-      auto *DIB = new DIBuilder(*F.getParent());
-      auto *scope = cast<DIScope>(tmp->getScope());
-      auto *debug = DIB->createAutoVariable(scope, "myvar", nullptr, tmp->getLine() + 1, nullptr);
-      BeforeInstr->setMetadata("sapfor.dbg", debug);
-        SmallVector<Value*, 3> Args(3);
-        Args[0] = dyn_cast<Value>(BeforeInstr->getMetadata("sapfor.dbg"));
-        Args[1] = dyn_cast<Value>(ConstantInt::get(BeforeInstr->getType(), 0));
-        Args[2] = dyn_cast<Value>(debug);
-
-        CallInst::Create(func, Args)->insertAfter(BeforeInstr);*/
-
-
-
-        auto *oldBefore = BeforeInstr;
-      if (changedVal) {
-        auto Instr2 = new LoadInst(BeforeInstr, "load.ptr." + V->getName());
-        Instr2->insertAfter(BeforeInstr);
-        BeforeInstr = Instr2;
-      }
-        std::cerr << "inserted instructions\n";
-
-      DenseMap<BasicBlock *, phiNodeLink *> phiLinks;
-      DenseSet<PHINode *> uniqueNodes;
-      DenseMap<BasicBlock *, Instruction *> lastInstructions;
-      insertPhiNodes(L->getLoopPredecessor(), phiLinks, lastInstructions, uniqueNodes, Val, true);
-        std::cerr << "inserted phi nodes\n";
-      lastInstructions[L->getLoopPredecessor()] = BeforeInstr;
-      for (auto &P : phiLinks) {
-        lastInstructions[P.getFirst()] = P.getSecond()->getPhi();
-      }
+      insertPhiNodes(ctx, L->getLoopPredecessor(), true);
+      std::cerr << "inserted phi nodes\n";
 
       DenseSet<BasicBlock *> processedBlocks;
-      DenseSet<BasicBlock *> changedLastInst;
-        std::cerr << "handling loads\n";
-      handleLoads(V, L, L->getLoopPredecessor(), lastInstructions, processedBlocks, changedLastInst, changedVal, true);
-        std::cerr << "loads handled\n";
+      handleLoads(ctx, L, L->getLoopPredecessor(), processedBlocks, true);
+      std::cerr << "loads handled\n";
 
-      for (auto *Phi : uniqueNodes) {
-        auto *BB = Phi->getParent();
-        for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
-          if (lastInstructions.find(*Pred) != lastInstructions.end()) {
-            Phi->addIncoming(lastInstructions[*Pred], *Pred);
-          } else {
-              auto *load = new LoadInst(V, "dummy.load." + V->getName(), *Pred);
-              Phi->addIncoming(load, *Pred);
-          }
-        }
-      }
-      deleteRedundantPhiNodes(phiLinks, uniqueNodes);
+      fillPhiNodes(ctx);
+      deleteRedundantPhiNodes(ctx);
 
-      SmallVector<BasicBlock *, 8> ExitBlocks;
-      L->getExitBlocks(ExitBlocks);
-      for (auto *BB : ExitBlocks) {
-        auto storeVal = changedVal ? oldBefore : V;
-        new StoreInst(lastInstructions[BB], storeVal, BB->getFirstNonPHI());
-      }
-      freeLinks(phiLinks);
+      insertStoreInstructions(ctx, L);
+      freeLinks(ctx.PhiLinks);
     }
   });
   return false;
