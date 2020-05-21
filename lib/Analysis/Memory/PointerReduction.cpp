@@ -8,7 +8,6 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 
-#include <iostream>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/PassSupport.h>
 #include <llvm/Transforms/Scalar.h>
@@ -199,7 +198,6 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
       if (Load->getPointerOperand() != ctx.V) {
         continue;
       }
-      std::cerr << "found load\n";
       Instruction *lastVal = ctx.LastInstructions[BB];
       if (Load->user_empty()) {
         continue;
@@ -212,7 +210,6 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
           ctx.ChangedLastInst.insert(Inst->getParent());
         }
         Load->replaceAllUsesWith(lastVal);
-        std::cerr << "replaced load\n";
       };
       if (!ctx.ValueChanged) {
         replaceAllLoadUsers(Load);
@@ -245,7 +242,6 @@ void handleLoads(
   if (completedBlocks.find(BB) != completedBlocks.end()) {
     return;
   }
-  std::cerr << "now handling loads for " << BB->getName().data() << std::endl;
 
   if (!init) {
     handleLoadsInBB(BB, ctx);
@@ -410,25 +406,11 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       }
     }
 
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-    std::cerr << "--------------------\n";
-
     for (auto *Val : Values) {
       auto *V = Val;
       if (auto *Load = dyn_cast<LoadInst>(Val)) {
-        std::cerr << "changed val for parent\n";
         V = Load->getPointerOperand();
       }
-      std::cerr << "now working with " << V->getName().data() << " from " << F.getName().data() << std::endl;
-      std::cerr << "type " << V->getType()->getPointerElementType()->getTypeID() << std::endl;
-      std::cerr << "global " << dyn_cast<GlobalValue>(V) << std::endl;
-
       if (!validateValue(V, L)) {
         break;
       }
@@ -438,22 +420,13 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         break;
       }
-      std::cerr << "validated successfully\n";
       auto ctx = PtrRedContext(V, Val != V);
-
       insertLoadInstructions(ctx, L);
-      std::cerr << "inserted instructions\n";
-
       insertPhiNodes(ctx, L->getLoopPredecessor(), true);
-      std::cerr << "inserted phi nodes\n";
-
       DenseSet<BasicBlock *> processedBlocks;
       handleLoads(ctx, L, L->getLoopPredecessor(), processedBlocks, true);
-      std::cerr << "loads handled\n";
-
       fillPhiNodes(ctx);
       deleteRedundantPhiNodes(ctx);
-
       insertStoreInstructions(ctx, L);
       freeLinks(ctx.PhiLinks);
     }
