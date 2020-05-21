@@ -53,9 +53,12 @@ struct phiNodeLink {
 };
 
 struct PtrRedContext {
-  explicit PtrRedContext(Value *v, bool changed) : V(v), ValueChanged(changed) { }
+  explicit PtrRedContext(Value *v, Function &f, Loop *l, bool changed)
+    : V(v), F(f), L(l), ValueChanged(changed) { }
 
   Value *V;
+  Function &F;
+  Loop *L;
   SmallVector<LoadInst *, 2> InsertedLoads;
   DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
   DenseSet<PHINode *> UniqueNodes;
@@ -137,26 +140,23 @@ bool validateValue(Value *V, Loop *L) {
   return true;
 }
 
-void insertLoadInstructions(PtrRedContext &ctx, Loop *L) {
+void insertDbgValueCall(Instruction *Inst, Function &F, Loop *L, const DebugLoc &Loc, Instruction *InsertBefore) {
+  auto *DIB = new DIBuilder(*F.getParent());
+
+  auto *scope = dyn_cast<DIScope>(Loc->getScope());
+  auto *debug = DIB->createAutoVariable(scope, Inst->getName(), nullptr, Loc->getLine() + 1, nullptr);
+  Inst->setMetadata("sapfor.dbg", debug);
+
+  DIB->insertDbgValueIntrinsic(Inst, debug, DIExpression::get(Inst->getContext(), {}), Loc, InsertBefore);
+}
+
+void insertLoadInstructions(PtrRedContext &ctx) {
   auto *BeforeInstr = new LoadInst(ctx.V, "load." + ctx.V->getName());
-//      BeforeInstr->setMetadata("sapfor.da", MDNode::get(V->getContext(), {}));
-//      auto *dbg = DbgValueInst::Create();
-  BeforeInstr->insertBefore(&L->getLoopPredecessor()->back());
+  BeforeInstr->insertBefore(&ctx.L->getLoopPredecessor()->back());
   ctx.InsertedLoads.push_back(BeforeInstr);
 
-  /*   auto func = Intrinsic::getDeclaration(F.getParent(), Intrinsic::dbg_value);
-     auto *tmp = &L->getLoopPredecessor()->back().getDebugLoc();
-   auto *DIB = new DIBuilder(*F.getParent());
-   auto *scope = cast<DIScope>(tmp->getScope());
-   auto *debug = DIB->createAutoVariable(scope, "myvar", nullptr, tmp->getLine() + 1, nullptr);
-   BeforeInstr->setMetadata("sapfor.dbg", debug);
-     SmallVector<Value*, 3> Args(3);
-     Args[0] = dyn_cast<Value>(BeforeInstr->getMetadata("sapfor.dbg"));
-     Args[1] = dyn_cast<Value>(ConstantInt::get(BeforeInstr->getType(), 0));
-     Args[2] = dyn_cast<Value>(debug);
-
-     CallInst::Create(func, Args)->insertAfter(BeforeInstr);*/
-
+  auto *insertBefore = &ctx.L->getLoopPredecessor()->back();
+  insertDbgValueCall(BeforeInstr, ctx.F, ctx.L, insertBefore->getDebugLoc(), insertBefore);
   if (ctx.ValueChanged) {
     BeforeInstr = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
     BeforeInstr->insertAfter(BeforeInstr);
@@ -164,12 +164,24 @@ void insertLoadInstructions(PtrRedContext &ctx, Loop *L) {
   }
 }
 
-void insertStoreInstructions(PtrRedContext &ctx, Loop *L) {
+void insertStoreInstructions(PtrRedContext &ctx) {
   SmallVector<BasicBlock *, 8> ExitBlocks;
-  L->getExitBlocks(ExitBlocks);
+  ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
     auto storeVal = ctx.ValueChanged ? ctx.InsertedLoads.front() : ctx.V;
-    new StoreInst(ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
+    auto *store = new StoreInst(ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
+    //need to get instruction after store
+    Instruction *insertBefore = &BB->back();
+    bool flag = false;
+    for (auto &Inst : BB->getInstList()) {
+      if (&Inst == store) {
+        flag = true;
+      }
+      if (flag) {
+        insertBefore = &Inst;
+      }
+    }
+    insertDbgValueCall(store, ctx.F, ctx.L, insertBefore->getDebugLoc(), insertBefore);
   }
 }
 
@@ -235,7 +247,7 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
 
 void handleLoads(
     PtrRedContext &ctx,
-    Loop *L, BasicBlock *BB,
+    BasicBlock *BB,
     DenseSet<BasicBlock *> &completedBlocks,
     bool init = false)
 {
@@ -248,8 +260,8 @@ void handleLoads(
   }
   completedBlocks.insert(BB);
   for (auto *Succ : successors(BB)) {
-    if (L->contains(Succ)) {
-      handleLoads(ctx, L, Succ, completedBlocks);
+    if (ctx.L->contains(Succ)) {
+      handleLoads(ctx, Succ, completedBlocks);
     }
   }
 }
@@ -278,6 +290,7 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
   if (needsCreate) {
     auto *phi = PHINode::Create(ctx.V->getType()->getPointerElementType(), 0,
         "phi." + BB->getName(), &BB->front());
+     insertDbgValueCall(phi, ctx.F, ctx.L, BB->getFirstNonPHI()->getDebugLoc(), BB->getFirstNonPHI());
     ctx.PhiLinks[BB] = new phiNodeLink(phi);
     ctx.UniqueNodes.insert(phi);
   }
@@ -420,14 +433,14 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         break;
       }
-      auto ctx = PtrRedContext(V, Val != V);
-      insertLoadInstructions(ctx, L);
+      auto ctx = PtrRedContext(V, F, L, Val != V);
+      insertLoadInstructions(ctx);
       insertPhiNodes(ctx, L->getLoopPredecessor(), true);
       DenseSet<BasicBlock *> processedBlocks;
-      handleLoads(ctx, L, L->getLoopPredecessor(), processedBlocks, true);
+      handleLoads(ctx, L->getLoopPredecessor(), processedBlocks, true);
       fillPhiNodes(ctx);
       deleteRedundantPhiNodes(ctx);
-      insertStoreInstructions(ctx, L);
+      insertStoreInstructions(ctx);
       freeLinks(ctx.PhiLinks);
     }
   });
