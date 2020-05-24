@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.4.3)
 project(TSAR VERSION 0.1 LANGUAGES CXX)
 
 set(TSAR_DESCRIPTION "Traits Static Analyzer")
-set(TSAR_HOMEPAGE_URL "https://bitbucket.org/dvm-system/tsar")
+set(TSAR_HOMEPAGE_URL "https://github.com/dvm-system/tsar")
 
 set (TSAR_FOLDER "Tools" CACHE STRING "Specify IDE folder for TSAR executable.")
 set (TSAR_LIBRARY_FOLDER "Tsar libraries" CACHE STRING "Specify IDE folder for TSAR libraries.")
