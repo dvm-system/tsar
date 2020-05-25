@@ -78,31 +78,6 @@ bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
   return false;
 }
 
-bool hasPossibleReductionUses(Instruction *Instr) {
-  const static auto opCodes = {
-      BinaryOperator::Add,
-      BinaryOperator::FAdd,
-      BinaryOperator::Sub,
-      BinaryOperator::FSub,
-      BinaryOperator::Mul,
-      BinaryOperator::FMul,
-      BinaryOperator::UDiv,
-      BinaryOperator::SDiv,
-      BinaryOperator::FDiv,
-
-  };
-  for (auto *User : Instr->users()) {
-    if (auto *Op = dyn_cast<Instruction>(User)) {
-      for (auto opCode : opCodes) {
-        if (Op->getOpcode() == opCode) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
 bool hasPathInCFG(BasicBlock *From, BasicBlock *To, DenseSet<BasicBlock *> &Visited) {
   if (From == To) {
     return true;
@@ -397,7 +372,7 @@ bool PointerReductionPass::runOnFunction(Function &F) {
             if (V.pointsToAliveValue() && !dyn_cast<UndefValue>(V)) {
               for (auto *User : V->users()) {
                 if (auto *LI = dyn_cast<LoadInst>(User)) {
-                  if (L->contains(LI) && hasPossibleReductionUses(LI)) {
+                  if (L->contains(LI)) {
                     Values.insert(LI->getPointerOperand());
                     break;
                   }
