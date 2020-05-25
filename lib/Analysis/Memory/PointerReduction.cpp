@@ -413,13 +413,13 @@ bool PointerReductionPass::runOnFunction(Function &F) {
         V = Load->getPointerOperand();
       }
       if (!validateValue(V, L)) {
-        break;
+        continue;
       }
       if (hasVolatileLoadInstInLoop(V, L)) {
-        break;
+        continue;
       }
       if (!analyzeAliasTree(V, AT, L, TLI)) {
-        break;
+        continue;
       }
       auto ctx = PtrRedContext(V, F, L, Val != V);
       insertLoadInstructions(ctx);
