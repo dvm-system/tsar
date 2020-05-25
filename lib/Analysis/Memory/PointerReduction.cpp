@@ -134,7 +134,9 @@ bool validateValue(Value *V, Loop *L) {
       DenseSet<BasicBlock *> visited;
       auto *from = L->getHeader();
       auto *to = Call->getParent();
-      return !L->contains(to) && hasPathInCFG(from, to, visited);
+      if (L->contains(to) || hasPathInCFG(from, to, visited)) {
+        return false;
+      }
     }
   }
   return true;
