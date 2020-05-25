@@ -91,25 +91,28 @@ bool hasPathInCFG(BasicBlock *From, BasicBlock *To, DenseSet<BasicBlock *> &Visi
   return false;
 }
 
-bool validateValue(Value *V, Loop *L) {
-  if (dyn_cast<GEPOperator>(V)) {
+bool validateValue(PtrRedContext &Ctx) {
+  if (dyn_cast<GEPOperator>(Ctx.V)) {
     return false;
   }
-  if (dyn_cast<GlobalValue>(V) && !V->getType()->getPointerElementType()->isPointerTy()) {
+  if (dyn_cast<GlobalValue>(Ctx.V) && !Ctx.V->getType()->getPointerElementType()->isPointerTy()) {
     return false;
   }
-  for (auto *User : V->users()) {
+  for (auto *User : Ctx.V->users()) {
     auto *GEP = dyn_cast<GetElementPtrInst>(User);
     auto *Call = dyn_cast<CallInst>(User);
-
-    if (GEP && L->contains(GEP)) {
+    auto *Store = dyn_cast<StoreInst>(User);
+    if (Ctx.ValueChanged && Store && Ctx.L->contains(Store)) {
+      return false;
+    }
+    if (GEP && Ctx.L->contains(GEP)) {
       return false;
     }
     if (Call) {
       DenseSet<BasicBlock *> visited;
-      auto *from = L->getHeader();
-      auto *to = Call->getParent();
-      if (L->contains(to) || hasPathInCFG(from, to, visited)) {
+      auto *to = Ctx.L->getHeader();
+      auto *from = Call->getParent();
+      if ((Ctx.L->contains(to) && to != Ctx.L->getExitingBlock()) || hasPathInCFG(from, to, visited)) {
         return false;
       }
     }
@@ -179,24 +182,25 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
       if (Load->user_empty()) {
         continue;
       }
-      auto replaceAllLoadUsers = [&](LoadInst *Load) {
+      auto replaceAllLoadUsers = [&](LoadInst *Load, Instruction *ReplaceWith) {
         DenseSet<Instruction *> instructions;
         getAllStoreOperands(Load, instructions, toErase);
         for (auto *Inst : instructions) {
           ctx.LastInstructions[Inst->getParent()] = Inst;
           ctx.ChangedLastInst.insert(Inst->getParent());
         }
-        Load->replaceAllUsesWith(lastVal);
+        Load->replaceAllUsesWith(ReplaceWith);
       };
       if (!ctx.ValueChanged) {
-        replaceAllLoadUsers(Load);
+        replaceAllLoadUsers(Load, lastVal);
       } else {
         for (auto *user : Load->users()) {
           if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
-            replaceAllLoadUsers(LoadChild);
+            replaceAllLoadUsers(LoadChild, lastVal);
             toErase.push_back(LoadChild);
           }
         }
+        replaceAllLoadUsers(Load, ctx.InsertedLoads.front());
       }
       toErase.push_back(Load);
     }
@@ -253,7 +257,7 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
     needsCreate = true;
   }
   if (needsCreate) {
-    auto *phi = PHINode::Create(ctx.V->getType()->getPointerElementType(), 0,
+    auto *phi = PHINode::Create(ctx.InsertedLoads.back()->getType(), 0,
         "phi." + BB->getName(), &BB->front());
      insertDbgValueCall(phi, ctx.F, ctx.L, BB->getFirstNonPHI()->getDebugLoc(), BB->getFirstNonPHI());
     ctx.PhiLinks[BB] = new phiNodeLink(phi);
@@ -372,6 +376,16 @@ bool PointerReductionPass::runOnFunction(Function &F) {
             if (V.pointsToAliveValue() && !dyn_cast<UndefValue>(V)) {
               for (auto *User : V->users()) {
                 if (auto *LI = dyn_cast<LoadInst>(User)) {
+                  bool hasLoadUses = false;
+                  for (auto *LoadChild : LI->users()) {
+                    if (dyn_cast<LoadInst>(LoadChild)) {
+                      hasLoadUses =true;
+                      break;
+                    }
+                  }
+                  if (hasLoadUses) {
+                    continue;
+                  }
                   if (L->contains(LI)) {
                     Values.insert(LI->getPointerOperand());
                     break;
@@ -389,7 +403,8 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (auto *Load = dyn_cast<LoadInst>(Val)) {
         V = Load->getPointerOperand();
       }
-      if (!validateValue(V, L)) {
+      auto ctx = PtrRedContext(V, F, L, Val != V);
+      if (!validateValue(ctx)) {
         continue;
       }
       if (hasVolatileLoadInstInLoop(V, L)) {
@@ -398,7 +413,6 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         continue;
       }
-      auto ctx = PtrRedContext(V, F, L, Val != V);
       insertLoadInstructions(ctx);
       insertPhiNodes(ctx, L->getLoopPredecessor(), true);
       DenseSet<BasicBlock *> processedBlocks;
