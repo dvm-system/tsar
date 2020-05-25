@@ -9,9 +9,9 @@
 #include "tsar/Transform/IR/InterprocAttr.h"
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/DIBuilder.h>
 #include <llvm/PassSupport.h>
 #include <llvm/Transforms/Scalar.h>
-#include <llvm/IR/DIBuilder.h>
 
 using namespace tsar;
 using namespace llvm;
@@ -158,9 +158,9 @@ void insertLoadInstructions(PtrRedContext &ctx) {
   auto *insertBefore = &ctx.L->getLoopPredecessor()->back();
   insertDbgValueCall(BeforeInstr, ctx.F, ctx.L, insertBefore->getDebugLoc(), insertBefore);
   if (ctx.ValueChanged) {
-    BeforeInstr = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
-    BeforeInstr->insertAfter(BeforeInstr);
-    ctx.InsertedLoads.push_back(BeforeInstr);
+    auto BeforeInstr2 = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
+    BeforeInstr2->insertAfter(BeforeInstr);
+    ctx.InsertedLoads.push_back(BeforeInstr2);
   }
 }
 
@@ -169,19 +169,7 @@ void insertStoreInstructions(PtrRedContext &ctx) {
   ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
     auto storeVal = ctx.ValueChanged ? ctx.InsertedLoads.front() : ctx.V;
-    auto *store = new StoreInst(ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
-    //need to get instruction after store
-    Instruction *insertBefore = &BB->back();
-    bool flag = false;
-    for (auto &Inst : BB->getInstList()) {
-      if (&Inst == store) {
-        flag = true;
-      }
-      if (flag) {
-        insertBefore = &Inst;
-      }
-    }
-    insertDbgValueCall(store, ctx.F, ctx.L, insertBefore->getDebugLoc(), insertBefore);
+    new StoreInst(ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
   }
 }
 
