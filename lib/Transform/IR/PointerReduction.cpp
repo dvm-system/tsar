@@ -1,8 +1,8 @@
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
-#include "tsar/Analysis/Memory/PointerReduction.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Transform/IR/PointerReduction.h"
 
 #include "tsar/Core/Query.h"
 #include "tsar/Support/IRUtils.h"
