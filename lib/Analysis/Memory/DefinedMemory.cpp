@@ -24,16 +24,20 @@
 
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/IRUtils.h"
+#include "tsar/Support/SCEVUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Dominators.h>
@@ -53,6 +57,8 @@ char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
   LLVM_DEBUG(INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass));
+  INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
@@ -67,18 +73,23 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
+  auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
+  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
+  auto &DL = F.getParent()->getDataLayout();
   if (GDM) {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, *GDM);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, DI, SE, DL, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   } else {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, DI, SE, DL);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   }
   return false;
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
+  AU.addRequired<DelinearizationPass>();
+  AU.addRequired<ScalarEvolutionWrapperPass>();
   LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
@@ -579,6 +590,49 @@ void ReachDFFwk::collapse(DFRegion *R) {
   // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
+  auto calcArrayLocation = [this, R](const tsar::MemoryLocationRange &Loc) {
+    MemoryLocationRange arrayLoc;
+    arrayLoc.Ptr = nullptr;
+    auto LocInfo = getDelinearizeInfo()->findRange(Loc.Ptr);
+    if (LocInfo.first && LocInfo.first->isDelinearized() &&
+      LocInfo.second->isValid()) {
+      for (auto *S : LocInfo.second->Subscripts) {
+        auto *SE = getScalarEvolution();
+        auto AddRecInfo = computeSCEVAddRec(S, *SE);
+        if (AddRecInfo.second) {
+          auto SCEV = AddRecInfo.first;
+          if (static_cast<SCEVTypes>(SCEV->getSCEVType()) != scAddRecExpr) {
+            break;
+          }
+          auto addRecExpr = cast<SCEVAddRecExpr>(SCEV);
+          if (auto *DFL = dyn_cast<DFLoop>(R)) {
+            auto *L = DFL->getLoop();
+            auto maxTripCount = SE->getSmallConstantMaxTripCount(L);
+            if (maxTripCount == 0)
+              break;
+            auto rangeMin = SE->getSignedRangeMin(SCEV);
+            auto rangeMax = SE->getSignedRangeMax(SCEV);
+            auto *stepSCEV = addRecExpr->getOperand(1);
+            if (static_cast<SCEVTypes>(stepSCEV->getSCEVType()) !=
+              scConstant)
+              break;
+            auto stepNumber = *cast<SCEVConstant>(stepSCEV)->
+              getValue()->getValue().getRawData();
+            if (stepNumber > 1)
+              break;
+            PointerType *pointerType = cast<PointerType>(
+              LocInfo.first->getBase()->getType());
+            auto arrayElementSize = getDataLayout().getTypeStoreSize(
+              pointerType->getElementType());
+            arrayLoc = Loc;
+            arrayLoc.LowerBound = *rangeMin.getRawData() * arrayElementSize;
+            arrayLoc.UpperBound = (*rangeMax.getRawData()+1) * arrayElementSize;
+          }
+        }
+      }
+    }
+    return arrayLoc;
+  };
   for (DFNode *N : R->getNodes()) {
     auto DefItr = getDefInfo().find(N);
     assert(DefItr != getDefInfo().end() &&
@@ -592,6 +646,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto &Loc : DU->getUses()) {
       bool StartInLoop = false, EndInLoop = false;
       auto *EM = AT.find(Loc);
+      if (EM == nullptr)
+        continue;
       EM = EM->getTopLevelParent();
       auto *V = EM->front();
       // We're looking for alloca->bitcast->lifetime.start/end instructions
@@ -624,8 +680,13 @@ void ReachDFFwk::collapse(DFRegion *R) {
             break;
         }
       }
-      if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop))
-        DefUse->addUse(Loc);
+      if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop)) {
+        auto arrayLoc = calcArrayLocation(Loc);
+        if (arrayLoc.Ptr != nullptr)
+          DefUse->addUse(arrayLoc);
+        else
+          DefUse->addUse(Loc);
+      }
     }
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
@@ -648,13 +709,27 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //     X = ...;
     // }
     for (auto &Loc : DU->getDefs()) {
-      if (ExitingDefs.MustReach.contain(Loc))
-        DefUse->addDef(Loc);
+      if (ExitingDefs.MustReach.contain(Loc)) {
+        auto arrayLoc = calcArrayLocation(Loc);
+        if (arrayLoc.Ptr != nullptr)
+          DefUse->addDef(arrayLoc);
+        else
+          DefUse->addDef(Loc);
+      } else {
+        auto arrayLoc = calcArrayLocation(Loc);
+        if (arrayLoc.Ptr != nullptr)
+          DefUse->addMayDef(arrayLoc);
+        else
+          DefUse->addMayDef(Loc);
+      }
+    }
+    for (auto &Loc : DU->getMayDefs()) {
+      auto arrayLoc = calcArrayLocation(Loc);
+      if (arrayLoc.Ptr != nullptr)
+        DefUse->addMayDef(arrayLoc);
       else
         DefUse->addMayDef(Loc);
     }
-    for (auto &Loc : DU->getMayDefs())
-      DefUse->addMayDef(Loc);
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
     for (auto Loc : DU->getAddressAccesses())

@@ -104,6 +104,7 @@ using CallList = std::vector<
 using LiveMemoryForCalls = DenseMap<const Function *, CallList>;
 
 using GlobalLiveMemoryProvider = FunctionPassProvider<
+  GlobalOptionsImmutableWrapper,
   DFRegionInfoPass,
   DefinedMemoryPass,
   DominatorTreeWrapperPass>;
@@ -187,6 +188,7 @@ INITIALIZE_PROVIDER_BEGIN(GlobalLiveMemoryProvider, "global-live-mem-provider",
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PROVIDER_END(GlobalLiveMemoryProvider, "global-live-mem-provider",
                         "Global Live Memory Analysis (Provider)")
 
@@ -263,6 +265,10 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
       return false;
     Worklist.push_back(CGN);
   }
+  GlobalLiveMemoryProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(&GO);
+      });
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
     GlobalLiveMemoryProvider::initialize<GlobalDefinedMemoryWrapper>(

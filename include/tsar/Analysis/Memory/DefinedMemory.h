@@ -36,6 +36,8 @@
 #include "tsar/ADT/DataFlow.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
@@ -366,6 +368,14 @@ public:
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo), mDI(&DI),
+    mSE(&SE), mDL(&DL) {}
+
+    /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo) :
     mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) {}
 
@@ -375,6 +385,14 @@ public:
       InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
+
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, InterprocDefUseInfo &InterprocDUInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo),
+    mDI(&DI), mSE(&SE), mDL(&DL), mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -401,16 +419,27 @@ public:
   /// Returns dominator tree if it is available or nullptr.
   const llvm::DominatorTree * getDomTree() const noexcept { return mDT; }
 
+  /// Returns delinearize info.
+  const DelinearizeInfo * getDelinearizeInfo() const noexcept { return mDI; }
+
+  /// Returns scalar evolution.
+  llvm::ScalarEvolution * getScalarEvolution() const noexcept { return mSE; }
+
+  /// Returns data layout.
+  const llvm::DataLayout & getDataLayout() const noexcept { return *mDL; }
+
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
-
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
   const llvm::DominatorTree *mDT;
   DefinedMemoryInfo *mDefInfo;
   InterprocDefUseInfo *mInterprocDUInfo = nullptr;
+  const DelinearizeInfo *mDI = nullptr;
+  llvm::ScalarEvolution *mSE = nullptr;
+  const llvm::DataLayout *mDL;
 };
 
 /// This represents results of interprocedural reach definition analysis.
