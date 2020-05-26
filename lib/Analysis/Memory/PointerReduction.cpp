@@ -54,9 +54,11 @@ struct phiNodeLink {
 
 struct PtrRedContext {
   explicit PtrRedContext(Value *v, Function &f, Loop *l, bool changed)
-    : V(v), F(f), L(l), ValueChanged(changed) { }
+    : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed) { }
 
   Value *V;
+  DILocalVariable *DbgVar;
+  DILocation *DbgLoc;
   Function &F;
   Loop *L;
   SmallVector<LoadInst *, 2> InsertedLoads;
@@ -120,14 +122,13 @@ bool validateValue(PtrRedContext &Ctx) {
   return true;
 }
 
-void insertDbgValueCall(Instruction *Inst, Function &F, Loop *L, const DebugLoc &Loc, Instruction *InsertBefore) {
-  auto *DIB = new DIBuilder(*F.getParent());
+void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, const DebugLoc &Loc, Instruction *InsertBefore, bool add) {
+  auto *DIB = new DIBuilder(*ctx.F.getParent());
 
-  auto *scope = dyn_cast<DIScope>(Loc->getScope());
-  auto *debug = DIB->createAutoVariable(scope, Inst->getName(), nullptr, Loc->getLine() + 1, nullptr);
-  Inst->setMetadata("sapfor.dbg", debug);
-
-  DIB->insertDbgValueIntrinsic(Inst, debug, DIExpression::get(Inst->getContext(), {}), Loc, InsertBefore);
+  if (add) {
+    Inst->setDebugLoc(Loc);
+  }
+  DIB->insertDbgValueIntrinsic(Inst, ctx.DbgVar, DIExpression::get(ctx.F.getContext(), {}), Loc, InsertBefore);
 }
 
 void insertLoadInstructions(PtrRedContext &ctx) {
@@ -136,7 +137,7 @@ void insertLoadInstructions(PtrRedContext &ctx) {
   ctx.InsertedLoads.push_back(BeforeInstr);
 
   auto *insertBefore = &ctx.L->getLoopPredecessor()->back();
-  insertDbgValueCall(BeforeInstr, ctx.F, ctx.L, insertBefore->getDebugLoc(), insertBefore);
+  insertDbgValueCall(ctx, BeforeInstr, ctx.DbgLoc, insertBefore, true);
   if (ctx.ValueChanged) {
     auto BeforeInstr2 = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
     BeforeInstr2->insertAfter(BeforeInstr);
@@ -153,26 +154,22 @@ void insertStoreInstructions(PtrRedContext &ctx) {
   }
 }
 
-void getAllStoreOperands(Instruction *Inst, DenseSet<Instruction *> &Storage, SmallVector<Instruction *, 16> &toErase) {
+void getAllStoreOperands(Instruction *Inst, DenseMap <StoreInst *, Instruction *> &Stores) {
   for (auto *User : Inst->users()) {
-    bool hasStore = false;
     if (auto *ChildInst = dyn_cast<Instruction>(User)) {
       for (auto *ChildUser : ChildInst->users()) {
         if (auto *Store = dyn_cast<StoreInst>(ChildUser)) {
-          toErase.push_back(Store);
-          hasStore = true;
+          Stores[Store] = ChildInst;
           break;
         }
-      }
-      if (hasStore) {
-        Storage.insert(ChildInst);
       }
     }
   }
 }
 
 void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
-  SmallVector<Instruction *, 16> toErase;
+  SmallVector<Instruction *, 16> loads;
+  DenseMap <StoreInst *, Instruction *> stores;
   for (auto &Instr : BB->getInstList()) {
     if (auto *Load = dyn_cast<LoadInst>(&Instr)) {
       if (Load->getPointerOperand() != ctx.V) {
@@ -183,12 +180,13 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
         continue;
       }
       auto replaceAllLoadUsers = [&](LoadInst *Load, Instruction *ReplaceWith) {
-        DenseSet<Instruction *> instructions;
-        getAllStoreOperands(Load, instructions, toErase);
-        for (auto *Inst : instructions) {
-          ctx.LastInstructions[Inst->getParent()] = Inst;
-          ctx.ChangedLastInst.insert(Inst->getParent());
+        DenseMap <StoreInst *, Instruction *> storeInstructions;
+        getAllStoreOperands(Load, storeInstructions);
+        for (auto &Pair : storeInstructions) {
+          ctx.LastInstructions[Pair.second ->getParent()] = Pair.second;
+          ctx.ChangedLastInst.insert(Pair.second->getParent());
         }
+        stores.insert(storeInstructions.begin(), storeInstructions.end());
         Load->replaceAllUsesWith(ReplaceWith);
       };
       if (!ctx.ValueChanged) {
@@ -197,17 +195,24 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
         for (auto *user : Load->users()) {
           if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
             replaceAllLoadUsers(LoadChild, lastVal);
-            toErase.push_back(LoadChild);
+            loads.push_back(LoadChild);
           }
         }
         replaceAllLoadUsers(Load, ctx.InsertedLoads.front());
       }
-      toErase.push_back(Load);
+      loads.push_back(Load);
     }
   }
-  for (auto *Load : toErase) {
+  for (auto &Pair : stores) {
+    insertDbgValueCall(ctx, Pair.second, Pair.first->getDebugLoc(), Pair.first, false);
+  }
+  for (auto *Load : loads) {
     Load->dropAllReferences();
     Load->eraseFromParent();
+  }
+  for (auto &Pair : stores) {
+    Pair.first->dropAllReferences();
+    Pair.first->eraseFromParent();
   }
   if (pred_size(BB) == 1 && ctx.ChangedLastInst.find(BB) == ctx.ChangedLastInst.end()) {
     ctx.LastInstructions[BB] = ctx.LastInstructions[BB->getSinglePredecessor()];
@@ -259,7 +264,7 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
   if (needsCreate) {
     auto *phi = PHINode::Create(ctx.InsertedLoads.back()->getType(), 0,
         "phi." + BB->getName(), &BB->front());
-     insertDbgValueCall(phi, ctx.F, ctx.L, BB->getFirstNonPHI()->getDebugLoc(), BB->getFirstNonPHI());
+     insertDbgValueCall(ctx, phi, ctx.DbgLoc, BB->getFirstNonPHI(), true);
     ctx.PhiLinks[BB] = new phiNodeLink(phi);
     ctx.UniqueNodes.insert(phi);
   }
@@ -397,7 +402,15 @@ bool PointerReductionPass::runOnFunction(Function &F) {
         }
       }
     }
-
+    DenseSet<Value *> toDelete;
+    for (auto *Val : Values) {
+      if (auto *Load = dyn_cast<LoadInst>(Val)) {
+        toDelete.insert(Load->getPointerOperand());
+      }
+    }
+    for (auto *el : toDelete) {
+      Values.erase(el);
+    }
     for (auto *Val : Values) {
       auto *V = Val;
       if (auto *Load = dyn_cast<LoadInst>(Val)) {
@@ -413,6 +426,30 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         continue;
       }
+      // find dbg.value call for V and save it for adding debug information later
+      for (auto &BB : F.getBasicBlockList()) {
+        for (auto &Inst : BB.getInstList()) {
+          if (auto *Dbg = dyn_cast<DbgValueInst>(&Inst)) {
+            if (Dbg->getValue() == V) {
+              ctx.DbgLoc = Dbg->getDebugLoc();
+              ctx.DbgVar = Dbg->getVariable();
+            }
+          } else if (auto *Dbg = dyn_cast<DbgDeclareInst>(&Inst)) {
+            if (Dbg->getAddress() == V) {
+              ctx.DbgLoc = Dbg->getDebugLoc();
+              ctx.DbgVar = Dbg->getVariable();
+            }
+          }
+        }
+      }
+      //there are no dbg.value or dbg.declare calls for global variables
+      if (dyn_cast<GlobalValue>(ctx.V)) {
+        auto *DIB = new DIBuilder(*ctx.F.getParent());
+        auto *scope = dyn_cast<DIScope>(L->getStartLoc()->getScope());
+        ctx.DbgVar = DIB->createAutoVariable(scope, "sapfor.da", nullptr, 0, nullptr, false, DINode::FlagZero | DINode::FlagArtificial);
+        ctx.DbgLoc = L->getStartLoc();
+      }
+
       insertLoadInstructions(ctx);
       insertPhiNodes(ctx, L->getLoopPredecessor(), true);
       DenseSet<BasicBlock *> processedBlocks;
