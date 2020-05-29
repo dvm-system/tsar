@@ -303,7 +303,7 @@ void deleteRedundantPhiNodes(PtrRedContext &ctx) {
 
 bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
   auto STR = SpanningTreeRelation<AliasTree *>(&AT);
-  auto *AliasNode = AT.find(MemoryLocation(V))->getAliasNode(AT);
+  auto *EM = AT.find(MemoryLocation(V));
   for (auto *BB : L->getBlocks()) {
     for (auto &Inst : BB->getInstList()) {
       // find where the value is defined
@@ -312,23 +312,23 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
       }
 
       bool writesToV = false;
-      auto memLambda = [&STR, &V, &AliasNode, &writesToV, &AT](Instruction &I, MemoryLocation &&Loc,
+      auto memLambda = [&STR, &V, &writesToV, &AT, &EM](Instruction &I, MemoryLocation &&Loc,
           unsigned, AccessInfo, AccessInfo IsWrite)
       {
         if (writesToV || IsWrite == AccessInfo::No || Loc.Ptr == V) {
           return;
         }
         auto instEM = AT.find(Loc);
-        if (instEM && !STR.isUnreachable(AliasNode, instEM->getAliasNode(AT))) {
+        if (EM && instEM && !STR.isUnreachable(EM->getAliasNode(AT), instEM->getAliasNode(AT))) {
           writesToV = true;
         }
       };
-      auto unknownMemLambda = [&writesToV, &AT, &STR, &AliasNode](Instruction &I, AccessInfo, AccessInfo W) {
+      auto unknownMemLambda = [&writesToV, &AT, &STR, &EM](Instruction &I, AccessInfo, AccessInfo W) {
         if (writesToV || W == AccessInfo::No) {
           return;
         }
         auto *instEM = AT.findUnknown(&I);
-        if (instEM && !STR.isUnreachable(instEM, AliasNode)) {
+        if (EM && instEM && !STR.isUnreachable(instEM, EM->getAliasNode(AT))) {
           writesToV = true;
         }
       };
