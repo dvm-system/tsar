@@ -85,9 +85,6 @@ bool validateValue(PtrRedContext &Ctx) {
   if (dyn_cast<GEPOperator>(Ctx.V)) {
     return false;
   }
-  if (dyn_cast<GlobalValue>(Ctx.V) && !Ctx.V->getType()->getPointerElementType()->isPointerTy()) {
-    return false;
-  }
   for (auto *User : Ctx.V->users()) {
     auto *GEP = dyn_cast<GetElementPtrInst>(User);
     auto *Call = dyn_cast<CallInst>(User);
