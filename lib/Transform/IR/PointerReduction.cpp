@@ -1,3 +1,4 @@
+#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
@@ -80,19 +81,6 @@ bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
   return false;
 }
 
-bool hasPathInCFG(BasicBlock *From, BasicBlock *To, DenseSet<BasicBlock *> &Visited) {
-  if (From == To) {
-    return true;
-  }
-  Visited.insert(From);
-  for (auto *succ : successors(From)) {
-    if (Visited.find(succ) == Visited.end() && hasPathInCFG(succ, To, Visited)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool validateValue(PtrRedContext &Ctx) {
   if (dyn_cast<GEPOperator>(Ctx.V)) {
     return false;
@@ -112,9 +100,7 @@ bool validateValue(PtrRedContext &Ctx) {
     }
     if (Call) {
       DenseSet<BasicBlock *> visited;
-      auto *to = Ctx.L->getHeader();
-      auto *from = Call->getParent();
-      if ((Ctx.L->contains(to) && to != Ctx.L->getExitingBlock()) || hasPathInCFG(from, to, visited)) {
+      if (Ctx.L->contains(Call->getParent()) && Call->getParent() != Ctx.L->getExitingBlock()) {
         return false;
       }
     }
@@ -316,7 +302,8 @@ void deleteRedundantPhiNodes(PtrRedContext &ctx) {
 }
 
 bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
-  auto *EM = AT.find(MemoryLocation(V));
+  auto STR = SpanningTreeRelation<AliasTree *>(&AT);
+  auto *AliasNode = AT.find(MemoryLocation(V))->getAliasNode(AT);
   for (auto *BB : L->getBlocks()) {
     for (auto &Inst : BB->getInstList()) {
       // find where the value is defined
@@ -324,29 +311,31 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
         return false;
       }
 
-     /* bool writesToV = false;
-      auto memLambda = [&EM, &writesToV, &AT](Instruction &I, MemoryLocation &&Loc,
+      bool writesToV = false;
+      auto memLambda = [&STR, &V, &AliasNode, &writesToV, &AT](Instruction &I, MemoryLocation &&Loc,
           unsigned, AccessInfo, AccessInfo IsWrite)
       {
-        if (writesToV) {
+        if (writesToV || IsWrite == AccessInfo::No || Loc.Ptr == V) {
           return;
         }
-//        if (IsWrite != AccessInfo::No) {
-          if (auto *ST = dyn_cast<StoreInst>(&I)) {
-            std::cerr << "found store " << ST->getPointerOperand()->getName().data() << std::endl;
-          }
-          auto instEM = AT.find(Loc);
-          if (EM && instEM && !EM->isUnreachable(*instEM)) {
-            std::cerr << "here" << std::endl;
-            writesToV = true;
-          }
-//        }
+        auto instEM = AT.find(Loc);
+        if (instEM && !STR.isUnreachable(AliasNode, instEM->getAliasNode(AT))) {
+          writesToV = true;
+        }
       };
-      for_each_memory(Inst, TLI, memLambda,
-        [](Instruction &, AccessInfo, AccessInfo) {});
+      auto unknownMemLambda = [&writesToV, &AT, &STR, &AliasNode](Instruction &I, AccessInfo, AccessInfo W) {
+        if (writesToV || W == AccessInfo::No) {
+          return;
+        }
+        auto *instEM = AT.findUnknown(&I);
+        if (instEM && !STR.isUnreachable(instEM, AliasNode)) {
+          writesToV = true;
+        }
+      };
+      for_each_memory(Inst, TLI, memLambda, unknownMemLambda);
       if (writesToV) {
         return false;
-      }*/
+      }
     }
   }
   return true;
