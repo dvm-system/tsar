@@ -79,6 +79,7 @@ void initializeFunctionMemoryAttrsAnalysisPass(PassRegistry &Registry);
 /// Create a pass which deduces function memory attributes.
 FunctionPass *createFunctionMemoryAttrsAnalysis();
 
+<<<<<<< HEAD
 /// Initialize a pass which marks functions which should be inlined to improve
 /// data-dependence analysis.
 void initializeDependenceInlinerAttributerPass(PassRegistry &Registry);
@@ -94,5 +95,9 @@ void initializeDependenceInlinerPassPass(PassRegistry &Registry);
 /// Create an inliner pass which handle functions which are necessary for
 /// analysis.
 Pass *createDependenceInlinerPass(bool InsertLifetime = true);
+
+void initializePointerReductionPassPass(PassRegistry &Registry);
+
+FunctionPass *createPointerReductionPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
