@@ -190,6 +190,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
         DICTy = cast<DICompositeType>(DICTy->getBaseType());
       }
       assert((DICTy->getTag() == dwarf::DW_TAG_structure_type ||
+        DICTy->getTag() == dwarf::DW_TAG_class_type ||
         DICTy->getTag() == dwarf::DW_TAG_array_type) &&
         "It must be aggregate type!");
       auto El = cast<DIDerivedType>(DICTy->getElements()[Idx]);
