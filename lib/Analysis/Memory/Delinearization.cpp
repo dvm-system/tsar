@@ -324,7 +324,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         for (auto J = DimIdx; J > 0; --J) {
           Expressions.push_back(Range.Subscripts[J - 1]);
           LLVM_DEBUG(dbgs() << "[DELINEARIZE]: use for GCD computation: ";
-            TSAR_LLVM_DUMP(Expressions.back()->dump()));
+            Expressions.back()->print(dbgs()); dbgs() << "\n");
         }
       }
       if (Expressions.empty()) {
@@ -335,7 +335,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       }
       DimSize = findGCD(Expressions, *mSE, mIsSafeTypeCast);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: ";
-        TSAR_LLVM_DUMP(DimSize->dump()));
+        DimSize->print(dbgs()); dbgs() << "\n");
       if (isa<SCEVCouldNotCompute>(DimSize)) {
         setUnknownDims(DimIdx);
         return;
@@ -352,7 +352,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
           }
         }
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: found " << LoopsToCheck.size()
-                        << "loops related to array uses\n");
+                        << " loops related to array uses\n");
       if (!LoopsToCheck.empty()) {
         SmallVector<const SCEV *, 4> InvariantFactors;
         if (auto *Factors = dyn_cast<SCEVMulExpr>(DimSize)) {
@@ -378,15 +378,15 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       DimSize = Div.Quotient;
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
-        TSAR_LLVM_DUMP(PrevDimSizesProduct->dump());
+        PrevDimSizesProduct->print(dbgs()); dbgs() << "\n";
         dbgs() << "[DELINEARIZE]: quotient ";
-        TSAR_LLVM_DUMP(Div.Quotient->dump());
+        Div.Quotient->print(dbgs()); dbgs() << "\n";
         dbgs() << "[DELINEARIZE]: remainder ";
-        TSAR_LLVM_DUMP(Div.Remainder->dump()));
+        Div.Remainder->print(dbgs()); dbgs() << "\n");
     }
     ArrayInfo.setDimSize(DimIdx, DimSize);
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is ";
-      TSAR_LLVM_DUMP(DimSize->dump()));
+      DimSize->print(dbgs()); dbgs() << "\n");
     DimSize = mSE->getTruncateOrZeroExtend(DimSize, mIndexTy);
     PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct, DimSize);
   }
@@ -484,7 +484,7 @@ void DelinearizationPass::collectArrays(Function &F) {
       if (!Visited.insert(Loc.Ptr).second)
         return;
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction ";
-        TSAR_LLVM_DUMP(I.dump()));
+        I.print(dbgs()); dbgs() << "\n");
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
       auto *DataPtr = BasePtr;
@@ -558,7 +558,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           dbgs() << "[DELINEARIZE]: no GEPs found\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : Range.Subscripts) {
-          dbgs() << "  "; TSAR_LLVM_DUMP( Subscript->dump());
+          dbgs() << "  "; Subscript->print(dbgs()); dbgs() <<"\n";
         }
       );
     };
@@ -591,7 +591,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   auto &DL = F.getParent()->getDataLayout();
   mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is ";
-    TSAR_LLVM_DUMP(mIndexTy->dump()));
+    mIndexTy->print(dbgs()); dbgs() << "\n");
   collectArrays(F);
   for (auto *ArrayInfo : mDelinearizeInfo.getArrays()) {
     fillArrayDimensionsSizes(*ArrayInfo);
