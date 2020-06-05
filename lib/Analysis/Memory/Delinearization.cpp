@@ -38,6 +38,7 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Transforms/Utils/Local.h>
@@ -90,26 +91,40 @@ template<class GEPItrT>
 bool extractSubscriptsFromGEPs(
     const GEPItrT &GEPBeginItr, const GEPItrT &GEPEndItr,
     std::size_t NumberOfDims, SmallVectorImpl<Value *> &Idxs) {
+  assert(Idxs.empty() && "List of indexes must be empty!");
+  SmallVector<Value *, 8> GEPs;
   for (auto *GEP : make_range(GEPBeginItr, GEPEndItr)) {
-    if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
-      return false;
     unsigned NumOperands = GEP->getNumOperands();
     if (NumOperands == 2) {
-      Idxs.push_back(GEP->getOperand(1));
+      GEPs.push_back(GEP->getOperand(1));
     } else {
+      unsigned StructIdx = 0;
+      for (auto I = gep_type_begin(GEP), EI = gep_type_end(GEP); I != EI; ++I) {
+        if (I.isStruct()) {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: drop ending structure\n");
+          GEPs.clear();
+          break;
+        }
+        ++StructIdx;
+      }
+      if (StructIdx == 0)
+        continue;
+      for (unsigned I =  StructIdx; I > 1; --I)
+        GEPs.push_back(GEP->getOperand(I));
       if (auto *SecondOp = dyn_cast<Constant>(GEP->getOperand(1))) {
         if (!SecondOp->isZeroValue())
-          Idxs.push_back(GEP->getOperand(1));
+          GEPs.push_back(GEP->getOperand(1));
       } else {
-        Idxs.push_back(GEP->getOperand(1));
-      }
-      for (unsigned I = 2; I < NumOperands; ++I) {
-        if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
-          return false;
-        Idxs.push_back(GEP->getOperand(I));
+        GEPs.push_back(GEP->getOperand(1));
       }
     }
   }
+  if (NumberOfDims > 0 && GEPs.size() >= NumberOfDims) {
+    std::copy(GEPs.rbegin(), GEPs.rbegin() + NumberOfDims,
+      std::back_inserter(Idxs));
+    return false;
+  }
+  std::copy(GEPs.rbegin(), GEPs.rend(), std::back_inserter(Idxs));
   return true;
 }
 
@@ -513,7 +528,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           break;
         GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
       }
-      while (GEP && (NumberOfDims == 0 || GEPs.size() < NumberOfDims)) {
+      while (GEP) {
         GEPs.push_back(GEP);
         GEP = dyn_cast<GEPOperator>(GEP->getPointerOperand());
       }
@@ -524,8 +539,8 @@ void DelinearizationPass::collectArrays(Function &F) {
         Range.setProperty(Array::Range::NoGEP);
       SmallVector<Value *, 4> SubscriptValues;
       bool UseAllSubscripts = extractSubscriptsFromGEPs(
-        GEPs.rbegin(), GEPs.rend(), NumberOfDims, SubscriptValues);
-      if (GEP || !UseAllSubscripts)
+        GEPs.begin(), GEPs.end(), NumberOfDims, SubscriptValues);
+      if (!UseAllSubscripts)
         Range.setProperty(Array::Range::IgnoreGEP);
       // In some cases zero subscript is dropping out by optimization passes.
       // So, we try to add extra zero subscripts later. We add subscripts for
