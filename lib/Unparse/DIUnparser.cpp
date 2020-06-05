@@ -45,8 +45,7 @@ LLVM_DUMP_METHOD bool DIUnparser::dump() {
 
 void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   if (Str.empty() || !mDIType || mIsDITypeEnd ||
-      !isa<GEPOperator>(mLastAddressChange) &&
-      !isa<LoadInst>(mLastAddressChange))
+      isa<AllocaInst>(mLastAddressChange))
     return;
   if (auto DICTy = dyn_cast<DICompositeType>(mDIType)) {
     // 1. There may be no 'getelementptr' instructions, this depends on
@@ -90,6 +89,10 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
           Str.append({ '[','0',']' });
         mDIType = stripDIType(DIDTy->getBaseType());
       }
+    } else {
+      // Process pointer which is stored in register, for example,
+      // if the corresponding variable has been promoted.
+      Str.append({ '[','0',']' });
     }
   } else {
     llvm_unreachable("Unsupported debug type!");
