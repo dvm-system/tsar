@@ -872,6 +872,11 @@ private:
     const msg::CalleeFuncList &Request);
   std::string answerAliasTree(llvm::Module &M, const msg::AliasTree &Request);
 
+  /// Recursively collect builtin functions in a specified contexs and
+  /// inner contexts.
+  void collectBuiltinFunctions(clang::DeclContext &DeclCtx,
+    msg::FunctionList &FuncList);
+
   bcl::IntrusiveConnection *mConnection;
   bcl::RedirectIO *mStdErr;
 
@@ -1149,6 +1154,48 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
   return json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
+void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
+    msg::FunctionList &FuncList) {
+  auto &ASTCtx = mTfmCtx->getContext();
+  auto &SrcMgr = ASTCtx.getSourceManager();
+  for (auto *D : DeclCtx.decls()) {
+    // Lookup for C builtins in CXX unit.
+    if (auto *LinkageCtx = dyn_cast<clang::LinkageSpecDecl>(D)) {
+      collectBuiltinFunctions(*LinkageCtx, FuncList);
+      continue;
+    }
+    clang::Decl *DeclToCheck = D;
+    if (auto *UD = dyn_cast<clang::UsingShadowDecl>(D)) {
+      assert(UD->getUnderlyingDecl() &&
+        "Underlying declaration in using must be known!");
+      DeclToCheck = UD->getUnderlyingDecl();
+    }
+    if (auto *FD = dyn_cast<clang::FunctionDecl>(DeclToCheck)) {
+      auto ID = FD->getBuiltinID();
+      if (ID == 0)
+        continue;
+      FD = FD->getCanonicalDecl();
+      if (!mVisibleToUser.insert(FD).second)
+        continue;
+      msg::Function Func;
+      SmallString<64> ExtraName;
+      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName);
+      // Canonical declaration may differs from declaration which has a body.
+      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
+      Func[msg::Function::User] = false;
+      Func[msg::Function::StartLocation] =
+          getLocation(FD->getLocStart(), SrcMgr);
+      Func[msg::Function::EndLocation] =
+          getLocation(FD->getLocEnd(), SrcMgr);
+      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
+          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
+          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
+        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
+          = msg::Analysis::No;
+      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+    }
+  }
+}
 
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
@@ -1205,38 +1252,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
-  for (auto *D : ASTCtx.getTranslationUnitDecl()->decls()) {
-    clang::Decl *DeclToCheck = D;
-    if (auto *UD = dyn_cast<clang::UsingShadowDecl>(D)) {
-      assert(UD->getUnderlyingDecl() &&
-        "Underlying declaration in using must be known!");
-      DeclToCheck = UD->getUnderlyingDecl();
-    }
-    if (auto *FD = dyn_cast<clang::FunctionDecl>(DeclToCheck)) {
-      auto ID = FD->getBuiltinID();
-      if (ID == 0)
-        continue;
-      FD = FD->getCanonicalDecl();
-      if (mVisibleToUser.count(FD))
-        continue;
-      msg::Function Func;
-      SmallString<64> ExtraName;
-      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName);
-      // Canonical declaration may differs from declaration which has a body.
-      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
-      Func[msg::Function::User] = false;
-      Func[msg::Function::StartLocation] =
-          getLocation(FD->getLocStart(), SrcMgr);
-      Func[msg::Function::EndLocation] =
-          getLocation(FD->getLocEnd(), SrcMgr);
-      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
-          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
-          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
-        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
-          = msg::Analysis::No;
-      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
-    }
-  }
+  collectBuiltinFunctions(*ASTCtx.getTranslationUnitDecl(), FuncList);
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
