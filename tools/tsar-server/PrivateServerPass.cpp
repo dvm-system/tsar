@@ -49,6 +49,7 @@
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -877,6 +878,11 @@ private:
   const GlobalOptions *mGlobalOpts = nullptr;
   AnalysisSocket *mSocket = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
+
+  /// List of canonical function declarations which is visible to user in GUI.
+  /// GUI knowns this function and it can highlight some information if
+  /// necessary.
+  DenseSet<clang::FunctionDecl *> mVisibleToUser;
 };
 
 /// Increments count of analyzed traits in a specified map TM.
@@ -1035,8 +1041,9 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getLocStart().getRawEncoding() !=
-        Request[msg::LoopTree::FunctionID])
+    if (!mVisibleToUser.count(CanonicalFD) ||
+        CanonicalFD->getLocStart().getRawEncoding() !=
+          Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::LoopTree>::unparseAsObject(Request);
@@ -1146,17 +1153,17 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
   auto &ASTCtx = mTfmCtx->getContext();
   auto &SrcMgr = ASTCtx.getSourceManager();
-  DenseSet<clang::FunctionDecl *> VisitedCanonicals;
   for (Function &F : M) {
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     auto *CanonicalD = FuncDecl->getCanonicalDecl();
-    VisitedCanonicals.insert(CanonicalD);
+    mVisibleToUser.insert(CanonicalD);
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
-    Func[msg::Function::Name] = FuncDecl->getName();
+    SmallString<64> ExtraName;
+    Func[msg::Function::Name] = getFunctionName(*FuncDecl, ExtraName);
     // Canonical declaration may differs from declaration which has a body.
     Func[msg::Function::ID] = CanonicalD->getLocStart().getRawEncoding();
     Func[msg::Function::User] =
@@ -1203,10 +1210,11 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
       if (ID == 0)
         continue;
       FD = FD->getCanonicalDecl();
-      if (VisitedCanonicals.count(FD))
+      if (mVisibleToUser.count(FD))
         continue;
       msg::Function Func;
-      Func[msg::Function::Name] = FD->getName();
+      SmallString<64> ExtraName;
+      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName);
       // Canonical declaration may differs from declaration which has a body.
       Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
       Func[msg::Function::User] = false;
@@ -1292,8 +1300,8 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Return)];
         (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Goto;
       } else if (auto CE = dyn_cast<clang::CallExpr>(T)) {
-        if (auto FD = CE->getDirectCallee()) {
-          FD = FD->getCanonicalDecl();
+        auto FD = CE->getDirectCallee();
+        if (FD && mVisibleToUser.count(FD = FD->getCanonicalDecl())) {
           F = &FuncMap[FD];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
           (*F)[msg::CalleeFuncInfo::CalleeID] =
@@ -1430,10 +1438,12 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
             if (auto SubMD = dyn_cast<DISubprogram>(MD)) {
               if (auto *D = mTfmCtx->getDeclForMangledName(SubMD->getName())) {
                 auto *FD = D->getCanonicalDecl()->getAsFunction();
+                SmallString<64> ExtraName;
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
-                    FD->getName();
-                M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
-                    FD->getLocStart().getRawEncoding();
+                    getFunctionName(*FD, ExtraName);
+                if (mVisibleToUser.count(FD))
+                  M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
+                      FD->getLocStart().getRawEncoding();
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
                     getLocation(FD->getLocStart(), SrcMgr);
               } else if (!ClonedUM->isExec() && !ClonedUM->isResult()) {
