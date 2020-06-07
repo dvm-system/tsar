@@ -26,6 +26,7 @@
 #include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #include <bcl/utility.h>
 #include <clang/Basic/LangOptions.h>
@@ -160,7 +161,8 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
       Line = SrcMgr.getPresumedLineNumber(
         SrcMgr.getExpansionLoc(D->getLocStart()));
       if (auto *FD = dyn_cast<FunctionDecl>(D)) {
-        Name = MDString::get(Ctx, FD->getName());
+        SmallString<64> ExtraName;
+        Name = MDString::get(Ctx, getFunctionName(*FD, ExtraName));
         if (FD->hasPrototype())
           Flags |= DINode::FlagPrototyped;
         if (FD->isImplicit())

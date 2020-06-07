@@ -26,6 +26,8 @@
 #include "tsar/Support/Utils.h"
 #include <bcl/utility.h>
 #include <clang/Analysis/CFG.h>
+#include <clang/AST/Decl.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
 #include <clang/Format/Format.h>
@@ -432,4 +434,23 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   // Replacements Replaces = sortIncludes(*Style, TfmSrc, Ranges, Filename);
   Replacements FormatChanges = reformat(*Style, TfmSrc, Ranges, Filename);
   return applyAllReplacements(TfmSrc, FormatChanges);
+}
+
+StringRef tsar::getFunctionName(FunctionDecl &FD,
+    SmallVectorImpl<char> &Name) {
+  if (auto *CXXDecl = dyn_cast<CXXMethodDecl>(&FD)) {
+    auto CXXClassName = CXXDecl->getParent()->getName();
+    switch(FD.getKind()) {
+      case Decl::CXXConstructor:
+        return (CXXClassName + "::constructor").toStringRef(Name);
+      case Decl::CXXDestructor:
+        return (CXXClassName + "::destructor").toStringRef(Name);
+      case Decl::CXXConversion:
+        return (CXXClassName + "::conversion").toStringRef(Name);
+      default:
+        llvm_unreachable("Unknown extra method in CXX declaration!");
+        return (CXXClassName + "::unknown").toStringRef(Name);
+    }
+  }
+  return FD.getName();
 }
