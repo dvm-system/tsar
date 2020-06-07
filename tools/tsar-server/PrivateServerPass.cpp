@@ -1436,7 +1436,11 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
                 M[msg::MemoryLocation::Size] = Size;
             }
           } else if (auto ClonedUM = dyn_cast<DIUnknownMemory>(T->getMemory())) {
-            auto MD = ClonedUM->getMetadata();
+            auto MemoryItr = ClonedMemory->find<Clone>(
+              const_cast<DIMemory *>(T->getMemory()));
+            auto MD = MemoryItr != ClonedMemory->end()
+                ? cast<DIUnknownMemory>(MemoryItr->get<Origin>())->getMetadata()
+                : ClonedUM->getMetadata();
             if (ClonedUM->isExec())
               AddressOS << "execution";
             else if (ClonedUM->isResult())
@@ -1444,7 +1448,10 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
             else
               AddressOS << "address";
             if (auto SubMD = dyn_cast<DISubprogram>(MD)) {
-              if (auto *D = mTfmCtx->getDeclForMangledName(SubMD->getName())) {
+              M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
+                SubMD->getName();
+              if (auto *D = mTfmCtx->getDeclForMangledName(
+                    SubMD->getLinkageName())) {
                 auto *FD = D->getCanonicalDecl()->getAsFunction();
                 SmallString<64> ExtraName;
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
