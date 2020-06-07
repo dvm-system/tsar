@@ -129,7 +129,7 @@ JSON_OBJECT_PAIR_4(Location,
   MacroLine, unsigned,
   MacroColumn, unsigned)
 
-  Location() = default;
+  Location() : JSON_INIT(Location, 0, 0, 0, 0) {}
   ~Location() = default;
 
   Location(const Location &) = default;
