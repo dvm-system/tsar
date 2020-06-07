@@ -58,6 +58,7 @@
 #include <bcl/RedirectIO.h>
 #include <bcl/utility.h>
 #include <clang/AST/ASTContext.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/AST/Expr.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/Builtins.h>
@@ -1204,8 +1205,14 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
-  for (auto *D : ASTCtx.getTranslationUnitDecl()->decls())
-    if (auto *FD = dyn_cast<clang::FunctionDecl>(D)) {
+  for (auto *D : ASTCtx.getTranslationUnitDecl()->decls()) {
+    clang::Decl *DeclToCheck = D;
+    if (auto *UD = dyn_cast<clang::UsingShadowDecl>(D)) {
+      assert(UD->getUnderlyingDecl() &&
+        "Underlying declaration in using must be known!");
+      DeclToCheck = UD->getUnderlyingDecl();
+    }
+    if (auto *FD = dyn_cast<clang::FunctionDecl>(DeclToCheck)) {
       auto ID = FD->getBuiltinID();
       if (ID == 0)
         continue;
@@ -1229,6 +1236,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
           = msg::Analysis::No;
       FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
     }
+  }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
