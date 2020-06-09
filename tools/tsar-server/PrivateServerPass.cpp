@@ -77,6 +77,22 @@ using ::llvm::Module;
 
 namespace tsar {
 namespace msg {
+/// This message provides list of all analyzed files (including implicitly
+/// analyzed header files).
+JSON_OBJECT_BEGIN(FileList)
+JSON_OBJECT_ROOT_PAIR(FileList
+  , Files, std::vector<File>
+  )
+
+  FileList() : JSON_INIT_ROOT {}
+  ~FileList() = default;
+
+  FileList(const FileList &) = default;
+  FileList & operator=(const FileList &) = default;
+  FileList(FileList &&) = default;
+  FileList & operator=(FileList &&) = default;
+JSON_OBJECT_END(FileList)
+
 /// \brief This message provides statistic of program analysis results.
 ///
 /// This contains number of analyzed files, functions, loops and variables and
@@ -371,6 +387,7 @@ JSON_OBJECT_END(Dependence)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
+JSON_DEFAULT_TRAITS(tsar::msg::, FileList)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, Loop)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
@@ -866,6 +883,7 @@ public:
 
 private:
   std::string answerStatistic(llvm::Module &M);
+  std::string answerFileList();
   std::string answerFunctionList(llvm::Module &M);
   std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
   std::string answerCalleeFuncList(llvm::Module &M,
@@ -1197,6 +1215,19 @@ void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
   }
 }
 
+std::string PrivateServerPass::answerFileList() {
+  msg::FileList FileList;
+  auto &ASTCtx = mTfmCtx->getContext();
+  auto &SrcMgr = ASTCtx.getSourceManager();
+  for (auto &Info : make_range(SrcMgr.fileinfo_begin(), SrcMgr.fileinfo_end())) {
+    msg::File File;
+    File[msg::File::ID] = Info.first->getUID();
+    File[msg::File::Name] = Info.first->getName();
+    FileList[msg::FileList::Files].emplace_back(std::move(File));
+  }
+  return json::Parser<msg::FileList>::unparseAsObject(FileList);
+}
+
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
   auto &ASTCtx = mTfmCtx->getContext();
@@ -1357,7 +1388,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
     if (CanonicalFD->getLocStart().getRawEncoding() !=
-        Request[msg::AliasTree::FuncID])
+          Request[msg::AliasTree::FuncID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::AliasTree>::unparseAsObject(Request);
@@ -1419,7 +1450,8 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
           SmallVector<DebugLoc, 1> DbgLocs;
           T->getMemory()->getDebugLoc(DbgLocs);
           for (auto DbgLoc : DbgLocs)
-            M[msg::MemoryLocation::Locations].push_back(getLocation(DbgLoc));
+            M[msg::MemoryLocation::Locations].push_back(
+              getLocation(DbgLoc, SrcMgr));
           M[msg::MemoryLocation::Traits] = &*T;
           if (auto *ClonedDIEM = dyn_cast<DIEstimateMemory>(T->getMemory())) {
             auto MemoryItr = ClonedMemory->find<Clone>(
@@ -1563,12 +1595,14 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
       return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
     }
-    json::Parser<msg::Statistic, msg::LoopTree,
+    json::Parser<msg::Statistic, msg::FileList, msg::LoopTree,
       msg::FunctionList, msg::CalleeFuncList, msg::AliasTree> P(Request);
     auto Obj = P.parse();
     assert(Obj && "Invalid request!");
     if (Obj->is<msg::Statistic>())
       return answerStatistic(M);
+    if (Obj->is<msg::FileList>())
+      return answerFileList();
     if (Obj->is<msg::LoopTree>())
       return answerLoopTree(M, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())

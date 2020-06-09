@@ -36,6 +36,7 @@
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/ADT/Optional.h>
 #include <array>
+#include <limits>
 #include <vector>
 #include <string>
 
@@ -121,15 +122,33 @@ JSON_OBJECT_ROOT_PAIR_4(Diagnostic,
   }
 JSON_OBJECT_END(Diagnostic)
 
+/// This represents a source file.
+JSON_OBJECT_BEGIN(File)
+JSON_OBJECT_PAIR_2(File
+  , ID, unsigned
+  , Name, std::string
+  )
+
+  File() : JSON_INIT(File, std::numeric_limits<unsigned>::max(), "") {}
+  ~File() = default;
+
+  File(const File &) = default;
+  File & operator=(const File &) = default;
+  File(File &&) = default;
+  File & operator=(File &&) = default;
+JSON_OBJECT_END(File)
+
 /// This represents location in a source code.
 JSON_OBJECT_BEGIN(Location)
-JSON_OBJECT_PAIR_4(Location,
+JSON_OBJECT_PAIR_6(Location,
+  File, unsigned,
   Line, unsigned,
   Column, unsigned,
+  MacroFile, unsigned,
   MacroLine, unsigned,
   MacroColumn, unsigned)
 
-  Location() : JSON_INIT(Location, 0, 0, 0, 0) {}
+  Location() : JSON_INIT(Location, 0, 0, 0, 0, 0, 0) {}
   ~Location() = default;
 
   Location(const Location &) = default;
@@ -141,6 +160,7 @@ JSON_OBJECT_END(Location)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Diagnostic)
+JSON_DEFAULT_TRAITS(tsar::msg::, File)
 JSON_DEFAULT_TRAITS(tsar::msg::, Location)
 
 namespace json {
