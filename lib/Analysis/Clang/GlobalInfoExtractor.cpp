@@ -94,7 +94,7 @@ bool GlobalInfoExtractor::VisitTypeLoc(TypeLoc TL) {
 }
 
 bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
-  if (isa<TranslationUnitDecl>(D))
+  if (!D || isa<TranslationUnitDecl>(D))
     return RecursiveASTVisitor::TraverseDecl(D);
   traverseSourceLocation(D, [this](SourceLocation Loc) { visitLoc(Loc); });
 #ifdef LLVM_DEBUG
