@@ -59,7 +59,7 @@ class DefaultClauseVisitor :
 public:
   /// Creates visitor.
   DefaultClauseVisitor(clang::Preprocessor &PP, ReplacementT &Replacement) :
-    BaseT(PP, Replacement) {}
+    BaseT(PP, Replacement), mLangOpts(PP.getLangOpts()) {}
 
   using BaseT::getReplacement;
   using BaseT::getLevelKind;
@@ -98,9 +98,12 @@ public:
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::kw_sizeof, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    // C++ does not allow to get size of void.
+    if (!mLangOpts.CPlusPlus) {
+      AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+      AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
+      AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
+    }
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     getReplacement().push_back(Tok);
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
@@ -132,6 +135,9 @@ public:
     getReplacement().push_back(Tok);
     AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
   }
+
+private:
+  const LangOptions &mLangOpts;
 };
 }
 
