@@ -409,8 +409,10 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     MatchFinder.matchAST(Unit->getASTContext());
     if (Search.isFound())
       break;
-    if (Pos == 0)
+    if (Pos == 0) {
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
       return std::vector<StringRef>();
+    }
     std::swap(Tokens[Pos], Tokens[Pos - 1]);
   }
   bcl::swapMemory(llvm::errs(), llvm::nulls());
