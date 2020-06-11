@@ -51,7 +51,7 @@
 #===------------------------------------------------------------------------===#
 
 package Plugins::TsarPlugin;
-use Plugins::Base v0.4.1;
+use Plugins::Base v0.4.3;
 use base qw(Plugins::Base);
 
 use File::Path qw(remove_tree);
@@ -135,8 +135,8 @@ sub process {
     multiline => {'' => [qw(sample_diff run)]},
     required  => {'' => [qw(sample run)]});
   my $sample = $task->get_var('', 'sample');
-  my @sample_diff = $task->get_arr('', 'sample_diff') if $task->has_var('', 'sample_diff');
-  my $comment = $task->get_var('', 'comment');
+  my @sample_diff = $task->get_arr('', 'sample_diff', []);
+  my $comment = $task->get_var('', 'comment', '');
   unless ($comment) {
     my ($sample_name, $sample_path, $sample_suffix) = fileparse($sample, keys %comments);
     error("prefix of a single line comment can not be inferred from an extension".
@@ -282,18 +282,14 @@ sub process {
         error("can not copy output '$output_file' to sample '$sample'");
       }
       if (@no_changes) {
-        print_out($task->name . " - no changes in @no_changes");
-      } else {
-        print_out($task->name);
+        print_out($task->name . " - no changes in @no_changes\n");
       }
     } elsif ($action eq 'check') {
       copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
-      print_out($task->name);
     } else {
       error("unknown action specified '$action'");
     }
     remove_tree $work_dir;
-    print_out(" - ok\n");
   } else {
     error("unknown action specified '$action'") unless ($action eq 'check');
     dbg1 and dprint("restore sample files");
