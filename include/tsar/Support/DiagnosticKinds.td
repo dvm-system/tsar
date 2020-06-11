@@ -89,6 +89,7 @@ def note_inline_different_num_params : Note<"number of formal parameters differs
 
 def remark_inline : Remark<"inline expansion of function call">;
 def remark_remove_unreachable : Remark<"remove unreachable code">;
+def remark_remove_de_decl : Remark<"remove unused declaration">;
 
 def note_decl_hide : Note<"declaration hides other declaration">;
 def note_expanded_from_here : Note<"expanded from here">;
@@ -139,3 +140,16 @@ def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
 def warn_region_add_loop_unable : Warning<"unable to mark loop for optimization">;
 def warn_region_add_call_unable : Warning<"unable to mark function call for optimization">;
 def warn_region_not_found : Warning<"optimization region with name '%0' not found">;
+
+def warn_disable_replace_struct : Warning<"disable structure replacement">;
+def warn_disable_replace_struct_no_param : Warning<"unable to replace any variable except argument">;
+def warn_disable_replace_struct_no_pointer : Warning<"disable replacement of a non-pointer type">;
+def warn_disable_replace_struct_no_struct : Warning<"disable replacement of a non-structure type">;
+def warn_disable_replace_struct_system : Warning<"disable replacement of a non-user defined function">;
+
+def note_replace_struct_arrow: Note<"not-arrow access prevent replacement">;
+def note_replace_struct_decl: Note<"unable to build declaration of a record member">;
+def note_replace_struct_macro_prevent : Note<"macro prevent replacement">;
+def note_replace_struct_de_decl : Note<"unable to remove unused declaration">;
+
+def remark_replace_struct: Remark<"structure replacement">;

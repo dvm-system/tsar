@@ -32,6 +32,7 @@ void llvm::initializeClangTransform(PassRegistry &Registry) {
   initializeClangExprPropagationPass(Registry);
   initializeClangInlinerPassPass(Registry);
   initializeClangRenameLocalPassPass(Registry);
+  initializeClangStructureReplacementPassPass(Registry);
   initializeClangDeadDeclsEliminationPass(Registry);
   initializeClangOpenMPParallelizationPass(Registry);
   initializeClangDVMHSMParallelizationPass(Registry);

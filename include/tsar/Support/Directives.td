@@ -102,6 +102,9 @@ def Propagate : Clause<"propagate", Transform>;
 
 def Rename : Clause<"rename", Transform>;
 
+def Replace : Clause<"replace", Transform,
+  [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
+
 def Private : Clause<"private", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
