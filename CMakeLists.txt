@@ -255,9 +255,30 @@ if (MSVC)
   endif()
 endif()
 
+set(PTS_EXECUTABLE "" CACHE FILEPATH
+  "Path to PTS (targets to run TSAR tests are generated if it is specified)")
+get_filename_component(PTS_PLUGIN_PATH utils ABSOLUTE)
+get_filename_component(PTS_SETENV_PATH test ABSOLUTE)
+
+if(BUILD_TESTING)
+  find_package(Perl)
+  if (NOT PERL_FOUND)
+    message(SEND_ERROR "Could NOT find Perl which is required to run tests. "
+                       "Disable BUILD_TESTING option to skip testing.")
+  else()
+    message(STATUS "Perl version: ${PERL_VERSION_STRING}")
+  endif()
+  if (NOT EXISTS "${PTS_EXECUTABLE}")
+    message(SEND_ERROR "Could NOT find PTS which is required tu run tests. "
+                       "Disable BUILD_TESTING option to skip testing.")
+  endif()
+
+  enable_testing()
+endif()
+
 add_subdirectory(utils/TableGen)
 add_subdirectory(lib tsar)
-add_subdirectory(test)
 add_subdirectory(tools)
+add_subdirectory(test)
 
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
