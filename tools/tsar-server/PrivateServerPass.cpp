@@ -49,6 +49,7 @@
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -57,6 +58,7 @@
 #include <bcl/RedirectIO.h>
 #include <bcl/utility.h>
 #include <clang/AST/ASTContext.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/AST/Expr.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/Builtins.h>
@@ -75,6 +77,22 @@ using ::llvm::Module;
 
 namespace tsar {
 namespace msg {
+/// This message provides list of all analyzed files (including implicitly
+/// analyzed header files).
+JSON_OBJECT_BEGIN(FileList)
+JSON_OBJECT_ROOT_PAIR(FileList
+  , Files, std::vector<File>
+  )
+
+  FileList() : JSON_INIT_ROOT {}
+  ~FileList() = default;
+
+  FileList(const FileList &) = default;
+  FileList & operator=(const FileList &) = default;
+  FileList(FileList &&) = default;
+  FileList & operator=(FileList &&) = default;
+JSON_OBJECT_END(FileList)
+
 /// \brief This message provides statistic of program analysis results.
 ///
 /// This contains number of analyzed files, functions, loops and variables and
@@ -369,6 +387,7 @@ JSON_OBJECT_END(Dependence)
 }
 
 JSON_DEFAULT_TRAITS(tsar::msg::, Statistic)
+JSON_DEFAULT_TRAITS(tsar::msg::, FileList)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTraits)
 JSON_DEFAULT_TRAITS(tsar::msg::, Loop)
 JSON_DEFAULT_TRAITS(tsar::msg::, LoopTree)
@@ -864,11 +883,17 @@ public:
 
 private:
   std::string answerStatistic(llvm::Module &M);
+  std::string answerFileList();
   std::string answerFunctionList(llvm::Module &M);
   std::string answerLoopTree(llvm::Module &M, const msg::LoopTree &Request);
   std::string answerCalleeFuncList(llvm::Module &M,
     const msg::CalleeFuncList &Request);
   std::string answerAliasTree(llvm::Module &M, const msg::AliasTree &Request);
+
+  /// Recursively collect builtin functions in a specified contexs and
+  /// inner contexts.
+  void collectBuiltinFunctions(clang::DeclContext &DeclCtx,
+    msg::FunctionList &FuncList);
 
   bcl::IntrusiveConnection *mConnection;
   bcl::RedirectIO *mStdErr;
@@ -877,6 +902,11 @@ private:
   const GlobalOptions *mGlobalOpts = nullptr;
   AnalysisSocket *mSocket = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
+
+  /// List of canonical function declarations which is visible to user in GUI.
+  /// GUI knowns this function and it can highlight some information if
+  /// necessary.
+  DenseSet<clang::FunctionDecl *> mVisibleToUser;
 };
 
 /// Increments count of analyzed traits in a specified map TM.
@@ -1035,8 +1065,9 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getLocStart().getRawEncoding() !=
-        Request[msg::LoopTree::FunctionID])
+    if (!mVisibleToUser.count(CanonicalFD) ||
+        CanonicalFD->getLocStart().getRawEncoding() !=
+          Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::LoopTree>::unparseAsObject(Request);
@@ -1141,22 +1172,77 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
   return json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
+void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
+    msg::FunctionList &FuncList) {
+  auto &ASTCtx = mTfmCtx->getContext();
+  auto &SrcMgr = ASTCtx.getSourceManager();
+  for (auto *D : DeclCtx.decls()) {
+    // Lookup for C builtins in CXX unit.
+    if (auto *LinkageCtx = dyn_cast<clang::LinkageSpecDecl>(D)) {
+      collectBuiltinFunctions(*LinkageCtx, FuncList);
+      continue;
+    }
+    clang::Decl *DeclToCheck = D;
+    if (auto *UD = dyn_cast<clang::UsingShadowDecl>(D)) {
+      assert(UD->getUnderlyingDecl() &&
+        "Underlying declaration in using must be known!");
+      DeclToCheck = UD->getUnderlyingDecl();
+    }
+    if (auto *FD = dyn_cast<clang::FunctionDecl>(DeclToCheck)) {
+      auto ID = FD->getBuiltinID();
+      if (ID == 0)
+        continue;
+      FD = FD->getCanonicalDecl();
+      if (!mVisibleToUser.insert(FD).second)
+        continue;
+      msg::Function Func;
+      SmallString<64> ExtraName;
+      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName);
+      // Canonical declaration may differs from declaration which has a body.
+      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
+      Func[msg::Function::User] = false;
+      Func[msg::Function::StartLocation] =
+          getLocation(FD->getLocStart(), SrcMgr);
+      Func[msg::Function::EndLocation] =
+          getLocation(FD->getLocEnd(), SrcMgr);
+      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
+          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
+          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
+        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
+          = msg::Analysis::No;
+      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+    }
+  }
+}
+
+std::string PrivateServerPass::answerFileList() {
+  msg::FileList FileList;
+  auto &ASTCtx = mTfmCtx->getContext();
+  auto &SrcMgr = ASTCtx.getSourceManager();
+  for (auto &Info : make_range(SrcMgr.fileinfo_begin(), SrcMgr.fileinfo_end())) {
+    msg::File File;
+    File[msg::File::ID] = Info.first->getUID();
+    File[msg::File::Name] = Info.first->getName();
+    FileList[msg::FileList::Files].emplace_back(std::move(File));
+  }
+  return json::Parser<msg::FileList>::unparseAsObject(FileList);
+}
 
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
   auto &ASTCtx = mTfmCtx->getContext();
   auto &SrcMgr = ASTCtx.getSourceManager();
-  DenseSet<clang::FunctionDecl *> VisitedCanonicals;
   for (Function &F : M) {
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     auto *CanonicalD = FuncDecl->getCanonicalDecl();
-    VisitedCanonicals.insert(CanonicalD);
+    mVisibleToUser.insert(CanonicalD);
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
-    Func[msg::Function::Name] = FuncDecl->getName();
+    SmallString<64> ExtraName;
+    Func[msg::Function::Name] = getFunctionName(*FuncDecl, ExtraName);
     // Canonical declaration may differs from declaration which has a body.
     Func[msg::Function::ID] = CanonicalD->getLocStart().getRawEncoding();
     Func[msg::Function::User] =
@@ -1197,30 +1283,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
-  for (auto *D : ASTCtx.getTranslationUnitDecl()->decls())
-    if (auto *FD = dyn_cast<clang::FunctionDecl>(D)) {
-      auto ID = FD->getBuiltinID();
-      if (ID == 0)
-        continue;
-      FD = FD->getCanonicalDecl();
-      if (VisitedCanonicals.count(FD))
-        continue;
-      msg::Function Func;
-      Func[msg::Function::Name] = FD->getName();
-      // Canonical declaration may differs from declaration which has a body.
-      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
-      Func[msg::Function::User] = false;
-      Func[msg::Function::StartLocation] =
-          getLocation(FD->getLocStart(), SrcMgr);
-      Func[msg::Function::EndLocation] =
-          getLocation(FD->getLocEnd(), SrcMgr);
-      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
-          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
-          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
-        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
-          = msg::Analysis::No;
-      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
-    }
+  collectBuiltinFunctions(*ASTCtx.getTranslationUnitDecl(), FuncList);
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
@@ -1292,8 +1355,8 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Return)];
         (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Goto;
       } else if (auto CE = dyn_cast<clang::CallExpr>(T)) {
-        if (auto FD = CE->getDirectCallee()) {
-          FD = FD->getCanonicalDecl();
+        auto FD = CE->getDirectCallee();
+        if (FD && mVisibleToUser.count(FD = FD->getCanonicalDecl())) {
           F = &FuncMap[FD];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
           (*F)[msg::CalleeFuncInfo::CalleeID] =
@@ -1325,7 +1388,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
     if (CanonicalFD->getLocStart().getRawEncoding() !=
-        Request[msg::AliasTree::FuncID])
+          Request[msg::AliasTree::FuncID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::AliasTree>::unparseAsObject(Request);
@@ -1387,7 +1450,8 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
           SmallVector<DebugLoc, 1> DbgLocs;
           T->getMemory()->getDebugLoc(DbgLocs);
           for (auto DbgLoc : DbgLocs)
-            M[msg::MemoryLocation::Locations].push_back(getLocation(DbgLoc));
+            M[msg::MemoryLocation::Locations].push_back(
+              getLocation(DbgLoc, SrcMgr));
           M[msg::MemoryLocation::Traits] = &*T;
           if (auto *ClonedDIEM = dyn_cast<DIEstimateMemory>(T->getMemory())) {
             auto MemoryItr = ClonedMemory->find<Clone>(
@@ -1420,7 +1484,11 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
                 M[msg::MemoryLocation::Size] = Size;
             }
           } else if (auto ClonedUM = dyn_cast<DIUnknownMemory>(T->getMemory())) {
-            auto MD = ClonedUM->getMetadata();
+            auto MemoryItr = ClonedMemory->find<Clone>(
+              const_cast<DIMemory *>(T->getMemory()));
+            auto MD = MemoryItr != ClonedMemory->end()
+                ? cast<DIUnknownMemory>(MemoryItr->get<Origin>())->getMetadata()
+                : ClonedUM->getMetadata();
             if (ClonedUM->isExec())
               AddressOS << "execution";
             else if (ClonedUM->isResult())
@@ -1428,12 +1496,17 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
             else
               AddressOS << "address";
             if (auto SubMD = dyn_cast<DISubprogram>(MD)) {
-              if (auto *D = mTfmCtx->getDeclForMangledName(SubMD->getName())) {
+              M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
+                SubMD->getName();
+              if (auto *D = mTfmCtx->getDeclForMangledName(
+                    SubMD->getLinkageName())) {
                 auto *FD = D->getCanonicalDecl()->getAsFunction();
+                SmallString<64> ExtraName;
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
-                    FD->getName();
-                M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
-                    FD->getLocStart().getRawEncoding();
+                    getFunctionName(*FD, ExtraName);
+                if (mVisibleToUser.count(FD))
+                  M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
+                      FD->getLocStart().getRawEncoding();
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
                     getLocation(FD->getLocStart(), SrcMgr);
               } else if (!ClonedUM->isExec() && !ClonedUM->isResult()) {
@@ -1522,12 +1595,14 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
       return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
     }
-    json::Parser<msg::Statistic, msg::LoopTree,
+    json::Parser<msg::Statistic, msg::FileList, msg::LoopTree,
       msg::FunctionList, msg::CalleeFuncList, msg::AliasTree> P(Request);
     auto Obj = P.parse();
     assert(Obj && "Invalid request!");
     if (Obj->is<msg::Statistic>())
       return answerStatistic(M);
+    if (Obj->is<msg::FileList>())
+      return answerFileList();
     if (Obj->is<msg::LoopTree>())
       return answerLoopTree(M, Obj->as<msg::LoopTree>());
     if (Obj->is<msg::FunctionList>())

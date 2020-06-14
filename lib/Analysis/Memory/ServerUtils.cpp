@@ -92,6 +92,17 @@ struct DICompileUnitSearch {
 void ClientToServerMemory::initializeServer(
     llvm::Pass &P, llvm::Module &ClientM, llvm::Module &ServerM,
     llvm::ValueToValueMapTy &ClientToServer, llvm::legacy::PassManager &PM) {
+  /// Manually attach sapfor.dbg metadata to cloned objects.
+  for (auto &ClientF : ClientM) {
+    auto F = ClientToServer[&ClientF];
+    assert(F && "Mapped function for a specified one must exist!");
+    if (!findMetadata(cast<Function>(F)))
+      if (auto *ClientMD = findMetadata(&ClientF)) {
+        auto MD = ClientToServer.getMappedMD(ClientMD);
+        assert(MD && "Mapped metadata for a subprogram must exist!");
+        cast<Function>(F)->setMetadata("sapfor.dbg", cast<MDNode>(*MD));
+      }
+  }
   // Add list DICompileUnits (this may occur due to manual mapping performed
   // in prepareToClone().
   // TODO (kaniandr@gmail.com): it seems that the appropriate check will be

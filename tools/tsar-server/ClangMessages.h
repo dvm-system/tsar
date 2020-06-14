@@ -42,6 +42,7 @@ msg::Location getLocation(
   const clang::SourceLocation &SLoc, const clang::SourceManager &SrcMgr);
 
 /// Convert a specified location to JSON.
-msg::Location getLocation(llvm::DebugLoc &Loc);
+msg::Location getLocation(
+  llvm::DebugLoc &Loc, const clang::SourceManager &SrcMgr);
 }
 #endif//TSAR_CLANG_MESSAGES_H

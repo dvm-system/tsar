@@ -26,6 +26,8 @@
 #include "tsar/Support/Utils.h"
 #include <bcl/utility.h>
 #include <clang/Analysis/CFG.h>
+#include <clang/AST/Decl.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
 #include <clang/Format/Format.h>
@@ -323,16 +325,32 @@ public:
     mType(Type), mId(Id), mProcessor(P) {}
 
   void run(const ast_matchers::MatchFinder::MatchResult &MR) {
-    auto *VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+    auto VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
     if (!VD)
       return;
-    SmallString<32> Buffer;
+    // Check that string representation of declaration matchs the declaration
+    // candidate. Sometimes representation of incorrect declaration in AST
+    // differs from original string and can be correctly unparsed.
+    // For example, 'int [5] D' is parsed to declaration of 'D'
+    // of type 'int [5]'. In this case previouse check has marked the tested
+    // string as correct. However,it is still incorrect, but print() of built
+    // declaration returns correct string 'int D[5]' which differs from
+    // tested one.
+    SmallString<128> CheckStr, BuildStr;
+    raw_svector_ostream OS(BuildStr);
+    VD->print(OS);
+    BuildStr.erase(remove_if(BuildStr, isspace), BuildStr.end());
+    join(mTokens.begin(), mTokens.end(), "", CheckStr);
+    SmallString<32> TypeBuffer;
     mIsFound |= (VD->getName() == mId &&
-      mProcessor(VD->getType().getAsString(), Buffer) == mType);
+      mProcessor(VD->getType().getAsString(), TypeBuffer) == mType &&
+      CheckStr == BuildStr);
     LLVM_DEBUG({
       bcl::swapMemory(llvm::errs(), llvm::nulls());
-      dbgs() << "[BUILD DECLARATION]: candidate type '" << Buffer << "'\n";
+      dbgs() << "[BUILD DECLARATION]: candidate type '" << TypeBuffer << "'\n";
       dbgs() << "[BUILD DECLARATION]: candidate id '" << VD->getName() << "'\n";
+      dbgs() << "[BUILD DECLARATION]: candidate declaration '" << OS.str()
+             << "'\n";
       if (isFound())
         dbgs() << "[BUILD DECLARATION]: successful build\n";
       bcl::swapMemory(llvm::errs(), llvm::nulls());
@@ -344,10 +362,13 @@ public:
   StringRef getType() const { return mType; }
   StringRef getId() const { return mId; }
 
+  void setTokens(ArrayRef<StringRef> Tokens) { mTokens = Tokens; }
+
 private:
   StringRef mType;
   StringRef mId;
   ProcessorT mProcessor;
+  ArrayRef<StringRef> mTokens;
   bool mIsFound = false;
 };
 }
@@ -404,11 +425,14 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     assert(Unit && "AST construction failed");
     // AST can be correctly parsed even with errors.
     // So, we ignore all and just try to find our node.
+    Search.setTokens(Tokens);
     MatchFinder.matchAST(Unit->getASTContext());
     if (Search.isFound())
       break;
-    if (Pos == 0)
+    if (Pos == 0) {
+      bcl::swapMemory(llvm::errs(), llvm::nulls());
       return std::vector<StringRef>();
+    }
     std::swap(Tokens[Pos], Tokens[Pos - 1]);
   }
   bcl::swapMemory(llvm::errs(), llvm::nulls());
@@ -432,4 +456,23 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   // Replacements Replaces = sortIncludes(*Style, TfmSrc, Ranges, Filename);
   Replacements FormatChanges = reformat(*Style, TfmSrc, Ranges, Filename);
   return applyAllReplacements(TfmSrc, FormatChanges);
+}
+
+StringRef tsar::getFunctionName(FunctionDecl &FD,
+    SmallVectorImpl<char> &Name) {
+  if (auto *CXXDecl = dyn_cast<CXXMethodDecl>(&FD)) {
+    auto CXXClassName = CXXDecl->getParent()->getName();
+    switch(FD.getKind()) {
+      case Decl::CXXConstructor:
+        return (CXXClassName + "::constructor").toStringRef(Name);
+      case Decl::CXXDestructor:
+        return (CXXClassName + "::destructor").toStringRef(Name);
+      case Decl::CXXConversion:
+        return (CXXClassName + "::conversion").toStringRef(Name);
+      default:
+        llvm_unreachable("Unknown extra method in CXX declaration!");
+        return (CXXClassName + "::unknown").toStringRef(Name);
+    }
+  }
+  return FD.getName();
 }

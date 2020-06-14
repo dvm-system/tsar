@@ -76,6 +76,7 @@ Pragma::Clause Pragma::clause(clause_iterator I) {
 bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
   if (!P || P.getDirectiveId() != getParent(Id))
     return false;
+  auto CSize = Clauses.size();
   for (auto CI = P.clause_begin(), CE = P.clause_end(); CI != CE; ++CI) {
     ClauseId CId;
     if (!getTsarClause(P.getDirectiveId(), Pragma::clause(CI).getName(), CId))
@@ -83,7 +84,7 @@ bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
     if (CId == Id)
       Clauses.push_back(*CI);
   }
-  return !Clauses.empty();
+  return CSize != Clauses.size();
 }
 
 std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,

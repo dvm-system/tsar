@@ -1,4 +1,5 @@
 add_subdirectory(de_decls)
 add_subdirectory(inline)
 add_subdirectory(propagate)
+add_subdirectory(replace)
 add_subdirectory(openmp)
