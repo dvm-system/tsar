@@ -73,18 +73,7 @@ class ClonedDIMemoryMatcherInfo {
       mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
     void allUsesReplacedWith(llvm::Value *V) override {
-      if (auto F = llvm::dyn_cast<llvm::Function>(V)) {
-        auto Itr = mInfo->mMatchers.find_as(
-          llvm::cast<llvm::Function>(getValPtr()));
-        if (Itr == mInfo->mMatchers.end())
-          return;
-        auto Pair = mInfo->insert(*F);
-        if (Pair.second)
-          *Pair.first = std::move(Itr->second);
-        mInfo->mMatchers.erase(Itr);
-      } else {
-        mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
-      }
+      mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
   public:
     FunctionCallbackVH(llvm::Value *V, ClonedDIMemoryMatcherInfo *I = nullptr) :
