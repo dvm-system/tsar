@@ -119,7 +119,7 @@ bool extractSubscriptsFromGEPs(
       }
     }
   }
-  if (NumberOfDims > 0 && GEPs.size() >= NumberOfDims) {
+  if (NumberOfDims > 0 && GEPs.size() > NumberOfDims) {
     std::copy(GEPs.rbegin(), GEPs.rbegin() + NumberOfDims,
       std::back_inserter(Idxs));
     return false;
