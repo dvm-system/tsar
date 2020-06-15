@@ -37,6 +37,7 @@
 # include "tsar/APC/Utils.h"
 #endif
 #include <clang/Frontend/FrontendActions.h>
+#include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
@@ -107,6 +108,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoCaretDiagnostics;
   llvm::cl::opt<bool> ShowSourceLocation;
   llvm::cl::opt<bool> NoShowSourceLocation;
+  llvm::cl::opt<std::string> BuildPath;
+  llvm::cl::alias BuildPathA;
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
@@ -193,6 +196,9 @@ Options::Options() :
     cl::desc("Print source file/line/column information in diagnostic")),
   NoShowSourceLocation("fno-show-source-location", cl::cat(CompileCategory),
     cl::desc("Do not print source file/line/column information in diagnostic.")),
+  BuildPath("build-path", cl::desc("Starting point to look up for compilation database in upward direction"),
+    cl::cat(CompileCategory)),
+  BuildPathA("p", cl::aliasopt(BuildPath), cl::desc("Alias for -build-path")),
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
@@ -325,14 +331,16 @@ void Options::printVersion(raw_ostream &OS) {
 /// It seems that there is no other way to set options for LLVM passes
 /// because '-mllvm <arg>' option works only for Clang.
 static std::vector<const char *> addInternalArgs(int Argc, const char **Argv) {
-  std::vector<const char *> Args(Argc);
-  std::copy(Argv, Argv + Argc, Args.begin());
+  std::vector<const char *> Args;
+  Args.push_back(Argv[0]);
   if (!std::count_if(Argv, Argv + Argc, [](const char *Arg) {
-    const char Opt[] = "-instcombine-lower-dbg-declare";
-    return bcl::array_sizeof(Opt) - 1 < std::strlen(Arg) &&
-      std::strncmp(Opt, Arg, bcl::array_sizeof(Opt) - 1) == 0;
-  }))
+        const char Opt[] = "-instcombine-lower-dbg-declare";
+        return bcl::array_sizeof(Opt) - 1 < std::strlen(Arg) &&
+               std::strncmp(Opt, Arg, bcl::array_sizeof(Opt) - 1) == 0;
+      })) {
     Args.emplace_back("-instcombine-lower-dbg-declare=0");
+  }
+  std::copy(Argv + 1, Argv + Argc, std::back_inserter(Args));
   return Args;
 }
 
@@ -419,7 +427,6 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
       mPrintSteps |= 1u << (Step - 1);
     }
   }
-
 }
 
 void Tool::storeCLOptions() {
@@ -460,8 +467,31 @@ void Tool::storeCLOptions() {
     mCommandLine.emplace_back("-fmath-errno");
   if (Options::get().NoMathErrno)
     mCommandLine.emplace_back("-fno-math-errno");
-  mCompilations = std::unique_ptr<CompilationDatabase>(
-    new FixedCompilationDatabase(".", mCommandLine));
+  if (!Options::get().BuildPath.empty()) {
+    std::string ErrorMessage;
+    mCompilations =
+        CompilationDatabase::autoDetectFromDirectory(
+          Options::get().BuildPath, ErrorMessage);
+    if (!mCompilations && !ErrorMessage.empty()) {
+      ErrorMessage.append("\n");
+      llvm::errs() << "Error while trying to load a compilation database:\n"
+                   << ErrorMessage
+                   << "Running with command line specified flags only.\n";
+      mCompilations = std::unique_ptr<CompilationDatabase>(
+        new FixedCompilationDatabase(".", mCommandLine));
+    } else {
+      auto AdjustingCompilations =
+          llvm::make_unique<ArgumentsAdjustingCompilations>(
+              std::move(mCompilations));
+      auto Adjuster =
+          getInsertArgumentAdjuster(mCommandLine, ArgumentInsertPosition::BEGIN);
+      AdjustingCompilations->appendArgumentsAdjuster(Adjuster);
+      mCompilations = std::move(AdjustingCompilations);
+    }
+  } else {
+    mCompilations = std::unique_ptr<CompilationDatabase>(
+      new FixedCompilationDatabase(".", mCommandLine));
+  }
   OptionList IncompatibleOpts;
   auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
     if (O)
