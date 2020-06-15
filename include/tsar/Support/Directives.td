@@ -94,6 +94,8 @@ class Clause<string name, Directive parent, list<Expr> expr_list = []> {
   list<Expr> ExprList = expr_list;
 }
 
+def NoStrict : Clause<"nostrict", Transform>;
+
 def Inline : Clause<"inline", Transform>;
 
 def NoInline : Clause<"noinline", Transform>;
