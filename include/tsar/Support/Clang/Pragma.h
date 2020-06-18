@@ -127,12 +127,15 @@ struct PragmaFlags {
 /// \post If pragma is in macro it can not be removed. If there are no other
 /// clauses in the pragma `P` except clauses from the list `Clauses` the whole
 /// pragma can be removed. So, the range of this pragma will be stored.
+/// To disable some checks use `Ignore` parameter. Currently macros cannot be
+/// processed even in the presence of this parameter.
 ///
 /// TODO (kaniandr@gmail.com): check this for Microsoft-like pragmas.
 std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   const llvm::SmallVectorImpl<clang::Stmt *> &Clauses,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
-  llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove);
+  llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove,
+  PragmaFlags::Flags Ignore = PragmaFlags::DefaultFlags);
 
 /// Constructs a string representation of a pragma according to introducer kind.
 llvm::StringRef getPragmaText(DirectiveId Id, llvm::SmallVectorImpl<char> &Out,

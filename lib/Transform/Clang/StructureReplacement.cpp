@@ -146,7 +146,8 @@ public:
       if (P.clause_size() > Clauses.size())
         Clauses.resize(StashSize);
       auto IsPossible =
-        pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, mToRemove);
+        pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, mToRemove,
+          PragmaFlags::IsInHeader);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),

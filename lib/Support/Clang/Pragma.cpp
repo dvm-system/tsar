@@ -27,6 +27,7 @@
 #include <clang/AST/Expr.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
+#include <type_traits>
 
 using namespace clang;
 using namespace llvm;
@@ -90,8 +91,12 @@ bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
 std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
     const SmallVectorImpl<Stmt *> &Clauses,
     const SourceManager &SM, const LangOptions &LangOpts,
-    SmallVectorImpl<CharSourceRange> &ToRemove) {
+    SmallVectorImpl<CharSourceRange> &ToRemove, PragmaFlags::Flags Ignore) {
   assert(P && "Pragma must be valid!");
+  using FlagRawT = std::underlying_type<PragmaFlags::Flags>::type;
+  auto IgnoreMask = std::numeric_limits<FlagRawT>::max() ^ Ignore;
+  // It isn't safe to remove clauses in macro, so always prevent transformation.
+  IgnoreMask |= PragmaFlags::IsInMacro;
   SourceLocation PStart = P.getNamespace()->getLocStart();
   SourceLocation PEnd = P.getNamespace()->getLocEnd();
   if (PStart.isInvalid())
@@ -101,7 +106,7 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
     SM.getDecomposedIncludedLoc(PStartDExp.first).first.isValid() ?
     PragmaFlags::IsInHeader : PragmaFlags::DefaultFlags;
   if (PStart.isFileID()) {
-    if (ErrFlags)
+    if (ErrFlags & IgnoreMask)
       return { false, ErrFlags };
     if (Clauses.size() == P.clause_size())
       ToRemove.push_back(
@@ -116,7 +121,7 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   if (Lexer::getRawToken(PStartExp, Tok, SM, LangOpts) ||
       Tok.isNot(tok::raw_identifier) || Tok.getRawIdentifier() != "_Pragma")
     ErrFlags |= PragmaFlags::IsInMacro;
-  if (ErrFlags)
+  if (ErrFlags & IgnoreMask)
     return { false, ErrFlags };
   if (Clauses.size() == P.clause_size()) {
     ToRemove.push_back(SM.getExpansionRange({ PStart, PEnd }));
