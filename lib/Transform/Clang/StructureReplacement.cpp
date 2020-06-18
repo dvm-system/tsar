@@ -444,7 +444,7 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
     if (ReplacementItr == Collector.getCandidates().end())
       continue;
     SmallString<128> NewParams;
-    // We also remove an unsed parameter if it is mentioned in replace clause.
+    // We also remove an unused parameter if it is mentioned in replace clause.
     if (ReplacementItr->second.empty()) {
       SourceLocation EndLoc = PD->getLocEnd();
       Token CommaTok;
