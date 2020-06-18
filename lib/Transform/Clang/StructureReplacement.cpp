@@ -26,6 +26,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Analysis/Clang/IncludeTree.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
@@ -64,6 +65,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TransformationEnginePass>();
     AU.addRequired<ClangGlobalInfoPass>();
+    AU.addRequired<ClangIncludeTreePass>();
     AU.getPreservesAll();
   }
 
@@ -336,6 +338,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(ClangStructureReplacementPass,
   tsar::TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
+INITIALIZE_PASS_DEPENDENCY(ClangIncludeTreePass)
 INITIALIZE_PASS_IN_GROUP_END(ClangStructureReplacementPass,
   "clang-struct-replacement", "Source-level Structure Replacement (Clang)",
   false, false,
@@ -421,21 +424,31 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
     NameRange.getBegin().getLocWithOffset(FuncDecl->getName().size() - 1));
   Canvas.ReplaceText(NameRange, NewName);
   // Look up for declaration of types of parameters.
+  auto &FT = getAnalysis<ClangIncludeTreePass>().getFileTree();
   std::string Context;
-  auto FuncStart = SrcMgr.getDecomposedExpansionLoc(FuncDecl->getLocStart());
-  for (auto &OuterDeclList : GIP.getGlobalInfo().getOutermostDecls())
-    for (auto &OuterDecl: OuterDeclList.second)
-      if (auto *TD = dyn_cast<TypeDecl>(OuterDecl.getRoot()))
-        for (auto *Redecl: TD->getCanonicalDecl()->redecls()) {
-          auto Loc = SrcMgr.getDecomposedExpansionLoc(Redecl->getLocEnd());
-          while (Loc.first.isValid() && Loc.first != FuncStart.first)
-            Loc = SrcMgr.getDecomposedIncludedLoc(Loc.first);
-          if (Loc.first.isValid() && Loc.second < FuncStart.second) {
-            Context += Lexer::getSourceText(
-              SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
-            Context += ";";
-          }
-        }
+  auto *OFD = GIP.getGlobalInfo().findOutermostDecl(FuncDecl);
+  assert(OFD && "Outermost declaration for the current function must be known!");
+  auto Root = FileNode::ChildT(FT.findRoot(OFD));
+  assert(Root && "File which contains declaration must be known!");
+  for (auto &Internal : FT.internals()) {
+    if (auto *TD = dyn_cast<TypeDecl>(Internal.getDescendant())) {
+      Context += Lexer::getSourceText(
+          SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
+      Context += ";";
+    }
+  }
+  for (auto *N : depth_first(&Root)) {
+    if (N->is<FileNode *>())
+      continue;
+    auto *OD = N->get<const FileNode::OutermostDecl *>();
+    if (OD == OFD)
+      break;
+    if (auto *TD = dyn_cast<TypeDecl>(OD->getDescendant())) {
+      Context += Lexer::getSourceText(
+          SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
+      Context += ";";
+    }
+  }
   // Replace aggregate parameters with separate variables.
   StringMap<std::string> Replacements;
   for (unsigned I = 0, EI = FuncDecl->getNumParams(); I < EI; ++I) {
