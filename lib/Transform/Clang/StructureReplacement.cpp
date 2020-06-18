@@ -452,11 +452,14 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
   }
   // Replace aggregate parameters with separate variables.
   StringMap<std::string> Replacements;
-  for (unsigned I = 0, EI = FuncDecl->getNumParams(); I < EI; ++I) {
-    auto *PD = FuncDecl->getParamDecl(I);
+  bool TheLastParam = true;
+  for (unsigned I = FuncDecl->getNumParams(); I > 0; --I) {
+    auto *PD = FuncDecl->getParamDecl(I - 1);
     auto ReplacementItr = Collector.getCandidates().find(PD);
-    if (ReplacementItr == Collector.getCandidates().end())
+    if (ReplacementItr == Collector.getCandidates().end()) {
+      TheLastParam = false;
       continue;
+    }
     SmallString<128> NewParams;
     // We also remove an unused parameter if it is mentioned in replace clause.
     if (ReplacementItr->second.empty()) {
@@ -469,6 +472,7 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
         toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
                diag::note_replace_struct_de_decl);
         Collector.getCandidates().erase(ReplacementItr);
+        TheLastParam = false;
         continue;
       }
       if (CommaTok.is(tok::comma))
@@ -481,6 +485,9 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
              diag::remark_replace_struct);
       toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
              diag::remark_remove_de_decl);
+      // Do not update TheLastParam variable. If the current parameter is the
+      // last in the list and if it is removed than the previous parameter
+      // in the list become the last one.
       continue;
     }
     auto StashContextSize = Context.size();
@@ -517,12 +524,34 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
                         << StringRef(NewParams.data() + Size,
                                      NewParams.size() - Size) << "\n");
     }
-    if (!NewParams.empty())
-      Canvas.ReplaceText(
-        getExpansionRange(SrcMgr, PD->getSourceRange()).getAsRange(),
-        NewParams);
-    else
+    if (!NewParams.empty()) {
+      SourceLocation EndLoc = PD->getLocEnd();
+      // If the next parameter in the parameter list is unused and it has been
+      // successfully remove, we have to remove comma after the current
+      // parameter.
+      if (TheLastParam) {
+        Token CommaTok;
+        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+          CommaTok)) {
+          toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
+            diag::warn_disable_replace_struct);
+          toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
+            diag::note_replace_struct_decl_internal);
+          Collector.getCandidates().erase(ReplacementItr);
+          continue;
+        }
+        if (CommaTok.is(tok::comma))
+          EndLoc = CommaTok.getLocation();
+      }
+      auto Range = SrcMgr
+                       .getExpansionRange(CharSourceRange::getTokenRange(
+                           PD->getLocStart(), EndLoc))
+                       .getAsRange();
+      Canvas.ReplaceText(Range, NewParams);
+    } else {
       Collector.getCandidates().erase(ReplacementItr);
+    }
+    TheLastParam = false;
   }
   // Replace accesses to parameters.
   for (auto &ParamInfo : Collector.getCandidates()) {

@@ -151,5 +151,6 @@ def note_replace_struct_arrow: Note<"not-arrow access prevent replacement">;
 def note_replace_struct_decl: Note<"unable to build declaration of a record member">;
 def note_replace_struct_macro_prevent : Note<"macro prevent replacement">;
 def note_replace_struct_de_decl : Note<"unable to remove unused declaration">;
+def note_replace_struct_decl_internal : Note<"unable to replace declaration">;
 
 def remark_replace_struct: Remark<"structure replacement">;
