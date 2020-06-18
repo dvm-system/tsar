@@ -28,12 +28,16 @@
 
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/AnalysisSocket.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/DIClientServerInfo.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/Analysis/PostDominators.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>
 
 namespace clang {
@@ -69,7 +73,9 @@ using ClangSMParallelProvider =
     FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
                            ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
                            DFRegionInfoPass, ClangDIMemoryMatcherPass,
-                           ClangPerfectLoopPass>;
+                           ClangPerfectLoopPass, DominatorTreeWrapperPass,
+                           PostDominatorTreeWrapperPass, TargetLibraryInfoWrapperPass,
+                           EstimateMemoryPass, DIEstimateMemoryPass>;
 
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
@@ -115,13 +121,21 @@ protected:
   /// successfully checked.
   /// \return true if a specified loop could be parallelized and inner loops
   /// should not be processed.
-  virtual bool exploitParallelism(const tsar::DFLoop &IR,
-    const clang::ForStmt &AST, const ClangSMParallelProvider &Provider,
+  virtual bool exploitParallelism(tsar::DFLoop &IR,
+    const clang::ForStmt &AST, Function* F,
+    const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     tsar::TransformationContext &TfmCtx) = 0;
 
   /// Perform optimization of parallel loops with a common parent.
-  virtual void optimizeLevel(tsar::TransformationContext &TfmCtx) { }
+  virtual void optimizeLevelLoop(tsar::TransformationContext& TfmCtx, Function& F,
+    Loop* L, ClangSMParallelProvider& Provider) { }
+
+  virtual void optimizeLevelFunction(tsar::TransformationContext& TfmCtx, Function& F,
+    std::vector<std::pair<const Function*, Instruction*>>& Callees,
+    ClangSMParallelProvider& Provider) { }
+
+  virtual void finalize(tsar::TransformationContext& TfmCtx) { };
 
 private:
   /// Initialize provider before on the fly passes will be run on client.
@@ -134,14 +148,25 @@ private:
 
   /// Parallelize outermost parallel loops in the range.
   template <class ItrT>
-  bool findParallelLoops(ItrT I, ItrT EI, Function &F,
+  bool findParallelLoops(Loop* L, ItrT I, ItrT EI, Function &F,
                          ClangSMParallelProvider &Provider) {
     bool Parallelized = false;
     for (; I != EI; ++I)
       Parallelized |= findParallelLoops(**I, F, Provider);
     if (Parallelized)
-      optimizeLevel(*mTfmCtx);
+      mParallelLoops.push_back(L);
     return Parallelized;
+  }
+
+  /// Parallelize outermost parallel loops in the range.
+  template <class ItrT>
+  void optimizeLoops(Loop* L, ItrT I, ItrT EI, Function& F,
+    ClangSMParallelProvider& Provider) {
+    for (; I != EI; ++I)
+      optimizeLoops(*I, (**I).begin(), (**I).end(), F, Provider);
+    if (std::find(mParallelLoops.begin(), mParallelLoops.end(), L) != mParallelLoops.end()) {
+      optimizeLevelLoop(*mTfmCtx, F, L, Provider);
+    }
   }
 
   tsar::TransformationContext *mTfmCtx = nullptr;
@@ -153,6 +178,7 @@ private:
   SmallVector<const tsar::OptimizationRegion *, 4> mRegions;
   CGNodeNumbering mCGNodes;
   CGNodeNumbering mParallelCallees;
+  std::vector<const Loop*> mParallelLoops;
 };
 
 
@@ -172,6 +198,7 @@ class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)                              \
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)                                 \
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)                             \
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)                               \
   INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)                         \
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)                         \
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)                    \
@@ -182,6 +209,9 @@ class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
   INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)                         \
   INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)                     \
   INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)                                 \
+  INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)                     \
+  INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)                         \
+  INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)                     \
   INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)                                \
   INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)                             \
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)                       \

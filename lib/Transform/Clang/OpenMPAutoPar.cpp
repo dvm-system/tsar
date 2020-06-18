@@ -46,7 +46,7 @@ public:
     initializeClangOpenMPParallelizationPass(*PassRegistry::getPassRegistry());
   }
 private:
-  bool exploitParallelism(const DFLoop &IR, const clang::ForStmt &AST,
+  bool exploitParallelism(DFLoop &IR, const clang::ForStmt &AST, Function* F,
     const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     TransformationContext &TfmCtx) override;
@@ -107,7 +107,7 @@ struct ClausePrinter {
 
 
 bool ClangOpenMPParallelization::exploitParallelism(
-    const DFLoop &IR, const clang::ForStmt &AST,
+    DFLoop &IR, const clang::ForStmt &AST, Function* F,
     const ClangSMParallelProvider &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     TransformationContext &TfmCtx) {
