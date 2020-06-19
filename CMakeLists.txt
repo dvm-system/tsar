@@ -1,5 +1,31 @@
 cmake_minimum_required(VERSION 3.4.3)
-project(TSAR VERSION 0.1 LANGUAGES CXX)
+
+project(TSAR VERSION 0.0.0 LANGUAGES CXX)
+
+
+if(SAPFOR_VERSION)
+  set(TSAR_VERSION ${SAPFOR_VERSION})
+  set(TSAR_VERSION_MAJOR ${SAPFOR_VERSION_MAJOR})
+  set(TSAR_VERSION_MINOR ${SAPFOR_VERSION_MINOR})
+  set(TSAR_VERSION_PATCH ${SAPFOR_VERSION_PATCH})
+  set(TSAR_VERSION_SUFFIX ${SAPFOR_VERSION_SUFFIX})
+endif()
+
+option(TSAR_DIRTY_BUILD "Do not use commit-based TSAR version string" ON)
+set(TSAR_VERSION_BUILD "dirty")
+if (NOT TSAR_DIRTY_BUILD)
+  find_package(Git)
+  if (GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --pretty=format:%h
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      RESULT_VARIABLE TSAR_SHA_ERROR OUTPUT_VARIABLE TSAR_SHA)
+    if (NOT TSAR_SHA_ERROR)
+      set(TSAR_VERSION_BUILD ${TSAR_SHA})
+    endif()
+  endif()
+endif()
+set_property(GLOBAL PROPERTY TSAR_VERSION_BUILD ${TSAR_VERSION_BUILD})
+set(TSAR_VERSION "${TSAR_VERSION}+${TSAR_VERSION_BUILD}")
 
 set(TSAR_DESCRIPTION "Traits Static Analyzer")
 set(TSAR_HOMEPAGE_URL "https://github.com/dvm-system/tsar")
