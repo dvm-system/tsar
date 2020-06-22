@@ -34,8 +34,15 @@ def EK_Identifier       : ExprKind<1, "identifier">;
 def EK_PPIdentifier     : ExprKind<1, "identifier">;
 def EK_NumericConstant  : ExprKind<1, "numeric_constant">;
 def EK_Comma            : ExprKind<1, "comma">;
+def EK_Colon            : ExprKind<1, "colon">;
+def EK_Arrow            : ExprKind<1, "arrow">;
 def EK_LParen           : ExprKind<1, "l_paren">;
 def EK_RParen           : ExprKind<1, "r_paren">;
+def EK_LSquare          : ExprKind<1, "l_square">;
+def EK_RSquare          : ExprKind<1, "r_square">;
+def EK_LBrace           : ExprKind<1, "l_brace">;
+def EK_RBrace           : ExprKind<1, "r_brace">;
+def EK_Period           : ExprKind<1, "period">;
 
 // Blocks of tokens.
 def EK_ZeroOrOne        : ExprKind;
@@ -55,8 +62,15 @@ def Identifier : Expr<EK_Identifier>;
 def PPIdentifier : Expr<EK_PPIdentifier>;
 def NumericConstant : Expr<EK_NumericConstant>;
 def Comma : Expr<EK_Comma>;
+def Colon : Expr<EK_Colon>;
+def Arrow : Expr<EK_Arrow>;
 def LParen : Expr<EK_LParen>;
 def RParen : Expr<EK_RParen>;
+def LSquare : Expr<EK_LSquare>;
+def RSquare : Expr<EK_RSquare>;
+def LBrace : Expr<EK_LBrace>;
+def RBrace : Expr<EK_RBrace>;
+def Period : Expr<EK_Period>;
 
 class ZeroOrOne<list<Expr> expr_list = []> : Expr<EK_ZeroOrOne, expr_list> {}
 class ZeroOrMore<list<Expr> expr_list = []> : Expr<EK_ZeroOrMore, expr_list> {}
