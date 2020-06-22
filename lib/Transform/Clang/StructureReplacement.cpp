@@ -327,8 +327,64 @@ private:
   SourceManager &mSrcMgr;
   const GlobalInfoExtractor &mGlobalInfo;
   bool mIsOk = true;
-
 };
+
+/// Insert #pragma inside the body of a new function to describe its relation
+/// with the original function.
+void addPragmaMetadata(FunctionDecl &FuncDecl,
+    ReplacementCandidates &Candidates,
+    SourceManager &SrcMgr, const LangOptions &LangOpts,
+    ExternalRewriter &Canvas) {
+  SmallString<256> MDPragma;
+  MDPragma.push_back('\n');
+  getPragmaText(ClauseId::ReplaceMetadata, MDPragma);
+  if (MDPragma.back() == '\n')
+    MDPragma.pop_back();
+  MDPragma.push_back('(');
+  MDPragma += FuncDecl.getName();
+  MDPragma.push_back('(');
+  bool FirstReplacement = true;
+  for (unsigned I = 0, EI = FuncDecl.getNumParams(); I < EI; ++I) {
+    auto *PD = FuncDecl.getParamDecl(I);
+    auto ReplacementItr = Candidates.find(PD);
+    if (ReplacementItr == Candidates.end())
+      continue;
+    if (!FirstReplacement)
+      MDPragma.push_back(',');
+    FirstReplacement = false;
+    (Twine(I + 1) + ":{").toStringRef(MDPragma);
+    auto Itr = ReplacementItr->second.begin();
+    auto EndItr = ReplacementItr->second.end();
+    if (Itr != EndItr) {
+      MDPragma += ".";
+      MDPragma += Itr->Member->getName();
+      MDPragma += "->";
+      MDPragma += Itr->Identifier;
+      ++Itr;
+    }
+    for (auto &R : make_range(Itr, EndItr)) {
+      MDPragma += ',';
+      MDPragma += ".";
+      MDPragma += R.Member->getName();
+      MDPragma += "->";
+      MDPragma += R.Identifier;
+    }
+    MDPragma.push_back('}');
+  }
+  MDPragma.push_back(')');
+  MDPragma.push_back(')');
+  auto FuncBody = FuncDecl.getBody();
+  assert(FuncBody && "Body of a transformed function must be available!");
+  auto NextToBraceLoc = SrcMgr.getExpansionLoc(FuncBody->getLocStart());
+  Token Tok;
+  if (getRawTokenAfter(NextToBraceLoc, SrcMgr, LangOpts, Tok) ||
+      SrcMgr.getPresumedLineNumber(Tok.getLocation()) ==
+        SrcMgr.getPresumedLineNumber(NextToBraceLoc)) {
+    MDPragma.push_back('\n');
+  }
+  NextToBraceLoc = NextToBraceLoc.getLocWithOffset(1);
+  Canvas.InsertTextAfter(NextToBraceLoc, MDPragma);
+}
 } // namespace
 
 char ClangStructureReplacementPass::ID = 0;
@@ -577,6 +633,8 @@ bool ClangStructureReplacementPass::runOnFunction(Function &F) {
     Rewriter.RemoveText(SR, RemoveEmptyLine);
     Canvas.RemoveText(SR, true);
   }
+  addPragmaMetadata(
+    *FuncDecl, Collector.getCandidates(), SrcMgr, LangOpts, Canvas);
   // Update sources.
   auto OriginDefString = Lexer::getSourceText(
       CharSourceRange::getTokenRange(

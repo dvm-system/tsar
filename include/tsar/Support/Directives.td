@@ -96,6 +96,7 @@ def Analysis   : Directive<"analysis">;
 def Transform  : Directive<"transform">;
 def Assert     : Directive<"assert">;
 def Region     : Directive<"region">;
+def Metadata   : Directive<"metadata">;
 
 def DvmTemplate: Directive<"template", Dvm>;
 def DvmArray   : Directive<"array", Dvm>;
@@ -128,6 +129,25 @@ def Induction : Clause<"induction", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
 def AssertNoMacro : Clause<"nomacro", Assert>;
+
+def ReplaceMetadata : Clause<"replace", Metadata,
+  [LParen, Identifier, LParen,
+    NumericConstant, Colon,
+      LBrace,
+        ZeroOrOne<[
+          Period, PPIdentifier, Arrow, Identifier,
+          ZeroOrMore<[Comma, Period, PPIdentifier, Arrow, Identifier]>
+        ]>,
+      RBrace,
+    ZeroOrMore<[Comma, NumericConstant, Colon,
+      LBrace,
+        ZeroOrOne<[
+          Period, PPIdentifier, Arrow, Identifier,
+          ZeroOrMore<[Comma, Period, PPIdentifier, Arrow, Identifier]>
+        ]>,
+      RBrace
+    ]>,
+  RParen, RParen]>;
 
 def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
