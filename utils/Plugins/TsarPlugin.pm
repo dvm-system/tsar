@@ -75,6 +75,8 @@ TSAR (Traits Static AnalyzeR) test plugin for PTS (Process Task Set)
 
 =cut
 
+use constant vs => exists $ENV{VISUALSTUDIOVERSION};
+
 # Checks files and copy them to a template directory.
 #
 # Arguments: task directory, template directory, additional suffix for copy,
@@ -246,6 +248,8 @@ sub process {
               $task->name . ": output and sample are not equal at line $line_idx with prefix".
               " '$check_prefix' (see '$output_file' .vs '$sample')\n"
             );
+            vs and print_out(rel2abs($output_file), "($line_idx)\n");
+            vs and print_out(rel2abs($sample), "($line_idx)\n");
             $ret = 0;
             next RUN;
           }
