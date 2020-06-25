@@ -110,6 +110,17 @@ sub error
   throw Exception => $err_prefix.join('', @_);
 }
 
+sub m_rmtree($)
+{
+  my $n = 32;
+  my $err;
+  while ((remove_tree($_[0], {error => \$err}), @$err != 0) && $n-- > 0) {
+    dbg1 and dprint("m_rmtree: another try\n");
+    select undef, undef, undef, 0.1;
+  }
+  @$err == 0
+}
+
 sub process {
   my ($class, $task, $db) = @_;
   my $ret = 1;
@@ -289,7 +300,7 @@ sub process {
     } else {
       error("unknown action specified '$action'");
     }
-    remove_tree $work_dir;
+    m_rmtree($work_dir);
   } else {
     error("unknown action specified '$action'") unless ($action eq 'check');
     dbg1 and dprint("restore sample files");
