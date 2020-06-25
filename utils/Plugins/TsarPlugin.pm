@@ -133,7 +133,7 @@ sub process {
   grep $action eq $_, qw(check init) or error("'action' variable has wrong value");
   $task->reload_config(
     multiline => {'' => [qw(sample_diff run)]},
-    required  => {'' => [qw(sample run)]});
+    required  => {'' => [qw(sample run tsar)]});
   my $sample = $task->get_var('', 'sample');
   my @sample_diff = $task->get_arr('', 'sample_diff', []);
   my $comment = $task->get_var('', 'comment', '');
