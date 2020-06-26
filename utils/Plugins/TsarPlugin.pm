@@ -251,7 +251,7 @@ sub process {
             );
             vs and print_out('  ', rel2abs($output_file), "($line_idx)\n");
             vs and print_out('  ', rel2abs($sample), "($line_idx)\n");
-            vs and print_out("  Tools.DiffFiles ", rel2abs($output_file), ' ', rel2abs($sample), "\n");
+            vs and print_out("  Tools.DiffFiles ", rel2abs($sample), ' ', rel2abs($output_file), "\n");
             $ret = 0;
             next RUN;
           }
