@@ -218,7 +218,7 @@ sub process {
       open(my $err, '>', $err_file) or error("unable to write TSAR executable errors to file");
       print $err $output;
       close $err;
-      print_out($task->name . ": TSAR executable error (see '$err_file')");
+      print_out($task->name . ": TSAR executable error (see '$err_file')\n");
       $ret = 0;
       next RUN;
     }
