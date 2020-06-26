@@ -219,7 +219,7 @@ sub process {
       print $err $output;
       close $err;
       print_out($task->name . ": TSAR executable error (see '$err_file')\n");
-      vs and print_out(rel2abs($err_file), "\n");
+      vs and print_out('  ', rel2abs($err_file), "\n");
       $ret = 0;
       next RUN;
     }
@@ -249,9 +249,9 @@ sub process {
               $task->name . ": output and sample are not equal at line $line_idx with prefix".
               " '$check_prefix' (see '$output_file' .vs '$sample')\n"
             );
-            vs and print_out(rel2abs($output_file), "($line_idx)\n");
-            vs and print_out(rel2abs($sample), "($line_idx)\n");
-            vs and print_out("Tools.DiffFiles ", rel2abs($output_file), ' ', rel2abs($sample), "\n");
+            vs and print_out('  ', rel2abs($output_file), "($line_idx)\n");
+            vs and print_out('  ', rel2abs($sample), "($line_idx)\n");
+            vs and print_out("  Tools.DiffFiles ", rel2abs($output_file), ' ', rel2abs($sample), "\n");
             $ret = 0;
             next RUN;
           }
