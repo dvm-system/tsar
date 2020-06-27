@@ -343,22 +343,22 @@ void addPragmaMetadata(FunctionDecl &FuncDecl,
   MDPragma.push_back('(');
   MDPragma += FuncDecl.getName();
   MDPragma.push_back('(');
-  bool FirstReplacement = true;
   for (unsigned I = 0, EI = FuncDecl.getNumParams(); I < EI; ++I) {
     auto *PD = FuncDecl.getParamDecl(I);
-    auto ReplacementItr = Candidates.find(PD);
-    if (ReplacementItr == Candidates.end())
-      continue;
-    if (!FirstReplacement)
+    if (I > 0)
       MDPragma.push_back(',');
-    FirstReplacement = false;
-    (Twine(I + 1) + ":{").toStringRef(MDPragma);
+    auto ReplacementItr = Candidates.find(PD);
+    if (ReplacementItr == Candidates.end()) {
+      MDPragma += PD->getName();
+      continue;
+    }
+    MDPragma += "{";
     auto Itr = ReplacementItr->second.begin();
     auto EndItr = ReplacementItr->second.end();
     if (Itr != EndItr) {
       MDPragma += ".";
       MDPragma += Itr->Member->getName();
-      MDPragma += "->";
+      MDPragma += "=";
       MDPragma += Itr->Identifier;
       ++Itr;
     }
@@ -366,7 +366,7 @@ void addPragmaMetadata(FunctionDecl &FuncDecl,
       MDPragma += ',';
       MDPragma += ".";
       MDPragma += R.Member->getName();
-      MDPragma += "->";
+      MDPragma += "=";
       MDPragma += R.Identifier;
     }
     MDPragma.push_back('}');

@@ -20,7 +20,7 @@ void foo(struct STy *S) {
 
 /* Replacement for void foo(struct STy *S) */
 void foo_spf0(unsigned int S_N0, enum Kind S_K0, struct QTy *S_Q0) {
-#pragma spf metadata replace(foo(1 : {.N->S_N0, .K->S_K0, .Q->S_Q0}))
+#pragma spf metadata replace(foo({.N = S_N0, .K = S_K0, .Q = S_Q0}))
   for (int I = 0; I < S_N0; ++I)
     if (S_K0 == K1) {
       S_Q0[I].V1 = S_Q0[I].V2 * S_N0;
