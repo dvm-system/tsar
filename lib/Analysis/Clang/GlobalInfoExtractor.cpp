@@ -187,7 +187,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     dbgs() << "[GLOBAL INFO]: expanded macros:\n";
     for (auto Loc : LocationStack) {
       dbgs() << "  " << Lexer::getImmediateMacroNameForDiagnostics(
-        Loc, mSM, mLangOpts) << " at";
+        Loc, mSM, mLangOpts) << " at ";
       Loc.dump(mSM);
       dbgs() << "\n";
     });
