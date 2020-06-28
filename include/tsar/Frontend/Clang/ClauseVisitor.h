@@ -281,6 +281,7 @@ private:
           mExprStack.pop_back();
           continue;
         }
+        mReplacement.resize(Level.ReplacementIdx);
         mPP.EnableBacktrackAtThisPos();
         return I;
       case ClauseExpr::EK_One:
