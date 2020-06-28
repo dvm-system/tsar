@@ -293,10 +293,14 @@ private:
         continue;
       case ClauseExpr::EK_ZeroOrMore:
       case ClauseExpr::EK_ZeroOrOne:
-        I = findAnchor(I, EI);
+        while (!isSingle(*(I + 1)))
+          I = findAnchor(I + 1, EI);
+        I = findAnchor(I + 1, EI);
         break;
       case ClauseExpr::EK_OneOrMore:
-        I = findAnchor(I, EI);
+        while (!isSingle(*(I + 1)))
+          I = findAnchor(I + 1, EI);
+        I = findAnchor(I + 1, EI);
         if (Level.Occurrence.getInt()) {
           break;
         } else {
