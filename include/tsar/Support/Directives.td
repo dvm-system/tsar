@@ -43,6 +43,7 @@ def EK_RSquare          : ExprKind<1, "r_square">;
 def EK_LBrace           : ExprKind<1, "l_brace">;
 def EK_RBrace           : ExprKind<1, "r_brace">;
 def EK_Period           : ExprKind<1, "period">;
+def EK_Equal            : ExprKind<1, "equal">;
 
 // Blocks of tokens.
 def EK_ZeroOrOne        : ExprKind;
@@ -71,6 +72,7 @@ def RSquare : Expr<EK_RSquare>;
 def LBrace : Expr<EK_LBrace>;
 def RBrace : Expr<EK_RBrace>;
 def Period : Expr<EK_Period>;
+def Equal : Expr<EK_Equal>;
 
 class ZeroOrOne<list<Expr> expr_list = []> : Expr<EK_ZeroOrOne, expr_list> {}
 class ZeroOrMore<list<Expr> expr_list = []> : Expr<EK_ZeroOrMore, expr_list> {}
@@ -120,7 +122,9 @@ def Propagate : Clause<"propagate", Transform>;
 def Rename : Clause<"rename", Transform>;
 
 def Replace : Clause<"replace", Transform,
-  [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
+  [ZeroOrOne<[LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>]>;
+
+def With : Clause<"with", Transform, [LParen, Identifier, RParen]>;
 
 def Private : Clause<"private", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
@@ -130,26 +134,70 @@ def Induction : Clause<"induction", Analysis,
 
 def AssertNoMacro : Clause<"nomacro", Assert>;
 
-def ReplaceMetadata : Clause<"replace", Metadata,
-  [LParen, Identifier, LParen,
-    NumericConstant, Colon,
-      LBrace,
-        ZeroOrOne<[
-          Period, PPIdentifier, Arrow, Identifier,
-          ZeroOrMore<[Comma, Period, PPIdentifier, Arrow, Identifier]>
-        ]>,
-      RBrace,
-    ZeroOrMore<[Comma, NumericConstant, Colon,
-      LBrace,
-        ZeroOrOne<[
-          Period, PPIdentifier, Arrow, Identifier,
-          ZeroOrMore<[Comma, Period, PPIdentifier, Arrow, Identifier]>
-        ]>,
-      RBrace
-    ]>,
-  RParen, RParen]>;
-
 def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
 def DvmAlign : Clause<"align", DvmArray>;
+
+def ReplaceMetadata : Clause<"replace", Metadata,
+  [LParen,
+    Identifier, LParen,
+      ZeroOrOne<[
+        OneOf<[
+          One<[Identifier]>,
+          One<[
+            LBrace,
+              ZeroOrOne<[
+                Period, PPIdentifier, Equal, Identifier,
+                ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+              ]>,
+            RBrace
+          ]>
+        ]>,
+        ZeroOrMore<[Comma,
+          OneOf<[
+            One<[Identifier]>,
+            One<[
+              LBrace,
+                ZeroOrOne<[
+                  Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                ]>,
+              RBrace
+            ]>
+          ]>
+        ]>
+      ]>,
+    RParen,
+    ZeroOrMore<[Comma,
+      Identifier, LParen,
+        ZeroOrOne<[
+          OneOf<[
+            One<[Identifier]>,
+            One<[
+              LBrace,
+                ZeroOrOne<[
+                  Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                ]>,
+              RBrace
+            ]>
+          ]>,
+          ZeroOrMore<[Comma,
+            OneOf<[
+              One<[Identifier]>,
+              One<[
+                LBrace,
+                  ZeroOrOne<[
+                    Period, PPIdentifier, Equal, Identifier,
+                    ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                  ]>,
+                RBrace
+              ]>
+            ]>
+          ]>
+        ]>,
+      RParen
+    ]>,
+  RParen]>;
+

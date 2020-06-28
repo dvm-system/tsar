@@ -87,7 +87,7 @@ ModulePass* createClangDVMHSMParallelization();
 
 /// Create pass to perform replacement of access to structure fields
 /// with separate variables.
-FunctionPass * createClangStructureReplacementPass();
+ModulePass * createClangStructureReplacementPass();
 
 /// Initialize a pass to perform replacement of access to structure fields
 /// with separate variables.

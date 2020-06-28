@@ -154,3 +154,24 @@ def note_replace_struct_de_decl : Note<"unable to remove unused declaration">;
 def note_replace_struct_decl_internal : Note<"unable to replace declaration">;
 
 def remark_replace_struct: Remark<"structure replacement">;
+
+def warn_replace_call_unable : Warning<"unable to replace call expression">;
+def warn_replace_call_indirect_unable : Warning<"unable to replace indirect call expression">;
+def note_replace_call_no_md : Note<"replacement metadata not found for function %0">;
+
+def error_replace_md_missing : Error<"missing replacement metadata">;
+def error_replace_md_target_param_expected : Error<"expected replacement for target parameter">;
+def error_replace_md : Error<"invalid replacement metadata">;
+def error_replace_md_param_twice : Error<"replacement metadata for parameter already set">;
+def error_replace_md_type_incompatible : Error<"type of target %select{member|parameter}0 and replacement parameter are not compatible">;
+
+def note_replace_md_no_param : Note<"missing parameter in replacement metadata">;
+def note_replace_md_here : Note<"replacement metadata set here">;
+
+def error_function_args_number : Error<"function does not take %0 %plural{1:argument|:arguments}0">;
+def error_directive_clause_twice : Error<"directive '%0' cannot contain more than one '%1' clause">;
+def error_clause_expect_function : Error<"expected function name after '%0' clause">;
+def error_expect_function_param : Error<"expected function parameter name">;
+
+def note_record_member_unknown: Error<"record has no member '%0'">;
+def note_declared_here: Note<"declared here">;
