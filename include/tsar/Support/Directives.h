@@ -133,7 +133,7 @@ inline ClausePrototype::const_iterator findAnchor(
   if (*I == ClauseExpr::EK_Anchor)
     return I;
   // Do not use isSingle() for the first value of I, because if it is a complex
-  // expression ComplexNum will be increased and a corrseponding anchor will
+  // expression ComplexNum will be increased and a corresponding anchor will
   // be lost.
   for (++I; I != EI; ++I) {
     if (!isSingle(*I))
