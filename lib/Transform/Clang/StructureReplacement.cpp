@@ -707,11 +707,11 @@ void addPragmaMetadata(FunctionDecl &FuncDecl,
   Canvas.InsertTextAfter(NextToBraceLoc, MDPragma);
 }
 
-template<class RewriterT > void replaceCalls(FunctionDecl *FuncDecl,
-    FunctionInfo &FI, ReplacementMap &ReplacementInfo, bool RemoveMetadata,
-    RewriterT &Rewriter) {
+template<class RewriterT > bool replaceCalls(FunctionDecl *FuncDecl,
+    FunctionInfo &FI, ReplacementMap &ReplacementInfo, RewriterT &Rewriter) {
   auto &SrcMgr = Rewriter.getSourceMgr();
   LLVM_DEBUG(printRequestLog(FuncDecl, FI.Requests, SrcMgr));
+  bool IsChanged = false;
   for (auto &Request : FI.Requests) {
     assert(Request.get<clang::CallExpr>() && "Call must not be null!");
     assert(Request.get<clang::FunctionDecl>() &&
@@ -780,16 +780,9 @@ template<class RewriterT > void replaceCalls(FunctionDecl *FuncDecl,
                           Request.get<clang::CallExpr>()->getSourceRange())
             .getAsRange(),
         NewCallExpr);
-    Rewriter::RewriteOptions RemoveEmptyLine;
-    /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
-    /// set to true then removing (in RewriterBuffer) works incorrect.
-    RemoveEmptyLine.RemoveLineIfEmpty = false;
-    for (auto SR : FI.ToRemoveTransform)
-      Rewriter.RemoveText(SR, RemoveEmptyLine);
-    if (RemoveMetadata)
-      for (auto SR : FI.ToRemoveMetadata)
-        Rewriter.RemoveText(SR, RemoveEmptyLine);
+    IsChanged = true;
   }
+  return IsChanged;
 }
 
 #ifdef LLVM_DEBUG
@@ -825,7 +818,7 @@ void printCandidateLog(ReplacementCandidates &Candidates, bool IsStrict) {
 }
 
 void printRequestLog(FunctionDecl *FD, ReplacementRequests &Requests,
-    SourceManager &SrcMgr) {
+    const SourceManager &SrcMgr) {
   if (Requests.empty())
     return;
   dbgs() << "[REPLACE]: callee replacement requests inside '" << FD->getName()
@@ -879,8 +872,15 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
   for (auto &Info : ReplacementInfo) {
     auto FuncDecl = Info.get<FunctionDecl>();
     if (!Info.get<FunctionInfo>()->hasCandidates()) {
-      replaceCalls(FuncDecl, *Info.get<FunctionInfo>(), ReplacementInfo, false,
-                   Rewriter);
+      if (replaceCalls(FuncDecl, *Info.get<FunctionInfo>(), ReplacementInfo,
+                       Rewriter)) {
+        Rewriter::RewriteOptions RemoveEmptyLine;
+        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+        /// set to true then removing (in RewriterBuffer) works incorrect.
+        RemoveEmptyLine.RemoveLineIfEmpty = false;
+        for (auto SR : Info.get<FunctionInfo>()->ToRemoveTransform)
+          Rewriter.RemoveText(SR, RemoveEmptyLine);
+      }
       continue;
     }
     ReplacementSanitizer Verifier(*TfmCtx, *Info.get<FunctionInfo>());
@@ -1079,6 +1079,7 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
     }
     if (!Info.get<FunctionInfo>()->hasCandidates())
       continue;
+    replaceCalls(FuncDecl, *Info.get<FunctionInfo>(), ReplacementInfo, Canvas);
     // Remove pragmas from the original function and its clone if replacement
     // is still possible.
     Rewriter::RewriteOptions RemoveEmptyLine;
@@ -1089,6 +1090,8 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
       Rewriter.RemoveText(SR, RemoveEmptyLine);
       Canvas.RemoveText(SR, true);
     }
+    for (auto SR : Info.get<FunctionInfo>()->ToRemoveMetadata)
+      Canvas.RemoveText(SR, true);
     addPragmaMetadata(
       *FuncDecl, Info.get<FunctionInfo>()->Candidates, SrcMgr, LangOpts, Canvas);
     // Update sources.
