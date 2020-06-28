@@ -213,16 +213,7 @@ sub process {
     $exec .= ' 2>&1';
     dbg1 and dprint("run '$exec'");
     my $output = `$exec`;
-    if ($?) {
-      my $err_file = catfile($work_dir, 'err.log');
-      open(my $err, '>', $err_file) or error("unable to write TSAR executable errors to file");
-      print $err $output;
-      close $err;
-      print_out($task->name . ": TSAR executable error (see '$err_file')\n");
-      vs and print_out('  ', rel2abs($err_file), "\n");
-      $ret = 0;
-      next RUN;
-    }
+    $? and $output = "Error while processing " . $task->name . ".\n" . $output;
     $output =~ s/\n$//;
     $output =~ s/\n/\n$comment$check_prefix: /g;
     my $curr_path = $CWD;
