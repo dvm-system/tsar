@@ -277,6 +277,7 @@ private:
       case ClauseExpr::EK_OneOf: // try next item in the list of variants
         mPP.Backtrack();
         if (*(I + 1) == ClauseExpr::EK_Anchor) {
+          I = I + 1;
           Tok = Level.Tok;
           mExprStack.pop_back();
           continue;
