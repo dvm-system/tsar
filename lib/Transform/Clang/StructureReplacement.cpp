@@ -38,7 +38,9 @@
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
+#include <clang/Sema/Sema.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -412,30 +414,74 @@ private:
     assert(mCurrMetaTargetParam < CurrMD.TargetDecl->getNumParams() &&
            "Parameter index is out of range!");
     if (auto PD = dyn_cast<ParmVarDecl>(ND)) {
-      auto ParamTy = getCanonicalUnqualifiedType(PD);
       auto TargetParam =
           CurrMD.TargetDecl->getParamDecl(mCurrMetaTargetParam);
-      auto TargetParamTy = mCurrMetaMember
-                               ? getCanonicalUnqualifiedType(mCurrMetaMember)
-                               : getCanonicalUnqualifiedType(TargetParam);
+      auto LHSTy = PD->getType();
+      auto RHSTy =
+          mCurrMetaMember ? mCurrMetaMember->getType() : TargetParam->getType();
+      auto &Sema = mTfmCtx.getCompilerInstance().getSema();
+      auto ConvertTy =
+          Sema.CheckAssignmentConstraints(Expr->getBeginLoc(), LHSTy, RHSTy);
       bool IsPointer = false;
-      if (ParamTy != TargetParamTy) {
-        auto PtrTy = dyn_cast<clang::PointerType>(ParamTy);
-        if (!PtrTy ||
-            TargetParamTy !=
-                PtrTy->getPointeeType().getCanonicalType().getTypePtr()) {
-          toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
-                 diag::error_replace_md_type_incompatible)
-                  << (mCurrMetaMember ? 0 : 1);
-          toDiag(mSrcMgr.getDiagnostics(),
-                 mCurrMetaMember ? mCurrMetaMember->getLocation()
-                                 : TargetParam->getLocation(),
-                 diag::note_declared_at);
-          toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(),
-            diag::note_declared_at);
-          return false;
+      if (ConvertTy != Sema::Compatible) {
+        if (auto DecayedTy = dyn_cast<clang::DecayedType>(LHSTy)) {
+          // Type of parameter (LHS) in replacement candidate is an array type.
+          auto LHSPointeeTy = DecayedTy->getPointeeType();
+          // Discard outermost array type of RHS value because it is implicitly
+          // compatible with a pointer type.
+          if (auto ArrayTy = dyn_cast<clang::ArrayType>(RHSTy)) {
+            auto RHSElementTy = ArrayTy->getElementType();
+            auto ConvertPointeeTy = Sema.CheckAssignmentConstraints(
+                Expr->getBeginLoc(), LHSPointeeTy, RHSElementTy);
+            if (ConvertPointeeTy == Sema::Compatible)
+              ConvertTy = ConvertPointeeTy;
+          }
+        } else if (auto PtrTy = dyn_cast<clang::PointerType>(LHSTy)) {
+          auto LHSPointeeTy = PtrTy->getPointeeType();
+          // Discard outermost array type of RHS value because it is implicitly
+          // compatible with a pointer type.
+          if (auto ArrayTy = dyn_cast<clang::ArrayType>(RHSTy)) {
+            auto RHSElementTy = ArrayTy->getElementType();
+            auto ConvertPointeeTy = Sema.CheckAssignmentConstraints(
+                Expr->getBeginLoc(), LHSPointeeTy, RHSElementTy);
+            if (ConvertPointeeTy == Sema::Compatible) {
+              ConvertTy = ConvertPointeeTy;
+            } else if (auto NestedPtrTy =
+                           dyn_cast<clang::PointerType>(LHSPointeeTy)) {
+              auto ConvertPointeeTy = Sema.CheckAssignmentConstraints(
+                  Expr->getBeginLoc(), NestedPtrTy->getPointeeType(),
+                  RHSElementTy);
+              if (ConvertPointeeTy == Sema::Compatible) {
+                ConvertTy = ConvertPointeeTy;
+                LHSTy = LHSPointeeTy;
+                IsPointer = true;
+              }
+            }
+          } else {
+            auto ConvertPointeeTy = Sema.CheckAssignmentConstraints(
+              Expr->getBeginLoc(), LHSPointeeTy, RHSTy);
+            if (ConvertPointeeTy == Sema::Compatible) {
+              LHSTy = LHSPointeeTy;
+              ConvertTy = ConvertPointeeTy;
+              IsPointer = true;
+            }
+          }
         }
-        IsPointer = true;
+      }
+      if (ConvertTy != Sema::Compatible)
+        Sema.DiagnoseAssignmentResult(ConvertTy, Expr->getBeginLoc(), LHSTy,
+                                      RHSTy, Expr, Sema::AA_Passing);
+      if (ConvertTy == Sema::Incompatible) {
+        toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
+               diag::error_replace_md_type_incompatible)
+                << (mCurrMetaMember ? 0 : 1);
+        toDiag(mSrcMgr.getDiagnostics(),
+               mCurrMetaMember ? mCurrMetaMember->getLocation()
+                               : TargetParam->getLocation(),
+               diag::note_declared_at);
+        toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(),
+          diag::note_declared_at);
+        return false;
       }
       unsigned ParamIdx = 0;
       for (unsigned EI = mCurrFD->getNumParams(); ParamIdx < EI; ++ParamIdx)
