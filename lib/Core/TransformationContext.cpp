@@ -123,9 +123,10 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
 }
 
 TransformationContext::TransformationContext(
-  ArrayRef<std::string> CL) : mCommandLine(CL), mGen(nullptr), mCtx(nullptr) {}
+    ArrayRef<std::string> CL)
+  : mCommandLine(CL), mCI(nullptr), mGen(nullptr), mCtx(nullptr) {}
 
-TransformationContext::TransformationContext(
+TransformationContext::TransformationContext(CompilerInstance &CI,
   ASTContext &Ctx, CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) :
   mRewriter(Ctx.getSourceManager(), Ctx.getLangOpts()),
   mCtx(&Ctx), mGen(&Gen), mCommandLine(CL) { }
@@ -144,16 +145,20 @@ clang::Decl * TransformationContext::getDeclForMangledName(StringRef Name) {
   return const_cast<Decl *>(mGen->GetDeclForMangledName(Name));
 }
 
-void TransformationContext::reset(clang::ASTContext &Ctx,
-  clang::CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) {
+void TransformationContext::reset(clang::CompilerInstance &CI,
+    clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
+    llvm::ArrayRef<std::string> CL) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCI = &CI;
   mCtx = &Ctx;
   mGen = &Gen;
   mCommandLine = CL;
 }
 
-void TransformationContext::reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen) {
+void TransformationContext::reset(clang::CompilerInstance &CI,
+    clang::ASTContext &Ctx, clang::CodeGenerator &Gen) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCI = &CI;
   mCtx = &Ctx;
   mGen = &Gen;
 }

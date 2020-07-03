@@ -38,6 +38,7 @@
 namespace clang {
 class Decl;
 class CodeGenerator;
+class CompilerInstance;
 class ASTContext;
 }
 
@@ -128,8 +129,8 @@ public:
   ///
   /// \param [in] CL Command line which is necessary to parse input file.
   /// \post Transformation engine is configured.
-  TransformationContext(clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
-    llvm::ArrayRef<std::string> CL);
+  TransformationContext(clang::CompilerInstance &CI, clang::ASTContext &Ctx,
+    clang::CodeGenerator &Gen, llvm::ArrayRef<std::string> CL);
 
   /// \brief Returns an input source file.
   ///
@@ -141,14 +142,20 @@ public:
 
   /// Returns rewriter.
   clang::Rewriter & getRewriter() {
-    assert(hasInstance() && "Rewriter is not configured!");
+    assert(hasInstance() && "Context is not configured!");
     return mRewriter;
   }
 
   /// Returns context.
   clang::ASTContext & getContext() {
-    assert(hasInstance() && "Rewriter is not configured!");
+    assert(hasInstance() && "Context is not configured!");
     return *mCtx;
+  }
+
+  /// Return compiler instance.
+  const clang::CompilerInstance & getCompilerInstance() const {
+    assert(hasInstance() && "Context is not configured!");
+    return *mCI;
   }
 
   /// \brief Returns a declaration for a mangled name.
@@ -157,7 +164,7 @@ public:
   clang::Decl * getDeclForMangledName(llvm::StringRef Name);
 
   /// Returns true if transformation engine is configured.
-  bool hasInstance() const { return mGen && mCtx; }
+  bool hasInstance() const { return mGen && mCtx && mCI; }
 
   /// Returns true if modifications have been made to some files.
   bool hasModification() const {
@@ -183,23 +190,25 @@ public:
   /// \brief Resets existence configuration of transformation engine.
   ///
   /// \post Transformation engine is configured.
-  void reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
-      llvm::ArrayRef<std::string> CL);
+  void reset(clang::CompilerInstance &CI, clang::ASTContext &Ctx,
+      clang::CodeGenerator &Gen, llvm::ArrayRef<std::string> CL);
 
   /// \brief Resets existence configuration of transformation engine.
   ///
   /// \post Transformation engine is configured.
-  void reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen);
+  void reset(clang::CompilerInstance &CI, clang::ASTContext &Ctx,
+      clang::CodeGenerator &Gen);
 
   /// \brief Resets existence configuration of transformation engine.
   ///
   /// \post Transformation engine is NOT configured.
-  void reset() { mGen = nullptr; mCtx = nullptr; }
+  void reset() { mGen = nullptr; mCtx = nullptr; mCI = nullptr; }
 
 private:
   clang::Rewriter mRewriter;
-  clang::CodeGenerator *mGen;
-  clang::ASTContext *mCtx;
+  clang::CompilerInstance *mCI = nullptr;
+  clang::CodeGenerator *mGen = nullptr;
+  clang::ASTContext *mCtx = nullptr;
   std::vector<std::string> mCommandLine;
 };
 }
