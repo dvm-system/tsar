@@ -110,10 +110,10 @@ void initializeClangCFTraitsPassPass(PassRegistry &Registry);
 /// for function and its loops.
 FunctionPass * createClangCFTraitsPass();
 
-// Initialize a pass to collect '#pragma spf region' directives.
+/// Initialize a pass to collect '#pragma spf region' directives.
 void initializeClangRegionCollectorPass(PassRegistry &Registry);
 
-// Create a pass to collect '#pragma spf region' directives.
+/// Create a pass to collect '#pragma spf region' directives.
 ModulePass * createClangRegionCollector();
 
 /// Initialize a pass to build file hierarchy.
