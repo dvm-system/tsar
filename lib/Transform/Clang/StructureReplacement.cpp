@@ -1105,6 +1105,20 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
       auto *PD = FuncDecl->getParamDecl(I - 1);
       auto ReplacementItr = Info.get<FunctionInfo>()->Candidates.find(PD);
       if (ReplacementItr == Info.get<FunctionInfo>()->Candidates.end()) {
+        // Remove comma after the current parameter if it becomes the last one.
+        if (TheLastParam) {
+          SourceLocation EndLoc = PD->getLocEnd();
+          Token CommaTok;
+          if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+                               CommaTok)) {
+            toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
+                   diag::warn_transform_internal);
+            Info.get<FunctionInfo>()->Candidates.clear();
+            break;
+          }
+          if (CommaTok.is(tok::comma))
+            Canvas.RemoveText(CommaTok.getLocation());
+        }
         TheLastParam = false;
         continue;
       }
@@ -1199,6 +1213,20 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
           .getAsRange();
         Canvas.ReplaceText(Range, NewParams);
       } else {
+        // Remove comma after the current parameter if it becomes the last one.
+        if (TheLastParam) {
+          SourceLocation EndLoc = PD->getLocEnd();
+          Token CommaTok;
+          if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+                               CommaTok)) {
+            toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
+                   diag::warn_transform_internal);
+            Info.get<FunctionInfo>()->Candidates.clear();
+            break;
+          }
+          if (CommaTok.is(tok::comma))
+            Canvas.RemoveText(CommaTok.getLocation());
+        }
         Info.get<FunctionInfo>()->Candidates.erase(ReplacementItr);
       }
       TheLastParam = false;

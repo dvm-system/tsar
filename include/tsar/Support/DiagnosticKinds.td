@@ -57,6 +57,7 @@ def err_backup_file : Error<"unable to backup file">;
 def note_not_transform : Note<"transfomration was not performed">;
 def err_transform_system : Note<"unable to transform system file">;
 def warn_reformat : Warning<"unable to reformat file">;
+def warn_transform_internal : Note<"unable to transform file">;
 
 def warn_remove_directive_in_macro : Warning<"unable to remove directive in macro">;
 def warn_remove_directive_in_include : Warning<"unable to remove directive in include">;
