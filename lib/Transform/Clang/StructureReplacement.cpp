@@ -890,7 +890,7 @@ template<class RewriterT > bool replaceCalls(FunctionDecl *FuncDecl,
             NewCallExpr += ')';
         }
       } else {
-        auto Itr = find_if(ReplacementItr->get<Replacement>(),
+        auto Itr = find_if(ReplacementItr->template get<Replacement>(),
                         [&ParamInfo](const Replacement &R) {
                           return R.Member == ParamInfo.TargetMember;
                         });
