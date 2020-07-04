@@ -127,6 +127,8 @@ protected:
     tsar::ClangDependenceAnalyzer &ASTDepInfo,
     tsar::TransformationContext &TfmCtx) = 0;
 
+  virtual void optimizeRegions(const Function* F, tsar::TransformationContext& TfmCtx) { };
+
   /// Perform optimization of parallel loops with a common parent.
   virtual void optimizeLevelLoop(tsar::TransformationContext& TfmCtx, Function& F,
     Loop* L, ClangSMParallelProvider& Provider) { }
@@ -164,9 +166,9 @@ private:
     ClangSMParallelProvider& Provider) {
     for (; I != EI; ++I)
       optimizeLoops(*I, (**I).begin(), (**I).end(), F, Provider);
-    if (std::find(mParallelLoops.begin(), mParallelLoops.end(), L) != mParallelLoops.end()) {
+    // if (std::find(mParallelLoops.begin(), mParallelLoops.end(), L) != mParallelLoops.end()) {
       optimizeLevelLoop(*mTfmCtx, F, L, Provider);
-    }
+    //}
   }
 
   tsar::TransformationContext *mTfmCtx = nullptr;

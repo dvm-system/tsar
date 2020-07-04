@@ -66,7 +66,7 @@ void ClangSMParallelizationInfo::addBeforePass(
     legacy::PassManager &Passes) const {
   addImmutableAliasAnalysis(Passes);
   addInitialTransformations(Passes);
-  Passes.add(createCallExtractorPass());
+  //Passes.add(createCallExtractorPass());
   Passes.add(createAnalysisSocketImmutableStorage());
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
@@ -300,8 +300,23 @@ bool ClangSMParallelization::runOnModule(Module &M) {
         return R->contain(*F) == OptimizationRegion::CS_No;
       }))
       continue;
+      // dbgs() << F->getName() << "\n";
+      optimizeRegions(F, *mTfmCtx);
+  }
+
+  for (scc_iterator<CallGraph*> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
+    Function* F = I->front()->getFunction();
+    if (!F || F->isIntrinsic() || F->isDeclaration() ||
+      hasFnAttr(*F, AttrKind::LibFunc))
+      continue;
+    if (!mRegions.empty() && std::all_of(mRegions.begin(), mRegions.end(),
+      [F](const OptimizationRegion* R) {
+        return R->contain(*F) == OptimizationRegion::CS_No;
+      }))
+      continue;
     auto& Provider = getAnalysis<ClangSMParallelProvider>(*F);
     auto& LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
+
     optimizeLoops(nullptr, LI.begin(), LI.end(), *F, Provider);
     optimizeLevelFunction(*mTfmCtx, *F, CaleeInfo[F], Provider);
   }
