@@ -37,10 +37,12 @@
 #include "tsar/Support/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
+#include <clang/Analysis/CallGraph.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Sema/Sema.h>
+#include <llvm/ADT/SCCIterator.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -53,37 +55,7 @@ using namespace clang;
 #define DEBUG_TYPE "clang-struct-replacement"
 
 namespace {
-class ClangStructureReplacementPass :
-    public ModulePass, private bcl::Uncopyable {
-public:
-  static char ID;
-
-  ClangStructureReplacementPass() : ModulePass(ID) {
-      initializeClangStructureReplacementPassPass(
-        *PassRegistry::getPassRegistry());
-  }
-
-  bool runOnModule(llvm::Module &M) override;
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TransformationEnginePass>();
-    AU.addRequired<ClangGlobalInfoPass>();
-    AU.addRequired<ClangIncludeTreePass>();
-    AU.getPreservesAll();
-  }
-
-private:
-  void addSuffix(const Twine &Prefix, SmallVectorImpl<char> &Out) {
-    for (unsigned Count = 0;
-      mRawInfo->Identifiers.count((Prefix + Twine(Count)).toStringRef(Out));
-      ++Count, Out.clear());
-    mRawInfo->Identifiers.insert(StringRef(Out.data(), Out.size()));
-  }
-
-  ClangGlobalInfoPass::RawInfo *mRawInfo = nullptr;
-};
-
-const clang::Type *getCanonicalUnqualifiedType(ValueDecl *VD) {
+inline const clang::Type *getCanonicalUnqualifiedType(ValueDecl *VD) {
   return VD->getType()
       .getTypePtr()
       ->getCanonicalTypeUnqualified()
@@ -110,10 +82,16 @@ struct Replacement {
   bool InAssignment = false;
 };
 
+/// Map from parameter to its replacement which is list of necessary members,
+/// replacement string and range that must be changed with this string.
 using ReplacementCandidates = SmallDenseMap<
-    NamedDecl *, SmallVector<Replacement, 8>, 8, DenseMapInfo<NamedDecl *>,
-    TaggedDenseMapPair<bcl::tagged<NamedDecl *, NamedDecl>,
-                       bcl::tagged<SmallVector<Replacement, 8>, Replacement>>>;
+    NamedDecl *,
+    std::tuple<SmallVector<Replacement, 8>, std::string, SourceRange>, 8,
+    DenseMapInfo<NamedDecl *>,
+    TaggedDenseMapTuple<bcl::tagged<NamedDecl *, NamedDecl>,
+                        bcl::tagged<SmallVector<Replacement, 8>, Replacement>,
+                        bcl::tagged<std::string, std::string>,
+                        bcl::tagged<SourceRange, SourceRange>>>;
 
 /// Description of a possible replacement of a source function.
 struct ReplacementMetadata {
@@ -160,14 +138,22 @@ using ReplacementRequests =
                  bcl::tagged<clang::FunctionDecl *, clang::FunctionDecl>,
                  bcl::tagged<clang::SourceLocation, clang::SourceLocation>>>;
 
+/// Set of calls that should be implicitly requested due to accesses to
+/// replace candidates.
+using ReplacementImplicitRequests = DenseSet<clang::CallExpr *>;
+
 struct FunctionInfo {
   /// List of parameters of this function, which are specified in 'replace'
   /// clause, which should be replaced.
   ReplacementCandidates Candidates;
 
-  /// List of calls from this function, which are marked with a  'with' clause,
+  /// List of calls from this function, which are marked with a 'with' clause,
   /// which should be replaced.
   ReplacementRequests Requests;
+
+  /// List of calls that should be implicitly requested due to accesses to
+  /// replace candidates.
+  ReplacementImplicitRequests ImplicitRequests;
 
   /// Calls to functions from this list can be replaced with this function.
   ReplacementTargets Targets;
@@ -179,6 +165,12 @@ struct FunctionInfo {
   /// Source ranges which corresponds to metadata clauses
   /// which can be successfully removed.
   SmallVector<CharSourceRange, 8> ToRemoveMetadata;
+
+  /// Source ranges which have to be removed from the clone only.
+  SmallVector<CharSourceRange, 8> ToRemoveClone;
+
+  /// Name of a new function which is a result of replacement.
+  SmallString<32> ReplacmenetName;
 
   SmallPtrSet<DeclRefExpr *, 8> Meta;
   bool Strict = false;
@@ -206,16 +198,40 @@ using ReplacementMap =
                  bcl::tagged<FunctionDecl *, FunctionDecl>,
                  bcl::tagged<std::unique_ptr<FunctionInfo>, FunctionInfo>>>;
 
+
+clang::DeclRefExpr *getCandidate(clang::Expr *ArgExpr) {
+  if (auto *Cast = dyn_cast<ImplicitCastExpr>(ArgExpr))
+    if (Cast->getCastKind() == CK_LValueToRValue)
+      ArgExpr = Cast->getSubExpr();
+  return dyn_cast<DeclRefExpr>(ArgExpr);
+}
+
+const clang::DeclRefExpr *getCandidate(const clang::Expr *ArgExpr) {
+  if (auto *Cast = dyn_cast<ImplicitCastExpr>(ArgExpr))
+    if (Cast->getCastKind() == CK_LValueToRValue)
+      ArgExpr = Cast->getSubExpr();
+  return dyn_cast<DeclRefExpr>(ArgExpr);
+}
+
+ReplacementCandidates::iterator isExprInCandidates(const clang::Expr *ArgExpr,
+    ReplacementCandidates &Candidates) {
+  if (auto *DRE = getCandidate(ArgExpr))
+    return Candidates.find(DRE->getFoundDecl());
+  return Candidates.end();
+}
+
+using CallList = std::vector<clang::CallExpr *>;
+
 /// This class collects all 'replace' clauses in the code.
 class ReplacementCollector : public RecursiveASTVisitor<ReplacementCollector> {
 public:
-
   ReplacementCollector(TransformationContext &TfmCtx,
-      ReplacementMap &Replacements)
+      ReplacementMap &Replacements, CallList &Calls)
      : mTfmCtx(TfmCtx)
      , mSrcMgr(TfmCtx.getContext().getSourceManager())
      , mLangOpts(TfmCtx.getContext().getLangOpts())
      , mReplacements(Replacements)
+     , mCalls(Calls)
   {}
 
   /// Return list of parameters to replace.
@@ -226,6 +242,16 @@ public:
   /// Return list of parameters to replace.
   const ReplacementMap & getReplacementInfo() const noexcept {
     return mReplacements;
+  }
+
+  /// Return list of visited call expressions.
+  CallList & getCalls() noexcept {
+    return mCalls;
+  }
+
+  /// Return list of visited call expressions.
+  const CallList & getCalls() const noexcept {
+    return mCalls;
   }
 
   bool TraverseStmt(Stmt *S) {
@@ -333,6 +359,7 @@ public:
   }
 
   bool VisitCallExpr(CallExpr *Expr) {
+    mCalls.push_back(Expr);
     if (mInClause == ClauseId::NotClause && mCurrWithTarget)
       mCurrFunc->Requests.try_emplace(Expr, mCurrWithTarget,
                                       mCurrClauseBeginLoc);
@@ -362,12 +389,14 @@ public:
   bool TraverseFunctionDecl(FunctionDecl *FD) {
     if (!FD->doesThisDeclarationHaveABody())
       return true;
-    mCurrFunc = make_unique<FunctionInfo>();
+    mCurrFunc = mReplacements.try_emplace(FD, make_unique<FunctionInfo>())
+                    .first->get<FunctionInfo>()
+                    .get();
     mCurrFD = FD;
     auto Res =
         RecursiveASTVisitor::TraverseFunctionDecl(FD->getCanonicalDecl());
-    if (!mCurrFunc->empty())
-      mReplacements.try_emplace(FD, std::move(mCurrFunc));
+    if (mCurrFunc->empty())
+      mReplacements.erase(FD);
     return Res;
   }
 
@@ -560,9 +589,10 @@ private:
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   ReplacementMap &mReplacements;
+  CallList &mCalls;
 
   FunctionDecl *mCurrFD = nullptr;
-  std::unique_ptr<FunctionInfo> mCurrFunc;
+  FunctionInfo *mCurrFunc = nullptr;
   ClauseId mInClause = ClauseId::NotClause;
   SourceLocation mCurrClauseBeginLoc;
 
@@ -614,16 +644,6 @@ ReplacementMetadata * findRequestMetadata(
   return &*MetaItr;
 }
 
-ReplacementCandidates::iterator isExprInCandidates(clang::Expr *ArgExpr,
-    ReplacementCandidates &Candidates) {
-  if (auto *Cast = dyn_cast<ImplicitCastExpr>(ArgExpr))
-    if (Cast->getCastKind() == CK_LValueToRValue)
-      ArgExpr = Cast->getSubExpr();
-  if (auto *DRE = dyn_cast<DeclRefExpr>(ArgExpr))
-    return Candidates.find(DRE->getFoundDecl());
-  return Candidates.end();
-}
-
 class ReplacementSanitizer : public RecursiveASTVisitor<ReplacementSanitizer> {
 public:
   using ReplacementCandidates =
@@ -648,8 +668,22 @@ public:
 
   bool TraverseCallExpr(clang::CallExpr *Expr) {
     auto RequestItr = mReplacements.Requests.find(Expr);
-    if (RequestItr == mReplacements.Requests.end())
-      return RecursiveASTVisitor::TraverseCallExpr(Expr);
+    if (RequestItr == mReplacements.Requests.end()) {
+      auto ImplicitItr = mReplacements.ImplicitRequests.find(Expr);
+      if (ImplicitItr == mReplacements.ImplicitRequests.end())
+        return RecursiveASTVisitor::TraverseCallExpr(Expr);
+      bool Res = true;
+      for (unsigned ArgIdx = 0, EI = Expr->getNumArgs(); ArgIdx < EI; ++ArgIdx) {
+        auto ArgExpr = Expr->getArg(ArgIdx);
+        auto ReplacementItr =
+          isExprInCandidates(ArgExpr, mReplacements.Candidates);
+        // Do not process replacement candidates if a corresponding callee
+        // may be cloned further.
+        if (ReplacementItr == mReplacements.Candidates.end())
+          Res &= TraverseStmt(ArgExpr);
+      }
+      return Res;
+    }
     assert(RequestItr->get<clang::FunctionDecl>() &&
            "Target function must not be null!");
     auto Meta = findRequestMetadata(*RequestItr, mReplacementInfo, mSrcMgr);
@@ -657,6 +691,7 @@ public:
       mReplacements.Requests.erase(RequestItr);
       return RecursiveASTVisitor::TraverseCallExpr(Expr);
     }
+    bool Res = true;
     for (unsigned ArgIdx = 0, EI= Expr->getNumArgs(); ArgIdx < EI; ++ArgIdx) {
       auto ArgExpr = Expr->getArg(ArgIdx);
       auto ReplacementItr =
@@ -677,11 +712,11 @@ public:
           auto Itr = addToReplacement(ParamMeta.TargetMember,
                                       ReplacementItr->get<Replacement>());
         }
-      } else if (!RecursiveASTVisitor::TraverseStmt(Expr->getArg(ArgIdx))) {
-        return false;
+      } else {
+        Res &= !TraverseStmt(ArgExpr);
       }
     }
-    return true;
+    return Res;
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Expr) {
@@ -798,6 +833,7 @@ void addPragmaMetadata(FunctionDecl &FuncDecl,
     ReplacementCandidates &Candidates,
     SourceManager &SrcMgr, const LangOptions &LangOpts,
     ExternalRewriter &Canvas) {
+  assert(FuncDecl.getBody() && "Unable to update declaration without body!");
   SmallString<256> MDPragma;
   MDPragma.push_back('\n');
   getPragmaText(ClauseId::ReplaceMetadata, MDPragma);
@@ -849,103 +885,96 @@ void addPragmaMetadata(FunctionDecl &FuncDecl,
   Canvas.InsertTextAfter(NextToBraceLoc, MDPragma);
 }
 
-template<class RewriterT > bool replaceCalls(FunctionDecl *FuncDecl,
-    FunctionInfo &FI, ReplacementMap &ReplacementInfo, RewriterT &Rewriter) {
+template <class RewriterT>
+void replaceCall(FunctionInfo &FI, const CallExpr &Expr,
+    StringRef ReplacementName, const ReplacementMetadata &Meta,
+    RewriterT &Rewriter) {
   auto &SrcMgr = Rewriter.getSourceMgr();
-  LLVM_DEBUG(printRequestLog(FuncDecl, FI.Requests, SrcMgr));
-  bool IsChanged = false;
-  for (auto &Request : FI.Requests) {
-    assert(Request.get<clang::CallExpr>() && "Call must not be null!");
-    assert(Request.get<clang::FunctionDecl>() &&
-           "Target function must not be null!");
-    auto Meta = findRequestMetadata(Request, ReplacementInfo, SrcMgr);
-    if (!Meta)
-      continue;
-    SmallString<256> NewCallExpr;
-    NewCallExpr += Request.get<FunctionDecl>()->getName();
-    NewCallExpr += '(';
-    for (unsigned I = 0, EI = Meta->Parameters.size(); I < EI; ++I) {
-      if (I > 0)
-        NewCallExpr += ", ";
-      auto &ParamInfo = Meta->Parameters[I];
-      auto ArgExpr =
-          Request.get<clang::CallExpr>()->getArg(*ParamInfo.TargetParam);
-      auto ReplacementItr = isExprInCandidates(ArgExpr, FI.Candidates);
-      if (ReplacementItr == FI.Candidates.end()) {
-        if (ParamInfo.IsPointer)
-          NewCallExpr += '&';
-        if (ParamInfo.TargetMember) {
-          NewCallExpr += '(';
-          NewCallExpr += Rewriter.getRewrittenText(
-            SrcMgr.getExpansionRange(ArgExpr->getSourceRange()).getAsRange());
-          NewCallExpr += ')';
-          NewCallExpr += "->";
-          NewCallExpr += ParamInfo.TargetMember->getName();
-        } else {
-          if (ParamInfo.IsPointer)
-            NewCallExpr += '(';
-          NewCallExpr += Rewriter.getRewrittenText(
-            SrcMgr.getExpansionRange(ArgExpr->getSourceRange()).getAsRange());
-          if (ParamInfo.IsPointer)
-            NewCallExpr += ')';
-        }
+  SmallString<256> NewCallExpr;
+  NewCallExpr += ReplacementName;
+  NewCallExpr += '(';
+  for (unsigned I = 0, EI = Meta.Parameters.size(); I < EI; ++I) {
+    if (I > 0)
+      NewCallExpr += ", ";
+    auto &ParamInfo = Meta.Parameters[I];
+    auto ArgExpr = Expr.getArg(*ParamInfo.TargetParam);
+    auto ReplacementItr = isExprInCandidates(ArgExpr, FI.Candidates);
+    if (ReplacementItr == FI.Candidates.end()) {
+      if (ParamInfo.IsPointer)
+        NewCallExpr += '&';
+      if (ParamInfo.TargetMember) {
+        NewCallExpr += '(';
+        NewCallExpr += Rewriter.getRewrittenText(
+          SrcMgr.getExpansionRange(ArgExpr->getSourceRange()).getAsRange());
+        NewCallExpr += ')';
+        NewCallExpr += "->";
+        NewCallExpr += ParamInfo.TargetMember->getName();
       } else {
-        auto Itr = find_if(ReplacementItr->template get<Replacement>(),
-                        [&ParamInfo](const Replacement &R) {
-                          return R.Member == ParamInfo.TargetMember;
-                        });
-        assert(Itr != ReplacementItr->get<Replacement>().end() &&
-               "Description of the replacement must be found!");
-        if (Itr->InAssignment || FI.Strict) {
-          if (ParamInfo.IsPointer) {
-            NewCallExpr += Itr->Identifier;
-          } else {
-            NewCallExpr += "*";
-            NewCallExpr += Itr->Identifier;
-          }
-        } else if (ParamInfo.IsPointer) {
-          NewCallExpr += "&";
+        if (ParamInfo.IsPointer)
+          NewCallExpr += '(';
+        NewCallExpr += Rewriter.getRewrittenText(
+          SrcMgr.getExpansionRange(ArgExpr->getSourceRange()).getAsRange());
+        if (ParamInfo.IsPointer)
+          NewCallExpr += ')';
+      }
+    } else {
+      auto Itr = find_if(ReplacementItr->template get<Replacement>(),
+                      [&ParamInfo](const Replacement &R) {
+                        return R.Member == ParamInfo.TargetMember;
+                      });
+      assert(Itr != ReplacementItr->get<Replacement>().end() &&
+             "Description of the replacement must be found!");
+      if (Itr->InAssignment || FI.Strict) {
+        if (ParamInfo.IsPointer) {
           NewCallExpr += Itr->Identifier;
         } else {
+          NewCallExpr += "*";
           NewCallExpr += Itr->Identifier;
         }
+      } else if (ParamInfo.IsPointer) {
+        NewCallExpr += "&";
+        NewCallExpr += Itr->Identifier;
+      } else {
+        NewCallExpr += Itr->Identifier;
       }
     }
-    NewCallExpr += ')';
-    Rewriter.ReplaceText(
-        getExpansionRange(SrcMgr,
-                          Request.get<clang::CallExpr>()->getSourceRange())
-            .getAsRange(),
-        NewCallExpr);
-    IsChanged = true;
   }
-  return IsChanged;
+  NewCallExpr += ')';
+  Rewriter.ReplaceText(
+      getExpansionRange(SrcMgr, Expr.getSourceRange()).getAsRange(),
+      NewCallExpr);
 }
 
 #ifdef LLVM_DEBUG
-void printMetadataLog(FunctionDecl *FD, ReplacementTargets &Sources) {
+void printMetadataLog(const FunctionDecl *FD,
+    const ReplacementTargets &Sources) {
   if (Sources.empty())
     return;
-  dbgs() << "[REPLACE]: target found '" << FD->getName() << "'\n";
+  dbgs() << "[REPLACE]: replacement is '" << FD->getName() << "' function\n";
   for (auto &SI : Sources) {
-    dbgs() << "[REPLACE]: source for target '" << SI.TargetDecl->getName();
+    dbgs() << "[REPLACE]: target '" << SI.TargetDecl->getName()
+           << "' for replacement";
     if (!SI.valid()) {
       dbgs() << " is not valid\n";
       continue;
     }
+    if (FD->getCanonicalDecl() == SI.TargetDecl)
+      dbgs() << " is implicit";
     dbgs() << "\n";
     for (unsigned I = 0, EI = SI.Parameters.size(); I < EI; ++I) {
       auto &PI = SI.Parameters[I];
       auto TargetParam = SI.TargetDecl->getParamDecl(*PI.TargetParam);
-      dbgs() << "[REPLACE]: replacement " << TargetParam->getName()
-        << "." << PI.TargetMember->getName() << "->"
-        << FD->getParamDecl(I)->getName() << " ("
-        << (PI.IsPointer ? "pointer" : "value") << ")\n";
+      dbgs() << "[REPLACE]: target parameter " << TargetParam->getName() << "."
+        << PI.TargetMember->getName() << "->" << I << " (";
+      if (FD->getCanonicalDecl() != SI.TargetDecl)
+        dbgs() << FD->getParamDecl(I)->getName() << ",";
+      dbgs() << (PI.IsPointer ? "pointer" : "value");
+      dbgs() << ")\n";
     }
   }
 }
 
-void printCandidateLog(ReplacementCandidates &Candidates, bool IsStrict) {
+void printCandidateLog(const ReplacementCandidates &Candidates, bool IsStrict) {
   dbgs() << "[REPLACE]: " << (IsStrict ? "strict" : "nostrict")
     << " replacement\n";
   dbgs() << "[REPLACE]: replacement candidates found";
@@ -954,8 +983,8 @@ void printCandidateLog(ReplacementCandidates &Candidates, bool IsStrict) {
   dbgs() << "\n";
 }
 
-void printRequestLog(FunctionDecl *FD, ReplacementRequests &Requests,
-    const SourceManager &SrcMgr) {
+void printRequestLog(const FunctionDecl *FD,
+    const ReplacementRequests &Requests, const SourceManager &SrcMgr) {
   if (Requests.empty())
     return;
   dbgs() << "[REPLACE]: callee replacement requests inside '" << FD->getName()
@@ -967,8 +996,169 @@ void printRequestLog(FunctionDecl *FD, ReplacementRequests &Requests,
     dbgs() << "\n";
   }
 }
+
+void printImplicitRequestLog(const FunctionDecl *FD,
+    const ReplacementImplicitRequests &ImplicitRequests,
+    const SourceManager &SrcMgr) {
+  if (ImplicitRequests.empty())
+    return;
+  dbgs() << "[REPLACE]: callee replacement implicit requests inside '"
+         << FD->getName() << "' found\n";
+  for (auto &Request : ImplicitRequests) {
+    dbgs() << "[REPALCE]: at ";
+    Request->getLocStart().print(dbgs(), SrcMgr);
+    dbgs() << "\n";
+  }
+}
 #endif
 
+template<class RewriterT > bool replaceCalls(const FunctionDecl *FuncDecl,
+    FunctionInfo &FI, ReplacementMap &ReplacementInfo, RewriterT &Rewriter) {
+  auto &SrcMgr = Rewriter.getSourceMgr();
+  LLVM_DEBUG(printRequestLog(FuncDecl, FI.Requests, SrcMgr));
+  bool IsChanged = false;
+  for (auto &Request : FI.Requests) {
+    assert(Request.get<clang::CallExpr>() && "Call must not be null!");
+    assert(Request.get<clang::FunctionDecl>() &&
+           "Target function must not be null!");
+    auto Meta = findRequestMetadata(Request, ReplacementInfo, SrcMgr);
+    if (!Meta)
+      continue;
+    replaceCall(FI, *Request.get<clang::CallExpr>(),
+                Request.get<FunctionDecl>()->getName(), *Meta, Rewriter);
+    IsChanged = true;
+  }
+  for (auto *Request : FI.ImplicitRequests) {
+    auto Callee = Request->getDirectCallee();
+    if (!Callee)
+      continue;
+    const FunctionDecl *Definition;
+    if (!Callee->hasBody(Definition))
+      continue;
+    auto Itr = ReplacementInfo.find(Definition);
+    if (Itr == ReplacementInfo.end())
+      continue;
+    auto MetaItr = find_if(
+        Itr->get<FunctionInfo>()->Targets, [Callee](ReplacementMetadata &Meta) {
+          return Meta.TargetDecl == Callee->getCanonicalDecl();
+        });
+    if (MetaItr == Itr->get<FunctionInfo>()->Targets.end())
+      continue;
+    assert(!Itr->get<FunctionInfo>()->ReplacmenetName.empty() &&
+      "Name of the function clone must not be null!");
+    replaceCall(FI, *Request, Itr->get<FunctionInfo>()->ReplacmenetName,
+      *MetaItr, Rewriter);
+    IsChanged = true;
+  }
+  return IsChanged;
+}
+
+
+class ClangStructureReplacementPass :
+    public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  ClangStructureReplacementPass() : ModulePass(ID) {
+      initializeClangStructureReplacementPassPass(
+        *PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(llvm::Module &M) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<TransformationEnginePass>();
+    AU.addRequired<ClangGlobalInfoPass>();
+    AU.addRequired<ClangIncludeTreePass>();
+    AU.getPreservesAll();
+  }
+
+  void releaseMemory() override {
+    mReplacementInfo.clear();
+    mTfmCtx = nullptr;
+    mGlobalInfo = nullptr;
+    mRawInfo = nullptr;
+  }
+
+private:
+  void addSuffix(const Twine &Prefix, SmallVectorImpl<char> &Out) {
+    for (unsigned Count = 0;
+      mRawInfo->Identifiers.count((Prefix + Twine(Count)).toStringRef(Out));
+      ++Count, Out.clear());
+    mRawInfo->Identifiers.insert(StringRef(Out.data(), Out.size()));
+  }
+
+  std::pair<FunctionDecl *, FunctionInfo *> tieCallGraphNode(
+      CallGraphNode *CGN) {
+    if (!CGN->getDecl() || !isa<FunctionDecl>(CGN->getDecl()))
+      return std::make_pair(nullptr, nullptr);
+    const auto *Definition = cast<FunctionDecl>(CGN->getDecl());
+    if (!Definition->hasBody(Definition))
+      return std::make_pair(nullptr, nullptr);
+    auto InfoItr = mReplacementInfo.find(Definition->getCanonicalDecl());
+    if (InfoItr == mReplacementInfo.end())
+      return std::make_pair(nullptr, nullptr);
+    auto FuncDecl = InfoItr->get<FunctionDecl>();
+    assert(FuncDecl->doesThisDeclarationHaveABody() &&
+      "Function must have a body to transform!");
+    return std::make_pair(FuncDecl, InfoItr->get<FunctionInfo>().get());
+  }
+
+  /// Collect replacement candidates for functions in a specified strongly
+  /// connected component in a call graph.
+  void collectCandidatesIn(scc_iterator<CallGraph *> &SCC);
+
+  /// Check accesses to replacement candidates inside a specified function.
+  ///
+  /// Remove replacement candidate if it cannot be replaced.
+  void sanitizeCandidates(FunctionDecl *FuncDecl, FunctionInfo *FuncInfo);
+
+  /// Update list of members which should become parameters in a new function
+  /// according to accesses in callees.
+  ///
+  /// If parameter has a structure type and it should be replaced, some its
+  /// members can be implicitly accessed in callees while these members are not
+  /// accessed in a function explicitly. This function collects these members
+  /// for further replacement.
+  void fillImplicitReplacementMembers(scc_iterator<CallGraph *> &SCC);
+
+  /// Check replacement candidates which are passed to calls.
+  /// Remove replacement candidates if it cannot be replaced in callee.
+  void sanitizeCandidatesInCalls(scc_iterator<CallGraph *> &SCC);
+
+  void buildParameters(FunctionDecl *FuncDecl, FunctionInfo *FuncInfo);
+  void buildParameters(scc_iterator<CallGraph *> &SCC) {
+    for (auto *CGN : *SCC) {
+      FunctionDecl *FuncDecl;
+      FunctionInfo *FuncInfo;
+      std::tie(FuncDecl, FuncInfo) = tieCallGraphNode(CGN);
+      if (!FuncDecl)
+        continue;
+      if (!FuncInfo->hasCandidates())
+        continue;
+      buildParameters(FuncDecl, FuncInfo);
+    }
+  }
+
+  void insertNewFunction(FunctionDecl *FuncDecl, FunctionInfo *FuncInfo );
+  void insertNewFunctions(scc_iterator<CallGraph *> &SCC) {
+    for (auto *CGN : *SCC) {
+      FunctionDecl *FuncDecl;
+      FunctionInfo *FuncInfo;
+      std::tie(FuncDecl, FuncInfo) = tieCallGraphNode(CGN);
+      if (!FuncDecl)
+        continue;
+      if (!FuncInfo->hasCandidates())
+        continue;
+      insertNewFunction(FuncDecl, FuncInfo);
+    }
+  }
+
+  TransformationContext *mTfmCtx = nullptr;
+  ClangGlobalInfoPass::RawInfo *mRawInfo = nullptr;
+  const GlobalInfoExtractor *mGlobalInfo = nullptr;
+  ReplacementMap mReplacementInfo;
+};
 } // namespace
 
 char ClangStructureReplacementPass::ID = 0;
@@ -989,288 +1179,541 @@ ModulePass * llvm::createClangStructureReplacementPass() {
   return new ClangStructureReplacementPass;
 }
 
-bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
-        ": transformation context is not available");
-    return false;
+void ClangStructureReplacementPass::collectCandidatesIn(
+    scc_iterator<CallGraph *> &SCC) {
+  std::vector<std::pair<FunctionDecl *, CallList>> Calls;
+  LLVM_DEBUG(dbgs() << "[REPLACE]: process functions in SCC\n");
+  for (auto *CGN : *SCC) {
+    if (!CGN->getDecl() || !isa<FunctionDecl>(CGN->getDecl()))
+      continue;
+    const auto *Definition = cast<FunctionDecl>(CGN->getDecl());
+    if (!Definition->hasBody(Definition))
+      continue;
+    LLVM_DEBUG(dbgs() << "[REPLACE]: process '" << Definition->getName()
+                      << "'\n");
+    Calls.emplace_back(const_cast<FunctionDecl *>(Definition), CallList());
+    ReplacementCollector Collector(*mTfmCtx, mReplacementInfo,
+                                   Calls.back().second);
+    Collector.TraverseDecl(const_cast<FunctionDecl *>(Definition));
   }
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  mRawInfo = &GIP.getRawInfo();
-  ReplacementMap ReplacementInfo;
-  ReplacementCollector Collector(*TfmCtx, ReplacementInfo);
-  Collector.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  auto &Rewriter = TfmCtx->getRewriter();
-  auto &SrcMgr = Rewriter.getSourceMgr();
-  auto &LangOpts = Rewriter.getLangOpts();
-  if (SrcMgr.getDiagnostics().hasErrorOccurred())
-    return false;
-  for (auto &Info : ReplacementInfo) {
-    auto FuncDecl = Info.get<FunctionDecl>();
-    if (!Info.get<FunctionInfo>()->hasCandidates()) {
-      if (replaceCalls(FuncDecl, *Info.get<FunctionInfo>(), ReplacementInfo,
-                       Rewriter)) {
-        Rewriter::RewriteOptions RemoveEmptyLine;
-        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
-        /// set to true then removing (in RewriterBuffer) works incorrect.
-        RemoveEmptyLine.RemoveLineIfEmpty = false;
-        for (auto SR : Info.get<FunctionInfo>()->ToRemoveTransform)
-          Rewriter.RemoveText(SR, RemoveEmptyLine);
-      }
-      continue;
-    }
-    ReplacementSanitizer Verifier(*TfmCtx, *Info.get<FunctionInfo>(),
-                                  ReplacementInfo);
-    Verifier.TraverseDecl(FuncDecl);
-    LLVM_DEBUG(printMetadataLog(FuncDecl, Info.get<FunctionInfo>()->Targets));
-    if (!Info.get<FunctionInfo>()->hasCandidates())
-      continue;
-    // Check general preconditions.
-    auto FuncRange = SrcMgr.getExpansionRange(FuncDecl->getSourceRange());
-    if (!SrcMgr.isWrittenInSameFile(FuncRange.getBegin(), FuncRange.getEnd())) {
-      toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
-        diag::warn_disable_replace_struct);
-      toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocStart(),
-        diag::note_source_range_not_single_file);
-      toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocEnd(),
-        diag::note_end_location);
-      continue;
-    }
-    if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) !=
-      SrcMgr::C_User) {
-      toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
-        diag::warn_disable_replace_struct_system);
-      continue;
-    }
-    if (Info.get<FunctionInfo>()->Strict) {
-      bool HasMacro = false;
-      for_each_macro(FuncDecl, SrcMgr, LangOpts, mRawInfo->Macros,
-        [FuncDecl, &SrcMgr, &HasMacro](SourceLocation Loc) {
-          if (!HasMacro) {
-            HasMacro = true;
-            toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
-              diag::warn_disable_replace_struct);
-            toDiag(SrcMgr.getDiagnostics(), Loc,
-              diag::note_replace_struct_macro_prevent);
-          }
-        });
-      if (HasMacro)
+  bool IsChanged = false;
+  do {
+    IsChanged = false;
+    for (auto &CallerToCalls : Calls) {
+      auto *Caller = CallerToCalls.first;
+      auto CallerItr = mReplacementInfo.find(Caller->getCanonicalDecl());
+      if (CallerItr == mReplacementInfo.end() ||
+          !CallerItr->get<FunctionInfo>()->hasCandidates())
         continue;
-    }
-    LLVM_DEBUG(printCandidateLog(Info.get<FunctionInfo>()->Candidates,
-                                 Info.get<FunctionInfo>()->Strict));
-    LLVM_DEBUG(
-        printRequestLog(FuncDecl, Info.get<FunctionInfo>()->Requests, SrcMgr));
-    ExternalRewriter Canvas(
-      tsar::getExpansionRange(SrcMgr, FuncDecl->getSourceRange()).getAsRange(),
-      SrcMgr, LangOpts);
-    // Build unique name for a new function.
-    SmallString<32> NewName;
-    addSuffix(FuncDecl->getName() + "_spf", NewName);
-    SourceRange NameRange(SrcMgr.getExpansionLoc(FuncDecl->getLocation()));
-    NameRange.setEnd(
-      NameRange.getBegin().getLocWithOffset(FuncDecl->getName().size() - 1));
-    Canvas.ReplaceText(NameRange, NewName);
-    // Look up for declaration of types of parameters.
-    auto &FT = getAnalysis<ClangIncludeTreePass>().getFileTree();
-    std::string Context;
-    auto *OFD = GIP.getGlobalInfo().findOutermostDecl(FuncDecl);
-    assert(OFD && "Outermost declaration for the current function must be known!");
-    auto Root = FileNode::ChildT(FT.findRoot(OFD));
-    assert(Root && "File which contains declaration must be known!");
-    for (auto &Internal : FT.internals()) {
-      if (auto *TD = dyn_cast<TypeDecl>(Internal.getDescendant())) {
-        Context += Lexer::getSourceText(
-          SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
-        Context += ";";
-      }
-    }
-    for (auto *N : depth_first(&Root)) {
-      if (N->is<FileNode *>())
-        continue;
-      auto *OD = N->get<const FileNode::OutermostDecl *>();
-      if (OD == OFD)
-        break;
-      if (auto *TD = dyn_cast<TypeDecl>(OD->getDescendant())) {
-        Context += Lexer::getSourceText(
-          SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
-        Context += ";";
-      }
-    }
-    // Replace aggregate parameters with separate variables.
-    StringMap<std::string> Replacements;
-    bool TheLastParam = true;
-    for (unsigned I = FuncDecl->getNumParams(); I > 0; --I) {
-      auto *PD = FuncDecl->getParamDecl(I - 1);
-      auto ReplacementItr = Info.get<FunctionInfo>()->Candidates.find(PD);
-      if (ReplacementItr == Info.get<FunctionInfo>()->Candidates.end()) {
-        // Remove comma after the current parameter if it becomes the last one.
-        if (TheLastParam) {
-          SourceLocation EndLoc = PD->getLocEnd();
-          Token CommaTok;
-          if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-                               CommaTok)) {
-            toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-                   diag::warn_transform_internal);
-            Info.get<FunctionInfo>()->Candidates.clear();
-            break;
+      for (auto *Call : CallerToCalls.second) {
+        if (CallerItr->get<FunctionInfo>()->Requests.count(Call))
+          continue;
+        const auto *CalleeDefinition = Call->getDirectCallee();
+        if (!CalleeDefinition || !CalleeDefinition->hasBody(CalleeDefinition))
+          continue;
+        auto *Callee = const_cast<FunctionDecl *>(CalleeDefinition);
+        auto CalleeItr = mReplacementInfo.find(Callee->getCanonicalDecl());
+        for (unsigned I = 0, EI = Call->getNumArgs(); I < EI; ++I) {
+          auto Itr = (isExprInCandidates(
+              Call->getArg(I), CallerItr->get<FunctionInfo>()->Candidates));
+          if (Itr == CallerItr->get<FunctionInfo>()->Candidates.end())
+            continue;
+          CallerItr->get<FunctionInfo>()->ImplicitRequests.insert(Call);
+          if (CalleeItr == mReplacementInfo.end()) {
+            CalleeItr = mReplacementInfo
+                            .try_emplace(Callee->getCanonicalDecl(),
+                                         make_unique<FunctionInfo>())
+                            .first;
+            CalleeItr->get<FunctionInfo>()->Strict =
+                CallerItr->get<FunctionInfo>()->Strict;
+            LLVM_DEBUG(dbgs()
+                       << "[REPLACE]: add implicit "
+                       << (CalleeItr->get<FunctionInfo>()->Strict ? "strict"
+                                                                  : "nostrict")
+                       << " replacement for '"
+                       << CalleeItr->get<FunctionDecl>()->getName() << "'\n");
           }
-          if (CommaTok.is(tok::comma))
-            Canvas.RemoveText(CommaTok.getLocation());
+          if (CalleeItr->get<FunctionInfo>()
+                  ->Candidates.try_emplace(Callee->getParamDecl(I))
+                  .second) {
+            IsChanged = true;
+            CalleeItr->get<FunctionInfo>()->Strict |=
+                CallerItr->get<FunctionInfo>()->Strict;
+          }
         }
+      }
+    }
+  } while (IsChanged && SCC.hasLoop());
+}
+
+void ClangStructureReplacementPass::sanitizeCandidates(FunctionDecl *FuncDecl,
+    FunctionInfo *FuncInfo) {
+  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+  auto &LangOpts = mTfmCtx->getContext().getLangOpts();
+  // Check general preconditions.
+  auto FuncRange = SrcMgr.getExpansionRange(FuncDecl->getSourceRange());
+  if (!SrcMgr.isWrittenInSameFile(FuncRange.getBegin(), FuncRange.getEnd())) {
+    FuncInfo->Candidates.clear();
+    toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
+      diag::warn_disable_replace_struct);
+    toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocStart(),
+      diag::note_source_range_not_single_file);
+    toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocEnd(),
+      diag::note_end_location);
+    return;
+  }
+  if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) !=
+    SrcMgr::C_User) {
+    FuncInfo->Candidates.clear();
+    toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
+      diag::warn_disable_replace_struct_system);
+    return;
+  }
+  if (FuncInfo->Strict) {
+    bool HasMacro = false;
+    for_each_macro(FuncDecl, SrcMgr, LangOpts, mRawInfo->Macros,
+      [FuncDecl, &SrcMgr, &HasMacro](SourceLocation Loc) {
+        if (!HasMacro) {
+          HasMacro = true;
+          toDiag(SrcMgr.getDiagnostics(), FuncDecl->getLocation(),
+            diag::warn_disable_replace_struct);
+          toDiag(SrcMgr.getDiagnostics(), Loc,
+            diag::note_replace_struct_macro_prevent);
+        }
+      });
+    if (HasMacro) {
+      FuncInfo->Candidates.clear();
+      return;
+    }
+  }
+  ReplacementSanitizer Verifier(*mTfmCtx, *FuncInfo, mReplacementInfo);
+  Verifier.TraverseDecl(FuncDecl);
+}
+
+void ClangStructureReplacementPass::fillImplicitReplacementMembers(
+    scc_iterator<CallGraph *> &SCC) {
+  bool IsChanged = false;
+  do {
+    IsChanged = false;
+    for (auto *CGN : *SCC) {
+      FunctionDecl *FuncDecl;
+      FunctionInfo *FuncInfo;
+      std::tie(FuncDecl, FuncInfo) = tieCallGraphNode(CGN);
+      if (!FuncDecl)
+        continue;
+      if (!FuncInfo->hasCandidates())
+        continue;
+      for (auto *Call : FuncInfo->ImplicitRequests) {
+        auto *Callee = Call->getDirectCallee();
+        assert(Callee &&
+          "Called must be known for a valid implicit request!");
+        const auto *CalleeDefinition = Call->getDirectCallee();
+        Callee->hasBody(CalleeDefinition);
+        assert(CalleeDefinition && "Callee must have a body!");
+        auto CalleeItr = mReplacementInfo.find(Callee->getCanonicalDecl());
+        if (CalleeItr == mReplacementInfo.end())
+          continue;
+        for (unsigned I = 0, EI = Call->getNumArgs(); I < EI; ++I) {
+          auto Itr =
+            isExprInCandidates(Call->getArg(I), FuncInfo->Candidates);
+          if (Itr == FuncInfo->Candidates.end())
+            continue;
+          auto CalleeCandidateItr =
+            CalleeItr->get<FunctionInfo>()->Candidates.find(
+              CalleeItr->get<FunctionDecl>()->getParamDecl(I));
+          if (CalleeCandidateItr ==
+            CalleeItr->get<FunctionInfo>()->Candidates.end())
+            continue;
+          for (auto &CalleeR : CalleeCandidateItr->get<Replacement>()) {
+            auto CallerRItr = find_if(Itr->get<Replacement>(),
+              [&CalleeR](const Replacement &R) {
+                return R.Member == CalleeR.Member;
+              });
+            if (CallerRItr != Itr->get<Replacement>().end()) {
+              if (!CallerRItr->InAssignment && CalleeR.InAssignment)
+                CallerRItr->InAssignment = IsChanged = true;
+            } else {
+              Itr->get<Replacement>().emplace_back(CalleeR.Member);
+              Itr->get<Replacement>().back().InAssignment =
+                CalleeR.InAssignment;
+              IsChanged = true;
+            }
+          }
+        }
+      }
+    }
+  } while (IsChanged && SCC.hasLoop());
+}
+
+void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
+    scc_iterator<CallGraph *> &SCC) {
+  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+  bool IsChanged = false;
+  do {
+    IsChanged = false;
+    for (auto *CGN : *SCC) {
+      FunctionDecl *FuncDecl;
+      FunctionInfo *FuncInfo;
+      std::tie(FuncDecl, FuncInfo) = tieCallGraphNode(CGN);
+      if (!FuncDecl)
+        continue;
+      if (!FuncInfo->hasCandidates())
+        continue;
+      SmallVector<CallExpr *, 8> ImplicitRequestToRemove;
+      for (auto *Call : FuncInfo->ImplicitRequests) {
+        auto *Callee = Call->getDirectCallee();
+        assert(Callee &&
+          "Called must be known for a valid implicit request!");
+        const auto *CalleeDefinition = Call->getDirectCallee();
+        Callee->hasBody(CalleeDefinition);
+        assert(CalleeDefinition && "Callee must have a body!");
+        auto CalleeItr = mReplacementInfo.find(Callee->getCanonicalDecl());
+        bool HasCandidatesInArgs = false;
+        for (unsigned I = 0, EI = Call->getNumArgs(); I < EI; ++I) {
+          auto Itr =
+            (isExprInCandidates(Call->getArg(I), FuncInfo->Candidates));
+          if (Itr == FuncInfo->Candidates.end())
+            continue;
+          if (CalleeItr == mReplacementInfo.end()) {
+            toDiag(SrcMgr.getDiagnostics(),
+                   Itr->get<NamedDecl>()->getLocation(),
+                   diag::warn_disable_replace_struct);
+            toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getLocStart(),
+              diag::note_replace_struct_arrow);
+            FuncInfo->Candidates.erase(Itr);
+            IsChanged = true;
+          } else {
+            if (!CalleeItr->get<FunctionInfo>()->Candidates.count(
+                    CalleeItr->get<FunctionDecl>()->getParamDecl(I))) {
+              toDiag(SrcMgr.getDiagnostics(),
+                     Itr->get<NamedDecl>()->getLocation(),
+                     diag::warn_disable_replace_struct);
+              toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getLocStart(),
+                     diag::note_replace_struct_arrow);
+              FuncInfo->Candidates.erase(Itr);
+              IsChanged = true;
+            } else {
+              HasCandidatesInArgs = true;
+            }
+          }
+        }
+        if (!HasCandidatesInArgs)
+          ImplicitRequestToRemove.push_back(Call);
+      }
+      for (auto *Call : ImplicitRequestToRemove)
+        FuncInfo->ImplicitRequests.erase(Call);
+    }
+  } while (IsChanged && SCC.hasLoop());
+}
+
+
+void ClangStructureReplacementPass::buildParameters(FunctionDecl *FuncDecl,
+    FunctionInfo *FuncInfo) {
+  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+  auto &LangOpts = mTfmCtx->getContext().getLangOpts();
+  // Look up for declaration of types of parameters.
+  auto &FT = getAnalysis<ClangIncludeTreePass>().getFileTree();
+  std::string Context;
+  auto *OFD = mGlobalInfo->findOutermostDecl(FuncDecl);
+  assert(OFD && "Outermost declaration for the current function must be known!");
+  auto Root = FileNode::ChildT(FT.findRoot(OFD));
+  assert(Root && "File which contains declaration must be known!");
+  for (auto &Internal : FT.internals()) {
+    if (auto *TD = dyn_cast<TypeDecl>(Internal.getDescendant())) {
+      Context += Lexer::getSourceText(
+        SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
+      Context += ";";
+    }
+  }
+  for (auto *N : depth_first(&Root)) {
+    if (N->is<FileNode *>())
+      continue;
+    auto *OD = N->get<const FileNode::OutermostDecl *>();
+    if (OD == OFD)
+      break;
+    if (auto *TD = dyn_cast<TypeDecl>(OD->getDescendant())) {
+      Context += Lexer::getSourceText(
+        SrcMgr.getExpansionRange(TD->getSourceRange()), SrcMgr, LangOpts);
+      Context += ";";
+    }
+  }
+  // Replace aggregate parameters with separate variables.
+  StringMap<std::string> Replacements;
+  bool TheLastParam = true;
+  for (unsigned I = FuncDecl->getNumParams(); I > 0; --I) {
+    auto *PD = FuncDecl->getParamDecl(I - 1);
+    auto ReplacementItr = FuncInfo->Candidates.find(PD);
+    if (ReplacementItr == FuncInfo->Candidates.end()) {
+      // Remove comma after the current parameter if it becomes the last one.
+      if (TheLastParam) {
+        SourceLocation EndLoc = PD->getLocEnd();
+        Token CommaTok;
+        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr,
+          LangOpts, CommaTok)) {
+          toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
+            diag::warn_transform_internal);
+          FuncInfo->Candidates.clear();
+          break;
+        }
+        if (CommaTok.is(tok::comma))
+          FuncInfo->ToRemoveClone.emplace_back(
+            CharSourceRange::getTokenRange(
+              SrcMgr.getExpansionLoc(CommaTok.getLocation())));
+      }
+      TheLastParam = false;
+      continue;
+    }
+    SmallString<128> NewParams;
+    // We also remove an unused parameter if it is mentioned in replace clause.
+    if (ReplacementItr->get<Replacement>().empty()) {
+      SourceLocation EndLoc = PD->getLocEnd();
+      Token CommaTok;
+      if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+        CommaTok)) {
+        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
+          diag::warn_disable_replace_struct);
+        toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
+          diag::note_replace_struct_de_decl);
+        FuncInfo->Candidates.erase(ReplacementItr);
         TheLastParam = false;
         continue;
       }
-      SmallString<128> NewParams;
-      // We also remove an unused parameter if it is mentioned in replace clause.
-      if (ReplacementItr->get<Replacement>().empty()) {
-        SourceLocation EndLoc = PD->getLocEnd();
+      if (CommaTok.is(tok::comma))
+        EndLoc = CommaTok.getLocation();
+      FuncInfo->ToRemoveClone.emplace_back(CharSourceRange::getTokenRange(
+        SrcMgr.getExpansionLoc(PD->getLocStart()),
+        SrcMgr.getExpansionLoc(EndLoc)));
+      toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
+        diag::remark_replace_struct);
+      toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
+        diag::remark_remove_de_decl);
+      // Do not update TheLastParam variable. If the current parameter is the
+      // last in the list and if it is removed than the previous parameter
+      // in the list become the last one.
+      continue;
+    }
+    auto StashContextSize = Context.size();
+    for (auto &R : ReplacementItr->get<Replacement>()) {
+      TypeSearch TS(PD, R.Member, SrcMgr, *mGlobalInfo);
+      TS.TraverseDecl(R.Member);
+      if (!TS.isOk()) {
+        Context.resize(StashContextSize);
+        NewParams.clear();
+        break;
+      }
+      addSuffix(PD->getName() + "_" + R.Member->getName(), R.Identifier);
+      auto ParamType = (R.InAssignment || FuncInfo->Strict)
+        ? R.Member->getType().getAsString() + "*"
+        : R.Member->getType().getAsString();
+      auto Tokens =
+        buildDeclStringRef(ParamType, R.Identifier, Context, Replacements);
+      if (Tokens.empty()) {
+        Context.resize(StashContextSize);
+        NewParams.clear();
+        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
+          diag::warn_disable_replace_struct);
+        toDiag(SrcMgr.getDiagnostics(), R.Member->getLocStart(),
+          diag::note_replace_struct_decl);
+        break;
+      }
+      if (!NewParams.empty())
+        NewParams.push_back(',');
+      auto Size = NewParams.size();
+      join(Tokens.begin(), Tokens.end(), " ", NewParams);
+      Context += StringRef(NewParams.data() + Size, NewParams.size() - Size);
+      Context += ";";
+      LLVM_DEBUG(dbgs() << "[REPLACE]: replacement for " << I
+        << " parameter: "
+        << StringRef(NewParams.data() + Size,
+          NewParams.size() - Size)
+        << "\n");
+    }
+    if (!NewParams.empty()) {
+      SourceLocation EndLoc = PD->getLocEnd();
+      // If the next parameter in the parameter list is unused and it has been
+      // successfully remove, we have to remove comma after the current
+      // parameter.
+      if (TheLastParam) {
         Token CommaTok;
         if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
           CommaTok)) {
           toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
             diag::warn_disable_replace_struct);
           toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-            diag::note_replace_struct_de_decl);
-          Info.get<FunctionInfo>()->Candidates.erase(ReplacementItr);
-          TheLastParam = false;
+            diag::note_replace_struct_decl_internal);
+          FuncInfo->Candidates.erase(ReplacementItr);
           continue;
         }
         if (CommaTok.is(tok::comma))
           EndLoc = CommaTok.getLocation();
-        Canvas.RemoveText(SrcMgr
-          .getExpansionRange(CharSourceRange::getTokenRange(
-            PD->getLocStart(), EndLoc))
-          .getAsRange());
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-          diag::remark_replace_struct);
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-          diag::remark_remove_de_decl);
-        // Do not update TheLastParam variable. If the current parameter is the
-        // last in the list and if it is removed than the previous parameter
-        // in the list become the last one.
-        continue;
       }
-      auto StashContextSize = Context.size();
-      for (auto &R : ReplacementItr->get<Replacement>()) {
-        TypeSearch TS(PD, R.Member, SrcMgr, GIP.getGlobalInfo());
-        TS.TraverseDecl(R.Member);
-        if (!TS.isOk()) {
-          Context.resize(StashContextSize);
-          NewParams.clear();
-          break;
-        }
-        addSuffix(PD->getName() + "_" + R.Member->getName(), R.Identifier);
-        auto ParamType = (R.InAssignment || Info.get<FunctionInfo>()->Strict)
-          ? R.Member->getType().getAsString() + "*"
-          : R.Member->getType().getAsString();
-        auto Tokens =
-          buildDeclStringRef(ParamType, R.Identifier, Context, Replacements);
-        if (Tokens.empty()) {
-          Context.resize(StashContextSize);
-          NewParams.clear();
-          toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-            diag::warn_disable_replace_struct);
-          toDiag(SrcMgr.getDiagnostics(), R.Member->getLocStart(),
-            diag::note_replace_struct_decl);
-          break;
-        }
-        if (!NewParams.empty())
-          NewParams.push_back(',');
-        auto Size = NewParams.size();
-        join(Tokens.begin(), Tokens.end(), " ", NewParams);
-        Context += StringRef(NewParams.data() + Size, NewParams.size() - Size);
-        Context += ";";
-        LLVM_DEBUG(dbgs() << "[REPLACE]: replacement for " << I
-                          << " parameter: "
-                          << StringRef(NewParams.data() + Size,
-                                       NewParams.size() - Size)
-                          << "\n");
-      }
-      if (!NewParams.empty()) {
+      auto Range = SrcMgr
+        .getExpansionRange(CharSourceRange::getTokenRange(
+          PD->getLocStart(), EndLoc))
+        .getAsRange();
+      ReplacementItr->get<std::string>() = NewParams.str();
+      ReplacementItr->get<SourceRange>() = Range;
+    } else {
+      // Remove comma after the current parameter if it becomes the last one.
+      if (TheLastParam) {
         SourceLocation EndLoc = PD->getLocEnd();
-        // If the next parameter in the parameter list is unused and it has been
-        // successfully remove, we have to remove comma after the current
-        // parameter.
-        if (TheLastParam) {
-          Token CommaTok;
-          if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-            CommaTok)) {
-            toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-              diag::warn_disable_replace_struct);
-            toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-              diag::note_replace_struct_decl_internal);
-            Info.get<FunctionInfo>()->Candidates.erase(ReplacementItr);
-            continue;
-          }
-          if (CommaTok.is(tok::comma))
-            EndLoc = CommaTok.getLocation();
+        Token CommaTok;
+        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+          CommaTok)) {
+          toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
+            diag::warn_transform_internal);
+          FuncInfo->Candidates.clear();
+          break;
         }
-        auto Range = SrcMgr
-          .getExpansionRange(CharSourceRange::getTokenRange(
-            PD->getLocStart(), EndLoc))
-          .getAsRange();
-        Canvas.ReplaceText(Range, NewParams);
+        if (CommaTok.is(tok::comma))
+          FuncInfo->ToRemoveClone.emplace_back(
+            CharSourceRange::getTokenRange(
+              SrcMgr.getExpansionLoc(CommaTok.getLocation())));
+      }
+      FuncInfo->Candidates.erase(ReplacementItr);
+    }
+    TheLastParam = false;
+  }
+}
+
+void ClangStructureReplacementPass::insertNewFunction(
+    FunctionDecl *FuncDecl, FunctionInfo *FuncInfo) {
+  auto &Rewriter = mTfmCtx->getRewriter();
+  auto &SrcMgr = Rewriter.getSourceMgr();
+  auto &LangOpts = Rewriter.getLangOpts();
+  LLVM_DEBUG(printCandidateLog(FuncInfo->Candidates, FuncInfo->Strict));
+  LLVM_DEBUG(printRequestLog(FuncDecl, FuncInfo->Requests, SrcMgr));
+  LLVM_DEBUG(
+      printImplicitRequestLog(FuncDecl, FuncInfo->ImplicitRequests, SrcMgr));
+  ExternalRewriter Canvas(
+    tsar::getExpansionRange(SrcMgr, FuncDecl->getSourceRange()).getAsRange(),
+    SrcMgr, LangOpts);
+  // Build unique name for a new function.
+  addSuffix(FuncDecl->getName() + "_spf", FuncInfo->ReplacmenetName);
+  SourceRange NameRange(SrcMgr.getExpansionLoc(FuncDecl->getLocation()));
+  NameRange.setEnd(
+    NameRange.getBegin().getLocWithOffset(FuncDecl->getName().size() - 1));
+  Canvas.ReplaceText(NameRange, FuncInfo->ReplacmenetName);
+  // Replace accesses to parameters.
+  for (auto &ParamInfo : FuncInfo->Candidates) {
+    Canvas.ReplaceText(ParamInfo.get<SourceRange>(),
+      ParamInfo.get<std::string>());
+    for (auto &R : ParamInfo.get<Replacement>()) {
+      for (auto Range : R.Ranges) {
+        SmallString<64> Tmp;
+        auto AccessString = R.InAssignment || FuncInfo->Strict
+          ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
+          : StringRef(R.Identifier);
+        Canvas.ReplaceText(Range, AccessString);
+      }
+    }
+  }
+  // Build implicit metadata.
+  FuncInfo->Targets.emplace_back();
+  auto &FuncMeta = FuncInfo->Targets.back();
+  FuncMeta.TargetDecl = FuncDecl->getCanonicalDecl();
+  for (unsigned I = 0, EI = FuncDecl->getNumParams(); I < EI; ++I) {
+    auto *PD = FuncDecl->getParamDecl(I);
+    auto ReplacementItr = FuncInfo->Candidates.find(PD);
+    if (ReplacementItr == FuncInfo->Candidates.end()) {
+      FuncMeta.Parameters.emplace_back();
+      FuncMeta.Parameters.back().TargetParam = I;
+      FuncMeta.Parameters.back().IsPointer = false;
+    } else {
+      for (auto &R : ReplacementItr->get<Replacement>()) {
+        FuncMeta.Parameters.emplace_back();
+        FuncMeta.Parameters.back().TargetParam = I;
+        FuncMeta.Parameters.back().TargetMember = cast<FieldDecl>(R.Member);
+        FuncMeta.Parameters.back().IsPointer =
+          FuncInfo->Strict || R.InAssignment;
+      }
+    }
+  }
+  LLVM_DEBUG(printMetadataLog(FuncDecl, FuncInfo->Targets));
+  replaceCalls(FuncDecl, *FuncInfo, mReplacementInfo, Canvas);
+  // Remove pragmas from the original function and its clone if replacement
+  // is still possible.
+  Rewriter::RewriteOptions RemoveEmptyLine;
+  /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+  /// set to true then removing (in RewriterBuffer) works incorrect.
+  RemoveEmptyLine.RemoveLineIfEmpty = false;
+  for (auto SR : FuncInfo->ToRemoveTransform) {
+    Rewriter.RemoveText(SR, RemoveEmptyLine);
+    Canvas.RemoveText(SR, true);
+  }
+  for (auto SR : FuncInfo->ToRemoveMetadata)
+    Canvas.RemoveText(SR, true);
+  for (auto SR : FuncInfo->ToRemoveClone)
+    Canvas.RemoveText(SR, true);
+  addPragmaMetadata(
+    *FuncDecl, FuncInfo->Candidates, SrcMgr, LangOpts, Canvas);
+  // Update sources.
+  auto OriginDefString = Lexer::getSourceText(
+    CharSourceRange::getTokenRange(
+      FuncDecl->getBeginLoc(),
+      FuncDecl->getParamDecl(FuncDecl->getNumParams() - 1)->getEndLoc()),
+    SrcMgr, LangOpts);
+  auto LocToInsert = SrcMgr.getExpansionLoc(FuncDecl->getLocEnd());
+  Rewriter.InsertTextAfterToken(
+    LocToInsert,
+    ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
+  Rewriter.InsertTextAfterToken(LocToInsert, Canvas.getBuffer());
+}
+
+bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
+  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
+    M.getContext().emitError("can not transform sources"
+        ": transformation context is not available");
+    return false;
+  }
+  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  mRawInfo = &GIP.getRawInfo();
+  mGlobalInfo = &GIP.getGlobalInfo();
+  clang::CallGraph CG;
+  CG.TraverseDecl(mTfmCtx->getContext().getTranslationUnitDecl());
+  std::vector<scc_iterator<CallGraph *>> Postorder;
+  for (auto I = scc_iterator<CallGraph *>::begin(&CG); !I.isAtEnd(); ++I)
+    Postorder.push_back(I);
+  LLVM_DEBUG(dbgs() << "[REPLACE]: number of SCCs " << Postorder.size() << "\n");
+  LLVM_DEBUG(dbgs() << "[REPLACE]: traverse call graph in reverse postorder\n");
+  for (auto &SCC: llvm::reverse(Postorder))
+    collectCandidatesIn(SCC);
+  auto &Rewriter = mTfmCtx->getRewriter();
+  auto &SrcMgr = Rewriter.getSourceMgr();
+  if (SrcMgr.getDiagnostics().hasErrorOccurred())
+    return false;
+  LLVM_DEBUG(dbgs() << "[REPLACE]: traverse call graph in postorder\n");
+  for (auto &SCC : Postorder) {
+    LLVM_DEBUG(dbgs() << "[REPLACE]: process functions in SCC\n");
+    for (auto *CGN : *SCC) {
+      FunctionDecl *FuncDecl;
+      FunctionInfo *FuncInfo;
+      std::tie(FuncDecl, FuncInfo) = tieCallGraphNode(CGN);
+      if (!FuncDecl)
+        continue;
+      LLVM_DEBUG(printMetadataLog(FuncDecl, FuncInfo->Targets));
+      LLVM_DEBUG(printCandidateLog(FuncInfo->Candidates, FuncInfo->Strict));
+      LLVM_DEBUG(printRequestLog(FuncDecl, FuncInfo->Requests, SrcMgr));
+      LLVM_DEBUG(printImplicitRequestLog(FuncDecl, FuncInfo->ImplicitRequests,
+                                         SrcMgr));
+      if (!FuncInfo->hasCandidates()) {
+        if (replaceCalls(FuncDecl, *FuncInfo, mReplacementInfo, Rewriter)) {
+          Rewriter::RewriteOptions RemoveEmptyLine;
+          /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+          /// set to true then removing (in RewriterBuffer) works incorrect.
+          RemoveEmptyLine.RemoveLineIfEmpty = false;
+          for (auto SR : FuncInfo->ToRemoveTransform)
+            Rewriter.RemoveText(SR, RemoveEmptyLine);
+        }
       } else {
-        // Remove comma after the current parameter if it becomes the last one.
-        if (TheLastParam) {
-          SourceLocation EndLoc = PD->getLocEnd();
-          Token CommaTok;
-          if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-                               CommaTok)) {
-            toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-                   diag::warn_transform_internal);
-            Info.get<FunctionInfo>()->Candidates.clear();
-            break;
-          }
-          if (CommaTok.is(tok::comma))
-            Canvas.RemoveText(CommaTok.getLocation());
-        }
-        Info.get<FunctionInfo>()->Candidates.erase(ReplacementItr);
-      }
-      TheLastParam = false;
-    }
-    // Replace accesses to parameters.
-    for (auto &ParamInfo : Info.get<FunctionInfo>()->Candidates) {
-      for (auto &R : ParamInfo.get<Replacement>()) {
-        for (auto Range : R.Ranges) {
-          SmallString<64> Tmp;
-          auto AccessString = R.InAssignment || Info.get<FunctionInfo>()->Strict
-            ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
-            : StringRef(R.Identifier);
-          Canvas.ReplaceText(Range, AccessString);
-        }
+        sanitizeCandidates(FuncDecl, FuncInfo);
       }
     }
-    if (!Info.get<FunctionInfo>()->hasCandidates())
-      continue;
-    replaceCalls(FuncDecl, *Info.get<FunctionInfo>(), ReplacementInfo, Canvas);
-    // Remove pragmas from the original function and its clone if replacement
-    // is still possible.
-    Rewriter::RewriteOptions RemoveEmptyLine;
-    /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
-    /// set to true then removing (in RewriterBuffer) works incorrect.
-    RemoveEmptyLine.RemoveLineIfEmpty = false;
-    for (auto SR : Info.get<FunctionInfo>()->ToRemoveTransform) {
-      Rewriter.RemoveText(SR, RemoveEmptyLine);
-      Canvas.RemoveText(SR, true);
-    }
-    for (auto SR : Info.get<FunctionInfo>()->ToRemoveMetadata)
-      Canvas.RemoveText(SR, true);
-    addPragmaMetadata(
-      *FuncDecl, Info.get<FunctionInfo>()->Candidates, SrcMgr, LangOpts, Canvas);
-    // Update sources.
-    auto OriginDefString = Lexer::getSourceText(
-      CharSourceRange::getTokenRange(
-        FuncDecl->getBeginLoc(),
-        FuncDecl->getParamDecl(FuncDecl->getNumParams() - 1)->getEndLoc()),
-      SrcMgr, LangOpts);
-    auto LocToInsert = SrcMgr.getExpansionLoc(FuncDecl->getLocEnd());
-    Rewriter.InsertTextAfterToken(
-      LocToInsert,
-      ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
-    Rewriter.InsertTextAfterToken(LocToInsert, Canvas.getBuffer());
+    fillImplicitReplacementMembers(SCC);
+    buildParameters(SCC);
+    sanitizeCandidatesInCalls(SCC);
+    insertNewFunctions(SCC);
   }
   return false;
 }

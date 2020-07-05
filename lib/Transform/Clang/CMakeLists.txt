@@ -13,6 +13,11 @@ endif()
 add_library(TSARTransformClang STATIC
   ${TRANSFORM_SOURCES} ${TRANSFORM_HEADERS} ${TRANSFORM_INTERNAL_HEADERS})
 
+if(MSVC)
+  target_compile_options(TSARTransformClang
+    PRIVATE $<$<NOT:$<CONFIG:Release>>:/bigobj>)
+endif()
+
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARTransformClang ${CLANG_LIBS} ${LLVM_LIBS})
 endif()
