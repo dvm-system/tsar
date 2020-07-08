@@ -236,6 +236,30 @@ ReplacementCandidates::iterator isExprInCandidates(const clang::Expr *ArgExpr,
   return Candidates.end();
 }
 
+template<class T>
+bool checkMacroBoundsAndEmitDiag(T *Obj, SourceLocation FuncLoc,
+                                 const SourceManager &SrcMgr,
+                                 const LangOptions &LangOpts) {
+  auto diag = [&SrcMgr, &FuncLoc](SourceLocation Loc) {
+    toDiag(SrcMgr.getDiagnostics(), FuncLoc, diag::warn_disable_replace_struct);
+    toDiag(SrcMgr.getDiagnostics(), Loc,
+           diag::note_replace_struct_macro_prevent);
+  };
+  if (Obj->getBeginLoc().isMacroID() &&
+      !Lexer::isAtStartOfMacroExpansion(Obj->getBeginLoc(), SrcMgr, LangOpts)) {
+    diag(Obj->getBeginLoc());
+    return false;
+  }
+  if (Obj->getEndLoc().isMacroID() &&
+      !Lexer::isAtEndOfMacroExpansion(Obj->getEndLoc(), SrcMgr, LangOpts)) {
+    diag(Obj->getEndLoc());
+    return false;
+  }
+  return true;
+}
+
+
+
 using CallList = std::vector<clang::CallExpr *>;
 
 /// This class collects all 'replace' clauses in the code.
@@ -665,10 +689,12 @@ public:
   using ReplacementCandidates =
     SmallDenseMap<NamedDecl *, SmallVector<Replacement, 8>, 8>;
 
-  ReplacementSanitizer(TransformationContext &TfmCtx, FunctionInfo &RC,
+  ReplacementSanitizer(TransformationContext &TfmCtx,
+      ClangGlobalInfoPass::RawInfo &RawInfo, FunctionInfo &RC,
       ReplacementMap &ReplacementInfo)
-     : mTfmCtx(TfmCtx)
-     , mSrcMgr(mTfmCtx.getContext().getSourceManager())
+     : mLangOpts(TfmCtx.getContext().getLangOpts())
+     , mSrcMgr(TfmCtx.getContext().getSourceManager())
+     , mRawInfo(&RawInfo)
      , mReplacements(RC)
      , mReplacementInfo(ReplacementInfo)
   {}
@@ -698,6 +724,12 @@ public:
       auto ImplicitItr = mReplacements.ImplicitRequests.find(Expr);
       if (ImplicitItr == mReplacements.ImplicitRequests.end())
         return RecursiveASTVisitor::TraverseCallExpr(Expr);
+      if (!checkMacroBoundsAndEmitDiag(Expr,
+                                       mReplacements.Definition->getLocation(),
+                                       mSrcMgr, mLangOpts)) {
+        mReplacements.ImplicitRequests.erase(ImplicitItr);
+        return RecursiveASTVisitor::TraverseCallExpr(Expr);
+      }
       bool Res = true;
       for (unsigned ArgIdx = 0, EI = Expr->getNumArgs(); ArgIdx < EI; ++ArgIdx) {
         auto ArgExpr = Expr->getArg(ArgIdx);
@@ -713,7 +745,9 @@ public:
     assert(RequestItr->get<clang::FunctionDecl>() &&
            "Target function must not be null!");
     auto Meta = findRequestMetadata(*RequestItr, mReplacementInfo, mSrcMgr);
-    if (!Meta) {
+    if (!Meta || !checkMacroBoundsAndEmitDiag(
+                     Expr, mReplacements.Definition->getLocation(), mSrcMgr,
+                     mLangOpts)) {
       mReplacements.Requests.erase(RequestItr);
       return RecursiveASTVisitor::TraverseCallExpr(Expr);
     }
@@ -776,6 +810,10 @@ public:
           toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
             diag::note_replace_struct_arrow);
           mReplacements.Candidates.erase(ReplacementItr);
+        } else if (!checkMacroBoundsAndEmitDiag(
+                       Expr, mReplacements.Definition->getLocation(), mSrcMgr,
+                       mLangOpts)) {
+          mReplacements.Candidates.erase(ReplacementItr);
         } else {
           auto Itr = addToReplacement(Expr->getMemberDecl(),
             ReplacementItr->get<Replacement>());
@@ -800,8 +838,9 @@ private:
     return Itr;
   }
 
-  TransformationContext &mTfmCtx;
+  const LangOptions &mLangOpts;
   SourceManager &mSrcMgr;
+  ClangGlobalInfoPass::RawInfo *mRawInfo;
   FunctionInfo &mReplacements;
   ReplacementMap &mReplacementInfo;
 
@@ -1046,6 +1085,7 @@ void printImplicitRequestLog(const FunctionInfo &FuncInfo,
 template<class RewriterT > bool replaceCalls(FunctionInfo &FI,
     ReplacementMap &ReplacementInfo, RewriterT &Rewriter) {
   auto &SrcMgr = Rewriter.getSourceMgr();
+  auto &LangOpts = Rewriter.getLangOpts();
   LLVM_DEBUG(printRequestLog(FI, SrcMgr));
   bool IsChanged = false;
   for (auto &Request : FI.Requests) {
@@ -1055,11 +1095,18 @@ template<class RewriterT > bool replaceCalls(FunctionInfo &FI,
     auto Meta = findRequestMetadata(Request, ReplacementInfo, SrcMgr);
     if (!Meta)
       continue;
+    if (!checkMacroBoundsAndEmitDiag(Request.get<clang::CallExpr>(),
+                                     FI.Definition->getLocation(), SrcMgr,
+                                     LangOpts))
+      continue;
     replaceCall(FI, *Request.get<clang::CallExpr>(),
                 Request.get<FunctionDecl>()->getName(), *Meta, Rewriter);
     IsChanged = true;
   }
   for (auto *Request : FI.ImplicitRequests) {
+    if (!checkMacroBoundsAndEmitDiag(Request, FI.Definition->getLocation(),
+                                     SrcMgr, LangOpts))
+      continue;
     auto Callee = Request->getDirectCallee();
     if (!Callee)
       continue;
@@ -1285,24 +1332,48 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
       diag::warn_disable_replace_struct_system);
     return;
   }
+  bool HasMacro = false;
+  auto diagMacro = [&FuncInfo, &SrcMgr, &HasMacro](SourceLocation Loc) {
+    if (!HasMacro) {
+      HasMacro = true;
+      toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
+             diag::warn_disable_replace_struct);
+      toDiag(SrcMgr.getDiagnostics(), Loc,
+             diag::note_replace_struct_macro_prevent);
+    }
+  };
+  if (FuncInfo.Definition->getLocation().isMacroID()) {
+    diagMacro(FuncInfo.Definition->getLocation());
+    FuncInfo.Candidates.clear();
+    return;
+  }
+  auto *Body = FuncInfo.Definition->getBody();
+  if (Body->getBeginLoc().isMacroID()) {
+    diagMacro(Body->getBeginLoc());
+    FuncInfo.Candidates.clear();
+    return;
+  }
   if (FuncInfo.Strict) {
-    bool HasMacro = false;
     for_each_macro(FuncInfo.Definition, SrcMgr, LangOpts, mRawInfo->Macros,
-      [&FuncInfo, &SrcMgr, &HasMacro](SourceLocation Loc) {
-        if (!HasMacro) {
-          HasMacro = true;
-          toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
-            diag::warn_disable_replace_struct);
-          toDiag(SrcMgr.getDiagnostics(), Loc,
-            diag::note_replace_struct_macro_prevent);
-        }
-      });
+                   diagMacro);
     if (HasMacro) {
       FuncInfo.Candidates.clear();
       return;
     }
+  } else {
+    SmallVector<NamedDecl *, 4> ToRemove;
+    for (auto &C : FuncInfo.Candidates) {
+      auto *PD = C.get<NamedDecl>();
+      if (!checkMacroBoundsAndEmitDiag(PD, FuncInfo.Definition->getLocation(),
+                                       SrcMgr, LangOpts)) {
+        ToRemove.push_back(PD);
+        continue;
+      }
+    }
+    for (auto *PD : ToRemove)
+      FuncInfo.Candidates.erase(PD);
   }
-  ReplacementSanitizer Verifier(*mTfmCtx, FuncInfo, mReplacementInfo);
+  ReplacementSanitizer Verifier(*mTfmCtx, *mRawInfo, FuncInfo, mReplacementInfo);
   Verifier.TraverseDecl(FuncInfo.Definition);
 }
 
@@ -1416,6 +1487,13 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
   // Look up for declaration of types of parameters.
   auto &FT = getAnalysis<ClangIncludeTreePass>().getFileTree();
   std::string Context;
+  // Add all macros to context to ensure that types of new parameters won't
+  // be overridden after preprocessing.
+  for (auto &M : mRawInfo->Macros) {
+    Context += "#define ";
+    Context += M.first();
+    Context += "\n";
+  }
   auto *OFD = mGlobalInfo->findOutermostDecl(FuncInfo.Definition);
   assert(OFD && "Outermost declaration for the current function must be known!");
   auto Root = FileNode::ChildT(FT.findRoot(OFD));
@@ -1607,7 +1685,8 @@ void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
         auto AccessString = R.InAssignment || FuncInfo.Strict
           ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
           : StringRef(R.Identifier);
-        Canvas.ReplaceText(Range, AccessString);
+        Canvas.ReplaceText(getExpansionRange(SrcMgr, Range).getAsRange(),
+                           AccessString);
       }
     }
   }
