@@ -459,9 +459,10 @@ private:
     if (auto PD = dyn_cast<ParmVarDecl>(ND)) {
       auto TargetParam =
           CurrMD.TargetDecl->getParamDecl(mCurrMetaTargetParam);
-      auto LHSTy = PD->getType();
+      auto LHSTy = PD->getType().getNonReferenceType();
       auto RHSTy =
           mCurrMetaMember ? mCurrMetaMember->getType() : TargetParam->getType();
+      RHSTy = RHSTy.getNonReferenceType();
       auto &Sema = mTfmCtx.getCompilerInstance().getSema();
       auto ConvertTy =
           Sema.CheckAssignmentConstraints(Expr->getBeginLoc(), LHSTy, RHSTy);
