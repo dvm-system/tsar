@@ -673,13 +673,23 @@ public:
      , mReplacementInfo(ReplacementInfo)
   {}
 
-  bool TraverseStmt(Stmt *S) {
-    if (S && std::distance(S->child_begin(), S->child_end()) > 1) {
-      LLVM_DEBUG(if (mInAssignment) dbgs()
-                 << "[REPLACE]: disable assignment check\n");
-      mInAssignment = false;
-    }
-    return RecursiveASTVisitor::TraverseStmt(S);
+  bool VisitStmt(Stmt *S) {
+    if (!S)
+      return true;
+    if (auto *Cast = dyn_cast<ImplicitCastExpr>(S))
+      if (Cast->getCastKind() == CK_LValueToRValue) {
+        LLVM_DEBUG(dbgs() << "[REPLACE]: disable assignment check at ";
+                   S->getBeginLoc().print(dbgs(), mSrcMgr); dbgs() << "\n");
+        mInAssignment = false;
+        return true;
+      }
+    // Skip chain of cast expressions.
+    if (!mInAssignment && isa<CastExpr>(S))
+      return true;
+    mInAssignment = true;
+    LLVM_DEBUG(dbgs() << "[REPLACE]: enable assignment check at ";
+               S->getBeginLoc().print(dbgs(), mSrcMgr); dbgs() << "\n");
+    return true;
   }
 
   bool TraverseCallExpr(clang::CallExpr *Expr) {
@@ -754,6 +764,7 @@ public:
 
   bool TraverseMemberExpr(MemberExpr *Expr) {
     mIsInnermostMember = true;
+    bool CurrInAssignment = mInAssignment;
     auto Res = RecursiveASTVisitor::TraverseMemberExpr(Expr);
     if (mIsInnermostMember && mLastDeclRef) {
       auto ND = mLastDeclRef->getFoundDecl();
@@ -769,22 +780,12 @@ public:
           auto Itr = addToReplacement(Expr->getMemberDecl(),
             ReplacementItr->get<Replacement>());
           Itr->Ranges.emplace_back(Expr->getSourceRange());
-          Itr->InAssignment |= mInAssignment;
+          Itr->InAssignment |= CurrInAssignment;
         }
       }
     }
     mIsInnermostMember = false;
     return Res;
-  }
-
-  bool TraverseBinAssign(BinaryOperator *BO) {
-    mInAssignment = true;
-    LLVM_DEBUG(dbgs() << "[REPLACE]: check assignment at ";
-               BO->getOperatorLoc().print(dbgs(), mSrcMgr); dbgs() << "\n");
-    auto Res = TraverseStmt(BO->getLHS());
-    LLVM_DEBUG(dbgs() << "[REPLACE]: disable assignment check\n");
-    mInAssignment = false;
-    return Res && TraverseStmt(BO->getRHS());
   }
 
 private:
@@ -806,7 +807,7 @@ private:
 
   bool mIsInnermostMember = false;
   DeclRefExpr *mLastDeclRef;
-  bool mInAssignment = false;
+  bool mInAssignment = true;
 };
 
 /// Check that types which are necessary to build checked declaration are
@@ -1000,10 +1001,19 @@ void printMetadataLog(const FunctionInfo &FuncInfo) {
 void printCandidateLog(const ReplacementCandidates &Candidates, bool IsStrict) {
   dbgs() << "[REPLACE]: " << (IsStrict ? "strict" : "nostrict")
     << " replacement\n";
-  dbgs() << "[REPLACE]: replacement candidates found";
-  for (auto &Candidate : Candidates)
-    dbgs() << " " << Candidate.get<NamedDecl>()->getName();
-  dbgs() << "\n";
+  for (auto &Candidate : Candidates) {
+    dbgs() << "[REPLACE]: replacement candidate "
+           << Candidate.get<NamedDecl>()->getName();
+    if (!Candidate.get<Replacement>().empty()) {
+      dbgs() << " with members: ";
+      for (auto &R : Candidate.get<Replacement>()) {
+        dbgs() << " " << R.Member->getName();
+        if (R.InAssignment)
+          dbgs() << "(ref)";
+      }
+    }
+    dbgs() << "\n";
+  }
 }
 
 void printRequestLog(FunctionInfo &FuncInfo, const SourceManager &SrcMgr) {
