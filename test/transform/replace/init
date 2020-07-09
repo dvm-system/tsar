@@ -15,6 +15,7 @@ replace_14: action=init
 replace_15: action=init
 replace_16: action=init
 replace_17: action=init
+replace_18: action=init
 replace_macro_1: action=init
 replace_macro_2: action=init
 replace_macro_3: action=init

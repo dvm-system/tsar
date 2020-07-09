@@ -978,7 +978,7 @@ void replaceCall(FunctionInfo &FI, const CallExpr &Expr,
                       });
       assert(Itr != ReplacementItr->get<Replacement>().end() &&
              "Description of the replacement must be found!");
-      if (Itr->InAssignment || FI.Strict) {
+      if (Itr->InAssignment) {
         if (ParamInfo.IsPointer) {
           NewCallExpr += Itr->Identifier;
         } else {
@@ -1375,6 +1375,12 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
   }
   ReplacementSanitizer Verifier(*mTfmCtx, *mRawInfo, FuncInfo, mReplacementInfo);
   Verifier.TraverseDecl(FuncInfo.Definition);
+  for (auto &C : FuncInfo.Candidates)
+    for (auto &R : C.get<Replacement>())
+      if (isa<clang::ArrayType>(R.Member->getType()))
+        R.InAssignment = false;
+      else
+        R.InAssignment |= FuncInfo.Strict;
 }
 
 void ClangStructureReplacementPass::fillImplicitReplacementMembers(
@@ -1582,7 +1588,7 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
         break;
       }
       addSuffix(PD->getName() + "_" + R.Member->getName(), R.Identifier);
-      auto ParamType = (R.InAssignment || FuncInfo.Strict)
+      auto ParamType = R.InAssignment
         ? R.Member->getType().getAsString() + "*"
         : R.Member->getType().getAsString();
       auto Tokens =
@@ -1682,7 +1688,7 @@ void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
     for (auto &R : ParamInfo.get<Replacement>()) {
       for (auto Range : R.Ranges) {
         SmallString<64> Tmp;
-        auto AccessString = R.InAssignment || FuncInfo.Strict
+        auto AccessString = R.InAssignment
           ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
           : StringRef(R.Identifier);
         Canvas.ReplaceText(getExpansionRange(SrcMgr, Range).getAsRange(),
@@ -1706,8 +1712,7 @@ void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
         FuncMeta.Parameters.emplace_back();
         FuncMeta.Parameters.back().TargetParam = I;
         FuncMeta.Parameters.back().TargetMember = cast<FieldDecl>(R.Member);
-        FuncMeta.Parameters.back().IsPointer =
-          FuncInfo.Strict || R.InAssignment;
+        FuncMeta.Parameters.back().IsPointer = R.InAssignment;
       }
     }
   }
