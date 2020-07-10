@@ -82,16 +82,15 @@ struct Replacement {
   bool InAssignment = false;
 };
 
-/// Map from parameter to its replacement which is list of necessary members,
-/// replacement string and range that must be changed with this string.
+/// Map from parameter to its replacement which is list of necessary members and
+/// replacement string.
 using ReplacementCandidates = SmallDenseMap<
     NamedDecl *,
-    std::tuple<SmallVector<Replacement, 8>, std::string, SourceRange>, 8,
+    std::tuple<SmallVector<Replacement, 8>, std::string>, 8,
     DenseMapInfo<NamedDecl *>,
     TaggedDenseMapTuple<bcl::tagged<NamedDecl *, NamedDecl>,
                         bcl::tagged<SmallVector<Replacement, 8>, Replacement>,
-                        bcl::tagged<std::string, std::string>,
-                        bcl::tagged<SourceRange, SourceRange>>>;
+                        bcl::tagged<std::string, std::string>>>;
 
 /// Description of a possible replacement of a source function.
 struct ReplacementMetadata {
@@ -1203,14 +1202,41 @@ private:
     }
   }
 
-  void insertNewFunction(FunctionInfo &FuncInfo );
-  void insertNewFunctions(scc_iterator<CallGraph *> &SCC) {
+  bool insertNewFunction(FunctionInfo &FuncInfo,
+    SmallVectorImpl<ExternalRewriter> &Canvas);
+  bool insertNewFunctions(scc_iterator<CallGraph *> &SCC) {
+    SmallVector<ExternalRewriter, 1> Canvas;
     for (auto *CGN : *SCC) {
       auto FuncInfo = tieCallGraphNode(CGN);
       if (!FuncInfo || !FuncInfo->hasCandidates())
         continue;
-      insertNewFunction(*FuncInfo);
+      if (!insertNewFunction(*FuncInfo, Canvas))
+        return false;
     }
+    // Update sources.
+    auto &Rewriter = mTfmCtx->getRewriter();
+    auto &SrcMgr = Rewriter.getSourceMgr();
+    auto &LangOpts = Rewriter.getLangOpts();
+    auto CanvasItr = Canvas.begin();
+    for (auto &CGN : *SCC) {
+      auto FuncInfo = tieCallGraphNode(CGN);
+      if (!FuncInfo || !FuncInfo->hasCandidates())
+        continue;
+      auto OriginDefString = Lexer::getSourceText(
+        CharSourceRange::getTokenRange(
+          FuncInfo->Definition->getBeginLoc(),
+          FuncInfo->Definition
+          ->getParamDecl(FuncInfo->Definition->getNumParams() - 1)
+          ->getEndLoc()),
+        SrcMgr, LangOpts);
+      auto LocToInsert =
+          SrcMgr.getExpansionLoc(FuncInfo->Definition->getLocEnd());
+      Rewriter.InsertTextAfterToken(
+        LocToInsert,
+        ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
+      Rewriter.InsertTextAfterToken(LocToInsert, CanvasItr->getBuffer());
+    }
+    return true;
   }
 
   TransformationContext *mTfmCtx = nullptr;
@@ -1525,59 +1551,13 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
   }
   // Replace aggregate parameters with separate variables.
   StringMap<std::string> Replacements;
-  bool TheLastParam = true;
-  for (unsigned I = FuncInfo.Definition->getNumParams(); I > 0; --I) {
-    auto *PD = FuncInfo.Definition->getParamDecl(I - 1);
+  for (unsigned I = 0, EI = FuncInfo.Definition->getNumParams(); I < EI; ++I) {
+    auto *PD = FuncInfo.Definition->getParamDecl(I);
     auto ReplacementItr = FuncInfo.Candidates.find(PD);
-    if (ReplacementItr == FuncInfo.Candidates.end()) {
-      // Remove comma after the current parameter if it becomes the last one.
-      if (TheLastParam) {
-        SourceLocation EndLoc = PD->getLocEnd();
-        Token CommaTok;
-        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr,
-          LangOpts, CommaTok)) {
-          toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-            diag::warn_transform_internal);
-          FuncInfo.Candidates.clear();
-          break;
-        }
-        if (CommaTok.is(tok::comma))
-          FuncInfo.ToRemoveClone.emplace_back(
-            CharSourceRange::getTokenRange(
-              SrcMgr.getExpansionLoc(CommaTok.getLocation())));
-      }
-      TheLastParam = false;
+    if (ReplacementItr == FuncInfo.Candidates.end() ||
+        ReplacementItr->get<Replacement>().empty())
       continue;
-    }
     SmallString<128> NewParams;
-    // We also remove an unused parameter if it is mentioned in replace clause.
-    if (ReplacementItr->get<Replacement>().empty()) {
-      SourceLocation EndLoc = PD->getLocEnd();
-      Token CommaTok;
-      if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-        CommaTok)) {
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-          diag::warn_disable_replace_struct);
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-          diag::note_replace_struct_de_decl);
-        FuncInfo.Candidates.erase(ReplacementItr);
-        TheLastParam = false;
-        continue;
-      }
-      if (CommaTok.is(tok::comma))
-        EndLoc = CommaTok.getLocation();
-      FuncInfo.ToRemoveClone.emplace_back(CharSourceRange::getTokenRange(
-        SrcMgr.getExpansionLoc(PD->getLocStart()),
-        SrcMgr.getExpansionLoc(EndLoc)));
-      toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-        diag::remark_replace_struct);
-      toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-        diag::remark_remove_de_decl);
-      // Do not update TheLastParam variable. If the current parameter is the
-      // last in the list and if it is removed than the previous parameter
-      // in the list become the last one.
-      continue;
-    }
     auto StashContextSize = Context.size();
     for (auto &R : ReplacementItr->get<Replacement>()) {
       TypeSearch TS(PD, R.Member, SrcMgr, *mGlobalInfo);
@@ -1614,65 +1594,26 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
           NewParams.size() - Size)
         << "\n");
     }
-    if (!NewParams.empty()) {
-      SourceLocation EndLoc = PD->getLocEnd();
-      // If the next parameter in the parameter list is unused and it has been
-      // successfully remove, we have to remove comma after the current
-      // parameter.
-      if (TheLastParam) {
-        Token CommaTok;
-        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-          CommaTok)) {
-          toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-            diag::warn_disable_replace_struct);
-          toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
-            diag::note_replace_struct_decl_internal);
-          FuncInfo.Candidates.erase(ReplacementItr);
-          continue;
-        }
-        if (CommaTok.is(tok::comma))
-          EndLoc = CommaTok.getLocation();
-      }
-      auto Range = SrcMgr
-        .getExpansionRange(CharSourceRange::getTokenRange(
-          PD->getLocStart(), EndLoc))
-        .getAsRange();
+    if (!NewParams.empty())
       ReplacementItr->get<std::string>() = NewParams.str();
-      ReplacementItr->get<SourceRange>() = Range;
-    } else {
-      // Remove comma after the current parameter if it becomes the last one.
-      if (TheLastParam) {
-        SourceLocation EndLoc = PD->getLocEnd();
-        Token CommaTok;
-        if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
-          CommaTok)) {
-          toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-            diag::warn_transform_internal);
-          FuncInfo.Candidates.clear();
-          break;
-        }
-        if (CommaTok.is(tok::comma))
-          FuncInfo.ToRemoveClone.emplace_back(
-            CharSourceRange::getTokenRange(
-              SrcMgr.getExpansionLoc(CommaTok.getLocation())));
-      }
+    else
       FuncInfo.Candidates.erase(ReplacementItr);
-    }
-    TheLastParam = false;
   }
 }
 
-void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
+bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
+    SmallVectorImpl<ExternalRewriter> &CanvasList) {
   auto &Rewriter = mTfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   auto &LangOpts = Rewriter.getLangOpts();
   LLVM_DEBUG(printCandidateLog(FuncInfo.Candidates, FuncInfo.Strict));
   LLVM_DEBUG(printRequestLog(FuncInfo, SrcMgr));
   LLVM_DEBUG(printImplicitRequestLog(FuncInfo, SrcMgr));
-  ExternalRewriter Canvas(
+  CanvasList.emplace_back(
       tsar::getExpansionRange(SrcMgr, FuncInfo.Definition->getSourceRange())
           .getAsRange(),
-    SrcMgr, LangOpts);
+      SrcMgr, LangOpts);
+  auto &Canvas = CanvasList.back();
   // Build unique name for a new function.
   addSuffix(FuncInfo.Definition->getName() + "_spf",
             FuncInfo.ReplacmenetName);
@@ -1681,11 +1622,53 @@ void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
   NameRange.setEnd(NameRange.getBegin().getLocWithOffset(
       FuncInfo.Definition->getName().size() - 1));
   Canvas.ReplaceText(NameRange, FuncInfo.ReplacmenetName);
+ // Replace aggregate parameters with separate variables.
+  bool TheLastParam = true;
+  for (unsigned I = FuncInfo.Definition->getNumParams(); I > 0; --I) {
+    auto *PD = FuncInfo.Definition->getParamDecl(I - 1);
+    auto ReplacementItr = FuncInfo.Candidates.find(PD);
+    SourceLocation EndLoc = PD->getLocEnd();
+    if (TheLastParam || (ReplacementItr != FuncInfo.Candidates.end() &&
+                         ReplacementItr->get<Replacement>().empty())) {
+      Token CommaTok;
+      if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr,
+        LangOpts, CommaTok)) {
+        toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
+          diag::warn_transform_internal);
+        return false;
+      }
+      if (CommaTok.is(tok::comma))
+        EndLoc = CommaTok.getLocation();
+    }
+    if (ReplacementItr == FuncInfo.Candidates.end()) {
+      // Remove comma after the current parameter if it becomes the last one.
+      if (EndLoc != PD->getLocEnd())
+        Canvas.RemoveText(
+            CharSourceRange::getTokenRange(SrcMgr.getExpansionLoc(EndLoc)));
+      TheLastParam = false;
+      continue;
+    }
+    // We also remove an unused parameter if it is mentioned in replace clause.
+    if (ReplacementItr->get<Replacement>().empty()) {
+      Canvas.RemoveText(CharSourceRange::getTokenRange(
+        SrcMgr.getExpansionLoc(PD->getLocStart()),
+        SrcMgr.getExpansionLoc(EndLoc)).getAsRange());
+      toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
+        diag::remark_replace_struct);
+      toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
+        diag::remark_remove_de_decl);
+      // Do not update TheLastParam variable. If the current parameter is the
+      // last in the list and if it is removed than the previous parameter
+      // in the list become the last one.
+      continue;
+    }
+    TheLastParam = false;
+    auto ReplaceRange = CharSourceRange::getTokenRange(
+        SrcMgr.getExpansionLoc(PD->getLocStart()),
+        SrcMgr.getExpansionLoc(EndLoc)).getAsRange();
+    Canvas.ReplaceText(ReplaceRange, ReplacementItr->get<std::string>());
   // Replace accesses to parameters.
-  for (auto &ParamInfo : FuncInfo.Candidates) {
-    Canvas.ReplaceText(ParamInfo.get<SourceRange>(),
-      ParamInfo.get<std::string>());
-    for (auto &R : ParamInfo.get<Replacement>()) {
+    for (auto &R : ReplacementItr->get<Replacement>()) {
       for (auto Range : R.Ranges) {
         SmallString<64> Tmp;
         auto AccessString = R.InAssignment
@@ -1733,19 +1716,7 @@ void ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo) {
   for (auto SR : FuncInfo.ToRemoveClone)
     Canvas.RemoveText(SR, true);
   addPragmaMetadata(FuncInfo, SrcMgr, LangOpts, Canvas);
-  // Update sources.
-  auto OriginDefString = Lexer::getSourceText(
-    CharSourceRange::getTokenRange(
-      FuncInfo.Definition->getBeginLoc(),
-          FuncInfo.Definition
-              ->getParamDecl(FuncInfo.Definition->getNumParams() - 1)
-              ->getEndLoc()),
-    SrcMgr, LangOpts);
-  auto LocToInsert = SrcMgr.getExpansionLoc(FuncInfo.Definition->getLocEnd());
-  Rewriter.InsertTextAfterToken(
-    LocToInsert,
-    ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
-  Rewriter.InsertTextAfterToken(LocToInsert, Canvas.getBuffer());
+  return true;
 }
 
 bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
@@ -1798,7 +1769,8 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
     fillImplicitReplacementMembers(SCC);
     buildParameters(SCC);
     sanitizeCandidatesInCalls(SCC);
-    insertNewFunctions(SCC);
+    if (!insertNewFunctions(SCC))
+      return false;
   }
   return false;
 }

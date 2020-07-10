@@ -17,12 +17,6 @@ void bar(struct STy *S) {
 //CHECK: replace_chain_8.c:8:31: note: not-arrow access prevent replacement
 //CHECK: void foo(struct STy *S) { baz(S); }
 //CHECK:                               ^
-//CHECK: replace_chain_8.c:10:22: remark: structure replacement
-//CHECK: void bar(struct STy *S) {
-//CHECK:                      ^
-//CHECK: replace_chain_8.c:10:10: remark: remove unused declaration
-//CHECK: void bar(struct STy *S) {
-//CHECK:          ^
 //CHECK: replace_chain_8.c:10:22: warning: disable structure replacement
 //CHECK: void bar(struct STy *S) {
 //CHECK:                      ^
