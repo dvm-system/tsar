@@ -28,6 +28,7 @@
 
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/AnalysisSocket.h"
+#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/DIClientServerInfo.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -155,8 +156,6 @@ private:
     bool Parallelized = false;
     for (; I != EI; ++I)
       Parallelized |= findParallelLoops(**I, F, Provider);
-    if (Parallelized)
-      mParallelLoops.push_back(L);
     return Parallelized;
   }
 
@@ -166,9 +165,7 @@ private:
     ClangSMParallelProvider& Provider) {
     for (; I != EI; ++I)
       optimizeLoops(*I, (**I).begin(), (**I).end(), F, Provider);
-    // if (std::find(mParallelLoops.begin(), mParallelLoops.end(), L) != mParallelLoops.end()) {
       optimizeLevelLoop(*mTfmCtx, F, L, Provider);
-    //}
   }
 
   tsar::TransformationContext *mTfmCtx = nullptr;
@@ -180,7 +177,10 @@ private:
   SmallVector<const tsar::OptimizationRegion *, 4> mRegions;
   CGNodeNumbering mCGNodes;
   CGNodeNumbering mParallelCallees;
-  std::vector<const Loop*> mParallelLoops;
+
+protected:
+  DenseMap<const clang::Stmt*, std::vector<std::string>> mLocalVars;
+  std::vector<std::string> mGlobalVars;
 };
 
 

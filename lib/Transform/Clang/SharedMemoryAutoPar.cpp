@@ -25,7 +25,7 @@
 
 #include "SharedMemoryAutoPar.h"
 #include "tsar/Analysis/AnalysisServer.h"
-#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
+#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h""
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
@@ -66,7 +66,7 @@ void ClangSMParallelizationInfo::addBeforePass(
     legacy::PassManager &Passes) const {
   addImmutableAliasAnalysis(Passes);
   addInitialTransformations(Passes);
-  //Passes.add(createCallExtractorPass());
+  Passes.add(createCallExtractorPass());
   Passes.add(createAnalysisSocketImmutableStorage());
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
@@ -178,6 +178,43 @@ void ClangSMParallelization::initializeProviderOnClient(Module &M) {
       });
 }
 
+void SetVarForStmt(const clang::Stmt* Stmt, const std::string& Name,
+    DenseMap<const clang::Stmt*, std::vector<std::string>>* LocalVars) {
+  if (!Stmt)
+    return;
+  (*LocalVars)[Stmt].push_back(Name);
+  for (const auto& Ch : Stmt->children()) {
+    SetVarForStmt(Ch, Name, LocalVars);
+  }
+}
+
+class VarDeclVisitor : public clang::RecursiveASTVisitor<VarDeclVisitor> {
+public:
+
+  VarDeclVisitor(clang::ASTContext& ASTCtx, 
+    DenseMap<const clang::Stmt*, std::vector<std::string>>* LocalVars,
+    std::vector<std::string>* GlobalVars) : mASTCtx(ASTCtx), mLocalVars(LocalVars),
+    mGlobalVars(GlobalVars) {};
+
+  bool VisitVarDecl(clang::VarDecl* VD) {
+    auto Parent = mASTCtx.getParents(*VD)[0].get<clang::Stmt>();
+    while (Parent != nullptr && !isa<clang::CompoundStmt>(*Parent)) {
+      Parent = mASTCtx.getParents(*Parent)[0].get<clang::Stmt>();
+    }
+    auto Name = VD->getDeclName().getAsString();
+    if (!Parent)
+      mGlobalVars->push_back(Name);
+    else
+      SetVarForStmt(Parent, Name, mLocalVars);
+    return true;
+  }
+
+private:
+  DenseMap<const clang::Stmt*, std::vector<std::string>>* mLocalVars;
+  std::vector<std::string>* mGlobalVars;
+  clang::ASTContext& mASTCtx;
+};
+
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
@@ -192,6 +229,8 @@ bool ClangSMParallelization::runOnModule(Module &M) {
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   mDIMEnv = &getAnalysis<DIMemoryEnvironmentWrapper>().get();
   initializeProviderOnClient(M);
+
+  auto& Context = mTfmCtx->getContext();
   auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
   if (mGlobalOpts->OptRegions.empty()) {
     transform(RegionInfo, std::back_inserter(mRegions),
@@ -289,7 +328,9 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     auto &LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
     findParallelLoops(nullptr, LI.begin(), LI.end(), *F, Provider);
   }
-
+  VarDeclVisitor V(Context, &mLocalVars, &mGlobalVars);
+  V.TraverseDecl(Context.getTranslationUnitDecl());
+  
   for (scc_iterator<CallGraph*> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
     Function* F = I->front()->getFunction();
     if (!F || F->isIntrinsic() || F->isDeclaration() ||
