@@ -44,7 +44,8 @@ namespace tsar {
 /// To define new visitor:
 /// - inherit this class (set VisitorT to the derived class).
 /// - implement some of methods visitDefault(), visitEK_..., visitSingleExpr().
-template<class ReplacementT, class VisitorT> class ClauseVisitor {
+template<class PreprocessorT, class ReplacementT, class VisitorT>
+class ClauseVisitor {
   /// Type of indexes and sizes of token containers.
   using size_type = typename ReplacementT::size_type;
 
@@ -82,14 +83,14 @@ template<class ReplacementT, class VisitorT> class ClauseVisitor {
 
 public:
   /// Creates visitor.
-  ClauseVisitor(clang::Preprocessor &PP, ReplacementT &Replacement) :
+  ClauseVisitor(PreprocessorT &PP, ReplacementT &Replacement) :
     mPP(PP), mReplacement(Replacement) {}
 
   ReplacementT & getReplacement() noexcept { return mReplacement; }
   const ReplacementT & getReplacement() const noexcept { return mReplacement; }
 
-  clang::Preprocessor & getPreprocessor() noexcept { return mPP; }
-  const clang::Preprocessor & getPreprocessor() const noexcept { return mPP; }
+  PreprocessorT & getPreprocessor() noexcept { return mPP; }
+  const PreprocessorT & getPreprocessor() const noexcept { return mPP; }
 
   /// Returns complex expression at the current level or ClauseExpr::NotExpr.
   ClauseExpr getLevelKind() const {
@@ -142,7 +143,7 @@ public:
         I = visitAnchor(Tok, I, EI);
         break;
       default:
-        mPP.LexUnexpandedToken(Tok);
+        mPP.Lex(Tok);
         LLVM_DEBUG(visitTokenLog(*I, Tok.getKind()));
         if (Tok.is(getTokenKind(*I))) {
           static_cast<VisitorT *>(this)->visitSingleExpr(*I, Tok);
@@ -356,7 +357,7 @@ void backtrackLog(iterator StartI,  iterator I, iterator EI) {
 #endif
 
 private:
-  clang::Preprocessor &mPP;
+  PreprocessorT &mPP;
   ReplacementT &mReplacement;
   ExprLevelStack mExprStack;
 };

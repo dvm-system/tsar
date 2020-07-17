@@ -37,9 +37,156 @@
 #include <clang/Lex/Pragma.h>
 #include <clang/Lex/Token.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringMap.h>
 
 namespace tsar {
-/// \brief Replaces directive namespace with string literal.
+class ExternalPreprocessor;
+class PragmaNamespaceReplacer;
+class PragmaReplacer;
+class ClauseReplacer;
+
+/// Base class to represent hierarchy of replacers.
+template<class T> class PragmaReplacerNode {
+public:
+  bool IsEmpty() const { return mHandlers.empty(); }
+
+  /// Check to see if there is already a handler for the specified name.
+  ///
+  ///  If not, return the handler for the null identifier if it
+  /// exists, otherwise return null.  If IgnoreNull is true (the default) then
+  /// the null handler isn't returned on failure to match.
+  T *FindHandler(llvm::StringRef Name, bool IgnoreNull) const {
+    auto Itr = mHandlers.find(Name);
+    if (Itr != mHandlers.end())
+      return Itr->getValue().get();
+    if (!IgnoreNull)
+      Itr = mHandlers.find(llvm::StringRef());
+    return Itr == mHandlers.end() ? nullptr : Itr->getValue().get();
+  }
+
+  void AddPragma(T *Handler) {
+    assert(Handler && "Handler must not be null!");
+    assert(!mHandlers.count(Handler->getName()) &&
+           "A handler with this name is already registered in this namespace");
+    mHandlers[Handler->getName()].reset(Handler);
+  }
+
+  void RemovePragmaHandler(T *Handler) {
+    assert(Handler && "Handler must not be null!");
+    assert(mHandlers.count(Handler->getName()) &&
+           "Handler not registered in this namespace");
+    mHandlers.erase(Handler->getName());
+  }
+private:
+  llvm::StringMap<std::unique_ptr<T>> mHandlers;
+};
+
+
+/// \brief Replaces clause with a sequence of tokens.
+///
+/// A parent handler PragmaReplacer calls this handler.
+class ClauseReplacer {
+public:
+  using ReplacementT = llvm::SmallVector<clang::Token, 32>;
+
+  /// Creates handler for a specified clause `Id` from a specified
+  /// directive`Parent`.
+  ClauseReplacer(ClauseId Id, PragmaReplacer &Parent);
+
+  llvm::StringRef getName() const { return mName; }
+
+  /// \brief Handles a clause.
+  ///
+  /// This checks syntax of a clause and converts it to a sequence of tokens
+  /// which will be parsed and evaluated later. For example,
+  /// `... induction(I) ...` will be converted to
+  /// `{ "induction"; (void)(sizeof((void)(I))); }`.
+  void HandleClause(ExternalPreprocessor &PP,
+    clang::PragmaIntroducerKind Introducer, clang::Token &FirstToken);
+
+  /// Returns clause ID being processed.
+  ClauseId getClauseId() const noexcept { return mClauseId; }
+
+  /// Returns parent directive ID being processed.
+  DirectiveId getDirectiveId() const noexcept;
+
+  /// Returns parent namespace ID being processed.
+  DirectiveNamespaceId getNamespaceId() const noexcept;
+
+  /// Returns common replacement for all handlers in hierarchy.
+  ReplacementT &getReplacement() noexcept;
+
+  /// Returns common replacement for all handlers in hierarchy.
+  const ReplacementT &getReplacement() const noexcept;
+
+  /// Returns parent handler.
+  PragmaReplacer & getParent() noexcept { return *mParent; }
+
+  /// Returns parent handler.
+  const PragmaReplacer & getParent() const noexcept { return *mParent; }
+
+protected:
+  /// \brief Handles body of the clause.
+  ///
+  /// For example, in case of `... inducition(I) ...`  the body will be `(I)`.
+  /// \pre `FirstTok` is a clause name, for the mentioned example,
+  /// `FirstTok` will be name of clause `induction`.
+  /// \post
+  /// - Lexer points to the last successfully processed token.
+  /// - On success, `FirstTok` is a last token in clause body.
+  virtual void HandleBody(ExternalPreprocessor &PP,
+    clang::PragmaIntroducerKind Introducer, clang::Token &FirstTok);
+
+private:
+  std::string mName;
+  ClauseId mClauseId;
+  PragmaReplacer *mParent;
+};
+
+/// \brief Replaces directive names with string literal.
+///
+/// A parent handler PragmaNamespaceReplacer calls this handler.
+class PragmaReplacer : public PragmaReplacerNode<ClauseReplacer> {
+public:
+  using ReplacementT = ClauseReplacer::ReplacementT;
+
+  /// Creates handler for a specified directive `Id` from a specified
+  /// namespace `Parent`.
+  PragmaReplacer(DirectiveId Id, PragmaNamespaceReplacer &Parent);
+
+  llvm::StringRef getName() const { return mName; }
+
+  /// Handles directive name and forwards processing of subsequent tokens
+  /// to child handlers of clauses.
+  ///
+  /// \post `FirstToken` is a some token inside pragma or tok::eod.
+  void HandlePragma(ExternalPreprocessor &PP,
+    clang::PragmaIntroducerKind Introducer, clang::Token &FirstToken);
+
+  /// Returns directive ID being processed.
+  DirectiveId getDirectiveId() const noexcept { return mDirectiveId; }
+
+  /// Returns parent namespace ID being processed.
+  DirectiveNamespaceId getNamespaceId() const noexcept;
+
+  /// Returns common replacement for all handlers in hierarchy.
+  ReplacementT &getReplacement() noexcept;
+
+  /// Returns common replacement for all handlers in hierarchy.
+  const ReplacementT &getReplacement() const noexcept;
+
+  /// Returns parent handler.
+  PragmaNamespaceReplacer & getParent() noexcept { return *mParent; }
+
+  /// Returns parent handler.
+  const PragmaNamespaceReplacer & getParent() const noexcept {return *mParent;}
+private:
+  std::string mName;
+  PragmaNamespaceReplacer *mParent;
+  DirectiveId mDirectiveId;
+};
+
+/// This handler replaces directive namespace with string literal.
 ///
 /// This handler replaces name of `#pragma <name> ...` with `{ "<name>"; ... }`
 /// and forwards processing to children. So,  this class allows hierarchical
@@ -48,13 +195,14 @@ namespace tsar {
 /// token stream after the last pragma token (tok::eod). Note, that children
 /// should evaluate all tokens in pragma. Otherwise, replacement will not be
 /// written to the token stream.
-class PragmaNamespaceReplacer : public clang::PragmaNamespace {
+class PragmaNamespaceReplacer :
+  public clang::PragmaHandler, public PragmaReplacerNode<PragmaReplacer> {
 public:
-  using ReplacementT = llvm::SmallVector<clang::Token, 32>;
+  using ReplacementT = ClauseReplacer::ReplacementT;
 
   /// Creates handler for a specified namespace.
   explicit PragmaNamespaceReplacer(DirectiveNamespaceId Id) :
-    clang::PragmaNamespace(tsar::getName(Id)), mNamespaceId(Id) {}
+    clang::PragmaHandler(tsar::getName(Id)), mNamespaceId(Id) {}
 
   /// Handles namespace name and forwards processing of subsequent tokens
   /// to child handlers of directives.
@@ -75,122 +223,35 @@ protected:
   DirectiveNamespaceId mNamespaceId;
 };
 
-/// \brief Replaces directive names with string literal.
-///
-/// A parent handler PragmaNamespaceReplacer calls this handler.
-class PragmaReplacer : public clang::PragmaNamespace {
-public:
-  using ReplacementT = PragmaNamespaceReplacer::ReplacementT;
+inline DirectiveNamespaceId PragmaReplacer::getNamespaceId() const noexcept {
+  return getParent().getNamespaceId();
+}
 
-  /// Creates handler for a specified directive `Id` from a specified
-  /// namespace `Parent`.
-  PragmaReplacer(DirectiveId Id, PragmaNamespaceReplacer &Parent) :
-      clang::PragmaNamespace(tsar::getName(Id)),
-      mDirectiveId(Id), mParent(&Parent) {
-    assert(tsar::getParent(Id) == Parent.getNamespaceId() &&
-      "Incompatible namespace and directive IDs!");
-  }
+inline PragmaReplacer::ReplacementT &PragmaReplacer::getReplacement() noexcept {
+  return mParent->getReplacement();
+}
 
-  /// Handles directive name and forwards processing of subsequent tokens
-  /// to child handlers of clauses.
-  ///
-  /// \post `FirstToken` is a some token inside pragma or tok::eod.
-  void HandlePragma(clang::Preprocessor &PP,
-    clang::PragmaIntroducerKind Introducer, clang::Token &FirstToken) override;
+inline const PragmaReplacer::ReplacementT &
+PragmaReplacer::getReplacement() const noexcept {
+  return mParent->getReplacement();
+}
 
-  /// Returns `nullptr` because this is not a namespace handler.
-  clang::PragmaNamespace * getIfNamespace() override { return nullptr; }
 
-  /// Returns directive ID being processed.
-  DirectiveId getDirectiveId() const noexcept { return mDirectiveId; }
+inline DirectiveId ClauseReplacer::getDirectiveId() const noexcept {
+  return getParent().getDirectiveId();
+}
 
-  /// Returns parent namespace ID being processed.
-  DirectiveNamespaceId getNamespaceId() const noexcept {
-    return getParent().getNamespaceId();
-  }
+inline DirectiveNamespaceId ClauseReplacer::getNamespaceId() const noexcept {
+  return getParent().getNamespaceId();
+}
 
-  /// Returns common replacement for all handlers in hierarchy.
-  ReplacementT & getReplacement() noexcept { return mParent->getReplacement(); }
+inline ClauseReplacer::ReplacementT &ClauseReplacer::getReplacement() noexcept {
+  return mParent->getReplacement();
+}
 
-  /// Returns common replacement for all handlers in hierarchy.
-  const ReplacementT & getReplacement() const noexcept {
-    return mParent->getReplacement(); }
-
-  /// Returns parent handler.
-  PragmaNamespaceReplacer & getParent() noexcept { return *mParent; }
-
-  /// Returns parent handler.
-  const PragmaNamespaceReplacer & getParent() const noexcept {return *mParent;}
-private:
-  PragmaNamespaceReplacer *mParent;
-  DirectiveId mDirectiveId;
-};
-
-/// \brief Replaces clause with a sequence of tokens.
-///
-/// A parent handler PragmaReplacer calls this handler.
-class ClauseReplacer: public clang::PragmaHandler{
-public:
-  using ReplacementT = PragmaReplacer::ReplacementT;
-
-  /// Creates handler for a specified clause `Id` from a specified
-  /// directive`Parent`.
-  ClauseReplacer(ClauseId Id, PragmaReplacer &Parent) :
-      clang::PragmaHandler(tsar::getName(Id)), mClauseId(Id), mParent(&Parent) {
-    assert(tsar::getParent(Id) == Parent.getDirectiveId() &&
-      "Incompatible directive and clause IDs!");
-  }
-
-  /// \brief Handles a clause.
-  ///
-  /// This checks syntax of a clause and converts it to a sequence of tokens
-  /// which will be parsed and evaluated later. For example,
-  /// `... induction(I) ...` will be converted to
-  /// `{ "induction"; (void)(sizeof((void)(I))); }`.
-  void HandlePragma(clang::Preprocessor &PP,
-    clang::PragmaIntroducerKind Introducer, clang::Token &FirstToken) override;
-
-  /// Returns clause ID being processed.
-  ClauseId getClauseId() const noexcept { return mClauseId; }
-
-  /// Returns parent directive ID being processed.
-  DirectiveId getDirectiveId() const noexcept {
-    return getParent().getDirectiveId();
-  }
-
-  /// Returns parent namespace ID being processed.
-  DirectiveNamespaceId getNamespaceId() const noexcept {
-    return getParent().getNamespaceId();
-  }
-
-  /// Returns common replacement for all handlers in hierarchy.
-  ReplacementT & getReplacement() noexcept { return mParent->getReplacement(); }
-
-  /// Returns common replacement for all handlers in hierarchy.
-  const ReplacementT & getReplacement() const noexcept {
-    return mParent->getReplacement(); }
-
-  /// Returns parent handler.
-  PragmaReplacer & getParent() noexcept { return *mParent; }
-
-  /// Returns parent handler.
-  const PragmaReplacer & getParent() const noexcept { return *mParent; }
-
-protected:
-  /// \brief Handles body of the clause.
-  ///
-  /// For example, in case of `... inducition(I) ...`  the body will be `(I)`.
-  /// \pre `FirstTok` is a clause name, for the mentioned example,
-  /// `FirstTok` will be name of clause `induction`.
-  /// \post
-  /// - Lexer points to the last successfully processed token.
-  /// - On success, `FirstTok` is a last token in clause body.
-  virtual void HandleBody(clang::Preprocessor &PP,
-    clang::PragmaIntroducerKind Introducer, clang::Token &FirstTok);
-
-private:
-  ClauseId mClauseId;
-  PragmaReplacer *mParent;
-};
+inline const ClauseReplacer::ReplacementT &
+ClauseReplacer::getReplacement() const noexcept {
+  return mParent->getReplacement();
+}
 }
 #endif//TSAR_PRAGMA_HANDLERS_H
