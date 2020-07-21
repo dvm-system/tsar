@@ -45,7 +45,7 @@ STATISTIC(NumNonMatchASTExpr, "Number of non-matched AST expressions");
 
 namespace {
 class MatchExprVisitor :
-  public MatchASTBase<Value, Stmt>,
+  public MatchASTBase<Value *, Stmt *>,
   public RecursiveASTVisitor<MatchExprVisitor> {
 public:
   MatchExprVisitor(SourceManager &SrcMgr, Matcher &MM,
@@ -64,9 +64,9 @@ public:
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
+      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
     if (!Pair.second)
-      Pair.first->second.push(S);
+      Pair.first->second.push_back(S);
   }
 
    bool VisitCallExpr(Expr *E) {
@@ -101,18 +101,19 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
     mMatcher, mUnmatchedAST, LocToExpr, LocToMacro);
   for (auto &I: instructions(F)) {
     CallSite CS(&I);
-    if (!CS && !isa<ReturnInst>(I) &&
-        !(isa<BranchInst>(I) && cast<BranchInst>(I).isUnconditional()))
+    if (!CS)
       continue;
     ++NumNonMatchIRExpr;
     auto Loc = I.getDebugLoc();
     if (Loc) {
       auto Pair = LocToExpr.insert(
-        std::make_pair(Loc, bcl::TransparentQueue<Value>(&I)));
+        std::make_pair(Loc, TinyPtrVector<Value *>(&I)));
       if (!Pair.second)
-        Pair.first->second.push(&I);
+        Pair.first->second.push_back(&I);
     }
   }
+  for (auto &Pair : LocToExpr)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   // It is necessary to build LocToExpr map also if FuncDecl is null,
   // because a number of unmatched expressions should be calculated.
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());

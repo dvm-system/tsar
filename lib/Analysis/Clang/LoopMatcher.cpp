@@ -63,7 +63,7 @@ INITIALIZE_PASS_END(LoopMatcherPass, "loop-matcher",
 namespace {
 /// This matches explicit for, while and do-while loops.
 class MatchExplicitVisitor :
-  public MatchASTBase<Loop, Stmt>,
+  public MatchASTBase<Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchExplicitVisitor> {
 public:
 
@@ -105,9 +105,9 @@ public:
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
+      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
     if (!Pair.second)
-      Pair.first->second.push(S);
+      Pair.first->second.push_back(S);
   }
 
   bool VisitStmt(Stmt *S) {
@@ -121,7 +121,8 @@ public:
       if (Stmt *Init = For->getInit()) {
         auto LpItr = findItrForLocation(Init->getLocStart());
         if (LpItr != mLocToIR->end()) {
-          Loop *L = LpItr->second.pop();
+          Loop *L = LpItr->second.back();
+          LpItr->second.pop_back();
           mMatcher->emplace(For, L);
           ++NumMatchLoop;
           --NumNonMatchIRLoop;
@@ -174,9 +175,9 @@ public:
         if (HeaderLoc) {
           auto Pair =
             mLocToImplicit->insert(
-              std::make_pair(HeaderLoc, bcl::TransparentQueue<Loop>(L)));
+              std::make_pair(HeaderLoc, TinyPtrVector<Loop *>(L)));
           if (!Pair.second)
-            Pair.first->second.push(L);
+            Pair.first->second.push_back(L);
         }
       }
     }
@@ -188,7 +189,7 @@ private:
 
 /// This matches implicit loops.
 class MatchImplicitVisitor :
-  public MatchASTBase<Loop, Stmt>,
+  public MatchASTBase<Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchImplicitVisitor> {
 public:
   MatchImplicitVisitor(SourceManager &SrcMgr, Matcher &LM,
@@ -279,14 +280,19 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     ++NumNonMatchIRLoop;
     if (Loc) {
       auto Pair = LocToLoop.insert(
-        std::make_pair(Loc, bcl::TransparentQueue<Loop>(L)));
+        std::make_pair(Loc, TinyPtrVector<Loop *>(L)));
       // In some cases different loops have the same locations. For example,
       // if these loops have been produced by one loop from a file that had been
       // included multiple times. The other case is a loop defined in macro.
       if (!Pair.second)
-        Pair.first->second.push(L);
+        Pair.first->second.push_back(L);
     }
   });
+  // Matcher uses back() to extract element from the list. So, we change
+  // order of loops to preserver traverse order (loop is visited before
+  // children).
+  for (auto &Pair : LocToLoop)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
   MatchExplicitVisitor::LocToIRMap LocToImplicit;
   MatchExplicitVisitor::LocToASTMap LocToMacro;
@@ -295,7 +301,11 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
   MatchExplicit.TraverseDecl(mFuncDecl);
   MatchImplicitVisitor MatchImplicit(SrcMgr, mMatcher, mUnmatchedAST,
     LocToImplicit, LocToMacro);
+  for (auto &Pair: LocToImplicit)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   MatchImplicit.TraverseDecl(mFuncDecl);
+  for (auto &Pair : LocToMacro)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   MatchExplicit.matchInMacro(
     NumMatchLoop, NumNonMatchASTLoop, NumNonMatchIRLoop);
   return MatchImplicit.isDILoopChanged();
