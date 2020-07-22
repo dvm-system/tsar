@@ -1291,8 +1291,9 @@ void ClangStructureReplacementPass::collectCandidatesIn(
       if (CallerItr == mReplacementInfo.end() ||
           !CallerItr->get<FunctionInfo>()->hasCandidates())
         continue;
+      auto &CallerFN = *CallerItr->get<FunctionInfo>();
       for (auto *Call : CallerToCalls.second) {
-        if (CallerItr->get<FunctionInfo>()->Requests.count(Call))
+        if (CallerFN.Requests.count(Call))
           continue;
         const auto *CalleeDefinition = Call->getDirectCallee();
         if (!CalleeDefinition)
@@ -1303,18 +1304,16 @@ void ClangStructureReplacementPass::collectCandidatesIn(
         auto *Callee = const_cast<FunctionDecl *>(CalleeDefinition);
         auto CalleeItr = mReplacementInfo.find(Callee);
         for (unsigned I = 0, EI = Call->getNumArgs(); I < EI; ++I) {
-          auto Itr = (isExprInCandidates(
-              Call->getArg(I), CallerItr->get<FunctionInfo>()->Candidates));
-          if (Itr == CallerItr->get<FunctionInfo>()->Candidates.end())
+          auto Itr = (isExprInCandidates(Call->getArg(I), CallerFN.Candidates));
+          if (Itr == CallerFN.Candidates.end())
             continue;
-          CallerItr->get<FunctionInfo>()->ImplicitRequests.insert(Call);
+          CallerFN.ImplicitRequests.insert(Call);
           if (CalleeItr == mReplacementInfo.end()) {
             CalleeItr =
                 mReplacementInfo
                     .try_emplace(Callee, make_unique<FunctionInfo>(Callee))
                     .first;
-            CalleeItr->get<FunctionInfo>()->Strict =
-                CallerItr->get<FunctionInfo>()->Strict;
+            CalleeItr->get<FunctionInfo>()->Strict = CallerFN.Strict;
             LLVM_DEBUG(dbgs()
                        << "[REPLACE]: add implicit "
                        << (CalleeItr->get<FunctionInfo>()->Strict ? "strict"
@@ -1326,8 +1325,7 @@ void ClangStructureReplacementPass::collectCandidatesIn(
                   ->Candidates.try_emplace(Callee->getParamDecl(I))
                   .second) {
             IsChanged = true;
-            CalleeItr->get<FunctionInfo>()->Strict |=
-                CallerItr->get<FunctionInfo>()->Strict;
+            CalleeItr->get<FunctionInfo>()->Strict |= CallerFN.Strict;
           }
         }
       }

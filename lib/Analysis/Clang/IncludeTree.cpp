@@ -64,11 +64,15 @@ void FileTree::reconstruct(const GlobalInfoExtractor &GIE) {
       FileInfo.first->push_back(&OuterDecl);
       mDeclToFile.try_emplace(&OuterDecl, &*FileInfo.first);
       Loc = mSrcMgr.getDecomposedIncludedLoc(Loc.first);
+      // Do not use FileInfo.first iterator after insert() inside the loop
+      // because insert() may invalidate iterators.
+      auto *FN = &*FileInfo.first;
       while (Loc.first.isValid()) {
         auto ParentInfo = insert(Loc.first);
         assert(ParentInfo.first != file_end() && "FileNode must not be null!");
-        ParentInfo.first->push_back(&*FileInfo.first);
+        ParentInfo.first->push_back(FN);
         FileInfo = std::move(ParentInfo);
+        auto *FN = &*FileInfo.first;
         Loc = mSrcMgr.getDecomposedIncludedLoc(Loc.first);
       }
     }
