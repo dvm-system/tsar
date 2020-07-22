@@ -30,11 +30,14 @@
 
 #include "tsar/ADT/Bimap.h"
 #include "tsar/Support/Tags.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Support/Path.h>
 #include <set>
 
 namespace llvm {
@@ -64,18 +67,21 @@ struct DILocationMapInfo {
   static bool isEqual(const DILocation *LHS, const DILocation *RHS) {
     auto TK = getTombstoneKey();
     auto EK = getEmptyKey();
+    llvm::SmallString<128> LHSPath, RHSPath;
     return LHS == RHS ||
       RHS != TK && LHS != TK && RHS != EK && LHS != EK &&
       LHS->getLine() == RHS->getLine() &&
       LHS->getColumn() == RHS->getColumn() &&
-      LHS->getFilename() == RHS->getFilename();
+      tsar::getAbsolutePath(*LHS->getScope(), LHSPath) ==
+        tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
   }
   static bool isEqual(const clang::PresumedLoc &LHS, const DILocation *RHS) {
+    llvm::SmallString<128> LHSPath, RHSPath;
     return !isEqual(RHS, getTombstoneKey()) &&
       !isEqual(RHS, getEmptyKey()) &&
       LHS.getLine() == RHS->getLine() &&
       LHS.getColumn() == RHS->getColumn() &&
-      LHS.getFilename() == RHS->getFilename();
+      LHS.getFilename() == tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
   }
 };
 }

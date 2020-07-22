@@ -29,6 +29,7 @@
 #include <llvm/ADT/Optional.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Support/Path.h>
 
 namespace tsar {
 /// Returns a language for a specified function.
@@ -178,5 +179,19 @@ inline bool isStubVariable(llvm::DIVariable &DIVar) {
   return llvm::isa<llvm::DILocalVariable>(DIVar) &&
          llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial();
 }
+
+/// Return absolute path to a file this scope belongs to.
+inline llvm::StringRef getAbsolutePath(const llvm::DIScope &Scope,
+                                         llvm::SmallVectorImpl<char> &Path) {
+    auto Tmp = Scope.getFilename();
+    if (!llvm::sys::path::is_absolute(Tmp)) {
+      auto Dir = Scope.getDirectory();
+      Path.append(Dir.begin(), Dir.end());
+      llvm::sys::path::append(Path, Tmp);
+    } else {
+      Path.append(Tmp.begin(), Tmp.end());
+    }
+    return llvm::StringRef(Path.data(), Path.size());
+  }
 }
 #endif//TSAR_SUPPORT_METADATA_UTILS_H

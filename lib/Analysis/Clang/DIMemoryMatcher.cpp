@@ -80,18 +80,6 @@ struct DILocalScopeMapInfo {
     }
     return { 0u, 0u };
   }
-  static inline StringRef getAbsoultePath(const DILocalScope &S,
-      SmallVectorImpl<char> &Path) {
-    auto Tmp = S.getFilename();
-    if (!sys::path::is_absolute(Tmp)) {
-      auto &Dir = S.getDirectory();
-      Path.append(Dir.begin(), Dir.end());
-      sys::path::append(Path, Tmp);
-    } else {
-      Path.append(Tmp.begin(), Tmp.end());
-    }
-    return StringRef(Path.data(), Path.size());
-  }
   static inline DILocalScope * getEmptyKey() {
     return DenseMapInfo<DILocalScope *>::getEmptyKey();
   }
@@ -120,7 +108,7 @@ struct DILocalScopeMapInfo {
     auto LineColumnRHS = getLineColumn(RHS);
     SmallString<128> LHSPath, RHSPath;
     return LineColumnLHS == LineColumnRHS &&
-           getAbsoultePath(*LHS, LHSPath) == getAbsoultePath(*RHS, RHSPath);
+           getAbsolutePath(*LHS, LHSPath) == getAbsolutePath(*RHS, RHSPath);
   }
   static bool isEqual(const clang::PresumedLoc &LHS, const DILocalScope *RHS) {
     if (isEqual(RHS, getTombstoneKey()) || isEqual(RHS, getEmptyKey()))
@@ -129,7 +117,7 @@ struct DILocalScopeMapInfo {
     SmallString<128> LHSPath, RHSPath;
     return (!LineColumn.first || LHS.getLine() == LineColumn.first) &&
            (!LineColumn.second || LHS.getColumn() == LineColumn.second) &&
-           LHS.getFilename() == getAbsoultePath(*RHS, RHSPath);
+           LHS.getFilename() == getAbsolutePath(*RHS, RHSPath);
   }
 };
 
