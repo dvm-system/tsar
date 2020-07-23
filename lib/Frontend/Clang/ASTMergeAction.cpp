@@ -215,6 +215,10 @@ public:
 
   Decl *Imported(Decl *From, Decl *To) override {
     To = GeneralImporter::Imported(From, To);
+    auto &FromSM = getFromContext().getSourceManager();
+    auto ToMainFID = Import(FromSM.getMainFileID());
+    if (ToMainFID.isValid())
+      mOut.MainFiles.insert(ToMainFID);
     SmallVector<SourceLocation, 5> FromLocs, ToLocs;
     traverseSourceLocation(From,
       [&FromLocs, this](SourceLocation Loc) {FromLocs.push_back(Import(Loc));});

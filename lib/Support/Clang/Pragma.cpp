@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/Expr.h>
 #include <clang/Lex/Lexer.h>
@@ -91,6 +92,7 @@ bool findClause(Pragma &P, ClauseId Id, SmallVectorImpl<Stmt *> &Clauses) {
 std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
     const SmallVectorImpl<Stmt *> &Clauses,
     const SourceManager &SM, const LangOptions &LangOpts,
+    const ASTImportInfo &ImportInfo,
     SmallVectorImpl<CharSourceRange> &ToRemove, PragmaFlags::Flags Ignore) {
   assert(P && "Pragma must be valid!");
   using FlagRawT = std::underlying_type<PragmaFlags::Flags>::type;
@@ -102,9 +104,11 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   if (PStart.isInvalid())
     return { false, PragmaFlags::DefaultFlags };
   auto PStartDExp = SM.getDecomposedExpansionLoc(PStart);
+  auto IncludeToFID = SM.getDecomposedIncludedLoc(PStartDExp.first).first;
   auto ErrFlags =
-    SM.getDecomposedIncludedLoc(PStartDExp.first).first.isValid() ?
-    PragmaFlags::IsInHeader : PragmaFlags::DefaultFlags;
+      IncludeToFID.isValid() && !ImportInfo.MainFiles.count(PStartDExp.first)
+          ? PragmaFlags::IsInHeader
+          : PragmaFlags::DefaultFlags;
   if (PStart.isFileID()) {
     if (ErrFlags & IgnoreMask)
       return { false, ErrFlags };

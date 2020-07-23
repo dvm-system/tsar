@@ -77,9 +77,10 @@ namespace {
 /// other warnings.
 class ClangRenamer : public RecursiveASTVisitor<ClangRenamer> {
 public:
-  ClangRenamer(TransformationContext &TfmCtx,
+  ClangRenamer(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
       ClangGlobalInfoPass::RawInfo &RawInfo) :
-    mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
+    mTfmCtx(&TfmCtx), mImportInfo(ImportInfo),
+    mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
     mLangOpts(mRewriter.getLangOpts()) {}
 
@@ -89,8 +90,8 @@ public:
     Pragma P(*S);
     if (findClause(P, ClauseId::Rename, mClauses)) {
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-      auto IsPossible =
-        pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+      auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
+                                            mImportInfo, ToRemove);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
@@ -203,6 +204,7 @@ private:
 #endif
 
   TransformationContext *mTfmCtx;
+  const ASTImportInfo &mImportInfo;
   ClangGlobalInfoPass::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
@@ -223,8 +225,12 @@ bool ClangRenameLocalPass::runOnModule(llvm::Module &M) {
         ": transformation context is not available");
     return false;
   }
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangRenamer Vis(*TfmCtx, GIP.getRawInfo());
+  ClangRenamer Vis(*TfmCtx, *ImportInfo, GIP.getRawInfo());
   Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   return false;
 }

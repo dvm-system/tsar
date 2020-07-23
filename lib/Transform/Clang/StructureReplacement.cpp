@@ -265,8 +265,10 @@ using CallList = std::vector<clang::CallExpr *>;
 class ReplacementCollector : public RecursiveASTVisitor<ReplacementCollector> {
 public:
   ReplacementCollector(TransformationContext &TfmCtx,
+      const ASTImportInfo &ImportInfo,
       ReplacementMap &Replacements, CallList &Calls)
      : mTfmCtx(TfmCtx)
+     , mImportInfo(ImportInfo)
      , mSrcMgr(TfmCtx.getContext().getSourceManager())
      , mLangOpts(TfmCtx.getContext().getLangOpts())
      , mReplacements(Replacements)
@@ -308,7 +310,7 @@ public:
       if (P.clause_size() > Clauses.size())
         Clauses.resize(StashSize);
       auto IsPossible = pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
-        mCurrFunc->ToRemoveTransform, PragmaFlags::IsInHeader);
+        mImportInfo, mCurrFunc->ToRemoveTransform, PragmaFlags::IsInHeader);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
@@ -338,7 +340,7 @@ public:
     }
     if (findClause(P, ClauseId::ReplaceMetadata, Clauses)) {
       assert(mCurrFunc && "Replacement-related data must not be null!");
-      pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
+      pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts, mImportInfo,
         mCurrFunc->ToRemoveMetadata, PragmaFlags::IsInHeader);
       mInClause = ClauseId::ReplaceMetadata;
       for (auto *C : Clauses) {
@@ -626,6 +628,7 @@ private:
   }
 
   TransformationContext &mTfmCtx;
+  const ASTImportInfo &mImportInfo;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   ReplacementMap &mReplacements;
@@ -1172,7 +1175,8 @@ private:
 
   /// Collect replacement candidates for functions in a specified strongly
   /// connected component in a call graph.
-  void collectCandidatesIn(scc_iterator<CallGraph *> &SCC);
+  void collectCandidatesIn(scc_iterator<CallGraph *> &SCC,
+                           const ASTImportInfo &ImportInfo);
 
   /// Check accesses to replacement candidates inside a specified function.
   ///
@@ -1265,7 +1269,7 @@ ModulePass * llvm::createClangStructureReplacementPass() {
 }
 
 void ClangStructureReplacementPass::collectCandidatesIn(
-    scc_iterator<CallGraph *> &SCC) {
+    scc_iterator<CallGraph *> &SCC, const ASTImportInfo &ImportInfo) {
   std::vector<std::pair<FunctionDecl *, CallList>> Calls;
   LLVM_DEBUG(dbgs() << "[REPLACE]: process functions in SCC\n");
   for (auto *CGN : *SCC) {
@@ -1278,7 +1282,7 @@ void ClangStructureReplacementPass::collectCandidatesIn(
     LLVM_DEBUG(dbgs() << "[REPLACE]: process '" << Definition->getName()
                       << "'\n");
     Calls.emplace_back(const_cast<FunctionDecl *>(Definition), CallList());
-    ReplacementCollector Collector(*mTfmCtx, mReplacementInfo,
+    ReplacementCollector Collector(*mTfmCtx, ImportInfo, mReplacementInfo,
                                    Calls.back().second);
     Collector.TraverseDecl(const_cast<FunctionDecl *>(Definition));
   }
@@ -1724,6 +1728,10 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
         ": transformation context is not available");
     return false;
   }
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   mRawInfo = &GIP.getRawInfo();
   mGlobalInfo = &GIP.getGlobalInfo();
@@ -1735,7 +1743,7 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
   LLVM_DEBUG(dbgs() << "[REPLACE]: number of SCCs " << Postorder.size() << "\n");
   LLVM_DEBUG(dbgs() << "[REPLACE]: traverse call graph in reverse postorder\n");
   for (auto &SCC: llvm::reverse(Postorder))
-    collectCandidatesIn(SCC);
+    collectCandidatesIn(SCC, *ImportInfo);
   auto &Rewriter = mTfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   if (SrcMgr.getDiagnostics().hasErrorOccurred())

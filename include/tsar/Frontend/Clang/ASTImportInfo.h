@@ -30,6 +30,7 @@
 #include <clang/AST/Decl.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Pass.h>
 #include <vector>
@@ -84,6 +85,11 @@ struct ASTImportInfo {
 
   using RedeclLocMap = llvm::DenseMap<clang::Decl *, MergedLocations>;
   RedeclLocMap RedeclLocs;
+
+  /// Only one main file may exist. So importer represents all imported main
+  /// files as files included into a single main file. This set contains FileIDs
+  /// which corresponds to main files before import.
+  llvm::DenseSet<clang::FileID> MainFiles;
 
   /// True if import has been performed.
   bool WasImport = false;

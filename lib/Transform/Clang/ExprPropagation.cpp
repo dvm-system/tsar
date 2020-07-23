@@ -177,9 +177,11 @@ private:
 
 public:
   DefUseVisitor(TransformationContext &TfmCtx,
+      const ASTImportInfo &ImportInfo,
       const ClangGlobalInfoPass::RawInfo &RawInfo,
       const GlobalInfoExtractor &GlobalInfo) :
     mTfmCtx(TfmCtx),
+    mImportInfo(ImportInfo),
     mRawInfo(RawInfo),
     mGlobalInfo(GlobalInfo),
     mRewriter(TfmCtx.getRewriter()),
@@ -220,8 +222,8 @@ public:
       // Search for propagate clause and disable renaming in other pragmas.
       if (findClause(P, ClauseId::Propagate, mClauses)) {
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-        auto IsPossible =
-          pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+        auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
+                                              mImportInfo, ToRemove);
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
             toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
@@ -428,7 +430,8 @@ public:
       return true;
     }
     auto Loc = mSrcMgr.getDecomposedExpansionLoc(Ref->getLocation());
-    if (mSrcMgr.getDecomposedIncludedLoc(Loc.first).first.isValid()) {
+    auto IncludeToFID = mSrcMgr.getDecomposedIncludedLoc(Loc.first).first;
+    if (IncludeToFID.isValid() && !mImportInfo.MainFiles.count(Loc.first)) {
       toDiag(mSrcMgr.getDiagnostics(), Ref->getLocation(),
         diag::warn_disable_propagate_in_include);
       return true;
@@ -622,6 +625,7 @@ private:
   }
 
   TransformationContext &mTfmCtx;
+  const ASTImportInfo &mImportInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
@@ -848,11 +852,16 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
   auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) != SrcMgr::C_User)
     return false;
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
   mDL = &M->getDataLayout();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo(), GIP.getGlobalInfo());
+  DefUseVisitor Visitor(*mTfmCtx, *ImportInfo, GIP.getRawInfo(),
+                        GIP.getGlobalInfo());
   DenseSet<Value *> WorkSet;
   // Search for PROPAGATION candidates.
   for (auto &I : instructions(F)) {

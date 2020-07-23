@@ -281,7 +281,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
     }
     mActiveClause = { Clauses.front(), true, false };
     auto IsPossible = pragmaRangeToRemove(
-      P, Clauses, mSrcMgr, mLangOpts, mCurrentT->getToRemove());
+      P, Clauses, mSrcMgr, mLangOpts, mImportInfo, mCurrentT->getToRemove());
     if (!IsPossible.first)
       if (IsPossible.second & PragmaFlags::IsInMacro)
         toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
@@ -915,8 +915,10 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
     auto EndLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getLocEnd());
     assert(StartLoc.first == EndLoc.first &&
       "Statements which starts and ends in different files must be already discarded!");
-    if (mSrcMgr.getDecomposedIncludedLoc(StartLoc.first).first.isValid() ||
-        mSrcMgr.getDecomposedIncludedLoc(EndLoc.first).first.isValid()) {
+    auto StartFID = mSrcMgr.getDecomposedIncludedLoc(StartLoc.first).first;
+    auto EndFID = mSrcMgr.getDecomposedIncludedLoc(EndLoc.first).first;
+    if (StartFID.isValid() && !mImportInfo.MainFiles.count(StartLoc.first) ||
+        EndFID.isValid() && !mImportInfo.MainFiles.count(EndLoc.first)) {
       toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
         diag::warn_disable_inline_in_include);
       return false;

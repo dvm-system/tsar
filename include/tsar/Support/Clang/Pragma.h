@@ -42,6 +42,8 @@ template<class T> class SmallVectorImpl;
 namespace tsar {
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
+struct ASTImportInfo;
+
 /// Description of a directive.
 class Pragma {
 public:
@@ -134,6 +136,7 @@ struct PragmaFlags {
 std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   const llvm::SmallVectorImpl<clang::Stmt *> &Clauses,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
+  const ASTImportInfo &ImportInfo,
   llvm::SmallVectorImpl<clang::CharSourceRange> &ToRemove,
   PragmaFlags::Flags Ignore = PragmaFlags::DefaultFlags);
 
