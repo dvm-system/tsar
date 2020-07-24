@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/MetadataUtils.h"
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/InstIterator.h>
 #include "llvm/IR/InstVisitor.h"
 #include <llvm/IR/LegacyPassManager.h>
@@ -87,6 +88,48 @@ struct DICompileUnitSearch {
   SmallPtrSet<const Metadata *, 32> MDNodes;
   SmallVector<DICompileUnit *, 2> CUs;
 };
+
+DILocalScope *cloneWithNewSubprogram(DILocalScope *Scope, DISubprogram *Sub) {
+  if (!Scope)
+    return nullptr;
+  if (isa<DISubprogram>(Scope))
+    return Sub;
+  Scope = cast<DILocalScope>(Scope->clone().release());
+  for (unsigned I = 0, EI = Scope->getNumOperands(); I < EI; ++I)
+    if (auto Parent = dyn_cast_or_null<DILocalScope>(Scope->getOperand(I))) {
+      assert(Scope->getScope().resolve() == Parent &&
+             "Unknown reference to local scope!");
+      Scope->replaceOperandWith(I, cloneWithNewSubprogram(Parent, Sub));
+    }
+  return Scope;
+}
+
+DILocation *cloneWithNewSubprogram(
+    DILocation *Loc,
+    const DenseMap<DISubprogram *, DISubprogram *> &SubprogramMap) {
+  if (!Loc)
+    return Loc;
+  bool NeedToClone = false;
+  auto *Scope = Loc->getScope();
+  auto *DISub = getSubprogram(Scope);
+  auto MapItr = SubprogramMap.find(DISub);
+  if (MapItr != SubprogramMap.end()) {
+    NeedToClone = true;
+    Scope = cloneWithNewSubprogram(Scope, MapItr->second);
+  }
+  auto *InlineAt = Loc->getInlinedAt();
+  if (InlineAt) {
+    auto CloneInlineAt = cloneWithNewSubprogram(InlineAt, SubprogramMap);
+    if (CloneInlineAt != InlineAt) {
+      NeedToClone = true;
+      InlineAt = CloneInlineAt;
+    }
+  }
+  if (!NeedToClone)
+    return Loc;
+  return DILocation::get(Loc->getContext(), Loc->getLine(), Loc->getColumn(),
+                         Scope, InlineAt);
+}
 }
 
 void ClientToServerMemory::initializeServer(
@@ -102,6 +145,51 @@ void ClientToServerMemory::initializeServer(
         assert(MD && "Mapped metadata for a subprogram must exist!");
         cast<Function>(F)->setMetadata("sapfor.dbg", cast<MDNode>(*MD));
       }
+  }
+  // Collect copies of DISubprogram metadata. This copies were implicitly
+  // created while local variables were copying.
+  DenseMap<DISubprogram *, DISubprogram *> SubprogramMap;
+  for (auto &Pair : *ClientToServer.getMDMap())
+    if (Pair.second && Pair.first != Pair.second)
+      if (auto *FromDIV = dyn_cast<DILocalVariable>(Pair.first)) {
+        auto *FromScope = getSubprogram(FromDIV->getScope());
+        assert(FromScope && "Local variable is not attached to a subprogram!");
+        auto *ToScope =
+            getSubprogram(cast<DILocalVariable>(Pair.second)->getScope());
+        assert(ToScope && "Local variable is not attached to a subprogram!");
+        SubprogramMap.try_emplace(cast<DISubprogram>(FromScope),
+                                  cast<DISubprogram>(ToScope));
+      }
+  // Replace DISubprograms with their copies in a new module.
+  for (auto &Pair : *ClientToServer.getMDMap())
+    if (Pair.second && Pair.first != Pair.second)
+      if (auto *MD = dyn_cast<MDNode>(Pair.second))
+        for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
+          if (auto Op = dyn_cast_or_null<DISubprogram>(MD->getOperand(I))) {
+            auto MapItr = SubprogramMap.find(Op);
+            if (MapItr != SubprogramMap.end())
+              MD->replaceOperandWith(I, MapItr->second);
+          }
+  for (auto &F : ServerM) {
+    if (auto *DISub = F.getSubprogram()) {
+      auto MapItr = SubprogramMap.find(DISub);
+      if (MapItr != SubprogramMap.end())
+        F.setSubprogram(MapItr->second);
+    }
+    for (auto &I : instructions(&F)) {
+      if (auto &Loc = I.getDebugLoc()) {
+        auto *NewLoc = cloneWithNewSubprogram(Loc.get(), SubprogramMap);
+        if (NewLoc != Loc)
+          I.setDebugLoc(NewLoc);
+      }
+      if (auto *MD = I.getMetadata(LLVMContext::MD_loop))
+        for (unsigned I = 1; I < MD->getNumOperands(); ++I)
+          if (auto *Loc = dyn_cast_or_null<DILocation>(MD->getOperand(I))) {
+            auto *NewLoc = cloneWithNewSubprogram(Loc, SubprogramMap);
+            if (NewLoc != Loc)
+              MD->replaceOperandWith(I, NewLoc);
+          }
+    }
   }
   // Add list DICompileUnits (this may occur due to manual mapping performed
   // in prepareToClone().

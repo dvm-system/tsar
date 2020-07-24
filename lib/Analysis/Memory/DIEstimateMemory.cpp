@@ -125,6 +125,22 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
     new DIUnknownMemory(Env, UM.getAsMDNode()));
 }
 
+static void serialize(DILocation &Loc, LLVMContext &Ctx,
+  SmallVectorImpl<Metadata *> &MDs) {
+  auto LineMD = ConstantAsMetadata::get(
+    ConstantInt::get(Type::getInt32Ty(Ctx), Loc.getLine()));
+  MDs.push_back(LineMD);
+  auto ColumnMD = ConstantAsMetadata::get(
+    ConstantInt::get(Type::getInt32Ty(Ctx), Loc.getColumn()));
+  MDs.push_back(ColumnMD);
+  if (auto *Scope = Loc.getRawScope())
+    MDs.push_back(Scope);
+  if (auto *InlineAt = Loc.getInlinedAt())
+    serialize(*InlineAt, Ctx, MDs);
+  else
+    MDs.push_back(nullptr);
+}
+
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   DIMemoryEnvironment &Env, MDNode *MD, Flags F,
   ArrayRef<DILocation *> DbgLocs) {
@@ -138,7 +154,7 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   auto NewMD = llvm::MDNode::get(Ctx, MDs);
   assert(NewMD && "Can not create metadata node!");
   ++NumUnknownMemory;
@@ -160,7 +176,7 @@ llvm::MDNode * DIUnknownMemory::getRawIfExists(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   return llvm::MDNode::getIfExists(Ctx, MDs);
 }
 
@@ -174,11 +190,46 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::getIfExists(
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, Node));
 }
 
+static inline ConstantInt *getConstantInt(const MDOperand &Op) {
+  if (auto CMD = dyn_cast<ConstantAsMetadata>(Op))
+    if (auto CInt = dyn_cast<ConstantInt>(CMD->getValue()))
+      return CInt;
+  return nullptr;
+};
+
+static std::pair<DILocation *, unsigned> getLocation(const MDNode *MD,
+  unsigned I, unsigned EI) {
+  ConstantInt *CInt = nullptr;
+  if (!(CInt = getConstantInt(MD->getOperand(I))))
+    return std::make_pair(nullptr, I);
+  unsigned Line = CInt->getZExtValue();
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  if (!(CInt = getConstantInt(MD->getOperand(I))))
+    return std::make_pair(nullptr, I);
+  unsigned Column = CInt->getZExtValue();
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  auto *Scope = dyn_cast<DIScope>(MD->getOperand(I));
+  if (!Scope)
+    return std::make_pair(nullptr, I);
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  auto InlineAt =
+    (MD->getOperand(I)) ? getLocation(MD, I, EI) : std::make_pair(nullptr, I);
+  return std::make_pair(
+    DILocation::get(MD->getContext(), Line, Column, Scope, InlineAt.first),
+    InlineAt.second);
+}
+
 void DIMemory::getDebugLoc(SmallVectorImpl<DebugLoc> &DbgLocs) const {
   auto MD = getAsMDNode();
-  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
-    if (auto *Loc = llvm::dyn_cast<llvm::DILocation>(MD->getOperand(I)))
-      DbgLocs.emplace_back(Loc);
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
+    auto Res = getLocation(MD, I, EI);
+    I = Res.second;
+    if (Res.first)
+      DbgLocs.emplace_back(Res.first);
+  }
 }
 
 std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
@@ -195,7 +246,7 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   auto MD = llvm::MDNode::get(Ctx, MDs);
   assert(MD && "Can not create metadata node!");
   ++NumEstimateMemory;
@@ -230,7 +281,7 @@ llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   return llvm::MDNode::getIfExists(Ctx, MDs);
 }
 

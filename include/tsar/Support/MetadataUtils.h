@@ -194,4 +194,11 @@ inline llvm::StringRef getAbsolutePath(const llvm::DIScope &Scope,
     return llvm::StringRef(Path.data(), Path.size());
   }
 }
+
+/// Return subprogram which contains a specified scope or nullptr.
+inline llvm::DISubprogram * getSubprogram(llvm::DIScope *Scope) {
+  while (Scope && !llvm::isa<llvm::DISubprogram>(Scope))
+    Scope = llvm::cast<llvm::DIScope>(Scope->getScope());
+  return llvm::dyn_cast_or_null<llvm::DISubprogram>(Scope);
+}
 #endif//TSAR_SUPPORT_METADATA_UTILS_H
