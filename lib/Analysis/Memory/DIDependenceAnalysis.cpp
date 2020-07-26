@@ -1788,6 +1788,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     // child.
     if (ChildTraitItr == DIDepSet.end())
       continue;
+    SmallVector<DIMemoryTraitRef, 8> DescendantTraits;
     for (auto &DIMTraitItr : *ChildTraitItr) {
       auto *DIM = DIMTraitItr->getMemory();
       // Alias trait contains not only locations from a corresponding alias
@@ -1818,9 +1819,13 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
         printDILocationSource(*DWLang, *DIM, dbgs());
         dbgs() << "\n";
       });
+      DescendantTraits.push_back(DIMTraitItr);
+    }
+    if (!DescendantTraits.empty()) {
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
-      DIATraitItr->insert(DIMTraitItr);
+      for (auto &DIMTraitItr : DescendantTraits)
+        DIATraitItr->insert(std::move(DIMTraitItr));
     }
   }
   if (CurrentPromoted.Memory && CurrentPromoted.Collapse &&
