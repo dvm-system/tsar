@@ -1408,7 +1408,8 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const DIMemory *> LockedTraits, DIMemoryTraitRegionPool &Pool) {
   assert(L && "Loop must not be null!");
-  LLVM_DEBUG(dbgs() << "[DA DI]: process loop at " << L->getStartLoc() << "\n");
+  LLVM_DEBUG(dbgs() << "[DA DI]: process loop at ";
+             L->getStartLoc().print(dbgs()); dbgs() << "\n");
   for (auto &DIMTrait : Pool) {
     if (DIMTrait.getMemory()->isOriginal() ||
         !DIMTrait.getMemory()->emptyBinding() ||
