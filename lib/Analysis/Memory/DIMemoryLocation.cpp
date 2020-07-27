@@ -122,9 +122,9 @@ DIMemoryLocation DIMemoryLocation::get(DbgInfoIntrinsic *Inst) {
       { dwarf::DW_OP_LLVM_fragment, Frag->OffsetInBits, Frag->SizeInBits });
   else
     Expr = DIExpression::get(Expr->getContext(), {});
-  return {
-    llvm::cast_or_null<DIVariable>(Inst->getVariable()),
-    Expr,
-    Inst->getDebugLoc().get()
-  };
+  auto *Var = cast_or_null<DIVariable>(Inst->getVariable());
+  auto DbgLoc = Inst->getDebugLoc();
+  auto *Location = !Var || DbgLoc && DbgLoc.getLine() != 0 ? DbgLoc.get() :
+      DILocation::get(Var->getContext(), Var->getLine(), 0, Var->getScope());
+  return {Var, Expr, Location};
 }
