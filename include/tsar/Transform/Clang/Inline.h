@@ -256,7 +256,11 @@ public:
   const clang::Stmt * operator->() const { return getStmt(); }
 
   bool isClause() const { return mInfo.getPointer().getInt(); }
-  void setIsClause(bool IsClause = true) { mInfo.getPointer().setInt(IsClause);}
+  void setIsClause(bool IsClause = true) {
+    auto Val = mInfo.getPointer();
+    Val.setInt(IsClause);
+    mInfo.setPointer(Val);
+  }
 
   bool isUsed() const { return mInfo.getInt(); }
   void setIsUsed(bool IsUsed = true) { mInfo.setInt(IsUsed); }
