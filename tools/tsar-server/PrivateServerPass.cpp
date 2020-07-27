@@ -553,6 +553,7 @@ template<> struct Traits<trait::DIInduction *> {
     if (TmpDest[msg::Induction::Step])
       Start = APSInt::get(*TmpDest[msg::Induction::Step]);
     Dest = new trait::DIInduction(TmpDest[msg::Induction::Kind]);
+    return true;
   }
 
   static void unparse(String &JSON, const trait::DIInduction *Obj) {
@@ -619,6 +620,7 @@ template<> struct Traits<trait::DIDependence *> {
     if (TmpDest[msg::Dependence::Max])
       Range.first = APSInt::get(*TmpDest[msg::Dependence::Max]);
     Dest = new trait::DIDependence(F, Range);
+    return true;
   }
 
   static void unparse(String &JSON, const trait::DIDependence *Obj) {

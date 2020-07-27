@@ -120,6 +120,7 @@ struct MemoryLocationRange {
     LowerBound = 0;
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
+    return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
