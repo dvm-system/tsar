@@ -35,7 +35,9 @@
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/Sequence.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
@@ -430,7 +432,7 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   ArrayInfo.setMetadata();
   if (!DIM->Var->getType())
     return;
-  auto VarDbgTy = stripDIType(DIM->Var->getType()).resolve();
+  auto VarDbgTy = stripDIType(DIM->Var->getType());
   DINodeArray ArrayDims = nullptr;
   bool IsFirstDimPointer = false;
   if (VarDbgTy->getTag() == dwarf::DW_TAG_array_type) {
@@ -438,7 +440,7 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   } else if (VarDbgTy->getTag() == dwarf::DW_TAG_pointer_type) {
     IsFirstDimPointer = true;
     auto BaseTy = cast<DIDerivedType>(VarDbgTy)->getBaseType();
-    if (BaseTy && BaseTy.resolve()->getTag() == dwarf::DW_TAG_array_type)
+    if (BaseTy && BaseTy->getTag() == dwarf::DW_TAG_array_type)
       ArrayDims = cast<DICompositeType>(BaseTy)->getElements();
   }
   LLVM_DEBUG(
@@ -467,11 +469,11 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
       } else if (DIDimCount.is<DIVariable *>()) {
         auto DIVar = DIDimCount.get<DIVariable *>();
         if (auto V = MetadataAsValue::getIfExists(DIVar->getContext(), DIVar)) {
-          SmallVector<DbgInfoIntrinsic *, 4> DbgInsts;
+          SmallVector<DbgVariableIntrinsic *, 4> DbgInsts;
           // Do not use findDbgUsers(). It checks V->isUsedByMetadata() which
           // may return false for MetadataAsValue.
           for (User *U : V->users())
-            if (DbgInfoIntrinsic *DII = dyn_cast<DbgInfoIntrinsic>(U))
+            if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
               DbgInsts.push_back(DII);
           if (DbgInsts.size() == 1) {
             ArrayInfo.setDimSize(DimIdx + PassPtrDim,
@@ -600,7 +602,7 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mLI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   mIsSafeTypeCast =
     getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
   auto &DL = F.getParent()->getDataLayout();

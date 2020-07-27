@@ -32,7 +32,6 @@
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/IR/DebugInfoMetadata.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/Module.h>
 
 using namespace llvm;
@@ -112,9 +111,9 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc, bool IsMinimal) {
   return false;
 }
 
-bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
+bool unparseCallee(const llvm::CallBase &CB, llvm::Module &M,
     llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S, bool IsMinimal) {
-  auto Callee = CS.getCalledValue()->stripPointerCasts();
+  auto Callee = CB.getCalledOperand()->stripPointerCasts();
   if (auto F = dyn_cast<Function>(Callee)) {
     S.assign(F->getName().begin(), F->getName().end());
     return true;

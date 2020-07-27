@@ -25,9 +25,11 @@
 
 #include "tsar/Core/TransformationContext.h"
 #include <clang/AST/ASTContext.h>
+#include <clang/Basic/FileManager.h>
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/FrontendDiagnostic.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
 
 using namespace tsar;
@@ -117,7 +119,7 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
     snprintf(Buf, MaxDigits, "%d", Pair.first->getValue());
     SmallString<128> Path = Filename;
     sys::path::replace_extension(Path, Buf + sys::path::extension(Path));
-    return Path.str();
+    return std::string(Path);
   };
   return FA;
 }

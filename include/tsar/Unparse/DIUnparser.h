@@ -89,7 +89,7 @@ private:
 
   const llvm::DominatorTree *mDT;
   const llvm::Value *mExpr;
-  llvm::DITypeRef mDIType;
+  llvm::DIType *mDIType = nullptr;
   const llvm::Value *mLastAddressChange = nullptr;
   bool mIsDITypeEnd = true;
 };

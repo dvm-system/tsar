@@ -166,7 +166,7 @@ public:
   void visitAtomicRMWInst(llvm::AtomicRMWInst &I);
   void visitReturnInst(llvm::ReturnInst &I);
   void visitFunction(llvm::Function &F);
-  void visitCallSite(llvm::CallSite CS);
+  void visitCallBase(llvm::CallBase &Call);
 
 private:
   /// Mark functions which should be ignored with sapfor.da.ignore metadata.

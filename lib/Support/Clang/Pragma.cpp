@@ -99,8 +99,8 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
   auto IgnoreMask = std::numeric_limits<FlagRawT>::max() ^ Ignore;
   // It isn't safe to remove clauses in macro, so always prevent transformation.
   IgnoreMask |= PragmaFlags::IsInMacro;
-  SourceLocation PStart = P.getNamespace()->getLocStart();
-  SourceLocation PEnd = P.getNamespace()->getLocEnd();
+  SourceLocation PStart = P.getNamespace()->getBeginLoc();
+  SourceLocation PEnd = P.getNamespace()->getEndLoc();
   if (PStart.isInvalid())
     return { false, PragmaFlags::DefaultFlags };
   auto PStartDExp = SM.getDecomposedExpansionLoc(PStart);
@@ -136,8 +136,8 @@ std::pair<bool, PragmaFlags::Flags> pragmaRangeToRemove(const Pragma &P,
     // a clause in the source code.
     auto PSpelling = SM.getSpellingLoc(PStart).getRawEncoding();
     for (auto C : Clauses) {
-      auto CSpellingS = SM.getSpellingLoc(C->getLocStart()).getRawEncoding();
-      auto CSpellingE = SM.getSpellingLoc(C->getLocEnd()).getRawEncoding();
+      auto CSpellingS = SM.getSpellingLoc(C->getBeginLoc()).getRawEncoding();
+      auto CSpellingE = SM.getSpellingLoc(C->getEndLoc()).getRawEncoding();
       // Offset of clause start from `spf` in _Pragma("spf ...
       auto OffsetS = CSpellingS - PSpelling;
       // Offset of clause end from `spf` in _Pragma("spf ...

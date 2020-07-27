@@ -66,7 +66,7 @@ llvm::Optional<unsigned> getLanguage(const llvm::DIVariable &DIVar) {
       cast<DISubprogram>(Scope)->getUnit() : dyn_cast<DICompileUnit>(Scope);
     if (CU)
       return CU->getSourceLanguage();
-    Scope = Scope->getScope().resolve();
+    Scope = Scope->getScope();
   }
   return None;
 }

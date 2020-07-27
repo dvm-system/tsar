@@ -153,7 +153,7 @@ public:
     bool IsNew = false;
     auto Itr = mRegionMap.find(RegionName);
     if (Itr == mRegionMap.end()) {
-      mRegions.emplace_back(llvm::make_unique<OptimizationRegion>(RegionName));
+      mRegions.emplace_back(std::make_unique<OptimizationRegion>(RegionName));
       Itr = mRegionMap.try_emplace(RegionName, mRegions.back().get()).first;
       IsNew = true;
     }

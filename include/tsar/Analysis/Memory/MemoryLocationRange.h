@@ -99,10 +99,10 @@ struct MemoryLocationRange {
   }
 
   /// Return a location representing a particular argument of a call.
-  static MemoryLocationRange getForArgument(llvm::ImmutableCallSite CS,
+  static MemoryLocationRange getForArgument(const llvm::CallBase *Call,
       unsigned ArgIdx, const llvm::TargetLibraryInfo &TLI) {
     return MemoryLocationRange(
-      llvm::MemoryLocation::getForArgument(CS, ArgIdx, TLI));
+      llvm::MemoryLocation::getForArgument(Call, ArgIdx, TLI));
   }
 
   explicit MemoryLocationRange(const llvm::Value *Ptr = nullptr,

@@ -111,18 +111,18 @@ private:
   template<class T> void checkNode(T Node) {
     auto MacroVisitor = [this](SourceLocation Loc) {
       mIsInvalid = true;
-      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getBeginLoc(),
         diag::err_assert);
       toDiag(mSrcMgr.getDiagnostics(), Loc,
         diag::note_assert_no_macro);
     };
     if (!for_each_macro(Node, mSrcMgr, mLangOpts, mRawMacros, MacroVisitor)) {
       mIsInvalid = true;
-      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getBeginLoc(),
         diag::err_assert);
-      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getBeginLoc(),
         diag::note_source_range_not_single_file);
-      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getLocEnd(),
+      toDiag(mSrcMgr.getDiagnostics(), getPointer(Node)->getEndLoc(),
         diag::note_end_location);
     }
   }

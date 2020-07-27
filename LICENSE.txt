@@ -206,7 +206,6 @@
 
       lib/Analysis/Memory/DependenceAnalysis.cpp
       include/tsar/Analysis/Memory/DependenceAnalysis.h
-      the files under include/tsar/Patch
 
 
    University of Illinois/NCSA

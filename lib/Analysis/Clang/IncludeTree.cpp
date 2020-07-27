@@ -26,10 +26,11 @@
 #include "tsar/Analysis/Clang/IncludeTree.h"
 #include <llvm/Analysis/DOTGraphTraitsPass.h>
 #include "tsar/Core/Query.h"
+#include <clang/Basic/FileManager.h>
 #include <llvm/Support/GraphWriter.h>
 #include <llvm/Support/DOTGraphTraits.h>
 #include <llvm/Support/Path.h>
-#include <ctime>>
+#include <ctime>
 
 using namespace clang;
 using namespace llvm;
@@ -176,7 +177,7 @@ bool ClangIncludeTreePass::runOnModule(llvm::Module &M) {
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   auto &SrcMgr = GIP.getGlobalInfo().getSourceManager();
   if (!mFileTree || &SrcMgr != &mFileTree->getSourceManager())
-    mFileTree = make_unique<FileTree>(SrcMgr);
+    mFileTree = std::make_unique<FileTree>(SrcMgr);
   mFileTree->reconstruct(GIP.getGlobalInfo());
   return false;
 }

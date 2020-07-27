@@ -50,6 +50,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
@@ -1930,7 +1931,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     SmallVector<const DIMemory *, 4> LockedTraits;
     if (!Pool) {
-      Pool = make_unique<DIMemoryTraitRegionPool>();
+      Pool = std::make_unique<DIMemoryTraitRegionPool>();
     } else {
       for (auto &T : *Pool)
         if (T.is<trait::Lock>())

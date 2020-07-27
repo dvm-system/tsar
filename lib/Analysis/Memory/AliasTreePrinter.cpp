@@ -29,7 +29,6 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/Analysis/DOTGraphTraitsPass.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/Support/GraphWriter.h>
 
 using namespace llvm;
@@ -100,11 +99,12 @@ template<> struct DOTGraphTraits<AliasTree *> :
     OS << "Unknown Memory\n";
     for (auto *Unknown : *N) {
       if (isSimple()) {
-        ImmutableCallSite CS(Unknown);
-        if (auto Callee = [CS]() {
-          return !CS ? nullptr : dyn_cast<Function>(
-            CS.getCalledValue()->stripPointerCasts());
-        }())
+        if (auto Callee = [Unknown]() -> Function * {
+              if (auto *Call = dyn_cast<CallBase>(Unknown))
+                return dyn_cast<Function>(
+                    Call->getCalledOperand()->stripPointerCasts());
+              return nullptr;
+            }())
           Callee->printAsOperand(OS, false);
         else
           Unknown->printAsOperand(OS, false);

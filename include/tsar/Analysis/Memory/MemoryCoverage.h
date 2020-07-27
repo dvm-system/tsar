@@ -68,14 +68,19 @@ bool cover(
       return true;
     if (EM.isUnreachable(*I))
       continue;
+    if (!I->getSize().hasValue())
+      return true;
     auto NodeItr = Numbers.find(I->getAliasNode(AT));
     assert(NodeItr != Numbers.end() && "Number of an alias node must be set!");
     PreorderTraversal.emplace(
       std::piecewise_construct,
       std::forward_as_tuple(NodeItr->template get<Preorder>()),
       std::forward_as_tuple(
-        NodeItr->template get<ReversePostorder>(), I->getSize()));
+        NodeItr->template get<ReversePostorder>(), I->getSize().getValue()));
   }
+  // Fixed size locations do not cover location of unknown size.
+  if (!EM.getSize().hasValue())
+    return false;
   uint64_t TotalSize = 0;
   auto PreorderItr = PreorderTraversal.begin();
   auto PreorderEndItr = PreorderTraversal.end();
@@ -91,7 +96,7 @@ bool cover(
     CurrentSize = PreorderItr->second.template get<Size>();
   }
   TotalSize += CurrentSize;
-  return TotalSize >= EM.getSize();
+  return TotalSize >= EM.getSize().getValue();
 }
 }
 #endif//TSAR_MEMORY_COVERAGE_H

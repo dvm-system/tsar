@@ -18,22 +18,22 @@ void bar() {
 //CHECK:    flow:
 //CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5
 //CHECK:    induction:
-//CHECK:     <I:7:12, 4>:[Int,0,10,1]
+//CHECK:     <I:7[7:3], 4>:[Int,0,10,1]
 //CHECK:    lock:
-//CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5 | <I:7:12, 4>
+//CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5 | <I:7[7:3], 4>
 //CHECK:    header access:
-//CHECK:     <I:7:12, 4>
+//CHECK:     <I:7[7:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5 | <I:7:12, 4>
+//CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5 | <I:7[7:3], 4>
 //CHECK:    address access:
 //CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?> exec():9:5 init():8:5
 //CHECK:    explicit access (separate):
-//CHECK:     <*P:{9:10|5:8}, ?> <I:7:12, 4> <P:5:8, ?> exec():9:5 init():8:5
+//CHECK:     <*P:{9:10|5:8}, ?> <I:7[7:3], 4> <P:5:8, ?> exec():9:5 init():8:5
 //CHECK:    lock (separate):
-//CHECK:     <*P:{9:10|5:8}, ?> <I:7:12, 4> <P:5:8, ?>
+//CHECK:     <*P:{9:10|5:8}, ?> <I:7[7:3], 4> <P:5:8, ?>
 //CHECK:    address access (separate):
 //CHECK:     <P:5:8, ?> exec():9:5 init():8:5
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <*P:{9:10|5:8}, ?> <P:5:8, ?>
 //CHECK:    direct access (separate):
-//CHECK:     <*P:{9:10|5:8}, ?> <I:7:12, 4> <P:5:8, ?> exec():9:5 init():8:5
+//CHECK:     <*P:{9:10|5:8}, ?> <I:7[7:3], 4> <P:5:8, ?> exec():9:5 init():8:5

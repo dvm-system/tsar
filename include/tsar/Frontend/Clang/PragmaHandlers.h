@@ -207,7 +207,7 @@ public:
   /// Handles namespace name and forwards processing of subsequent tokens
   /// to child handlers of directives.
   void HandlePragma(clang::Preprocessor &PP,
-    clang::PragmaIntroducerKind Introducer, clang::Token &FirstToken) override;
+    clang::PragmaIntroducer Introducer, clang::Token &FirstToken) override;
 
   /// Returns common replacement for all handlers in hierarchy.
   ReplacementT & getReplacement() noexcept { return mTokenQueue; }

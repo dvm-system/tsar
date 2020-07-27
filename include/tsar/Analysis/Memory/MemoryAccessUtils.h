@@ -29,7 +29,6 @@
 #include <bcl/trait.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Instruction.h>
 #include <utility>
@@ -52,7 +51,7 @@ enum class AccessInfo : uint8_t { No, May, Must };
 template<class FuncTy, class UnknownFuncTy>
 void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     FuncTy &&Func, UnknownFuncTy &&UnknownFunc) {
-  using llvm::CallSite;
+  using llvm::CallBase;
   using llvm::cast;
   using llvm::Function;
   using llvm::Instruction;
@@ -69,49 +68,51 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     return true;
   };
   auto traverseActualParams =
-      [&TLI, &Func, &UnknownFunc, &isValidPtr](CallSite CS) {
+      [&TLI, &Func, &UnknownFunc, &isValidPtr](CallBase *Call) {
     auto Callee =
-      llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      llvm::dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
     llvm::LibFunc LibId;
-    if (auto II = llvm::dyn_cast<IntrinsicInst>(CS.getInstruction())) {
+    if (auto II = llvm::dyn_cast<IntrinsicInst>(Call)) {
       bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
       foreachIntrinsicMemArg(*II,
-          [IsMarker, &CS, &TLI, &Func, &isValidPtr](unsigned Idx) {
-        auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
+          [IsMarker, Call, &TLI, &Func, &isValidPtr](unsigned Idx) {
+        auto Loc = MemoryLocation::getForArgument(Call, Idx, TLI);
         if (!isValidPtr(Loc.Ptr))
           return;
-        Func(*CS.getInstruction(), std::move(Loc), Idx,
-          (CS.doesNotReadMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May,
-          (CS.onlyReadsMemory() || IsMarker) ? AccessInfo::No : AccessInfo::May);
+        Func(*Call, std::move(Loc), Idx,
+          (Call->doesNotReadMemory() || IsMarker)
+             ? AccessInfo::No : AccessInfo::May,
+          (Call->onlyReadsMemory() || IsMarker)
+             ? AccessInfo::No : AccessInfo::May);
       });
     } else if (Callee && TLI.getLibFunc(*Callee, LibId)) {
       foreachLibFuncMemArg(LibId,
-          [&CS, &TLI, &Func, &isValidPtr](unsigned Idx) {
-        auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
+          [Call, &TLI, &Func, &isValidPtr](unsigned Idx) {
+        auto Loc = MemoryLocation::getForArgument(Call, Idx, TLI);
         if (!isValidPtr(Loc.Ptr))
           return;
-        Func(*CS.getInstruction(), std::move(Loc), Idx,
-          CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
-          CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
+        Func(*Call, std::move(Loc), Idx,
+          Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+          Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       });
     } else {
-      for (unsigned Idx = 0; Idx < CS.arg_size(); ++Idx) {
-        assert(CS.getArgument(Idx)->getType() &&
+      for (unsigned Idx = 0; Idx < Call->arg_size(); ++Idx) {
+        assert(Call->getArgOperand(Idx)->getType() &&
           "All actual parameters must be typed!");
-        if (!CS.getArgument(Idx)->getType()->isPointerTy())
+        if (!Call->getArgOperand(Idx)->getType()->isPointerTy())
           continue;
-        auto Loc = MemoryLocation::getForArgument(CS, Idx, TLI);
+        auto Loc = MemoryLocation::getForArgument(Call, Idx, TLI);
         if (!isValidPtr(Loc.Ptr))
           continue;
-        Func(*CS.getInstruction(), std::move(Loc),
-         Idx, CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
-         CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
+        Func(*Call, std::move(Loc), Idx,
+         Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+         Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       }
     }
-    if (!CS.onlyAccessesArgMemory())
-      UnknownFunc(*CS.getInstruction(),
-        CS.doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
-        CS.onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
+    if (!Call->onlyAccessesArgMemory() && Call->mayReadOrWriteMemory())
+      UnknownFunc(*Call,
+        Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+        Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
   };
   switch (I.getOpcode()) {
   default:
@@ -146,7 +147,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     break;
   }
   case Instruction::Call: case Instruction::Invoke:
-    traverseActualParams(CallSite(&I)); break;
+    traverseActualParams(cast<CallBase>(&I)); break;
   }
 }
 

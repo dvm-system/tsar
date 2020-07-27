@@ -63,6 +63,8 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
   void visitUDivExpr(const SCEVUDivExpr *Numerator) {}
   void visitSMaxExpr(const SCEVSMaxExpr *Numerator) {}
   void visitUMaxExpr(const SCEVUMaxExpr *Numerator) {}
+  void visitSMinExpr(const SCEVSMinExpr *Numerator) {}
+  void visitUMinExpr(const SCEVUMinExpr *Numerator) {}
   void visitUnknown(const SCEVUnknown *Numerator) {}
   void visitCouldNotCompute(const SCEVCouldNotCompute *Numerator) {}
 
@@ -407,6 +409,8 @@ struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
   void visitUDivExpr(const SCEVUDivExpr *S) { FreeTerm = S; }
   void visitSMaxExpr(const SCEVSMaxExpr *S) { FreeTerm = S; }
   void visitUMaxExpr(const SCEVUMaxExpr *S) { FreeTerm = S; }
+  void visitSMinExpr(const SCEVSMinExpr *S) { FreeTerm = S; }
+  void visitUMinExpr(const SCEVUMinExpr *S) { FreeTerm = S; }
   void visitUnknown(const SCEVUnknown *S) { FreeTerm = S; }
   void visitCouldNotCompute(const SCEVCouldNotCompute *S) { FreeTerm = S; }
 };
@@ -611,4 +615,3 @@ std::vector<std::size_t> countPrimeNumbers(std::size_t Bound) {
 }
 
 }
-

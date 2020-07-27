@@ -182,16 +182,16 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   DVMHRegion += "\n{\n";
   // Add directives to the source code.
   auto &Rewriter = TfmCtx.getRewriter();
-  Rewriter.InsertTextBefore(AST.getLocStart(), ParallelFor);
-  Rewriter.InsertTextBefore(AST.getLocStart(), DVMHRegion);
+  Rewriter.InsertTextBefore(AST.getBeginLoc(), ParallelFor);
+  Rewriter.InsertTextBefore(AST.getBeginLoc(), DVMHRegion);
   if (!DVMHActual.empty())
-    Rewriter.InsertTextBefore(AST.getLocStart(), DVMHActual);
+    Rewriter.InsertTextBefore(AST.getBeginLoc(), DVMHActual);
   auto &ASTCtx = TfmCtx.getContext();
   Token SemiTok;
-  auto InsertLoc = (!getRawTokenAfter(AST.getLocEnd(),
+  auto InsertLoc = (!getRawTokenAfter(AST.getEndLoc(),
       ASTCtx.getSourceManager(), ASTCtx.getLangOpts(), SemiTok)
     && SemiTok.is(tok::semi))
-    ? SemiTok.getLocation() : AST.getLocEnd();
+    ? SemiTok.getLocation() : AST.getEndLoc();
   Rewriter.InsertTextAfterToken(InsertLoc, "}");
   if (!DVMHGetActual.empty()) {
     Rewriter.InsertTextAfterToken(InsertLoc, "\n");

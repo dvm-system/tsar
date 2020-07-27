@@ -138,7 +138,7 @@ void templatesInfoLog(const ClangInliner::TemplateMap &Ts,
     llvm::dbgs() << " in '" << T.first->getName() << "':\n";
     for (auto &TI : T.second->getCalls()) {
       llvm::dbgs() << "  '" << sourceText(TI.mCallExpr) << "' at ";
-      TI.mCallExpr->getLocStart().dump(SM);
+      TI.mCallExpr->getBeginLoc().dump(SM);
       dbgs() << "\n";
     }
   }
@@ -166,7 +166,7 @@ bool ClangInliner::TraverseFunctionDecl(clang::FunctionDecl *FD) {
   unreachableBlocks(*CFG, UB);
   auto &NewT = mTs.emplace(FD, nullptr).first->second;
   if (!NewT)
-    NewT = llvm::make_unique<Template>(FD);
+    NewT = std::make_unique<Template>(FD);
   mCurrentT = NewT.get();
   for (auto *BB : UB)
     for (auto &I : *BB)
@@ -275,7 +275,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   Pragma P(*S);
   if (findClause(P, ClauseId::Inline, Clauses)) {
     if (mActiveClause) {
-      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getBeginLoc(),
         diag::warn_unexpected_directive);
       mActiveClause.reset();
     }
@@ -284,13 +284,13 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
       P, Clauses, mSrcMgr, mLangOpts, mImportInfo, mCurrentT->getToRemove());
     if (!IsPossible.first)
       if (IsPossible.second & PragmaFlags::IsInMacro)
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
           diag::warn_remove_directive_in_macro);
       else if (IsPossible.second & PragmaFlags::IsInHeader)
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
           diag::warn_remove_directive_in_include);
       else
-        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
           diag::warn_remove_directive);
     return true;
   }
@@ -307,7 +307,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
     if (ParentI + 1 == ParentEI) {
       LLVM_DEBUG(dbgs() << "[INLINE]: last statement for '" <<
         mCurrentT->getFuncDecl()->getName() << "' found at ";
-      S->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+      S->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
       mCurrentT->setLastStmt(S);
     }
   }
@@ -320,9 +320,9 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   mScopes.pop_back();
   if (!mScopes.empty() && mScopes.back().isClause()) {
     if (!mScopes.back().isUsed()) {
-      toDiag(mSrcMgr.getDiagnostics(), mScopes.back()->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mScopes.back()->getBeginLoc(),
         diag::warn_unexpected_directive);
-      toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
         diag::note_inline_no_call);
     }
     mScopes.pop_back();
@@ -332,7 +332,7 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
   // }
   // <stmt>, pragma should not mark <stmt>
   if (mActiveClause && !isa<CaseStmt>(S)) {
-    toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), mActiveClause->getBeginLoc(),
       diag::warn_unexpected_directive);
     mActiveClause.reset();
   }
@@ -342,10 +342,10 @@ bool ClangInliner::TraverseStmt(clang::Stmt *S) {
 bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   LLVM_DEBUG(dbgs() << "[INLINE]: traverse call expression '" <<
     getSourceText(getTfmRange(Call)) << "' at ";
-    Call->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+    Call->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
   auto InlineInMacro = mStmtInMacro;
-  mStmtInMacro = (Call->getLocStart().isMacroID()) ? Call->getLocStart() :
-    Call->getLocEnd().isMacroID() ? Call->getLocEnd() : SourceLocation();
+  mStmtInMacro = (Call->getBeginLoc().isMacroID()) ? Call->getBeginLoc() :
+    Call->getEndLoc().isMacroID() ? Call->getEndLoc() : SourceLocation();
   if (!RecursiveASTVisitor::TraverseCallExpr(Call))
     return false;
   // Some calls may be visited multiple times.
@@ -427,9 +427,9 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       ((ParentI + 1 != ScopeE) && isa<SwitchStmt>(*(ParentI + 1)));
   LLVM_DEBUG(dbgs() << "[INLINE]: statement with call '" <<
     getSourceText(getTfmRange(StmtWithCall)) << "' at ";
-    StmtWithCall->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+    StmtWithCall->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
   LLVM_DEBUG(dbgs() << "[INLINE]: parent statement at ";
-    (*ParentI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+    (*ParentI)->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
   if (ClauseI == mScopes.rend()) {
     for (auto I = ScopeI + 1, PrevI = ScopeI; I != ScopeE; ++I, ++PrevI) {
       if (!I->isClause() || !isa<CompoundStmt>(*PrevI))
@@ -444,38 +444,38 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
   }
   LLVM_DEBUG(dbgs() << "[INLINE]: clause found '" <<
     getSourceText(getTfmRange(ClauseI->getStmt())) << "' at ";
-    (*ClauseI)->getLocStart().dump(mSrcMgr); dbgs() << "\n");
+    (*ClauseI)->getBeginLoc().dump(mSrcMgr); dbgs() << "\n");
   // We mark this clause here, however checks bellow may disable inline
   // expansion of the current call. It seems the we should not diagnose the
   // clause as unused in this case. We only diagnose that some calls can not be
   // inlined (may be all calls).
   ClauseI->setIsUsed();
   if (mCurrentT->getUnreachableStmts().count(Call)) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_unreachable);
     return true;
   }
   const auto *Definition = Call->getDirectCallee();
   if (!Definition || !Definition->hasBody(Definition)) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_no_body);
     return true;
   }
   if (InlineInMacro.isValid()) {
     LLVM_DEBUG(dbgs() << "[INLINE]: call contains a macro\n");
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline);
     toDiag(mSrcMgr.getDiagnostics(), InlineInMacro,
       diag::note_inline_macro_prevent);
     return true;
   }
-  if (mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getLocStart()).first !=
-      mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getLocEnd()).first) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+  if (mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getBeginLoc()).first !=
+      mSrcMgr.getDecomposedExpansionLoc(StmtWithCall->getEndLoc()).first) {
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline);
-    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getBeginLoc(),
       diag::note_source_range_not_single_file);
-    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getLocEnd(),
+    toDiag(mSrcMgr.getDiagnostics(), StmtWithCall->getEndLoc(),
       diag::note_end_location);
     return true;
   }
@@ -503,7 +503,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
       auto MacroLoc = Tok.getLocation();
       Lex.LexFromRawLexer(Tok);
       if (Tok.getRawIdentifier() != "pragma") {
-        toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
           diag::warn_disable_inline);
         toDiag(mSrcMgr.getDiagnostics(), MacroLoc,
           diag::note_inline_macro_prevent);
@@ -518,7 +518,7 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     if (MacroItr == mRawInfo.Macros.end())
       continue;
     LLVM_DEBUG(dbgs() << "[INLINE]: raw macro disables inline expansion\n");
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline);
     toDiag(mSrcMgr.getDiagnostics(), Tok.getLocation(),
       diag::note_inline_macro_prevent);
@@ -527,34 +527,34 @@ bool ClangInliner::TraverseCallExpr(CallExpr *Call) {
     return true;
   }
   if (InCondOp) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_in_ternary);
     return true;
   }
   if (InLoopCond) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_in_loop_cond);
     return true;
   }
   if (InForInc) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_in_for_inc);
     return true;
   }
   if (InLogicRHS) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_in_logic_rhs);
     return true;
   }
   if (InCommaOp) {
-    toDiag(mSrcMgr.getDiagnostics(), Call->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), Call->getBeginLoc(),
       diag::warn_disable_inline_in_comma);
     return true;
   }
   // Template may not exist yet if forward declaration of a function is used.
   auto &CalleeT = mTs.emplace(Definition, nullptr).first->second;
   if (!CalleeT)
-    CalleeT = llvm::make_unique<Template>(Definition);
+    CalleeT = std::make_unique<Template>(Definition);
   CalleeT->setNeedToInline();
   auto F = IsNeedBraces ? TemplateInstantiation::IsNeedBraces :
     TemplateInstantiation::DefaultFlags;
@@ -588,7 +588,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
   for (auto& PVD : CalleeFD->parameters()) {
     SmallString<32> Identifier;
     addSuffix(PVD->getName(), Identifier);
-    Replacements[PVD->getName()] = Identifier.str();
+    Replacements[PVD->getName()] = std::string(Identifier);
     auto DeclT = PVD->getType().getAsString();
     auto Tokens = buildDeclStringRef(DeclT, Identifier, Context, Replacements);
     assert(!Tokens.empty() && "Unable to build parameter declaration!");
@@ -611,7 +611,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     SmallVector<std::string, 8> Args(CallTI.mCallExpr->getNumArgs());
     std::transform(CallTI.mCallExpr->arg_begin(), CallTI.mCallExpr->arg_end(),
       std::begin(Args), [this, &Canvas](const clang::Expr* Arg) {
-        return Canvas.getRewrittenText(getTfmRange(Arg));
+        return Canvas.getRewrittenText(getTfmRange(Arg)).str();
     });
     CallStack.push_back(&CallTI);
     auto Text = compile(CallTI, Args, TICheckers, CallStack);
@@ -624,14 +624,14 @@ std::pair<std::string, std::string> ClangInliner::compile(
       if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces)
         Text.first = "{" + Text.first;
       Canvas.InsertTextAfter(
-        mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocStart()).getLocWithOffset(-1),
+        mSrcMgr.getExpansionLoc(CallTI.mStmt->getBeginLoc()).getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       if (CallTI.mFlags & TemplateInstantiation::IsNeedBraces) {
         Token SemiTok;
         auto InsertLoc =
-          (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()),
+          (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getEndLoc()),
             mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi)) ?
-          SemiTok.getLocation() : CallTI.mStmt->getLocEnd();
+          SemiTok.getLocation() : CallTI.mStmt->getEndLoc();
         Canvas.InsertTextAfterToken(mSrcMgr.getExpansionLoc(InsertLoc), "}");
       }
     } else {
@@ -639,7 +639,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
         ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
       assert(!Res && "Can not replace text in an external buffer!");
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(CallTI.mStmt->getEndLoc()),
         mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
@@ -683,7 +683,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
       bool Res = Canvas.ReplaceText(getTfmRange(RS.first), Text);
       assert(!Res && "Can not replace text in an external buffer!");
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getEndLoc()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
@@ -696,7 +696,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
         assert(!Res && "Can not remove text in an external buffer!");
         // Now, we remove `;` after the ending return.
         Token SemiTok;
-        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
+        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getEndLoc()),
             mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
           Canvas.RemoveText(SemiTok.getLocation(), true);
         continue;
@@ -707,7 +707,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
     }
   }
   if (!UnreachableRetStmts.empty())
-    toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+    toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getBeginLoc(),
       diag::remark_inline);
   for (auto &RS : UnreachableRetStmts) {
     bool Res = Canvas.ReplaceText(getTfmRange(RS.first), "");
@@ -716,7 +716,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
       // If braces is not needed we can remover ending `;`.
       // if (...) return; => IsNeedBraces == true => do not remove `;`.
       Token SemiTok;
-      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getLocEnd()),
+      if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(RS.first->getEndLoc()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
         Canvas.RemoveText(SemiTok.getLocation(), true);
     }
@@ -725,7 +725,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
   }
   for (auto SR : TI.mCallee->getToRemove())
     Canvas.RemoveText(SR, true);
-  std::string Text = Canvas.getRewrittenText(getTfmRange(CalleeFD->getBody()));
+  std::string Text(Canvas.getRewrittenText(getTfmRange(CalleeFD->getBody())));
   Text += "\n";
   if (IsNeedLabel)
     Text.insert(Text.size() - 1, (RetLab + ":;").str());
@@ -746,7 +746,7 @@ std::pair<std::string, std::string> ClangInliner::compile(
   getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
   Text.insert(Text.begin(), NoMacroPragma.begin(), NoMacroPragma.end());
   Text.insert(Text.begin(), RetIdDeclStmt.begin(), RetIdDeclStmt.end());
-  return { Text, RetId.str() };
+  return { Text, std::string(RetId) };
 }
 
 DenseSet<const clang::FunctionDecl *> ClangInliner::findRecursion() const {
@@ -807,9 +807,9 @@ auto ClangInliner::getTemplateCheckers() const
     if (!mSrcMgr.isWrittenInSameFile(SR.getBegin(), SR.getEnd())) {
       toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocation(),
         diag::warn_disable_inline);
-      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getBeginLoc(),
         diag::note_source_range_not_single_file);
-      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getLocEnd(),
+      toDiag(mSrcMgr.getDiagnostics(), T.getFuncDecl()->getEndLoc(),
         diag::note_end_location);
       return false;
     }
@@ -817,7 +817,7 @@ auto ClangInliner::getTemplateCheckers() const
   });
   // Checks that a function is defined by the user.
   Checkers.push_back([this](const Template &T) {
-    if (mSrcMgr.getFileCharacteristic(T.getFuncDecl()->getLocStart()) !=
+    if (mSrcMgr.getFileCharacteristic(T.getFuncDecl()->getBeginLoc()) !=
         SrcMgr::C_User) {
       LLVM_DEBUG(dbgs() << "[INLINE]: non-user defined function '" <<
         T.getFuncDecl()->getName() << "' for instantiation\n");
@@ -895,9 +895,9 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
       "Function at the top of stack should make a call which is checked!");
     auto F = TI.mCallee->getFuncDecl();
     if (TI.mCallExpr->getNumArgs() != F->getNumParams()) {
-      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getBeginLoc(),
         diag::warn_disable_inline);
-      toDiag(mSrcMgr.getDiagnostics(), F->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), F->getBeginLoc(),
         diag::note_inline_different_num_params);
       return false;
     }
@@ -911,15 +911,15 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
     // We already made the check earlier.
     if (CallStack.size() > 1)
       return true;
-    auto StartLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getLocStart());
-    auto EndLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getLocEnd());
+    auto StartLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getBeginLoc());
+    auto EndLoc = mSrcMgr.getDecomposedExpansionLoc(TI.mStmt->getEndLoc());
     assert(StartLoc.first == EndLoc.first &&
       "Statements which starts and ends in different files must be already discarded!");
     auto StartFID = mSrcMgr.getDecomposedIncludedLoc(StartLoc.first).first;
     auto EndFID = mSrcMgr.getDecomposedIncludedLoc(EndLoc.first).first;
     if (StartFID.isValid() && !mImportInfo.MainFiles.count(StartLoc.first) ||
         EndFID.isValid() && !mImportInfo.MainFiles.count(EndLoc.first)) {
-      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getBeginLoc(),
         diag::warn_disable_inline_in_include);
       return false;
     }
@@ -940,7 +940,7 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
     auto isInAvailableForwardDecl = [this](std::pair<FileID, unsigned> Bound,
         const GlobalInfoExtractor::OutermostDecl *FD) {
       for (auto *Redecl : FD->getRoot()->getCanonicalDecl()->redecls()) {
-        auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(Redecl->getLocEnd());
+        auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(Redecl->getEndLoc());
         while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
           FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
         if (FDLoc.first.isValid() && FDLoc.second < Bound.second)
@@ -952,7 +952,7 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
         /// import process (if it is available).
         auto RedeclLocItr = mImportInfo.RedeclLocs.find(Redecl);
         if (RedeclLocItr != mImportInfo.RedeclLocs.end())
-          for (auto RedeclLoc : RedeclLocItr->second.find(Redecl->getLocEnd())) {
+          for (auto RedeclLoc : RedeclLocItr->second.find(Redecl->getEndLoc())) {
             auto FDLoc = mSrcMgr.getDecomposedExpansionLoc(RedeclLoc);
             while (FDLoc.first.isValid() && FDLoc.first != Bound.first)
               FDLoc = mSrcMgr.getDecomposedIncludedLoc(FDLoc.first);
@@ -969,14 +969,14 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
         return true;
       if (isInAvailableForwardDecl(Bound, FD))
         return true;
-      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getBeginLoc(),
         diag::warn_disable_inline);
       toDiag(mSrcMgr.getDiagnostics(), FD->getDescendant()->getLocation(),
         diag::note_inline_unresolvable_extern_dep);
       return false;
     };
     auto TargetFuncStart = mSrcMgr.getDecomposedExpansionLoc(
-      CallStack.front()->mCallee->getFuncDecl()->getLocStart());
+      CallStack.front()->mCallee->getFuncDecl()->getBeginLoc());
     for (auto FD : TI.mCallee->getForwardDecls())
       if (!checkFD(TargetFuncStart, FD))
         return false;
@@ -1012,7 +1012,7 @@ auto ClangInliner::getTemplatInstantiationCheckers() const
         // has the same name.
         auto HiddenItr = FDs.find_as(ND->getName());
         if (HiddenItr != FDs.end() && ND != (*HiddenItr)->getDescendant()) {
-          toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), TI.mCallExpr->getBeginLoc(),
             diag::warn_disable_inline);
           toDiag(mSrcMgr.getDiagnostics(),
             (*HiddenItr)->getDescendant()->getLocation(),
@@ -1057,7 +1057,7 @@ void ClangInliner::HandleTranslationUnit() {
     // For example, forward declarations which are not definitions are ignored.
     if (!mCurrentT)
       continue;
-    if (mSrcMgr.getFileCharacteristic(mCurrentT->getFuncDecl()->getLocStart())
+    if (mSrcMgr.getFileCharacteristic(mCurrentT->getFuncDecl()->getBeginLoc())
         != clang::SrcMgr::C_User)
       continue;
     if (mCurrentT->isMacroInDecl())
@@ -1174,22 +1174,22 @@ void ClangInliner::HandleTranslationUnit() {
         mRewriter.ReplaceText(getTfmRange(TI.mCallExpr), Text.second);
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces)
           Text.first = "{" + Text.first;
-        auto BeforeLoc = mSrcMgr.getExpansionLoc(TI.mStmt->getLocStart());
+        auto BeforeLoc = mSrcMgr.getExpansionLoc(TI.mStmt->getBeginLoc());
         mRewriter.InsertTextAfter(BeforeLoc.getLocWithOffset(-1),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
         if (TI.mFlags & TemplateInstantiation::IsNeedBraces) {
           Token SemiTok;
           auto InsertLoc =
-            (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()),
+            (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getEndLoc()),
               mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi)) ?
-            SemiTok.getLocation() : TI.mStmt->getLocEnd();
+            SemiTok.getLocation() : TI.mStmt->getEndLoc();
           mRewriter.InsertTextAfterToken(mSrcMgr.getExpansionLoc(InsertLoc),"}");
         }
       } else {
         mRewriter.ReplaceText(getTfmRange(TI.mStmt),
           ("/* " + CallExpr + " is inlined below */\n" + Text.first).str());
         Token SemiTok;
-        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getLocEnd()),
+        if (!getRawTokenAfter(mSrcMgr.getExpansionLoc(TI.mStmt->getEndLoc()),
           mSrcMgr, mLangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter.RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
       }

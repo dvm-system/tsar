@@ -296,12 +296,6 @@ inline clang::SourceRange getFileRange(const clang::SourceManager &SM,
     SM.getFileLoc(Range.getBegin()), SM.getFileLoc(Range.getEnd()));
 }
 
-/// Compares locations.
-inline bool operator<=(const clang::SourceLocation& LHS,
-    const clang::SourceLocation& RHS) {
-  return LHS < RHS || LHS == RHS;
-}
-
 /// \brief Returns true if `Range` contains `SubRange`
 /// (or `Range` == `SubRange`).
 ///

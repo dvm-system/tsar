@@ -7,24 +7,24 @@ void foo(int * restrict A) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 induction_1.c:4:3
 //CHECK:    shared:
-//CHECK:     <*A:3:25, ?>
+//CHECK:     <*A:3, ?>
 //CHECK:    first private:
-//CHECK:     <*A:3:25, ?>
+//CHECK:     <*A:3, ?>
 //CHECK:    dynamic private:
-//CHECK:     <*A:3:25, ?>
+//CHECK:     <*A:3, ?>
 //CHECK:    induction:
-//CHECK:     <I:4:12, 4>:[Int,,,-1]
+//CHECK:     <I:4[4:3], 4>:[Int,,,-1]
 //CHECK:    read only:
-//CHECK:     <A:3:25, 8> | <Start, 4>
+//CHECK:     <A:3, 8> | <Start, 4>
 //CHECK:    lock:
-//CHECK:     <I:4:12, 4> | <Start, 4>
+//CHECK:     <I:4[4:3], 4> | <Start, 4>
 //CHECK:    header access:
-//CHECK:     <I:4:12, 4> | <Start, 4>
+//CHECK:     <I:4[4:3], 4> | <Start, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:3:25, 8> | <I:4:12, 4> | <Start, 4>
+//CHECK:     <A:3, 8> | <I:4[4:3], 4> | <Start, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:3:25, 8> <I:4:12, 4> <Start, 4>
+//CHECK:     <A:3, 8> <I:4[4:3], 4> <Start, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:4:12, 4> <Start, 4>
+//CHECK:     <I:4[4:3], 4> <Start, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:3:25, ?> <A:3:25, 8> <I:4:12, 4> <Start, 4>
+//CHECK:     <*A:3, ?> <A:3, 8> <I:4[4:3], 4> <Start, 4>

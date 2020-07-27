@@ -94,13 +94,13 @@ public:
                                             mImportInfo, ToRemove);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_include);
         else
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
       /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
@@ -142,7 +142,7 @@ public:
 
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
         diag::warn_unexpected_directive);
       mClauses.clear();
     }
@@ -151,7 +151,7 @@ public:
 
   bool VisitDecl(Decl * D) {
     if (!mClauses.empty()) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
         diag::warn_unexpected_directive);
       mClauses.clear();
     }

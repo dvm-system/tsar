@@ -37,6 +37,7 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>

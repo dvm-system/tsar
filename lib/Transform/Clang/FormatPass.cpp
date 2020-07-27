@@ -28,6 +28,7 @@
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/ASTContext.h>
+#include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
@@ -76,7 +77,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       SmallString<128> Path = Filename;
       sys::path::replace_extension(Path,
         "." + GlobalOpts.OutputSuffix + sys::path::extension(Path));
-    return Path.str();
+    return std::string(Path);
   };
   Rewriter FormatRewriter(SrcMgr, LangOpts);
 #ifdef LLVM_DEBUG

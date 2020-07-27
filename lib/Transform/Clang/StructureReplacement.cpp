@@ -313,13 +313,13 @@ public:
         mImportInfo, mCurrFunc->ToRemoveTransform, PragmaFlags::IsInHeader);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_include);
         else
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
             diag::warn_remove_directive);
       mInClause = ClauseId::Replace;
       Clauses.resize(StashSize);
@@ -348,7 +348,7 @@ public:
         for (auto *S : Pragma::clause(&C))
           if (!RecursiveASTVisitor::TraverseStmt(S))
             break;
-          checkMetadataClauseEnd(mCurrMetaBeginLoc, C->getLocEnd());
+          checkMetadataClauseEnd(mCurrMetaBeginLoc, C->getEndLoc());
       }
       mInClause = ClauseId::NotClause;
       return true;
@@ -430,9 +430,10 @@ public:
   bool TraverseFunctionDecl(FunctionDecl *FD) {
     if (!FD->doesThisDeclarationHaveABody())
       return true;
-    mCurrFunc = mReplacements.try_emplace(FD, make_unique<FunctionInfo>(FD))
-                    .first->get<FunctionInfo>()
-                    .get();
+    mCurrFunc = mReplacements.try_emplace(
+                    FD, std::make_unique<FunctionInfo>(FD))
+                         .first->get<FunctionInfo>()
+                         .get();
     auto Res =
         RecursiveASTVisitor::TraverseFunctionDecl(FD);
     if (mCurrFunc->empty())
@@ -587,15 +588,15 @@ private:
         if (auto StructTy = dyn_cast<clang::RecordType>(PointeeTy)) {
           mCurrFunc->Candidates.try_emplace(PD);
         } else {
-          toDiag(mSrcMgr.getDiagnostics(), Expr->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
                  diag::warn_disable_replace_struct_no_struct);
         }
       } else {
-        toDiag(mSrcMgr.getDiagnostics(), Expr->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
           diag::warn_disable_replace_struct_no_pointer);
       }
     } else {
-      toDiag(mSrcMgr.getDiagnostics(), Expr->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
         diag::warn_disable_replace_struct_no_param);
     }
     return true;
@@ -653,7 +654,7 @@ ReplacementMetadata * findRequestMetadata(
     const ReplacementMap &ReplacementInfo, const SourceManager &SrcMgr) {
   auto TargetItr = ReplacementInfo.find(Request.get<FunctionDecl>());
   auto toDiagNoMetadata = [&Request, &SrcMgr]() {
-    toDiag(SrcMgr.getDiagnostics(), Request.get<CallExpr>()->getLocStart(),
+    toDiag(SrcMgr.getDiagnostics(), Request.get<CallExpr>()->getBeginLoc(),
            diag::warn_replace_call_unable);
     toDiag(SrcMgr.getDiagnostics(), Request.get<SourceLocation>(),
            diag::note_replace_call_no_md)
@@ -666,14 +667,14 @@ ReplacementMetadata * findRequestMetadata(
     toDiagNoMetadata();
     return nullptr;
   }
-  auto CalleeFD = Request.get<clang::CallExpr>()->getDirectCallee();
+  CanonicalDeclPtr<FunctionDecl> CalleeFD{
+      Request.get<clang::CallExpr>()->getDirectCallee()};
   if (!CalleeFD) {
     toDiag(SrcMgr.getDiagnostics(),
-           Request.get<clang::CallExpr>()->getLocStart(),
+           Request.get<clang::CallExpr>()->getBeginLoc(),
       diag::warn_replace_call_indirect_unable);
     return nullptr;
   }
-  CalleeFD = CalleeFD->getCanonicalDecl();
   auto &TargetInfo = *TargetItr->get<FunctionInfo>();
   auto MetaItr = llvm::find_if(
       TargetInfo.Targets, [CalleeFD](const ReplacementMetadata &RM) {
@@ -764,9 +765,9 @@ public:
             continue;
           if (!ParamMeta.TargetMember) {
             toDiag(mSrcMgr.getDiagnostics(),
-                   ReplacementItr->get<NamedDecl>()->getLocStart(),
+                   ReplacementItr->get<NamedDecl>()->getBeginLoc(),
                    diag::warn_disable_replace_struct);
-            toDiag(mSrcMgr.getDiagnostics(), Expr->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
                    diag::note_replace_struct_arrow);
             mReplacements.Candidates.erase(ReplacementItr->get<NamedDecl>());
             break;
@@ -786,9 +787,9 @@ public:
     if (!mIsInnermostMember && !mReplacements.inClause(Expr)) {
       auto ND = Expr->getFoundDecl();
       if (mReplacements.Candidates.count(ND)) {
-        toDiag(mSrcMgr.getDiagnostics(), ND->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
           diag::warn_disable_replace_struct);
-        toDiag(mSrcMgr.getDiagnostics(), Expr->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
           diag::note_replace_struct_arrow);
         mReplacements.Candidates.erase(ND);
       }
@@ -807,7 +808,7 @@ public:
       auto ReplacementItr = mReplacements.Candidates.find(ND);
       if (ReplacementItr != mReplacements.Candidates.end()) {
         if (!Expr->isArrow()) {
-          toDiag(mSrcMgr.getDiagnostics(), ND->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
             diag::warn_disable_replace_struct);
           toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
             diag::note_replace_struct_arrow);
@@ -867,7 +868,7 @@ public:
     if (!mGlobalInfo.findOutermostDecl(TT->getDecl())) {
       toDiag(mSrcMgr.getDiagnostics(), mRootDecl->getLocation(),
              diag::warn_disable_replace_struct);
-      toDiag(mSrcMgr.getDiagnostics(), mCheckDecl->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), mCheckDecl->getBeginLoc(),
              diag::note_replace_struct_decl);
       mIsOk = false;
       return false;
@@ -930,7 +931,7 @@ void addPragmaMetadata(FunctionInfo &FuncInfo,
   MDPragma.push_back(')');
   auto FuncBody = FuncInfo.Definition->getBody();
   assert(FuncBody && "Body of a transformed function must be available!");
-  auto NextToBraceLoc = SrcMgr.getExpansionLoc(FuncBody->getLocStart());
+  auto NextToBraceLoc = SrcMgr.getExpansionLoc(FuncBody->getBeginLoc());
   Token Tok;
   if (getRawTokenAfter(NextToBraceLoc, SrcMgr, LangOpts, Tok) ||
       SrcMgr.getPresumedLineNumber(Tok.getLocation()) ==
@@ -1015,7 +1016,7 @@ void printMetadataLog(const FunctionInfo &FuncInfo) {
       dbgs() << " is not valid\n";
       continue;
     }
-    if (FD->getCanonicalDecl() == SI.TargetDecl)
+    if (CanonicalDeclPtr<FunctionDecl>(FD->getCanonicalDecl()) == SI.TargetDecl)
       dbgs() << " is implicit";
     dbgs() << "\n";
     const FunctionDecl *TargetDefinition = SI.TargetDecl;
@@ -1031,7 +1032,8 @@ void printMetadataLog(const FunctionInfo &FuncInfo) {
       if (PI.TargetMember)
         dbgs() << "." << PI.TargetMember->getName();
       dbgs() << "->" << I << " (";
-      if (FD->getCanonicalDecl() != SI.TargetDecl)
+      if (CanonicalDeclPtr<FunctionDecl>(FD->getCanonicalDecl())
+            != SI.TargetDecl)
         dbgs() << FD->getParamDecl(I)->getName() << ",";
       dbgs() << (PI.IsPointer ? "pointer" : "value");
       dbgs() << ")\n";
@@ -1065,7 +1067,7 @@ void printRequestLog(FunctionInfo &FuncInfo, const SourceManager &SrcMgr) {
          << "' found\n";
   for (auto &Request : FuncInfo.Requests) {
     dbgs() << "[REPALCE]: with " << FuncInfo.Definition->getName() << " at ";
-    Request.get<clang::CallExpr>()->getLocStart().print(dbgs(), SrcMgr);
+    Request.get<clang::CallExpr>()->getBeginLoc().print(dbgs(), SrcMgr);
     dbgs() << "\n";
   }
 }
@@ -1078,7 +1080,7 @@ void printImplicitRequestLog(const FunctionInfo &FuncInfo,
          << FuncInfo.Definition->getName() << "' found\n";
   for (auto &Request : FuncInfo.ImplicitRequests) {
     dbgs() << "[REPALCE]: at ";
-    Request->getLocStart().print(dbgs(), SrcMgr);
+    Request->getBeginLoc().print(dbgs(), SrcMgr);
     dbgs() << "\n";
   }
 }
@@ -1117,7 +1119,7 @@ template<class RewriterT > bool replaceCalls(FunctionInfo &FI,
       continue;
     auto MetaItr = find_if(
         Itr->get<FunctionInfo>()->Targets, [Callee](ReplacementMetadata &Meta) {
-          return Meta.TargetDecl == Callee->getCanonicalDecl();
+          return Meta.TargetDecl == CanonicalDeclPtr<FunctionDecl>(Callee);
         });
     if (MetaItr == Itr->get<FunctionInfo>()->Targets.end())
       continue;
@@ -1234,7 +1236,7 @@ private:
           ->getEndLoc()),
         SrcMgr, LangOpts);
       auto LocToInsert =
-          SrcMgr.getExpansionLoc(FuncInfo->Definition->getLocEnd());
+          SrcMgr.getExpansionLoc(FuncInfo->Definition->getEndLoc());
       Rewriter.InsertTextAfterToken(
         LocToInsert,
         ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
@@ -1315,7 +1317,7 @@ void ClangStructureReplacementPass::collectCandidatesIn(
           if (CalleeItr == mReplacementInfo.end()) {
             CalleeItr =
                 mReplacementInfo
-                    .try_emplace(Callee, make_unique<FunctionInfo>(Callee))
+                    .try_emplace(Callee, std::make_unique<FunctionInfo>(Callee))
                     .first;
             CalleeItr->get<FunctionInfo>()->Strict = CallerFN.Strict;
             LLVM_DEBUG(dbgs()
@@ -1334,7 +1336,7 @@ void ClangStructureReplacementPass::collectCandidatesIn(
         }
       }
     }
-  } while (IsChanged && SCC.hasLoop());
+  } while (IsChanged && SCC.hasCycle());
 }
 
 void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
@@ -1347,13 +1349,13 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
     FuncInfo.Candidates.clear();
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
       diag::warn_disable_replace_struct);
-    toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocStart(),
+    toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getBeginLoc(),
       diag::note_source_range_not_single_file);
-    toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocEnd(),
+    toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getEndLoc(),
       diag::note_end_location);
     return;
   }
-  if (SrcMgr.getFileCharacteristic(FuncInfo.Definition->getLocStart()) !=
+  if (SrcMgr.getFileCharacteristic(FuncInfo.Definition->getBeginLoc()) !=
     SrcMgr::C_User) {
     FuncInfo.Candidates.clear();
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
@@ -1456,7 +1458,7 @@ void ClangStructureReplacementPass::fillImplicitReplacementMembers(
         }
       }
     }
-  } while (IsChanged && SCC.hasLoop());
+  } while (IsChanged && SCC.hasCycle());
 }
 
 void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
@@ -1485,7 +1487,7 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
             toDiag(SrcMgr.getDiagnostics(),
                    Itr->get<NamedDecl>()->getLocation(),
                    diag::warn_disable_replace_struct);
-            toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getLocStart(),
+            toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getBeginLoc(),
               diag::note_replace_struct_arrow);
             FuncInfo->Candidates.erase(Itr);
             IsChanged = true;
@@ -1496,7 +1498,7 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
               toDiag(SrcMgr.getDiagnostics(),
                      Itr->get<NamedDecl>()->getLocation(),
                      diag::warn_disable_replace_struct);
-              toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getLocStart(),
+              toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getBeginLoc(),
                      diag::note_replace_struct_arrow);
               FuncInfo->Candidates.erase(Itr);
               IsChanged = true;
@@ -1511,7 +1513,7 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
       for (auto *Call : ImplicitRequestToRemove)
         FuncInfo->ImplicitRequests.erase(Call);
     }
-  } while (IsChanged && SCC.hasLoop());
+  } while (IsChanged && SCC.hasCycle());
 }
 
 
@@ -1580,7 +1582,7 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
         NewParams.clear();
         toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
           diag::warn_disable_replace_struct);
-        toDiag(SrcMgr.getDiagnostics(), R.Member->getLocStart(),
+        toDiag(SrcMgr.getDiagnostics(), R.Member->getBeginLoc(),
           diag::note_replace_struct_decl);
         break;
       }
@@ -1597,7 +1599,7 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
         << "\n");
     }
     if (!NewParams.empty())
-      ReplacementItr->get<std::string>() = NewParams.str();
+      ReplacementItr->get<std::string>() = std::string(NewParams);
     else
       FuncInfo.Candidates.erase(ReplacementItr);
   }
@@ -1629,7 +1631,7 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
   for (unsigned I = FuncInfo.Definition->getNumParams(); I > 0; --I) {
     auto *PD = FuncInfo.Definition->getParamDecl(I - 1);
     auto ReplacementItr = FuncInfo.Candidates.find(PD);
-    SourceLocation EndLoc = PD->getLocEnd();
+    SourceLocation EndLoc = PD->getEndLoc();
     if (TheLastParam || (ReplacementItr != FuncInfo.Candidates.end() &&
                          ReplacementItr->get<Replacement>().empty())) {
       Token CommaTok;
@@ -1644,7 +1646,7 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     }
     if (ReplacementItr == FuncInfo.Candidates.end()) {
       // Remove comma after the current parameter if it becomes the last one.
-      if (EndLoc != PD->getLocEnd())
+      if (EndLoc != PD->getEndLoc())
         Canvas.RemoveText(
             CharSourceRange::getTokenRange(SrcMgr.getExpansionLoc(EndLoc)));
       TheLastParam = false;
@@ -1653,11 +1655,11 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     // We also remove an unused parameter if it is mentioned in replace clause.
     if (ReplacementItr->get<Replacement>().empty()) {
       Canvas.RemoveText(CharSourceRange::getTokenRange(
-        SrcMgr.getExpansionLoc(PD->getLocStart()),
+        SrcMgr.getExpansionLoc(PD->getBeginLoc()),
         SrcMgr.getExpansionLoc(EndLoc)).getAsRange());
       toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
         diag::remark_replace_struct);
-      toDiag(SrcMgr.getDiagnostics(), PD->getLocStart(),
+      toDiag(SrcMgr.getDiagnostics(), PD->getBeginLoc(),
         diag::remark_remove_de_decl);
       // Do not update TheLastParam variable. If the current parameter is the
       // last in the list and if it is removed than the previous parameter
@@ -1666,7 +1668,7 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     }
     TheLastParam = false;
     auto ReplaceRange = CharSourceRange::getTokenRange(
-        SrcMgr.getExpansionLoc(PD->getLocStart()),
+        SrcMgr.getExpansionLoc(PD->getBeginLoc()),
         SrcMgr.getExpansionLoc(EndLoc)).getAsRange();
     Canvas.ReplaceText(ReplaceRange, ReplacementItr->get<std::string>());
   // Replace accesses to parameters.

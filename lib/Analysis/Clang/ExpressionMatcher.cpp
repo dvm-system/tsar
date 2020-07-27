@@ -30,7 +30,7 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/InstIterator.h>
-#include <llvm/IR/CallSite.h>
+#include <llvm/IR/Instructions.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -55,9 +55,9 @@ public:
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
   void VisitFromMacro(Stmt *S) {
-    assert(S->getLocStart().isMacroID() &&
+    assert(S->getBeginLoc().isMacroID() &&
       "Expression must be expanded from macro!");
-    auto Loc = S->getLocStart();
+    auto Loc = S->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
@@ -70,11 +70,11 @@ public:
   }
 
    bool VisitCallExpr(Expr *E) {
-    if (E->getLocStart().isMacroID()) {
+    if (E->getBeginLoc().isMacroID()) {
       VisitFromMacro(E);
       return true;
     }
-    auto ExprLoc = E->getLocStart();
+    auto ExprLoc = E->getBeginLoc();
     if (auto *I = findIRForLocation(ExprLoc)) {
       mMatcher->emplace(E, I);
       ++NumMatchExpr;
@@ -100,8 +100,7 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
   MatchExprVisitor MatchExpr(SrcMgr,
     mMatcher, mUnmatchedAST, LocToExpr, LocToMacro);
   for (auto &I: instructions(F)) {
-    CallSite CS(&I);
-    if (!CS)
+    if (!isa<CallBase>(I))
       continue;
     ++NumNonMatchIRExpr;
     auto Loc = I.getDebugLoc();

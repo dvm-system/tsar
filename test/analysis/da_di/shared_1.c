@@ -9,18 +9,18 @@ void foo(int I) {
 //CHECK:    shared:
 //CHECK:     <U, 80000>
 //CHECK:    induction:
-//CHECK:     <J:4:12, 4>:[Int,0,100,1]
+//CHECK:     <J:4[4:3], 4>:[Int,0,100,1]
 //CHECK:    read only:
-//CHECK:     <I:3:14, 4>
+//CHECK:     <I:3, 4>
 //CHECK:    lock:
-//CHECK:     <J:4:12, 4>
+//CHECK:     <J:4[4:3], 4>
 //CHECK:    header access:
-//CHECK:     <J:4:12, 4>
+//CHECK:     <J:4[4:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:3:14, 4> | <J:4:12, 4>
+//CHECK:     <I:3, 4> | <J:4[4:3], 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:3:14, 4> <J:4:12, 4>
+//CHECK:     <I:3, 4> <J:4[4:3], 4>
 //CHECK:    lock (separate):
-//CHECK:     <J:4:12, 4>
+//CHECK:     <J:4[4:3], 4>
 //CHECK:    direct access (separate):
-//CHECK:     <I:3:14, 4> <J:4:12, 4> <U, 80000>
+//CHECK:     <I:3, 4> <J:4[4:3], 4> <U, 80000>

@@ -136,7 +136,7 @@ public:
     mResponseKind = static_cast<MessageKind>(Response.front());
     if (mResponseKind == Analysis) {
       llvm::StringRef Json(Response.data() + 1, Response.size() - 2);
-      json::Parser<AnalysisResponse> Parser(Json);
+      json::Parser<AnalysisResponse> Parser(Json.str());
       AnalysisResponse R;
       if (!Parser.parse(R))
         mAnalysis.clear();

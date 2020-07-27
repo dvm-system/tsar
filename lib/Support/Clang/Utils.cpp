@@ -211,7 +211,7 @@ bool ExternalRewriter::InsertText(SourceLocation Loc, StringRef NewStr,
     return true;
   auto OrigBegin = ComputeOrigOffset(Loc);
   std::size_t OrigIdx = InsertAfter ? 2 * OrigBegin + 1 : 2 * OrigBegin;
-  mBuffer.insert(mMapping[OrigIdx], NewStr);
+  mBuffer.insert(mMapping[OrigIdx], NewStr.str());
   auto NewStrSize = NewStr.size();
   for (std::size_t I = OrigIdx, EI = mMapping.size(); I < EI; ++I)
     mMapping[I] += NewStrSize;
@@ -240,7 +240,7 @@ void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
     for (std::size_t I = OrigEndIdx, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] -= (End - Begin) - NewStrSize;
   }
-  mBuffer.replace(Begin, End - Begin, NewStr);
+  mBuffer.replace(Begin, End - Begin, std::string(NewStr));
 }
 
 bool ExternalRewriter::RemoveText(SourceRange SR, bool RemoveLineIfEmpty) {
@@ -346,14 +346,14 @@ public:
       mProcessor(VD->getType().getAsString(), TypeBuffer) == mType &&
       CheckStr == BuildStr);
     LLVM_DEBUG({
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
       dbgs() << "[BUILD DECLARATION]: candidate type '" << TypeBuffer << "'\n";
       dbgs() << "[BUILD DECLARATION]: candidate id '" << VD->getName() << "'\n";
       dbgs() << "[BUILD DECLARATION]: candidate declaration '" << OS.str()
              << "'\n";
       if (isFound())
         dbgs() << "[BUILD DECLARATION]: successful build\n";
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
     });
   }
 
@@ -409,18 +409,19 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   // it is guaranteed to be before declared identifier, just choose far position
   // (meaning choosing longest type string).
   // Optimization: match in reverse order until success.
-  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
   for (std::size_t Pos = Tokens.size() - 1; ; --Pos) {
     SmallString<128> DeclStr;
-    std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
-      Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
+    auto Code =
+      (Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";").str();
+    std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(Code);
     LLVM_DEBUG({
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
       SmallString<128> DeclStr;
       dbgs() << "[BUILD DECLARATION]: possible declaration with token at " <<
         Pos << " position '" <<
         join(Tokens.begin(), Tokens.end(), " ", DeclStr) << "'\n";
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
     });
     assert(Unit && "AST construction failed");
     // AST can be correctly parsed even with errors.
@@ -430,12 +431,12 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
     if (Search.isFound())
       break;
     if (Pos == 0) {
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
       return std::vector<StringRef>();
     }
     std::swap(Tokens[Pos], Tokens[Pos - 1]);
   }
-  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
   return Tokens;
 }
 

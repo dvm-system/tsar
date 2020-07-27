@@ -51,7 +51,7 @@ typedef std::function<std::string(llvm::StringRef)> FilenameAdjuster;
 
 /// Returns a filename adjuster which does not modify name of files.
 inline FilenameAdjuster getPureFilenameAdjuster() {
-  return [](llvm::StringRef Filename) { return Filename; };
+  return [](llvm::StringRef Filename) { return Filename.str(); };
 }
 
 /// \brief Returns a filename adjuster which generates the following name:

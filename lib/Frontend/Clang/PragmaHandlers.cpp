@@ -157,7 +157,7 @@ assert(tsar::getParent(Id) == Parent.getNamespaceId() &&
 }
 
 void PragmaNamespaceReplacer::HandlePragma(
-  Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  Preprocessor &PP, PragmaIntroducer Introducer, Token &FirstToken) {
   mTokenQueue.clear();
   auto NamespaceLoc = FirstToken.getLocation();
   PP.LexUnexpandedToken(FirstToken);
@@ -191,11 +191,11 @@ void PragmaNamespaceReplacer::HandlePragma(
     mTokensToRelex.push_back(FirstToken);
   } while (!FirstToken.is(tok::eod));
   ExternalPreprocessor ExternalPP(PP, mTokensToRelex);
-  Handler->HandlePragma(ExternalPP, Introducer, RelexFrom);
+  Handler->HandlePragma(ExternalPP, Introducer.Kind, RelexFrom);
   // Replace pragma only if all tokens have been processed.
   if (RelexFrom.is(tok::eod)) {
     AddToken(tok::r_brace, FirstToken.getLocation(), 1, mTokenQueue);
-    PP.EnterTokenStream(mTokenQueue, false);
+    PP.EnterTokenStream(mTokenQueue, false, false);
   } 
 }
 

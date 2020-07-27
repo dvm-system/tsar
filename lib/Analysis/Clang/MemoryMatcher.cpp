@@ -135,9 +135,9 @@ public:
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
   void VisitFromMacro(VarDecl *D) {
-    assert(D->getLocStart().isMacroID() &&
+    assert(D->getBeginLoc().isMacroID() &&
       "Declaration must be expanded from macro!");
-    auto Loc = D->getLocStart();
+    auto Loc = D->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
@@ -150,7 +150,7 @@ public:
   }
 
   bool VisitVarDecl(VarDecl *D) {
-    if (D->getLocStart().isMacroID()) {
+    if (D->getBeginLoc().isMacroID()) {
       VisitFromMacro(D);
       return true;
     }

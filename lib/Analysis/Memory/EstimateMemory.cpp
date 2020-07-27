@@ -24,12 +24,14 @@
 
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/MemorySetInfo.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/PointerUnion.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Operator.h>
@@ -88,9 +90,9 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   auto Ty = Loc.Ptr->getType();
   if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
     auto Size = PtrTy->getElementType()->isSized() ?
-      DL.getTypeStoreSize(PtrTy->getElementType()) :
-      MemoryLocation::UnknownSize;
-    if (Size > Loc.Size) {
+      LocationSize::precise(DL.getTypeStoreSize(PtrTy->getElementType())) :
+      LocationSize::unknown();
+    if (MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) > 0) {
       Loc.Size = Size;
       return true;
     }
@@ -110,10 +112,11 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
         if (Idx < ZeroTailIdx - 1)
           continue;
         auto ITy = OpTy.getIndexedType();
-        if (Loc.Size >= DL.getTypeStoreSize(ITy)) {
+        if (MemorySetInfo<MemoryLocation>::sizecmp(Loc.Size,
+              LocationSize::precise(DL.getTypeStoreSize(ITy))) >= 0) {
           // If ZeroTailIdx == 1 and Idx == 1 we should also break the loop.
           if (Idx == 1 || Idx == ZeroTailIdx - 1) {
-            Size = DL.getTypeStoreSize(ITy);
+            Size = LocationSize::precise(DL.getTypeStoreSize(ITy));
             break;
           }
           if (Idx < GEP->getNumOperands()) {
@@ -124,7 +127,7 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
             return true;
           }
         }
-        Size = DL.getTypeStoreSize(ITy);
+        Size = LocationSize::precise(DL.getTypeStoreSize(ITy));
       }
     }
     // In case of sequence of GEPs try to subsequently strip all GEPs to build
@@ -137,19 +140,20 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     // unknown size can not be greater than allocated size.
     // Note, if array dimensions have constant size than Size == Loc.Size and
     // level will be striped.
-    if (Size < Loc.Size && Loc.Size != MemoryLocation::UnknownSize)
+    if (Loc.Size.hasValue() &&
+        MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) < 0)
       return false;
     LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
     Loc.Ptr = GEP->getPointerOperand();
     Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
-    if (Loc.Size != MemoryLocation::UnknownSize) {
+    if (Loc.Size.hasValue()) {
       Type *SrcTy = GEP->getSourceElementType();
       if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
         auto SrcSize = DL.getTypeStoreSize(SrcTy);
         APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
         if (GEP->accumulateConstantOffset(DL, GEPOffset))
-          if (Loc.Size + GEPOffset.getSExtValue() <= SrcSize) {
-            Loc.Size = SrcSize;
+          if (Loc.Size.getValue() + GEPOffset.getSExtValue() <= SrcSize) {
+            Loc.Size = LocationSize::precise(SrcSize);
             return true;
           }
       }
@@ -167,25 +171,25 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       }
       Loc.Ptr = BasePtr;
     }
-    if (!IsInBounds || Loc.Size == MemoryLocation::UnknownSize) {
+    if (!IsInBounds || !Loc.Size.hasValue()) {
       LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip " << (!IsInBounds ? "not " : "")
                         << "'inbounds' offset for location with "
-                        << (Loc.Size == MemoryLocation::UnknownSize ? "unknown"
-                                                                    : "known")
+                        << (!Loc.Size.hasValue() ? "unknown" : "known")
                         << "size\n");
       return true;
     }
-    Loc.Size = MemoryLocation::UnknownSize;
+    Loc.Size = LocationSize::unknown();
     if (auto GV = dyn_cast<GlobalValue>(Loc.Ptr)) {
       auto Ty = GV->getValueType();
       if (Ty->isSized())
-        Loc.Size = DL.getTypeStoreSize(Ty);
+        Loc.Size = LocationSize::precise(DL.getTypeStoreSize(Ty));
     } else if (auto AI = dyn_cast<AllocaInst>(Loc.Ptr)) {
       auto Ty = AI->getAllocatedType();
       auto Size = AI->getArraySize();
       if (Ty->isSized() && isa<ConstantInt>(Size))
-        Loc.Size = cast<ConstantInt>(Size)->getValue().getZExtValue() *
-          DL.getTypeStoreSize(Ty);
+        Loc.Size = LocationSize::precise(
+          cast<ConstantInt>(Size)->getValue().getZExtValue() *
+            DL.getTypeStoreSize(Ty));
     }
     return true;
   }
@@ -242,8 +246,7 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
       Dptr.set<trait::PartialAlias>();
       // Now we try to prove that one location covers other location.
       if (LHS.Size == RHS.Size ||
-          LHS.Size == MemoryLocation::UnknownSize &&
-          RHS.Size == MemoryLocation::UnknownSize)
+          !LHS.Size.isPrecise() || !RHS.Size.isPrecise())
         break;
       int64_t OffsetLHS, OffsetRHS;
       auto BaseLHS = GetPointerBaseWithConstantOffset(LHS.Ptr, OffsetLHS, DL);
@@ -251,27 +254,44 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
       if (OffsetLHS == 0 && OffsetRHS == 0)
         break;
       auto BaseAlias = AA.alias(
-        BaseLHS, MemoryLocation::UnknownSize,
-        BaseRHS, MemoryLocation::UnknownSize);
+        BaseLHS, LocationSize::unknown(),
+        BaseRHS, LocationSize::unknown());
       // It is possible to precisely compare two partially overlapped
       // locations in case of the same base pointer only.
       if (BaseAlias != MustAlias)
         break;
       if (OffsetLHS < OffsetRHS &&
-          OffsetLHS + LHS.Size >= OffsetRHS + RHS.Size)
+          OffsetLHS + LHS.Size.getValue() >= OffsetRHS + RHS.Size.getValue())
         Dptr.set<trait::CoverAlias>();
       else if (OffsetLHS > OffsetRHS &&
-          OffsetLHS + LHS.Size <= OffsetRHS + RHS.Size)
+          OffsetLHS + LHS.Size.getValue() <= OffsetRHS + RHS.Size.getValue())
         Dptr.set<trait::ContainedAlias>();
     }
     break;
   case MustAlias:
     Dptr.set<trait::MustAlias>();
+    if (!LHS.Size.isPrecise() || !RHS.Size.isPrecise()) {
+      // It is safe to compare sizes, which are not precise, if pointers are
+      // only the same.
+      int64_t OffsetLHS, OffsetRHS;
+      auto BaseLHS = GetPointerBaseWithConstantOffset(LHS.Ptr, OffsetLHS, DL);
+      auto BaseRHS = GetPointerBaseWithConstantOffset(RHS.Ptr, OffsetRHS, DL);
+      if (OffsetLHS == OffsetRHS && BaseLHS == BaseRHS) {
+        auto Cmp = MemorySetInfo<MemoryLocation>::sizecmp(LHS.Size, RHS.Size);
+        if (Cmp == 0)
+          Dptr.set<trait::CoincideAlias>();
+        else if (Cmp > 0)
+          Dptr.set<trait::CoverAlias>();
+        else 
+          Dptr.set<trait::ContainedAlias>();
+      }
+      break;
+    }
     if (LHS.Size == RHS.Size)
       Dptr.set<trait::CoincideAlias>();
-    else if (LHS.Size > RHS.Size)
+    else if (LHS.Size.getValue() > RHS.Size.getValue())
       Dptr.set<trait::CoverAlias>();
-    if (LHS.Size < RHS.Size)
+    else
       Dptr.set<trait::ContainedAlias>();
     break;
   }
@@ -570,8 +590,8 @@ void tsar::AliasTree::addUnknown(llvm::Instruction *I) {
   /// Is it safe to ignore intrinsics here? It seems that all intrinsics in
   /// LLVM does not use addresses to perform  computations instead of
   /// memory accesses (see, PrivateAnalysis pass for details).
-  ImmutableCallSite CS(I);
-  if ((!CS || isa<IntrinsicInst>(I)) && !I->mayReadOrWriteMemory())
+  if ((!isa<CallBase>(I) || isa<IntrinsicInst>(I)) &&
+      !I->mayReadOrWriteMemory())
     return;
   SmallVector<AliasNode *, 4> UnknownAliases, EstimateAliases;
   auto Children = make_range(
@@ -632,7 +652,8 @@ AliasUnknownNode::slowMayAliasUnknownImp(
   if (mUnknownInsts.count(const_cast<Instruction *>(I)))
     return std::make_pair(true, const_cast<Instruction *>(I));
   for (auto *UI : *this) {
-    ImmutableCallSite C1(UI), C2(I);
+    auto *C1 = dyn_cast<CallBase>(UI);
+    auto *C2 = dyn_cast<CallBase>(I);
     if (!C1 || !C2 || AA.getModRefInfo(C1, C2) != ModRefInfo::NoModRef ||
       AA.getModRefInfo(C2, C1) != ModRefInfo::NoModRef)
       return std::make_pair(true, UI);
@@ -834,7 +855,8 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
     using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
     EstimateMemory *Prev = nullptr;
     do {
-      if (Base.Size > Chain->getSize())
+      if (MemorySetInfo<MemoryLocation>::sizecmp(
+            Base.Size, Chain->getSize()) > 0)
         continue;
       SearchInfo.first->second = Chain;
       return Chain;
@@ -888,7 +910,9 @@ AliasTree::insert(const MemoryLocation &Base) {
       using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
       EstimateMemory *Prev = nullptr, *UpdateChain = nullptr;
       do {
-        if (Base.Size <= Chain->getSize() && !UpdateChain)
+        if (MemorySetInfo<MemoryLocation>::sizecmp(
+              Base.Size, Chain->getSize()) <= 0 &&
+            !UpdateChain)
           UpdateChain = Chain;
       } while (Prev = Chain, Chain = CT::getNext(Chain));
       // This condition checks that it is safe to insert a specified location
@@ -908,7 +932,8 @@ AliasTree::insert(const MemoryLocation &Base) {
         // <dum, 24>. So, if we insert it before <dum[2],?> we will obtain
         // incorrect sequence of sizes after insertion its parent <dum, 24>:
         // <dum[2],8>-<dum[2],?>-<dum,24>.
-        if (Prev->getSize() > StripedBase.Size)
+        if (MemorySetInfo<MemoryLocation>::sizecmp(
+              Prev->getSize(), StripedBase.Size) > 0)
           continue;
         // For example, let's consider a chain <dum[1], 8> with parent
         // <dum, 24>-<dum, ?>. Try to insert <dum[1], ?>. If we insert it after
@@ -917,7 +942,8 @@ AliasTree::insert(const MemoryLocation &Base) {
         // chain <dum[1],?> with parent <dum,?>.
         if (auto Parent = Prev->getParent()) {
           if (!isSameBase(*mDL, Parent->front(), StripedBase.Ptr) ||
-              Parent->getSize() < StripedBase.Size) {
+              MemorySetInfo<MemoryLocation>::sizecmp(
+                Parent->getSize(), StripedBase.Size) < 0) {
             continue;
           }
         }
@@ -932,7 +958,8 @@ AliasTree::insert(const MemoryLocation &Base) {
         UpdateChain->updateAAInfo(Base.AATags);
         return std::make_tuple(UpdateChain, false, AddAmbiguous);
       }
-      assert(Base.Size < UpdateChain->getSize() && "Invariant broken!");
+      assert(MemorySetInfo<MemoryLocation>::sizecmp(
+               Base.Size, UpdateChain->getSize()) < 0 && "Invariant broken!");
       auto EM = new EstimateMemory(*UpdateChain, Base.Size, Base.AATags);
       ++NumEstimateMemory;
       CT::splicePrev(EM, UpdateChain);
@@ -974,7 +1001,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   releaseMemory();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   auto M = F.getParent();
   auto &DL = M->getDataLayout();
   mAliasTree = new AliasTree(AA, DL, DT);
@@ -1019,8 +1046,10 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
       return;
     auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
     assert(PointeeTy && "Pointee type must not be null!");
-    addLocation(MemoryLocation(V, PointeeTy->isSized() ?
-      DL.getTypeStoreSize(PointeeTy) : MemoryLocation::UnknownSize));
+    addLocation(MemoryLocation(
+        V, PointeeTy->isSized()
+               ? LocationSize::precise(DL.getTypeStoreSize(PointeeTy))
+               : LocationSize::unknown()));
   };
   for (auto &Arg : F.args())
     addPointeeIfNeed(&Arg);
@@ -1040,7 +1069,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
               WorkList.push_back(ExprCEOp);
           }
         } while (!WorkList.empty());
-      } else if (ImmutableCallSite(&I) && !AccessedUnknown.count(&I)) {
+      } else if (isa<CallBase>(I) && !AccessedUnknown.count(&I)) {
         mAliasTree->addUnknown(&I);
       }
     }

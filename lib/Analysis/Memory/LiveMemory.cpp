@@ -59,7 +59,7 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   auto &GLM = getAnalysis<GlobalLiveMemoryWrapper>();
   auto LiveItr = mLiveInfo.insert(
-    std::make_pair(DFF, llvm::make_unique<LiveSet>())).first;
+    std::make_pair(DFF, std::make_unique<LiveSet>())).first;
   auto &LS = LiveItr->get<LiveSet>();
   bool IsIPOAvailable = false;
   if (GLM) {
@@ -114,7 +114,7 @@ void DataFlowTraits<LiveDFFwk *>::initialize(
   assert(N && "Node must not be null!");
   assert(DFF && "Data-flow framework must not be null!");
   DFF->getLiveInfo().insert(
-    std::make_pair(N, llvm::make_unique<LiveSet>()));
+    std::make_pair(N, std::make_unique<LiveSet>()));
 }
 
 bool DataFlowTraits<LiveDFFwk*>::transferFunction(

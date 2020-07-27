@@ -14,20 +14,20 @@ void foo(int N) {
 //CHECK:    private:
 //CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    induction:
-//CHECK:     <I:8:12, 4>:[Int,0,10,1]
+//CHECK:     <I:8[8:3], 4>:[Int,0,10,1]
 //CHECK:    lock:
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    header access:
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    address access:
 //CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    address access (separate):
 //CHECK:     <A:{4:3|4:10}, ?>
 //CHECK:    direct access (separate):
-//CHECK:     <A:{4:3|4:10}, ?> <I:8:12, 4>
+//CHECK:     <A:{4:3|4:10}, ?> <I:8[8:3], 4>

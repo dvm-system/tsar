@@ -35,6 +35,7 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/GlobalOptions.h"
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 

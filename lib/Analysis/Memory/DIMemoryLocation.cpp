@@ -51,15 +51,15 @@ bool DIMemoryLocation::isSized() const {
   return !hasDeref();
 }
 
-uint64_t DIMemoryLocation::getSize() const {
+LocationSize DIMemoryLocation::getSize() const {
   assert(isValid() && "Debug memory location is invalid!");
   auto Fragment = Expr->getFragmentInfo();
   if (Fragment.hasValue())
-    return Fragment->SizeInBits == 0 ? MemoryLocation::UnknownSize :
-      (Fragment->SizeInBits + 7) / 8;
+    return Fragment->SizeInBits == 0 ? LocationSize::unknown() :
+      LocationSize::precise((Fragment->SizeInBits + 7) / 8);
   if (hasDeref())
-    return llvm::MemoryLocation::UnknownSize;
-  if (auto Ty = stripDIType(Var->getType()).resolve()) {
+    return LocationSize::unknown();
+  if (auto Ty = stripDIType(Var->getType())) {
     // There is no dereference and size of type is known, so try to determine
     // size. We should check that the last offset does not lead to out of range
     // memory access.
@@ -69,10 +69,10 @@ uint64_t DIMemoryLocation::getSize() const {
     bool IsPositiveOffset = SignMask.test(0);
     uint64_t TySize = (Ty->getSizeInBits() + 7) / 8;
     if (IsPositiveOffset && TySize > Offsets.back())
-      return TySize - Offsets.back();
+      return LocationSize::precise(TySize - Offsets.back());
   }
   // Return UnknownSize in case of out of range memory access.
-  return llvm::MemoryLocation::UnknownSize;
+  return LocationSize::unknown();
 }
 void DIMemoryLocation::getOffsets(
     SmallVectorImpl<uint64_t> &Offsets, SmallBitVector &SignMask) const {
@@ -113,7 +113,7 @@ bool DIMemoryLocation::isValid() const {
   return Var && Expr && Expr->isValid() && !Expr->isConstant();
 }
 
-DIMemoryLocation DIMemoryLocation::get(DbgInfoIntrinsic *Inst) {
+DIMemoryLocation DIMemoryLocation::get(DbgVariableIntrinsic *Inst) {
   assert(Inst && "Instruction must not be null!");
   auto *Expr = Inst->getExpression();
   assert(Expr && Expr->isValid() && "Expression must be valid!");

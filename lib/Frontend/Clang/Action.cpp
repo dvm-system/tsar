@@ -190,7 +190,7 @@ void ActionBase::EndSourceFileAction() {
 
 void ActionBase::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
-  if (getCurrentFileKind().getLanguage() != InputKind::LLVM_IR) {
+  if (getCurrentFileKind().getLanguage() != Language::LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
     return;
   }
@@ -202,7 +202,7 @@ void ActionBase::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   SourceManager &SM = CI.getSourceManager();
   FileID FID = SM.getMainFileID();
-  llvm::MemoryBuffer *MainFile = SM.getBuffer(FID, &Invalid);
+  auto *MainFile = SM.getBuffer(FID, &Invalid);
   if (Invalid)
     return;
   llvm::SMDiagnostic Err;

@@ -95,7 +95,7 @@ public:
   std::pair<ClonedDIMemoryMatcher *, bool> insert(llvm::Function &F) {
     auto Pair = mMatchers.try_emplace(FunctionCallbackVH(&F, this));
     if (Pair.second)
-      Pair.first->second = llvm::make_unique<ClonedDIMemoryMatcher>();
+      Pair.first->second = std::make_unique<ClonedDIMemoryMatcher>();
     return std::make_pair(Pair.first->second.get(), Pair.second);
   }
 

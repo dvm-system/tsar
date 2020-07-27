@@ -82,7 +82,7 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
   updatePriority(TOKEN_FIELD, TOKEN_FIELD);
   mSuffix.append({ TOKEN_FIELD,TOKEN_IDENTIFIER });
   mIdentifiers.push_back(CurrEl);
-  mCurrType = stripDIType(CurrEl->getBaseType()).resolve();
+  mCurrType = stripDIType(CurrEl->getBaseType());
   Offset -= CurrEl->getOffsetInBits() / 8;
   return unparse(Offset, true);
 }
@@ -96,7 +96,7 @@ bool SourceUnparserImp::unparseAsPointerTy(uint64_t Offset, bool IsPositive) {
   if (!mIsAddress)
     return unparseAsScalarTy(Offset, IsPositive);
   auto DIDTy = cast<DIDerivedType>(mCurrType);
-  mCurrType = stripDIType(DIDTy->getBaseType()).resolve();
+  mCurrType = stripDIType(DIDTy->getBaseType());
   auto TySize = mCurrType ? getSize(mCurrType) : 0;
   if (TySize == 0)
     return unparseAsScalarTy(Offset, IsPositive);
@@ -131,7 +131,7 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
   assert(mCurrType && "Currently evaluated type must not be null!");
   auto DICTy = cast<DICompositeType>(mCurrType);
   auto TySize = getSize(mCurrType);
-  mCurrType = stripDIType(DICTy->getBaseType()).resolve();
+  mCurrType = stripDIType(DICTy->getBaseType());
   auto ElSize = mCurrType ? getSize(mCurrType) : 0;
   mIsAddress = true;
   if (DICTy->getElements().size() == 0 || !IsPositive || TySize <= Offset ||
@@ -140,16 +140,21 @@ bool SourceUnparserImp::unparseAsArrayTy(uint64_t Offset, bool IsPositive) {
   SmallVector<std::pair<int64_t, int64_t>, 8> Dims;
   auto pushDimSize = [this, DICTy, Offset, IsPositive, &Dims](unsigned Dim) {
     auto DInfo = cast<DISubrange>(DICTy->getElements()[Dim]);
-    if (DInfo->getCount().is<DIVariable *>() ||
-        DInfo->getCount().get<ConstantInt *>()->isMinusOne())
+    auto LowerBound = DInfo->getLowerBound();
+    auto Count = DInfo->getCount();
+    if (!Count || Count.is<DIVariable *>() ||
+        Count.get<ConstantInt *>()->isMinusOne() ||
+        LowerBound && LowerBound.is<DIVariable *>() ||
+        LowerBound && LowerBound.is<DIExpression *>())
       if (mLoc.Template) {
         addUnknownSubscripts(DICTy->getElements().size());
         return std::make_pair(false, true);
       } else {
         return std::make_pair(false, unparseAsScalarTy(Offset, IsPositive));
       }
-    auto *C = DInfo->getCount().get<ConstantInt *>();
-    Dims.push_back(std::make_pair(DInfo->getLowerBound(), C->getSExtValue()));
+    auto L = LowerBound ? LowerBound.get<ConstantInt *>()->getSExtValue() : 0;
+    auto C = Count.get<ConstantInt *>()->getSExtValue();
+    Dims.push_back(std::make_pair(L, C));
     return std::make_pair(true, true);
   };
   if (mIsForwardDim)
@@ -235,7 +240,7 @@ bool SourceUnparserImp::unparse() {
   SmallBitVector SignMask;
   mLoc.getOffsets(Offsets, SignMask);
   assert(!Offsets.empty() && "Number of offsets must not be null!");
-  mCurrType = stripDIType(mLoc.Var->getType()).resolve();
+  mCurrType = stripDIType(mLoc.Var->getType());
   for (unsigned OffsetIdx = 0, E = Offsets.size() - 1;
        OffsetIdx < E; ++OffsetIdx) {
     if (!unparse(Offsets[OffsetIdx], SignMask.test(OffsetIdx)) ||
@@ -243,7 +248,8 @@ bool SourceUnparserImp::unparse() {
       return false;
   }
   if (!mIsMinimal || !mCurrType || Offsets.back() != 0 ||
-      mLoc.getSize() < getSize(mCurrType))
+        (mLoc.getSize().hasValue() &&
+         mLoc.getSize().getValue() < getSize(mCurrType)))
     if (!unparse(Offsets.back(), SignMask.test(Offsets.size() - 1)))
       return false;
   if (mIsAddress) {

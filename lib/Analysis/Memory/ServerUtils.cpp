@@ -48,7 +48,7 @@ void ClientToServerMemory::prepareToClone(
   // So, we perform preliminary manual cloning of local variables.
   for (auto &F : ClientM) {
     for (auto &I : instructions(F))
-      if (auto DDI = dyn_cast<DbgInfoIntrinsic>(&I)) {
+      if (auto DDI = dyn_cast<DbgVariableIntrinsic>(&I)) {
         MapMetadata(cast<MDNode>(DDI->getVariable()), ClientToServer);
         SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
         DDI->getAllMetadata(MDs);
@@ -97,7 +97,7 @@ DILocalScope *cloneWithNewSubprogram(DILocalScope *Scope, DISubprogram *Sub) {
   Scope = cast<DILocalScope>(Scope->clone().release());
   for (unsigned I = 0, EI = Scope->getNumOperands(); I < EI; ++I)
     if (auto Parent = dyn_cast_or_null<DILocalScope>(Scope->getOperand(I))) {
-      assert(Scope->getScope().resolve() == Parent &&
+      assert(Scope->getScope() == Parent &&
              "Unknown reference to local scope!");
       Scope->replaceOperandWith(I, cloneWithNewSubprogram(Parent, Sub));
     }

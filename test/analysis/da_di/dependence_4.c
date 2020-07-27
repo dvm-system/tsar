@@ -18,45 +18,45 @@ void foo(int *restrict N, float *restrict A) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 dependence_4.c:2:3
 //CHECK:    private:
-//CHECK:     <J:4:14, 4> | <V:3:11, 4>
+//CHECK:     <J:4[4:5], 4> | <V:3[2:40], 4>
 //CHECK:    output:
-//CHECK:     <*A:1:43, ?>
+//CHECK:     <*A:1, ?>
 //CHECK:    anti:
-//CHECK:     <*A:1:43, ?>
+//CHECK:     <*A:1, ?>
 //CHECK:    flow:
-//CHECK:     <*A:1:43, ?>
+//CHECK:     <*A:1, ?>
 //CHECK:    induction:
-//CHECK:     <I:2:12, 4>:[Int,1,,2]
+//CHECK:     <I:2[2:3], 4>:[Int,1,,2]
 //CHECK:    read only:
-//CHECK:     <*N:1:24, ?> | <A:1:43, 8> | <N:1:24, 8>
+//CHECK:     <*N:1, ?> | <A:1, 8> | <N:1, 8>
 //CHECK:    lock:
-//CHECK:     <*N:1:24, ?> | <I:2:12, 4> | <N:1:24, 8>
+//CHECK:     <*N:1, ?> | <I:2[2:3], 4> | <N:1, 8>
 //CHECK:    header access:
-//CHECK:     <*N:1:24, ?> | <I:2:12, 4> | <N:1:24, 8>
+//CHECK:     <*N:1, ?> | <I:2[2:3], 4> | <N:1, 8>
 //CHECK:    explicit access:
-//CHECK:     <A:1:43, 8> | <I:2:12, 4> | <J:4:14, 4> | <N:1:24, 8> | <V:3:11, 4>
+//CHECK:     <A:1, 8> | <I:2[2:3], 4> | <J:4[4:5], 4> | <N:1, 8> | <V:3[2:40], 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:1:43, 8> <I:2:12, 4> <J:4:14, 4> <N:1:24, 8> <V:3:11, 4>
+//CHECK:     <A:1, 8> <I:2[2:3], 4> <J:4[4:5], 4> <N:1, 8> <V:3[2:40], 4>
 //CHECK:    lock (separate):
-//CHECK:     <*N:1:24, ?> <I:2:12, 4> <N:1:24, 8>
+//CHECK:     <*N:1, ?> <I:2[2:3], 4> <N:1, 8>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:1:43, ?> <*N:1:24, ?> <A:1:43, 8> <I:2:12, 4> <J:4:14, 4> <N:1:24, 8> <V:3:11, 4>
+//CHECK:     <*A:1, ?> <*N:1, ?> <A:1, 8> <I:2[2:3], 4> <J:4[4:5], 4> <N:1, 8> <V:3[2:40], 4>
 //CHECK:   loop at depth 2 dependence_4.c:4:5
 //CHECK:     shared:
-//CHECK:      <*A:1:43, ?>
+//CHECK:      <*A:1, ?>
 //CHECK:     induction:
-//CHECK:      <J:4:14, 4>:[Int,,,1]
+//CHECK:      <J:4[4:5], 4>:[Int,,,1]
 //CHECK:     read only:
-//CHECK:      <*N:1:24, ?> | <A:1:43, 8> | <I:2:12, 4> | <N:1:24, 8> | <V:3:11, 4>
+//CHECK:      <*N:1, ?> | <A:1, 8> | <I:2[2:3], 4> | <N:1, 8> | <V:3[2:40], 4>
 //CHECK:     lock:
-//CHECK:      <*N:1:24, ?> | <I:2:12, 4> | <J:4:14, 4> | <N:1:24, 8>
+//CHECK:      <*N:1, ?> | <I:2[2:3], 4> | <J:4[4:5], 4> | <N:1, 8>
 //CHECK:     header access:
-//CHECK:      <*N:1:24, ?> | <I:2:12, 4> | <J:4:14, 4> | <N:1:24, 8>
+//CHECK:      <*N:1, ?> | <I:2[2:3], 4> | <J:4[4:5], 4> | <N:1, 8>
 //CHECK:     explicit access:
-//CHECK:      <A:1:43, 8> | <I:2:12, 4> | <J:4:14, 4> | <N:1:24, 8> | <V:3:11, 4>
+//CHECK:      <A:1, 8> | <I:2[2:3], 4> | <J:4[4:5], 4> | <N:1, 8> | <V:3[2:40], 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <A:1:43, 8> <I:2:12, 4> <J:4:14, 4> <N:1:24, 8> <V:3:11, 4>
+//CHECK:      <A:1, 8> <I:2[2:3], 4> <J:4[4:5], 4> <N:1, 8> <V:3[2:40], 4>
 //CHECK:     lock (separate):
-//CHECK:      <*N:1:24, ?> <I:2:12, 4> <J:4:14, 4> <N:1:24, 8>
+//CHECK:      <*N:1, ?> <I:2[2:3], 4> <J:4[4:5], 4> <N:1, 8>
 //CHECK:     direct access (separate):
-//CHECK:      <*A:1:43, ?> <*N:1:24, ?> <A:1:43, 8> <I:2:12, 4> <J:4:14, 4> <N:1:24, 8> <V:3:11, 4>
+//CHECK:      <*A:1, ?> <*N:1, ?> <A:1, 8> <I:2[2:3], 4> <J:4[4:5], 4> <N:1, 8> <V:3[2:40], 4>

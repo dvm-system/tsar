@@ -30,6 +30,7 @@
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
@@ -145,7 +146,6 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     return false;
   Wrapper->clear();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   for (scc_iterator<CallGraph *> SCC = scc_begin(&CG); !SCC.isAtEnd(); ++SCC) {
     /// TODO (kaniandr@gmail.com): implement analysis in case of recursion.
     if (SCC->size() > 1)
@@ -161,6 +161,7 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
       continue;
     LLVM_DEBUG(dbgs() << "[GLOBAL DEFINED MEMORY]: analyze " << F->getName()
                       << "\n";);
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*F);
     auto &Provider = getAnalysis<GlobalDefinedMemoryProvider>(*F);
     auto &RegInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();

@@ -31,7 +31,6 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
-#include "tsar/Patch/llvm/ADT/iterator.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/tagged.h>
 #include <llvm/ADT/BitmaskEnum.h>
@@ -342,9 +341,8 @@ public:
       const_cast<llvm::DIExpression *>(getExpression())).isSized();
   }
 
-  /// Returns size of location, in address units, or
-  /// llvm::MemoryLocation:: UnknownSize if the size is not known.
-  uint64_t getSize() const {
+  /// Return size of location, in address units, if it is known.
+  llvm::LocationSize getSize() const {
     return DIMemoryLocation(
       const_cast<llvm::DIVariable *>(getVariable()),
       const_cast<llvm::DIExpression *>(getExpression())).getSize();
@@ -461,7 +459,7 @@ std::unique_ptr<DIMemory> buildDIMemory(const EstimateMemory &EM,
 
 /// Builds debug memory location for a specified memory location.
 std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
-    uint64_t Size, llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
+    llvm::LocationSize, llvm::LLVMContext &Ctx, DIMemoryEnvironment &Env,
     const llvm::DataLayout &DL, const llvm::DominatorTree &DT);
 
 /// Builds debug memory location for a specified memory location.
@@ -881,7 +879,7 @@ template<> struct GraphTraits<tsar::DIAliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::DIAliasNode::child_iterator>;
+    pointer_iterator<tsar::DIAliasNode::child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -896,7 +894,7 @@ template<> struct GraphTraits<const tsar::DIAliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::DIAliasNode::const_child_iterator>;
+    pointer_iterator<tsar::DIAliasNode::const_child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -911,7 +909,7 @@ template<> struct GraphTraits<tsar::DIAliasTree *> :
     return AT->getTopLevelNode();
   }
   using nodes_iterator =
-    patch::pointer_iterator<tsar::DIAliasTree::iterator>;
+    pointer_iterator<tsar::DIAliasTree::iterator>;
   static nodes_iterator nodes_begin(tsar::DIAliasTree *AT) {
     return nodes_iterator(AT->begin());
   }
@@ -927,7 +925,7 @@ template<> struct GraphTraits<const tsar::DIAliasTree *> :
     return AT->getTopLevelNode();
   }
   using nodes_iterator =
-    patch::pointer_iterator<tsar::DIAliasTree::const_iterator>;
+    pointer_iterator<tsar::DIAliasTree::const_iterator>;
   static nodes_iterator nodes_begin(const tsar::DIAliasTree *AT) {
     return nodes_iterator(AT->begin());
   }

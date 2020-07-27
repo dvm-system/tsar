@@ -52,25 +52,25 @@ int main() {
 //CHECK:    dynamic private:
 //CHECK:     <A, 512> | <B, 512>
 //CHECK:    private:
-//CHECK:     <J:22:14, 4> | <sapfor.var:0:0, 4>
+//CHECK:     <J:22[22:5], 4> | <sapfor.var, 4>
 //CHECK:    induction:
-//CHECK:     <I:21:12, 4>:[Int,0,8,1]
+//CHECK:     <I:21[21:3], 4>:[Int,0,8,1]
 //CHECK:    redundant:
-//CHECK:     <sapfor.var:0:0, 4>
+//CHECK:     <sapfor.var, 4>
 //CHECK:    lock:
-//CHECK:     <I:21:12, 4>
+//CHECK:     <I:21[21:3], 4>
 //CHECK:    header access:
-//CHECK:     <I:21:12, 4>
+//CHECK:     <I:21[21:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:21:12, 4> | <J:22:14, 4> | <sapfor.var:0:0, 4>
+//CHECK:     <I:21[21:3], 4> | <J:22[22:5], 4> | <sapfor.var, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:21:12, 4> <J:22:14, 4> <sapfor.var:0:0, 4>
+//CHECK:     <I:21[21:3], 4> <J:22[22:5], 4> <sapfor.var, 4>
 //CHECK:    redundant (separate):
-//CHECK:     <sapfor.var:0:0, 4>
+//CHECK:     <sapfor.var, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:21:12, 4>
+//CHECK:     <I:21[21:3], 4>
 //CHECK:    direct access (separate):
-//CHECK:     <A, 512> <B, 512> <I:21:12, 4> <J:22:14, 4> <sapfor.var:0:0, 4>
+//CHECK:     <A, 512> <B, 512> <I:21[21:3], 4> <J:22[22:5], 4> <sapfor.var, 4>
 //CHECK:   loop at depth 2 Jacobi.c:22:5
 //CHECK:     shared:
 //CHECK:      <A, 512> | <B, 512>
@@ -79,24 +79,24 @@ int main() {
 //CHECK:     dynamic private:
 //CHECK:      <A, 512> | <B, 512>
 //CHECK:     induction:
-//CHECK:      <J:22:14, 4>:[Int,0,8,1]
+//CHECK:      <J:22[22:5], 4>:[Int,0,8,1]
 //CHECK:     read only:
-//CHECK:      <I:21:12, 4>
+//CHECK:      <I:21[21:3], 4>
 //CHECK:     lock:
-//CHECK:      <J:22:14, 4>
+//CHECK:      <J:22[22:5], 4>
 //CHECK:     header access:
-//CHECK:      <J:22:14, 4>
+//CHECK:      <J:22[22:5], 4>
 //CHECK:     explicit access:
-//CHECK:      <I:21:12, 4> | <J:22:14, 4>
+//CHECK:      <I:21[21:3], 4> | <J:22[22:5], 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <I:21:12, 4> <J:22:14, 4>
+//CHECK:      <I:21[21:3], 4> <J:22[22:5], 4>
 //CHECK:     lock (separate):
-//CHECK:      <J:22:14, 4>
+//CHECK:      <J:22[22:5], 4>
 //CHECK:     direct access (separate):
-//CHECK:      <A, 512> <B, 512> <I:21:12, 4> <J:22:14, 4>
+//CHECK:      <A, 512> <B, 512> <I:21[21:3], 4> <J:22[22:5], 4>
 //CHECK:  loop at depth 1 Jacobi.c:29:3
 //CHECK:    private:
-//CHECK:     <Eps:30:12, 8> | <I:31:14, 4> | <I:37:14, 4> | <J:32:16, 4> | <J:38:16, 4> | <Tmp:33:16, 8> | <sapfor.var:0:0, 4>
+//CHECK:     <Eps:30[29:39], 8> | <I:31[31:5], 4> | <I:37[37:5], 4> | <J:32[32:7], 4> | <J:38[38:7], 4> | <Tmp:33[32:39], 8> | <sapfor.var, 4>
 //CHECK:    output:
 //CHECK:     <A, 512> <B, 512> printf():40:5
 //CHECK:    anti:
@@ -104,27 +104,27 @@ int main() {
 //CHECK:    flow:
 //CHECK:     <A, 512> <B, 512> printf():40:5
 //CHECK:    induction:
-//CHECK:     <It:29:12, 4>:[Int,1,,1]
+//CHECK:     <It:29[29:3], 4>:[Int,1,,1]
 //CHECK:    redundant:
-//CHECK:     <sapfor.var:0:0, 4>
+//CHECK:     <sapfor.var, 4>
 //CHECK:    lock:
-//CHECK:     <It:29:12, 4>
+//CHECK:     <It:29[29:3], 4>
 //CHECK:    header access:
-//CHECK:     <It:29:12, 4>
+//CHECK:     <It:29[29:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <A, 512> <B, 512> printf():40:5 | <Eps:30:12, 8> | <I:31:14, 4> | <I:37:14, 4> | <It:29:12, 4> | <J:32:16, 4> | <J:38:16, 4> | <Tmp:33:16, 8> | <sapfor.var:0:0, 4>
+//CHECK:     <A, 512> <B, 512> printf():40:5 | <Eps:30[29:39], 8> | <I:31[31:5], 4> | <I:37[37:5], 4> | <It:29[29:3], 4> | <J:32[32:7], 4> | <J:38[38:7], 4> | <Tmp:33[32:39], 8> | <sapfor.var, 4>
 //CHECK:    address access:
 //CHECK:     <A, 512> <B, 512> printf():40:5
 //CHECK:    explicit access (separate):
-//CHECK:     <Eps:30:12, 8> <I:31:14, 4> <I:37:14, 4> <It:29:12, 4> <J:32:16, 4> <J:38:16, 4> <Tmp:33:16, 8> <sapfor.var:0:0, 4> printf():40:5
+//CHECK:     <Eps:30[29:39], 8> <I:31[31:5], 4> <I:37[37:5], 4> <It:29[29:3], 4> <J:32[32:7], 4> <J:38[38:7], 4> <Tmp:33[32:39], 8> <sapfor.var, 4> printf():40:5
 //CHECK:    redundant (separate):
-//CHECK:     <sapfor.var:0:0, 4>
+//CHECK:     <sapfor.var, 4>
 //CHECK:    lock (separate):
-//CHECK:     <It:29:12, 4>
+//CHECK:     <It:29[29:3], 4>
 //CHECK:    address access (separate):
 //CHECK:     printf():40:5
 //CHECK:    direct access (separate):
-//CHECK:     <A, 512> <B, 512> <Eps:30:12, 8> <I:31:14, 4> <I:37:14, 4> <It:29:12, 4> <J:32:16, 4> <J:38:16, 4> <Tmp:33:16, 8> <sapfor.var:0:0, 4> printf():40:5
+//CHECK:     <A, 512> <B, 512> <Eps:30[29:39], 8> <I:31[31:5], 4> <I:37[37:5], 4> <It:29[29:3], 4> <J:32[32:7], 4> <J:38[38:7], 4> <Tmp:33[32:39], 8> <sapfor.var, 4> printf():40:5
 //CHECK:   loop at depth 2 Jacobi.c:37:5
 //CHECK:     shared:
 //CHECK:      <B, 512>
@@ -133,27 +133,27 @@ int main() {
 //CHECK:     dynamic private:
 //CHECK:      <B, 512>
 //CHECK:     private:
-//CHECK:      <J:38:16, 4> | <sapfor.var:0:0, 4>
+//CHECK:      <J:38[38:7], 4> | <sapfor.var, 4>
 //CHECK:     induction:
-//CHECK:      <I:37:14, 4>:[Int,1,7,1]
+//CHECK:      <I:37[37:5], 4>:[Int,1,7,1]
 //CHECK:     read only:
 //CHECK:      <A, 512>
 //CHECK:     redundant:
-//CHECK:      <sapfor.var:0:0, 4>
+//CHECK:      <sapfor.var, 4>
 //CHECK:     lock:
-//CHECK:      <I:37:14, 4>
+//CHECK:      <I:37[37:5], 4>
 //CHECK:     header access:
-//CHECK:      <I:37:14, 4>
+//CHECK:      <I:37[37:5], 4>
 //CHECK:     explicit access:
-//CHECK:      <I:37:14, 4> | <J:38:16, 4> | <sapfor.var:0:0, 4>
+//CHECK:      <I:37[37:5], 4> | <J:38[38:7], 4> | <sapfor.var, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <I:37:14, 4> <J:38:16, 4> <sapfor.var:0:0, 4>
+//CHECK:      <I:37[37:5], 4> <J:38[38:7], 4> <sapfor.var, 4>
 //CHECK:     redundant (separate):
-//CHECK:      <sapfor.var:0:0, 4>
+//CHECK:      <sapfor.var, 4>
 //CHECK:     lock (separate):
-//CHECK:      <I:37:14, 4>
+//CHECK:      <I:37[37:5], 4>
 //CHECK:     direct access (separate):
-//CHECK:      <A, 512> <B, 512> <I:37:14, 4> <J:38:16, 4> <sapfor.var:0:0, 4>
+//CHECK:      <A, 512> <B, 512> <I:37[37:5], 4> <J:38[38:7], 4> <sapfor.var, 4>
 //CHECK:    loop at depth 3 Jacobi.c:38:7
 //CHECK:      shared:
 //CHECK:       <B, 512>
@@ -162,68 +162,68 @@ int main() {
 //CHECK:      dynamic private:
 //CHECK:       <B, 512>
 //CHECK:      induction:
-//CHECK:       <J:38:16, 4>:[Int,1,7,1]
+//CHECK:       <J:38[38:7], 4>:[Int,1,7,1]
 //CHECK:      read only:
-//CHECK:       <A, 512> | <I:37:14, 4>
+//CHECK:       <A, 512> | <I:37[37:5], 4>
 //CHECK:      lock:
-//CHECK:       <J:38:16, 4>
+//CHECK:       <J:38[38:7], 4>
 //CHECK:      header access:
-//CHECK:       <J:38:16, 4>
+//CHECK:       <J:38[38:7], 4>
 //CHECK:      explicit access:
-//CHECK:       <I:37:14, 4> | <J:38:16, 4>
+//CHECK:       <I:37[37:5], 4> | <J:38[38:7], 4>
 //CHECK:      explicit access (separate):
-//CHECK:       <I:37:14, 4> <J:38:16, 4>
+//CHECK:       <I:37[37:5], 4> <J:38[38:7], 4>
 //CHECK:      lock (separate):
-//CHECK:       <J:38:16, 4>
+//CHECK:       <J:38[38:7], 4>
 //CHECK:      direct access (separate):
-//CHECK:       <A, 512> <B, 512> <I:37:14, 4> <J:38:16, 4>
+//CHECK:       <A, 512> <B, 512> <I:37[37:5], 4> <J:38[38:7], 4>
 //CHECK:   loop at depth 2 Jacobi.c:31:5
 //CHECK:     shared:
 //CHECK:      <A, 512>
 //CHECK:     private:
-//CHECK:      <J:32:16, 4> | <Tmp:33:16, 8> | <sapfor.var:0:0, 4>
+//CHECK:      <J:32[32:7], 4> | <Tmp:33[32:39], 8> | <sapfor.var, 4>
 //CHECK:     induction:
-//CHECK:      <I:31:14, 4>:[Int,1,7,1]
+//CHECK:      <I:31[31:5], 4>:[Int,1,7,1]
 //CHECK:     reduction:
-//CHECK:      <Eps:30:12, 8>:max
+//CHECK:      <Eps:30[29:39], 8>:max
 //CHECK:     read only:
 //CHECK:      <B, 512>
 //CHECK:     redundant:
-//CHECK:      <sapfor.var:0:0, 4>
+//CHECK:      <sapfor.var, 4>
 //CHECK:     lock:
-//CHECK:      <I:31:14, 4>
+//CHECK:      <I:31[31:5], 4>
 //CHECK:     header access:
-//CHECK:      <I:31:14, 4>
+//CHECK:      <I:31[31:5], 4>
 //CHECK:     explicit access:
-//CHECK:      <Eps:30:12, 8> | <I:31:14, 4> | <J:32:16, 4> | <Tmp:33:16, 8> | <sapfor.var:0:0, 4>
+//CHECK:      <Eps:30[29:39], 8> | <I:31[31:5], 4> | <J:32[32:7], 4> | <Tmp:33[32:39], 8> | <sapfor.var, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <Eps:30:12, 8> <I:31:14, 4> <J:32:16, 4> <Tmp:33:16, 8> <sapfor.var:0:0, 4>
+//CHECK:      <Eps:30[29:39], 8> <I:31[31:5], 4> <J:32[32:7], 4> <Tmp:33[32:39], 8> <sapfor.var, 4>
 //CHECK:     redundant (separate):
-//CHECK:      <sapfor.var:0:0, 4>
+//CHECK:      <sapfor.var, 4>
 //CHECK:     lock (separate):
-//CHECK:      <I:31:14, 4>
+//CHECK:      <I:31[31:5], 4>
 //CHECK:     direct access (separate):
-//CHECK:      <A, 512> <B, 512> <Eps:30:12, 8> <I:31:14, 4> <J:32:16, 4> <Tmp:33:16, 8> <sapfor.var:0:0, 4>
+//CHECK:      <A, 512> <B, 512> <Eps:30[29:39], 8> <I:31[31:5], 4> <J:32[32:7], 4> <Tmp:33[32:39], 8> <sapfor.var, 4>
 //CHECK:    loop at depth 3 Jacobi.c:32:7
 //CHECK:      shared:
 //CHECK:       <A, 512>
 //CHECK:      private:
-//CHECK:       <Tmp:33:16, 8>
+//CHECK:       <Tmp:33[32:39], 8>
 //CHECK:      induction:
-//CHECK:       <J:32:16, 4>:[Int,1,7,1]
+//CHECK:       <J:32[32:7], 4>:[Int,1,7,1]
 //CHECK:      reduction:
-//CHECK:       <Eps:30:12, 8>:max
+//CHECK:       <Eps:30[29:39], 8>:max
 //CHECK:      read only:
-//CHECK:       <B, 512> | <I:31:14, 4>
+//CHECK:       <B, 512> | <I:31[31:5], 4>
 //CHECK:      lock:
-//CHECK:       <J:32:16, 4>
+//CHECK:       <J:32[32:7], 4>
 //CHECK:      header access:
-//CHECK:       <J:32:16, 4>
+//CHECK:       <J:32[32:7], 4>
 //CHECK:      explicit access:
-//CHECK:       <Eps:30:12, 8> | <I:31:14, 4> | <J:32:16, 4> | <Tmp:33:16, 8>
+//CHECK:       <Eps:30[29:39], 8> | <I:31[31:5], 4> | <J:32[32:7], 4> | <Tmp:33[32:39], 8>
 //CHECK:      explicit access (separate):
-//CHECK:       <Eps:30:12, 8> <I:31:14, 4> <J:32:16, 4> <Tmp:33:16, 8>
+//CHECK:       <Eps:30[29:39], 8> <I:31[31:5], 4> <J:32[32:7], 4> <Tmp:33[32:39], 8>
 //CHECK:      lock (separate):
-//CHECK:       <J:32:16, 4>
+//CHECK:       <J:32[32:7], 4>
 //CHECK:      direct access (separate):
-//CHECK:       <A, 512> <B, 512> <Eps:30:12, 8> <I:31:14, 4> <J:32:16, 4> <Tmp:33:16, 8>
+//CHECK:       <A, 512> <B, 512> <Eps:30[29:39], 8> <I:31[31:5], 4> <J:32[32:7], 4> <Tmp:33[32:39], 8>

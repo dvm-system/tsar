@@ -24,18 +24,18 @@ void foo(int Flag) {
 //CHECK:    flow:
 //CHECK:     <A, 800>:[1,1]
 //CHECK:    induction:
-//CHECK:     <I:5:12, 4>:[Int,0,100,1]
+//CHECK:     <I:5[5:3], 4>:[Int,0,100,1]
 //CHECK:    read only:
-//CHECK:     <Flag:4:14, 4>
+//CHECK:     <Flag:4, 4>
 //CHECK:    lock:
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5[5:3], 4>
 //CHECK:    header access:
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5[5:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <Flag:4:14, 4> | <I:5:12, 4> | <X, 4>
+//CHECK:     <Flag:4, 4> | <I:5[5:3], 4> | <X, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <Flag:4:14, 4> <I:5:12, 4> <X, 4>
+//CHECK:     <Flag:4, 4> <I:5[5:3], 4> <X, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5[5:3], 4>
 //CHECK:    direct access (separate):
-//CHECK:     <A, 800> <Flag:4:14, 4> <I:5:12, 4> <X, 4>
+//CHECK:     <A, 800> <Flag:4, 4> <I:5[5:3], 4> <X, 4>

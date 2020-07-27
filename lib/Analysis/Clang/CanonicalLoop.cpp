@@ -47,6 +47,9 @@
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/InitializePasses.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 
@@ -88,7 +91,7 @@ public:
       mLoopInfo = &P.getAnalysis<LoopMatcherPass>().getMatcher();
       mMemoryMatcher = &P.getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher;
       mAliasTree = &P.getAnalysis<EstimateMemoryPass>().getAliasTree();
-      mTLI = &P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+      mTLI = &P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
       mSE = &P.getAnalysis<ScalarEvolutionWrapperPass>().getSE();
       mDT = &P.getAnalysis<DominatorTreeWrapperPass>().getDomTree();
       auto &DIEMPass = P.getAnalysis<DIEstimateMemoryPass>();
@@ -107,7 +110,7 @@ public:
     if (!For)
       return;
     LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: process loop at ");
-    LLVM_DEBUG(For->getLocStart().dump(Result.Context->getSourceManager()));
+    LLVM_DEBUG(For->getBeginLoc().dump(Result.Context->getSourceManager()));
     LLVM_DEBUG(dbgs() << "\n");
     auto Match = mLoopInfo->find<AST>(For);
     if (Match == mLoopInfo->end()) {
@@ -292,8 +295,7 @@ private:
             return;
           /// TODO (kaniandr@gmail.com): use results from server to check
           /// that function call doesn't write any memory.
-          if (!(RequiredInstruction =
-                   (ImmutableCallSite(&I) && onlyReadsMemory(I))))
+          if (!(RequiredInstruction = (isa<CallBase>(I) && onlyReadsMemory(I))))
             return;
           auto DIM = mDIMInfo->findFromClient(
             I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
@@ -322,8 +324,8 @@ private:
 
   /// Checks that possible call from here does not write to memory.
   bool onlyReadsMemory(Instruction &Inst) {
-    ImmutableCallSite CS(&Inst);
-    return CS && mAliasTree->getAliasAnalysis().onlyReadsMemory(CS);
+    auto *Call = dyn_cast<CallBase>(&Inst);
+    return Call && mAliasTree->getAliasAnalysis().onlyReadsMemory(Call);
   }
 
   /// \brief Checks whether operands (except inductive variable) of a specified
@@ -379,7 +381,7 @@ private:
             return;
           /// TODO (kaniandr@gmail.com): use results from server to check
           /// that function call doesn't write any memory.
-          if (!(Result = (ImmutableCallSite(&I) && onlyReadsMemory(I))))
+          if (!(Result = (isa<CallBase>(I) && onlyReadsMemory(I))))
             return;
           auto *DIM = mDIMInfo->findFromClient(
             I, *mDT, DIUnknownMemory::NoFlags).get<Clone>();
@@ -395,7 +397,7 @@ private:
       return Tuple;
     bool OpNotAccessInduct = true;
     for (auto &Op : U.operands())
-      if (isa<Instruction>(Op) || isa<ConstantExpr>(Op)) {
+      if (isa<Instruction>(Op) || isa<llvm::ConstantExpr>(Op)) {
         auto T = isLoopInvariantMemory(STR, DIDepSet, DIMI, cast<User>(*Op));
         std::get<0>(Tuple) &= std::get<0>(T);
         if (!std::get<0>(Tuple))
@@ -412,9 +414,9 @@ private:
           std::get<4>(Tuple) = &U;
         }
       } else if (isa<ConstantData>(Op) || isa<GlobalValue>(Op)) {
-        std::get<3>(Tuple) = Op;
-        std::get<4>(Tuple) = &U;
-      } else if (auto Expr = dyn_cast<ConstantExpr>(Op)) {
+          std::get<3>(Tuple) = Op;
+          std::get<4>(Tuple) = &U;
+      } else if (auto Expr = dyn_cast<llvm::ConstantExpr>(Op)) {
       } else {
         std::get<0>(Tuple) = false;
         return Tuple;

@@ -33,6 +33,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -94,11 +95,11 @@ public:
   /// expansion location. So it is not possible to determine token in macro
   /// body where these loops starts without additional analysis of AST.
   void VisitFromMacro(Stmt *S) {
-    assert(S->getLocStart().isMacroID() &&
+    assert(S->getBeginLoc().isMacroID() &&
       "Statement must be expanded from macro!");
     if (!isa<WhileStmt>(S) && !isa<DoStmt>(S) && !isa<ForStmt>(S))
       return;
-    auto Loc = S->getLocStart();
+    auto Loc = S->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
@@ -111,7 +112,7 @@ public:
   }
 
   bool VisitStmt(Stmt *S) {
-    if (S->getLocStart().isMacroID()) {
+    if (S->getBeginLoc().isMacroID()) {
       VisitFromMacro(S);
       return true;
     }
@@ -119,7 +120,7 @@ public:
       // To determine appropriate loop in LLVM IR it is necessary to use start
       // location of initialization instruction, if it is available.
       if (Stmt *Init = For->getInit()) {
-        auto LpItr = findItrForLocation(Init->getLocStart());
+        auto LpItr = findItrForLocation(Init->getBeginLoc());
         if (LpItr != mLocToIR->end()) {
           Loop *L = LpItr->second.back();
           LpItr->second.pop_back();
@@ -137,7 +138,7 @@ public:
             auto HeadBB = L->getHeader();
             auto HeaderLoc = HeadBB ?
               HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
-            PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getLocStart(), false);
+            PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getBeginLoc(), false);
             auto Tmp = std::move(LpItr->second);
             mLocToIR->erase(LpItr);
             if (HeaderLoc && DILocationMapInfo::isEqual(PLoc, HeaderLoc))
@@ -150,7 +151,7 @@ public:
     // If there is no initialization instruction, an appropriate loop has not
     // been found or considered loop is not a for-loop try to use accurate loop
     // location.
-    auto StartLoc = S->getLocStart();
+    auto StartLoc = S->getBeginLoc();
     if (isa<WhileStmt>(S) || isa<DoStmt>(S) || isa<ForStmt>(S)) {
       if (Loop *L = findIRForLocation(StartLoc)) {
         mMatcher->emplace(S, L);
@@ -206,7 +207,7 @@ public:
     }
     if (!mLastLabel)
       return true;
-    if (Loop *L = findIRForLocation(S->getLocStart())) {
+    if (Loop *L = findIRForLocation(S->getBeginLoc())) {
       mMatcher->emplace(mLastLabel, L);
       ++NumMatchLoop;
       --NumNonMatchIRLoop;
@@ -231,7 +232,7 @@ private:
       SmallVector<Metadata *, 3> MDs(1);
       auto HeadBB = L->getHeader();
       DILocation *DILoopLoc;
-      auto LabelLoc = mLastLabel->getLocStart();
+      auto LabelLoc = mLastLabel->getBeginLoc();
       auto HeaderLoc = HeadBB->getTerminator()->getDebugLoc().get();
       // The following assert should not fail because the condition has
       // been checked in MatchExplicitVisitor.

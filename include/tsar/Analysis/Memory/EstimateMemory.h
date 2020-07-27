@@ -54,7 +54,6 @@
 #include "tsar/Analysis/DataFlowGraph.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include "tsar/Patch/llvm/ADT/iterator.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/Chain.h>
@@ -65,6 +64,7 @@
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/simple_ilist.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/TinyPtrVector.h>
@@ -412,11 +412,11 @@ public:
 
   /// Returns size of location in address units or
   /// llvm::MemoryLocation:: UnknownSize if the size is not known.
-  uint64_t getSize() const noexcept { return mSize; }
+  llvm::LocationSize getSize() const noexcept { return mSize; }
 
   /// Returns true if size is known.
   bool isSized() const noexcept {
-    return mSize != llvm::MemoryLocation::UnknownSize;
+    return mSize.hasValue();
   }
 
   /// Returns true if this location is explicitly mentioned in a
@@ -597,7 +597,7 @@ private:
 
   /// Creates an out of tree copy of a specified location with a new size
   /// and metadata node.
-  EstimateMemory(const EstimateMemory &EM, uint64_t Size,
+  EstimateMemory(const EstimateMemory &EM, llvm::LocationSize Size,
       const llvm::AAMDNodes &AATags) : EstimateMemory(EM) {
     mSize = Size;
     mAATags = AATags;
@@ -612,7 +612,7 @@ private:
   friend class AliasTree;
   friend class bcl::Chain<EstimateMemory, Hierarchy>;
 
-  uint64_t mSize;
+  llvm::LocationSize mSize;
   llvm::AAMDNodes mAATags;
   AmbiguousRef mAmbiguous;
   mutable AliasEstimateNode *mNode = nullptr;
@@ -1364,7 +1364,7 @@ template<> struct GraphTraits<tsar::EstimateMemory *> {
     return N;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::EstimateMemory::child_iterator>;
+    pointer_iterator<tsar::EstimateMemory::child_iterator>;
   static ChildIteratorType child_begin(NodeRef N) {
     return ChildIteratorType(N->child_begin());
   }
@@ -1379,7 +1379,7 @@ template<> struct GraphTraits<const tsar::EstimateMemory *> {
     return N;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::EstimateMemory::const_child_iterator>;
+    pointer_iterator<tsar::EstimateMemory::const_child_iterator>;
   static ChildIteratorType child_begin(NodeRef N) {
     return ChildIteratorType(N->child_begin());
   }
@@ -1397,7 +1397,7 @@ template<> struct GraphTraits<tsar::AliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::AliasNode::child_iterator>;
+    pointer_iterator<tsar::AliasNode::child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -1412,7 +1412,7 @@ template<> struct GraphTraits<const tsar::AliasNode *> {
     return AN;
   }
   using ChildIteratorType =
-    patch::pointer_iterator<tsar::AliasNode::const_child_iterator>;
+    pointer_iterator<tsar::AliasNode::const_child_iterator>;
   static ChildIteratorType child_begin(NodeRef AN) {
     return ChildIteratorType(AN->child_begin());
   }
@@ -1426,7 +1426,7 @@ template<> struct GraphTraits<tsar::AliasTree *> :
   static NodeRef getEntryNode(tsar::AliasTree *AT) noexcept {
     return AT->getTopLevelNode();
   }
-  using nodes_iterator = patch::pointer_iterator<tsar::AliasTree::iterator>;
+  using nodes_iterator = pointer_iterator<tsar::AliasTree::iterator>;
   static nodes_iterator nodes_begin(tsar::AliasTree *AT) {
     return nodes_iterator(AT->begin());
   }
@@ -1441,7 +1441,7 @@ template<> struct GraphTraits<const tsar::AliasTree *> :
   static NodeRef getEntryNode(const tsar::AliasTree *AT) noexcept {
     return AT->getTopLevelNode();
   }
-  using nodes_iterator = patch::pointer_iterator<tsar::AliasTree::const_iterator>;
+  using nodes_iterator = pointer_iterator<tsar::AliasTree::const_iterator>;
   static nodes_iterator nodes_begin(const tsar::AliasTree *AT) {
     return nodes_iterator(AT->begin());
   }

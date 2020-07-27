@@ -28,13 +28,13 @@
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/Passes.h"
-#include "tsar/Patch/llvm/ADT/iterator.h"
 #include <bcl/convertible_pair.h>
 #include <bcl/utility.h>
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/GraphTraits.h>
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/PointerUnion.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
@@ -146,7 +146,7 @@ template<> struct GraphTraits<tsar::FileNode::ChildT *> {
   static nodes_iterator nodes_begin(NodeRef G) { return df_begin(G); }
   static nodes_iterator nodes_end(NodeRef G) { return df_end(G); }
 
-  using ChildIteratorType = patch::pointer_iterator<tsar::FileNode::iterator>;
+  using ChildIteratorType = pointer_iterator<tsar::FileNode::iterator>;
   static ChildIteratorType child_begin(NodeRef N) {
     using tsar::FileNode;
     if (FileNode::isFile(*N))
@@ -295,7 +295,7 @@ public:
     bool IsNew = false;
     if (!Info.first->second) {
       IsNew = true;
-      Info.first->second = llvm::make_unique<FileNode>(ID, mSrcMgr);
+      Info.first->second = std::make_unique<FileNode>(ID, mSrcMgr);
     }
     return std::make_pair(file_iterator(Info.first, file_helper), IsNew);
   }
@@ -468,7 +468,7 @@ struct GraphTraits<
 template <>
 struct GraphTraits<tsar::FileTree *>
     : public GraphTraits<tsar::FileNode::ChildT *> {
-  using nodes_iterator = patch::pointer_iterator<tsar::FileTree::iterator>;
+  using nodes_iterator = pointer_iterator<tsar::FileTree::iterator>;
   static nodes_iterator nodes_begin(tsar::FileTree *G) {
     return nodes_iterator(G->begin());
   }

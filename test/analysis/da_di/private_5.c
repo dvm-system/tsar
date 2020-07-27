@@ -12,22 +12,22 @@ int foo(int Y) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 private_5.c:4:3
 //CHECK:    output:
-//CHECK:     <X:2:10, 4> | <Y:1:13, 4>
+//CHECK:     <X:2, 4> | <Y:1, 4>
 //CHECK:    anti:
-//CHECK:     <X:2:10, 4> | <Y:1:13, 4>
+//CHECK:     <X:2, 4> | <Y:1, 4>
 //CHECK:    flow:
-//CHECK:     <X:2:10, 4> | <Y:1:13, 4>
+//CHECK:     <X:2, 4> | <Y:1, 4>
 //CHECK:    induction:
-//CHECK:     <I:2:7, 4>:[Int,0,10,1]
+//CHECK:     <I:2, 4>:[Int,0,10,1]
 //CHECK:    lock:
-//CHECK:     <I:2:7, 4>
+//CHECK:     <I:2, 4>
 //CHECK:    header access:
-//CHECK:     <I:2:7, 4>
+//CHECK:     <I:2, 4>
 //CHECK:    explicit access:
-//CHECK:     <I:2:7, 4> | <X:2:10, 4> | <Y:1:13, 4>
+//CHECK:     <I:2, 4> | <X:2, 4> | <Y:1, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//CHECK:     <I:2, 4> <X:2, 4> <Y:1, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:2:7, 4>
+//CHECK:     <I:2, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <I:2:7, 4> <X:2:10, 4> <Y:1:13, 4>
+//CHECK:     <I:2, 4> <X:2, 4> <Y:1, 4>

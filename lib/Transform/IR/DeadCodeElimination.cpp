@@ -30,6 +30,7 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/Pass.h>
@@ -71,7 +72,7 @@ INITIALIZE_PASS_END(NoMetadataDSEPass, "de-code",
 FunctionPass * llvm::createNoMetadataDSEPass() { return new NoMetadataDSEPass; }
 
 bool NoMetadataDSEPass::runOnFunction(Function &F) {
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   AliasSetTracker Tracker(AA);
   for (auto &I : instructions(F))
@@ -79,7 +80,7 @@ bool NoMetadataDSEPass::runOnFunction(Function &F) {
   // Find stores which writes to a memory that is not used.
   DenseMap<AliasSet *, std::vector<Instruction *>> OnlyStores;
   for (auto &AS : Tracker)
-    if (!AS.isForwardingAliasSet() && !AS.isVolatile() && AS.isMod())
+    if (!AS.isForwardingAliasSet() && AS.isMod())
     OnlyStores.try_emplace(&AS);
   auto &DL = F.getParent()->getDataLayout();
   for (auto &I : instructions(F)) {
@@ -87,7 +88,7 @@ bool NoMetadataDSEPass::runOnFunction(Function &F) {
       [&DL, &Tracker, &OnlyStores](Instruction &I, MemoryLocation &&Loc,
           unsigned, AccessInfo, AccessInfo) {
         auto *Ptr = const_cast<Value *>(Loc.Ptr);
-        auto &AS = Tracker.getAliasSetForPointer(Ptr, Loc.Size, Loc.AATags);
+        auto &AS = Tracker.getAliasSetFor(Loc);
         auto Itr = OnlyStores.find(&AS);
         if (Itr == OnlyStores.end())
           return;

@@ -56,7 +56,7 @@ endif()
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
 
 # Minimum LLVM version which is necessary to build TSAR.
-set(LLVM_MIN_VERSION 7.0)
+set(LLVM_MIN_VERSION 11.0)
 
 include(BCLCompilerOptions)
 include(BCLUtils)
@@ -207,21 +207,12 @@ set(LLVM_COMPONENTS
 llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 
 # Add targets to the list of necessary LLVM libraries (LLVM_LIBS).
-foreach(T ${LLVM_TARGETS_TO_BUILD})
-  llvm_map_components_to_libnames(L "${T}asmparser")
-  list(FIND LLVM_AVAILABLE_LIBS "${L}" FIND_RES)
-  if (NOT ${FIND_RES} EQUAL -1)
-    list(APPEND LLVM_LIBS ${L})
-  endif()
-  llvm_map_components_to_libnames(L "${T}info")
-  list(FIND LLVM_AVAILABLE_LIBS ${L} FIND_RES)
-  if (NOT ${FIND_RES} EQUAL -1)
+llvm_map_components_to_libnames(LLVM_TARGETS_LIBS ${LLVM_TARGETS_TO_BUILD})
+foreach(L ${LLVM_TARGETS_LIBS})
+    string(TOLOWER ${L} TO_COMPARE)
+    string(REGEX MATCH "(asmparser|info|codegen)$" FIND_RES ${TO_COMPARE})
+    if (FIND_RES)
     list(APPEND LLVM_LIBS "${L}")
-  endif()
-  llvm_map_components_to_libnames(L "${T}codegen")
-  list(FIND LLVM_AVAILABLE_LIBS "${L}" FIND_RES)
-  if (NOT ${FIND_RES} EQUAL -1)
-    list(APPEND LLVM_LIBS ${L})
   endif()
 endforeach()
 

@@ -26,11 +26,11 @@
 #include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Frontend/Clang/Passes.h"
-#include "tsar/Patch/clang/AST/ASTImporter.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>
+#include <clang/AST/ASTImporter.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -63,98 +63,6 @@ public:
            ATL.setSizeExpr(VAT->getSizeExpr());
   }
 };
-
-/// \brief This callback for ASTMatcher tries to perform manual import of
-/// variable array types if clang::ASTImporter can not perform it itself.
-///
-/// TODO (kaniandr@gmail.com): VariableArrayType with null size expression is
-/// not imported by ASTImporter (VisitVariableArrayType() in ASTImporter.cpp).
-/// Such import is implemented hear to avoid patching of ASTImporter.cpp,
-/// only ASTImporter.h is patched. The patch marks this class as friend for
-/// ASTImporter to enable access to ASTImporter::ImportedTypes map.
-/// VariableArrayType with null size expression occurs in ImplicitCastExpr in a
-/// function call. This class should be removed when ASTImporter will be fixed.
-class VariableArrayCallback : public ast_matchers::MatchFinder::MatchCallback {
-public:
-  /// Creates callback.
-  explicit VariableArrayCallback(ASTImporter &Importer,
-      DiagnosticsEngine &Diags) : mImporter(&Importer), mDiags(&Diags) {}
-
-  /// Imports variable array type which is used in implicit cast expression.
-  void run(const ast_matchers::MatchFinder::MatchResult &Result) override {
-    auto VAT = Result.Nodes.getNodeAs<VariableArrayType>("vaType");
-    if (VAT->getSizeExpr() || mImporter->ImportedTypes.count(VAT))
-      return;
-    auto To = VisitVariableArrayType(VAT);
-    if (To.isNull())
-      toDiag(*mDiags, mImporter->Import(VAT->getLBracketLoc()),
-        diag::err_import);
-    else
-      toDiag(*mDiags, mImporter->Import(VAT->getLBracketLoc()),
-        diag::warn_import_variable_array);
-  }
-
-private:
-  /// Imports variable array type.
-  QualType VisitVariableArrayType(const VariableArrayType *T) {
-    QualType ToElementType = mImporter->Import(T->getElementType());
-    // We try to import type manually if built-in clang::ASTImporter has been
-    // unsuccessful.
-    if (ToElementType.isNull() && !T->getElementType().isNull() &&
-        isa<VariableArrayType>(T->getElementType().getTypePtr())) {
-      ToElementType = VisitVariableArrayType(
-        cast<VariableArrayType>(T->getElementType().getTypePtr()));
-      ToElementType = mImporter->getToContext().getQualifiedType(
-        ToElementType, T->getElementType().getLocalQualifiers());
-    }
-    if (ToElementType.isNull())
-      return QualType();
-    Expr *Size = mImporter->Import(T->getSizeExpr());
-    if (!Size && T->getSizeExpr())
-      return QualType();
-    SourceRange Brackets = mImporter->Import(T->getBracketsRange());
-    auto To = mImporter->getToContext().getVariableArrayType(
-      ToElementType, Size, T->getSizeModifier(),
-      T->getIndexTypeCVRQualifiers(), Brackets);
-    mImporter->ImportedTypes[T] = To.getTypePtr();
-    return To;
-  }
-
-  ASTImporter *mImporter;
-  DiagnosticsEngine *mDiags;
-};
-
-/// \brief This callback for ASTMatcher try to perform manual import of case
-/// statement.
-///
-/// TODO (kaniandr@gmail.com): ASTImporter does not import getSubStmt() for
-/// a case statements. This callback performs such import.
-/// This class should be removed when ASTImporter will be fixed.
-class CaseStmtCallback : public ast_matchers::MatchFinder::MatchCallback {
-public:
-  /// Creates callback.
-  explicit CaseStmtCallback(ASTImporter &Importer,
-      DiagnosticsEngine &Diags) : mImporter(&Importer), mDiags(&Diags) {}
-
-  /// Imports case statements.
-  void run(const ast_matchers::MatchFinder::MatchResult &Result) override {
-    auto FromCS = Result.Nodes.getNodeAs<CaseStmt>("case");
-    auto ToCS = mImporter->Import(const_cast<CaseStmt *>(FromCS));
-    if (!ToCS || !FromCS->getSubStmt())
-      return;
-    auto ToSubStmt =
-      mImporter->Import(const_cast<Stmt *>(FromCS->getSubStmt()));
-    if (!ToSubStmt)
-      toDiag(*mDiags, ToCS->getLocStart(), diag::err_import);
-    else
-      toDiag(*mDiags, ToCS->getLocStart(), diag::warn_import_case);
-    cast<CaseStmt>(ToCS)->setSubStmt(ToSubStmt);
-  }
-
-private:
-  ASTImporter *mImporter;
-  DiagnosticsEngine *mDiags;
-};
 }
 
 namespace tsar {
@@ -167,8 +75,9 @@ public:
     ASTImporter(ToContext, ToFileManager, FromContext, FromFileManager,
       MinimalImport) {}
 
-  DeclarationName HandleNameConflict(DeclarationName Name, DeclContext *DC,
-      unsigned IDNS, NamedDecl **Decls, unsigned NumDecls) override {
+  Expected<DeclarationName> HandleNameConflict(DeclarationName Name,
+      DeclContext *DC, unsigned IDNS, NamedDecl **Decls,
+      unsigned NumDecls) override {
     for (unsigned I = 0; I < NumDecls; ++I) {
       if (mInternalFuncs.count(Decls[I])) {
         // Conflicts for internal functions from the current unit are ignored.
@@ -181,11 +90,11 @@ public:
       ToDiag(Decls[I]->getLocation(), diag::err_redefinition_different_kind)
         << Name;
     }
-    return DeclarationName();
+    return make_error<ImportError>(ImportError::NameConflict);
   }
 
-  Decl *Imported(Decl *From, Decl *To) override {
-    To = ASTImporter::Imported(From, To);
+  void Imported(Decl *From, Decl *To) override {
+    ASTImporter::Imported(From, To);
     if (auto FromF = dyn_cast<FunctionDecl>(From)) {
       if (!FromF->hasExternalFormalLinkage()) {
         mInternalFuncs.insert(To);
@@ -196,7 +105,6 @@ public:
         }
       }
     }
-    return To;
   }
 private:
   SmallPtrSet<Decl *, 8> mInternalFuncs;
@@ -213,22 +121,24 @@ public:
     GeneralImporter(ToContext, ToFileManager, FromContext, FromFileManager,
       MinimalImport), mOut(Out) {}
 
-  Decl *Imported(Decl *From, Decl *To) override {
-    To = GeneralImporter::Imported(From, To);
+  void Imported(Decl *From, Decl *To) override {
+    GeneralImporter::Imported(From, To);
     auto &FromSM = getFromContext().getSourceManager();
     auto ToMainFID = Import(FromSM.getMainFileID());
-    if (ToMainFID.isValid())
-      mOut.MainFiles.insert(ToMainFID);
+    if (ToMainFID && ToMainFID->isValid())
+      mOut.MainFiles.insert(*ToMainFID);
     SmallVector<SourceLocation, 5> FromLocs, ToLocs;
     traverseSourceLocation(From,
-      [&FromLocs, this](SourceLocation Loc) {FromLocs.push_back(Import(Loc));});
+      [&FromLocs, this](SourceLocation Loc) {
+        if (auto ToLoc = Import(Loc))
+          FromLocs.push_back(*ToLoc);
+      });
     traverseSourceLocation(To,
       [&ToLocs](SourceLocation Loc) { ToLocs.push_back(Loc); });
     assert(FromLocs.size() == ToLocs.size() &&
       "Different lists of known locations for the source and the result of import!");
     auto &RedeclLocs = mOut.RedeclLocs.try_emplace(To, ToLocs).first->second;
     RedeclLocs.push_back(FromLocs);
-    return To;
   }
 private:
   ASTImportInfo &mOut;
@@ -239,7 +149,7 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
   auto ToD = Importer.Import(FromV);
   if (!ToD)
     return std::make_pair(FromV, nullptr);
-  auto ToV = cast<VarDecl>(ToD);
+  auto ToV = cast<VarDecl>(*ToD);
   switch (ToV->isThisDeclarationADefinition()) {
   case VarDecl::TentativeDefinition:
     TentativeDefinitions.push_back(ToV); break;
@@ -257,10 +167,13 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportVarDecl(VarDecl *FromV,
     // the same storage class as imported declaration (2).
     if (FromV->isThisDeclarationADefinition() ==
         VarDecl::TentativeDefinition) {
+      auto ToInnerLocStart = Importer.Import(FromV->getInnerLocStart());
+      auto ToLocation = Importer.Import(FromV->getLocation());
+      if (!ToInnerLocStart || !ToLocation)
+        return std::make_pair(FromV, nullptr);
       VarDecl *ToTentative = VarDecl::Create(
         ToV->getASTContext(), ToV->getDeclContext(),
-        Importer.Import(FromV->getInnerLocStart()),
-        Importer.Import(FromV->getLocation()),
+        *ToInnerLocStart, *ToLocation,
         ToV->getDeclName().getAsIdentifierInfo(),
         ToV->getType(), ToV->getTypeSourceInfo(),
         FromV->getStorageClass());
@@ -297,24 +210,16 @@ std::pair<Decl *, Decl *> ASTMergeAction::ImportFunctionDecl(
     }
   }
   auto ToF = Importer.Import(FromF);
-  if (ToF && FromF != FuncWithBody)
-    cast<FunctionDecl>(ToF)->setBody(nullptr);
-  return std::make_pair(FromF, ToF);
+  if (!ToF)
+    return std::make_pair(FromF, nullptr);
+  if (FromF != FuncWithBody)
+    cast<FunctionDecl>(*ToF)->setBody(nullptr);
+  return std::make_pair(FromF, *ToF);
 }
 
 
 void ASTMergeAction::PrepareToImport(ASTUnit &Unit,
     DiagnosticsEngine &Diags, ASTImporter &Importer) const {
-  ast_matchers::MatchFinder Finder;
-  VariableArrayCallback VAC(Importer, Diags);
-  Finder.addMatcher(
-    ast_matchers::implicitCastExpr(
-      ast_matchers::hasImplicitDestinationType(
-        ast_matchers::pointsTo(
-          ast_matchers::variableArrayType().bind("vaType")))), &VAC);
-  CaseStmtCallback CSC(Importer, Diags);
-  Finder.addMatcher(ast_matchers::caseStmt().bind("case"), &CSC);
-  Finder.matchAST(Unit.getASTContext());
 }
 
 void ASTMergeAction::FinalizeImport(clang::ASTContext &ToContext,
@@ -403,11 +308,13 @@ void ASTMergeAction::ExecuteAction() {
             auto Stash = Typedef->getTypeSourceInfo()->getType();
             Typedef->getTypeSourceInfo()->overrideType(
               Typedef->getUnderlyingType());
-            toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
+            auto DiagLoc = Importer->Import(D->getLocation());
+            toDiag(CI.getDiagnostics(), DiagLoc ? *DiagLoc : SourceLocation(),
               diag::warn_import_typedef);
           }
         }
-        ToD = Importer->Import(D);
+        if (auto ImportInfo = Importer->Import(D))
+          ToD = *ImportInfo;
       }
       if (ToD) {
         DeclGroupRef DGR(ToD);
@@ -415,14 +322,15 @@ void ASTMergeAction::ExecuteAction() {
         continue;
       }
       // Report errors.
+      auto DiagLoc = Importer->Import(D->getLocation());
       if (auto *ND = dyn_cast<NamedDecl>(D)) {
         if (auto ImportedName = Importer->Import(ND->getDeclName())) {
-          toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
-            diag::err_import_named) << ImportedName;
+          toDiag(CI.getDiagnostics(), DiagLoc ? *DiagLoc : SourceLocation(),
+            diag::err_import_named) << *ImportedName;
           continue;
         }
       }
-      toDiag(CI.getDiagnostics(), Importer->Import(D->getLocation()),
+      toDiag(CI.getDiagnostics(), DiagLoc ? *DiagLoc : SourceLocation(),
         diag::err_import);
     }
   }

@@ -51,8 +51,8 @@ namespace tsar {
 /// TODO (kaniandr@gmail.com): add support of C++, including MemberDecl.
 template<class FuncT>
 void traverseSourceLocation(const clang::Stmt *S, FuncT &&F) {
-  F(S->getLocStart());
-  F(S->getLocEnd());
+  F(S->getBeginLoc());
+  F(S->getEndLoc());
   if (auto Switch = llvm::dyn_cast<clang::SwitchCase>(S)) {
     F(Switch->getColonLoc());
     if (auto Case = llvm::dyn_cast<clang::CaseStmt>(S))
@@ -84,8 +84,8 @@ void traverseSourceLocation(const clang::Stmt *S, FuncT &&F) {
     } else if (auto DIE = llvm::dyn_cast<clang::DesignatedInitExpr>(E)) {
       F(DIE->getEqualOrColonLoc());
       for (auto &D : DIE->designators()) {
-        F(D.getLocStart());
-        F(D.getLocEnd());
+        F(D.getBeginLoc());
+        F(D.getEndLoc());
         if (D.isArrayRangeDesignator())
           F(D.getEllipsisLoc());
       }
@@ -104,8 +104,8 @@ void traverseSourceLocation(const clang::Stmt *S, FuncT &&F) {
 /// Calls a specified function for each known location in a declaration.
 template<class FuncT>
 void traverseSourceLocation(const clang::Decl *D, FuncT &&F) {
-  F(D->getLocStart());
-  F(D->getLocEnd());
+  F(D->getBeginLoc());
+  F(D->getEndLoc());
   F(D->getLocation());
   if (auto FSA = llvm::dyn_cast<clang::FileScopeAsmDecl>(D)) {
     F(FSA->getAsmLoc());
@@ -122,8 +122,8 @@ void traverseSourceLocation(const clang::Decl *D, FuncT &&F) {
 /// Calls a specified function for each known location in a type.
 template<class FuncT>
 void traverseSourceLocation(clang::TypeLoc TL, FuncT &&F) {
-  F(TL.getLocStart());
-  F(TL.getLocEnd());
+  F(TL.getBeginLoc());
+  F(TL.getEndLoc());
 }
 }
 #endif//TSAR_SOURCE_LOCATION_TRAVERSE_H

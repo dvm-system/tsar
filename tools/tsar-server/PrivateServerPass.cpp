@@ -62,8 +62,10 @@
 #include <clang/AST/Expr.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/Builtins.h>
+#include <clang/Basic/FileManager.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
@@ -959,8 +961,8 @@ unsigned incrementTraitCount(Function &F, const GlobalOptions &GO,
 
 msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
   assert(S && "Statement must not be null!");
-  auto LocStart = S->getLocStart();
-  auto LocEnd = S->getLocEnd();
+  auto LocStart = S->getBeginLoc();
+  auto LocEnd = S->getEndLoc();
   msg::Loop Loop;
   Loop[msg::Loop::ID] = LocStart.getRawEncoding();
   if (isa<clang::ForStmt>(S))
@@ -1037,7 +1039,7 @@ std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
-    if (SrcMgr.getFileCharacteristic(Decl->getLocStart())
+    if (SrcMgr.getFileCharacteristic(Decl->getBeginLoc())
         != clang::SrcMgr::C_User)
       continue;
     ++Stat[msg::Statistic::Functions];
@@ -1068,7 +1070,7 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
     if (!mVisibleToUser.count(CanonicalFD) ||
-        CanonicalFD->getLocStart().getRawEncoding() !=
+        CanonicalFD->getBeginLoc().getRawEncoding() !=
           Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
@@ -1199,14 +1201,14 @@ void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
         continue;
       msg::Function Func;
       SmallString<64> ExtraName;
-      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName);
+      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName).str();
       // Canonical declaration may differs from declaration which has a body.
-      Func[msg::Function::ID] = FD->getLocStart().getRawEncoding();
+      Func[msg::Function::ID] = FD->getBeginLoc().getRawEncoding();
       Func[msg::Function::User] = false;
       Func[msg::Function::StartLocation] =
-          getLocation(FD->getLocStart(), SrcMgr);
+          getLocation(FD->getBeginLoc(), SrcMgr);
       Func[msg::Function::EndLocation] =
-          getLocation(FD->getLocEnd(), SrcMgr);
+          getLocation(FD->getEndLoc(), SrcMgr);
       if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
           !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
           !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
@@ -1224,7 +1226,7 @@ std::string PrivateServerPass::answerFileList() {
   for (auto &Info : make_range(SrcMgr.fileinfo_begin(), SrcMgr.fileinfo_end())) {
     msg::File File;
     File[msg::File::ID] = Info.first->getUID();
-    File[msg::File::Name] = Info.first->getName();
+    File[msg::File::Name] = std::string(Info.first->getName());
     FileList[msg::FileList::Files].emplace_back(std::move(File));
   }
   return json::Parser<msg::FileList>::unparseAsObject(FileList);
@@ -1244,16 +1246,16 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
     SmallString<64> ExtraName;
-    Func[msg::Function::Name] = getFunctionName(*FuncDecl, ExtraName);
+    Func[msg::Function::Name] = getFunctionName(*FuncDecl, ExtraName).str();
     // Canonical declaration may differs from declaration which has a body.
-    Func[msg::Function::ID] = CanonicalD->getLocStart().getRawEncoding();
+    Func[msg::Function::ID] = CanonicalD->getBeginLoc().getRawEncoding();
     Func[msg::Function::User] =
-        (SrcMgr.getFileCharacteristic(Decl->getLocStart()) ==
+        (SrcMgr.getFileCharacteristic(Decl->getBeginLoc()) ==
          clang::SrcMgr::C_User);
     Func[msg::Function::StartLocation] =
-        getLocation(FuncDecl->getLocStart(), SrcMgr);
+        getLocation(FuncDecl->getBeginLoc(), SrcMgr);
     Func[msg::Function::EndLocation] =
-        getLocation(FuncDecl->getLocEnd(), SrcMgr);
+        getLocation(FuncDecl->getEndLoc(), SrcMgr);
     if (hasFnAttr(F, AttrKind::AlwaysReturn) &&
         F.hasFnAttribute(Attribute::NoUnwind) &&
         !F.hasFnAttribute(Attribute::ReturnsTwice))
@@ -1296,7 +1298,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getLocStart().getRawEncoding() !=
+    if (CanonicalFD->getBeginLoc().getRawEncoding() !=
         Request[msg::CalleeFuncList::FuncID])
       continue;
     if (F.isDeclaration())
@@ -1314,14 +1316,14 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         bcl::tagged<clang::Stmt *, AST>,
         bcl::tagged<Loop *, IR>> Loop(nullptr, nullptr);
       for (auto Match : Matcher)
-        if (Match.get<AST>()->getLocStart().getRawEncoding() ==
+        if (Match.get<AST>()->getBeginLoc().getRawEncoding() ==
             StmtList[msg::CalleeFuncList::LoopID]) {
           Loop = Match;
           break;
         }
       if (!Loop.get<AST>()) {
         for (auto Unmatch : Unmatcher)
-          if (Unmatch->getLocStart().getRawEncoding() ==
+          if (Unmatch->getBeginLoc().getRawEncoding() ==
               StmtList[msg::CalleeFuncList::LoopID]) {
             Loop.get<AST>() = Unmatch;
             break;
@@ -1362,7 +1364,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
           F = &FuncMap[FD];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
           (*F)[msg::CalleeFuncInfo::CalleeID] =
-              FD->getLocStart().getRawEncoding();
+              FD->getBeginLoc().getRawEncoding();
         } else {
           F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Call)];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
@@ -1370,7 +1372,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
       }
       if (F)
         (*F)[msg::CalleeFuncInfo::StartLocation].push_back(
-          getLocation(T.Stmt->getLocStart(), SrcMgr));
+          getLocation(T.Stmt->getBeginLoc(), SrcMgr));
     }
     for (auto &CFI: StmtMap)
       if (CFI[msg::CalleeFuncInfo::Kind] != msg::StmtKind::Invalid)
@@ -1389,7 +1391,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getLocStart().getRawEncoding() !=
+    if (CanonicalFD->getBeginLoc().getRawEncoding() !=
           Request[msg::AliasTree::FuncID])
       continue;
     if (F.isDeclaration())
@@ -1403,7 +1405,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
         bcl::tagged<clang::Stmt *, AST>,
         bcl::tagged<Loop *, IR>> Loop(nullptr, nullptr);
       for (auto Match : LoopMatcher)
-        if (Match.get<AST>()->getLocStart().getRawEncoding() ==
+        if (Match.get<AST>()->getBeginLoc().getRawEncoding() ==
             Request[msg::AliasTree::LoopID]) {
           Loop = Match;
           break;
@@ -1467,7 +1469,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
                 M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
                   VD->getLocation().getRawEncoding();
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
-                  VD->getName();
+                  VD->getName().str();
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
                   getLocation(VD->getLocation(), SrcMgr);
               }
@@ -1482,8 +1484,8 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
               if (!unparsePrint(dwarf::DW_LANG_C, TmpLoc, AddressOS))
                 AddressOS << "?";
               auto Size = TmpLoc.getSize();
-              if (Size != MemoryLocation::UnknownSize)
-                M[msg::MemoryLocation::Size] = Size;
+              if (Size.hasValue())
+                M[msg::MemoryLocation::Size] = Size.getValue();
             }
           } else if (auto ClonedUM = dyn_cast<DIUnknownMemory>(T->getMemory())) {
             auto MemoryItr = ClonedMemory->find<Clone>(
@@ -1499,18 +1501,18 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
               AddressOS << "address";
             if (auto SubMD = dyn_cast<DISubprogram>(MD)) {
               M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
-                SubMD->getName();
+                SubMD->getName().str();
               if (auto *D = mTfmCtx->getDeclForMangledName(
                     SubMD->getLinkageName())) {
                 auto *FD = D->getCanonicalDecl()->getAsFunction();
                 SmallString<64> ExtraName;
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
-                    getFunctionName(*FD, ExtraName);
+                    getFunctionName(*FD, ExtraName).str();
                 if (mVisibleToUser.count(FD))
                   M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
-                      FD->getLocStart().getRawEncoding();
+                      FD->getBeginLoc().getRawEncoding();
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
-                    getLocation(FD->getLocStart(), SrcMgr);
+                    getLocation(FD->getBeginLoc(), SrcMgr);
               } else if (!ClonedUM->isExec() && !ClonedUM->isResult()) {
                 SmallString<32> Address("?");
                 if (MD->getNumOperands() == 1)

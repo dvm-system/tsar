@@ -108,9 +108,8 @@ FunctionType *getType(LLVMContext &Ctx, IntrinsicId Id) {
   return FunctionType::get(ResultTy, ArgsTys, false);
 }
 
-llvm::Function * getDeclaration(Module *M, IntrinsicId Id) {
-  return cast<Function>(
-    M->getOrInsertFunction(getName(Id), getType(M->getContext(), Id)));
+llvm::FunctionCallee getDeclaration(Module *M, IntrinsicId Id) {
+  return M->getOrInsertFunction(getName(Id), getType(M->getContext(), Id));
 }
 
 bool getTsarLibFunc(StringRef funcName, IntrinsicId &Id) {
