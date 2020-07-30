@@ -63,83 +63,46 @@ include(BCLUtils)
 include(llvm-utility)
 
 # There are three steps to configure LLVM and Clang:
-# 1.a (DOWNLOAD_LLVM is ON, SVN is currently supported only):
-#    check out a working copies ${LLVM_SOURCE_DIR}, ${CLANG_SOURCE_DIR}
-#    and ${COMPILER_RT_SOURCE_DIR} (or update if it already exists)
-#    from LLVM repository ${LLVM_REPO}.
-# 1.b (LOCAL_LLVM is ON, SVN multirepo or GIT multi/mono repo are supported):
+# 1.a (LOCAL_LLVM is ON, GIT mono repo is only supported):
 #    Use LLVM as TSAR subproject (add_subdirectory() is used to build LLVM).
-# 1.c (PACKAGE_LLVM is ON):
+# 1.b (PACKAGE_LLVM is ON):
 #    Use previously installed LLVM package.
 # 2. Configure LLVM project ((in case of 1.a and 1.b only).
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
-option(DOWNLOAD_LLVM "Download LLVM from subversion repository" OFF)
 option(LOCAL_LLVM "Use existing LLVM sources" OFF)
 option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
 
-set(LLVM_REPO
-  "http://llvm.org/svn/llvm-project/llvm/tags/RELEASE_700/final/" CACHE STRING
-  "URL of LLVM subversion repository (useful only if DOWNLOAD_LLVM is set)")
-set(CLANG_REPO
-  "http://llvm.org/svn/llvm-project/cfe/tags/RELEASE_700/final/" CACHE STRING
-  "URL of Clang subversion repository (useful only if DOWNLOAD_LLVM is set)")
-set(COMPILER_RT_REPO
-  "http://llvm.org/svn/llvm-project/compiler-rt/tags/RELEASE_700/final/" CACHE STRING
-  "URL of Compiler-RT subversion repository (useful only if DOWNLOAD_LLVM is set)")
-
-set(LLVM_SOURCE_DIR "${CMAKE_BINARY_DIR}/llvm" CACHE PATH
-   "Root of LLVM source tree")
+set(LLVM_PROJECT_DIR "${CMAKE_BINARY_DIR}/llvm-project" CACHE PATH
+   "Root of LLVM source tree (path to llvm-project directory, usefull if LOCAL_LLVM is set to ON")
 
 set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
   "Version of installed LLVM package (useful only if PACKAGE_LLVM is set)")
 
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
+option(TSAR_SERVER "Build TSAR server shared library" OFF)
+
 option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_PROFILE "Build profile runtime" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
-option(TSAR_SERVER "Build TSAR server shared library" OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
-option(LLVM_MONO_REPO
-  "Use LLVM monolithic repository (useful only if LOCAL_LLVM is set)" ON)
 
-if(NOT LLVM_MONO_REPO)
-  set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/tools/clang")
-  set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/projects/compiler-rt")
-else()
-  set(CLANG_SOURCE_DIR "${LLVM_SOURCE_DIR}/../clang")
-  set(COMPILER_RT_SOURCE_DIR "${LLVM_SOURCE_DIR}/../compiler-rt")
-endif()
+set(LLVM_SOURCE_DIR "${LLVM_PROJECT_DIR}/llvm")
+set(CLANG_SOURCE_DIR "${LLVM_PROJECT_DIR}/clang")
+set(COMPILER_RT_SOURCE_DIR "${LLVM_PROJECT_DIR}/compiler-rt")
 
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
 
-if((DOWNLOAD_LLVM AND LOCAL_LLVM) OR
-   (DOWNLOAD_LLVM AND PACKAGE_LLVM) OR
-   (LOCAL_LLVM AND PACKAGE_LLVM))
+if (LOCAL_LLVM AND PACKAGE_LLVM)
   message(FATAL_ERROR
-    "Options DOWNLOAD_LLVM, LOCAL_LLVM and PACKAGE_LLVM are not compatible")
+    "Options LOCAL_LLVM and PACKAGE_LLVM are not compatible")
 endif()
-if(NOT LOCAL_LLVM AND NOT DOWNLOAD_LLVM AND NOT PACKAGE_LLVM)
+if(NOT LOCAL_LLVM AND NOT PACKAGE_LLVM)
   message(FATAL_ERROR
-    "One of options LOCAL_LLVM, DOWNLOAD_LLVM, PACKAGE_LLVM should be specified.")
-endif()
-if (DOWNLOAD_LLVM AND LLVM_MONO_REPO)
-  message(FATAL_ERROR
-    "Options DOWNLOAD_LLVM and LLVM_MONO_REPO are not compatible: "
-    "download monolithic repository manually "
-    "or use Subversion umbrella repository")
-endif()
-
-# Download LLVM if need
-set(DOWNLOAD_CLANG ${DOWNLOAD_LLVM})
-if (BUILD_PROFILE)
-  set(DOWNLOAD_COMPILER_RT ${DOWNLOAD_LLVM})
-endif()
-if(DOWNLOAD_LLVM)
-  sapfor_download_llvm()
+    "One of options LOCAL_LLVM, PACKAGE_LLVM should be specified.")
 endif()
 
 if(PACKAGE_LLVM)
@@ -163,21 +126,22 @@ else()
   if ((BUILD_CLANG OR BUILD_TSAR) AND NOT EXISTS ${CLANG_SOURCE_DIR})
     message(FATAL_ERROR "CLANG_SOURCE_DIR '${CLANG_SOURCE_DIR}' does not exist")
   endif()
+  if (BUILD_PROFILE AND NOT EXISTS ${COMPILER_RT_SOURCE_DIR})
+    message(FATAL_ERROR "COMPILER_RT_SOURCE_DIR '${COMPILER_RT_SOURCE_DIR}' does not exist")
+  endif()
   set(LLVM_STATUS "Configuring LLVM project")
   message(STATUS ${LLVM_STATUS})
-  if (LLVM_MONO_REPO)
-    set(LLVM_PROJECTS clang)
-    if (BUILD_PROFILE)
-      set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
-    endif()
-    set(LLVM_ENABLE_PROJECTS ${LLVM_PROJECTS} CACHE STRING "" FORCE)
+  set(LLVM_PROJECTS clang)
+  if (BUILD_PROFILE)
+    set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
   endif()
+  set(LLVM_ENABLE_PROJECTS ${LLVM_PROJECTS} CACHE STRING "" FORCE)
   add_subdirectory(${LLVM_SOURCE_DIR} ${LLVM_BINARY_DIR} EXCLUDE_FROM_ALL)
   find_package(LLVM CONFIG HINTS ${LLVM_BINARY_DIR} NO_DEFAULT_PATH)
   if(NOT LLVM_FOUND)
-   message(FATAL_ERROR "${LLVM_STATUS} - error")
+    message(FATAL_ERROR "${LLVM_STATUS} - error")
   else()
-   message(STATUS "${LLVM_STATUS} - done")
+    message(STATUS "${LLVM_STATUS} - done")
   endif()
   set(LLVM_VERSION ${LLVM_VERSION} CACHE STRING "" FORCE)
   if(BUILD_PROFILE AND (NOT LLVM_TOOL_COMPILER_RT_BUILD))
