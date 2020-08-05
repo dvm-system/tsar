@@ -110,21 +110,43 @@ void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
   }
 }
 
-unsigned getPerfectNestSize(const DFLoop &DFL,
-    const PerfectLoopInfo &PerfectInfo,
-    const CanonicalLoopSet &CanonicalLoops) {
+void addOnClause(const DFLoop &DFL, const PerfectLoopInfo &PerfectInfo,
+                 const CanonicalLoopSet &CanonicalLoops,
+                 const MemoryMatchInfo &MemoryMatcher,
+                 SmallVectorImpl<char> &Out) {
+  Out.append({' ', 'o', 'n', '('});
   auto *CurrDFL = &DFL;
-  unsigned PerfectSize = 1;
-  for (; PerfectInfo.count(CurrDFL) && CurrDFL->getNumRegions() > 0;
-       ++PerfectSize) {
+  auto CanonicalItr = CanonicalLoops.find_as(const_cast<DFLoop *>(CurrDFL));
+  assert(CanonicalItr != CanonicalLoops.end() &&
+         (**CanonicalItr).isCanonical() &&
+         "Parallel loop must have canonical loop form!");
+  auto *Induction = (**CanonicalItr).getInduction();
+  assert(Induction && "Induction variable must not be null in canonical loop!");
+  auto MatchItr = MemoryMatcher.Matcher.find<IR>(Induction);
+  assert(MatchItr != MemoryMatcher.Matcher.end() &&
+         "AST-level variable representation must be available!");
+  Out.append({'['});
+  Out.append(MatchItr->get<AST>()->getName().begin(),
+             MatchItr->get<AST>()->getName().end());
+  Out.append({']'});
+  for (; PerfectInfo.count(CurrDFL) && CurrDFL->getNumRegions() > 0;) {
     CurrDFL = dyn_cast<DFLoop>(*CurrDFL->region_begin());
     if (!CurrDFL)
-      return PerfectSize;
+      break;
     auto CanonicalItr = CanonicalLoops.find_as(const_cast<DFLoop *>(CurrDFL));
     if (CanonicalItr == CanonicalLoops.end() || !(**CanonicalItr).isCanonical())
-      return PerfectSize;
+      break;
+    auto *Induction = (**CanonicalItr).getInduction();
+    assert(Induction && "Induction variable must not be null in canonical loop!");
+    auto MatchItr = MemoryMatcher.Matcher.find<IR>(Induction);
+    assert(MatchItr != MemoryMatcher.Matcher.end() &&
+          "AST-level variable representation must be available!");
+    Out.append({'['});
+    Out.append(MatchItr->get<AST>()->getName().begin(),
+               MatchItr->get<AST>()->getName().end());
+    Out.append({']'});
   }
-  return PerfectSize;
+  Out.append({')'});
 }
 } // namespace
 
@@ -166,13 +188,13 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   }
   auto &PerfectInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
   auto &CanonicalInfo = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
-  SmallString<128> ParallelFor("#pragma dvm parallel (");
+  auto &MemoryMatcher = Provider.get<MemoryMatcherImmutableWrapper>().get();
+
+  SmallString<128> ParallelFor("#pragma dvm parallel");
   if (HostOnly)
-    ParallelFor += "1";
+    ParallelFor += "(1)";
   else
-    Twine(getPerfectNestSize(IR, PerfectInfo, CanonicalInfo))
-        .toStringRef(ParallelFor);
-  ParallelFor += ")";
+    addOnClause(IR, PerfectInfo, CanonicalInfo, MemoryMatcher, ParallelFor);
   if (!ASTDepInfo.get<trait::Private>().empty()) {
     ParallelFor += " private";
     addVarList(ASTDepInfo.get<trait::Private>(), ParallelFor);

@@ -28,6 +28,7 @@
 
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/AnalysisSocket.h"
+#include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <bcl/tagged.h>
@@ -70,7 +71,7 @@ using ClangSMParallelProvider =
     FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
                            ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
                            DFRegionInfoPass, ClangDIMemoryMatcherPass,
-                           ClangPerfectLoopPass>;
+                           MemoryMatcherImmutableWrapper, ClangPerfectLoopPass>;
 
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
