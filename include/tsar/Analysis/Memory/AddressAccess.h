@@ -65,7 +65,7 @@ namespace llvm {
 
         //using AccessSet = DenseSet<llvm::Value *>;
         using StoredPtrArguments = DenseSet<Argument *>;
-        using FunctionToArguments = DenseMap<const llvm::Function *, StoredPtrArguments>;
+        using FunctionToArguments = DenseMap<llvm::Function *, StoredPtrArguments *>;
         typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
 
         static bool isNonTrivialPointerType(Type *);
@@ -77,13 +77,13 @@ namespace llvm {
         }
 
         static void runOnFunctionBasic(Function &F);
-        void runOnFunction(Function &F);
+        void runOnFunction(Function *F);
 
         bool runOnModule(Module &M) override;
 
         void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-        //void print(raw_ostream &OS, const Module *M) const override {};
+        void print(raw_ostream &OS, const Module *M) const override;
 
         static const tsar::AliasEstimateNode *
         getAliasNodeByPointerValue(Value *Val, Function *F, const tsar::AliasTree &);

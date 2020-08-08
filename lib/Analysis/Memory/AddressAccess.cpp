@@ -72,53 +72,61 @@ void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
 }
 
-void AddressAccessAnalyser::runOnFunction(Function &F) {
-    FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(F);
+void AddressAccessAnalyser::runOnFunction(Function *F) {
+    mParameterAccesses[F] = new StoredPtrArguments();  // if argument is here => ptr held by it may be stored somewhere
 
-    // obtain vars address of which is evaluated in function
-    tsar::DefinedMemoryInfo *DefInfo = &Provider->get<DefinedMemoryPass>().getDefInfo();
-    tsar::DFRegionInfo *RegionInfo = &Provider->get<DFRegionInfoPass>().getRegionInfo();
+    // obtain AliasTree
+//    FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(F);
+//    auto AliasTree = &getAnalysis<EstimateMemoryPass>(F).getAliasTree();
+//    AliasTreeRelation AliasSTR(AliasTree);
 
-    auto *FunRegion = cast<DFFunction>(RegionInfo->getTopLevelRegion());
-    auto DefItr = DefInfo->find(FunRegion);
-    auto &DefUse = DefItr->get<DefUseSet>();
+    // filter out non-ptr args for convenience
+    auto PtrArgs = StoredPtrArguments();
+    for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++)
+        if (Arg->getType()->isPointerTy())
+            PtrArgs.insert(Arg);
 
-    const PointerSet &ValuesAccessedByAddress = DefUse->getAddressAccesses();
+    // iterate through fun body
+    for (BasicBlock &BB : F->getBasicBlockList())
+        for (Instruction &I: BB) {
+            // TODO: process pointers stored to global memory
+//            if (auto *SI = dyn_cast<StoreInst>(&I)) {
+//                auto *Dst = SI->getPointerOperand();
+//                auto *StoredValue = SI->getValueOperand();
+//                if (!isa<GlobalVariable>(Dst) || !StoredValue->getType()->isPointerTy())
+//                    continue;  // TODO: what if a pointer is somewhere within a struct/array?
+//
+//                for (Argument *PtrArg : PtrArgs) {
+//                    auto *ArgAliasNode = getAliasNodeByPointerValue(PtrArg, &F, *AliasTree);
+//                    auto *ValAliasNode = getAliasNodeByPointerValue(StoredValue, &F, *AliasTree);
+//                    if (!AliasSTR.isUnreachable(ValAliasNode, ArgAliasNode))
+//                        mParameterAccesses[&F]->insert(PtrArg);  // TODO: weird all args match to stored value
+//                }
+//            }
 
-    // keep only those values which intersect with fun-params by memory
-    auto ValToArgs = DenseMap<Value *, DenseSet<Argument *>>();
+            // process calls of [already processed] funcs
+            if (auto *CI = dyn_cast<CallInst>(&I)) {
+                Function *Callee = CI->getCalledFunction();
+                if (Callee->isIntrinsic())
+                    continue;
 
-    auto AliasTree = &getAnalysis<EstimateMemoryPass>(F).getAliasTree();
-    AliasTreeRelation AliasSTR(AliasTree);
-
-    for (Value *ValueAccessed : ValuesAccessedByAddress) {
-        LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: var accessed by address " << ValueAccessed->getName().str()
-                          << "\n";);
-
-        const tsar::AliasEstimateNode *ValueAliasNode = getAliasNodeByPointerValue(ValueAccessed, &F, *AliasTree);
-
-        auto args = StoredPtrArguments();
-        for (Argument *arg = F.arg_begin(); arg != F.arg_end(); arg++) {
-            auto ArgTy = arg->getType();
-            if (!ArgTy->isPointerTy()) // we're analyzing only pointers
-                continue;
-            if (isNonTrivialPointerType(ArgTy))
-                args.insert(arg);
-
-            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: par of pointer type " << arg->getName().str()
-                              << "\n";);
-
-            const tsar::AliasEstimateNode *ArgumentAliasNode = getAliasNodeByPointerValue(arg, &F, *AliasTree);
-            if (!AliasSTR.isUnreachable(ValueAliasNode, ArgumentAliasNode))
-                args.insert(arg);
+                auto CalleeParAccesses = mParameterAccesses.find(Callee);
+                assert(CalleeParAccesses != mParameterAccesses.end() && "Callee unprocessed");  // TODO: weird fun in main is still unprocessed
+                printf("Callee [%s] is being processed after caller [%s]\n", Callee->getName().begin(), F->getName().begin());
+//                for (Argument *FormalArg : *CalleeParAccesses->second) {
+//                    Value *ActArg = CI->getArgOperand(FormalArg->getArgNo());
+//                    for (Argument *ParentArg : PtrArgs) {
+//
+//                    }
+//                }
+            }
+            // TODO: process casts
+            // TODO: process pointers returned
+//            auto *RI = dyn_cast<ReturnInst>(&I);
+//            if (RI && hasUnderlyingPointer(RI->getReturnValue()->getType())) {
+//                // TODO: find which locations may be returned
+//            }
         }
-
-        if (!args.empty())
-            ValToArgs.insert(std::pair<Value *, DenseSet<Argument *>>(ValueAccessed, args));
-    }
-
-    // iterate over kept usages to see if address is stored somewhere
-    // TODO
 }
 
 void AddressAccessAnalyser::runOnFunctionBasic(Function &F) {
@@ -169,7 +177,7 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
 
         LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: analyzing function " << F->getName().str()
                           << "\n";);
-        runOnFunction(*F);
+        runOnFunction(F);
     }
 
     return false;
@@ -189,15 +197,21 @@ const tsar::AliasEstimateNode *AddressAccessAnalyser::getAliasNodeByPointerValue
 }
 
 bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
-  assert(Ty && "Type must not be null!");
-  if (Ty->isArrayTy())
-    return hasUnderlyingPointer(Ty->getArrayElementType());
-  if (Ty->isVectorTy())
-    return hasUnderlyingPointer(Ty->getVectorElementType());
-  if (Ty->isStructTy())
-    for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
-      return hasUnderlyingPointer(Ty->getStructElementType(I));
-  return false;
+    assert(Ty && "Type must not be null!");
+    if (Ty->isPointerTy())
+        return hasUnderlyingPointer(Ty->getPointerElementType());
+    if (Ty->isArrayTy())
+        return hasUnderlyingPointer(Ty->getArrayElementType());
+    if (Ty->isVectorTy())
+        return hasUnderlyingPointer(Ty->getVectorElementType());
+    if (Ty->isStructTy())
+        for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
+            return hasUnderlyingPointer(Ty->getStructElementType(I));
+    return false;
+}
+
+void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
+  OS << "Printing pass: '" << getPassName() << "'\n";
 }
 
 //void AddressAccessAnalyser::resolveCandidats(
