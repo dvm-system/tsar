@@ -64,6 +64,8 @@ namespace llvm {
             public ModulePass, private bcl::Uncopyable {
 
         //using AccessSet = DenseSet<llvm::Value *>;
+        using ValueSet = DenseSet<llvm::Value *>;
+        using ArgumentHolders = DenseMap<Argument *, ValueSet>;
         using StoredPtrArguments = DenseSet<Argument *>;
         using FunctionToArguments = DenseMap<llvm::Function *, StoredPtrArguments *>;
         typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
@@ -85,12 +87,17 @@ namespace llvm {
 
         void print(raw_ostream &OS, const Module *M) const override;
 
+        DenseSet<Argument *> getCallerArgsStoredInValue(Value* V, Function* caller, ArgumentHolders &argHolders);
         static const tsar::AliasEstimateNode *
         getAliasNodeByPointerValue(Value *Val, Function *F, const tsar::AliasTree &);
 
         void releaseMemory() override {};
 
         FunctionToArguments mParameterAccesses;
+
+    private:
+        ValueSet getAncestors(Value *);
+        ArgumentHolders getArgumentHolders(Function* F);
     };
 }
 #endif //SAPFOR_ADDRESSACCESS_H

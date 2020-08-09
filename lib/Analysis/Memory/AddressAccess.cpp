@@ -27,6 +27,7 @@
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/ADT/SCCIterator.h"
 #include <iostream>
+#include <queue>
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "address-access"
@@ -72,6 +73,119 @@ void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
 }
 
+AddressAccessAnalyser::ValueSet AddressAccessAnalyser::getAncestors(Value *V) {
+    /* Traverse through use graph of values.
+     *
+     * Vertex of this graph is either:
+     *  a) argument
+     *  b) named register, holding address in memory
+     *  c) load instruction
+     *
+     * Edge of this graph is presented as a usage of a Value corresponding to vertex.
+     */
+    auto visited = ValueSet();
+    auto visitQueue = std::queue<llvm::Value *>();
+
+    visited.insert(V);
+    visitQueue.push(V);
+
+    while (!visitQueue.empty()) {
+        Value* head = visitQueue.front();
+        visitQueue.pop();
+
+        for (auto U : head->users()) {
+            if (auto SI = dyn_cast<StoreInst>(U)) {
+                // Value of the argument is passed if the register holding it is a source (not destination)
+                // e.g. store %a, %ptr  <-- OK
+                // e.g. store %b, %a    <-- NOT OK
+                if (SI->getPointerOperand() != head && visited.find(SI->getPointerOperand()) == visited.end()) {
+                    visited.insert(SI->getPointerOperand());
+                    visitQueue.push(SI->getPointerOperand());
+                }
+            }
+            else if (auto LI = dyn_cast<LoadInst>(U)) {
+                visited.insert(LI);
+                visitQueue.push(LI);
+            }
+        }
+    }
+
+    return visited;
+}
+
+AddressAccessAnalyser::ArgumentHolders AddressAccessAnalyser::getArgumentHolders(llvm::Function *F) {
+    /* For every ptr argument finds Values which may contain it's value. Example:
+     *
+     * Code:
+     * define void @fun(i32* %a) {
+     *    // ...Some declarations...
+     *
+     *    store i32* %a, i32** %a.addr, align 8
+     *
+     *    %1 = load i32*, i32** %a.addr, align 8
+     *    store i32* %1, i32** %x, align 8             // int *x = a;
+     *
+     *    %3 = load i32*, i32** %a.addr, align 8
+     *    store i32* %3, i32** %y, align 8             // int *y = a;
+     *
+     *    %5 = load i32*, i32** %x, align 8
+     *    store i32* %5, i32** %z, align 8             // int *z = x;
+     * }
+     *
+     * Result:
+     * {
+     *     Argument("a"): [
+     *         Reg("a.addr"),
+     *         Instr("%1 = load.."),    <-- <Load> instruction, which loads value of the argument from memory
+     *         Reg("x"),                <-- Register, which holds address in memory containing a value of the arg
+     *         Instr("%3 = load.."),
+     *         Reg("y"),
+     *         Instr("%5 = load.."),
+     *         Reg("z"),
+     *     ]
+     * }
+     */
+    auto argumentHolders = ArgumentHolders();
+
+    for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++) {
+        if (Arg->getType()->isPointerTy()) {  // we're not interested in non-ptr arguments
+            argumentHolders[Arg] = getAncestors(Arg);
+        }
+    }
+
+    return argumentHolders;
+}
+
+DenseSet<Argument *> AddressAccessAnalyser::getCallerArgsStoredInValue(
+        Value* V,
+        Function* caller,
+        AddressAccessAnalyser::ArgumentHolders &argHolders) {
+    auto argSet = DenseSet<Argument *>();
+
+    if (V == NULL)
+        return argSet;
+
+    if (auto SI = dyn_cast<LoadInst>(V)) {  // usually argument of the callee is a result of the LoadInst
+        for (auto &pair: argHolders) {
+            Argument *arg = pair.first;
+            ValueSet holders = pair.second;
+
+            if (holders.find(SI) != holders.end())
+                argSet.insert(arg);
+        }
+    }
+    else if (auto C = dyn_cast<Constant>(V)) {  // also argument could be a constant
+        // nothing to do
+    }
+    else {  // conservatively assume all parameters being stored here
+        LLVM_DEBUG(errs() << "Value of an unknown type as a callee argument" << "\n");
+        for (Argument &arg : caller->args())
+            argSet.insert(&arg);
+    }
+
+    return argSet;
+}
+
 void AddressAccessAnalyser::runOnFunction(Function *F) {
     mParameterAccesses[F] = new StoredPtrArguments();  // if argument is here => ptr held by it may be stored somewhere
 
@@ -81,10 +195,19 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
 //    AliasTreeRelation AliasSTR(AliasTree);
 
     // filter out non-ptr args for convenience
-    auto PtrArgs = StoredPtrArguments();
-    for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++)
-        if (Arg->getType()->isPointerTy())
-            PtrArgs.insert(Arg);
+    auto PtrArgs = getArgumentHolders(F);
+
+//    // DEBUG
+//    printf("Function [%s]:\n", F->getName().begin());
+//    for (auto &CallerArgPair : PtrArgs) {
+//        auto CallerArg = CallerArgPair.first;
+//        auto CallerArgHolders = CallerArgPair.second;
+//
+//        printf("\tArg [%s]: ", CallerArg->getName().begin());
+//        for (auto V: CallerArgHolders)
+//            printf("%s, ", V->getName().begin());
+//        printf("\n");
+//    }
 
     // iterate through fun body
     for (BasicBlock &BB : F->getBasicBlockList())
@@ -105,27 +228,32 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
 //            }
 
             // process calls of [already processed] funcs
+            // TODO: hasUnderlyingPointer
             if (auto *CI = dyn_cast<CallInst>(&I)) {
                 Function *Callee = CI->getCalledFunction();
+                // printf("Callee: [%s]\n", Callee->getName().begin());
                 if (Callee->isIntrinsic())
                     continue;
 
                 auto CalleeParAccesses = mParameterAccesses.find(Callee);
-                assert(CalleeParAccesses != mParameterAccesses.end() && "Callee unprocessed");  // TODO: weird fun in main is still unprocessed
-                printf("Callee [%s] is being processed after caller [%s]\n", Callee->getName().begin(), F->getName().begin());
-//                for (Argument *FormalArg : *CalleeParAccesses->second) {
-//                    Value *ActArg = CI->getArgOperand(FormalArg->getArgNo());
-//                    for (Argument *ParentArg : PtrArgs) {
-//
-//                    }
-//                }
+                assert(CalleeParAccesses != mParameterAccesses.end() && "Callee unprocessed");
+
+                // Iterating over Parameters of the callee [possibly] saved to the global memory
+                for (Argument *FormalArg : *CalleeParAccesses->second) {
+                    Value *CalleeArg = CI->getArgOperand(FormalArg->getArgNo());
+
+                    // Conservatively determine parameters of the caller which may be stored in this par of the callee
+                    DenseSet<Argument *> parAccesses = getCallerArgsStoredInValue(CalleeArg, F, PtrArgs);
+                    mParameterAccesses[F]->insert(parAccesses.begin(), parAccesses.end());
+                }
             }
             // TODO: process casts
-            // TODO: process pointers returned
-//            auto *RI = dyn_cast<ReturnInst>(&I);
-//            if (RI && hasUnderlyingPointer(RI->getReturnValue()->getType())) {
-//                // TODO: find which locations may be returned
-//            }
+
+            // process pointers returned
+            if (auto *RI = dyn_cast<ReturnInst>(&I)) {
+                DenseSet<Argument *> parAccesses = getCallerArgsStoredInValue(RI->getReturnValue(), F, PtrArgs);
+                mParameterAccesses[F]->insert(parAccesses.begin(), parAccesses.end());
+            }
         }
 }
 
@@ -160,23 +288,19 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
         Function *F = nextSCC.front()->getFunction();
 
         if (!F) {
-            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping external node"
-                              << "\n";);
+            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping external node" << "\n";);
             continue;
         }
         if (F->isIntrinsic()) {
-            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping intrinsic function " << F->getName().str()
-                              << "\n";);
+            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping intrinsic function " << F->getName().str()       << "\n";);
             continue;
         }
         if (hasFnAttr(*F, AttrKind::LibFunc)) {
-            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping lib function " << F->getName().str()
-                              << "\n";);
+            LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping lib function " << F->getName().str() << "\n";);
             continue;
         }
 
-        LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: analyzing function " << F->getName().str()
-                          << "\n";);
+        LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: analyzing function " << F->getName().str() << "\n";);
         runOnFunction(F);
     }
 
@@ -211,7 +335,16 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
 }
 
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
-  OS << "Printing pass: '" << getPassName() << "'\n";
+    fflush(stderr);
+    for (auto &pair: mParameterAccesses) {
+        Function *F = pair.first;
+        DenseSet<Argument*> *parAccesses = pair.second;
+
+        printf("Function [%s]: ", F->getName().begin());
+        for (auto Arg: *parAccesses)
+            printf("\t%s, ", Arg->getName().begin());
+        printf("\n");
+    }
 }
 
 //void AddressAccessAnalyser::resolveCandidats(
