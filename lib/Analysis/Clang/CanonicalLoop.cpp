@@ -414,9 +414,10 @@ private:
           std::get<4>(Tuple) = &U;
         }
       } else if (isa<ConstantData>(Op) || isa<GlobalValue>(Op)) {
+        if (!InductIdx.count(Op.getOperandNo())) {
           std::get<3>(Tuple) = Op;
           std::get<4>(Tuple) = &U;
-      } else if (auto Expr = dyn_cast<llvm::ConstantExpr>(Op)) {
+        }
       } else {
         std::get<0>(Tuple) = false;
         return Tuple;

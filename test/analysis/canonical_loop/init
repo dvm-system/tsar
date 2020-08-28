@@ -18,3 +18,4 @@ canonical_loop_17: action=init
 canonical_loop_18: action=init
 global_1: action=init
 global_2: action=init
+global_3: action=init
