@@ -284,6 +284,7 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalsAAWrapperPass>();
   AU.addRequired<ClangRegionCollector>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
+  AU.addRequired<DIArrayAccessWrapper>();
   AU.setPreservesAll();
 }
 
