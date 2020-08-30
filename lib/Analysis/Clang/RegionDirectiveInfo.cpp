@@ -27,8 +27,8 @@
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/ExpressionMatcher.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>

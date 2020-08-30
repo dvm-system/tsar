@@ -1,4 +1,4 @@
-set(SUPPORT_SOURCES Diagnostic.cpp Utils.cpp Pragma.cpp)
+set(SUPPORT_SOURCES Diagnostic.cpp Utils.cpp)
 
 if(MSVC_IDE)
   file(GLOB SUPPORT_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

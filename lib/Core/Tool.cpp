@@ -30,8 +30,8 @@
 #include "tsar/Core/tsar-config.h"
 #include "tsar/Frontend/Clang/Action.h"
 #include "tsar/Frontend/Clang/ASTMergeAction.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/Clang/Pragma.h"
 #ifdef APC_FOUND
 # include "tsar/APC/Utils.h"
 #endif

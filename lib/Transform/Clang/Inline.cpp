@@ -26,13 +26,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/Inline.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Analysis/CallGraph.h>

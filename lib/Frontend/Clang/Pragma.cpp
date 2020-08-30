@@ -22,7 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/Expr.h>

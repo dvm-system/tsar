@@ -35,10 +35,10 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/IR/Passes.h"
 #include <apc/Distribution/DvmhDirective.h>

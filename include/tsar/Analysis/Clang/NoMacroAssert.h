@@ -29,8 +29,8 @@
 #define TSAR_CLANG_ASSERT_NO_MACRO_H
 
 #include "tsar/Analysis/Clang/Passes.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>

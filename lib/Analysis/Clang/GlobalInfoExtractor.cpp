@@ -24,8 +24,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>

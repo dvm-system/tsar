@@ -34,12 +34,12 @@
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <clang/AST/Decl.h>

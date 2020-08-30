@@ -23,10 +23,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Frontend/Clang/ASTMergeAction.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Frontend/Clang/Passes.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include <clang/Frontend/ASTUnit.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>

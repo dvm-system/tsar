@@ -24,7 +24,7 @@
 
 #include "tsar/Frontend/Clang/FrontendActions.h"
 #include "tsar/Frontend/Clang/DefaultPragmaHandlers.h"
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include <clang/AST/ASTDumperUtils.h>
 #include <clang/Frontend/ASTConsumers.h>
 #include <clang/Frontend/CompilerInstance.h>
