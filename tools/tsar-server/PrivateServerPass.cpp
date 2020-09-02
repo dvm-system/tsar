@@ -588,6 +588,7 @@ template<> struct Traits<trait::DIReduction *> {
     if (!Res)
       return false;
     Dest = new trait::DIReduction(TmpDest[msg::Reduction::Kind]);
+    return true;
   }
 
   static void unparse(String &JSON, const trait::DIReduction *Obj) {
