@@ -83,6 +83,9 @@ AddressAccessAnalyser::ValueSet AddressAccessAnalyser::getAncestors(Value *V) {
      *
      * Edge of this graph is presented as a usage of a Value corresponding to vertex.
      */
+    // TODO: problem with structs
+    // Как консервативно "протрейсить"?
+    //
     auto visited = ValueSet();
     auto visitQueue = std::queue<llvm::Value *>();
 
@@ -161,7 +164,7 @@ DenseSet<Argument *> AddressAccessAnalyser::getCallerArgsStoredInValue(
         Function* caller,
         AddressAccessAnalyser::ArgumentHolders &argHolders) {
     auto argSet = DenseSet<Argument *>();
-
+    // Может ли быть Value (аргумент функции, возвращаемое значение, аргумент операции cast) не результатом load?
     if (V == NULL)
         return argSet;
 
@@ -186,6 +189,91 @@ DenseSet<Argument *> AddressAccessAnalyser::getCallerArgsStoredInValue(
     return argSet;
 }
 
+void AddressAccessAnalyser::runOnFunction(Function *F) {
+    if (F->getName().str() != "fun")
+        return;
+
+    Argument *arg = F->arg_begin();
+    for (auto &use : arg->uses())
+        use->print(dbgs());
+
+    // for debug
+    // obtain AliasTree
+//    FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
+//    auto AliasTree = &getAnalysis<EstimateMemoryPass>(*F).getAliasTree();
+//    AliasTreeRelation AliasSTR(AliasTree);
+//
+//    //isUnreachable
+//    // get returned value
+//    ReturnInst *RI = nullptr;
+//    for (BasicBlock &BB : F->getBasicBlockList())
+//        for (Instruction &I: BB) {
+//            RI = dyn_cast<ReturnInst>(&I);
+//            if (RI) {
+//                break;
+//            }
+//        }
+//    if (!RI) {
+//        printf("no return\n");
+//        return;
+//    }
+//
+//    auto RVV = RI->getReturnValue();
+//    auto RV_LOAD = cast<LoadInst>(RVV);
+//    if (!RV_LOAD) {
+//        printf("not load\n");
+//        return;
+//    }
+//    auto RV = RV_LOAD->getPointerOperand();
+//    printf("%s\n", RV->getName().begin());
+//    auto PointeeTy = cast<PointerType>(RV->getType())->getElementType();
+//    if (!PointeeTy->isSized()) {
+//        printf("return not sized\n");
+//        return;
+//    }
+//
+//    auto DL = F->getParent()->getDataLayout();
+//    MemoryLocation RetValLoc = MemoryLocation(RV, DL.getTypeStoreSize(PointeeTy));
+//    EstimateMemory* RetValEM = AliasTree->find(RetValLoc);
+//    if (!RetValEM->hasAliasNode()) {
+//        printf("ret val has no alias node");
+//        return;
+//    }
+//    auto RetValAN = RetValEM->getAliasNode(*AliasTree);
+//
+//    // get argument
+//    Argument *Argg = F->arg_begin();
+//    if (!Argg) {
+//        printf("no arg\n");
+//        return;
+//    }
+//    auto arg_store = cast<StoreInst>(*Argg->user_begin());
+//    if (!arg_store) {
+//        printf("no store");
+//        return;
+//    }
+//    auto Arg = arg_store->getPointerOperand();
+//    printf("%s\n", Arg->getName().begin());
+//    PointeeTy = cast<PointerType>(Arg->getType())->getElementType();
+//    if (!PointeeTy->isSized()) {
+//        printf("arg not sized\n");
+//        return;
+//    }
+//
+//    MemoryLocation ArgLoc = MemoryLocation(Arg, DL.getTypeStoreSize(PointeeTy));
+//    EstimateMemory* ArgEM = AliasTree->find(ArgLoc);
+//    if (!ArgEM->hasAliasNode()) {
+//        printf("arg has no alias node");
+//        return;
+//    }
+//    auto ArgAN = ArgEM->getAliasNode(*AliasTree);
+//
+//    if (RetValAN == ArgAN || (AliasSTR.isUnreachable(ArgAN, RetValAN) && AliasSTR.isUnreachable(RetValAN, ArgAN)))
+//        printf("intersect\n");
+//    else
+//        printf("not intersect\n");
+}
+/*
 void AddressAccessAnalyser::runOnFunction(Function *F) {
     mParameterAccesses[F] = new StoredPtrArguments();  // if argument is here => ptr held by it may be stored somewhere
 
@@ -251,11 +339,14 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
 
             // process pointers returned
             if (auto *RI = dyn_cast<ReturnInst>(&I)) {
+//                if (isNonTrivialPointerType(RI->getReturnValue()->getType()))
+//
                 DenseSet<Argument *> parAccesses = getCallerArgsStoredInValue(RI->getReturnValue(), F, PtrArgs);
                 mParameterAccesses[F]->insert(parAccesses.begin(), parAccesses.end());
             }
         }
 }
+ */
 
 void AddressAccessAnalyser::runOnFunctionBasic(Function &F) {
     auto StoredPtrArgs = StoredPtrArguments();  // if argument is here => ptr held by it may be stored somewhere

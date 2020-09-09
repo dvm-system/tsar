@@ -12,6 +12,7 @@
 #include <bcl/utility.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
+#include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include <forward_list>
 #include <tuple>
 
