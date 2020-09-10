@@ -61,14 +61,23 @@ namespace llvm {
     class DataLayout;
     class ScalarEvolution;
 
+    class MoveUndefined : public std::exception {};
+
+    struct InstrDependencies {
+        std::vector<Instruction *> deps;
+        bool is_invalid;
+
+        InstrDependencies() : deps(std::vector<Instruction *>()), is_invalid(false) {};
+        explicit InstrDependencies(bool is_invalid) : deps(std::vector<Instruction *>()), is_invalid(is_invalid) {};
+    };
     class AddressAccessAnalyser :
             public ModulePass, private bcl::Uncopyable {
 
-        //using AccessSet = DenseSet<llvm::Value *>;
         using ValueSet = DenseSet<llvm::Value *>;
         using ArgumentHolders = DenseMap<Argument *, ValueSet>;
-        using StoredPtrArguments = DenseSet<Argument *>;
+        using StoredPtrArguments = DenseSet<int>;
         using FunctionToArguments = DenseMap<llvm::Function *, StoredPtrArguments *>;
+        using DependentInfo = DenseMap<Instruction *, InstrDependencies * >;
         typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
 
         static bool isNonTrivialPointerType(Type *);
@@ -79,7 +88,14 @@ namespace llvm {
             initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
         }
 
-        static void runOnFunctionBasic(Function &F);
+        bool isStored(Value *);
+
+        void initDepInfo(Function *);
+
+        std::vector<Value *> useMovesTo(Value *, Instruction *);
+
+        bool contructUsageTree(Argument *arg);
+
         void runOnFunction(Function *F);
 
         bool runOnModule(Module &M) override;
@@ -88,17 +104,12 @@ namespace llvm {
 
         void print(raw_ostream &OS, const Module *M) const override;
 
-        DenseSet<Argument *> getCallerArgsStoredInValue(Value* V, Function* caller, ArgumentHolders &argHolders);
-        static const tsar::AliasEstimateNode *
-        getAliasNodeByPointerValue(Value *Val, Function *F, const tsar::AliasTree &);
-
         void releaseMemory() override {};
 
+        // если номер аргумента присутствует, значит он может быть сохранен
         FunctionToArguments mParameterAccesses;
-
     private:
-        ValueSet getAncestors(Value *);
-        ArgumentHolders getArgumentHolders(Function* F);
+        DependentInfo *mDepInfo = nullptr;
     };
 }
 #endif //SAPFOR_ADDRESSACCESS_H
