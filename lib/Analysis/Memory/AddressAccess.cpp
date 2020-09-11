@@ -1,5 +1,4 @@
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
-#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/PrintUtils.h"
@@ -42,18 +41,15 @@ using bcl::operator "" _b;
 char AddressAccessAnalyser::ID = 0;
 
 namespace {
-    using FunctionPassesProvider = FunctionPassProvider<DFRegionInfoPass, DefinedMemoryPass, EstimateMemoryPass, MemoryDependenceWrapperPass>;
+    using FunctionPassesProvider = FunctionPassProvider<MemoryDependenceWrapperPass>;
 }
 
 INITIALIZE_PROVIDER_BEGIN(FunctionPassesProvider,
                           "function-passes-provider",
-                          "Region,DefineMemory,EstimateMemory -passes (Provider)")
-    INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
-    INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
-    INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
-    INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
+                          "MemoryDependenceWrapperPass provider")
+INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
 INITIALIZE_PROVIDER_END(FunctionPassesProvider, "function-passes-provider",
-                        "Region,DefineMemory,EstimateMemory -passes (Provider)")
+                        "MemoryDependenceWrapperPass provider")
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(AddressAccessAnalyser, "address-access",
                                "address-access", false, true,
@@ -76,20 +72,6 @@ void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
 }
 
-//std::vector<Value *> AddressAccessAnalyser::getStoreDeps(Instruction *instr) {
-//    MemDepResult Dep = mDepInfo->getDependency(instr);
-//    if (Dep.isNonLocal()) {
-//        LLVM_DEBUG(errs() << "met an non local dependency of store instruction" << "\n";);
-//        throw MoveUndefined();
-//    }
-//    if (!Dep.isDef()) {
-//        LLVM_DEBUG(errs() << "met an non def dependency of store instruction" << "\n";);
-//        throw MoveUndefined();
-//    }
-//
-//    return dep.getInst();
-//}
-
 void AddressAccessAnalyser::initDepInfo(llvm::Function *F) {
     // мапит инструкции на зависимые от них
     // например, такой код:
@@ -98,7 +80,7 @@ void AddressAccessAnalyser::initDepInfo(llvm::Function *F) {
     // должен породить такой словарь:
     // {'store %a, %a.addr': ['%1 = load %a.addr']}
     FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
-    auto MDA = &getAnalysis<MemoryDependenceWrapperPass>(*F).getMemDep();
+    auto MDA = &Provider->get<MemoryDependenceWrapperPass>().getMemDep();
 
     if (mDepInfo) {
         for (auto pair : *mDepInfo)
@@ -173,11 +155,6 @@ bool AddressAccessAnalyser::isStored(llvm::Value *v) {
 
 std::vector<Value *> AddressAccessAnalyser::useMovesTo(Value *value, Instruction* instr) {
 
-//    instr->print(llvm::dbgs());
-//    fflush(stderr);
-//    std::cout << std::endl;
-//    printf("%s\n", value->getName().begin());
-
     auto res = std::vector<Value *>();
     if (auto store = dyn_cast<StoreInst>(instr)) {
         Value *storedTo = store->getPointerOperand();
@@ -218,7 +195,7 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(Value *value, Instruction
         return res;
     } else if (auto call = dyn_cast<CallInst>(instr)) {
         Function* called = call->getCalledFunction();
-        if (mParameterAccesses.find(called) == mParameterAccesses.end()) {
+        if (mParameterAccesses.infoByFun.find(called) == mParameterAccesses.infoByFun.end()) {
             LLVM_DEBUG(errs() << "called not processed yet" << "\n";);
             throw MoveUndefined();
         }
@@ -226,7 +203,7 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(Value *value, Instruction
         for (Use &arg_use : call->arg_operands()) {
             Value* arg_value = arg_use.get();
             if (arg_value == value) {  // проверяем что эта функция не сохраняет аргумент, которым является наш value
-                if (mParameterAccesses[called]->find(argIdx) != mParameterAccesses[called]->end()) {
+                if (mParameterAccesses.infoByFun[called]->find(argIdx) != mParameterAccesses.infoByFun[called]->end()) {
                     throw MoveUndefined();
                 }
             }
@@ -278,14 +255,14 @@ bool AddressAccessAnalyser::contructUsageTree(Argument *arg) {
 }
 
 void AddressAccessAnalyser::runOnFunction(Function *F) {
-    mParameterAccesses[F] = new StoredPtrArguments();  // if argument is here => ptr held by it may be stored somewhere
+    mParameterAccesses.addFunction(F);  // if argument is here => ptr held by it may be stored somewhere
     initDepInfo(F);
 
     int argIdx = 0;
     for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++) {
         if (Arg->getType()->isPointerTy()) {  // we're not interested in non-ptr arguments
             if (!contructUsageTree(Arg))  // if usage tree exists then we have only local usages
-                mParameterAccesses[F]->insert(argIdx);
+                mParameterAccesses.infoByFun[F]->insert(argIdx);
         }
         argIdx++;
     }
@@ -342,8 +319,8 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
 
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
     fflush(stderr);
-    for (auto &pair: mParameterAccesses) {
-        Function *F = pair.first;
+    for (auto &pair: mParameterAccesses.infoByFun) {
+        const Function *F = pair.first;
         DenseSet<int> *parAccesses = pair.second;
 
         printf("Function [%s]: ", F->getName().begin());
@@ -351,4 +328,23 @@ void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
             printf("\t%s, ", F->arg_begin()[Arg].getName().begin());
         printf("\n");
     }
+}
+
+bool PreservedParametersInfo::isPreserved(ImmutableCallSite CS, Use* use) {
+    const Function* F = CS.getCalledFunction();
+
+    if (!CS.isArgOperand(use))
+        return false;
+
+    if (!F)  {
+        LLVM_DEBUG(errs() << "not a direct call" << "\n";);
+        return true;
+    }
+
+    if (infoByFun.find(F) == infoByFun.end()) {
+        LLVM_DEBUG(errs() << "called not processed yet" << "\n";);
+        return true;
+    }
+
+    return infoByFun[F]->find(CS.getArgumentNo(use)) != infoByFun[F]->end();
 }

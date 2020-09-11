@@ -107,6 +107,7 @@ void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
+  Passes.add(createAddressAccessAnalyserPass());
   Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   Passes.add(createAnalysisReader());
@@ -143,6 +144,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
+  Passes.add(createAddressAccessAnalyserPass());
   Passes.add(createDIDependencyAnalysisPass());
 }
 
@@ -160,6 +162,7 @@ void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
+  Passes.add(createAddressAccessAnalyserPass());
   Passes.add(createDIDependencyAnalysisPass());
 }
 } // namespace tsar

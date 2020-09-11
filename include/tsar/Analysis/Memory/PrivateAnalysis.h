@@ -38,6 +38,7 @@
 #include "tsar/Analysis/Memory/IRMemoryTrait.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/AddressAccess.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
@@ -357,6 +358,7 @@ private:
   const DataLayout *mDL = nullptr;
   TargetLibraryInfo *mTLI = nullptr;
   ScalarEvolution *mSE = nullptr;
+  tsar::PreservedParametersInfo *mAA = nullptr;
 };
 }
 #endif//TSAR_PRIVATE_ANALYSIS_H

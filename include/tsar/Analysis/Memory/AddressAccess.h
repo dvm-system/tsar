@@ -2,64 +2,25 @@
 #define SAPFOR_ADDRESSACCESS_H
 
 #include "tsar/Analysis/DataFlowGraph.h"
-#include "tsar/ADT/DenseMapTraits.h"
-#include "tsar/ADT/GraphNumbering.h"
-#include "tsar/Analysis/Memory/DefinedMemory.h"
-#include "tsar/Analysis/Memory/DFMemoryLocation.h"
-#include "tsar/Analysis/Memory/IRMemoryTrait.h"
-#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include <bcl/utility.h>
-#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>
-#include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include <forward_list>
 #include <tuple>
 
 namespace tsar {
-    class AliasNode;
+    struct PreservedParametersInfo {
+        using StoredPtrArguments = llvm::DenseSet<int>;
+        using FunctionToArguments = llvm::DenseMap<const llvm::Function *, StoredPtrArguments *>;
 
-    class AliasTree;
+        FunctionToArguments infoByFun;
+        PreservedParametersInfo() : infoByFun(FunctionToArguments()) {};
 
-    class DefUseSet;
-
-    class DFLoop;
-
-    class EstimateMemory;
-
-    class BitMemoryTrait;
-
-    template<class GraphType>
-    class SpanningTreeRelation;
-
-/// This determine relation between two nodes in an alias tree.
-    using AliasTreeRelation = SpanningTreeRelation<const AliasTree *>;
-
-/// Information about privatizability of locations for an analyzed region.
-    using PrivateInfo =
-    llvm::DenseMap<DFNode *, DependenceSet,
-            llvm::DenseMapInfo<DFNode *>,
-            TaggedDenseMapPair <
-            bcl::tagged<DFNode *, DFNode>,
-            bcl::tagged<DependenceSet, DependenceSet>>>;
-
-    namespace detail {
-        class DependenceImp;
-
-        struct DependenceCache;
-    }
+        void addFunction(llvm::Function* F) {infoByFun[F] = new StoredPtrArguments();}
+        bool isPreserved(llvm::ImmutableCallSite CS, llvm::Use* use);
+    };
 }
 
 namespace llvm {
-
-    inline namespace tsar_impl {
-        class Dependence;
-
-        class DependenceInfo;
-    }
-
-    class DataLayout;
-    class ScalarEvolution;
 
     class MoveUndefined : public std::exception {};
 
@@ -76,7 +37,7 @@ namespace llvm {
         using ValueSet = DenseSet<llvm::Value *>;
         using ArgumentHolders = DenseMap<Argument *, ValueSet>;
         using StoredPtrArguments = DenseSet<int>;
-        using FunctionToArguments = DenseMap<llvm::Function *, StoredPtrArguments *>;
+        using FunctionToArguments = DenseMap<const llvm::Function *, StoredPtrArguments *>;
         using DependentInfo = DenseMap<Instruction *, InstrDependencies * >;
         typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
 
@@ -87,6 +48,8 @@ namespace llvm {
         AddressAccessAnalyser() : ModulePass(ID) {
             initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
         }
+
+        tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
 
         bool isStored(Value *);
 
@@ -107,7 +70,7 @@ namespace llvm {
         void releaseMemory() override {};
 
         // если номер аргумента присутствует, значит он может быть сохранен
-        FunctionToArguments mParameterAccesses;
+        tsar::PreservedParametersInfo mParameterAccesses;
     private:
         DependentInfo *mDepInfo = nullptr;
     };
