@@ -85,7 +85,7 @@ INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyser)
+INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyserWrapper)
 INITIALIZE_PASS_IN_GROUP_END(PrivateRecognitionPass, "private",
   "Private Variable Analysis", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -122,7 +122,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   mDL = &F.getParent()->getDataLayout();
   mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  mAA= &getAnalysis<AddressAccessAnalyser>().getAA();
+  mAA= &getAnalysis<AddressAccessAnalyserWrapper>().get();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   GraphNumbering<const AliasNode *> Numbers;
   numberGraph(mAliasTree, &Numbers);
@@ -1217,7 +1217,7 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DependenceAnalysisWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
-  AU.addRequired<AddressAccessAnalyser>();
+  AU.addRequired<AddressAccessAnalyserWrapper>();
   AU.setPreservesAll();
 }
 

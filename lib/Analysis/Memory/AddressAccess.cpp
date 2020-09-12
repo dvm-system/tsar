@@ -1,16 +1,11 @@
-#include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include "tsar/Analysis/Attributes.h"
-#include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
-#include "tsar/Analysis/Memory/DependenceAnalysis.h"
-#include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassProvider.h"
-#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include <llvm/ADT/STLExtras.h>
@@ -51,9 +46,14 @@ INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
 INITIALIZE_PROVIDER_END(FunctionPassesProvider, "function-passes-provider",
                         "MemoryDependenceWrapperPass provider")
 
+template<> char AddressAccessAnalyserWrapper::ID = 0;
+INITIALIZE_PASS(AddressAccessAnalyserWrapper, "address-access-wrapper",
+  "address-access (Immutable Wrapper)", true, true)
+
 INITIALIZE_PASS_IN_GROUP_BEGIN(AddressAccessAnalyser, "address-access",
                                "address-access", false, true,
                                DefaultQueryManager::PrintPassGroup::getPassRegistry())
+    INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyserWrapper)
     INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
     INITIALIZE_PASS_DEPENDENCY(FunctionPassesProvider)
 INITIALIZE_PASS_IN_GROUP_END(AddressAccessAnalyser, "address-access",
@@ -65,6 +65,7 @@ Pass *llvm::createAddressAccessAnalyserPass() {
 }
 
 void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.addRequired<AddressAccessAnalyserWrapper>();
     AU.addRequired<CallGraphWrapperPass>();
     AU.addRequired<GlobalOptionsImmutableWrapper>();
     AU.addRequired<FunctionPassesProvider>();
@@ -300,6 +301,7 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
         runOnFunction(F);
     }
 
+    getAnalysis<AddressAccessAnalyserWrapper>().set(mParameterAccesses);
     return false;
 }
 

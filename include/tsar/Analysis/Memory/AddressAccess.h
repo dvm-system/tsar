@@ -74,5 +74,9 @@ namespace llvm {
     private:
         DependentInfo *mDepInfo = nullptr;
     };
+
+using AddressAccessAnalyserWrapper =
+    AnalysisWrapperPass<tsar::PreservedParametersInfo>;
 }
+
 #endif //SAPFOR_ADDRESSACCESS_H
