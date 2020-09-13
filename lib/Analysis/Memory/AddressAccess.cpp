@@ -76,14 +76,14 @@ INITIALIZE_PASS(AddressAccessAnalyserWrapper, "address-access-wrapper",
                 "address-access (Immutable Wrapper)", true, true)
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(AddressAccessAnalyser, "address-access",
-        "address-access", false, true,
-        DefaultQueryManager::PrintPassGroup::getPassRegistry())
+                               "address-access", false, true,
+                               DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(AddressAccessAnalyserWrapper)
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(FunctionPassesProvider)
 INITIALIZE_PASS_IN_GROUP_END(AddressAccessAnalyser, "address-access",
-        "address-access", false, true,
-        DefaultQueryManager::PrintPassGroup::getPassRegistry())
+                             "address-access", false, true,
+                             DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 Pass *llvm::createAddressAccessAnalyserPass() {
   return new AddressAccessAnalyser();
@@ -165,22 +165,27 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(
     if (storedTo == value)
       return res;
     if (!dyn_cast<AllocaInst>(storedTo)) {
-      LLVM_DEBUG(errs() << "store to a suspicious address" << "\n";);
+      LLVM_DEBUG(dbgs() <<
+                        "[ADDRESS-ACCESS] store to a suspicious address"
+                        << "\n";);
       undefined = true;
       return res;
     }
     if (isStored(storedTo)) {
-      LLVM_DEBUG(errs() << "store to address which is stored" << "\n";);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] store to address which is stored"
+                        << "\n";);
       undefined = true;
       return res;
     }
     auto deps = mDepInfo->find(store);
     if (deps == mDepInfo->end()) {
-      LLVM_DEBUG(errs() << "store has no deps" << "\n";);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] store has no deps" << "\n";);
       return res;
     }
     if (deps->second->is_invalid) {
-      LLVM_DEBUG(errs() << "store has deps which we don't process" << "\n";);
+      LLVM_DEBUG(
+              dbgs() << "[ADDRESS-ACCESS] store has deps which we don't process"
+                     << "\n";);
       undefined = true;
       return res;
     }
@@ -196,7 +201,8 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(
     Function *called = call->getCalledFunction();
     if (mParameterAccesses.infoByFun.find(called) ==
         mParameterAccesses.infoByFun.end()) {
-      LLVM_DEBUG(errs() << "called not processed yet" << "\n";);
+      LLVM_DEBUG(
+              dbgs() << "[ADDRESS-ACCESS] called not processed yet" << "\n";);
       undefined = true;
       return res;
     }
@@ -231,7 +237,8 @@ bool AddressAccessAnalyser::constructUsageTree(Argument *arg) {
     for (User *user : v->users()) {
       auto instr = dyn_cast<Instruction>(user);
       if (!instr) {
-        LLVM_DEBUG(errs() << "usage is not an instruction" << "\n";);
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] usage is not an instruction"
+                          << "\n";);
         return false;
       }
       bool undefined = false;
@@ -240,7 +247,8 @@ bool AddressAccessAnalyser::constructUsageTree(Argument *arg) {
         return false;
       for (Value *dst : dsts) {
         if (seen.find(dst) != seen.end()) {
-          LLVM_DEBUG(errs() << "met already seen instruction" << "\n";);
+          LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] met already seen instruction"
+                            << "\n";);
           return false;
         }
         seen.insert(dst);
@@ -267,7 +275,7 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
 }
 
 bool AddressAccessAnalyser::runOnModule(Module &M) {
-  LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: analyze module "
+  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] analyze module "
                     << M.getSourceFileName() << "\n";);
   releaseMemory();
   getAnalysis<AddressAccessAnalyserWrapper>().set(mParameterAccesses);
@@ -276,29 +284,29 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
           &CG); !SCCI.isAtEnd(); ++SCCI) {
     const std::vector<CallGraphNode *> &nextSCC = *SCCI;
     if (nextSCC.size() != 1 || SCCI.hasLoop()) {
-      LLVM_DEBUG(errs() << "[AddressAccessAnalyser]: met recursion, failed"
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] met recursion, failed"
                         << "\n";);
       mParameterAccesses.failed = true;
       return false;
     }
     Function *F = nextSCC.front()->getFunction();
     if (!F) {
-      LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping external node"
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] skipping external node"
                         << "\n";);
       continue;
     }
     if (F->isIntrinsic()) {
       LLVM_DEBUG(
-              dbgs() << "[AddressAccessAnalyser]: skipping intrinsic function "
+              dbgs() << "[ADDRESS-ACCESS] skipping intrinsic function "
                      << F->getName().str() << "\n";);
       continue;
     }
     if (hasFnAttr(*F, AttrKind::LibFunc)) {
-      LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: skipping lib function "
+      LLVM_DEBUG(dbgs() << "skipping lib function "
                         << F->getName().str() << "\n";);
       continue;
     }
-    LLVM_DEBUG(dbgs() << "[AddressAccessAnalyser]: analyzing function "
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] analyzing function "
                       << F->getName().str() << "\n";);
     runOnFunction(F);
   }
@@ -320,15 +328,16 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
 }
 
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
-  fflush(stderr);
   for (auto &pair: mParameterAccesses.infoByFun) {
     const Function *F = pair.first;
     DenseSet<int> *parAccesses = pair.second;
-    LLVM_DEBUG(errs() << "Function [" << F->getName().begin() << "]\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Function [" << F->getName().begin()
+                      << "]\n";);
     for (int Arg: *parAccesses)
       LLVM_DEBUG(
-              errs() << "\t" << F->arg_begin()[Arg].getName().begin() << ",";);
-    LLVM_DEBUG(errs() << "\n";);
+              dbgs() << "[ADDRESS-ACCESS] \t"
+                     << F->arg_begin()[Arg].getName().begin() << ",";);
+    LLVM_DEBUG(dbgs() << "\n";);
   }
 }
 
@@ -339,11 +348,11 @@ bool PreservedParametersInfo::isPreserved(ImmutableCallSite CS, Use *use) {
   if (!CS.isArgOperand(use))
     return false;
   if (!F) {
-    LLVM_DEBUG(errs() << "not a direct call" << "\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] not a direct call" << "\n";);
     return true;
   }
   if (infoByFun.find(F) == infoByFun.end()) {
-    LLVM_DEBUG(errs() << "called not processed yet" << "\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] called not processed yet" << "\n";);
     return true;
   }
   return infoByFun[F]->find(CS.getArgumentNo(use)) != infoByFun[F]->end();
