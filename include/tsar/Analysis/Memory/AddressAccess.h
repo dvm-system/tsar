@@ -1,82 +1,125 @@
+//===--- PrivateAnalysis.h - Private Variable Analyzer ----------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines passes to determine formal arguments which can be
+// preserved by the function (e.g. saved to the global memory).
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef SAPFOR_ADDRESSACCESS_H
 #define SAPFOR_ADDRESSACCESS_H
 
-#include "tsar/Analysis/DataFlowGraph.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include <llvm/Pass.h>
-#include <forward_list>
-#include <tuple>
 
 namespace tsar {
-    struct PreservedParametersInfo {
-        using StoredPtrArguments = llvm::DenseSet<int>;
-        using FunctionToArguments = llvm::DenseMap<const llvm::Function *, StoredPtrArguments *>;
+  struct PreservedParametersInfo {
+    using StoredPtrArguments = llvm::DenseSet<int>;
+    using FunctionToArguments = llvm::DenseMap<
+            const llvm::Function *, StoredPtrArguments *>;
 
-        FunctionToArguments infoByFun;
-        PreservedParametersInfo() : infoByFun(FunctionToArguments()) {};
+    FunctionToArguments infoByFun;
+    bool failed;  /// set if analysis has failed
+    PreservedParametersInfo() :
+      infoByFun(FunctionToArguments()), failed(false) {};
 
-        void addFunction(llvm::Function* F) {infoByFun[F] = new StoredPtrArguments();}
-        bool isPreserved(llvm::ImmutableCallSite CS, llvm::Use* use);
-    };
+    void addFunction(llvm::Function *F) {
+      infoByFun[F] = new StoredPtrArguments();
+    }
+
+    bool isPreserved(llvm::ImmutableCallSite CS, llvm::Use *use);
+  };
 }
 
 namespace llvm {
+  struct InstrDependencies {
+    std::vector<Instruction *> deps;
+    bool is_invalid;
 
-    class MoveUndefined : public std::exception {};
+    InstrDependencies() :
+            deps(std::vector<Instruction *>()), is_invalid(false) {};
 
-    struct InstrDependencies {
-        std::vector<Instruction *> deps;
-        bool is_invalid;
+    explicit InstrDependencies(bool is_invalid) : deps(
+            std::vector<Instruction *>()), is_invalid(is_invalid) {};
+  };
 
-        InstrDependencies() : deps(std::vector<Instruction *>()), is_invalid(false) {};
-        explicit InstrDependencies(bool is_invalid) : deps(std::vector<Instruction *>()), is_invalid(is_invalid) {};
+  class AddressAccessAnalyser :
+          public ModulePass, private bcl::Uncopyable {
+
+    using ValueSet = DenseSet<llvm::Value *>;
+    using ArgumentHolders = DenseMap<Argument *, ValueSet>;
+    using StoredPtrArguments = DenseSet<int>;
+    using FunctionToArguments = DenseMap<
+            const llvm::Function *, StoredPtrArguments *>;
+    /// maps instructions on those which are dependent on them
+    using DependentInfo = DenseMap<Instruction *, InstrDependencies *>;
+
+    static bool isNonTrivialPointerType(Type *);
+
+  public:
+    static char ID;
+
+    AddressAccessAnalyser() : ModulePass(ID) {
+      initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
+    }
+
+    tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
+
+    bool isStored(Value *);
+
+    /// initializes mDepInfo
+    void initDepInfo(Function *);
+
+    /// returns values which may contain incoming value as a result
+    /// of execution instruction
+    std::vector<Value *> useMovesTo(Value *, Instruction *, bool &);
+
+    /// tries to construct tree of local usages of the argument's value
+    /// returns true on success
+    bool constructUsageTree(Argument *arg);
+
+    void runOnFunction(Function *F);
+
+    bool runOnModule(Module &M) override;
+
+    void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+    void print(raw_ostream &OS, const Module *M) const override;
+
+    void releaseMemory() override {
+      if (mDepInfo) {
+        for (auto pair : *mDepInfo)
+          delete (pair.second);
+        delete (mDepInfo);
+      }
     };
-    class AddressAccessAnalyser :
-            public ModulePass, private bcl::Uncopyable {
 
-        using ValueSet = DenseSet<llvm::Value *>;
-        using ArgumentHolders = DenseMap<Argument *, ValueSet>;
-        using StoredPtrArguments = DenseSet<int>;
-        using FunctionToArguments = DenseMap<const llvm::Function *, StoredPtrArguments *>;
-        using DependentInfo = DenseMap<Instruction *, InstrDependencies * >;
-        typedef llvm::SmallPtrSet<llvm::Value *, 32> PointerSet;
+    /// contains indexes of arguments which may be preserved by the function
+    tsar::PreservedParametersInfo mParameterAccesses;
+  private:
+    /// contains instructions which other instructions may be dependent on
+    DependentInfo *mDepInfo = nullptr;
+  };
 
-        static bool isNonTrivialPointerType(Type *);
-    public:
-        static char ID;
-
-        AddressAccessAnalyser() : ModulePass(ID) {
-            initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
-        }
-
-        tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
-
-        bool isStored(Value *);
-
-        void initDepInfo(Function *);
-
-        std::vector<Value *> useMovesTo(Value *, Instruction *);
-
-        bool contructUsageTree(Argument *arg);
-
-        void runOnFunction(Function *F);
-
-        bool runOnModule(Module &M) override;
-
-        void getAnalysisUsage(AnalysisUsage &AU) const override;
-
-        void print(raw_ostream &OS, const Module *M) const override;
-
-        void releaseMemory() override {};
-
-        // если номер аргумента присутствует, значит он может быть сохранен
-        tsar::PreservedParametersInfo mParameterAccesses;
-    private:
-        DependentInfo *mDepInfo = nullptr;
-    };
-
-using AddressAccessAnalyserWrapper =
-    AnalysisWrapperPass<tsar::PreservedParametersInfo>;
+  using AddressAccessAnalyserWrapper =
+  AnalysisWrapperPass<tsar::PreservedParametersInfo>;
 }
 
 #endif //SAPFOR_ADDRESSACCESS_H

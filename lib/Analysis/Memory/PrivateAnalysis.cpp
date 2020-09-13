@@ -776,7 +776,8 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
       }
       if (UseInsts.empty())
         continue;
-      if (!any_of(UseInsts, [Lp, User, this](std::pair<Instruction *, Use *> &I) {
+      if (!any_of(UseInsts,
+              [Lp, User, this](std::pair<Instruction *, Use *> &I) {
             if (!Lp->contains(I.first->getParent()))
               return false;
             // The address is used inside the loop.

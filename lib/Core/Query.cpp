@@ -111,7 +111,6 @@ void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
   Passes.add(createDIDependencyAnalysisPass());
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   Passes.add(createAnalysisReader());
-  //Passes.add(createAddressAccessAnalyserPass());
 }
 
 void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
@@ -125,7 +124,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   // Do not add 'instcombine' here, because in this case some metadata may be
   // lost after SROA (for example, if a promoted variable is a structure).
   // Passes.add(createInstructionCombiningPass());
-  Passes.add(createSROAPass());  // a.addr elimination
+  Passes.add(createSROAPass());
   Passes.add(createProcessDIMemoryTraitPass(
     [&DL](DIMemoryTrait &T) { markIfNotPromoted(DL, T); }));
   if (!GO.UnsafeTfmAnalysis)

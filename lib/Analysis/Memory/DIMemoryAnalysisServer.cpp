@@ -51,8 +51,8 @@ static void initializeDIMemoryAnalysisServerResponsePass(PassRegistry &);
 
 namespace {
 /// This provides access to function-level analysis results on server.
-using DIMemoryAnalysisServerProvider =
-FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass, AddressAccessAnalyserWrapper>;
+using DIMemoryAnalysisServerProvider = FunctionPassAAProvider<
+  DIEstimateMemoryPass, DIDependencyAnalysisPass, AddressAccessAnalyserWrapper>;
 
 /// List of responses available from server (client may request corresponding
 /// analysis, in case of provider all analysis related to a provider may

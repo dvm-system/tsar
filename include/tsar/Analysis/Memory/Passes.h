@@ -216,7 +216,8 @@ ModulePass *createDIArrayAccessCollector();
 /// Initialize a pass calculating preserved parameters
 void initializeAddressAccessAnalyserPass(PassRegistry &Registry);
 
-
+/// Initialize a pass to access results of interprocedural
+/// address preservation analysis
 void initializeAddressAccessAnalyserWrapperPass(PassRegistry &Registry);
 
 /// Create a pass calculating preserved parameters
