@@ -2,7 +2,7 @@ int * glob;
 
 void bar(int *X) {
     *X = 22;
-    //glob = X;
+    glob = X;
 }
 
 int main() {

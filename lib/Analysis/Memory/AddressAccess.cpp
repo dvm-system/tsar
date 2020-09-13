@@ -165,27 +165,18 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(
     if (storedTo == value)
       return res;
     if (!dyn_cast<AllocaInst>(storedTo)) {
-      LLVM_DEBUG(dbgs() <<
-                        "[ADDRESS-ACCESS] store to a suspicious address"
-                        << "\n";);
       undefined = true;
       return res;
     }
     if (isStored(storedTo)) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] store to address which is stored"
-                        << "\n";);
       undefined = true;
       return res;
     }
     auto deps = mDepInfo->find(store);
     if (deps == mDepInfo->end()) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] store has no deps" << "\n";);
       return res;
     }
     if (deps->second->is_invalid) {
-      LLVM_DEBUG(
-              dbgs() << "[ADDRESS-ACCESS] store has deps which we don't process"
-                     << "\n";);
       undefined = true;
       return res;
     }
@@ -275,8 +266,6 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
 }
 
 bool AddressAccessAnalyser::runOnModule(Module &M) {
-  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] analyze module "
-                    << M.getSourceFileName() << "\n";);
   releaseMemory();
   getAnalysis<AddressAccessAnalyserWrapper>().set(mParameterAccesses);
   CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
@@ -291,23 +280,14 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
     }
     Function *F = nextSCC.front()->getFunction();
     if (!F) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] skipping external node"
-                        << "\n";);
       continue;
     }
     if (F->isIntrinsic()) {
-      LLVM_DEBUG(
-              dbgs() << "[ADDRESS-ACCESS] skipping intrinsic function "
-                     << F->getName().str() << "\n";);
       continue;
     }
     if (hasFnAttr(*F, AttrKind::LibFunc)) {
-      LLVM_DEBUG(dbgs() << "skipping lib function "
-                        << F->getName().str() << "\n";);
       continue;
     }
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] analyzing function "
-                      << F->getName().str() << "\n";);
     runOnFunction(F);
   }
   return false;
@@ -327,13 +307,16 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
   return false;
 }
 
-void AddressAccessAnalyser::print(raw_ostream &OS, const Module *) const {
-  for (auto &pair: mParameterAccesses.infoByFun) {
-    const Function *F = pair.first;
-    DenseSet<int> *parAccesses = pair.second;
+void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
+  for (const Function &FF: *m) {
+    const Function *F = &FF;
+    if (F->isIntrinsic()) {
+      continue;
+    }
+    auto parAccesses = mParameterAccesses.infoByFun.find(F);
     LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Function [" << F->getName().begin()
-                      << "]\n";);
-    for (int Arg: *parAccesses)
+                      << "]: ";);
+    for (int Arg: *parAccesses->second)
       LLVM_DEBUG(
               dbgs() << "[ADDRESS-ACCESS] \t"
                      << F->arg_begin()[Arg].getName().begin() << ",";);
