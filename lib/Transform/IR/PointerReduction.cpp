@@ -1,18 +1,22 @@
+#include "tsar/Transform/IR/PointerReduction.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
-#include "tsar/Transform/IR/PointerReduction.h"
 
 #include "tsar/Core/Query.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/DIBuilder.h>
-#include <llvm/PassSupport.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Transforms/Scalar.h>
+
+#undef DEBUG_TYPE
+#define DEBUG_TYPE "ptr-red"
 
 using namespace tsar;
 using namespace llvm;
@@ -20,14 +24,14 @@ using namespace llvm;
 char PointerReductionPass::ID = 0;
 
 INITIALIZE_PASS_BEGIN(PointerReductionPass, "ptr-red",
-    "Pointer Reduction Pass", false, false)
-  INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
-  INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass);
-  INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass);
-  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass);
-  INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass);
+                      "Pointer Reduction Pass", false, false)
+INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
+INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass);
+INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass);
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass);
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass);
 INITIALIZE_PASS_END(PointerReductionPass, "ptr-red",
-    "Pointer Reduction Pass", false, false)
+                    "Pointer Reduction Pass", false, false)
 
 void PointerReductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
@@ -41,9 +45,9 @@ struct phiNodeLink {
   PHINode *phiNode;
   phiNodeLink *parent;
 
-  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) { }
+  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) {}
 
-  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) { }
+  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
 
   PHINode *getPhi() {
     if (phiNode) {
@@ -55,7 +59,7 @@ struct phiNodeLink {
 
 struct PtrRedContext {
   explicit PtrRedContext(Value *v, Function &f, Loop *l, bool changed)
-    : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed) { }
+      : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed) {}
 
   Value *V;
   DILocalVariable *DbgVar;
@@ -115,14 +119,13 @@ void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, const DebugLoc &L
 }
 
 void insertLoadInstructions(PtrRedContext &ctx) {
-  auto *BeforeInstr = new LoadInst(ctx.V, "load." + ctx.V->getName());
-  BeforeInstr->insertBefore(&ctx.L->getLoopPredecessor()->back());
+  auto *BeforeInstr = new LoadInst(ctx.V->getType()->getPointerElementType(), ctx.V, "load." + ctx.V->getName(), &ctx.L->getLoopPredecessor()->back());
   ctx.InsertedLoads.push_back(BeforeInstr);
 
   auto *insertBefore = &ctx.L->getLoopPredecessor()->back();
   insertDbgValueCall(ctx, BeforeInstr, ctx.DbgLoc, insertBefore, true);
   if (ctx.ValueChanged) {
-    auto BeforeInstr2 = new LoadInst(BeforeInstr, "load.ptr." + ctx.V->getName());
+    auto BeforeInstr2 = new LoadInst(BeforeInstr->getType(), BeforeInstr, "load.ptr." + ctx.V->getName(), (Instruction *) nullptr);
     BeforeInstr2->insertAfter(BeforeInstr);
     ctx.InsertedLoads.push_back(BeforeInstr2);
   }
@@ -137,7 +140,7 @@ void insertStoreInstructions(PtrRedContext &ctx) {
   }
 }
 
-void getAllStoreOperands(Instruction *Inst, DenseMap <StoreInst *, Instruction *> &Stores) {
+void getAllStoreOperands(Instruction *Inst, DenseMap<StoreInst *, Instruction *> &Stores) {
   for (auto *User : Inst->users()) {
     if (auto *ChildInst = dyn_cast<Instruction>(User)) {
       for (auto *ChildUser : ChildInst->users()) {
@@ -152,7 +155,7 @@ void getAllStoreOperands(Instruction *Inst, DenseMap <StoreInst *, Instruction *
 
 void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
   SmallVector<Instruction *, 16> loads;
-  DenseMap <StoreInst *, Instruction *> stores;
+  DenseMap<StoreInst *, Instruction *> stores;
   for (auto &Instr : BB->getInstList()) {
     if (auto *Load = dyn_cast<LoadInst>(&Instr)) {
       if (Load->getPointerOperand() != ctx.V) {
@@ -163,10 +166,10 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
         continue;
       }
       auto replaceAllLoadUsers = [&](LoadInst *Load, Instruction *ReplaceWith) {
-        DenseMap <StoreInst *, Instruction *> storeInstructions;
+        DenseMap<StoreInst *, Instruction *> storeInstructions;
         getAllStoreOperands(Load, storeInstructions);
         for (auto &Pair : storeInstructions) {
-          ctx.LastInstructions[Pair.second ->getParent()] = Pair.second;
+          ctx.LastInstructions[Pair.second->getParent()] = Pair.second;
           ctx.ChangedLastInst.insert(Pair.second->getParent());
         }
         stores.insert(storeInstructions.begin(), storeInstructions.end());
@@ -203,11 +206,10 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
 }
 
 void handleLoads(
-    PtrRedContext &ctx,
-    BasicBlock *BB,
-    DenseSet<BasicBlock *> &completedBlocks,
-    bool init = false)
-{
+        PtrRedContext &ctx,
+        BasicBlock *BB,
+        DenseSet<BasicBlock *> &completedBlocks,
+        bool init = false) {
   if (completedBlocks.find(BB) != completedBlocks.end()) {
     return;
   }
@@ -225,7 +227,7 @@ void handleLoads(
 
 void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &phiLinks) {
   for (auto It : phiLinks) {
-      delete It.second;
+    delete It.second;
   }
 }
 
@@ -236,8 +238,8 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
   bool needsCreate = false;
   if (pred_size(BB) == 1 && !init) {
     if (ctx.PhiLinks.find(BB->getSinglePredecessor()) != ctx.PhiLinks.end()) {
-        auto *parentLink = ctx.PhiLinks.find(BB->getSinglePredecessor())->second;
-        ctx.PhiLinks[BB] = new phiNodeLink(parentLink);
+      auto *parentLink = ctx.PhiLinks.find(BB->getSinglePredecessor())->second;
+      ctx.PhiLinks[BB] = new phiNodeLink(parentLink);
     } else {
       needsCreate = true;
     }
@@ -246,8 +248,8 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
   }
   if (needsCreate) {
     auto *phi = PHINode::Create(ctx.InsertedLoads.back()->getType(), 0,
-        "phi." + BB->getName(), &BB->front());
-     insertDbgValueCall(ctx, phi, ctx.DbgLoc, BB->getFirstNonPHI(), true);
+                                "phi." + BB->getName(), &BB->front());
+    insertDbgValueCall(ctx, phi, ctx.DbgLoc, BB->getFirstNonPHI(), true);
     ctx.PhiLinks[BB] = new phiNodeLink(phi);
     ctx.UniqueNodes.insert(phi);
   }
@@ -270,7 +272,7 @@ void fillPhiNodes(PtrRedContext &ctx) {
       if (ctx.LastInstructions.find(*Pred) != ctx.LastInstructions.end()) {
         Phi->addIncoming(ctx.LastInstructions[*Pred], *Pred);
       } else {
-        auto *load = new LoadInst(ctx.V, "dummy.load." + ctx.V->getName(), *Pred);
+        auto *load = new LoadInst(ctx.V->getType()->getPointerElementType(), ctx.V, "dummy.load." + ctx.V->getName(), *Pred);
         Phi->addIncoming(load, *Pred);
       }
     }
@@ -281,20 +283,20 @@ void deleteRedundantPhiNodes(PtrRedContext &ctx) {
   for (auto *Phi : ctx.UniqueNodes) {
     bool hasSameOperands = true;
     auto *operand = Phi->getOperand(0);
-      for (int i = 0; i < Phi->getNumOperands(); ++i) {
-        if (operand != Phi->getOperand(i)) {
-          hasSameOperands = false;
-          break;
-        }
+    for (int i = 0; i < Phi->getNumOperands(); ++i) {
+      if (operand != Phi->getOperand(i)) {
+        hasSameOperands = false;
+        break;
       }
-      if (hasSameOperands) {
-        Phi->replaceAllUsesWith(operand);
-        ctx.UniqueNodes.erase(Phi);
-        ctx.PhiLinks[Phi->getParent()]->phiNode = nullptr;
-        auto *Instr = dyn_cast<Instruction>(operand);
-        ctx.PhiLinks[Phi->getParent()]->parent = ctx.PhiLinks[Instr->getParent()];
-        Phi->eraseFromParent();
-      }
+    }
+    if (hasSameOperands) {
+      Phi->replaceAllUsesWith(operand);
+      ctx.UniqueNodes.erase(Phi);
+      ctx.PhiLinks[Phi->getParent()]->phiNode = nullptr;
+      auto *Instr = dyn_cast<Instruction>(operand);
+      ctx.PhiLinks[Phi->getParent()]->parent = ctx.PhiLinks[Instr->getParent()];
+      Phi->eraseFromParent();
+    }
   }
 }
 
@@ -310,8 +312,7 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
 
       bool writesToV = false;
       auto memLambda = [&STR, &V, &writesToV, &AT, &EM](Instruction &I, MemoryLocation &&Loc,
-          unsigned, AccessInfo, AccessInfo IsWrite)
-      {
+                                                        unsigned, AccessInfo, AccessInfo IsWrite) {
         if (writesToV || IsWrite == AccessInfo::No || Loc.Ptr == V) {
           return;
         }
@@ -343,7 +344,7 @@ bool PointerReductionPass::runOnFunction(Function &F) {
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   auto &LoopAttr = getAnalysis<LoopAttributesDeductionPass>();
   auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
 
   // 1. Find memory that was marked anti after the first step;
   // 2. Check if this is a pointer that is dereferenced inside the loop;
@@ -354,12 +355,12 @@ bool PointerReductionPass::runOnFunction(Function &F) {
 
   for_each_loop(LI, [this, &TraitPool, &LoopAttr, &AT, &TLI, &F](Loop *L) {
     if (!LoopAttr.hasAttr(*L, Attribute::NoUnwind) || LoopAttr.hasAttr(*L, Attribute::Returned)) {
-        return;
+      return;
     }
     auto &Pool = TraitPool[L->getLoopID()];
     SmallDenseSet<Value *> Values;
     if (!Pool) {
-      Pool = make_unique<DIMemoryTraitRegionPool>();
+      Pool = std::make_unique<DIMemoryTraitRegionPool>();
     } else {
       for (auto &T : *Pool) {
         if (T.is<trait::Anti>() || T.is<trait::Flow>() || T.is<trait::Output>()) {
@@ -370,7 +371,7 @@ bool PointerReductionPass::runOnFunction(Function &F) {
                   bool hasLoadUses = false;
                   for (auto *LoadChild : LI->users()) {
                     if (dyn_cast<LoadInst>(LoadChild)) {
-                      hasLoadUses =true;
+                      hasLoadUses = true;
                       break;
                     }
                   }
