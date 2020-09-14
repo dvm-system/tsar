@@ -602,6 +602,9 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (!(DIMTraitItr->is<trait::Redundant>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::Redundant>();
+    if (!(DIMTraitItr->is<trait::NoRedundant>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::NoRedundant>();
     if (IgnoreRedundant && DIMTraitItr->is<trait::Redundant>()) {
       DIATrait.set<trait::NoAccess>();
       DIATrait.unset<trait::HeaderAccess, trait::AddressAccess>();

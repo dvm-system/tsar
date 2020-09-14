@@ -25,7 +25,7 @@ int bar(int N, float * restrict A) {
 //CHECK:    header access:
 //CHECK:     <I:2[2:4], 4>
 //CHECK:    explicit access:
-//CHECK:     <A:1, 8> | <I:2[2:4], 4> | <X:1, 8>
+//CHECK:     <*X:1, 8> | <A:1, 8> | <I:2[2:4], 4> | <X:1, 8>
 //CHECK:    explicit access (separate):
 //CHECK:     <*X:1, 8> <A:1, 8> <I:2[2:4], 4> <X:1, 8>
 //CHECK:    lock (separate):

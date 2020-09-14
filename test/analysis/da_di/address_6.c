@@ -21,6 +21,8 @@ int foo() {
 //CHECK:     <I:8[8:3], 4>:[Int,0,10,1]
 //CHECK:    reduction:
 //CHECK:     <S:6, 4>:mult
+//CHECK:    no promoted scalar:
+//CHECK:     <X:6:7, ?>
 //CHECK:    lock:
 //CHECK:     <I:8[8:3], 4> | <X:6:7, ?>
 //CHECK:    header access:
