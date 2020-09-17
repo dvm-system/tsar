@@ -44,7 +44,7 @@ namespace tsar {
       infoByFun[F] = new StoredPtrArguments();
     }
 
-    bool isPreserved(llvm::ImmutableCallSite CS, llvm::Use *use);
+    bool isPreserved(llvm::CallBase *CS, llvm::Use *use);
   };
 }
 

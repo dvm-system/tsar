@@ -45,6 +45,7 @@
 #include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/InitializePasses.h"
 #include <queue>
 #include <unordered_set>
 
@@ -120,9 +121,9 @@ void AddressAccessAnalyser::initDepInfo(llvm::Function *F) {
           (*mDepInfo)[target]->is_invalid = true;
         else
           (*mDepInfo)[target]->deps.push_back(&I);
-      } else if (auto CS = CallSite(Inst)) {
+      } else if (auto CB = dyn_cast<CallBase>((Inst))) {
         const MemoryDependenceResults::NonLocalDepInfo &NLDI =
-                MDA->getNonLocalCallDependency(CS);
+                MDA->getNonLocalCallDependency(CB);
         for (const NonLocalDepEntry &NLDE : NLDI) {
           const MemDepResult &Res = NLDE.getResult();
           Instruction *target = Res.getInst();
@@ -272,7 +273,7 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
   for (scc_iterator<CallGraph *> SCCI = scc_begin(
           &CG); !SCCI.isAtEnd(); ++SCCI) {
     const std::vector<CallGraphNode *> &nextSCC = *SCCI;
-    if (nextSCC.size() != 1 || SCCI.hasLoop()) {
+    if (nextSCC.size() != 1) {
       LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] met recursion, failed"
                         << "\n";);
       mParameterAccesses.failed = true;
@@ -299,8 +300,8 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
     return hasUnderlyingPointer(Ty->getPointerElementType());
   if (Ty->isArrayTy())
     return hasUnderlyingPointer(Ty->getArrayElementType());
-  if (Ty->isVectorTy())
-    return hasUnderlyingPointer(Ty->getVectorElementType());
+//  if (Ty->isVectorTy())
+//    return hasUnderlyingPointer(Ty->getVectorElementType());
   if (Ty->isStructTy())
     for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
       return hasUnderlyingPointer(Ty->getStructElementType(I));
@@ -324,11 +325,11 @@ void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
   }
 }
 
-bool PreservedParametersInfo::isPreserved(ImmutableCallSite CS, Use *use) {
+bool PreservedParametersInfo::isPreserved(llvm::CallBase *CB, Use *use) {
   if (failed)
     return true;
-  const Function *F = CS.getCalledFunction();
-  if (!CS.isArgOperand(use))
+  const Function *F = CB->getCalledFunction();
+  if (!CB->isArgOperand(use))
     return false;
   if (!F) {
     LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] not a direct call" << "\n";);
@@ -338,5 +339,5 @@ bool PreservedParametersInfo::isPreserved(ImmutableCallSite CS, Use *use) {
     LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] called not processed yet" << "\n";);
     return true;
   }
-  return infoByFun[F]->find(CS.getArgumentNo(use)) != infoByFun[F]->end();
+  return infoByFun[F]->find(CB->getArgOperandNo(use)) != infoByFun[F]->end();
 }
