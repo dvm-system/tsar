@@ -98,6 +98,8 @@ void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
+//void AddressAccessAnalyser::initDepInfo(llvm::Function *F) { mDepInfo = new DependentInfo(); }
+
 void AddressAccessAnalyser::initDepInfo(llvm::Function *F) {
   FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
   auto MDA = &Provider->get<MemoryDependenceWrapperPass>().getMemDep();
@@ -284,9 +286,11 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
       continue;
     }
     if (F->isIntrinsic()) {
+      mParameterAccesses.addFunction(F);
       continue;
     }
     if (hasFnAttr(*F, AttrKind::LibFunc)) {
+      mParameterAccesses.addFunction(F);
       continue;
     }
     runOnFunction(F);
@@ -319,8 +323,7 @@ void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
                       << "]: ";);
     for (int Arg: *parAccesses->second)
       LLVM_DEBUG(
-              dbgs() << "[ADDRESS-ACCESS] \t"
-                     << F->arg_begin()[Arg].getName().begin() << ",";);
+              dbgs() << F->arg_begin()[Arg].getName().begin() << ",";);
     LLVM_DEBUG(dbgs() << "\n";);
   }
 }
@@ -336,7 +339,7 @@ bool PreservedParametersInfo::isPreserved(llvm::CallBase *CB, Use *use) {
     return true;
   }
   if (infoByFun.find(F) == infoByFun.end()) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] called not processed yet" << "\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] call not processed yet" << "\n";);
     return true;
   }
   return infoByFun[F]->find(CB->getArgOperandNo(use)) != infoByFun[F]->end();
