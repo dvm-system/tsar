@@ -22,35 +22,24 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
-#include "tsar/Transform/Clang/LoopSwapping.h"
-#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
-#include "tsar/Analysis/Memory/ServerUtils.h"
-#include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassAAProvider.h"
-#include <clang/AST/Decl.h>
+#include "tsar/Support/Tags.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include <clang/AST/RecursiveASTVisitor.h>
-#include <clang/AST/Stmt.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/Pass.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <vector>
-#include <stack>
-
 
 using namespace llvm;
 using namespace clang;
@@ -59,98 +48,48 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-l-swap"
 
-char ClangLoopSwapping::ID = 0;
-
-namespace llvm {
-
-static void initializeClangLoopSwappingServerPass(PassRegistry &);
-static void initializeClangLoopSwappingServerResponsePass(PassRegistry &);
-
-}
-
 namespace {
 
 /// This provides access to function-level analysis results on server.
-using ClangLoopSwappingServerProvider =
+using ClangLoopSwappingProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
 
-/// List of responses available from server (client may request corresponding
-/// analysis, in case of provider all analysis related to a provider may
-/// be requested separately).
-using ClangLoopSwappingServerResponse = AnalysisResponsePass<
-    DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
-    ClangLoopSwappingServerProvider>;
+using RangeVector = SmallVector<SourceRange, 2>;
 
-/// This analysis server performs transformation-based analysis.
-class ClangLoopSwappingServer final : public AnalysisServer {
-public:
-  static char ID;
-  ClangLoopSwappingServer() : AnalysisServer(ID) {
-    initializeClangLoopSwappingServerPass(*PassRegistry::getPassRegistry());
-  }
+using RangePairVector = std::vector<RangeVector>;
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AnalysisServer::getAnalysisUsage(AU);
-    ClientToServerMemory::getAnalysisUsage(AU);
-    AU.addRequired<GlobalOptionsImmutableWrapper>();
-  }
+using LoopVector = SmallVector<Loop *, 2>;
 
-  void prepareToClone(llvm::Module &ClientM,
-                      ValueToValueMapTy &ClientToServer) override {
-    ClientToServerMemory::prepareToClone(ClientM, ClientToServer);
-  }
+using LoopPairVector = std::vector<LoopVector>;
 
-  void initializeServer(llvm::Module &CM, llvm::Module &SM, ValueToValueMapTy &CToS,
-                        legacy::PassManager &PM) override {
-    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
-    PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
-    PM.add(createDIMemoryTraitPoolStorage());
-    ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
-  }
-
-  void addServerPasses(llvm::Module &M, legacy::PassManager &PM) override {
-    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-    addImmutableAliasAnalysis(PM);
-    addBeforeTfmAnalysis(PM);
-    addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
-    addAfterLoopRotateAnalysis(PM);
-    PM.add(createVerifierPass());
-    PM.add(new ClangLoopSwappingServerResponse);
-  }
-
-  void prepareToClose(legacy::PassManager &PM) override {
-    ClientToServerMemory::prepareToClose(PM);
-  }
-};
+using DIAliasTraitVector = std::vector<const DIAliasTrait *>;
 
 class LoopVisitor : public RecursiveASTVisitor<LoopVisitor> {
+private:
+  enum TraverseState { NONE, PRAGMA, OUTERFOR, INNERFOR };
 public:
-  LoopVisitor(Rewriter &Rewr, const LoopMatcherPass::LoopMatcher &LM) :
-    mRewriter(Rewr),
-    mLoopInfo(LM),
-    mSrcMgr(Rewr.getSourceMgr()),
-    mLangOpts(Rewr.getLangOpts()),
-    mIsInScope(false), mForStack(nullptr)
-    {}
+  LoopVisitor(Rewriter &Rewr, const LoopMatcherPass::LoopMatcher &LM,
+      const ASTImportInfo &ImportInfo)
+    : mRewriter(Rewr)
+    , mSrcMgr(Rewr.getSourceMgr())
+    , mImportInfo(ImportInfo)
+    , mLangOpts(Rewr.getLangOpts())
+    , mLoopInfo(LM)
+    , mState(TraverseState::NONE)
+  {}
 
   void EnterInScope() {
     mForLocations.clear();
     mForIRs.clear();
-  	mIsInScope = true;
   }
 
   void ExitFromScope() {
     mForLocations.clear();
     mForIRs.clear();
-  	mIsInScope = false;
-  }
-
-  bool IsInScope() {
-  	return mIsInScope;
   }
 
   bool TraverseStmt(Stmt *S) {
-  	if (!S)
+    if (!S)
       return true;
     Pragma P(*S);
     if (P) {
@@ -158,16 +97,17 @@ public:
       if (findClause(P, ClauseId::SwapLoops, mClauses)) {
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
         auto IsPossible =
-          pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+          pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, mImportInfo,
+                              ToRemove);
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive_in_macro);
           else if (IsPossible.second & PragmaFlags::IsInHeader)
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive_in_include);
           else
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive);
         Rewriter::RewriteOptions RemoveEmptyLine;
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
@@ -175,77 +115,73 @@ public:
         RemoveEmptyLine.RemoveLineIfEmpty = false;
         for (auto SR : ToRemove)
           mRewriter.RemoveText(SR, RemoveEmptyLine);
+        mState = TraverseState::PRAGMA;
         EnterInScope();
       }
       return true;
-  	}
-  	auto Res = RecursiveASTVisitor::TraverseStmt(S);
+    }
+    auto Res = RecursiveASTVisitor::TraverseStmt(S);
     return Res;
   }
 
   bool TraverseCompoundStmt(CompoundStmt *S) {
-    if (IsInScope() && mForStack == nullptr) {
-      mForStack = new std::stack<ForStmt *>;
+    if (mState == TraverseState::PRAGMA) {
+      mState = TraverseState::OUTERFOR;
       mForLocations.clear();
       mForIRs.clear();
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-      while (!mForStack->empty())
-        mForStack->pop();
-      delete mForStack;
-      mForStack = nullptr;
+      mState = TraverseState::PRAGMA;
       mRangePairs.push_back(mForLocations);
       mLoopPairs.push_back(mForIRs);
       ExitFromScope();
       return Res;
     }
-  	return RecursiveASTVisitor::TraverseCompoundStmt(S);
+    return RecursiveASTVisitor::TraverseCompoundStmt(S);
   }
 
   bool TraverseForStmt(ForStmt *S) {
-    if (IsInScope() && mForStack != nullptr) {
-      if (mForStack->empty()) {
-	      auto Match = mLoopInfo.find<AST>(S);
-        if (Match != mLoopInfo.end()) {
-          Loop *loop = Match->get<IR>();
-          mForIRs.push_back(loop);
-          SourceRange range(S->getBeginLoc(), S->getEndLoc());
-          mForLocations.push_back(range);
-        }
-	      mForStack->push(S);
-	      auto Res = RecursiveASTVisitor::TraverseForStmt(S);
-	      mForStack->pop();
-	      return Res;
-	    }
-	  }
+    if (mState == TraverseState::OUTERFOR) {
+      auto Match = mLoopInfo.find<AST>(S);
+      if (Match != mLoopInfo.end()) {
+        Loop *MatchLoop = Match->get<IR>();
+        mForIRs.push_back(MatchLoop);
+        SourceRange Range(S->getBeginLoc(), S->getEndLoc());
+        mForLocations.push_back(Range);
+      }
+      mState = TraverseState::INNERFOR;
+      auto Res = RecursiveASTVisitor::TraverseForStmt(S);
+      mState = TraverseState::OUTERFOR;
+      return Res;
+    }
     return RecursiveASTVisitor::TraverseForStmt(S);
   }
 
-  std::vector<std::vector<SourceRange>> getRangePairs() {
+  RangePairVector getRangePairs() const {
     return mRangePairs;
   }
 
-  std::vector<std::vector<Loop *>> getLoopPairs() {
+  LoopPairVector getLoopPairs() const {
     return mLoopPairs;
   }
 
-  size_t getLoopsCount() {
+  size_t getLoopCount() const {
     return mRangePairs.size();
   }
   
-  void PrintLocations() {
-    dbgs() << "[LOOP SWAPPING]: 'for' loop locations:\n";
-    unsigned int loopNumber = 0;
+  void printLocations() const {
+    LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: 'for' loop locations:\n");
+    size_t LoopNumber = 0;
     for (auto locs: mRangePairs) {
       for (auto location : locs) {
-        dbgs() << "Loop #" << loopNumber << ":\n";
-        SourceLocation begin = location.getBegin();
-        SourceLocation end = location.getEnd();
-        dbgs() << "\tBegin: ";
-        begin.print(dbgs(), mSrcMgr);
-        dbgs() << "\n\tEnd: ";
-        end.print(dbgs(), mSrcMgr);
-        dbgs() << '\n';
-        loopNumber++;
+        LLVM_DEBUG(dbgs() << "Loop #" << LoopNumber << ":\n");
+        SourceLocation Begin = location.getBegin();
+        SourceLocation End = location.getEnd();
+        LLVM_DEBUG(dbgs() << "\tBegin: ");
+        Begin.print(dbgs(), mSrcMgr);
+        LLVM_DEBUG(dbgs() << "\n\tEnd: ");
+        End.print(dbgs(), mSrcMgr);
+        LLVM_DEBUG(dbgs() << '\n');
+        LoopNumber++;
       }
     }
   }
@@ -253,16 +189,44 @@ public:
 private:
   Rewriter &mRewriter;
   SourceManager &mSrcMgr;
+  const ASTImportInfo &mImportInfo;
   const LangOptions &mLangOpts;
-  bool mIsInScope;
   const LoopMatcherPass::LoopMatcher &mLoopInfo;
-
+  TraverseState mState;
   SmallVector<Stmt *, 1> mClauses;
-  std::vector<SourceRange> mForLocations;
-  std::vector<Loop *> mForIRs;
-  std::vector<std::vector<SourceRange>> mRangePairs;
-  std::vector<std::vector<Loop *>> mLoopPairs;
-  std::stack<ForStmt *> *mForStack;
+  RangeVector mForLocations;
+  LoopVector mForIRs;
+  RangePairVector mRangePairs;
+  LoopPairVector mLoopPairs;
+};
+
+class ClangLoopSwapping : public FunctionPass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  ClangLoopSwapping() : FunctionPass(ID) {
+    initializeClangLoopSwappingPass(*PassRegistry::getPassRegistry());
+  }
+  bool runOnFunction(Function &F) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  void swapLoops(const LoopVisitor &Visitor);
+  DIAliasTraitVector getLoopTraits(MDNode *LoopID) const;
+  bool isSwappingAvailable(const LoopVector &Loops) const;
+  bool hasSameReductionKind(const DIAliasTraitVector &TV0,
+                            const DIAliasTraitVector &TV1) const;
+  bool hasTrueOrAntiDependence(const DIAliasTraitVector &TV0,
+                               const DIAliasTraitVector &TV1) const;
+
+  Function *mFunction = nullptr;
+  TransformationContext *mTfmCtx = nullptr;
+  const GlobalOptions *mGlobalOpts = nullptr;
+  AnalysisSocketInfo *mSocketInfo = nullptr;
+  DIDependencInfo *mDIDepInfo = nullptr;
+  DIAliasTree *mDIAT = nullptr;
+  std::function<ObjectID(ObjectID)> mGetLoopID;
+  const SourceManager *mSrcMgr = nullptr;
 };
 
 class ClangLoopSwappingInfo final : public PassGroupInfo {
@@ -273,7 +237,8 @@ class ClangLoopSwappingInfo final : public PassGroupInfo {
     Passes.add(createDIMemoryTraitPoolStorage());
     Passes.add(createDIMemoryEnvironmentStorage());
     Passes.add(createDIEstimateMemoryPass());
-    Passes.add(new ClangLoopSwappingServer);
+    Passes.add(createDIMemoryAnalysisServer());
+    Passes.add(createAnalysisWaitServerPass());
     Passes.add(createAnalysisWaitServerPass());
   }
 
@@ -283,66 +248,50 @@ class ClangLoopSwappingInfo final : public PassGroupInfo {
   }
 };
 
-}
+} //namespace
 
-void ClangLoopSwapping::initializeProviderOnServer() {
-  ClangLoopSwappingServerProvider::initialize<GlobalOptionsImmutableWrapper>(
-      [this](GlobalOptionsImmutableWrapper &Wrapper) {
-        Wrapper.setOptions(mGlobalOpts);
-      });
-  auto R = mSocket->getAnalysis<
-      DIMemoryEnvironmentWrapper, DIMemoryTraitPoolWrapper>();
-  assert(R && "Immutable passes must be available on server!");
-  auto *DIMEnvServer = R->value<DIMemoryEnvironmentWrapper *>();
-  ClangLoopSwappingServerProvider::initialize<DIMemoryEnvironmentWrapper>(
-      [DIMEnvServer](DIMemoryEnvironmentWrapper &Wrapper) {
-        Wrapper.set(**DIMEnvServer);
-      });
-  auto *DIMTraitPoolServer = R->value<DIMemoryTraitPoolWrapper *>();
-  ClangLoopSwappingServerProvider::initialize<DIMemoryTraitPoolWrapper>(
-      [DIMTraitPoolServer](DIMemoryTraitPoolWrapper &Wrapper) {
-        Wrapper.set(**DIMTraitPoolServer);
-      });
-      
-}
+char ClangLoopSwapping::ID = 0;
 
-std::vector<const DIAliasTrait *> ClangLoopSwapping::GetLoopTraits(MDNode *LoopID) {
-  auto DepItr = DIDepInfo->find(LoopID);
-  assert(DepItr != DIDepInfo->end() && "Loop must be analyzed!");
+DIAliasTraitVector ClangLoopSwapping::getLoopTraits(MDNode *LoopID) const {
+  auto DepItr = mDIDepInfo->find(LoopID);
+  assert(DepItr != mDIDepInfo->end() && "Loop must be analyzed!");
   auto &DIDepSet = DepItr->get<DIDependenceSet>();
   DenseSet<const DIAliasNode *> Coverage;
-  accessCoverage<bcl::SimpleInserter>(DIDepSet, *DIAT, Coverage,
+  accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
                                       mGlobalOpts->IgnoreRedundantMemory);
-  std::vector<const DIAliasTrait *> traits;
+  DIAliasTraitVector Traits;
   for (auto &TS : DIDepSet) {
-    auto node = TS.getNode();
-    if (!Coverage.count(node))
+    if (!Coverage.count(TS.getNode()))
       continue;
-    traits.push_back(&TS);
+    Traits.push_back(&TS);
   }
-  return traits;
+  return Traits;
 }
 
-bool ClangLoopSwapping::HasSameReductionKind(std::vector<const DIAliasTrait *> &traits0,
-                        std::vector<const DIAliasTrait *> &traits1,
-                        SpanningTreeRelation<DIAliasTree *> &STR) {
-  for (auto TS0: traits0) {
-    auto *node0 = const_cast<DIAliasNode *>(TS0->getNode());
+bool ClangLoopSwapping::hasSameReductionKind(
+    const DIAliasTraitVector &TV0, const DIAliasTraitVector &TV1) const {
+  for (auto &TS0: TV0) {
+    auto *Node0 = TS0->getNode();
     MemoryDescriptor Dptr0 = *TS0;
-    for (auto TS1: traits1) {
-      auto *node1 = const_cast<DIAliasNode *>(TS1->getNode());
+    if (!Dptr0.is<trait::Reduction>())
+      continue;
+    for (auto &TS1: TV1) {
+      auto *Node1 = TS1->getNode();
       MemoryDescriptor Dptr1 = *TS1;
-      if (STR.isEqual(node0, node1) && Dptr0.is<trait::Reduction>() &&
-          Dptr1.is<trait::Reduction>()) {
-        dbgs() << "[LOOP SWAPPING]: same reduction nodes;\n";
+      if (Node0 == Node1 && Dptr1.is<trait::Reduction>()) {
+        LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Same nodes with reduction.\n");
         auto I0 = TS0->begin(), I1 = TS1->begin();
         auto *Red0 = (**I0).get<trait::Reduction>();
         auto *Red1 = (**I1).get<trait::Reduction>();
+        if (!Red0 || !Red1) {
+          LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Unknown Reduction.\n");
+          return false;
+        }
         auto Kind0 = Red0->getKind(), Kind1 = Red1->getKind();
-        if (!Red0 || !Red1 || Kind0 == trait::DIReduction::RK_NoReduction ||
+        if (Kind0 == trait::DIReduction::RK_NoReduction ||
             Kind1 == trait::DIReduction::RK_NoReduction) {
-          dbgs() << "[LOOP SWAPPING]: No Reduction\n";
-          return true;
+          LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Unknown Reduction.\n");
+          return false;
         }
         if (Kind0 != Kind1)
           return false;
@@ -352,21 +301,20 @@ bool ClangLoopSwapping::HasSameReductionKind(std::vector<const DIAliasTrait *> &
   return true;
 }
 
-bool ClangLoopSwapping::HasTrueOrAntiDependence(std::vector<const DIAliasTrait *> &traits0,
-                        std::vector<const DIAliasTrait *> &traits1,
-                        SpanningTreeRelation<DIAliasTree *> &STR) {
-  for (auto TS0: traits0) {
-    auto *node0 = const_cast<DIAliasNode *>(TS0->getNode());
+bool ClangLoopSwapping::hasTrueOrAntiDependence(
+    const DIAliasTraitVector &TV0, const DIAliasTraitVector &TV1) const {
+  for (auto &TS0: TV0) {
+    auto *Node0 = TS0->getNode();
     MemoryDescriptor Dptr0 = *TS0;
-    for (auto TS1: traits1) {
-      auto *node1 = const_cast<DIAliasNode *>(TS1->getNode());
+    for (auto &TS1: TV1) {
+      auto *Node1 = TS1->getNode();
       MemoryDescriptor Dptr1 = *TS1;
-      if (STR.isEqual(node0, node1)) {
+      if (Node0 == Node1) {
         if (Dptr0.is<trait::Readonly>() && !Dptr1.is<trait::Readonly>()) {
-          dbgs() << "[LOOP SWAPPING]: anti dependence found;\n";
+          // anti dependence
           return true;
-        } else if (Dptr1.is<trait::Readonly>() && !Dptr0.is<trait::Readonly>()) {
-          dbgs() << "[LOOP SWAPPING]: true dependence found;\n";
+        } else if (Dptr1.is<trait::Readonly>() && !Dptr0.is<trait::Readonly>()){
+          // true dependence
           return true;
         }
       }
@@ -375,99 +323,64 @@ bool ClangLoopSwapping::HasTrueOrAntiDependence(std::vector<const DIAliasTrait *
   return false;
 }
 
-bool ClangLoopSwapping::IsSwappingAvailable(std::vector<Loop *> loops) {
-  Loop *loop0 = loops[0];
-  Loop *loop1 = loops[1];
-  
-  auto *Loop0_ID = loop0->getLoopID();
-  auto *Loop1_ID = loop1->getLoopID();
-  
-  if (!Loop0_ID || !(Loop0_ID = getLoopID(Loop0_ID))) {
-    dbgs() << "[LOOP SWAPPING]: ignore loop without ID (loop 0).";
+bool ClangLoopSwapping::isSwappingAvailable(const LoopVector &Loops) const {
+  auto HasLoopID = [this](MDNode*& LoopID, int LoopN) {
+    if (!LoopID || !(LoopID = mGetLoopID(LoopID))) {
+      LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: ignore loop without ID (loop " <<
+        LoopN << ").");
+      return false;
+    }
+    return true;
+  };
+  auto *LoopID0 = Loops[0]->getLoopID();
+  auto *LoopID1 = Loops[1]->getLoopID();
+  if (!HasLoopID(LoopID0, 0))
+    return false;
+  if (!HasLoopID(LoopID1, 1))
+    return false;
+  auto Traits0 = getLoopTraits(LoopID0);
+  auto Traits1 = getLoopTraits(LoopID1);
+  if (!hasSameReductionKind(Traits0, Traits1)) {
+    toDiag(mSrcMgr->getDiagnostics(), diag::warn_loop_swapping_diff_reduction);
     return false;
   }
-
-  if (!Loop1_ID || !(Loop1_ID = getLoopID(Loop1_ID))) {
-    dbgs() << "[LOOP SWAPPING]: ignore loop without ID (loop 1).";
-    return false;
-  }
-
-  std::vector<const DIAliasTrait *> traits0 = GetLoopTraits(Loop0_ID);
-  std::vector<const DIAliasTrait *> traits1 = GetLoopTraits(Loop1_ID);
-
-  SpanningTreeRelation<DIAliasTree *> STR(DIAT);
-
-  if (!HasSameReductionKind(traits0, traits1, STR)) {
-    dbgs() << "[LOOP SWAPPING]: Failed to swap loops: different reduction kinds.";
-    return false;
-  }
-  if (HasTrueOrAntiDependence(traits0, traits1, STR)) {
-    dbgs() << "[LOOP SWAPPING]: Failed to swap loops: true or anti depencende.";
+  if (hasTrueOrAntiDependence(Traits0, Traits1)) {
+    toDiag(mSrcMgr->getDiagnostics(),
+           diag::warn_loop_swapping_true_anti_dependence);
     return false;
   }
   return true;
 }
 
-void ClangLoopSwapping::SwapLoops(const std::vector<std::vector<SourceRange>> &mRangePairs,
-                                  const std::vector<std::vector<Loop *>> &mLoopPairs) {
+void ClangLoopSwapping::swapLoops(const LoopVisitor &Visitor) {
+  const auto &RangePairs = Visitor.getRangePairs();
+  const auto &LoopPairs = Visitor.getLoopPairs();
   Rewriter &mRewriter = mTfmCtx->getRewriter();
-  for (int i = 0; i < mRangePairs.size(); i++) {
-    std::vector<SourceRange> ranges = mRangePairs[i];
-    std::vector<Loop *> loops = mLoopPairs[i];
-    if (ranges.size() < 2) {
-      dbgs() << "[LOOP SWAPPING]: Too few loops for swap. Ignore.\n";
+  for (size_t i = 0; i < RangePairs.size(); i++) {
+    const auto &Ranges = RangePairs[i];
+    const auto &Loops = LoopPairs[i];
+    if (Ranges.size() < 2) {
+      toDiag(mSrcMgr->getDiagnostics(),
+              diag::warn_loop_swapping_missing_loop);
       continue;
     }
-    if (ranges.size() > 2) {
-      dbgs() << "[LOOP SWAPPING]: Too many loops for swap. Ignore additional loops.\n";
+    if (Ranges.size() > 2) {
+      toDiag(mSrcMgr->getDiagnostics(),
+              diag::warn_loop_swapping_redundant_loop);
     }
-    if (IsSwappingAvailable(loops)) {
-      SourceRange first = ranges[0];
-      SourceRange second = ranges[1];
-      std::string first_loop = mRewriter.getRewrittenText(first);
-      std::string second_loop = mRewriter.getRewrittenText(second);
-      mRewriter.ReplaceText(first, second_loop);
-      mRewriter.ReplaceText(second, first_loop);
-    } else {
-      dbgs() << " Loops will not be swapped.\n";
-    }
-  }
-}
-
-bool ClangLoopSwapping::LoadDependenceAnalysisInfo(Function &F) {
-  getLoopID = [](ObjectID ID) { return ID; };
-  if (auto *Socket = getAnalysisIfAvailable<AnalysisSocketImmutableWrapper>()) {
-    if (auto R = (*Socket)->getAnalysis<AnalysisClientServerMatcherWrapper>()) {
-      auto *Matcher = R->value<AnalysisClientServerMatcherWrapper *>();
-      getLoopID = [Matcher](ObjectID ID) {
-        auto ServerID = (*Matcher)->getMappedMD(ID);
-        return ServerID ? cast<MDNode>(*ServerID) : nullptr;
-      };
-      if (auto R =(*Socket)->getAnalysis<
-            DIEstimateMemoryPass, DIDependencyAnalysisPass>(F)) {
-        DIAT = &R->value<DIEstimateMemoryPass *>()->getAliasTree();
-        DIDepInfo = &R->value<DIDependencyAnalysisPass *>()->getDependencies();
-      }
+    if (isSwappingAvailable(Loops)) {
+      const auto &FirstRange = Ranges[0];
+      const auto &SecondRange = Ranges[1];
+      const auto &FirstLoop = mRewriter.getRewrittenText(FirstRange);
+      const auto &SecondLoop = mRewriter.getRewrittenText(SecondRange);
+      mRewriter.ReplaceText(FirstRange, SecondLoop);
+      mRewriter.ReplaceText(SecondRange, FirstLoop);
     }
   }
-  if (!DIAT || !DIDepInfo) {
-    dbgs() << "[LOOP SWAPPING]: analysis server is not available\n";
-    if (auto *P = getAnalysisIfAvailable<DIEstimateMemoryPass>())
-      DIAT = &P->getAliasTree();
-    else
-      return false;
-    if (auto *P = getAnalysisIfAvailable<DIDependencyAnalysisPass>())
-      DIDepInfo = &P->getDependencies();
-    else
-      return false;
-    dbgs() << "[LOOP SWAPPING]: use dependence analysis from client\n";
-  }
-  return true;
 }
 
 bool ClangLoopSwapping::runOnFunction(Function &F) {
   mFunction = &F;
-  dbgs() << "\n[LOOP SWAPPING]: Function '" << F.getName() << "'.\n";
   auto *M = F.getParent();
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
@@ -478,35 +391,44 @@ bool ClangLoopSwapping::runOnFunction(Function &F) {
   auto FuncDecl = mTfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
-  mSocket = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
+  mSocketInfo = &getAnalysis<AnalysisSocketImmutableWrapper>().get();
   mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  initializeProviderOnServer();
-  if (!LoadDependenceAnalysisInfo(F))
-    return false;
+  auto *Socket = mSocketInfo->getActiveSocket();
+  auto RF =
+      Socket->getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
+  assert(RF && "Dependence analysis must be available for a parallel loop!");
+  mDIAT = &RF->value<DIEstimateMemoryPass *>()->getAliasTree();
+  mDIDepInfo = &RF->value<DIDependencyAnalysisPass *>()->getDependencies();
+  auto R = Socket->getAnalysis<AnalysisClientServerMatcherWrapper>();
+  auto *Matcher = R->value<AnalysisClientServerMatcherWrapper *>();
+  mGetLoopID = [Matcher](ObjectID ID) {
+    auto ServerID = (*Matcher)->getMappedMD(ID);
+    return ServerID ? cast<MDNode>(*ServerID) : nullptr;
+  };
   auto &mLoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  LoopVisitor lv(mTfmCtx->getRewriter(), mLoopInfo);
-  lv.TraverseDecl(FuncDecl);
-  if (lv.getLoopsCount() == 0) {
-    dbgs() << "[LOOP SWAPPING]: no loops found.\n";
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
+  LoopVisitor Visitor(mTfmCtx->getRewriter(), mLoopInfo, *ImportInfo);
+  mSrcMgr = &mTfmCtx->getRewriter().getSourceMgr();
+  Visitor.TraverseDecl(FuncDecl);
+  if (Visitor.getLoopCount() == 0) {
+    LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: no loop found.\n");
     return false;
   }
-  lv.PrintLocations();
-  std::vector<std::vector<SourceRange>> mRangePairs = lv.getRangePairs();
-  std::vector<std::vector<Loop *>> mLoopPairs = lv.getLoopPairs();
-  SwapLoops(mRangePairs, mLoopPairs);
+  Visitor.printLocations();
+  swapLoops(Visitor);
   return false;
 }
 
 void ClangLoopSwapping::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AnalysisSocketImmutableWrapper>();
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<DIDependencyAnalysisPass>();
   AU.addRequired<LoopMatcherPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DIEstimateMemoryPass>();
-  AU.addRequired<DIMemoryEnvironmentWrapper>();
-  AU.addRequired<DIMemoryTraitPoolWrapper>();
   AU.setPreservesAll();
 }
 
@@ -514,33 +436,24 @@ FunctionPass * llvm::createClangLoopSwapping() {
   return new ClangLoopSwapping();
 }
 
-INITIALIZE_PROVIDER(ClangLoopSwappingServerProvider, "clang-loop-swapping-server-provider",
-                    "Loop Swapping (Clang, Server, Provider)")
-
-template <> char ClangLoopSwappingServerResponse::ID = 0;
-INITIALIZE_PASS(ClangLoopSwappingServerResponse, "clang-loop-swapping-response",
-                "Loop Swapping (Clang, Server, Response)", true,
-                false)
-
-char ClangLoopSwappingServer::ID = 0;
-INITIALIZE_PASS(ClangLoopSwappingServer, "clang-loop-swapping-server",
-                "Loop Swapping (Clang, Server)", false, false)
-                
+INITIALIZE_PROVIDER_BEGIN(ClangLoopSwappingProvider,
+                  "clang-loop-swapping-provider",
+                  "Loop Swapping (Clang, Provider)");
+INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass);
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass);
+INITIALIZE_PROVIDER_END(ClangLoopSwappingProvider,
+                    "clang-loop-swapping-provider",
+                    "Loop Swapping (Clang, Provider)");
+                    
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangLoopSwapping,"clang-l-swap",
   "'for' Loops Swapping (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry());
 INITIALIZE_PASS_IN_GROUP_INFO(ClangLoopSwappingInfo);
+INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper);
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass);
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass);
-INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass);
-INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass);
-INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass);
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper);
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper);
-INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper);
-INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper);
-INITIALIZE_PASS_DEPENDENCY(ClangLoopSwappingServerProvider);
-INITIALIZE_PASS_DEPENDENCY(ClangLoopSwappingServerResponse);
+INITIALIZE_PASS_DEPENDENCY(ClangLoopSwappingProvider);
 INITIALIZE_PASS_IN_GROUP_END(ClangLoopSwapping,"clang-l-swap",
   "'for' Loops Swapping (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry());
