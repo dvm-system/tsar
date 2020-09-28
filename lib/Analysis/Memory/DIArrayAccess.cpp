@@ -226,7 +226,8 @@ void DIArrayAccessInfo::erase(const Array &V) {
       --PrevItr;
       auto PrevArrayItr =
           Info.get<ArrayToAccessMap>().find(PrevItr->getArray());
-      if (PrevArrayItr != Info.get<ArrayToAccessMap>().end())
+      if (PrevArrayItr != Info.get<ArrayToAccessMap>().end() &&
+          PrevArrayItr->get<End>()->getArray() == V)
         PrevArrayItr->get<End>() = I->get<End>();
     }
     Info.get<ArrayToAccessMap>().erase(V);
