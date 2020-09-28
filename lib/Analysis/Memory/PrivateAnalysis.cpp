@@ -791,8 +791,9 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
             // Address should be also remembered if it is a function parameter
             // and this parameter is preserved within this function
             auto *Call = dyn_cast<CallBase>(I.first);
+            auto *Arg = dyn_cast<Argument>(I.second);
             return Call && Call->getCalledOperand() != I.second->get()
-                        && mAA->isPreserved(Call, I.second);
+                        && Arg && !Arg->hasNoCaptureAttr();
           }))
         continue;
       auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));

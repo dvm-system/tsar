@@ -98,8 +98,6 @@ void AddressAccessAnalyser::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-//void AddressAccessAnalyser::initDepInfo(llvm::Function *F) { mDepInfo = new DependentInfo(); }
-
 void AddressAccessAnalyser::initDepInfo(llvm::Function *F) {
   FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
   auto MDA = &Provider->get<MemoryDependenceWrapperPass>().getMemDep();
@@ -187,26 +185,23 @@ std::vector<Value *> AddressAccessAnalyser::useMovesTo(
       res.push_back(I);
     return res;
   } else if (auto load = dyn_cast<LoadInst>(instr)) {
+    // res.push_back(load);
     return res;
   } else if (auto gep = dyn_cast<GetElementPtrInst>(instr)) {
     res.push_back(gep);
     return res;
   } else if (auto call = dyn_cast<CallInst>(instr)) {
     Function *called = call->getCalledFunction();
-    if (mParameterAccesses.infoByFun.find(called) ==
-        mParameterAccesses.infoByFun.end()) {
-      LLVM_DEBUG(
-              dbgs() << "[ADDRESS-ACCESS] called not processed yet" << "\n";);
-      undefined = true;
+    if (called->isIntrinsic() || hasFnAttr(*called, AttrKind::LibFunc))
       return res;
-    }
+
+    printf("%s\n", called->getName().begin());
     int argIdx = 0;
-    for (Use &arg_use : call->arg_operands()) {
+    for (Use &arg_use : call->args()) {
       Value *arg_value = arg_use.get();
       if (arg_value ==
           value) {
-        if (mParameterAccesses.infoByFun[called]->find(argIdx) !=
-            mParameterAccesses.infoByFun[called]->end()) {
+        if (!called->getArg(argIdx)->hasNoCaptureAttr()) {
           undefined = true;
           return res;
         }
@@ -259,10 +254,12 @@ void AddressAccessAnalyser::runOnFunction(Function *F) {
   initDepInfo(F);
   int argIdx = 0;
   for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++) {
-    if (Arg->getType()->isPointerTy()) { // we're not interested in non-ptr arg
-      if (!constructUsageTree(
-              Arg))  // if usage tree exists then we have only local usages
+    if (Arg->getType()->isPointerTy() && !Arg->hasReturnedAttr()) {
+      if (Arg->hasNoCaptureAttr() || !constructUsageTree(
+              Arg)) {// if usage tree exists then we have only local usages
+        Arg->addAttr(Attribute::AttrKind::NoCapture);
         mParameterAccesses.infoByFun[F]->insert(argIdx);
+      }
     }
     argIdx++;
   }
@@ -287,10 +284,15 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
     }
     if (F->isIntrinsic()) {
       mParameterAccesses.addFunction(F);
+      setNocaptureToAll(F);
       continue;
     }
     if (hasFnAttr(*F, AttrKind::LibFunc)) {
       mParameterAccesses.addFunction(F);
+      setNocaptureToAll(F);
+      continue;
+    }
+    if (F->isDeclaration()) {
       continue;
     }
     runOnFunction(F);
@@ -304,8 +306,6 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
     return hasUnderlyingPointer(Ty->getPointerElementType());
   if (Ty->isArrayTy())
     return hasUnderlyingPointer(Ty->getArrayElementType());
-//  if (Ty->isVectorTy())
-//    return hasUnderlyingPointer(Ty->getVectorElementType());
   if (Ty->isStructTy())
     for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
       return hasUnderlyingPointer(Ty->getStructElementType(I));
@@ -315,32 +315,20 @@ bool AddressAccessAnalyser::isNonTrivialPointerType(llvm::Type *Ty) {
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
   for (const Function &FF: *m) {
     const Function *F = &FF;
-    if (F->isIntrinsic()) {
+    if (F->isIntrinsic() || tsar::hasFnAttr(*F, AttrKind::LibFunc))
       continue;
-    }
-    auto parAccesses = mParameterAccesses.infoByFun.find(F);
     LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Function [" << F->getName().begin()
                       << "]: ";);
-    for (int Arg: *parAccesses->second)
-      LLVM_DEBUG(
-              dbgs() << F->arg_begin()[Arg].getName().begin() << ",";);
+    for (auto &arg : F->args())
+      if (arg.hasNoCaptureAttr())
+        LLVM_DEBUG(
+                dbgs() << arg.getName().begin() << ",";);
     LLVM_DEBUG(dbgs() << "\n";);
   }
 }
 
-bool PreservedParametersInfo::isPreserved(llvm::CallBase *CB, Use *use) {
-  if (failed)
-    return true;
-  const Function *F = CB->getCalledFunction();
-  if (!CB->isArgOperand(use))
-    return false;
-  if (!F) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] not a direct call" << "\n";);
-    return true;
-  }
-  if (infoByFun.find(F) == infoByFun.end()) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] call not processed yet" << "\n";);
-    return true;
-  }
-  return infoByFun[F]->find(CB->getArgOperandNo(use)) != infoByFun[F]->end();
+void AddressAccessAnalyser::setNocaptureToAll(Function* F) {
+  for (auto &arg : F->args())
+    if (arg.getType()->isPointerTy())
+      arg.addAttr(Attribute::AttrKind::NoCapture);
 }

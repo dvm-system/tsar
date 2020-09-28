@@ -43,8 +43,6 @@ namespace tsar {
     void addFunction(llvm::Function *F) {
       infoByFun[F] = new StoredPtrArguments();
     }
-
-    bool isPreserved(llvm::CallBase *CS, llvm::Use *use);
   };
 }
 
@@ -64,10 +62,6 @@ namespace llvm {
           public ModulePass, private bcl::Uncopyable {
 
     using ValueSet = DenseSet<llvm::Value *>;
-    using ArgumentHolders = DenseMap<Argument *, ValueSet>;
-    using StoredPtrArguments = DenseSet<int>;
-    using FunctionToArguments = DenseMap<
-            const llvm::Function *, StoredPtrArguments *>;
     /// maps instructions on those which are dependent on them
     using DependentInfo = DenseMap<Instruction *, InstrDependencies *>;
 
@@ -81,6 +75,8 @@ namespace llvm {
     }
 
     tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
+
+    void setNocaptureToAll(Function* );
 
     bool isStored(Value *);
 
