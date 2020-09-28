@@ -627,16 +627,23 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
       Coef = SE.getZero(S->getType());
       ConstTerm = S;
     }
-    if (!L || !isa<SCEVConstant>(Coef) || !isa<SCEVConstant>(ConstTerm))
+    if (!isa<SCEVConstant>(ConstTerm))
       continue;
-    auto MonomLoopID = L->getLoopID();
-    if (!MonomLoopID)
-      continue;
+    ObjectID MonomLoopID = nullptr;
+    if (L) {
+      if (!isa<SCEVConstant>(Coef))
+        continue;
+      MonomLoopID = L->getLoopID();
+      if (!MonomLoopID)
+        continue;
+    }
     auto ConstTermValue = cast<SCEVConstant>(ConstTerm)->getAPInt();
     auto *DimAccess =
         Access->make<DIAffineSubscript>(DimIdx, APSInt(ConstTermValue, false));
-    auto CoefValue = cast<SCEVConstant>(Coef)->getAPInt();
-    DimAccess->emplaceMonom(MonomLoopID, APSInt(CoefValue, false));
+    if (L) {
+      auto CoefValue = cast<SCEVConstant>(Coef)->getAPInt();
+      DimAccess->emplaceMonom(MonomLoopID, APSInt(CoefValue, false));
+    }
     LLVM_DEBUG(dbgs() << "[DI ARRAY ACCESS]: dimension " << DimIdx
                       << " subscript " << DimAccess->getConstant();
                for (unsigned I = 0, EI = DimAccess->getNumberOfMonoms(); I < EI;
