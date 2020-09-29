@@ -179,3 +179,8 @@ def error_expect_function_param : Error<"expected function parameter name">;
 
 def note_record_member_unknown: Error<"record has no member '%0'">;
 def note_declared_here: Note<"declared here">;
+
+def warn_loop_swapping_diff_reduction: Warning<"unable to swap loops due to the different reduction types">;
+def warn_loop_swapping_true_anti_dependence: Warning<"unable to swap loops due to the true or anti dependence">;
+def warn_loop_swapping_missing_loop: Warning<"not enough loops for swapping">;
+def warn_loop_swapping_redundant_loop: Warning<"too many loops for swapping, ignore redundant">;
