@@ -426,6 +426,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
           unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
+        // EM may be smaller than Loc if it is known that access out of the
+        // EM size leads to undefined behavior.
+        Loc.Size = EM->getSize();
         assert(EM && "Estimate memory location must not be null!");
         auto &AA = AT.getAliasAnalysis();
         /// List of ambiguous pointers contains only one pointer for each set

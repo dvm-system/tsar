@@ -1089,6 +1089,10 @@ public:
 
   /// Returns the smallest estimate memory location which covers a specified
   /// memory location or nullptr.
+  ///
+  /// \attention The size of found location (EM) may be smaller than the size of
+  /// a specified one (Loc) if it is known that access out of the EM size leads
+  /// to undefined behavior.
   EstimateMemory * find(const llvm::MemoryLocation &Loc) {
     return const_cast<EstimateMemory *>(
       static_cast<const AliasTree *>(this)->find(Loc));
@@ -1099,12 +1103,18 @@ public:
   ///
   /// TODO (kaniandr@gmail.com): implement accurate search do not ignore lower
   /// bound.
+  /// \attention The size of found location (EM) may be smaller than the size of
+  /// a specified one (Loc) if it is known that access out of the EM size leads
+  /// to undefined behavior.
   const EstimateMemory * find(const MemoryLocationRange &Loc) const {
     return find(llvm::MemoryLocation(Loc.Ptr, Loc.UpperBound, Loc.AATags));
   }
 
   /// Returns the smallest estimate memory location which covers a specified
   /// memory location or nullptr.
+  /// \attention The size of found location (EM) may be smaller than the size of
+  /// a specified one (Loc) if it is known that access out of the EM size leads
+  /// to undefined behavior.
   EstimateMemory * find(const MemoryLocationRange &Loc) {
     return const_cast<EstimateMemory *>(
       static_cast<const AliasTree *>(this)->find(Loc));
