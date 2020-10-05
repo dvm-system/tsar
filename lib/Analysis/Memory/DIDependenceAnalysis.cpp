@@ -564,8 +564,32 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
       continue;
     for (auto &DILoc : DILocs) {
       auto *MD = getRawDIMemoryIfExists(Incoming->getContext(), DILoc);
-      if (!MD)
-        continue;
+      // If a memory location is partially promoted we will try to use
+      // dbg.declare or dbg.addr intrinsics to find the corresponding node in
+      // the alias tree.
+      if (!MD) {
+        if (DILoc.Expr->getNumOperands() != 0)
+          continue;
+        auto *MDV =
+            MetadataAsValue::getIfExists(Incoming->getContext(), DILoc.Var);
+        if (!MDV)
+          continue;
+        for (User *U : MDV->users()) {
+          if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
+            if (DII->isAddressOfVariable()) {
+              auto DILocCandidate = DIMemoryLocation::get(DII);
+              if (DILocCandidate.Expr != DILoc.Expr &&
+                  DILocCandidate.Loc == DILoc.Loc)
+                continue;
+              MD = getRawDIMemoryIfExists(Incoming->getContext(),
+                                          DILocCandidate);
+              if (MD)
+                break;
+            }
+        }
+        if (!MD)
+          continue;
+      }
       auto DIMTraitItr = Pool.find_as(MD);
       if (DIMTraitItr == Pool.end() ||
           DIMTraitItr->getMemory()->isOriginal() ||
