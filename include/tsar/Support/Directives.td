@@ -100,9 +100,13 @@ def Assert     : Directive<"assert">;
 def Region     : Directive<"region">;
 def Metadata   : Directive<"metadata">;
 
-def DvmTemplate: Directive<"template", Dvm>;
-def DvmArray   : Directive<"array", Dvm>;
-def DvmInherit : Directive<"inherit", Dvm>;
+def DvmTemplate  : Directive<"template", Dvm>;
+def DvmArray     : Directive<"array", Dvm>;
+def DvmInherit   : Directive<"inherit", Dvm>;
+def DvmRegion    : Directive<"region", Dvm>;
+def DvmParallel  : Directive<"parallel", Dvm>;
+def DvmActual    : Directive<"actual", Dvm>;
+def DvmGetActual : Directive<"get_actual", Dvm>;
 
 // Define one clause.
 class Clause<string name, Directive parent, list<Expr> expr_list = []> {

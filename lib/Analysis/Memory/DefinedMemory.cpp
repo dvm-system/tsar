@@ -36,9 +36,9 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
@@ -58,12 +58,12 @@ char DefinedMemoryPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
   LLVM_DEBUG(INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass));
-  INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
-  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
 
@@ -76,8 +76,8 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-  auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   auto &DL = F.getParent()->getDataLayout();
+  auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
     ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, DI, SE, DL, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
@@ -90,12 +90,12 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
-  AU.addRequired<DelinearizationPass>();
-  AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalDefinedMemoryWrapper>();
+  AU.addRequired<DelinearizationPass>();
+  AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -437,6 +437,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
           unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
+        // EM may be smaller than Loc if it is known that access out of the
+        // EM size leads to undefined behavior.
+        Loc.Size = EM->getSize();
         assert(EM && "Estimate memory location must not be null!");
         auto &AA = AT.getAliasAnalysis();
         /// List of ambiguous pointers contains only one pointer for each set

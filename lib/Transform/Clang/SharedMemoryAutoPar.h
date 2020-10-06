@@ -32,8 +32,12 @@
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
+#include <bcl/cell.h>
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
+#include <llvm/ADT/Optional.h>
+#include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/PointerUnion.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/InitializePasses.h>
@@ -52,6 +56,141 @@ class OptimizationRegion;
 class TransformationContext;
 struct GlobalOptions;
 struct MemoryMatchInfo;
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
+
+/// This represents a parallel construct.
+class ParallelItem {
+  enum Flags : uint8_t {
+    NoProperty = 0,
+    Final = 1u << 0,
+    ChildPossible = 1u << 1,
+    Marker = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(Marker)
+  };
+public:
+  explicit ParallelItem(unsigned Kind, bool IsFinal,
+                        ParallelItem *Parent = nullptr)
+    : ParallelItem(Kind, IsFinal, false, false, Parent) {}
+  virtual ~ParallelItem() {}
+
+  /// Return user-defined kind of a parallel item.
+  unsigned getKind() const noexcept { return mKind; }
+
+  /// Return true if this item may contain nested parallel items.
+  bool isChildPossible() const noexcept { return mFlags & ChildPossible; }
+
+  /// Return true if this item has been finalized. For hierarchical source code
+  /// constructs (for example loops) it means that nested constructs should not
+  /// be analyzed.
+  ///
+  /// Use finalize() method to mark this item as final.
+  bool isFinal() const noexcept { return mFlags & Final; }
+
+  /// Return true if this is a marker which is auxiliary construction.
+  bool isMarker() const noexcept { return mFlags & Marker; }
+
+  ParallelItem *getParent() noexcept { return mParent; }
+  const ParallelItem *getParent() const noexcept { return mParent; }
+
+  void setParent(ParallelItem *Parent) noexcept { mParent = Parent; }
+
+  /// Mark item as final.
+  ///
+  /// \attention Overridden methods have to call this one to set corresponding
+  /// flags.
+  virtual void finalize() { mFlags |= Final; }
+
+protected:
+  ParallelItem(unsigned Kind, bool IsFinal, bool IsMarker, bool IsChildPossible,
+               ParallelItem *Parent)
+      : mParent(Parent), mFlags(NoProperty), mKind(Kind) {
+    if (IsFinal)
+      mFlags |= Final;
+    if (IsMarker)
+      mFlags |= Marker;
+    if (IsChildPossible)
+      mFlags |= ChildPossible;
+  }
+
+private:
+  ParallelItem *mParent;
+  Flags mFlags;
+  unsigned mKind;
+};
+
+/// This represents a parallel construct which may contain other constructs
+/// (for exmplae DVMH region contains parallel loops).
+class ParallelLevel : public ParallelItem {
+public:
+  using child_iterator = std::vector<ParallelItem *>::iterator;
+  using const_child_iterator = std::vector<ParallelItem *>::const_iterator;
+
+  static bool classof(const ParallelItem *Item) noexcept {
+    return Item->isChildPossible();
+  }
+
+  explicit ParallelLevel(unsigned Kind, bool IsFinal,
+                        ParallelItem *Parent = nullptr)
+      : ParallelItem(Kind, IsFinal, true, false, Parent) {
+  }
+  ~ParallelLevel() {
+    for (auto *Child : mChildren)
+      Child->setParent(nullptr);
+  }
+
+  child_iterator child_insert(ParallelItem *Item) {
+    mChildren.push_back(Item);
+    if (Item->getParent()) {
+      auto PrevChildItr = llvm::find(
+          llvm::cast<ParallelLevel>(Item->getParent())->children(), Item);
+      assert(PrevChildItr !=
+                 llvm::cast<ParallelLevel>(Item->getParent())->child_end() &&
+             "Corrupted parallel item, parent must contain its child!");
+      llvm::cast<ParallelLevel>(Item->getParent())->child_erase(PrevChildItr);
+    }
+    Item->setParent(this);
+    return mChildren.end() - 1;
+  }
+
+  child_iterator child_erase(child_iterator I) {
+    (*I)->setParent(nullptr);
+    return mChildren.erase(I);
+  }
+
+  child_iterator child_begin() { return mChildren.begin(); }
+  child_iterator child_end() { return mChildren.end(); }
+
+  const_child_iterator child_begin() const { return mChildren.begin(); }
+  const_child_iterator child_end() const { return mChildren.end(); }
+
+  llvm::iterator_range<child_iterator> children() {
+    return llvm::make_range(child_begin(), child_end());
+  }
+
+  llvm::iterator_range<const_child_iterator> children() const {
+    return llvm::make_range(child_begin(), child_end());
+  }
+
+private:
+  std::vector<ParallelItem *> mChildren;
+};
+
+/// This is auxiliary item which references to an item of a specified type.
+///
+/// Use get/setParent() to access original item. This class is useful to mark
+/// the end of a parallel construct in source code.
+template<class ItemT>
+class ParallelMarker : public ParallelItem {
+public:
+  static bool classof(const ParallelItem *Item) noexcept {
+    return Item->isMarker() && Item->getParent() &&
+           llvm::isa<ItemT>(Item->getParent());
+  }
+
+  ParallelMarker(unsigned Kind, ItemT *For)
+      : ParallelItem(Kind, true, true, false, For) {}
+};
 }
 
 namespace llvm {
@@ -62,21 +201,23 @@ class Loop;
 class CanonicalLoopPass;
 class ClangPerfectLoopPass;
 class ClangDIMemoryMatcherPass;
+class DIEstimateMemoryPass;
 class DFRegionInfoPass;
 class LoopMatcherPass;
 class LoopInfoWrapperPass;
 class ParallelLoopPass;
 
-/// This provider access to function-level analysis results on client.
-using ClangSMParallelProvider =
-    FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
-                           ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
-                           DFRegionInfoPass, ClangDIMemoryMatcherPass,
-                           MemoryMatcherImmutableWrapper, ClangPerfectLoopPass>;
+/// This provide access to function-level analysis results on client.
+using FunctionAnalysis =
+    bcl::StaticTypeMap<AnalysisSocketImmutableWrapper *, LoopInfoWrapperPass *,
+                       ParallelLoopPass *, CanonicalLoopPass *,
+                       LoopMatcherPass *, DFRegionInfoPass *,
+                       ClangDIMemoryMatcherPass *, DIEstimateMemoryPass *,
+                       MemoryMatcherImmutableWrapper *, ClangPerfectLoopPass *>;
 
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
-class ClangSMParallelization: public ModulePass, private bcl::Uncopyable{
+class ClangSMParallelization: public ModulePass, private bcl::Uncopyable {
   struct Preorder {};
   struct ReversePreorder {};
   struct Postorder {};
@@ -118,32 +259,37 @@ protected:
   /// successfully checked.
   /// \return true if a specified loop could be parallelized and inner loops
   /// should not be processed.
-  virtual bool exploitParallelism(const tsar::DFLoop &IR,
-    const clang::ForStmt &AST, const ClangSMParallelProvider &Provider,
-    tsar::ClangDependenceAnalyzer &ASTDepInfo,
-    tsar::TransformationContext &TfmCtx) = 0;
+  virtual tsar::ParallelItem *
+  exploitParallelism(const tsar::DFLoop &IR, const clang::ForStmt &AST,
+                     const FunctionAnalysis &Provider,
+                     tsar::ClangDependenceAnalyzer &ASTDepInfo,
+                     tsar::ParallelItem *PI) = 0;
 
-  /// Perform optimization of parallel loops with a common parent.
-  virtual void optimizeLevel(tsar::TransformationContext &TfmCtx) { }
+  /// Process loop after its body parallelization.
+  virtual void optimizeLevel(PointerUnion<Loop *, Function *> Level,
+      const FunctionAnalysis &Provider) {}
 
+  /// Return analysis results computed on the client for a specified function.
+  FunctionAnalysis analyzeFunction(llvm::Function &F);
 private:
   /// Initialize provider before on the fly passes will be run on client.
   void initializeProviderOnClient(Module &M);
 
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
-  bool findParallelLoops(Loop &L, Function &F,
-                         ClangSMParallelProvider &Provider);
+  bool findParallelLoops(Loop &L, const FunctionAnalysis &Provider,
+      tsar::ParallelItem *PI);
 
   /// Parallelize outermost parallel loops in the range.
   template <class ItrT>
-  bool findParallelLoops(ItrT I, ItrT EI, Function &F,
-                         ClangSMParallelProvider &Provider) {
-    bool Parallelized = false;
+  bool findParallelLoops(PointerUnion<Loop *, Function *> Parent,
+      ItrT I, ItrT EI, const FunctionAnalysis &Provider,
+      tsar::ParallelItem *PI) {
+    auto Parallelized = false;
     for (; I != EI; ++I)
-      Parallelized |= findParallelLoops(**I, F, Provider);
+      Parallelized |= findParallelLoops(**I, Provider, PI);
     if (Parallelized)
-      optimizeLevel(*mTfmCtx);
+      optimizeLevel(Parent, Provider);
     return Parallelized;
   }
 
@@ -157,7 +303,6 @@ private:
   CGNodeNumbering mCGNodes;
   CGNodeNumbering mParallelCallees;
 };
-
 
 /// This specifies additional passes which must be run on client.
 class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
@@ -187,7 +332,6 @@ class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
   INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)                                 \
   INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)                                \
   INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)                             \
-  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)                       \
   INITIALIZE_PASS_DEPENDENCY(DIArrayAccessWrapper)                             \
   INITIALIZE_PASS_IN_GROUP_END(passName, arg, name, false, false,              \
                                TransformationQueryManager::getPassRegistry())

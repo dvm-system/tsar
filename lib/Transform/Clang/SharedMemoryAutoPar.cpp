@@ -62,6 +62,15 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-shared-parallel"
 
+namespace {
+template <typename... Analysis>
+FunctionPassAAProvider<std::remove_pointer_t<Analysis>...>
+functionAnalysisList(bcl::StaticTypeMap<Analysis...> &&);
+
+using ClangSMParallelProvider =
+    decltype(functionAnalysisList(std::declval<FunctionAnalysis>()));
+}
+
 void ClangSMParallelizationInfo::addBeforePass(
     legacy::PassManager &Passes) const {
   addImmutableAliasAnalysis(Passes);
@@ -82,20 +91,29 @@ void ClangSMParallelizationInfo::addAfterPass(
   Passes.add(createAnalysisCloseConnectionPass());
 }
 
-bool ClangSMParallelization::findParallelLoops(
-    Loop &L, Function &F, ClangSMParallelProvider &Provider) {
+bool ClangSMParallelization::findParallelLoops(Loop &L,
+    const FunctionAnalysis &Provider, ParallelItem *PI) {
+  auto &F = *L.getHeader()->getParent();
   if (!mRegions.empty() &&
-      std::none_of(mRegions.begin(), mRegions.end(),
-                   [&L](const OptimizationRegion *R) { return R->contain(L); }))
-    return findParallelLoops(L.begin(), L.end(), F, Provider);
-  auto &PL = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
-  auto &CL = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
-  auto &RI = Provider.get<DFRegionInfoPass>().getRegionInfo();
-  auto &LM = Provider.get<LoopMatcherPass>().getMatcher();
+    std::none_of(mRegions.begin(), mRegions.end(),
+      [&L](const OptimizationRegion *R) { return R->contain(L); })) {
+    assert(!PI && "Loop located inside a parallel item must be contained in an "
+                  "optimization region!");
+    return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+  }
+  auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
+  auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
+  auto &RI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
+  auto &LM = Provider.value<LoopMatcherPass *>()->getMatcher();
   auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   auto &Diags = SrcMgr.getDiagnostics();
-  if (!PL.count(&L))
-    return findParallelLoops(L.begin(), L.end(), F, Provider);
+  if (!PL.count(&L)) {
+    if (PI)
+      PI->finalize();
+    if (!PI || PI && PI->isChildPossible())
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+    return false;
+  }
   auto LMatchItr = LM.find<IR>(&L);
   if (LMatchItr != LM.end())
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
@@ -105,7 +123,11 @@ bool ClangSMParallelization::findParallelLoops(
   if (CanonicalItr == CL.end() || !(**CanonicalItr).isCanonical()) {
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
            clang::diag::warn_parallel_not_canonical);
-    return findParallelLoops(L.begin(), L.end(), F, Provider);
+    if (PI)
+      PI->finalize();
+    if (!PI || PI && PI->isChildPossible())
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+    return false;
   }
   auto &Socket = mSocketInfo->getActive()->second;
   auto RF =
@@ -124,29 +146,39 @@ bool ClangSMParallelization::findParallelLoops(
   auto *DIMemoryMatcher =
       (**RM->value<ClonedDIMemoryMatcherWrapper *>())[*ServerF];
   assert(DIMemoryMatcher && "Cloned memory matcher must not be null!");
-  auto &ASTToClient = Provider.get<ClangDIMemoryMatcherPass>().getMatcher();
+  auto &ASTToClient =
+      Provider.value<ClangDIMemoryMatcherPass *>()->getMatcher();
   auto *ForStmt = (**CanonicalItr).getASTLoop();
   assert(ForStmt && "Source-level representation of a loop must be available!");
   ClangDependenceAnalyzer RegionAnalysis(const_cast<clang::ForStmt *>(ForStmt),
     *mGlobalOpts, Diags, DIAT, DIDepSet, *DIMemoryMatcher, ASTToClient);
-  if (!RegionAnalysis.evaluateDependency())
-    return findParallelLoops(L.begin(), L.end(), F, Provider);
-  if (!exploitParallelism(*DFL, *ForStmt, Provider, RegionAnalysis, *mTfmCtx))
-    return findParallelLoops(L.begin(), L.end(), F, Provider);
-  for (auto *BB : L.blocks())
-    for (auto &I : *BB) {
-      auto *Call = dyn_cast<CallBase>(&I);
-      if (!Call)
-        continue;
-      auto Callee = dyn_cast<Function>(
-        Call->getCalledOperand()->stripPointerCasts());
-      if (!Callee)
-        continue;
-      auto Info = mParallelCallees.try_emplace(Callee);
-      if (Info.second)
-        Info.first->getSecond() = mCGNodes[Callee];
-    }
-  return true;
+  if (!RegionAnalysis.evaluateDependency()) {
+    if (PI)
+      PI->finalize();
+    if (!PI || PI && PI->isChildPossible())
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+    return false;
+  }
+  bool InParallelItem = PI;
+  PI = exploitParallelism(*DFL, *ForStmt, Provider, RegionAnalysis, PI);
+  if (PI && !InParallelItem) {
+    for (auto *BB : L.blocks())
+      for (auto &I : *BB) {
+        auto *Call = dyn_cast<CallBase>(&I);
+        if (!Call)
+          continue;
+        auto Callee = dyn_cast<Function>(
+          Call->getCalledOperand()->stripPointerCasts());
+        if (!Callee)
+          continue;
+        auto Info = mParallelCallees.try_emplace(Callee);
+        if (Info.second)
+          Info.first->getSecond() = mCGNodes[Callee];
+      }
+  }
+  if (!PI || PI && (!PI->isFinal() || PI->isChildPossible()))
+    return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+  return PI;
 }
 
 void ClangSMParallelization::initializeProviderOnClient(Module &M) {
@@ -267,11 +299,21 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     }
     LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: process function " << F->getName()
                       << "\n");
-    auto &Provider = getAnalysis<ClangSMParallelProvider>(*F);
-    auto &LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
-    findParallelLoops(LI.begin(), LI.end(), *F, Provider);
+    auto Provider = analyzeFunction(*F);
+    auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+    findParallelLoops(F, LI.begin(), LI.end(), Provider, nullptr);
   }
   return false;
+}
+
+FunctionAnalysis
+ClangSMParallelization::analyzeFunction(llvm::Function &F) {
+  auto &Provider = getAnalysis<ClangSMParallelProvider>(F);
+  FunctionAnalysis Results;
+  Results.for_each([&Provider](auto &T) {
+    T = &Provider.get<std::remove_pointer_t<std::decay_t<decltype(T)>>>();
+  });
+  return Results;
 }
 
 void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {

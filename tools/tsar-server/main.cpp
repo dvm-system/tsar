@@ -75,14 +75,14 @@ namespace {
 class Log {
 public:
   Log() {}
-  
+
   ~Log() {
     mLogFile << "\n  ]\n}\n";
     mLogFile.flush();
   }
 
   inline void init(llvm::StringRef App, llvm::StringRef Date,
-      llvm::StringRef Version, std::fstream &&LogFile) { 
+      llvm::StringRef Version, std::fstream &&LogFile) {
     mLogFile = std::move(LogFile);
     mLogFile << "{\n  " << R"("Application": )" << '"' << App.data() << '"';
     mLogFile << ",\n  " << R"("Date": )" << '"' << Date.data() << '"';
@@ -146,7 +146,7 @@ int main(int Argc, char **Argv) {
   Status[net::Socket::ServerPort] = 0;
   Status[net::Socket::ClientPort] = 0;
   L.init(Argv[0], Status[net::Socket::Date], Status[net::Socket::TSARVersion],
-    std::move(LogFile)); 
+    std::move(LogFile));
   L.print(Status, ",\n  \"Status\": [\n    ");
   bcl::net::startServer("localhost", 0, 0,
     [](bcl::net::SocketStatus StatusID, const bcl::net::Connection &Connection){
@@ -181,6 +181,10 @@ int main(int Argc, char **Argv) {
         case bcl::net::SocketStatus::Close:
           Status[net::Socket::Status] = "close";
           Status[net::Socket::Message] = "socket is closed";
+          break;
+        case bcl::net::SocketStatus::InitializeError:
+          Status[net::Socket::Status] = "error";
+          Status[net::Socket::Message] = "unable to initialize socket library";
           break;
         case bcl::net::SocketStatus::CreateError:
           Status[net::Socket::Status] = "error";

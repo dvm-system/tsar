@@ -24,6 +24,7 @@
 
 #include "SharedMemoryAutoPar.h"
 #include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
+#include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Core/Query.h"
@@ -42,14 +43,15 @@ namespace {
 class ClangOpenMPParallelization : public ClangSMParallelization {
 public:
   static char ID;
-  ClangOpenMPParallelization() : ClangSMParallelization(ID) {
+  ClangOpenMPParallelization() : ClangSMParallelization(ID), mStub(0, true) {
     initializeClangOpenMPParallelizationPass(*PassRegistry::getPassRegistry());
   }
 private:
-  bool exploitParallelism(const DFLoop &IR, const clang::ForStmt &AST,
-    const ClangSMParallelProvider &Provider,
-    tsar::ClangDependenceAnalyzer &ASTDepInfo,
-    TransformationContext &TfmCtx) override;
+  ParallelItem * exploitParallelism(const DFLoop &IR, const clang::ForStmt &AST,
+    const FunctionAnalysis &Provider,
+    tsar::ClangDependenceAnalyzer &ASTDepInfo, ParallelItem *PI) override;
+
+  ParallelItem mStub;
 };
 
 struct ClausePrinter {
@@ -105,18 +107,18 @@ struct ClausePrinter {
 };
 } // namespace
 
-
-bool ClangOpenMPParallelization::exploitParallelism(
+ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     const DFLoop &IR, const clang::ForStmt &AST,
-    const ClangSMParallelProvider &Provider,
-    tsar::ClangDependenceAnalyzer &ASTDepInfo,
-    TransformationContext &TfmCtx) {
+    const FunctionAnalysis &Provider,
+    tsar::ClangDependenceAnalyzer &ASTDepInfo, ParallelItem *PI) {
+  auto *M = IR.getLoop()->getHeader()->getModule();
+  auto &TfmCtx = *getAnalysis<TransformationEnginePass>().getContext(*M);
   SmallString<128> ParallelFor("#pragma omp parallel for default(shared)");
   bcl::for_each(ASTDepInfo.getDependenceInfo(), ClausePrinter{ParallelFor});
   ParallelFor += '\n';
   auto &Rewriter = TfmCtx.getRewriter();
   Rewriter.InsertTextBefore(AST.getBeginLoc(), ParallelFor);
-  return true;
+  return &mStub;
 }
 
 ModulePass *llvm::createClangOpenMPParallelization() {

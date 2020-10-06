@@ -51,6 +51,30 @@ STATISTIC(NumMergedNode, "Number of alias nodes merged in");
 STATISTIC(NumEstimateMemory, "Number of estimate memory created");
 STATISTIC(NumUnknownMemory, "Number of unknown memory created");
 
+static inline void clarifyUnknownSize(const DataLayout &DL,
+    MemoryLocation &Loc, const DominatorTree *DT = nullptr) {
+  if (Loc.Size.hasValue())
+    return;
+  if (auto GV = dyn_cast<GlobalValue>(Loc.Ptr)) {
+    auto Ty = GV->getValueType();
+    if (Ty->isSized())
+      Loc.Size = LocationSize::precise(DL.getTypeStoreSize(Ty));
+  } else if (auto AI = dyn_cast<AllocaInst>(Loc.Ptr)) {
+    auto Ty = AI->getAllocatedType();
+    auto Size = AI->getArraySize();
+    if (Ty->isSized() && isa<ConstantInt>(Size))
+      Loc.Size = LocationSize::precise(
+          cast<ConstantInt>(Size)->getValue().getZExtValue() *
+          DL.getTypeStoreSize(Ty));
+  }
+  LLVM_DEBUG(if (Loc.Size.hasValue()) {
+    dbgs()
+        << "[ALIAS TREE]: decrease the location size to the allocated size: ";
+    printLocationSource(dbgs(), Loc, DT);
+    dbgs() << "\n";
+  });
+}
+
 namespace tsar {
 Value * stripPointer(const DataLayout &DL, Value *Ptr) {
   assert(Ptr && "Pointer to memory location must not be null!");
@@ -179,18 +203,7 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       return true;
     }
     Loc.Size = LocationSize::unknown();
-    if (auto GV = dyn_cast<GlobalValue>(Loc.Ptr)) {
-      auto Ty = GV->getValueType();
-      if (Ty->isSized())
-        Loc.Size = LocationSize::precise(DL.getTypeStoreSize(Ty));
-    } else if (auto AI = dyn_cast<AllocaInst>(Loc.Ptr)) {
-      auto Ty = AI->getAllocatedType();
-      auto Size = AI->getArraySize();
-      if (Ty->isSized() && isa<ConstantInt>(Size))
-        Loc.Size = LocationSize::precise(
-          cast<ConstantInt>(Size)->getValue().getZExtValue() *
-            DL.getTypeStoreSize(Ty));
-    }
+    clarifyUnknownSize(DL, Loc);
     return true;
   }
   return false;
@@ -491,6 +504,7 @@ void AliasTree::add(const MemoryLocation &Loc) {
   mSearchCache.clear();
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
+  clarifyUnknownSize(*mDL, Base, mDT);
   EstimateMemory *PrevChainEnd = nullptr;
   do {
     LLVM_DEBUG(evaluateMemoryLevelLog(Base, getDomTree()));
@@ -831,6 +845,7 @@ const AliasUnknownNode * AliasTree::findUnknown(
 const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
+  clarifyUnknownSize(*mDL, Base, mDT);
   stripToBase(*mDL, Base);
   auto SearchInfo = mSearchCache.try_emplace(Base, nullptr);
   if (!SearchInfo.second)
@@ -1014,8 +1029,8 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     AccessedUnknown.insert(&I);
     mAliasTree->addUnknown(&I);
   };
-  for_each_memory(F, TLI, [&addLocation](
-    Instruction &, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
+  for_each_memory(F, TLI, [&DL, &addLocation](
+    Instruction &I, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo) {
       addLocation(std::move(Loc));
   },
     [&addUnknown](Instruction &I, AccessInfo, AccessInfo) {
