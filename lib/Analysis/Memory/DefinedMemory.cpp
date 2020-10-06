@@ -588,6 +588,72 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   return false;
 }
 
+MemoryLocationRange ReachDFFwk::calcArrayLocation(
+    DFRegion *R, const MemoryLocationRange &Loc) {
+  MemoryLocationRange arrayLoc;
+  arrayLoc.Ptr = nullptr;
+  auto LocInfo = getDelinearizeInfo()->findRange(Loc.Ptr);
+  if (LocInfo.first && LocInfo.first->isDelinearized() &&
+    LocInfo.second->isValid()) {
+    auto ArrayPtr = LocInfo.first;
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array size: " <<
+        ArrayPtr->size() << "\n");
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Number of dims: " <<
+        ArrayPtr->getNumberOfDims() << "\n");
+    for (auto i = 0; i < ArrayPtr->getNumberOfDims(); i++) {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Dimension `" << i << "` size: "
+          << *ArrayPtr->getDimSize(i) << "\n");
+    }
+    for (auto *S : LocInfo.second->Subscripts) {
+      LLVM_DEBUG(dbgs() << "Subscript: " << *S << "\n");
+      auto *SE = getScalarEvolution();
+      auto AddRecInfo = computeSCEVAddRec(S, *SE);
+      if (AddRecInfo.second) {
+        auto SCEV = AddRecInfo.first;
+        if (static_cast<SCEVTypes>(SCEV->getSCEVType()) != scAddRecExpr) {
+          break;
+        }
+        auto addRecExpr = cast<SCEVAddRecExpr>(SCEV);
+        if (auto *DFL = dyn_cast<DFLoop>(R)) {
+          auto *L = DFL->getLoop();
+          auto maxTripCount = SE->getSmallConstantMaxTripCount(L);
+          if (maxTripCount == 0) {
+            LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Unable to define max"
+                                  "trip count (unknown or non-constant)\n");
+            break;
+          }
+          auto rangeMin = SE->getSignedRangeMin(SCEV);
+          auto rangeMax = SE->getSignedRangeMax(SCEV);
+          auto *stepSCEV = addRecExpr->getOperand(1);
+          if (static_cast<SCEVTypes>(stepSCEV->getSCEVType()) !=
+              scConstant) {
+            LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant loop"
+                                  "bounds.\n");
+            break;
+          }
+          auto stepNumber = *cast<SCEVConstant>(stepSCEV)->
+            getValue()->getValue().getRawData();
+          if (stepNumber > 1) {
+            LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Loop stride is "
+                << stepNumber << " (only 1 available). Ignore.\n");
+            break;
+          }
+          PointerType *pointerType = cast<PointerType>(
+              LocInfo.first->getBase()->getType());
+          auto arrayElementSize = getDataLayout().getTypeStoreSize(
+              pointerType->getElementType()).getFixedSize();
+          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element size: "
+              << arrayElementSize << "\n");
+          arrayLoc = Loc;
+          arrayLoc.LowerBound = *rangeMin.getRawData() * arrayElementSize;
+          arrayLoc.UpperBound = (*rangeMax.getRawData()+1) * arrayElementSize;
+        }
+      }
+    }
+  }
+  return arrayLoc;    
+}
+
 void ReachDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
   typedef RegionDFTraits<ReachDFFwk *> RT;
@@ -602,58 +668,6 @@ void ReachDFFwk::collapse(DFRegion *R) {
   // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
-  auto calcArrayLocation = [this, R](const tsar::MemoryLocationRange &Loc) {
-    MemoryLocationRange arrayLoc;
-    arrayLoc.Ptr = nullptr;
-    auto LocInfo = getDelinearizeInfo()->findRange(Loc.Ptr);
-    if (LocInfo.first && LocInfo.first->isDelinearized() &&
-      LocInfo.second->isValid()) {
-      for (auto *S : LocInfo.second->Subscripts) {
-        auto *SE = getScalarEvolution();
-        auto AddRecInfo = computeSCEVAddRec(S, *SE);
-        if (AddRecInfo.second) {
-          auto SCEV = AddRecInfo.first;
-          if (static_cast<SCEVTypes>(SCEV->getSCEVType()) != scAddRecExpr) {
-            break;
-          }
-          auto addRecExpr = cast<SCEVAddRecExpr>(SCEV);
-          if (auto *DFL = dyn_cast<DFLoop>(R)) {
-            auto *L = DFL->getLoop();
-            auto maxTripCount = SE->getSmallConstantMaxTripCount(L);
-            if (maxTripCount == 0) {
-              LLVM_DEBUG("[ARRAY LOCATION] Unable to define max trip count"
-                         "(unknown or non-constant)");
-              break;
-            }
-            auto rangeMin = SE->getSignedRangeMin(SCEV);
-            auto rangeMax = SE->getSignedRangeMax(SCEV);
-            auto *stepSCEV = addRecExpr->getOperand(1);
-            if (static_cast<SCEVTypes>(stepSCEV->getSCEVType()) !=
-                scConstant) {
-              LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant loop"
-                                   "bounds.\n");
-              break;
-            }
-            auto stepNumber = *cast<SCEVConstant>(stepSCEV)->
-              getValue()->getValue().getRawData();
-            if (stepNumber > 1) {
-              LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Loop stride is "
-                  << stepNumber << " (only 1 available). Ignore.\n");
-              break;
-            }
-            PointerType *pointerType = cast<PointerType>(
-              LocInfo.first->getBase()->getType());
-            auto arrayElementSize = getDataLayout().getTypeStoreSize(
-              pointerType->getElementType()).getFixedSize();
-            arrayLoc = Loc;
-            arrayLoc.LowerBound = *rangeMin.getRawData() * arrayElementSize;
-            arrayLoc.UpperBound = (*rangeMax.getRawData()+1) * arrayElementSize;
-          }
-        }
-      }
-    }
-    return arrayLoc;
-  };
   for (DFNode *N : R->getNodes()) {
     auto DefItr = getDefInfo().find(N);
     assert(DefItr != getDefInfo().end() &&
@@ -702,7 +716,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
         }
       }
       if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop)) {
-        auto arrayLoc = calcArrayLocation(Loc);
+        auto arrayLoc = calcArrayLocation(R, Loc);
         if (arrayLoc.Ptr != nullptr)
           DefUse->addUse(arrayLoc);
         else
@@ -731,13 +745,13 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // }
     for (auto &Loc : DU->getDefs()) {
       if (ExitingDefs.MustReach.contain(Loc)) {
-        auto arrayLoc = calcArrayLocation(Loc);
+        auto arrayLoc = calcArrayLocation(R, Loc);
         if (arrayLoc.Ptr != nullptr)
           DefUse->addDef(arrayLoc);
         else
           DefUse->addDef(Loc);
       } else {
-        auto arrayLoc = calcArrayLocation(Loc);
+        auto arrayLoc = calcArrayLocation(R, Loc);
         if (arrayLoc.Ptr != nullptr)
           DefUse->addMayDef(arrayLoc);
         else
@@ -745,7 +759,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
-      auto arrayLoc = calcArrayLocation(Loc);
+      auto arrayLoc = calcArrayLocation(R, Loc);
       if (arrayLoc.Ptr != nullptr)
         DefUse->addMayDef(arrayLoc);
       else
