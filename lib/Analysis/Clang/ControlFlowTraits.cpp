@@ -29,7 +29,7 @@
 #include <clang/AST/Stmt.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/IR/InstIterator.h>
-#include <llvm/IR/CallSite.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Module.h>
 
 using namespace clang;
@@ -185,11 +185,11 @@ bool ClangCFTraitsPass::runOnFunction(Function &F) {
     return false;
   Visitor::CalleeMap Callees;
   for (auto &I : instructions(F)) {
-    CallSite CS(&I);
-    if (!CS)
+    auto *Call = dyn_cast<CallBase>(&I);
+    if (!Call)
       continue;
-    auto Callee =
-      llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    auto Callee = llvm::dyn_cast<Function>(
+      Call->getCalledOperand()->stripPointerCasts());
     if (!Callee)
       continue;
     auto FD = TfmCtx->getDeclForMangledName(Callee->getName());

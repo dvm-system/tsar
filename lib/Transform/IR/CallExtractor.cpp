@@ -81,7 +81,7 @@ bool CallExtractorPass::runOnFunction(Function& F) {
   if (!F.empty()) {
     for (auto CurrBB = F.begin(), LastBB = F.end();
         CurrBB != LastBB; ++CurrBB) {
-      TerminatorInst* TermInst = CurrBB->getTerminator();
+      auto *TermInst = CurrBB->getTerminator();
       if (TermInst == nullptr || CurrBB->size() < 2)
         continue;
       auto CurrInstr = CurrBB->begin();

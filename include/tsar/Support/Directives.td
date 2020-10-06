@@ -34,8 +34,16 @@ def EK_Identifier       : ExprKind<1, "identifier">;
 def EK_PPIdentifier     : ExprKind<1, "identifier">;
 def EK_NumericConstant  : ExprKind<1, "numeric_constant">;
 def EK_Comma            : ExprKind<1, "comma">;
+def EK_Colon            : ExprKind<1, "colon">;
+def EK_Arrow            : ExprKind<1, "arrow">;
 def EK_LParen           : ExprKind<1, "l_paren">;
 def EK_RParen           : ExprKind<1, "r_paren">;
+def EK_LSquare          : ExprKind<1, "l_square">;
+def EK_RSquare          : ExprKind<1, "r_square">;
+def EK_LBrace           : ExprKind<1, "l_brace">;
+def EK_RBrace           : ExprKind<1, "r_brace">;
+def EK_Period           : ExprKind<1, "period">;
+def EK_Equal            : ExprKind<1, "equal">;
 
 // Blocks of tokens.
 def EK_ZeroOrOne        : ExprKind;
@@ -55,8 +63,16 @@ def Identifier : Expr<EK_Identifier>;
 def PPIdentifier : Expr<EK_PPIdentifier>;
 def NumericConstant : Expr<EK_NumericConstant>;
 def Comma : Expr<EK_Comma>;
+def Colon : Expr<EK_Colon>;
+def Arrow : Expr<EK_Arrow>;
 def LParen : Expr<EK_LParen>;
 def RParen : Expr<EK_RParen>;
+def LSquare : Expr<EK_LSquare>;
+def RSquare : Expr<EK_RSquare>;
+def LBrace : Expr<EK_LBrace>;
+def RBrace : Expr<EK_RBrace>;
+def Period : Expr<EK_Period>;
+def Equal : Expr<EK_Equal>;
 
 class ZeroOrOne<list<Expr> expr_list = []> : Expr<EK_ZeroOrOne, expr_list> {}
 class ZeroOrMore<list<Expr> expr_list = []> : Expr<EK_ZeroOrMore, expr_list> {}
@@ -82,6 +98,7 @@ def Analysis   : Directive<"analysis">;
 def Transform  : Directive<"transform">;
 def Assert     : Directive<"assert">;
 def Region     : Directive<"region">;
+def Metadata   : Directive<"metadata">;
 
 def DvmTemplate: Directive<"template", Dvm>;
 def DvmArray   : Directive<"array", Dvm>;
@@ -94,6 +111,8 @@ class Clause<string name, Directive parent, list<Expr> expr_list = []> {
   list<Expr> ExprList = expr_list;
 }
 
+def NoStrict : Clause<"nostrict", Transform>;
+
 def Inline : Clause<"inline", Transform>;
 
 def NoInline : Clause<"noinline", Transform>;
@@ -101,6 +120,11 @@ def NoInline : Clause<"noinline", Transform>;
 def Propagate : Clause<"propagate", Transform>;
 
 def Rename : Clause<"rename", Transform>;
+
+def Replace : Clause<"replace", Transform,
+  [ZeroOrOne<[LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>]>;
+
+def With : Clause<"with", Transform, [LParen, Identifier, RParen]>;
 
 def Private : Clause<"private", Analysis,
   [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
@@ -114,3 +138,66 @@ def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
 def DvmAlign : Clause<"align", DvmArray>;
+
+def ReplaceMetadata : Clause<"replace", Metadata,
+  [LParen,
+    Identifier, LParen,
+      ZeroOrOne<[
+        OneOf<[
+          One<[Identifier]>,
+          One<[
+            LBrace,
+              ZeroOrOne<[
+                Period, PPIdentifier, Equal, Identifier,
+                ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+              ]>,
+            RBrace
+          ]>
+        ]>,
+        ZeroOrMore<[Comma,
+          OneOf<[
+            One<[Identifier]>,
+            One<[
+              LBrace,
+                ZeroOrOne<[
+                  Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                ]>,
+              RBrace
+            ]>
+          ]>
+        ]>
+      ]>,
+    RParen,
+    ZeroOrMore<[Comma,
+      Identifier, LParen,
+        ZeroOrOne<[
+          OneOf<[
+            One<[Identifier]>,
+            One<[
+              LBrace,
+                ZeroOrOne<[
+                  Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                ]>,
+              RBrace
+            ]>
+          ]>,
+          ZeroOrMore<[Comma,
+            OneOf<[
+              One<[Identifier]>,
+              One<[
+                LBrace,
+                  ZeroOrOne<[
+                    Period, PPIdentifier, Equal, Identifier,
+                    ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                  ]>,
+                RBrace
+              ]>
+            ]>
+          ]>
+        ]>,
+      RParen
+    ]>,
+  RParen]>;
+

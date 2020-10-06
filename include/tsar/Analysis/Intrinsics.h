@@ -29,6 +29,7 @@
 #define TSAR_INTRINSICS_H
 
 #include <llvm/ADT/StringRef.h>
+#include <llvm/IR/DerivedTypes.h>
 
 namespace llvm {
 class Function;
@@ -55,7 +56,7 @@ llvm::StringRef getName(IntrinsicId Id);
 llvm::FunctionType *getType(llvm::LLVMContext &Ctx, IntrinsicId Id);
 
 /// Creates or inserts an LLVM Function declaration for an intrinsic.
-llvm::Function * getDeclaration(llvm::Module *M, IntrinsicId Id);
+llvm::FunctionCallee getDeclaration(llvm::Module *M, IntrinsicId Id);
 
 /// Find tsar function by name. Return false if not found.
 bool getTsarLibFunc(llvm::StringRef funcName, IntrinsicId &Id);

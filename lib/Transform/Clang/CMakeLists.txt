@@ -1,6 +1,6 @@
 set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp Inline.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp FormatPass.cpp OpenMPAutoPar.cpp
-  SharedMemoryAutoPar.cpp DVMHSMAutoPar.cpp)
+  SharedMemoryAutoPar.cpp DVMHSMAutoPar.cpp StructureReplacement.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -12,6 +12,11 @@ endif()
 
 add_library(TSARTransformClang STATIC
   ${TRANSFORM_SOURCES} ${TRANSFORM_HEADERS} ${TRANSFORM_INTERNAL_HEADERS})
+
+if(MSVC)
+  target_compile_options(TSARTransformClang
+    PRIVATE $<$<NOT:$<CONFIG:Release>>:/bigobj>)
+endif()
 
 if(NOT PACKAGE_LLVM)
   add_dependencies(TSARTransformClang ${CLANG_LIBS} ${LLVM_LIBS})

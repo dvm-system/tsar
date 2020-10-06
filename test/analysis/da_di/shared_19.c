@@ -12,37 +12,37 @@ double foo() {
 //CHECK:    shared:
 //CHECK:     <U:2:10, 800>
 //CHECK:    private:
-//CHECK:     <J:3:10, 4>
+//CHECK:     <J:3, 4>
 //CHECK:    induction:
-//CHECK:     <I:4:12, 4>:[Int,0,100,10]
+//CHECK:     <I:4[4:3], 4>:[Int,0,100,10]
 //CHECK:    lock:
-//CHECK:     <I:4:12, 4>
+//CHECK:     <I:4[4:3], 4>
 //CHECK:    header access:
-//CHECK:     <I:4:12, 4>
+//CHECK:     <I:4[4:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:4:12, 4> | <J:3:10, 4>
+//CHECK:     <I:4[4:3], 4> | <J:3, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:4:12, 4> <J:3:10, 4>
+//CHECK:     <I:4[4:3], 4> <J:3, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:4:12, 4>
+//CHECK:     <I:4[4:3], 4>
 //CHECK:    direct access (separate):
-//CHECK:     <I:4:12, 4> <J:3:10, 4> <U:2:10, 800>
+//CHECK:     <I:4[4:3], 4> <J:3, 4> <U:2:10, 800>
 //CHECK:   loop at depth 2 shared_19.c:5:5
 //CHECK:     shared:
 //CHECK:      <U:2:10, 800>
 //CHECK:     induction:
-//CHECK:      <J:3:10, 4>:[Int,0,10,1]
+//CHECK:      <J:3, 4>:[Int,0,10,1]
 //CHECK:     read only:
-//CHECK:      <I:4:12, 4>
+//CHECK:      <I:4[4:3], 4>
 //CHECK:     lock:
-//CHECK:      <J:3:10, 4>
+//CHECK:      <J:3, 4>
 //CHECK:     header access:
-//CHECK:      <J:3:10, 4>
+//CHECK:      <J:3, 4>
 //CHECK:     explicit access:
-//CHECK:      <I:4:12, 4> | <J:3:10, 4>
+//CHECK:      <I:4[4:3], 4> | <J:3, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <I:4:12, 4> <J:3:10, 4>
+//CHECK:      <I:4[4:3], 4> <J:3, 4>
 //CHECK:     lock (separate):
-//CHECK:      <J:3:10, 4>
+//CHECK:      <J:3, 4>
 //CHECK:     direct access (separate):
-//CHECK:      <I:4:12, 4> <J:3:10, 4> <U:2:10, 800>
+//CHECK:      <I:4[4:3], 4> <J:3, 4> <U:2:10, 800>

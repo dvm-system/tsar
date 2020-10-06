@@ -1,0 +1,6 @@
+dvmh_sm_1: action=init
+dvmh_sm_2: action=init
+dvmh_sm_3: action=init
+dvmh_sm_4: action=init
+Jacobi: action=init
+Adi.func: action=init

@@ -14,22 +14,22 @@ void foo (int N) {
 //CHECK:    flow:
 //CHECK:     <X:4:10, ?> bar():6:5
 //CHECK:    induction:
-//CHECK:     <I:5:12, 4>:[Int,0,10,1]
+//CHECK:     <I:5[5:3], 4>:[Int,0,10,1]
 //CHECK:    lock:
-//CHECK:     <I:5:12, 4> | <X:4:10, ?> bar():6:5
+//CHECK:     <I:5[5:3], 4> | <X:4:10, ?> bar():6:5
 //CHECK:    header access:
-//CHECK:     <I:5:12, 4>
+//CHECK:     <I:5[5:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:5:12, 4> | <X:4:10, ?> bar():6:5
+//CHECK:     <I:5[5:3], 4> | <X:4:10, ?> bar():6:5
 //CHECK:    address access:
 //CHECK:     <X:4:10, ?> bar():6:5
 //CHECK:    explicit access (separate):
-//CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
+//CHECK:     <I:5[5:3], 4> <X:4:10, ?> bar():6:5
 //CHECK:    lock (separate):
-//CHECK:     <I:5:12, 4> <X:4:10, ?>
+//CHECK:     <I:5[5:3], 4> <X:4:10, ?>
 //CHECK:    address access (separate):
 //CHECK:     <X:4:10, ?> bar():6:5
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <X:4:10, ?>
 //CHECK:    direct access (separate):
-//CHECK:     <I:5:12, 4> <X:4:10, ?> bar():6:5
+//CHECK:     <I:5[5:3], 4> <X:4:10, ?> bar():6:5

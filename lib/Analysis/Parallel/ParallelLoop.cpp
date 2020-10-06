@@ -33,6 +33,7 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
+#include <llvm/InitializePasses.h>
 #include <llvm/Analysis/LoopInfo.h>
 
 #undef DEBUG_TYPE
@@ -113,11 +114,11 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
     bool AllowGPU = true;
     for (auto *BB : L->getBlocks())
       for (auto &I : *BB) {
-        CallSite CS(&I);
-        if (!CS)
+        auto *Call = dyn_cast<CallBase>(&I);
+        if (!Call)
           continue;
         auto Callee =
-            dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+            dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
         if (!Callee && !hasFnAttr(*Callee, AttrKind::DirectUserCallee)) {
           LLVM_DEBUG(dbgs() << "[PARALLEL LOOP]: indirect call of user-defined "
                                "function prevents parallelization: ";

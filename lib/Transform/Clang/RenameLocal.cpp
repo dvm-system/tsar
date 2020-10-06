@@ -28,8 +28,8 @@
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -77,9 +77,10 @@ namespace {
 /// other warnings.
 class ClangRenamer : public RecursiveASTVisitor<ClangRenamer> {
 public:
-  ClangRenamer(TransformationContext &TfmCtx,
+  ClangRenamer(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
       ClangGlobalInfoPass::RawInfo &RawInfo) :
-    mTfmCtx(&TfmCtx), mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
+    mTfmCtx(&TfmCtx), mImportInfo(ImportInfo),
+    mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
     mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
     mLangOpts(mRewriter.getLangOpts()) {}
 
@@ -89,17 +90,17 @@ public:
     Pragma P(*S);
     if (findClause(P, ClauseId::Rename, mClauses)) {
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-      auto IsPossible =
-        pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+      auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
+                                            mImportInfo, ToRemove);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive_in_include);
         else
-          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+          toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
             diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
       /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
@@ -141,7 +142,7 @@ public:
 
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
         diag::warn_unexpected_directive);
       mClauses.clear();
     }
@@ -150,7 +151,7 @@ public:
 
   bool VisitDecl(Decl * D) {
     if (!mClauses.empty()) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
         diag::warn_unexpected_directive);
       mClauses.clear();
     }
@@ -203,6 +204,7 @@ private:
 #endif
 
   TransformationContext *mTfmCtx;
+  const ASTImportInfo &mImportInfo;
   ClangGlobalInfoPass::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
@@ -223,8 +225,12 @@ bool ClangRenameLocalPass::runOnModule(llvm::Module &M) {
         ": transformation context is not available");
     return false;
   }
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangRenamer Vis(*TfmCtx, GIP.getRawInfo());
+  ClangRenamer Vis(*TfmCtx, *ImportInfo, GIP.getRawInfo());
   Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   return false;
 }

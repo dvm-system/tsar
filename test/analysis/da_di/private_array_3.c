@@ -11,26 +11,26 @@ double foo(double *X, int N) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 private_array_3.c:4:3
 //CHECK:    first private:
-//CHECK:     <T:2:10, 24>
+//CHECK:     <T:2, 24>
 //CHECK:    second to last private:
-//CHECK:     <T:2:10, 24>
+//CHECK:     <T:2, 24>
 //CHECK:    anti:
-//CHECK:     <*X:1:20, ?>:[1,1]
+//CHECK:     <*X:1, ?>:[1,1]
 //CHECK:    flow:
-//CHECK:     <*X:1:20, ?>:[1,1]
+//CHECK:     <*X:1, ?>:[1,1]
 //CHECK:    induction:
-//CHECK:     <I:4:12, 4>:[Int,1,,1]
+//CHECK:     <I:4[4:3], 4>:[Int,1,,1]
 //CHECK:    read only:
-//CHECK:     <N:1:27, 4> | <X:1:20, 8>
+//CHECK:     <N:1, 4> | <X:1, 8>
 //CHECK:    lock:
-//CHECK:     <I:4:12, 4> | <N:1:27, 4>
+//CHECK:     <I:4[4:3], 4> | <N:1, 4>
 //CHECK:    header access:
-//CHECK:     <I:4:12, 4> | <N:1:27, 4>
+//CHECK:     <I:4[4:3], 4> | <N:1, 4>
 //CHECK:    explicit access:
-//CHECK:     <I:4:12, 4> | <N:1:27, 4> | <X:1:20, 8>
+//CHECK:     <I:4[4:3], 4> | <N:1, 4> | <X:1, 8>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:4:12, 4> <N:1:27, 4> <X:1:20, 8>
+//CHECK:     <I:4[4:3], 4> <N:1, 4> <X:1, 8>
 //CHECK:    lock (separate):
-//CHECK:     <I:4:12, 4> <N:1:27, 4>
+//CHECK:     <I:4[4:3], 4> <N:1, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*X:1:20, ?> <I:4:12, 4> <N:1:27, 4> <T:2:10, 24> <X:1:20, 8>
+//CHECK:     <*X:1, ?> <I:4[4:3], 4> <N:1, 4> <T:2, 24> <X:1, 8>

@@ -18,20 +18,22 @@ int foo() {
 //CHECK:    private:
 //CHECK:     <X:6:7, ?>
 //CHECK:    induction:
-//CHECK:     <I:8:12, 4>:[Int,0,10,1]
+//CHECK:     <I:8[8:3], 4>:[Int,0,10,1]
 //CHECK:    reduction:
-//CHECK:     <S:6:10, 4>:mult
+//CHECK:     <S:6, 4>:mult
+//CHECK:    no promoted scalar:
+//CHECK:     <X:6:7, ?>
 //CHECK:    lock:
-//CHECK:     <I:8:12, 4> | <X:6:7, ?>
+//CHECK:     <I:8[8:3], 4> | <X:6:7, ?>
 //CHECK:    header access:
-//CHECK:     <I:8:12, 4>
+//CHECK:     <I:8[8:3], 4>
 //CHECK:    explicit access:
-//CHECK:     <I:8:12, 4> | <S:6:10, 4>
+//CHECK:     <I:8[8:3], 4> | <S:6, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:8:12, 4> <S:6:10, 4>
+//CHECK:     <I:8[8:3], 4> <S:6, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:8:12, 4> <X:6:7, ?>
+//CHECK:     <I:8[8:3], 4> <X:6:7, ?>
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <X:6:7, ?>
 //CHECK:    direct access (separate):
-//CHECK:     <I:8:12, 4> <S:6:10, 4> <X:6:7, ?>
+//CHECK:     <I:8[8:3], 4> <S:6, 4> <X:6:7, ?>

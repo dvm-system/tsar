@@ -29,6 +29,7 @@
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/Statistic.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -109,19 +110,18 @@ private:
   /// `not_attribute`.
   AttrKind addDirectUserCalleeAttr();
 
-  TargetLibraryInfo *mTLI = nullptr;
   SmallPtrSet<Function *, 4> mSCCFuncs;
   SmallPtrSet<Function *, 16> mCalleeFuncs;
 };
 
 bool addLibFuncAttrsTopDown(Function &F) {
   for (auto *U : F.users()) {
-    CallSite CS(U);
-    if (CS && hasFnAttr(*CS.getParent()->getParent(), AttrKind::LibFunc)) {
-      addFnAttr(F, AttrKind::LibFunc);
-      ++NumLibFunc;
-      return true;
-    }
+    if (auto *Call = dyn_cast<CallBase>(U))
+      if (hasFnAttr(*Call->getParent()->getParent(), AttrKind::LibFunc)) {
+        addFnAttr(F, AttrKind::LibFunc);
+        ++NumLibFunc;
+        return true;
+      }
   }
   return true;
 }
@@ -142,7 +142,6 @@ ModulePass * llvm::createRPOFunctionAttrsAnalysis() {
 
 bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   std::vector<Function *> Worklist;
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
     auto CGNIdx = Worklist.size();
@@ -151,6 +150,7 @@ bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
       if (auto F = CGN->getFunction()) {
         if (F->isIntrinsic())
           continue;
+        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*F);
         Worklist.push_back(F);
         LibFunc LibId;
         HasLibFunc |= TLI.getLibFunc(*F, LibId);
@@ -179,7 +179,13 @@ Pass * llvm::createPOFunctionAttrsAnalysis() {
 }
 
 bool POFunctionAttrsAnalysis::runOnSCC(CallGraphSCC &SCC) {
-  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  // DbgInfoIntrinsics are excluded from CallGraph, so traverse them manually.
+  for (auto &F : SCC.getCallGraph().getModule())
+    if (isDbgInfoIntrinsic(F.getIntrinsicID())) {
+      addFnAttr(F, AttrKind::AlwaysReturn);
+      addFnAttr(F, AttrKind::NoIO);
+      addFnAttr(F, AttrKind::DirectUserCallee);
+    }
   mSCCFuncs.clear();
   mCalleeFuncs.clear();
   for (auto *CGN : SCC)
@@ -223,7 +229,8 @@ AttrKind POFunctionAttrsAnalysis::addNoIOAttr() {
     // functions which treated as library by TargetLibraryInfo only. So, the
     // mentioned set may not contain some 'safpor.libfunc' functions which are
     // in/out functions.
-    bool IsLibFunc = mTLI->getLibFunc(*SCCF, LibId);
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*SCCF);
+    bool IsLibFunc = TLI.getLibFunc(*SCCF, LibId);
     if ((IsLibFunc && isIOLibFuncName(SCCF->getName())) ||
         (!IsLibFunc && SCCF->isDeclaration()))
       return AttrKind::not_attribute;
@@ -239,8 +246,9 @@ AttrKind POFunctionAttrsAnalysis::addDirectUserCalleeAttr() {
   for (auto *SCCF : mSCCFuncs) {
     if (SCCF->isIntrinsic())
       continue;
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*SCCF);
     LibFunc LibId;
-    if (mTLI->getLibFunc(*SCCF, LibId))
+    if (TLI.getLibFunc(*SCCF, LibId))
       continue;
   }
   for (auto *CF : mCalleeFuncs)
@@ -289,11 +297,11 @@ bool LoopAttributesDeductionPass::runOnFunction(Function &F) {
     bool MayUnwind = false, MayReturnsTwice = false;
     for (auto *BB : L->blocks())
       for (auto &I : *BB) {
-        CallSite CS(&I);
-        if (!CS)
+        auto *Call = dyn_cast<CallBase>(&I);
+        if (!Call)
           continue;
-        auto Callee =
-          dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+        auto Callee = dyn_cast<Function>(
+          Call->getCalledOperand()->stripPointerCasts());
         if (!Callee) {
           MayIO = MayNoReturn = MayUnwind = MayReturnsTwice = true;
           break;

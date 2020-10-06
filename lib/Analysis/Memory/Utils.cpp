@@ -448,10 +448,13 @@ bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
   }, [&DUS, &AT, &STR, &Result](Instruction &I, AccessInfo, AccessInfo) {
     if (!Result)
       return;
-    ImmutableCallSite CS(&I);
-    if (CS && AT.getAliasAnalysis().doesNotAccessMemory(CS))
-      return;
-    Result &= CS && AT.getAliasAnalysis().onlyReadsMemory(CS);
+    if (auto *Call = dyn_cast<CallBase>(&I)) {
+      if (AT.getAliasAnalysis().doesNotAccessMemory(Call))
+        return;
+      Result &= AT.getAliasAnalysis().onlyReadsMemory(Call);
+    } else {
+      Result = false;
+    }
     if (!Result)
       return;
     auto *AN = AT.findUnknown(I);
@@ -467,9 +470,9 @@ bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
       }
     }
     for (auto *Loc : DUS.getExplicitUnknowns()) {
-      ImmutableCallSite CS(Loc);
-      if (CS && AT.getAliasAnalysis().onlyReadsMemory(CS))
-        continue;
+      if (auto *Call = dyn_cast<CallBase>(Loc))
+        if (AT.getAliasAnalysis().onlyReadsMemory(Call))
+          continue;
       auto UN = AT.findUnknown(*Loc);
       assert(UN &&
         "Unknown memory location must be presented in alias tree!");

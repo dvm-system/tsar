@@ -31,6 +31,25 @@ set_target_properties(TSARServer PROPERTIES
   FOLDER "${TSAR_SERVER_FOLDER}")
 
 install(TARGETS TSARServer
-  LIBRARY DESTINATION shared
-  RUNTIME DESTINATION shared
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib
   ARCHIVE DESTINATION lib)
+
+if (UNIX)
+  add_executable(tsar-server main.cpp)
+
+  add_dependencies(tsar-server TSARServer)
+  if(NOT PACKAGE_LLVM)
+    add_dependencies(tsar-server ${LLVM_LIBS})
+  endif()
+  target_link_libraries(tsar-server TSARServer ${LLVM_LIBS} BCL::CSocket TSARServer)
+  set_target_properties(tsar-server PROPERTIES
+    COMPILE_DEFINITIONS BCL_EXPORTING
+    FOLDER "${TSAR_SERVER_FOLDER}")
+
+  # Specify RPATH to look up for necessary shared libraries after installation.
+  set_target_properties(tsar-server PROPERTIES
+    INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+
+  install(TARGETS tsar-server DESTINATION bin)
+endif()

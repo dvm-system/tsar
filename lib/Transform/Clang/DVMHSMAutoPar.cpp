@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
@@ -110,21 +111,54 @@ void addVarList(const ClangDependenceAnalyzer::ReductionVarListT &VarInfoList,
   }
 }
 
-unsigned getPerfectNestSize(const DFLoop &DFL,
-    const PerfectLoopInfo &PerfectInfo,
-    const CanonicalLoopSet &CanonicalLoops) {
+void addOnClause(const DFLoop &DFL, const PerfectLoopInfo &PerfectInfo,
+                 const CanonicalLoopSet &CanonicalLoops,
+                 const MemoryMatchInfo &MemoryMatcher,
+                 SmallVectorImpl<std::pair<ObjectID, StringRef>> &ParallelNest,
+                 SmallVectorImpl<char> &Out, unsigned NestSize = 0) {
+  Out.append({' ', 'o', 'n', '('});
   auto *CurrDFL = &DFL;
-  unsigned PerfectSize = 1;
-  for (; PerfectInfo.count(CurrDFL) && CurrDFL->getNumRegions() > 0;
-       ++PerfectSize) {
+  auto CanonicalItr = CanonicalLoops.find_as(const_cast<DFLoop *>(CurrDFL));
+  assert(CanonicalItr != CanonicalLoops.end() &&
+         (**CanonicalItr).isCanonical() &&
+         "Parallel loop must have canonical loop form!");
+  auto *Induction = (**CanonicalItr).getInduction();
+  assert(Induction && "Induction variable must not be null in canonical loop!");
+  auto MatchItr = MemoryMatcher.Matcher.find<IR>(Induction);
+  assert(MatchItr != MemoryMatcher.Matcher.end() &&
+         "AST-level variable representation must be available!");
+  Out.append({'['});
+  Out.append(MatchItr->get<AST>()->getName().begin(),
+             MatchItr->get<AST>()->getName().end());
+  Out.append({']'});
+  auto LoopID = CurrDFL->getLoop()->getLoopID();
+  assert(LoopID &&
+         "Loop ID must be available for the outermost parallel loop!");
+  ParallelNest.emplace_back(LoopID, MatchItr->get<AST>()->getName());
+  for (; PerfectInfo.count(CurrDFL) && CurrDFL->getNumRegions() > 0;) {
+    if (NestSize > 0 && NestSize <= ParallelNest.size())
+      break;
     CurrDFL = dyn_cast<DFLoop>(*CurrDFL->region_begin());
     if (!CurrDFL)
-      return PerfectSize;
+      break;
+    auto LoopID = CurrDFL->getLoop()->getLoopID();
+    if (!LoopID)
+      break;
     auto CanonicalItr = CanonicalLoops.find_as(const_cast<DFLoop *>(CurrDFL));
     if (CanonicalItr == CanonicalLoops.end() || !(**CanonicalItr).isCanonical())
-      return PerfectSize;
+      break;
+    auto *Induction = (**CanonicalItr).getInduction();
+    assert(Induction && "Induction variable must not be null in canonical loop!");
+    auto MatchItr = MemoryMatcher.Matcher.find<IR>(Induction);
+    assert(MatchItr != MemoryMatcher.Matcher.end() &&
+          "AST-level variable representation must be available!");
+    Out.append({'['});
+    Out.append(MatchItr->get<AST>()->getName().begin(),
+               MatchItr->get<AST>()->getName().end());
+    Out.append({']'});
+    ParallelNest.emplace_back(LoopID, MatchItr->get<AST>()->getName());
   }
-  return PerfectSize;
+  Out.append({')'});
 }
 } // namespace
 
@@ -166,13 +200,64 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   }
   auto &PerfectInfo = Provider.get<ClangPerfectLoopPass>().getPerfectLoopInfo();
   auto &CanonicalInfo = Provider.get<CanonicalLoopPass>().getCanonicalLoopInfo();
-  SmallString<128> ParallelFor("#pragma dvm parallel (");
-  if (HostOnly)
-    ParallelFor += "1";
-  else
-    Twine(getPerfectNestSize(IR, PerfectInfo, CanonicalInfo))
-        .toStringRef(ParallelFor);
-  ParallelFor += ")";
+  auto &MemoryMatcher = Provider.get<MemoryMatcherImmutableWrapper>().get();
+  SmallString<128> ParallelFor("#pragma dvm parallel");
+  SmallVector<std::pair<ObjectID, StringRef>, 4> ParallelNest;
+  addOnClause(IR, PerfectInfo, CanonicalInfo, MemoryMatcher, ParallelNest,
+              ParallelFor, HostOnly ? 1 : 0);
+  auto *AccessInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
+  if (AccessInfo) {
+    bool EmptyTie = true;
+    auto arraycmp = [](const DIEstimateMemory *LHS,
+                       const DIEstimateMemory *RHS) {
+      return LHS->getVariable()->getName() < RHS->getVariable()->getName();
+    };
+    std::map<DIEstimateMemory *, SmallVector<std::string, 5>,
+             decltype(arraycmp)>
+        Mapping(arraycmp);
+    for (auto &Access :
+         AccessInfo->scope_accesses(ParallelNest.front().first)) {
+      if (!isa<DIEstimateMemory>(Access.getArray()))
+        continue;
+      auto MappingItr =
+        Mapping.emplace(std::piecewise_construct,
+          std::forward_as_tuple(cast<DIEstimateMemory>(Access.getArray())),
+          std::forward_as_tuple(Access.size(), "*")).first;
+      auto StashSize{ ParallelFor.size() };
+      for (auto *Subscript : Access) {
+        if (!Subscript || MappingItr->second[Subscript->getDimension()] != "*")
+          continue;
+        if (auto *Affine = dyn_cast<DIAffineSubscript>(Subscript)) {
+          for (unsigned I = 0, EI = Affine->getNumberOfMonoms(); I < EI; ++I) {
+            if (Affine->getMonom(I).Value.isNullValue())
+              continue;
+            auto LoopItr = find_if(ParallelNest, [Affine, I](auto &Loop) {
+              return Loop.first == Affine->getMonom(I).Column;
+            });
+            if (LoopItr != ParallelNest.end()) {
+              MappingItr->second[Affine->getDimension()] =
+                  ((Affine->getMonom(I).Value.isNegative() ? "-" : "") +
+                   LoopItr->second)
+                      .str();
+              EmptyTie = false;
+            }
+          }
+        }
+      }
+    }
+    if (!EmptyTie) {
+      ParallelFor += " tie(";
+      for (auto &Map : Mapping) {
+        if (all_of(Map.second, [](StringRef S) { return S == "*"; }))
+          continue;
+        ParallelFor +=
+          cast<DIEstimateMemory>(Map.first)->getVariable()->getName();
+        ParallelFor += "[" + join(Map.second, "][") + "]";
+        ParallelFor += ",";
+      }
+      ParallelFor.back() = ')';
+    }
+  }
   if (!ASTDepInfo.get<trait::Private>().empty()) {
     ParallelFor += " private";
     addVarList(ASTDepInfo.get<trait::Private>(), ParallelFor);
@@ -182,16 +267,16 @@ bool ClangDVMHSMParallelization::exploitParallelism(
   DVMHRegion += "\n{\n";
   // Add directives to the source code.
   auto &Rewriter = TfmCtx.getRewriter();
-  Rewriter.InsertTextBefore(AST.getLocStart(), ParallelFor);
-  Rewriter.InsertTextBefore(AST.getLocStart(), DVMHRegion);
+  Rewriter.InsertTextBefore(AST.getBeginLoc(), ParallelFor);
+  Rewriter.InsertTextBefore(AST.getBeginLoc(), DVMHRegion);
   if (!DVMHActual.empty())
-    Rewriter.InsertTextBefore(AST.getLocStart(), DVMHActual);
+    Rewriter.InsertTextBefore(AST.getBeginLoc(), DVMHActual);
   auto &ASTCtx = TfmCtx.getContext();
   Token SemiTok;
-  auto InsertLoc = (!getRawTokenAfter(AST.getLocEnd(),
+  auto InsertLoc = (!getRawTokenAfter(AST.getEndLoc(),
       ASTCtx.getSourceManager(), ASTCtx.getLangOpts(), SemiTok)
     && SemiTok.is(tok::semi))
-    ? SemiTok.getLocation() : AST.getLocEnd();
+    ? SemiTok.getLocation() : AST.getEndLoc();
   Rewriter.InsertTextAfterToken(InsertLoc, "}");
   if (!DVMHGetActual.empty()) {
     Rewriter.InsertTextAfterToken(InsertLoc, "\n");

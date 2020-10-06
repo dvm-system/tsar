@@ -24,6 +24,7 @@
 
 #include "tsar/Frontend/Clang/PragmaHandlers.h"
 #include "tsar/Frontend/Clang/ClauseVisitor.h"
+#include "tsar/Frontend/Clang/ExternalPreprocessor.h"
 
 using namespace clang;
 using namespace llvm;
@@ -43,7 +44,8 @@ inline void AddToken(tok::TokenKind K, SourceLocation Loc, unsigned Len,
   TokenList.push_back(Tok);
 }
 
-inline void AddStringToken(StringRef Str, SourceLocation Loc, Preprocessor &PP,
+template<class PreprocessorT >
+inline void AddStringToken(StringRef Str, SourceLocation Loc, PreprocessorT &PP,
     SmallVectorImpl<Token> &TokenList) {
   Token Tok;
   Tok.startToken();
@@ -52,14 +54,16 @@ inline void AddStringToken(StringRef Str, SourceLocation Loc, Preprocessor &PP,
   TokenList.push_back(Tok);
 }
 
-template<class ReplacementT>
+template<class PreprocessorT, class ReplacementT>
 class DefaultClauseVisitor :
-  public ClauseVisitor<ReplacementT, DefaultClauseVisitor<ReplacementT>> {
-  using BaseT = ClauseVisitor<ReplacementT, DefaultClauseVisitor<ReplacementT>>;
+  public ClauseVisitor<PreprocessorT, ReplacementT,
+      DefaultClauseVisitor<PreprocessorT, ReplacementT>> {
+  using BaseT = ClauseVisitor<PreprocessorT, ReplacementT,
+      DefaultClauseVisitor<PreprocessorT, ReplacementT>>;
 public:
   /// Creates visitor.
-  DefaultClauseVisitor(clang::Preprocessor &PP, ReplacementT &Replacement) :
-    BaseT(PP, Replacement) {}
+  DefaultClauseVisitor(PreprocessorT &PP, ReplacementT &Replacement) :
+    BaseT(PP, Replacement), mLangOpts(PP.getLangOpts()) {}
 
   using BaseT::getReplacement;
   using BaseT::getLevelKind;
@@ -80,10 +84,11 @@ public:
   }
 
   /// Assumes that a current token is an identifier and append to replacement
-  /// something similar to `(void)(sizeof((void)(A)))` (for identifier `A`).
+  /// something similar to `(void)(sizeof((long long)(A)))`
+  /// (for identifier `A`).
   void visitEK_Identifier(Token &Tok) {
     assert(Tok.is(tok::identifier) && "Token must be an identifier!");
-    // Each identifier 'I' will be replace by (void)(sizeof((void)(I))).
+    // Each identifier 'I' will be replace by (void)(sizeof((long long)(I))).
     // This construction is necessary to disable warnings for unused expressions
     // (cast to void) and to disable generation of LLVM IR for it (sizeof).
     // Cast to void inside 'sizeof' operator is necessary in case of variable
@@ -92,6 +97,9 @@ public:
     // double A[N];
     // (void)(sizeof(A)) // This produces LLVM IR which computes size in dynamic.
     // (void)(sizeof((void)(A))) // This does not produce LLVM IR.
+    // However it is forbidden to apply 'sizeof' to the void type in C++,
+    // it is also forbidden to apply 'sizeof' to a function type in C++.
+    // So, we use 'long long' instead of 'void'.
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
@@ -99,7 +107,8 @@ public:
     AddToken(tok::kw_sizeof, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_long, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::kw_long, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     getReplacement().push_back(Tok);
@@ -132,12 +141,23 @@ public:
     getReplacement().push_back(Tok);
     AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
   }
+
+private:
+  const LangOptions &mLangOpts;
 };
 }
 
 namespace tsar {
+
+PragmaReplacer::PragmaReplacer(DirectiveId Id, PragmaNamespaceReplacer &Parent) :
+  mName(tsar::getName(Id).str()),
+  mDirectiveId(Id), mParent(&Parent) {
+assert(tsar::getParent(Id) == Parent.getNamespaceId() &&
+  "Incompatible namespace and directive IDs!");
+}
+
 void PragmaNamespaceReplacer::HandlePragma(
-  Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+  Preprocessor &PP, PragmaIntroducer Introducer, Token &FirstToken) {
   mTokenQueue.clear();
   auto NamespaceLoc = FirstToken.getLocation();
   PP.LexUnexpandedToken(FirstToken);
@@ -156,7 +176,7 @@ void PragmaNamespaceReplacer::HandlePragma(
       diag::err_unknown_directive) << getName() << DirectiveName;
     return;
   }
-  PragmaHandler *Handler = FindHandler(DirectiveName, false);
+  auto *Handler = FindHandler(DirectiveName, false);
   if (!Handler) {
     PP.Diag(FirstToken, diag::warn_pragma_ignored);
     return;
@@ -164,33 +184,29 @@ void PragmaNamespaceReplacer::HandlePragma(
   AddToken(tok::l_brace, NamespaceLoc, 1, mTokenQueue);
   AddStringToken(getName(), NamespaceLoc, PP, mTokenQueue);
   AddToken(tok::semi, NamespaceLoc, 1, mTokenQueue);
-  Handler->HandlePragma(PP, Introducer, FirstToken);
+  auto RelexFrom = FirstToken;
+  SmallVector<Token, 64> mTokensToRelex;
+  do {
+    PP.LexUnexpandedToken(FirstToken);
+    mTokensToRelex.push_back(FirstToken);
+  } while (!FirstToken.is(tok::eod));
+  ExternalPreprocessor ExternalPP(PP, mTokensToRelex);
+  Handler->HandlePragma(ExternalPP, Introducer.Kind, RelexFrom);
   // Replace pragma only if all tokens have been processed.
-  if (FirstToken.is(tok::eod)) {
+  if (RelexFrom.is(tok::eod)) {
     AddToken(tok::r_brace, FirstToken.getLocation(), 1, mTokenQueue);
-    PP.EnterTokenStream(mTokenQueue, false);
-  } else {
-    // It seems that call of `PP.CommitBacktrackedTokens()` in clause handlers
-    // prevents preprocessor from calling of DiscardUntilEndOfDirective().
-    // So, in case of errors in pragma syntax the lexer will read tokens
-    // inside pragma instead of tokens after tok::eod. Hence, we manually
-    // discards all tokens until the end of directive.
-    do {
-      PP.LexUnexpandedToken(FirstToken);
-      assert(FirstToken.isNot(tok::eof) &&
-        "EOF seen while discarding directive tokens");
-    } while (FirstToken.isNot(tok::eod));
-  }
+    PP.EnterTokenStream(mTokenQueue, false, false);
+  } 
 }
 
-void PragmaReplacer::HandlePragma(
-    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+void PragmaReplacer::HandlePragma(ExternalPreprocessor &PP,
+    PragmaIntroducerKind Introducer, Token &FirstToken) {
   assert(mParent && "Parent handler must not be null!");
   auto DirectiveLoc = FirstToken.getLocation();
   AddToken(tok::l_brace, DirectiveLoc, 1, getReplacement());
   AddStringToken(getName(), DirectiveLoc, PP, getReplacement());
   AddToken(tok::semi, DirectiveLoc, 1, getReplacement());
-  PP.LexUnexpandedToken(FirstToken);
+  PP.Lex(FirstToken);
   while (FirstToken.isNot(tok::eod)) {
     StringRef ClauseName;
     if (FirstToken.is(tok::identifier)) {
@@ -212,16 +228,23 @@ void PragmaReplacer::HandlePragma(
       PP.Diag(FirstToken, diag::warn_pragma_ignored);
       return;
     }
-    ClauseHandler->HandlePragma(PP, Introducer, FirstToken);
+    ClauseHandler->HandleClause(PP, Introducer, FirstToken);
     assert(!PP.isBacktrackEnabled() &&
       "Did you forget to call CommitBacktrackedTokens() or Backtrack()?");
-    PP.LexUnexpandedToken(FirstToken);
+    PP.Lex(FirstToken);
   }
   AddToken(tok::r_brace, FirstToken.getLocation(), 1, getReplacement());
 }
 
-void ClauseReplacer::HandlePragma(
-    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+ClauseReplacer::ClauseReplacer(ClauseId Id, PragmaReplacer &Parent)
+    : mName(tsar::getName(Id)), mClauseId(Id), mParent(&Parent) {
+  assert(tsar::getParent(Id) == Parent.getDirectiveId() &&
+         "Incompatible directive and clause IDs!");
+}
+
+void ClauseReplacer::HandleClause(
+    ExternalPreprocessor &PP, PragmaIntroducerKind Introducer,
+    Token &FirstToken) {
   auto ClauseLoc = FirstToken.getLocation();
   AddToken(tok::l_brace, ClauseLoc, 1, getReplacement());
   AddStringToken(getName(), ClauseLoc, PP, getReplacement());
@@ -233,11 +256,12 @@ void ClauseReplacer::HandlePragma(
   AddToken(tok::r_brace, End, 1, getReplacement());
 }
 
-void ClauseReplacer::HandleBody(
-    Preprocessor &PP, PragmaIntroducerKind Introducer, Token &FirstToken) {
+void ClauseReplacer::HandleBody(ExternalPreprocessor &PP,
+    PragmaIntroducerKind Introducer, Token &FirstToken) {
   LLVM_DEBUG(dbgs() << "[PRAGMA HANDLER]: process body of '" << getName() << "'\n");
   const auto Prototype = ClausePrototype::get(mClauseId);
-  DefaultClauseVisitor<ReplacementT> CV(PP, getReplacement());
+  DefaultClauseVisitor<ExternalPreprocessor, ReplacementT> CV(PP,
+                                                              getReplacement());
   CV.visitBody(Prototype.begin(), Prototype.end(), FirstToken);
 }
 }

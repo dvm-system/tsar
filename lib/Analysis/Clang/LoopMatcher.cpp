@@ -33,6 +33,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -63,7 +64,7 @@ INITIALIZE_PASS_END(LoopMatcherPass, "loop-matcher",
 namespace {
 /// This matches explicit for, while and do-while loops.
 class MatchExplicitVisitor :
-  public MatchASTBase<Loop, Stmt>,
+  public MatchASTBase<Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchExplicitVisitor> {
 public:
 
@@ -94,24 +95,24 @@ public:
   /// expansion location. So it is not possible to determine token in macro
   /// body where these loops starts without additional analysis of AST.
   void VisitFromMacro(Stmt *S) {
-    assert(S->getLocStart().isMacroID() &&
+    assert(S->getBeginLoc().isMacroID() &&
       "Statement must be expanded from macro!");
     if (!isa<WhileStmt>(S) && !isa<DoStmt>(S) && !isa<ForStmt>(S))
       return;
-    auto Loc = S->getLocStart();
+    auto Loc = S->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
+      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
     if (!Pair.second)
-      Pair.first->second.push(S);
+      Pair.first->second.push_back(S);
   }
 
   bool VisitStmt(Stmt *S) {
-    if (S->getLocStart().isMacroID()) {
+    if (S->getBeginLoc().isMacroID()) {
       VisitFromMacro(S);
       return true;
     }
@@ -119,9 +120,10 @@ public:
       // To determine appropriate loop in LLVM IR it is necessary to use start
       // location of initialization instruction, if it is available.
       if (Stmt *Init = For->getInit()) {
-        auto LpItr = findItrForLocation(Init->getLocStart());
+        auto LpItr = findItrForLocation(Init->getBeginLoc());
         if (LpItr != mLocToIR->end()) {
-          Loop *L = LpItr->second.pop();
+          Loop *L = LpItr->second.back();
+          LpItr->second.pop_back();
           mMatcher->emplace(For, L);
           ++NumMatchLoop;
           --NumNonMatchIRLoop;
@@ -136,7 +138,7 @@ public:
             auto HeadBB = L->getHeader();
             auto HeaderLoc = HeadBB ?
               HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
-            PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getLocStart(), false);
+            PresumedLoc PLoc = mSrcMgr->getPresumedLoc(S->getBeginLoc(), false);
             auto Tmp = std::move(LpItr->second);
             mLocToIR->erase(LpItr);
             if (HeaderLoc && DILocationMapInfo::isEqual(PLoc, HeaderLoc))
@@ -149,7 +151,7 @@ public:
     // If there is no initialization instruction, an appropriate loop has not
     // been found or considered loop is not a for-loop try to use accurate loop
     // location.
-    auto StartLoc = S->getLocStart();
+    auto StartLoc = S->getBeginLoc();
     if (isa<WhileStmt>(S) || isa<DoStmt>(S) || isa<ForStmt>(S)) {
       if (Loop *L = findIRForLocation(StartLoc)) {
         mMatcher->emplace(S, L);
@@ -174,9 +176,9 @@ public:
         if (HeaderLoc) {
           auto Pair =
             mLocToImplicit->insert(
-              std::make_pair(HeaderLoc, bcl::TransparentQueue<Loop>(L)));
+              std::make_pair(HeaderLoc, TinyPtrVector<Loop *>(L)));
           if (!Pair.second)
-            Pair.first->second.push(L);
+            Pair.first->second.push_back(L);
         }
       }
     }
@@ -188,7 +190,7 @@ private:
 
 /// This matches implicit loops.
 class MatchImplicitVisitor :
-  public MatchASTBase<Loop, Stmt>,
+  public MatchASTBase<Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchImplicitVisitor> {
 public:
   MatchImplicitVisitor(SourceManager &SrcMgr, Matcher &LM,
@@ -205,7 +207,7 @@ public:
     }
     if (!mLastLabel)
       return true;
-    if (Loop *L = findIRForLocation(S->getLocStart())) {
+    if (Loop *L = findIRForLocation(S->getBeginLoc())) {
       mMatcher->emplace(mLastLabel, L);
       ++NumMatchLoop;
       --NumNonMatchIRLoop;
@@ -230,7 +232,7 @@ private:
       SmallVector<Metadata *, 3> MDs(1);
       auto HeadBB = L->getHeader();
       DILocation *DILoopLoc;
-      auto LabelLoc = mLastLabel->getLocStart();
+      auto LabelLoc = mLastLabel->getBeginLoc();
       auto HeaderLoc = HeadBB->getTerminator()->getDebugLoc().get();
       // The following assert should not fail because the condition has
       // been checked in MatchExplicitVisitor.
@@ -279,14 +281,19 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     ++NumNonMatchIRLoop;
     if (Loc) {
       auto Pair = LocToLoop.insert(
-        std::make_pair(Loc, bcl::TransparentQueue<Loop>(L)));
+        std::make_pair(Loc, TinyPtrVector<Loop *>(L)));
       // In some cases different loops have the same locations. For example,
       // if these loops have been produced by one loop from a file that had been
       // included multiple times. The other case is a loop defined in macro.
       if (!Pair.second)
-        Pair.first->second.push(L);
+        Pair.first->second.push_back(L);
     }
   });
+  // Matcher uses back() to extract element from the list. So, we change
+  // order of loops to preserver traverse order (loop is visited before
+  // children).
+  for (auto &Pair : LocToLoop)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
   MatchExplicitVisitor::LocToIRMap LocToImplicit;
   MatchExplicitVisitor::LocToASTMap LocToMacro;
@@ -295,7 +302,11 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
   MatchExplicit.TraverseDecl(mFuncDecl);
   MatchImplicitVisitor MatchImplicit(SrcMgr, mMatcher, mUnmatchedAST,
     LocToImplicit, LocToMacro);
+  for (auto &Pair: LocToImplicit)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   MatchImplicit.TraverseDecl(mFuncDecl);
+  for (auto &Pair : LocToMacro)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   MatchExplicit.matchInMacro(
     NumMatchLoop, NumNonMatchASTLoop, NumNonMatchIRLoop);
   return MatchImplicit.isDILoopChanged();

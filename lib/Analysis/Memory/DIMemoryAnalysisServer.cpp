@@ -26,6 +26,7 @@
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
@@ -35,6 +36,7 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/GlobalOptions.h"
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
 
@@ -57,7 +59,8 @@ FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
 using DIMemoryAnalysisServerResponse = AnalysisResponsePass<
   GlobalsAAWrapperPass, DIMemoryTraitPoolWrapper, DIMemoryEnvironmentWrapper,
   GlobalDefinedMemoryWrapper, GlobalLiveMemoryWrapper,
-  ClonedDIMemoryMatcherWrapper, DIMemoryAnalysisServerProvider>;
+  ClonedDIMemoryMatcherWrapper, DIMemoryAnalysisServerProvider,
+  DIArrayAccessWrapper>;
 
 class DIMemoryAnalysisServerProviderPass : public ModulePass, private bcl::Uncopyable {
 public:
@@ -71,24 +74,24 @@ public:
   bool runOnModule(llvm::Module &M) override {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
     DIMemoryAnalysisServerProvider::initialize<GlobalOptionsImmutableWrapper>(
-        [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
-          Wrapper.setOptions(&GO);
-        });
+      [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(&GO);
+      });
     auto &DIMEnv = getAnalysis<DIMemoryEnvironmentWrapper>().get();
     DIMemoryAnalysisServerProvider::initialize<DIMemoryEnvironmentWrapper>(
-        [&DIMEnv](DIMemoryEnvironmentWrapper &Wrapper) {
-          Wrapper.set(DIMEnv);
-        });
+      [&DIMEnv](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(DIMEnv);
+      });
     auto &DIMTraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
     DIMemoryAnalysisServerProvider::initialize<DIMemoryTraitPoolWrapper>(
-        [&DIMTraitPool](DIMemoryTraitPoolWrapper &Wrapper) {
-          Wrapper.set(DIMTraitPool);
-        });
+      [&DIMTraitPool](DIMemoryTraitPoolWrapper &Wrapper) {
+        Wrapper.set(DIMTraitPool);
+      });
     auto &GlobalsAA = getAnalysis<GlobalsAAWrapperPass>().getResult();
     DIMemoryAnalysisServerProvider::initialize<GlobalsAAResultImmutableWrapper>(
-        [&GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
-          Wrapper.set(GlobalsAA);
-        });
+      [&GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(GlobalsAA);
+      });
     auto &GlobalDefUse = getAnalysis<GlobalDefinedMemoryWrapper>().get();
     DIMemoryAnalysisServerProvider::initialize<GlobalDefinedMemoryWrapper>(
       [&GlobalDefUse](GlobalDefinedMemoryWrapper &Wrapper) {
@@ -140,6 +143,7 @@ public:
     PM.add(createGlobalDefinedMemoryStorage());
     PM.add(createGlobalLiveMemoryStorage());
     PM.add(createDIMemoryTraitPoolStorage());
+    PM.add(createDIArrayAccessStorage());
     ClientToServerMemory::initializeServer(*this, CM, SM, CToS, PM);
   }
 
@@ -148,6 +152,7 @@ public:
     addImmutableAliasAnalysis(PM);
     addBeforeTfmAnalysis(PM);
     addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
+    PM.add(createDIArrayAccessCollector());
     addAfterLoopRotateAnalysis(PM);
     // Notify client that analysis is performed. Analysis changes metadata-level
     // alias tree and invokes corresponding handles to update client to server
@@ -165,14 +170,14 @@ public:
 };
 }
 
-ModulePass * llvm::createDIMemoryAnalysisServer() {
+ModulePass *llvm::createDIMemoryAnalysisServer() {
   return new DIMemoryAnalysisServer;
 }
 
 INITIALIZE_PROVIDER(DIMemoryAnalysisServerProvider, "di-memory-server-provider",
   "Metadata-Level Memory Server (Provider)")
 
-char DIMemoryAnalysisServer::ID = 0;
+  char DIMemoryAnalysisServer::ID = 0;
 INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServer, "di-memory-server",
   "Metadata-Level Memory Server", false, false)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
@@ -180,10 +185,10 @@ INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServer, "di-memory-server",
   INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryAnalysisServerProvider)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryAnalysisServerResponse)
-INITIALIZE_PASS_END(DIMemoryAnalysisServer, "di-memory-server",
-  "Metadata-Level Memory Server", false, false)
+  INITIALIZE_PASS_END(DIMemoryAnalysisServer, "di-memory-server",
+    "Metadata-Level Memory Server", false, false)
 
-template <> char DIMemoryAnalysisServerResponse::ID = 0;
+  template <> char DIMemoryAnalysisServerResponse::ID = 0;
 INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServerResponse,
   "di-memory-server-response",
   "Metadata-Level Memory Server (Response)", true, false)
@@ -196,19 +201,19 @@ INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServerResponse,
   INITIALIZE_PASS_DEPENDENCY(DIMemoryAnalysisServerProvider)
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
-INITIALIZE_PASS_END(DIMemoryAnalysisServerResponse,
-  "di-memory-server-response",
-  "Metadata-Level Memory Server (Response)", true, false)
+  INITIALIZE_PASS_END(DIMemoryAnalysisServerResponse,
+    "di-memory-server-response",
+    "Metadata-Level Memory Server (Response)", true, false)
 
-char DIMemoryAnalysisServerProviderPass::ID = 0;
+  char DIMemoryAnalysisServerProviderPass::ID = 0;
 INITIALIZE_PASS_BEGIN(DIMemoryAnalysisServerProviderPass,
   "di-memory-server-provider-init",
   "Metadata-Level Memory Server (Provider, Initialize)", true, true)
-INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
-INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
-INITIALIZE_PASS_END(DIMemoryAnalysisServerProviderPass,
-  "di-memory-server-provider-init",
-  "Metadata-Level Memory Server (Provider, Initialize)", true, true)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+  INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+  INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+  INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
+  INITIALIZE_PASS_END(DIMemoryAnalysisServerProviderPass,
+    "di-memory-server-provider-init",
+    "Metadata-Level Memory Server (Provider, Initialize)", true, true)

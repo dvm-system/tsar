@@ -41,6 +41,7 @@ template <typename PtrType> class SmallPtrSetImpl;
 namespace clang {
 class CFG;
 class CFGBlock;
+class FunctionDecl;
 class LangOptions;
 class MemoryBuffer;
 class SourceManager;
@@ -295,12 +296,6 @@ inline clang::SourceRange getFileRange(const clang::SourceManager &SM,
     SM.getFileLoc(Range.getBegin()), SM.getFileLoc(Range.getEnd()));
 }
 
-/// Compares locations.
-inline bool operator<=(const clang::SourceLocation& LHS,
-    const clang::SourceLocation& RHS) {
-  return LHS < RHS || LHS == RHS;
-}
-
 /// \brief Returns true if `Range` contains `SubRange`
 /// (or `Range` == `SubRange`).
 ///
@@ -316,5 +311,13 @@ inline bool isSubRange(const clang::SourceManager &SM,
   return Range.getBegin() <= SubRange.getBegin() &&
     SubRange.getEnd() <= Range.getEnd();
 }
+
+/// Return name of a specified function.
+///
+/// This returns the name as a single StringRef if it can be
+/// represented as such. Otherwise the name is written into the given
+/// SmallVector and a StringRef to the SmallVector's data is returned.
+llvm::StringRef getFunctionName(clang::FunctionDecl &FD,
+    llvm::SmallVectorImpl<char> &Name);
 }
 #endif//TSAR_CLANG_UTILS_H

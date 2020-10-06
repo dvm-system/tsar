@@ -50,6 +50,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
@@ -117,7 +118,7 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   mAliasTree = &getAnalysis<EstimateMemoryPass>().getAliasTree();
   mDepInfo = &getAnalysis<DependenceAnalysisWrapperPass>().getDI();
   mDL = &F.getParent()->getDataLayout();
-  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   GraphNumbering<const AliasNode *> Numbers;
@@ -493,18 +494,17 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
       if (auto II = dyn_cast<IntrinsicInst>(*SrcItr))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
           continue;
-      ImmutableCallSite SrcCS(*SrcItr);
       for (auto DstItr = SrcItr; DstItr != EndItr; ++DstItr) {
         if (!(**DstItr).mayReadOrWriteMemory())
           continue;
         if (auto II = dyn_cast<IntrinsicInst>(*DstItr))
           if (isMemoryMarkerIntrinsic(II->getIntrinsicID()))
             continue;
-        ImmutableCallSite DstCS(*DstItr);
         trait::Dependence::Flag Flag = trait::Dependence::May |
           trait::Dependence::UnknownDistance |
-          (!SrcCS && !DstCS ? trait::Dependence::UnknownCause :
-            trait::Dependence::CallCause);
+          (!isa<CallBase>(*SrcItr) && !isa<CallBase>(*DstItr)
+             ? trait::Dependence::UnknownCause
+             : trait::Dependence::CallCause);
         DependenceImp::Descriptor Dptr;
         Dptr.set<trait::Flow, trait::Anti, trait::Output>();
         auto insertUnknownDep =
@@ -533,10 +533,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
               continue;
           if (AA.getModRefInfo(*DstItr, Src) == ModRefInfo::NoModRef)
             continue;
-          ImmutableCallSite DstCS(*DstItr);
           trait::Dependence::Flag Flag = trait::Dependence::May |
             trait::Dependence::UnknownDistance |
-            (!DstCS ? trait::Dependence::UnknownCause :
+            (!isa<CallBase>(*DstItr) ? trait::Dependence::UnknownCause :
               trait::Dependence::CallCause);
           DependenceImp::Descriptor Dptr;
           Dptr.set<trait::Flow, trait::Anti, trait::Output>();
@@ -668,9 +667,9 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
     assert(N && "Alias node for unknown memory location must not be null!");
     auto I = NodeTraits.find(N);
     auto &AA = mAliasTree->getAliasAnalysis();
-    ImmutableCallSite CS(Unknown);
-    BitMemoryTrait TID = (CS && AA.onlyReadsMemory(CS)) ?
-      BitMemoryTrait::Readonly : BitMemoryTrait::Dependency;
+    auto *Call = dyn_cast<CallBase>(Unknown);
+    BitMemoryTrait TID = (Call && AA.onlyReadsMemory(Call)) ?
+        BitMemoryTrait::Readonly : BitMemoryTrait::Dependency;
     TID &= BitMemoryTrait::NoRedundant;
     I->get<UnknownList>().push_front(
       std::make_pair(Unknown, TID));
@@ -787,8 +786,8 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
                      StoreInst::getPointerOperandIndex();
             // Address should be also remembered if it is a function parameter
             // because it is not known how it is used inside a function.
-            ImmutableCallSite CS(I.first);
-            return CS && CS.getCalledValue() != I.second->get();
+            auto *Call = dyn_cast<CallBase>(I.first);
+            return Call && Call->getCalledOperand() != I.second->get();
           }))
         continue;
       auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
@@ -1242,25 +1241,27 @@ public:
       OS << "<";
       printLocationSource(OS, T.getMemory()->front(), mDT);
       OS << ", ";
-      if (T.getMemory()->getSize() == MemoryLocation::UnknownSize)
+      if (!T.getMemory()->getSize().hasValue())
         OS << "?";
       else
-        OS << T.getMemory()->getSize();
+        OS << T.getMemory()->getSize().getValue();
       OS << ">";
       traitToStr(T.get<Trait>(), OS);
       OS << " ";
     }
-    for (auto T : make_range(mTS->unknown_begin(), mTS->unknown_end())) {
+    for (auto &T : make_range(mTS->unknown_begin(), mTS->unknown_end())) {
       if (!std::is_same<Trait, trait::AddressAccess>::value &&
            T.is<trait::NoAccess>() ||
           std::is_same<Trait, trait::AddressAccess>::value && !T.is<Trait>())
         continue;
       OS << "<";
-      ImmutableCallSite CS(T.getMemory());
-      if (auto Callee = [CS]() {
-        return !CS ? nullptr : dyn_cast<Function>(
-          CS.getCalledValue()->stripPointerCasts());
-      }())
+      if (auto Callee = [&T]() -> llvm::Function * {
+            if (auto *Call = dyn_cast<CallBase>(T.getMemory()))
+              return dyn_cast<Function>(
+                  Call->getCalledOperand()->stripPointerCasts());
+            else
+              return nullptr;
+          }())
         Callee->printAsOperand(OS, false);
       else
         T.getMemory()->printAsOperand(OS, false);

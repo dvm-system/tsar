@@ -49,11 +49,7 @@ class DIMemoryEnvironment final {
       mEnv->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
     void allUsesReplacedWith(llvm::Value *V) override {
-      if (auto F = llvm::dyn_cast<llvm::Function>(V))
-        mEnv->reset(*F,
-          mEnv->release(llvm::cast<llvm::Function>(*getValPtr())));
-      else
-        mEnv->erase(llvm::cast<llvm::Function>(*getValPtr()));
+      mEnv->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
   public:
     FunctionCallbackVH(llvm::Value *V, DIMemoryEnvironment *Env = nullptr) :

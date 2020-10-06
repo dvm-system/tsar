@@ -24,9 +24,11 @@
 
 #include "tsar/Frontend/Clang/FrontendActions.h"
 #include "tsar/Frontend/Clang/DefaultPragmaHandlers.h"
-#include "tsar/Support/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/Pragma.h"
+#include <clang/AST/ASTDumperUtils.h>
 #include <clang/Frontend/ASTConsumers.h>
 #include <clang/Frontend/CompilerInstance.h>
+#include <llvm/ADT/iterator.h>
 #include <llvm/ADT/STLExtras.h>
 
 using namespace clang;
@@ -40,11 +42,7 @@ tsar::ASTPrintAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) 
 
 std::unique_ptr<ASTConsumer>
 tsar::ASTDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return CreateASTDumper(nullptr, "", true, true, true);
-}
-
-GenPCHPragmaAction::~GenPCHPragmaAction() {
-  DeleteContainerPointers(mNamespaces);
+  return CreateASTDumper(nullptr, "", true, true, true, true, ADOF_Default);
 }
 
 bool GenPCHPragmaAction::BeginSourceFileAction(CompilerInstance &CI) {
@@ -52,7 +50,6 @@ bool GenPCHPragmaAction::BeginSourceFileAction(CompilerInstance &CI) {
   mPP = &CI.getPreprocessor();
   AddPragmaHandlers(*mPP, mNamespaces);
   if (!WrapperFrontendAction::BeginSourceFileAction(CI)) {
-    DeleteContainerPointers(mNamespaces);
     return false;
   }
   return true;
@@ -60,6 +57,8 @@ bool GenPCHPragmaAction::BeginSourceFileAction(CompilerInstance &CI) {
 
 void GenPCHPragmaAction::EndSourceFileAction() {
   WrapperFrontendAction::EndSourceFileAction();
-  RemovePragmaHandlers(*mPP, mNamespaces.begin(), mNamespaces.end());
-  DeleteContainerPointers(mNamespaces);
+  using ItrTy =
+    pointer_iterator<pointee_iterator<decltype(mNamespaces)::iterator>>;
+  RemovePragmaHandlers(*mPP,
+    ItrTy(mNamespaces.begin()), ItrTy(mNamespaces.end()));
 }

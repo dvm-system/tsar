@@ -59,7 +59,7 @@ struct ClausePrinter {
       const ClangDependenceAnalyzer::SortedVarListT &VarInfoList) {
     if (VarInfoList.empty())
       return;
-    std::string Clause = Trait::tag::toString();
+    std::string Clause(Trait::tag::toString());
     Clause.erase(
         std::remove_if(Clause.begin(), Clause.end(), bcl::isWhitespace),
         Clause.end());
@@ -115,7 +115,7 @@ bool ClangOpenMPParallelization::exploitParallelism(
   bcl::for_each(ASTDepInfo.getDependenceInfo(), ClausePrinter{ParallelFor});
   ParallelFor += '\n';
   auto &Rewriter = TfmCtx.getRewriter();
-  Rewriter.InsertTextBefore(AST.getLocStart(), ParallelFor);
+  Rewriter.InsertTextBefore(AST.getBeginLoc(), ParallelFor);
   return true;
 }
 

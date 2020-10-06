@@ -62,7 +62,7 @@ inline bool hasUnderlyingPointer(llvm::Type *Ty) {
   if (Ty->isArrayTy())
     return hasUnderlyingPointer(Ty->getArrayElementType());
   if (Ty->isVectorTy())
-    return hasUnderlyingPointer(Ty->getVectorElementType());
+    return hasUnderlyingPointer(Ty->getScalarType());
   if (Ty->isStructTy())
     for (unsigned I = 0, EI = Ty->getStructNumElements(); I < EI; ++I)
       return hasUnderlyingPointer(Ty->getStructElementType(I));

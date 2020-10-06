@@ -30,11 +30,14 @@
 
 #include "tsar/ADT/Bimap.h"
 #include "tsar/Support/Tags.h"
-#include <bcl/transparent_queue.h>
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Statistic.h>
+#include <llvm/ADT/TinyPtrVector.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Support/Path.h>
 #include <set>
 
 namespace llvm {
@@ -64,18 +67,21 @@ struct DILocationMapInfo {
   static bool isEqual(const DILocation *LHS, const DILocation *RHS) {
     auto TK = getTombstoneKey();
     auto EK = getEmptyKey();
+    llvm::SmallString<128> LHSPath, RHSPath;
     return LHS == RHS ||
       RHS != TK && LHS != TK && RHS != EK && LHS != EK &&
       LHS->getLine() == RHS->getLine() &&
       LHS->getColumn() == RHS->getColumn() &&
-      LHS->getFilename() == RHS->getFilename();
+      tsar::getAbsolutePath(*LHS->getScope(), LHSPath) ==
+        tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
   }
   static bool isEqual(const clang::PresumedLoc &LHS, const DILocation *RHS) {
+    llvm::SmallString<128> LHSPath, RHSPath;
     return !isEqual(RHS, getTombstoneKey()) &&
       !isEqual(RHS, getEmptyKey()) &&
       LHS.getLine() == RHS->getLine() &&
       LHS.getColumn() == RHS->getColumn() &&
-      LHS.getFilename() == RHS->getFilename();
+      LHS.getFilename() == tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
   }
 };
 }
@@ -92,8 +98,8 @@ template<class IRPtrTy, class ASTPtrTy,
   class ASTLocationTy = unsigned,
   class ASTLocationMapInfo = llvm::DenseMapInfo<ASTLocationTy>,
   class MatcherTy = Bimap<
-    bcl::tagged<ASTPtrTy *, AST>, bcl::tagged<IRPtrTy *, IR>>,
-  class UnmatchedASTSetTy = std::set<ASTPtrTy *>>
+    bcl::tagged<ASTPtrTy, AST>, bcl::tagged<IRPtrTy, IR>>,
+  class UnmatchedASTSetTy = std::set<ASTPtrTy>>
 class MatchASTBase {
 public:
   typedef MatcherTy Matcher;
@@ -102,7 +108,7 @@ public:
 
   /// This is a map from entity location to a queue of IR entities.
   typedef llvm::DenseMap<IRLocationTy,
-    bcl::TransparentQueue<IRPtrTy>, IRLocationMapInfo> LocToIRMap;
+    llvm::TinyPtrVector<IRPtrTy>, IRLocationMapInfo> LocToIRMap;
 
   /// \brief This is a map from location in a source file to an queue of AST
   /// entities, which are associated with this location.
@@ -110,7 +116,7 @@ public:
   /// The key in this map is a raw encoding for location.
   /// To decode it use SourceLocation::getFromRawEncoding() method.
   typedef llvm::DenseMap<ASTLocationTy,
-    bcl::TransparentQueue<ASTPtrTy>, ASTLocationMapInfo> LocToASTMap;
+    llvm::TinyPtrVector<ASTPtrTy>, ASTLocationMapInfo> LocToASTMap;
 
   /// \brief Constructor.
   ///
@@ -131,11 +137,13 @@ public:
   /// Finds low-level representation of an entity at the specified location.
   ///
   /// \return LLVM IR for an entity or `nullptr`.
-  IRPtrTy * findIRForLocation(clang::SourceLocation Loc) {
+  IRPtrTy findIRForLocation(clang::SourceLocation Loc) {
     auto LocItr = findItrForLocation(Loc);
     if (LocItr == mLocToIR->end())
       return nullptr;
-    return LocItr->second.pop();
+    auto Res = LocItr->second.back();
+    LocItr->second.pop_back();
+    return Res;
   }
 
   /// Finds low-level representation of an entity at the specified location.
@@ -166,13 +174,18 @@ public:
       if (IREntityItr == mLocToIR->end() ||
         IREntityItr->second.size() != InMacro.second.size()) {
         NumNonMatchAST += InMacro.second.size();
-        while (auto ASTEntity = InMacro.second.pop())
-          mUnmatchedAST->insert(ASTEntity);
+        while (!InMacro.second.empty()) {
+          mUnmatchedAST->insert(InMacro.second.back());
+          InMacro.second.pop_back();
+        }
       } else {
         NumMatch += InMacro.second.size();
         NumNonMatchIR -= InMacro.second.size();
-        while (auto ASTEntity = InMacro.second.pop())
-          mMatcher->emplace(ASTEntity, IREntityItr->second.pop());
+        while (!InMacro.second.empty()) {
+          mMatcher->emplace(InMacro.second.back(), IREntityItr->second.back());
+          InMacro.second.pop_back();
+          IREntityItr->second.pop_back();
+        }
       }
     }
   }

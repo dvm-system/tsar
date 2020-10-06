@@ -85,8 +85,9 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second) {
   public:
     AnalysisActionFactory(FirstTy F, SecondTy S) :
       mFirst(std::move(F)), mSecond(std::move(S)) {}
-    clang::FrontendAction *create() override {
-      return new ActionTy(mFirst, mSecond);
+    std::unique_ptr<clang::FrontendAction> create() override {
+      return std::unique_ptr<clang::FrontendAction>(
+        new ActionTy(mFirst, mSecond));
     }
   private:
     FirstTy mFirst;
@@ -104,10 +105,11 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second) {
   public:
     AnalysisActionFactory(FirstTy F, SecondTy S) :
       mFirst(std::move(F)), mSecond(std::move(S)) {}
-    clang::FrontendAction *create() override {
+    std::unique_ptr<clang::FrontendAction> create() override {
       std::unique_ptr<clang::FrontendAction> Action(
         new ActionTy(mFirst, mSecond));
-      return new AdaptorTy(std::move(Action));
+      return std::unique_ptr<clang::FrontendAction>(
+        new AdaptorTy(std::move(Action)));
     }
   private:
     FirstTy mFirst;
@@ -127,10 +129,11 @@ newAnalysisActionFactory(
   public:
     AnalysisActionFactory(FirstTy F, SecondTy S, AdaptorArgTy A) :
       mFirst(std::move(F)), mSecond(std::move(S)), mAdaptorArg(std::move(A)) {}
-    clang::FrontendAction *create() override {
+    std::unique_ptr<clang::FrontendAction> create() override {
       std::unique_ptr<clang::FrontendAction> Action(
         new ActionTy(mFirst, mSecond));
-      return new AdaptorTy(std::move(Action), mAdaptorArg);
+      return std::unique_ptr<clang::FrontendAction>(
+        new AdaptorTy(std::move(Action), mAdaptorArg));
     }
   private:
     FirstTy mFirst;
@@ -155,10 +158,11 @@ newAnalysisActionFactory(FirstTy First, SecondTy Second,
         AdaptorFirstTy AF, AdaptorSecondTy AS) :
       mFirst(std::move(F)), mSecond(std::move(S)),
       mAdaptorFirst(std::move(AF)), mAdaptorSecond(std::move(AS)) {}
-    clang::FrontendAction *create() override {
+    std::unique_ptr<clang::FrontendAction> create() override {
       std::unique_ptr<clang::FrontendAction> Action(
         new ActionTy(mFirst, mSecond));
-      return new AdaptorTy(std::move(Action), mAdaptorFirst, mAdaptorSecond);
+      return std::unique_ptr<clang::FrontendAction>(
+        new AdaptorTy(std::move(Action), mAdaptorFirst, mAdaptorSecond));
     }
   private:
     FirstTy mFirst;
@@ -180,9 +184,10 @@ newFrontendActionFactory() {
     public clang::tooling::FrontendActionFactory {
   public:
     SimpleFrontendActionFactory() {}
-    clang::FrontendAction *create() override {
+    std::unique_ptr<clang::FrontendAction> create() override {
       std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
-      return new AdaptorTy(std::move(Action));
+      return std::unique_ptr<clang::FrontendAction>(
+        new AdaptorTy(std::move(Action)));
     }
   };
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
@@ -197,9 +202,10 @@ newFrontendActionFactory(AdaptorArgTy AdaptorArg) {
     public clang::tooling::FrontendActionFactory {
   public:
     SimpleFrontendActionFactory(AdaptorArgTy A) : mAdaptorArg(std::move(A)) {}
-    clang::FrontendAction *create() override {
+    std::unique_ptr<clang::FrontendAction> create() override {
       std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
-      return new AdaptorTy(std::move(Action), mAdaptorArg);
+      return std::unique_ptr<clang::FrontendAction>(
+        new AdaptorTy(std::move(Action), mAdaptorArg));
     }
   private:
     AdaptorArgTy mAdaptorArg;

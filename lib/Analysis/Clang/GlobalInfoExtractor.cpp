@@ -24,9 +24,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
-#include "tsar/Analysis/Clang/SourceLocationTraverse.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
+#include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -70,7 +71,7 @@ bool ClangGlobalInfoPass::runOnModule(llvm::Module &M) {
   auto &Rewriter = TfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   auto &LangOpts = Rewriter.getLangOpts();
-  mGIE = make_unique<GlobalInfoExtractor>(SrcMgr, LangOpts);
+  mGIE = std::make_unique<GlobalInfoExtractor>(SrcMgr, LangOpts);
   mGIE->TraverseDecl(Context.getTranslationUnitDecl());
   for (auto *File : mGIE->getFiles()) {
     StringMap<SourceLocation> RawIncludes;
@@ -94,7 +95,7 @@ bool GlobalInfoExtractor::VisitTypeLoc(TypeLoc TL) {
 }
 
 bool GlobalInfoExtractor::TraverseDecl(Decl *D) {
-  if (isa<TranslationUnitDecl>(D))
+  if (!D || isa<TranslationUnitDecl>(D))
     return RecursiveASTVisitor::TraverseDecl(D);
   traverseSourceLocation(D, [this](SourceLocation Loc) { visitLoc(Loc); });
 #ifdef LLVM_DEBUG
@@ -187,7 +188,7 @@ void GlobalInfoExtractor::collectIncludes(FileID FID) {
     dbgs() << "[GLOBAL INFO]: expanded macros:\n";
     for (auto Loc : LocationStack) {
       dbgs() << "  " << Lexer::getImmediateMacroNameForDiagnostics(
-        Loc, mSM, mLangOpts) << " at";
+        Loc, mSM, mLangOpts) << " at ";
       Loc.dump(mSM);
       dbgs() << "\n";
     });

@@ -50,10 +50,10 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
   O << "<";
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
-  if (Loc.Size == MemoryLocation::UnknownSize)
+  if (!Loc.Size.hasValue())
     O << "?";
   else
-    O << Loc.Size;
+    O << Loc.Size.getValue();
   O << ">";
 }
 
@@ -62,15 +62,15 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   O << "<";
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
-  if (Loc.LowerBound == MemoryLocation::UnknownSize)
+  if (!Loc.LowerBound.hasValue())
     O << "?";
   else
-    O << Loc.LowerBound;
+    O << Loc.LowerBound.getValue();
   O << ", ";
-  if (Loc.UpperBound == MemoryLocation::UnknownSize)
+  if (!Loc.UpperBound.hasValue())
     O << "?";
   else
-    O << Loc.UpperBound;
+    O << Loc.UpperBound.getValue();
   O << ">";
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,
@@ -93,11 +93,24 @@ void printDILocationSource(unsigned DWLang,
     O << "?" << Loc.Var->getName() << "?";
   O << ", ";
   auto Size = Loc.getSize();
-  if (Size == MemoryLocation::UnknownSize)
+  if (!Size.hasValue())
     O << "?";
   else
-    O << Size;
+    O << Size.getValue();
   O << ">";
+}
+
+template<class PositionT>
+static bool printAt(const PositionT  *At, const Twine &Prefix, raw_ostream &O) {
+  if (At && At->getLine() > 0) {
+    O << Prefix << At->getLine();
+    if (At->getColumn())
+      O << ":" << At->getColumn();
+    else if (printAt(dyn_cast_or_null<DILexicalBlock>(At->getScope()), "[", O))
+      O << "]";
+    return true;
+  }
+  return false;
 }
 
 void printDILocationSource(unsigned DWLang,
@@ -106,16 +119,22 @@ void printDILocationSource(unsigned DWLang,
   auto printDbgLoc = [&Loc, &O]() {
     SmallVector<DebugLoc, 1> DbgLocs;
     Loc.getDebugLoc(DbgLocs);
-    if (DbgLocs.size() == 1) {
-      O << ":" << DbgLocs.front().getLine() << ":" << DbgLocs.front().getCol();
-    } else if (!DbgLocs.empty()) {
+    auto NumberOfLocs = count_if(DbgLocs, [](const DebugLoc &L) {
+      return L.getLine() > 0;
+    });
+    if (NumberOfLocs == 1) {
+      for (auto &L : DbgLocs)
+        printAt(DbgLocs.front().get(), ":", O);
+    } else if (NumberOfLocs > 1) {
       O << ":{";
-      auto I = DbgLocs.begin();
-      for (auto EI = DbgLocs.end() - 1; I != EI; ++I)
-        if (*I)
-          O << I->getLine() << ":" << I->getCol() << "|";
-      if (*I)
-        O << I->getLine() << ":" << I->getCol() << "}";
+      bool WasPrinted = false;
+      for (auto &L: DbgLocs) {
+        if (WasPrinted)
+          printAt(L.get(), "|", O);
+        else
+          WasPrinted = printAt(L.get(), "", O);
+      }
+      O << "}";
     }
   };
   if (auto EM = dyn_cast<DIEstimateMemory>(M)) {
@@ -136,10 +155,10 @@ void printDILocationSource(unsigned DWLang,
     printDbgLoc();
     O << ", ";
     auto Size = TmpLoc.getSize();
-    if (Size == MemoryLocation::UnknownSize)
+    if (!Size.hasValue())
       O << "?";
     else
-      O << Size;
+      O << Size.getValue();
     O << ">";
   } else if (auto UM = dyn_cast<DIUnknownMemory>(M)) {
     auto MD = UM->getMetadata();
@@ -183,7 +202,7 @@ void printDILocationSource(unsigned DWLang,
 void printDIType(raw_ostream &o, const DIType *DITy) {
   bool isDerived = false;
   if (auto *Ty = dyn_cast_or_null<DIDerivedType>(DITy)) {
-    DITy= Ty->getBaseType().resolve();
+    DITy= Ty->getBaseType();
     isDerived = true;
   }
   if (DITy)
@@ -197,10 +216,8 @@ void printDIType(raw_ostream &o, const DIType *DITy) {
 void printDIVariable(raw_ostream &o, DIVariable *DIVar) {
   assert(DIVar && "Variable must not be null!");
   o << DIVar->getLine() << ": ";
-  printDIType(o, DIVar->getType().resolve()), o << " ";
+  printDIType(o, DIVar->getType()), o << " ";
   o << DIVar->getName();
 }
 
 }
-
-

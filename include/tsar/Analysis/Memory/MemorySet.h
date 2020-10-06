@@ -170,15 +170,21 @@ public:
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Tail))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Tail)) <= 0)
         continue;
       if (!KnownStartIdx)
         StartIdx = Idx;
-      if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Tail))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getLowerBound(Tail)) > 0)
         return make_range(iterator(mLocations.end(), 0),
                           iterator(mLocations.end(), 0));
       MemoryInfo::setLowerBound(MemoryInfo::getUpperBound(Curr) + 1, Tail);
-      if (MemoryInfo::getUpperBound(Tail) < MemoryInfo::getLowerBound(Tail))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Tail),
+              MemoryInfo::getLowerBound(Tail)) < 0)
         return make_range(iterator(I, StartIdx), iterator(I, Idx));
     }
     return make_range(iterator(mLocations.end(), 0),
@@ -197,15 +203,22 @@ public:
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Tail))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Tail)) <= 0)
         continue;
       if (!KnownStartIdx)
         StartIdx = Idx;
-      if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Tail))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getLowerBound(Tail)) > 0)
         return make_range(const_iterator(mLocations.end(), 0),
                           const_iterator(mLocations.end(), 0));
-      MemoryInfo::setLowerBound(MemoryInfo::getUpperBound(Curr) + 1, Tail);
-      if (MemoryInfo::getUpperBound(Tail) < MemoryInfo::getLowerBound(Tail))
+      MemoryInfo::setLowerBound(
+        MemoryInfo::sizeinc(MemoryInfo::getUpperBound(Curr)), Tail);
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Tail),
+              MemoryInfo::getLowerBound(Tail)) < 0)
         return make_range(const_iterator(I, StartIdx), const_iterator(I, Idx));
     }
     return make_range(const_iterator(mLocations.end(), 0),
@@ -227,33 +240,39 @@ public:
     bool IsEmptyList = true;
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) <= MemoryInfo::getLowerBound(Loc))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Loc)) <= 0)
         continue;
-      if (MemoryInfo::getLowerBound(Curr) >= MemoryInfo::getUpperBound(Loc))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getUpperBound(Loc)) >= 0)
         return;
       LocationTy CoveredLoc(Loc);
-      MemoryInfo::setLowerBound(std::max(MemoryInfo::getLowerBound(Curr),
-                                         MemoryInfo::getLowerBound(Loc)),
+      MemoryInfo::setLowerBound(max(MemoryInfo::getLowerBound(Curr),
+                                    MemoryInfo::getLowerBound(Loc)),
                                 CoveredLoc);
-      MemoryInfo::setUpperBound(std::min(MemoryInfo::getUpperBound(Curr),
-                                         MemoryInfo::getUpperBound(Loc)),
+      MemoryInfo::setUpperBound(min(MemoryInfo::getUpperBound(Curr),
+                                    MemoryInfo::getUpperBound(Loc)),
                                 CoveredLoc);
 
       if (IsEmptyList) {
         Locs.push_back(std::move(CoveredLoc));
         IsEmptyList = false;
       } else {
-        if (MemoryInfo::getLowerBound(CoveredLoc) <=
-                MemoryInfo::getUpperBound(Locs.back()) &&
-            MemoryInfo::getUpperBound(CoveredLoc) >=
-                MemoryInfo::getLowerBound(Locs.back())) {
+        if (MemoryInfo::sizecmp(
+                MemoryInfo::getLowerBound(CoveredLoc),
+                MemoryInfo::getUpperBound(Locs.back())) <= 0 &&
+            MemoryInfo::sizecmp(
+                MemoryInfo::getUpperBound(CoveredLoc),
+                MemoryInfo::getLowerBound(Locs.back())) >= 0) {
           MemoryInfo::setLowerBound(
-              std::min(MemoryInfo::getLowerBound(CoveredLoc),
-                       MemoryInfo::getLowerBound(Locs.back())),
+              min(MemoryInfo::getLowerBound(CoveredLoc),
+                  MemoryInfo::getLowerBound(Locs.back())),
               Locs.back());
           MemoryInfo::setUpperBound(
-              std::max(MemoryInfo::getUpperBound(CoveredLoc),
-                       MemoryInfo::getUpperBound(Locs.back())),
+              max(MemoryInfo::getUpperBound(CoveredLoc),
+                  MemoryInfo::getUpperBound(Locs.back())),
               Locs.back());
         }
       }
@@ -275,8 +294,12 @@ public:
       return iterator(mLocations.end(), 0);
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) > MemoryInfo::getLowerBound(Loc) &&
-          MemoryInfo::getLowerBound(Curr) < MemoryInfo::getUpperBound(Loc))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Loc)) > 0 &&
+          MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getUpperBound(Loc)) < 0)
         return iterator(I, Idx);
     }
     return iterator(mLocations.end(), 0);
@@ -289,8 +312,12 @@ public:
       return const_iterator(mLocations.end(), 0);
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) > MemoryInfo::getLowerBound(Loc) &&
-          MemoryInfo::getLowerBound(Curr) < MemoryInfo::getUpperBound(Loc))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Loc)) > 0 &&
+          MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getUpperBound(Loc)) < 0)
         return const_iterator(I, Idx);
     }
     return const_iterator(mLocations.end(), 0);
@@ -329,8 +356,12 @@ public:
     auto InsertItr = I->second.begin();
     for (auto EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getUpperBound(Curr) >= MemoryInfo::getLowerBound(Loc) &&
-          MemoryInfo::getLowerBound(Curr) <= MemoryInfo::getUpperBound(Loc)) {
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getUpperBound(Curr),
+              MemoryInfo::getLowerBound(Loc)) >= 0 &&
+          MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(Curr),
+              MemoryInfo::getUpperBound(Loc)) <= 0) {
         bool isChanged = true;
         if (MemoryInfo::getAATags(Curr) != MemoryInfo::getAATags(Loc))
           if (MemoryInfo::getAATags(Curr) ==
@@ -341,18 +372,23 @@ public:
               llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey(), Curr);
         else
           isChanged = false;
-        if (MemoryInfo::getUpperBound(Curr) < MemoryInfo::getUpperBound(Loc)) {
+        if (MemoryInfo::sizecmp(
+                MemoryInfo::getUpperBound(Curr),
+                MemoryInfo::getUpperBound(Loc)) < 0) {
           MemoryInfo::setUpperBound(MemoryInfo::getUpperBound(Loc), Curr);
           isChanged = true;
         }
-        if (MemoryInfo::getLowerBound(Curr) > MemoryInfo::getLowerBound(Loc)) {
+        if (MemoryInfo::sizecmp(
+                MemoryInfo::getLowerBound(Curr),
+                MemoryInfo::getLowerBound(Loc)) > 0) {
           MemoryInfo::setLowerBound(MemoryInfo::getLowerBound(Loc), Curr);
           isChanged = true;
         }
         return std::make_pair(iterator(I, Idx), isChanged);
       }
-      if (MemoryInfo::getLowerBound(*InsertItr) <=
-          MemoryInfo::getLowerBound(Loc))
+      if (MemoryInfo::sizecmp(
+              MemoryInfo::getLowerBound(*InsertItr),
+              MemoryInfo::getLowerBound(Loc)) <= 0)
         ++InsertItr;
     }
     I->second.insert(InsertItr, Loc);
@@ -415,21 +451,22 @@ public:
     if (mLocations.size() != RHS.mLocations.size())
       return false;
     auto sanitize = [](typename LocationList::const_iterator RangeItr,
-                       typename LocationList::const_iterator RangeItrE,
-                       LocationList &Locs) {
+        typename LocationList::const_iterator RangeItrE, LocationList &Locs) {
       Locs.push_back(*RangeItr);
       for (; RangeItr != RangeItrE; ++RangeItr) {
-        if (MemoryInfo::getUpperBound(Locs.back()) >
-                MemoryInfo::getLowerBound(*RangeItr) &&
-            MemoryInfo::getLowerBound(Locs.back()) <
-                MemoryInfo::getUpperBound(*RangeItr)) {
+        if (MemoryInfo::sizecmp(
+                MemoryInfo::getUpperBound(Locs.back()),
+                MemoryInfo::getLowerBound(*RangeItr)) > 0 &&
+            MemoryInfo::sizecmp(
+                MemoryInfo::getLowerBound(Locs.back()),
+                MemoryInfo::getUpperBound(*RangeItr)) < 0) {
           MemoryInfo::setLowerBound(
-              std::min(MemoryInfo::getLowerBound(*RangeItr),
-                       MemoryInfo::getLowerBound(Locs.back())),
+              min(MemoryInfo::getLowerBound(*RangeItr),
+                  MemoryInfo::getLowerBound(Locs.back())),
               Locs.back());
           MemoryInfo::setUpperBound(
-              std::max(MemoryInfo::getUpperBound(*RangeItr),
-                       MemoryInfo::getUpperBound(Locs.back())),
+              max(MemoryInfo::getUpperBound(*RangeItr),
+                  MemoryInfo::getUpperBound(Locs.back())),
               Locs.back());
         } else {
           Locs.push_back(*RangeItr);
@@ -449,6 +486,19 @@ public:
     return true;
   }
 private:
+  template<class SizeT>
+  static const SizeT & max(const SizeT &L, const SizeT &R) {
+    if (MemoryInfo::sizecmp(L, R) < 0)
+      return R;
+    return L;
+  }
+  template<class SizeT>
+  static const SizeT & min(const SizeT &L, const SizeT &R) {
+    if (MemoryInfo::sizecmp(L, R) > 0)
+      return R;
+    return L;
+  }
+
   MapTy mLocations;
 };
 

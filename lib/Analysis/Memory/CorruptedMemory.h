@@ -458,7 +458,7 @@ private:
 
   /// Allocates memory for a new list of corrupted memory locations.
   CorruptedMemoryItem * newCorrupted() {
-    mCorrupted.push_back(llvm::make_unique<CorruptedMemoryItem>());
+    mCorrupted.push_back(std::make_unique<CorruptedMemoryItem>());
     return mCorrupted.back().get();
   }
 

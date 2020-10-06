@@ -27,8 +27,8 @@
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/ExpressionMatcher.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -37,8 +37,8 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/CallGraph.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/InitializePasses.h>
 #include <stack>
 
 #undef DEBUG_TYPE
@@ -70,7 +70,7 @@ public:
       if (P.getDirectiveId() != DirectiveId::Region)
         return true;
       if (mNewPragma) {
-        toDiag(mSrcMgr.getDiagnostics(), mNewPragma->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), mNewPragma->getBeginLoc(),
           diag::warn_unexpected_directive);
         mActiveRegions.resize(mActiveRegions.size() - mNewActiveRegions);
       }
@@ -99,7 +99,7 @@ public:
     if (!(isa<CompoundStmt>(S) || isa<ForStmt>(S) || isa<WhileStmt>(S) ||
           isa<DoStmt>(S))) {
       if (mNewPragma) {
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
           diag::warn_unexpected_directive);
         mActiveRegions.resize(mActiveRegions.size() - mNewActiveRegions);
         mNewPragma = nullptr;
@@ -113,14 +113,14 @@ public:
     if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S)) {
       auto MatchItr = mLoops.find<AST>(S);
       if (MatchItr == mLoops.end()) {
-        toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
+        toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
           diag::warn_region_add_loop_unable);
       } else {
         bool AddToRegionError = false;
         for (auto *R : mActiveRegions)
           if (!R->markForOptimization(*MatchItr->get<IR>())) {
             if (!AddToRegionError)
-              toDiag(mSrcMgr.getDiagnostics(), S->getLocStart(),
+              toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
                 diag::warn_region_add_loop_unable);
             AddToRegionError = true;
           }
@@ -136,14 +136,14 @@ public:
       return true;
     auto MatchItr = mExprs.find<AST>(CE);
     if (MatchItr == mExprs.end()) {
-      toDiag(mSrcMgr.getDiagnostics(), CE->getLocStart(),
+      toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
         diag::warn_region_add_call_unable);
     } else {
       bool AddToRegionError = false;
       for (auto *R : mActiveRegions)
         if (!R->markForOptimization(*MatchItr->get<IR>())) {
           if (!AddToRegionError)
-            toDiag(mSrcMgr.getDiagnostics(), CE->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
               diag::warn_region_add_call_unable);
           AddToRegionError = true;
         }
@@ -242,24 +242,25 @@ bool ClangRegionCollector::runOnModule(llvm::Module &M) {
           case OptimizationRegion::CS_Condition:
             SCCRegions.insert(&R);
             for (auto &Callee : *CGN)
-              if (Callee.first) {
+              if (Callee.first && *Callee.first) {
                 LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
-                           TSAR_LLVM_DUMP(Callee.first->dump()));
-                if (!R.markForOptimization(*Callee.first))
+                           TSAR_LLVM_DUMP((**Callee.first).dump()));
+                if (!R.markForOptimization(**Callee.first))
                   LLVM_DEBUG(dbgs() << "[OPT REGION]: unable to add\n");
               }
             break;
           case OptimizationRegion::CS_Child:
             for (auto &Callee : *CGN)
-              if (auto *I = dyn_cast_or_null<Instruction>(Callee.first)) {
-                if (auto *L = LI.getLoopFor(I->getParent()))
-                  if (R.contain(*L)) {
-                    LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
-                               TSAR_LLVM_DUMP(Callee.first->dump()));
-                    if (!R.markForOptimization(*Callee.first))
-                      LLVM_DEBUG(dbgs() << "[OPT REGION]: unable to add\n");
-                  }
-              }
+              if (Callee.first)
+                if (auto *I = dyn_cast_or_null<Instruction>(*Callee.first)) {
+                  if (auto *L = LI.getLoopFor(I->getParent()))
+                    if (R.contain(*L)) {
+                      LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
+                                TSAR_LLVM_DUMP(I->dump()));
+                      if (!R.markForOptimization(**Callee.first))
+                        LLVM_DEBUG(dbgs() << "[OPT REGION]: unable to add\n");
+                    }
+                }
             break;
           default:
             break;
@@ -285,10 +286,10 @@ bool ClangRegionCollector::runOnModule(llvm::Module &M) {
             case OptimizationRegion::CS_Condition:
               HasNewSCCRegion |= SCCRegions.insert(&R).second;
               for (auto &Callee : *CGN)
-                if (Callee.first) {
+                if (Callee.first && *Callee.first) {
                   LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
-                  TSAR_LLVM_DUMP(Callee.first->dump()));
-                  if (!R.markForOptimization(*Callee.first))
+                  TSAR_LLVM_DUMP((**Callee.first).dump()));
+                  if (!R.markForOptimization(**Callee.first))
                     LLVM_DEBUG(dbgs() << "[OPT REGION]: unable to add\n");
                 }
               break;
@@ -308,10 +309,10 @@ bool ClangRegionCollector::runOnModule(llvm::Module &M) {
                           << F->getName() << "\n");
         for (auto *R : SCCRegions)
           for (auto &Callee : *CGN)
-            if (Callee.first) {
+            if (Callee.first && *Callee.first) {
               LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
-                         TSAR_LLVM_DUMP(Callee.first->dump()));
-              if (!R->markForOptimization(*Callee.first))
+                         TSAR_LLVM_DUMP((**Callee.first).dump()));
+              if (!R->markForOptimization(**Callee.first))
                 LLVM_DEBUG(dbgs() << "[OPT REGION]: unable to add\n");
             }
       }
@@ -338,9 +339,8 @@ bool OptimizationRegion::markForOptimization(const llvm::Value &V) {
     Info.first->second.Status = CS_Always;
     return true;
   }
-  ImmutableCallSite CS(&V);
-  if (CS) {
-    auto F = dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+  if (auto *Call = dyn_cast<CallBase>(&V)) {
+    auto F = dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
     if (!F)
       return false;
     auto Info = mFunctions.try_emplace(F, CS_Condition);

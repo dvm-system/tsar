@@ -25,9 +25,11 @@
 
 #include "tsar/Core/TransformationContext.h"
 #include <clang/AST/ASTContext.h>
+#include <clang/Basic/FileManager.h>
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/FrontendDiagnostic.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
 
 using namespace tsar;
@@ -117,15 +119,16 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
     snprintf(Buf, MaxDigits, "%d", Pair.first->getValue());
     SmallString<128> Path = Filename;
     sys::path::replace_extension(Path, Buf + sys::path::extension(Path));
-    return Path.str();
+    return std::string(Path);
   };
   return FA;
 }
 
 TransformationContext::TransformationContext(
-  ArrayRef<std::string> CL) : mCommandLine(CL), mGen(nullptr), mCtx(nullptr) {}
+    ArrayRef<std::string> CL)
+  : mCommandLine(CL), mCI(nullptr), mGen(nullptr), mCtx(nullptr) {}
 
-TransformationContext::TransformationContext(
+TransformationContext::TransformationContext(CompilerInstance &CI,
   ASTContext &Ctx, CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) :
   mRewriter(Ctx.getSourceManager(), Ctx.getLangOpts()),
   mCtx(&Ctx), mGen(&Gen), mCommandLine(CL) { }
@@ -144,16 +147,20 @@ clang::Decl * TransformationContext::getDeclForMangledName(StringRef Name) {
   return const_cast<Decl *>(mGen->GetDeclForMangledName(Name));
 }
 
-void TransformationContext::reset(clang::ASTContext &Ctx,
-  clang::CodeGenerator &Gen, llvm::ArrayRef<std::string> CL) {
+void TransformationContext::reset(clang::CompilerInstance &CI,
+    clang::ASTContext &Ctx, clang::CodeGenerator &Gen,
+    llvm::ArrayRef<std::string> CL) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCI = &CI;
   mCtx = &Ctx;
   mGen = &Gen;
   mCommandLine = CL;
 }
 
-void TransformationContext::reset(clang::ASTContext &Ctx, clang::CodeGenerator &Gen) {
+void TransformationContext::reset(clang::CompilerInstance &CI,
+    clang::ASTContext &Ctx, clang::CodeGenerator &Gen) {
   mRewriter.setSourceMgr(Ctx.getSourceManager(), Ctx.getLangOpts());
+  mCI = &CI;
   mCtx = &Ctx;
   mGen = &Gen;
 }

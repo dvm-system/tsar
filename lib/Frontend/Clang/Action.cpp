@@ -59,7 +59,7 @@ public:
       "mLLVMIRGeneration",
       "LLVM IR Generation Time"
     ),
-    mASTContext(nullptr), mLLVMContext(new LLVMContext),
+    mCI(&CI), mASTContext(nullptr), mLLVMContext(new LLVMContext),
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
@@ -78,7 +78,7 @@ public:
       return;
     }
     mASTContext = &Ctx;
-    mTransformContext->reset(Ctx, *mGen);
+    mTransformContext->reset(*mCI, Ctx, *mGen);
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.startTimer();
     mGen->Initialize(Ctx);
@@ -164,6 +164,7 @@ public:
   }
 
 private:
+  CompilerInstance *mCI;
   Timer mLLVMIRGeneration;
   ASTContext *mASTContext;
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
@@ -189,7 +190,7 @@ void ActionBase::EndSourceFileAction() {
 
 void ActionBase::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
-  if (getCurrentFileKind().getLanguage() != InputKind::LLVM_IR) {
+  if (getCurrentFileKind().getLanguage() != Language::LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
     return;
   }
@@ -201,7 +202,7 @@ void ActionBase::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   SourceManager &SM = CI.getSourceManager();
   FileID FID = SM.getMainFileID();
-  llvm::MemoryBuffer *MainFile = SM.getBuffer(FID, &Invalid);
+  auto *MainFile = SM.getBuffer(FID, &Invalid);
   if (Invalid)
     return;
   llvm::SMDiagnostic Err;

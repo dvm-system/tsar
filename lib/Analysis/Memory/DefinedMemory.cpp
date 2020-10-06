@@ -36,10 +36,11 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
@@ -68,7 +69,7 @@ INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
 
 bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   const DominatorTree *DT = nullptr;
   LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
@@ -88,9 +89,9 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
+  LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
   AU.addRequired<DelinearizationPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
-  LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -216,8 +217,17 @@ public:
           // Base - OffsetLoc --------------|mLoc.Ptr| --- mLoc.Size --- |
           // Base - OffsetALoc -|ALoc.Ptr| ---- ALoc.Size -------------------- |
           //--------------------|ALoc.Ptr|--| ------ addMust(...) ------ |
-          MemoryLocationRange Range(ALoc.Ptr, OffsetLoc - OffsetALoc,
-            OffsetLoc - OffsetALoc + mLoc.Size, ALoc.AATags);
+          auto UpperBound =
+              mLoc.Size.isPrecise()
+                  ? LocationSize::precise(
+                      OffsetLoc - OffsetALoc + mLoc.Size.getValue())
+                  : mLoc.Size.hasValue()
+                        ? LocationSize::upperBound(
+                            OffsetLoc - OffsetALoc + mLoc.Size.getValue())
+                        : LocationSize::unknown();
+          MemoryLocationRange Range(ALoc.Ptr,
+            LocationSize::precise(OffsetLoc - OffsetALoc),
+            UpperBound, ALoc.AATags);
           if (this->mDU.hasDef(Range))
             continue;
           addMust(Range);
@@ -337,7 +347,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     return;
   auto &AT = DFF->getAliasTree();
   auto Pair = DFF->getDefInfo().insert(std::make_pair(N, std::make_tuple(
-    llvm::make_unique<DefUseSet>(),llvm::make_unique<ReachSet>())));
+    std::make_unique<DefUseSet>(), std::make_unique<ReachSet>())));
   auto *InterDUInfo = DFF->getInterprocDefUseInfo();
   auto &TLI = DFF->getTLI();
   // DefUseSet will be calculated here for nodes different to regions.
@@ -396,11 +406,10 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list
     // of unknown address accesses. Now, accesses to global memory
     // in a function call leads to unknown address access.
-    ImmutableCallSite CS(&I);
-    if (CS) {
+    if (auto *Call = dyn_cast<CallBase>(&I)) {
       bool UnknownAddressAccess = true;
-      auto F =
-        llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      auto F = llvm::dyn_cast<Function>(
+        Call->getCalledOperand()->stripPointerCasts());
       if (F && InterDUInfo) {
         auto InterDUItr = InterDUInfo->find(F);
         if (InterDUItr != InterDUInfo->end()) {
@@ -445,10 +454,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         }
         auto AN = EM->getAliasNode(AT);
         assert(AN && "Alias node must not be null!");
-        ImmutableCallSite CS(&I);
-        if (CS) {
-          auto F =
-            llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+        if (auto *Call = dyn_cast<CallBase>(&I)) {
+          auto F = llvm::dyn_cast<Function>(
+            Call->getCalledOperand()->stripPointerCasts());
           bool InterprocAvailable = false;
           if (F && !F->isVarArg() && InterDUInfo) {
             auto InterDUItr = InterDUInfo->find(F);
@@ -468,7 +476,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
             }
           }
           if (!InterprocAvailable)
-            switch (AA.getArgModRefInfo(CS, Idx)) {
+            switch (AA.getArgModRefInfo(Call, Idx)) {
               case ModRefInfo::NoModRef:
                 W = R = AccessInfo::No; break;
               case ModRefInfo::Mod:
@@ -499,14 +507,15 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         }
       },
       [&DL, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo, AccessInfo) {
-          ImmutableCallSite CS(&I);
-        auto F =
-          llvm::dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
-        if (F && InterDUInfo) {
-          auto InterDUItr = InterDUInfo->find(F);
-          if (InterDUItr != InterDUInfo->end())
-            if (isPure(*F, *InterDUItr->get<DefUseSet>()))
-              return;
+        if (auto *Call = dyn_cast<CallBase>(&I)) {
+          auto F = llvm::dyn_cast<Function>(
+            Call->getCalledOperand()->stripPointerCasts());
+          if (F && InterDUInfo) {
+            auto InterDUItr = InterDUInfo->find(F);
+            if (InterDUItr != InterDUInfo->end())
+              if (isPure(*F, *InterDUItr->get<DefUseSet>()))
+                return;
+          }
         }
         auto *AN = AT.findUnknown(I);
         if (!AN)
@@ -582,7 +591,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
   auto &AT = getAliasTree();
   auto &AA = AT.getAliasAnalysis();
   auto Pair = getDefInfo().insert(std::make_pair(R, std::make_tuple(
-    llvm::make_unique<DefUseSet>(), llvm::make_unique<ReachSet>())));
+    std::make_unique<DefUseSet>(), std::make_unique<ReachSet>())));
   auto &DefUse = Pair.first->get<DefUseSet>();
   assert(DefUse && "Value of def-use attribute must not be null!");
   // ExitingDefs.MustReach is a set of must define locations (Defs) for the
@@ -608,22 +617,31 @@ void ReachDFFwk::collapse(DFRegion *R) {
           if (auto *DFL = dyn_cast<DFLoop>(R)) {
             auto *L = DFL->getLoop();
             auto maxTripCount = SE->getSmallConstantMaxTripCount(L);
-            if (maxTripCount == 0)
+            if (maxTripCount == 0) {
+              LLVM_DEBUG("[ARRAY LOCATION] Unable to define max trip count"
+                         "(unknown or non-constant)");
               break;
+            }
             auto rangeMin = SE->getSignedRangeMin(SCEV);
             auto rangeMax = SE->getSignedRangeMax(SCEV);
             auto *stepSCEV = addRecExpr->getOperand(1);
             if (static_cast<SCEVTypes>(stepSCEV->getSCEVType()) !=
-              scConstant)
+                scConstant) {
+              LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant loop"
+                                   "bounds.\n");
               break;
+            }
             auto stepNumber = *cast<SCEVConstant>(stepSCEV)->
               getValue()->getValue().getRawData();
-            if (stepNumber > 1)
+            if (stepNumber > 1) {
+              LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Loop stride is "
+                  << stepNumber << " (only 1 available). Ignore.\n");
               break;
+            }
             PointerType *pointerType = cast<PointerType>(
               LocInfo.first->getBase()->getType());
             auto arrayElementSize = getDataLayout().getTypeStoreSize(
-              pointerType->getElementType());
+              pointerType->getElementType()).getFixedSize();
             arrayLoc = Loc;
             arrayLoc.LowerBound = *rangeMin.getRawData() * arrayElementSize;
             arrayLoc.UpperBound = (*rangeMax.getRawData()+1) * arrayElementSize;

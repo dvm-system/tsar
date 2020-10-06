@@ -30,18 +30,20 @@
 #include "tsar/Core/tsar-config.h"
 #include "tsar/Frontend/Clang/Action.h"
 #include "tsar/Frontend/Clang/ASTMergeAction.h"
-#include "tsar/Patch/llvm/IR/LegacyPassNameParser.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/Clang/Pragma.h"
 #ifdef APC_FOUND
 # include "tsar/APC/Utils.h"
 #endif
 #include <clang/Frontend/FrontendActions.h>
+#include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
+#include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/Host.h>
 #ifdef lp_solve_FOUND
 # include <lp_solve/lp_solve_config.h>
 #endif
@@ -52,6 +54,26 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+/// FilteredPassNameParser class - Make use of the pass registration
+/// mechanism to automatically add a command line argument to opt for
+/// each pass that satisfies a filter criteria. Filter should return
+/// true for passes to be registered as command-line options.
+///
+/// It was copied from earliery LLVM sources because it is not available
+/// in the last version of LLVM.
+template<typename Filter>
+class FilteredPassNameParser : public PassNameParser {
+private:
+  Filter filter;
+
+public:
+  FilteredPassNameParser(cl::Option & O) : PassNameParser(O) {}
+
+  bool ignorablePassImpl(const PassInfo *P) const override {
+    return !filter(*P);
+  }
+};
+
 template<class PassGroupT>
 struct PassGroupRegistryFilterTraits {
   static inline const PassGroupRegistry & getPassRegistry() {
@@ -82,12 +104,12 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::list<std::string> Sources;
 
   llvm::cl::list<const llvm::PassInfo*, bool,
-    llvm::patch::FilteredPassNameParser<
+    FilteredPassNameParser<
       PassFromGroupFilter<DefaultQueryManager,
         DefaultQueryManager::OutputPassGroup>>> OutputPasses;
 
   llvm::cl::opt<const llvm::PassInfo *, false,
-    llvm::patch::FilteredPassNameParser<
+    FilteredPassNameParser<
       PassFromGroupFilter<TransformationQueryManager>>> TfmPass;
 
   llvm::cl::OptionCategory CompileCategory;
@@ -107,6 +129,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoCaretDiagnostics;
   llvm::cl::opt<bool> ShowSourceLocation;
   llvm::cl::opt<bool> NoShowSourceLocation;
+  llvm::cl::opt<std::string> BuildPath;
+  llvm::cl::alias BuildPathA;
 
   llvm::cl::OptionCategory DebugCategory;
   llvm::cl::opt<bool> EmitLLVM;
@@ -117,7 +141,7 @@ struct Options : private bcl::Uncopyable {
 
   llvm::cl::opt<bool> PrintAll;
   llvm::cl::list<const PassInfo *, bool,
-    llvm::patch::FilteredPassNameParser<
+    FilteredPassNameParser<
       PassFromGroupFilter<DefaultQueryManager,
         DefaultQueryManager::PrintPassGroup>>> PrintOnly;
   llvm::cl::list<unsigned> PrintStep;
@@ -193,6 +217,9 @@ Options::Options() :
     cl::desc("Print source file/line/column information in diagnostic")),
   NoShowSourceLocation("fno-show-source-location", cl::cat(CompileCategory),
     cl::desc("Do not print source file/line/column information in diagnostic.")),
+  BuildPath("build-path", cl::desc("Starting point to look up for compilation database in upward direction"),
+    cl::cat(CompileCategory)),
+  BuildPathA("p", cl::aliasopt(BuildPath), cl::desc("Alias for -build-path")),
   DebugCategory("Debugging options"),
   EmitLLVM("emit-llvm", cl::cat(DebugCategory),
     cl::desc("Emit llvm without analysis")),
@@ -262,18 +289,18 @@ Options::Options() :
   // Debug options are not available if LLVM has been built in release mode.
   if (Opts.count("debug") == 1) {
     auto Debug = Opts["debug"];
-    Debug->setCategory(DebugCategory);
+    Debug->addCategory(DebugCategory);
     Debug->setHiddenFlag(cl::NotHidden);
     assert(Opts.count("debug-only") == 1 && "Option must be specified!");
     auto DebugOnly = Opts["debug-only"];
-    DebugOnly->setCategory(DebugCategory);
+    DebugOnly->addCategory(DebugCategory);
     DebugOnly->setHiddenFlag(cl::NotHidden);
     auto DebugPass = Opts["debug-pass"];
     assert(Opts.count("debug-pass") == 1 && "Option must be specified!");
-    DebugPass->setCategory(DebugCategory);
+    DebugPass->addCategory(DebugCategory);
     DebugPass->setHiddenFlag(cl::NotHidden);
     assert(Opts.count("stats") == 1 && "Option must be specified!");
-    Opts["stats"]->setCategory(DebugCategory);
+    Opts["stats"]->addCategory(DebugCategory);
   }
 #endif
   assert(Opts.count("print-before") == 1 && "Option must be specified!");
@@ -281,11 +308,11 @@ Options::Options() :
   assert(Opts.count("print-before-all") == 1 && "Option must be specified!");
   assert(Opts.count("print-after-all") == 1 && "Option must be specified!");
   assert(Opts.count("filter-print-funcs") == 1 && "Option must be specified!");
-  Opts["print-before"]->setCategory(DebugCategory);
-  Opts["print-after"]->setCategory(DebugCategory);
-  Opts["print-before-all"]->setCategory(DebugCategory);
-  Opts["print-after-all"]->setCategory(DebugCategory);
-  Opts["filter-print-funcs"]->setCategory(DebugCategory);
+  Opts["print-before"]->addCategory(DebugCategory);
+  Opts["print-after"]->addCategory(DebugCategory);
+  Opts["print-before-all"]->addCategory(DebugCategory);
+  Opts["print-after-all"]->addCategory(DebugCategory);
+  Opts["filter-print-funcs"]->addCategory(DebugCategory);
   cl::AddExtraVersionPrinter(printVersion);
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
@@ -315,7 +342,7 @@ void Options::printVersion(raw_ostream &OS) {
 #endif
   OS << ".\n";
   OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
-  std::string CPU = sys::getHostCPUName();
+  auto CPU = sys::getHostCPUName();
   OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
 }
 
@@ -325,14 +352,16 @@ void Options::printVersion(raw_ostream &OS) {
 /// It seems that there is no other way to set options for LLVM passes
 /// because '-mllvm <arg>' option works only for Clang.
 static std::vector<const char *> addInternalArgs(int Argc, const char **Argv) {
-  std::vector<const char *> Args(Argc);
-  std::copy(Argv, Argv + Argc, Args.begin());
+  std::vector<const char *> Args;
+  Args.push_back(Argv[0]);
   if (!std::count_if(Argv, Argv + Argc, [](const char *Arg) {
-    const char Opt[] = "-instcombine-lower-dbg-declare";
-    return bcl::array_sizeof(Opt) - 1 < std::strlen(Arg) &&
-      std::strncmp(Opt, Arg, bcl::array_sizeof(Opt) - 1) == 0;
-  }))
+        const char Opt[] = "-instcombine-lower-dbg-declare";
+        return bcl::array_sizeof(Opt) - 1 < std::strlen(Arg) &&
+               std::strncmp(Opt, Arg, bcl::array_sizeof(Opt) - 1) == 0;
+      })) {
     Args.emplace_back("-instcombine-lower-dbg-declare=0");
+  }
+  std::copy(Argv + 1, Argv + Argc, std::back_inserter(Args));
   return Args;
 }
 
@@ -419,7 +448,6 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
       mPrintSteps |= 1u << (Step - 1);
     }
   }
-
 }
 
 void Tool::storeCLOptions() {
@@ -429,6 +457,7 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-disable-llvm-passes");
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-fstandalone-debug");
+  mCommandLine.emplace_back("-gcolumn-info");
   mCommandLine.emplace_back("-Wunknown-pragmas");
   if (Options::get().CaretDiagnostics)
     mCommandLine.emplace_back("-fcaret-diagnostics");
@@ -452,7 +481,7 @@ void Tool::storeCLOptions() {
     mCommandLine.push_back("-D" + Macro);
   if (Options::get().MathErrno && Options::get().NoMathErrno) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoMathErrno.ArgStr);
+    Msg.append(" -").append(Options::get().NoMathErrno.ArgStr.data());
     Options::get().MathErrno.error(Msg);
     exit(1);
   }
@@ -460,8 +489,31 @@ void Tool::storeCLOptions() {
     mCommandLine.emplace_back("-fmath-errno");
   if (Options::get().NoMathErrno)
     mCommandLine.emplace_back("-fno-math-errno");
-  mCompilations = std::unique_ptr<CompilationDatabase>(
-    new FixedCompilationDatabase(".", mCommandLine));
+  if (!Options::get().BuildPath.empty()) {
+    std::string ErrorMessage;
+    mCompilations =
+        CompilationDatabase::autoDetectFromDirectory(
+          Options::get().BuildPath, ErrorMessage);
+    if (!mCompilations && !ErrorMessage.empty()) {
+      ErrorMessage.append("\n");
+      llvm::errs() << "Error while trying to load a compilation database:\n"
+                   << ErrorMessage
+                   << "Running with command line specified flags only.\n";
+      mCompilations = std::unique_ptr<CompilationDatabase>(
+        new FixedCompilationDatabase(".", mCommandLine));
+    } else {
+      auto AdjustingCompilations =
+          std::make_unique<ArgumentsAdjustingCompilations>(
+              std::move(mCompilations));
+      auto Adjuster =
+          getInsertArgumentAdjuster(mCommandLine, ArgumentInsertPosition::BEGIN);
+      AdjustingCompilations->appendArgumentsAdjuster(Adjuster);
+      mCompilations = std::move(AdjustingCompilations);
+    }
+  } else {
+    mCompilations = std::unique_ptr<CompilationDatabase>(
+      new FixedCompilationDatabase(".", mCommandLine));
+  }
   OptionList IncompatibleOpts;
   auto addIfSet = [&IncompatibleOpts](cl::opt<bool> &O) -> cl::opt<bool> & {
     if (O)
@@ -487,21 +539,21 @@ void Tool::storeCLOptions() {
   mGlobalOpts.IsSafeTypeCast = Options::get().SafeTypeCast;
   if (Options::get().SafeTypeCast && Options::get().NoSafeTypeCast) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoSafeTypeCast.ArgStr);
+    Msg.append(" -").append(Options::get().NoSafeTypeCast.ArgStr.data());
     Options::get().SafeTypeCast.error(Msg);
     exit(1);
   }
   mGlobalOpts.InBoundsSubscripts = Options::get().InBoundsSubscripts;
   if (Options::get().InBoundsSubscripts && Options::get().NoInBoundsSubscripts) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoInBoundsSubscripts.ArgStr);
+    Msg.append(" -").append(Options::get().NoInBoundsSubscripts.ArgStr.data());
     Options::get().InBoundsSubscripts.error(Msg);
     exit(1);
   }
   mGlobalOpts.AnalyzeLibFunc = Options::get().AnalyzeLibFunc;
   if (Options::get().AnalyzeLibFunc && Options::get().NoAnalyzeLibFunc) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoAnalyzeLibFunc.ArgStr);
+    Msg.append(" -").append(Options::get().NoAnalyzeLibFunc.ArgStr.data());
     Options::get().AnalyzeLibFunc.error(Msg);
     exit(1);
   }
@@ -510,7 +562,8 @@ void Tool::storeCLOptions() {
   if (Options::get().IgnoreRedundantMemory &&
       Options::get().NoIgnoreRedundantMemory) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoIgnoreRedundantMemory.ArgStr);
+    Msg.append(" -")
+       .append(Options::get().NoIgnoreRedundantMemory.ArgStr.data());
     Options::get().IgnoreRedundantMemory.error(Msg);
     exit(1);
   }
@@ -518,14 +571,14 @@ void Tool::storeCLOptions() {
   if (Options::get().UnsafeTfmAnalysis &&
       Options::get().NoUnsafeTfmAnalysis) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoUnsafeTfmAnalysis.ArgStr);
+    Msg.append(" -").append(Options::get().NoUnsafeTfmAnalysis.ArgStr.data());
     Options::get().UnsafeTfmAnalysis.error(Msg);
     exit(1);
   }
   mGlobalOpts.NoExternalCalls = Options::get().NoExternalCalls;
   if (Options::get().ExternalCalls && Options::get().NoExternalCalls) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().NoExternalCalls.ArgStr);
+    Msg.append(" -").append(Options::get().NoExternalCalls.ArgStr.data());
     Options::get().ExternalCalls.error(Msg);
     exit(1);
   }
@@ -556,7 +609,7 @@ void Tool::storeCLOptions() {
       addIfSetIf(Options::get().UseServer, !mPrint && (!NoTfmPass || mCheck));
   if (!Options::get().PrintStep.empty() && mServer) {
     std::string Msg("error - this option is incompatible with");
-    Msg.append(" -").append(Options::get().PrintStep.ArgStr);
+    Msg.append(" -").append(Options::get().PrintStep.ArgStr.data());
     Options::get().UseServer.error(Msg);
     exit(1);
   }
@@ -569,7 +622,7 @@ void Tool::storeCLOptions() {
   if (IncompatibleOpts.size() > 1) {
     std::string Msg("error - this option is incompatible with");
     for (unsigned I = 1; I < IncompatibleOpts.size(); ++I)
-      Msg.append(" -").append(IncompatibleOpts[1]->ArgStr);
+      Msg.append(" -").append(IncompatibleOpts[1]->ArgStr.data());
     IncompatibleOpts[0]->error(Msg);
     exit(1);
   }
@@ -579,7 +632,7 @@ void Tool::storeCLOptions() {
     auto LLSrcItr = std::find_if(mSources.begin(), mSources.end(),
       [](StringRef Src) {
         return FrontendOptions::getInputKindForExtension(
-          sys::path::extension(Src)).getLanguage() == InputKind::LLVM_IR; });
+          sys::path::extension(Src)).getLanguage() == Language::LLVM_IR; });
     if (LLSrcItr != mSources.end()) {
       std::string Msg();
       LLIncompatibleOpts[0]->error(
@@ -598,7 +651,7 @@ int Tool::run(QueryManager *QM) {
   for (auto &Src : mSources) {
     auto InputKind = FrontendOptions::getInputKindForExtension(
         sys::path::extension(Src).substr(1)); // ignore first . in extension
-    if (mLanguage != "ast" && InputKind.getLanguage() == InputKind::LLVM_IR)
+    if (mLanguage != "ast" && InputKind.getLanguage() == Language::LLVM_IR)
       LLSources.push_back(Src);
     else
       NoLLSources.push_back(Src);
@@ -619,14 +672,14 @@ int Tool::run(QueryManager *QM) {
       if (Arg.startswith("-fsyntax-only"))
         Adjusted.emplace_back("-emit-ast");
       else
-        Adjusted.push_back(Arg);
+        Adjusted.push_back(Arg.str());
     }
     Adjusted.emplace_back("-o");
     if (mOutputFilename.empty()) {
       SmallString<128> PCHFile = Filename;
       sys::path::replace_extension(PCHFile, ".ast");
-      Adjusted.push_back(PCHFile.str());
-      SourcesToMerge.push_back(PCHFile.str());
+      Adjusted.push_back(std::string(PCHFile));
+      SourcesToMerge.push_back(std::string(PCHFile));
     } else {
       Adjusted.push_back(mOutputFilename);
       SourcesToMerge.push_back(mOutputFilename);

@@ -50,6 +50,7 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
@@ -601,6 +602,9 @@ void combineTraits(bool IgnoreRedundant, DIAliasTrait &DIATrait) {
     if (!(DIMTraitItr->is<trait::Redundant>() &&
           DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
       DIATrait.unset<trait::Redundant>();
+    if (!(DIMTraitItr->is<trait::NoRedundant>() &&
+          DIATrait.getNode() == DIMTraitItr->getMemory()->getAliasNode()))
+      DIATrait.unset<trait::NoRedundant>();
     if (IgnoreRedundant && DIMTraitItr->is<trait::Redundant>()) {
       DIATrait.set<trait::NoAccess>();
       DIATrait.unset<trait::HeaderAccess, trait::AddressAccess>();
@@ -1408,7 +1412,8 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const DIMemory *> LockedTraits, DIMemoryTraitRegionPool &Pool) {
   assert(L && "Loop must not be null!");
-  LLVM_DEBUG(dbgs() << "[DA DI]: process loop at " << L->getStartLoc() << "\n");
+  LLVM_DEBUG(dbgs() << "[DA DI]: process loop at ";
+             L->getStartLoc().print(dbgs()); dbgs() << "\n");
   for (auto &DIMTrait : Pool) {
     if (DIMTrait.getMemory()->isOriginal() ||
         !DIMTrait.getMemory()->emptyBinding() ||
@@ -1787,6 +1792,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     // child.
     if (ChildTraitItr == DIDepSet.end())
       continue;
+    SmallVector<DIMemoryTraitRef, 8> DescendantTraits;
     for (auto &DIMTraitItr : *ChildTraitItr) {
       auto *DIM = DIMTraitItr->getMemory();
       // Alias trait contains not only locations from a corresponding alias
@@ -1817,9 +1823,13 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
         printDILocationSource(*DWLang, *DIM, dbgs());
         dbgs() << "\n";
       });
+      DescendantTraits.push_back(DIMTraitItr);
+    }
+    if (!DescendantTraits.empty()) {
       if (DIATraitItr == DIDepSet.end())
         DIATraitItr = DIDepSet.insert(DIAliasTrait(&DIN)).first;
-      DIATraitItr->insert(DIMTraitItr);
+      for (auto &DIMTraitItr : DescendantTraits)
+        DIATraitItr->insert(std::move(DIMTraitItr));
     }
   }
   if (CurrentPromoted.Memory && CurrentPromoted.Collapse &&
@@ -1924,7 +1934,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
     LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
     SmallVector<const DIMemory *, 4> LockedTraits;
     if (!Pool) {
-      Pool = make_unique<DIMemoryTraitRegionPool>();
+      Pool = std::make_unique<DIMemoryTraitRegionPool>();
     } else {
       for (auto &T : *Pool)
         if (T.is<trait::Lock>())

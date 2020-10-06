@@ -73,18 +73,7 @@ class ClonedDIMemoryMatcherInfo {
       mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
     void allUsesReplacedWith(llvm::Value *V) override {
-      if (auto F = llvm::dyn_cast<llvm::Function>(V)) {
-        auto Itr = mInfo->mMatchers.find_as(
-          llvm::cast<llvm::Function>(getValPtr()));
-        if (Itr == mInfo->mMatchers.end())
-          return;
-        auto Pair = mInfo->insert(*F);
-        if (Pair.second)
-          *Pair.first = std::move(Itr->second);
-        mInfo->mMatchers.erase(Itr);
-      } else {
-        mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
-      }
+      mInfo->erase(llvm::cast<llvm::Function>(*getValPtr()));
     }
   public:
     FunctionCallbackVH(llvm::Value *V, ClonedDIMemoryMatcherInfo *I = nullptr) :
@@ -100,12 +89,14 @@ class ClonedDIMemoryMatcherInfo {
     public llvm::DenseMapInfo<llvm::Value *> {};
 
   using FunctionToMatcherMap = llvm::DenseMap<FunctionCallbackVH,
-    ClonedDIMemoryMatcher, FunctionCallbackVHDenseMapInfo>;
+    std::unique_ptr<ClonedDIMemoryMatcher>, FunctionCallbackVHDenseMapInfo>;
 
 public:
   std::pair<ClonedDIMemoryMatcher *, bool> insert(llvm::Function &F) {
     auto Pair = mMatchers.try_emplace(FunctionCallbackVH(&F, this));
-    return std::make_pair(&Pair.first->second, Pair.second);
+    if (Pair.second)
+      Pair.first->second = std::make_unique<ClonedDIMemoryMatcher>();
+    return std::make_pair(Pair.first->second.get(), Pair.second);
   }
 
   void erase(llvm::Function &F) {
@@ -118,12 +109,12 @@ public:
 
   ClonedDIMemoryMatcher * find(llvm::Function &F) {
     auto Itr = mMatchers.find_as(&F);
-    return Itr == mMatchers.end() ? nullptr : &Itr->second;
+    return Itr == mMatchers.end() ? nullptr : Itr->second.get();
   }
 
   const ClonedDIMemoryMatcher * find(llvm::Function &F) const {
     auto Itr = mMatchers.find_as(&F);
-    return Itr == mMatchers.end() ? nullptr : &Itr->second;
+    return Itr == mMatchers.end() ? nullptr : Itr->second.get();
   }
 
   ClonedDIMemoryMatcher * operator[](llvm::Function &F) { return find(F); }

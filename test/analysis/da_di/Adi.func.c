@@ -80,9 +80,9 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'main':
 //CHECK:  loop at depth 1 Adi.func.c:29:3
 //CHECK:    first private:
-//CHECK:     <Eps:22:18, 8>
+//CHECK:     <Eps:22, 8>
 //CHECK:    dynamic private:
-//CHECK:     <Eps:22:18, 8>
+//CHECK:     <Eps:22, 8>
 //CHECK:    output:
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> printf():31:5
 //CHECK:    anti:
@@ -90,300 +90,300 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:    flow:
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> printf():31:5
 //CHECK:    induction:
-//CHECK:     <It:24:7, 4>:[Int,1,,1]
+//CHECK:     <It:24, 4>:[Int,1,,1]
 //CHECK:    read only:
-//CHECK:     <A:23:11, 8> | <ItMax:24:11, 4> | <MaxEps:22:10, 8>
+//CHECK:     <A:23, 8> | <ItMax:24, 4> | <MaxEps:22, 8>
 //CHECK:    redundant:
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> iter():30:11 printf():31:5
 //CHECK:    lock:
-//CHECK:     <It:24:7, 4> | <ItMax:24:11, 4>
+//CHECK:     <It:24, 4> | <ItMax:24, 4>
 //CHECK:    header access:
-//CHECK:     <It:24:7, 4> | <ItMax:24:11, 4>
+//CHECK:     <It:24, 4> | <ItMax:24, 4>
 //CHECK:    explicit access:
-//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> printf():31:5 | <A:23:11, 8> | <Eps:22:18, 8> | <It:24:7, 4> | <ItMax:24:11, 4> | <MaxEps:22:10, 8>
+//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> printf():31:5 | <A:23, 8> | <Eps:22, 8> | <It:24, 4> | <ItMax:24, 4> | <MaxEps:22, 8>
 //CHECK:    address access:
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <malloc():27:26,?> iter():30:11 printf():31:5
 //CHECK:    explicit access (separate):
-//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23:11, 8> <Eps:22:18, 8> <It:24:7, 4> <ItMax:24:11, 4> <MaxEps:22:10, 8> printf():31:5
+//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23, 8> <Eps:22, 8> <It:24, 4> <ItMax:24, 4> <MaxEps:22, 8> printf():31:5
 //CHECK:    redundant (separate):
-//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> iter():30:11
+//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?>
 //CHECK:    lock (separate):
-//CHECK:     <It:24:7, 4> <ItMax:24:11, 4>
+//CHECK:     <It:24, 4> <ItMax:24, 4>
 //CHECK:    address access (separate):
 //CHECK:     iter():30:11 printf():31:5
 //CHECK:    direct access (separate):
-//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23:11, 8> <Eps:22:18, 8> <It:24:7, 4> <ItMax:24:11, 4> <MaxEps:22:10, 8> iter():30:11 printf():31:5
+//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23, 8> <Eps:22, 8> <It:24, 4> <ItMax:24, 4> <MaxEps:22, 8> iter():30:11 printf():31:5
 //CHECK:    indirect access (separate):
 //CHECK:     <malloc():27:26,?>
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'init':
 //CHECK:  loop at depth 1 Adi.func.c:48:3
 //CHECK:    shared:
-//CHECK:     <*A:46:20, ?>
+//CHECK:     <*A:46, ?>
 //CHECK:    first private:
-//CHECK:     <*A:46:20, ?>
+//CHECK:     <*A:46, ?>
 //CHECK:    dynamic private:
-//CHECK:     <*A:46:20, ?>
+//CHECK:     <*A:46, ?>
 //CHECK:    private:
-//CHECK:     <J:47:10, 4> | <K:47:13, 4>
+//CHECK:     <J:47, 4> | <K:47, 4>
 //CHECK:    induction:
-//CHECK:     <I:47:7, 4>:[Int,0,384,1]
+//CHECK:     <I:47, 4>:[Int,0,384,1]
 //CHECK:    read only:
-//CHECK:     <A:46:20, 8>
+//CHECK:     <A:46, 8>
 //CHECK:    lock:
-//CHECK:     <I:47:7, 4>
+//CHECK:     <I:47, 4>
 //CHECK:    header access:
-//CHECK:     <I:47:7, 4>
+//CHECK:     <I:47, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:46:20, 8> | <I:47:7, 4> | <J:47:10, 4> | <K:47:13, 4>
+//CHECK:     <A:46, 8> | <I:47, 4> | <J:47, 4> | <K:47, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:     <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:47:7, 4>
+//CHECK:     <I:47, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:46:20, ?> <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:     <*A:46, ?> <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK:   loop at depth 2 Adi.func.c:49:5
 //CHECK:     shared:
-//CHECK:      <*A:46:20, ?>
+//CHECK:      <*A:46, ?>
 //CHECK:     first private:
-//CHECK:      <*A:46:20, ?>
+//CHECK:      <*A:46, ?>
 //CHECK:     dynamic private:
-//CHECK:      <*A:46:20, ?>
+//CHECK:      <*A:46, ?>
 //CHECK:     private:
-//CHECK:      <K:47:13, 4>
+//CHECK:      <K:47, 4>
 //CHECK:     induction:
-//CHECK:      <J:47:10, 4>:[Int,0,384,1]
+//CHECK:      <J:47, 4>:[Int,0,384,1]
 //CHECK:     read only:
-//CHECK:      <A:46:20, 8> | <I:47:7, 4>
+//CHECK:      <A:46, 8> | <I:47, 4>
 //CHECK:     lock:
-//CHECK:      <J:47:10, 4>
+//CHECK:      <J:47, 4>
 //CHECK:     header access:
-//CHECK:      <J:47:10, 4>
+//CHECK:      <J:47, 4>
 //CHECK:     explicit access:
-//CHECK:      <A:46:20, 8> | <I:47:7, 4> | <J:47:10, 4> | <K:47:13, 4>
+//CHECK:      <A:46, 8> | <I:47, 4> | <J:47, 4> | <K:47, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:      <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK:     lock (separate):
-//CHECK:      <J:47:10, 4>
+//CHECK:      <J:47, 4>
 //CHECK:     direct access (separate):
-//CHECK:      <*A:46:20, ?> <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:      <*A:46, ?> <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK:    loop at depth 3 Adi.func.c:50:7
 //CHECK:      shared:
-//CHECK:       <*A:46:20, ?>
+//CHECK:       <*A:46, ?>
 //CHECK:      first private:
-//CHECK:       <*A:46:20, ?>
+//CHECK:       <*A:46, ?>
 //CHECK:      dynamic private:
-//CHECK:       <*A:46:20, ?>
+//CHECK:       <*A:46, ?>
 //CHECK:      induction:
-//CHECK:       <K:47:13, 4>:[Int,0,384,1]
+//CHECK:       <K:47, 4>:[Int,0,384,1]
 //CHECK:      read only:
-//CHECK:       <A:46:20, 8> | <I:47:7, 4> | <J:47:10, 4>
+//CHECK:       <A:46, 8> | <I:47, 4> | <J:47, 4>
 //CHECK:      lock:
-//CHECK:       <K:47:13, 4>
+//CHECK:       <K:47, 4>
 //CHECK:      header access:
-//CHECK:       <K:47:13, 4>
+//CHECK:       <K:47, 4>
 //CHECK:      explicit access:
-//CHECK:       <A:46:20, 8> | <I:47:7, 4> | <J:47:10, 4> | <K:47:13, 4>
+//CHECK:       <A:46, 8> | <I:47, 4> | <J:47, 4> | <K:47, 4>
 //CHECK:      explicit access (separate):
-//CHECK:       <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:       <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK:      lock (separate):
-//CHECK:       <K:47:13, 4>
+//CHECK:       <K:47, 4>
 //CHECK:      direct access (separate):
-//CHECK:       <*A:46:20, ?> <A:46:20, 8> <I:47:7, 4> <J:47:10, 4> <K:47:13, 4>
+//CHECK:       <*A:46, ?> <A:46, 8> <I:47, 4> <J:47, 4> <K:47, 4>
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'iter':
 //CHECK:  loop at depth 1 Adi.func.c:62:3
 //CHECK:    private:
-//CHECK:     <J:60:10, 4> | <K:60:13, 4>
+//CHECK:     <J:60, 4> | <K:60, 4>
 //CHECK:    anti:
-//CHECK:     <*A:59:21, ?>:[1,1]
+//CHECK:     <*A:59, ?>:[1,1]
 //CHECK:    flow:
-//CHECK:     <*A:59:21, ?>:[1,1]
+//CHECK:     <*A:59, ?>:[1,1]
 //CHECK:    induction:
-//CHECK:     <I:60:7, 4>:[Int,1,383,1]
+//CHECK:     <I:60, 4>:[Int,1,383,1]
 //CHECK:    read only:
-//CHECK:     <A:59:21, 8>
+//CHECK:     <A:59, 8>
 //CHECK:    lock:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    header access:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:     <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:     <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:     <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:   loop at depth 2 Adi.func.c:63:5
 //CHECK:     shared:
-//CHECK:      <*A:59:21, ?>
+//CHECK:      <*A:59, ?>
 //CHECK:     private:
-//CHECK:      <K:60:13, 4>
+//CHECK:      <K:60, 4>
 //CHECK:     induction:
-//CHECK:      <J:60:10, 4>:[Int,1,383,1]
+//CHECK:      <J:60, 4>:[Int,1,383,1]
 //CHECK:     read only:
-//CHECK:      <A:59:21, 8> | <I:60:7, 4>
+//CHECK:      <A:59, 8> | <I:60, 4>
 //CHECK:     lock:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     header access:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     explicit access:
-//CHECK:      <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:      <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:      <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:     lock (separate):
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     direct access (separate):
-//CHECK:      <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:      <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:    loop at depth 3 Adi.func.c:64:7
 //CHECK:      shared:
-//CHECK:       <*A:59:21, ?>
+//CHECK:       <*A:59, ?>
 //CHECK:      induction:
-//CHECK:       <K:60:13, 4>:[Int,1,383,1]
+//CHECK:       <K:60, 4>:[Int,1,383,1]
 //CHECK:      read only:
-//CHECK:       <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4>
+//CHECK:       <A:59, 8> | <I:60, 4> | <J:60, 4>
 //CHECK:      lock:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      header access:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      explicit access:
-//CHECK:       <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:       <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:      explicit access (separate):
-//CHECK:       <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:       <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:      lock (separate):
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      direct access (separate):
-//CHECK:       <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:       <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:  loop at depth 1 Adi.func.c:66:3
 //CHECK:    shared:
-//CHECK:     <*A:59:21, ?>
+//CHECK:     <*A:59, ?>
 //CHECK:    private:
-//CHECK:     <J:60:10, 4> | <K:60:13, 4>
+//CHECK:     <J:60, 4> | <K:60, 4>
 //CHECK:    induction:
-//CHECK:     <I:60:7, 4>:[Int,1,383,1]
+//CHECK:     <I:60, 4>:[Int,1,383,1]
 //CHECK:    read only:
-//CHECK:     <A:59:21, 8>
+//CHECK:     <A:59, 8>
 //CHECK:    lock:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    header access:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:     <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:     <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:     <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:   loop at depth 2 Adi.func.c:67:5
 //CHECK:     private:
-//CHECK:      <K:60:13, 4>
+//CHECK:      <K:60, 4>
 //CHECK:     anti:
-//CHECK:      <*A:59:21, ?>:[1,1]
+//CHECK:      <*A:59, ?>:[1,1]
 //CHECK:     flow:
-//CHECK:      <*A:59:21, ?>:[1,1]
+//CHECK:      <*A:59, ?>:[1,1]
 //CHECK:     induction:
-//CHECK:      <J:60:10, 4>:[Int,1,383,1]
+//CHECK:      <J:60, 4>:[Int,1,383,1]
 //CHECK:     read only:
-//CHECK:      <A:59:21, 8> | <I:60:7, 4>
+//CHECK:      <A:59, 8> | <I:60, 4>
 //CHECK:     lock:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     header access:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     explicit access:
-//CHECK:      <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:      <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:     explicit access (separate):
-//CHECK:      <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:      <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:     lock (separate):
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     direct access (separate):
-//CHECK:      <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:      <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:    loop at depth 3 Adi.func.c:68:7
 //CHECK:      shared:
-//CHECK:       <*A:59:21, ?>
+//CHECK:       <*A:59, ?>
 //CHECK:      induction:
-//CHECK:       <K:60:13, 4>:[Int,1,383,1]
+//CHECK:       <K:60, 4>:[Int,1,383,1]
 //CHECK:      read only:
-//CHECK:       <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4>
+//CHECK:       <A:59, 8> | <I:60, 4> | <J:60, 4>
 //CHECK:      lock:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      header access:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      explicit access:
-//CHECK:       <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4>
+//CHECK:       <A:59, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4>
 //CHECK:      explicit access (separate):
-//CHECK:       <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:       <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:      lock (separate):
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      direct access (separate):
-//CHECK:       <*A:59:21, ?> <A:59:21, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4>
+//CHECK:       <*A:59, ?> <A:59, 8> <I:60, 4> <J:60, 4> <K:60, 4>
 //CHECK:  loop at depth 1 Adi.func.c:70:3
 //CHECK:    shared:
-//CHECK:     <*A:59:21, ?>
+//CHECK:     <*A:59, ?>
 //CHECK:    private:
-//CHECK:     <J:60:10, 4> | <K:60:13, 4> | <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:     <J:60, 4> | <K:60, 4> | <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:    induction:
-//CHECK:     <I:60:7, 4>:[Int,1,383,1]
+//CHECK:     <I:60, 4>:[Int,1,383,1]
 //CHECK:    reduction:
-//CHECK:     <Eps:61:10, 8>:max
+//CHECK:     <Eps:61, 8>:max
 //CHECK:    read only:
-//CHECK:     <A:59:21, 8>
+//CHECK:     <A:59, 8>
 //CHECK:    lock:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    header access:
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    explicit access:
-//CHECK:     <A:59:21, 8> | <Eps:61:10, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4> | <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:     <A:59, 8> | <Eps:61, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4> | <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:    explicit access (separate):
-//CHECK:     <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:     <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>
 //CHECK:    lock (separate):
-//CHECK:     <I:60:7, 4>
+//CHECK:     <I:60, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <*A:59:21, ?> <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:     <*A:59, ?> <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>
 //CHECK:   loop at depth 2 Adi.func.c:71:5
 //CHECK:     shared:
-//CHECK:      <*A:59:21, ?>
+//CHECK:      <*A:59, ?>
 //CHECK:     private:
-//CHECK:      <K:60:13, 4> | <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:      <K:60, 4> | <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:     induction:
-//CHECK:      <J:60:10, 4>:[Int,1,383,1]
+//CHECK:      <J:60, 4>:[Int,1,383,1]
 //CHECK:     reduction:
-//CHECK:      <Eps:61:10, 8>:max
+//CHECK:      <Eps:61, 8>:max
 //CHECK:     read only:
-//CHECK:      <A:59:21, 8> | <I:60:7, 4>
+//CHECK:      <A:59, 8> | <I:60, 4>
 //CHECK:     lock:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     header access:
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     explicit access:
-//CHECK:      <A:59:21, 8> | <Eps:61:10, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4> | <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:      <A:59, 8> | <Eps:61, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4> | <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:     explicit access (separate):
-//CHECK:      <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:      <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>
 //CHECK:     lock (separate):
-//CHECK:      <J:60:10, 4>
+//CHECK:      <J:60, 4>
 //CHECK:     direct access (separate):
-//CHECK:      <*A:59:21, ?> <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:      <*A:59, ?> <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>
 //CHECK:    loop at depth 3 Adi.func.c:72:7
 //CHECK:      private:
-//CHECK:       <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:       <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:      anti:
-//CHECK:       <*A:59:21, ?>:[1,1]
+//CHECK:       <*A:59, ?>:[1,1]
 //CHECK:      flow:
-//CHECK:       <*A:59:21, ?>:[1,1]
+//CHECK:       <*A:59, ?>:[1,1]
 //CHECK:      induction:
-//CHECK:       <K:60:13, 4>:[Int,1,383,1]
+//CHECK:       <K:60, 4>:[Int,1,383,1]
 //CHECK:      reduction:
-//CHECK:       <Eps:61:10, 8>:max
+//CHECK:       <Eps:61, 8>:max
 //CHECK:      read only:
-//CHECK:       <A:59:21, 8> | <I:60:7, 4> | <J:60:10, 4>
+//CHECK:       <A:59, 8> | <I:60, 4> | <J:60, 4>
 //CHECK:      lock:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      header access:
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      explicit access:
-//CHECK:       <A:59:21, 8> | <Eps:61:10, 8> | <I:60:7, 4> | <J:60:10, 4> | <K:60:13, 4> | <Tmp1:73:16, 8> | <Tmp2:74:16, 8>
+//CHECK:       <A:59, 8> | <Eps:61, 8> | <I:60, 4> | <J:60, 4> | <K:60, 4> | <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:      explicit access (separate):
-//CHECK:       <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:       <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>
 //CHECK:      lock (separate):
-//CHECK:       <K:60:13, 4>
+//CHECK:       <K:60, 4>
 //CHECK:      direct access (separate):
-//CHECK:       <*A:59:21, ?> <A:59:21, 8> <Eps:61:10, 8> <I:60:7, 4> <J:60:10, 4> <K:60:13, 4> <Tmp1:73:16, 8> <Tmp2:74:16, 8>
+//CHECK:       <*A:59, ?> <A:59, 8> <Eps:61, 8> <I:60, 4> <J:60, 4> <K:60, 4> <Tmp1:73[72:36], 8> <Tmp2:74[72:36], 8>

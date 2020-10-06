@@ -30,6 +30,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/LoopPass.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 
 using namespace llvm;

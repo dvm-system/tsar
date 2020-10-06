@@ -93,7 +93,7 @@ public:
   FunctionPassPrinter(const PassInfo *PI, raw_ostream &Out)
     : FunctionPass(ID), mPassToPrint(PI), mOut(Out) {
     assert(PI && "PassInfo must not be null!");
-    std::string PassToPrintName = mPassToPrint->getPassName();
+    auto PassToPrintName = mPassToPrint->getPassName().str();
     mPassName = "FunctionPass Printer: " + PassToPrintName;
   }
 
@@ -139,7 +139,7 @@ public:
   ModulePassPrinter(const PassInfo *PI, raw_ostream &out)
       : ModulePass(ID), mPassToPrint(PI), mOut(out) {
     assert(PI && "PassInfo must not be null!");
-    std::string PassToPrintName = mPassToPrint->getPassName();
+    auto PassToPrintName = mPassToPrint->getPassName().str();
     mPassName = "ModulePass Printer: " + PassToPrintName;
   }
 

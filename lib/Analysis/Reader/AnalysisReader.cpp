@@ -40,6 +40,7 @@
 #include <llvm/IR/DebugLoc.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Pass.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Debug.h>
 #include <map>

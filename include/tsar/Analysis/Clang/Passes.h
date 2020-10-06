@@ -110,10 +110,44 @@ void initializeClangCFTraitsPassPass(PassRegistry &Registry);
 /// for function and its loops.
 FunctionPass * createClangCFTraitsPass();
 
-// Initialize a pass to collect '#pragma spf region' directives.
+/// Initialize a pass to collect '#pragma spf region' directives.
 void initializeClangRegionCollectorPass(PassRegistry &Registry);
 
-// Create a pass to collect '#pragma spf region' directives.
+/// Create a pass to collect '#pragma spf region' directives.
 ModulePass * createClangRegionCollector();
+
+/// Initialize a pass to build file hierarchy.
+void initializeClangIncludeTreePassPass(PassRegistry &Registry);
+
+/// Create a pass to build file hierarchy.
+ModulePass *createClangIncludeTreePass();
+
+/// Initialize a pass to print source file tree to 'dot' file.
+void initializeClangIncludeTreePrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print source file tree to 'dot' file.
+ModulePass *createClangIncludeTreePrinter();
+
+/// Initialize a pass to print source file tree to 'dot' file (filenames
+/// instead of full paths).
+void initializeClangIncludeTreeOnlyPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print source file tree to 'dot' file (filenames
+/// instead of full paths).
+ModulePass *createClangIncludeTreeOnlyPrinter();
+
+/// Initialize a pass to display source file tree.
+void initializeClangIncludeTreeViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display source file tree.
+ModulePass *createClangIncludeTreeViewer();
+
+/// Initialize a pass to display source file tree (filenames instead of
+/// full paths).
+void initializeClangIncludeTreeOnlyViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display source file tree (filenames instead of
+/// full paths).
+ModulePass *createClangIncludeTreeOnlyViewer();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H

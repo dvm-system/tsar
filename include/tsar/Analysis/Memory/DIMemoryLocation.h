@@ -27,6 +27,7 @@
 #define TSAR_DI_MEMORY_LOCATION_H
 
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/DebugLoc.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -75,7 +76,7 @@ struct DIMemoryLocation {
   bool Template = false;
 
   /// Determines which memory location is exhibits by a specified instruction.
-  static DIMemoryLocation get(llvm::DbgInfoIntrinsic *Inst);
+  static DIMemoryLocation get(llvm::DbgVariableIntrinsic *Inst);
 
   /// Determines which memory location is exhibits by a specified instruction.
   static inline DIMemoryLocation get(llvm::Instruction *Inst) {
@@ -102,22 +103,21 @@ struct DIMemoryLocation {
   /// If the first operation in expression is DW_OP_deref it returns true.
   bool startsWithDeref() const;
 
-  /// \brief Returns true if size is known.
+  /// Return true if size is known.
   ///
   /// \attention
   /// - It does not check whether memory out of range memory access
   /// occurs. In this case `isSized()` returns `true` but `getSize()` returns
-  /// llvm::MemoryLocation::UnknownSize.
+  /// unknown size.
   /// - If size of DW_OP_LLVM_fragment is 0 the size is unknown and this method
   /// returns false.
   bool isSized() const;
 
-  /// \brief Returns size of location, in address units, or
-  /// llvm::MemoryLocation::UnknownSize if the size is not known.
+  /// Return size of location, in address units if it is known.
   ///
   /// If out of range memory access occurs UnknownSize will be also returned.
   /// If size of DW_OP_LLVM_fragment is 0 then UnknownSize will be returned.
-  uint64_t getSize() const;
+  llvm::LocationSize getSize() const;
 
   /// \brief Returns list of offsets of the location starting point from its
   /// basis, in address units.

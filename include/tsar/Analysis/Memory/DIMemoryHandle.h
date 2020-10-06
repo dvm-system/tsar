@@ -285,15 +285,6 @@ struct DenseMapInfo<tsar::AssertingDIMemoryHandle<T>> {
       LHS.getRawMemoryPtr(), RHS.getRawMemoryPtr());
   }
 };
-
-template <typename T>
-struct isPodLike<tsar::AssertingDIMemoryHandle<T> > {
-#ifdef NDEBUG
-  static const bool value = true;
-#else
-  static const bool value = false;
-#endif
-};
 }
 
 namespace tsar {

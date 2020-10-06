@@ -29,6 +29,7 @@
 #include <llvm/ADT/Optional.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Support/Path.h>
 
 namespace tsar {
 /// Returns a language for a specified function.
@@ -93,14 +94,9 @@ inline bool isForwardDim(unsigned DWLang) noexcept {
 }
 
 /// Returns size of type, in address units, type must not be null.
-inline uint64_t getSize(llvm::DIType *Ty) {
+inline uint64_t getSize(const llvm::DIType *Ty) {
   assert(Ty && "Type must not be null!");
   return (Ty->getSizeInBits() + 7) / 8;
-}
-
-/// Returns size of type, in address units, type must not be null.
-inline uint64_t getSize(llvm::DITypeRef DITy) {
-  return getSize(DITy.resolve());
 }
 
 /// Return number of elements in a subrange in address units if size is constant.
@@ -111,9 +107,9 @@ llvm::Optional<uint64_t> getConstantCount(const llvm::DISubrange &Range);
 ///
 /// For example, const int and int & will be stripped to int, typedef will be
 /// also stripped.
-inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
+inline llvm::DIType * stripDIType(llvm::DIType *DITy) {
   using namespace llvm;
-  if (!DITy.resolve() || !isa<llvm::DIDerivedType>(DITy))
+  if (!DITy || !isa<DIDerivedType>(DITy))
     return DITy;
   auto DIDTy = cast<DIDerivedType>(DITy);
   switch (DIDTy->getTag()) {
@@ -129,18 +125,18 @@ inline llvm::DITypeRef stripDIType(llvm::DITypeRef DITy) {
 }
 
 /// Returns type of an array element or nullptr if type is unknown.
-inline llvm::DITypeRef arrayElementDIType(llvm::DITypeRef DITy) {
+inline llvm::DIType * arrayElementDIType(llvm::DIType *DITy) {
   using namespace llvm;
   auto ElTy = stripDIType(DITy);
-  if (!ElTy.resolve())
-    return DITypeRef();
-  if (ElTy.resolve()->getTag() != dwarf::DW_TAG_pointer_type &&
-      ElTy.resolve()->getTag() != dwarf::DW_TAG_array_type)
-    return DITypeRef();
-  if (ElTy.resolve()->getTag() == dwarf::DW_TAG_pointer_type)
-    ElTy = cast<DIDerivedType>(ElTy)->getBaseType().resolve();
-  if (ElTy.resolve()->getTag() == dwarf::DW_TAG_array_type)
-    ElTy = cast<DICompositeType>(ElTy)->getBaseType().resolve();
+  if (!ElTy)
+    return nullptr;
+  if (ElTy->getTag() != dwarf::DW_TAG_pointer_type &&
+      ElTy->getTag() != dwarf::DW_TAG_array_type)
+    return nullptr;
+  if (ElTy->getTag() == dwarf::DW_TAG_pointer_type)
+    ElTy = cast<DIDerivedType>(ElTy)->getBaseType();
+  if (ElTy->getTag() == dwarf::DW_TAG_array_type)
+    ElTy = cast<DICompositeType>(ElTy)->getBaseType();
   return stripDIType(ElTy);
 }
 
@@ -163,9 +159,8 @@ inline llvm::AAMDNodes sanitizeAAInfo(llvm::AAMDNodes AAInfo) {
 ///
 /// TODO (kaniandr@gmail.com): may be we should use other way to distinguish
 /// such types. How LLVM uses 'artificial' flag on types?
-inline bool isStubType(llvm::DITypeRef DITy) {
-  auto Ty = DITy.resolve();
-  return !Ty || (Ty->isArtificial() && Ty->getName() == "sapfor.type");
+inline bool isStubType(llvm::DIType *DITy) {
+  return !DITy || (DITy->isArtificial() && DITy->getName() == "sapfor.type");
 }
 
 /// Additional variables may be necessary for metadata-level analysis.
@@ -178,5 +173,26 @@ inline bool isStubVariable(llvm::DIVariable &DIVar) {
   return llvm::isa<llvm::DILocalVariable>(DIVar) &&
          llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial();
 }
+
+/// Return absolute path to a file this scope belongs to.
+inline llvm::StringRef getAbsolutePath(const llvm::DIScope &Scope,
+                                         llvm::SmallVectorImpl<char> &Path) {
+    auto Tmp = Scope.getFilename();
+    if (!llvm::sys::path::is_absolute(Tmp)) {
+      auto Dir = Scope.getDirectory();
+      Path.append(Dir.begin(), Dir.end());
+      llvm::sys::path::append(Path, Tmp);
+    } else {
+      Path.append(Tmp.begin(), Tmp.end());
+    }
+    return llvm::StringRef(Path.data(), Path.size());
+  }
+}
+
+/// Return subprogram which contains a specified scope or nullptr.
+inline llvm::DISubprogram * getSubprogram(llvm::DIScope *Scope) {
+  while (Scope && !llvm::isa<llvm::DISubprogram>(Scope))
+    Scope = llvm::cast<llvm::DIScope>(Scope->getScope());
+  return llvm::dyn_cast_or_null<llvm::DISubprogram>(Scope);
 }
 #endif//TSAR_SUPPORT_METADATA_UTILS_H

@@ -125,7 +125,7 @@ STATISTIC(NumNonMatchASTMemory, "Number of non-matched AST variables");
 namespace {
 /// This matches allocas (IR) and variables (AST).
 class MatchAllocaVisitor :
-  public MatchASTBase<Value, VarDecl>,
+  public MatchASTBase<Value *, VarDecl *>,
   public RecursiveASTVisitor<MatchAllocaVisitor> {
 public:
   MatchAllocaVisitor(SourceManager &SrcMgr, Matcher &MM,
@@ -135,22 +135,22 @@ public:
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
   void VisitFromMacro(VarDecl *D) {
-    assert(D->getLocStart().isMacroID() &&
+    assert(D->getBeginLoc().isMacroID() &&
       "Declaration must be expanded from macro!");
-    auto Loc = D->getLocStart();
+    auto Loc = D->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<VarDecl>(D)));
+      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<VarDecl *>(D)));
     if (!Pair.second)
-      Pair.first->second.push(D);
+      Pair.first->second.push_back(D);
   }
 
   bool VisitVarDecl(VarDecl *D) {
-    if (D->getLocStart().isMacroID()) {
+    if (D->getBeginLoc().isMacroID()) {
       VisitFromMacro(D);
       return true;
     }
@@ -169,6 +169,7 @@ public:
   /// For the specified function this stores pairs (DILocation *, AllocInst *)
   /// into the mLocToIR.
   void buildAllocaMap(Function &F) {
+    DenseMap<const Value *, StringRef> ValueToName;
     for (auto &BB : F)
       for (auto &I : BB) {
         if (!isa<AllocaInst>(I))
@@ -179,14 +180,21 @@ public:
         // dbg instrinsics?
         if (DIIList.size() != 1)
           continue;
+        auto Var = DIIList.front()->getVariable();
         auto Loc = DIIList.front()->getDebugLoc();
-        if (Loc) {
+        if (Var && Loc) {
           auto Pair = mLocToIR->insert(
-            std::make_pair(Loc, bcl::TransparentQueue<Value>(&I)));
+            std::make_pair(Loc, TinyPtrVector<Value *>(&I)));
           if (!Pair.second)
-            Pair.first->second.push(&I);
+            Pair.first->second.push_back(&I);
+          ValueToName.try_emplace(&I, Var->getName());
         }
       }
+    for (auto &Pair : *mLocToIR)
+      llvm::sort(Pair.second.begin(), Pair.second.end(),
+                 [&ValueToName](const Value *LHS, const Value *RHS) {
+                   return ValueToName[LHS] < ValueToName[RHS];
+                 });
   }
 };
 }
@@ -215,6 +223,20 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
     if (!FuncDecl)
       continue;
     MatchAlloca.TraverseDecl(FuncDecl);
+    for (auto &Pair : LocToMacro) {
+      llvm::sort(Pair.second.begin(), Pair.second.end(),
+                 [](const VarDecl *LHS, const VarDecl *RHS) {
+                   return LHS->getName() < RHS->getName();
+                 });
+      for (auto I = Pair.second.begin() + 1, EI = Pair.second.end(); I < EI;
+           ++I) {
+        if ((*(I - 1))->getName() == (*I)->getName()) {
+          // Unable to distinguish locations with the same name inside a macro.
+          Pair.second.clear();
+          break;
+        }
+      }
+    }
     MatchAlloca.matchInMacro(
       NumMatchMemory, NumNonMatchASTMemory, NumNonMatchIRMemory);
   }

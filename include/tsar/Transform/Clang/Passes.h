@@ -84,5 +84,13 @@ void initializeClangDVMHSMParallelizationPass(PassRegistry &Registry);
 
 /// Create a pass to perform DVMH-based parallelization for shared memory.
 ModulePass* createClangDVMHSMParallelization();
+
+/// Create pass to perform replacement of access to structure fields
+/// with separate variables.
+ModulePass * createClangStructureReplacementPass();
+
+/// Initialize a pass to perform replacement of access to structure fields
+/// with separate variables.
+void initializeClangStructureReplacementPassPass(PassRegistry &Registry);
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

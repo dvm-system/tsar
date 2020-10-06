@@ -37,6 +37,11 @@ void llvm::initializeClangAnalysis(PassRegistry &Registry) {
   initializeCanonicalLoopPassPass(Registry);
   initializeClangCFTraitsPassPass(Registry);
   initializeClangRegionCollectorPass(Registry);
+  initializeClangIncludeTreePassPass(Registry);
+  initializeClangIncludeTreePrinterPass(Registry);
+  initializeClangIncludeTreeOnlyPrinterPass(Registry);
+  initializeClangIncludeTreeViewerPass(Registry);
+  initializeClangIncludeTreeOnlyViewerPass(Registry);
   // Initialize checkers.
   initializeClangNoMacroAssertPass(Registry);
 }

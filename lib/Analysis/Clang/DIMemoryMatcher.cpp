@@ -30,11 +30,13 @@
 #include "tsar/Core/TransformationContext.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
-#include <llvm/Support/Debug.h>
+#include <llvm/InitializePasses.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Statistic.h>
-#include <llvm/IR/Dominators.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/Path.h>
 
 using namespace clang;
 using namespace llvm;
@@ -69,8 +71,59 @@ void ClangDIMemoryMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 namespace {
-using MatchDIVisitorBase = MatchASTBase<DIVariable, VarDecl,
-  DILocation *, DILocationMapInfo,
+struct DILocalScopeMapInfo {
+  static std::pair<unsigned, unsigned> getLineColumn(
+      const DILocalScope *Scope) {
+    if (auto *S = dyn_cast<DISubprogram>(Scope))
+      return { S->getScopeLine(), 0u };
+    if (auto *S = dyn_cast<DILexicalBlock>(Scope)) {
+      return { S->getLine(), S->getColumn() };
+    }
+    return { 0u, 0u };
+  }
+  static inline DILocalScope * getEmptyKey() {
+    return DenseMapInfo<DILocalScope *>::getEmptyKey();
+  }
+  static inline DILocalScope * getTombstoneKey() {
+    return DenseMapInfo<DILocalScope *>::getTombstoneKey();
+  }
+  static unsigned getHashValue(const DILocalScope *Scope) {
+    auto LineColumn = getLineColumn(Scope);
+    assert(LineColumn.first && "Line must be known!");
+    return DenseMapInfo<decltype(LineColumn)>::getHashValue(LineColumn);
+  }
+  static unsigned getHashValue(const clang::PresumedLoc &PLoc) {
+    auto Line = PLoc.getLine();
+    auto Column = PLoc.getColumn();
+    auto Pair = std::make_pair(Line, Column);
+    return DenseMapInfo<decltype(Pair)>::getHashValue(Pair);
+  }
+  static bool isEqual(const DILocalScope *LHS, const DILocalScope *RHS) {
+    if (LHS == RHS)
+      return true;
+    auto TK = getTombstoneKey();
+    auto EK = getEmptyKey();
+    if (RHS == TK || LHS == TK || RHS == EK || LHS == EK)
+      return false;
+    auto LineColumnLHS = getLineColumn(LHS);
+    auto LineColumnRHS = getLineColumn(RHS);
+    SmallString<128> LHSPath, RHSPath;
+    return LineColumnLHS == LineColumnRHS &&
+           getAbsolutePath(*LHS, LHSPath) == getAbsolutePath(*RHS, RHSPath);
+  }
+  static bool isEqual(const clang::PresumedLoc &LHS, const DILocalScope *RHS) {
+    if (isEqual(RHS, getTombstoneKey()) || isEqual(RHS, getEmptyKey()))
+      return false;
+    auto LineColumn = getLineColumn(RHS);
+    SmallString<128> LHSPath, RHSPath;
+    return (!LineColumn.first || LHS.getLine() == LineColumn.first) &&
+           (!LineColumn.second || LHS.getColumn() == LineColumn.second) &&
+           LHS.getFilename() == getAbsolutePath(*RHS, RHSPath);
+  }
+};
+
+using MatchDIVisitorBase = MatchASTBase<DIVariable *, VarDecl *,
+  DILocalScope *, DILocalScopeMapInfo,
   unsigned, DenseMapInfo<unsigned>,
   ClangDIMemoryMatcherPass::DIMemoryMatcher,
   ClangDIMemoryMatcherPass::MemoryASTSet>;
@@ -83,39 +136,89 @@ public:
       UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
     MatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
 
-  /// Evaluates declarations expanded from a macro and stores such
-  /// declaration into location to macro map.
-  void VisitFromMacro(VarDecl *D) {
-    assert(D->getLocStart().isMacroID() &&
-      "Declaration must be expanded from macro!");
-    auto Loc = D->getLocStart();
-    if (Loc.isInvalid())
-      return;
-    Loc = mSrcMgr->getExpansionLoc(Loc);
-    if (Loc.isInvalid())
-      return;
-    auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<VarDecl>(D)));
-    if (!Pair.second)
-      Pair.first->second.push(D);
-  }
-
   bool VisitVarDecl(VarDecl *D) {
-    if (D->getLocStart().isMacroID()) {
-      VisitFromMacro(D);
-      return true;
-    }
-    auto VarLoc = D->getLocation();
-    if (auto *AI = findIRForLocation(VarLoc)) {
-      mMatcher->emplace(D->getCanonicalDecl(), AI);
-      ++NumMatchMemory;
-      --NumNonMatchDIMemory;
-    } else {
-      mUnmatchedAST->insert(D->getCanonicalDecl());
-      ++NumNonMatchASTMemory;
-    }
+    mVisitedVars.push_back(D->getCanonicalDecl());
     return true;
   }
+
+  bool TraverseFunctionDecl(FunctionDecl *FD) {
+    if (FD->doesThisDeclarationHaveABody()) {
+      mIsEntry = true;
+      mFuncDecl = FD;
+      mVisitedVars.clear();
+    }
+    return RecursiveASTVisitor::TraverseFunctionDecl(FD);
+  }
+
+  bool TraverseStmt(Stmt *S) {
+    if (!S || !isa<CompoundStmt>(S) && !isa<ForStmt>(S) && !isa<WhileStmt>(S) &&
+                  !isa<IfStmt>(S))
+      return RecursiveASTVisitor::TraverseStmt(S);
+    // Parameters were visited before the body.
+    auto StashSize = mIsEntry ? 0 : mVisitedVars.size();
+    // Location of function declaration is used instead of location of body
+    // to map top-level local variables.
+    auto ScopeLoc = mIsEntry ? mFuncDecl->getLocation() : S->getBeginLoc();
+    mIsEntry = false;
+    auto Res = RecursiveASTVisitor::TraverseStmt(S);
+    if (Res && mVisitedVars.size() > StashSize) {
+      llvm::sort(mVisitedVars.begin() + StashSize, mVisitedVars.end(),
+                 [](const VarDecl *LHS, const VarDecl *RHS) {
+                   return LHS->getName() < RHS->getName();
+                 });
+      LLVM_DEBUG(dbgs() << "[DI MEMORY MATCHER]: visited "
+                        << mVisitedVars.size() - StashSize
+                        << " variables in scope at ";
+                 ScopeLoc.print(dbgs(), *mSrcMgr); dbgs() << "\n");
+      if (ScopeLoc.isInvalid()) {
+        mUnmatchedAST->insert(mVisitedVars.begin() + StashSize,
+                              mVisitedVars.end());
+        NumNonMatchASTMemory += mVisitedVars.size() - StashSize;
+        mVisitedVars.resize(StashSize);
+        return true;
+      }
+      if (ScopeLoc.isMacroID()) {
+        ScopeLoc = mSrcMgr->getExpansionLoc(ScopeLoc);
+        auto Pair = mLocToMacro->try_emplace(ScopeLoc.getRawEncoding());
+        assert(Pair.second && "Unable to insert list of variables!");
+        Pair.first->second.insert(Pair.first->second.end(),
+          mVisitedVars.begin() + StashSize, mVisitedVars.end());
+      } else {
+        auto I = findItrForLocation(ScopeLoc);
+        if (I != mLocToIR->end()) {
+          auto SearchFromItr = mVisitedVars.begin() + StashSize;
+          for (unsigned Idx = 0, IdxE = I->second.size(); Idx < IdxE; ++Idx) {
+            auto DIV = I->second[Idx];
+            // We search variables for promoted locations only. Other variables
+            // are processing further.
+            auto Itr = std::find_if(SearchFromItr, mVisitedVars.end(),
+                                    [DIV](const VarDecl *D) {
+                                      return DIV->getName() == D->getName();
+                                    });
+            if (Itr == mVisitedVars.end())
+              continue;
+            mMatcher->emplace(*Itr, DIV);
+            ++NumMatchMemory;
+            --NumNonMatchDIMemory;
+            NumNonMatchASTMemory += std::distance(SearchFromItr, Itr);
+            SearchFromItr = Itr + 1;
+          }
+          I->second.clear();
+        } else {
+          mUnmatchedAST->insert(mVisitedVars.begin() + StashSize,
+                                mVisitedVars.end());
+          NumNonMatchASTMemory += mVisitedVars.size() - StashSize;
+        }
+      }
+      mVisitedVars.resize(StashSize);
+    }
+    return Res;
+  }
+private:
+  std::vector<VarDecl *> mVisitedVars;
+  SmallVector<SourceLocation, 8> mScopes;
+  FunctionDecl *mFuncDecl = nullptr;
+  bool mIsEntry = false;
 };
 }
 
@@ -138,19 +241,48 @@ bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
     auto *DbgValue = dyn_cast<DbgValueInst>(&I);
     if (!DbgValue)
       continue;
-    auto DbgLoc = I.getDebugLoc();
     auto *DIVar = DbgValue->getVariable();
     if (DIVar && VisitedDIVars.insert(DIVar).second) {
       ++NumNonMatchDIMemory;
-      if (DbgLoc) {
-        auto Pair = LocToDIVar.insert(
-          std::make_pair(DbgLoc, bcl::TransparentQueue<DIVariable>(DIVar)));
+      if (auto *S = dyn_cast_or_null<DILocalScope>(DIVar->getScope())) {
+        auto Pair =
+            isa<DISubprogram>(S)
+                ? LocToDIVar.insert_as(
+                      std::make_pair(S, TinyPtrVector<DIVariable *>(DIVar)),
+                      SrcMgr.getPresumedLoc(
+                          SrcMgr.getExpansionLoc(FuncDecl->getLocation())))
+                : LocToDIVar.insert(
+                      std::make_pair(S, TinyPtrVector<DIVariable *>(DIVar)));
         if (!Pair.second)
-          Pair.first->second.push(DIVar);
+          Pair.first->second.push_back(DIVar);
+        LLVM_DEBUG(dbgs() << "[DI MEMORY MATCHER]: remember metadata for '"
+                          << DIVar->getName() << "' at ";
+                   auto LineColumn = DILocalScopeMapInfo::getLineColumn(S);
+                   dbgs() << LineColumn.first << ":" << LineColumn.second
+                          << "\n");
       }
     }
   }
+  for (auto &Pair : LocToDIVar)
+    llvm::sort(Pair.second.begin(), Pair.second.end(),
+               [](const DIVariable *LHS, const DIVariable *RHS) {
+                 return LHS->getName() < RHS->getName();
+               });
   MatchDIVar.TraverseDecl(FuncDecl);
+  for (auto &Pair : LocToMacro) {
+    llvm::sort(Pair.second.begin(), Pair.second.end(),
+               [](const VarDecl *LHS, const VarDecl *RHS) {
+                 return LHS->getName() < RHS->getName();
+               });
+    for (auto I = Pair.second.begin() + 1, EI = Pair.second.end(); I < EI;
+         ++I) {
+      if ((*(I - 1))->getName() == (*I)->getName()) {
+        // Unable to distinguish locations with the same name inside a macro.
+        Pair.second.clear();
+        break;
+      }
+    }
+  }
   MatchDIVar.matchInMacro(
     NumMatchMemory, NumNonMatchASTMemory, NumNonMatchDIMemory);
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();

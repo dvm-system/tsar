@@ -30,7 +30,7 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/InstIterator.h>
-#include <llvm/IR/CallSite.h>
+#include <llvm/IR/Instructions.h>
 
 using namespace llvm;
 using namespace tsar;
@@ -45,7 +45,7 @@ STATISTIC(NumNonMatchASTExpr, "Number of non-matched AST expressions");
 
 namespace {
 class MatchExprVisitor :
-  public MatchASTBase<Value, Stmt>,
+  public MatchASTBase<Value *, Stmt *>,
   public RecursiveASTVisitor<MatchExprVisitor> {
 public:
   MatchExprVisitor(SourceManager &SrcMgr, Matcher &MM,
@@ -55,26 +55,26 @@ public:
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
   void VisitFromMacro(Stmt *S) {
-    assert(S->getLocStart().isMacroID() &&
+    assert(S->getBeginLoc().isMacroID() &&
       "Expression must be expanded from macro!");
-    auto Loc = S->getLocStart();
+    auto Loc = S->getBeginLoc();
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
     auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), bcl::TransparentQueue<Stmt>(S)));
+      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
     if (!Pair.second)
-      Pair.first->second.push(S);
+      Pair.first->second.push_back(S);
   }
 
    bool VisitCallExpr(Expr *E) {
-    if (E->getLocStart().isMacroID()) {
+    if (E->getBeginLoc().isMacroID()) {
       VisitFromMacro(E);
       return true;
     }
-    auto ExprLoc = E->getLocStart();
+    auto ExprLoc = E->getBeginLoc();
     if (auto *I = findIRForLocation(ExprLoc)) {
       mMatcher->emplace(E, I);
       ++NumMatchExpr;
@@ -100,19 +100,19 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
   MatchExprVisitor MatchExpr(SrcMgr,
     mMatcher, mUnmatchedAST, LocToExpr, LocToMacro);
   for (auto &I: instructions(F)) {
-    CallSite CS(&I);
-    if (!CS && !isa<ReturnInst>(I) &&
-        !(isa<BranchInst>(I) && cast<BranchInst>(I).isUnconditional()))
+    if (!isa<CallBase>(I))
       continue;
     ++NumNonMatchIRExpr;
     auto Loc = I.getDebugLoc();
     if (Loc) {
       auto Pair = LocToExpr.insert(
-        std::make_pair(Loc, bcl::TransparentQueue<Value>(&I)));
+        std::make_pair(Loc, TinyPtrVector<Value *>(&I)));
       if (!Pair.second)
-        Pair.first->second.push(&I);
+        Pair.first->second.push_back(&I);
     }
   }
+  for (auto &Pair : LocToExpr)
+    std::reverse(Pair.second.begin(), Pair.second.end());
   // It is necessary to build LocToExpr map also if FuncDecl is null,
   // because a number of unmatched expressions should be calculated.
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());

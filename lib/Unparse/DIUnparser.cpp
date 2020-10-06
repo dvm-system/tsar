@@ -45,8 +45,7 @@ LLVM_DUMP_METHOD bool DIUnparser::dump() {
 
 void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
   if (Str.empty() || !mDIType || mIsDITypeEnd ||
-      !isa<GEPOperator>(mLastAddressChange) &&
-      !isa<LoadInst>(mLastAddressChange))
+      isa<AllocaInst>(mLastAddressChange))
     return;
   if (auto DICTy = dyn_cast<DICompositeType>(mDIType)) {
     // 1. There may be no 'getelementptr' instructions, this depends on
@@ -90,6 +89,10 @@ void DIUnparser::endDITypeIfNeed(llvm::SmallVectorImpl<char> &Str) {
           Str.append({ '[','0',']' });
         mDIType = stripDIType(DIDTy->getBaseType());
       }
+    } else {
+      // Process pointer which is stored in register, for example,
+      // if the corresponding variable has been promoted.
+      Str.append({ '[','0',']' });
     }
   } else {
     llvm_unreachable("Unsupported debug type!");
@@ -190,6 +193,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
         DICTy = cast<DICompositeType>(DICTy->getBaseType());
       }
       assert((DICTy->getTag() == dwarf::DW_TAG_structure_type ||
+        DICTy->getTag() == dwarf::DW_TAG_class_type ||
         DICTy->getTag() == dwarf::DW_TAG_array_type) &&
         "It must be aggregate type!");
       auto El = cast<DIDerivedType>(DICTy->getElements()[Idx]);

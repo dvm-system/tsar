@@ -300,10 +300,10 @@ public:
             if (E) {
               auto ResultPass = getResolver()->findImplPass(
                   this, ID, *cast<Function>(CloneF));
-              assert(ResultPass && "getAnalysis*() called on an analysis that "
-                                   "was not 'required' by pass!");
+              assert(std::get<Pass *>(ResultPass) && "getAnalysis*() called on "
+                "an analysis that was not 'required' by pass!");
               Response[tsar::AnalysisResponse::Analysis].push_back(
-                  ResultPass->getAdjustedAnalysisPointer(ID));
+                  std::get<Pass *>(ResultPass)->getAdjustedAnalysisPointer(ID));
               ActiveIDs.emplace_back(
                   ID, Response[tsar::AnalysisResponse::Analysis].back());
             }

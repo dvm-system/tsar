@@ -10,23 +10,23 @@ double foo(int N, struct STy S) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 struct_6.c:4:3
 //CHECK:    induction:
-//CHECK:     <I:4:12, 4>:[Int,0,,1]
+//CHECK:     <I:4[4:3], 4>:[Int,0,,1]
 //CHECK:    reduction:
-//CHECK:     <S:4:14, 16>
+//CHECK:     <S:4, 16>
 //CHECK:    read only:
-//CHECK:     <N:3:16, 4>
+//CHECK:     <N:3, 4>
 //CHECK:    lock:
-//CHECK:     <I:4:12, 4> | <N:3:16, 4>
+//CHECK:     <I:4[4:3], 4> | <N:3, 4>
 //CHECK:    header access:
-//CHECK:     <I:4:12, 4> | <N:3:16, 4>
+//CHECK:     <I:4[4:3], 4> | <N:3, 4>
 //CHECK:    explicit access:
-//CHECK:     <I:4:12, 4> | <N:3:16, 4>
+//CHECK:     <I:4[4:3], 4> | <N:3, 4>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:4:12, 4> <N:3:16, 4>
+//CHECK:     <I:4[4:3], 4> <N:3, 4>
 //CHECK:    lock (separate):
-//CHECK:     <I:4:12, 4> <N:3:16, 4>
+//CHECK:     <I:4[4:3], 4> <N:3, 4>
 //CHECK:    direct access (separate):
-//CHECK:     <I:4:12, 4> <N:3:16, 4> <S:3:30, 16>
+//CHECK:     <I:4[4:3], 4> <N:3, 4> <S:3, 16>
 //SAFE: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //SAFE:  loop at depth 1 struct_6.c:4:3
 //SAFE:    output:
@@ -36,18 +36,18 @@ double foo(int N, struct STy S) {
 //SAFE:    flow:
 //SAFE:     <S:3:30, 16>
 //SAFE:    induction:
-//SAFE:     <I:4:12, 4>:[Int,0,,1]
+//SAFE:     <I:4[4:3], 4>:[Int,0,,1]
 //SAFE:    read only:
-//SAFE:     <N:3:16, 4>
+//SAFE:     <N:3, 4>
 //SAFE:    lock:
-//SAFE:     <I:4:12, 4> | <N:3:16, 4>
+//SAFE:     <I:4[4:3], 4> | <N:3, 4>
 //SAFE:    header access:
-//SAFE:     <I:4:12, 4> | <N:3:16, 4>
+//SAFE:     <I:4[4:3], 4> | <N:3, 4>
 //SAFE:    explicit access:
-//SAFE:     <I:4:12, 4> | <N:3:16, 4>
+//SAFE:     <I:4[4:3], 4> | <N:3, 4>
 //SAFE:    explicit access (separate):
-//SAFE:     <I:4:12, 4> <N:3:16, 4>
+//SAFE:     <I:4[4:3], 4> <N:3, 4>
 //SAFE:    lock (separate):
-//SAFE:     <I:4:12, 4> <N:3:16, 4>
+//SAFE:     <I:4[4:3], 4> <N:3, 4>
 //SAFE:    direct access (separate):
-//SAFE:     <I:4:12, 4> <N:3:16, 4> <S:3:30, 16>
+//SAFE:     <I:4[4:3], 4> <N:3, 4> <S:3:30, 16>

@@ -183,9 +183,9 @@ bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
   if (Search.first && CanonicalLocals.count(Search.first))
     return true;
   if (Search.second == VariableCollector::CoincideLocal) {
-      VarNames.insert(Search.first->getName());
+      VarNames.insert(std::string(Search.first->getName()));
   } else if (Search.second == VariableCollector::CoincideGlobal) {
-    VarNames.insert(Search.first->getName());
+    VarNames.insert(std::string(Search.first->getName()));
     GlobalRefs.try_emplace(const_cast<DIAliasNode *>(&DIN), Search.first);
   } else if (Search.second != VariableCollector::Unknown) {
     if (Error)

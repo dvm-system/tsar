@@ -57,6 +57,7 @@ def err_backup_file : Error<"unable to backup file">;
 def note_not_transform : Note<"transfomration was not performed">;
 def err_transform_system : Note<"unable to transform system file">;
 def warn_reformat : Warning<"unable to reformat file">;
+def warn_transform_internal : Note<"unable to transform file">;
 
 def warn_remove_directive_in_macro : Warning<"unable to remove directive in macro">;
 def warn_remove_directive_in_include : Warning<"unable to remove directive in include">;
@@ -89,6 +90,7 @@ def note_inline_different_num_params : Note<"number of formal parameters differs
 
 def remark_inline : Remark<"inline expansion of function call">;
 def remark_remove_unreachable : Remark<"remove unreachable code">;
+def remark_remove_de_decl : Remark<"remove unused declaration">;
 
 def note_decl_hide : Note<"declaration hides other declaration">;
 def note_expanded_from_here : Note<"expanded from here">;
@@ -139,3 +141,38 @@ def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
 def warn_region_add_loop_unable : Warning<"unable to mark loop for optimization">;
 def warn_region_add_call_unable : Warning<"unable to mark function call for optimization">;
 def warn_region_not_found : Warning<"optimization region with name '%0' not found">;
+
+def warn_disable_replace_struct : Warning<"disable structure replacement">;
+def warn_disable_replace_struct_no_param : Warning<"unable to replace any variable except argument">;
+def warn_disable_replace_struct_no_pointer : Warning<"disable replacement of a non-pointer type">;
+def warn_disable_replace_struct_no_struct : Warning<"disable replacement of a non-structure type">;
+def warn_disable_replace_struct_system : Warning<"disable replacement of a non-user defined function">;
+
+def note_replace_struct_arrow: Note<"not-arrow access prevent replacement">;
+def note_replace_struct_decl: Note<"unable to build declaration of a record member">;
+def note_replace_struct_macro_prevent : Note<"macro prevent replacement">;
+def note_replace_struct_de_decl : Note<"unable to remove unused declaration">;
+def note_replace_struct_decl_internal : Note<"unable to replace declaration">;
+
+def remark_replace_struct: Remark<"structure replacement">;
+
+def warn_replace_call_unable : Warning<"unable to replace call expression">;
+def warn_replace_call_indirect_unable : Warning<"unable to replace indirect call expression">;
+def note_replace_call_no_md : Note<"replacement metadata not found for function %0">;
+
+def error_replace_md_missing : Error<"missing replacement metadata">;
+def error_replace_md_target_param_expected : Error<"expected replacement for target parameter">;
+def error_replace_md : Error<"invalid replacement metadata">;
+def error_replace_md_param_twice : Error<"replacement metadata for parameter already set">;
+def error_replace_md_type_incompatible : Error<"type of target %select{member|parameter}0 and replacement parameter are not compatible">;
+
+def note_replace_md_no_param : Note<"missing parameter in replacement metadata">;
+def note_replace_md_here : Note<"replacement metadata set here">;
+
+def error_function_args_number : Error<"function does not take %0 %plural{1:argument|:arguments}0">;
+def error_directive_clause_twice : Error<"directive '%0' cannot contain more than one '%1' clause">;
+def error_clause_expect_function : Error<"expected function name after '%0' clause">;
+def error_expect_function_param : Error<"expected function parameter name">;
+
+def note_record_member_unknown: Error<"record has no member '%0'">;
+def note_declared_here: Note<"declared here">;

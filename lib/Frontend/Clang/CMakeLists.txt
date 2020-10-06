@@ -1,5 +1,5 @@
 set(FRONTEND_SOURCES FrontendActions.cpp ASTMergeAction.cpp Passes.cpp
-  Action.cpp PragmaHandlers.cpp)
+  Action.cpp PragmaHandlers.cpp Pragma.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE FRONTEND_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

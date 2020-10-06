@@ -44,7 +44,8 @@ namespace tsar {
 /// To define new visitor:
 /// - inherit this class (set VisitorT to the derived class).
 /// - implement some of methods visitDefault(), visitEK_..., visitSingleExpr().
-template<class ReplacementT, class VisitorT> class ClauseVisitor {
+template<class PreprocessorT, class ReplacementT, class VisitorT>
+class ClauseVisitor {
   /// Type of indexes and sizes of token containers.
   using size_type = typename ReplacementT::size_type;
 
@@ -82,14 +83,14 @@ template<class ReplacementT, class VisitorT> class ClauseVisitor {
 
 public:
   /// Creates visitor.
-  ClauseVisitor(clang::Preprocessor &PP, ReplacementT &Replacement) :
+  ClauseVisitor(PreprocessorT &PP, ReplacementT &Replacement) :
     mPP(PP), mReplacement(Replacement) {}
 
   ReplacementT & getReplacement() noexcept { return mReplacement; }
   const ReplacementT & getReplacement() const noexcept { return mReplacement; }
 
-  clang::Preprocessor & getPreprocessor() noexcept { return mPP; }
-  const clang::Preprocessor & getPreprocessor() const noexcept { return mPP; }
+  PreprocessorT & getPreprocessor() noexcept { return mPP; }
+  const PreprocessorT & getPreprocessor() const noexcept { return mPP; }
 
   /// Returns complex expression at the current level or ClauseExpr::NotExpr.
   ClauseExpr getLevelKind() const {
@@ -142,7 +143,7 @@ public:
         I = visitAnchor(Tok, I, EI);
         break;
       default:
-        mPP.LexUnexpandedToken(Tok);
+        mPP.Lex(Tok);
         LLVM_DEBUG(visitTokenLog(*I, Tok.getKind()));
         if (Tok.is(getTokenKind(*I))) {
           static_cast<VisitorT *>(this)->visitSingleExpr(*I, Tok);
@@ -277,10 +278,12 @@ private:
       case ClauseExpr::EK_OneOf: // try next item in the list of variants
         mPP.Backtrack();
         if (*(I + 1) == ClauseExpr::EK_Anchor) {
+          I = I + 1;
           Tok = Level.Tok;
           mExprStack.pop_back();
           continue;
         }
+        mReplacement.resize(Level.ReplacementIdx);
         mPP.EnableBacktrackAtThisPos();
         return I;
       case ClauseExpr::EK_One:
@@ -291,10 +294,14 @@ private:
         continue;
       case ClauseExpr::EK_ZeroOrMore:
       case ClauseExpr::EK_ZeroOrOne:
-        I = findAnchor(I, EI);
+        while (!isSingle(*(I + 1)))
+          I = findAnchor(I + 1, EI);
+        I = findAnchor(I + 1, EI);
         break;
       case ClauseExpr::EK_OneOrMore:
-        I = findAnchor(I, EI);
+        while (!isSingle(*(I + 1)))
+          I = findAnchor(I + 1, EI);
+        I = findAnchor(I + 1, EI);
         if (Level.Occurrence.getInt()) {
           break;
         } else {
@@ -350,7 +357,7 @@ void backtrackLog(iterator StartI,  iterator I, iterator EI) {
 #endif
 
 private:
-  clang::Preprocessor &mPP;
+  PreprocessorT &mPP;
   ReplacementT &mReplacement;
   ExprLevelStack mExprStack;
 };

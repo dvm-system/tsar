@@ -32,6 +32,7 @@
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Support/raw_ostream.h>
@@ -148,15 +149,16 @@ void initMayLivesWithIPO(Function &F, LiveMemoryForCalls &LiveSetForCalls,
 bool checkCallsFrom(CallGraphNode &CGN) {
   assert(CGN.getFunction() && "Function must not be null!");
   for (auto &CallInfo : CGN) {
-    assert(CallInfo.first && "Call instruction must not be null!");
+    if (!CallInfo.first.hasValue())
+      continue;
+    assert(*CallInfo.first && "Call instruction must not be null!");
     bool HasUsefulInstr = false;
-    for (auto &I : *cast<Instruction>(*CallInfo.first).getParent()) {
+    for (auto &I : *cast<Instruction>(**CallInfo.first).getParent()) {
       if (auto *II = dyn_cast<IntrinsicInst>(&I))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           continue;
-      ImmutableCallSite CS(&I);
-      if (CS && HasUsefulInstr) {
+      if (isa<CallBase>(&I) && HasUsefulInstr) {
         llvm::DiagnosticInfoOptimizationFailure Diag(
             *CGN.getFunction(), I.getDebugLoc(),
             "inter-procedural live memory analysis was disabled: unable to "
@@ -238,7 +240,6 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
   if (!Wrapper)
     return false;
   Wrapper->clear();
-  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<CallGraphNode *> Worklist;
@@ -307,27 +308,28 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     }
     LiveMemoryInfo IntraLiveInfo;
     auto LiveItr =
-      IntraLiveInfo.try_emplace(TopRegion, llvm::make_unique<LiveSet>()).first;
+      IntraLiveInfo.try_emplace(TopRegion, std::make_unique<LiveSet>()).first;
     auto &LS = LiveItr->get<LiveSet>();
     LS->setOut(MayLives);
     LiveDFFwk LiveFwk(IntraLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, TopRegion);
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*F);
     for (auto &CallRecord : *CGN) {
       Function *Callee = CallRecord.second->getFunction();
-      if (!Callee)
+      if (!CallRecord.first || !Callee)
         continue;
       auto FuncInfo = LiveSetForCalls.try_emplace(Callee);
-      auto *BB = cast<Instruction>(CallRecord.first)->getParent();
+      auto *BB = cast<Instruction>(*CallRecord.first)->getParent();
       auto *DFB = RegInfo.getRegionFor(BB);
       assert(DFB && "Data-flow node must not be null!");
       FuncInfo.first->second.push_back(
-          std::make_pair(cast<Instruction>(CallRecord.first),
+          std::make_pair(cast<Instruction>(*CallRecord.first),
                          std::move(LiveFwk.getLiveInfo()[DFB])));
       auto &CallLS = FuncInfo.first->second.back().get<LiveSet>();
       auto &CallLiveOut =
           const_cast<MemorySet<MemoryLocationRange> &>(CallLS->getOut());
       if (!Callee->isVarArg())
-        for_each_memory(*cast<Instruction>(CallRecord.first), TLI,
+        for_each_memory(*cast<Instruction>(*CallRecord.first), TLI,
           [Callee, &CallLiveOut](Instruction &I, MemoryLocation &&Loc,
               unsigned Idx, AccessInfo, AccessInfo) {
             auto OverlapItr = CallLiveOut.findOverlappedWith(Loc);

@@ -35,15 +35,21 @@ namespace tsar {
 /// The following methods should be provided:
 /// - static const llvm::Value * getPtr(const Ty &) -
 ///     Return pointer to the beginning of a memory location.
-/// - static uint64_t getLowerBound(const Ty &) -
+/// - static SizeTy getLowerBound(const Ty &) -
 ///     Return the lower bound (offset) of a memory location.
-/// - static uint64_t getUpperBound(const Ty &) -
+/// - static SizeTy getUpperBound(const Ty &) -
 ///     Return the upper bound (offset) of a memory location.
+/// - static int8_t sizecmp(SizeT LHS, SizeT RHS) -
+///     Return a negative value if LHS is less than RHS,
+///            zero if sizes are equal and
+///            a positive value if LHS is greater than RHS.
+///  - static SizeT sizeinp(SizeT) -
+///     Return the incremented size of a memory location.
 /// - static llvm::AAMDNodes & getAATags(const Ty &) -
 ///     Return the metadata nodes which describes the aliasing of the location.
-/// - static void setLowerBound(uint64_t, LocationTy &)
+/// - static void setLowerBound(SizeTy, LocationTy &)
 ///     Set the lower bound for a specified location.
-/// - static void setUpperBound(uint64_t, LocationTy &)
+/// - static void setUpperBound(SizeTy, LocationTy &)
 ///     Set the upper bound for a specified location.
 /// - static void setAATags(const llvm::AAMDNodes &, LocationTy &)
 ///     Set the metadata nodes for a specified location.
@@ -55,6 +61,7 @@ namespace tsar {
 /// - Ty is a type of memory locations which is used for insertion the new one
 ///   and for search the existent locations. It should be also possible to use
 ///   LocationTy as a Ty.
+/// - SizeTy is a type which is suitable to represent size of memory location.
 template<class Ty> struct MemorySetInfo {
   typedef typename Ty::UnknownMemoryLocationError LocationTy;
 };
@@ -80,7 +87,24 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
       llvm::LocationSize Size, llvm::MemoryLocation &Loc)  noexcept {
     Loc.Size = Size;
   }
-    static inline const llvm::AAMDNodes & getAATags(
+  static inline int8_t sizecmp(llvm::LocationSize LHS, llvm::LocationSize RHS) {
+    if (LHS == RHS || !LHS.hasValue() && !RHS.hasValue())
+      return 0;
+    if (!LHS.hasValue())
+      return 1;
+    if (!RHS.hasValue())
+      return -1;
+    return LHS.getValue() < RHS.getValue() ? -1 :
+      LHS.getValue() == RHS.getValue() ? 0 : 1;
+  }
+  static inline llvm::LocationSize sizeinc(llvm::LocationSize Size) {
+    if (Size.isPrecise())
+      return LocationSize::precise(Size.getValue() + 1);
+    if (!Size.hasValue())
+      return Size;
+    return Size.upperBound(Size.getValue() + 1);
+  }
+  static inline const llvm::AAMDNodes & getAATags(
       const llvm::MemoryLocation &Loc) noexcept {
     return Loc.AATags;
   }
@@ -116,7 +140,13 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       LocationSize Size, MemoryLocationRange &Loc) noexcept {
     Loc.UpperBound = Size;
   }
-    static inline const llvm::AAMDNodes & getAATags(
+  static inline int8_t sizecmp(llvm::LocationSize LHS, llvm::LocationSize RHS) {
+    return MemorySetInfo<llvm::MemoryLocation>::sizecmp(LHS, RHS);
+  }
+  static inline llvm::LocationSize sizeinc(llvm::LocationSize Size) {
+    return MemorySetInfo<llvm::MemoryLocation>::sizeinc(Size);
+  }
+  static inline const llvm::AAMDNodes & getAATags(
       const MemoryLocationRange &Loc) noexcept {
     return Loc.AATags;
   }

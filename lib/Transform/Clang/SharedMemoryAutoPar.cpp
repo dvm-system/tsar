@@ -98,12 +98,12 @@ bool ClangSMParallelization::findParallelLoops(
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   auto LMatchItr = LM.find<IR>(&L);
   if (LMatchItr != LM.end())
-    toDiag(Diags, LMatchItr->get<AST>()->getLocStart(),
+    toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
            clang::diag::remark_parallel_loop);
   auto DFL = cast<DFLoop>(RI.getRegionFor(&L));
   auto CanonicalItr = CL.find_as(DFL);
   if (CanonicalItr == CL.end() || !(**CanonicalItr).isCanonical()) {
-    toDiag(Diags, LMatchItr->get<AST>()->getLocStart(),
+    toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
            clang::diag::warn_parallel_not_canonical);
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   }
@@ -135,11 +135,11 @@ bool ClangSMParallelization::findParallelLoops(
     return findParallelLoops(L.begin(), L.end(), F, Provider);
   for (auto *BB : L.blocks())
     for (auto &I : *BB) {
-      CallSite CS(&I);
-      if (!CS)
+      auto *Call = dyn_cast<CallBase>(&I);
+      if (!Call)
         continue;
-      auto Callee =
-        dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      auto Callee = dyn_cast<Function>(
+        Call->getCalledOperand()->stripPointerCasts());
       if (!Callee)
         continue;
       auto Info = mParallelCallees.try_emplace(Callee);
@@ -214,7 +214,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
   std::size_t LastPostorderNum = 1;
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd();
        ++I, ++LastPostorderNum)
-    if (!I.hasLoop() && I->front()->getFunction()) {
+    if (!I.hasCycle() && I->front()->getFunction()) {
       PostorderTraverse.emplace_back();
       PostorderTraverse.back().get<Function>() = I->front()->getFunction();
       PostorderTraverse.back().get<Postorder>() = LastPostorderNum;
@@ -284,6 +284,7 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalsAAWrapperPass>();
   AU.addRequired<ClangRegionCollector>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
+  AU.addRequired<DIArrayAccessWrapper>();
   AU.setPreservesAll();
 }
 

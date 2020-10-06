@@ -61,7 +61,6 @@ redundant_1
 redundant_2
 redundant_3
 redundant_4
-redundant_5
 malloc_1
 malloc_2
 malloc_3
@@ -88,7 +87,7 @@ reduction_2
 reduction_3
 reduction_4
 reduction_5
-reduction_6
+reduction_6.safe
 reduction_7
 global_1
 interproc_1

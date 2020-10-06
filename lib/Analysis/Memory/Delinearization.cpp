@@ -35,9 +35,12 @@
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/Sequence.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Transforms/Utils/Local.h>
@@ -90,26 +93,40 @@ template<class GEPItrT>
 bool extractSubscriptsFromGEPs(
     const GEPItrT &GEPBeginItr, const GEPItrT &GEPEndItr,
     std::size_t NumberOfDims, SmallVectorImpl<Value *> &Idxs) {
+  assert(Idxs.empty() && "List of indexes must be empty!");
+  SmallVector<Value *, 8> GEPs;
   for (auto *GEP : make_range(GEPBeginItr, GEPEndItr)) {
-    if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
-      return false;
     unsigned NumOperands = GEP->getNumOperands();
     if (NumOperands == 2) {
-      Idxs.push_back(GEP->getOperand(1));
+      GEPs.push_back(GEP->getOperand(1));
     } else {
+      unsigned StructIdx = 0;
+      for (auto I = gep_type_begin(GEP), EI = gep_type_end(GEP); I != EI; ++I) {
+        if (I.isStruct()) {
+          LLVM_DEBUG(dbgs() << "[DELINEARIZE]: drop ending structure\n");
+          GEPs.clear();
+          break;
+        }
+        ++StructIdx;
+      }
+      if (StructIdx == 0)
+        continue;
+      for (unsigned I =  StructIdx; I > 1; --I)
+        GEPs.push_back(GEP->getOperand(I));
       if (auto *SecondOp = dyn_cast<Constant>(GEP->getOperand(1))) {
         if (!SecondOp->isZeroValue())
-          Idxs.push_back(GEP->getOperand(1));
+          GEPs.push_back(GEP->getOperand(1));
       } else {
-        Idxs.push_back(GEP->getOperand(1));
-      }
-      for (unsigned I = 2; I < NumOperands; ++I) {
-        if (NumberOfDims > 0 && Idxs.size() >= NumberOfDims)
-          return false;
-        Idxs.push_back(GEP->getOperand(I));
+        GEPs.push_back(GEP->getOperand(1));
       }
     }
   }
+  if (NumberOfDims > 0 && GEPs.size() > NumberOfDims) {
+    std::copy(GEPs.rbegin(), GEPs.rbegin() + NumberOfDims,
+      std::back_inserter(Idxs));
+    return false;
+  }
+  std::copy(GEPs.rbegin(), GEPs.rend(), std::back_inserter(Idxs));
   return true;
 }
 
@@ -324,7 +341,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
         for (auto J = DimIdx; J > 0; --J) {
           Expressions.push_back(Range.Subscripts[J - 1]);
           LLVM_DEBUG(dbgs() << "[DELINEARIZE]: use for GCD computation: ";
-            TSAR_LLVM_DUMP(Expressions.back()->dump()));
+            Expressions.back()->print(dbgs()); dbgs() << "\n");
         }
       }
       if (Expressions.empty()) {
@@ -335,7 +352,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       }
       DimSize = findGCD(Expressions, *mSE, mIsSafeTypeCast);
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: GCD: ";
-        TSAR_LLVM_DUMP(DimSize->dump()));
+        DimSize->print(dbgs()); dbgs() << "\n");
       if (isa<SCEVCouldNotCompute>(DimSize)) {
         setUnknownDims(DimIdx);
         return;
@@ -352,7 +369,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
           }
         }
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: found " << LoopsToCheck.size()
-                        << "loops related to array uses\n");
+                        << " loops related to array uses\n");
       if (!LoopsToCheck.empty()) {
         SmallVector<const SCEV *, 4> InvariantFactors;
         if (auto *Factors = dyn_cast<SCEVMulExpr>(DimSize)) {
@@ -378,15 +395,15 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
       DimSize = Div.Quotient;
       LLVM_DEBUG(
         dbgs() << "[DELINEARIZE]: product of sizes of previous dimensions: ";
-        TSAR_LLVM_DUMP(PrevDimSizesProduct->dump());
+        PrevDimSizesProduct->print(dbgs()); dbgs() << "\n";
         dbgs() << "[DELINEARIZE]: quotient ";
-        TSAR_LLVM_DUMP(Div.Quotient->dump());
+        Div.Quotient->print(dbgs()); dbgs() << "\n";
         dbgs() << "[DELINEARIZE]: remainder ";
-        TSAR_LLVM_DUMP(Div.Remainder->dump()));
+        Div.Remainder->print(dbgs()); dbgs() << "\n");
     }
     ArrayInfo.setDimSize(DimIdx, DimSize);
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: dimension size is ";
-      TSAR_LLVM_DUMP(DimSize->dump()));
+      DimSize->print(dbgs()); dbgs() << "\n");
     DimSize = mSE->getTruncateOrZeroExtend(DimSize, mIndexTy);
     PrevDimSizesProduct = mSE->getMulExpr(PrevDimSizesProduct, DimSize);
   }
@@ -415,7 +432,7 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   ArrayInfo.setMetadata();
   if (!DIM->Var->getType())
     return;
-  auto VarDbgTy = stripDIType(DIM->Var->getType()).resolve();
+  auto VarDbgTy = stripDIType(DIM->Var->getType());
   DINodeArray ArrayDims = nullptr;
   bool IsFirstDimPointer = false;
   if (VarDbgTy->getTag() == dwarf::DW_TAG_array_type) {
@@ -423,7 +440,7 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
   } else if (VarDbgTy->getTag() == dwarf::DW_TAG_pointer_type) {
     IsFirstDimPointer = true;
     auto BaseTy = cast<DIDerivedType>(VarDbgTy)->getBaseType();
-    if (BaseTy && BaseTy.resolve()->getTag() == dwarf::DW_TAG_array_type)
+    if (BaseTy && BaseTy->getTag() == dwarf::DW_TAG_array_type)
       ArrayDims = cast<DICompositeType>(BaseTy)->getElements();
   }
   LLVM_DEBUG(
@@ -452,11 +469,11 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
       } else if (DIDimCount.is<DIVariable *>()) {
         auto DIVar = DIDimCount.get<DIVariable *>();
         if (auto V = MetadataAsValue::getIfExists(DIVar->getContext(), DIVar)) {
-          SmallVector<DbgInfoIntrinsic *, 4> DbgInsts;
+          SmallVector<DbgVariableIntrinsic *, 4> DbgInsts;
           // Do not use findDbgUsers(). It checks V->isUsedByMetadata() which
           // may return false for MetadataAsValue.
           for (User *U : V->users())
-            if (DbgInfoIntrinsic *DII = dyn_cast<DbgInfoIntrinsic>(U))
+            if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
               DbgInsts.push_back(DII);
           if (DbgInsts.size() == 1) {
             ArrayInfo.setDimSize(DimIdx + PassPtrDim,
@@ -484,7 +501,7 @@ void DelinearizationPass::collectArrays(Function &F) {
       if (!Visited.insert(Loc.Ptr).second)
         return;
       LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process instruction ";
-        TSAR_LLVM_DUMP(I.dump()));
+        I.print(dbgs()); dbgs() << "\n");
       auto &DL = I.getModule()->getDataLayout();
       auto *BasePtr = const_cast<Value *>(Loc.Ptr);
       auto *DataPtr = BasePtr;
@@ -513,7 +530,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           break;
         GEP = dyn_cast<GEPOperator>(const_cast<Value *>(RangePtr));
       }
-      while (GEP && (NumberOfDims == 0 || GEPs.size() < NumberOfDims)) {
+      while (GEP) {
         GEPs.push_back(GEP);
         GEP = dyn_cast<GEPOperator>(GEP->getPointerOperand());
       }
@@ -524,8 +541,8 @@ void DelinearizationPass::collectArrays(Function &F) {
         Range.setProperty(Array::Range::NoGEP);
       SmallVector<Value *, 4> SubscriptValues;
       bool UseAllSubscripts = extractSubscriptsFromGEPs(
-        GEPs.rbegin(), GEPs.rend(), NumberOfDims, SubscriptValues);
-      if (GEP || !UseAllSubscripts)
+        GEPs.begin(), GEPs.end(), NumberOfDims, SubscriptValues);
+      if (!UseAllSubscripts)
         Range.setProperty(Array::Range::IgnoreGEP);
       // In some cases zero subscript is dropping out by optimization passes.
       // So, we try to add extra zero subscripts later. We add subscripts for
@@ -558,7 +575,7 @@ void DelinearizationPass::collectArrays(Function &F) {
           dbgs() << "[DELINEARIZE]: no GEPs found\n";
         dbgs() << "[DELINEARIZE]: subscripts: \n";
         for (auto *Subscript : Range.Subscripts) {
-          dbgs() << "  "; TSAR_LLVM_DUMP( Subscript->dump());
+          dbgs() << "  "; Subscript->print(dbgs()); dbgs() <<"\n";
         }
       );
     };
@@ -585,13 +602,13 @@ bool DelinearizationPass::runOnFunction(Function &F) {
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mLI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  mTLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   mIsSafeTypeCast =
     getAnalysis<GlobalOptionsImmutableWrapper>().getOptions().IsSafeTypeCast;
   auto &DL = F.getParent()->getDataLayout();
   mIndexTy = DL.getIndexType(Type::getInt8PtrTy(F.getContext()));
   LLVM_DEBUG(dbgs() << "[DELINEARIZE]: index type is ";
-    TSAR_LLVM_DUMP(mIndexTy->dump()));
+    mIndexTy->print(dbgs()); dbgs() << "\n");
   collectArrays(F);
   for (auto *ArrayInfo : mDelinearizeInfo.getArrays()) {
     fillArrayDimensionsSizes(*ArrayInfo);

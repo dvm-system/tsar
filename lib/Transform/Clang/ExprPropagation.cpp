@@ -34,12 +34,12 @@
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
-#include "tsar/Support/Clang/Pragma.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <clang/AST/Decl.h>
@@ -49,7 +49,7 @@
 #include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/MemoryLocation.h>
-#include <llvm/IR/CallSite.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/Function.h>
@@ -177,9 +177,11 @@ private:
 
 public:
   DefUseVisitor(TransformationContext &TfmCtx,
+      const ASTImportInfo &ImportInfo,
       const ClangGlobalInfoPass::RawInfo &RawInfo,
       const GlobalInfoExtractor &GlobalInfo) :
     mTfmCtx(TfmCtx),
+    mImportInfo(ImportInfo),
     mRawInfo(RawInfo),
     mGlobalInfo(GlobalInfo),
     mRewriter(TfmCtx.getRewriter()),
@@ -220,17 +222,17 @@ public:
       // Search for propagate clause and disable renaming in other pragmas.
       if (findClause(P, ClauseId::Propagate, mClauses)) {
         llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
-        auto IsPossible =
-          pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts, ToRemove);
+        auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
+                                              mImportInfo, ToRemove);
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive_in_macro);
           else if (IsPossible.second & PragmaFlags::IsInHeader)
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive_in_include);
           else
-            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getLocStart(),
+            toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
               diag::warn_remove_directive);
         Rewriter::RewriteOptions RemoveEmptyLine;
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
@@ -242,7 +244,7 @@ public:
       return true;
     }
     excludeIfAssignment(S);
-    auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getLocStart();
+    auto Loc = isa<Expr>(S) ? cast<Expr>(S)->getExprLoc() : S->getBeginLoc();
     bool Res = false;
     if (Loc.isValid() && Loc.isFileID()) {
       auto PLoc = mSrcMgr.getPresumedLoc(Loc);
@@ -284,7 +286,7 @@ public:
         mActivePropagate = true;
         SmallString<64> NoMacroPragma;
         getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
-        mRewriter.InsertTextBefore(S->getLocStart(), NoMacroPragma);
+        mRewriter.InsertTextBefore(S->getBeginLoc(), NoMacroPragma);
       }
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
       mActivePropagate = StashPropagateState;
@@ -328,11 +330,13 @@ public:
     return Res;
   }
 
-  bool TraverseBinAssign(clang::BinaryOperator *Expr) {
+  bool TraverseBinaryOperator(clang::BinaryOperator *Expr) {
+    if (!Expr || !Expr->isAssignmentOp())
+      return RecursiveASTVisitor::TraverseBinaryOperator(Expr);
     auto PLoc = mSrcMgr.getPresumedLoc(Expr->getRHS()->getExprLoc());
     auto DefItr = mDefLocs.find_as(PLoc);
     if (DefItr == mDefLocs.end())
-      return RecursiveASTVisitor::TraverseBinAssign(Expr);
+      return RecursiveASTVisitor::TraverseBinaryOperator(Expr);
     auto Res = TraverseStmt(Expr->getLHS());
     bool StashCollectDecls;
     auto DeclRefIdx = startCollectDeclRef(StashCollectDecls);
@@ -353,7 +357,7 @@ public:
           mDeclsToPropagate.insert(ND);
         }
       if (!HasNamedDecl)
-        toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+        toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
           diag::warn_unexpected_directive);
       assert(mDeclPropagateScope.first && "Top level scope must not be null!");
       if (hasMacro(mDeclPropagateScope.first)) {
@@ -363,15 +367,15 @@ public:
       SmallString<64> NoMacroPragma("\n");
       getPragmaText(ClauseId::AssertNoMacro, NoMacroPragma);
       mRewriter.InsertTextBefore(
-        mDeclPropagateScope.first->getLocStart(), NoMacroPragma);
+        mDeclPropagateScope.first->getBeginLoc(), NoMacroPragma);
       if (!mDeclPropagateScope.second) {
         // Propagation scope is a function body, add extra {} around a pragma.
         mRewriter.InsertTextBefore(
-          mDeclPropagateScope.first->getLocStart(), "{");
-        mRewriter.InsertTextAfter(mDeclPropagateScope.first->getLocEnd(), "}");
+          mDeclPropagateScope.first->getBeginLoc(), "{");
+        mRewriter.InsertTextAfter(mDeclPropagateScope.first->getEndLoc(), "}");
       }
     } else if (!isa<CompoundStmt>(S)) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getLocStart(),
+      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
         diag::warn_unexpected_directive);
     }
     mClauses.clear();
@@ -428,7 +432,8 @@ public:
       return true;
     }
     auto Loc = mSrcMgr.getDecomposedExpansionLoc(Ref->getLocation());
-    if (mSrcMgr.getDecomposedIncludedLoc(Loc.first).first.isValid()) {
+    auto IncludeToFID = mSrcMgr.getDecomposedIncludedLoc(Loc.first).first;
+    if (IncludeToFID.isValid() && !mImportInfo.MainFiles.count(Loc.first)) {
       toDiag(mSrcMgr.getDiagnostics(), Ref->getLocation(),
         diag::warn_disable_propagate_in_include);
       return true;
@@ -450,12 +455,12 @@ public:
       }
     }
     LLVM_DEBUG(dbgs() << "[PROPAGATION]: replace variable in [";
-               Ref->getLocStart().dump(mSrcMgr); dbgs() << ", ";
-               Ref->getLocEnd().dump(mSrcMgr);
+               Ref->getBeginLoc().dump(mSrcMgr); dbgs() << ", ";
+               Ref->getEndLoc().dump(mSrcMgr);
                dbgs() << "] with '" << ReplacementItr->get<Definition>()
                << "'\n");
     mRewriter.ReplaceText(
-      SourceRange(Ref->getLocStart(), Ref->getLocEnd()),
+      SourceRange(Ref->getBeginLoc(), Ref->getEndLoc()),
       ReplacementItr->get<Definition>());
     return true;
   }
@@ -622,6 +627,7 @@ private:
   }
 
   TransformationContext &mTfmCtx;
+  const ASTImportInfo &mImportInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
@@ -690,9 +696,9 @@ void findAvailableDecls(Instruction &DI, Instruction &UI,
           OpWorkList.push_back(Op);
   }
   for (auto *Op : Ops) {
-    ImmutableCallSite CS(Op);
-    if ((CS && !CS.onlyReadsMemory() && !CS.doesNotReadMemory()) ||
-        (CS && !CS.doesNotThrow())) {
+    auto *Call = dyn_cast<CallBase>(Op);
+    if ((Call && !Call->onlyReadsMemory() && !Call->doesNotReadMemory()) ||
+        (Call && !Call->doesNotThrow())) {
       LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable due to ";
         TSAR_LLVM_DUMP(Op->dump()));
       // Call may have side effect and prevent PROPAGATION.
@@ -790,7 +796,7 @@ bool ClangExprPropagation::unparseReplacement(
       CFP->getValueAPF().toString(DefStr);
     } else if (auto *CInt = dyn_cast<ConstantInt>(&Def)) {
       auto *Ty = dyn_cast_or_null<DIBasicType>(
-        DIUse.Var->getType().resolve());
+        DIUse.Var->getType());
       if (!Ty)
         return false;
       DefStr.clear();
@@ -823,7 +829,7 @@ bool ClangExprPropagation::unparseReplacement(
       return false;
     }
     return true;
-  } 
+  }
   if (!DIDef || !DIDef->isValid() || DIDef->Template)
     return false;
   if (!unparseToString(DWLang, *DIDef, DefStr, false))
@@ -846,13 +852,18 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
   if (!DWLang)
     return false;
   auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
-  if (SrcMgr.getFileCharacteristic(FuncDecl->getLocStart()) != SrcMgr::C_User)
+  if (SrcMgr.getFileCharacteristic(FuncDecl->getBeginLoc()) != SrcMgr::C_User)
     return false;
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
   mDL = &M->getDataLayout();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  DefUseVisitor Visitor(*mTfmCtx, GIP.getRawInfo(), GIP.getGlobalInfo());
+  DefUseVisitor Visitor(*mTfmCtx, *ImportInfo, GIP.getRawInfo(),
+                        GIP.getGlobalInfo());
   DenseSet<Value *> WorkSet;
   // Search for PROPAGATION candidates.
   for (auto &I : instructions(F)) {

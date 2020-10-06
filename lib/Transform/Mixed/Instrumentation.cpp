@@ -42,7 +42,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
-#include <llvm/Analysis/ScalarEvolutionExpander.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -52,6 +52,7 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Local.h>
+#include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <vector>
 
 using namespace llvm;
@@ -169,7 +170,7 @@ GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
     ConstantPointerNull::get(DIPoolTy), "sapfor.di.pool", nullptr);
   assert(DIPool->getName() == "sapfor.di.pool" &&
     "Unable to crate a metadata pool!");
-  DIPool->setAlignment(4);
+  DIPool->setAlignment(MaybeAlign(4));
   DIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   return DIPool;
 }
@@ -188,10 +189,11 @@ static void collectCallee(CallGraphNode &CGN,
       if (TransitiveCallees.insert(Callee.second->getFunction()).second)
         collectCallee(*Callee.second, TransitiveCallees);
     } else if (Callee.first) {
-      CallSite CS(Callee.first);
-      if (!CS)
+      auto *Call = dyn_cast<CallBase>(*Callee.first);
+      if (!Call)
         continue;
-      auto F = dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+      auto F =
+        dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
       if (!F)
         continue;
       if (TransitiveCallees.insert(F).second)
@@ -433,7 +435,7 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   Value *Start = nullptr, *End = nullptr, *Step = nullptr;
   bool Signed = false;
   auto SLBeginFunc = getDeclaration(Header->getModule(), IntrinsicId::sl_begin);
-  auto SLBeginFuncTy = SLBeginFunc->getFunctionType();
+  auto SLBeginFuncTy = SLBeginFunc.getFunctionType();
   assert(SLBeginFuncTy->getNumParams() > 3 && "Too few arguments!");
   auto *SizeTy = dyn_cast<IntegerType>(SLBeginFuncTy->getParamType(1));
   assert(SizeTy && "Bound expression must has an integer type!");
@@ -707,33 +709,34 @@ void Instrumentation::regArgs(Function &F, LoadInst *DIFunc) {
     CallInst *Call = nullptr;
     if (Args.size() > 2) {
       auto Func = getDeclaration(&M, IntrinsicId::reg_dummy_arr);
-      auto FuncTy = Func->getFunctionType();
+      auto FuncTy = Func.getFunctionType();
       assert(FuncTy->getNumParams() > 4 && "Too few arguments!");
       auto Pos = ConstantInt::get(FuncTy->getParamType(4), Arg.getArgNo());
       Args.append({ DIFunc, Pos });
-      Call = CallInst::Create(Func, Args, "", &*InsertBefore);
+      Call =
+        CallInst::Create(FuncTy, Func.getCallee(), Args, "", &*InsertBefore);
     } else {
       auto Func = getDeclaration(&M, IntrinsicId::reg_dummy_var);
-      auto FuncTy = Func->getFunctionType();
+      auto FuncTy = Func.getFunctionType();
       assert(FuncTy->getNumParams() > 3 && "Too few arguments!");
       auto Pos = ConstantInt::get(FuncTy->getParamType(3), Arg.getArgNo());
       Args.append({ DIFunc, Pos });
-      Call = CallInst::Create(Func, Args, "", &*InsertBefore);
+      Call =
+        CallInst::Create(FuncTy, Func.getCallee(), Args, "", &*InsertBefore);
     }
     Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   }
 }
 
-void Instrumentation::visitCallSite(llvm::CallSite CS) {
-  if (isDbgInfoIntrinsic(CS.getIntrinsicID()) ||
-      isMemoryMarkerIntrinsic(CS.getIntrinsicID()))
+void Instrumentation::visitCallBase(llvm::CallBase &Call) {
+  if (isDbgInfoIntrinsic(Call.getIntrinsicID()) ||
+      isMemoryMarkerIntrinsic(Call.getIntrinsicID()))
     return;
   DIStringRegister::IdTy FuncIdx = 0;
-  auto *Inst = CS.getInstruction();
-  LLVM_DEBUG(dbgs() << "[INSTR]: process "; Inst->print(dbgs()); dbgs() << "\n");
-  auto *M = Inst->getModule();
+  LLVM_DEBUG(dbgs() << "[INSTR]: process "; Call.print(dbgs()); dbgs() << "\n");
+  auto *M = Call.getModule();
   if (auto *Callee = llvm::dyn_cast<llvm::Function>(
-        CS.getCalledValue()->stripPointerCasts())) {
+        Call.getCalledOperand()->stripPointerCasts())) {
     IntrinsicId LibId;
     // Do not check for 'sapfor.da' metadata only because it may not be set
     // for some functions of dynamic analyzer yet. However, it is necessary to
@@ -744,11 +747,11 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
       return;
     FuncIdx = mDIStrings[Callee];
   } else {
-    auto CalledValue = CS.getCalledValue();
+    auto CalledValue = Call.getCalledOperand();
     auto Info = mDIStrings.regItem(CalledValue);
     FuncIdx = Info.first;
     if (Info.second) {
-      auto FuncTy = CS.getFunctionType();
+      auto FuncTy = Call.getFunctionType();
       assert(FuncTy && "Function type must not be null!");
       assert(mDT && "Dominator tree must not be null!");
       auto DIM = buildDIMemory(MemoryLocation(CalledValue),
@@ -757,16 +760,16 @@ void Instrumentation::visitCallSite(llvm::CallSite CS) {
         DIM ? DIM->Var : nullptr, FuncIdx, *M);
     }
   }
-  auto DbgLocIdx = regDebugLoc(Inst->getDebugLoc());
-  auto DILoc = createPointerToDI(DbgLocIdx, *Inst);
-  auto DIFunc = createPointerToDI(FuncIdx, *Inst);
+  auto DbgLocIdx = regDebugLoc(Call.getDebugLoc());
+  auto DILoc = createPointerToDI(DbgLocIdx, Call);
+  auto DIFunc = createPointerToDI(FuncIdx, Call);
   auto Fun = getDeclaration(M, tsar::IntrinsicId::func_call_begin);
-  auto CallBegin = llvm::CallInst::Create(Fun, {DILoc, DIFunc}, "", Inst);
+  auto CallBegin = llvm::CallInst::Create(Fun, {DILoc, DIFunc}, "", &Call);
   auto InstrMD = MDNode::get(M->getContext(), {});
   CallBegin->setMetadata("sapfor.da", InstrMD);
   Fun = getDeclaration(M, tsar::IntrinsicId::func_call_end);
   auto CallEnd = llvm::CallInst::Create(Fun, {DIFunc}, "");
-  CallEnd->insertAfter(Inst);
+  CallEnd->insertAfter(&Call);
   CallBegin->setMetadata("sapfor.da", InstrMD);
   ++NumCall;
 }
@@ -838,13 +841,15 @@ void Instrumentation::regReadMemory(Instruction &I, Value &Ptr) {
   std::tie(DILoc, Addr, DIVar, ArrayBase) =
     regMemoryAccessArgs(&Ptr, I.getDebugLoc(), I);
   if (ArrayBase) {
-    auto *Fun = getDeclaration(M, IntrinsicId::read_arr);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar, ArrayBase}, "", &I);
+    auto Fun = getDeclaration(M, IntrinsicId::read_arr);
+    auto Call = CallInst::Create(Fun.getFunctionType(), Fun.getCallee(),
+      {DILoc, Addr, DIVar, ArrayBase}, "", &I);
     Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
     ++NumLoadArray;
   } else {
-    auto *Fun = getDeclaration(M, IntrinsicId::read_var);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &I);
+    auto Fun = getDeclaration(M, IntrinsicId::read_var);
+    auto Call = CallInst::Create(Fun.getFunctionType(), Fun.getCallee(),
+      {DILoc, Addr, DIVar}, "", &I);
     Call->setMetadata("sapfor.da", MDNode::get(I.getContext(), {}));
     ++NumLoadScalar;
   }
@@ -863,14 +868,16 @@ void Instrumentation::regWriteMemory(Instruction &I, Value &Ptr) {
   if (!Addr)
     return;
   if (ArrayBase) {
-    auto *Fun = getDeclaration(M, IntrinsicId::write_arr_end);
-    auto Call = CallInst::Create(Fun, { DILoc, Addr, DIVar, ArrayBase }, "");
+    auto Fun = getDeclaration(M, IntrinsicId::write_arr_end);
+    auto Call = CallInst::Create(Fun.getFunctionType(), Fun.getCallee(),
+      { DILoc, Addr, DIVar, ArrayBase }, "");
     Call->insertBefore(&*InsertBefore);
     Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
     ++NumStoreArray;
   } else {
-    auto *Fun = getDeclaration(M, IntrinsicId::write_var_end);
-    auto Call = CallInst::Create(Fun, {DILoc, Addr, DIVar}, "", &*InsertBefore);
+    auto Fun = getDeclaration(M, IntrinsicId::write_var_end);
+    auto Call = CallInst::Create(Fun.getFunctionType(), Fun.getCallee(),
+      {DILoc, Addr, DIVar}, "", &*InsertBefore);
     Call->setMetadata("sapfor.da", MDNode::get(M->getContext(), {}));
     ++NumStoreScalar;
   }
@@ -901,8 +908,8 @@ void Instrumentation::regTypes(Module& M) {
   // Get all registered types and fill std::vector<llvm::Constant*>
   // with local indexes and sizes of these types.
   auto &Types = mTypes.getRegister<llvm::Type *>();
-  auto *DeclTypeFunc = getDeclaration(&M, IntrinsicId::decl_types);
-  auto *SizeTy = DeclTypeFunc->getFunctionType()->getParamType(0);
+  auto DeclTypeFunc = getDeclaration(&M, IntrinsicId::decl_types);
+  auto *SizeTy = DeclTypeFunc.getFunctionType()->getParamType(0);
   auto *Int0 = ConstantInt::get(SizeTy, 0);
   std::vector<Constant* > Ids, Sizes;
   auto &DL = M.getDataLayout();
@@ -944,10 +951,11 @@ void Instrumentation::regTypes(Module& M) {
   Counter->addIncoming(Int0, EntryBB);
   auto *GEP = GetElementPtrInst::Create(
     nullptr, IdsArray, { Int0, Counter }, "arrayidx", LoopBB);
-  auto *LocalTypeId = new LoadInst(GEP, "typeid", false, 0, LoopBB);
+  auto *LocalTypeId = new LoadInst(
+    GEP->getResultElementType(), GEP, "typeid", false, LoopBB);
   auto Add = BinaryOperator::CreateNUW(
     BinaryOperator::Add, LocalTypeId, StartId, "add", LoopBB);
-  new StoreInst(Add, GEP, false, 0, LoopBB);
+  new StoreInst(Add, GEP, false, LoopBB);
   auto Inc = BinaryOperator::CreateNUW(BinaryOperator::Add, Counter,
     ConstantInt::get(SizeTy, 1), "inc", LoopBB);
   Counter->addIncoming(Inc, LoopBB);
@@ -974,13 +982,14 @@ void Instrumentation::createInitDICall(const llvm::Twine &Str,
   auto *M = mInitDIAll->getParent();
   auto InitDIFunc = getDeclaration(M, IntrinsicId::init_di);
   auto IdxV = ConstantInt::get(Type::getInt64Ty(M->getContext()), Idx);
-  auto DIPoolPtr = new LoadInst(mDIPool, "dipool", T);
+  auto DIPoolPtr = new LoadInst(mDIPool->getValueType(), mDIPool, "dipool", T);
   auto GEP =
     GetElementPtrInst::Create(nullptr, DIPoolPtr, { IdxV }, "arrayidx", T);
   SmallString<256> SingleStr;
   auto DIString = createDIStringPtr(Str.toStringRef(SingleStr), *T);
   auto Offset = &*mInitDIAll->arg_begin();
-  CallInst::Create(InitDIFunc, {GEP, DIString, Offset}, "", T);
+  CallInst::Create(InitDIFunc.getFunctionType(), InitDIFunc.getCallee(),
+     {GEP, DIString, Offset}, "", T);
 }
 
 GetElementPtrInst* Instrumentation::createDIStringPtr(
@@ -1001,13 +1010,16 @@ LoadInst* Instrumentation::createPointerToDI(
   auto &Ctx = InsertBefore.getContext();
   auto *MD = MDNode::get(Ctx, {});
   auto IdxV = ConstantInt::get(Type::getInt64Ty(Ctx), Idx);
-  auto DIPoolPtr = new LoadInst(mDIPool, "dipool", &InsertBefore);
+  auto DIPoolPtr =
+    new LoadInst(mDIPool->getValueType(), mDIPool, "dipool", &InsertBefore);
   DIPoolPtr->setMetadata("sapfor.da", MD);
   auto GEP = GetElementPtrInst::Create(nullptr, DIPoolPtr, {IdxV}, "arrayidx");
   GEP->setMetadata("sapfor.da", MD);
   GEP->insertAfter(DIPoolPtr);
   GEP->setIsInBounds(true);
-  auto DI = new LoadInst(GEP, "di");
+  auto &DL = InsertBefore.getModule()->getDataLayout();
+  auto DI = new LoadInst(GEP->getResultElementType(), GEP, "di", false,
+                         DL.getABITypeAlign(GEP->getResultElementType()));
   DI->setMetadata("sapfor.da", MD);
   DI->insertAfter(GEP);
   return DI;
@@ -1043,12 +1055,13 @@ void Instrumentation::regValue(Value *V, Type *T, Value *ArraySize,
   CallInst *Call = nullptr;
   if (Args.size() > 2) {
     auto Func = getDeclaration(&M, IntrinsicId::reg_arr);
-    auto FuncTy = Func->getFunctionType();
+    auto FuncTy = Func.getFunctionType();
     assert(FuncTy->getNumParams() > 2 && "Too few arguments!");
-    Call = CallInst::Create(Func, Args, "", &InsertBefore);
+    Call = CallInst::Create(FuncTy, Func.getCallee(), Args, "", &InsertBefore);
   } else {
     auto Func = getDeclaration(&M, IntrinsicId::reg_var);
-    Call = CallInst::Create(Func, Args, "", &InsertBefore);
+    Call = CallInst::Create(Func.getFunctionType(), Func.getCallee(),
+      Args, "", &InsertBefore);
   }
   Call->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
 }
@@ -1285,9 +1298,10 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
   auto *InitFuncTy = FunctionType::get(IdTy, { IdTy }, false);
   Value *FreeId = llvm::ConstantInt::get(IdTy, 0);
   for (auto Suffix : InitSuffixes) {
-    auto *InitFunc = EntryM->getOrInsertFunction(
+    auto InitFunc = EntryM->getOrInsertFunction(
       ("sapfor.init.module" + Twine(Suffix)).str(), InitFuncTy);
-    FreeId = CallInst::Create(InitFunc, {FreeId}, "freeid", InsertBefore);
+    FreeId = CallInst::Create(InitFunc.getFunctionType(), InitFunc.getCallee(),
+      {FreeId}, "freeid", InsertBefore);
     cast<CallInst>(FreeId)->setMetadata("sapfor.da", InstrMD);
   }
 }

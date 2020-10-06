@@ -26,6 +26,8 @@
 #include "tsar/Support/Utils.h"
 #include <bcl/utility.h>
 #include <clang/Analysis/CFG.h>
+#include <clang/AST/Decl.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/LangOptions.h>
 #include <clang/Format/Format.h>
@@ -209,7 +211,7 @@ bool ExternalRewriter::InsertText(SourceLocation Loc, StringRef NewStr,
     return true;
   auto OrigBegin = ComputeOrigOffset(Loc);
   std::size_t OrigIdx = InsertAfter ? 2 * OrigBegin + 1 : 2 * OrigBegin;
-  mBuffer.insert(mMapping[OrigIdx], NewStr);
+  mBuffer.insert(mMapping[OrigIdx], NewStr.str());
   auto NewStrSize = NewStr.size();
   for (std::size_t I = OrigIdx, EI = mMapping.size(); I < EI; ++I)
     mMapping[I] += NewStrSize;
@@ -238,7 +240,7 @@ void ExternalRewriter::ReplaceText(unsigned OrigBegin, std::size_t Length,
     for (std::size_t I = OrigEndIdx, EI = mMapping.size(); I < EI; ++I)
       mMapping[I] -= (End - Begin) - NewStrSize;
   }
-  mBuffer.replace(Begin, End - Begin, NewStr);
+  mBuffer.replace(Begin, End - Begin, std::string(NewStr));
 }
 
 bool ExternalRewriter::RemoveText(SourceRange SR, bool RemoveLineIfEmpty) {
@@ -323,19 +325,35 @@ public:
     mType(Type), mId(Id), mProcessor(P) {}
 
   void run(const ast_matchers::MatchFinder::MatchResult &MR) {
-    auto *VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
+    auto VD = MR.Nodes.getNodeAs<clang::VarDecl>("varDecl");
     if (!VD)
       return;
-    SmallString<32> Buffer;
+    // Check that string representation of declaration matchs the declaration
+    // candidate. Sometimes representation of incorrect declaration in AST
+    // differs from original string and can be correctly unparsed.
+    // For example, 'int [5] D' is parsed to declaration of 'D'
+    // of type 'int [5]'. In this case previouse check has marked the tested
+    // string as correct. However,it is still incorrect, but print() of built
+    // declaration returns correct string 'int D[5]' which differs from
+    // tested one.
+    SmallString<128> CheckStr, BuildStr;
+    raw_svector_ostream OS(BuildStr);
+    VD->print(OS);
+    BuildStr.erase(remove_if(BuildStr, isspace), BuildStr.end());
+    join(mTokens.begin(), mTokens.end(), "", CheckStr);
+    SmallString<32> TypeBuffer;
     mIsFound |= (VD->getName() == mId &&
-      mProcessor(VD->getType().getAsString(), Buffer) == mType);
+      mProcessor(VD->getType().getAsString(), TypeBuffer) == mType &&
+      CheckStr == BuildStr);
     LLVM_DEBUG({
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
-      dbgs() << "[BUILD DECLARATION]: candidate type '" << Buffer << "'\n";
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
+      dbgs() << "[BUILD DECLARATION]: candidate type '" << TypeBuffer << "'\n";
       dbgs() << "[BUILD DECLARATION]: candidate id '" << VD->getName() << "'\n";
+      dbgs() << "[BUILD DECLARATION]: candidate declaration '" << OS.str()
+             << "'\n";
       if (isFound())
         dbgs() << "[BUILD DECLARATION]: successful build\n";
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
     });
   }
 
@@ -344,10 +362,13 @@ public:
   StringRef getType() const { return mType; }
   StringRef getId() const { return mId; }
 
+  void setTokens(ArrayRef<StringRef> Tokens) { mTokens = Tokens; }
+
 private:
   StringRef mType;
   StringRef mId;
   ProcessorT mProcessor;
+  ArrayRef<StringRef> mTokens;
   bool mIsFound = false;
 };
 }
@@ -388,30 +409,34 @@ std::vector<llvm::StringRef> tsar::buildDeclStringRef(llvm::StringRef Type,
   // it is guaranteed to be before declared identifier, just choose far position
   // (meaning choosing longest type string).
   // Optimization: match in reverse order until success.
-  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
   for (std::size_t Pos = Tokens.size() - 1; ; --Pos) {
     SmallString<128> DeclStr;
-    std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(
-      Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";");
+    auto Code =
+      (Context + join(Tokens.begin(), Tokens.end(), " ", DeclStr) + ";").str();
+    std::unique_ptr<ASTUnit> Unit = tooling::buildASTFromCode(Code);
     LLVM_DEBUG({
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
       SmallString<128> DeclStr;
       dbgs() << "[BUILD DECLARATION]: possible declaration with token at " <<
         Pos << " position '" <<
         join(Tokens.begin(), Tokens.end(), " ", DeclStr) << "'\n";
-      bcl::swapMemory(llvm::errs(), llvm::nulls());
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
     });
     assert(Unit && "AST construction failed");
     // AST can be correctly parsed even with errors.
     // So, we ignore all and just try to find our node.
+    Search.setTokens(Tokens);
     MatchFinder.matchAST(Unit->getASTContext());
     if (Search.isFound())
       break;
-    if (Pos == 0)
+    if (Pos == 0) {
+      bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
       return std::vector<StringRef>();
+    }
     std::swap(Tokens[Pos], Tokens[Pos - 1]);
   }
-  bcl::swapMemory(llvm::errs(), llvm::nulls());
+  bcl::swapMemory<llvm::raw_ostream>(llvm::errs(), llvm::nulls());
   return Tokens;
 }
 
@@ -432,4 +457,23 @@ Expected<std::string> tsar::reformat(StringRef TfmSrc, StringRef Filename) {
   // Replacements Replaces = sortIncludes(*Style, TfmSrc, Ranges, Filename);
   Replacements FormatChanges = reformat(*Style, TfmSrc, Ranges, Filename);
   return applyAllReplacements(TfmSrc, FormatChanges);
+}
+
+StringRef tsar::getFunctionName(FunctionDecl &FD,
+    SmallVectorImpl<char> &Name) {
+  if (auto *CXXDecl = dyn_cast<CXXMethodDecl>(&FD)) {
+    auto CXXClassName = CXXDecl->getParent()->getName();
+    switch(FD.getKind()) {
+      case Decl::CXXConstructor:
+        return (CXXClassName + "::constructor").toStringRef(Name);
+      case Decl::CXXDestructor:
+        return (CXXClassName + "::destructor").toStringRef(Name);
+      case Decl::CXXConversion:
+        return (CXXClassName + "::conversion").toStringRef(Name);
+      default:
+        llvm_unreachable("Unknown extra method in CXX declaration!");
+        return (CXXClassName + "::unknown").toStringRef(Name);
+    }
+  }
+  return FD.getName();
 }

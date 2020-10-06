@@ -28,12 +28,15 @@
 
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/AnalysisSocket.h"
+#include "tsar/Analysis/Clang/MemoryMatcher.h"
+#include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Pass.h>
 
 namespace clang {
@@ -69,7 +72,7 @@ using ClangSMParallelProvider =
     FunctionPassAAProvider<AnalysisSocketImmutableWrapper, LoopInfoWrapperPass,
                            ParallelLoopPass, CanonicalLoopPass, LoopMatcherPass,
                            DFRegionInfoPass, ClangDIMemoryMatcherPass,
-                           ClangPerfectLoopPass>;
+                           MemoryMatcherImmutableWrapper, ClangPerfectLoopPass>;
 
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
@@ -185,6 +188,7 @@ class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
   INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)                                \
   INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)                             \
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)                       \
+  INITIALIZE_PASS_DEPENDENCY(DIArrayAccessWrapper)                             \
   INITIALIZE_PASS_IN_GROUP_END(passName, arg, name, false, false,              \
                                TransformationQueryManager::getPassRegistry())
 #endif//TSAR_CLANG_SHARED_PARALLEL_H

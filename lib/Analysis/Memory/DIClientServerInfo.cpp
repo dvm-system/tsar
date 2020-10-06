@@ -129,5 +129,6 @@ DIDependenceSet *DIMemoryClientServerInfo::findFromClient(const Loop &L) const {
       return DIDepItr != DIDepInfo->end() ?
         &DIDepItr->get<DIDependenceSet>() : nullptr;
     }
+  return nullptr;
 }
 

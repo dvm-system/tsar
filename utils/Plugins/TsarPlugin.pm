@@ -51,7 +51,7 @@
 #===------------------------------------------------------------------------===#
 
 package Plugins::TsarPlugin;
-use Plugins::Base v0.4.1;
+use Plugins::Base v0.4.3;
 use base qw(Plugins::Base);
 
 use File::Path qw(remove_tree);
@@ -74,6 +74,8 @@ use strict;
 TSAR (Traits Static AnalyzeR) test plugin for PTS (Process Task Set)
 
 =cut
+
+use constant vs => exists $ENV{VISUALSTUDIOVERSION};
 
 # Checks files and copy them to a template directory.
 #
@@ -110,6 +112,17 @@ sub error
   throw Exception => $err_prefix.join('', @_);
 }
 
+sub m_rmtree($)
+{
+  my $n = 32;
+  my $err;
+  while ((remove_tree($_[0], {error => \$err}), @$err != 0) && $n-- > 0) {
+    dbg1 and dprint("m_rmtree: another try\n");
+    select undef, undef, undef, 0.1;
+  }
+  @$err == 0
+}
+
 sub process {
   my ($class, $task, $db) = @_;
   my $ret = 1;
@@ -133,10 +146,10 @@ sub process {
   grep $action eq $_, qw(check init) or error("'action' variable has wrong value");
   $task->reload_config(
     multiline => {'' => [qw(sample_diff run)]},
-    required  => {'' => [qw(sample run)]});
+    required  => {'' => [qw(sample run tsar)]});
   my $sample = $task->get_var('', 'sample');
-  my @sample_diff = $task->get_arr('', 'sample_diff') if $task->has_var('', 'sample_diff');
-  my $comment = $task->get_var('', 'comment');
+  my @sample_diff = $task->get_arr('', 'sample_diff', []);
+  my $comment = $task->get_var('', 'comment', '');
   unless ($comment) {
     my ($sample_name, $sample_path, $sample_suffix) = fileparse($sample, keys %comments);
     error("prefix of a single line comment can not be inferred from an extension".
@@ -200,15 +213,7 @@ sub process {
     $exec .= ' 2>&1';
     dbg1 and dprint("run '$exec'");
     my $output = `$exec`;
-    if ($?) {
-      my $err_file = catfile($work_dir, 'err.log');
-      open(my $err, '>', $err_file) or error("unable to write TSAR executable errors to file");
-      print $err $output;
-      close $err;
-      print_out($task->name . ": TSAR executable error (see '$err_file')");
-      $ret = 0;
-      next RUN;
-    }
+    $? and $output = "Error while processing " . $task->name . ".\n" . $output;
     $output =~ s/\n$//;
     $output =~ s/\n/\n$comment$check_prefix: /g;
     my $curr_path = $CWD;
@@ -235,6 +240,9 @@ sub process {
               $task->name . ": output and sample are not equal at line $line_idx with prefix".
               " '$check_prefix' (see '$output_file' .vs '$sample')\n"
             );
+            vs and print_out('  ', rel2abs($output_file), "($line_idx)\n");
+            vs and print_out('  ', rel2abs($sample), "($line_idx)\n");
+            vs and print_out("  Tools.DiffFiles ", rel2abs($sample), ' ', rel2abs($output_file), "\n");
             $ret = 0;
             next RUN;
           }
@@ -282,18 +290,14 @@ sub process {
         error("can not copy output '$output_file' to sample '$sample'");
       }
       if (@no_changes) {
-        print_out($task->name . " - no changes in @no_changes");
-      } else {
-        print_out($task->name);
+        print_out($task->name . " - no changes in @no_changes\n");
       }
     } elsif ($action eq 'check') {
       copy($sample_backup, $sample) or error("unable to restore sample file '$sample'");
-      print_out($task->name);
     } else {
       error("unknown action specified '$action'");
     }
-    remove_tree $work_dir;
-    print_out(" - ok\n");
+    m_rmtree($work_dir);
   } else {
     error("unknown action specified '$action'") unless ($action eq 'check');
     dbg1 and dprint("restore sample files");

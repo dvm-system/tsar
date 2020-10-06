@@ -104,7 +104,9 @@ public:
     return true;
   }
 
-  bool TraverseBinAssign(BinaryOperator *BO) {
+  bool TraverseBinaryOperator(BinaryOperator *BO) {
+    if (!BO || !BO->isAssignmentOp())
+      return RecursiveASTVisitor::TraverseBinaryOperator(BO);
     if (!BO->isCompoundAssignmentOp()) {
       auto ParentItr = mScopes.rbegin() + 1; // mScopes.back() is BO
       if (isa<CompoundStmt>(*ParentItr))
@@ -115,13 +117,13 @@ public:
               Itr->second.DeadAccesses.push_back(BO);
               auto Stash = mSimpleAssignLHS;
               mSimpleAssignLHS = Ref;
-              auto Res = RecursiveASTVisitor::TraverseBinAssign(BO);
+              auto Res = RecursiveASTVisitor::TraverseBinaryOperator(BO);
               mSimpleAssignLHS = Stash;
               return Res;
             }
           }
     }
-    return RecursiveASTVisitor::TraverseBinAssign(BO);
+    return RecursiveASTVisitor::TraverseBinaryOperator(BO);
   }
 
   bool TraverseStmt(Stmt *S) {
@@ -146,7 +148,7 @@ public:
         } else if (VD->hasInit()) {
           if (auto SideEffect = findSideEffect(*VD->getInit())) {
             toDiag(Diags, VD->getLocation(), diag::warn_disable_de);
-            toDiag(Diags, SideEffect->getLocStart(),
+            toDiag(Diags, SideEffect->getBeginLoc(),
                    diag::note_de_side_effect_prevent);
             I = mDeadDecls.erase(I);
             continue;
@@ -207,13 +209,13 @@ public:
         // removed inside a compound statement only, so it is safe to remove
         // ending semicolon.
         Token SemiTok;
-        if (!getRawTokenAfter(SrcMgr.getFileLoc(S->getLocEnd()),
+        if (!getRawTokenAfter(SrcMgr.getFileLoc(S->getEndLoc()),
             SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
       }
       if (I->second.Scope && isa<CompoundStmt>(I->second.Scope)) {
         Token SemiTok;
-        if (!getRawTokenAfter(SrcMgr.getFileLoc(I->first->getLocEnd()),
+        if (!getRawTokenAfter(SrcMgr.getFileLoc(I->first->getEndLoc()),
             SrcMgr, LangOpts, SemiTok) && SemiTok.is(tok::semi))
           mRewriter->RemoveText(SemiTok.getLocation(), RemoveEmptyLine);
       }

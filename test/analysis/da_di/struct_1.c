@@ -11,18 +11,18 @@ double foo(int N) {
 //CHECK: Printing analysis 'Dependency Analysis (Metadata)' for function 'foo':
 //CHECK:  loop at depth 1 struct_1.c:7:3
 //CHECK:    induction:
-//CHECK:     <I:7:12, 4>:[Int,0,,1] | <Res:5:10, 8>:[Fp,,,]
+//CHECK:     <I:7[7:3], 4>:[Int,0,,1] | <Res:5, 8>:[Fp,,,]
 //CHECK:    read only:
-//CHECK:     <S:4:14, 16>
+//CHECK:     <S:4, 16>
 //CHECK:    lock:
-//CHECK:     <I:7:12, 4> | <S:4:14, 16>
+//CHECK:     <I:7[7:3], 4> | <S:4, 16>
 //CHECK:    header access:
-//CHECK:     <I:7:12, 4> | <S:4:14, 16>
+//CHECK:     <I:7[7:3], 4> | <S:4, 16>
 //CHECK:    explicit access:
-//CHECK:     <I:7:12, 4> | <Res:5:10, 8>
+//CHECK:     <I:7[7:3], 4> | <Res:5, 8>
 //CHECK:    explicit access (separate):
-//CHECK:     <I:7:12, 4> <Res:5:10, 8>
+//CHECK:     <I:7[7:3], 4> <Res:5, 8>
 //CHECK:    lock (separate):
-//CHECK:     <I:7:12, 4> <S:4:14, 16>
+//CHECK:     <I:7[7:3], 4> <S:4, 16>
 //CHECK:    direct access (separate):
-//CHECK:     <I:7:12, 4> <Res:5:10, 8> <S:4:14, 16>
+//CHECK:     <I:7[7:3], 4> <Res:5, 8> <S:4, 16>

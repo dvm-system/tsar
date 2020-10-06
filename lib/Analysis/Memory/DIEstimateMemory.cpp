@@ -38,9 +38,9 @@
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Dominators.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <algorithm>
@@ -125,6 +125,22 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
     new DIUnknownMemory(Env, UM.getAsMDNode()));
 }
 
+static void serialize(DILocation &Loc, LLVMContext &Ctx,
+  SmallVectorImpl<Metadata *> &MDs) {
+  auto LineMD = ConstantAsMetadata::get(
+    ConstantInt::get(Type::getInt32Ty(Ctx), Loc.getLine()));
+  MDs.push_back(LineMD);
+  auto ColumnMD = ConstantAsMetadata::get(
+    ConstantInt::get(Type::getInt32Ty(Ctx), Loc.getColumn()));
+  MDs.push_back(ColumnMD);
+  if (auto *Scope = Loc.getRawScope())
+    MDs.push_back(Scope);
+  if (auto *InlineAt = Loc.getInlinedAt())
+    serialize(*InlineAt, Ctx, MDs);
+  else
+    MDs.push_back(nullptr);
+}
+
 std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   DIMemoryEnvironment &Env, MDNode *MD, Flags F,
   ArrayRef<DILocation *> DbgLocs) {
@@ -138,7 +154,7 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::get(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   auto NewMD = llvm::MDNode::get(Ctx, MDs);
   assert(NewMD && "Can not create metadata node!");
   ++NumUnknownMemory;
@@ -160,7 +176,7 @@ llvm::MDNode * DIUnknownMemory::getRawIfExists(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   return llvm::MDNode::getIfExists(Ctx, MDs);
 }
 
@@ -174,11 +190,46 @@ std::unique_ptr<DIUnknownMemory> DIUnknownMemory::getIfExists(
   return std::unique_ptr<DIUnknownMemory>(new DIUnknownMemory(Env, Node));
 }
 
+static inline ConstantInt *getConstantInt(const MDOperand &Op) {
+  if (auto CMD = dyn_cast<ConstantAsMetadata>(Op))
+    if (auto CInt = dyn_cast<ConstantInt>(CMD->getValue()))
+      return CInt;
+  return nullptr;
+};
+
+static std::pair<DILocation *, unsigned> getLocation(const MDNode *MD,
+  unsigned I, unsigned EI) {
+  ConstantInt *CInt = nullptr;
+  if (!(CInt = getConstantInt(MD->getOperand(I))))
+    return std::make_pair(nullptr, I);
+  unsigned Line = CInt->getZExtValue();
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  if (!(CInt = getConstantInt(MD->getOperand(I))))
+    return std::make_pair(nullptr, I);
+  unsigned Column = CInt->getZExtValue();
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  auto *Scope = dyn_cast<DIScope>(MD->getOperand(I));
+  if (!Scope)
+    return std::make_pair(nullptr, I);
+  if (++I == EI)
+    return std::make_pair(nullptr, I);
+  auto InlineAt =
+    (MD->getOperand(I)) ? getLocation(MD, I, EI) : std::make_pair(nullptr, I);
+  return std::make_pair(
+    DILocation::get(MD->getContext(), Line, Column, Scope, InlineAt.first),
+    InlineAt.second);
+}
+
 void DIMemory::getDebugLoc(SmallVectorImpl<DebugLoc> &DbgLocs) const {
   auto MD = getAsMDNode();
-  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I)
-    if (auto *Loc = llvm::dyn_cast<llvm::DILocation>(MD->getOperand(I)))
-      DbgLocs.emplace_back(Loc);
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
+    auto Res = getLocation(MD, I, EI);
+    I = Res.second;
+    if (Res.first)
+      DbgLocs.emplace_back(Res.first);
+  }
 }
 
 std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
@@ -195,7 +246,7 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   auto MD = llvm::MDNode::get(Ctx, MDs);
   assert(MD && "Can not create metadata node!");
   ++NumEstimateMemory;
@@ -230,7 +281,7 @@ llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
   SmallVector<Metadata *, 2> MDs{ BasicMD };
   for (auto DbgLoc : DbgLocs)
     if (DbgLoc)
-      MDs.push_back(DbgLoc);
+      serialize(*DbgLoc, Ctx, MDs);
   return llvm::MDNode::getIfExists(Ctx, MDs);
 }
 
@@ -633,11 +684,12 @@ void buildMemoryLog(Function &F, DIMemory &DIM, Value &V) {
   dbgs() << "[DI ALIAS TREE]: build debug memory location ";
   printDILocationSource(*getLanguage(F), DIM, dbgs());
   dbgs() << " for ";
-  ImmutableCallSite CS(&V);
-  if (auto Callee = [CS]() {
-    return !CS ? nullptr : dyn_cast<Function>(
-      CS.getCalledValue()->stripPointerCasts());
-  }())
+  if (auto Callee = [&V]() -> llvm::Function * {
+        if (auto *Call = dyn_cast<CallBase>(&V))
+          return dyn_cast<Function>(
+              Call->getCalledOperand()->stripPointerCasts());
+        return nullptr;
+      }())
     Callee->printAsOperand(dbgs(), false);
   else
     V.printAsOperand(dbgs(), false);
@@ -933,7 +985,7 @@ public:
       if (auto N = dyn_cast<DIAliasUnknownNode>(Parent))
         mVisitedCorrupted.insert(N);
     }
-    auto Ty = stripDIType(mVar->getType()).resolve();
+    auto Ty = stripDIType(mVar->getType());
     if (!Ty) {
       addFragments(Parent, 0, mSortedFragments.size());
       return;
@@ -1308,7 +1360,7 @@ private:
       "Type to evaluate must be a structure or class!");
     assert(Parent && "Alias node must not be null!");
     auto DICTy = cast<DICompositeType>(Ty);
-    auto ElTy = stripDIType(DICTy->getBaseType()).resolve();
+    auto ElTy = stripDIType(DICTy->getBaseType());
     auto ElSize = getSize(ElTy);
     auto FirstFragmentIdx = Fragments.first;
     auto FragmentIdx = Fragments.first;
@@ -1352,7 +1404,7 @@ private:
         stripDIType(cast<DIType>(DICTy->getElements()[ElIdx])));
       auto ElOffset = ElTy->getOffsetInBits() / 8;
       auto ElSize = getSize(ElTy);
-      evaluateElement(Offset, Fragments, Parent, ElTy->getBaseType().resolve(),
+      evaluateElement(Offset, Fragments, Parent, ElTy->getBaseType(),
         ElIdx, ElOffset, ElSize, FirstElIdx, FirstFragmentIdx, FragmentIdx);
     }
     addFragments(Parent, FirstFragmentIdx, FragmentIdx);
@@ -1391,8 +1443,7 @@ findLocationToInsert(const AliasTree &AT, const DataLayout &DL) {
       auto Root = EM.getTopLevelParent();
       if (Operator::getOpcode(Root->front()) == Instruction::IntToPtr)
         continue;
-      ImmutableCallSite CS(Root->front());
-      if (CS)
+      if (isa<CallBase>(Root->front()))
         continue;
       int64_t Offset;
       auto Base = GetPointerBaseWithConstantOffset(EM.front(), Offset, DL);
@@ -1966,8 +2017,8 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M,
   Replacement.emplace_back(&M, nullptr);
   DIMemory *RAUWd = nullptr;
   DIMemoryCache LocalCache;
-  uint64_t Size = isa<DIEstimateMemory>(M) ?
-    cast<DIEstimateMemory>(M).getSize() : 0;
+  auto Size = isa<DIEstimateMemory>(M) ?
+    cast<DIEstimateMemory>(M).getSize() : LocationSize::precise(0);
   for (auto &VH : M) {
     if (!VH || isa<UndefValue>(VH))
       continue;
@@ -1987,7 +2038,9 @@ bool CorruptedMemoryResolver::isSameAfterRebuildEstimate(DIMemory &M,
       // there is a single GEP with multiple operands and <X[0], size of dim>
       // will not be constructed. So, we ignore this case if <X[0], array size>
       // exist.
-      if (EM->getSize() > Size)
+      if (!EM->getSize().hasValue() && Size.hasValue() ||
+           EM->getSize().hasValue() && Size.hasValue() &&
+             EM->getSize().getValue() > Size.getValue())
         Cached = LocalCache.try_emplace(EM);
       else if (EM->getSize() != Size)
         return false;
@@ -2113,14 +2166,14 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
     if (Expr[I] != dwarf::DW_OP_deref)
       ++I;
   }
-  if (Loc.Size != MemoryLocation::UnknownSize) {
+  if (Loc.Size.isPrecise()) {
     if (Expr.empty () || LastDwarfOp == dwarf::DW_OP_deref ||
         LastDwarfOp == dwarf::DW_OP_minus || LastDwarfOp == dwarf::DW_OP_plus) {
-      Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, Loc.Size * 8});
+      Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, Loc.Size.getValue() * 8});
     } else {
       assert(LastDwarfOp == dwarf::DW_OP_plus_uconst && "Unknown DWARF operand!");
       Expr[Expr.size() - 2] = dwarf::DW_OP_LLVM_fragment;
-      Expr.push_back(Loc.Size * 8);
+      Expr.push_back(Loc.Size.getValue() * 8);
     }
   } else {
     if (!Expr.empty() && LastDwarfOp == dwarf::DW_OP_LLVM_fragment)
@@ -2157,8 +2210,8 @@ std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
   auto VItr = EM.begin();
   auto Properties = EM.isExplicit() ? DIMemory::Explicit : DIMemory::NoProperty;
   if (!DILoc) {
-    auto F = ImmutableCallSite(*VItr) ? DIUnknownMemory::Result
-                                      : DIUnknownMemory::Object;
+    auto F = isa<CallBase>(*VItr) ? DIUnknownMemory::Result
+                                  : DIUnknownMemory::Object;
     DIM =
       buildDIMemory(const_cast<Value &>(**VItr), Ctx, Env, DT, Properties, F);
     ++VItr;
@@ -2186,7 +2239,7 @@ llvm::MDNode * getRawDIMemoryIfExists(const EstimateMemory &EM,
   auto DILoc = buildDIMemory(
     MemoryLocation(EM.front(), EM.getSize()), Ctx, DL, DT);
   if (!DILoc) {
-    auto F = ImmutableCallSite(EM.front()) ? DIUnknownMemory::Result
+    auto F = isa<CallBase>(EM.front()) ? DIUnknownMemory::Result
       : DIUnknownMemory::Object;
     return getRawDIMemoryIfExists(const_cast<Value &>(*EM.front()), Ctx, DT, F);
   } else {
@@ -2223,9 +2276,9 @@ std::unique_ptr<DIMemory> buildDIMemory(Value &V, LLVMContext &Ctx,
       Loc = cast<Instruction>(V).getDebugLoc().get();
     }
   } else {
-    CallSite CS(&V);
-    auto Callee = !CS ? dyn_cast_or_null<Function>(&V)
-      : dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    auto *Call = dyn_cast<CallBase>(&V);
+    auto Callee = !Call ? dyn_cast_or_null<Function>(&V)
+      : dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
     if (Callee)
       MD = findMetadata(Callee);
     if (isa<Instruction>(V))
@@ -2255,9 +2308,9 @@ llvm::MDNode * getRawDIMemoryIfExists(llvm::Value &V, llvm::LLVMContext &Ctx,
       Loc = cast<Instruction>(V).getDebugLoc().get();
     }
   } else {
-    CallSite CS(&V);
-    auto Callee = !CS ? dyn_cast_or_null<Function>(&V)
-      : dyn_cast<Function>(CS.getCalledValue()->stripPointerCasts());
+    auto *Call = dyn_cast<CallBase>(&V);
+    auto Callee = !Call ? dyn_cast_or_null<Function>(&V)
+      : dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
     if (Callee)
       MD = findMetadata(Callee);
     if (isa<Instruction>(V))
@@ -2343,7 +2396,7 @@ bool DIEstimateMemoryPass::runOnFunction(Function &F) {
   auto &Env = *EnvWrapper;
   auto &DL = F.getParent()->getDataLayout();
   auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  auto NewDIAT = make_unique<DIAliasTree>(F);
+  auto NewDIAT = std::make_unique<DIAliasTree>(F);
   {
     // This scope is necessary to drop of memory asserting handles in CMR
     // before previous alias tree destruction.

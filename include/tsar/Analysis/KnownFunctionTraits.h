@@ -31,6 +31,7 @@
 #include <bcl/utility.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/IntrinsicsARM.h>
 
 namespace tsar {
 /// Returns 'true' if a specified intrinsic indicates some information about
@@ -40,19 +41,6 @@ inline bool isMemoryMarkerIntrinsic(llvm::Intrinsic::ID Id) noexcept {
   case llvm::Intrinsic::lifetime_start: case llvm::Intrinsic::lifetime_end:
   case llvm::Intrinsic::invariant_start: case llvm::Intrinsic::invariant_end:
   case llvm::Intrinsic::sideeffect: case llvm::Intrinsic::assume:
-    return true;
-  }
-  return false;
-}
-
-/// Returns 'true' if a specified intrinsic indicates some
-/// metadata information only.
-inline bool isDbgInfoIntrinsic(llvm::Intrinsic::ID Id) noexcept {
-  switch (Id) {
-  case llvm::Intrinsic::dbg_value:
-  case llvm::Intrinsic::dbg_addr:
-  case llvm::Intrinsic::dbg_declare:
-  case llvm::Intrinsic::dbg_label:
     return true;
   }
   return false;

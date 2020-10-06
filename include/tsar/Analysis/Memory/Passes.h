@@ -197,5 +197,19 @@ ModulePass *createDIMemoryAnalysisServer();
 /// Initialize analysis server.
 void initializeDIMemoryAnalysisServerPass(PassRegistry &Registry);
 
+/// Initialize a pass to store list of array accesses.
+void initializeDIArrayAccessStoragePass(PassRegistry &Registry);
+
+/// Create a pass to store list of array accesses.
+ImmutablePass *createDIArrayAccessStorage();
+
+/// Initialize a pass to access information about array accesses in the program.
+void initializeDIArrayAccessWrapperPass(PassRegistry &Registry);
+
+/// Initialize a pass to collect array accesses.
+void initializeDIArrayAccessCollectorPass(PassRegistry &Registry);
+
+/// Create a pass to collect array accesses.
+ModulePass *createDIArrayAccessCollector();
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

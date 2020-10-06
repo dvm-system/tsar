@@ -202,7 +202,7 @@ void run(IntrusiveConnection C) {
       // Set query to nullptr to avoid multiple memory deletion.
       CL[msg::CommandLine::Query] = nullptr;
     }
-    Analyzer = std::move(llvm::make_unique<Tool>(
+    Analyzer = std::move(std::make_unique<Tool>(
       CL[msg::CommandLine::Args].size(),
       CL[msg::CommandLine::Args].data()));
     if (StdErr.isDiff())

@@ -26,6 +26,7 @@
 #include "tsar/Analysis/LoopTraits.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/InitializePasses.h>
 
 using namespace llvm;
 using namespace tsar;
