@@ -431,6 +431,10 @@ public:
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
+
+  /// Calculates array range in memory.
+  MemoryLocationRange calcArrayLocation(DFRegion *R,
+                                        const MemoryLocationRange &Loc);
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
