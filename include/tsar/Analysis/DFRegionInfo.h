@@ -47,7 +47,7 @@ public:
   tsar::DFNode * getTopLevelRegion() const noexcept { return mTopLevelRegion; }
 
   /// Returns the smallest region that surrounds a specified basic block .
-  tsar::DFNode * getRegionFor(llvm::BasicBlock *BB) const {
+  tsar::DFNode * getRegionFor(const llvm::BasicBlock *BB) const {
     auto I = mBBToNode.find(BB);
     return I == mBBToNode.end() ? nullptr : I->second;
   }

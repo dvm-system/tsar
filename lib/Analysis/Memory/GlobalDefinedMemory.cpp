@@ -34,9 +34,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
-#ifdef LLVM_DEBUG
 #include <llvm/IR/Dominators.h>
-#endif
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "def-mem"
@@ -165,11 +163,10 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     auto &Provider = getAnalysis<GlobalDefinedMemoryProvider>(*F);
     auto &RegInfo = Provider.get<DFRegionInfoPass>().getRegionInfo();
     auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();
-    const DominatorTree *DT = nullptr;
-    LLVM_DEBUG(DT = &Provider.get<DominatorTreeWrapperPass>().getDomTree());
+    const auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
     auto *DFF = cast<DFFunction>(RegInfo.getTopLevelRegion());
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, DT, DefInfo, *Wrapper);
+    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DefInfo, *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&

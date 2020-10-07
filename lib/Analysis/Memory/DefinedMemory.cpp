@@ -65,22 +65,21 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &RegionInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  const DominatorTree *DT = nullptr;
-  LLVM_DEBUG(DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree());
+  const auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo, *GDM);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, mDefInfo, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   } else {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, DT, mDefInfo);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, mDefInfo);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   }
   return false;
 }
 
 void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
-  LLVM_DEBUG(AU.addRequired<DominatorTreeWrapperPass>());
+  AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<DFRegionInfoPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -100,8 +99,9 @@ namespace {
 template<class ImpTy> class AddAccessFunctor {
 public:
   /// Create functor.
-  AddAccessFunctor(AAResults &AA, const DataLayout &DL, DefUseSet &DU) :
-    mAA(AA), mDL(DL), mDU(DU) {}
+  AddAccessFunctor(AAResults &AA, const DataLayout &DL, const DFRegionInfo &DFI,
+      const DominatorTree &DT, const Instruction &Inst, DefUseSet &DU) :
+    mAA(AA), mDL(DL), mDFI(DFI), mDT(DT), mInst(Inst), mDU(DU) {}
 
   /// Switches processing of a node to an appropriate add... method.
   void operator()(AliasNode *N) {
@@ -134,8 +134,51 @@ public:
   }
 
 protected:
+  // Return true if a specified memory location is alive when the current
+  // instruction is executed.
+  bool isAlive(const EstimateMemory &EM) {
+    if (auto AI = dyn_cast<AllocaInst>(EM.getTopLevelParent()->front())) {
+      DFNode *StartRegion = nullptr, *EndRegion = nullptr;
+      for (auto *U1 : AI->users())
+        if (auto *BCI = dyn_cast<BitCastInst>(U1))
+          for (auto *U2 : BCI->users())
+            if (auto *II = dyn_cast<IntrinsicInst>(U2))
+              if (II->getIntrinsicID() == llvm::Intrinsic::lifetime_end) {
+                if (mDT.dominates(II, &mInst))
+                  return false;
+                EndRegion = mDFI.getRegionFor(II->getParent());
+              } else if (II->getIntrinsicID() ==
+                         llvm::Intrinsic::lifetime_start) {
+                StartRegion = mDFI.getRegionFor(II->getParent());
+              }
+      if (StartRegion && EndRegion) {
+        while (StartRegion != mDFI.getTopLevelRegion() &&
+               ![&EndRegion, &StartRegion]() {
+                 auto Tmp = EndRegion;
+                 while (Tmp && Tmp != StartRegion)
+                   Tmp = Tmp->getParent();
+                 return Tmp;
+               }())
+          StartRegion = StartRegion->getParent();
+        if (auto *DFF = dyn_cast<DFFunction>(StartRegion))
+          return true;
+        if (auto *DFB = dyn_cast<DFBlock>(StartRegion))
+          return DFB->getBlock() != mInst.getParent();
+        if (auto *DFL = dyn_cast<DFLoop>(StartRegion))
+          return DFL->getLoop()->contains(&mInst);
+        if (auto *DFR = dyn_cast<DFRegion>(StartRegion))
+          return is_contained(DFR->getNodes(),
+                              mDFI.getRegionFor(mInst.getParent()));
+      }
+    }
+    return true;
+  }
+
   AAResults &mAA;
   const DataLayout &mDL;
+  const DFRegionInfo &mDFI;
+  const DominatorTree &mDT;
+  const Instruction &mInst;
   DefUseSet &mDU;
 };
 
@@ -145,12 +188,13 @@ class AddUnknownAccessFunctor :
   public AddAccessFunctor<AddUnknownAccessFunctor> {
 public:
   AddUnknownAccessFunctor(AAResults &AA, const DataLayout &DL,
-      const Instruction &Inst, DefUseSet &DU) :
-    AddAccessFunctor<AddUnknownAccessFunctor>(AA, DL, DU), mInst(Inst) {}
+      const DFRegionInfo &DFI, const DominatorTree &DT, const Instruction &Inst,
+      DefUseSet &DU)
+    : AddAccessFunctor<AddUnknownAccessFunctor>(AA, DL, DFI, DT, Inst, DU) {}
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
-      if (!EM.isExplicit())
+      if (!EM.isExplicit() || !isAlive(EM))
         continue;
       for (auto *APtr : EM) {
         MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());
@@ -168,8 +212,6 @@ public:
       }
     }
   }
-private:
-  const Instruction &mInst;
 };
 
 /// This functor adds into a specified DefUseSet all locations from a specified
@@ -181,12 +223,13 @@ class AddKnownAccessFunctor :
   using Base = AddAccessFunctor<AddKnownAccessFunctor<ImpTy>>;
 public:
   AddKnownAccessFunctor(AAResults &AA, const DataLayout &DL,
+      const DFRegionInfo &DFI, const DominatorTree &DT, const Instruction &Inst,
       const MemoryLocation &Loc, DefUseSet &DU) :
-    Base(AA, DL, DU), mLoc(Loc) {}
+    Base(AA, DL, DFI, DT, Inst, DU),  mLoc(Loc) {}
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
-      if (!EM.isExplicit())
+      if (!EM.isExplicit() || !isAlive(EM))
         continue;
       for (auto *APtr : EM) {
         MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());
@@ -243,8 +286,10 @@ private:
 #define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST) \
 class NAME : public BASE<NAME> { \
 public: \
-  NAME(AAResults &AA, const DataLayout &DL, MEM &Loc, DefUseSet &DU) : \
-    BASE<NAME>(AA, DL, Loc, DU) {} \
+  NAME(AAResults &AA, const DataLayout &DL, const DFRegionInfo &DFI, \
+      const DominatorTree &DT, const Instruction &Inst, \
+      MEM &Loc, DefUseSet &DU) : \
+    BASE<NAME>(AA, DL, DFI, DT, Inst, Loc, DU) {} \
 private: \
   friend BASE<NAME>; \
   void addMust(const MemoryLocationRange &Loc) { MUST; } \
@@ -266,7 +311,7 @@ ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
 
 #ifndef NDEBUG
 void intializeDefUseSetLog(
-    const DFNode &N, const DefUseSet &DU, const DominatorTree *DT) {
+    const DFNode &N, const DefUseSet &DU, const DominatorTree &DT) {
   dbgs() << "[DEFUSE] Def/Use locations for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
@@ -278,23 +323,23 @@ void intializeDefUseSetLog(
   }
   dbgs() << "Outward exposed must define locations:\n";
   for (auto &Loc : DU.getDefs())
-    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
   dbgs() << "Outward exposed may define locations:\n";
   for (auto &Loc : DU.getMayDefs())
-    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
   dbgs() << "Outward exposed uses:\n";
   for (auto &Loc : DU.getUses())
-    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
   dbgs() << "Explicitly accessed locations:\n";
   for (auto &Loc : DU.getExplicitAccesses())
-    printLocationSource(dbgs(), Loc, DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
   for (auto *I : DU.getExplicitUnknowns())
     I->print(dbgs()), dbgs() << "\n";
   dbgs() << "[END DEFUSE]\n";
 };
 
 void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In,
-    const DominatorTree *DT) {
+    const DominatorTree &DT) {
   dbgs() << "[TRANSFER REACH] Transfer function for ";
   if (isa<DFBlock>(N)) {
     dbgs() << "the following basic block:\n";
@@ -306,22 +351,22 @@ void initializeTransferBeginLog(const DFNode &N, const DefinitionInfo &In,
   }
   dbgs() << "IN:\n";
   dbgs() << "MUST REACH DEFINITIONS:\n";
-  In.MustReach.dump(DT);
+  In.MustReach.dump(&DT);
   dbgs() << "MAY REACH DEFINITIONS:\n";
-  In.MayReach.dump(DT);
+  In.MayReach.dump(&DT);
 }
 
 void initializeTransferEndLog(const DefinitionInfo &Out, bool HasChanges,
-    const DominatorTree *DT) {
+    const DominatorTree &DT) {
   dbgs() << "OUT ";
   if (HasChanges)
     dbgs() << "with changes:\n";
   else
     dbgs() << "without changes:\n";
   dbgs() << "MUST REACH DEFINITIONS:\n";
-  Out.MustReach.dump(DT);
+  Out.MustReach.dump(&DT);
   dbgs() << "MAY REACH DEFINITIONS:\n";
-  Out.MayReach.dump(DT);
+  Out.MayReach.dump(&DT);
   dbgs() << "[END TRANSFER]\n";
 
 }
@@ -422,9 +467,11 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // accessed in a current instruction. Note that this attribute will be also
     // set for locations which are accessed implicitly.
     // 3. Unknown instructions will be remembered in DefUseSet.
+    auto &DT = DFF->getDomTree();
+    auto &DFI = DFF->getRegionInfo();
     for_each_memory(I, TLI,
-      [&DL, &AT, InterDUInfo, &TLI, &DU](Instruction &I, MemoryLocation &&Loc,
-          unsigned Idx, AccessInfo R, AccessInfo W) {
+      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU](Instruction &I,
+          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         // EM may be smaller than Loc if it is known that access out of the
         // EM size leads to undefined behavior.
@@ -482,23 +529,29 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         switch (W) {
         case AccessInfo::No:
           if (R != AccessInfo::No)
-            for_each_alias(&AT, AN, AddUseFunctor(AA, DL, Loc, *DU));
+            for_each_alias(&AT, AN,
+                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
           break;
         case AccessInfo::May:
           if (R != AccessInfo::No)
-            for_each_alias(&AT, AN, AddMayDefUseFunctor(AA, DL, Loc, *DU));
+            for_each_alias(&AT, AN,
+                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
           else
-            for_each_alias(&AT, AN, AddMayDefFunctor(AA, DL, Loc, *DU));
+            for_each_alias(&AT, AN,
+                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
           break;
         case AccessInfo::Must:
           if (R != AccessInfo::No)
-            for_each_alias(&AT, AN, AddDefUseFunctor(AA, DL, Loc, *DU));
+            for_each_alias(&AT, AN,
+                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
           else
-            for_each_alias(&AT, AN, AddDefFunctor(AA, DL, Loc, *DU));
+            for_each_alias(&AT, AN,
+                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
           break;
         }
       },
-      [&DL, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo, AccessInfo) {
+      [&DL, &DFI, &DT, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo,
+          AccessInfo) {
         if (auto *Call = dyn_cast<CallBase>(&I)) {
           auto F = llvm::dyn_cast<Function>(
             Call->getCalledOperand()->stripPointerCasts());
@@ -515,7 +568,8 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         DU->addExplicitUnknown(&I);
         DU->addUnknownInst(&I);
         auto &AA = AT.getAliasAnalysis();
-        for_each_alias(&AT, AN, AddUnknownAccessFunctor(AA, DL, I, *DU));
+          for_each_alias(&AT, AN,
+                         AddUnknownAccessFunctor(AA, DL, DFI, DT, I, *DU));
       }
     );
   }

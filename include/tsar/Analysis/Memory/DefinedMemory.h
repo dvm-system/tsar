@@ -60,6 +60,7 @@ class TargetLibraryInfo;
 
 namespace tsar {
 class AliasTree;
+class DFRegionInfo;
 
 /// \brief This contains locations which have outward exposed definitions or
 /// uses in a data-flow node.
@@ -366,14 +367,18 @@ public:
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
-      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo) {}
+      const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
+      DefinedMemoryInfo &DefInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
+    mDT(&DT), mDefInfo(&DefInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
-      const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
+      const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
+      DefinedMemoryInfo &DefInfo,
       InterprocDefUseInfo &InterprocDUInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDT(DT), mDefInfo(&DefInfo),
+    mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
+    mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
@@ -398,8 +403,11 @@ public:
   /// Returns target library information.
   llvm::TargetLibraryInfo & getTLI() const noexcept { return *mTLI; }
 
-  /// Returns dominator tree if it is available or nullptr.
-  const llvm::DominatorTree * getDomTree() const noexcept { return mDT; }
+  /// Return dominator tree.
+  const llvm::DominatorTree & getDomTree() const noexcept { return *mDT; }
+
+  /// Return hierarchy of regions.
+  const DFRegionInfo &getRegionInfo() const noexcept { return *mRegionInfo; }
 
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
@@ -409,6 +417,7 @@ private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
   const llvm::DominatorTree *mDT;
+  const DFRegionInfo *mRegionInfo;
   DefinedMemoryInfo *mDefInfo;
   InterprocDefUseInfo *mInterprocDUInfo = nullptr;
 };
