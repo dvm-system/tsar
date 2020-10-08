@@ -86,6 +86,7 @@ option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
 option(BUILD_PROFILE "Build profile runtime" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
+option(BUILD_LINK "Build LLVM bitcode linker" OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
 
@@ -106,9 +107,9 @@ if(NOT LOCAL_LLVM AND NOT PACKAGE_LLVM)
 endif()
 
 if(PACKAGE_LLVM)
-  if (BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE)
+  if (BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE OR BUILD_LINK)
     message(FATAL_ERROR
-      "Options BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE are not compatible with PACKAGE_LLVM")
+      "Options BUILD_CLANG or BUILD_OPT or BUILD_LLC or BUILD_PROFILE or BUILD_LINK are not compatible with PACKAGE_LLVM")
   endif()
   unset(LLVM_DIR CACHE)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
