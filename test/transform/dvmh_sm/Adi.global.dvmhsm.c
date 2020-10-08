@@ -15,24 +15,23 @@
 #define NY 384
 #define NZ 384
 
-void init(double (*A)[NY][NZ]);
-double iter(double (*A)[NY][NZ]);
+void init();
+double iter();
+
+double A[NX][NY][NZ];
 
 int main(int Argc, char *Argv[]) {
   double MaxEps, Eps;
-  double(*A)[NY][NZ];
   int It, ItMax, I, J, K;
   MaxEps = 0.01;
   ItMax = 100;
-  A = (double(*)[NY][NZ])malloc(NX * NY * NZ * sizeof(double));
-  init(A);
+  init();
   for (It = 1; It <= ItMax; It++) {
-    Eps = iter(A);
+    Eps = iter();
     printf(" IT = %4i   EPS = %14.7E\n", It, Eps);
     if (Eps < MaxEps)
       break;
   }
-  free(A);
   printf(" ADI Benchmark Completed.\n");
   printf(" Size            = %4d x %4d x %4d\n", NX, NY, NZ);
   printf(" Iterations      =       %12d\n", ItMax);
@@ -43,11 +42,12 @@ int main(int Argc, char *Argv[]) {
   return 0;
 }
 
-void init(double (*A)[NY][NZ]) {
+void init() {
   int I, J, K;
-#pragma dvm region targets(HOST)
+#pragma dvm actual(A, I)
+#pragma dvm region in(A, I)out(A, I) local(J, K)
   {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K])
     for (I = 0; I < NX; I++)
       for (J = 0; J < NY; J++)
         for (K = 0; K < NZ; K++)
@@ -58,33 +58,39 @@ void init(double (*A)[NY][NZ]) {
           else
             A[I][J][K] = 0;
   }
+#pragma dvm get_actual(A, I)
 }
 
-double iter(double (*A)[NY][NZ]) {
+double iter() {
   int I, J, K;
   double Eps = 0;
-#pragma dvm region targets(HOST)
+#pragma dvm actual(A, I)
+#pragma dvm region in(A, I)out(A, I) local(J, K)
   {
-#pragma dvm parallel([I]) tie(A[I][][])                                        \
-    across(A [1:1] [0:0] [0:0]) private(J, K)
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [1:1] [0:0] [0:0])
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++)
           A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
   }
+#pragma dvm get_actual(A, I)
 
-#pragma dvm region targets(HOST)
+#pragma dvm actual(A, I)
+#pragma dvm region in(A, I)out(A, I) local(J, K)
   {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [1:1] [0:0])
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++)
           A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
   }
+#pragma dvm get_actual(A, I)
 
-#pragma dvm region targets(HOST)
+#pragma dvm actual(A, Eps, I)
+#pragma dvm region in(A, Eps, I)out(A, Eps, I) local(J, K)
   {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K) reduction(max(Eps))
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [0:0] [1:1])    \
+    reduction(max(Eps))
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++) {
@@ -94,6 +100,7 @@ double iter(double (*A)[NY][NZ]) {
           A[I][J][K] = Tmp1;
         }
   }
+#pragma dvm get_actual(A, Eps, I)
 
   return Eps;
 }

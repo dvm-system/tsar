@@ -43,6 +43,16 @@ public:
   /// Sorted list of variables (to print their in algoristic order).
   using SortedVarListT = std::set<std::string, std::less<std::string>>;
 
+  /// List of dependence distances.
+  using DistanceInfo = bcl::tagged_tuple<
+      bcl::tagged<trait::DIDependence::DistanceRange, trait::Flow>,
+      bcl::tagged<trait::DIDependence::DistanceRange, trait::Anti>>;
+
+  /// Sorted list of variables with dependence distances (flow and anti)
+  /// attached to them.
+  using SortedVarDistanceT =
+      std::map<std::string, DistanceInfo, std::less<std::string>>;
+
   /// Lists of reduction variables.
   using ReductionVarListT =
       std::array<SortedVarListT, trait::DIReduction::RK_NumberOf>;
@@ -54,7 +64,9 @@ public:
                         bcl::tagged<SortedVarListT, trait::LastPrivate>,
                         bcl::tagged<SortedVarListT, trait::ReadOccurred>,
                         bcl::tagged<SortedVarListT, trait::WriteOccurred>,
-                        bcl::tagged<ReductionVarListT, trait::Reduction>>;
+                        bcl::tagged<ReductionVarListT, trait::Reduction>,
+                        bcl::tagged<SortedVarDistanceT, trait::Dependence>,
+                        bcl::tagged<std::string, trait::Induction>>;
 
   ClangDependenceAnalyzer(clang::Stmt *Region, const GlobalOptions &GO,
       clang::DiagnosticsEngine &Diags, DIAliasTree &DIAT,
@@ -72,6 +84,13 @@ public:
   const ASTRegionTraitInfo & getDependenceInfo() const noexcept {
     return mDependenceInfo;
   }
+
+  clang::DiagnosticsEngine &getDiagnostics() const noexcept {
+    return mDiags;
+  }
+
+  clang::Stmt *getRegion() noexcept { return mRegion; }
+  const clang::Stmt *getRegion() const noexcept { return mRegion; }
 
 private:
   clang::Stmt *mRegion;

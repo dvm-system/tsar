@@ -21,7 +21,7 @@ int main() {
 #pragma dvm actual(A, B)
 #pragma dvm region in(A, B)out(A, B)
   {
-#pragma dvm parallel on([I][J]) tie(A[I][J], B[I][J])
+#pragma dvm parallel([I][J]) tie(A[I][J], B[I][J])
     for (int I = 0; I < L; ++I)
       for (int J = 0; J < L; ++J) {
         A[I][J] = 0;
@@ -38,7 +38,7 @@ int main() {
 #pragma dvm actual(A, B, Eps)
 #pragma dvm region in(A, B, Eps)out(A, Eps)
     {
-#pragma dvm parallel on([I][J]) tie(A[I][J], B[I][J]) reduction(max(Eps))
+#pragma dvm parallel([I][J]) tie(A[I][J], B[I][J]) reduction(max(Eps))
       for (int I = 1; I < L - 1; ++I)
         for (int J = 1; J < L - 1; ++J) {
           double Tmp = fabs(B[I][J] - A[I][J]);
@@ -51,7 +51,7 @@ int main() {
 #pragma dvm actual(A, B)
 #pragma dvm region in(A, B)out(B)
     {
-#pragma dvm parallel on([I][J]) tie(A[I][J], B[I][J])
+#pragma dvm parallel([I][J]) tie(A[I][J], B[I][J])
       for (int I = 1; I < L - 1; ++I)
         for (int J = 1; J < L - 1; ++J)
           B[I][J] =

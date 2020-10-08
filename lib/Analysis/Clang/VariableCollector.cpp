@@ -175,22 +175,34 @@ bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
     const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer,
     SortedVarListT &VarNames, clang::VarDecl **Error) {
+  auto Res = localize(T, DIN, ASTToClient, ClientToServer);
+  if (!std::get<1>(Res)) {
+    if (Error)
+      *Error = std::get<0>(Res);
+    return false;
+  }
+  if (std::get<0>(Res) && !std::get<2>(Res))
+    VarNames.insert(std::string(std::get<0>(Res)->getName()));
+  return true;
+}
+
+std::tuple<clang::VarDecl *, bool, bool> VariableCollector::localize(DIMemoryTrait &T,
+    const DIAliasNode &DIN, const DIMemoryMatcher &ASTToClient,
+    const ClonedDIMemoryMatcher &ClientToServer) {
   auto Search = findDecl(*T.getMemory(), ASTToClient, ClientToServer);
   // Do no specify traits for variables declared in a loop body
   // these variables are private by default. Moreover, these variables are
   // not visible outside the loop and could not be mentioned in clauses
   // before loop.
   if (Search.first && CanonicalLocals.count(Search.first))
-    return true;
+    return std::make_tuple(Search.first, true, true);
   if (Search.second == VariableCollector::CoincideLocal) {
-      VarNames.insert(std::string(Search.first->getName()));
+    return std::make_tuple(Search.first, true, false);
   } else if (Search.second == VariableCollector::CoincideGlobal) {
-    VarNames.insert(std::string(Search.first->getName()));
     GlobalRefs.try_emplace(const_cast<DIAliasNode *>(&DIN), Search.first);
+    return std::make_tuple(Search.first, true, false);
   } else if (Search.second != VariableCollector::Unknown) {
-    if (Error)
-      *Error = Search.first;
-    return false;
+    return std::make_tuple(Search.first, false, false);
   }
-  return true;
+  return std::make_tuple(nullptr, true, false);
 }

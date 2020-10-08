@@ -37,8 +37,10 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 using namespace clang;
 using namespace llvm;
@@ -186,6 +188,10 @@ class PragmaParallel : public ParallelItem {
 public:
   using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
   using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
+  using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
+  using AcrossVarListT =
+      std::map<std::string, SmallVector<trait::DIDependence::DistanceRange, 3>,
+               std::less<std::string>>;
   using LoopNestT = SmallVector<ObjectID, 4>;
   using VarMappingT =
       DenseMap<ObjectID, SmallVector<std::pair<ObjectID, bool>, 4>>;
@@ -193,6 +199,7 @@ public:
   using ClauseList =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
                         bcl::tagged<ReductionVarListT, trait::Reduction>,
+                        bcl::tagged<AcrossVarListT, trait::Dependence>,
                         bcl::tagged<LoopNestT, trait::Induction>,
                         bcl::tagged<VarMappingT, trait::DirectAccess>>;
 
@@ -225,7 +232,12 @@ public:
 private:
   ParallelItem * exploitParallelism(const DFLoop &IR, const clang::ForStmt &AST,
     const FunctionAnalysis &Provider,
-    tsar::ClangDependenceAnalyzer &ASTDepInfo, ParallelItem *PI) override;
+    tsar::ClangDependenceAnalyzer &ASTRegionAnalysis,
+    ParallelItem *PI) override;
+
+  bool processRegularDependenceis(const DFLoop &DFL,
+    const tsar::ClangDependenceAnalyzer &ASRegionAnalysis,
+    const FunctionAnalysis &Provider, PragmaParallel &DVMHParallel);
 
   void optimizeLevel(PointerUnion<Loop *, Function *> Level,
     const FunctionAnalysis &Provider) override;
@@ -233,6 +245,81 @@ private:
   Parallelization mParallelizationInfo;
 };
 
+bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
+    const tsar::ClangDependenceAnalyzer &ASTRegionAnalysis,
+    const FunctionAnalysis &Provider, PragmaParallel &DVMHParallel) {
+  auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
+  if (ASTDepInfo.get<trait::Dependence>().empty())
+    return true;
+  auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
+  auto CanonicalItr = CL.find_as(&DFL);
+  auto ConstStep = dyn_cast_or_null<SCEVConstant>((*CanonicalItr)->getStep());
+  if (!ConstStep) {
+    toDiag(ASTRegionAnalysis.getDiagnostics(),
+           ASTRegionAnalysis.getRegion()->getBeginLoc(),
+           diag::warn_parallel_loop);
+    toDiag(ASTRegionAnalysis.getDiagnostics(),
+           ASTRegionAnalysis.getRegion()->getBeginLoc(),
+           diag::note_parallel_across_direction_unknown);
+    return false;
+  }
+  auto LoopID = DFL.getLoop()->getLoopID();
+  auto *AccessInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
+  if (!AccessInfo)
+    return false;
+  for (auto &Dep : ASTDepInfo.get<trait::Dependence>()) {
+    auto AccessItr =
+        find_if(AccessInfo->scope_accesses(LoopID), [&Dep](auto &Access) {
+          if (auto DIEM = dyn_cast<DIEstimateMemory>(Access.getArray())) {
+            return DIEM->getVariable()->getName() == Dep.first;
+          }
+          return false;
+        });
+    if (AccessItr == AccessInfo->scope_end(LoopID))
+      return false;
+    Optional<unsigned> DependentDim;
+    unsigned NumberOfDims = 0;
+    for (auto &Access :
+         AccessInfo->array_accesses(AccessItr->getArray(), LoopID)) {
+      NumberOfDims = std::max(NumberOfDims, Access.size());
+      for (auto *Subscript : Access) {
+        if (!Subscript || !isa<DIAffineSubscript>(Subscript))
+          return false;
+        auto Affine = cast<DIAffineSubscript>(Subscript);
+        ObjectID AnotherColumn = nullptr;
+        for (unsigned Idx = 0, IdxE = Affine->getNumberOfMonoms(); Idx < IdxE;
+             ++Idx) {
+          if (Affine->getMonom(Idx).Column == LoopID) {
+            if (AnotherColumn ||
+                DependentDim && *DependentDim != Affine->getDimension())
+              return false;
+            DependentDim = Affine->getDimension();
+          } else {
+            if (DependentDim && *DependentDim == Affine->getDimension())
+              return false;
+            AnotherColumn = Affine->getMonom(Idx).Column;
+          }
+        }
+      }
+    }
+    if (!DependentDim)
+      return nullptr;
+    auto I =
+        DVMHParallel.getClauses()
+            .get<trait::Dependence>()
+            .emplace(std::piecewise_construct, std::forward_as_tuple(Dep.first),
+                     std::forward_as_tuple())
+            .first;
+    I->second.resize(NumberOfDims);
+    if (ConstStep->getAPInt().isNegative())
+      I->second[*DependentDim] = {Dep.second.get<trait::Anti>().second,
+                                  Dep.second.get<trait::Flow>().second};
+    else
+      I->second[*DependentDim] = {Dep.second.get<trait::Flow>().second,
+                                  Dep.second.get<trait::Anti>().second};
+  }
+  return true;
+}
 } // namespace
 
 ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
@@ -241,7 +328,8 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     tsar::ClangDependenceAnalyzer &ASTRegionAnalysis, ParallelItem *PI) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
   if (!ASTDepInfo.get<trait::FirstPrivate>().empty() ||
-      !ASTDepInfo.get<trait::LastPrivate>().empty()) {
+      !ASTDepInfo.get<trait::LastPrivate>().empty() ||
+      ASTDepInfo.get<trait::Induction>().empty()) {
     if (PI)
       PI->finalize();
     return PI;
@@ -249,11 +337,20 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
   if (PI) {
     auto DVMHParallel = cast<PragmaParallel>(PI);
     auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
+    DVMHParallel->getClauses().get<trait::Private>().erase(
+        ASTDepInfo.get<trait::Induction>());
     if (PL[IR.getLoop()].isHostOnly() ||
         ASTDepInfo.get<trait::Private>() !=
             DVMHParallel->getClauses().get<trait::Private>() ||
         ASTDepInfo.get<trait::Reduction>() !=
             DVMHParallel->getClauses().get<trait::Reduction>()) {
+      DVMHParallel->getClauses().get<trait::Private>().insert(
+          ASTDepInfo.get<trait::Induction>());
+      PI->finalize();
+      return PI;
+    }
+    if (!processRegularDependenceis(IR, ASTRegionAnalysis, Provider,
+                                    *DVMHParallel)) {
       PI->finalize();
       return PI;
     }
@@ -272,6 +369,9 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       DVMHParallel->getClauses().get<trait::Reduction>()[I].insert(
           ASTDepInfo.get<trait::Reduction>()[I].begin(),
           ASTDepInfo.get<trait::Reduction>()[I].end());
+    if (!processRegularDependenceis(IR, ASTRegionAnalysis, Provider,
+                                    *DVMHParallel))
+      return nullptr;
     auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
     if (!PL[IR.getLoop()].isHostOnly() && ASTRegionAnalysis.evaluateDefUse()) {
       if (!ASTDepInfo.get<trait::ReadOccurred>().empty()) {
@@ -342,6 +442,8 @@ template <typename ItrT>
 static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
     const DIArrayAccessInfo &AccessInfo,
     Parallelization &ParallelizationInfo) {
+  auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
+  auto &DFI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
   for (; I != EI; ++I) {
     auto ID = (*I)->getLoopID();
     if (!ID)
@@ -360,6 +462,15 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
     if (PI == PL->Entry.end())
       continue;
     auto &DVMHParallel = cast<PragmaParallel>(**PI);
+    auto CanonicalItr = CL.find_as(DFI.getRegionFor(*I));
+    assert(CanonicalItr != CL.end() && (**CanonicalItr).isCanonical() &&
+      "Parallel loop must have the canonical loop form!");
+    auto ConstStep = dyn_cast_or_null<SCEVConstant>((*CanonicalItr)->getStep());
+    // We assume positive step if we cannot compute it accurately.
+    // Error in 'tie' directive does not produce an incorrect program.
+    // However, it may produce the less effective one.
+    auto IsGrowingInduction =
+        (ConstStep && ConstStep->getAPInt().isNegative()) ? false : true;
     for (auto &Access : AccessInfo.scope_accesses(ID)) {
       if (!isa<DIEstimateMemory>(Access.getArray()))
         continue;
@@ -383,7 +494,10 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
                            .template get<trait::Induction>()
                            .end())
               MappingItr->second[Affine->getDimension()] = {
-                  *Itr, !Affine->getMonom(I).Value.isNegative() };
+                  *Itr, !Affine->getMonom(I).Value.isNegative() &&
+                                IsGrowingInduction ||
+                            Affine->getMonom(I).Value.isNegative() &&
+                                !IsGrowingInduction};
           }
         }
       }
@@ -578,6 +692,27 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
                   ")";
             else
               addParallelMapping(*L, *Parallel, Provider, PragmaStr);
+            if (!Parallel->getClauses().get<trait::Dependence>().empty()) {
+              PragmaStr += "across(";
+              for (auto &Across :
+                Parallel->getClauses().get<trait::Dependence>()) {
+                PragmaStr += Across.first;
+                for (auto &Range : Across.second) {
+                  PragmaStr += "[";
+                  if (Range.first)
+                    Range.first->toString(PragmaStr);
+                  else
+                    PragmaStr += "0";
+                  PragmaStr += ":";
+                  if (Range.second)
+                    Range.second->toString(PragmaStr);
+                  else
+                    PragmaStr += "0";
+                  PragmaStr += "]";
+                }
+              }
+              PragmaStr += ")";
+            }
             addClauseIfNeed(" private",
                             Parallel->getClauses().get<trait::Private>(),
                             PragmaStr);

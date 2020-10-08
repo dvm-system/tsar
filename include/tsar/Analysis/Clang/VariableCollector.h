@@ -82,14 +82,24 @@ struct VariableCollector
   findDecl(const DIMemory &DIM, const DIMemoryMatcher &ASTToClient,
            const ClonedDIMemoryMatcher &ClientToServer);
 
-  /// Check whether it is possible to use high-level syntax to create copy for
-  /// all memory locations in `TS` for each thread.
+  /// Check whether it is possible to use high-level syntax to create copy of a
+  /// specified memory `T` for each thread.
   ///
-  /// On failure if `Error` not nullptr set it to the first variable which
-  /// prevents localization (or to nullptr if variable not found).
-  bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
-                const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
+  /// On success to create a local copy of a memory source-level variable
+  /// should be mentioned in a clauses like private or reduction.
+  /// \attention  This method does not check whether it is valid to create a
+  /// such copy, for example global variables must be checked later.
+  /// Localized global variables breaks relation with original global variables.
+  /// And program may become invalid if such variables are used in calls inside
+  /// the loop body.
+  /// \return On failure it returns the variable which prevents localization (or
+  /// to nullptr if variable not found). In this case the second argument in
+  /// tuple is false. Otherwise, it is true. The third argument is set to true
+  /// if the variable is defined inside the loop head or the loop body.
+  std::tuple<clang::VarDecl *, bool, bool>
+  localize(DIMemoryTrait &T, const DIAliasNode &DIN,
+           const DIMemoryMatcher &ASTToClient,
+           const ClonedDIMemoryMatcher &ClientToServer);
 
   /// Check whether it is possible to use high-level syntax to create copy of a
   /// specified memory `T` for each thread.
@@ -97,15 +107,19 @@ struct VariableCollector
   /// On success to create a local copy of a memory source-level variable
   /// should be mentioned in a clauses like private or reduction.
   /// This variable will be stored in a list of variables `VarNames`.
-  /// \attention  This method does not check whether it is valid to create a
-  /// such copy, for example global variables must be checked later.
-  /// Localized global variables breaks relation with original global variables.
-  /// And program may become invalid if such variables are used in calls inside
-  /// the loop body.
-  /// \post On failure if `Error` not nullptr set it to the first variable which
+  /// \post On failure if `Error` not nullptr set it to the variable which
   /// prevents localization (or to nullptr if variable not found).
   bool localize(DIMemoryTrait &T, const DIAliasNode &DIN,
                 const DIMemoryMatcher &ASTToClient,
+                const ClonedDIMemoryMatcher &ClientToServer,
+                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
+
+  /// Check whether it is possible to use high-level syntax to create copy for
+  /// all memory locations in `TS` for each thread.
+  ///
+  /// On failure if `Error` not nullptr set it to the first variable which
+  /// prevents localization (or to nullptr if variable not found).
+  bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
                 SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
 

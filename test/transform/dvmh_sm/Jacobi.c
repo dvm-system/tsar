@@ -46,9 +46,18 @@ int main() {
 //CHECK: Jacobi.c:31:5: remark: parallel execution of loop is possible
 //CHECK:     for (int I = 1; I < L - 1; ++I)
 //CHECK:     ^
+//CHECK: Jacobi.c:32:7: remark: parallel execution of loop is possible
+//CHECK:       for (int J = 1; J < L - 1; ++J) {
+//CHECK:       ^
 //CHECK: Jacobi.c:37:5: remark: parallel execution of loop is possible
 //CHECK:     for (int I = 1; I < L - 1; ++I)
 //CHECK:     ^
+//CHECK: Jacobi.c:38:7: remark: parallel execution of loop is possible
+//CHECK:       for (int J = 1; J < L - 1; ++J)
+//CHECK:       ^
 //CHECK: Jacobi.c:21:3: remark: parallel execution of loop is possible
 //CHECK:   for (int I = 0; I < L; ++I)
 //CHECK:   ^
+//CHECK: Jacobi.c:22:5: remark: parallel execution of loop is possible
+//CHECK:     for (int J = 0; J < L; ++J) {
+//CHECK:     ^

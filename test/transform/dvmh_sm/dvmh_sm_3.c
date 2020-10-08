@@ -19,9 +19,15 @@ int main() {
 //CHECK: dvmh_sm_3.c:14:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 0; I < N; ++I)
 //CHECK:   ^
+//CHECK: dvmh_sm_3.c:15:5: remark: parallel execution of loop is possible
+//CHECK:     for (J = 0; J < N; ++J)
+//CHECK:     ^
 //CHECK: dvmh_sm_3.c:11:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < N; ++I)
 //CHECK:   ^
 //CHECK: dvmh_sm_3.c:8:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 0; I < N; ++I)
 //CHECK:   ^
+//CHECK: dvmh_sm_3.c:9:5: remark: parallel execution of loop is possible
+//CHECK:     for (J = 0; J < N; ++J)
+//CHECK:     ^

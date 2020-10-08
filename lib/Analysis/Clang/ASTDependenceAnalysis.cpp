@@ -91,28 +91,36 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           return false;
         }
       } else {
-        auto Search = mASTVars.findDecl(*(*TS.begin())->getMemory(),
-          mASTToClient, mDIMemoryMatcher);
-        if (Search.second != VariableCollector::CoincideLocal ||
-            Search.first != mASTVars.Induction) {
+        auto Localized = mASTVars.localize(**TS.begin(), *TS.getNode(),
+                                           mASTToClient, mDIMemoryMatcher);
+        if (!std::get<0>(Localized) || !std::get<1>(Localized) ||
+            std::get<0>(Localized)->getCanonicalDecl() !=
+                mASTVars.Induction->getCanonicalDecl()) {
           if (!IgnoreRedundant) {
             toDiag(mDiags, mRegion->getBeginLoc(),
                    clang::diag::warn_parallel_loop);
-            if (mASTVars.Induction && Search.first &&
-                mASTVars.Induction != Search.first) {
+            if (!std::get<1>(Localized)) {
+              toDiag(mDiags,
+                     std::get<0>(Localized)
+                         ? std::get<0>(Localized)->getLocation()
+                         : mRegion->getBeginLoc(),
+                     clang::diag::note_parallel_localize_induction_unable);
+            } else {
               toDiag(mDiags, mASTVars.Induction->getLocation(),
                      clang::diag::note_parallel_multiple_induction);
-              toDiag(mDiags, Search.first->getLocation(),
-                     clang::diag::note_parallel_multiple_induction);
-            } else {
-              toDiag(mDiags, mRegion->getBeginLoc(),
-                     clang::diag::note_parallel_multiple_induction);
+              if (std::get<0>(Localized))
+                toDiag(mDiags, std::get<0>(Localized)->getLocation(),
+                       clang::diag::note_parallel_multiple_induction);
             }
             return false;
           }
         }
-        mInToLocalize.push_back(&TS);
-        mOutToLocalize.push_back(&TS);
+        mDependenceInfo.get<trait::Induction>() =
+            std::string(mASTVars.Induction->getName());
+        if (!std::get<2>(Localized)) {
+          mInToLocalize.push_back(&TS);
+          mOutToLocalize.push_back(&TS);
+        }
       }
     } else if (Dptr.is<trait::Private>()) {
       clang::VarDecl *Status = nullptr;
@@ -179,6 +187,39 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
                      clang::diag::note_parallel_localize_reduction_unable);
               return false;
             }
+          }
+        }
+      }
+    } else if (Dptr.is_any<trait::Anti, trait::Flow>() &&
+               !Dptr.is<trait::Output>()) {
+      for (auto &T : TS) {
+        DistanceInfo Info;
+        auto setIf = [&Info, &T](auto &&Kind) {
+          if (auto Dep = T->get<std::decay_t<decltype(Kind)>>())
+            if (Dep->isKnownDistance())
+              Info.get<std::decay_t<decltype(Kind)>>() = Dep->getDistance();
+            else
+              return false;
+          return true;
+        };
+        if (setIf(trait::Flow{}) && setIf(trait::Anti{})) {
+          clang::VarDecl *Status = nullptr;
+          auto Search = mASTVars.findDecl(*(*TS.begin())->getMemory(),
+                                          mASTToClient, mDIMemoryMatcher);
+          if (Search.first &&
+            (Search.second == VariableCollector::CoincideLocal ||
+              VariableCollector::CoincideGlobal)) {
+            mDependenceInfo.get<trait::Dependence>().emplace(
+              std::string(Search.first->getName()), std::move(Info));
+            mInToLocalize.push_back(&TS);
+            mOutToLocalize.push_back(&TS);
+          } else if (!IgnoreRedundant) {
+            toDiag(mDiags, mRegion->getBeginLoc(),
+                   clang::diag::warn_parallel_loop);
+            if (Search.first)
+              toDiag(mDiags, Search.first->getLocation(),
+                     clang::diag::note_parallel_variable_not_analyzed);
+            return false;
           }
         }
       }

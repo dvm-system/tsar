@@ -103,6 +103,12 @@ struct ClausePrinter {
     }
   }
 
+  template <class Trait>
+  void operator()(const ClangDependenceAnalyzer::SortedVarDistanceT &) {}
+
+  template <class Trait>
+  void operator()(const std::string &) {}
+
   SmallString<128> &ParallelFor;
 };
 } // namespace
@@ -111,6 +117,8 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     const DFLoop &IR, const clang::ForStmt &AST,
     const FunctionAnalysis &Provider,
     tsar::ClangDependenceAnalyzer &ASTDepInfo, ParallelItem *PI) {
+  if (ASTDepInfo.getDependenceInfo().get<trait::Induction>().empty())
+    return nullptr;
   auto *M = IR.getLoop()->getHeader()->getModule();
   auto &TfmCtx = *getAnalysis<TransformationEnginePass>().getContext(*M);
   SmallString<128> ParallelFor("#pragma omp parallel for default(shared)");
