@@ -45,55 +45,40 @@ int main(int Argc, char *Argv[]) {
 
 void init(double (*A)[NY][NZ]) {
   int I, J, K;
-#pragma dvm region targets(HOST)
-  {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
-    for (I = 0; I < NX; I++)
-      for (J = 0; J < NY; J++)
-        for (K = 0; K < NZ; K++)
-          if (K == 0 || K == NZ - 1 || J == 0 || J == NY - 1 || I == 0 ||
-              I == NX - 1)
-            A[I][J][K] =
-                10.0 * I / (NX - 1) + 10.0 * J / (NY - 1) + 10.0 * K / (NZ - 1);
-          else
-            A[I][J][K] = 0;
-  }
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K])
+  for (I = 0; I < NX; I++)
+    for (J = 0; J < NY; J++)
+      for (K = 0; K < NZ; K++)
+        if (K == 0 || K == NZ - 1 || J == 0 || J == NY - 1 || I == 0 ||
+            I == NX - 1)
+          A[I][J][K] =
+              10.0 * I / (NX - 1) + 10.0 * J / (NY - 1) + 10.0 * K / (NZ - 1);
+        else
+          A[I][J][K] = 0;
 }
 
 double iter(double (*A)[NY][NZ]) {
   int I, J, K;
   double Eps = 0;
-#pragma dvm region targets(HOST)
-  {
-#pragma dvm parallel([I]) tie(A[I][][])                                        \
-    across(A [1:1] [0:0] [0:0]) private(J, K)
-    for (I = 1; I < NX - 1; I++)
-      for (J = 1; J < NY - 1; J++)
-        for (K = 1; K < NZ - 1; K++)
-          A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
-  }
-
-#pragma dvm region targets(HOST)
-  {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
-    for (I = 1; I < NX - 1; I++)
-      for (J = 1; J < NY - 1; J++)
-        for (K = 1; K < NZ - 1; K++)
-          A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
-  }
-
-#pragma dvm region targets(HOST)
-  {
-#pragma dvm parallel([I]) tie(A[I][][]) private(J, K) reduction(max(Eps))
-    for (I = 1; I < NX - 1; I++)
-      for (J = 1; J < NY - 1; J++)
-        for (K = 1; K < NZ - 1; K++) {
-          double Tmp1 = (A[I][J][K - 1] + A[I][J][K + 1]) / 2;
-          double Tmp2 = fabs(A[I][J][K] - Tmp1);
-          Eps = MAX(Eps, Tmp2);
-          A[I][J][K] = Tmp1;
-        }
-  }
-
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [1:1] [0:0] [0:0])
+  for (I = 1; I < NX - 1; I++)
+    for (J = 1; J < NY - 1; J++)
+      for (K = 1; K < NZ - 1; K++)
+        A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [1:1] [0:0])
+  for (I = 1; I < NX - 1; I++)
+    for (J = 1; J < NY - 1; J++)
+      for (K = 1; K < NZ - 1; K++)
+        A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
+#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [0:0] [1:1])    \
+    reduction(max(Eps))
+  for (I = 1; I < NX - 1; I++)
+    for (J = 1; J < NY - 1; J++)
+      for (K = 1; K < NZ - 1; K++) {
+        double Tmp1 = (A[I][J][K - 1] + A[I][J][K + 1]) / 2;
+        double Tmp2 = fabs(A[I][J][K] - Tmp1);
+        Eps = MAX(Eps, Tmp2);
+        A[I][J][K] = Tmp1;
+      }
   return Eps;
 }

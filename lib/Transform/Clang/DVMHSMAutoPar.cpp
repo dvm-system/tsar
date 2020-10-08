@@ -357,8 +357,12 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
   } else {
     std::unique_ptr<PragmaActual> DVMHActual;
     std::unique_ptr<PragmaGetActual> DVMHGetActual;
-    auto DVMHRegion = std::make_unique<PragmaRegion>();
-    DVMHRegion->finalize();
+    std::unique_ptr<PragmaRegion> DVMHRegion;
+    auto Localized = ASTRegionAnalysis.evaluateDefUse();
+    if (Localized) {
+      DVMHRegion = std::make_unique<PragmaRegion>();
+      DVMHRegion->finalize();
+    }
     auto DVMHParallel = std::make_unique<PragmaParallel>(DVMHRegion.get());
     PI = DVMHParallel.get();
     DVMHParallel->getClauses().get<trait::Private>().insert(
@@ -373,7 +377,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
                                     *DVMHParallel))
       return nullptr;
     auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
-    if (!PL[IR.getLoop()].isHostOnly() && ASTRegionAnalysis.evaluateDefUse()) {
+    if (!PL[IR.getLoop()].isHostOnly() && Localized) {
       if (!ASTDepInfo.get<trait::ReadOccurred>().empty()) {
         DVMHActual = std::make_unique<PragmaActual>();
             DVMHActual->getMemory()
@@ -395,8 +399,17 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       DVMHRegion->getClauses().get<trait::Private>().insert(
           ASTDepInfo.get<trait::Private>().begin(),
           ASTDepInfo.get<trait::Private>().end());
-    } else {
+    } else if (Localized) {
       DVMHRegion->setHostOnly(true);
+      // TODO (kaniandr@gmail.com): try to predict influence of OpenMP collapse
+      // directives. Sometimes they may degrade performance, so we do not use
+      // them now if there are no regular dependencies.
+      if (ASTDepInfo.get<trait::Dependence>().empty())
+        DVMHParallel->finalize();
+    } else if (ASTDepInfo.get<trait::Dependence>().empty()) {
+      // TODO (kaniandr@gmail.com): try to predict influence of OpenMP collapse
+      // directives. Sometimes they may degrade performance, so we do not use
+      // them now if there are no regular dependencies.
       DVMHParallel->finalize();
     }
     auto EntryInfo =
@@ -417,13 +430,15 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       ExitLoc = &ExitInfo.first->get<ParallelLocation>().back();
       ExitLoc->Anchor = IR.getLoop()->getLoopID();
     }
-    ExitLoc->Exit.push_back(
-        std::make_unique<ParallelMarker<PragmaRegion>>(0, DVMHRegion.get()));
+    if (DVMHRegion)
+      ExitLoc->Exit.push_back(
+          std::make_unique<ParallelMarker<PragmaRegion>>(0, DVMHRegion.get()));
     if (DVMHActual)
       EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
           std::move(DVMHActual));
-    EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
-        std::move(DVMHRegion));
+    if (DVMHRegion)
+      EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
+          std::move(DVMHRegion));
     EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
         std::move(DVMHParallel));
     if (DVMHGetActual)
