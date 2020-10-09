@@ -47,6 +47,7 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Instruction.h>
 #endif//DEBUG
@@ -366,6 +367,16 @@ public:
       bcl::tagged<llvm::Function *, llvm::Function>,
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>>> InterprocDefUseInfo;
 
+  /// This represents array's memory location info.
+  typedef std::pair<bool, MemoryLocationRange> ArrayLocInfo;
+
+  struct DimensionInfo {
+    unsigned SCEVType = llvm::SCEVTypes::scUnknown;
+    uint64_t RangeMin = 0;
+    uint64_t RangeMax = 0;
+    uint64_t Stride = 0;
+  };
+
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree *DT, DefinedMemoryInfo &DefInfo,
@@ -433,8 +444,8 @@ public:
   void collapse(DFRegion *R);
 
   /// Calculates array range in memory.
-  MemoryLocationRange calcArrayLocation(DFRegion *R,
-                                        const MemoryLocationRange &Loc);
+  ArrayLocInfo calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
+  
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
