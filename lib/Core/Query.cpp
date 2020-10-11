@@ -294,6 +294,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   // avoid dangling handles. So, we add pool before environment in the manager.
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createRestrictionArgumentsPass());
 #ifdef APC_FOUND
   Passes.add(createAPCContextStorage());
   addIfNecessary(createAPCLoopInfoBasePass(), mPrintPasses,

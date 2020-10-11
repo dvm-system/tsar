@@ -191,6 +191,12 @@ ImmutablePass *createGlobalDefinedMemoryStorage();
 /// analysis.
 void initializeGlobalDefinedMemoryWrapperPass(PassRegistry &Registry);
 
+/// Initialize a pass to perform iterprocedural analysis of restrict arguments
+void initializeRestrictionArgumentsPassPass(PassRegistry& Registry);
+
+/// Create a pass to perform iterprocedural analysis of restrict arguments
+ModulePass* createRestrictionArgumentsPass();
+
 /// Create analysis server.
 ModulePass *createDIMemoryAnalysisServer();
 
