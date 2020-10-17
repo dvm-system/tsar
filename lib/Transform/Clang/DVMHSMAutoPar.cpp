@@ -29,10 +29,12 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Clang/Utils.h"
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Passes.h"
+#include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
@@ -50,75 +52,6 @@ using namespace tsar;
 #define DEBUG_TYPE "clang-dvmh-sm-parallel"
 
 namespace {
-/// Sequence which determines an order of parallel constructs in a source code.
-/// This is similar to a basic block in a control-flow graph.
-using ParallelBlock = llvm::SmallVector<std::unique_ptr<ParallelItem>, 4>;
-
-/// This determine location in a source code to insert parallel constructs.
-struct ParallelLocation {
-  /// Source-code item which implies parallel constructs.
-  PointerUnion<MDNode *, Instruction *> Anchor;
-
-  /// Parallel constructs before a specified anchor.
-  ParallelBlock Entry;
-
-  /// Parallel constructs after a specified anchor.
-  ParallelBlock Exit;
-};
-
-/// This represents results of program parallelization.
-class Parallelization {
-  /// Collection of basic blocks with attached parallel blocks to them.
-  using ParallelBlocks = llvm::DenseMap<
-      llvm::BasicBlock *, llvm::SmallVector<ParallelLocation, 1>,
-      llvm::DenseMapInfo<llvm::BasicBlock *>,
-      TaggedDenseMapPair<bcl::tagged<llvm::BasicBlock *, llvm::BasicBlock>,
-                         bcl::tagged<llvm::SmallVector<ParallelLocation, 1>,
-                                     ParallelLocation>>>;
-
-  /// Functions which contains parallel constructs.
-  using ParallelFunctions = llvm::SmallPtrSet<llvm::Function *, 32>;
-
-public:
-  using iterator = ParallelBlocks::iterator;
-  using const_iterator = ParallelBlocks::const_iterator;
-
-  iterator begin() { return mParallelBlocks.begin(); }
-  iterator end() { return mParallelBlocks.end(); }
-
-  const_iterator begin() const { return mParallelBlocks.begin(); }
-  const_iterator end() const { return mParallelBlocks.end(); }
-
-  /// Return false if program has not been parallelized.
-  bool empty() const { return mParallelBlocks.empty(); }
-
-  /// Attach a new parallel block to a specified one and mark corresponding
-  /// function as parallel.
-  template<class... Ts>
-  std::pair<iterator, bool> try_emplace(llvm::BasicBlock *BB, Ts &&... Args) {
-    mParallelFuncs.insert(BB->getParent());
-    return mParallelBlocks.try_emplace(BB, std::forward<Ts>(Args)...);
-  }
-
-  iterator find(const llvm::BasicBlock *BB) { return mParallelBlocks.find(BB); }
-  const_iterator find(const llvm::BasicBlock *BB) const {
-    return mParallelBlocks.find(BB);
-  }
-
-  using function_iterator = ParallelFunctions::iterator;
-  using const_function_iterator = ParallelFunctions::const_iterator;
-
-  function_iterator func_begin() { return mParallelFuncs.begin(); }
-  function_iterator func_end() { return mParallelFuncs.end(); }
-
-  const_function_iterator func_begin() const { return mParallelFuncs.begin(); }
-  const_function_iterator func_end() const { return mParallelFuncs.end(); }
-
-private:
-  llvm::SmallPtrSet<llvm::Function *, 32> mParallelFuncs;
-  ParallelBlocks mParallelBlocks;
-};
-
 class PragmaRegion : public ParallelLevel {
 public:
   using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
@@ -576,38 +509,6 @@ void ClangDVMHSMParallelization::optimizeLevel(
   }
 }
 
-/// Compute inductions for loops in a parallel nest with a specified outermost
-/// loop 'L'.
-static void getBaseInductionsForNest(
-    Loop &L, PragmaParallel &Parallel, const FunctionAnalysis &Provider,
-    SmallVectorImpl<std::pair<ObjectID, StringRef>> &Inductions) {
-  auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
-  auto &RI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
-  auto &MemoryMatcher =
-      Provider.value<MemoryMatcherImmutableWrapper *>()->get();
-  auto addToInductions = [&Inductions, &CL, &MemoryMatcher, &RI](Loop &L) {
-    auto *DFL = RI.getRegionFor(&L);
-    assert(DFL && "A parallel directive has been attached to an "
-                  "unknown loop!");
-    auto CanonicalItr = CL.find_as(DFL);
-    auto *Induction = (**CanonicalItr).getInduction();
-    assert(Induction &&
-           "Induction variable must not be null in canonical loop!");
-    auto MatchItr = MemoryMatcher.Matcher.find<IR>(Induction);
-    assert(MatchItr != MemoryMatcher.Matcher.end() &&
-           "AST-level variable representation must be available!");
-    Inductions.emplace_back(L.getLoopID(), MatchItr->get<AST>()->getName());
-  };
-  addToInductions(L);
-  auto *CurrLoop = &L;
-  for (unsigned I = 1,
-                EI = Parallel.getClauses().get<trait::Induction>().size();
-       I < EI; ++I) {
-    CurrLoop = *CurrLoop->begin();
-    addToInductions(*CurrLoop);
-  }
-}
-
 static inline void addVarList(
     const ClangDependenceAnalyzer::SortedVarListT &VarInfoList,
     SmallVectorImpl<char> &Clause) {
@@ -629,7 +530,12 @@ static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
   auto &MemoryMatcher =
       Provider.value<MemoryMatcherImmutableWrapper *>()->get();
   SmallVector<std::pair<ObjectID, StringRef>, 4> Inductions;
-  getBaseInductionsForNest(L, Parallel, Provider, Inductions);
+  getBaseInductionsForNest(L,
+                           Parallel.getClauses().get<trait::Induction>().size(),
+                           CL, RI, MemoryMatcher, Inductions);
+  assert(Inductions.size() ==
+             Parallel.getClauses().get<trait::Induction>().size() &&
+    "Unable to find induction variable for some of the loops in a parallel nest!");
   PragmaStr.push_back('(');
   for (auto &LToI : Inductions) {
     PragmaStr.push_back('[');

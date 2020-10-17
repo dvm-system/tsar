@@ -39,6 +39,7 @@
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"

@@ -35,8 +35,6 @@
 #include <bcl/cell.h>
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
-#include <llvm/ADT/Optional.h>
-#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/PointerUnion.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/DenseMap.h>
@@ -52,145 +50,11 @@ class DFLoop;
 class AnalysisSocketInfo;
 class ClangDependenceAnalyzer;
 class DIMemoryEnvironment;
+class ParallelItem;
 class OptimizationRegion;
 class TransformationContext;
 struct GlobalOptions;
 struct MemoryMatchInfo;
-
-LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
-
-/// This represents a parallel construct.
-class ParallelItem {
-  enum Flags : uint8_t {
-    NoProperty = 0,
-    Final = 1u << 0,
-    ChildPossible = 1u << 1,
-    Marker = 1u << 2,
-    LLVM_MARK_AS_BITMASK_ENUM(Marker)
-  };
-public:
-  explicit ParallelItem(unsigned Kind, bool IsFinal,
-                        ParallelItem *Parent = nullptr)
-    : ParallelItem(Kind, IsFinal, false, false, Parent) {}
-  virtual ~ParallelItem() {}
-
-  /// Return user-defined kind of a parallel item.
-  unsigned getKind() const noexcept { return mKind; }
-
-  /// Return true if this item may contain nested parallel items.
-  bool isChildPossible() const noexcept { return mFlags & ChildPossible; }
-
-  /// Return true if this item has been finalized. For hierarchical source code
-  /// constructs (for example loops) it means that nested constructs should not
-  /// be analyzed.
-  ///
-  /// Use finalize() method to mark this item as final.
-  bool isFinal() const noexcept { return mFlags & Final; }
-
-  /// Return true if this is a marker which is auxiliary construction.
-  bool isMarker() const noexcept { return mFlags & Marker; }
-
-  ParallelItem *getParent() noexcept { return mParent; }
-  const ParallelItem *getParent() const noexcept { return mParent; }
-
-  void setParent(ParallelItem *Parent) noexcept { mParent = Parent; }
-
-  /// Mark item as final.
-  ///
-  /// \attention Overridden methods have to call this one to set corresponding
-  /// flags.
-  virtual void finalize() { mFlags |= Final; }
-
-protected:
-  ParallelItem(unsigned Kind, bool IsFinal, bool IsMarker, bool IsChildPossible,
-               ParallelItem *Parent)
-      : mParent(Parent), mFlags(NoProperty), mKind(Kind) {
-    if (IsFinal)
-      mFlags |= Final;
-    if (IsMarker)
-      mFlags |= Marker;
-    if (IsChildPossible)
-      mFlags |= ChildPossible;
-  }
-
-private:
-  ParallelItem *mParent;
-  Flags mFlags;
-  unsigned mKind;
-};
-
-/// This represents a parallel construct which may contain other constructs
-/// (for exmplae DVMH region contains parallel loops).
-class ParallelLevel : public ParallelItem {
-public:
-  using child_iterator = std::vector<ParallelItem *>::iterator;
-  using const_child_iterator = std::vector<ParallelItem *>::const_iterator;
-
-  static bool classof(const ParallelItem *Item) noexcept {
-    return Item->isChildPossible();
-  }
-
-  explicit ParallelLevel(unsigned Kind, bool IsFinal,
-                        ParallelItem *Parent = nullptr)
-      : ParallelItem(Kind, IsFinal, true, false, Parent) {
-  }
-  ~ParallelLevel() {
-    for (auto *Child : mChildren)
-      Child->setParent(nullptr);
-  }
-
-  child_iterator child_insert(ParallelItem *Item) {
-    mChildren.push_back(Item);
-    if (Item->getParent()) {
-      auto PrevChildItr = llvm::find(
-          llvm::cast<ParallelLevel>(Item->getParent())->children(), Item);
-      assert(PrevChildItr !=
-                 llvm::cast<ParallelLevel>(Item->getParent())->child_end() &&
-             "Corrupted parallel item, parent must contain its child!");
-      llvm::cast<ParallelLevel>(Item->getParent())->child_erase(PrevChildItr);
-    }
-    Item->setParent(this);
-    return mChildren.end() - 1;
-  }
-
-  child_iterator child_erase(child_iterator I) {
-    (*I)->setParent(nullptr);
-    return mChildren.erase(I);
-  }
-
-  child_iterator child_begin() { return mChildren.begin(); }
-  child_iterator child_end() { return mChildren.end(); }
-
-  const_child_iterator child_begin() const { return mChildren.begin(); }
-  const_child_iterator child_end() const { return mChildren.end(); }
-
-  llvm::iterator_range<child_iterator> children() {
-    return llvm::make_range(child_begin(), child_end());
-  }
-
-  llvm::iterator_range<const_child_iterator> children() const {
-    return llvm::make_range(child_begin(), child_end());
-  }
-
-private:
-  std::vector<ParallelItem *> mChildren;
-};
-
-/// This is auxiliary item which references to an item of a specified type.
-///
-/// Use get/setParent() to access original item. This class is useful to mark
-/// the end of a parallel construct in source code.
-template<class ItemT>
-class ParallelMarker : public ParallelItem {
-public:
-  static bool classof(const ParallelItem *Item) noexcept {
-    return Item->isMarker() && Item->getParent() &&
-           llvm::isa<ItemT>(Item->getParent());
-  }
-
-  ParallelMarker(unsigned Kind, ItemT *For)
-      : ParallelItem(Kind, true, true, false, For) {}
-};
 }
 
 namespace llvm {
