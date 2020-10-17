@@ -533,21 +533,12 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
     if (PI == PL->Entry.end())
       continue;
     auto &DVMHParallel = cast<PragmaParallel>(**PI);
-    auto CanonicalItr = CL.find_as(DFI.getRegionFor(*I));
-    assert(CanonicalItr != CL.end() && (**CanonicalItr).isCanonical() &&
-      "Parallel loop must have the canonical loop form!");
-    auto ConstStep = dyn_cast_or_null<SCEVConstant>((*CanonicalItr)->getStep());
-    // We assume positive step if we cannot compute it accurately.
-    // Error in 'tie' directive does not produce an incorrect program.
-    // However, it may produce the less effective one.
-    auto IsGrowingInduction =
-        (ConstStep && ConstStep->getAPInt().isNegative()) ? false : true;
+    auto &Clauses = DVMHParallel.getClauses();
     for (auto &Access : AccessInfo.scope_accesses(ID)) {
       if (!isa<DIEstimateMemory>(Access.getArray()))
         continue;
       auto MappingItr =
-          DVMHParallel.getClauses()
-              .template get<trait::DirectAccess>()
+          Clauses.template get<trait::DirectAccess>()
               .try_emplace(Access.getArray()->getAsMDNode(), Access.size(),
                            std::pair<ObjectID, bool>(nullptr, true))
               .first;
@@ -558,17 +549,11 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
           for (unsigned I = 0, EI = Affine->getNumberOfMonoms(); I < EI; ++I) {
             if (Affine->getMonom(I).Value.isNullValue())
               continue;
-            auto Itr =
-                find(DVMHParallel.getClauses().template get<trait::Induction>(),
-                     Affine->getMonom(I).Column);
-            if (Itr != DVMHParallel.getClauses()
-                           .template get<trait::Induction>()
-                           .end())
+            auto Itr = find(Clauses.template get<trait::Induction>(),
+                            Affine->getMonom(I).Column);
+            if (Itr != Clauses.template get<trait::Induction>().end())
               MappingItr->second[Affine->getDimension()] = {
-                  *Itr, !Affine->getMonom(I).Value.isNegative() &&
-                                IsGrowingInduction ||
-                            Affine->getMonom(I).Value.isNegative() &&
-                                !IsGrowingInduction};
+                  *Itr, !Affine->getMonom(I).Value.isNegative()};
           }
         }
       }
