@@ -45,8 +45,8 @@ public:
 
   /// List of dependence distances.
   using DistanceInfo = bcl::tagged_tuple<
-      bcl::tagged<trait::DIDependence::DistanceRange, trait::Flow>,
-      bcl::tagged<trait::DIDependence::DistanceRange, trait::Anti>>;
+      bcl::tagged<trait::DIDependence::DistanceVector, trait::Flow>,
+      bcl::tagged<trait::DIDependence::DistanceVector, trait::Anti>>;
 
   /// Sorted list of variables with dependence distances (flow and anti)
   /// attached to them.

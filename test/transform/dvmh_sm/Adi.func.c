@@ -84,12 +84,6 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK: Adi.func.c:59:21: note: unable to localize inout variable
 //CHECK: double iter(double(*A)[NY][NZ]) {
 //CHECK:                     ^
-//CHECK: Adi.func.c:71:5: remark: parallel execution of loop is possible
-//CHECK:     for (J = 1; J < NY - 1; J++)
-//CHECK:     ^
-//CHECK: Adi.func.c:72:7: remark: parallel execution of loop is possible
-//CHECK:       for (K = 1; K < NZ - 1; K++) {
-//CHECK:       ^
 //CHECK: Adi.func.c:66:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
@@ -97,12 +91,6 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK: Adi.func.c:59:21: note: unable to localize inout variable
 //CHECK: double iter(double(*A)[NY][NZ]) {
 //CHECK:                     ^
-//CHECK: Adi.func.c:67:5: remark: parallel execution of loop is possible
-//CHECK:     for (J = 1; J < NY - 1; J++)
-//CHECK:     ^
-//CHECK: Adi.func.c:68:7: remark: parallel execution of loop is possible
-//CHECK:       for (K = 1; K < NZ - 1; K++)
-//CHECK:       ^
 //CHECK: Adi.func.c:62:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
@@ -123,10 +111,4 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK: Adi.func.c:46:20: note: unable to localize inout variable
 //CHECK: void init(double (*A)[NY][NZ]) {
 //CHECK:                    ^
-//CHECK: Adi.func.c:49:5: remark: parallel execution of loop is possible
-//CHECK:     for (J = 0; J < NY; J++)
-//CHECK:     ^
-//CHECK: Adi.func.c:50:7: remark: parallel execution of loop is possible
-//CHECK:       for (K = 0; K < NZ; K++)
-//CHECK:       ^
 //CHECK: 4 warnings generated.

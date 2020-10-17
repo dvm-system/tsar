@@ -16,7 +16,7 @@ void foo() {
 //CHECK:    anti:
 //CHECK:     <A, 40> <B, 44> <bar():7:7,?> bar():7:7
 //CHECK:    flow:
-//CHECK:     <A, 40> <B, 44>:[1,1] <bar():7:7,?> bar():7:7
+//CHECK:     <A, 40> <B, 44>:[1:1] <bar():7:7,?> bar():7:7
 //CHECK:    induction:
 //CHECK:     <I:5[5:3], 4>:[Int,0,10,1]
 //CHECK:    redundant:
@@ -44,7 +44,7 @@ void foo() {
 //REDUNDANT:    shared:
 //REDUNDANT:     <A, 40>
 //REDUNDANT:    flow:
-//REDUNDANT:     <B, 44>:[1,1]
+//REDUNDANT:     <B, 44>:[1:1]
 //REDUNDANT:    induction:
 //REDUNDANT:     <I:5[5:3], 4>:[Int,0,10,1]
 //REDUNDANT:    redundant:

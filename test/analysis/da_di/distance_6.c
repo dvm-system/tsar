@@ -11,7 +11,7 @@ void foo() {
 //CHECK:    private:
 //CHECK:     <J:5[5:5], 4>
 //CHECK:    flow:
-//CHECK:     <U, 800>:[1,1]
+//CHECK:     <U, 800>:[1:1]
 //CHECK:    induction:
 //CHECK:     <I:4[4:3], 4>:[Int,1,100,1]
 //CHECK:    lock:

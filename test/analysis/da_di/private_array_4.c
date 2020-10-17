@@ -11,9 +11,9 @@ void foo(double *X, int N) {
 //CHECK:    first private:
 //CHECK:     <T:2, 24>
 //CHECK:    anti:
-//CHECK:     <*X:1, ?>:[1,1]
+//CHECK:     <*X:1, ?>:[1:1]
 //CHECK:    flow:
-//CHECK:     <*X:1, ?>:[1,1]
+//CHECK:     <*X:1, ?>:[1:1]
 //CHECK:    induction:
 //CHECK:     <I:3[3:3], 4>:[Int,1,,1]
 //CHECK:    read only:

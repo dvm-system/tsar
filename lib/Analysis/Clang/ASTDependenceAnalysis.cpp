@@ -195,11 +195,14 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       for (auto &T : TS) {
         DistanceInfo Info;
         auto setIf = [&Info, &T](auto &&Kind) {
-          if (auto Dep = T->get<std::decay_t<decltype(Kind)>>())
-            if (Dep->isKnownDistance())
-              Info.get<std::decay_t<decltype(Kind)>>() = Dep->getDistance();
-            else
+          if (auto Dep = T->get<std::decay_t<decltype(Kind)>>()) {
+            if (!Dep->isKnownDistance())
               return false;
+            Info.get<std::decay_t<decltype(Kind)>>().resize(
+                Dep->getKnownLevel());
+            for (unsigned I = 0, EI = Dep->getKnownLevel(); I < EI; ++I)
+              Info.get<std::decay_t<decltype(Kind)>>()[I] = Dep->getDistance(I);
+          }
           return true;
         };
         if (setIf(trait::Flow{}) && setIf(trait::Anti{})) {

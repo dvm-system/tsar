@@ -20,7 +20,7 @@ double foo() {
 //CHECK:    anti:
 //CHECK:     <JStart, 4> bar():7:5
 //CHECK:    flow:
-//CHECK:     <JStart, 4> bar():7:5 | <U:5:10, 800>:[1,1]
+//CHECK:     <JStart, 4> bar():7:5 | <U:5:10, 800>:[1:1]
 //CHECK:    induction:
 //CHECK:     <I:6[6:3], 4>:[Int,1,100,1]
 //CHECK:    lock:

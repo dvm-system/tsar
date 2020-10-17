@@ -274,13 +274,16 @@ template<class TraitTag> void updateAntiFlowDep(
     F = Dep->getFlags();
   F &= (~trait::Dependence::Flag::UnknownDistance);
   F &= (~trait::Dependence::Flag::May);
-  trait::DIDependence::DistanceRange Range;
+  trait::DIDependence::DistanceVector DistVector(
+      Dep->getLevels() > 0 ? Dep->getLevels() : 1);
   auto &T = *TraitItr->second.template get<TraitTag>();
   auto Min = T->second[trait::Distance::Min];
-  Range.first = APSInt(APInt(CHAR_BIT * sizeof(Min), Min, true), false);
+  DistVector[0].first = APSInt(APInt(CHAR_BIT * sizeof(Min), Min, true), false);
   auto Max = T->second[trait::Distance::Max];
-  Range.second = APSInt(APInt(CHAR_BIT * sizeof(Max), Max, true), false);
-  DITrait.template set<TraitTag>(new trait::DIDependence(F, std::move(Range)));
+  DistVector[0].second = APSInt(APInt(CHAR_BIT * sizeof(Max), Max, true), false);
+  for (unsigned I = 1, EI = Dep->getLevels(); I < EI; ++I)
+    DistVector[I] = Dep->getDistance(I);
+  DITrait.template set<TraitTag>(new trait::DIDependence(F, DistVector));
   LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set distance to [" << Min << ", "
                     << Max << "]\n");
 }
@@ -299,7 +302,10 @@ void updateOutputDep(
   if (F)
     F = Dep->getFlags();
   F &= (~trait::Dependence::Flag::May);
-  DITrait.template set<trait::Output>(new trait::DIDependence(F, Dep->getDistance()));
+  trait::DIDependence::DistanceVector DistVector(Dep->getLevels());
+  for (unsigned I = 0, EI = Dep->getLevels(); I < EI; ++I)
+    DistVector[I] = Dep->getDistance(I);
+  DITrait.template set<trait::Output>(new trait::DIDependence(F, DistVector));
 }
 }
 

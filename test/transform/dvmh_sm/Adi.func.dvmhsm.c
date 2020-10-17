@@ -45,7 +45,7 @@ int main(int Argc, char *Argv[]) {
 
 void init(double (*A)[NY][NZ]) {
   int I, J, K;
-#pragma dvm parallel([I][J][K]) tie(A[I][J][K])
+#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
   for (I = 0; I < NX; I++)
     for (J = 0; J < NY; J++)
       for (K = 0; K < NZ; K++)
@@ -65,13 +65,12 @@ double iter(double (*A)[NY][NZ]) {
     for (J = 1; J < NY - 1; J++)
       for (K = 1; K < NZ - 1; K++)
         A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
-#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [1:1] [0:0])
+#pragma dvm parallel([I]) tie(A[I][][]) private(J, K)
   for (I = 1; I < NX - 1; I++)
     for (J = 1; J < NY - 1; J++)
       for (K = 1; K < NZ - 1; K++)
         A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
-#pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [0:0] [1:1])    \
-    reduction(max(Eps))
+#pragma dvm parallel([I]) tie(A[I][][]) private(J, K) reduction(max(Eps))
   for (I = 1; I < NX - 1; I++)
     for (J = 1; J < NY - 1; J++)
       for (K = 1; K < NZ - 1; K++) {

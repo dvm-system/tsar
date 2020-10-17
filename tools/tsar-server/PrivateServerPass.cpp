@@ -622,23 +622,25 @@ template<> struct Traits<trait::DIDependence *> {
       Range.first = APSInt::get(*TmpDest[msg::Dependence::Min]);
     if (TmpDest[msg::Dependence::Max])
       Range.first = APSInt::get(*TmpDest[msg::Dependence::Max]);
-    Dest = new trait::DIDependence(F, Range);
+    Dest = new trait::DIDependence(F, makeArrayRef(Range));
     return true;
   }
 
   static void unparse(String &JSON, const trait::DIDependence *Obj) {
     msg::Dependence TmpObj;
     TmpObj[msg::Dependence::May] = Obj->isMay();
-    auto Range = Obj->getDistance();
-    if (auto V = Range.first) {
-      msg::json_::DependenceImpl::Min::ValueType::value_type Min;
-      if (castAPInt(*V, V->isSigned(), Min))
-        TmpObj[msg::Dependence::Min] = Min;
-    }
-    if (auto V = Range.second) {
-      msg::json_::DependenceImpl::Max::ValueType::value_type Max;
-      if (castAPInt(*V, V->isSigned(), Max))
-        TmpObj[msg::Dependence::Max] = Max;
+    if (Obj->getLevels() > 0) {
+      auto Range = Obj->getDistance(0);
+      if (auto V = Range.first) {
+        msg::json_::DependenceImpl::Min::ValueType::value_type Min;
+        if (castAPInt(*V, V->isSigned(), Min))
+          TmpObj[msg::Dependence::Min] = Min;
+      }
+      if (auto V = Range.second) {
+        msg::json_::DependenceImpl::Max::ValueType::value_type Max;
+        if (castAPInt(*V, V->isSigned(), Max))
+          TmpObj[msg::Dependence::Max] = Max;
+      }
     }
     if (Obj->isUnknown())
       TmpObj[msg::Dependence::Causes].push_back("unknown");

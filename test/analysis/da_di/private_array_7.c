@@ -61,7 +61,7 @@ void foo(int *A) {
 //SAFE:    output:
 //SAFE:     <T:2:10, 32>
 //SAFE:    anti:
-//SAFE:     <*A:1, ?>:[1,1] | <T:2:10, 32>
+//SAFE:     <*A:1, ?>:[1:1] | <T:2:10, 32>
 //SAFE:    flow:
 //SAFE:     <T:2:10, 32>
 //SAFE:    induction:

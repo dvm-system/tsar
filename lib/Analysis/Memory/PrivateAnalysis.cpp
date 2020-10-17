@@ -129,6 +129,50 @@ bool PrivateRecognitionPass::runOnFunction(Function &F) {
   return false;
 }
 
+namespace {
+struct DistanceInfo {
+  enum Apply : uint8_t {
+    NotChange = 0u,
+    // This is useful for anti and flow dependencies because direction is
+    // known and sign of distance for a current loop (level) can be
+    // always converted to a positive value.
+    // [-2, 3, -1] => [2, -3, 1]
+    Revert = 1u << 0,
+    // This is useful if direction is not known. This implies conservative
+    // assumption which allows to separate distances for different dimensions
+    // and aggregate min/max distances for the accessed memory (instead of
+    // each separate access):
+    // [X, Y] => [abs(X), abs(Y)] [abs(X), -abs(Y)]
+    //
+    // (1) A(f1, j) = ...
+    // (2) A(f2, j - 2) = ...
+    // If f1 - f2 < 0 then aggregated distances for variable A
+    // (for all accesses) are [abs(f1 - f2], -2]. This means that if we access
+    // variable A on iteration (i, j) the next access will be on
+    // (i + abs(f1 - f2), j - 2).
+    // Otherwise (f1 - f2 > 0) then aggregated distances are [f1 - f2, 2].
+    // This means that the next access will be on
+    // (i + f1 - f2 = i + abs(f1 - f2), j + 2).
+    // If we do not known sign of f1 - f2, then we assume that access in
+    // j-loop occurs in the range between -2 and 2. And it allows us to
+    // compute min/max distances for all loops in the nest.
+    Extend = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(Extend)
+  };
+
+  DistanceInfo() = default;
+  DistanceInfo(const Dependence &D, unsigned L, Apply T, ScalarEvolution &SE)
+      : Dep(&D), Level(L), Transform(T), SE(&SE) {
+    assert(Level <= Dep->getLevels() && "Level out of range!");
+  }
+
+  const Dependence *Dep = nullptr;
+  unsigned Level = 0;
+  Apply Transform = NotChange;
+  ScalarEvolution *SE = nullptr;
+};
+}
+
 namespace tsar {
 namespace detail {
 /// Internal representation of loop-carried dependencies.
@@ -139,6 +183,7 @@ class DependenceImp {
 
 public:
   using Distances = SmallPtrSet<const SCEV *, 4>;
+  using DistanceNest = SmallVector<Distances, 3>;
   using Descriptor =
     bcl::TraitDescriptor<trait::Flow, trait::Anti, trait::Output>;
 
@@ -150,21 +195,29 @@ public:
   template<class TraitSet>
   struct SummarizeFunctor {
     template<class Trait> void operator()() {
-      trait::IRDependence::DistanceRange Dist(nullptr, nullptr);
-      SmallVector<const SCEV *, 4> MaxOps(mDep->mDists.get<Trait>().size());
-      SmallVector<const SCEV *, 4> MinOps(mDep->mDists.get<Trait>().size());
       if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
-        std::size_t Idx = 0;
-        for (auto D : mDep->mDists.get<Trait>()) {
-          MaxOps[Idx] = mSE->getSMaxExpr(mSE->getNegativeSCEV(D), D);
-          MinOps[Idx] = mSE->getNotSCEV(MaxOps[Idx]);
-          ++Idx;
+        trait::IRDependence::DistanceVector Distances (
+            mDep->mDists.get<Trait>().size());
+        auto LevelItr = mDep->mDists.get<Trait>().begin();
+        auto LevelItrE = mDep->mDists.get<Trait>().end();
+        unsigned Idx = 0;
+        SmallVector<const SCEV *, 4> MaxOps(LevelItr->begin(), LevelItr->end());
+        auto MinOps(MaxOps); //Computation of max/min may update its parameter.
+        Distances[Idx].first = mSE->getUMinExpr(MinOps);
+        Distances[Idx].second = mSE->getUMaxExpr(MaxOps);
+        for (++Idx, ++LevelItr; LevelItr != LevelItrE; ++LevelItr, ++Idx) {
+          SmallVector<const SCEV *, 4> MaxOps(LevelItr->begin(),
+                                              LevelItr->end());
+          auto MinOps(MaxOps);
+          Distances[Idx].first = mSE->getSMinExpr(MinOps);
+          Distances[Idx].second = mSE->getSMaxExpr(MaxOps);
         }
-        Dist.first = mSE->getNotSCEV(mSE->getUMaxExpr(MinOps));
-        Dist.second = mSE->getUMaxExpr(MaxOps);
+        mSet->template set<Trait>(
+            new trait::IRDependence(mDep->mFlags.get<Trait>(), Distances));
+      } else {
+        mSet->template set<Trait>(
+            new trait::IRDependence(mDep->mFlags.get<Trait>()));
       }
-      mSet->template set<Trait>(
-        new trait::IRDependence(mDep->mFlags.get<Trait>(), Dist));
     }
     DependenceImp *mDep;
     TraitSet *mSet;
@@ -176,12 +229,12 @@ public:
 
   /// Uses specified descriptor, flags, and distance to update
   /// information about dependencies (see UpdateFunctor for details).
-  void update(Descriptor Dptr, trait::Dependence::Flag F, const SCEV * Dist) {
-    Dptr.for_each(UpdateFunctor{ this, F, Dist });
+  void update(Descriptor Dptr, trait::Dependence::Flag F, DistanceInfo &&Dist) {
+    Dptr.for_each(UpdateFunctor{ this, F, std::move(Dist)});
   }
 
   /// Uses specified dependence description to update underlying
-  /// information about dependencies (see UpdateFunctor for details).
+  /// information about dependencies (see UpdateDefFunctor for details).
   void update(DependenceImp &Dep) {
     Dep.mDptr.for_each(UpdateDepFunctor{ this, &Dep });
   }
@@ -197,17 +250,49 @@ private:
   struct UpdateFunctor {
     template<class Trait> void operator()() {
       mDep->mDptr.set<Trait>();
-      if (!mDist)
-        mFlag |= trait::Dependence::UnknownDistance;
       mDep->mFlags.get<Trait>() |= mFlag;
-      if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance))
-        mDep->mDists.get<Trait>().insert(mDist);
-      else
+      if (!mDist.Dep ||
+          mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance) {
+        mDep->mFlags.get<Trait>() |= trait::Dependence::UnknownDistance;
+        mDep->mKnownDistanceLevel.get<Trait>() = 0;
         mDep->mDists.get<Trait>().clear();
+        return;
+      }
+      unsigned DistLevel = mDist.Dep->getLevels() + 1;
+      if (mDep->mKnownDistanceLevel.get<Trait>() &&
+          DistLevel > mDist.Level + *mDep->mKnownDistanceLevel.get<Trait>())
+        DistLevel = mDist.Level + *mDep->mKnownDistanceLevel.get<Trait>();
+      for (unsigned I = mDist.Level; I < DistLevel; ++I) {
+        auto *Dist = mDist.Dep->getDistance(I);
+        if (!Dist) {
+          mDep->mKnownDistanceLevel.get<Trait>() = I - mDist.Level;
+          mDep->mDists.get<Trait>().resize(
+              *mDep->mKnownDistanceLevel.get<Trait>());
+          if (*mDep->mKnownDistanceLevel.get<Trait>() == 0)
+            mDep->mFlags.get<Trait>() |= trait::Dependence::UnknownDistance;
+          break;
+        }
+        if (I - mDist.Level == mDep->mDists.get<Trait>().size())
+          mDep->mDists.get<Trait>().emplace_back();
+        if (mDist.Transform == DistanceInfo::NotChange)
+          mDep->mDists.get<Trait>()[I - mDist.Level].insert(Dist);
+        else if (mDist.Transform & DistanceInfo::Revert)
+          mDep->mDists.get<Trait>()[I - mDist.Level].insert(
+              mDist.SE->getNegativeSCEV(Dist));
+        else if (mDist.Transform & DistanceInfo::Extend)
+          if (I == mDist.Level) {
+            mDep->mDists.get<Trait>()[I - mDist.Level].insert(
+              mDist.SE->getSMaxExpr(mDist.SE->getNegativeSCEV(Dist), Dist));
+          } else {
+            mDep->mDists.get<Trait>()[I - mDist.Level].insert(Dist);
+            mDep->mDists.get<Trait>()[I - mDist.Level].insert(
+                mDist.SE->getNegativeSCEV(Dist));
+          }
+      }
     }
     DependenceImp *mDep;
     trait::Dependence::Flag mFlag;
-    const SCEV *mDist;
+    DistanceInfo mDist;
   };
 
   /// This functor updates specified dependence description mDep.
@@ -215,11 +300,28 @@ private:
     template<class Trait> void operator()() {
       mDep->mDptr.set<Trait>();
       mDep->mFlags.get<Trait>() |= mSrc->mFlags.get<Trait>();
-      if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance))
-        mDep->mDists.get<Trait>().insert(
-          mSrc->mDists.get<Trait>().begin(), mSrc->mDists.get<Trait>().end());
-      else
+      if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
+        if (auto SrcLevel = mSrc->mKnownDistanceLevel.get<Trait>())
+          if (auto DepLevel = mDep->mKnownDistanceLevel.get<Trait>())
+            mDep->mKnownDistanceLevel.get<Trait>() =
+                std::min(*SrcLevel, *DepLevel);
+          else
+            mDep->mKnownDistanceLevel.get<Trait>() = SrcLevel;
+        unsigned MergedLevel =
+            mDep->mKnownDistanceLevel.get<Trait>()
+                ? std::min<unsigned>(*mDep->mKnownDistanceLevel.get<Trait>(),
+                                     mSrc->mDists.get<Trait>().size())
+                : mSrc->mDists.get<Trait>().size();
+        if (mDep->mDists.get<Trait>().size() < MergedLevel)
+          mDep->mDists.get<Trait>().resize(MergedLevel);
+        for (unsigned I = 0; I < MergedLevel; ++I)
+          mDep->mDists.get<Trait>()[I].insert(
+              mSrc->mDists.get<Trait>()[I].begin(),
+              mSrc->mDists.get<Trait>()[I].end());
+      } else {
+        mDep->mKnownDistanceLevel.get<Trait>() = 0;
         mDep->mDists.get<Trait>().clear();
+      }
     }
     DependenceImp *mDep;
     DependenceImp *mSrc;
@@ -232,11 +334,20 @@ private:
       mOS << ", flags=";
       bcl::bitPrint(mDep->mFlags.get<Trait>(), mOS);
       mOS << ", distance={";
-      for (const SCEV *D : mDep->mDists.get<Trait>()) {
-        mOS << " ";
-        D->print(mOS);
+      unsigned LevelIdx = 0;
+      for (const auto &Level : mDep->mDists.get<Trait>()) {
+        for (const auto *D : Level) {
+          mOS << " ";
+          D->print(mOS);
+        }
+        ++LevelIdx;
+        if (LevelIdx < mDep->mDists.get<Trait>().size())
+          mOS << " |";
       }
-      mOS << " }}";
+      mOS << "}";
+      if (mDep->mKnownDistanceLevel.get<Trait>())
+        mOS << ", has dropped distances";
+      mOS << "}";
     }
     DependenceImp *mDep;
     raw_ostream &mOS;
@@ -244,13 +355,17 @@ private:
 
   Descriptor mDptr;
   bcl::tagged_tuple<
-    bcl::tagged<Distances, trait::Flow>,
-    bcl::tagged<Distances, trait::Anti>,
-    bcl::tagged<Distances, trait::Output>> mDists;
+    bcl::tagged<DistanceNest, trait::Flow>,
+    bcl::tagged<DistanceNest, trait::Anti>,
+    bcl::tagged<DistanceNest, trait::Output>> mDists;
   bcl::tagged_tuple<
     bcl::tagged<trait::Dependence::Flag, trait::Flow>,
     bcl::tagged<trait::Dependence::Flag, trait::Anti>,
     bcl::tagged<trait::Dependence::Flag, trait::Output>> mFlags;
+  bcl::tagged_tuple<
+    bcl::tagged<Optional<unsigned>, trait::Flow>,
+    bcl::tagged<Optional<unsigned>, trait::Anti>,
+    bcl::tagged<Optional<unsigned>, trait::Output>> mKnownDistanceLevel;
 };
 }
 }
@@ -294,12 +409,12 @@ static void removeRedundantLog(TraitList &TL, StringRef Prefix) {
 template<class MapTy>
 static inline void updateDependence(const EstimateMemory *EM,
     DependenceImp::Descriptor &Dptr, trait::Dependence::Flag F,
-    const SCEV *Dist, MapTy &Deps) {
+    DistanceInfo &&Dist, MapTy &Deps) {
   assert(EM && "Estimate memory location must not be null!");
   auto Itr = Deps.try_emplace(EM, nullptr).first;
   if (!Itr->template get<DependenceImp>())
     Itr->template get<DependenceImp>().reset(new DependenceImp);
-  Itr->template get<DependenceImp>()->update(Dptr, F, Dist);
+  Itr->template get<DependenceImp>()->update(Dptr, F, std::move(Dist));
   LLVM_DEBUG(updateDependenceLog(*EM, *Itr->template get<DependenceImp>()));
 }
 
@@ -422,28 +537,28 @@ void PrivateRecognitionPass::resolveCandidats(
 }
 
 void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
-    const MemoryLocation &Src, const MemoryLocation Dst,
-    trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps) {
+  const MemoryLocation &Src, const MemoryLocation Dst,
+  trait::Dependence::Flag Flag, Loop &L, DependenceMap &Deps) {
   auto LoopDepth = L.getLoopDepth();
-  if (Dep.getConfusedLevels() >= LoopDepth) {
+  if (Dep.isConfused() || Dep.getConfusedLevels() >= LoopDepth) {
     LLVM_DEBUG(dbgs() << "[PRIVATE]: assume confused dependence"
       " (confused levels " << Dep.getConfusedLevels() << ")\n");
     DependenceImp::Descriptor Dptr;
     Dptr.set<trait::Flow, trait::Anti, trait::Output>();
     trait::Dependence::Flag Flag = trait::Dependence::ConfusedCause |
       trait::Dependence::LoadStoreCause | trait::Dependence::May;
-    updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
-    updateDependence(mAliasTree->find(Dst), Dptr, Flag, nullptr, Deps);
+    updateDependence(mAliasTree->find(Src), Dptr, Flag, DistanceInfo{}, Deps);
+    updateDependence(mAliasTree->find(Dst), Dptr, Flag, DistanceInfo{}, Deps);
     return;
   }
   for (unsigned OuterDepth =
-       Dep.getConfusedLevels() > 0 ? Dep.getConfusedLevels() : 1;
-       OuterDepth < LoopDepth; ++OuterDepth) {
+    Dep.getConfusedLevels() > 0 ? Dep.getConfusedLevels() : 1;
+    OuterDepth < LoopDepth; ++OuterDepth) {
     auto Dir = Dep.getDirection(OuterDepth);
     if (Dir != Dependence::DVEntry::EQ && Dir != Dependence::DVEntry::ALL &&
-        Dir != Dependence::DVEntry::LE && Dir != Dependence::DVEntry::GE) {
+      Dir != Dependence::DVEntry::LE && Dir != Dependence::DVEntry::GE) {
       LLVM_DEBUG(dbgs() << "[PRIVATE]: ignore loop independent dependence (due "
-                           "to outer loop dependence direction)\n");
+        "to outer loop dependence direction)\n");
       return;
     }
   }
@@ -454,28 +569,39 @@ void PrivateRecognitionPass::insertDependence(const Dependence &Dep,
   }
   assert((Dep.isOutput() || Dep.isAnti() || Dep.isFlow()) &&
     "Unknown kind of dependency!");
+  DistanceInfo Dist{Dep, L.getLoopDepth(), DistanceInfo::NotChange, *mSE};
   DependenceImp::Descriptor Dptr;
-  if (Dep.isOutput())
+  if (Dep.isOutput()) {
+    if (Dir == Dependence::DVEntry::GT || Dir == Dependence::DVEntry::GE)
+      Dist.Transform |= DistanceInfo::Revert;
     Dptr.set<trait::Output>();
-  else if (Dir == Dependence::DVEntry::ALL)
+  } else if (Dir == Dependence::DVEntry::ALL) {
     Dptr.set<trait::Flow, trait::Anti>();
-  else if (Dep.isFlow())
-    if (Dir == Dependence::DVEntry::LT || Dir == Dependence::DVEntry::LE)
+    Dist.Transform |= DistanceInfo::Extend;
+  } else if (Dep.isFlow())
+    if (Dir == Dependence::DVEntry::LT || Dir == Dependence::DVEntry::LE) {
       Dptr.set<trait::Flow>();
-    else
+    } else {
       Dptr.set<trait::Anti>();
+      Dist.Transform |= DistanceInfo::Revert;
+    }
   else if (Dep.isAnti())
-    if (Dir == Dependence::DVEntry::LT || Dir == Dependence::DVEntry::LE)
+    if (Dir == Dependence::DVEntry::LT || Dir == Dependence::DVEntry::LE) {
       Dptr.set<trait::Anti>();
-    else
+    } else {
       Dptr.set<trait::Flow>();
-  else
+      Dist.Transform |= DistanceInfo::Revert;
+    }
+  else {
     Dptr.set<trait::Flow, trait::Anti>();
-  auto Dist = Dep.getDistance(L.getLoopDepth());
-  updateDependence(mAliasTree->find(Src),
-    Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
-  updateDependence(mAliasTree->find(Dst),
-    Dptr, trait::Dependence::LoadStoreCause | Flag, Dist, Deps);
+    Dist.Transform |= DistanceInfo::Extend;
+  }
+  updateDependence(mAliasTree->find(Src), Dptr,
+                   trait::Dependence::LoadStoreCause | Flag, std::move(Dist),
+                   Deps);
+  updateDependence(mAliasTree->find(Dst), Dptr,
+                   trait::Dependence::LoadStoreCause | Flag, std::move(Dist),
+                   Deps);
 }
 
 void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
@@ -516,7 +642,8 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
             return;
           if (AA.getModRefInfo(*DstItr, Loc) == ModRefInfo::NoModRef)
             return;
-          updateDependence(mAliasTree->find(Loc), Dptr, Flag, nullptr, Deps);
+          updateDependence(mAliasTree->find(Loc), Dptr, Flag, DistanceInfo{},
+                           Deps);
         };
         auto stab = [](Instruction &, AccessInfo, AccessInfo) {};
         for_each_memory(**SrcItr, *mTLI, insertUnknownDep, stab);
@@ -539,7 +666,8 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
               trait::Dependence::CallCause);
           DependenceImp::Descriptor Dptr;
           Dptr.set<trait::Flow, trait::Anti, trait::Output>();
-          updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
+          updateDependence(mAliasTree->find(Src), Dptr, Flag, DistanceInfo{},
+                           Deps);
         } else {
           if (!(*SrcItr)->mayWriteToMemory() &&
               !(*DstItr)->mayWriteToMemory()) {
@@ -577,8 +705,10 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
             Dptr.set<trait::Flow, trait::Anti, trait::Output>();
             trait::Dependence::Flag Flag = trait::Dependence::ConfusedCause |
               trait::Dependence::LoadStoreCause | trait::Dependence::May;
-            updateDependence(mAliasTree->find(Src), Dptr, Flag, nullptr, Deps);
-            updateDependence(mAliasTree->find(Dst), Dptr, Flag, nullptr, Deps);
+            updateDependence(mAliasTree->find(Src), Dptr, Flag, DistanceInfo{},
+                             Deps);
+            updateDependence(mAliasTree->find(Dst), Dptr, Flag, DistanceInfo{},
+                             Deps);
           }
         }
       }
@@ -1272,16 +1402,23 @@ public:
 
   /// Prints description of a trait into a specified stream.
   void traitToStr(const trait::IRDependence *Dep, raw_string_ostream &OS) {
-    if (!Dep)
-      return;
-    if (!Dep->getDistance().first && !Dep->getDistance().second)
+    if (!Dep || Dep->getLevels() == 0)
       return;
     OS << ":[";
-    if (Dep->getDistance().first)
-      Dep->getDistance().first->print(OS);
-    OS << ",";
-    if (Dep->getDistance().second)
-      Dep->getDistance().second->print(OS);
+    unsigned I = 0, EI = Dep->getLevels();
+    if (Dep->getDistance(I).first)
+      Dep->getDistance(I).first->print(OS);
+    OS << ":";
+    if (Dep->getDistance(I).second)
+      Dep->getDistance(I).second->print(OS);
+    for (++I; I < EI; ++I) {
+      OS << ",";
+      if (Dep->getDistance(I).first)
+        Dep->getDistance(I).first->print(OS);
+      OS << ":";
+      if (Dep->getDistance(I).second)
+        Dep->getDistance(I).second->print(OS);
+    }
     OS << "]";
   }
 

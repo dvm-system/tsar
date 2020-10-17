@@ -194,9 +194,9 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:    private:
 //CHECK:     <J:60, 4> | <K:60, 4>
 //CHECK:    anti:
-//CHECK:     <*A:59, ?>:[1,1]
+//CHECK:     <*A:59, ?>:[1:1,0:0,0:0]
 //CHECK:    flow:
-//CHECK:     <*A:59, ?>:[1,1]
+//CHECK:     <*A:59, ?>:[1:1,0:0,0:0]
 //CHECK:    induction:
 //CHECK:     <I:60, 4>:[Int,1,383,1]
 //CHECK:    read only:
@@ -278,9 +278,9 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:     private:
 //CHECK:      <K:60, 4>
 //CHECK:     anti:
-//CHECK:      <*A:59, ?>:[1,1]
+//CHECK:      <*A:59, ?>:[1:1,0:0]
 //CHECK:     flow:
-//CHECK:      <*A:59, ?>:[1,1]
+//CHECK:      <*A:59, ?>:[1:1,0:0]
 //CHECK:     induction:
 //CHECK:      <J:60, 4>:[Int,1,383,1]
 //CHECK:     read only:
@@ -366,9 +366,9 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:      private:
 //CHECK:       <Tmp1:73[72:36], 8> | <Tmp2:74[72:36], 8>
 //CHECK:      anti:
-//CHECK:       <*A:59, ?>:[1,1]
+//CHECK:       <*A:59, ?>:[1:1]
 //CHECK:      flow:
-//CHECK:       <*A:59, ?>:[1,1]
+//CHECK:       <*A:59, ?>:[1:1]
 //CHECK:      induction:
 //CHECK:       <K:60, 4>:[Int,1,383,1]
 //CHECK:      reduction:

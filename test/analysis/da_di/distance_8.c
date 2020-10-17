@@ -16,7 +16,7 @@ void foo() {
 //CHECK:    private:
 //CHECK:     <J:6, 4>
 //CHECK:    flow:
-//CHECK:     <A, 80000>:[1,1]
+//CHECK:     <A, 80000>:[1:1,0:0]
 //CHECK:    induction:
 //CHECK:     <I:6, 4>:[Int,1,100,1]
 //CHECK:    lock:
@@ -33,7 +33,7 @@ void foo() {
 //CHECK:     <A, 80000> <I:6, 4> <J:6, 4>
 //CHECK:   loop at depth 2 distance_8.c:10:5
 //CHECK:     flow:
-//CHECK:      <A, 80000>:[1,1]
+//CHECK:      <A, 80000>:[1:1]
 //CHECK:     induction:
 //CHECK:      <J:6, 4>:[Int,1,100,1]
 //CHECK:     read only:

@@ -20,9 +20,9 @@ void foo(int Flag) {
 //CHECK:    dynamic private:
 //CHECK:     <X, 4>
 //CHECK:    output:
-//CHECK:     <A, 800>:[1,1]
+//CHECK:     <A, 800>:[1:1]
 //CHECK:    flow:
-//CHECK:     <A, 800>:[1,1]
+//CHECK:     <A, 800>:[1:1]
 //CHECK:    induction:
 //CHECK:     <I:5[5:3], 4>:[Int,0,100,1]
 //CHECK:    read only:

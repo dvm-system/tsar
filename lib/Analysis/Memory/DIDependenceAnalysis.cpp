@@ -160,14 +160,22 @@ template<class Tag> void combineIf(
   if (IRDep) {
     if (!DIDep) {
       if (!hasSpuriousDep(DITrait) && !DITrait.template is<Tag>()) {
-        trait::DIDependence::DistanceRange DIDistRange;
-        auto Dist = IRDep->getDistance();
-        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
-          DIDistRange.first = APSInt(ConstDist->getAPInt());
-        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
-          DIDistRange.second = APSInt(ConstDist->getAPInt());
+        trait::DIDependence::DistanceVector DIDistVector(IRDep->getLevels());
+        for (unsigned I = 0, EI = IRDep->getLevels(); I < EI; ++I) {
+          auto Dist = IRDep->getDistance(I);
+          if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
+            DIDistVector[I].first = APSInt(ConstDist->getAPInt(), I == 0);
+          if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
+            DIDistVector[I].second = APSInt(ConstDist->getAPInt(), I == 0);
+        }
+        auto KnownSize = DIDistVector.size();
+        for (auto I = DIDistVector.rbegin(), EI = DIDistVector.rend(); I != EI;
+             ++I, --KnownSize)
+          if (I->first || I->second)
+            break;
+        DIDistVector.resize(KnownSize);
         DITrait.template set<Tag>(
-          new trait::DIDependence(IRDep->getFlags(), DIDistRange));
+          new trait::DIDependence(IRDep->getFlags(), DIDistVector));
       } else {
         auto F = IRDep->getFlags() | trait::Dependence::UnknownCause;
         if (F & trait::Dependence::May)
@@ -178,19 +186,29 @@ template<class Tag> void combineIf(
       auto F = IRDep->getFlags() | DIDep->getFlags();
       if (!IRDep->isMay() || !DIDep->isMay())
         F &= ~trait::Dependence::May;
-      auto Dist = IRDep->getDistance();
-      trait::DIDependence::DistanceRange DIDistRange;
-      if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
-        if (DIDep->getDistance().first)
-          DIDistRange.first =
-            APSInt(ConstDist->getAPInt()) <= DIDep->getDistance().first ?
-              APSInt(ConstDist->getAPInt()) : DIDep->getDistance().first;
-      if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
-        if (DIDep->getDistance().second)
-          DIDistRange.second =
-            APSInt(ConstDist->getAPInt()) >= DIDep->getDistance().second?
-              APSInt(ConstDist->getAPInt()) : DIDep->getDistance().second;
-      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
+      trait::DIDependence::DistanceVector DIDistVector(IRDep->getLevels());
+      for (unsigned I = 0, EI = IRDep->getLevels(); I < EI; ++I) {
+        auto Dist = IRDep->getDistance(I);
+        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.first))
+          if (DIDep->getDistance(I).first)
+            DIDistVector[I].first = APSInt(ConstDist->getAPInt(), I == 0) <=
+                                            DIDep->getDistance(I).first
+                                        ? APSInt(ConstDist->getAPInt(), I == 0)
+                                        : DIDep->getDistance(I).first;
+        if (auto ConstDist = dyn_cast_or_null<SCEVConstant>(Dist.second))
+          if (DIDep->getDistance(I).second)
+            DIDistVector[I].second = APSInt(ConstDist->getAPInt(), I == 0) >=
+                                             DIDep->getDistance(I).second
+                                         ? APSInt(ConstDist->getAPInt(), I == 0)
+                                         : DIDep->getDistance(I).second;
+      }
+      auto KnownSize = DIDistVector.size();
+      for (auto I = DIDistVector.rbegin(), EI = DIDistVector.rend(); I != EI;
+           ++I, --KnownSize)
+        if (I->first || I->second)
+          break;
+      DIDistVector.resize(KnownSize);
+      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistVector));
     }
   } else if (DIDep && (hasSpuriousDep(IRTrait) || IRTrait.template is<Tag>())) {
     auto F = DIDep->getFlags() | trait::Dependence::UnknownCause;
@@ -227,17 +245,27 @@ template<class Tag> void combineIf(
       auto F = FromDIDep->getFlags() | DIDep->getFlags();
       if (!FromDIDep->isMay() || !DIDep->isMay())
         F &= ~trait::Dependence::May;
-      auto Dist = FromDIDep->getDistance();
-      trait::DIDependence::DistanceRange DIDistRange;
-      if (FromDIDep->getDistance().first && DIDep->getDistance().first)
-          DIDistRange.first =
-            FromDIDep->getDistance().first <= DIDep->getDistance().first ?
-              FromDIDep->getDistance().first : DIDep->getDistance().first;
-      if (FromDIDep->getDistance().second && DIDep->getDistance().second)
-          DIDistRange.second =
-            FromDIDep->getDistance().second >= DIDep->getDistance().second ?
-              FromDIDep->getDistance().second : DIDep->getDistance().second;
-      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistRange));
+      trait::DIDependence::DistanceVector DIDistVector(
+          std::min(FromDIDep->getLevels(), DIDep->getLevels()));
+      for (unsigned I = 0, EI = DIDistVector.size(); I < EI; ++I) {
+        if (FromDIDep->getDistance(I).first && DIDep->getDistance(I).first)
+          DIDistVector[I].first =
+              FromDIDep->getDistance(I).first <= DIDep->getDistance(I).first
+                  ? FromDIDep->getDistance(I).first
+                  : DIDep->getDistance(I).first;
+        if (FromDIDep->getDistance(I).second && DIDep->getDistance(I).second)
+          DIDistVector[I].second =
+              FromDIDep->getDistance(I).second >= DIDep->getDistance(I).second
+                  ? FromDIDep->getDistance(I).second
+                  : DIDep->getDistance(I).second;
+      }
+      auto KnownSize = DIDistVector.size();
+      for (auto I = DIDistVector.rbegin(), EI = DIDistVector.rend(); I != EI;
+           ++I, --KnownSize)
+        if (I->first || I->second)
+          break;
+      DIDistVector.resize(KnownSize);
+      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistVector));
     }
   } else if (DIDep && (hasSpuriousDep(FromDITrait) ||
              FromDITrait.template is<Tag>())) {
@@ -2068,16 +2096,23 @@ struct TraitPrinter {
 
   /// Prints description of a trait into a specified stream.
   void traitToStr(trait::DIDependence *Dep, raw_string_ostream &OS) {
-    if (!Dep)
-      return;
-    if (!Dep->getDistance().first && !Dep->getDistance().second)
+    if (!Dep || Dep->getLevels() == 0)
       return;
     OS << ":[";
-    if (Dep->getDistance().first)
-      OS << *Dep->getDistance().first;
-    OS << ",";
-    if (Dep->getDistance().second)
-      OS << *Dep->getDistance().second;
+    unsigned I = 0, EI = Dep->getLevels();
+    if (Dep->getDistance(I).first)
+      OS << *Dep->getDistance(I).first;
+    OS << ":";
+    if (Dep->getDistance(I).second)
+      OS << *Dep->getDistance(I).second;
+    for (++I; I < EI; ++I) {
+      OS << ",";
+      if (Dep->getDistance(I).first)
+        OS << *Dep->getDistance(I).first;
+      OS << ":";
+      if (Dep->getDistance(I).second)
+        OS << *Dep->getDistance(I).second;
+    }
     OS << "]";
   }
 

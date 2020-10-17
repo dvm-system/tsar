@@ -28,6 +28,8 @@
 #include "tsar/Analysis/Memory/MemoryTrait.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/SmallVector.h>
 
 namespace llvm {
 class Instruction;
@@ -47,27 +49,49 @@ public:
   /// This represents lowest and highest distances.
   using DistanceRange = std::pair<const llvm::SCEV *, const llvm::SCEV *>;
 
+  /// This represent a distance vectors for a loop nest.
+  ///
+  /// The first range of distances corresponds to the outermost loop in the
+  /// currently analyzed nest. Note, that this outermost loop may contain parent
+  /// loops.
+  using DistanceVector = llvm::SmallVector<DistanceRange, 3>;
+
   /// Creates dependence and set its properties to `F`.
   /// Distances will not be set.
   explicit IRDependence(Flag F) :
-    Dependence(F | UnknownDistance), mDistance(nullptr, nullptr) {}
+    Dependence(F | UnknownDistance), mKnownLevel(0){}
 
   /// Creates dependence and set its distances and properties.
   /// `UnknownDistance` flag will be updated according to specified distances.
-  IRDependence(Flag F, DistanceRange Dist) :
-    Dependence((Dist.first && Dist.second) ?
-      F & ~UnknownDistance : F | UnknownDistance), mDistance(Dist) { }
-
-  /// Return distances.
-  DistanceRange getDistance() const noexcept {
-    assert(mDistance.first && mDistance.second ||
-      (getFlags() & UnknownDistance) &&
-      "Distance is marked as known but it is not specified!");
-    return mDistance;
+  IRDependence(Flag F, llvm::ArrayRef<DistanceRange> Distances)
+      : Dependence((!Distances.empty() && Distances.front().first &&
+                    Distances.front().second)
+                       ? F & ~UnknownDistance
+                       : F | UnknownDistance),
+        mDistances(Distances.begin(), Distances.end()) {
+    mKnownLevel = 0;
+    for (auto &DR : Distances)
+      if (DR.first && DR.second)
+        ++mKnownLevel;
+      else
+        break;
   }
 
+  /// Return distances.
+  DistanceRange getDistance(unsigned Level) const {
+    assert(Level < getLevels() && "Distance level is out of range!");
+    return mDistances[Level];
+  }
+
+  /// Return size of a distance vector.
+  unsigned getLevels() const { return mDistances.size(); }
+
+  /// Return number of first known distances.
+  unsigned getKnownLevel() const noexcept { return mKnownLevel; }
+
 private:
-  DistanceRange mDistance;
+  unsigned mKnownLevel = 0;
+  DistanceVector mDistances;
 };
 }
 

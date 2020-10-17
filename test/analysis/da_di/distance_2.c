@@ -13,7 +13,7 @@ void foo() {
 //CHECK:    private:
 //CHECK:     <J:6[6:5], 4>
 //CHECK:    flow:
-//CHECK:     <U, 80000>:[1,1]
+//CHECK:     <U, 80000>:[1:1,-1:-1]
 //CHECK:    induction:
 //CHECK:     <I:5[5:3], 4>:[Int,1,100,1] | <JStart:4, 4>:[Int,0,99,1]
 //CHECK:    lock:
