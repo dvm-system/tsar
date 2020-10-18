@@ -46,6 +46,7 @@
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #ifdef LLVM_DEBUG
@@ -367,15 +368,26 @@ public:
       bcl::tagged<llvm::Function *, llvm::Function>,
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>>> InterprocDefUseInfo;
 
-  /// This represents array's memory location info.
-  typedef std::pair<bool, MemoryLocationRange> ArrayLocInfo;
+  enum LoopBoundKind : short {
+    None = 0,
+    Const,
+    ParentDependent,
+    Variable
+  };
 
   struct DimensionInfo {
     unsigned SCEVType = llvm::SCEVTypes::scUnknown;
-    uint64_t RangeMin = 0;
-    uint64_t RangeMax = 0;
-    uint64_t Stride = 0;
+    int64_t RangeMin = 0;
+    int64_t RangeMax = 0;
+    uint64_t Step = 0;
+    uint64_t ElemSize;
+    LoopBoundKind BoundKind = None;
+    size_t DimSize = 0;
   };
+
+  /// This represents array's memory location info.
+  typedef MemorySet<MemoryLocationRange> ArrayLocSet;
+  typedef llvm::SmallVector<DimensionInfo, 4> DimensionInfoList;
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
@@ -444,7 +456,10 @@ public:
   void collapse(DFRegion *R);
 
   /// Calculates array range in memory.
-  ArrayLocInfo calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
+  ArrayLocSet calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
+
+  void addLocationsToSet(ArrayLocSet &ALS, DimensionInfoList &DimInfo,
+      const MemoryLocationRange &Loc, size_t DimN, uint64_t ParentOffset);
   
 private:
   AliasTree *mAliasTree;
@@ -465,6 +480,9 @@ typedef ReachDFFwk::ReachSet ReachSet;
 
 /// This represents results of reach definition analysis results.
 typedef ReachDFFwk::DefinedMemoryInfo DefinedMemoryInfo;
+
+typedef ReachDFFwk::ArrayLocSet ArrayLocSet;
+typedef ReachDFFwk::DimensionInfoList DimensionInfoList;
 
 /// Traits for a data-flow framework which is used to find reach definitions.
 template<> struct DataFlowTraits<ReachDFFwk *> {
