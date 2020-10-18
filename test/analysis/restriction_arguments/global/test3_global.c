@@ -7,6 +7,7 @@ int foo(int *a, int* b) {
 }
 
 int main(int argc, char const *argv[]) {
-	int *a = malloc(sizeof(int) * 5);
-	return foo(a, b[0]);
+	int *a1 = malloc(sizeof(int) * 5);
+	int (*a2)[10] = malloc(sizeof(int) * 10 * 20);
+	return foo(a1, b) + foo(a2[2], b);
 }

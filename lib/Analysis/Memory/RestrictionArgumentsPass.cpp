@@ -13,6 +13,8 @@
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/InitializePasses.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
+#include <llvm/IR/Operator.h>
 
 using namespace tsar;
 using namespace llvm;
@@ -136,20 +138,15 @@ DenseMap<CallInst*, FunctionCallWithMemorySources> fillCallsToPtrArgumentsMemory
         auto& memorySources = WorkPair.mMemorySources;
         workList.pop_back();
         for (auto* U : I->users()) {
-            if (auto* GepU = dyn_cast<GetElementPtrInst>(U)) {
+            if (auto* GepU = dyn_cast<GEPOperator>(U)) {
                 workList.push_back(ValueWithMemorySources(GepU, memorySources));
-            }
-            if (auto* CastI = dyn_cast<CastInst>(U)) {
+            } else if (auto* CastI = dyn_cast<CastInst>(U)) {
                 workList.push_back(ValueWithMemorySources(CastI, memorySources));
-            }
-            if (auto* SelectI = dyn_cast<SelectInst>(U)) {
+            } else if (auto* SelectI = dyn_cast<SelectInst>(U)) {
                 workList.push_back(ValueWithMemorySources(SelectI, memorySources));
-            }
-            // for the new malloc behaviour
-            if (auto* LoadI = dyn_cast<LoadInst>(U)) {
+            } else if (auto* LoadI = dyn_cast<LoadInst>(U)) {
               workList.push_back(ValueWithMemorySources(LoadI, memorySources));
-            }
-            if (auto* CallI = dyn_cast<CallInst>(U)) {
+            } else if (auto* CallI = dyn_cast<CallInst>(U)) {
                 if (TargetFunctionsCalls.count(CallI)) {
                     LLVM_DEBUG(
                         dbgs() << "\tFound CallInst in TargetCalls: ";
