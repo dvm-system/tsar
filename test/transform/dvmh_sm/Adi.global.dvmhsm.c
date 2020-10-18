@@ -64,31 +64,19 @@ void init() {
 double iter() {
   int I, J, K;
   double Eps = 0;
-#pragma dvm actual(A, I)
-#pragma dvm region in(A, I)out(A, I) local(J, K)
+#pragma dvm actual(A, Eps, I)
+#pragma dvm region in(A, Eps, I)out(A, Eps, I) local(J, K)
   {
 #pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [1:1] [0:0] [0:0])
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++)
           A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
-  }
-#pragma dvm get_actual(A, I)
-
-#pragma dvm actual(A, I)
-#pragma dvm region in(A, I)out(A, I) local(J, K)
-  {
 #pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [1:1] [0:0])
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++)
           A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
-  }
-#pragma dvm get_actual(A, I)
-
-#pragma dvm actual(A, Eps, I)
-#pragma dvm region in(A, Eps, I)out(A, Eps, I) local(J, K)
-  {
 #pragma dvm parallel([I][J][K]) tie(A[I][J][K]) across(A [0:0] [0:0] [1:1])    \
     reduction(max(Eps))
     for (I = 1; I < NX - 1; I++)

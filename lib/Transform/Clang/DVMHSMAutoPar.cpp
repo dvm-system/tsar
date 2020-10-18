@@ -42,6 +42,7 @@
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include <clang/AST/ParentMapContext.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 using namespace clang;
@@ -442,31 +443,168 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
   return PI;
 }
 
+static inline PragmaParallel *isParallel(const Loop *L,
+                                         Parallelization &ParallelizationInfo) {
+  if (auto ID = L->getLoopID())
+    return ParallelizationInfo.find<PragmaParallel>(L->getHeader(), ID)
+        .dyn_cast();
+  return nullptr;
+}
+
+static inline Stmt *getScope(Loop *L,
+    const LoopMatcherPass::LoopMatcher &LoopMatcher, ASTContext &ASTCtx) {
+  auto &ParentCtx = ASTCtx.getParentMapContext();
+  auto Itr = LoopMatcher.find<IR>(L);
+  if (Itr == LoopMatcher.end())
+    return nullptr;
+  return const_cast<Stmt *>(
+      ParentCtx.getParents(*Itr->get<AST>()).begin()->get<Stmt>());
+}
+
+static void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
+    Parallelization &ParallelizationInfo) {
+  assert(ToMerge.size() > 1 && "At least two regions must be specified!");
+  auto MergedRegion = ParallelizationInfo.find<PragmaRegion>(
+      ToMerge.front()->getHeader(), ToMerge.front()->getLoopID(), true);
+  auto MergedMarker = ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
+      ToMerge.back()->getExitingBlock(), ToMerge.back()->getLoopID(), false);
+  auto &MergedActual = *[&PB = MergedRegion.getPL()->Entry]() {
+    auto I = find_if(PB, [](auto &PI) { return isa<PragmaActual>(*PI); });
+    if (I != PB.end())
+      return cast<PragmaActual>(I->get());
+    PB.push_back(std::make_unique<PragmaActual>());
+    return cast<PragmaActual>(PB.back().get());
+  }();
+  auto &MergedGetActual = *[&PB = MergedMarker.getPL()->Exit]() {
+    auto I = find_if(PB, [](auto &PI) { return isa<PragmaGetActual>(*PI); });
+    if (I != PB.end())
+      return cast<PragmaGetActual>(I->get());
+    PB.push_back(std::make_unique<PragmaGetActual>());
+    return cast<PragmaGetActual>(PB.back().get());
+  }();
+  MergedMarker.get()->setParent(MergedRegion.get());
+  auto copyActual = [](auto &PB, auto &To) {
+    auto I = find_if(PB, [&To](auto &PI) {
+      return isa<std::decay_t<decltype(To)>>(PI.get());
+    });
+    if (I != PB.end()) {
+      auto &M = cast<std::decay_t<decltype(To)>>(**I).getMemory();
+      To.getMemory().insert(M.begin(), M.end());
+    }
+    return I;
+  };
+  auto copyInOut = [&To = MergedRegion.get()->getClauses()](auto &FromRegion) {
+    auto &From = FromRegion.getClauses();
+    To.get<trait::ReadOccurred>().insert(
+        From.get<trait::ReadOccurred>().begin(),
+        From.get<trait::ReadOccurred>().end());
+    To.get<trait::WriteOccurred>().insert(
+        From.get<trait::WriteOccurred>().begin(),
+        From.get<trait::WriteOccurred>().end());
+    To.get<trait::Private>().insert(From.get<trait::Private>().begin(),
+                                    From.get<trait::Private>().end());
+  };
+  // Remove start or and of region and corresponding actualization directive.
+  auto remove = [&ParallelizationInfo](BasicBlock *BB, auto RegionItr,
+      auto ActualItr,  auto PEdgeItr, ParallelBlock &OppositePB,
+      ParallelBlock &FromPB) {
+    if (FromPB.size() == 1 || FromPB.size() == 2 && ActualItr != FromPB.end()) {
+      if (OppositePB.empty() && PEdgeItr->get<ParallelLocation>().size() == 1)
+        ParallelizationInfo.erase(BB);
+      else
+        FromPB.clear();
+    } else if (ActualItr != FromPB.end()) {
+      FromPB.erase(RegionItr);
+      FromPB.erase(find_if(FromPB, [&ActualItr](auto &PI) {
+        return PI->getKind() == (*ActualItr)->getKind();
+      }));
+    } else {
+      FromPB.erase(RegionItr);
+    }
+  };
+  auto removeEndOfRegion = [&copyActual, &remove, &MergedGetActual,
+                            &ParallelizationInfo](Loop *L) {
+    auto ExitingBB = L->getExitingBlock();
+    auto ID = L->getLoopID();
+    auto Marker = ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
+        ExitingBB, ID, false);
+    auto &ExitPB = Marker.getPL()->Exit;
+    auto GetActualItr = copyActual(ExitPB, MergedGetActual);
+    remove(ExitingBB, Marker.getPI(), GetActualItr, Marker.getPE(),
+           Marker.getPL()->Entry, ExitPB);
+  };
+  auto removeStartOfRegion = [&copyActual, &copyInOut, &remove, &MergedActual,
+                              &ParallelizationInfo](Loop *L) {
+    auto HeaderBB = L->getExitingBlock();
+    auto ID = L->getLoopID();
+    auto Region = ParallelizationInfo.find<PragmaRegion>(L->getHeader(), ID);
+    copyInOut(*Region.get());
+    auto &EntryPB = Region.getPL()->Entry;
+    auto ActualItr = copyActual(EntryPB, MergedActual);
+    remove(HeaderBB, Region.getPI(), ActualItr, Region.getPE(),
+           Region.getPL()->Exit, EntryPB);
+  };
+  removeEndOfRegion(ToMerge.front());
+  for (auto I = ToMerge.begin() + 1, EI = ToMerge.end() - 1; I != EI; ++I) {
+    // All markers should be removed before the corresponding region.
+    removeEndOfRegion(*I);
+    removeStartOfRegion(*I);
+  }
+  removeStartOfRegion(ToMerge.back());
+}
+
+template<typename ItrT>
+static void mergeSiblingRegions(ItrT I, ItrT EI,
+    const FunctionAnalysis &Provider, ASTContext &ASTCtx,
+    Parallelization &ParallelizationInfo) {
+  if (I == EI)
+    return;
+  auto &LoopMatcher = Provider.value<LoopMatcherPass *>()->getMatcher();
+  auto *ParentScope = getScope(*I, LoopMatcher, ASTCtx);
+  assert(ParentScope && "Unable to find AST scope for a parallel loop!");
+  SmallVector<Loop *, 4> ToMerge;
+  bool IsHostOnly = false;
+  for (auto *Child : ParentScope->children()) {
+    if (!Child)
+      continue;
+    if (auto *For = dyn_cast<ForStmt>(Child)) {
+      auto MatchItr = LoopMatcher.find<AST>(For);
+      if (MatchItr != LoopMatcher.end())
+        if (auto *DVMHParallel =
+                isParallel(MatchItr->get<IR>(), ParallelizationInfo))
+          if (auto *DVMHRegion =
+                  cast_or_null<PragmaRegion>(DVMHParallel->getParent())) {
+            if (!ToMerge.empty()) {
+              if (DVMHRegion->isHostOnly() == IsHostOnly) {
+                ToMerge.push_back(MatchItr->get<IR>());
+                continue;
+              }
+              if (ToMerge.size() > 1)
+                mergeRegions(ToMerge, ParallelizationInfo);
+            }
+            ToMerge.push_back(MatchItr->get<IR>());
+            IsHostOnly = DVMHRegion->isHostOnly();
+            continue;
+          }
+    }
+    if (ToMerge.size() > 1)
+      mergeRegions(ToMerge, ParallelizationInfo);
+    ToMerge.clear();
+  }
+  if (ToMerge.size() > 1)
+    mergeRegions(ToMerge, ParallelizationInfo);
+}
+
 template <typename ItrT>
 static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
-    const DIArrayAccessInfo &AccessInfo,
-    Parallelization &ParallelizationInfo) {
-  auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
-  auto &DFI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
+    const DIArrayAccessInfo &AccessInfo, Parallelization &ParallelizationInfo) {
   for (; I != EI; ++I) {
+    auto *DVMHParallel = isParallel(*I, ParallelizationInfo);
+    if (!DVMHParallel)
+      continue;
     auto ID = (*I)->getLoopID();
-    if (!ID)
-      continue;
-    auto PLocs = ParallelizationInfo.find((*I)->getHeader());
-    if (PLocs == ParallelizationInfo.end())
-      continue;
-    auto PL = find_if(
-        PLocs->template get<ParallelLocation>(), [ID](ParallelLocation &PL) {
-          return PL.Anchor.is<MDNode *>() && PL.Anchor.get<MDNode *>() == ID;
-        });
-    if (PL == PLocs->template get<ParallelLocation>().end())
-      continue;
-    auto PI = find_if(PL->Entry,
-                      [](auto &PI) { return isa<PragmaParallel>(PI.get()); });
-    if (PI == PL->Entry.end())
-      continue;
-    auto &DVMHParallel = cast<PragmaParallel>(**PI);
-    auto &Clauses = DVMHParallel.getClauses();
+    assert(ID && "Identifier must be known for a parallel loop!");
+    auto &Clauses = DVMHParallel->getClauses();
     for (auto &Access : AccessInfo.scope_accesses(ID)) {
       if (!isa<DIEstimateMemory>(Access.getArray()))
         continue;
@@ -495,17 +633,31 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
 }
 
 void ClangDVMHSMParallelization::optimizeLevel(
-  PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
+    PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
   auto *AccessInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
-  if (!AccessInfo)
-    return;
+  if (AccessInfo) {
+    if (Level.is<Function *>()) {
+      auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+      optimizeLevelImpl(LI.begin(), LI.end(), Provider, *AccessInfo,
+                        mParallelizationInfo);
+    } else {
+      optimizeLevelImpl(Level.get<Loop *>()->begin(),
+                        Level.get<Loop *>()->end(), Provider, *AccessInfo,
+                        mParallelizationInfo);
+    }
+  }
+  auto *M = Level.is<Function *>() ? Level.get<Function *>()->getParent() :
+    Level.get<Loop *>()->getHeader()->getModule();
+  auto &ASTCtx =
+      getAnalysis<TransformationEnginePass>().getContext(*M)->getContext();
   if (Level.is<Function *>()) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
-    optimizeLevelImpl(LI.begin(), LI.end(), Provider, *AccessInfo,
+    mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
                       mParallelizationInfo);
   } else {
-    optimizeLevelImpl(Level.get<Loop *>()->begin(), Level.get<Loop *>()->end(),
-                      Provider, *AccessInfo, mParallelizationInfo);
+    mergeSiblingRegions(Level.get<Loop *>()->begin(),
+                        Level.get<Loop *>()->end(), Provider, ASTCtx,
+                        mParallelizationInfo);
   }
 }
 

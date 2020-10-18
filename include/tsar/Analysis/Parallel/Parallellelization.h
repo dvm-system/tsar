@@ -215,6 +215,8 @@ struct ParallelLocation {
   ParallelBlock Exit;
 };
 
+template<class ItemT> class ParallelItemRef;
+
 /// This represents results of program parallelization.
 class Parallelization {
   /// Collection of basic blocks with attached parallel blocks to them.
@@ -265,9 +267,94 @@ public:
   const_function_iterator func_begin() const { return mParallelFuncs.begin(); }
   const_function_iterator func_end() const { return mParallelFuncs.end(); }
 
+  /// Look for a parallel item of a specified type 'ItemT'.
+  template <typename ItemT, typename AnchorT>
+  ParallelItemRef<ItemT> find(llvm::BasicBlock *BB, AnchorT Anchor,
+                              bool OnEntry = true);
+
 private:
   llvm::SmallPtrSet<llvm::Function *, 32> mParallelFuncs;
   ParallelBlocks mParallelBlocks;
 };
+
+/// This is a reference to a parallel item inside a parallelization.
+template<class ItemT>
+class ParallelItemRef {
+  using ParallelLocationList = llvm::SmallVectorImpl<ParallelLocation>;
+public:
+  ParallelItemRef(Parallelization::iterator PLocListItr,
+    ParallelLocationList::iterator PLocItr,
+    ParallelBlock::iterator PIItr, bool OnEntry)
+    : mPLocListItr(PLocListItr), mPLocItr(PLocItr), mPIItr(PIItr),
+    mOnEntry(OnEntry), mIsValid(true) {}
+
+  ParallelItemRef() = default;
+
+  /// Return parallel item or nullptr if reference is invalid.
+  ItemT * dyn_cast() const { return isValid() ? get() : nullptr; }
+
+  /// Return parallel item.
+  ItemT *get() const {
+    assert(isValid() && "Reference is invalid!");
+    return cast<ItemT>(mPIItr->get());
+  }
+
+  /// Return edge from basic block to a list of parallel locations.
+  Parallelization::iterator getPE() const {
+    assert(isValid() && "Reference is invalid!");
+    return mPLocListItr;
+  }
+
+  /// Return parallel location which contains a parallel item.
+  ParallelLocationList::iterator getPL() const {
+    assert(isValid() && "Reference is invalid!");
+    return mPLocItr;
+  }
+
+  /// Return parallel item
+  ParallelBlock::iterator getPI() const {
+    assert(isValid() && "Reference is invalid!");
+    return mPIItr;
+  }
+
+  bool isOnEntry() const noexcept {
+    assert(isValid() && "Reference is invalid!");
+    return mOnEntry;
+  }
+
+  bool isValid() const noexcept { return mIsValid; }
+  bool isInValid() const noexcept { return !isValid(); }
+  operator bool() const noexcept { return isValid(); }
+
+  explicit operator ItemT *() const { return get(); }
+
+private:
+  Parallelization::iterator mPLocListItr;
+  ParallelLocationList::iterator mPLocItr;
+  ParallelBlock::iterator mPIItr;
+  bool mOnEntry;
+  bool mIsValid = false;
+};
+
+template <typename ItemT, typename AnchorT>
+ParallelItemRef<ItemT> Parallelization::find(
+    llvm::BasicBlock *BB, AnchorT Anchor, bool OnEntry) {
+  auto PLocListItr = find(BB);
+  if (PLocListItr == end())
+    return ParallelItemRef<ItemT>{};
+  auto PLocItr =
+      llvm::find_if(PLocListItr->template get<ParallelLocation>(),
+                    [Anchor](ParallelLocation &PL) {
+                      return PL.Anchor.is<std::decay_t<AnchorT>>() &&
+                             PL.Anchor.get<std::decay_t<AnchorT>>() == Anchor;
+                    });
+  if (PLocItr == PLocListItr->template get<ParallelLocation>().end())
+    return ParallelItemRef<ItemT>{};
+  auto &PB = OnEntry ? PLocItr->Entry : PLocItr->Exit;
+  auto PIItr = llvm::find_if(PB, [](auto &PI) { return isa<ItemT>(PI.get()); });
+  return PIItr != PB.end()
+             ? ParallelItemRef<ItemT>{PLocListItr, PLocItr, PIItr, OnEntry}
+             : ParallelItemRef<ItemT>{};
+}
 }
 #endif//TSAR_PARALLELIZATION_H
