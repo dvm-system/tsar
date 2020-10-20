@@ -13,3 +13,4 @@ region_4: action=init
 region_5: action=init
 Jacobi: action=init
 Adi.func: action=init
+Adi.global: action=init

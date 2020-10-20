@@ -15,24 +15,23 @@
 #define NY 384
 #define NZ 384
 
-void init(double (*A)[NY][NZ]);
-double iter(double (*A)[NY][NZ]);
+double A[NX][NY][NZ];
+
+void init();
+double iter();
 
 int main(int Argc, char *Argv[]) {
   double MaxEps, Eps;
-  double(*A)[NY][NZ];
   int It, ItMax, I, J, K;
   MaxEps = 0.01;
   ItMax = 100;
-  A = (double(*)[NY][NZ])malloc(NX * NY * NZ * sizeof(double));
-  init(A);
+  init();
   for (It = 1; It <= ItMax; It++) {
-    Eps = iter(A);
+    Eps = iter();
     printf(" IT = %4i   EPS = %14.7E\n", It, Eps);
     if (Eps < MaxEps)
       break;
   }
-  free(A);
   printf(" ADI Benchmark Completed.\n");
   printf(" Size            = %4d x %4d x %4d\n", NX, NY, NZ);
   printf(" Iterations      =       %12d\n", ItMax);
@@ -43,7 +42,7 @@ int main(int Argc, char *Argv[]) {
   return 0;
 }
 
-void init(double (*A)[NY][NZ]) {
+void init() {
   int I, J, K;
 #pragma omp parallel
   {
@@ -60,7 +59,7 @@ void init(double (*A)[NY][NZ]) {
   }
 }
 
-double iter(double (*A)[NY][NZ]) {
+double iter() {
   int I, J, K;
   double Eps = 0;
 #pragma omp parallel

@@ -1,10 +1,13 @@
 void foo(int N, int *restrict A);
 
 void baz(int M, int *restrict T, int N, int *restrict A) {
-#pragma omp parallel for default(shared)
-  for (int I = 0; I < N; ++I) {
-    for (int J = 0; J < M; ++J)
-      A[I] = A[I] + T[J];
+#pragma omp parallel
+  {
+#pragma omp for default(shared)
+    for (int I = 0; I < N; ++I) {
+      for (int J = 0; J < M; ++J)
+        A[I] = A[I] + T[J];
+    }
   }
 }
 

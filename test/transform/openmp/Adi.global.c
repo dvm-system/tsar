@@ -15,24 +15,23 @@
 #define NY 384
 #define NZ 384
 
-void init(double (*A)[NY][NZ]);
-double iter(double (*A)[NY][NZ]);
+double A[NX][NY][NZ];
+
+void init();
+double iter();
 
 int main(int Argc, char *Argv[]) {
   double MaxEps, Eps;
-  double(*A)[NY][NZ];
   int It, ItMax, I, J, K;
   MaxEps = 0.01;
   ItMax = 100;
-  A = (double(*)[NY][NZ])malloc(NX * NY * NZ * sizeof(double));
-  init(A);
+  init();
   for (It = 1; It <= ItMax; It++) {
-    Eps = iter(A);
+    Eps = iter();
     printf(" IT = %4i   EPS = %14.7E\n", It, Eps);
     if (Eps < MaxEps)
       break;
   }
-  free(A);
   printf(" ADI Benchmark Completed.\n");
   printf(" Size            = %4d x %4d x %4d\n", NX, NY, NZ);
   printf(" Iterations      =       %12d\n", ItMax);
@@ -43,7 +42,7 @@ int main(int Argc, char *Argv[]) {
   return 0;
 }
 
-void init(double (*A)[NY][NZ]) {
+void init() {
   int I, J, K;
   for (I = 0; I < NX; I++)
     for (J = 0; J < NY; J++)
@@ -56,7 +55,7 @@ void init(double (*A)[NY][NZ]) {
           A[I][J][K] = 0;
 }
 
-double iter(double(*A)[NY][NZ]) {
+double iter() {
   int I, J, K;
   double Eps = 0;
   for (I = 1; I < NX - 1; I++)
@@ -77,18 +76,18 @@ double iter(double(*A)[NY][NZ]) {
       }
   return Eps;
 }
-//CHECK: Adi.func.c:70:3: remark: parallel execution of loop is possible
+//CHECK: Adi.global.c:69:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
-//CHECK: Adi.func.c:66:3: remark: parallel execution of loop is possible
+//CHECK: Adi.global.c:65:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
-//CHECK: Adi.func.c:62:3: remark: parallel execution of loop is possible
+//CHECK: Adi.global.c:61:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 1; I < NX - 1; I++)
 //CHECK:   ^
-//CHECK: Adi.func.c:63:5: remark: parallel execution of loop is possible
+//CHECK: Adi.global.c:62:5: remark: parallel execution of loop is possible
 //CHECK:     for (J = 1; J < NY - 1; J++)
 //CHECK:     ^
-//CHECK: Adi.func.c:48:3: remark: parallel execution of loop is possible
+//CHECK: Adi.global.c:47:3: remark: parallel execution of loop is possible
 //CHECK:   for (I = 0; I < NX; I++)
 //CHECK:   ^

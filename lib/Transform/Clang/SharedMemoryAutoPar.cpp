@@ -177,7 +177,7 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
           Info.first->getSecond() = mCGNodes[Callee];
       }
   }
-  if (!PI || PI && (!PI->isFinal() || PI->isChildPossible()))
+  if (!PI || PI && !PI->isFinal())
     return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
   return PI;
 }
