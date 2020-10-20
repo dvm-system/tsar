@@ -73,19 +73,12 @@ double iter() {
           A[I][J][K] = (A[I - 1][J][K] + A[I + 1][J][K]) / 2;
 #pragma omp ordered depend(source)
       }
-  }
 
-#pragma omp parallel
-  {
 #pragma omp for default(shared) private(J, K)
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)
         for (K = 1; K < NZ - 1; K++)
           A[I][J][K] = (A[I][J - 1][K] + A[I][J + 1][K]) / 2;
-  }
-
-#pragma omp parallel
-  {
 #pragma omp for default(shared) private(J, K) reduction(max : Eps)
     for (I = 1; I < NX - 1; I++)
       for (J = 1; J < NY - 1; J++)

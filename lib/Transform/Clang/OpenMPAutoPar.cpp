@@ -37,6 +37,7 @@
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include <clang/AST/ParentMapContext.h>
 #include <llvm/Frontend/OpenMP/OMPConstants.h>
 
 using namespace clang;
@@ -270,10 +271,107 @@ trait::DIDependence::DistanceVector makeOrderedRange(
   DV[EnclosingPNestSize].second = - (*DV[EnclosingPNestSize].second);
   return DV;
 }
+
+inline Stmt *getScope(Loop *L,
+    const LoopMatcherPass::LoopMatcher &LoopMatcher, ASTContext &ASTCtx) {
+  auto &ParentCtx = ASTCtx.getParentMapContext();
+  auto Itr = LoopMatcher.find<IR>(L);
+  if (Itr == LoopMatcher.end())
+    return nullptr;
+  return const_cast<Stmt *>(
+      ParentCtx.getParents(*Itr->get<AST>()).begin()->get<Stmt>());
+}
+
+inline OMPForDirective *isParallel(const Loop *L,
+                                   Parallelization &ParallelizationInfo) {
+  if (auto ID = L->getLoopID())
+    return ParallelizationInfo.find<OMPForDirective>(L->getHeader(), ID)
+        .dyn_cast();
+  return nullptr;
+}
+
+void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
+    Parallelization &ParallelizationInfo) {
+  assert(ToMerge.size() > 1 && "At least two regions must be specified!");
+  auto MergedRegion = ParallelizationInfo.find<OMPParallelDirective>(
+      ToMerge.front()->getHeader(), ToMerge.front()->getLoopID(), true);
+  auto MergedMarker =
+      ParallelizationInfo.find<ParallelMarker<OMPParallelDirective>>(
+          ToMerge.back()->getExitingBlock(), ToMerge.back()->getLoopID(),
+          false);
+  MergedMarker.get()->setParent(MergedRegion.get());
+  auto remove = [&ParallelizationInfo](BasicBlock *BB, auto RegionItr,
+      auto PEdgeItr, ParallelBlock &OppositePB, ParallelBlock &FromPB) {
+    if (FromPB.size() == 1) {
+      if (OppositePB.empty() && PEdgeItr->get<ParallelLocation>().size() == 1)
+        ParallelizationInfo.erase(BB);
+      else
+        FromPB.clear();
+    } else {
+      FromPB.erase(RegionItr);
+    }
+  };
+  auto removeEndOfRegion = [&remove, &ParallelizationInfo](Loop *L) {
+    auto ExitingBB = L->getExitingBlock();
+    auto ID = L->getLoopID();
+    auto Marker =
+        ParallelizationInfo.find<ParallelMarker<OMPParallelDirective>>(
+            ExitingBB, ID, false);
+    auto &ExitPB = Marker.getPL()->Exit;
+    remove(ExitingBB, Marker.getPI(), Marker.getPE(), Marker.getPL()->Entry,
+           ExitPB);
+  };
+  auto removeStartOfRegion = [&remove, &ParallelizationInfo](Loop *L) {
+    auto HeaderBB = L->getExitingBlock();
+    auto ID = L->getLoopID();
+    auto Region =
+        ParallelizationInfo.find<OMPParallelDirective>(L->getHeader(), ID);
+    auto &EntryPB = Region.getPL()->Entry;
+    remove(HeaderBB, Region.getPI(), Region.getPE(), Region.getPL()->Exit,
+           EntryPB);
+  };
+  removeEndOfRegion(ToMerge.front());
+  for (auto I = ToMerge.begin() + 1, EI = ToMerge.end() - 1; I != EI; ++I) {
+    // All markers should be removed before the corresponding region.
+    removeEndOfRegion(*I);
+    removeStartOfRegion(*I);
+  }
+  removeStartOfRegion(ToMerge.back());
+}
+
+template<typename ItrT>
+void mergeSiblingRegions(ItrT I, ItrT EI,
+    const FunctionAnalysis &Provider, ASTContext &ASTCtx,
+    Parallelization &ParallelizationInfo) {
+  if (I == EI)
+    return;
+  auto &LoopMatcher = Provider.value<LoopMatcherPass *>()->getMatcher();
+  auto *ParentScope = getScope(*I, LoopMatcher, ASTCtx);
+  assert(ParentScope && "Unable to find AST scope for a parallel loop!");
+  SmallVector<Loop *, 4> ToMerge;
+  for (auto *Child : ParentScope->children()) {
+    if (!Child)
+      continue;
+    if (auto *For = dyn_cast<ForStmt>(Child)) {
+      auto MatchItr = LoopMatcher.find<AST>(For);
+      if (MatchItr != LoopMatcher.end())
+        if (isParallel(MatchItr->get<IR>(), ParallelizationInfo)) {
+          ToMerge.push_back(MatchItr->get<IR>());
+          continue;
+        }
+    }
+    if (ToMerge.size() > 1)
+      mergeRegions(ToMerge, ParallelizationInfo);
+    ToMerge.clear();
+  }
+  if (ToMerge.size() > 1)
+    mergeRegions(ToMerge, ParallelizationInfo);
+}
 } // namespace
 
 void ClangOpenMPParallelization::optimizeLevel(
     PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
+  // Insert ordered directives.
   for (auto &Ordered : mOutermostOrderedLoops) {
     auto *InnermostLoop = Ordered.get<Loop>();
     for (unsigned I = 1, EI = Ordered.get<OMPOrderedDirective>()->depth();
@@ -307,6 +405,20 @@ void ClangOpenMPParallelization::optimizeLevel(
       std::move(Ordered.get<OMPOrderedDirective>()));
   }
   mOutermostOrderedLoops.clear();
+  // Merge neighboring parallel regions.
+  auto *M = Level.is<Function *>() ? Level.get<Function *>()->getParent() :
+    Level.get<Loop *>()->getHeader()->getModule();
+  auto &ASTCtx =
+      getAnalysis<TransformationEnginePass>().getContext(*M)->getContext();
+  if (Level.is<Function *>()) {
+    auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+    mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
+                      mParallelizationInfo);
+  } else {
+    mergeSiblingRegions(Level.get<Loop *>()->begin(),
+                        Level.get<Loop *>()->end(), Provider, ASTCtx,
+                        mParallelizationInfo);
+  }
 }
 
 Optional<bool> ClangOpenMPParallelization::addOrUpdateOrderedIfNeed(

@@ -42,10 +42,6 @@ int main() {
           Eps = Max(Tmp, Eps);
           A[I][J] = B[I][J];
         }
-    }
-
-#pragma omp parallel
-    {
 #pragma omp for default(shared)
       for (int I = 1; I < L - 1; ++I)
         for (int J = 1; J < L - 1; ++J)
