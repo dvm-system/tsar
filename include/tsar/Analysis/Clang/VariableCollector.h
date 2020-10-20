@@ -93,7 +93,7 @@ struct VariableCollector
   /// And program may become invalid if such variables are used in calls inside
   /// the loop body.
   /// \return On failure it returns the variable which prevents localization (or
-  /// to nullptr if variable not found). In this case the second argument in
+  /// nullptr if the variable not found). In this case the second argument in
   /// tuple is false. Otherwise, it is true. The third argument is set to true
   /// if the variable is defined inside the loop head or the loop body.
   std::tuple<clang::VarDecl *, bool, bool>

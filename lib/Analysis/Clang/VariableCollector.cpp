@@ -186,8 +186,9 @@ bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
   return true;
 }
 
-std::tuple<clang::VarDecl *, bool, bool> VariableCollector::localize(DIMemoryTrait &T,
-    const DIAliasNode &DIN, const DIMemoryMatcher &ASTToClient,
+std::tuple<clang::VarDecl *, bool, bool> VariableCollector::localize(
+    DIMemoryTrait &T, const DIAliasNode &DIN,
+    const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer) {
   auto Search = findDecl(*T.getMemory(), ASTToClient, ClientToServer);
   // Do no specify traits for variables declared in a loop body

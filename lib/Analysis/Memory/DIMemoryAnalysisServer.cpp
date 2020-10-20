@@ -62,7 +62,8 @@ using DIMemoryAnalysisServerResponse = AnalysisResponsePass<
   ClonedDIMemoryMatcherWrapper, DIMemoryAnalysisServerProvider,
   DIArrayAccessWrapper>;
 
-class DIMemoryAnalysisServerProviderPass : public ModulePass, private bcl::Uncopyable {
+class DIMemoryAnalysisServerProviderPass : public ModulePass,
+                                           private bcl::Uncopyable {
 public:
   static char ID;
 
