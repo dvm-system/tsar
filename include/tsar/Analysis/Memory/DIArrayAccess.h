@@ -71,8 +71,8 @@ public:
       llvm::mapped_iterator<SubscriptList::const_iterator, ConstDerefFnTy>;
 
   DIArrayAccess(Array Array, Scope Parent, unsigned NumberOfSubscripts,
-                AccessInfo W, AccessInfo R)
-      : mArray(Array), mParent(Parent) {
+                AccessInfo R, AccessInfo W)
+      : mArray(Array), mParent(Parent), mReadInfo(R), mWriteInfo(W) {
     mSubscripts.reserve(NumberOfSubscripts);
     for (unsigned I = 0; I < NumberOfSubscripts; ++I)
       mSubscripts.emplace_back();

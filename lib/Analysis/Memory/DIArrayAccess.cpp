@@ -270,8 +270,8 @@ void DIArrayHandle::allUsesReplacedWith(DIMemory *M) {
              dbgs() << "\n");
   for (auto &Access : mAccessInfo->array_accesses(getMemoryPtr())) {
     auto NewAccess = std::make_unique<DIArrayAccess>(
-        M, Access.getParent(), Access.size(), Access.getWriteInfo(),
-        Access.getReadInfo());
+        M, Access.getParent(), Access.size(), Access.getReadInfo(),
+        Access.getWriteInfo());
     for (unsigned DimIdx = 0, DimIdxE = Access.size(); DimIdx < DimIdxE;
          ++DimIdx)
       if (Access[DimIdx])
@@ -603,7 +603,7 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
   LoopNest.push_back(Subroutine);
   auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
   auto Access = std::make_unique<DIArrayAccess>(
-      &ArrayDIM, InnerLoopID, Range.Subscripts.size(), IsWrite, IsRead);
+      &ArrayDIM, InnerLoopID, Range.Subscripts.size(), IsRead, IsWrite);
   LLVM_DEBUG(dbgs() << "[DI ARRAY ACCESS]: access to '";
              if (auto DWLang = getLanguage(*I.getFunction()))
                  printDILocationSource(*DWLang, ArrayDIM, dbgs());
@@ -764,7 +764,7 @@ bool DIArrayAccessWrapper::runOnModule(Module &M) {
       LoopNest.push_back(FuncMD);
       auto A = std::make_unique<DIArrayAccess>(
           ArrayItr->get<Origin>(), LoopNest.front(), Access.size(),
-          Access.getWriteInfo(), Access.getReadInfo());
+          Access.getReadInfo(), Access.getWriteInfo());
       for (auto DimIdx : seq(0u, Access.size())) {
         if (Access[DimIdx])
           Access[DimIdx]->apply([&A, &ServerToClientLoop](const auto &To) {
