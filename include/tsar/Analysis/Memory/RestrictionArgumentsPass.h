@@ -27,7 +27,8 @@ namespace llvm {
 
 namespace tsar {
 
-    typedef llvm::DenseSet<llvm::Value*> MemorySources;
+//  llvm::DenseSet<llvm::Value*> showed unstable behaviour in sets intersection
+    typedef std::set<llvm::Value*> MemorySources;
 
     struct FunctionCallWithMemorySources {
         llvm::CallInst* mCallI;

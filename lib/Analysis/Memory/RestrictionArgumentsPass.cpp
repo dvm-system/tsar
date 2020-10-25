@@ -216,6 +216,18 @@ DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>> collectRestrictFunctions
                 auto otherArgumentIndex = ArgumentsIndexes[j];
                 auto& argumentSources = ArgumentsSources[argumentIndex];
                 auto& otherArgumentSources = ArgumentsSources[otherArgumentIndex];
+                LLVM_DEBUG(
+                    dbgs() << "\tSources for intersection: \n\t\tFirst arg sources:\n";
+                    for (auto* S : argumentSources) {
+                      dbgs() << "\t\t\t";
+                      S->dump();
+                    }
+                    dbgs() << "\t\tSecond arg sources:\n";
+                    for (auto* S : otherArgumentSources) {
+                      dbgs() << "\t\t\t";
+                      S->dump();
+                    }
+                );
                 std::vector<Value*> sourcesIntersection;
                 std::set_intersection(
                     argumentSources.begin(),
@@ -224,12 +236,16 @@ DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>> collectRestrictFunctions
                     otherArgumentSources.end(),
                     std::back_inserter(sourcesIntersection));
                 LLVM_DEBUG(
-                    dbgs() << "\tSources intersection: \n";
-                    for (auto* S : sourcesIntersection) {
-                      dbgs() << "\t\t";
-                      S->dump();
+                    if (sourcesIntersection.empty()) {
+                      dbgs() << "\t\tEmpty\n";
+                    } else {
+                      for (auto *S : sourcesIntersection) {
+                        dbgs() << "\t\t";
+                        S->dump();
+                      }
                     }
                 );
+
                 if (!sourcesIntersection.empty()) {
                     bool allArgumentSourcesReturnUniqueValues = true;
                     for (auto* commonSource : sourcesIntersection) {
