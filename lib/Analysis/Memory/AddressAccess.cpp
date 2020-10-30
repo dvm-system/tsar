@@ -48,6 +48,7 @@
 #include "llvm/InitializePasses.h"
 #include <queue>
 #include <unordered_set>
+#include "llvm/Analysis/MemorySSA.h"
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "address-access"
@@ -61,13 +62,14 @@ char AddressAccessAnalyser::ID = 0;
 
 namespace {
   using FunctionPassesProvider =
-  FunctionPassProvider<MemoryDependenceWrapperPass>;
+  FunctionPassProvider<MemoryDependenceWrapperPass, MemorySSAWrapperPass>;
 }
 
 INITIALIZE_PROVIDER_BEGIN(FunctionPassesProvider,
                           "function-passes-provider",
                           "MemoryDependenceWrapperPass provider")
   INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
 INITIALIZE_PROVIDER_END(FunctionPassesProvider, "function-passes-provider",
                         "MemoryDependenceWrapperPass provider")
 
@@ -248,21 +250,27 @@ bool AddressAccessAnalyser::constructUsageTree(Argument *arg) {
   return true;
 }
 
+//void AddressAccessAnalyser::runOnFunction(Function *F) {
+//  mParameterAccesses.addFunction(
+//          F);  // if argument is here => ptr held by it may be stored somewhere
+//  initDepInfo(F);
+//  int argIdx = 0;
+//  for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++) {
+//    if (Arg->getType()->isPointerTy() && !Arg->hasReturnedAttr()) {
+//      if (Arg->hasNoCaptureAttr() || !constructUsageTree(
+//              Arg)) {// if usage tree exists then we have only local usages
+//        Arg->addAttr(Attribute::AttrKind::NoCapture);
+//        mParameterAccesses.infoByFun[F]->insert(argIdx);
+//      }
+//    }
+//    argIdx++;
+//  }
+//}
+
 void AddressAccessAnalyser::runOnFunction(Function *F) {
-  mParameterAccesses.addFunction(
-          F);  // if argument is here => ptr held by it may be stored somewhere
-  initDepInfo(F);
-  int argIdx = 0;
-  for (Argument *Arg = F->arg_begin(); Arg != F->arg_end(); Arg++) {
-    if (Arg->getType()->isPointerTy() && !Arg->hasReturnedAttr()) {
-      if (Arg->hasNoCaptureAttr() || !constructUsageTree(
-              Arg)) {// if usage tree exists then we have only local usages
-        Arg->addAttr(Attribute::AttrKind::NoCapture);
-        mParameterAccesses.infoByFun[F]->insert(argIdx);
-      }
-    }
-    argIdx++;
-  }
+  FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
+  auto MSSA = &Provider->get<MemorySSAWrapperPass>().getMSSA();
+  auto walker = MSSA->getWalker();
 }
 
 bool AddressAccessAnalyser::runOnModule(Module &M) {
