@@ -79,7 +79,6 @@ void initializeFunctionMemoryAttrsAnalysisPass(PassRegistry &Registry);
 /// Create a pass which deduces function memory attributes.
 FunctionPass *createFunctionMemoryAttrsAnalysis();
 
-<<<<<<< HEAD
 /// Initialize a pass which marks functions which should be inlined to improve
 /// data-dependence analysis.
 void initializeDependenceInlinerAttributerPass(PassRegistry &Registry);

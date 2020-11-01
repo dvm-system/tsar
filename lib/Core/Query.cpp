@@ -135,9 +135,9 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   // lost after SROA (for example, if a promoted variable is a structure).
   // Passes.add(createInstructionCombiningPass());
   Passes.add(createSROAPass());
-  Passes.add(createPointerReductionPass());
   Passes.add(createProcessDIMemoryTraitPass(
     [&DL](DIMemoryTrait &T) { markIfNotPromoted(DL, T); }));
+  Passes.add(createPointerReductionPass());
   if (!GO.UnsafeTfmAnalysis)
     Passes.add(createProcessDIMemoryTraitPass(
       markIf<trait::Lock, trait::NoPromotedScalar>));

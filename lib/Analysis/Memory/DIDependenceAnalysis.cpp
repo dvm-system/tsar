@@ -590,6 +590,47 @@ trait::Reduction::Kind getReductionKind(
   return trait::DIReduction::RK_NoReduction;
 }
 
+bool handleLoopEmptyBindings(
+        const Loop *L, const DIMemory *Mem,
+        DIMemoryTraitRegionPool &Pool,
+        const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR)
+{
+  if (Mem->emptyBinding()) {
+    return true;
+  }
+  for (auto &Loc : *Mem) {
+    if (Loc.pointsToAliveValue()) {
+      if (auto *I = dyn_cast<Instruction>(Loc)) {
+        if (L->contains(I)) {
+          return false;
+        }
+      }
+      if (auto *CE = dyn_cast<ConstantExpr>(Loc)) {
+        for (auto *User: CE->users()) {
+          if (auto *I = dyn_cast<Instruction>(User)) {
+            if (L->contains(I)) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (auto &Trait: Pool) {
+    auto *PoolNode = Trait.getMemory()->getAliasNode();
+    auto *MemNode = Mem->getAliasNode();
+
+    if (!DIAliasSTR.isUnreachable(PoolNode, MemNode) &&
+        !DIAliasSTR.isEqual(PoolNode, MemNode))
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /// Update traits of metadata-level locations related to a specified Phi-node
 /// in a specified loop. This function uses a specified `TraitInserter` functor
 /// to update traits for a single memory location.
@@ -642,7 +683,7 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
         DIMTraitItr->getMemory()->isOriginal() ||
-        !DIMTraitItr->getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
         !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
         isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       continue;
@@ -1450,7 +1491,7 @@ void DIDependencyAnalysisPass::analyzePrivatePromoted(Loop *L,
       continue;
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() || DIMTraitItr->getMemory()->isOriginal() ||
-        !DIMTraitItr->getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
         !DIMTraitItr->is_any<trait::Anti, trait::Flow, trait::Output,
                              trait::LastPrivate, trait::SecondToLastPrivate,
                              trait::FirstPrivate, trait::DynamicPrivate>() ||
@@ -1488,7 +1529,7 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
              L->getStartLoc().print(dbgs()); dbgs() << "\n");
   for (auto &DIMTrait : Pool) {
     if (DIMTrait.getMemory()->isOriginal() ||
-        !DIMTrait.getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, DIMTrait.getMemory(), Pool, DIAliasSTR) ||
         isLockedTrait(DIMTrait, LockedTraits, DIAliasSTR))
       continue;
     DIMTrait.unset<trait::AddressAccess>();
@@ -1613,14 +1654,14 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
     return;
   SmallVector<DIMemoryTraitRegionPool::iterator, 2> Traits;
   auto allowToUpdate =
-    [&Pool, &LockedTraits, &DIAliasSTR, &Traits](DIMemoryLocation &DILoc) {
+    [&Pool, &LockedTraits, &DIAliasSTR, &Traits, &L](DIMemoryLocation &DILoc) {
     auto *MD = getRawDIMemoryIfExists(DILoc.Var->getContext(), DILoc);
     if (!MD)
       return false;
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
       DIMTraitItr->getMemory()->isOriginal() ||
-      !DIMTraitItr->getMemory()->emptyBinding() ||
+      !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
       !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
       isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       return false;

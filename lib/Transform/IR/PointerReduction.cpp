@@ -109,8 +109,26 @@ bool validateValue(PtrRedContext &Ctx) {
   return true;
 }
 
-void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, const DebugLoc &Loc, Instruction *InsertBefore, bool add) {
+template <typename T>
+DebugLoc firstDebugLocInRange(const T &BeginItr, const T &EndItr) {
+  for (auto I = BeginItr; I != EndItr; ++I) {
+    if (!I->getDebugLoc())
+      continue;
+    if (auto II = dyn_cast<IntrinsicInst>(&*I))
+      if (isDbgInfoIntrinsic(II->getIntrinsicID()) ||
+          isMemoryMarkerIntrinsic(II->getIntrinsicID()))
+        continue;
+    return I->getDebugLoc();
+  }
+  return DebugLoc();
+}
+
+void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, Instruction *InsertBefore, bool add) {
   auto *DIB = new DIBuilder(*ctx.F.getParent());
+
+  auto *parent = Inst->getParent();
+  auto closestLoc = firstDebugLocInRange(parent->begin(), parent->end());
+  auto Loc = DILocation::get(Inst->getContext(), 0, 0, closestLoc->getScope());
 
   if (add) {
     Inst->setDebugLoc(Loc);
@@ -123,10 +141,9 @@ void insertLoadInstructions(PtrRedContext &ctx) {
   ctx.InsertedLoads.push_back(BeforeInstr);
 
   auto *insertBefore = &ctx.L->getLoopPredecessor()->back();
-  insertDbgValueCall(ctx, BeforeInstr, ctx.DbgLoc, insertBefore, true);
+  insertDbgValueCall(ctx, BeforeInstr, insertBefore, true);
   if (ctx.ValueChanged) {
-    auto BeforeInstr2 = new LoadInst(BeforeInstr->getType(), BeforeInstr, "load.ptr." + ctx.V->getName(), (Instruction *) nullptr);
-    BeforeInstr2->insertAfter(BeforeInstr);
+    auto BeforeInstr2 = new LoadInst(BeforeInstr->getType()->getPointerElementType(), BeforeInstr, "load.ptr." + ctx.V->getName(), &ctx.L->getLoopPredecessor()->back());
     ctx.InsertedLoads.push_back(BeforeInstr2);
   }
 }
@@ -140,13 +157,15 @@ void insertStoreInstructions(PtrRedContext &ctx) {
   }
 }
 
-void getAllStoreOperands(Instruction *Inst, DenseMap<StoreInst *, Instruction *> &Stores) {
+void getAllStoreOperands(LoadInst *Inst, DenseMap<StoreInst *, Instruction *> &Stores) {
   for (auto *User : Inst->users()) {
     if (auto *ChildInst = dyn_cast<Instruction>(User)) {
       for (auto *ChildUser : ChildInst->users()) {
         if (auto *Store = dyn_cast<StoreInst>(ChildUser)) {
-          Stores[Store] = ChildInst;
-          break;
+          if (Store->getPointerOperand() == Inst->getPointerOperand()) {
+            Stores[Store] = ChildInst;
+            break;
+          }
         }
       }
     }
@@ -190,7 +209,7 @@ void handleLoadsInBB(BasicBlock *BB, PtrRedContext &ctx) {
     }
   }
   for (auto &Pair : stores) {
-    insertDbgValueCall(ctx, Pair.second, Pair.first->getDebugLoc(), Pair.first, false);
+    insertDbgValueCall(ctx, Pair.second, Pair.first, false);
   }
   for (auto *Load : loads) {
     Load->dropAllReferences();
@@ -249,7 +268,7 @@ void insertPhiNodes(PtrRedContext &ctx, BasicBlock *BB, bool init = false) {
   if (needsCreate) {
     auto *phi = PHINode::Create(ctx.InsertedLoads.back()->getType(), 0,
                                 "phi." + BB->getName(), &BB->front());
-    insertDbgValueCall(ctx, phi, ctx.DbgLoc, BB->getFirstNonPHI(), true);
+    insertDbgValueCall(ctx, phi, BB->getFirstNonPHI(), true);
     ctx.PhiLinks[BB] = new phiNodeLink(phi);
     ctx.UniqueNodes.insert(phi);
   }
@@ -366,22 +385,21 @@ bool PointerReductionPass::runOnFunction(Function &F) {
         if (T.is<trait::Anti>() || T.is<trait::Flow>() || T.is<trait::Output>()) {
           for (auto &V : *T.getMemory()) {
             if (V.pointsToAliveValue() && !dyn_cast<UndefValue>(V)) {
+              bool hasLoopLoad = false, hasLoopStore = false;
               for (auto *User : V->users()) {
                 if (auto *LI = dyn_cast<LoadInst>(User)) {
-                  bool hasLoadUses = false;
-                  for (auto *LoadChild : LI->users()) {
-                    if (dyn_cast<LoadInst>(LoadChild)) {
-                      hasLoadUses = true;
-                      break;
-                    }
-                  }
-                  if (hasLoadUses) {
-                    continue;
-                  }
                   if (L->contains(LI)) {
-                    Values.insert(LI->getPointerOperand());
-                    break;
+                    hasLoopLoad = true;
                   }
+                }
+                if (auto *LI = dyn_cast<StoreInst>(User)) {
+                  if (L->contains(LI)) {
+                    hasLoopStore = true;
+                  }
+                }
+                if (hasLoopLoad && hasLoopStore) {
+                  Values.insert(V);
+                  break;
                 }
               }
             }
@@ -397,6 +415,11 @@ bool PointerReductionPass::runOnFunction(Function &F) {
     }
     for (auto *el : toDelete) {
       Values.erase(el);
+    }
+    if (!Values.empty()) {
+      for (auto &T: *Pool) {
+        T.unset<trait::NoPromotedScalar>();
+      }
     }
     for (auto *Val : Values) {
       auto *V = Val;
