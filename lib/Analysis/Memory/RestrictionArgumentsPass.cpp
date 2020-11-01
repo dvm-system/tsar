@@ -194,142 +194,189 @@ DenseMap<CallInst*, FunctionCallWithMemorySources> fillCallsToPtrArgumentsMemory
 
 // Maps Function to calls info for each pointer argument index
 DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>> collectRestrictFunctionsCallsByArguments(
-    DenseMap<CallInst*, FunctionCallWithMemorySources>& CallsToPtrArgumentsMemorySources,
-    DenseMap<Function*, FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies) {
-    DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>> RestrictFunctionsCalls;
+  DenseMap<CallInst*, FunctionCallWithMemorySources>& CallsToPtrArgumentsMemorySources,
+  DenseMap<Function*, FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies) {
+  DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>> RestrictFunctionsCalls;
 
-    for (auto& CallInfo : CallsToPtrArgumentsMemorySources) {
-        auto* CallI = CallInfo.second.mCallI;
-        auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
-        auto* F = CallI->getCalledFunction();
+  LLVM_DEBUG(
+  dbgs() << "\nCollectRestrictFunctionsCallsByArguments\n";
+  );
+  for (auto& CallInfo : CallsToPtrArgumentsMemorySources) {
+    auto* CallI = CallInfo.second.mCallI;
+    auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
+    auto* F = CallI->getCalledFunction();
 
-        std::vector<int> ArgumentsIndexes;
-        DenseMap<int, DenseSet<int>> ArgumentsCollisions;
-        for (auto& S : ArgumentsSources) {
-            ArgumentsIndexes.push_back(S.first);
-            ArgumentsCollisions.insert(std::make_pair(S.first, DenseSet<int>()));
-        }
+    LLVM_DEBUG(
+      dbgs() << "Processing call: ";
+      CallI->dump();
+    );
 
-        for (int i = 0; i < ArgumentsIndexes.size(); i++) {
-            for (int j = i + 1; j < ArgumentsIndexes.size(); j++) {
-                auto argumentIndex = ArgumentsIndexes[i];
-                auto otherArgumentIndex = ArgumentsIndexes[j];
-                auto& argumentSources = ArgumentsSources[argumentIndex];
-                auto& otherArgumentSources = ArgumentsSources[otherArgumentIndex];
-                LLVM_DEBUG(
-                    dbgs() << "\tSources for intersection: \n\t\tFirst arg sources:\n";
-                    for (auto* S : argumentSources) {
-                      dbgs() << "\t\t\t";
-                      S->dump();
-                    }
-                    dbgs() << "\t\tSecond arg sources:\n";
-                    for (auto* S : otherArgumentSources) {
-                      dbgs() << "\t\t\t";
-                      S->dump();
-                    }
-                );
-                std::vector<Value*> sourcesIntersection;
-                std::set_intersection(
-                    argumentSources.begin(),
-                    argumentSources.end(),
-                    otherArgumentSources.begin(),
-                    otherArgumentSources.end(),
-                    std::back_inserter(sourcesIntersection));
-                LLVM_DEBUG(
-                    if (sourcesIntersection.empty()) {
-                      dbgs() << "\t\tEmpty\n";
-                    } else {
-                      for (auto *S : sourcesIntersection) {
-                        dbgs() << "\t\t";
-                        S->dump();
-                      }
-                    }
-                );
-
-                if (!sourcesIntersection.empty()) {
-                    bool allArgumentSourcesReturnUniqueValues = true;
-                    for (auto* commonSource : sourcesIntersection) {
-                        if (auto* AllocaI = dyn_cast<AllocaInst>(commonSource)) {
-                            allArgumentSourcesReturnUniqueValues = false;
-                            break;
-                        }
-                        else if (auto* CommonCallI = dyn_cast<CallInst>(commonSource)) {
-                            auto* TargetCommonFunction = CommonCallI->getCalledFunction();
-                            if (FunctionsReturnValuesDependencies.count(TargetCommonFunction)) {
-                                if (!FunctionsReturnValuesDependencies[TargetCommonFunction].mIsRestrict) {
-                                    allArgumentSourcesReturnUniqueValues = false;
-                                    break;
-                                }
-                            }
-                            else if (!TargetCommonFunction->returnDoesNotAlias()) {
-                                allArgumentSourcesReturnUniqueValues = false;
-                                break;
-                            }
-                        }
-                        else {
-                            allArgumentSourcesReturnUniqueValues = false;
-                            break;
-                        }
-                    }
-                    if (!allArgumentSourcesReturnUniqueValues) {
-                        ArgumentsCollisions[argumentIndex].insert(otherArgumentIndex);
-                        ArgumentsCollisions[otherArgumentIndex].insert(argumentIndex);
-                    }
-                }
-            }
-        }
-
-        DenseSet<int> RestrictArgumentsForCall;
-        for (auto& A : ArgumentsCollisions) {
-            if (A.second.empty()) {
-                RestrictArgumentsForCall.insert(A.first);
-            }
-        }
-
-        if (!RestrictFunctionsCalls.count(F)) {
-            RestrictFunctionsCalls.insert(std::make_pair(F, DenseMap<int, DenseSet<CallInst*>>()));
-        }
-
-        for (auto ArgumentIndex : RestrictArgumentsForCall) {
-            if (!RestrictFunctionsCalls[F].count(ArgumentIndex)) {
-                RestrictFunctionsCalls[F].insert(std::make_pair(ArgumentIndex, DenseSet<CallInst*>({ CallI })));
-            }
-            else {
-                RestrictFunctionsCalls[F][ArgumentIndex].insert(CallI);
-            }
-        }
+    std::vector<int> ArgumentsIndexes;
+    DenseMap<int, DenseSet<int>> ArgumentsCollisions;
+    for (auto& S : ArgumentsSources) {
+      ArgumentsIndexes.push_back(S.first);
+      ArgumentsCollisions.insert(std::make_pair(S.first, DenseSet<int>()));
     }
-    return RestrictFunctionsCalls;
+
+    for (int i = 0; i < ArgumentsIndexes.size(); i++) {
+      for (int j = i + 1; j < ArgumentsIndexes.size(); j++) {
+        auto argumentIndex = ArgumentsIndexes[i];
+        auto otherArgumentIndex = ArgumentsIndexes[j];
+        auto& argumentSources = ArgumentsSources[argumentIndex];
+        auto& otherArgumentSources = ArgumentsSources[otherArgumentIndex];
+        LLVM_DEBUG(
+          dbgs() << "\tSources for intersection: \n\t\tFirst arg sources:\n";
+          for (auto* S : argumentSources) {
+            dbgs() << "\t\t\t";
+            S->dump();
+          }
+          dbgs() << "\t\tSecond arg sources:\n";
+          for (auto* S : otherArgumentSources) {
+            dbgs() << "\t\t\t";
+            S->dump();
+          }
+        );
+        std::vector<Value*> sourcesIntersection;
+        std::set_intersection(
+          argumentSources.begin(),
+          argumentSources.end(),
+          otherArgumentSources.begin(),
+          otherArgumentSources.end(),
+          std::back_inserter(sourcesIntersection));
+        LLVM_DEBUG(
+          if (sourcesIntersection.empty()) {
+            dbgs() << "\t\tEmpty\n";
+          } else {
+            for (auto *S : sourcesIntersection) {
+              dbgs() << "\t\t";
+              S->dump();
+            }
+          }
+        );
+
+        // Common memory source instruction is a common memory source instruction
+        if (!sourcesIntersection.empty()) {
+          ArgumentsCollisions[argumentIndex].insert(otherArgumentIndex);
+          ArgumentsCollisions[otherArgumentIndex].insert(argumentIndex);
+        } else {
+          // searching for a common memory-source function
+          std::set<Function *> argumentFunctionSources;
+          for (auto* S : argumentSources) {
+            if (auto* SourceCallI = dyn_cast<CallInst>(S)) {
+              auto *TargetFunction = SourceCallI->getCalledFunction();
+              argumentFunctionSources.insert(TargetFunction);
+            }
+          }
+          std::set<Function *> otherArgumentFunctionSources;
+          for (auto* S : otherArgumentSources) {
+            if (auto* SourceCallI = dyn_cast<CallInst>(S)) {
+              auto *TargetFunction = SourceCallI->getCalledFunction();
+              otherArgumentFunctionSources.insert(TargetFunction);
+            }
+          }
+          LLVM_DEBUG(
+            dbgs() << "\tFunctions Sources for intersection: \n\t\tFirst arg functions:\n";
+            for (auto* FS : argumentFunctionSources) {
+              dbgs() << "\t\t\t" << FS->getName() << "\n";
+            }
+            dbgs() << "\t\tSecond arg functions:\n";
+            for (auto* FS : otherArgumentFunctionSources) {
+              dbgs() << "\t\t\t" << FS->getName() << "\n";
+            }
+          );
+          std::vector<Function *> functionsIntersection;
+          std::set_intersection(
+            argumentFunctionSources.begin(),
+            argumentFunctionSources.end(),
+            otherArgumentFunctionSources.begin(),
+            otherArgumentFunctionSources.end(),
+            std::back_inserter(functionsIntersection));
+          LLVM_DEBUG(
+              dbgs() << "\tIntersection:\n";
+            if (functionsIntersection.empty()) {
+              dbgs() << "\t\tEmpty\n";
+            } else {
+              for (auto *FS : functionsIntersection) {
+                dbgs() << "\t\t\t" << FS->getName() << "\n";
+              }
+            }
+          );
+
+          if (!functionsIntersection.empty()) {
+            for (auto CommonFS : functionsIntersection) {
+              if (FunctionsReturnValuesDependencies.count(CommonFS)) {
+                if (!FunctionsReturnValuesDependencies[CommonFS].mIsRestrict) {
+                  ArgumentsCollisions[argumentIndex].insert(otherArgumentIndex);
+                  ArgumentsCollisions[otherArgumentIndex].insert(argumentIndex);
+                }
+              }
+              else if (!CommonFS->returnDoesNotAlias()) {
+                ArgumentsCollisions[argumentIndex].insert(otherArgumentIndex);
+                ArgumentsCollisions[otherArgumentIndex].insert(argumentIndex);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    DenseSet<int> RestrictArgumentsForCall;
+    LLVM_DEBUG(
+      dbgs() << "Restrict args for this call:\n";
+    );
+    for (auto& A : ArgumentsCollisions) {
+      if (A.second.empty()) {
+        RestrictArgumentsForCall.insert(A.first);
+        LLVM_DEBUG(
+          dbgs() << "\t" << A.first << "\n";
+        );
+      }
+    }
+
+    if (!RestrictFunctionsCalls.count(F)) {
+      RestrictFunctionsCalls.insert(std::make_pair(F, DenseMap<int, DenseSet<CallInst*>>()));
+    }
+
+    for (auto ArgumentIndex : RestrictArgumentsForCall) {
+      if (!RestrictFunctionsCalls[F].count(ArgumentIndex)) {
+        RestrictFunctionsCalls[F].insert(std::make_pair(ArgumentIndex, DenseSet<CallInst*>({ CallI })));
+      }
+      else {
+        RestrictFunctionsCalls[F][ArgumentIndex].insert(CallI);
+      }
+    }
+  }
+  return RestrictFunctionsCalls;
 }
 
 // Maps function to restrict arguments, based on target functions calls
 DenseMap<Function*, DenseSet<int>> collectRestrictFunctionsInfoByArguments(
-    DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>>& RestrictFunctionsCalls, DenseSet<CallInst*>& TargetFunctionsCalls) {
-    DenseMap<Function*, DenseSet<int>> RestrictFunctionsInfo;
-    DenseSet<Function*> PartiallyRestrictFunctions;
-    for (auto& FunctionCallsInfo : RestrictFunctionsCalls) {
-        auto* F = FunctionCallsInfo.first;
-        auto ArgumentsCallsMap = FunctionCallsInfo.second;
-        int FCallsCount = 0;
-        for (auto* TFC : TargetFunctionsCalls) {
-            if (TFC->getCalledFunction() == F) {
-                FCallsCount++;
-            }
-        }
-        for (auto& ArgumentCallsInfo : ArgumentsCallsMap) {
-            auto ArgumentIndex = ArgumentCallsInfo.first;
-            auto& RestrictCalls = ArgumentCallsInfo.second;
-            if (FCallsCount == RestrictCalls.size()) {
-                if (RestrictFunctionsInfo.count(F)) {
-                    RestrictFunctionsInfo[F].insert(ArgumentIndex);
-                }
-                else {
-                    RestrictFunctionsInfo.insert(std::make_pair(F, DenseSet<int>({ ArgumentIndex })));
-                }
-            }
-        }
+  DenseMap<Function*, DenseMap<int, DenseSet<CallInst*>>>& RestrictFunctionsCalls, DenseSet<CallInst*>& TargetFunctionsCalls) {
+  DenseMap<Function*, DenseSet<int>> RestrictFunctionsInfo;
+  DenseSet<Function*> PartiallyRestrictFunctions;
+  for (auto& FunctionCallsInfo : RestrictFunctionsCalls) {
+    auto* F = FunctionCallsInfo.first;
+    auto ArgumentsCallsMap = FunctionCallsInfo.second;
+    int FCallsCount = 0;
+    for (auto* TFC : TargetFunctionsCalls) {
+      if (TFC->getCalledFunction() == F) {
+          FCallsCount++;
+      }
     }
-    return RestrictFunctionsInfo;
+    for (auto& ArgumentCallsInfo : ArgumentsCallsMap) {
+      auto ArgumentIndex = ArgumentCallsInfo.first;
+      auto& RestrictCalls = ArgumentCallsInfo.second;
+      if (FCallsCount == RestrictCalls.size()) {
+        if (RestrictFunctionsInfo.count(F)) {
+          RestrictFunctionsInfo[F].insert(ArgumentIndex);
+        }
+        else {
+          RestrictFunctionsInfo.insert(std::make_pair(F, DenseSet<int>({ ArgumentIndex })));
+        }
+      }
+    }
+  }
+  return RestrictFunctionsInfo;
 }
 
 void runOnFunction(
@@ -484,6 +531,29 @@ void runOnFunction(
             KnownNonRestrictFunctions.insert(std::make_pair(LNRF, DenseSet<int>(FNonRestrictArgs)));
         }
     }
+  LLVM_DEBUG(
+    dbgs() << "After this function analysis:\n Restrict Functions: \n";
+    for (auto& FInfo : KnownRestrictFunctions) {
+      auto F = FInfo.first;
+      auto& Args = FInfo.second;
+      dbgs() << "\t" << F->getName() << "\n";
+      std::set<int> orderedArgs(Args.begin(), Args.end());
+      for (auto ArgIdx : orderedArgs) {
+        dbgs() << "\t\t" << ArgIdx << "\n";
+      }
+    }
+
+    dbgs() << "[RESTRICTION ARGS] Functions with Non Restrict calls:\n";
+    for (auto& FInfo : KnownNonRestrictFunctions) {
+      auto F = FInfo.first;
+      auto& Args = FInfo.second;
+      dbgs() << "\t" << F->getName() << "\n";
+      std::set<int> orderedArgs(Args.begin(), Args.end());
+      for (auto ArgIdx : orderedArgs) {
+        dbgs() << "\t\t" << ArgIdx << "\n";
+      }
+    }
+  );
 }
 
 FunctionResultArgumentsMemoryDependencies findReturnValueDependencies(Function* F, DenseMap<Function*,
@@ -628,36 +698,37 @@ bool RestrictionArgumentsPass::runOnModule(Module& M) {
 
     LLVM_DEBUG(
         dbgs() << "[RESTRICTION ARGS] Restrict Functions: \n";
-    for (auto& FInfo : RestrictFunctionsInfo) {
-        auto F = FInfo.first;
-        auto& Args = FInfo.second;
-        dbgs() << "\t" << F->getName() << "\n";
-        for (auto ArgIdx : Args) {
-            dbgs() << "\t\t" << ArgIdx << "\n";
-        }
-    }
+      for (auto& FInfo : RestrictFunctionsInfo) {
+          auto F = FInfo.first;
+          auto& Args = FInfo.second;
+          dbgs() << "\t" << F->getName() << "\n";
+          std::set<int> orderedArgs(Args.begin(), Args.end());
+          for (auto ArgIdx : orderedArgs) {
+              dbgs() << "\t\t" << ArgIdx << "\n";
+          }
+      }
 
-    dbgs() << "[RESTRICTION ARGS] Functions with Non Restrict calls:\n";
-    for (auto& FInfo : NonRestrictFunctionsInfo) {
-        auto F = FInfo.first;
-        auto& Args = FInfo.second;
-        dbgs() << "\t" << F->getName() << "\n";
-        for (auto ArgIdx : Args) {
-            dbgs() << "\t\t" << ArgIdx << "\n";
-        }
-    }
+      dbgs() << "[RESTRICTION ARGS] Functions with Non Restrict calls:\n";
+      for (auto& FInfo : NonRestrictFunctionsInfo) {
+          auto F = FInfo.first;
+          auto& Args = FInfo.second;
+          dbgs() << "\t" << F->getName() << "\n";
+          std::set<int> orderedArgs(Args.begin(), Args.end());
+          for (auto ArgIdx : orderedArgs) {
+              dbgs() << "\t\t" << ArgIdx << "\n";
+          }
+      }
 
-    dbgs() << "[RESTRICTION ARGS] Global vars:\n";
-    for (auto& GV : GlobalMemorySources) {
-        dbgs() << "\t" << GV->getName() << "\n";
-        GV->dump();
-    }
+      dbgs() << "[RESTRICTION ARGS] Global vars:\n";
+      for (auto& GV : GlobalMemorySources) {
+          dbgs() << "\t" << GV->getName() << "\n";
+          GV->dump();
+      }
     );
  return false;
 }
 
 void RestrictionArgumentsPass::getAnalysisUsage(llvm::AnalysisUsage& AU) const {
-    //AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<CallGraphWrapperPass>();
     AU.setPreservesAll();
 }
