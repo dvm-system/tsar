@@ -36,6 +36,8 @@
 #include "tsar/ADT/DataFlow.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
@@ -44,7 +46,9 @@
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Instruction.h>
 #endif//DEBUG
@@ -82,6 +86,14 @@ public:
 
   /// Set of memory locations.
   typedef MemorySet<MemoryLocationRange> LocationSet;
+
+  /// Kind of mutual arrangement of two memory location ranges.
+  enum ArrangementKind : short {
+    Unknown = 0,
+    Intersecting,
+    Adjacently,
+    Far
+  };
 
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
@@ -307,6 +319,14 @@ public:
     return mAddressUnknowns.insert(I).second;
   }
 
+  /// Merges adjacent memory location ranges into one contiguous memory
+  /// location range for Def, Use and MayDef sets.
+  void mergeAdjacentLocations(const llvm::DominatorTree *DT);
+
+  /// Merges adjacent memory location ranges into one contiguous memory
+  /// location range for specific set.
+  void mergeAdjacentSetLocations(LocationSet &LS, const llvm::DominatorTree *DT);
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -365,21 +385,59 @@ public:
       bcl::tagged<llvm::Function *, llvm::Function>,
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>>> InterprocDefUseInfo;
 
-  /// Creates data-flow framework.
-  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
-      const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
-      DefinedMemoryInfo &DefInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
-    mDT(&DT), mDefInfo(&DefInfo) {}
+  /// Kind of a loop bounds needed to collect information about the array
+  /// dimension.
+  enum LoopBoundKind : short {
+    None = 0,
+    Const,
+    ParentDependent,
+    Variable
+  };
+
+  /// This stores an information about one array dimension associated with
+  /// loops that use an array. 
+  struct DimensionInfo {
+    unsigned SCEVType = llvm::SCEVTypes::scUnknown;
+    int64_t RangeMin = 0;
+    int64_t RangeMax = 0;
+    uint64_t Step = 0;
+    uint64_t ElemSize = 0;
+    LoopBoundKind BoundKind = None;
+    size_t DimSize = 0;
+    const llvm::Value *Ptr;
+  };
+
+  /// This represents additional information for every dimension of an array.
+  typedef llvm::SmallVector<DimensionInfo, 4> DimensionInfoList;
+
+  /// Set of memory locations.
+  typedef DefUseSet::LocationSet LocationSet;
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
-      DefinedMemoryInfo &DefInfo,
+      DefinedMemoryInfo &DefInfo, const DelinearizeInfo &DI,
+      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL) :
+    mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
+    mDT(&DT), mDefInfo(&DefInfo), mDI(&DI), mSE(&SE), mDL(&DL) {}
+
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
+      DefinedMemoryInfo &DefInfo, const DelinearizeInfo &DI,
+      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
       InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
-    mDefInfo(&DefInfo),
+    mDefInfo(&DefInfo), mDI(&DI), mSE(&SE), mDL(&DL),
     mInterprocDUInfo(&InterprocDUInfo) {}
+
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const llvm::DominatorTree &DT, DefinedMemoryInfo &DefInfo,
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, InterprocDefUseInfo &InterprocDUInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDefInfo(&DefInfo),
+    mDI(&DI), mSE(&SE), mDL(&DL), mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -409,10 +467,27 @@ public:
   /// Return hierarchy of regions.
   const DFRegionInfo &getRegionInfo() const noexcept { return *mRegionInfo; }
 
+  /// Returns delinearize info.
+  const DelinearizeInfo * getDelinearizeInfo() const noexcept { return mDI; }
+
+  /// Returns scalar evolution.
+  llvm::ScalarEvolution * getScalarEvolution() const noexcept { return mSE; }
+
+  /// Returns data layout.
+  const llvm::DataLayout & getDataLayout() const noexcept { return *mDL; }
+
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
 
+  /// Calculates all memory ranges of an array if delinearization is available.
+  LocationSet calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
+
+  /// Calculates an offset for every memory range and fills the ALS set with
+  /// ready ranges. 
+  void addLocationsToSet(LocationSet &ALS, DimensionInfoList &DimInfo,
+      const MemoryLocationRange &Loc, size_t DimN, uint64_t ParentOffset);
+  
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
@@ -420,6 +495,9 @@ private:
   const DFRegionInfo *mRegionInfo;
   DefinedMemoryInfo *mDefInfo;
   InterprocDefUseInfo *mInterprocDUInfo = nullptr;
+  const DelinearizeInfo *mDI = nullptr;
+  llvm::ScalarEvolution *mSE = nullptr;
+  const llvm::DataLayout *mDL;
 };
 
 /// This represents results of interprocedural reach definition analysis.
@@ -430,6 +508,12 @@ typedef ReachDFFwk::ReachSet ReachSet;
 
 /// This represents results of reach definition analysis results.
 typedef ReachDFFwk::DefinedMemoryInfo DefinedMemoryInfo;
+
+/// This represents additional information for every dimension of an array.
+typedef ReachDFFwk::DimensionInfoList DimensionInfoList;
+
+/// Set of memory locations.
+typedef ReachDFFwk::LocationSet LocationSet;
 
 /// Traits for a data-flow framework which is used to find reach definitions.
 template<> struct DataFlowTraits<ReachDFFwk *> {
