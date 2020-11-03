@@ -86,6 +86,14 @@ public:
   /// Set of memory locations.
   typedef MemorySet<MemoryLocationRange> LocationSet;
 
+  /// Kind of mutual arrangement of two memory location ranges.
+  enum ArrangementKind : short {
+    Unknown = 0,
+    Intersecting,
+    Adjacently,
+    Far
+  };
+
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
 
@@ -310,6 +318,14 @@ public:
     return mAddressUnknowns.insert(I).second;
   }
 
+  /// Merges adjacent memory location ranges into one contiguous memory
+  /// location range for Def, Use and MayDef sets.
+  void mergeAdjacentLocations(const llvm::DominatorTree *DT);
+
+  /// Merges adjacent memory location ranges into one contiguous memory
+  /// location range for specific set.
+  void mergeAdjacentSetLocations(LocationSet &LS, const llvm::DominatorTree *DT);
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -368,6 +384,8 @@ public:
       bcl::tagged<llvm::Function *, llvm::Function>,
       bcl::tagged<std::unique_ptr<DefUseSet>, DefUseSet>>> InterprocDefUseInfo;
 
+  /// Kind of a loop bounds needed to collect information about the array
+  /// dimension.
   enum LoopBoundKind : short {
     None = 0,
     Const,
@@ -375,19 +393,24 @@ public:
     Variable
   };
 
+  /// This stores an information about one array dimension associated with
+  /// loops that use an array. 
   struct DimensionInfo {
     unsigned SCEVType = llvm::SCEVTypes::scUnknown;
     int64_t RangeMin = 0;
     int64_t RangeMax = 0;
     uint64_t Step = 0;
-    uint64_t ElemSize;
+    uint64_t ElemSize = 0;
     LoopBoundKind BoundKind = None;
     size_t DimSize = 0;
+    const llvm::Value *Ptr;
   };
 
-  /// This represents array's memory location info.
-  typedef MemorySet<MemoryLocationRange> ArrayLocSet;
+  /// This represents additional information for every dimension of an array.
   typedef llvm::SmallVector<DimensionInfo, 4> DimensionInfoList;
+
+  /// Set of memory locations.
+  typedef DefUseSet::LocationSet LocationSet;
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
@@ -455,10 +478,12 @@ public:
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
 
-  /// Calculates array range in memory.
-  ArrayLocSet calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
+  /// Calculates all memory ranges of an array if delinearization is available.
+  LocationSet calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
 
-  void addLocationsToSet(ArrayLocSet &ALS, DimensionInfoList &DimInfo,
+  /// Calculates an offset for every memory range and fills the ALS set with
+  /// ready ranges. 
+  void addLocationsToSet(LocationSet &ALS, DimensionInfoList &DimInfo,
       const MemoryLocationRange &Loc, size_t DimN, uint64_t ParentOffset);
   
 private:
@@ -481,8 +506,11 @@ typedef ReachDFFwk::ReachSet ReachSet;
 /// This represents results of reach definition analysis results.
 typedef ReachDFFwk::DefinedMemoryInfo DefinedMemoryInfo;
 
-typedef ReachDFFwk::ArrayLocSet ArrayLocSet;
+/// This represents additional information for every dimension of an array.
 typedef ReachDFFwk::DimensionInfoList DimensionInfoList;
+
+/// Set of memory locations.
+typedef ReachDFFwk::LocationSet LocationSet;
 
 /// Traits for a data-flow framework which is used to find reach definitions.
 template<> struct DataFlowTraits<ReachDFFwk *> {
