@@ -643,78 +643,6 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   return false;
 }
 
-void DefUseSet::mergeAdjacentSetLocations(LocationSet &LS,
-    const llvm::DominatorTree *DT) {
-  auto MergeRanges = [](LocationSet &LocSet, MemoryLocationRange Range) {
-    auto getArrangementKind = [](MemoryLocationRange &R1,
-        MemoryLocationRange &R2) {
-      if (!R1.LowerBound.hasValue() || !R2.LowerBound.hasValue()
-          || !R1.UpperBound.hasValue() || !R2.UpperBound.hasValue())
-        return ArrangementKind::Unknown;
-      if (R1.UpperBound.getValue() == R2.LowerBound.getValue()
-          || R2.LowerBound.getValue() == R1.UpperBound.getValue())
-        return ArrangementKind::Adjacently;
-      if (R1.UpperBound.getValue() < R2.LowerBound.getValue()
-          || R2.UpperBound.getValue() < R1.LowerBound.getValue())
-        return ArrangementKind::Far;
-      return ArrangementKind::Intersecting;
-    };
-    LocationSet MergedLS;
-    for (auto &OldRange: LocSet) {
-      auto Kind = getArrangementKind(OldRange, Range);
-      LLVM_DEBUG(
-        dbgs() << "[ARRAY LOCATION] Compare ranges: ";
-        dbgs() << "<" << OldRange.LowerBound << ", " << OldRange.UpperBound <<
-            ">, ";
-        dbgs() << "<" << Range.LowerBound << ", " << Range.UpperBound << ">. ";
-        dbgs() << "Result: " << Kind << "\n";
-      );
-      if (Kind == ArrangementKind::Adjacently ||
-          Kind == ArrangementKind::Intersecting) {
-        Range.LowerBound = std::min(OldRange.LowerBound.getValue(),
-            Range.LowerBound.getValue());
-        Range.UpperBound = std::max(OldRange.UpperBound.getValue(),
-            Range.UpperBound.getValue());
-      } else {
-        MergedLS.insert(OldRange);
-      }
-    }
-    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Merged range: " << "<" <<
-        Range.LowerBound << ", " << Range.UpperBound << ">\n");
-    MergedLS.insert(Range);
-    LocSet.clear();
-    LocSet.insert(MergedLS.begin(), MergedLS.end());
-  };
-  llvm::DenseMap<const llvm::Value *, LocationSet> VarLocs;
-  for (auto &LocRange : mDefs) {
-    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range info: " <<
-        LocRange.LowerBound << " " << LocRange.UpperBound << " | " <<
-        LocRange.Ptr << "\n");
-    MergeRanges(VarLocs[LocRange.Ptr], LocRange);
-  }
-  LLVM_DEBUG(
-    dbgs() << "[ARRAY LOCATION] Location set ranges:\n";
-    for (auto &Pair : VarLocs) {
-      dbgs() << "Variable: " << Pair.first->getName() << "\n";
-      dbgs() << "Ranges: ";
-      for (auto &Range : Pair.second) {
-        dbgs() << "<" << Range.LowerBound << ", " << Range.UpperBound << "> ";
-      }
-      dbgs() << "\n";
-    }
-  );
-  LS.clear();
-  for (auto &Pair : VarLocs) {
-    LS.insert(Pair.second.begin(), Pair.second.end());
-  }
-}
-
-void DefUseSet::mergeAdjacentLocations(const llvm::DominatorTree *DT) {
-  mergeAdjacentSetLocations(mDefs, DT);
-  mergeAdjacentSetLocations(mMayDefs, DT);
-  mergeAdjacentSetLocations(mUses, DT);
-}
-
 void ReachDFFwk::addLocationsToSet(LocationSet &ALS, DimensionInfoList &DIL,
     const MemoryLocationRange &Loc, size_t DimN, uint64_t ParentOffset) {
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check location at depth: " << DimN <<
@@ -777,16 +705,20 @@ LocationSet ReachDFFwk::calcArrayLocation(
       ArrayPtr->isAddressOfVariable() << ".\n");
   auto BaseType = ArrayPtr->getBase()->getType();
   auto ArrayType = cast<PointerType>(BaseType)->getElementType();
-  if (ArrayPtr->isAddressOfVariable())
+  if (ArrayPtr->isAddressOfVariable()) {
     ArrayType = cast<PointerType>(ArrayType)->getElementType();
+    // TODO: ArrayPtr = ?
+  }
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array type: " << *ArrayType << ".\n");
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Element type: " <<
       ArrayType->getTypeID() << ".\n");
-  auto ElementType = std::get<2>(arraySize(ArrayType));
-  if (ElementType == ArrayType) {
+  auto ArraySizeInfo = arraySize(ArrayType);
+  if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
+      ArrayPtr->getNumberOfDims() != 1) {
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get array size.\n");
     return LocationSet();
   }
+  auto ElementType = std::get<2>(ArraySizeInfo);
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array elements type:  " <<
       *ElementType << ".\n");
   auto ByteWidth = getDataLayout().getTypeStoreSize(ElementType);
@@ -804,10 +736,25 @@ LocationSet ReachDFFwk::calcArrayLocation(
     DimInfo.Ptr = ArrayPtr->getBase();
     auto *SE = getScalarEvolution();
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
-    if (AddRecInfo.second) {
-      auto SCEV = AddRecInfo.first;
-      if (SCEV->getSCEVType() != scAddRecExpr)
-        break;
+    if (!AddRecInfo.second)
+      continue;
+    auto SCEV = AddRecInfo.first;
+    if (SCEV->getSCEVType() == scConstant) {
+      auto Range = *cast<SCEVConstant>(S)->getValue()->getValue().getRawData();
+      DimInfo.RangeMin = Range;
+      DimInfo.RangeMax = Range;
+      DimInfo.Step = 1;
+      DimInfo.BoundKind = LoopBoundKind::Const;
+      DimInfo.ElemSize = ByteWidth;
+      auto DimSize = ArrayPtr->getDimSize(Dimension);
+      if (DimSize->getSCEVType() == scConstant) {
+        DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
+            getValue().getRawData();
+        DimInfoList.push_back(DimInfo);
+      } else {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
+      }
+    } else if (SCEV->getSCEVType() == scAddRecExpr) {
       if (auto *DFL = dyn_cast<DFLoop>(R)) {
         auto *StepSCEV = cast<SCEVAddRecExpr>(SCEV)->getOperand(1);
         if (StepSCEV->getSCEVType() != scConstant) {
@@ -820,7 +767,7 @@ LocationSet ReachDFFwk::calcArrayLocation(
         int64_t SignedRangeMax = *SE->getSignedRangeMax(SCEV).getRawData();
         if (SignedRangeMin < 0 || SignedRangeMax < 0) {
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range bounds must be"
-                               "non-negative.\n");
+                                "non-negative.\n");
           break;
         }
         LLVM_DEBUG(
@@ -834,7 +781,6 @@ LocationSet ReachDFFwk::calcArrayLocation(
         } else {
           DimInfo.DimSize = 0;
         }
-        DimInfo.SCEVType = scAddRecExpr;
         DimInfo.RangeMin = SignedRangeMin;
         DimInfo.RangeMax = SignedRangeMax;
         DimInfo.Step = StepNumber;
@@ -842,22 +788,6 @@ LocationSet ReachDFFwk::calcArrayLocation(
         DimInfo.ElemSize = ByteWidth;
         DimInfoList.push_back(DimInfo);
       }
-    } else if (S->getSCEVType() == scConstant) {
-      auto Range = *cast<SCEVConstant>(S)->getValue()->getValue().getRawData();
-      DimInfo.SCEVType = scConstant;
-      DimInfo.RangeMin = Range;
-      DimInfo.RangeMax = Range;
-      DimInfo.Step = 0;
-      DimInfo.BoundKind = LoopBoundKind::Const;
-      DimInfo.ElemSize = ByteWidth;
-      auto DimSize = ArrayPtr->getDimSize(Dimension);
-      if (DimSize->getSCEVType() == scConstant) {
-        DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
-            getValue().getRawData();
-      } else {
-        DimInfo.DimSize = 0;
-      }
-      DimInfoList.push_back(DimInfo);
     }
     Dimension++;
   }
@@ -868,7 +798,6 @@ LocationSet ReachDFFwk::calcArrayLocation(
     dbgs() << "[ARRAY LOCATION] Dimension info:\n";
     for (auto i = 0; i != DimInfoList.size(); i++) {
       auto &DimInfo = DimInfoList[i];
-      dbgs() << "SCEV Type: " << DimInfo.SCEVType << "\n";
       dbgs() << "Range Min:" << DimInfo.RangeMin << "\n";
       dbgs() << "Range Max:" << DimInfo.RangeMax << "\n";
       dbgs() << "Step:" << DimInfo.Step << "\n";
@@ -975,8 +904,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
       if (ExitingDefs.MustReach.contain(Loc)) {
         auto ArrayLocs = calcArrayLocation(R, Loc);
         if (!ArrayLocs.empty()) {
-          for (auto ArrayLoc : ArrayLocs)
+          for (auto ArrayLoc : ArrayLocs) {
             DefUse->addDef(ArrayLoc);
+          }
         } else {
           DefUse->addDef(Loc);
         }
@@ -1008,6 +938,6 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
   }
-  DefUse->mergeAdjacentLocations(&getDomTree());
+  //DefUse->mergeAdjacentLocations(getDomTree());
   LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
 }

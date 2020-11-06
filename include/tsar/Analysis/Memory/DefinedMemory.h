@@ -87,14 +87,6 @@ public:
   /// Set of memory locations.
   typedef MemorySet<MemoryLocationRange> LocationSet;
 
-  /// Kind of mutual arrangement of two memory location ranges.
-  enum ArrangementKind : short {
-    Unknown = 0,
-    Intersecting,
-    Adjacently,
-    Far
-  };
-
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
 
@@ -319,14 +311,6 @@ public:
     return mAddressUnknowns.insert(I).second;
   }
 
-  /// Merges adjacent memory location ranges into one contiguous memory
-  /// location range for Def, Use and MayDef sets.
-  void mergeAdjacentLocations(const llvm::DominatorTree *DT);
-
-  /// Merges adjacent memory location ranges into one contiguous memory
-  /// location range for specific set.
-  void mergeAdjacentSetLocations(LocationSet &LS, const llvm::DominatorTree *DT);
-
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -397,7 +381,6 @@ public:
   /// This stores an information about one array dimension associated with
   /// loops that use an array. 
   struct DimensionInfo {
-    unsigned SCEVType = llvm::SCEVTypes::scUnknown;
     int64_t RangeMin = 0;
     int64_t RangeMax = 0;
     uint64_t Step = 0;
