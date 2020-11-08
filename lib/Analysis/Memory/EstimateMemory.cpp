@@ -55,11 +55,15 @@ static inline void clarifyUnknownSize(const DataLayout &DL,
     MemoryLocation &Loc, const DominatorTree *DT = nullptr) {
   if (Loc.Size.hasValue())
     return;
-  if (auto GV = dyn_cast<GlobalValue>(Loc.Ptr)) {
+  int64_t Offset = 0;
+  auto Ptr = GetPointerBaseWithConstantOffset(Loc.Ptr, Offset, DL);
+  if (Offset != 0)
+    Ptr = Loc.Ptr;
+  if (auto GV = dyn_cast<GlobalValue>(Ptr)) {
     auto Ty = GV->getValueType();
     if (Ty->isSized())
       Loc.Size = LocationSize::precise(DL.getTypeStoreSize(Ty));
-  } else if (auto AI = dyn_cast<AllocaInst>(Loc.Ptr)) {
+  } else if (auto AI = dyn_cast<AllocaInst>(Ptr)) {
     auto Ty = AI->getAllocatedType();
     auto Size = AI->getArraySize();
     if (Ty->isSized() && isa<ConstantInt>(Size))
@@ -106,6 +110,8 @@ void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   if (BasePtr == Loc.Ptr)
     return;
   Loc.Ptr = BasePtr;
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip offset from base to ";
+             printLocationSource(dbgs(), Loc); dbgs() << "\n");
   stripToBase(DL, Loc);
 }
 
@@ -165,42 +171,28 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
     // Note, if array dimensions have constant size than Size == Loc.Size and
     // level will be striped.
     if (Loc.Size.hasValue() &&
-        MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) < 0)
-      return false;
-    LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
-    Loc.Ptr = GEP->getPointerOperand();
-    Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
-    if (Loc.Size.hasValue()) {
-      Type *SrcTy = GEP->getSourceElementType();
-      if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
-        auto SrcSize = DL.getTypeStoreSize(SrcTy);
-        APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
-        if (GEP->accumulateConstantOffset(DL, GEPOffset))
-          if (Loc.Size.getValue() + GEPOffset.getSExtValue() <= SrcSize) {
-            Loc.Size = LocationSize::precise(SrcSize);
-            return true;
-          }
+        MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) >= 0) {
+      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
+      Loc.Ptr = GEP->getPointerOperand();
+      Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
+      if (Loc.Size.hasValue()) {
+        Type *SrcTy = GEP->getSourceElementType();
+        if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
+          auto SrcSize = DL.getTypeStoreSize(SrcTy);
+          APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+          if (GEP->accumulateConstantOffset(DL, GEPOffset))
+            if (Loc.Size.getValue() + GEPOffset.getSExtValue() <= SrcSize) {
+              Loc.Size = LocationSize::precise(SrcSize);
+              return true;
+            }
+        }
       }
     }
-    bool IsInBounds = GEP->isInBounds();
     for (;;) {
-      auto BasePtr = GetUnderlyingObject(Loc.Ptr, DL, 1);
+      auto BasePtr = GetUnderlyingObject(Loc.Ptr, DL, 0);
       if (BasePtr == Loc.Ptr)
         break;
-      if (GEP = dyn_cast<GEPOperator>(BasePtr)) {
-        LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
-        IsInBounds &= GEP->isInBounds();
-      } else {
-        LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip not GEP instruction\n");
-      }
       Loc.Ptr = BasePtr;
-    }
-    if (!IsInBounds || !Loc.Size.hasValue()) {
-      LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip " << (!IsInBounds ? "not " : "")
-                        << "'inbounds' offset for location with "
-                        << (!Loc.Size.hasValue() ? "unknown" : "known")
-                        << "size\n");
-      return true;
     }
     Loc.Size = LocationSize::unknown();
     clarifyUnknownSize(DL, Loc);
@@ -500,15 +492,20 @@ void mergeChainAfterLog(EstimateMemory *EM, const DominatorTree &DT) {
 void AliasTree::add(const MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   assert(!isa<UndefValue>(Loc.Ptr) && "Pointer to memory location must be valid!");
-  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location\n");
+  LLVM_DEBUG(dbgs() << "[ALIAS TREE]: add memory location ";
+             printLocationSource(dbgs(), Loc, mDT); dbgs() << "\n");
   mSearchCache.clear();
   using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
   MemoryLocation Base(Loc);
-  clarifyUnknownSize(*mDL, Base, mDT);
   EstimateMemory *PrevChainEnd = nullptr;
+  stripToBase(*mDL, Base);
+  clarifyUnknownSize(*mDL, Base, mDT);
   do {
     LLVM_DEBUG(evaluateMemoryLevelLog(Base, getDomTree()));
     stripToBase(*mDL, Base);
+    // Do not clarify unknown size if memory level has been stripped.
+    // If we insert child location with unknown size then size of its parrent
+    // cannot be known.
     EstimateMemory *EM;
     bool IsNew, AddAmbiguous;
     std::tie(EM, IsNew, AddAmbiguous) = insert(Base);
@@ -845,8 +842,8 @@ const AliasUnknownNode * AliasTree::findUnknown(
 const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   MemoryLocation Base(Loc);
-  clarifyUnknownSize(*mDL, Base, mDT);
   stripToBase(*mDL, Base);
+  clarifyUnknownSize(*mDL, Base, mDT);
   auto SearchInfo = mSearchCache.try_emplace(Base, nullptr);
   if (!SearchInfo.second)
     return SearchInfo.first->second;
@@ -854,6 +851,8 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
   auto I = mBases.find(StrippedPtr);
   if (I == mBases.end())
     return nullptr;
+  // If the most appropriate result is not found, the first one is returned.
+  EstimateMemory *FirstResult = nullptr;
   for (auto &ChainBegin : I->second) {
     auto Chain = ChainBegin;
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
@@ -868,16 +867,41 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
       llvm_unreachable("Unknown result of alias query!"); break;
     }
     using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
-    EstimateMemory *Prev = nullptr;
+    EstimateMemory *Prev = nullptr, *Result = nullptr;
     do {
       if (MemorySetInfo<MemoryLocation>::sizecmp(
             Base.Size, Chain->getSize()) > 0)
         continue;
-      SearchInfo.first->second = Chain;
-      return Chain;
+      if (!Result)
+        Result = Chain;
     } while (Prev = Chain, Chain = CT::getNext(Chain));
+    if (!Result)
+      continue;
+    if (!FirstResult)
+      FirstResult = Result;
+    bool IsStripedBase = false;
+    auto StripedBase = Base;
+    do {
+      IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
+    } while (IsStripedBase && isSameBase(*mDL, StripedBase.Ptr, Base.Ptr));
+    if (IsStripedBase) {
+      if (auto Parent = Prev->getParent()) {
+        auto SizeCmp = MemorySetInfo<MemoryLocation>::sizecmp(
+          Parent->getSize(), StripedBase.Size);
+        if (!isSameBase(*mDL, Parent->front(), StripedBase.Ptr) ||
+            SizeCmp < 0 || SizeCmp > 0 && Result == Prev)
+          continue;
+      } else {
+        if (MemorySetInfo<MemoryLocation>::sizecmp(Prev->getSize(),
+                                                   StripedBase.Size) > 0)
+          continue;
+      }
+    }
+    SearchInfo.first->second = Result;
+    return Result;
   }
-  return nullptr;
+  SearchInfo.first->second = FirstResult;
+  return FirstResult;
 }
 
 std::tuple<EstimateMemory *, bool, bool>
@@ -942,25 +966,26 @@ AliasTree::insert(const MemoryLocation &Base) {
         IsStripedBase = stripMemoryLevel(*mDL, StripedBase);
       } while (IsStripedBase && isSameBase(*mDL, StripedBase.Ptr, Base.Ptr));
       if (IsStripedBase) {
-        // For example, let's consider a chain <dum[2],?> with parent <dum, ?>.
-        // Try to insert <dum[2], 8>, note that stripMemoryLevel() returns
-        // <dum, 24>. So, if we insert it before <dum[2],?> we will obtain
-        // incorrect sequence of sizes after insertion its parent <dum, 24>:
-        // <dum[2],8>-<dum[2],?>-<dum,24>.
-        if (MemorySetInfo<MemoryLocation>::sizecmp(
-              Prev->getSize(), StripedBase.Size) > 0)
-          continue;
         // For example, let's consider a chain <dum[1], 8> with parent
         // <dum, 24>-<dum, ?>. Try to insert <dum[1], ?>. If we insert it after
         // <dum[1], 8> we will obtain incorrect sequence of sizes (? < 24)
         // <dum[1], 8>-<dum[1],?>-<dum, 24>-<dum, ?>. So, we should create a new
         // chain <dum[1],?> with parent <dum,?>.
         if (auto Parent = Prev->getParent()) {
+          auto SizeCmp = MemorySetInfo<MemoryLocation>::sizecmp(
+            Parent->getSize(), StripedBase.Size);
           if (!isSameBase(*mDL, Parent->front(), StripedBase.Ptr) ||
-              MemorySetInfo<MemoryLocation>::sizecmp(
-                Parent->getSize(), StripedBase.Size) < 0) {
+              SizeCmp < 0 || SizeCmp > 0 && !UpdateChain)
             continue;
-          }
+        } else {
+          // For example, let's consider a chain <dum[2],?> with parent <dum,
+          // ?>. Try to insert <dum[2], 8>, note that stripMemoryLevel() returns
+          // <dum, 24>. So, if we insert it before <dum[2],?> we will obtain
+          // incorrect sequence of sizes after insertion its parent <dum, 24>:
+          // <dum[2],8>-<dum[2],?>-<dum,24>-<dum,?>.
+          if (MemorySetInfo<MemoryLocation>::sizecmp(Prev->getSize(),
+                                                     StripedBase.Size) > 0)
+            continue;
         }
       }
       if (!UpdateChain) {
