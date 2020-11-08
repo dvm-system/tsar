@@ -579,59 +579,61 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     const DominatorTree &DT, Optional<unsigned> DWLang,
     ArrayRef<const DIMemory *> LockedTraits,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
-    DIMemoryTraitRegionPool &Pool, FuncT &&TraitInserter) {
+    DIMemoryTraitRegionPool &Pool,
+    ArrayRef<Instruction *> MDSearchIterationUsers, FuncT &&TraitInserter) {
+  SmallVector<DIMemoryLocation, 2> DILocs;
   for (const auto &Incoming : Phi->incoming_values()) {
     if (!L->contains(Phi->getIncomingBlock(Incoming)))
       continue;
     LLVM_DEBUG(dbgs() << "[DA DI]: traits for promoted location ";
       printLocationSource(dbgs(), Incoming, &DT); dbgs() << " found \n");
-    SmallVector<DIMemoryLocation, 2> DILocs;
     Instruction * Users[] = { &Phi->getIncomingBlock(Incoming)->back() };
     findMetadata(Incoming, Users, DT, DILocs);
-    if (DILocs.empty())
-      continue;
-    for (auto &DILoc : DILocs) {
-      auto *MD = getRawDIMemoryIfExists(Incoming->getContext(), DILoc);
-      // If a memory location is partially promoted we will try to use
-      // dbg.declare or dbg.addr intrinsics to find the corresponding node in
-      // the alias tree.
-      if (!MD) {
-        if (DILoc.Expr->getNumOperands() != 0)
-          continue;
-        auto *MDV =
-            MetadataAsValue::getIfExists(Incoming->getContext(), DILoc.Var);
-        if (!MDV)
-          continue;
-        for (User *U : MDV->users()) {
-          if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
-            if (DII->isAddressOfVariable()) {
-              auto DILocCandidate = DIMemoryLocation::get(DII);
-              if (DILocCandidate.Expr != DILoc.Expr &&
-                  DILocCandidate.Loc == DILoc.Loc)
-                continue;
-              MD = getRawDIMemoryIfExists(Incoming->getContext(),
-                                          DILocCandidate);
-              if (MD)
-                break;
-            }
-        }
-        if (!MD)
-          continue;
-      }
-      auto DIMTraitItr = Pool.find_as(MD);
-      if (DIMTraitItr == Pool.end() ||
-          DIMTraitItr->getMemory()->isOriginal() ||
-          !DIMTraitItr->getMemory()->emptyBinding() ||
-          !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
-          isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
+  }
+  if (!MDSearchIterationUsers.empty())
+    findMetadata(Phi, MDSearchIterationUsers, DT, DILocs);
+  if (DILocs.empty())
+    return;
+  for (auto &DILoc : DILocs) {
+    auto *MD = getRawDIMemoryIfExists(Phi->getContext(), DILoc);
+    // If a memory location is partially promoted we will try to use
+    // dbg.declare or dbg.addr intrinsics to find the corresponding node in
+    // the alias tree.
+    if (!MD) {
+      if (DILoc.Expr->getNumOperands() != 0)
         continue;
-      LLVM_DEBUG(if (DWLang) {
-        dbgs() << "[DA DI]: update traits for ";
-        printDILocationSource(*DWLang, *DIMTraitItr->getMemory(), dbgs());
-        dbgs() << "\n";
-      });
-      TraitInserter(*DIMTraitItr);
+      auto *MDV =
+          MetadataAsValue::getIfExists(Phi->getContext(), DILoc.Var);
+      if (!MDV)
+        continue;
+      for (User *U : MDV->users()) {
+        if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
+          if (DII->isAddressOfVariable()) {
+            auto DILocCandidate = DIMemoryLocation::get(DII);
+            if (DILocCandidate.Expr != DILoc.Expr &&
+                DILocCandidate.Loc == DILoc.Loc)
+              continue;
+            MD = getRawDIMemoryIfExists(Phi->getContext(), DILocCandidate);
+            if (MD)
+              break;
+          }
+      }
+      if (!MD)
+        continue;
     }
+    auto DIMTraitItr = Pool.find_as(MD);
+    if (DIMTraitItr == Pool.end() ||
+        DIMTraitItr->getMemory()->isOriginal() ||
+        !DIMTraitItr->getMemory()->emptyBinding() ||
+        !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
+        isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
+      continue;
+    LLVM_DEBUG(if (DWLang) {
+      dbgs() << "[DA DI]: update traits for ";
+      printDILocationSource(*DWLang, *DIMTraitItr->getMemory(), dbgs());
+      dbgs() << "\n";
+    });
+    TraitInserter(*DIMTraitItr);
   }
 }
 
@@ -1491,8 +1493,8 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
     PredicatedScalarEvolution PSE(*mSE, *L);
     if (RecurrenceDescriptor::isReductionPHI(Phi, L, RD)) {
       auto RK = getReductionKind(RD);
-      updateTraits(L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool,
-          [RK](DIMemoryTrait &T) {
+      updateTraits(L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool, {},
+                   [RK](DIMemoryTrait &T) {
         T.set<trait::Reduction>(new trait::DIReduction(RK));
         LLVM_DEBUG(dbgs() << "[DA DI]: reduction found\n");
         ++NumTraits.get<trait::Reduction>();
@@ -1507,7 +1509,13 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
       if (Start && Step && mSE->hasLoopInvariantBackedgeTakenCount(L))
         if (auto *C = dyn_cast<SCEVConstant>(mSE->getBackedgeTakenCount(L)))
           BackedgeCount = APSInt(C->getAPInt());
-      updateTraits(L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool,
+      // We set variable as induction if it has not been marked as privitizable
+      // however it obtains its value in the beginning of loop iteration.
+      auto MDSerchIterationUsers =
+          L->getHeader()->getFirstNonPHIOrDbgOrLifetime();
+      updateTraits(
+          L, Phi, *mDT, DWLang, LockedTraits, DIAliasSTR, Pool,
+          makeArrayRef(MDSerchIterationUsers),
           [&ID, &Start, &Step, &BackedgeCount](DIMemoryTrait &T) {
         auto DIEM = dyn_cast<DIEstimateMemory>(T.getMemory());
         if (!DIEM)

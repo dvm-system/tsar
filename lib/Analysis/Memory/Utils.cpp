@@ -191,6 +191,7 @@ bool findGlobalMetadata(const GlobalVariable *Var,
 Optional<DIMemoryLocation> findMetadata(const Value *V,
     ArrayRef<Instruction *> Users,  const DominatorTree &DT,
     SmallVectorImpl<DIMemoryLocation> &DILocs) {
+  auto DILocsOriginSize = DILocs.size();
   auto Dominators = findDomDbgValues(V, DT, Users);
   for (auto &DILocToDom : Dominators) {
     auto DILoc = DILocToDom.first;
@@ -248,11 +249,11 @@ Optional<DIMemoryLocation> findMetadata(const Value *V,
     if (IsReached)
       DILocs.push_back(DILoc);
   }
-  auto DILocItr = DILocs.begin(), DILocItrE = DILocs.end();
-  for (; DILocItr != DILocItrE; ++DILocItr) {
-    if ([&V, &DILocs, &DILocItr, &DILocItrE, &Dominators, &DT]() {
+  auto DILocItrB = DILocs.begin() + DILocsOriginSize, DILocItrE = DILocs.end();
+  for (auto DILocItr = DILocItrB; DILocItr != DILocItrE; ++DILocItr) {
+    if ([&V, &DILocs, &DILocItr, &DILocItrB, &DILocItrE, &Dominators, &DT]() {
       auto DILocToDom = Dominators.find(*DILocItr);
-      for (auto I = DILocs.begin(), E = DILocItrE; I != E; ++I) {
+      for (auto I = DILocItrB, E = DILocItrE; I != E; ++I) {
         if (I == DILocItr)
           continue;
         for (auto BB : Dominators.find(*I)->second)
