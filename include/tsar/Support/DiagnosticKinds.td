@@ -184,6 +184,8 @@ def warn_loop_swapping_diff_reduction: Warning<"unable to swap loops due to the 
 def warn_loop_swapping_true_anti_dependence: Warning<"unable to swap loops due to the true or anti dependence">;
 def warn_loop_swapping_missing_loop: Warning<"not enough loops for swapping">;
 def warn_loop_swapping_redundant_loop: Warning<"too many loops for swapping, ignore redundant">;
+def warn_loop_swapping_no_loop_id: Warning<"cannot find loop ID to perform swapping">;
+
 def error_loop_swapping_lost_loop: Error<"cannot match ForStmt with its IR">;
 def error_loop_swapping_expect_compound: Error<"expected compound statement after pragma">;
-def warn_loop_swapping_no_loop_id: Warning<"cannot find loop ID to perform swapping">;
+def error_loop_swapping_diff_scope: Error<"loops within a pragma must have the same scope">;
