@@ -54,19 +54,11 @@ using namespace tsar;
 
 namespace {
 
-struct LoopRangeInfo {
-  Loop *LoopPtr;
-  SourceRange Range;
-  CompoundStmt *CompStmtPtr;
-  LoopRangeInfo() : LoopPtr(nullptr), CompStmtPtr(nullptr) {}
-  LoopRangeInfo(llvm::Loop *L, const SourceRange &R, CompoundStmt *S):
-      LoopPtr(L), Range(R), CompStmtPtr(S) {}
-};
-
 /// This provides access to function-level analysis results on server.
 using ClangLoopSwappingProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
 using DIAliasTraitVector = std::vector<const DIAliasTrait *>;
+using LoopRangeInfo = std::pair<Loop *, SourceRange>;
 using LoopRangeList = SmallVector<LoopRangeInfo, 2>;
 using PragmaInfoList = SmallVector<std::pair<Stmt *, LoopRangeList>, 2>;
 
@@ -123,11 +115,15 @@ public:
           diag::error_loop_swapping_expect_compound);
       return false;
     }
+    if (mState == TraverseState::OUTERFOR && !dyn_cast<ForStmt>(S)) {
+      toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+          diag::error_loop_swapping_redundant_stmt);
+      return false;
+    }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
   bool TraverseCompoundStmt(CompoundStmt *S) {
-    mCompStmtStack.push(S);
     if (mState == TraverseState::PRAGMA) {
       mState = TraverseState::OUTERFOR;
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
@@ -135,7 +131,6 @@ public:
       return Res;
     }
     auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-    mCompStmtStack.pop();
     return Res;
   }
 
@@ -144,13 +139,7 @@ public:
       auto Match = mLoopInfo.find<AST>(S);
       if (Match != mLoopInfo.end()) {
         auto &LRL = mPragmaLoopsInfo.back().second;
-        if (!LRL.empty() && LRL.back().CompStmtPtr != mCompStmtStack.top()) {
-          toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-            diag::error_loop_swapping_diff_scope);
-            return false;
-        }
-        LRL.push_back(LoopRangeInfo(Match->get<IR>(), S->getSourceRange(),
-            mCompStmtStack.top()));
+        LRL.push_back(std::make_pair(Match->get<IR>(), S->getSourceRange()));
       } else {
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
             diag::error_loop_swapping_lost_loop);
@@ -178,8 +167,8 @@ public:
         ++It, ++N) {
       dbgs() << "\tPragma " << N << " (" << It->first <<"):\n";
       for (const auto &Info : It->second) {
-        const auto LoopPtr = Info.LoopPtr;
-        const auto &Range = Info.Range;
+        const auto LoopPtr = Info.first;
+        const auto &Range = Info.second;
         dbgs() << "\t\t[Range]\n";
         dbgs() << "\t\tBegin:" << Range.getBegin().printToString(mSrcMgr)
             << "\n";
@@ -200,7 +189,6 @@ private:
   const LoopMatcherPass::LoopMatcher &mLoopInfo;
   TraverseState mState;
   SmallVector<Stmt *, 1> mClauses;
-  std::stack<CompoundStmt *> mCompStmtStack;
   PragmaInfoList mPragmaLoopsInfo; 
 };
 
@@ -327,15 +315,15 @@ bool ClangLoopSwapping::hasTrueOrAntiDependence(
 
 bool ClangLoopSwapping::isSwappingAvailable(
     const LoopRangeList &LRL, const Stmt *Pragma) const {
-  auto *LoopID0 = mGetLoopID(LRL[0].LoopPtr->getLoopID());
-  auto *LoopID1 = mGetLoopID(LRL[1].LoopPtr->getLoopID());
+  auto *LoopID0 = mGetLoopID(LRL[0].first->getLoopID());
+  auto *LoopID1 = mGetLoopID(LRL[1].first->getLoopID());
   if (!LoopID0) {
-    toDiag(mSrcMgr->getDiagnostics(), LRL[0].Range.getBegin(),
+    toDiag(mSrcMgr->getDiagnostics(), LRL[0].second.getBegin(),
         diag::warn_loop_swapping_no_loop_id);
     return false;
   }
   if (!LoopID1) {
-    toDiag(mSrcMgr->getDiagnostics(), LRL[1].Range.getBegin(),
+    toDiag(mSrcMgr->getDiagnostics(), LRL[1].second.getBegin(),
         diag::warn_loop_swapping_no_loop_id);
     return false;
   }
@@ -376,8 +364,8 @@ void ClangLoopSwapping::swapLoops(const LoopVisitor &Visitor) {
               diag::warn_loop_swapping_redundant_loop);
     }
     if (isSwappingAvailable(Loops, Pragma)) {
-      auto Range0 = Loops[0].Range;
-      auto Range1 = Loops[1].Range;
+      auto Range0 = Loops[0].second;
+      auto Range1 = Loops[1].second;
       Range0.setEnd(GetLoopEnd(Range0));
       Range1.setEnd(GetLoopEnd(Range1));
       auto Range0End = Range0.getEnd();

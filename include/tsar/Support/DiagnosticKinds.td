@@ -188,4 +188,4 @@ def warn_loop_swapping_no_loop_id: Warning<"cannot find loop ID to perform swapp
 
 def error_loop_swapping_lost_loop: Error<"cannot match ForStmt with its IR">;
 def error_loop_swapping_expect_compound: Error<"expected compound statement after pragma">;
-def error_loop_swapping_diff_scope: Error<"loops within a pragma must have the same scope">;
+def error_loop_swapping_redundant_stmt: Error<"pragma should only contain loops or other pragma">;
