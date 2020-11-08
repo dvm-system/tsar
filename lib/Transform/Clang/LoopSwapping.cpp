@@ -1,8 +1,8 @@
-//===- LoopSwapping.cpp - Source-level Renaming of Local Objects - *- C++ -*===//
+//===- LoopSwapping.cpp - Loop Swapping (Clang) -----------------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2020 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
@@ -58,7 +59,8 @@ using ClangLoopSwappingProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
 using DIAliasTraitVector = std::vector<const DIAliasTrait *>;
 using LoopRangeInfo = std::pair<Loop *, SourceRange>;
-using LoopRangeVector = SmallVector<LoopRangeInfo, 2>;
+using LoopRangeList = SmallVector<LoopRangeInfo, 2>;
+using PragmaInfoList = SmallVector<std::pair<Stmt *, LoopRangeList>, 2>;
 
 class LoopVisitor : public RecursiveASTVisitor<LoopVisitor> {
 private:
@@ -100,29 +102,29 @@ public:
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
         /// set to true then removing (in RewriterBuffer) works incorrect.
         RemoveEmptyLine.RemoveLineIfEmpty = false;
-        for (auto SR : ToRemove)
-          mRewriter.RemoveText(SR, RemoveEmptyLine);
+        /*for (auto SR : ToRemove)
+          mRewriter.RemoveText(SR, RemoveEmptyLine);*/
         mCurrentLevel++;
-        if (mCurrentLevel + 1 > int(mPragmaLevels.size())) {
-          mPragmaLevels.resize(mCurrentLevel + 1);
-        }
-        mPragmaLevels[mCurrentLevel].push_back(S);
+        mPragmaLoopsInfo.resize(mPragmaLoopsInfo.size() + 1);
+        mPragmaLoopsInfo.back().first = S;
         mState = TraverseState::PRAGMA;
       }
       return true;
     }
-    auto Res = RecursiveASTVisitor::TraverseStmt(S);
-    return Res;
+    if (mState == TraverseState::PRAGMA && !dyn_cast<CompoundStmt>(S)) {
+      S->dump();
+      toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
+          diag::error_loop_swapping_expect_compound);
+      return false;
+    }
+    return RecursiveASTVisitor::TraverseStmt(S);
   }
 
   bool TraverseCompoundStmt(CompoundStmt *S) {
     if (mState == TraverseState::PRAGMA) {
       mState = TraverseState::OUTERFOR;
-      mLoopStack.push(LoopRangeVector());
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-      mState = TraverseState::PRAGMA;
-      mPragmaLoopsInfo[mPragmaLevels[mCurrentLevel].back()] = mLoopStack.top();
-      mLoopStack.pop();
+      mState = TraverseState::NONE;
       mCurrentLevel--;
       return Res;
     }
@@ -133,9 +135,11 @@ public:
     if (mState == TraverseState::OUTERFOR) {
       auto Match = mLoopInfo.find<AST>(S);
       if (Match != mLoopInfo.end()) {
-        Loop *MatchLoop = Match->get<IR>();
-        SourceRange Range(S->getBeginLoc(), S->getEndLoc());
-        mLoopStack.top().push_back(std::make_pair(MatchLoop, Range));
+        mPragmaLoopsInfo.back().second.push_back(
+            std::make_pair(Match->get<IR>(), S->getSourceRange()));
+      } else {
+        toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+            diag::error_loop_swapping_lost_loop);
       }
       mState = TraverseState::INNERFOR;
       auto Res = RecursiveASTVisitor::TraverseForStmt(S);
@@ -145,45 +149,34 @@ public:
     return RecursiveASTVisitor::TraverseForStmt(S);
   }
 
-  const DenseMap<Stmt *, LoopRangeVector> &getPragmaLoopsInfo() const {
+  const PragmaInfoList &getPragmaLoopsInfo() const {
     return mPragmaLoopsInfo;
   }
 
-  const std::vector<SmallVector<Stmt *, 1>> &getPragmaLevels() const {
-    return mPragmaLevels;
-  }
-
-  size_t getMaxPragmaDepth() const {
-    return mPragmaLevels.size();
+  bool hasPragma() const {
+    return !mPragmaLoopsInfo.empty();
   }
   
+  #ifdef LLVM_DEBUG
   void printLocations() const {
-    for (size_t Level = 0; Level < mPragmaLevels.size(); Level++) {
-      LLVM_DEBUG(dbgs() << "Level " << Level << " :\n");
-      const auto &CurrentLevel = mPragmaLevels[Level];
-      for (size_t PragmaN = 0; PragmaN < CurrentLevel.size(); PragmaN++) {
-        const auto &Pragma = CurrentLevel[PragmaN];
-        auto PragmaItr = mPragmaLoopsInfo.find(Pragma);
-        assert(PragmaItr != mPragmaLoopsInfo.end() &&
-            "Map should contain all pragmas (as keys) from level vectors.");
-        const auto &Loops = PragmaItr->second;
-        LLVM_DEBUG(dbgs() << "\tPragma " << PragmaN << " (" << Pragma <<"):\n");
-        for (const auto &Info : Loops) {
-          const auto LoopPtr = Info.first;
-          const auto &Range = Info.second;
-          SourceLocation Begin = Range.getBegin();
-          SourceLocation End = Range.getEnd();
-          LLVM_DEBUG(dbgs() << "\t\t[Range]\n");
-          LLVM_DEBUG(dbgs() << "\t\tBegin:" << Begin.printToString(mSrcMgr)
-              << "\n");
-          LLVM_DEBUG(dbgs() << "\t\tEnd:" << End.printToString(mSrcMgr) <<"\n");
-          LLVM_DEBUG(dbgs() << "\t\t\n\t\t[Loop]\n");
-          const auto &LoopText = mRewriter.getRewrittenText(Range);
-          LLVM_DEBUG(dbgs() << "\t\t" << LoopText << "\n\n");
-        }
+    int N = 0;
+    for (auto It = mPragmaLoopsInfo.begin(); It != mPragmaLoopsInfo.end();
+        ++It, ++N) {
+      dbgs() << "\tPragma " << N << " (" << It->first <<"):\n";
+      for (const auto &Info : It->second) {
+        const auto LoopPtr = Info.first;
+        const auto &Range = Info.second;
+        dbgs() << "\t\t[Range]\n";
+        dbgs() << "\t\tBegin:" << Range.getBegin().printToString(mSrcMgr)
+            << "\n";
+        dbgs() << "\t\tEnd:" << Range.getEnd().printToString(mSrcMgr) <<"\n";
+        dbgs() << "\t\t\n\t\t[Loop]\n";
+        const auto &LoopText = mRewriter.getRewrittenText(Range);
+        dbgs() << "\t\t" << LoopText << "\n\n";
       }
     }
   }
+  #endif
 
 private:
   Rewriter &mRewriter;
@@ -195,9 +188,7 @@ private:
   SmallVector<Stmt *, 1> mClauses;
 
   int mCurrentLevel;
-  std::stack<LoopRangeVector> mLoopStack;
-  std::vector<SmallVector<Stmt *, 1>> mPragmaLevels;
-  DenseMap<Stmt *, LoopRangeVector> mPragmaLoopsInfo; 
+  PragmaInfoList mPragmaLoopsInfo; 
 };
 
 class ClangLoopSwapping : public FunctionPass, private bcl::Uncopyable {
@@ -213,12 +204,11 @@ public:
 private:
   void swapLoops(const LoopVisitor &Visitor);
   DIAliasTraitVector getLoopTraits(MDNode *LoopID) const;
-  bool isSwappingAvailable(std::pair<Loop *, Loop *> &Loops) const;
+  bool isSwappingAvailable(const LoopRangeList &LRL, const Stmt *Pragma) const;
   bool hasSameReductionKind(const DIAliasTraitVector &TV0,
                             const DIAliasTraitVector &TV1) const;
   bool hasTrueOrAntiDependence(const DIAliasTraitVector &TV0,
                                const DIAliasTraitVector &TV1) const;
-  void removePragmas(const std::vector<SmallVector<Stmt *, 1>> &PragmaLevels);
 
   Function *mFunction = nullptr;
   TransformationContext *mTfmCtx = nullptr;
@@ -304,17 +294,15 @@ bool ClangLoopSwapping::hasSameReductionKind(
 
 bool ClangLoopSwapping::hasTrueOrAntiDependence(
     const DIAliasTraitVector &TV0, const DIAliasTraitVector &TV1) const {
+  SpanningTreeRelation<DIAliasTree *> STR(mDIAT);
   for (auto &TS0: TV0) {
-    auto *Node0 = TS0->getNode();
-    MemoryDescriptor Dptr0 = *TS0;
     for (auto &TS1: TV1) {
-      auto *Node1 = TS1->getNode();
-      MemoryDescriptor Dptr1 = *TS1;
-      if (Node0 == Node1) {
-        if (Dptr0.is<trait::Readonly>() && !Dptr1.is<trait::Readonly>()) {
+      if (!STR.isUnreachable(const_cast<DIAliasNode *>(TS0->getNode()),
+          const_cast<DIAliasNode *>(TS1->getNode()))) {
+        if (TS0->is<trait::Readonly>() && !TS1->is<trait::Readonly>()) {
           // anti dependence
           return true;
-        } else if (Dptr1.is<trait::Readonly>() && !Dptr0.is<trait::Readonly>()){
+        } else if (TS1->is<trait::Readonly>() && !TS0->is<trait::Readonly>()){
           // true dependence
           return true;
         }
@@ -325,29 +313,28 @@ bool ClangLoopSwapping::hasTrueOrAntiDependence(
 }
 
 bool ClangLoopSwapping::isSwappingAvailable(
-    std::pair<Loop *, Loop *> &Loops) const {
-  auto HasLoopID = [this](MDNode*& LoopID, int LoopN) {
-    if (!LoopID || !(LoopID = mGetLoopID(LoopID))) {
-      LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: ignore loop without ID (loop " <<
-        LoopN << ").\n");
-      return false;
-    }
-    return true;
-  };
-  auto *LoopID0 = Loops.first->getLoopID();
-  auto *LoopID1 = Loops.second->getLoopID();
-  if (!HasLoopID(LoopID0, 0))
+    const LoopRangeList &LRL, const Stmt *Pragma) const {
+  auto *LoopID0 = mGetLoopID(LRL[0].first->getLoopID());
+  auto *LoopID1 = mGetLoopID(LRL[1].first->getLoopID());
+  if (!LoopID0) {
+    toDiag(mSrcMgr->getDiagnostics(), LRL[0].second.getBegin(),
+        diag::warn_loop_swapping_no_loop_id);
     return false;
-  if (!HasLoopID(LoopID1, 1))
+  }
+  if (!LoopID1) {
+    toDiag(mSrcMgr->getDiagnostics(), LRL[1].second.getBegin(),
+        diag::warn_loop_swapping_no_loop_id);
     return false;
+  }
   auto Traits0 = getLoopTraits(LoopID0);
   auto Traits1 = getLoopTraits(LoopID1);
   if (!hasSameReductionKind(Traits0, Traits1)) {
-    toDiag(mSrcMgr->getDiagnostics(), diag::warn_loop_swapping_diff_reduction);
+    toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+        diag::warn_loop_swapping_diff_reduction);
     return false;
   }
   if (hasTrueOrAntiDependence(Traits0, Traits1)) {
-    toDiag(mSrcMgr->getDiagnostics(),
+    toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
            diag::warn_loop_swapping_true_anti_dependence);
     return false;
   }
@@ -356,48 +343,38 @@ bool ClangLoopSwapping::isSwappingAvailable(
 
 void ClangLoopSwapping::swapLoops(const LoopVisitor &Visitor) {
   Rewriter &Rewr = mTfmCtx->getRewriter();
-  auto GetLoopEnd = [this, Rewr](const SourceRange &LoopRange)->SourceLocation {
+  auto GetLoopEnd = [this, &Rewr](const SourceRange &LoopRange) {
     Token SemiTok;
     return (!getRawTokenAfter(LoopRange.getEnd(), *mSrcMgr,
         Rewr.getLangOpts(), SemiTok) && SemiTok.is(tok::semi)) ?
         SemiTok.getLocation() : LoopRange.getEnd();
   };
-  auto &PragmaLevels = Visitor.getPragmaLevels();
   auto &PragmaLoopsInfo = Visitor.getPragmaLoopsInfo();
-  for (auto it = PragmaLevels.rbegin(); it != PragmaLevels.rend(); it++) {
-    for (auto &Pragma : *it) {
-      auto PragmaItr = PragmaLoopsInfo.find(Pragma);
-      assert(PragmaItr != PragmaLoopsInfo.end() &&
-          "Map should contain all pragmas (as keys) from level vectors.");
-      const auto &Loops = PragmaItr->second;
-      if (Loops.size() < 2) {
-        toDiag(mSrcMgr->getDiagnostics(),
-                diag::warn_loop_swapping_missing_loop);
-        continue;
-      }
-      if (Loops.size() > 2) {
-        toDiag(mSrcMgr->getDiagnostics(),
-                diag::warn_loop_swapping_redundant_loop);
-      }
-      auto Info0 = Loops[0];
-      auto Info1 = Loops[1];
-      auto Loop0 = Info0.first;
-      auto Loop1 = Info1.first;
-      auto LoopPair = std::make_pair(Loop0, Loop1);
-      if (isSwappingAvailable(LoopPair)) {
-        auto &Range0 = Info0.second;
-        auto &Range1 = Info1.second;
-        Range0.setEnd(GetLoopEnd(Range0));
-        Range1.setEnd(GetLoopEnd(Range1));
-        auto Range0End = Range0.getEnd();
-        auto Range1Begin = Range1.getBegin();
-        const auto &LoopText0 = Rewr.getRewrittenText(Range0);
-        const auto &LoopText1 = Rewr.getRewrittenText(Range1);
-        Rewr.RemoveText(Range0);
-        Rewr.RemoveText(Range1);
-        Rewr.InsertTextBefore(Range0End, LoopText1);
-        Rewr.InsertTextAfter(Range1Begin, LoopText0);
-      }
+  for (auto It = PragmaLoopsInfo.begin(); It != PragmaLoopsInfo.end(); It++) {
+    auto &Pragma = It->first;
+    auto &Loops = It->second;
+    if (Loops.size() < 2) {
+      toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+              diag::warn_loop_swapping_missing_loop);
+      continue;
+    }
+    if (Loops.size() > 2) {
+      toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+              diag::warn_loop_swapping_redundant_loop);
+    }
+    if (isSwappingAvailable(Loops, Pragma)) {
+      auto Range0 = Loops[0].second;
+      auto Range1 = Loops[1].second;
+      Range0.setEnd(GetLoopEnd(Range0));
+      Range1.setEnd(GetLoopEnd(Range1));
+      auto Range0End = Range0.getEnd();
+      auto Range1Begin = Range1.getBegin();
+      const auto &LoopText0 = Rewr.getRewrittenText(Range0);
+      const auto &LoopText1 = Rewr.getRewrittenText(Range1);
+      Rewr.RemoveText(Range0);
+      Rewr.RemoveText(Range1);
+      Rewr.InsertTextBefore(Range0End, LoopText1);
+      Rewr.InsertTextAfter(Range1Begin, LoopText0);
     }
   }
 }
@@ -436,11 +413,13 @@ bool ClangLoopSwapping::runOnFunction(Function &F) {
   LoopVisitor Visitor(mTfmCtx->getRewriter(), mLoopInfo, *ImportInfo);
   mSrcMgr = &mTfmCtx->getRewriter().getSourceMgr();
   Visitor.TraverseDecl(FuncDecl);
-  if (Visitor.getMaxPragmaDepth() == 0) {
+  if (mSrcMgr->getDiagnostics().hasErrorOccurred())
+    return false;
+  if (!Visitor.hasPragma()) {
     LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: no pragma found.\n");
     return false;
   }
-  Visitor.printLocations();
+  LLVM_DEBUG(Visitor.printLocations());
   swapLoops(Visitor);
   return false;
 }
