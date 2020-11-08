@@ -57,7 +57,11 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
     return unparseAsScalarTy(Offset, IsPositive);
   DIDerivedType *CurrEl = nullptr;
   for (auto El: DICTy->getElements()) {
+    if (El->getTag() != dwarf::DW_TAG_member)
+      continue;
     auto DITy = cast<DIDerivedType>(stripDIType(cast<DIType>(El)));
+    //if (!DITy || DITy->getTag() != dwarf::DW_TAG_member)
+    //  continue;
     auto ElOffset = DITy->getOffsetInBits() / 8;
     // It is necessary to use both checks (== and >) to accurately evaluate
     // structures with bit fields. In this case the first field will be
@@ -71,7 +75,9 @@ bool SourceUnparserImp::unparseAsStructureTy(uint64_t Offset, bool IsPositive) {
     }
     CurrEl = DITy;
   }
-  assert(CurrEl && "Element of a structure must not be null!");
+  // A composite type may have elements but does not have members in case of C++.
+  if (!CurrEl)
+    return unparseAsScalarTy(Offset, IsPositive);
   assert(Offset >= CurrEl->getOffsetInBits() / 8 &&
     "Too large offset of a structure filed!");
   if (mIsAddress) {
