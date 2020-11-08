@@ -37,6 +37,7 @@
 #include <llvm/ADT/Sequence.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Instructions.h>
@@ -133,10 +134,28 @@ bool extractSubscriptsFromGEPs(
 std::tuple<Value *, Value *, bool> GetUnderlyingArray(Value *Ptr,
                                                      const DataLayout &DL) {
   auto BasePtrInfo = GetUnderlyingObjectWithMetadata(Ptr, DL);
-  if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first))
+  if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first)) {
     Ptr = cast<LoadInst>(BasePtrInfo.first)->getPointerOperand();
-  else
+  } else if (!isa<AllocaInst>(BasePtrInfo.first) &&
+             !isa<GlobalValue>(BasePtrInfo.first) &&
+             !isa<Constant>(BasePtrInfo.first)) {
     Ptr = BasePtrInfo.first;
+    SmallVector<DbgVariableIntrinsic *, 4> DbgUsers;
+    findDbgUsers(DbgUsers, BasePtrInfo.first);
+    auto CurrFuncDbgItr = find_if(DbgUsers, [](auto *U) {
+      auto DbgLoc = U->getDebugLoc();
+      return DbgLoc && !DbgLoc.getInlinedAt();
+    });
+    // Attached metadata may refer to an inlined function after callee has been
+    // inlined. Try to find metadata related to the current function.
+    if (CurrFuncDbgItr == DbgUsers.end()) {
+      auto InlineBasePtr = GetUnderlyingObject(BasePtrInfo.first, DL, 1);
+      if (InlineBasePtr != BasePtrInfo.first)
+        return GetUnderlyingArray(InlineBasePtr, DL);
+    }
+  } else {
+    Ptr = BasePtrInfo.first;
+  }
   bool IsAddressOfVariable = (Ptr != BasePtrInfo.first);
   return std::make_tuple(Ptr, BasePtrInfo.first, IsAddressOfVariable);
 }

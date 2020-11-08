@@ -2267,6 +2267,8 @@ void DIDependencyAnalysisPass::print(raw_ostream &OS, const Module *M) const {
   }
   for_each_loop(LpInfo, [this, M, &GlobalOpts, &DIAT, &OS, &DWLang](Loop *L) {
     DebugLoc Loc = L->getStartLoc();
+    if (Loc && Loc.getInlinedAt())
+      return;
     std::string Offset(L->getLoopDepth(), ' ');
     OS << Offset;
     OS << "loop at depth " << L->getLoopDepth() << " ";

@@ -163,6 +163,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoExternalCalls;
   llvm::cl::opt<bool> MathErrno;
   llvm::cl::opt<bool> NoMathErrno;
+  llvm::cl::opt<bool> Inline;
+  llvm::cl::opt<bool> NoInline;
   llvm::cl::opt<std::string> AnalysisUse;
   llvm::cl::list<std::string> OptRegion;
 
@@ -270,6 +272,10 @@ Options::Options() :
      cl::desc("Require math functions to indicate errors by setting errno")),
   NoMathErrno("fno-math-errno", cl::cat(AnalysisCategory),
      cl::desc("Prevent math functions to indicate errors by setting errno")),
+  Inline("finline", cl::cat(AnalysisCategory),
+    cl::desc("Allow to inline function calls to improve analysis accuracy (default)")),
+  NoInline("fno-inline", cl::cat(AnalysisCategory),
+    cl::desc("Do not inline function calls to decrease analysis time")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -580,6 +586,13 @@ void Tool::storeCLOptions() {
     std::string Msg("error - this option is incompatible with");
     Msg.append(" -").append(Options::get().NoExternalCalls.ArgStr.data());
     Options::get().ExternalCalls.error(Msg);
+    exit(1);
+  }
+  mGlobalOpts.NoInline = Options::get().NoInline;
+  if (Options::get().Inline && Options::get().NoInline) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoInline.ArgStr.data());
+    Options::get().Inline.error(Msg);
     exit(1);
   }
   mGlobalOpts.OptRegions = Options::get().OptRegion;

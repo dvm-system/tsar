@@ -51,6 +51,7 @@ class CodeGenOptions;
 
 namespace tsar {
 struct GlobalOptions;
+class DIMemoryTrait;
 class TransformationContext;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
@@ -82,6 +83,16 @@ void addBeforeTfmAnalysis(llvm::legacy::PassManager &Passes,
 /// also analyses.
 void addAfterSROAAnalysis(const GlobalOptions &GO, const llvm::DataLayout &DL,
                           llvm::legacy::PassManager &Passes);
+
+/// Perform function inlining then repeat SROA and repeat dependence analysis.
+///
+/// Use 'Unlock' to unlock some traits before function inlining if necessary.
+/// For example, it may be useful to unset 'lock' trait for not promoted
+/// scalar, because function inlining may help SROA to promote them.
+void addAfterFunctionInlineAnalysis(
+    const GlobalOptions &GO, const llvm::DataLayout &DL,
+    const std::function<void(tsar::DIMemoryTrait &)> &Unlock,
+    llvm::legacy::PassManager &Passes);
 
 /// Perform loop rotation to enable reduction recognition if for-loops.
 void addAfterLoopRotateAnalysis(llvm::legacy::PassManager &Passes);
@@ -127,7 +138,8 @@ public:
     InitialStep = 0,
     BeforeTfmAnalysis = 1u << 0,
     AfterSroaAnalysis = 1u << 1,
-    AfterLoopRotateAnalysis = 1u << 2,
+    AfterFunctionInlineAnalysis = 1u << 2,
+    AfterLoopRotateAnalysis = 1u << 3,
     LLVM_MARK_AS_BITMASK_ENUM(AfterLoopRotateAnalysis)
   };
 

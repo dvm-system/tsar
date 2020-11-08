@@ -13,7 +13,7 @@ void foo() {
 //CHECK:    private:
 //CHECK:     <J:8[8:5], 4>
 //CHECK:    flow:
-//CHECK:     <A, ?>:[1:1,0:0]
+//CHECK:     <A, 800>:[1:1,0:0]
 //CHECK:    induction:
 //CHECK:     <I:7[7:3], 4>:[Int,0,10,1]
 //CHECK:    lock:
@@ -27,10 +27,10 @@ void foo() {
 //CHECK:    lock (separate):
 //CHECK:     <I:7[7:3], 4>
 //CHECK:    direct access (separate):
-//CHECK:     <A, ?> <I:7[7:3], 4> <J:8[8:5], 4>
+//CHECK:     <A, 800> <I:7[7:3], 4> <J:8[8:5], 4>
 //CHECK:   loop at depth 2 global_1.c:8:5
 //CHECK:     shared:
-//CHECK:      <A, ?>
+//CHECK:      <A, 800>
 //CHECK:     induction:
 //CHECK:      <J:8[8:5], 4>:[Int,0,10,1]
 //CHECK:     read only:
@@ -46,4 +46,4 @@ void foo() {
 //CHECK:     lock (separate):
 //CHECK:      <J:8[8:5], 4>
 //CHECK:     direct access (separate):
-//CHECK:      <A, ?> <I:7[7:3], 4> <J:8[8:5], 4>
+//CHECK:      <A, 800> <I:7[7:3], 4> <J:8[8:5], 4>

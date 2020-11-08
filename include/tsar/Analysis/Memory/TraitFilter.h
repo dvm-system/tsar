@@ -36,8 +36,13 @@ class DataLayout;
 
 namespace tsar {
 /// Set `WhatT` trait.
-template<class WhatT, class... Traits> void mark(DIMemoryTrait &T) {
+template<class WhatT> void mark(DIMemoryTrait &T) {
   T.set<WhatT>();
+}
+
+/// Unset `WhatT` trait.
+template<class WhatT> void unmark(DIMemoryTrait &T) {
+  T.unset<WhatT>();
 }
 
 /// Set `WhatT` trait if all specified traits `Traits` is set for `T`.
@@ -46,10 +51,24 @@ template<class WhatT, class... Traits> void markIf(DIMemoryTrait &T) {
     T.set<WhatT>();
 }
 
-/// Set `WhatT` trait if at least one of specified traits `Traits` is set for `T`.
+/// Unset `WhatT` trait if all specified traits `Traits` is set for `T`.
+template<class WhatT, class... Traits> void unmarkIf(DIMemoryTrait &T) {
+  if (T.is<Traits...>())
+    T.unset<WhatT>();
+}
+
+/// Set `WhatT` trait if at least one of specified traits `Traits` is set for
+/// `T`.
 template<class WhatT, class... Traits> void markIfAny(DIMemoryTrait &T) {
   if (T.is_any<Traits...>())
     T.set<WhatT>();
+}
+
+/// Unset `WhatT` trait if at least one of specified traits `Traits` is set for
+/// `T`.
+template<class WhatT, class... Traits> void unmarkIfAny(DIMemoryTrait &T) {
+  if (T.is_any<Traits...>())
+    T.unset<WhatT>();
 }
 
 /// This filter marks locations which have not been promoted yet.

@@ -225,7 +225,7 @@ int main(int Argc, char **Argv) {
 //CHECK:    explicit access (separate):
 //CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <A:44, 8> <B:45, 8> <Eps:48[47:39], 8> <ITMAX:43, 4> <It:47[47:3], 4> <L:42, 4> <sapfor.var, 4> printf():49:5
 //CHECK:    redundant (separate):
-//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <sapfor.var, 4>
+//CHECK:     <*A:{46:11|48:26|53:8|44:12}, ?> <*B:{46:14|48:29|54:8|45:12}, ?> <sapfor.var, 4> iter():48:18
 //CHECK:    lock (separate):
 //CHECK:     <ITMAX:43, 4> <It:47[47:3], 4>
 //CHECK:    address access (separate):

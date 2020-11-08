@@ -57,6 +57,7 @@
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
 #include <llvm/Transforms/IPO/FunctionAttrs.h>
+#include <llvm/Transforms/IPO/AlwaysInliner.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils.h>
 
@@ -143,6 +144,19 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
   Passes.add(createDIDependencyAnalysisPass());
+}
+
+void addAfterFunctionInlineAnalysis(
+    const GlobalOptions &GO, const DataLayout &DL,
+    const std::function<void(tsar::DIMemoryTrait &)> &Unlock,
+    legacy::PassManager &Passes) {
+  if (GO.NoInline)
+    return;
+  Passes.add(createPassBarrier());
+  Passes.add(createDependenceInlinerAttributer());
+  Passes.add(createProcessDIMemoryTraitPass(Unlock));
+  Passes.add(createDependenceInlinerPass());
+  addAfterSROAAnalysis(GO, DL, Passes);
 }
 
 void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
@@ -287,6 +301,15 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
 #endif
   addPrint(AfterSroaAnalysis);
   addOutput(AfterSroaAnalysis);
+  addAfterFunctionInlineAnalysis(
+      *mGlobalOptions, M->getDataLayout(),
+      [](auto &T) {
+        unmarkIf<trait::Lock, trait::NoPromotedScalar>(T);
+        unmark<trait::NoPromotedScalar>(T);
+      },
+      Passes);
+  addPrint(AfterFunctionInlineAnalysis);
+  addOutput(AfterFunctionInlineAnalysis);
   addAfterLoopRotateAnalysis(Passes);
   addPrint(AfterLoopRotateAnalysis);
   addOutput(AfterLoopRotateAnalysis);

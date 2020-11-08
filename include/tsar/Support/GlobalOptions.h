@@ -58,6 +58,8 @@ struct GlobalOptions {
   bool UnsafeTfmAnalysis = false;
   /// Assume that functions are never called outside the analyzed module.
   bool NoExternalCalls = false;
+  /// Disable function inlining which is useful for program analysis.
+  bool NoInline = false;
   /// Pass to external analysis results which is used to clarify analysis/
   std::string AnalysisUse = "";
   /// List of regions which should be optimized.

@@ -106,7 +106,7 @@ double iter(double(*A)[NY][NZ]) {
 //CHECK:    explicit access (separate):
 //CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> <A:23, 8> <Eps:22, 8> <It:24, 4> <ItMax:24, 4> <MaxEps:22, 8> printf():31:5
 //CHECK:    redundant (separate):
-//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?>
+//CHECK:     <*A:{28:8|30:16|35:8|23:11}, ?> iter():30:11
 //CHECK:    lock (separate):
 //CHECK:     <It:24, 4> <ItMax:24, 4>
 //CHECK:    address access (separate):

@@ -32,6 +32,7 @@
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
+#include "tsar/Analysis/Memory/TraitFilter.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -154,6 +155,13 @@ public:
     addBeforeTfmAnalysis(PM);
     addAfterSROAAnalysis(GO, M.getDataLayout(), PM);
     PM.add(createDIArrayAccessCollector());
+    addAfterFunctionInlineAnalysis(
+        GO, M.getDataLayout(),
+        [](auto &T) {
+          unmarkIf<trait::Lock, trait::NoPromotedScalar>(T);
+          unmark<trait::NoPromotedScalar>(T);
+        },
+        PM);
     addAfterLoopRotateAnalysis(PM);
     // Notify client that analysis is performed. Analysis changes metadata-level
     // alias tree and invokes corresponding handles to update client to server

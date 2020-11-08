@@ -34,4 +34,6 @@ void llvm::initializeIRTransform(PassRegistry &Registry) {
   initializeLoopAttributesDeductionPassPass(Registry);
   initializeCallExtractorPassPass(Registry);
   initializeFunctionMemoryAttrsAnalysisPass(Registry);
+  initializeDependenceInlinerPassPass(Registry);
+  initializeDependenceInlinerAttributerPass(Registry);
 }
