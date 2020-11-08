@@ -59,18 +59,27 @@ public:
   /// loops.
   using DistanceVector = llvm::SmallVector<DistanceRange, 1>;
 
+  /// One of causes which imply the dependence.
+  using Cause = bcl::tagged_pair<bcl::tagged<ObjectID, ObjectID>,
+                                 bcl::tagged<llvm::DebugLoc, llvm::DebugLoc>>;
+
   /// Creates dependence and set its properties to `F`.
   /// Distances will not be set.
-  explicit DIDependence(Flag F) : Dependence(F | UnknownDistance) {}
+  explicit DIDependence(Flag F,
+                        llvm::ArrayRef<Cause> Causes = llvm::ArrayRef<Cause>())
+      : Dependence(F | UnknownDistance), mCauses(Causes.begin(), Causes.end()) {
+  }
 
   /// Creates dependence and set its distances and properties.
   /// `UnknownDistance` flag will be updated according to specified distances.
-  DIDependence(Flag F, llvm::ArrayRef<DistanceRange> Distances)
+  DIDependence(Flag F, llvm::ArrayRef<DistanceRange> Distances,
+               llvm::ArrayRef<Cause> Causes = llvm::ArrayRef<Cause>())
       : Dependence((!Distances.empty() && Distances.front().first &&
                     Distances.front().second)
                        ? F & ~UnknownDistance
                        : F | UnknownDistance),
-        mDistances(Distances.begin(), Distances.end()) {
+        mDistances(Distances.begin(), Distances.end()),
+        mCauses(Causes.begin(), Causes.end()) {
     mKnownLevel = 0;
     for (auto &DR : Distances)
       if (DR.first && DR.second)
@@ -91,9 +100,13 @@ public:
   /// Return number of first known distances.
   unsigned getKnownLevel() const noexcept { return mKnownLevel; }
 
+  /// Return some objects which imply the dependence.
+  const auto &getCauses() const noexcept { return mCauses; }
+
 private:
   unsigned mKnownLevel = 0;
   DistanceVector mDistances;
+  llvm::SmallVector<Cause, 4> mCauses;
 };
 
 /// Metadata-level description of an induction.

@@ -158,6 +158,22 @@ template<class Tag> void combineIf(
   LLVM_DEBUG(if (IRDep || DIDep)
     dbgs() << "[DA DI]: combine " << Tag::toString() << " dependence\n");
   if (IRDep) {
+    SmallVector<trait::DIDependence::Cause, 4> Causes;
+    for (auto *V : IRDep->getCauses()) {
+      trait::DIDependence::Cause C;
+      if (auto *I = dyn_cast<Instruction>(V)) {
+        C.get<DebugLoc>() = I->getDebugLoc();
+        if (auto *CB = dyn_cast<CallBase>(I))
+          if (auto F = llvm::dyn_cast<Function>(
+                  CB->getCalledOperand()->stripPointerCasts()))
+            if (auto DISub = findMetadata(F))
+              C.get<ObjectID>() = DISub;
+      }
+      if (C.get<DebugLoc>() || C.get<ObjectID>())
+        Causes.push_back(std::move(C));
+    }
+    LLVM_DEBUG(dbgs() << "[DA DI]: the number of known causes is "
+                      << Causes.size() << "\n");
     if (!DIDep) {
       if (!hasSpuriousDep(DITrait) && !DITrait.template is<Tag>()) {
         trait::DIDependence::DistanceVector DIDistVector(IRDep->getLevels());
@@ -175,12 +191,12 @@ template<class Tag> void combineIf(
             break;
         DIDistVector.resize(KnownSize);
         DITrait.template set<Tag>(
-          new trait::DIDependence(IRDep->getFlags(), DIDistVector));
+          new trait::DIDependence(IRDep->getFlags(), DIDistVector, Causes));
       } else {
         auto F = IRDep->getFlags() | trait::Dependence::UnknownCause;
         if (F & trait::Dependence::May)
           F &= ~trait::Dependence::May;
-        DITrait.template set<Tag>(new trait::DIDependence(F));
+        DITrait.template set<Tag>(new trait::DIDependence(F, Causes));
       }
     } else {
       auto F = IRDep->getFlags() | DIDep->getFlags();
@@ -208,7 +224,8 @@ template<class Tag> void combineIf(
         if (I->first || I->second)
           break;
       DIDistVector.resize(KnownSize);
-      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistVector));
+      DITrait.template set<Tag>(
+          new trait::DIDependence(F, DIDistVector, Causes));
     }
   } else if (DIDep && (hasSpuriousDep(IRTrait) || IRTrait.template is<Tag>())) {
     auto F = DIDep->getFlags() | trait::Dependence::UnknownCause;
@@ -239,7 +256,8 @@ template<class Tag> void combineIf(
         auto F = FromDIDep->getFlags() | trait::Dependence::UnknownCause;
         if (F & trait::Dependence::May)
           F &= ~trait::Dependence::May;
-        DITrait.template set<Tag>(new trait::DIDependence(F));
+        DITrait.template set<Tag>(
+            new trait::DIDependence(F, FromDIDep->getCauses()));
       }
     } else {
       auto F = FromDIDep->getFlags() | DIDep->getFlags();
@@ -265,7 +283,8 @@ template<class Tag> void combineIf(
         if (I->first || I->second)
           break;
       DIDistVector.resize(KnownSize);
-      DITrait.template set<Tag>(new trait::DIDependence(F, DIDistVector));
+      DITrait.template set<Tag>(
+          new trait::DIDependence(F, DIDistVector, FromDIDep->getCauses()));
     }
   } else if (DIDep && (hasSpuriousDep(FromDITrait) ||
              FromDITrait.template is<Tag>())) {

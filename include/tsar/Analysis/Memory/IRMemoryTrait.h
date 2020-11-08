@@ -58,17 +58,22 @@ public:
 
   /// Creates dependence and set its properties to `F`.
   /// Distances will not be set.
-  explicit IRDependence(Flag F) :
-    Dependence(F | UnknownDistance), mKnownLevel(0){}
+  explicit IRDependence(Flag F, llvm::ArrayRef<llvm::Value *> Causes =
+                                    llvm::ArrayRef<llvm::Value *>())
+      : Dependence(F | UnknownDistance), mKnownLevel(0),
+        mCauses(Causes.begin(), Causes.end()) {}
 
   /// Creates dependence and set its distances and properties.
   /// `UnknownDistance` flag will be updated according to specified distances.
-  IRDependence(Flag F, llvm::ArrayRef<DistanceRange> Distances)
+  IRDependence(
+      Flag F, llvm::ArrayRef<DistanceRange> Distances,
+      llvm::ArrayRef<llvm::Value *> Causes = llvm::ArrayRef<llvm::Value *>())
       : Dependence((!Distances.empty() && Distances.front().first &&
                     Distances.front().second)
                        ? F & ~UnknownDistance
                        : F | UnknownDistance),
-        mDistances(Distances.begin(), Distances.end()) {
+        mDistances(Distances.begin(), Distances.end()),
+        mCauses(Causes.begin(), Causes.end()) {
     mKnownLevel = 0;
     for (auto &DR : Distances)
       if (DR.first && DR.second)
@@ -89,9 +94,12 @@ public:
   /// Return number of first known distances.
   unsigned getKnownLevel() const noexcept { return mKnownLevel; }
 
+  /// Return some instructions which imply this dependence.
+  const auto &getCauses() const noexcept { return mCauses; }
 private:
   unsigned mKnownLevel = 0;
   DistanceVector mDistances;
+  llvm::SmallVector<llvm::Value *, 4> mCauses;
 };
 }
 

@@ -195,6 +195,8 @@ public:
   template<class TraitSet>
   struct SummarizeFunctor {
     template<class Trait> void operator()() {
+      SmallVector<Value *, 4> Causes{mDep->mCauses.begin(),
+                                     mDep->mCauses.end()};
       if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
         trait::IRDependence::DistanceVector Distances (
             mDep->mDists.get<Trait>().size());
@@ -212,11 +214,11 @@ public:
           Distances[Idx].first = mSE->getSMinExpr(MinOps);
           Distances[Idx].second = mSE->getSMaxExpr(MaxOps);
         }
-        mSet->template set<Trait>(
-            new trait::IRDependence(mDep->mFlags.get<Trait>(), Distances));
+        mSet->template set<Trait>(new trait::IRDependence(
+            mDep->mFlags.get<Trait>(), Distances, Causes));
       } else {
         mSet->template set<Trait>(
-            new trait::IRDependence(mDep->mFlags.get<Trait>()));
+            new trait::IRDependence(mDep->mFlags.get<Trait>(), Causes));
       }
     }
     DependenceImp *mDep;
@@ -229,8 +231,9 @@ public:
 
   /// Uses specified descriptor, flags, and distance to update
   /// information about dependencies (see UpdateFunctor for details).
-  void update(Descriptor Dptr, trait::Dependence::Flag F, DistanceInfo &&Dist) {
-    Dptr.for_each(UpdateFunctor{ this, F, std::move(Dist)});
+  void update(Descriptor Dptr, trait::Dependence::Flag F, DistanceInfo &&Dist,
+              ArrayRef<Value *> Causes) {
+    Dptr.for_each(UpdateFunctor{ this, F, std::move(Dist), Causes});
   }
 
   /// Uses specified dependence description to update underlying
@@ -249,6 +252,7 @@ private:
   /// This functor updates specified dependence description mDep.
   struct UpdateFunctor {
     template<class Trait> void operator()() {
+      mDep->mCauses.insert(mCauses.begin(), mCauses.end());
       mDep->mDptr.set<Trait>();
       mDep->mFlags.get<Trait>() |= mFlag;
       if (!mDist.Dep ||
@@ -293,11 +297,13 @@ private:
     DependenceImp *mDep;
     trait::Dependence::Flag mFlag;
     DistanceInfo mDist;
+    ArrayRef<Value *> mCauses;
   };
 
   /// This functor updates specified dependence description mDep.
   struct UpdateDepFunctor {
     template<class Trait> void operator()() {
+      mDep->mCauses.insert(mSrc->mCauses.begin(), mSrc->mCauses.end());
       mDep->mDptr.set<Trait>();
       mDep->mFlags.get<Trait>() |= mSrc->mFlags.get<Trait>();
       if (!(mDep->mFlags.get<Trait>() & trait::Dependence::UnknownDistance)) {
@@ -347,6 +353,8 @@ private:
       mOS << "}";
       if (mDep->mKnownDistanceLevel.get<Trait>())
         mOS << ", has dropped distances";
+      if (!mDep->mCauses.empty())
+        mOS << ", has " << mDep->mCauses.size() << " known causes";
       mOS << "}";
     }
     DependenceImp *mDep;
@@ -366,6 +374,7 @@ private:
     bcl::tagged<Optional<unsigned>, trait::Flow>,
     bcl::tagged<Optional<unsigned>, trait::Anti>,
     bcl::tagged<Optional<unsigned>, trait::Output>> mKnownDistanceLevel;
+  SmallPtrSet<Value *, 8> mCauses;
 };
 }
 }
@@ -409,12 +418,13 @@ static void removeRedundantLog(TraitList &TL, StringRef Prefix) {
 template<class MapTy>
 static inline void updateDependence(const EstimateMemory *EM,
     DependenceImp::Descriptor &Dptr, trait::Dependence::Flag F,
-    DistanceInfo &&Dist, MapTy &Deps) {
+    DistanceInfo &&Dist, MapTy &Deps,
+    ArrayRef<Value *> Causes = ArrayRef<Value *>()) {
   assert(EM && "Estimate memory location must not be null!");
   auto Itr = Deps.try_emplace(EM, nullptr).first;
   if (!Itr->template get<DependenceImp>())
     Itr->template get<DependenceImp>().reset(new DependenceImp);
-  Itr->template get<DependenceImp>()->update(Dptr, F, std::move(Dist));
+  Itr->template get<DependenceImp>()->update(Dptr, F, std::move(Dist), Causes);
   LLVM_DEBUG(updateDependenceLog(*EM, *Itr->template get<DependenceImp>()));
 }
 
@@ -633,9 +643,15 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
              : trait::Dependence::CallCause);
         DependenceImp::Descriptor Dptr;
         Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+        SmallVector<Value *, 2> Causes;
+        if (isa<CallBase>(*SrcItr))
+          Causes.push_back(*SrcItr);
+        if (isa<CallBase>(*DstItr))
+          Causes.push_back(*DstItr);
         auto insertUnknownDep =
-          [this, &AA, &SrcItr, &DstItr, &Dptr, Flag, &Deps](Instruction &,
-            MemoryLocation &&Loc, unsigned, AccessInfo R, AccessInfo W) {
+          [this, &AA, &SrcItr, &DstItr, &Dptr, Flag, &Causes, &Deps](
+            Instruction &, MemoryLocation &&Loc, unsigned,
+            AccessInfo R, AccessInfo W) {
           if (R == AccessInfo::No && W == AccessInfo::No)
             return;
           if (AA.getModRefInfo(*SrcItr, Loc) == ModRefInfo::NoModRef)
@@ -643,7 +659,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
           if (AA.getModRefInfo(*DstItr, Loc) == ModRefInfo::NoModRef)
             return;
           updateDependence(mAliasTree->find(Loc), Dptr, Flag, DistanceInfo{},
-                           Deps);
+                           Deps, Causes);
         };
         auto stab = [](Instruction &, AccessInfo, AccessInfo) {};
         for_each_memory(**SrcItr, *mTLI, insertUnknownDep, stab);
@@ -667,7 +683,7 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
           DependenceImp::Descriptor Dptr;
           Dptr.set<trait::Flow, trait::Anti, trait::Output>();
           updateDependence(mAliasTree->find(Src), Dptr, Flag, DistanceInfo{},
-                           Deps);
+                           Deps, isa<CallBase>(*DstItr) ? *DstItr : nullptr);
         } else {
           if (!(*SrcItr)->mayWriteToMemory() &&
               !(*DstItr)->mayWriteToMemory()) {
