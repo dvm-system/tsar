@@ -188,14 +188,17 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
       // for each dimension.
       if (DICTy->getTag() == dwarf::DW_TAG_array_type) {
         assert(!mIsDITypeEnd && "Array must be defer unparsed!");
-        for (int I = 0; I < DICTy->getElements().size(); ++I)
-          Str.append({ '[','?',']' });
-        DICTy = cast<DICompositeType>(DICTy->getBaseType());
+        if (isa<DICompositeType>(DICTy->getBaseType())) {
+          for (int I = 0; I < DICTy->getElements().size(); ++I)
+            Str.append({ '[','?',']' });
+          DICTy = cast<DICompositeType>(DICTy->getBaseType());
+        }
       }
-      assert((DICTy->getTag() == dwarf::DW_TAG_structure_type ||
-        DICTy->getTag() == dwarf::DW_TAG_class_type ||
-        DICTy->getTag() == dwarf::DW_TAG_array_type) &&
-        "It must be aggregate type!");
+      // TODO (kaniandr@gmail.com): LLVM IR for Fortran programs uses structure
+      // of array of bytes to store pool of data which may have different types.
+      if (DICTy->getTag() != dwarf::DW_TAG_structure_type &&
+          DICTy->getTag() != dwarf::DW_TAG_class_type)
+        return false;
       auto El = cast<DIDerivedType>(DICTy->getElements()[Idx]);
       Str.push_back('.');
       Str.append(El->getName().begin(), El->getName().end());
