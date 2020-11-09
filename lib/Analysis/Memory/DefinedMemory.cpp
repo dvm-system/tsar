@@ -194,7 +194,7 @@ public:
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
-      if (!EM.isExplicit() || !isAlive(EM))
+      if (!EM.isExplicit() || !this->isAlive(EM))
         continue;
       for (auto *APtr : EM) {
         MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());
@@ -229,7 +229,7 @@ public:
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
-      if (!EM.isExplicit() || !isAlive(EM))
+      if (!EM.isExplicit() || !this->isAlive(EM))
         continue;
       for (auto *APtr : EM) {
         MemoryLocation ALoc(APtr, EM.getSize(), EM.getAAInfo());

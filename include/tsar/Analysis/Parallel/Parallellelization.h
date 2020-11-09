@@ -296,7 +296,7 @@ public:
   /// Return parallel item.
   ItemT *get() const {
     assert(isValid() && "Reference is invalid!");
-    return cast<ItemT>(mPIItr->get());
+    return llvm::cast<ItemT>(mPIItr->get());
   }
 
   /// Return edge from basic block to a list of parallel locations.
@@ -351,7 +351,9 @@ ParallelItemRef<ItemT> Parallelization::find(
   if (PLocItr == PLocListItr->template get<ParallelLocation>().end())
     return ParallelItemRef<ItemT>{};
   auto &PB = OnEntry ? PLocItr->Entry : PLocItr->Exit;
-  auto PIItr = llvm::find_if(PB, [](auto &PI) { return isa<ItemT>(PI.get()); });
+  auto PIItr = llvm::find_if(PB, [](auto &PI) {
+    return llvm::isa<ItemT>(PI.get());
+  });
   return PIItr != PB.end()
              ? ParallelItemRef<ItemT>{PLocListItr, PLocItr, PIItr, OnEntry}
              : ParallelItemRef<ItemT>{};

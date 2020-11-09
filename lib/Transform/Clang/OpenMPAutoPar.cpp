@@ -303,7 +303,8 @@ void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
   auto remove = [&ParallelizationInfo](BasicBlock *BB, auto RegionItr,
       auto PEdgeItr, ParallelBlock &OppositePB, ParallelBlock &FromPB) {
     if (FromPB.size() == 1) {
-      if (OppositePB.empty() && PEdgeItr->get<ParallelLocation>().size() == 1)
+      if (OppositePB.empty() &&
+          PEdgeItr->template get<ParallelLocation>().size() == 1)
         ParallelizationInfo.erase(BB);
       else
         FromPB.clear();
@@ -355,8 +356,8 @@ void mergeSiblingRegions(ItrT I, ItrT EI,
     if (auto *For = dyn_cast<ForStmt>(Child)) {
       auto MatchItr = LoopMatcher.find<AST>(For);
       if (MatchItr != LoopMatcher.end())
-        if (isParallel(MatchItr->get<IR>(), ParallelizationInfo)) {
-          ToMerge.push_back(MatchItr->get<IR>());
+        if (isParallel(MatchItr->template get<IR>(), ParallelizationInfo)) {
+          ToMerge.push_back(MatchItr->template get<IR>());
           continue;
         }
     }
@@ -396,7 +397,7 @@ void ClangOpenMPParallelization::optimizeLevel(
       }
     assert(BodyEntryBB &&
            "Unable to place ordered directive inside an empty loop!");
-    auto &SinkInfo = mParallelizationInfo.try_emplace(BodyEntryBB);
+    auto SinkInfo = mParallelizationInfo.try_emplace(BodyEntryBB);
     if (SinkInfo.second)
       SinkInfo.first->get<ParallelLocation>().emplace_back();
     SinkInfo.first->get<ParallelLocation>().back().Anchor =

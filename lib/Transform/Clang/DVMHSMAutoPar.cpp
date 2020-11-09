@@ -222,11 +222,11 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
     ASTDepInfo.get<trait::Dependence>()
         .begin()->second.get<trait::Flow>().size();
   auto updatePAD = [&PossibleAcrossDepth](auto &Dep, auto T) {
-    if (!Dep.second.get<decltype(T)>().empty()) {
-      auto MinDepth = *Dep.second.get<decltype(T)>().front().first;
+    if (!Dep.second.template get<decltype(T)>().empty()) {
+      auto MinDepth = *Dep.second.template get<decltype(T)>().front().first;
       unsigned PAD = 1;
-      for (auto InnerItr = Dep.second.get<decltype(T)>().begin() + 1,
-                InnerItrE = Dep.second.get<decltype(T)>().end();
+      for (auto InnerItr = Dep.second.template get<decltype(T)>().begin() + 1,
+                InnerItrE = Dep.second.template get<decltype(T)>().end();
            InnerItr != InnerItrE; ++InnerItr, ++PAD)
         if (InnerItr->first->isNegative()) {
           auto Revert = -(*InnerItr->first);
@@ -273,7 +273,7 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
       }
     }
     if (!DependentDim)
-      return nullptr;
+      return false;
     updatePAD(Dep, trait::Flow{});
     updatePAD(Dep, trait::Anti{});
     auto I =
@@ -496,20 +496,21 @@ static void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
   auto copyInOut = [&To = MergedRegion.get()->getClauses()](auto &FromRegion) {
     auto &From = FromRegion.getClauses();
     To.get<trait::ReadOccurred>().insert(
-        From.get<trait::ReadOccurred>().begin(),
-        From.get<trait::ReadOccurred>().end());
+        From.template get<trait::ReadOccurred>().begin(),
+        From.template get<trait::ReadOccurred>().end());
     To.get<trait::WriteOccurred>().insert(
-        From.get<trait::WriteOccurred>().begin(),
-        From.get<trait::WriteOccurred>().end());
-    To.get<trait::Private>().insert(From.get<trait::Private>().begin(),
-                                    From.get<trait::Private>().end());
+        From.template get<trait::WriteOccurred>().begin(),
+        From.template get<trait::WriteOccurred>().end());
+    To.get<trait::Private>().insert(From.template get<trait::Private>().begin(),
+                                    From.template get<trait::Private>().end());
   };
   // Remove start or and of region and corresponding actualization directive.
   auto remove = [&ParallelizationInfo](BasicBlock *BB, auto RegionItr,
       auto ActualItr,  auto PEdgeItr, ParallelBlock &OppositePB,
       ParallelBlock &FromPB) {
     if (FromPB.size() == 1 || FromPB.size() == 2 && ActualItr != FromPB.end()) {
-      if (OppositePB.empty() && PEdgeItr->get<ParallelLocation>().size() == 1)
+      if (OppositePB.empty() &&
+          PEdgeItr->template get<ParallelLocation>().size() == 1)
         ParallelizationInfo.erase(BB);
       else
         FromPB.clear();
@@ -571,18 +572,18 @@ static void mergeSiblingRegions(ItrT I, ItrT EI,
       auto MatchItr = LoopMatcher.find<AST>(For);
       if (MatchItr != LoopMatcher.end())
         if (auto *DVMHParallel =
-                isParallel(MatchItr->get<IR>(), ParallelizationInfo))
+                isParallel(MatchItr->template get<IR>(), ParallelizationInfo))
           if (auto *DVMHRegion =
                   cast_or_null<PragmaRegion>(DVMHParallel->getParent())) {
             if (!ToMerge.empty()) {
               if (DVMHRegion->isHostOnly() == IsHostOnly) {
-                ToMerge.push_back(MatchItr->get<IR>());
+                ToMerge.push_back(MatchItr->template get<IR>());
                 continue;
               }
               if (ToMerge.size() > 1)
                 mergeRegions(ToMerge, ParallelizationInfo);
             }
-            ToMerge.push_back(MatchItr->get<IR>());
+            ToMerge.push_back(MatchItr->template get<IR>());
             IsHostOnly = DVMHRegion->isHostOnly();
             continue;
           }
