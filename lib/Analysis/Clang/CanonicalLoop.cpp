@@ -109,9 +109,10 @@ public:
       Result.Nodes.getNodeAs<ForStmt>("forLoop"));
     if (!For)
       return;
-    LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: process loop at ");
-    LLVM_DEBUG(For->getBeginLoc().dump(Result.Context->getSourceManager()));
-    LLVM_DEBUG(dbgs() << "\n");
+    LLVM_DEBUG(
+        dbgs() << "[CANONICAL LOOP]: process loop at ";
+        For->getBeginLoc().print(dbgs(), Result.Context->getSourceManager());
+        dbgs() << "\n");
     auto Match = mLoopInfo->find<AST>(For);
     if (Match == mLoopInfo->end()) {
       LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: unmatched loop found.\n");

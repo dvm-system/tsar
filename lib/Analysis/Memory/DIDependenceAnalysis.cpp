@@ -533,8 +533,7 @@ AliasNode * findBoundAliasNode(AliasTree &AT, DIAliasEstimateNode &DIN) {
     if (M.emptyBinding())
       continue;
     findBoundAliasNodes(M, AT, BoundNodes);
-    assert(BoundNodes.size() == 1 &&
-      "Metadata-level alias tree is corrupted!");
+    assert(BoundNodes.size() == 1 && "Metadata-level alias tree is corrupted!");
 #ifndef LLVM_DEBUG
     return *BoundNodes.begin();
   }

@@ -1,4 +1,4 @@
-//===-- DVMHSMAutoPar.cpp - OpenMP Based Parallelization (Clang) -*- C++ -*===//
+//===-- DVMHSMAutoPar.cpp - DVMH Based Parallelization (Clang) ---*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //

@@ -143,8 +143,12 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
     // TODO (kaniandr@gmail.com): investigate cases which lead to absence of
     // analysis results. This situation occurs if CG from NAS NPB 3.3.1 is
     // analyzed for example.
-    if (DepItr == DIDepInfo->end())
+    if (DepItr == DIDepInfo->end()) {
+      LLVM_DEBUG(
+          dbgs() << "[PARALLEL LOOP]: ignore loop without analysis results: ";
+          SLoc.print(dbgs()); dbgs() << "\n");
       return;
+    }
     auto &DIDepSet = DepItr->get<DIDependenceSet>();
     DenseSet<const DIAliasNode *> Coverage;
     accessCoverage<bcl::SimpleInserter>(DIDepSet, *DIAT, Coverage,

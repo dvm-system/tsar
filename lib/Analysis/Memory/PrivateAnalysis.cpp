@@ -379,7 +379,7 @@ private:
 }
 }
 
-#ifndef NDEBUG
+#ifdef LLVM_DEBUG
 static void updateTraitsLog(const EstimateMemory *EM, BitMemoryTrait T) {
   llvm::dbgs() << "[PRIVATE]: update traits of ";
   printLocationSource(llvm::dbgs(),
@@ -508,7 +508,7 @@ void PrivateRecognitionPass::resolveCandidats(
   assert(R && "Region must not be null!");
   if (auto *L = dyn_cast<DFLoop>(R)) {
     LLVM_DEBUG(dbgs() << "[PRIVATE]: analyze loop ";
-      TSAR_LLVM_DUMP(L->getLoop()->dump());
+      L->getLoop()->print(dbgs());
       if (DebugLoc DbgLoc = L->getLoop()->getStartLoc()) {
         dbgs() << " at ";
         DbgLoc.print(dbgs());
@@ -662,6 +662,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
                            Deps, Causes);
         };
         auto stab = [](Instruction &, AccessInfo, AccessInfo) {};
+        LLVM_DEBUG(dbgs() << "[PRIVATE]: conservatively assume dependence: ";
+                   (**SrcItr).print(dbgs()); dbgs() << "\n";
+                   (**DstItr).print(dbgs()); dbgs() << "\n");
         for_each_memory(**SrcItr, *mTLI, insertUnknownDep, stab);
         for_each_memory(**DstItr, *mTLI, insertUnknownDep, stab);
       }
@@ -682,6 +685,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
               trait::Dependence::CallCause);
           DependenceImp::Descriptor Dptr;
           Dptr.set<trait::Flow, trait::Anti, trait::Output>();
+          LLVM_DEBUG(dbgs() << "[PRIVATE]: conservatively assume dependence: ";
+                     (**SrcItr).print(dbgs()); dbgs() << "\n";
+                     (**DstItr).print(dbgs()); dbgs() << "\n");
           updateDependence(mAliasTree->find(Src), Dptr, Flag, DistanceInfo{},
                            Deps, isa<CallBase>(*DstItr) ? *DstItr : nullptr);
         } else {
@@ -705,9 +711,9 @@ void PrivateRecognitionPass::collectDependencies(Loop *L, DependenceMap &Deps,
           if (Dep) {
             LLVM_DEBUG(
               dbgs() << "[PRIVATE]: dependence found: ";
-              TSAR_LLVM_DUMP(Dep->dump(dbgs()));
-              TSAR_LLVM_DUMP((**SrcItr).dump());
-              TSAR_LLVM_DUMP((**DstItr).dump());
+              Dep->dump(dbgs());
+              (**SrcItr).print(dbgs()); dbgs() << "\n";
+              (**DstItr).print(dbgs()); dbgs() << "\n";
             );
             // Do not use Dependence::isLoopIndependent() to check loop
             // independent dependencies. This method returns `may` instead of
