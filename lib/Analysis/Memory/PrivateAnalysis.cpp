@@ -939,7 +939,18 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
             // Address should be also remembered if it is a function parameter
             // because it is not known how it is used inside a function.
             auto *Call = dyn_cast<CallBase>(I.first);
-            return Call && Call->getCalledOperand() != I.second->get();
+            if (Call && Call->isArgOperand(I.second)) {
+              if (auto Callee = llvm::dyn_cast<Function>(
+                      Call->getCalledOperand()->stripPointerCasts())) {
+                // Function declaration may have unknown number of arguments.
+                // The function is casted to the valid prototype before a call.
+                return Callee->arg_size() > Call->getArgOperandNo(I.second) &&
+                       !Callee->getArg(Call->getArgOperandNo(I.second))
+                            ->hasAttribute(Attribute::NoCapture);
+              }
+              return true;
+            }
+            return false;
           }))
         continue;
       auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
