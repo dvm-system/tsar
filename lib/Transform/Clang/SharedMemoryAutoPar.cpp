@@ -48,6 +48,7 @@
 #include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
+#include <bcl/marray.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <llvm/ADT/SCCIterator.h>
@@ -168,13 +169,15 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
         auto *Call = dyn_cast<CallBase>(&I);
         if (!Call)
           continue;
+        if (isDbgInfoIntrinsic(Call->getIntrinsicID()) ||
+            isMemoryMarkerIntrinsic(Call->getIntrinsicID()))
+          continue;
         auto Callee = dyn_cast<Function>(
           Call->getCalledOperand()->stripPointerCasts());
         if (!Callee)
           continue;
-        auto Info = mParallelCallees.try_emplace(Callee);
-        if (Info.second)
-          Info.first->getSecond() = mCGNodes[Callee];
+        assert(mAdjacentList.count(Callee) && "Call to an unknown function!");
+        mParallelCallees.try_emplace(Callee, mAdjacentList[Callee].get<Id>());
       }
   }
   if (!PI || PI && !PI->isFinal())
@@ -210,6 +213,101 @@ void ClangSMParallelization::initializeProviderOnClient(Module &M) {
       });
 }
 
+std::size_t ClangSMParallelization::buildAdjacentList() {
+  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  std::size_t LastPostorderNum = 0;
+  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
+    bool HasCycle = I.hasCycle();
+    auto CurrSize = mAdjacentList.size();
+    for (auto *CGN : *I) {
+      if (CGN->getFunction()) {
+        auto &Node = mAdjacentList[CGN->getFunction()];
+        Node.get<Id>() = LastPostorderNum;
+        Node.get<InCycle>() = HasCycle;
+      }
+    }
+    if (mAdjacentList.size() > CurrSize) {
+      ++LastPostorderNum;
+      auto FuncRange =
+          make_range(mAdjacentList.begin() + CurrSize, mAdjacentList.end());
+      for (auto *CGN : *I) {
+        for (auto &Call : *I->front())
+          if (Call.second == CG.getCallsExternalNode()) {
+            for (auto &Info: FuncRange)
+              Info.second.get<HasUnknownCalls>() = true;
+          } else if (Call.second != CGN) {
+            assert(Call.second->getFunction() &&
+              "Call to an unknown function!");
+            auto Itr = mAdjacentList.find(Call.second->getFunction());
+            assert(Itr != mAdjacentList.end() && "Unknown function!");
+            for (auto &Info : FuncRange)
+              if (!Info.second.get<Adjacent>()
+                       .insert(Itr->second.get<Id>())
+                       .second)
+                break;
+            ;
+          }
+      }
+    }
+  }
+  if (CG.getExternalCallingNode())
+    for (auto &ExternalCall : *CG.getExternalCallingNode())
+      if (auto *F = ExternalCall.second->getFunction())
+        mExternalCalls.insert(mAdjacentList[F].get<Id>());
+  LLVM_DEBUG(
+    for (auto &SCC : mAdjacentList) {
+      dbgs() << "[SHARED PARALLEL]: function " << SCC.first->getName()
+             << " in SCC " << SCC.second.get<Id>()
+             << ", has" << (SCC.second.get<InCycle>() ? " " : " no ") << "cycle"
+             << ", has" << (SCC.second.get<HasUnknownCalls>() ? " " : " no ")
+             << "unknown calls"
+             << ", adjacent SCCs:";
+      for (auto SCCId : SCC.second.get<Adjacent>())
+        dbgs() << " " << SCCId;
+      dbgs() << "\n";
+    }
+    dbgs() << "[SHARED PARALLEL]: external calls to SCCs:";
+    for (auto SCCId : mExternalCalls)
+      dbgs() << " " << SCCId;
+    dbgs() << "\n");
+  return LastPostorderNum;
+}
+
+template <typename Adjacent, typename HasUnknownCalls, typename AdjacentListT>
+static void addToReachability(const AdjacentListT &AdjacentList,
+                              const DenseSet<std::size_t> ExternalCalls,
+                              const typename AdjacentListT::value_type &SCC,
+                              SmallVectorImpl<std::size_t> &Path,
+                              DenseSet<std::size_t> &Finished,
+                              DenseSet<std::size_t> &Visited,
+                              bcl::marray<bool, 2> &Reachability) {
+  for (auto To : SCC.second.template get<Adjacent>()) {
+    if (!Visited.insert(To).second)
+      continue;
+    for (auto From : Path)
+      Reachability[From][To] = true;
+    if (Finished.insert(To).second) {
+      Path.push_back(To);
+      addToReachability<Adjacent, HasUnknownCalls>(
+          AdjacentList, ExternalCalls, *(AdjacentList.begin() + To), Path,
+          Finished, Visited, Reachability);
+      Path.pop_back();
+    } else {
+      addToReachability<Adjacent, HasUnknownCalls>(
+          AdjacentList, ExternalCalls, *(AdjacentList.begin() + To), Path,
+          Finished, Visited, Reachability);
+    }
+  }
+  // It's not necessary to add call to external functions if there are
+  // unknown calls from the current SCC. There are two possibility for unknown
+  // calls. The first one is call to user-defined functions. However, these
+  // calls prevent parallelization of a loop (DirectUserCallee attribute).
+  // So, it's not important whether a function, which we consider to parallelize,
+  // is reachable from this unknown callee. The second case is call to a library
+  // function. We assume that there is no user-defined functions which are
+  // reachable from library functions. So, this case can be also ignored.
+}
+
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
   mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
@@ -236,46 +334,37 @@ bool ClangSMParallelization::runOnModule(Module &M) {
         toDiag(mTfmCtx->getContext().getDiagnostics(),
                clang::diag::warn_region_not_found) << Name;
   }
-  auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  std::vector<
-    bcl::tagged_tuple<
-      bcl::tagged<Function *, Function>,
-      bcl::tagged<std::size_t, Preorder>,
-      bcl::tagged<std::size_t, ReversePreorder>,
-      bcl::tagged<std::size_t, Postorder>,
-      bcl::tagged<std::size_t, ReversePostorder>>> PostorderTraverse;
-  std::size_t LastPostorderNum = 1;
-  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd();
-       ++I, ++LastPostorderNum)
-    if (!I.hasCycle() && I->front()->getFunction()) {
-      PostorderTraverse.emplace_back();
-      PostorderTraverse.back().get<Function>() = I->front()->getFunction();
-      PostorderTraverse.back().get<Postorder>() = LastPostorderNum;
-    }
-  if (PostorderTraverse.empty())
-    return false;
-  std::size_t PrevPostorderNum = 0, LastPreorderNum = 1;
-  for (auto I = PostorderTraverse.rbegin(), EI = PostorderTraverse.rend();
-       I != EI; PrevPostorderNum = I->get<Postorder>(), ++I) {
-    auto Itr = mCGNodes.try_emplace(I->get<Function>()).first;
-    Itr->get<Postorder>() = I->get<Postorder>();
-    Itr->get<ReversePostorder>() = I->get<ReversePostorder>() =
-      LastPostorderNum - I->get<Postorder>();
-    Itr->get<Preorder>() = I->get<Preorder>() =
-      LastPreorderNum + I->get<Postorder>() - PrevPostorderNum;
-    Itr->get<ReversePreorder>() = I->get<ReversePreorder>() =
-      LastPostorderNum - I->get<Preorder>();
-    LLVM_DEBUG(
-        dbgs() << "Numbering for " << I->get<Function>()->getName() << " "
-               << "postorder " << Itr->get<Postorder>() << " "
-               << "reverse postorder " << Itr->get<ReversePostorder>() << " "
-               << "preorder " << Itr->get<Preorder>() << " "
-               << "reverse preorder " << Itr->get<ReversePreorder>()
-               << "\n");
+  auto NumberOfSCCs = buildAdjacentList();
+  bcl::marray<bool, 2> Reachability({NumberOfSCCs, NumberOfSCCs});
+  for (std::size_t I = 0, EI = NumberOfSCCs; I < EI; ++I)
+    for (std::size_t J = 0, EJ = NumberOfSCCs; J < EJ; ++J)
+      Reachability[I][J] = false;
+  DenseSet<std::size_t> Finished;
+  std::size_t PrevSCCId = NumberOfSCCs;
+  // Build reachability matrix for SCCs.
+  for (auto &SCC : mAdjacentList) {
+    if (SCC.second.get<Id>() == PrevSCCId)
+      continue;
+    PrevSCCId = SCC.second.get<Id>();
+    if (!Finished.insert(SCC.second.get<Id>()).second)
+      continue;
+    SmallVector<std::size_t, 8> Path;
+    Path.push_back(SCC.second.get<Id>());
+    DenseSet<std::size_t> Visited;
+    addToReachability<Adjacent, HasUnknownCalls>(mAdjacentList, mExternalCalls,
+                                                 SCC, Path, Finished, Visited,
+                                                 Reachability);
   }
-  for (auto &Current : llvm::reverse(PostorderTraverse)) {
-    auto *F = Current.get<Function>();
-    if (!F || F->isIntrinsic() || F->isDeclaration() ||
+  LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: reachability matrix:\n";
+             for (std::size_t I = 0, EI = NumberOfSCCs; I < EI; ++I) {
+               for (std::size_t J = 0, EJ = NumberOfSCCs; J < EJ; ++J)
+                 dbgs() << Reachability[I][J] << " ";
+               dbgs() << "\n";
+             });
+  for (auto &Current : llvm::reverse(mAdjacentList)) {
+    auto *F = Current.first;
+    auto &Node = Current.second;
+    if (Node.get<InCycle>() || !F || F->isIntrinsic() || F->isDeclaration() ||
         hasFnAttr(*F, AttrKind::LibFunc))
       continue;
     if (!mRegions.empty() && std::all_of(mRegions.begin(), mRegions.end(),
@@ -287,15 +376,12 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     // Check that current function is not reachable from any parallel region.
     if (mParallelCallees.count(F) ||
         llvm::any_of(mParallelCallees,
-                     [&Current](const CGNodeNumbering::value_type &Parallel) {
-                       if (Parallel.get<Preorder>() < Current.get<Preorder>() &&
-                           Parallel.get<ReversePostorder>() <
-                               Current.get<ReversePostorder>())
-                         return true;
-                       return false;
+                     [&Node, &Reachability](const auto &Parallel) {
+                       return Reachability[Parallel.second][Node.get<Id>()];
                      })) {
       LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: ignore function reachable from "
-                           "parallel region " << F->getName() << "\n");
+                           "parallel region "
+                        << F->getName() << "\n");
       continue;
     }
     LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: process function " << F->getName()

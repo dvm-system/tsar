@@ -37,7 +37,9 @@
 #include <bcl/utility.h>
 #include <llvm/ADT/PointerUnion.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/MapVector.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/Pass.h>
 
@@ -82,24 +84,20 @@ using FunctionAnalysis =
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
 class ClangSMParallelization: public ModulePass, private bcl::Uncopyable {
-  struct Preorder {};
-  struct ReversePreorder {};
-  struct Postorder {};
-  struct ReversePostorder {};
+  struct Id {};
+  struct InCycle {};
+  struct HasUnknownCalls {};
+  struct Adjacent {};
 
-  /// Storage for numbers of call graph nodes.
-  using CGNodeNumbering = llvm::DenseMap<
-    Function *,
-    std::tuple<
-      std::size_t, std::size_t,
-      std::size_t, std::size_t>,
-    DenseMapInfo<Function *>,
-    tsar::TaggedDenseMapTuple<
-      bcl::tagged<Function *, Function>,
-      bcl::tagged<std::size_t, Preorder>,
-      bcl::tagged<std::size_t, ReversePreorder>,
-      bcl::tagged<std::size_t, Postorder>,
-      bcl::tagged<std::size_t, ReversePostorder>>>;
+  /// Representation of a call graph as an adjacent list. Note that calls
+  /// inside the same SCC are ignored and all functions from the same SCC
+  /// have the same IDs.
+  using AdjacentListT =
+      MapVector<Function *,
+                bcl::tagged_tuple<
+                    bcl::tagged<std::size_t, Id>, bcl::tagged<bool, InCycle>,
+                    bcl::tagged<bool, HasUnknownCalls>,
+                    bcl::tagged<llvm::SmallSet<std::size_t, 16>, Adjacent>>>;
 
 public:
   ClangSMParallelization(char &ID);
@@ -157,6 +155,8 @@ private:
     return Parallelized;
   }
 
+  std::size_t buildAdjacentList();
+
   tsar::TransformationContext *mTfmCtx = nullptr;
   const tsar::GlobalOptions *mGlobalOpts = nullptr;
   tsar::MemoryMatchInfo *mMemoryMatcher = nullptr;
@@ -164,8 +164,10 @@ private:
   tsar::AnalysisSocketInfo *mSocketInfo = nullptr;
   tsar::DIMemoryEnvironment *mDIMEnv = nullptr;
   SmallVector<const tsar::OptimizationRegion *, 4> mRegions;
-  CGNodeNumbering mCGNodes;
-  CGNodeNumbering mParallelCallees;
+  AdjacentListT mAdjacentList;
+  DenseSet<std::size_t> mExternalCalls;
+  // Set of functions and their IDs which are called from parallel loops.
+  DenseMap<Function *, std::size_t> mParallelCallees;
 };
 
 /// This specifies additional passes which must be run on client.
