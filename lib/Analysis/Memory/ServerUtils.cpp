@@ -130,6 +130,49 @@ DILocation *cloneWithNewSubprogram(
   return DILocation::get(Loc->getContext(), Loc->getLine(), Loc->getColumn(),
                          Scope, InlineAt);
 }
+
+
+MDNode *cloneWithNewSubprogram(
+    MDNode *MD, const DenseMap<DISubprogram *, DISubprogram *> &SubprogramMap,
+    llvm::ValueToValueMapTy &ClientToServer,
+    SmallPtrSetImpl<MDNode *> &Visited) {
+  if (!Visited.insert(MD).second)
+    return MD;
+  bool NeedToClone = false;
+  for (unsigned I = 0, EI = MD->getNumOperands(); I < EI; ++I) {
+    auto &Op = MD->getOperand(I);
+    if (!Op)
+      continue;
+    if (auto *DISub = dyn_cast<DISubprogram>(Op)) {
+      auto MapItr = SubprogramMap.find(DISub);
+      if (MapItr != SubprogramMap.end())
+        if (!ClientToServer.getMappedMD(MD))
+          MD->replaceOperandWith(I, MapItr->second);
+        else
+          NeedToClone = true;
+    } else if (auto MDOp = dyn_cast<MDNode>(Op)) {
+      auto NewMD = cloneWithNewSubprogram(MDOp, SubprogramMap, ClientToServer,
+                                            Visited);
+      if (MDOp != NewMD)
+        if (!ClientToServer.getMappedMD(MD))
+          MD->replaceOperandWith(I, NewMD);
+        else
+          NeedToClone = true;
+    }
+  }
+  if (NeedToClone) {
+    ClientToServer.MD().erase(MD);
+    return MapMetadata(MD, ClientToServer);
+  }
+  return MD;
+}
+
+MDNode * cloneWithNewSubprogram(
+    MDNode *MD, const DenseMap<DISubprogram *, DISubprogram *> &SubprogramMap,
+    llvm::ValueToValueMapTy &ClientToServer) {
+  SmallPtrSet<MDNode *, 8> Visited;
+  return cloneWithNewSubprogram(MD, SubprogramMap, ClientToServer, Visited);
+}
 }
 
 void ClientToServerMemory::initializeServer(
@@ -170,6 +213,8 @@ void ClientToServerMemory::initializeServer(
             if (MapItr != SubprogramMap.end())
               MD->replaceOperandWith(I, MapItr->second);
           }
+  for (auto &Pair : SubprogramMap)
+    ClientToServer.MD()[Pair.first].reset(Pair.second);
   for (auto &F : ServerM) {
     if (auto *DISub = F.getSubprogram()) {
       auto MapItr = SubprogramMap.find(DISub);
@@ -217,6 +262,7 @@ void ClientToServerMemory::initializeServer(
     if (!DIAT)
       continue;
     auto F = ClientToServer[&ClientF];
+    SmallDenseMap<MDNode *, MDNode *, 8> DIMReplacement;
     assert(F && "Mapped function for a specified one must exist!");
     LLVM_DEBUG(dbgs() << "[CLONED DI MEMORY]: create mapping for function '"
                       << F->getName() << "'\n");
@@ -227,8 +273,27 @@ void ClientToServerMemory::initializeServer(
                  dbgs() << "\n");
       auto MD = ClientToServer.getMappedMD(DIM.getAsMDNode());
       assert(MD && "Mapped metadata for a specified memory must exist!");
-      CloneToOrigin.try_emplace(
-        std::make_pair(cast<Function>(F), cast<MDNode>(*MD)), &DIM);
+      auto ServerMD = cloneWithNewSubprogram(cast<MDNode>(*MD), SubprogramMap,
+                                             ClientToServer);
+      if (*MD != ServerMD)
+        DIMReplacement.try_emplace(cast<MDNode>(*MD), ServerMD);
+      CloneToOrigin.try_emplace(std::make_pair(cast<Function>(F), ServerMD),
+                                &DIM);
+    }
+    if (!DIMReplacement.empty()) {
+      auto AliasTreeMD = cast<Function>(F)->getMetadata("alias.tree");
+      assert(AliasTreeMD && "List of alias tree nodes must not be null!");
+      if (ClientToServer.getMappedMD(AliasTreeMD)) {
+        ClientToServer.MD().erase(AliasTreeMD);
+        MapMetadata(AliasTreeMD, ClientToServer);
+      } else {
+        for (unsigned I = 0, EI = AliasTreeMD->getNumOperands(); I < EI; ++I) {
+          auto ReplacementItr =
+              DIMReplacement.find(cast<MDNode>(AliasTreeMD->getOperand(I)));
+          if (ReplacementItr != DIMReplacement.end())
+            AliasTreeMD->replaceOperandWith(I, ReplacementItr->second);
+        }
+      }
     }
   }
   // Passes are removed in backward direction and handlers should be removed
