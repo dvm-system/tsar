@@ -98,7 +98,6 @@ public:
   }
 
   bool VisitDeclStmt(DeclStmt *S) {
-    auto Group = S->getDeclGroup();
     if(!S->isSingleDecl())
       mMultipleDecls.insert(S);
     return true;
