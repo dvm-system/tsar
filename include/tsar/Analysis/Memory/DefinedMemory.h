@@ -384,10 +384,8 @@ public:
     int64_t RangeMin = 0;
     int64_t RangeMax = 0;
     uint64_t Step = 0;
-    uint64_t ElemSize = 0;
     LoopBoundKind BoundKind = None;
-    size_t DimSize = 0;
-    const llvm::Value *Ptr;
+    uint64_t DimSize = 0;
   };
 
   /// This represents additional information for every dimension of an array.
@@ -464,12 +462,9 @@ public:
   void collapse(DFRegion *R);
 
   /// Calculates all memory ranges of an array if delinearization is available.
-  LocationSet calcArrayLocation(DFRegion *R, const MemoryLocationRange &Loc);
-
-  /// Calculates an offset for every memory range and fills the ALS set with
-  /// ready ranges. 
-  void addLocationsToSet(LocationSet &ALS, DimensionInfoList &DimInfo,
-      const MemoryLocationRange &Loc, size_t DimN, uint64_t ParentOffset);
+  template<typename FuncT>
+  void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
+      FuncT &&Inserter);
   
 private:
   AliasTree *mAliasTree;

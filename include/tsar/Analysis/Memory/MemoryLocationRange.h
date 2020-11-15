@@ -34,14 +34,24 @@ using LocationSize = llvm::LocationSize;
 /// Representation for a memory location with shifted start position.
 ///
 /// The difference from llvm::MemoryLocation is that the current location
-/// starts at `Ptr + LowerBound` address. In case of llvm::MemoryLocation
-/// LowerBound is always 0.
+/// starts at `Ptr + Start` address. In case of llvm::MemoryLocation
+/// Start is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
 
+  struct Range {
+    uint64_t Step;
+    uint64_t Size;
+    Range() : Step(0), Size(0) {}
+    Range(uint64_t Step, uint64_t Size) : Step(Step), Size(Size) {}
+    bool operator==(const Range &Other) const { return Step == Other.Step &&
+        Size == Other.Size; }
+  };
+
   const llvm::Value * Ptr;
-  LocationSize LowerBound;
-  LocationSize UpperBound;
+  LocationSize Start;
+  LocationSize Width;
+  llvm::SmallVector<Range, 0> Ranges;
   llvm::AAMDNodes AATags;
 
   /// Return a location with information about the memory reference by the given
@@ -106,26 +116,39 @@ struct MemoryLocationRange {
   }
 
   explicit MemoryLocationRange(const llvm::Value *Ptr = nullptr,
-                               LocationSize LowerBound = 0,
-                               LocationSize UpperBound = UnknownSize,
+                               LocationSize Start = 0,
+                               LocationSize Width = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
-      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
+      : Ptr(Ptr), Start(Start), Width(Width),
         AATags(AATags) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
-      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags) {}
+      : Ptr(Loc.Ptr), Start(0), Width(Loc.Size), AATags(Loc.AATags) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
-    LowerBound = 0;
-    UpperBound = Loc.Size;
+    Start = 0;
+    Width = Loc.Size;
     AATags = Loc.AATags;
     return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
-      LowerBound == Other.LowerBound && UpperBound == Other.UpperBound ;
+      Start == Other.Start && Width == Other.Width && Ranges == Other.Ranges;
+  }
+
+  LocationSize getEnd() const {
+    if (!Start.hasValue() || !Width.hasValue())
+      return LocationSize::unknown();
+    return Start.getValue() + Width.getValue();
+  }
+
+  void setEnd(LocationSize Size) {
+    if (!Start.hasValue() || !Width.hasValue())
+      Width = LocationSize::unknown();
+    else
+      Width = Size.getValue() - Start.getValue();
   }
 };
 }
@@ -143,8 +166,8 @@ template <> struct DenseMapInfo<tsar::MemoryLocationRange> {
   }
   static unsigned getHashValue(const tsar::MemoryLocationRange &Val) {
     return DenseMapInfo<const Value *>::getHashValue(Val.Ptr) ^
-           DenseMapInfo<LocationSize>::getHashValue(Val.LowerBound) ^
-           DenseMapInfo<LocationSize>::getHashValue(Val.UpperBound) ^
+           DenseMapInfo<LocationSize>::getHashValue(Val.Start) ^
+           DenseMapInfo<LocationSize>::getHashValue(Val.Width) ^
            DenseMapInfo<AAMDNodes>::getHashValue(Val.AATags);
   }
   static bool isEqual(const MemoryLocation &LHS, const MemoryLocation &RHS) {

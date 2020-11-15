@@ -125,20 +125,20 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline LocationSize getLowerBound(
       const MemoryLocationRange &Loc) noexcept {
-    return Loc.LowerBound;
+    return Loc.Start;
   }
   static inline void setLowerBound(
       LocationSize Size, MemoryLocationRange &Loc) noexcept {
 
-    Loc.LowerBound = Size;
+    Loc.Start = Size;
   }
   static inline LocationSize getUpperBound(
       const MemoryLocationRange &Loc) noexcept {
-    return Loc.UpperBound;
+    return Loc.getEnd();
   }
   static inline void setUpperBound(
       LocationSize Size, MemoryLocationRange &Loc) noexcept {
-    Loc.UpperBound = Size;
+    return Loc.setEnd(Size);
   }
   static inline int8_t sizecmp(llvm::LocationSize LHS, llvm::LocationSize RHS) {
     return MemorySetInfo<llvm::MemoryLocation>::sizecmp(LHS, RHS);
