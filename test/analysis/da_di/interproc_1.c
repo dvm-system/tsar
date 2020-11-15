@@ -28,14 +28,10 @@ void bar(int X, int N, float * restrict A) {
 //CHECK:     <I:7[7:3], 4> | <N:5, 4>
 //CHECK:    explicit access:
 //CHECK:     <A:5, 8> | <I:7[7:3], 4> | <N:5, 4> | <X:5:14, 4>
-//CHECK:    address access:
-//CHECK:     <X:5:14, 4>
 //CHECK:    explicit access (separate):
 //CHECK:     <A:5, 8> <I:7[7:3], 4> <N:5, 4> <X:5:14, 4>
 //CHECK:    lock (separate):
 //CHECK:     <I:7[7:3], 4> <N:5, 4> <X:5:14, 4>
-//CHECK:    address access (separate):
-//CHECK:     <X:5:14, 4>
 //CHECK:    no promoted scalar (separate):
 //CHECK:     <X:5:14, 4>
 //CHECK:    direct access (separate):

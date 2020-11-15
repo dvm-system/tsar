@@ -26,13 +26,9 @@ int test(int *a) {
 //CHECK:     <j:2[2:5], 4>
 //CHECK:    explicit access:
 //CHECK:     <a:1, 8> | <a[0]:1, 4> <sapfor.var, 12> | <b:3:13, 12> | <j:2[2:5], 4>
-//CHECK:    address access:
-//CHECK:     <a[0]:1, 4> <sapfor.var, 12> | <b:3:13, 12>
 //CHECK:    explicit access (separate):
 //CHECK:     <a:1, 8> <a[0]:1, 4> <b:3:13, 12> <j:2[2:5], 4> <sapfor.var, 12>
 //CHECK:    lock (separate):
 //CHECK:     <j:2[2:5], 4>
-//CHECK:    address access (separate):
-//CHECK:     <b:3:13, 12> <sapfor.var, 12>
 //CHECK:    direct access (separate):
 //CHECK:     <a:1, 8> <a[0]:1, 4> <b:3:13, 12> <j:2[2:5], 4> <sapfor.var, 12>

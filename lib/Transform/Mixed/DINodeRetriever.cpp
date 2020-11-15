@@ -37,6 +37,7 @@
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Transforms/Utils/Local.h>
 
 using namespace clang;
 using namespace llvm;
@@ -77,14 +78,30 @@ private:
   void insertDeclareIfNotExist(Function &F, DIFile *FileCU, DIBuilder &DIB) {
     for (auto &I : instructions(F))
       if (auto *AI = dyn_cast<AllocaInst>(&I)) {
-        SmallVector<DIMemoryLocation, 1> DILocs;
-        findMetadata(AI, DILocs, nullptr, MDSearch::AddressOfVariable);
-        if (!DILocs.empty())
+        auto &Ctx = AI->getContext();
+        auto AddrUses = FindDbgAddrUses(AI);
+        if (!AddrUses.empty()) {
+          for (auto *DbgInst : AddrUses) {
+            // Artificial variables without name may produce the same
+            // metdata-level locations for distinct lower level locations.
+            // This leads to incorrect metadata-level alias tree.
+            // So, replace this variable with the distinct one.
+            if (auto DIVar = DbgInst->getVariable())
+              if (DIVar->getFlags() & DINode::FlagArtificial &&
+                  DIVar->getName().empty()) {
+                auto DistinctDIVar = DILocalVariable::getDistinct(
+                    Ctx, DIVar->getScope(), "sapfor.var", DIVar->getFile(),
+                    DIVar->getLine(), DIVar->getType(), DIVar->getArg(),
+                    DIVar->getFlags(), DIVar->getAlignInBits());
+                DbgInst->setArgOperand(
+                    1, MetadataAsValue::get(Ctx, DistinctDIVar));
+            }
+          }
           continue;
+        }
         auto *DITy =
           createStubType(*F.getParent(), AI->getType()->getAddressSpace(), DIB);
         auto *DISub = F.getSubprogram();
-        auto &Ctx = AI->getContext();
         auto *DIVar = DILocalVariable::getDistinct(
             Ctx, DISub, "sapfor.var", FileCU, 0, DITy, 0,
             DINode::FlagArtificial, AI->getAlignment());
@@ -104,11 +121,9 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
   if (!TEP)
     return false;
   auto *TfmCtx = TEP->getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance())
-    return false;
+  if (TfmCtx && !TfmCtx->hasInstance())
+    TfmCtx = nullptr;
   auto &Ctx = M.getContext();
-  auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
-  auto &LangOpts = TfmCtx->getRewriter().getLangOpts();
   auto CUItr = M.debug_compile_units_begin();
   assert(CUItr != M.debug_compile_units_end() &&
          "At least one compile unit must be available!");
@@ -128,14 +143,17 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     // A name should be specified for global variables, otherwise LLVM IR is
     // considered corrupted.
     StringRef Name = "sapfor.var";
-    if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
-      auto FName = SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
-      File = DIB.createFile(FName, DirName);
-      Line = SrcMgr.getPresumedLineNumber(
-        SrcMgr.getExpansionLoc(D->getBeginLoc()));
-      if (auto ND = dyn_cast<NamedDecl>(D))
-        Name = ND->getName();
-    }
+    if (TfmCtx)
+      if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
+        auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+        auto FName =
+            SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
+        File = DIB.createFile(FName, DirName);
+        Line = SrcMgr.getPresumedLineNumber(
+            SrcMgr.getExpansionLoc(D->getBeginLoc()));
+        if (auto ND = dyn_cast<NamedDecl>(D))
+          Name = ND->getName();
+      }
     auto *DITy = createStubType(M, GlobalVar.getType()->getAddressSpace(), DIB);
     auto *GV = DIGlobalVariable::getDistinct(
       Ctx, File, Name, GlobalVar.getName(), File, Line, DITy,
@@ -157,22 +175,25 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     unsigned Line = 0;
     auto Flags = DINode::FlagZero;
     MDString *Name = nullptr;
-    if (auto *D = TfmCtx->getDeclForMangledName(F.getName())) {
-      auto FName = SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
-      File = DIB.createFile(FName, DirName);
-      Line = SrcMgr.getPresumedLineNumber(
-        SrcMgr.getExpansionLoc(D->getBeginLoc()));
-      if (auto *FD = dyn_cast<FunctionDecl>(D)) {
-        SmallString<64> ExtraName;
-        Name = MDString::get(Ctx, getFunctionName(*FD, ExtraName));
-        if (FD->hasPrototype())
-          Flags |= DINode::FlagPrototyped;
-        if (FD->isImplicit())
-          Flags |= DINode::FlagArtificial;
+    if (TfmCtx)
+      if (auto *D = TfmCtx->getDeclForMangledName(F.getName())) {
+        auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+        auto FName =
+            SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
+        File = DIB.createFile(FName, DirName);
+        Line = SrcMgr.getPresumedLineNumber(
+            SrcMgr.getExpansionLoc(D->getBeginLoc()));
+        if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+          SmallString<64> ExtraName;
+          Name = MDString::get(Ctx, getFunctionName(*FD, ExtraName));
+          if (FD->hasPrototype())
+            Flags |= DINode::FlagPrototyped;
+          if (FD->isImplicit())
+            Flags |= DINode::FlagArtificial;
+        }
       }
-    }
-    auto SPFlags = DISubprogram::toSPFlags(
-      F.hasLocalLinkage(), !F.isDeclaration(), LangOpts.Optimize);
+    auto SPFlags =
+        DISubprogram::toSPFlags(F.hasLocalLinkage(), !F.isDeclaration(), false);
     auto *SP = DISubprogram::getDistinct(Ctx, File, Name,
       MDString::get(Ctx, F.getName()), File, Line, nullptr, Line, nullptr,
       0, 0, Flags, SPFlags, !F.isDeclaration() ? CU : nullptr);
