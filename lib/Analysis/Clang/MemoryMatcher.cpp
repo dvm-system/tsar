@@ -25,7 +25,7 @@
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/Matcher.h"
 #include "tsar/Analysis/Clang/Passes.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Decl.h>
 #include <llvm/ADT/DenseMap.h>
@@ -205,7 +205,10 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
   Storage.releaseMemory();
   auto &MatchInfo = Storage.getMatchInfo();
   getAnalysis<MemoryMatcherImmutableWrapper>().set(MatchInfo);
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  if (!TfmInfo)
+    return false;
+  auto TfmCtx = TfmInfo->getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
@@ -235,8 +238,7 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
           Pair.second.clear();
           break;
         }
-      }
-    }
+      }    }
     MatchAlloca.matchInMacro(
       NumMatchMemory, NumNonMatchASTMemory, NumNonMatchIRMemory);
   }

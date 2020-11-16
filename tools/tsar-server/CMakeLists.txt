@@ -22,9 +22,9 @@ add_library(TSARServer SHARED
 
 add_dependencies(TSARServer TSARTool)
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARServer ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARServer ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(TSARServer TSARTool ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+target_link_libraries(TSARServer TSARTool ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 
 set_target_properties(TSARServer PROPERTIES
   COMPILE_DEFINITIONS BCL_EXPORTING

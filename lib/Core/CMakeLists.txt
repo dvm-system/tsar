@@ -41,8 +41,9 @@ if(NOT PACKAGE_LLVM)
     TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
     TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory
     TSARAnalysis TSARUnparse TSARSupportClang TSARSupport
-    ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+    ${CLANG_LIBS} ${LLVM_LIBS} ${FLANG_LIBS} BCL::Core)
 endif()
+
 target_link_libraries(TSARTool PRIVATE
   TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
   TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory

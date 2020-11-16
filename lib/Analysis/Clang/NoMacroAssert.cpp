@@ -27,7 +27,7 @@
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include <llvm/IR/Function.h>
@@ -140,7 +140,8 @@ private:
 
 bool ClangNoMacroAssert::runOnFunction(Function &F) {
   auto *M = F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(*M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M->getContext().emitError("can not check sources"
         ": transformation context is not available");

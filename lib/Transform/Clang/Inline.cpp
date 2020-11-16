@@ -27,9 +27,9 @@
 
 #include "tsar/Transform/Clang/Inline.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/SourceLocationTraverse.h"
@@ -73,7 +73,8 @@ void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
 }
 
 bool ClangInlinerPass::runOnModule(llvm::Module& M) {
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
         ": transformation context is not available");

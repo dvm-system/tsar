@@ -26,7 +26,7 @@
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -264,7 +264,8 @@ private:
 
 bool ClangDeadDeclsElimination::runOnFunction(Function &F) {
   auto *M = F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(*M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M->getContext().emitError("can not transform sources"
       ": transformation context is not available");

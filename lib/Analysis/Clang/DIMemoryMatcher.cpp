@@ -27,7 +27,7 @@
 #include "tsar/Analysis/Clang/Matcher.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Memory/Utils.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/InitializePasses.h>
@@ -225,7 +225,10 @@ private:
 bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
   releaseMemory();
   auto M = F.getParent();
-  auto TfmCtx  = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  if (!TfmInfo)
+    return false;
+  auto TfmCtx  = TfmInfo->getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto *FuncDecl = TfmCtx->getDeclForMangledName(F.getName());

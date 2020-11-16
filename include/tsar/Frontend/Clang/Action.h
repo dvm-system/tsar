@@ -26,24 +26,27 @@
 #ifndef TSAR_ACTION_H
 #define TSAR_ACTION_H
 
+#include "tsar/Core/TransformationContext.h"
+#include <bcl/utility.h>
 #include <clang/Tooling/Tooling.h>
 #include <memory>
 
 namespace tsar {
-class TransformationContext;
+class TransformationInfo;
 class QueryManager;
 
-/// Base front-end action to analyze and transform sources. Concrete actions
-/// must inherit this.
-class ActionBase : public clang::ASTFrontendAction {
+/// Base front-end action to analyze and transform sources.
+class MainAction : public clang::ASTFrontendAction {
 public:
-  /// \brief Callback at the start of processing a single input.
+  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM);
+
+  /// Callback at the start of processing a single input.
   ///
   /// \return True on success; on failure ExecutionAction() and
   /// EndSourceFileAction() will not be called.
   bool BeginSourceFileAction(clang::CompilerInstance &CI) override;
 
-  /// \brief Callback at the end of processing a single input.
+  /// Callback at the end of processing a single input.
   ///
   /// This is guaranteed to only be called following a successful call to
   /// BeginSourceFileAction (and BeginSourceFile).
@@ -52,29 +55,16 @@ public:
   /// Return true because this action supports use with IR files.
   bool hasIRSupport() const override { return true; }
 
-  /// Executes action, evaluation of IR files is also supported.
+  /// Execute action, evaluation of IR files is also supported.
   void ExecuteAction() override;
 
-protected:
-  /// Creates specified action.
-  explicit ActionBase(QueryManager *QM);
-
-  tsar::QueryManager *mQueryManager;
-};
-
-/// Main action to perform analysis and transformation for a single
-/// compilation unit.
-class MainAction : public ActionBase {
-public:
-  /// Constructor.
-  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM);
-
-  /// Creates AST Consumer.
+  /// Create AST Consumer.
   std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
 
 private:
-  std::unique_ptr<TransformationContext> mTfmCtx;
+  tsar::QueryManager *mQueryManager;
+  std::unique_ptr<TransformationInfo> mTfmInfo;
 };
 
 /// Creates an analysis/transformations actions factory.

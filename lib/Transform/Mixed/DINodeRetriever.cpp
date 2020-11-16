@@ -25,7 +25,7 @@
 
 #include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/Utils.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #include <bcl/utility.h>
@@ -117,12 +117,11 @@ INITIALIZE_PASS(DINodeRetrieverPass, "di-node-retriever",
                 "Debug Info Retriever", true, false)
 
 bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
-  auto *TEP = getAnalysisIfAvailable<TransformationEnginePass>();
-  if (!TEP)
-    return false;
-  auto *TfmCtx = TEP->getContext(M);
-  if (TfmCtx && !TfmCtx->hasInstance())
-    TfmCtx = nullptr;
+  ClangTransformationContext *TfmCtx = nullptr;
+  if (auto *TEP = getAnalysisIfAvailable<TransformationEnginePass>())
+    if (*TEP && (TfmCtx = (*TEP)->getContext(M)))
+      if (!TfmCtx->hasInstance())
+        TfmCtx = nullptr;
   auto &Ctx = M.getContext();
   auto CUItr = M.debug_compile_units_begin();
   assert(CUItr != M.debug_compile_units_end() &&

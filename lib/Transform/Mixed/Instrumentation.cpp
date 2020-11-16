@@ -110,10 +110,10 @@ INITIALIZE_PASS_END(InstrumentationPass, "instr-llvm",
 
 bool InstrumentationPass::runOnModule(Module &M) {
   releaseMemory();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>().get();
   InstrumentationPassProvider::initialize<TransformationEnginePass>(
-    [&M, &TfmCtx](TransformationEnginePass &TEP) {
-      TEP.setContext(M, TfmCtx);
+    [&TfmInfo](TransformationEnginePass &TEP) {
+      TEP.set(TfmInfo);
   });
   auto &MMWrapper = getAnalysis<MemoryMatcherImmutableWrapper>();
   InstrumentationPassProvider::initialize<MemoryMatcherImmutableWrapper>(

@@ -24,7 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/Basic/FileManager.h>
@@ -61,7 +61,8 @@ void ClangGlobalInfoPass::getAnalysisUsage(AnalysisUsage& AU) const {
 
 bool ClangGlobalInfoPass::runOnModule(llvm::Module &M) {
   releaseMemory();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
         ": transformation context is not available");

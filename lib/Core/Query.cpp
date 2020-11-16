@@ -194,14 +194,14 @@ void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
   Passes.add(P);
 };
 
-void DefaultQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
+void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
   Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
-  if (Ctx) {
+  if (TfmInfo) {
     auto TEP = static_cast<TransformationEnginePass *>(
       createTransformationEnginePass());
-    TEP->setContext(*M, Ctx);
+    TEP->set(*TfmInfo);
     Passes.add(TEP);
     Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   }
@@ -324,20 +324,21 @@ bool EmitLLVMQueryManager::beginSourceFile(
   return mOS && mCodeGenOpts;
 }
 
-void EmitLLVMQueryManager::run(llvm::Module *M, TransformationContext *) {
+void EmitLLVMQueryManager::run(llvm::Module *M, TransformationInfo *) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
   Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
   Passes.run(*M);
 }
 
-void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
+void InstrLLVMQueryManager::run(llvm::Module *M,
+    TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
-  if (Ctx) {
+  if (TfmInfo) {
     auto TEP = static_cast<TransformationEnginePass *>(
       createTransformationEnginePass());
-    TEP->setContext(*M, Ctx);
+    TEP->set(*TfmInfo);
     Passes.add(TEP);
   }
   Passes.add(createUnreachableBlockEliminationPass());
@@ -351,15 +352,15 @@ void InstrLLVMQueryManager::run(llvm::Module *M, TransformationContext *Ctx) {
 }
 
 void TransformationQueryManager::run(llvm::Module *M,
-    TransformationContext* Ctx) {
+    TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
   Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
-  if (!Ctx)
+  if (!TfmInfo)
     report_fatal_error("transformation context is not available");
   auto TEP = static_cast<TransformationEnginePass *>(
     createTransformationEnginePass());
-  TEP->setContext(*M, Ctx);
+  TEP->set(*TfmInfo);
   Passes.add(TEP);
   Passes.add(createImmutableASTImportInfoPass(mImportInfo));
   addInitialTransformations(Passes);
@@ -377,14 +378,14 @@ void TransformationQueryManager::run(llvm::Module *M,
   Passes.run(*M);
 }
 
-void CheckQueryManager::run(llvm::Module *M, TransformationContext* Ctx) {
+void CheckQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
-  if (!Ctx)
+  if (!TfmInfo)
     report_fatal_error("transformation context is not available");
   auto TEP = static_cast<TransformationEnginePass *>(
     createTransformationEnginePass());
-  TEP->setContext(*M, Ctx);
+  TEP->set(*TfmInfo);
   Passes.add(TEP);
   Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createNoMetadataDSEPass());

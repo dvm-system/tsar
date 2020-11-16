@@ -16,9 +16,9 @@ endif()
 
 add_dependencies(tsar TSARTool)
 if(NOT PACKAGE_LLVM)
-  add_dependencies(tsar ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(tsar ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS})
 endif()
-target_link_libraries(tsar TSARTool ${CLANG_LIBS} ${LLVM_LIBS} BCL::Core)
+target_link_libraries(tsar TSARTool ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS} BCL::Core)
 
 set_target_properties(tsar PROPERTIES FOLDER "${TSAR_FOLDER}")
 

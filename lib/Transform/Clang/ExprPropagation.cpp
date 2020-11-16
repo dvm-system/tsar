@@ -20,10 +20,12 @@
 //
 // This file implements a pass to replace the occurrences of variables with
 // expressions which compute their values.
+// Note, that propagation of array subranges is also supported, for example
+// the following assignments can be processed '(*A)[5] = B[X]', where B is
+// a 3-dimensional array.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/ExprPropagation.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/ADT/PersistentMap.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
@@ -33,13 +35,14 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <clang/AST/Decl.h>
@@ -56,10 +59,12 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Scalar.h>
 #include <bcl/tagged.h>
+#include <bcl/utility.h>
 #include <stack>
 #include <tuple>
 #include <vector>
@@ -71,9 +76,32 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-propagate"
 
-char ClangExprPropagation::ID = 0;
-
 namespace {
+class ClangExprPropagation : public FunctionPass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  ClangExprPropagation() : FunctionPass(ID) {
+    initializeClangExprPropagationPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnFunction(Function &F) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  /// Unparse replacement for a specified metadata-level candidate 'DIUse'.
+  ///
+  /// If `DIDef` is not specified then `Def` must be a constant for successful
+  /// unparsing.
+  bool unparseReplacement(const Value &Def, const tsar::DIMemoryLocation *DIDef,
+    unsigned DWLang, const tsar::DIMemoryLocation &DIUse,
+    SmallVectorImpl<char> &DefStr);
+
+  const DataLayout *mDL = nullptr;
+  DominatorTree *mDT = nullptr;
+  tsar::TransformationContext *mTfmCtx = nullptr;
+};
+
 class ClangCopyPropagationInfo final : public PassGroupInfo {
   void addBeforePass(legacy::PassManager &PM) const override {
     PM.add(createSROAPass());
@@ -82,6 +110,7 @@ class ClangCopyPropagationInfo final : public PassGroupInfo {
 };
 }
 
+char ClangExprPropagation::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangExprPropagation, "clang-propagate",
   "Expression Propagation (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
@@ -812,7 +841,7 @@ bool ClangExprPropagation::unparseReplacement(
       if (MD && MD->isValid() && !MD->Template) {
         if (unparseToString(DWLang, *MD, DefStr, false)) {
           auto NumberOfDims = 1 + dimensionsNum(
-            cast<PointerType>(GEP->getType())->getPointerElementType());
+            cast<llvm::PointerType>(GEP->getType())->getPointerElementType());
           for(; NumberOfDims > 0 && DefStr.size() > 3; --NumberOfDims) {
             auto Size = DefStr.size();
             if (DefStr[Size - 1] != ']' ||
@@ -839,7 +868,8 @@ bool ClangExprPropagation::unparseReplacement(
 
 bool ClangExprPropagation::runOnFunction(Function &F) {
   auto *M = F.getParent();
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  mTfmCtx = TfmInfo ? TfmInfo->getContext(*M) : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M->getContext().emitError("can not transform sources"
       ": transformation context is not available");

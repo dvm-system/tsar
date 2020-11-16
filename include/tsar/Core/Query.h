@@ -52,7 +52,7 @@ class CodeGenOptions;
 namespace tsar {
 struct GlobalOptions;
 class DIMemoryTrait;
-class TransformationContext;
+class TransformationInfo;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
@@ -122,7 +122,7 @@ public:
   ///
   /// \attention Neither module nor transformation context is not going to be
   /// taken under control.
-  virtual void run(llvm::Module *M, tsar::TransformationContext *Ctx) = 0;
+  virtual void run(llvm::Module *M, tsar::TransformationInfo *TfmInfo) = 0;
 
   /// Initializes external storage to access information about import process
   /// if necessary.
@@ -228,7 +228,7 @@ public:
     mPrintSteps(PrintSteps) {}
 
   /// Runs default sequence of passes.
-  void run(llvm::Module *M, tsar::TransformationContext *Ctx) override;
+  void run(llvm::Module *M, tsar::TransformationInfo *TfmInfo) override;
 
   /// Initializes external storage to access information about import process.
   ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
@@ -252,7 +252,7 @@ class EmitLLVMQueryManager : public QueryManager {
 public:
   bool beginSourceFile(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
-  void run(llvm::Module *M, tsar::TransformationContext *) override;
+  void run(llvm::Module *M, tsar::TransformationInfo *) override;
 
   void endSourceFile() override {
     // An output stream attached to a temporary output file should be freed.
@@ -274,7 +274,7 @@ public:
     mInstrEntry(InstrEntry),
     mInstrStart(InstrStart.begin(), InstrStart.end()) {}
 
-  void run(llvm::Module *M, tsar::TransformationContext *) override;
+  void run(llvm::Module *M, tsar::TransformationInfo *) override;
 
 private:
   std::string mInstrEntry;
@@ -294,7 +294,7 @@ public:
       const GlobalOptions *Options) :
     mTfmPass(TfmPass), mGlobalOptions(Options) {}
 
-  void run(llvm::Module *M, TransformationContext *Ctx) override;
+  void run(llvm::Module *M, TransformationInfo *TfmInfo) override;
 
   ASTImportInfo * initializeImportInfo() override { return &mImportInfo; }
 
@@ -315,7 +315,7 @@ public:
 
   CheckQueryManager() = default;
 
-  void run(llvm::Module *M, TransformationContext *Ctx) override;
+  void run(llvm::Module *M, TransformationInfo *TfmInfo) override;
 };
 }
 

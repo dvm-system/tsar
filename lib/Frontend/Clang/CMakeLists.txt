@@ -1,5 +1,5 @@
 set(FRONTEND_SOURCES FrontendActions.cpp ASTMergeAction.cpp Passes.cpp
-  Action.cpp PragmaHandlers.cpp Pragma.cpp)
+  Action.cpp PragmaHandlers.cpp Pragma.cpp TransformationContext.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE FRONTEND_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -13,10 +13,10 @@ add_library(TSARFrontendClang STATIC
   ${FRONTEND_SOURCES} ${FRONTEND_HEADERS} ${FRONTEND_INTERNAL_HEADERS})
 
 if(NOT PACKAGE_LLVM)
-  add_dependencies(TSARFrontendClang ${CLANG_LIBS} ${LLVM_LIBS})
+  add_dependencies(TSARFrontendClang ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS})
 endif()
 add_dependencies(TSARFrontendClang DirectivesGen DiagnosticKinds)
-target_link_libraries(TSARFrontendClang TSARAnalysisClang BCL::Core)
+target_link_libraries(TSARFrontendClang TSARAnalysisClang BCL::Core ${FLANG_LIBS})
 
 set_target_properties(TSARFrontendClang PROPERTIES
   FOLDER "${TSAR_LIBRARY_FOLDER}"

@@ -26,12 +26,13 @@
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/ExpressionMatcher.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -188,15 +189,16 @@ void ClangRegionCollector::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool ClangRegionCollector::runOnModule(llvm::Module &M) {
   releaseMemory();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
       ": transformation context is not available");
     return false;
   }
   ClangRegionCollectorProvider::initialize<TransformationEnginePass>(
-      [&TfmCtx, &M](TransformationEnginePass &Wrapper) {
-        Wrapper.setContext(M, TfmCtx);
+      [&TfmInfo, &M](TransformationEnginePass &Wrapper) {
+        Wrapper.set(*TfmInfo);
       });
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<CallGraphNode *> Worklist;

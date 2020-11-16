@@ -32,7 +32,7 @@
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
@@ -410,7 +410,7 @@ void ClangOpenMPParallelization::optimizeLevel(
   auto *M = Level.is<Function *>() ? Level.get<Function *>()->getParent() :
     Level.get<Loop *>()->getHeader()->getModule();
   auto &ASTCtx =
-      getAnalysis<TransformationEnginePass>().getContext(*M)->getContext();
+      getAnalysis<TransformationEnginePass>()->getContext(*M)->getContext();
   if (Level.is<Function *>()) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
     mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
@@ -478,7 +478,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     return PI;
   }
   auto *M = DFL.getLoop()->getHeader()->getModule();
-  auto &TfmCtx = *getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmCtx = *getAnalysis<TransformationEnginePass>()->getContext(*M);
   auto LoopID = DFL.getLoop()->getLoopID();
   Optional<bool> Finalize;
   if (!PI) {
@@ -611,7 +611,7 @@ void buildOrederedSink(const trait::DIDependence::DistanceVector &SinkRange,
 
 bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
   ClangSMParallelization::runOnModule(M);
-  auto *TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto *TfmCtx = getAnalysis<TransformationEnginePass>()->getContext(M);
   for (auto F : make_range(mParallelizationInfo.func_begin(),
                            mParallelizationInfo.func_end())) {
     auto Provider = analyzeFunction(*F);

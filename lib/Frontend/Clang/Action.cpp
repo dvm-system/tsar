@@ -24,8 +24,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Frontend/Clang/Action.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Core/tsar-config.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/ASTConsumer.h>
 #include <clang/AST/ASTContext.h>
@@ -34,10 +37,17 @@
 #include <clang/Frontend/FrontendDiagnostic.h>
 #include <clang/Sema/Sema.h>
 #include <clang/Serialization/ASTReader.h>
+#ifdef FLANG_FOUND
+# include "tsar/Frontend/Flang/TransformationContext.h"
+# include <flang/Parser/parsing.h>
+# include <flang/Semantics/semantics.h>
+#endif
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/ErrorHandling.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
 #include <memory>
@@ -54,7 +64,7 @@ class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
   AnalysisConsumer(CompilerInstance &CI, StringRef InFile,
-    TransformationContext *TfmCtx, QueryManager *QM)
+    TransformationInfo &TfmInfo, QueryManager &QM)
     : mLLVMIRGeneration(
       "mLLVMIRGeneration",
       "LLVM IR Generation Time"
@@ -63,8 +73,7 @@ public:
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
-    mTransformContext(TfmCtx), mQueryManager(QM) {
-    assert(mTransformContext && "Transformation context must not be null!");
+    mTransformInfo(&TfmInfo), mQueryManager(&QM) {
   }
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
@@ -78,7 +87,6 @@ public:
       return;
     }
     mASTContext = &Ctx;
-    mTransformContext->reset(*mCI, Ctx, *mGen);
     if (llvm::TimePassesIsEnabled)
       mLLVMIRGeneration.startTimer();
     mGen->Initialize(Ctx);
@@ -136,7 +144,14 @@ public:
       "LLVM IR Analysis Time");
     if (llvm::TimePassesIsEnabled)
       LLVMIRAnalysis.startTimer();
-    mQueryManager->run(M, mTransformContext);
+    auto CUs = M->getNamedMetadata("llvm.dbg.cu");
+    if (CUs->getNumOperands() == 1) {
+      auto *CU = cast<DICompileUnit>(*CUs->op_begin());
+      mTransformInfo->setContext(
+          *CU,
+          std::make_unique<ClangTransformationContext>(*mCI, ASTCtx, *mGen));
+    }
+    mQueryManager->run(M, mTransformInfo);
     if (llvm::TimePassesIsEnabled)
       LLVMIRAnalysis.stopTimer();
   }
@@ -169,26 +184,85 @@ private:
   ASTContext *mASTContext;
   std::unique_ptr<llvm::LLVMContext> mLLVMContext;
   std::unique_ptr<CodeGenerator> mGen;
-  TransformationContext *mTransformContext;
+  TransformationInfo *mTransformInfo;
   QueryManager *mQueryManager;
   std::unique_ptr<llvm::Module> mModule;
 };
 }
 
-ActionBase::ActionBase(QueryManager *QM) : mQueryManager(QM) {
-  assert(QM && "Query manager must be specified!");
-}
-
-bool ActionBase::BeginSourceFileAction(CompilerInstance &CI) {
+bool MainAction::BeginSourceFileAction(CompilerInstance &CI) {
   TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
   return mQueryManager->beginSourceFile(CI, getCurrentFile());
 }
 
-void ActionBase::EndSourceFileAction() {
+void MainAction::EndSourceFileAction() {
   mQueryManager->endSourceFile();
 }
 
-void ActionBase::ExecuteAction() {
+template<TransformationContextBase::Kind FrontendKind>
+struct ActionHelper {
+  std::unique_ptr<TransformationContextBase>
+  CreateTransformationContext(StringRef IRSource, StringRef Path) {
+    return nullptr;
+  }
+};
+
+#ifdef FLANG_FOUND
+template<>
+struct ActionHelper<TransformationContextBase::TC_Flang> {
+  Fortran::common::IntrinsicTypeDefaultKinds DefaultKinds;
+
+  std::unique_ptr<FlangTransformationContext>
+  CreateTransformationContext(StringRef IRSource, StringRef Path) {
+    Fortran::parser::Options Options;
+    Options.predefinitions.emplace_back("__F18", "1");
+    Options.predefinitions.emplace_back("__F18_MAJOR__", "1");
+    Options.predefinitions.emplace_back("__F18_MINOR__", "1");
+    Options.predefinitions.emplace_back("__F18_PATCHLEVEL__", "1");
+    Options.features.Enable(
+      Fortran::common::LanguageFeature::BackslashEscapes, true);
+    auto Extension = sys::path::extension(Path);
+    Options.isFixedForm =
+      (Extension == ".f" || Extension == ".F" || Extension == ".ff");
+    Options.searchDirectories.emplace_back("."s);
+    auto TfmCtx{ std::make_unique<FlangTransformationContext>(
+       Options, DefaultKinds) };
+    auto &Parsing{ TfmCtx->getParsing() };
+    Parsing.Prescan(std::string{ Path }, TfmCtx->getOptions());
+    if (!Parsing.messages().empty() &&
+      Parsing.messages().AnyFatalError()) {
+      Parsing.messages().Emit(errs(), Parsing.cooked());
+      errs() << IRSource << " could not scan " << Path << '\n';
+      return nullptr;
+    }
+    Parsing.Parse(outs());
+    Parsing.ClearLog();
+    Parsing.messages().Emit(errs(), Parsing.cooked());
+    if (!Parsing.consumedWholeFile()) {
+      Parsing.EmitMessage(errs(), Parsing.finalRestingPlace(),
+        "parser FAIL (final position)");
+      return nullptr;
+    }
+    if (!Parsing.messages().empty() &&
+      Parsing.messages().AnyFatalError() || !Parsing.parseTree()) {
+      errs() << IRSource << " could not parse " << Path << '\n';
+      return nullptr;
+    }
+    auto &ParseTree{ *Parsing.parseTree() };
+    Fortran::semantics::Semantics Semantics{
+        TfmCtx->getContext(), ParseTree, Parsing.cooked(), false };
+    Semantics.Perform();
+    Semantics.EmitMessages(llvm::errs());
+    if (Semantics.AnyFatalError()) {
+      errs() << IRSource << " semantic errors in " << Path << '\n';
+      return nullptr;
+    }
+    return TfmCtx;
+  }
+};
+#endif
+
+void MainAction::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
   if (getCurrentFileKind().getLanguage() != Language::LLVM_IR) {
     ASTFrontendAction::ExecuteAction();
@@ -241,16 +315,34 @@ void ActionBase::ExecuteAction() {
     "LLVM IR Analysis Time");
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.startTimer();
-  mQueryManager->run(M.get(), nullptr);
+  ActionHelper<TransformationContextBase::TC_Clang> ClangHelper;
+  ActionHelper<TransformationContextBase::TC_Flang> FlangHelper;
+  auto CUs = M->getNamedMetadata("llvm.dbg.cu");
+  for (auto *Op : CUs->operands())
+    if (auto *CU = dyn_cast<DICompileUnit>(Op)) {
+      SmallString<128> Path{CU->getFilename()};
+      sys::fs::make_absolute(CU->getDirectory(), Path);
+      if (isFortran(CU->getSourceLanguage())) {
+        if (auto TfmCtx =
+                FlangHelper.CreateTransformationContext(getCurrentFile(), Path))
+          mTfmInfo->setContext(*CU, std::move(TfmCtx));
+      } else if (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()))
+        if (auto TfmCtx =
+                ClangHelper.CreateTransformationContext(getCurrentFile(), Path))
+          mTfmInfo->setContext(*CU, std::move(TfmCtx));
+    }
+  mQueryManager->run(M.get(), mTfmInfo.get());
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.stopTimer();
 }
 
 std::unique_ptr<ASTConsumer>
 MainAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return std::unique_ptr<AnalysisConsumer>(
-    new AnalysisConsumer(CI, InFile, mTfmCtx.get(), mQueryManager));
+  return std::make_unique<AnalysisConsumer>(CI, InFile, *mTfmInfo,
+                                            *mQueryManager);
 }
 
 MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM) :
-  ActionBase(QM), mTfmCtx(new TransformationContext(CL)) {}
+  mQueryManager(QM), mTfmInfo(new TransformationInfo(CL)) {
+    assert(QM && "Query manager must not be null!");
+}

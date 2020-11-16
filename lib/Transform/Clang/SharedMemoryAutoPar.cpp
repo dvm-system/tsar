@@ -42,7 +42,7 @@
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -51,6 +51,7 @@
 #include <bcl/marray.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
@@ -185,7 +186,7 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
   return PI;
 }
 
-void ClangSMParallelization::initializeProviderOnClient(Module &M) {
+void ClangSMParallelization::initializeProviderOnClient() {
   ClangSMParallelProvider::initialize<GlobalOptionsImmutableWrapper>(
       [this](GlobalOptionsImmutableWrapper &Wrapper) {
         Wrapper.setOptions(mGlobalOpts);
@@ -195,8 +196,8 @@ void ClangSMParallelization::initializeProviderOnClient(Module &M) {
         Wrapper.set(*mSocketInfo);
       });
   ClangSMParallelProvider::initialize<TransformationEnginePass>(
-      [this, &M](TransformationEnginePass &Wrapper) {
-        Wrapper.setContext(M, mTfmCtx);
+      [this](TransformationEnginePass &Wrapper) {
+        Wrapper.set(*mTfmInfo);
       });
   ClangSMParallelProvider::initialize<MemoryMatcherImmutableWrapper>(
       [this](MemoryMatcherImmutableWrapper &Wrapper) {
@@ -310,7 +311,9 @@ static void addToReachability(const AdjacentListT &AdjacentList,
 
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
+  mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
+  mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
                              ": transformation context is not available");
@@ -321,7 +324,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
   mMemoryMatcher = &getAnalysis<MemoryMatcherImmutableWrapper>().get();
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   mDIMEnv = &getAnalysis<DIMemoryEnvironmentWrapper>().get();
-  initializeProviderOnClient(M);
+  initializeProviderOnClient();
   auto &RegionInfo = getAnalysis<ClangRegionCollector>().getRegionInfo();
   if (mGlobalOpts->OptRegions.empty()) {
     transform(RegionInfo, std::back_inserter(mRegions),

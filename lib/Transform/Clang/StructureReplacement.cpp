@@ -30,8 +30,8 @@
 #include "tsar/Analysis/Clang/IncludeTree.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/Utils.h"
@@ -43,6 +43,7 @@
 #include <clang/Lex/Lexer.h>
 #include <clang/Sema/Sema.h>
 #include <llvm/ADT/SCCIterator.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
@@ -1724,7 +1725,8 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
 }
 
 bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  mTfmCtx = TfmInfo ? TfmInfo->getContext(M) : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
         ": transformation context is not available");

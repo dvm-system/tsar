@@ -115,14 +115,14 @@ public:
     : mGlobalOptions(GO), mConnection(C), mStdIn(StdIn), mStdOut(StdOut),
       mStdErr(StdErr) {}
 
-  void run(llvm::Module *M, TransformationContext *Ctx) override {
+  void run(llvm::Module *M, TransformationInfo *TfmInfo) override {
     assert(M && "Module must not be null!");
     legacy::PassManager Passes;
     Passes.add(createGlobalOptionsImmutableWrapper(&mGlobalOptions));
-    if (Ctx) {
+    if (TfmInfo) {
       auto TEP = static_cast<TransformationEnginePass *>(
         createTransformationEnginePass());
-      TEP->setContext(*M, Ctx);
+      TEP->set(*TfmInfo);
       Passes.add(TEP);
       Passes.add(createImmutableASTImportInfoPass(mImportInfo));
     }

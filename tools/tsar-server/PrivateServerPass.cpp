@@ -48,7 +48,7 @@
 #include "tsar/Unparse/Utils.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
@@ -905,6 +905,7 @@ private:
   bcl::IntrusiveConnection *mConnection;
   bcl::RedirectIO *mStdErr;
 
+  TransformationInfo *mTfmInfo = nullptr;
   TransformationContext *mTfmCtx  = nullptr;
   const GlobalOptions *mGlobalOpts = nullptr;
   AnalysisSocket *mSocket = nullptr;
@@ -1553,7 +1554,9 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     M.getContext().emitError("intrusive connection is not established");
     return false;
   }
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
+  mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
+  mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
   auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
   mSocket = SocketInfo.getActiveSocket();
   assert(mSocket && "Active socket must be specified!");
@@ -1565,8 +1568,8 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     return false;
   }
   ServerPrivateProvider::initialize<TransformationEnginePass>(
-    [this, &M](TransformationEnginePass &TEP) {
-      TEP.setContext(M, mTfmCtx);
+    [this](TransformationEnginePass &TEP) {
+      TEP.set(*mTfmInfo);
   });
   ServerPrivateProvider::initialize<AnalysisSocketImmutableWrapper>(
       [&SocketInfo](AnalysisSocketImmutableWrapper &Wrapper) {

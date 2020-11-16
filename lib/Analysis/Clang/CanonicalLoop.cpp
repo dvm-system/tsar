@@ -34,7 +34,7 @@
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/Tags.h"
@@ -691,7 +691,10 @@ DeclarationMatcher makeLoopMatcher() {
 bool CanonicalLoopPass::runOnFunction(Function &F) {
   releaseMemory();
   auto M = F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  if (!TfmInfo)
+    return false;
+  auto TfmCtx = TfmInfo->getContext(*M);
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());

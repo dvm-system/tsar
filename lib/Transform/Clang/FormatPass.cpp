@@ -23,7 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/FormatPass.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
@@ -61,7 +61,8 @@ void ClangFormatPass::getAnalysisUsage(AnalysisUsage& AU) const {
 }
 
 bool ClangFormatPass::runOnModule(llvm::Module& M) {
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
         ": transformation context is not available");

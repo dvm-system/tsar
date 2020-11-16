@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.4.3)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 project(TSAR VERSION 0.0.0 LANGUAGES CXX)
@@ -58,6 +58,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH}
 # Minimum LLVM version which is necessary to build TSAR.
 set(LLVM_MIN_VERSION 11.0)
 
+include(CMakeDependentOption)
 include(BCLCompilerOptions)
 include(BCLUtils)
 include(llvm-utility)
@@ -87,15 +88,20 @@ option(BUILD_PROFILE "Build profile runtime" OFF)
 option(BUILD_OPT "Build LLVM optimizer" OFF)
 option(BUILD_LLC "Build LLVM IR static compiler" OFF)
 option(BUILD_LINK "Build LLVM bitcode linker" OFF)
+cmake_dependent_option(BUILD_FLANG "Build LLVM native Fortran compiler Flang" OFF UNIX OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
 
 set(LLVM_SOURCE_DIR "${LLVM_PROJECT_DIR}/llvm")
 set(CLANG_SOURCE_DIR "${LLVM_PROJECT_DIR}/clang")
+set(FLANG_SOURCE_DIR "${LLVM_PROJECT_DIR}/flang")
 set(COMPILER_RT_SOURCE_DIR "${LLVM_PROJECT_DIR}/compiler-rt")
 
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
+set(FLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/flang")
+
+set(FLANG_FOUND OFF)
 
 if (LOCAL_LLVM AND PACKAGE_LLVM)
   message(FATAL_ERROR
@@ -107,14 +113,20 @@ if(NOT LOCAL_LLVM AND NOT PACKAGE_LLVM)
 endif()
 
 if(PACKAGE_LLVM)
-  if (BUILD_CLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE OR BUILD_LINK)
+  if (BUILD_CLANG OR BUILD_FLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE OR BUILD_LINK)
     message(FATAL_ERROR
-      "Options BUILD_CLANG or BUILD_OPT or BUILD_LLC or BUILD_PROFILE or BUILD_LINK are not compatible with PACKAGE_LLVM")
+      "Options BUILD_CLANG or BUILD_FLANG or BUILD_OPT or BUILD_LLC or BUILD_PROFILE or BUILD_LINK are not compatible with PACKAGE_LLVM")
   endif()
   unset(LLVM_DIR CACHE)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
   set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
   set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
+  set(FLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/flang")
+  if (EXISTS ${FLANG_SOURCE_DIR})
+    set(FLANG_FOUND ON)
+  else()
+    message(WARNING "Flang compiler is not found, build with limited Fortran support")
+  endif()
   if (MSVC_IDE)
     if (TARGET intrinsics_gen)
       set_target_properties(intrinsics_gen PROPERTIES FOLDER "Tablegenning")
@@ -127,12 +139,18 @@ else()
   if ((BUILD_CLANG OR BUILD_TSAR) AND NOT EXISTS ${CLANG_SOURCE_DIR})
     message(FATAL_ERROR "CLANG_SOURCE_DIR '${CLANG_SOURCE_DIR}' does not exist")
   endif()
+  if (BUILD_FLANG AND NOT EXISTS ${FLANG_SOURCE_DIR})
+    message(FATAL_ERROR "FLANG_SOURCE_DIR '${FLANG_SOURCE_DIR}' does not exist")
+  endif()
   if (BUILD_PROFILE AND NOT EXISTS ${COMPILER_RT_SOURCE_DIR})
     message(FATAL_ERROR "COMPILER_RT_SOURCE_DIR '${COMPILER_RT_SOURCE_DIR}' does not exist")
   endif()
   set(LLVM_STATUS "Configuring LLVM project")
   message(STATUS ${LLVM_STATUS})
   set(LLVM_PROJECTS clang)
+  if (BUILD_FLANG)
+    set(LLVM_PROJECTS ${LLVM_PROJECTS} flang)
+  endif()
   if (BUILD_PROFILE)
     set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
   endif()
@@ -148,6 +166,9 @@ else()
   if(BUILD_PROFILE AND (NOT LLVM_TOOL_COMPILER_RT_BUILD))
     message(FATAL_ERROR
       "To build profile runtime LLVM_TOOL_COMPILER_RT_BUILD must be set to ON.")
+  endif()
+  if (BUILD_FLANG)
+    set(FLANG_FOUND ON)
   endif()
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
@@ -167,7 +188,8 @@ message(STATUS ${LLVM_STATUS})
 
 set(LLVM_COMPONENTS
   analysis asmparser bitreader core instrumentation irreader scalaropts support
-  tablegen target transformutils coverage mcparser option debuginfodwarf)
+  tablegen target transformutils coverage mcparser option debuginfodwarf
+  frontendopenacc)
 
 llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 
@@ -186,9 +208,18 @@ set(CLANG_LIBS
   clangParse clangSema clangAnalysis clangRewrite clangEdit clangAST clangLex
   clangBasic clangASTMatchers clangFormat clangToolingCore clangToolingInclusions)
 
+if(FLANG_FOUND)
+  set(FLANG_LIBS
+    FortranSemantics FortranEvaluate FortranParser FortranDecimal FortranCommon)
+endif()
+
 if(NOT PACKAGE_LLVM)
   list(APPEND LLVM_INCLUDE_DIRS
     ${CLANG_SOURCE_DIR}/include ${CLANG_BINARY_DIR}/include)
+endif()
+if(NOT PACKAGE_LLVM AND FLANG_FOUND)
+  list(APPEND LLVM_INCLUDE_DIRS
+    ${FLANG_SOURCE_DIR}/include ${FLANG_BINARY_DIR}/include)
 endif()
 include_directories(${LLVM_INCLUDE_DIRS})
 

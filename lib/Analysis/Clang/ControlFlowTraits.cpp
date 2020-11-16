@@ -23,7 +23,7 @@
 //===----------------------------------------------------------------------===//
 #include "tsar/Analysis/Clang/ControlFlowTraits.h"
 #include "tsar/Analysis/Attributes.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include <clang/AST/Expr.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -174,7 +174,13 @@ private:
 
 bool ClangCFTraitsPass::runOnFunction(Function &F) {
   auto &M = *F.getParent();
-  auto TfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  if (!TfmInfo) {
+    M.getContext().emitError("can not access sources"
+        ": transformation context is not available");
+    return false;
+  }
+  auto TfmCtx = getAnalysis<TransformationEnginePass>()->getContext(M);
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     M.getContext().emitError("can not access sources"
         ": transformation context is not available");

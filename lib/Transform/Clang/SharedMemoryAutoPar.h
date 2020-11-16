@@ -51,10 +51,11 @@ namespace tsar {
 class DFLoop;
 class AnalysisSocketInfo;
 class ClangDependenceAnalyzer;
+class ClangTransformationContext;
 class DIMemoryEnvironment;
 class ParallelItem;
 class OptimizationRegion;
-class TransformationContext;
+class TransformationInfo;
 struct GlobalOptions;
 struct MemoryMatchInfo;
 }
@@ -135,7 +136,7 @@ protected:
   FunctionAnalysis analyzeFunction(llvm::Function &F);
 private:
   /// Initialize provider before on the fly passes will be run on client.
-  void initializeProviderOnClient(Module &M);
+  void initializeProviderOnClient();
 
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
@@ -157,7 +158,8 @@ private:
 
   std::size_t buildAdjacentList();
 
-  tsar::TransformationContext *mTfmCtx = nullptr;
+  tsar::ClangTransformationContext *mTfmCtx = nullptr;
+  tsar::TransformationInfo *mTfmInfo = nullptr;
   const tsar::GlobalOptions *mGlobalOpts = nullptr;
   tsar::MemoryMatchInfo *mMemoryMatcher = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;

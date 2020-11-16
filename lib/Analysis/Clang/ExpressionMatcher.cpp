@@ -26,7 +26,7 @@
 
 #include "tsar/Analysis/Clang/ExpressionMatcher.h"
 #include "tsar/Analysis/Clang/Matcher.h"
-#include "tsar/Core/TransformationContext.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/InstIterator.h>
@@ -90,8 +90,10 @@ public:
 
 bool ClangExprMatcherPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto TfmCtx =
-    getAnalysis<TransformationEnginePass>().getContext(*F.getParent());
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  if (!TfmInfo)
+    return false;
+  auto TfmCtx = TfmInfo->getContext(*F.getParent());
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
