@@ -1,6 +1,12 @@
 set(TRANSFORM_SOURCES Passes.cpp Instrumentation.cpp DILoopRetriever.cpp
   DINodeRetriever.cpp)
 
+if(FLANG_FOUND)
+  set(TRANSFORM_SOURCES ${TRANSFORM_SOURCES} DummyScopeAAPass.cpp)
+else()
+  set(TRANSFORM_SOURCES ${TRANSFORM_SOURCES} FlangStubs.cpp)
+endif()
+
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include/tsar/Transform/Mixed/*.h)

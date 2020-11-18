@@ -1,8 +1,8 @@
-//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
+//===---- EmptyPass.cpp ------ Trivial Empty Pass ----------------*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2020 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,18 +18,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This contains functions to initialize passes which performs transformation
-// of LLVM IR however depends on source-level information.
+// This file implements a trivial empty pass which does nothing. It can be use
+// as a stub if configuration of the build does not provide some passes.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Mixed/Passes.h"
+#include "tsar/Support/EmptyPass.h"
 
 using namespace llvm;
 
-void llvm::initializeMixedTransform(PassRegistry &Registry) {
-  initializeInstrumentationPassPass(Registry);
-  initializeDILoopRetrieverPassPass(Registry);
-  initializeDINodeRetrieverPassPass(Registry);
-  initializeFlangDummyAliasAnalysisPass(Registry);
-}
+char EmptyFunctionPass::ID = 0;
+INITIALIZE_PASS(EmptyFunctionPass, "empty-pass", "Empty Pass", true, true)

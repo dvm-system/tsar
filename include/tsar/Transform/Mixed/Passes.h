@@ -62,5 +62,13 @@ void initializeDINodeRetrieverPassPass(PassRegistry &Registry);
 /// Create a pass which retrieves some debug information for global values
 /// if it is not presented in LLVM IR.
 ModulePass * createDINodeRetrieverPass();
+
+/// Initialize a pass which retrieves alias information for dummy arguments from
+/// the source code.
+void initializeFlangDummyAliasAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass which retrieves alias information for dummy arguments from
+/// the source code.
+FunctionPass *createFlangDummyAliasAnalysis();
 }
 #endif//TSAR_MIXED_TRANSFORM_PASSES_H

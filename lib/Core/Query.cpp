@@ -101,6 +101,7 @@ void addInitialTransformations(legacy::PassManager &Passes) {
   Passes.add(createNoMetadataDSEPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDINodeRetrieverPass());
+  Passes.add(createFlangDummyAliasAnalysis());
 }
 
 void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
