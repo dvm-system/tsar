@@ -707,7 +707,7 @@ int Tool::run(QueryManager *QM) {
       mOutputFilename.clear();
     }
     return EmitPCHTool.run(
-      newFrontendActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
+        newActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!mOutputFilename.empty())
     errs() << "WARNING: The -o (output filename) option is ignored when "
@@ -721,7 +721,7 @@ int Tool::run(QueryManager *QM) {
   // the SourcesToMerge collection only.
   if (mMergeAST) {
     EmitPCHTool.run(
-      newFrontendActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
+        newActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!QM) {
     if (mEmitLLVM)
@@ -741,31 +741,41 @@ int Tool::run(QueryManager *QM) {
     ClangTool CTool(*mCompilations, SourcesToMerge.back());
     SourcesToMerge.pop_back();
     if (mDumpAST)
-      return CTool.run(newFrontendActionFactory<
-        tsar::ASTDumpAction, tsar::ASTMergeAction>(SourcesToMerge).get());
-    if (mPrintAST)
-      return CTool.run(newFrontendActionFactory<
-        tsar::ASTPrintAction, tsar::ASTMergeAction>(SourcesToMerge).get());
-    if (!ImportInfoStorage)
       return CTool.run(
-        newAnalysisActionFactory<MainAction, tsar::ASTMergeAction>(
-          mCommandLine, QM, SourcesToMerge).get());
+          newActionFactory<tsar::ASTDumpAction, tsar::ASTMergeAction>(
+              std::forward_as_tuple(), std::forward_as_tuple(SourcesToMerge))
+              .get());
+    if (mPrintAST)
+      return CTool.run(
+          newActionFactory<tsar::ASTPrintAction, tsar::ASTMergeAction>(
+              std::forward_as_tuple(), std::forward_as_tuple(SourcesToMerge))
+              .get());
+    if (!ImportInfoStorage)
+      return CTool.run(newActionFactory<MainAction, tsar::ASTMergeAction>(
+                           std::forward_as_tuple(mCommandLine, QM),
+                           std::forward_as_tuple(SourcesToMerge))
+                           .get());
     return CTool.run(
-      newAnalysisActionFactory<MainAction, ASTMergeActionWithInfo>(
-      mCommandLine, QM, SourcesToMerge, ImportInfoStorage).get());
+        newActionFactory<MainAction, ASTMergeActionWithInfo>(
+            std::forward_as_tuple(mCommandLine, QM),
+            std::forward_as_tuple(SourcesToMerge, ImportInfoStorage))
+            .get());
   }
   ClangTool CTool(*mCompilations, NoLLSources);
   if (mDumpAST)
-    return CTool.run(newFrontendActionFactory<
-      tsar::ASTDumpAction, tsar::GenPCHPragmaAction>().get());
+    return CTool.run(
+        newActionFactory<tsar::ASTDumpAction, tsar::GenPCHPragmaAction>()
+            .get());
   if (mPrintAST)
-    return CTool.run(newFrontendActionFactory<
-      tsar::ASTPrintAction, tsar::GenPCHPragmaAction>().get());
+    return CTool.run(
+        newActionFactory<tsar::ASTPrintAction, tsar::GenPCHPragmaAction>()
+            .get());
   // Do not search pragmas in .ll file to avoid internal assertion fails.
   ClangTool CLLTool(*mCompilations, LLSources);
   return
-    CTool.run(newAnalysisActionFactory<MainAction, GenPCHPragmaAction>(
-      mCommandLine, QM).get()) ||
-    CLLTool.run(newAnalysisActionFactory<MainAction>(mCommandLine, QM).get()) ?
+    CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
+      std::forward_as_tuple(mCommandLine, QM)).get()) ||
+    CLLTool.run(newActionFactory<MainAction>(
+      std::forward_as_tuple(mCommandLine, QM)).get()) ?
     1 : 0;
 }

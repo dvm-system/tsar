@@ -68,140 +68,52 @@ private:
 };
 
 /// Creates an analysis/transformations actions factory.
-template <class ActionTy, class FirstTy, class SecondTy>
+template <typename ActionT, typename... ArgT>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
-newAnalysisActionFactory(FirstTy First, SecondTy Second) {
-  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
+newActionFactory(std::tuple<ArgT...> Args) {
+  class ActionFactory : public clang::tooling::FrontendActionFactory {
   public:
-    AnalysisActionFactory(FirstTy F, SecondTy S) :
-      mFirst(std::move(F)), mSecond(std::move(S)) {}
+    explicit ActionFactory(std::tuple<ArgT...> Args) : mArgs{std::move(Args)} {}
     std::unique_ptr<clang::FrontendAction> create() override {
       return std::unique_ptr<clang::FrontendAction>(
-        new ActionTy(mFirst, mSecond));
+          bcl::make_unique_piecewise<ActionT>(mArgs).release());
     }
+
   private:
-    FirstTy mFirst;
-    SecondTy mSecond;
+    std::tuple<ArgT...> mArgs;
   };
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(std::move(First), std::move(Second)));
+      new ActionFactory(std::move(Args)));
 }
 
 /// Creates an analysis/transformations actions factory with adaptor.
-template <class ActionTy, class AdaptorTy, class FirstTy, class SecondTy>
+template <typename ActionT, typename AdaptorT, typename... ActionArgT,
+          typename... AdaptorArgT>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
-newAnalysisActionFactory(FirstTy First, SecondTy Second) {
-  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
+newActionFactory(std::tuple<ActionArgT...> ActionArgs = {},
+                 std::tuple<AdaptorArgT...> AdaptorArgs = {}) {
+  class ActionFactory : public clang::tooling::FrontendActionFactory {
   public:
-    AnalysisActionFactory(FirstTy F, SecondTy S) :
-      mFirst(std::move(F)), mSecond(std::move(S)) {}
+    ActionFactory(std::tuple<ActionArgT...> ActionArgs,
+                  std::tuple<AdaptorArgT...> AdaptorArgs)
+        : mActionArgs{std::move(ActionArgs)}
+        , mAdaptorArgs{std::move(AdaptorArgs)} {}
     std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action(
-        new ActionTy(mFirst, mSecond));
+      std::unique_ptr<clang::FrontendAction> Action{
+          bcl::make_unique_piecewise<ActionT>(mActionArgs).release()};
       return std::unique_ptr<clang::FrontendAction>(
-        new AdaptorTy(std::move(Action)));
+          bcl::make_unique_piecewise<AdaptorT>(
+              std::tuple_cat(std::forward_as_tuple(std::move(Action)),
+                             mAdaptorArgs))
+              .release());
     }
-  private:
-    FirstTy mFirst;
-    SecondTy mSecond;
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(std::move(First), std::move(Second)));
-}
 
-/// Creates an analysis/transformations actions factory with adaptor.
-template <class ActionTy, class AdaptorTy,
-          class FirstTy, class SecondTy, class AdaptorArgTy>
-std::unique_ptr<clang::tooling::FrontendActionFactory>
-newAnalysisActionFactory(
-    FirstTy First, SecondTy Second, AdaptorArgTy AdaptorArg) {
-  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
-  public:
-    AnalysisActionFactory(FirstTy F, SecondTy S, AdaptorArgTy A) :
-      mFirst(std::move(F)), mSecond(std::move(S)), mAdaptorArg(std::move(A)) {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action(
-        new ActionTy(mFirst, mSecond));
-      return std::unique_ptr<clang::FrontendAction>(
-        new AdaptorTy(std::move(Action), mAdaptorArg));
-    }
   private:
-    FirstTy mFirst;
-    SecondTy mSecond;
-    AdaptorArgTy mAdaptorArg;
+    std::tuple<ActionArgT...> mActionArgs;
+    std::tuple<AdaptorArgT...> mAdaptorArgs;
   };
   return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(
-      std::move(First), std::move(Second), std::move(AdaptorArg)));
-}
-
-/// Creates an analysis/transformations actions factory with adaptor.
-template <class ActionTy, class AdaptorTy,
-          class FirstTy, class SecondTy,
-          class AdaptorFirstTy, class AdaptorSecondTy>
-std::unique_ptr<clang::tooling::FrontendActionFactory>
-newAnalysisActionFactory(FirstTy First, SecondTy Second,
-    AdaptorFirstTy AdaptorFirst, AdaptorSecondTy AdaptorSecond) {
-  class AnalysisActionFactory : public clang::tooling::FrontendActionFactory {
-  public:
-    AnalysisActionFactory(FirstTy F, SecondTy S,
-        AdaptorFirstTy AF, AdaptorSecondTy AS) :
-      mFirst(std::move(F)), mSecond(std::move(S)),
-      mAdaptorFirst(std::move(AF)), mAdaptorSecond(std::move(AS)) {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action(
-        new ActionTy(mFirst, mSecond));
-      return std::unique_ptr<clang::FrontendAction>(
-        new AdaptorTy(std::move(Action), mAdaptorFirst, mAdaptorSecond));
-    }
-  private:
-    FirstTy mFirst;
-    SecondTy mSecond;
-    AdaptorFirstTy mAdaptorFirst;
-    AdaptorSecondTy mAdaptorSecond;
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new AnalysisActionFactory(std::move(First), std::move(Second),
-      std::move(AdaptorFirst), std::move(AdaptorSecond)));
-}
-}
-namespace clang {
-/// Creates an frontend actions factory with adaptor.
-template <class ActionTy, class AdaptorTy>
-std::unique_ptr<clang::tooling::FrontendActionFactory>
-newFrontendActionFactory() {
-  class SimpleFrontendActionFactory :
-    public clang::tooling::FrontendActionFactory {
-  public:
-    SimpleFrontendActionFactory() {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
-      return std::unique_ptr<clang::FrontendAction>(
-        new AdaptorTy(std::move(Action)));
-    }
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new SimpleFrontendActionFactory());
-}
-
-/// Creates an frontend actions factory with adaptor.
-template <class ActionTy, class AdaptorTy, class AdaptorArgTy>
-std::unique_ptr<clang::tooling::FrontendActionFactory>
-newFrontendActionFactory(AdaptorArgTy AdaptorArg) {
-  class SimpleFrontendActionFactory :
-    public clang::tooling::FrontendActionFactory {
-  public:
-    SimpleFrontendActionFactory(AdaptorArgTy A) : mAdaptorArg(std::move(A)) {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action(new ActionTy());
-      return std::unique_ptr<clang::FrontendAction>(
-        new AdaptorTy(std::move(Action), mAdaptorArg));
-    }
-  private:
-    AdaptorArgTy mAdaptorArg;
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-    new SimpleFrontendActionFactory(std::move(AdaptorArg)));
+      new ActionFactory(std::move(ActionArgs), std::move(AdaptorArgs)));
 }
 }
 #endif//TSAR_ACTION_H
