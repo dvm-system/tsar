@@ -114,6 +114,7 @@ private:
   bool mCheck = false;
   bool mPrint = false;
   bool mServer = false;
+  bool mLoadSources = true;
   std::string mOutputFilename;
   std::string mLanguage;
   std::string mInstrEntry;

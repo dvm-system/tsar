@@ -64,7 +64,7 @@ class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
   AnalysisConsumer(CompilerInstance &CI, StringRef InFile,
-    TransformationInfo &TfmInfo, QueryManager &QM)
+    TransformationInfo *TfmInfo, QueryManager &QM)
     : mLLVMIRGeneration(
       "mLLVMIRGeneration",
       "LLVM IR Generation Time"
@@ -73,7 +73,7 @@ public:
     mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
       CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
       CI.getCodeGenOpts(), *mLLVMContext)),
-    mTransformInfo(&TfmInfo), mQueryManager(&QM) {
+    mTransformInfo(TfmInfo), mQueryManager(&QM) {
   }
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
@@ -144,12 +144,14 @@ public:
       "LLVM IR Analysis Time");
     if (llvm::TimePassesIsEnabled)
       LLVMIRAnalysis.startTimer();
-    auto CUs = M->getNamedMetadata("llvm.dbg.cu");
-    if (CUs->getNumOperands() == 1) {
-      auto *CU = cast<DICompileUnit>(*CUs->op_begin());
-      mTransformInfo->setContext(
-          *CU,
-          std::make_unique<ClangTransformationContext>(*mCI, ASTCtx, *mGen));
+    if (mTransformInfo) {
+      auto CUs = M->getNamedMetadata("llvm.dbg.cu");
+      if (CUs->getNumOperands() == 1) {
+        auto *CU = cast<DICompileUnit>(*CUs->op_begin());
+        mTransformInfo->setContext(
+            *CU,
+            std::make_unique<ClangTransformationContext>(*mCI, ASTCtx, *mGen));
+      }
     }
     mQueryManager->run(M, mTransformInfo);
     if (llvm::TimePassesIsEnabled)
@@ -315,22 +317,25 @@ void MainAction::ExecuteAction() {
     "LLVM IR Analysis Time");
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.startTimer();
-  ActionHelper<TransformationContextBase::TC_Clang> ClangHelper;
-  ActionHelper<TransformationContextBase::TC_Flang> FlangHelper;
-  auto CUs = M->getNamedMetadata("llvm.dbg.cu");
-  for (auto *Op : CUs->operands())
-    if (auto *CU = dyn_cast<DICompileUnit>(Op)) {
-      SmallString<128> Path{CU->getFilename()};
-      sys::fs::make_absolute(CU->getDirectory(), Path);
-      if (isFortran(CU->getSourceLanguage())) {
-        if (auto TfmCtx =
-                FlangHelper.CreateTransformationContext(getCurrentFile(), Path))
-          mTfmInfo->setContext(*CU, std::move(TfmCtx));
-      } else if (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()))
-        if (auto TfmCtx =
-                ClangHelper.CreateTransformationContext(getCurrentFile(), Path))
-          mTfmInfo->setContext(*CU, std::move(TfmCtx));
-    }
+  if (mTfmInfo) {
+    ActionHelper<TransformationContextBase::TC_Clang> ClangHelper;
+    ActionHelper<TransformationContextBase::TC_Flang> FlangHelper;
+    auto CUs = M->getNamedMetadata("llvm.dbg.cu");
+    for (auto *Op : CUs->operands())
+      if (auto *CU = dyn_cast<DICompileUnit>(Op)) {
+        SmallString<128> Path{CU->getFilename()};
+        sys::fs::make_absolute(CU->getDirectory(), Path);
+        if (isFortran(CU->getSourceLanguage())) {
+          if (auto TfmCtx = FlangHelper.CreateTransformationContext(
+                  getCurrentFile(), Path))
+            mTfmInfo->setContext(*CU, std::move(TfmCtx));
+        } else if (isC(CU->getSourceLanguage()) ||
+                   isCXX(CU->getSourceLanguage()))
+          if (auto TfmCtx = ClangHelper.CreateTransformationContext(
+                  getCurrentFile(), Path))
+            mTfmInfo->setContext(*CU, std::move(TfmCtx));
+      }
+  }
   mQueryManager->run(M.get(), mTfmInfo.get());
   if (llvm::TimePassesIsEnabled)
     LLVMIRAnalysis.stopTimer();
@@ -338,11 +343,13 @@ void MainAction::ExecuteAction() {
 
 std::unique_ptr<ASTConsumer>
 MainAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return std::make_unique<AnalysisConsumer>(CI, InFile, *mTfmInfo,
+  return std::make_unique<AnalysisConsumer>(CI, InFile, mTfmInfo.get(),
                                             *mQueryManager);
 }
 
-MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM) :
-  mQueryManager(QM), mTfmInfo(new TransformationInfo(CL)) {
-    assert(QM && "Query manager must not be null!");
+MainAction::MainAction(ArrayRef<std::string> CL, QueryManager *QM,
+                       bool LoadSources)
+    : mQueryManager(QM),
+      mTfmInfo(LoadSources ? new TransformationInfo(CL) : nullptr) {
+  assert(QM && "Query manager must not be null!");
 }

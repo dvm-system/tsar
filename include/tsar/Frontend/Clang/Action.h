@@ -38,7 +38,8 @@ class QueryManager;
 /// Base front-end action to analyze and transform sources.
 class MainAction : public clang::ASTFrontendAction {
 public:
-  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM);
+  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM,
+             bool LoadSources = true);
 
   /// Callback at the start of processing a single input.
   ///

@@ -165,6 +165,8 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoMathErrno;
   llvm::cl::opt<bool> Inline;
   llvm::cl::opt<bool> NoInline;
+  llvm::cl::opt<bool> LoadSources;
+  llvm::cl::opt<bool> NoLoadSources;
   llvm::cl::opt<std::string> AnalysisUse;
   llvm::cl::list<std::string> OptRegion;
 
@@ -276,6 +278,10 @@ Options::Options() :
     cl::desc("Allow to inline function calls to improve analysis accuracy (default)")),
   NoInline("fno-inline", cl::cat(AnalysisCategory),
     cl::desc("Do not inline function calls to decrease analysis time")),
+  LoadSources("fload-sources", cl::cat(AnalysisCategory),
+    cl::desc("Try to load higher level sources for an IR-level input (default)")),
+  NoLoadSources("fno-load-sources", cl::cat(AnalysisCategory),
+    cl::desc("Avoid source-level analysis for an IR-level input")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
@@ -611,7 +617,14 @@ void Tool::storeCLOptions() {
   if (!mInstrLLVM && (!mInstrEntry.empty() || !mInstrStart.empty()))
     errs() << "WARNING: Instrumentation options are ignored when "
               "-instr-llvm is not set.\n";
-  mCheck = addLLIfSet(Options::get().Check);
+  mCheck = addLLIfSet(addIfSet(Options::get().Check));
+  mLoadSources = !addIfSetIf(Options::get().NoLoadSources, mTfmPass || mCheck);
+  if (Options::get().LoadSources && Options::get().NoLoadSources) {
+    std::string Msg("error - this option is incompatible with");
+    Msg.append(" -").append(Options::get().NoLoadSources.ArgStr.data());
+    Options::get().LoadSources.error(Msg);
+    exit(1);
+  }
   mOutputFilename = Options::get().Output;
   storePrintOptions(IncompatibleOpts);
   mLanguage = Options::get().Language;
@@ -776,6 +789,6 @@ int Tool::run(QueryManager *QM) {
     CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
       std::forward_as_tuple(mCommandLine, QM)).get()) ||
     CLLTool.run(newActionFactory<MainAction>(
-      std::forward_as_tuple(mCommandLine, QM)).get()) ?
+      std::forward_as_tuple(mCommandLine, QM, mLoadSources)).get()) ?
     1 : 0;
 }
