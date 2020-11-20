@@ -17,6 +17,10 @@ set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
   TSARTransformClang TSARAnalysisClang TSARFrontendClang TSARSupportClang
   TSARUnparse PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+if (FLANG_FOUND)
+  set_property(TARGET TSARFrontendFlang PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()
+
 add_library(TSARServer SHARED
   ${TSAR_SHARED_SOURCES} ${TSAR_SHARED_INTERNAL_HEADERS})
 

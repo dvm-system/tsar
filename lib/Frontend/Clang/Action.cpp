@@ -204,7 +204,9 @@ void MainAction::EndSourceFileAction() {
 template<TransformationContextBase::Kind FrontendKind>
 struct ActionHelper {
   std::unique_ptr<TransformationContextBase>
-  CreateTransformationContext(StringRef IRSource, StringRef Path) {
+  CreateTransformationContext([[maybe_unused]] const llvm::Module &M,
+      [[maybe_unused]] const DICompileUnit &CU,
+      [[maybe_unused]] StringRef IRSource, [[maybe_unused]] StringRef Path) {
     return nullptr;
   }
 };
@@ -215,7 +217,8 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
   Fortran::common::IntrinsicTypeDefaultKinds DefaultKinds;
 
   std::unique_ptr<FlangTransformationContext>
-  CreateTransformationContext(StringRef IRSource, StringRef Path) {
+  CreateTransformationContext(const llvm::Module &M, const DICompileUnit &CU,
+      StringRef IRSource, StringRef Path) {
     Fortran::parser::Options Options;
     Options.predefinitions.emplace_back("__F18", "1");
     Options.predefinitions.emplace_back("__F18_MAJOR__", "1");
@@ -259,6 +262,7 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
       errs() << IRSource << " semantic errors in " << Path << '\n';
       return nullptr;
     }
+    TfmCtx->initializeDemangler(M, CU);
     return TfmCtx;
   }
 };
@@ -327,12 +331,12 @@ void MainAction::ExecuteAction() {
         sys::fs::make_absolute(CU->getDirectory(), Path);
         if (isFortran(CU->getSourceLanguage())) {
           if (auto TfmCtx = FlangHelper.CreateTransformationContext(
-                  getCurrentFile(), Path))
+                  *M, *CU, getCurrentFile(), Path))
             mTfmInfo->setContext(*CU, std::move(TfmCtx));
         } else if (isC(CU->getSourceLanguage()) ||
                    isCXX(CU->getSourceLanguage()))
           if (auto TfmCtx = ClangHelper.CreateTransformationContext(
-                  getCurrentFile(), Path))
+                  *M, *CU, getCurrentFile(), Path))
             mTfmInfo->setContext(*CU, std::move(TfmCtx));
       }
   }

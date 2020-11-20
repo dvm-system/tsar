@@ -67,16 +67,6 @@ using namespace tsar;
 #define DEBUG_TYPE "dummy-no-alias"
 
 namespace {
-semantics::Scope * findSubprogram(StringRef Name, semantics::Scope &Parent) {
-  if (Parent.kind() == semantics::Scope::Kind::Subprogram)
-    if (auto *S{Parent.symbol()}; S && S->name().ToString() == Name)
-      return &Parent;
-  for (auto &Child : Parent.children())
-    if(auto *Sub{findSubprogram(Name, Child)})
-      return Sub;
-  return nullptr;
-}
-
 class FlangDummyAliasAnalysis : public FunctionPass, private bcl::Uncopyable {
 public:
   static char ID;
@@ -124,11 +114,10 @@ bool FlangDummyAliasAnalysis::runOnFunction(Function &F) {
                       << ": transformation context is not available\n");
     return false;
   }
-  auto &GlobalScope{TfmCtx->getContext().globalScope()};
-  auto *ASTSub{findSubprogram(DISub->getName(), GlobalScope)};
+  auto *ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
   if (!ASTSub)
     return false;
-  auto *Details{ASTSub->symbol()->detailsIf<semantics::SubprogramDetails>()};
+  auto *Details{ASTSub->detailsIf<semantics::SubprogramDetails>()};
   if (any_of(Details->dummyArgs(), [](auto *Dummy) {
     return Dummy->attrs().HasAny(
         {Fortran::semantics::Attr::TARGET, Fortran::semantics::Attr::POINTER});
