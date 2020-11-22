@@ -62,35 +62,45 @@ DenseSet<Value*> collectMemorySources(Function* F) {
 }
 
 int countPointerArguments(Function* F) {
-    int PointerArgsAmount = 0;
-    for (auto& Arg : F->args()) {
-        if (Arg.getType()->isPointerTy()) {
-            PointerArgsAmount++;
-        }
+  int PointerArgsAmount = 0;
+  for (auto& Arg : F->args()) {
+    if (Arg.getType()->isPointerTy()) {
+      if (auto* PtrType = dyn_cast<PointerType>(Arg.getType())) {
+        if (PtrType->getElementType()->isSingleValueType() || PtrType->getElementType()->isAggregateType())
+          PointerArgsAmount++;
+      }
+    } else if (Arg.getType()->isArrayTy()) {
+      PointerArgsAmount++;
     }
-    return PointerArgsAmount;
+  }
+  return PointerArgsAmount;
 }
 
 DenseSet<Value*> findPointerArguments(Function* F) {
-    DenseSet<Value*> PointerArgs;
-    for (auto& Arg : F->args()) {
-        if (Arg.getType()->isPointerTy()) {
-            PointerArgs.insert(&Arg);
-        }
+  DenseSet<Value*> PointerArgs;
+  for (auto& Arg : F->args()) {
+    if (Arg.getType()->isPointerTy()) {
+      if (auto* PtrType = dyn_cast<PointerType>(Arg.getType())) {
+        if (PtrType->getElementType()->isSingleValueType() || PtrType->getElementType()->isAggregateType())
+          PointerArgs.insert(&Arg);
+      }
+    } else if (Arg.getType()->isArrayTy()) {
+      PointerArgs.insert(&Arg);
     }
-    return PointerArgs;
+  }
+  return PointerArgs;
 }
 
 DenseSet<int> findPointerArgumentsIndexes(Function* F) {
-    DenseSet<int> PointerArgsIndexes;
-    int i = 0;
-    for (auto& Arg : F->args()) {
-        if (Arg.getType()->isPointerTy()) {
-            PointerArgsIndexes.insert(i);
-        }
-        i++;
+  DenseSet<int> PointerArgsIndexes;
+  int i = 0;
+  for (auto& Arg : F->args()) {
+    if (Arg.getType()->isPointerTy()) {
+      PointerArgsIndexes.insert(i);
     }
-    return PointerArgsIndexes;
+    i++;
+  }
+  return PointerArgsIndexes;
 }
 
 DenseSet<CallInst*> collectCallsOfFunctionsWithPointerArguments(Function* F) {
@@ -106,7 +116,7 @@ DenseSet<CallInst*> collectCallsOfFunctionsWithPointerArguments(Function* F) {
         );
         if (!CalledF->isIntrinsic()) {
           int PointerArgsAmount = countPointerArguments(CalledF);
-          if (PointerArgsAmount > 0) {
+          if (PointerArgsAmount > 1) {
             CallsOfFunctionsWithPointerArguments.insert(CallI);
           }
         }
@@ -409,157 +419,168 @@ DenseMap<Function*, DenseSet<int>> collectRestrictFunctionsInfoByArguments(
 }
 
 void runOnFunction(
-    Function* F,
-    DenseMap<Function*, DenseSet<int>>& KnownRestrictFunctions,
-    DenseMap<Function*, DenseSet<int>>& KnownNonRestrictFunctions,
-    DenseMap<Function*, FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies,
-    DenseSet<Value *>& GlobalMemorySources) {
-    LLVM_DEBUG(
-        dbgs() << "[RESTRICTION ARGS] F:" << "\n";
-    F->dump();
-    );
+  Function* F,
+  DenseMap<Function*, DenseSet<int>>& KnownRestrictFunctions,
+  DenseMap<Function*, DenseSet<int>>& KnownNonRestrictFunctions,
+  DenseMap<Function*, FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies,
+  DenseSet<Value *>& GlobalMemorySources) {
+  LLVM_DEBUG(
+      dbgs() << "[RESTRICTION ARGS] F:" << "\n";
+  F->dump();
+  );
 
-    auto MemorySources = collectMemorySources(F);
-    for (auto *GM : GlobalMemorySources) {
-      MemorySources.insert(GM);
+  auto MemorySources = collectMemorySources(F);
+  for (auto *GM : GlobalMemorySources) {
+    MemorySources.insert(GM);
+  }
+  LLVM_DEBUG(
+      dbgs() << "[RESTRICTION ARGS] Allocation Instructions: " << "\n";
+  for (auto* I : MemorySources) {
+      dbgs() << "\t";
+      I->dump();
+      dbgs() << "\tUsers: " << "\n";
+      for (auto* U : I->users()) {
+          dbgs() << "\t\t";
+          U->dump();
+      }
+      dbgs() << "\n";
+  }
+  );
+
+  // because we already analyzed real arguments for the F calls
+  if (KnownRestrictFunctions.count(F)) {
+      int i = 0;
+      for (auto& Arg : F->args()) {
+          if (KnownRestrictFunctions[F].count(i)) {
+              MemorySources.insert(&Arg);
+          }
+          i++;
+      }
+  }
+
+  auto TargetFunctionsCalls = collectCallsOfFunctionsWithPointerArguments(F);
+  LLVM_DEBUG(
+      dbgs() << "[RESTRICTION ARGS] TargetFunctionsCalls Instructions: " << "\n";
+  for (auto* I : TargetFunctionsCalls) {
+      dbgs() << "\t";
+      I->dump();
+  }
+  );
+
+  DenseMap<Function*, DenseSet<int>> LocallyAnalysedFunctions;
+  for (auto* FCall : TargetFunctionsCalls) {
+      auto* LF = FCall->getCalledFunction();
+      LocallyAnalysedFunctions.insert(std::make_pair(LF, findPointerArgumentsIndexes(LF)));
+  }
+
+  auto CallsToPtrArgumentsMemorySources = fillCallsToPtrArgumentsMemorySources(
+      TargetFunctionsCalls,
+      MemorySources,
+      FunctionsReturnValuesDependencies);
+  LLVM_DEBUG(
+      dbgs() << "[RESTRICTION ARGS] CallsToPtrArgumentsMemorySources: " << "\n";
+  for (auto& CallInfo : CallsToPtrArgumentsMemorySources) {
+      auto* CallI = CallInfo.second.mCallI;
+      auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
+      dbgs() << "Call: ";
+      CallI->dump();
+      dbgs() << "Args memory sources:\n";
+      for (auto& S : ArgumentsSources) {
+          dbgs() << "\t" << S.first << ":\n";
+          for (auto* MS : S.second) {
+              dbgs() << "\t\t";
+              MS->dump();
+          }
+      }
+      dbgs() << "\n";
+  }
+  );
+
+  auto RestrictFunctionsCallsByArgument = collectRestrictFunctionsCallsByArguments(
+      CallsToPtrArgumentsMemorySources, FunctionsReturnValuesDependencies);
+  auto LocalRestrictFunctionsInfo = collectRestrictFunctionsInfoByArguments(
+      RestrictFunctionsCallsByArgument, TargetFunctionsCalls);
+
+  DenseMap<Function*, DenseSet<int>> LocalNonRestrictFunctionsInfo;
+  for (auto& AnalysedFunctionInfo : LocallyAnalysedFunctions) {
+    auto* AnalysedFunction = AnalysedFunctionInfo.first;
+    auto& PointerArgs = AnalysedFunctionInfo.second;
+    // Function doesn't have any restrict argument
+    if (!LocalRestrictFunctionsInfo.count(AnalysedFunction)) {
+      LocalNonRestrictFunctionsInfo.insert(std::make_pair(AnalysedFunction, DenseSet<int>(PointerArgs)));
     }
-    LLVM_DEBUG(
-        dbgs() << "[RESTRICTION ARGS] Allocation Instructions: " << "\n";
-    for (auto* I : MemorySources) {
-        dbgs() << "\t";
-        I->dump();
-        dbgs() << "\tUsers: " << "\n";
-        for (auto* U : I->users()) {
-            dbgs() << "\t\t";
-            U->dump();
+    else {
+      DenseSet<int> NonRestrictPointerArgs;
+      for (auto PointerArgIdx : PointerArgs) {
+        // Argument isn't restrict
+        if (!LocalRestrictFunctionsInfo[AnalysedFunction].count(PointerArgIdx)) {
+          NonRestrictPointerArgs.insert(PointerArgIdx);
         }
-        dbgs() << "\n";
-    }
-    );
-
-    // because we already analyzed real arguments for the F calls
-    if (KnownRestrictFunctions.count(F)) {
-        int i = 0;
-        for (auto& Arg : F->args()) {
-            if (KnownRestrictFunctions[F].count(i)) {
-                MemorySources.insert(&Arg);
-            }
-            i++;
+      }
+      if (NonRestrictPointerArgs.size() > 1) {
+        for (auto PointerArgIdx : NonRestrictPointerArgs) {
+          if (LocalNonRestrictFunctionsInfo.count(AnalysedFunction)) {
+            LocalNonRestrictFunctionsInfo[AnalysedFunction].insert(PointerArgIdx);
+          }
+          else {
+            LocalNonRestrictFunctionsInfo.insert(std::make_pair(AnalysedFunction, DenseSet<int>({ PointerArgIdx })));
+          }
         }
-    }
-
-    auto TargetFunctionsCalls = collectCallsOfFunctionsWithPointerArguments(F);
-    LLVM_DEBUG(
-        dbgs() << "[RESTRICTION ARGS] TargetFunctionsCalls Instructions: " << "\n";
-    for (auto* I : TargetFunctionsCalls) {
-        dbgs() << "\t";
-        I->dump();
-    }
-    );
-
-    DenseMap<Function*, DenseSet<int>> LocallyAnalysedFunctions;
-    for (auto* FCall : TargetFunctionsCalls) {
-        auto* LF = FCall->getCalledFunction();
-        LocallyAnalysedFunctions.insert(std::make_pair(LF, findPointerArgumentsIndexes(LF)));
-    }
-
-    auto CallsToPtrArgumentsMemorySources = fillCallsToPtrArgumentsMemorySources(
-        TargetFunctionsCalls,
-        MemorySources,
-        FunctionsReturnValuesDependencies);
-    LLVM_DEBUG(
-        dbgs() << "[RESTRICTION ARGS] CallsToPtrArgumentsMemorySources: " << "\n";
-    for (auto& CallInfo : CallsToPtrArgumentsMemorySources) {
-        auto* CallI = CallInfo.second.mCallI;
-        auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
-        dbgs() << "Call: ";
-        CallI->dump();
-        dbgs() << "Args memory sources:\n";
-        for (auto& S : ArgumentsSources) {
-            dbgs() << "\t" << S.first << ":\n";
-            for (auto* MS : S.second) {
-                dbgs() << "\t\t";
-                MS->dump();
-            }
+      } else {
+        // 1 argument can't be non-restrict
+        for (auto PointerArgIdx : NonRestrictPointerArgs) {
+          LocalRestrictFunctionsInfo[AnalysedFunction].insert(PointerArgIdx);
         }
-        dbgs() << "\n";
+      }
     }
-    );
+  }
 
-    auto RestrictFunctionsCallsByArgument = collectRestrictFunctionsCallsByArguments(
-        CallsToPtrArgumentsMemorySources, FunctionsReturnValuesDependencies);
-    auto LocalRestrictFunctionsInfo = collectRestrictFunctionsInfoByArguments(
-        RestrictFunctionsCallsByArgument, TargetFunctionsCalls);
+  for (auto& LRFInfo : LocalRestrictFunctionsInfo) {
+    auto* LRF = LRFInfo.first;
+    auto& FRestrictArgs = LRFInfo.second;
+    if (KnownNonRestrictFunctions.count(LRF)) {
+      for (auto LocalRestrictArg : FRestrictArgs) {
+        if (!KnownNonRestrictFunctions[LRF].count(LocalRestrictArg)) {
+          if (KnownRestrictFunctions.count(LRF)) {
+            KnownRestrictFunctions[LRF].insert(LocalRestrictArg);
+          }
+          else {
+            KnownRestrictFunctions.insert(std::make_pair(LRF, DenseSet<int>({ LocalRestrictArg })));
+          }
+        }
+      }
+    }
+    else {
+      if (KnownRestrictFunctions.count(LRF)) {
+        KnownRestrictFunctions[LRF].insert(FRestrictArgs.begin(), FRestrictArgs.end());
+      }
+      else {
+        KnownRestrictFunctions.insert(std::make_pair(LRF, DenseSet<int>(FRestrictArgs)));
+      }
+    }
+  }
 
-    DenseMap<Function*, DenseSet<int>> LocalNonRestrictFunctionsInfo;
-    for (auto& AnalysedFunctionInfo : LocallyAnalysedFunctions) {
-        auto* AnalysedFunction = AnalysedFunctionInfo.first;
-        auto& PointerArgs = AnalysedFunctionInfo.second;
-        // Function doesn't have any restrict argument
-        if (!LocalRestrictFunctionsInfo.count(AnalysedFunction)) {
-            LocalNonRestrictFunctionsInfo.insert(std::make_pair(AnalysedFunction, DenseSet<int>(PointerArgs)));
+  for (auto& LNRFInfo : LocalNonRestrictFunctionsInfo) {
+    auto* LNRF = LNRFInfo.first;
+    auto& FNonRestrictArgs = LNRFInfo.second;
+    if (KnownRestrictFunctions.count(LNRF)) {
+      for (auto LocalNonRestrictArg : FNonRestrictArgs) {
+        if (KnownRestrictFunctions[LNRF].count(LocalNonRestrictArg)) {
+            KnownRestrictFunctions[LNRF].erase(LocalNonRestrictArg);
         }
-        else {
-            for (auto PointerArgIdx : PointerArgs) {
-                // Argument isn't restrict
-                if (!LocalRestrictFunctionsInfo[AnalysedFunction].count(PointerArgIdx)) {
-                    if (LocalNonRestrictFunctionsInfo.count(AnalysedFunction)) {
-                        LocalNonRestrictFunctionsInfo[AnalysedFunction].insert(PointerArgIdx);
-                    }
-                    else {
-                        LocalNonRestrictFunctionsInfo.insert(std::make_pair(AnalysedFunction, DenseSet<int>({ PointerArgIdx })));
-                    }
-                }
-            }
-        }
+      }
+      if (KnownRestrictFunctions[LNRF].empty()) {
+        KnownNonRestrictFunctions.erase(LNRF);
+      }
     }
 
-    for (auto& LRFInfo : LocalRestrictFunctionsInfo) {
-        auto* LRF = LRFInfo.first;
-        auto& FRestrictArgs = LRFInfo.second;
-        if (KnownNonRestrictFunctions.count(LRF)) {
-            for (auto LocalRestrictArg : FRestrictArgs) {
-                if (!KnownNonRestrictFunctions[LRF].count(LocalRestrictArg)) {
-                    if (KnownRestrictFunctions.count(LRF)) {
-                        KnownRestrictFunctions[LRF].insert(LocalRestrictArg);
-                    }
-                    else {
-                        KnownRestrictFunctions.insert(std::make_pair(LRF, DenseSet<int>({ LocalRestrictArg })));
-                    }
-                }
-            }
-        }
-        else {
-            if (KnownRestrictFunctions.count(LRF)) {
-                KnownRestrictFunctions[LRF].insert(FRestrictArgs.begin(), FRestrictArgs.end());
-            }
-            else {
-                KnownRestrictFunctions.insert(std::make_pair(LRF, DenseSet<int>(FRestrictArgs)));
-            }
-        }
+    if (KnownNonRestrictFunctions.count(LNRF)) {
+      KnownNonRestrictFunctions[LNRF].insert(FNonRestrictArgs.begin(), FNonRestrictArgs.end());
     }
-
-    for (auto& LNRFInfo : LocalNonRestrictFunctionsInfo) {
-        auto* LNRF = LNRFInfo.first;
-        auto& FNonRestrictArgs = LNRFInfo.second;
-        if (KnownRestrictFunctions.count(LNRF)) {
-            for (auto LocalNonRestrictArg : FNonRestrictArgs) {
-                if (KnownRestrictFunctions[LNRF].count(LocalNonRestrictArg)) {
-                    KnownRestrictFunctions[LNRF].erase(LocalNonRestrictArg);
-                }
-            }
-            if (KnownRestrictFunctions[LNRF].empty()) {
-                KnownNonRestrictFunctions.erase(LNRF);
-            }
-        }
-
-        if (KnownNonRestrictFunctions.count(LNRF)) {
-            KnownNonRestrictFunctions[LNRF].insert(FNonRestrictArgs.begin(), FNonRestrictArgs.end());
-        }
-        else {
-            KnownNonRestrictFunctions.insert(std::make_pair(LNRF, DenseSet<int>(FNonRestrictArgs)));
-        }
+    else {
+      KnownNonRestrictFunctions.insert(std::make_pair(LNRF, DenseSet<int>(FNonRestrictArgs)));
     }
+  }
   LLVM_DEBUG(
     dbgs() << "After this function analysis:\n Restrict Functions: \n";
     for (auto& FInfo : KnownRestrictFunctions) {
