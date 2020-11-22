@@ -30,6 +30,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Support/Path.h>
+#include <llvm/Support/FileSystem.h>
 
 namespace tsar {
 /// Returns a language for a specified function.
@@ -174,19 +175,20 @@ inline bool isStubVariable(llvm::DIVariable &DIVar) {
          llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial();
 }
 
+/// Convert path to a native form.
+inline llvm::StringRef getNativePath(const llvm::Twine &Path,
+    llvm::SmallVectorImpl<char> &Result) {
+  llvm::sys::path::native(Path, Result);
+  return llvm::StringRef(Result.data(), Result.size());
+}
+
 /// Return absolute path to a file this scope belongs to.
 inline llvm::StringRef getAbsolutePath(const llvm::DIScope &Scope,
                                          llvm::SmallVectorImpl<char> &Path) {
-    auto Tmp = Scope.getFilename();
-    if (!llvm::sys::path::is_absolute(Tmp)) {
-      auto Dir = Scope.getDirectory();
-      Path.append(Dir.begin(), Dir.end());
-      llvm::sys::path::append(Path, Tmp);
-    } else {
-      Path.append(Tmp.begin(), Tmp.end());
-    }
-    return llvm::StringRef(Path.data(), Path.size());
-  }
+  auto Tmp{ Scope.getFilename() };
+  llvm::SmallString<128> Absolute{ Tmp.begin(), Tmp.end() };
+  llvm::sys::fs::make_absolute(Scope.getDirectory(), Absolute);
+  return getNativePath(Absolute, Path);
 }
 
 /// Return subprogram which contains a specified scope or nullptr.
@@ -194,5 +196,6 @@ inline llvm::DISubprogram * getSubprogram(llvm::DIScope *Scope) {
   while (Scope && !llvm::isa<llvm::DISubprogram>(Scope))
     Scope = llvm::cast<llvm::DIScope>(Scope->getScope());
   return llvm::dyn_cast_or_null<llvm::DISubprogram>(Scope);
+}
 }
 #endif//TSAR_SUPPORT_METADATA_UTILS_H

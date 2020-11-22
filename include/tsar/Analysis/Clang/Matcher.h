@@ -81,7 +81,8 @@ struct DILocationMapInfo {
       !isEqual(RHS, getEmptyKey()) &&
       LHS.getLine() == RHS->getLine() &&
       LHS.getColumn() == RHS->getColumn() &&
-      LHS.getFilename() == tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
+      tsar::getNativePath(LHS.getFilename(), LHSPath) ==
+      tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
   }
 };
 }

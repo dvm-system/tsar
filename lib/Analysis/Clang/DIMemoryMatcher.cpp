@@ -118,7 +118,8 @@ struct DILocalScopeMapInfo {
     SmallString<128> LHSPath, RHSPath;
     return (!LineColumn.first || LHS.getLine() == LineColumn.first) &&
            (!LineColumn.second || LHS.getColumn() == LineColumn.second) &&
-           LHS.getFilename() == getAbsolutePath(*RHS, RHSPath);
+           getNativePath(LHS.getFilename(), LHSPath) ==
+               getAbsolutePath(*RHS, RHSPath);
   }
 };
 
