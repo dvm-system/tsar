@@ -66,7 +66,7 @@ int countPointerArguments(Function* F) {
   for (auto& Arg : F->args()) {
     if (Arg.getType()->isPointerTy()) {
       if (auto* PtrType = dyn_cast<PointerType>(Arg.getType())) {
-        if (PtrType->getElementType()->isSingleValueType() || PtrType->getElementType()->isAggregateType())
+        if (!PtrType->getElementType()->isFunctionTy())
           PointerArgsAmount++;
       }
     } else if (Arg.getType()->isArrayTy()) {
@@ -81,7 +81,7 @@ DenseSet<Value*> findPointerArguments(Function* F) {
   for (auto& Arg : F->args()) {
     if (Arg.getType()->isPointerTy()) {
       if (auto* PtrType = dyn_cast<PointerType>(Arg.getType())) {
-        if (PtrType->getElementType()->isSingleValueType() || PtrType->getElementType()->isAggregateType())
+        if (!PtrType->getElementType()->isFunctionTy())
           PointerArgs.insert(&Arg);
       }
     } else if (Arg.getType()->isArrayTy()) {
@@ -182,7 +182,9 @@ DenseMap<CallInst*, FunctionCallWithMemorySources> fillCallsToPtrArgumentsMemory
       } else if (auto* SelectI = dyn_cast<SelectInst>(U)) {
         workList.push_back(ValueWithMemorySources(SelectI, memorySources));
       } else if (auto* LoadI = dyn_cast<LoadInst>(U)) {
-        workList.push_back(ValueWithMemorySources(LoadI, memorySources));
+        if (LoadI->getType()->isPointerTy()) {
+          workList.push_back(ValueWithMemorySources(LoadI, memorySources));
+        }
       } else if (auto* CallI = dyn_cast<CallInst>(U)) {
         if (TargetFunctionsCalls.count(CallI)) {
           LLVM_DEBUG(
