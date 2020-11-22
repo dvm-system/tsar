@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Transform/IR/InterprocAttr.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassAAProvider.h"
@@ -43,7 +44,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Transforms/IPO/Inliner.h>
 
-#define DEBUG_TYPE "dependence-inliner"
+#define DEBUG_TYPE "dependence-inline"
 
 STATISTIC(CallsToInline, "Number of calls to inline");
 
@@ -53,7 +54,7 @@ using namespace tsar;
 namespace {
 using DependenceInlinerProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass,
-                           LoopInfoWrapperPass>;
+                           LoopInfoWrapperPass, LoopAttributesDeductionPass>;
 
 class DependenceInlinerAttributer : public ModulePass, bcl::Uncopyable {
 public:
@@ -230,12 +231,18 @@ InlineCost DependenceInlinerPass::getInlineCost(CallBase &CB) {
       auto &LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();
       auto &DIAT = Provider.get<DIEstimateMemoryPass>().getAliasTree();
       auto &DIDep = Provider.get<DIDependencyAnalysisPass>().getDependencies();
+      auto &LoopAttr = Provider.get<LoopAttributesDeductionPass>();
       unsigned ToInlineCount = 0;
-      for_each_loop(LI, [this, GO, &DIAT, &DIDep, InlineMDKind, InlineMD,
-                         &check, &IsChanged, &ToInline,
+      for_each_loop(LI, [this, GO, &DIAT, &DIDep, &LoopAttr, InlineMDKind,
+                         InlineMD, &check, &IsChanged, &ToInline,
                          &ToInlineCount](Loop *L) {
         auto LoopID = L->getLoopID();
         if (!LoopID)
+          return;
+        if (!LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn) ||
+            !LoopAttr.hasAttr(*L, AttrKind::NoIO) ||
+            !LoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
+            LoopAttr.hasAttr(*L, Attribute::ReturnsTwice))
           return;
         auto DIDepItr = DIDep.find(LoopID);
         if (DIDepItr == DIDep.end())
