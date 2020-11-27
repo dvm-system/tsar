@@ -644,9 +644,9 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
 }
 
 template<typename FuncT>
-void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
-    FuncT &&Inserter) {
-  auto LocInfo = getDelinearizeInfo()->findRange(Loc.Ptr);
+void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
+    const ReachDFFwk &Fwk, FuncT &&Inserter) {
+  auto LocInfo = Fwk.getDelinearizeInfo()->findRange(Loc.Ptr);
   auto ArrayPtr = LocInfo.first;
   if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
     Inserter(Loc);
@@ -681,38 +681,42 @@ void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
   auto ElementType = std::get<2>(ArraySizeInfo);
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array elements type:  " <<
       *ElementType << ".\n");
-  auto ElemSize = getDataLayout().getTypeStoreSize(ElementType);
+  auto ElemSize = uint64_t(Fwk.getDataLayout().getTypeStoreSize(ElementType));
+  struct DimensionInfo {
+    int64_t RangeMin = 0;
+    int64_t RangeMax = 0;
+    uint64_t Step = 0;
+    uint64_t DimSize = 0;
+  };
+  SmallVector<DimensionInfo, 1> DimInfoList;
   size_t Dimension = 0;
-  DimensionInfoList DimInfoList;
   for (auto *S : LocInfo.second->Subscripts) {
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
     if (!ArrayPtr->isKnownDimSize(Dimension) && Dimension != 0) {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get dimension "
                            "size for required dimension `" << Dimension <<
                            "`.\n");
-      Inserter(Loc);
-      return;
+      break;
     }
     DimensionInfo DimInfo;
-    auto *SE = getScalarEvolution();
+    auto DimSize = ArrayPtr->getDimSize(Dimension);
+    if (DimSize->getSCEVType() == scConstant) {
+      DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
+          getValue().getRawData();
+    } else {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
+      break;
+    }
+    auto *SE = Fwk.getScalarEvolution();
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
     if (!AddRecInfo.second)
-      continue;
+      break;
     auto SCEV = AddRecInfo.first;
     if (SCEV->getSCEVType() == scConstant) {
       auto Range = *cast<SCEVConstant>(S)->getValue()->getValue().getRawData();
-      DimInfo.RangeMin = Range;
-      DimInfo.RangeMax = Range;
+      DimInfo.RangeMin = DimInfo.RangeMax = Range;
       DimInfo.Step = 1;
-      DimInfo.BoundKind = LoopBoundKind::Const;
-      auto DimSize = ArrayPtr->getDimSize(Dimension);
-      if (DimSize->getSCEVType() == scConstant) {
-        DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
-            getValue().getRawData();
-        DimInfoList.push_back(DimInfo);
-      } else {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
-      }
+      DimInfoList.push_back(DimInfo);
     } else if (SCEV->getSCEVType() == scAddRecExpr) {
       if (auto *DFL = dyn_cast<DFLoop>(R)) {
         auto *StepSCEV = cast<SCEVAddRecExpr>(SCEV)->getOperand(1);
@@ -729,21 +733,9 @@ void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
                                 "non-negative.\n");
           break;
         }
-        LLVM_DEBUG(
-          dbgs() << "[ARRAY LOCATION] Constant range: " <<
-              SE->getSignedRange(SCEV) << "\n";
-        );
-        auto DimSize = ArrayPtr->getDimSize(Dimension);
-        if (DimSize->getSCEVType() == scConstant) {
-          DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
-              getValue().getRawData();
-        } else {
-          DimInfo.DimSize = 0;
-        }
         DimInfo.RangeMin = SignedRangeMin;
         DimInfo.RangeMax = SignedRangeMax;
         DimInfo.Step = StepNumber;
-        DimInfo.BoundKind = LoopBoundKind::Const;
         DimInfoList.push_back(DimInfo);
       }
     }
@@ -761,7 +753,6 @@ void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       dbgs() << "\tRange Min:" << DimInfo.RangeMin << "\n";
       dbgs() << "\tRange Max:" << DimInfo.RangeMax << "\n";
       dbgs() << "\tStep:" << DimInfo.Step << "\n";
-      dbgs() << "\tBound Kind:" << DimInfo.BoundKind << "\n";
     }
   );
   auto GetSize = [](uint64_t Min, uint64_t Max, uint64_t Step) {
@@ -771,11 +762,11 @@ void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
   MemoryLocationRange ResLoc;
   ResLoc.Ptr = ArrayPtr->getBase();
   auto &LastDim = DimInfoList.back();
-  ResLoc.Width = LastDim.Step == 1 ? LastDim.RangeMax - LastDim.RangeMin + 1 : 1;
+  ResLoc.Width = (LastDim.Step == 1 ? LastDim.RangeMax - LastDim.RangeMin + 1 :
+      1) * ElemSize;
   uint64_t Start = LastDim.RangeMin;
-  for (auto It = DimInfoList.rbegin() + 1; It != DimInfoList.rend(); It++) {
+  for (auto It = DimInfoList.rbegin() + 1; It != DimInfoList.rend(); It++)
     It->DimSize *= (It + 1)->DimSize;
-  }
   for (size_t I = 0; I < DimInfoList.size() - 1; I++) {
     auto &DimInfo = DimInfoList[I];
     Start += DimInfo.RangeMin * DimInfoList[I + 1].DimSize;
@@ -789,8 +780,7 @@ void ReachDFFwk::addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     ResLoc.Ranges.push_back(MemoryLocationRange::Range(LastDim.Step,
         GetSize(LastDim.RangeMin, LastDim.RangeMax, LastDim.Step)));
   }
-  Start *= ElemSize;
-  ResLoc.Start = Start;
+  ResLoc.Start = Start * ElemSize;
   Inserter(ResLoc);
   LLVM_DEBUG(
     dbgs() << "[ARRAY LOCATION] Calculated loc info:\n";
@@ -865,7 +855,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
         }
       }
       if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop)) {
-        addLocationToSet(R, Loc, [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
+        addLocationToSet(R, Loc, *this,
+            [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
       }
     }
     // It is possible that some locations are only written in the loop.
@@ -890,13 +881,16 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // }
     for (auto &Loc : DU->getDefs()) {
       if (ExitingDefs.MustReach.contain(Loc)) {
-        addLocationToSet(R, Loc, [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
+        addLocationToSet(R, Loc, *this,
+            [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
       } else {
-        addLocationToSet(R, Loc, [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);});
+        addLocationToSet(R, Loc, *this,
+            [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);});
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
-      addLocationToSet(R, Loc, [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); });
+      addLocationToSet(R, Loc, *this,
+          [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); });
     }
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
