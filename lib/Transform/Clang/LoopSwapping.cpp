@@ -29,9 +29,9 @@
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/Clang/SourceLocationTraverse.h"
@@ -42,7 +42,6 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
-#include <vector>
 #include <stack>
 
 using namespace llvm;
@@ -57,10 +56,10 @@ namespace {
 /// This provides access to function-level analysis results on server.
 using ClangLoopSwappingProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
-using DIAliasTraitVector = std::vector<const DIAliasTrait *>;
+using DIAliasTraitList = SmallVector<const DIAliasTrait *, 8>;
 using LoopRangeInfo = std::pair<Loop *, SourceRange>;
 using LoopRangeList = SmallVector<LoopRangeInfo, 2>;
-using PragmaInfoList = SmallVector<std::pair<Stmt *, LoopRangeList>, 2>;
+using PragmaInfoList = DenseMap<Stmt *, LoopRangeList>;
 
 class LoopVisitor : public RecursiveASTVisitor<LoopVisitor> {
 private:
@@ -103,8 +102,8 @@ public:
         RemoveEmptyLine.RemoveLineIfEmpty = false;
         /*for (auto SR : ToRemove)
           mRewriter.RemoveText(SR, RemoveEmptyLine);*/
-        mPragmaLoopsInfo.resize(mPragmaLoopsInfo.size() + 1);
-        mPragmaLoopsInfo.back().first = S;
+        mPragmaLoopsInfo.insert(std::make_pair(S, LoopRangeList()));
+        mPragmaStack.push(S);
         mState = TraverseState::PRAGMA;
       }
       return true;
@@ -117,7 +116,7 @@ public:
     }
     if (mState == TraverseState::OUTERFOR && !dyn_cast<ForStmt>(S)) {
       toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-          diag::error_loop_swapping_redundant_stmt);
+          diag::warn_loop_swapping_redundant_stmt);
       return false;
     }
     return RecursiveASTVisitor::TraverseStmt(S);
@@ -127,22 +126,22 @@ public:
     if (mState == TraverseState::PRAGMA) {
       mState = TraverseState::OUTERFOR;
       auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-      mState = TraverseState::NONE;
+      mPragmaStack.pop();
+      mState = mPragmaStack.empty() ? TraverseState::NONE : TraverseState::OUTERFOR;
       return Res;
     }
-    auto Res = RecursiveASTVisitor::TraverseCompoundStmt(S);
-    return Res;
+    return RecursiveASTVisitor::TraverseCompoundStmt(S);
   }
 
   bool TraverseForStmt(ForStmt *S) {
     if (mState == TraverseState::OUTERFOR) {
       auto Match = mLoopInfo.find<AST>(S);
       if (Match != mLoopInfo.end()) {
-        auto &LRL = mPragmaLoopsInfo.back().second;
+        auto &LRL = mPragmaLoopsInfo[mPragmaStack.top()];
         LRL.push_back(std::make_pair(Match->get<IR>(), S->getSourceRange()));
       } else {
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-            diag::error_loop_swapping_lost_loop);
+            diag::warn_loop_swapping_lost_loop);
       }
       mState = TraverseState::INNERFOR;
       auto Res = RecursiveASTVisitor::TraverseForStmt(S);
@@ -165,17 +164,17 @@ public:
     int N = 0;
     for (auto It = mPragmaLoopsInfo.begin(); It != mPragmaLoopsInfo.end();
         ++It, ++N) {
-      dbgs() << "\tPragma " << N << " (" << It->first <<"):\n";
+      dbgs() << "Pragma " << N << " (" << It->first <<"):\n";
       for (const auto &Info : It->second) {
         const auto LoopPtr = Info.first;
         const auto &Range = Info.second;
-        dbgs() << "\t\t[Range]\n";
-        dbgs() << "\t\tBegin:" << Range.getBegin().printToString(mSrcMgr)
+        dbgs() << "\t[Range]\n";
+        dbgs() << "\tBegin:" << Range.getBegin().printToString(mSrcMgr)
             << "\n";
-        dbgs() << "\t\tEnd:" << Range.getEnd().printToString(mSrcMgr) <<"\n";
-        dbgs() << "\t\t\n\t\t[Loop]\n";
+        dbgs() << "\tEnd:" << Range.getEnd().printToString(mSrcMgr) <<"\n";
+        dbgs() << "\t\n\t\t[Loop]\n";
         const auto &LoopText = mRewriter.getRewrittenText(Range);
-        dbgs() << "\t\t" << LoopText << "\n\n";
+        dbgs() << "\t" << LoopText << "\n\n";
       }
     }
   }
@@ -189,7 +188,8 @@ private:
   const LoopMatcherPass::LoopMatcher &mLoopInfo;
   TraverseState mState;
   SmallVector<Stmt *, 1> mClauses;
-  PragmaInfoList mPragmaLoopsInfo; 
+  PragmaInfoList mPragmaLoopsInfo;
+  std::stack<Stmt *> mPragmaStack;
 };
 
 class ClangLoopSwapping : public FunctionPass, private bcl::Uncopyable {
@@ -204,12 +204,12 @@ public:
 
 private:
   void swapLoops(const LoopVisitor &Visitor);
-  DIAliasTraitVector getLoopTraits(MDNode *LoopID) const;
+  DIAliasTraitList getLoopTraits(MDNode *LoopID) const;
   bool isSwappingAvailable(const LoopRangeList &LRL, const Stmt *Pragma) const;
-  bool hasSameReductionKind(const DIAliasTraitVector &TV0,
-                            const DIAliasTraitVector &TV1) const;
-  bool hasTrueOrAntiDependence(const DIAliasTraitVector &TV0,
-                               const DIAliasTraitVector &TV1) const;
+  bool hasSameReductionKind(const DIAliasTraitList &TV0,
+                            const DIAliasTraitList &TV1) const;
+  bool hasTrueOrAntiDependence(const DIAliasTraitList &TV0,
+                               const DIAliasTraitList &TV1) const;
 
   Function *mFunction = nullptr;
   TransformationContext *mTfmCtx = nullptr;
@@ -244,14 +244,14 @@ class ClangLoopSwappingInfo final : public PassGroupInfo {
 
 char ClangLoopSwapping::ID = 0;
 
-DIAliasTraitVector ClangLoopSwapping::getLoopTraits(MDNode *LoopID) const {
+DIAliasTraitList ClangLoopSwapping::getLoopTraits(MDNode *LoopID) const {
   auto DepItr = mDIDepInfo->find(LoopID);
   assert(DepItr != mDIDepInfo->end() && "Loop must be analyzed!");
   auto &DIDepSet = DepItr->get<DIDependenceSet>();
   DenseSet<const DIAliasNode *> Coverage;
   accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
                                       mGlobalOpts->IgnoreRedundantMemory);
-  DIAliasTraitVector Traits;
+  DIAliasTraitList Traits;
   for (auto &TS : DIDepSet) {
     if (!Coverage.count(TS.getNode()))
       continue;
@@ -261,20 +261,17 @@ DIAliasTraitVector ClangLoopSwapping::getLoopTraits(MDNode *LoopID) const {
 }
 
 bool ClangLoopSwapping::hasSameReductionKind(
-    const DIAliasTraitVector &TV0, const DIAliasTraitVector &TV1) const {
+    const DIAliasTraitList &TV0, const DIAliasTraitList &TV1) const {
   for (auto &TS0: TV0) {
-    auto *Node0 = TS0->getNode();
-    MemoryDescriptor Dptr0 = *TS0;
-    if (!Dptr0.is<trait::Reduction>())
+    if (!TS0->is<trait::Reduction>())
       continue;
+    auto *Node0 = TS0->getNode();
     for (auto &TS1: TV1) {
       auto *Node1 = TS1->getNode();
-      MemoryDescriptor Dptr1 = *TS1;
-      if (Node0 == Node1 && Dptr1.is<trait::Reduction>()) {
+      if (Node0 == Node1 && TS1->is<trait::Reduction>()) {
         LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Same nodes with reduction.\n");
-        auto I0 = TS0->begin(), I1 = TS1->begin();
-        auto *Red0 = (**I0).get<trait::Reduction>();
-        auto *Red1 = (**I1).get<trait::Reduction>();
+        auto *Red0 = (**TS0->begin()).get<trait::Reduction>();
+        auto *Red1 = (**TS1->begin()).get<trait::Reduction>();
         if (!Red0 || !Red1) {
           LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Unknown Reduction.\n");
           return false;
@@ -294,7 +291,7 @@ bool ClangLoopSwapping::hasSameReductionKind(
 }
 
 bool ClangLoopSwapping::hasTrueOrAntiDependence(
-    const DIAliasTraitVector &TV0, const DIAliasTraitVector &TV1) const {
+    const DIAliasTraitList &TV0, const DIAliasTraitList &TV1) const {
   SpanningTreeRelation<DIAliasTree *> STR(mDIAT);
   for (auto &TS0: TV0) {
     for (auto &TS1: TV1) {
@@ -315,8 +312,11 @@ bool ClangLoopSwapping::hasTrueOrAntiDependence(
 
 bool ClangLoopSwapping::isSwappingAvailable(
     const LoopRangeList &LRL, const Stmt *Pragma) const {
-  auto *LoopID0 = mGetLoopID(LRL[0].first->getLoopID());
-  auto *LoopID1 = mGetLoopID(LRL[1].first->getLoopID());
+  auto ClientLoopID0 = LRL[0].first->getLoopID();
+  auto ClientLoopID1 = LRL[1].first->getLoopID();
+  assert(ClientLoopID0 && ClientLoopID1 && "LoopID must not be null!");
+  auto *LoopID0 = mGetLoopID(ClientLoopID0);
+  auto *LoopID1 = mGetLoopID(ClientLoopID1);
   if (!LoopID0) {
     toDiag(mSrcMgr->getDiagnostics(), LRL[0].second.getBegin(),
         diag::warn_loop_swapping_no_loop_id);
@@ -383,10 +383,11 @@ void ClangLoopSwapping::swapLoops(const LoopVisitor &Visitor) {
 bool ClangLoopSwapping::runOnFunction(Function &F) {
   mFunction = &F;
   auto *M = F.getParent();
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(*M);
+  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  mTfmCtx = TfmInfo ? TfmInfo->getContext(*M) : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M->getContext().emitError("can not transform sources"
-        ": transformation context is not available");
+      ": transformation context is not available");
     return false;
   }
   auto FuncDecl = mTfmCtx->getDeclForMangledName(F.getName());
