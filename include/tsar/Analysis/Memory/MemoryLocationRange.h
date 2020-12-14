@@ -25,7 +25,9 @@
 #ifndef TSAR_MEMORY_LOCATION_RANGE_H
 #define TSAR_MEMORY_LOCATION_RANGE_H
 
+#include <bcl/Equation.h>
 #include <llvm/Analysis/MemoryLocation.h>
+#include <llvm/Support/Debug.h>
 
 namespace tsar {
 
@@ -39,19 +41,22 @@ using LocationSize = llvm::LocationSize;
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
 
-  struct Range {
+  struct Dimension {
+    uint64_t Start;
     uint64_t Step;
-    uint64_t Size;
-    Range() : Step(0), Size(0) {}
-    Range(uint64_t Step, uint64_t Size) : Step(Step), Size(Size) {}
-    bool operator==(const Range &Other) const { return Step == Other.Step &&
-        Size == Other.Size; }
+    uint64_t MaxIter;
+    uint64_t DimSize;
+    inline bool operator==(const Dimension &Other) const {
+      return Start == Other.Start &&
+             Step == Other.Step &&
+             DimSize == Other.DimSize;
+    }
   };
 
   const llvm::Value * Ptr;
   LocationSize Start;
   LocationSize Width;
-  llvm::SmallVector<Range, 0> Ranges;
+  llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
 
   /// Return a location with information about the memory reference by the given
@@ -135,7 +140,8 @@ struct MemoryLocationRange {
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
-      Start == Other.Start && Width == Other.Width && Ranges == Other.Ranges;
+      Start == Other.Start && Width == Other.Width &&
+      DimList == Other.DimList;
   }
 
   LocationSize getEnd() const {
@@ -151,6 +157,110 @@ struct MemoryLocationRange {
       Width = Size.getValue() - Start.getValue();
   }
 };
+
+namespace MemoryLocationRangeEquation {
+  typedef int64_t ColumnT;
+  typedef int64_t ValueT;
+
+  struct ColumnInfo {
+    void addVariable(const std::pair<std::string, ValueT> &Var) {
+      Variables.push_back(Var);
+    }
+
+    template<typename T>
+    T get(ColumnT Column) const {
+      return Variables[Column].second;
+    }
+
+    ColumnT parameterColumn() {
+      Variables.push_back(std::make_pair("T", 0));
+      return Variables.size() - 1;
+    }
+
+    ColumnT parameterColumn(ColumnT Column) {
+      Variables.push_back(Variables[Column]);
+      Variables.back().first += "'";
+      return Variables.size() - 1;
+    }
+
+    bool isParameter(ColumnT Column) const {
+      return Column > 1;
+    }
+
+    std::string name(ColumnT Column) const {
+      return Variables[Column].first;
+    }
+
+    std::vector<std::pair<std::string, ValueT>> Variables;
+  };
+
+  /// Returns an intersection between two locations. If intersection is empty,
+  /// return default MemoryLocationRange. 
+  MemoryLocationRange intersect(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS) {
+    // TODO : check scalars
+    typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
+    typedef BAEquation::Monom Monom;
+    typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
+    typedef std::pair<ValueT, ValueT> VarRange;
+    if (LHS.Ptr != RHS.Ptr || LHS.DimList.size() != RHS.DimList.size()) {
+      return MemoryLocationRange();
+    }
+    bool Intersected = true;
+    MemoryLocationRange ResultRange(LHS);
+    ResultRange.DimList.resize(LHS.DimList.size());
+    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
+      auto &Left = LHS.DimList[I];
+      auto &Right = RHS.DimList[I];
+      ColumnInfo Info;
+      // Px = L1 + K1 * X
+      // Py = L2 + K2 * Y
+      ValueT L1 = Left.Start, K1 = Left.Step;
+      ValueT L2 = Right.Start, K2 = Right.Step;
+      Info.addVariable(std::make_pair("X", K1));
+      Info.addVariable(std::make_pair("Y", -K2));
+      VarRange XRange(0, Left.MaxIter), YRange(0, Right.MaxIter);
+      ValueT PxMin = K1 * XRange.first + L1, PxMax = K1 * XRange.second + L1;
+      ValueT PyMin = K2 * YRange.first + L2, PyMax = K2 * YRange.second + L2;
+      if (PxMax <= PyMin || PxMin >= PyMax) {
+        Intersected = false;
+        break;
+      }
+      LinearSystem System;
+      System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
+      System.instantiate(Info);
+      auto count = System.solve<ColumnInfo, llvm::raw_ostream, false>(
+          Info, llvm::dbgs());
+      if (count == 0) {
+        Intersected = false;
+        break;
+      }
+      auto &Solution = System.getSolution();
+      auto &LineX = Solution[0];
+      auto &LineY = Solution[1];
+      ValueT A = LineX.Constant, B = -LineX.RHS.Value;
+      ValueT C = LineY.Constant, D = -LineY.RHS.Value;
+      ValueT TXmin = std::ceil((XRange.first - A) / double(B));
+      ValueT TXmax = std::floor((XRange.second - A) / double(B));
+      ValueT TYmin = std::ceil((YRange.first - C) / double(D));
+      ValueT TYmax = std::floor((YRange.second - C) / double(D));
+      ValueT Tmin = std::max(TXmin, TYmin);
+      ValueT Tmax = std::min(TXmax, TYmax);
+      ValueT Shift = Tmin;
+      Tmin = 0;
+      Tmax -= Shift;
+      ValueT Step = K1 * B;
+      ValueT Start = (K2 * A + L1) + Step * Shift;
+      assert(Start >= 0 && "Start must be non-negative!");
+      assert(Step >= 0 && "Step must be non-negative!");
+      ResultRange.DimList[I].Start = Start;
+      ResultRange.DimList[I].Step = Step;
+      ResultRange.DimList[I].MaxIter = Tmax;
+      ResultRange.DimList[I].DimSize = Left.DimSize;
+    }
+    return Intersected ? ResultRange : MemoryLocationRange();
+  }
+}
 }
 
 namespace llvm {
