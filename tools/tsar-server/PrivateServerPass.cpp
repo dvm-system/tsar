@@ -43,6 +43,7 @@
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitJSON.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Unparse/Utils.h"
@@ -52,7 +53,6 @@
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/RedirectIO.h>

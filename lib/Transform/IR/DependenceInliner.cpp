@@ -29,10 +29,10 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/IR/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/AssumptionCache.h>

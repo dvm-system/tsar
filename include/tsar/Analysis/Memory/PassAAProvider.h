@@ -26,6 +26,7 @@
 #ifndef TSAR_PASS_AA_PROVIDER_H
 #define TSAR_PASS_AA_PROVIDER_H
 
+#include "tsar/Analysis/Memory/AllocasModRef.h"
 #include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/PassProvider.h"
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -53,7 +54,7 @@ class FunctionPassAAProvider
     : public FunctionPassProvider<
           llvm::CFLSteensAAWrapperPass, llvm::CFLAndersAAWrapperPass,
           llvm::TypeBasedAAWrapperPass, llvm::ScopedNoAliasAAWrapperPass,
-          Analysis...> {
+          llvm::AllocasAAWrapperPass, Analysis...> {
   void preparePassManager(llvm::PMStack &PMS) override {
     assert(PMS.top()->getPassManagerType() == llvm::PMT_FunctionPassManager &&
            "Top manager for on the flay passes must be of a function kind!");
@@ -62,11 +63,16 @@ class FunctionPassAAProvider
     auto *PM = PMS.top()->getTopLevelManager();
     PM->schedulePass(new GlobalsAAResultImmutableWrapper);
     PM->schedulePass(llvm::createExternalAAWrapperPass(
-        [](llvm::Pass &P, llvm::Function &, llvm::AAResults &AAR) {
+        [](llvm::Pass &P, llvm::Function &F, llvm::AAResults &AAR) {
           if (auto *WrapperPass =
                   P.getAnalysisIfAvailable<GlobalsAAResultImmutableWrapper>())
             if (*WrapperPass)
               AAR.addAAResult(WrapperPass->get());
+          if (auto *AAP =
+                  P.getAnalysisIfAvailable<llvm::AllocasAAWrapperPass>()) {
+            AAP->getResult().analyzeFunction(F);
+            AAR.addAAResult(AAP->getResult());
+          }
         }));
   }
 };

@@ -38,6 +38,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
@@ -45,7 +46,6 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/marray.h>
@@ -427,4 +427,3 @@ INITIALIZE_PROVIDER(ClangSMParallelProvider,
 ClangSMParallelization::ClangSMParallelization(char &ID) : ModulePass(ID) {
   initializeClangSMParallelProviderPass(*PassRegistry::getPassRegistry());
 }
-

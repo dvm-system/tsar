@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Support/IRUtils.h"
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -504,3 +505,8 @@ bool isPure(const llvm::Function &F, const DefUseSet &DUS) {
   return true;
 }
 }
+
+template <> char GlobalsAAResultImmutableWrapper::ID = 0;
+using namespace llvm;
+INITIALIZE_PASS(GlobalsAAResultImmutableWrapper, "globals-aa-iw",
+                "Globals Alias Analysis Wrapper", true, true)

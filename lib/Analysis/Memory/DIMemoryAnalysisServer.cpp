@@ -33,9 +33,9 @@
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/ServerUtils.h"
 #include "tsar/Analysis/Memory/TraitFilter.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/GlobalOptions.h"
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Verifier.h>
