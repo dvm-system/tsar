@@ -43,6 +43,20 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       RedundantCoverage, false);
     RedundantCoverageRef = &RedundantCoverage;
   }
+  CanonicalDeclPtr<VarDecl> Induction;
+  if (auto *For{dyn_cast<ForStmt>(mRegion)}) {
+    if (auto *DS{dyn_cast_or_null<DeclStmt>(For->getInit())})
+      Induction = cast<VarDecl>(DS->getSingleDecl());
+    else if (auto *BO{dyn_cast_or_null<clang::BinaryOperator>(For->getInit())};
+             BO && BO->isAssignmentOp())
+      if (auto *DRE{dyn_cast<DeclRefExpr>(BO->getLHS())})
+        Induction = dyn_cast<VarDecl>(DRE->getFoundDecl());
+  }
+  if (!Induction) {
+    toDiag(mDiags, mRegion->getBeginLoc(),
+           clang::diag::warn_parallel_no_induction);
+    return false;
+  }
   mASTVars.TraverseStmt(mRegion);
   DenseSet<DIAliasNode *> DirectSideEffect;
   for (auto &TS : mDIDepSet) {
@@ -82,7 +96,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       if (Dptr.is<trait::Shared>())
         mOutToLocalize.push_back(&TS);
     } else if (Dptr.is<trait::Induction>()) {
-      if (TS.size() > 1) {
+      if (Induction && TS.size() > 1) {
         if (!IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
                  clang::diag::warn_parallel_loop);
@@ -94,8 +108,8 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
         auto Localized = mASTVars.localize(**TS.begin(), *TS.getNode(),
                                            mASTToClient, mDIMemoryMatcher);
         if (!std::get<0>(Localized) || !std::get<1>(Localized) ||
-            std::get<0>(Localized)->getCanonicalDecl() !=
-                mASTVars.Induction->getCanonicalDecl()) {
+            Induction &&
+                &*Induction != std::get<0>(Localized)->getCanonicalDecl()) {
           if (!IgnoreRedundant) {
             toDiag(mDiags, mRegion->getBeginLoc(),
                    clang::diag::warn_parallel_loop);
@@ -106,8 +120,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
                          : mRegion->getBeginLoc(),
                      clang::diag::note_parallel_localize_induction_unable);
             } else {
-              toDiag(mDiags, mASTVars.Induction->getLocation(),
-                     clang::diag::note_parallel_multiple_induction);
+              if (Induction)
+                toDiag(mDiags, Induction->getLocation(),
+                      clang::diag::note_parallel_multiple_induction);
               if (std::get<0>(Localized))
                 toDiag(mDiags, std::get<0>(Localized)->getLocation(),
                        clang::diag::note_parallel_multiple_induction);
@@ -116,7 +131,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           }
         }
         mDependenceInfo.get<trait::Induction>() =
-            std::string(mASTVars.Induction->getName());
+            std::string(std::get<0>(Localized)->getName());
         if (!std::get<2>(Localized)) {
           mInToLocalize.push_back(&TS);
           mOutToLocalize.push_back(&TS);

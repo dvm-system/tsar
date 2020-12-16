@@ -123,12 +123,6 @@ struct VariableCollector
                 const ClonedDIMemoryMatcher &ClientToServer,
                 SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
 
-  /// Induction variable mentioned in a head of a canonical loop.
-  ///
-  /// TODO (kaniandr@gmail.com): set it to nullptr if analyzed scope is not a
-  /// canonical loop.
-  clang::VarDecl * Induction = nullptr;
-
   /// Map of variable which is referenced in a scope. The value in the map is
   /// metadat-level memory locations which represent a derived memory from
   /// a specified variable (key in the map).

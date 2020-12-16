@@ -56,8 +56,6 @@ bool VariableCollector::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
   assert(ND && "Declaration must not be null!");
   if (isa<clang::VarDecl>(ND)) {
     auto *VD = cast<clang::VarDecl>(ND->getCanonicalDecl());
-    if (!Induction)
-      Induction = VD;
     auto T = getCanonicalUnqualifiedType(VD);
     unsigned PtrTpNum = numberOfPointerTypes(T);
     if (PtrTpNum == 0 && VD->getType().isConstQualified())

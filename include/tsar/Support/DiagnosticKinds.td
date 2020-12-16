@@ -130,6 +130,7 @@ def note_decl_insert_macro_prevent : Note<"unable to create declaration '%0' in 
 def remark_parallel_loop : Remark<"parallel execution of loop is possible">;
 def warn_parallel_loop : Warning<"unable to create parallel directive">;
 def warn_parallel_not_canonical : Warning<"unable to create parallel directive for loop not in canonical form">;
+def warn_parallel_no_induction : Warning<"unable to create parallel directive for loop without induction variable">;
 def note_parallel_multiple_induction : Note<"loop has multiple inducition variables">;
 def note_parallel_localize_private_unable : Note<"unable to localize privatizable variable">;
 def note_parallel_localize_reduction_unable : Note<"unable to localize reduction variable">;
