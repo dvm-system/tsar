@@ -211,5 +211,11 @@ void initializeDIArrayAccessCollectorPass(PassRegistry &Registry);
 
 /// Create a pass to collect array accesses.
 ModulePass *createDIArrayAccessCollector();
+
+/// Initialize a pass to access alias results for allocas.
+void initializeAllocasAAWrapperPassPass(PassRegistry &Regitsry);
+
+/// Create a pass to access alias results for allocas.
+ImmutablePass *createAllocasAAWrapperPass();
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H
