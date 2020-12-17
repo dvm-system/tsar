@@ -60,6 +60,9 @@ struct GlobalOptions {
   bool NoExternalCalls = false;
   /// Disable function inlining which is useful for program analysis.
   bool NoInline = false;
+  /// A function is only inlined if the number of memory accesses in the caller
+  /// does not exceed this value.
+  unsigned MemoryAccessInlineThreshold = 0;
   /// Pass to external analysis results which is used to clarify analysis/
   std::string AnalysisUse = "";
   /// List of regions which should be optimized.

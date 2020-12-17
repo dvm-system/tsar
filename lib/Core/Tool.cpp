@@ -164,6 +164,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> MathErrno;
   llvm::cl::opt<bool> NoMathErrno;
   llvm::cl::opt<bool> Inline;
+  llvm::cl::opt<unsigned> MemoryAccessInlineThreshold;
   llvm::cl::opt<bool> NoInline;
   llvm::cl::opt<bool> LoadSources;
   llvm::cl::opt<bool> NoLoadSources;
@@ -276,6 +277,10 @@ Options::Options() :
      cl::desc("Prevent math functions to indicate errors by setting errno")),
   Inline("finline", cl::cat(AnalysisCategory),
     cl::desc("Allow to inline function calls to improve analysis accuracy (default)")),
+  MemoryAccessInlineThreshold("inline-memory-access-count", cl::init(500),
+   cl::Hidden, cl::cat(AnalysisCategory),
+    cl::desc("A function is only inlined if the number of memory "
+             "accesses in the caller does not exceed this value")),
   NoInline("fno-inline", cl::cat(AnalysisCategory),
     cl::desc("Do not inline function calls to decrease analysis time")),
   LoadSources("fload-sources", cl::cat(AnalysisCategory),
@@ -601,6 +606,8 @@ void Tool::storeCLOptions() {
     Options::get().Inline.error(Msg);
     exit(1);
   }
+  mGlobalOpts.MemoryAccessInlineThreshold =
+      Options::get().MemoryAccessInlineThreshold;
   mGlobalOpts.OptRegions = Options::get().OptRegion;
   mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
