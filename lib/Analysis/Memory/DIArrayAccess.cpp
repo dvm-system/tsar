@@ -652,7 +652,8 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
                for (unsigned I = 0, EI = DimAccess->getNumberOfMonoms(); I < EI;
                     ++I)
                  dbgs() << " + " << DimAccess->getMonom(I).Value << "*"
-                        << "I" << I << "\n");
+                        << "I" << I;
+               dbgs() << "\n");
   }
   Accesses.add(Access.release(), LoopNest);
 }

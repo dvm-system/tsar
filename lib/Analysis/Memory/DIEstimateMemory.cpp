@@ -641,7 +641,7 @@ std::pair<bool, bool> DIAliasTree::erase(DIMemory &M) {
 }
 
 namespace {
-#ifndef NDEBUG
+#ifdef LLVM_DEBUG
 template<class ItrTy>
 void constantOffsetLog(const ItrTy &I, const ItrTy E, const DominatorTree &DT) {
   dbgs() <<
@@ -1020,7 +1020,7 @@ public:
   }
 
 private:
-#ifndef NDEBUG
+#ifdef LLVM_DEBUG
   void addFragmentLog(llvm::DIExpression *Expr) {
     dbgs() << "[DI ALIAS TREE]: add a new node and a new fragment ";
     auto DWLang = getLanguage(mDIAT->getFunction()).getValue();

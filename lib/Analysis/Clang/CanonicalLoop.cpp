@@ -438,13 +438,12 @@ private:
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
       return;
-    auto AI= MemMatch->get<IR>();
+    auto AI = MemMatch->get<IR>();
     if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
     LInfo->setInduction(AI);
-    LLVM_DEBUG(
-      dbgs() << "[CANONICAL LOOP]: induction variable is";
-      TSAR_LLVM_DUMP(AI->dump()));
+    LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: induction variable is";
+               AI->print(dbgs()); dbgs() << "\n");
     llvm::MemoryLocation MemLoc(AI, 1);
     auto EMI = mAliasTree->find(MemLoc);
     assert(EMI && "Estimate memory location must not be null!");
@@ -528,7 +527,7 @@ private:
     LLVM_DEBUG(
       if (Expr) {
         dbgs() << "[CANONICAL LOOP]: lower bound of induction variable is ";
-        TSAR_LLVM_DUMP(Expr->dump());
+        Expr->print(dbgs()); dbgs() << "\n";
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
       isLoopInvariantMemory(STR, *DIDepSet, *DIMI, *Increment);
@@ -548,7 +547,7 @@ private:
     LLVM_DEBUG(
       if (LInfo->getStep()) {
         dbgs() << "[CANONICAL LOOP]: step of induction variable is ";
-        TSAR_LLVM_DUMP(LInfo->getStep()->dump());
+        LInfo->getStep()->print(dbgs()); dbgs() << "\n";
       });
     std::tie(Result, InductUseNum, InductDefNum, Expr, Inst) =
       isLoopInvariantMemory(STR, *DIDepSet, *DIMI, *Condition);
@@ -565,7 +564,7 @@ private:
     LLVM_DEBUG(
       if (Expr) {
         dbgs() << "[CANONICAL LOOP]: upper bound of induction variable is ";
-        TSAR_LLVM_DUMP(Expr->dump());
+        Expr->print(dbgs()); dbgs() << "\n";
       });
     LInfo->markAsCanonical();
   }
