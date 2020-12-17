@@ -268,7 +268,10 @@ void DIArrayHandle::allUsesReplacedWith(DIMemory *M) {
              dbgs() << " with ";
              printDILocationSource(dwarf::DW_LANG_C, *M, dbgs());
              dbgs() << "\n");
-  for (auto &Access : mAccessInfo->array_accesses(getMemoryPtr())) {
+  // Make a temporary copy, because insertion of new accesses updates DenseSet
+  // which contains the current access. Hence, this access could be invalidated.
+  auto *AccessInfo{mAccessInfo};
+  for (auto &Access : AccessInfo->array_accesses(getMemoryPtr())) {
     auto NewAccess = std::make_unique<DIArrayAccess>(
         M, Access.getParent(), Access.size(), Access.getReadInfo(),
         Access.getWriteInfo());
@@ -279,10 +282,10 @@ void DIArrayHandle::allUsesReplacedWith(DIMemory *M) {
           NewAccess->make<std::decay_t<decltype(To)>>(To.getDimension(), To);
         });
     SmallVector<DIArrayAccess::Scope, 8> Nest;
-    mAccessInfo->scopes(Access, Nest);
-    mAccessInfo->add(NewAccess.release(), Nest);
+    AccessInfo->scopes(Access, Nest);
+    AccessInfo->add(NewAccess.release(), Nest);
   }
-  mAccessInfo->erase(getMemoryPtr());
+  AccessInfo->erase(getMemoryPtr());
 }
 
 void DIArrayAccessInfo::printScope(
