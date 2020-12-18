@@ -42,6 +42,7 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/DebugLoc.h>
 #include <stack>
 
 using namespace llvm;
@@ -116,7 +117,7 @@ public:
     }
     if (mState == TraverseState::OUTERFOR && !dyn_cast<ForStmt>(S)) {
       toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-          diag::warn_loop_swapping_redundant_stmt);
+          diag::error_loop_swapping_redundant_stmt);
       return false;
     }
     return RecursiveASTVisitor::TraverseStmt(S);
@@ -172,9 +173,9 @@ public:
         dbgs() << "\tBegin:" << Range.getBegin().printToString(mSrcMgr)
             << "\n";
         dbgs() << "\tEnd:" << Range.getEnd().printToString(mSrcMgr) <<"\n";
-        dbgs() << "\t\n\t\t[Loop]\n";
+        dbgs() << "\t\n\t[Loop]\n";
         const auto &LoopText = mRewriter.getRewrittenText(Range);
-        dbgs() << "\t" << LoopText << "\n\n";
+        dbgs() << LoopText << "\n\n";
       }
     }
   }
@@ -203,14 +204,18 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
+  enum OutputDepKind : char {
+    Output = 0,
+    UnknownReduction,
+    DiffReduction,
+    SameReduction,
+    Private
+  };
   void swapLoops(const LoopVisitor &Visitor);
   DIAliasTraitList getLoopTraits(MDNode *LoopID) const;
   bool isSwappingAvailable(const LoopRangeList &LRL, const Stmt *Pragma) const;
-  bool hasSameReductionKind(const DIAliasTraitList &TV0,
-                            const DIAliasTraitList &TV1) const;
-  bool hasTrueOrAntiDependence(const DIAliasTraitList &TV0,
-                               const DIAliasTraitList &TV1) const;
-
+  OutputDepKind getOutputDepType(const DIAliasTrait *T0,
+                                 const DIAliasTrait *T1) const;
   Function *mFunction = nullptr;
   TransformationContext *mTfmCtx = nullptr;
   const GlobalOptions *mGlobalOpts = nullptr;
@@ -260,54 +265,47 @@ DIAliasTraitList ClangLoopSwapping::getLoopTraits(MDNode *LoopID) const {
   return Traits;
 }
 
-bool ClangLoopSwapping::hasSameReductionKind(
-    const DIAliasTraitList &TV0, const DIAliasTraitList &TV1) const {
-  for (auto &TS0: TV0) {
-    if (!TS0->is<trait::Reduction>())
-      continue;
-    auto *Node0 = TS0->getNode();
-    for (auto &TS1: TV1) {
-      auto *Node1 = TS1->getNode();
-      if (Node0 == Node1 && TS1->is<trait::Reduction>()) {
-        LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Same nodes with reduction.\n");
-        auto *Red0 = (**TS0->begin()).get<trait::Reduction>();
-        auto *Red1 = (**TS1->begin()).get<trait::Reduction>();
-        if (!Red0 || !Red1) {
-          LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Unknown Reduction.\n");
-          return false;
+ClangLoopSwapping::OutputDepKind ClangLoopSwapping::getOutputDepType(
+    const DIAliasTrait *T0, const DIAliasTrait *T1) const {
+  auto Kind = OutputDepKind::Output;
+  for (auto MemIt0 = T0->begin(); MemIt0 != T0->end(); MemIt0++) {
+    for (auto MemIt1 = T1->begin(); MemIt1 != T1->end(); MemIt1++) {
+      if ((*MemIt0)->getMemory() == (*MemIt1)->getMemory()) {
+        if ((**MemIt0).is<trait::Private>() && (**MemIt1).is<trait::Private>()){
+          LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Private.\n");
+          Kind = OutputDepKind::Private;
+          continue;
         }
-        auto Kind0 = Red0->getKind(), Kind1 = Red1->getKind();
-        if (Kind0 == trait::DIReduction::RK_NoReduction ||
-            Kind1 == trait::DIReduction::RK_NoReduction) {
-          LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Unknown Reduction.\n");
-          return false;
-        }
-        if (Kind0 != Kind1)
-          return false;
-      }
-    }
-  }
-  return true;
-}
-
-bool ClangLoopSwapping::hasTrueOrAntiDependence(
-    const DIAliasTraitList &TV0, const DIAliasTraitList &TV1) const {
-  SpanningTreeRelation<DIAliasTree *> STR(mDIAT);
-  for (auto &TS0: TV0) {
-    for (auto &TS1: TV1) {
-      if (!STR.isUnreachable(const_cast<DIAliasNode *>(TS0->getNode()),
-          const_cast<DIAliasNode *>(TS1->getNode()))) {
-        if (TS0->is<trait::Readonly>() && !TS1->is<trait::Readonly>()) {
-          // anti dependence
-          return true;
-        } else if (TS1->is<trait::Readonly>() && !TS0->is<trait::Readonly>()){
-          // true dependence
-          return true;
+        auto *Red0 = (**MemIt0).get<trait::Reduction>();
+        auto *Red1 = (**MemIt1).get<trait::Reduction>();
+        auto Ind0 = (**MemIt0).is<trait::Induction>();
+        auto Ind1 = (**MemIt1).is<trait::Induction>();
+        if (Red0 && Red1) {
+          auto Kind0 = Red0->getKind(), Kind1 = Red1->getKind();
+          if (Kind0 == trait::DIReduction::RK_NoReduction ||
+              Kind1 == trait::DIReduction::RK_NoReduction) {
+            return OutputDepKind::UnknownReduction;
+          }
+          if (Kind0 != Kind1)
+            return OutputDepKind::DiffReduction;
+          Kind = OutputDepKind::SameReduction;
+        } else if ((Red0 && Ind1) || (Ind0 && Red1)) {
+          auto RedKind = Red0 ? Red0->getKind() : Red1->getKind();
+          if (RedKind == trait::DIReduction::RK_NoReduction)
+            return OutputDepKind::UnknownReduction;
+          else if (!RedKind == trait::DIReduction::RK_Add)
+            return OutputDepKind::DiffReduction;
+          else
+            Kind = OutputDepKind::SameReduction;
+        } else if (Ind0 && Ind1) {
+          Kind = OutputDepKind::SameReduction;
+        } else {
+          return OutputDepKind::Output;
         }
       }
     }
   }
-  return false;
+  return Kind;
 }
 
 bool ClangLoopSwapping::isSwappingAvailable(
@@ -327,19 +325,48 @@ bool ClangLoopSwapping::isSwappingAvailable(
         diag::warn_loop_swapping_no_loop_id);
     return false;
   }
-  auto Traits0 = getLoopTraits(LoopID0);
-  auto Traits1 = getLoopTraits(LoopID1);
-  if (!hasSameReductionKind(Traits0, Traits1)) {
-    toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
-        diag::warn_loop_swapping_diff_reduction);
-    return false;
+  bool isAvailable = true;
+  SpanningTreeRelation<const DIAliasTree *> STR(mDIAT);
+  for (auto &T0: getLoopTraits(LoopID0)) {
+    for (auto &T1: getLoopTraits(LoopID1)) {
+      if (STR.isUnreachable(T0->getNode(), T1->getNode()))
+          continue;
+      if (!T0->is<trait::Readonly>() && T1->is<trait::Readonly>()) {
+        toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+            diag::warn_loop_swapping_true_dependence);
+        isAvailable = false;
+        break;
+      } else if (T0->is<trait::Readonly>() && !T1->is<trait::Readonly>()) {
+        toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+            diag::warn_loop_swapping_anti_dependence);
+        isAvailable = false;
+        break;
+      } else if (!T0->is<trait::Readonly>() && !T1->is<trait::Readonly>()) {
+        auto OutDepKind = getOutputDepType(T0, T1);
+        LLVM_DEBUG(dbgs() << "[LOOP SWAPPING]: Output dependency kind: " <<
+            OutDepKind << "\n");
+        if (OutDepKind == OutputDepKind::Output) {
+          toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+              diag::warn_loop_swapping_output_dependence);
+          isAvailable = false;
+          break;
+        } else if (OutDepKind == OutputDepKind::DiffReduction) {
+          toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+              diag::warn_loop_swapping_diff_reduction);
+          isAvailable = false;
+          break;
+        } else if (OutDepKind == OutputDepKind::UnknownReduction) {
+          toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
+              diag::warn_loop_swapping_unknown_reduction);
+          isAvailable = false;
+          break;
+        }
+      }
+    }
+    if (!isAvailable)
+      break;
   }
-  if (hasTrueOrAntiDependence(Traits0, Traits1)) {
-    toDiag(mSrcMgr->getDiagnostics(), Pragma->getBeginLoc(),
-           diag::warn_loop_swapping_true_anti_dependence);
-    return false;
-  }
-  return true;
+  return isAvailable;
 }
 
 void ClangLoopSwapping::swapLoops(const LoopVisitor &Visitor) {
