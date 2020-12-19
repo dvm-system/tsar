@@ -92,5 +92,13 @@ ModulePass * createClangStructureReplacementPass();
 /// Initialize a pass to perform replacement of access to structure fields
 /// with separate variables.
 void initializeClangStructureReplacementPassPass(PassRegistry &Registry);
+
+/// Creates a pass to perform swapping of loops.
+FunctionPass * createClangLoopSwapping();
+
+/// Initializes a pass to perform swapping of loops.
+void initializeClangLoopSwappingPass(PassRegistry &Registry);
+
 }
+
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H
