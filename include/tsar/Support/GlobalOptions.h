@@ -34,6 +34,14 @@
 
 namespace tsar {
 struct GlobalOptions {
+  enum IgnoreRedundantMemoryKind {
+    IRMK_No = 0,
+    IRMK_Strict,
+    IRMK_Bounded,
+    IRMK_Partial,
+    IRMK_Weak
+  };
+
   /// Print only names of files instead of full paths.
   bool PrintFilenameOnly = false;
   /// Disallow unsafe integer type cast in analysis passes.
@@ -48,7 +56,7 @@ struct GlobalOptions {
   bool AnalyzeLibFunc = true;
   /// Try to discard influence of redundant memory locations on the analysis
   /// results for other memory locations.
-  bool IgnoreRedundantMemory = false;
+  IgnoreRedundantMemoryKind IgnoreRedundantMemory = IRMK_No;
   /// Try to analyze memory locations after unsafe transformations of related
   /// instructions.
   ///

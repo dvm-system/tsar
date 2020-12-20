@@ -155,8 +155,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoInBoundsSubscripts;
   llvm::cl::opt<bool> AnalyzeLibFunc;
   llvm::cl::opt<bool> NoAnalyzeLibFunc;
-  llvm::cl::opt<bool> IgnoreRedundantMemory;
-  llvm::cl::opt<bool> NoIgnoreRedundantMemory;
+  llvm::cl::opt<GlobalOptions::IgnoreRedundantMemoryKind> IgnoreRedundantMemory;
   llvm::cl::opt<bool> UnsafeTfmAnalysis;
   llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
   llvm::cl::opt<bool> ExternalCalls;
@@ -260,9 +259,23 @@ Options::Options() :
   NoAnalyzeLibFunc("fno-analyze-library-functions", cl::cat(AnalysisCategory),
     cl::desc("Do not perform analysis of library functions")),
   IgnoreRedundantMemory("fignore-redundant-memory", cl::cat(AnalysisCategory),
-    cl::desc("Try to discard influence of redundant memory on the analysis results")),
-  NoIgnoreRedundantMemory("fno-ignore-redundant-memory", cl::cat(AnalysisCategory),
-    cl::desc("Do not discard influence of redundant memory on the analysis results(default)")),
+    cl::init(GlobalOptions::IRMK_No),
+    cl::desc("Try to discard influence of redundant memory "
+             "on the analysis results"),
+    cl::values(clEnumValN(GlobalOptions::IRMK_No, "disable",
+                  "Always analyze redundant memory (default)"),
+               clEnumValN(GlobalOptions::IRMK_Strict, "strict",
+                   "Analyze redundant memory before source-to-source "
+                   "program transformation"),
+               clEnumValN(GlobalOptions::IRMK_Bounded, "bounded",
+                   "Source-to-source transform passes ignore unused tails "
+                   "of redundant memory locations"),
+               clEnumValN(GlobalOptions::IRMK_Partial, "partial",
+                   "Source-to-source transform passes ignore unused parts "
+                   "of redundant memory locations"),
+               clEnumValN(GlobalOptions::IRMK_Weak, "weak",
+                   "Source-to-source transform passes ignore the whole "
+                   " redundant memory locations"))),
   UnsafeTfmAnalysis("funsafe-tfm-analysis", cl::cat(AnalysisCategory),
     cl::desc("Perform analysis after unsafe transformations")),
   NoUnsafeTfmAnalysis("fno-unsafe-tfm-analysis", cl::cat(AnalysisCategory),
@@ -574,16 +587,7 @@ void Tool::storeCLOptions() {
     Options::get().AnalyzeLibFunc.error(Msg);
     exit(1);
   }
-  mGlobalOpts.IgnoreRedundantMemory =
-    Options::get().IgnoreRedundantMemory;
-  if (Options::get().IgnoreRedundantMemory &&
-      Options::get().NoIgnoreRedundantMemory) {
-    std::string Msg("error - this option is incompatible with");
-    Msg.append(" -")
-       .append(Options::get().NoIgnoreRedundantMemory.ArgStr.data());
-    Options::get().IgnoreRedundantMemory.error(Msg);
-    exit(1);
-  }
+  mGlobalOpts.IgnoreRedundantMemory = Options::get().IgnoreRedundantMemory;
   mGlobalOpts.UnsafeTfmAnalysis = Options::get().UnsafeTfmAnalysis;
   if (Options::get().UnsafeTfmAnalysis &&
       Options::get().NoUnsafeTfmAnalysis) {

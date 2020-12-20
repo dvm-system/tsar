@@ -286,7 +286,18 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
   // specified.
   for (auto &VarRef : mASTVars.CanonicalRefs)
     if (!mASTVars.CanonicalLocals.count(VarRef.first) &&
-        llvm::count(VarRef.second, nullptr)) {
+        !llvm::all_of(VarRef.second, [this](const auto &Derived) {
+          return Derived &&
+                     (Derived.Kind == VariableCollector::DK_Strong ||
+                      mGlobalOpts.IgnoreRedundantMemory ==
+                              GlobalOptions::IRMK_Bounded &&
+                          Derived.Kind == VariableCollector::DK_Bounded ||
+                      mGlobalOpts.IgnoreRedundantMemory ==
+                              GlobalOptions::IRMK_Partial &&
+                          Derived.Kind == VariableCollector::DK_Partial) ||
+                 !Derived && mGlobalOpts.IgnoreRedundantMemory ==
+                                 GlobalOptions::IRMK_Weak;
+        })) {
       toDiag(mDiags, mRegion->getBeginLoc(), clang::diag::warn_parallel_loop);
       toDiag(mDiags, VarRef.first->getLocation(),
              clang::diag::note_parallel_variable_not_analyzed)
