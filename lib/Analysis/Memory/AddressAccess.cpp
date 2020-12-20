@@ -37,6 +37,13 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/AliasSetTracker.h>
+#include "tsar/Analysis/Memory/Utils.h"
+#include <llvm/IR/InstIterator.h>
+#include <vector>
+#include "tsar/Support/PassAAProvider.h"
+#include <algorithm>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Operator.h>
@@ -61,8 +68,8 @@ using bcl::operator "" _b;
 char AddressAccessAnalyser::ID = 0;
 
 namespace {
-  using FunctionPassesProvider =
-  FunctionPassProvider<MemoryDependenceWrapperPass, MemorySSAWrapperPass>;
+    using FunctionPassesProvider =
+    FunctionPassAAProvider<MemoryDependenceWrapperPass, MemorySSAWrapperPass, TargetLibraryInfoWrapperPass, AAResultsWrapperPass>;
 }
 
 INITIALIZE_PROVIDER_BEGIN(FunctionPassesProvider,
@@ -70,6 +77,8 @@ INITIALIZE_PROVIDER_BEGIN(FunctionPassesProvider,
                           "MemoryDependenceWrapperPass provider")
   INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(MemorySSAWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PROVIDER_END(FunctionPassesProvider, "function-passes-provider",
                         "MemoryDependenceWrapperPass provider")
 
@@ -266,11 +275,174 @@ bool AddressAccessAnalyser::constructUsageTree(Argument *arg) {
 //    argIdx++;
 //  }
 //}
+//class AliasSetWithTraits;
+//
+//class AliasSetWithTraits : public AliasSet {
+//public:
+//  bool isExposed = false;
+//  std::vector<bool> storesArgNo = std::vector<bool>();
+//  AliasSetWithTraits* pointsTo = nullptr;
+//};
+
+
+/// \brief Returns true if location satisfies at least one condition:
+/// 1. Location is global (TODO: or aliases some global location? think of an example);
+/// 2. Location is returned from function *not* marked as noalias;
+/// 3. Location is passed in some call as captured argument;
+/// 4. Location retrieved as argument (TODO: or aliases some? think of an example);
+bool AddressAccessAnalyser::isTriviallyExposed(Instruction &I, int OpNo) {
+  auto Op = I.getOperand(OpNo);
+  if (isa<GlobalVariable>(Op))
+    return true;
+  if (CallBase *callBase = dyn_cast<CallBase>(Op))
+    return !callBase->getCalledFunction()->returnDoesNotAlias();
+  if (isa<Argument>(Op))
+    return true; // location retrieved as an argument is exposed
+  if (CallBase *callBase = dyn_cast<CallBase>(&I)) {
+    auto use = &I.getOperandUse(OpNo);
+    if (callBase->isArgOperand(use)) {
+      int ArgNo = callBase->getArgOperandNo(use);
+      auto Arg = callBase->getCalledFunction()->getArg(ArgNo);
+      return !Arg->hasAttribute(Attribute::NoCapture);
+    }
+  }
+  return false;
+}
+
+bool AddressAccessAnalyser::aliasesExposed(Value *QueryV, std::set<Value *> &Exposed) {
+  auto DL = CurFunction->getParent()->getDataLayout();
+  auto QueryTy = cast<PointerType>(QueryV->getType())->getElementType();
+  auto QueryML = MemoryLocation(QueryV,
+                                QueryTy->isSized() ?
+                                DL.getTypeStoreSize(QueryTy) : MemoryLocation::UnknownSize);
+  for (auto &ExposedV : Exposed) {
+    auto ExposedTy = cast<PointerType>(ExposedV->getType())->getElementType();
+    auto ExposedML = MemoryLocation(ExposedV,
+                                    ExposedTy->isSized() ?
+                                    DL.getTypeStoreSize(ExposedTy) : MemoryLocation::UnknownSize);
+    if (QueryV == ExposedV || !AA->isNoAlias(QueryML, ExposedML))
+      return true;
+  }
+  return false;
+}
+
+/// \brief Supplies exposed set with new references. Return true on changes. Locations to become exposed:
+/// 1. locations stored to memory known to be exposed (e.g store i32** %ptr, i32*** %glob);
+/// 2. locations loaded from memory known to be exposed (e.g. %1 = load i32*** %glob);
+/// 3. modified locations aliasing exposed locations, so we don't need to use AA further;
+bool AddressAccessAnalyser::transitExposedProperty(Instruction &I, MemoryLocation &Loc, int OpNo, AccessInfo isRead,
+                                                   AccessInfo isWrite, std::set<Value *> &Exposed) {
+  auto *Ptr = const_cast<Value *>(Loc.Ptr);
+  bool modified = false;
+  if (isWrite != AccessInfo::No && aliasesExposed(Ptr, Exposed)) {
+    switch (I.getOpcode()) {
+      default:
+        LLVM_DEBUG(dbgs() << "Met unknown write: "; I.print(dbgs()); dbgs() << "\n"; break;);
+        llvm_unreachable("Met unknown write");  // TODO: process conservatively
+        break;
+      case Instruction::Store: {
+        auto SI = dyn_cast<StoreInst>(&I);
+        auto inserted = Exposed.insert(SI->getPointerOperand());  // case 3.
+        modified |= inserted.second;
+        if (isa<PointerType>(SI->getValueOperand()->getType()))  // case 1.
+          inserted = Exposed.insert(SI->getValueOperand());
+        modified |= inserted.second;
+      }
+    }
+  }
+  if (isRead != AccessInfo::No && aliasesExposed(Ptr, Exposed)) {
+    switch (I.getOpcode()) {
+      default:
+        LLVM_DEBUG(dbgs() << "Met unknown read: "; I.print(dbgs()); dbgs() << "\n"; break;);
+        llvm_unreachable("Met unknown read");  // TODO: process conservatively
+        break;
+      case Instruction::Load: {
+        auto LI = dyn_cast<LoadInst>(&I);
+        if (isa<PointerType>(LI->getType())) {  // case 2.
+          auto inserted = Exposed.insert(LI);
+          modified |= inserted.second;
+        }
+      }
+    }
+  }
+  return modified;
+}
+
+/// \brief Return all values referencing memory locations which are modified by
+/// this function and could be referenced from other functions
+std::set<Value *> AddressAccessAnalyser::getExposedMemLocs(Function *F) {
+  auto exposedMemLocs = std::set<Value *>();
+  // Init set with values trivially known to be exposed
+  for (auto &I : instructions(F)) {
+    LLVM_DEBUG(I.print(dbgs()););
+    LLVM_DEBUG(dbgs() << "\n";);
+    for (int OpNo = 0; OpNo < I.getNumOperands(); OpNo++) {
+      auto Op = I.getOperand(OpNo);
+      auto PointeeOp = dyn_cast<PointerType>(Op->getType());
+      if (!PointeeOp || !isTriviallyExposed(I, OpNo))
+        continue;
+      exposedMemLocs.insert(Op);
+    }
+  }
+  LLVM_DEBUG(dbgs() << "**********\n\n";);
+  // Transit exposed property
+  auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
+  auto &TLI = Provider.get<TargetLibraryInfoWrapperPass>().getTLI(*F);
+  bool modified = true;
+  int iteration = 0;
+  while (modified) {
+    modified = false;
+    LLVM_DEBUG(dbgs() << "Transit exposed iteration: " << iteration++ << "\n";);
+    for_each_memory(*F, TLI,
+                    [&modified, &exposedMemLocs, this](Instruction &I, MemoryLocation &&Loc,
+                                                       unsigned OpNo, AccessInfo r, AccessInfo w) {
+                        LLVM_DEBUG(I.print(dbgs()); dbgs() << "\n";);
+                        modified |= transitExposedProperty(I, Loc, OpNo, r, w, exposedMemLocs);
+                    },
+                    [&exposedMemLocs, this](Instruction &I, AccessInfo IsRead, AccessInfo isWrite) {
+                        LLVM_DEBUG(dbgs() << "Met unknown memory: "; I.print(dbgs()); dbgs() << "\n"; return;);
+                        llvm_unreachable("Met unknown memory");  // TODO: process conservatively
+//                        if (isWrite != AccessInfo::No) {
+//                          for (auto &op : I.operands()) {
+//                            exposedMemLocs.insert(op);
+//                          }
+//                        }
+                    });
+  }
+  // Filter out values referencing not modified locations
+  auto modifiedMemLocs = std::set<Value *>();
+  for_each_memory(*F, TLI,
+                  [&modifiedMemLocs](Instruction &I, MemoryLocation &&Loc,
+                                     unsigned, AccessInfo IsRead, AccessInfo isWrite) {
+                      if (isWrite != AccessInfo::No) {
+                        auto *Ptr = const_cast<Value *>(Loc.Ptr);
+                        modifiedMemLocs.insert(Ptr);
+                      }
+                  },
+                  [&modifiedMemLocs](Instruction &I, AccessInfo IsRead, AccessInfo isWrite) {
+                      if (isWrite != AccessInfo::No) {
+                        for (auto &op : I.operands()) {
+                          modifiedMemLocs.insert(op);
+                        }
+                      }
+                  });
+  auto intersection = std::set<Value *>();
+  std::set_intersection(exposedMemLocs.begin(), exposedMemLocs.end(),
+                        modifiedMemLocs.begin(), modifiedMemLocs.end(),
+                        std::inserter(intersection, intersection.begin()));
+  return intersection;
+}
 
 void AddressAccessAnalyser::runOnFunction(Function *F) {
-  FunctionPassesProvider *Provider = &getAnalysis<FunctionPassesProvider>(*F);
-  auto MSSA = &Provider->get<MemorySSAWrapperPass>().getMSSA();
-  auto walker = MSSA->getWalker();
+  auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
+  AA = &Provider.get<AAResultsWrapperPass>().getAAResults();
+  CurFunction = F;
+
+  for (auto V : getExposedMemLocs(F)) {
+    V->print(dbgs());
+    LLVM_DEBUG(dbgs() << "\n";);
+  }
+  LLVM_DEBUG(dbgs() << "-----------------\n\n";);
 }
 
 bool AddressAccessAnalyser::runOnModule(Module &M) {
@@ -335,7 +507,7 @@ void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
   }
 }
 
-void AddressAccessAnalyser::setNocaptureToAll(Function* F) {
+void AddressAccessAnalyser::setNocaptureToAll(Function *F) {
   for (auto &arg : F->args())
     if (arg.getType()->isPointerTy())
       arg.addAttr(Attribute::AttrKind::NoCapture);

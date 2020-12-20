@@ -28,6 +28,7 @@
 
 #include "tsar/Analysis/Memory/Passes.h"
 #include <llvm/Pass.h>
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 
 namespace tsar {
   struct PreservedParametersInfo {
@@ -64,9 +65,10 @@ namespace llvm {
     using ValueSet = DenseSet<llvm::Value *>;
     /// maps instructions on those which are dependent on them
     using DependentInfo = DenseMap<Instruction *, InstrDependencies *>;
-
+    using AccessInfo = tsar::AccessInfo;
     static bool isNonTrivialPointerType(Type *);
-
+    Function *CurFunction = nullptr;
+    AAResults* AA = nullptr;
   public:
     static char ID;
 
@@ -90,6 +92,15 @@ namespace llvm {
     /// tries to construct tree of local usages of the argument's value
     /// returns true on success
     bool constructUsageTree(Argument *arg);
+
+    bool isTriviallyExposed(Instruction& I, int OpNo);
+
+    bool aliasesExposed(Value *V, std::set<Value *> &exposed);
+
+    bool transitExposedProperty(Instruction& I, MemoryLocation &Loc, int OpNo, AccessInfo isRead,
+                                AccessInfo isWrite, std::set<Value *>& exposed);
+
+    std::set<Value *> getExposedMemLocs(Function *F);
 
     void runOnFunction(Function *F);
 
