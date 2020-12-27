@@ -114,5 +114,11 @@ void initializeClangLoopReversePass(PassRegistry &Registry);
 
 /// Create a pass to reverse loop.
 ModulePass *createClangLoopReverse();
+
+/// Creates a pass to perform elimination of dead declarations.
+FunctionPass* createLoopDistributionPass();
+
+/// Initializes a pass to perform elimination of dead declarations.
+void initializeLoopDistributionPassPass(PassRegistry& Registry);
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

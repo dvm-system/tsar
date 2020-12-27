@@ -26,6 +26,7 @@
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/DependenceAnalysis.h"
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
@@ -53,7 +54,8 @@ static void initializeDIMemoryAnalysisServerResponsePass(PassRegistry &);
 namespace {
 /// This provides access to function-level analysis results on server.
 using DIMemoryAnalysisServerProvider =
-FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass>;
+FunctionPassAAProvider<DIEstimateMemoryPass, DIDependencyAnalysisPass,
+  DependenceAnalysisWrapperPass>;
 
 /// List of responses available from server (client may request corresponding
 /// analysis, in case of provider all analysis related to a provider may
