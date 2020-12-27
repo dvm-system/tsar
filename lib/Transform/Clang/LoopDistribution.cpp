@@ -96,20 +96,29 @@ INITIALIZE_PASS_IN_GROUP_END(LoopDistributionPass, "loop-distribution",
 namespace {
 class ASTVisitor : public RecursiveASTVisitor<ASTVisitor> {
 public:
-  // TODO: Make this constructor similar to CanonicalLoop constructor.
-  ASTVisitor(DFRegionInfo& DFRI, TargetLibraryInfo &TLI,
-      AliasTree& AT, DominatorTree& DT,
-      DIMemoryClientServerInfo &DIMInfo,
-      const CanonicalLoopSet& CLI,
-      const LoopMatcherPass::LoopMatcher& LM, DIAliasTree &DIAT,
-      DIDependencInfo DIDep, const GlobalOptions& GO,
-      AnalysisClientServerMatcherWrapper* Matcher,
-      DependenceInfo& DepInfo) :
-      mDFRI(DFRI), mTLI(TLI), mAliasTree(AT), mDomTree(DT),
-      mDIMInfo(DIMInfo), mCLI(CLI),
-      mLM(LM), mDIAT(DIAT), mDIDep(DIDep),
-      mGO(GO), mDepInfo(DepInfo),
-      mSTR(SpanningTreeRelation<const DIAliasTree*>(mDIMInfo.DIAT)) {
+  ASTVisitor(FunctionPass& P, Function& F) {
+    mDFRI = &P.getAnalysis<DFRegionInfoPass>().getRegionInfo();
+    mTLI = &P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+    mAliasTree = &P.getAnalysis<EstimateMemoryPass>().getAliasTree();
+    mDomTree = &P.getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    auto& DIEMPass = P.getAnalysis<DIEstimateMemoryPass>();
+    assert(DIEMPass.isConstructed() && "Alias tree must be constructed!");
+    mDIMInfo = new DIMemoryClientServerInfo(DIEMPass.getAliasTree(), P, F);
+    mSTR = new SpanningTreeRelation<const DIAliasTree*>(mDIMInfo->DIAT);
+    mCLI = &P.getAnalysis<CanonicalLoopPass>().getCanonicalLoopInfo();
+    mLM = &P.getAnalysis<LoopMatcherPass>().getMatcher();
+    mGO = &P.getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+    auto& SocketInfo = P.getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    auto& Socket = SocketInfo.getActive()->second;
+    auto RF = Socket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass,
+        DependenceAnalysisWrapperPass>(F);
+    assert(RF && "Dependence analysis must be available!");
+    mDIAT = &RF->value<DIEstimateMemoryPass*>()->getAliasTree();
+    mDIDep = &RF->value<DIDependencyAnalysisPass*>()->getDependencies();
+    mDepInfo = &RF->value<DependenceAnalysisWrapperPass*>()->getDI();
+    auto RM = Socket.getAnalysis<AnalysisClientServerMatcherWrapper>();
+    assert(RM && "Client to server IR-matcher must be available!");
+    auto Matcher = RM->value<AnalysisClientServerMatcherWrapper*>();
     mGetLoopID = [Matcher](ObjectID ID) {
       auto ServerID = (*Matcher)->getMappedMD(ID);
       return ServerID ? cast<MDNode>(*ServerID) : nullptr;
@@ -126,14 +135,14 @@ public:
     if (!ForS)
       return RecursiveASTVisitor::TraverseStmt(S);
     dbgs() << "Loop\n";
-    auto Match = mLM.find<AST>(ForS);
-    if (Match == mLM.end())
+    auto Match = mLM->find<AST>(ForS);
+    if (Match == mLM->end())
       return false;
     Loop* L = Match->get<IR>();
     auto LoopDepth = L->getLoopDepth();
-    auto DFL = dyn_cast<DFRegion>(mDFRI.getRegionFor(L));
-    auto CanonItr = mCLI.find_as(DFL);
-    if (CanonItr == mCLI.end() || !(**CanonItr).isCanonical() ||
+    auto DFL = dyn_cast<DFRegion>(mDFRI->getRegionFor(L));
+    auto CanonItr = mCLI->find_as(DFL);
+    if (CanonItr == mCLI->end() || !(**CanonItr).isCanonical() ||
       !(**CanonItr).getLoop())
       return false;
     dbgs() << "Canonical loop\n";
@@ -143,13 +152,13 @@ public:
       dbgs() << "Ignore loop without ID";
       return false;
     }
-    auto DepItr = mDIDep.find(LoopID);
-    if (DepItr == mDIDep.end())
+    auto DepItr = mDIDep->find(LoopID);
+    if (DepItr == mDIDep->end())
       return false;
     auto& DIDepSet = DepItr->get<DIDependenceSet>();
     DenseSet<const DIAliasNode*> Coverage;
-    accessCoverage<bcl::SimpleInserter>(DIDepSet, mDIAT, Coverage,
-      mGO.IgnoreRedundantMemory);
+    accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
+      mGO->IgnoreRedundantMemory);
     for (auto& TS : DIDepSet) {
       if (!Coverage.count(TS.getNode()))
         continue;
@@ -168,14 +177,14 @@ public:
       auto* DINode = DIMem->getAliasNode();
       for (auto BB = L->block_begin(); BB != L->block_end(); ++BB) {
         std::vector<Instruction*> Reads, Writes;
-        for_each_memory(**BB, mTLI, [this, DINode, &Reads, &Writes](Instruction& I,
+        for_each_memory(**BB, *mTLI, [this, DINode, &Reads, &Writes](Instruction& I,
           MemoryLocation&& Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EM = mAliasTree.find(Loc);
+          auto EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
           auto& DL = I.getModule()->getDataLayout();
-          auto* DIM = mDIMInfo.findFromClient(
-            *EM->getTopLevelParent(), DL, mDomTree).get<Clone>();
-          if (!DIM || mSTR.isUnreachable(DINode, DIM->getAliasNode())) {
+          auto* DIM = mDIMInfo->findFromClient(
+            *EM->getTopLevelParent(), DL, *mDomTree).get<Clone>();
+          if (!DIM || mSTR->isUnreachable(DINode, DIM->getAliasNode())) {
             return;
           }
           dbgs() << "Instruction\n";
@@ -192,7 +201,9 @@ public:
         });
         for (auto Write = Writes.begin(); Write != Writes.end(); ++Write) {
           for (auto Read = Reads.begin(); Read != Reads.end(); ++Read) {
-            auto Dep = mDepInfo.depends(mGetInstruction(*Write), mGetInstruction(*Read), false); // TODO: probably true instead of false
+            // TODO: probably true instead of false
+            auto Dep = mDepInfo->depends(mGetInstruction(*Write),
+                mGetInstruction(*Read), false);
             if (!Dep) continue;
             auto Dir = Dep.get()->getDirection(LoopDepth);
             if (Dir == tsar_impl::Dependence::DVEntry::EQ) {
@@ -232,20 +243,20 @@ public:
   }
 
 private:
-  DFRegionInfo& mDFRI;
-  TargetLibraryInfo& mTLI;
-  AliasTree& mAliasTree;
-  DominatorTree& mDomTree;
-  DIMemoryClientServerInfo& mDIMInfo;
-  const CanonicalLoopSet& mCLI;
-  const LoopMatcherPass::LoopMatcher& mLM;
-  DIAliasTree& mDIAT;
-  DIDependencInfo mDIDep;
-  const GlobalOptions& mGO;
+  DFRegionInfo* mDFRI;
+  TargetLibraryInfo* mTLI;
+  AliasTree* mAliasTree;
+  DominatorTree* mDomTree;
+  DIMemoryClientServerInfo* mDIMInfo;
+  SpanningTreeRelation<const DIAliasTree*>* mSTR;
+  const CanonicalLoopSet* mCLI;
+  const LoopMatcherPass::LoopMatcher* mLM;
+  const GlobalOptions* mGO;
+  DIAliasTree* mDIAT;
+  DIDependencInfo* mDIDep;
+  DependenceInfo* mDepInfo;
   std::function<ObjectID(ObjectID)> mGetLoopID;
-  std::function<Instruction* (Instruction*)>mGetInstruction;
-  DependenceInfo& mDepInfo;
-  SpanningTreeRelation<const DIAliasTree*> mSTR;
+  std::function<Instruction* (Instruction*)> mGetInstruction;
   bool mIsInsideLoop = false;
 };
 }
@@ -261,6 +272,7 @@ bool LoopDistributionPass::runOnFunction(Function& F) {
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
+  /*
   auto& RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto& TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
   auto& AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
@@ -284,7 +296,8 @@ bool LoopDistributionPass::runOnFunction(Function& F) {
       .getOptions();
   auto& CLI = getAnalysis<CanonicalLoopPass>().getCanonicalLoopInfo();
   auto& LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  ASTVisitor LoopVisitor(RgnInfo, TLI, AliasTree, DomTree, DIMInfo, CLI, LoopInfo, DIAT, DIDepInfo, GlobalOpts, Matcher, DepInfo);
+  */
+  ASTVisitor LoopVisitor(*this, F);
   LoopVisitor.TraverseDecl(FuncDecl);
   return false;
 }
