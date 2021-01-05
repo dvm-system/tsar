@@ -65,7 +65,7 @@ void ClangTransformationContext::reset(clang::CompilerInstance &CI,
 }
 
 std::pair<std::string, bool> ClangTransformationContext::release(
-    const FilenameAdjuster &FA) const {
+    const FilenameAdjuster &FA) {
   assert(hasInstance() && "Rewriter is not configured!");
   DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();
   std::unique_ptr<llvm::raw_fd_ostream> OS;

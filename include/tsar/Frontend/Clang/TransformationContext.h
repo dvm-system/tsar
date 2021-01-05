@@ -92,7 +92,7 @@ public:
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   std::pair<std::string, bool> release(
-    const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const override;
+    const FilenameAdjuster &FA = getDumpFilenameAdjuster()) override;
 
   /// Save all changes in a specified buffer to disk (in file with a specified
   /// name), emits diagnostic messages in case of error.

@@ -147,7 +147,7 @@ public:
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   virtual std::pair<std::string, bool>
-  release(const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const = 0;
+  release(const FilenameAdjuster &FA = getDumpFilenameAdjuster()) = 0;
 
   auto getKind() const noexcept { return mKind; }
 
