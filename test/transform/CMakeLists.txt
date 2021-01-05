@@ -4,3 +4,7 @@ add_subdirectory(propagate)
 add_subdirectory(replace)
 add_subdirectory(openmp)
 add_subdirectory(dvmh_sm)
+
+if (FLANG_FOUND)
+  add_subdirectory(replace_const)
+endif()

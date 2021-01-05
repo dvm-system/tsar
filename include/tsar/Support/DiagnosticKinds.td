@@ -184,3 +184,7 @@ def error_expect_function_param : Error<"expected function parameter name">;
 
 def note_record_member_unknown: Error<"record has no member '%0'">;
 def note_declared_here: Note<"declared here">;
+
+
+// Fortran-specific diagnostics.
+def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
