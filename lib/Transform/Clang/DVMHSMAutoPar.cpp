@@ -204,10 +204,10 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
   if (!ConstStep) {
     toDiag(ASTRegionAnalysis.getDiagnostics(),
            ASTRegionAnalysis.getRegion()->getBeginLoc(),
-           diag::warn_parallel_loop);
+           tsar::diag::warn_parallel_loop);
     toDiag(ASTRegionAnalysis.getDiagnostics(),
            ASTRegionAnalysis.getRegion()->getBeginLoc(),
-           diag::note_parallel_across_direction_unknown);
+           tsar::diag::note_parallel_across_direction_unknown);
     return false;
   }
   auto LoopID = DFL.getLoop()->getLoopID();

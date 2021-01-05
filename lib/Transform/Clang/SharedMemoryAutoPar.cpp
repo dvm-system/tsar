@@ -120,12 +120,12 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
   auto LMatchItr = LM.find<IR>(&L);
   if (LMatchItr != LM.end())
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
-           clang::diag::remark_parallel_loop);
+           tsar::diag::remark_parallel_loop);
   auto DFL = cast<DFLoop>(RI.getRegionFor(&L));
   auto CanonicalItr = CL.find_as(DFL);
   if (CanonicalItr == CL.end() || !(**CanonicalItr).isCanonical()) {
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
-           clang::diag::warn_parallel_not_canonical);
+           tsar::diag::warn_parallel_not_canonical);
     if (PI)
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
@@ -335,7 +335,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
         mRegions.push_back(R);
       else
         toDiag(mTfmCtx->getContext().getDiagnostics(),
-               clang::diag::warn_region_not_found) << Name;
+               tsar::diag::warn_region_not_found) << Name;
   }
   auto NumberOfSCCs = buildAdjacentList();
   bcl::marray<bool, 2> Reachability({NumberOfSCCs, NumberOfSCCs});

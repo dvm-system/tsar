@@ -54,7 +54,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
   }
   if (!Induction) {
     toDiag(mDiags, mRegion->getBeginLoc(),
-           clang::diag::warn_parallel_no_induction);
+           tsar::diag::warn_parallel_no_induction);
     return false;
   }
   mASTVars.TraverseStmt(mRegion);
@@ -99,9 +99,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       if (Induction && TS.size() > 1) {
         if (!IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::warn_parallel_loop);
+                 tsar::diag::warn_parallel_loop);
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::note_parallel_multiple_induction);
+                 tsar::diag::note_parallel_multiple_induction);
           return false;
         }
       } else {
@@ -112,20 +112,20 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
                 &*Induction != std::get<0>(Localized)->getCanonicalDecl()) {
           if (!IgnoreRedundant) {
             toDiag(mDiags, mRegion->getBeginLoc(),
-                   clang::diag::warn_parallel_loop);
+                   tsar::diag::warn_parallel_loop);
             if (!std::get<1>(Localized)) {
               toDiag(mDiags,
                      std::get<0>(Localized)
                          ? std::get<0>(Localized)->getLocation()
                          : mRegion->getBeginLoc(),
-                     clang::diag::note_parallel_localize_induction_unable);
+                     tsar::diag::note_parallel_localize_induction_unable);
             } else {
               if (Induction)
                 toDiag(mDiags, Induction->getLocation(),
-                      clang::diag::note_parallel_multiple_induction);
+                      tsar::diag::note_parallel_multiple_induction);
               if (std::get<0>(Localized))
                 toDiag(mDiags, std::get<0>(Localized)->getLocation(),
-                       clang::diag::note_parallel_multiple_induction);
+                       tsar::diag::note_parallel_multiple_induction);
             }
             return false;
           }
@@ -142,9 +142,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       if (!mASTVars.localize(TS, mASTToClient, mDIMemoryMatcher,
                              mDependenceInfo.get<trait::Private>(), &Status) &&
           !IgnoreRedundant) {
-        toDiag(mDiags, mRegion->getBeginLoc(), clang::diag::warn_parallel_loop);
+        toDiag(mDiags, mRegion->getBeginLoc(), tsar::diag::warn_parallel_loop);
         toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-          clang::diag::note_parallel_localize_private_unable);
+          tsar::diag::note_parallel_localize_private_unable);
         return false;
       }
     } else if (Dptr.is<trait::Reduction>()) {
@@ -153,13 +153,13 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
       if (!Red || Red->getKind() == trait::DIReduction::RK_NoReduction) {
         if (!IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::warn_parallel_loop);
+                 tsar::diag::warn_parallel_loop);
           auto Search = mASTVars.findDecl(*(*I)->getMemory(), mASTToClient,
                                          mDIMemoryMatcher);
           toDiag(mDiags,
                  Search.first ? Search.first->getLocation()
                               : mRegion->getBeginLoc(),
-                 clang::diag::note_parallel_reduction_unknown);
+                 tsar::diag::note_parallel_reduction_unknown);
           return false;
         }
       } else {
@@ -171,9 +171,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
               mDIMemoryMatcher, ReductionList, &Status) &&
             !IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::warn_parallel_loop);
+                 tsar::diag::warn_parallel_loop);
           toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-                 clang::diag::note_parallel_localize_reduction_unable);
+                 tsar::diag::note_parallel_localize_reduction_unable);
           return false;
         }
         for (++I; I != EI; ++I) {
@@ -181,13 +181,13 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           if (!Red || Red->getKind() != CurrentKind) {
             if (!IgnoreRedundant) {
               toDiag(mDiags, mRegion->getBeginLoc(),
-                clang::diag::warn_parallel_loop);
+                tsar::diag::warn_parallel_loop);
               auto Search = mASTVars.findDecl(*(*I)->getMemory(), mASTToClient,
                 mDIMemoryMatcher);
               toDiag(mDiags,
                 Search.first ? Search.first->getLocation()
                 : mRegion->getBeginLoc(),
-                clang::diag::note_parallel_reduction_unknown);
+                tsar::diag::note_parallel_reduction_unknown);
               return false;
             }
           } else {
@@ -196,10 +196,10 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
                   mASTToClient, mDIMemoryMatcher, ReductionList, &Status) &&
                 !IgnoreRedundant) {
               toDiag(mDiags, mRegion->getBeginLoc(),
-                     clang::diag::warn_parallel_loop);
+                     tsar::diag::warn_parallel_loop);
               toDiag(mDiags,
                      Status ? Status->getLocation() : mRegion->getBeginLoc(),
-                     clang::diag::note_parallel_localize_reduction_unable);
+                     tsar::diag::note_parallel_localize_reduction_unable);
               return false;
             }
           }
@@ -233,10 +233,10 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
             mOutToLocalize.push_back(&TS);
           } else if (!IgnoreRedundant) {
             toDiag(mDiags, mRegion->getBeginLoc(),
-                   clang::diag::warn_parallel_loop);
+                   tsar::diag::warn_parallel_loop);
             if (Search.first)
               toDiag(mDiags, Search.first->getLocation(),
-                     clang::diag::note_parallel_variable_not_analyzed);
+                     tsar::diag::note_parallel_variable_not_analyzed);
             return false;
           }
         }
@@ -248,9 +248,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
               mDependenceInfo.get<trait::LastPrivate>(), &Status) &&
             !IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::warn_parallel_loop);
+                 tsar::diag::warn_parallel_loop);
           toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-                 clang::diag::note_parallel_localize_private_unable);
+                 tsar::diag::note_parallel_localize_private_unable);
           return false;
         }
       }
@@ -260,9 +260,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
               mDependenceInfo.get<trait::FirstPrivate>(), &Status) &&
             !IgnoreRedundant) {
           toDiag(mDiags, mRegion->getBeginLoc(),
-                 clang::diag::warn_parallel_loop);
+                 tsar::diag::warn_parallel_loop);
           toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-                 clang::diag::note_parallel_localize_private_unable);
+                 tsar::diag::note_parallel_localize_private_unable);
           return false;
         }
       }
@@ -275,11 +275,11 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
   for (auto &NodeWithGlobal : mASTVars.GlobalRefs)
     for (auto *NodeWithSideEffect : DirectSideEffect)
       if (!STR.isUnreachable(NodeWithGlobal.first, NodeWithSideEffect)) {
-        toDiag(mDiags, mRegion->getBeginLoc(), clang::diag::warn_parallel_loop);
+        toDiag(mDiags, mRegion->getBeginLoc(), tsar::diag::warn_parallel_loop);
         toDiag(mDiags,
                NodeWithGlobal.second ? NodeWithGlobal.second->getLocation()
                                      : mRegion->getBeginLoc(),
-               clang::diag::note_parallel_localize_global_unable);
+               tsar::diag::note_parallel_localize_global_unable);
         return false;
       }
   // Check that traits for all variables referenced in the loop are properly
@@ -298,9 +298,9 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
                  !Derived && mGlobalOpts.IgnoreRedundantMemory ==
                                  GlobalOptions::IRMK_Weak;
         })) {
-      toDiag(mDiags, mRegion->getBeginLoc(), clang::diag::warn_parallel_loop);
+      toDiag(mDiags, mRegion->getBeginLoc(), tsar::diag::warn_parallel_loop);
       toDiag(mDiags, VarRef.first->getLocation(),
-             clang::diag::note_parallel_variable_not_analyzed)
+             tsar::diag::note_parallel_variable_not_analyzed)
           << VarRef.first->getName();
       return false;
     }
@@ -313,9 +313,9 @@ bool ClangDependenceAnalyzer::evaluateDefUse() {
     if (!mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
           mDependenceInfo.get<trait::ReadOccurred>(), &Status)) {
       toDiag(mDiags, mRegion->getBeginLoc(),
-             clang::diag::warn_parallel_loop);
+             tsar::diag::warn_parallel_loop);
       toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-             clang::diag::note_parallel_localize_inout_unable);
+             tsar::diag::note_parallel_localize_inout_unable);
       return false;
     }
   }
@@ -324,9 +324,9 @@ bool ClangDependenceAnalyzer::evaluateDefUse() {
     if (!mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
           mDependenceInfo.get<trait::WriteOccurred>(), &Status)) {
       toDiag(mDiags, mRegion->getBeginLoc(),
-             clang::diag::warn_parallel_loop);
+             tsar::diag::warn_parallel_loop);
       toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-             clang::diag::note_parallel_localize_inout_unable);
+             tsar::diag::note_parallel_localize_inout_unable);
       return false;
     }
   }

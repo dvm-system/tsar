@@ -87,8 +87,9 @@ public:
         mLastConflict = Decls[I];
         return Name;
       }
-      ToDiag(Decls[I]->getLocation(), diag::err_redefinition_different_kind)
-        << Name;
+      ToDiag(Decls[I]->getLocation(),
+             clang::diag::err_redefinition_different_kind)
+          << Name;
     }
     return make_error<ImportError>(ImportError::NameConflict);
   }

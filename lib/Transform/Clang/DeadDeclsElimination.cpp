@@ -141,14 +141,15 @@ public:
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
       if (auto VD = dyn_cast<VarDecl>(I->first)) {
         if (!VD->isLocalVarDecl() && VD->isLocalVarDeclOrParm()) {
-          toDiag(Diags, VD->getLocation(), diag::warn_disable_de_parameter);
+          toDiag(Diags, VD->getLocation(),
+                 tsar::diag::warn_disable_de_parameter);
           I = mDeadDecls.erase(I);
           continue;
         } else if (VD->hasInit()) {
           if (auto SideEffect = findSideEffect(*VD->getInit())) {
-            toDiag(Diags, VD->getLocation(), diag::warn_disable_de);
+            toDiag(Diags, VD->getLocation(), tsar::diag::warn_disable_de);
             toDiag(Diags, SideEffect->getBeginLoc(),
-                   diag::note_de_side_effect_prevent);
+                   tsar::diag::note_de_side_effect_prevent);
             I = mDeadDecls.erase(I);
             continue;
           }
@@ -166,8 +167,8 @@ public:
         MacroLoc = MacroItr->second;
       }
       if (MacroLoc.isValid()) {
-        toDiag(Diags, I->first->getLocation(), diag::warn_disable_de);
-        toDiag(Diags, MacroLoc, diag::note_de_macro_prevent);
+        toDiag(Diags, I->first->getLocation(), tsar::diag::warn_disable_de);
+        toDiag(Diags, MacroLoc, tsar::diag::note_de_macro_prevent);
         I = mDeadDecls.erase(I);
         continue;
       }
@@ -188,8 +189,9 @@ public:
       }
       if (!DeadInGroup.empty() && LiveD) {
         for (auto *ND : DeadInGroup) {
-          toDiag(Diags, ND->getLocation(), diag::warn_disable_de);
-          toDiag(Diags, LiveD->getLocation(), diag::note_de_multiple_prevent);
+          toDiag(Diags, ND->getLocation(), tsar::diag::warn_disable_de);
+          toDiag(Diags, LiveD->getLocation(),
+                 tsar::diag::note_de_multiple_prevent);
           mDeadDecls.erase(ND);
         }
       }

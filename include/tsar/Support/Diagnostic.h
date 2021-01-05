@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements functions to emit different low-level diagnostics.
+// This file implements functions to emit different TSAR-embedded diagnostics.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +28,48 @@
 #include <llvm/IR/DiagnosticInfo.h>
 
 namespace tsar {
+namespace diag {
+/// Identifiers of built-in diagnostics of TSAR.
+enum {
+  // Do not override IDs of Clang built-in diagnostics.
+  PADDING_BUILTIN_TSAR_DIAGNOSTIC = 100000,
+#define DIAG(ENUM,LEVEL,DESC) ENUM,
+#include "tsar/Support/DiagnosticKinds.inc"
+#undef DIAG
+  INVALID_BUILTIN_TSAR_DIAGNOSTIC,
+  NUM_BUILTIN_TSAR_DIAGNOSTICS = INVALID_BUILTIN_TSAR_DIAGNOSTIC -
+    PADDING_BUILTIN_TSAR_DIAGNOSTIC - 1
+};
+}
+
+class DiagnosticInfo {
+public:
+  enum Level { Ignored, Note, Remark, Warning, Error, Fatal };
+
+  constexpr DiagnosticInfo(Level L, const char *Str, std::size_t Len) :
+    mLevel(L), mDescription(Str), mLength(Len) {}
+
+  constexpr Level level() const noexcept { return mLevel; }
+
+  constexpr llvm::StringRef description() const {
+    return llvm::StringRef{mDescription, mLength};
+  }
+
+  constexpr bool isError() const noexcept {
+    return mLevel == Error || mLevel == Fatal;
+  }
+  constexpr bool isWarningOrError() const noexcept {
+    return mLevel == Warning || isError();
+  }
+
+private:
+  Level mLevel;
+  const char *mDescription;
+  std::size_t mLength;
+};
+
+const DiagnosticInfo * getDiagnosticInfo(unsigned DiagId);
+
 inline void emitUnableShrink(llvm::LLVMContext &Ctx, const llvm::Function &F,
     const llvm::DebugLoc &Loc,
     llvm::DiagnosticSeverity Severity = llvm::DS_Error) {

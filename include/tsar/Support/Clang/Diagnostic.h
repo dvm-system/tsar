@@ -22,27 +22,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_DIAGNOSTIC_H
-#define TSAR_DIAGNOSTIC_H
+#ifndef TSAR_CLANG_DIAGNOSTIC_H
+#define TSAR_CLANG_DIAGNOSTIC_H
 
+#include "tsar/Support/Diagnostic.h"
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Basic/SourceLocation.h>
-
-namespace clang {
-namespace diag {
-/// Identifiers of built-in diagnostics of TSAR.
-enum {
-  // Do not override IDs of Clang built-in diagnostics.
-  PADDING_BUILTIN_TSAR_DIAGNOSTIC = 100000,
-#define DIAG(ENUM,LEVEL,DESC) ENUM,
-#include "tsar/Support/DiagnosticKinds.inc"
-#undef DIAG
-  INVALID_BUILTIN_TSAR_DIAGNOSTIC,
-  NUM_BUILTIN_TSAR_DIAGNOSTICS = INVALID_BUILTIN_TSAR_DIAGNOSTIC -
-    PADDING_BUILTIN_TSAR_DIAGNOSTIC - 1
-};
-}
-}
 
 namespace tsar {
 /// \brief Issue the message to the client.
@@ -63,4 +48,4 @@ clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
 clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
     unsigned int DiagId);
 }
-#endif//TSAR_DIAGNOSTIC_H
+#endif//TSAR_CLANG_DIAGNOSTIC_H

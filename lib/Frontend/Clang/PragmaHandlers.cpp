@@ -167,18 +167,18 @@ void PragmaNamespaceReplacer::HandlePragma(
   } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
     DirectiveName = KW;
   } else {
-    PP.Diag(FirstToken, diag::err_expected) << "name of directive";
+    PP.Diag(FirstToken, clang::diag::err_expected) << "name of directive";
     return;
   }
   DirectiveId Id;
   if (!getTsarDirective(mNamespaceId, DirectiveName, Id)) {
     toDiag(PP.getDiagnostics(), FirstToken.getLocation(),
-      diag::err_unknown_directive) << getName() << DirectiveName;
+      tsar::diag::err_unknown_directive) << getName() << DirectiveName;
     return;
   }
   auto *Handler = FindHandler(DirectiveName, false);
   if (!Handler) {
-    PP.Diag(FirstToken, diag::warn_pragma_ignored);
+    PP.Diag(FirstToken, clang::diag::warn_pragma_ignored);
     return;
   }
   AddToken(tok::l_brace, NamespaceLoc, 1, mTokenQueue);
@@ -196,7 +196,7 @@ void PragmaNamespaceReplacer::HandlePragma(
   if (RelexFrom.is(tok::eod)) {
     AddToken(tok::r_brace, FirstToken.getLocation(), 1, mTokenQueue);
     PP.EnterTokenStream(mTokenQueue, false, false);
-  } 
+  }
 }
 
 void PragmaReplacer::HandlePragma(ExternalPreprocessor &PP,
@@ -214,7 +214,7 @@ void PragmaReplacer::HandlePragma(ExternalPreprocessor &PP,
     } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
       ClauseName = KW;
     } else {
-      PP.Diag(FirstToken, diag::err_expected) << "name of clause";
+      PP.Diag(FirstToken, clang::diag::err_expected) << "name of clause";
       return;
     }
     ClauseId Id;
@@ -225,7 +225,7 @@ void PragmaReplacer::HandlePragma(ExternalPreprocessor &PP,
     }
     auto *ClauseHandler = FindHandler(ClauseName, false);
     if (!ClauseHandler) {
-      PP.Diag(FirstToken, diag::warn_pragma_ignored);
+      PP.Diag(FirstToken, clang::diag::warn_pragma_ignored);
       return;
     }
     ClauseHandler->HandleClause(PP, Introducer, FirstToken);
