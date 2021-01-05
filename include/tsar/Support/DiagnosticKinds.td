@@ -44,6 +44,10 @@ class Warning<string str>   : Diagnostic<str, Warning>;
 class Error<string str>     : Diagnostic<str, Error>;
 class Fatal<string str>     : Diagnostic<str, Fatal>;
 
+//Copy of some Clang diagnostics to use them with other frontends.
+def err_fe_unable_to_open_output : Error<"unable to open output file '%0': '%1'">;
+def err_unable_to_rename_temp: Error<"unable to rename temporary '%0' to output file '%1': '%2'">;
+
 def err_import_named : Error<"unable to import declaration %0">;
 def err_import : Error<"unable to import">;
 def warn_import_typedef : Warning<"import of typedef declaration is partially supported">;

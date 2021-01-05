@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Diagnostic.h"
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
 
@@ -60,6 +61,69 @@ FilenameAdjuster tsar::getDumpFilenameAdjuster() {
     return std::string(Path);
   };
   return FA;
+}
+
+bool AtomicallyMovedFile::checkStatus() {
+  llvm::sys::fs::file_status Status;
+  llvm::sys::fs::status(mFilename, Status);
+  if (llvm::sys::fs::exists(Status)) {
+    if (!llvm::sys::fs::can_write(mFilename)) {
+      std::error_code EC;
+      if (mError)
+        *mError = std::tuple{tsar::diag::err_fe_unable_to_open_output,
+                             std::tuple{std::string{mFilename}, EC.message()}};
+      return false;
+    }
+    if (!llvm::sys::fs::is_regular_file(Status))
+      mUseTemporary = false;
+  }
+  return true;
+}
+
+
+AtomicallyMovedFile::AtomicallyMovedFile(StringRef File, ErrorT *Error) :
+  mFilename(File), mError(Error), mUseTemporary(true) {
+  if (!checkStatus())
+    return;
+  if (mUseTemporary) {
+    mTempFilename = mFilename;
+    mTempFilename += "-%%%%%%%%";
+    int FD;
+    std::error_code EC =
+      llvm::sys::fs::createUniqueFile(mTempFilename.str(), FD, mTempFilename);
+    if (!EC)
+      mFileStream.reset(new llvm::raw_fd_ostream(FD, true));
+    // If it is unable to use temporary, so write to the file directly.
+    if (!mFileStream)
+      mUseTemporary = false;
+  }
+  if (!mUseTemporary) {
+    std::error_code EC;
+    mFileStream.reset(
+      new llvm::raw_fd_ostream(mFilename, EC, llvm::sys::fs::F_Text));
+    if (EC && mError)
+      *mError = std::tuple{tsar::diag::err_fe_unable_to_open_output,
+                           std::tuple{std::string{mFilename}, EC.message()}};
+  }
+}
+
+AtomicallyMovedFile::~AtomicallyMovedFile() {
+  if (!hasStream()) return;
+  mFileStream->flush();
+#ifdef LLVM_ON_WIN32
+  // Win32 does not allow rename/removing opened files.
+  mFileStream.reset();
+#endif
+  if (!mUseTemporary)
+    return;
+  if (std::error_code EC =
+    llvm::sys::fs::rename(mTempFilename.str(), mFilename)) {
+    if (mError)
+      *mError = std::tuple{tsar::diag::err_unable_to_rename_temp,
+                           std::tuple{std::string{mTempFilename},
+                                      std::string{mFilename}, EC.message()}};
+    llvm::sys::fs::remove(mTempFilename.str());
+  }
 }
 
 ClangTransformationContext * TransformationInfo::getContext(llvm::Module &M) {
