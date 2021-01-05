@@ -15,10 +15,11 @@ endif()
 set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
   TSARAnalysisMemory TSARAnalysisParallel TSARTransformIR TSARTransformMixed
   TSARTransformClang TSARAnalysisClang TSARFrontendClang TSARSupportClang
-  TSARUnparse PROPERTY POSITION_INDEPENDENT_CODE ON)
+  TSARUnparse TSARTransformAST PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 if (FLANG_FOUND)
-  set_property(TARGET TSARFrontendFlang PROPERTY POSITION_INDEPENDENT_CODE ON)
+  set_property(TARGET TSARFrontendFlang TSARSupportFlang TSARTransformFlang
+    PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(TSARServer SHARED

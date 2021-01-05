@@ -1,5 +1,5 @@
 set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp Inline.cpp RenameLocal.cpp
-  DeadDeclsElimination.cpp FormatPass.cpp OpenMPAutoPar.cpp
+  DeadDeclsElimination.cpp Format.cpp OpenMPAutoPar.cpp
   SharedMemoryAutoPar.cpp DVMHSMAutoPar.cpp StructureReplacement.cpp)
 
 if(MSVC_IDE)

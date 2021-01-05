@@ -1,8 +1,8 @@
-//=== Passes.cpp  Create and Initialize Transform Passes (Clang) *- C++ -*-===//
+//===----- Format.h --- Source-level Reformat Pass (Flang) ------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2020 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,21 +18,21 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This contains functions to initialize passes which are necessary for
-// source-to-source transformation of C programs.
+// This file declares functions to reformat sources after transformations.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/Passes.h"
+#ifndef TSAR_FLANG_FORMAT_H
+#define TSAR_FLANG_FORMAT_H
 
-using namespace llvm;
+#include "tsar/Core/TransformationContext.h"
 
-void llvm::initializeClangTransform(PassRegistry &Registry) {
-  initializeClangExprPropagationPass(Registry);
-  initializeClangInlinerPassPass(Registry);
-  initializeClangRenameLocalPassPass(Registry);
-  initializeClangStructureReplacementPassPass(Registry);
-  initializeClangDeadDeclsEliminationPass(Registry);
-  initializeClangOpenMPParallelizationPass(Registry);
-  initializeClangDVMHSMParallelizationPass(Registry);
+namespace tsar {
+class FlangTransformationContext;
+struct GlobalOptions;
+
+void formatSourceAndPrepareToRelease(
+    const GlobalOptions &GlobalOpts, FlangTransformationContext &TfmCtx,
+    const FilenameAdjuster &Adjuster);
 }
+#endif//TSAR_FLANG_FORMAT_H

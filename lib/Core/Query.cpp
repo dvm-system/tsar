@@ -36,7 +36,7 @@
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassBarrier.h"
-#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/AST/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #include <clang/Frontend/CompilerInstance.h>
@@ -383,7 +383,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   Passes.add(mTfmPass->getNormalCtor()());
   if (auto *GI = getPassRegistry().groupInfo(*mTfmPass))
     GI->addAfterPass(Passes);
-  Passes.add(createClangFormatPass());
+  Passes.add(createASTFormatPass());
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }

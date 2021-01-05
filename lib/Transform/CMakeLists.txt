@@ -1,3 +1,7 @@
 add_subdirectory(IR)
 add_subdirectory(Clang)
+if(FLANG_FOUND)
+  add_subdirectory(Flang)
+endif()
+add_subdirectory(AST)
 add_subdirectory(Mixed)

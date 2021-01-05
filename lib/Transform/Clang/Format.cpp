@@ -1,4 +1,4 @@
-//===- FormatPass.cpp - Source-level Reformat Pass (Clang) ------*- C++ -*-===//
+//===- Format.cpp ----- Source-level Reformat Pass (Clang) ------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -18,11 +18,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file defines a pass to reformat sources after transformations.
+// This file defines functions to reformat sources after transformations.
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/FormatPass.h"
+#include "tsar/Transform/Clang/Format.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Clang/Diagnostic.h"
@@ -42,56 +42,26 @@ using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-format"
+#define DEBUG_TYPE "ast-format"
 
-char ClangFormatPass::ID = 0;
-INITIALIZE_PASS_BEGIN(ClangFormatPass, "clang-format",
-  "Source-level Formatting (Clang)", false, false)
-  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper);
-INITIALIZE_PASS_END(ClangFormatPass, "clang-format",
-  "Source-level Formatting (Clang)", false, false)
-
-ModulePass* llvm::createClangFormatPass() { return new ClangFormatPass(); }
-
-void ClangFormatPass::getAnalysisUsage(AnalysisUsage& AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<GlobalOptionsImmutableWrapper>();
-  AU.setPreservesAll();
-}
-
-bool ClangFormatPass::runOnModule(llvm::Module& M) {
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
-        ": transformation context is not available");
-    return false;
-  }
-  auto &TfmRewriter = TfmCtx->getRewriter();
-  auto &SrcMgr = TfmRewriter.getSourceMgr();
-  auto &LangOpts = TfmRewriter.getLangOpts();
-  auto &Diags = SrcMgr.getDiagnostics();
-  auto &GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  auto Adjuster = GlobalOpts.OutputSuffix.empty() ? getPureFilenameAdjuster() :
-    [this, &GlobalOpts](llvm::StringRef Filename) -> std::string {
-      SmallString<128> Path = Filename;
-      sys::path::replace_extension(Path,
-        "." + GlobalOpts.OutputSuffix + sys::path::extension(Path));
-    return std::string(Path);
-  };
-  Rewriter FormatRewriter(SrcMgr, LangOpts);
+void tsar::formatSourceAndPrepareToRelease(
+    const GlobalOptions &GlobalOpts, ClangTransformationContext &TfmCtx,
+    const FilenameAdjuster &Adjuster) {
+  auto &TfmRewriter{TfmCtx.getRewriter()};
+  auto &SrcMgr{TfmRewriter.getSourceMgr()};
+  auto &LangOpts{TfmRewriter.getLangOpts()};
+  auto &Diags{SrcMgr.getDiagnostics()};
 #ifdef LLVM_DEBUG
   StringSet<> TransformedFiles;
 #endif
   for (auto &Buffer :
-      make_range(TfmRewriter.buffer_begin(), TfmRewriter.buffer_end())) {
-    auto StartLoc = SrcMgr.getLocForStartOfFile(Buffer.first);
+       make_range(TfmRewriter.buffer_begin(), TfmRewriter.buffer_end())) {
+    auto StartLoc{SrcMgr.getLocForStartOfFile(Buffer.first)};
     if (SrcMgr.getFileCharacteristic(StartLoc) != clang::SrcMgr::C_User) {
       toDiag(Diags, StartLoc, diag::err_transform_system);
       continue;
     }
-    auto *OrigFile = SrcMgr.getFileEntryForID(Buffer.first);
+    auto *OrigFile{SrcMgr.getFileEntryForID(Buffer.first)};
     assert(TransformedFiles.insert(OrigFile->getName()).second &&
       "Multiple rewriter buffers for the same file does not allowed!");
     // Backup original files if they will be overwritten due to empty output
@@ -100,8 +70,8 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       std::error_code Err = sys::fs::copy_file(OrigFile->getName(),
         getBackupFilenameAdjuster()(OrigFile->getName()));
       if (Err) {
-        toDiag(Diags, StartLoc, diag::err_backup_file);
-        toDiag(Diags, StartLoc, diag::note_not_transform);
+        toDiag(Diags, StartLoc, tsar::diag::err_backup_file);
+        toDiag(Diags, StartLoc, tsar::diag::note_not_transform);
         continue;
       }
     }
@@ -110,7 +80,7 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       auto EndLoc = SrcMgr.getLocForEndOfFile(Buffer.first);
       auto ReformatSrc = reformat(TfmSrc, Adjuster(OrigFile->getName()));
       if (!ReformatSrc) {
-        toDiag(Diags, StartLoc, diag::warn_reformat);
+        toDiag(Diags, StartLoc, tsar::diag::warn_reformat);
         continue;
       }
       auto CurrSize = Buffer.second.size();
@@ -118,6 +88,4 @@ bool ClangFormatPass::runOnModule(llvm::Module& M) {
       Buffer.second.RemoveText(0, CurrSize);
     }
   }
-  TfmCtx->release(Adjuster);
-  return false;
 }
