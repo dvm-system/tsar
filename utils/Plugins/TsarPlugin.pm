@@ -27,7 +27,7 @@
 #
 #   # Prefix of a single line comments, optional, default:
 #   # ';' is for .ll sample,
-#   # 'C' for .f, .for, .f90, .fdv sample,
+#   # '!' for .f, .for, .f90, .fdv sample,
 #   # '//' for .c, .h, .cxx, .cpp, .cdv sample.
 #   comment = //
 #
@@ -131,10 +131,10 @@ sub process {
 
   my %comments = (
     '.ll' => ';',
-    '.f' => 'C',
-    '.for' => 'C',
-    '.f90' => 'C',
-    '.fdv' => 'C',
+    '.f' => '!',
+    '.for' => '!',
+    '.f90' => '!',
+    '.fdv' => '!',
     '.c' => '//',
     '.h' => '//',
     '.cxx' => '//',
