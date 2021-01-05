@@ -32,3 +32,7 @@ tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
 add_dependencies(TSARSupport DirectivesGen DiagnosticKinds)
 
 add_subdirectory(Clang)
+
+if(FLANG_FOUND)
+  add_subdirectory(Flang)
+endif()
