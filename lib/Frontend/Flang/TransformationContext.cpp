@@ -60,7 +60,8 @@ void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
     const NameHierarchyMapT &NameHierarchy, MangledToSourceMapT &Map) {
   if (auto *S{Parent.symbol()}) {
     Names.push_back(S->name().ToString());
-    if (Parent.kind() == semantics::Scope::Kind::Subprogram)
+    if (Parent.kind() == semantics::Scope::Kind::Subprogram ||
+        Parent.kind() == semantics::Scope::Kind::MainProgram)
       if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end())
         Map.try_emplace(I->second, S);
     for (auto &Child : Parent.children())
