@@ -35,13 +35,14 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "ast-format"
 
-void tsar::formatSourceAndPrepareToRelease(
+bool tsar::formatSourceAndPrepareToRelease(
     const GlobalOptions &GlobalOpts, FlangTransformationContext &TfmCtx,
     const FilenameAdjuster &Adjuster) {
   auto &TfmRewriter{TfmCtx.getRewriter()};
 #ifdef LLVM_DEBUG
   StringSet<> TransformedFiles;
 #endif
+  bool IsAllValid{true};
   for (auto &[File, Info] :
        make_range(TfmRewriter.buffer_begin(), TfmRewriter.buffer_end())) {
     if (!Info->hasModification())
@@ -57,6 +58,7 @@ void tsar::formatSourceAndPrepareToRelease(
         auto Pos{*TfmCtx.getParsing().cooked().GetCharBlock(Info->getRange())};
         toDiag(TfmCtx.getContext(), Pos, tsar::diag::err_backup_file);
         toDiag(TfmCtx.getContext(), Pos, tsar::diag::note_not_transform);
+        IsAllValid = false;
         continue;
       }
     }
@@ -64,4 +66,5 @@ void tsar::formatSourceAndPrepareToRelease(
       //TODO (kaniandr@gmail.com): reformat transformed sources
     }
   }
+  return IsAllValid;
 }

@@ -31,7 +31,7 @@ namespace tsar {
 class ClangTransformationContext;
 struct GlobalOptions;
 
-void formatSourceAndPrepareToRelease(
+bool formatSourceAndPrepareToRelease(
     const GlobalOptions &GlobalOpts, ClangTransformationContext &TfmCtx,
     const FilenameAdjuster &Adjuster);
 }

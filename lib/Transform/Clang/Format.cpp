@@ -44,7 +44,7 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "ast-format"
 
-void tsar::formatSourceAndPrepareToRelease(
+bool tsar::formatSourceAndPrepareToRelease(
     const GlobalOptions &GlobalOpts, ClangTransformationContext &TfmCtx,
     const FilenameAdjuster &Adjuster) {
   auto &TfmRewriter{TfmCtx.getRewriter()};
@@ -54,11 +54,13 @@ void tsar::formatSourceAndPrepareToRelease(
 #ifdef LLVM_DEBUG
   StringSet<> TransformedFiles;
 #endif
+  bool IsAllValid{true};
   for (auto &Buffer :
        make_range(TfmRewriter.buffer_begin(), TfmRewriter.buffer_end())) {
     auto StartLoc{SrcMgr.getLocForStartOfFile(Buffer.first)};
     if (SrcMgr.getFileCharacteristic(StartLoc) != clang::SrcMgr::C_User) {
       toDiag(Diags, StartLoc, diag::err_transform_system);
+      IsAllValid = false;
       continue;
     }
     auto *OrigFile{SrcMgr.getFileEntryForID(Buffer.first)};
@@ -72,6 +74,7 @@ void tsar::formatSourceAndPrepareToRelease(
       if (Err) {
         toDiag(Diags, StartLoc, tsar::diag::err_backup_file);
         toDiag(Diags, StartLoc, tsar::diag::note_not_transform);
+        IsAllValid = false;
         continue;
       }
     }
@@ -88,4 +91,5 @@ void tsar::formatSourceAndPrepareToRelease(
       Buffer.second.RemoveText(0, CurrSize);
     }
   }
+  return IsAllValid;
 }

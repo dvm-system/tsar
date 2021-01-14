@@ -94,17 +94,21 @@ bool ASTFormatPass::runOnModule(llvm::Module& M) {
     return std::string(Path);
   };
   auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  bool IsAllValid{true};
   for (auto *Op : CUs->operands())
     if (auto *CU{dyn_cast<DICompileUnit>(Op)}) {
       if (auto *TfmCtx{TfmInfo->getContext(*CU)};
           TfmCtx && TfmCtx->hasInstance()) {
         if (auto *CtxImpl{dyn_cast<ClangTransformationContext>(TfmCtx)})
-          formatSourceAndPrepareToRelease(GlobalOpts, *CtxImpl, Adjuster);
+          IsAllValid &=
+              formatSourceAndPrepareToRelease(GlobalOpts, *CtxImpl, Adjuster);
 #ifdef FLANG_FOUND
         else if (auto *CtxImpl{dyn_cast<FlangTransformationContext>(TfmCtx)})
-          formatSourceAndPrepareToRelease(GlobalOpts, *CtxImpl, Adjuster);
+          IsAllValid &=
+              formatSourceAndPrepareToRelease(GlobalOpts, *CtxImpl, Adjuster);
 #endif
-        TfmCtx->release(Adjuster);
+        if (IsAllValid)
+          TfmCtx->release(Adjuster);
       } else {
         M.getContext().emitError(
             "cannot transform " + CU->getFilename() +
