@@ -146,7 +146,7 @@ public:
       !(**CanonItr).getLoop())
       return false;
     dbgs() << "Canonical loop\n";
-    // TODO: see ParallelLoop.cpp, probably I should use for_each_loop instead.
+    // TODO: See ParallelLoop.cpp, probably I should use for_each_loop instead.
     MDNode* LoopID = L->getLoopID();
     if (!LoopID || !(LoopID = mGetLoopID(LoopID))) {
       dbgs() << "Ignore loop without ID";
@@ -175,7 +175,9 @@ public:
       if (!DIMTraitItr->is_any<trait::Flow, trait::Anti>())
         continue;
       auto* DINode = DIMem->getAliasNode();
+      // TODO: For now I consider the only block in the loop
       for (auto BB = L->block_begin(); BB != L->block_end(); ++BB) {
+        // Get all reads and writes of memory leading to dependencies
         std::vector<Instruction*> Reads, Writes;
         for_each_memory(**BB, *mTLI, [this, DINode, &Reads, &Writes](Instruction& I,
           MemoryLocation&& Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
@@ -190,18 +192,18 @@ public:
           dbgs() << "Instruction\n";
           if (W != AccessInfo::No) {
             Writes.push_back(&I);
-            dbgs() << "Write\n";
           }
           if (R != AccessInfo::No) {
             Reads.push_back(&I);
-            dbgs() << "Read\n";
           }
         }, [](Instruction& I, AccessInfo, AccessInfo W) {
-          // TODO: fill in
+          // TODO: Fill in
         });
+        // Try to get write instructions after which should be split
+        std::set<Instruction*> Splits(Writes.begin(), Writes.end());
         for (auto Write = Writes.begin(); Write != Writes.end(); ++Write) {
           for (auto Read = Reads.begin(); Read != Reads.end(); ++Read) {
-            // TODO: probably true instead of false
+            // TODO: Probably true instead of false
             auto Dep = mDepInfo->depends(mGetInstruction(*Write),
                 mGetInstruction(*Read), false);
             if (!Dep) continue;
@@ -211,25 +213,42 @@ public:
               dbgs() << "Ignore loop independent dependence\n";
               continue;
             }
+            // Get direction of the dependency
+            bool Flow = false, Anti = false;
             if (Dir == tsar_impl::Dependence::DVEntry::ALL) {
-              dbgs() << "Flow and anti\n";
+              Flow = true;
+              Anti = true;
             }
             else if (Dep.get()->isFlow())
               if (Dir == tsar_impl::Dependence::DVEntry::LT ||
                   Dir == tsar_impl::Dependence::DVEntry::LE) {
-                dbgs() << "Flow\n";
+                Flow = true;
               } else {
-                dbgs() << "Anti\n";
+                Anti = true;
               }
             else if (Dep.get()->isAnti())
               if (Dir == tsar_impl::Dependence::DVEntry::LT ||
                   Dir == tsar_impl::Dependence::DVEntry::LE) {
-                dbgs() << "Anti\n";
+                Anti = true;
               }
               else {
-                dbgs() << "Flow\n";
+                Flow = true;
               }
+            bool WriteBeforeRead = (**Write).comesBefore(*Read);
+            // If this is bad instructions dependency, can't split between them
+            if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) continue;
+            // TODO: More effective version of this algo
+            for (auto Split = Writes.begin(); *Split != *Write; ++Split) {
+              if (!Splits.count(*Split)) continue;
+              if ((**Split).comesBefore(*Write) && (**Read).comesBefore(*Split)
+                || (**Split).comesBefore(*Read) && (**Write).comesBefore(*Split)) {
+                Splits.erase(*Split);
+              }
+            }
           }
+        }
+        for (auto Split = Splits.begin(); Split != Splits.end(); ++Split) {
+          (**Split).dump();
         }
       }
       //auto *Alias = DIMem.getAliasNode();
