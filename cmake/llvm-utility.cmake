@@ -13,6 +13,8 @@ macro(sapfor_install_llvm)
     add_dependencies(CLANG_BUILD clang)
     install(PROGRAMS $<TARGET_FILE:clang> ${CLANG_LINKS_TO_INSTALL}
       DESTINATION bin)
+    install(DIRECTORY ${LLVM_BINARY_DIR}/$<CONFIG>/lib/clang DESTINATION lib
+      FILES_MATCHING PATTERN *.h)
   endif()
   if(BUILD_FLANG)
     add_custom_target(FLANG_BUILD ALL)
