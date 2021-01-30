@@ -33,11 +33,16 @@ function(tsar_test)
   set(OPTION_LIST --total-time --failed f -s)
   set(PLUGIN_LIST -I ${PTS_PLUGIN_PATH})
   if (WIN32)
-    set(TT_PLATFORM "WINDOWS")
+    set(TT_PLATFORM "win")
   else()
-    set(TT_PLATFORM "NOT_WINDOWS")
+    set(TT_PLATFORM "uni")
   endif()
-  set(TASK_CONFIG -T . -T ${PTS_SETENV_PATH} setenv:tsar=$<TARGET_FILE:tsar>,platform=${TT_PLATFORM} parallel)
+  set(TASK_CONFIG -T . -T ${PTS_SETENV_PATH} setenv:tsar=$<TARGET_FILE:tsar>,platform=${TT_PLATFORM})
+  set(TASK_CONFIG "${TASK_CONFIG},include=${CLANG_INCLUDE_DIR},clang=${CLANG_EXECUTABLE}")
+
+  if (EXISTS "${DVM_SCRIPT_PATH}")
+    set(TASK_CONFIG "${TASK_CONFIG},dvm=${DVM_SCRIPT_PATH}")
+  endif()
 
   add_custom_target(${TT_TEST_TARGET}
     COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} check

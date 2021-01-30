@@ -14,6 +14,9 @@ sub on_prepare {
   return if !$tsar;
 
   my $platform = $task->get_var('', 'platform');
+  my $clang= $task->get_var('', 'clang');
+  my $include = $task->get_var('', 'include');
+  my $dvm = $task->get_var('', 'dvm', '');
 
   for (my $i = $$pind + 1; $i < @$all_tasks; $i++) {
     my $t = $all_tasks->[$i];
@@ -21,6 +24,9 @@ sub on_prepare {
     next if $t->plugin ne 'TsarPlugin';
     my $new_id = $t->id.($t->id->args ? ',' : ':')."tsar=$tsar";
     $new_id .= ",platform=$platform" if $platform;
+    $new_id .= ",clang=$clang" if $clang;
+    $new_id .= ",include=$include" if $include;
+    $new_id .= ",dvm=$dvm" if $dvm;
     $all_tasks->[$i] = $db->new_task($new_id);
   }
 }

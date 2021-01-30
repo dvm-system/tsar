@@ -1,3 +1,4 @@
+parallel
 private_1
 private_2.safe
 private_3
@@ -105,3 +106,4 @@ interproc_11
 Jacobi
 Jacobi.func
 Adi.func
+end_parallel
