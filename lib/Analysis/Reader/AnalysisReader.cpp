@@ -89,6 +89,9 @@ using TraitT = bcl::tagged_tuple<
     Optional<trait::json_::LoopImpl::WriteOccurred::ValueType::const_iterator>,
       trait::WriteOccurred>,
   bcl::tagged<
+    Optional<trait::json_::LoopImpl::ReadOccurred::ValueType::const_iterator>,
+      trait::ReadOccurred>,
+  bcl::tagged<
     Optional<trait::json_::LoopImpl::Output::ValueType::const_iterator>,
       trait::Output>,
   bcl::tagged<
@@ -232,6 +235,7 @@ TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
   addToCache<trait::Private>(trait::Loop::Private, Info, L, Res);
   addToCache<trait::UseAfterLoop>(trait::Loop::UseAfterLoop, Info, L, Res);
   addToCache<trait::WriteOccurred>(trait::Loop::WriteOccurred, Info, L, Res);
+  addToCache<trait::ReadOccurred>(trait::Loop::ReadOccurred, Info, L, Res);
   addToCache<trait::Output>(trait::Loop::Output, Info, L, Res);
   addToCache<trait::Anti>(trait::Loop::Anti, Info, L, Res);
   addToCache<trait::Flow>(trait::Loop::Flow, Info, L, Res);
