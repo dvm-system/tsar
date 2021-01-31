@@ -129,9 +129,10 @@ struct IsOnlyImpl<bcl::tagged_tuple_size<TraitT>::value, Tags...> {
 
 template<std::size_t Idx, class... Tags> struct IsOnlyAnyOfImpl {
   static bool is(const TraitT &Traits) {
+    // We have to only check that traits except Tags... are not set.
     if (bcl::is_contained<typename bcl::tagged_tuple_tag<Idx, TraitT>::type,
                           Tags...>::value)
-      return IsOnlyImpl<Idx + 1, Tags...>::is(Traits);
+      return IsOnlyAnyOfImpl<Idx + 1, Tags...>::is(Traits);
     return !std::get<Idx>(Traits) &&
       IsOnlyAnyOfImpl<Idx + 1, Tags...>::is(Traits);
   }
