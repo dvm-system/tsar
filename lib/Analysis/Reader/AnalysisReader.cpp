@@ -31,7 +31,9 @@
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
+#include "tsar/Unparse/SourceUnparserUtils.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
@@ -379,6 +381,9 @@ void AnalysisReader::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 bool AnalysisReader::runOnFunction(Function &F) {
+  auto DWLang = getLanguage(F);
+  if (!DWLang)
+    return false;
   if (mDataFile.empty()) {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
     if (!GO.AnalysisUse.empty())
@@ -447,28 +452,39 @@ bool AnalysisReader::runOnFunction(Function &F) {
       auto *DIVar = DIEM->getVariable();
       auto *DIExpr = DIEM->getExpression();
       assert(DIVar && DIExpr && "Invalid memory location!");
-      if (DIExpr->getNumElements() > 1)
-        continue;
-      if (DIExpr->getNumElements() == 1 && !DIExpr->startsWithDeref())
-        continue;
       VariableT Var;
       SmallVector<DebugLoc, 1> DbgLocs;
       DIEM->getDebugLoc(DbgLocs);
-      if (DbgLocs.size() > 1)
-        continue;
+      DILocation *DefinitionLoc = nullptr;
       if (DbgLocs.empty()) {
         // Column may be omitted for global variables only, because there are
         // no more than one variable with the same name in a global scope.
         if (!isa<DIGlobalVariable>(DIVar))
           continue;
-        Var.get<Line>() = DIVar->getLine();
-        Var.get<Column>() = 0;
+        DefinitionLoc = DILocation::get(F.getContext(), DIVar->getLine(), 0,
+          DIVar->getScope());
+
+      } else if (DbgLocs.size() > 1) {
+        DefinitionLoc = DbgLocs.front().get();
+        for (auto &DbgLoc : DbgLocs)
+          if (DbgLoc.getLine() < DefinitionLoc->getLine())
+            DefinitionLoc = DbgLoc.get();
+          else if (DbgLoc.getLine() == DefinitionLoc->getLine() &&
+            DbgLoc.getCol() < DefinitionLoc->getColumn())
+            DefinitionLoc = DbgLoc.get();
       } else {
-        Var.get<Line>() = DbgLocs.front().getLine();
-        Var.get<Column>() = DbgLocs.front().getCol();
+        DefinitionLoc = DbgLocs.front().get();
       }
-      Var.get<Identifier>() =
-        ((DIExpr->startsWithDeref() ? "^" : "") + DIVar->getName()).str();
+      Var.get<Line>() = DefinitionLoc->getLine();
+      Var.get<Column>() = DefinitionLoc->getColumn();
+      SmallString<32> LocToString;
+      DIMemoryLocation TmpLoc{ const_cast<DIVariable *>(DIEM->getVariable()),
+                              const_cast<DIExpression *>(DIEM->getExpression()),
+                              DefinitionLoc, DIEM->isTemplate() };
+      if (!unparseToString(*DWLang, TmpLoc, LocToString))
+        continue;
+      std::replace(LocToString.begin(), LocToString.end(), '*', '^');
+      Var.get<Identifier>() = std::string(LocToString);
       sys::fs::UniqueID FileID;
       if (sys::fs::getUniqueID(DIVar->getFilename(), FileID)) {
         LLVM_DEBUG(
