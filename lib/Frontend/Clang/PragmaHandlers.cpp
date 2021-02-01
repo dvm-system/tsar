@@ -161,7 +161,7 @@ void PragmaNamespaceReplacer::HandlePragma(
   mTokenQueue.clear();
   auto NamespaceLoc = FirstToken.getLocation();
   PP.LexUnexpandedToken(FirstToken);
-  StringRef DirectiveName = FirstToken.getIdentifierInfo()->getName();
+  StringRef DirectiveName;
   if (FirstToken.is(tok::identifier)) {
     DirectiveName = FirstToken.getIdentifierInfo()->getName();
   } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
