@@ -206,16 +206,23 @@ void PragmaReplacer::HandlePragma(ExternalPreprocessor &PP,
   AddToken(tok::l_brace, DirectiveLoc, 1, getReplacement());
   AddStringToken(getName(), DirectiveLoc, PP, getReplacement());
   AddToken(tok::semi, DirectiveLoc, 1, getReplacement());
-  PP.Lex(FirstToken);
+  // To represent the directive body a clause with empty name is used.
+  // So do not read clause name if a directive has a body.
+  bool HandleDirectiveBody = hasBody(mDirectiveId);
+  if (!HandleDirectiveBody)
+    PP.Lex(FirstToken);
   while (FirstToken.isNot(tok::eod)) {
     StringRef ClauseName;
-    if (FirstToken.is(tok::identifier)) {
-      ClauseName = FirstToken.getIdentifierInfo()->getName();
-    } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
-      ClauseName = KW;
-    } else {
-      PP.Diag(FirstToken, clang::diag::err_expected) << "name of clause";
-      return;
+    if (!HandleDirectiveBody) {
+      if (FirstToken.is(tok::identifier)) {
+        ClauseName = FirstToken.getIdentifierInfo()->getName();
+      } else if (auto *KW = tok::getKeywordSpelling(FirstToken.getKind())) {
+        ClauseName = KW;
+      } else {
+        PP.Diag(FirstToken, clang::diag::err_expected) << "name of clause";
+        return;
+      }
+      HandleDirectiveBody = false;
     }
     ClauseId Id;
     if (!getTsarClause(mDirectiveId, ClauseName, Id)) {

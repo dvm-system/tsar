@@ -89,7 +89,8 @@ def Spf : Namespace<"spf">;
 def Dvm : Namespace<"dvm">;
 
 // Define one directive which may contain multiple clauses.
-class Directive<string name, Namespace parent = Spf> {
+class Directive<string name, Namespace parent = Spf, bit has_body = 0> {
+  bit HasBody = has_body;
   string Name = name;
   Namespace Parent = parent;
 }

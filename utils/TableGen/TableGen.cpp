@@ -85,11 +85,17 @@ void GenNamespaceIdList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "#endif\n\n";
 }
 
-void GenDirectiveIdList(raw_ostream &OS, RecordKeeper &Records) {
-  OS << "// Enum values for Directive IDs\n";
-  OS << "#ifdef GET_DIRECTIVE_ENUM_VALUES\n";
+void GenDirectiveList(raw_ostream &OS, RecordKeeper &Records) {
+  OS << "// List of directives\n";
+  OS << "// #define DIRECTIVE(ID, Name, HasBody) ... \n";
+  OS << "#ifdef GET_DIRECTIVE_LIST\n";
   for (Record *Rec : Records.getAllDerivedDefinitions("Directive")) {
-    OS << "  " << Rec->getName() << ",";
+    OS << "  DIRECTIVE(";
+    OS << Rec->getName();
+    OS << ",  \"";
+    OS.write_escaped(Rec->getValueAsString("Name")) << "\"";
+    OS << ", " << (Rec->getValueAsBit("HasBody") ? "true" : "false");
+    OS << ")";
     Record *Parent = Rec->getValueAsDef("Parent");
     OS << "                // " << Parent->getValueAsString("Name") << " ";
     OS << Rec->getValueAsString("Name") << "\n";
@@ -155,17 +161,6 @@ void GenNamespaceNameList(raw_ostream &OS, RecordKeeper &Records) {
   OS << "#ifdef GET_NAMESPACE_NAME_TABLE\n";
   OS << "// Note that entry #0 is the invalid namespace!\n";
   for (Record *Rec : Records.getAllDerivedDefinitions("Namespace")) {
-    OS << "  \"";
-    OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
-  }
-  OS << "#endif\n\n";
-}
-
-void GenDirectiveNameList(raw_ostream &OS, RecordKeeper &Records) {
-  OS << "// Directive ID to name table\n";
-  OS << "#ifdef GET_DIRECTIVE_NAME_TABLE\n";
-  OS << "// Note that entry #0 is the invalid directive!\n";
-  for (Record *Rec : Records.getAllDerivedDefinitions("Directive")) {
     OS << "  \"";
     OS.write_escaped(Rec->getValueAsString("Name")) << "\",\n";
   }
@@ -326,10 +321,9 @@ bool LLVMTableGenMain(raw_ostream &OS, RecordKeeper &Records) {
   case GenTSARDirectivesDefs:
     GenExprKindList(OS, Records);
     GenNamespaceIdList(OS, Records);
-    GenDirectiveIdList(OS, Records);
+    GenDirectiveList(OS, Records);
     GenClauseIdList(OS, Records);
     GenNamespaceNameList(OS, Records);
-    GenDirectiveNameList(OS, Records);
     GenClauseNameList(OS, Records);
     GenClauseDirectiveList(OS, Records);
     GenDirectiveNamespaceList(OS, Records);
