@@ -15,6 +15,7 @@ function(tsar_test)
   set(TT_TEST_TARGET Test${TT_TARGET})
   set(TT_INIT_TARGET Init${TT_TARGET})
   set(TT_FAIL_TARGET Fail${TT_TARGET})
+  set(TT_CLEAN_TARGET Clean${TT_TARGET})
 
   if(NOT PERL_FOUND OR NOT EXISTS "${PTS_EXECUTABLE}")
     return()
@@ -24,10 +25,12 @@ function(tsar_test)
     set(TT_MESSAGE "Testing...")
     set(TT_INIT_MESSAGE "Initialization of tests...")
     set(TT_FAIL_MESSAGE "Running of skipped tests...")
+    set(TT_CLEAN_MESSAGE "Cleaning of test results...")
   else()
     set(TT_MESSAGE "Testing '${TT_PASSNAME}' pass...")
     set(TT_INIT_MESSAGE "Initialization of tests for '${TT_PASSNAME}' pass...")
     set(TT_FAIL_MESSAGE "Running of skipped tests for ${TT_PASSNAME}' pass...")
+    set(TT_CLEAN_MESSAGE "Cleaning of test results for ${TT_PASSNAME}' pass...")
   endif()
 
   set(OPTION_LIST --total-time --failed f -s)
@@ -37,7 +40,7 @@ function(tsar_test)
   else()
     set(TT_PLATFORM "uni")
   endif()
-  set(TASK_CONFIG -T . -T ${PTS_SETENV_PATH} setenv:tsar=$<TARGET_FILE:tsar>,platform=${TT_PLATFORM})
+  set(TASK_CONFIG -T ${PTS_SETENV_PATH} setenv:tsar=$<TARGET_FILE:tsar>,platform=${TT_PLATFORM})
   set(TASK_CONFIG "${TASK_CONFIG},include=${CLANG_INCLUDE_DIR},clang=${CLANG_EXECUTABLE}")
 
   if (EXISTS "${DVM_SCRIPT_PATH}")
@@ -45,7 +48,7 @@ function(tsar_test)
   endif()
 
   add_custom_target(${TT_TEST_TARGET}
-    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} check
+    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} ./check
     COMMENT ${TT_MESSAGE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
@@ -55,7 +58,7 @@ function(tsar_test)
   add_dependencies(${TT_TEST_TARGET} tsar)
 
   add_custom_target(${TT_INIT_TARGET}
-    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} init
+    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} ./init
     COMMENT ${TT_INIT_MESSAGE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
@@ -65,7 +68,7 @@ function(tsar_test)
   add_dependencies(${TT_INIT_TARGET} tsar)
 
   add_custom_target(${TT_FAIL_TARGET}
-    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} fail
+    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} ./fail
     COMMENT ${TT_FAIL_MESSAGE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
@@ -73,6 +76,16 @@ function(tsar_test)
   set_target_properties(${TT_FAIL_TARGET} PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD ON)
   set_property(GLOBAL APPEND PROPERTY TSAR_TEST_FAIL_TARGETS ${TT_FAIL_TARGET})
   add_dependencies(${TT_FAIL_TARGET} tsar)
+
+  add_custom_target(${TT_CLEAN_TARGET}
+    COMMAND ${PERL_EXECUTABLE} ${PTS_EXECUTABLE} ${OPTION_LIST} ${PLUGIN_LIST} ${TASK_CONFIG} clean ./init ./check ./fail
+    COMMENT ${TT_CLEAN_MESSAGE}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  set_target_properties(${TT_CLEAN_TARGET} PROPERTIES FOLDER "Tsar testing")
+  set_target_properties(${TT_CLEAN_TARGET} PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD ON)
+  set_property(GLOBAL APPEND PROPERTY TSAR_TEST_CLEAN_TARGETS ${TT_CLEAN_TARGET})
+  add_dependencies(${TT_CLEAN_TARGET} tsar)
 
   include(CTest)
 
