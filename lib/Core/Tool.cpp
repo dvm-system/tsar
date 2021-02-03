@@ -129,6 +129,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoCaretDiagnostics;
   llvm::cl::opt<bool> ShowSourceLocation;
   llvm::cl::opt<bool> NoShowSourceLocation;
+  llvm::cl::list<std::string> EnableWarnings;
   llvm::cl::opt<std::string> BuildPath;
   llvm::cl::alias BuildPathA;
 
@@ -221,6 +222,8 @@ Options::Options() :
     cl::desc("Print source file/line/column information in diagnostic")),
   NoShowSourceLocation("fno-show-source-location", cl::cat(CompileCategory),
     cl::desc("Do not print source file/line/column information in diagnostic.")),
+  EnableWarnings("W", cl::cat(CompileCategory), cl::value_desc("warning"),
+    cl::desc("Enable the specified warning"), cl::Prefix),
   BuildPath("build-path", cl::desc("Starting point to look up for compilation database in upward direction"),
     cl::cat(CompileCategory)),
   BuildPathA("p", cl::aliasopt(BuildPath), cl::desc("Alias for -build-path")),
@@ -488,7 +491,8 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-fstandalone-debug");
   mCommandLine.emplace_back("-gcolumn-info");
-  mCommandLine.emplace_back("-Wunknown-pragmas");
+  for (auto &Warning : Options::get().EnableWarnings)
+    mCommandLine.push_back("-W" + Warning);
   if (Options::get().CaretDiagnostics)
     mCommandLine.emplace_back("-fcaret-diagnostics");
   if (Options::get().NoCaretDiagnostics)
