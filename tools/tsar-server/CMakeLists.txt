@@ -55,4 +55,4 @@ set_target_properties(tsar-server PROPERTIES
 set_target_properties(tsar-server PROPERTIES
   INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 
-install(TARGETS tsar-server DESTINATION bin)
+install(TARGETS tsar-server EXPORT TSARExports RUNTIME DESTINATION bin)

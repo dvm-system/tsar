@@ -11,6 +11,11 @@ if(SAPFOR_VERSION)
   set(TSAR_VERSION_MINOR ${SAPFOR_VERSION_MINOR})
   set(TSAR_VERSION_PATCH ${SAPFOR_VERSION_PATCH})
   set(TSAR_VERSION_SUFFIX ${SAPFOR_VERSION_SUFFIX})
+
+  set(PROJECT_VERSION ${TSAR_VERSION})
+  set(PROJECT_VERSION_MAJOR ${TSAR_VERSION_MAJOR})
+  set(PROJECT_VERSION_MINOR ${TSAR_VERSION_MINOR})
+  set(PROJECT_VERSION_PATCH ${TSAR_VERSION_PATCH})
 endif()
 
 option(TSAR_DIRTY_BUILD "Do not use commit-based TSAR version string" ON)
@@ -172,6 +177,17 @@ else()
   if (BUILD_FLANG)
     set(FLANG_FOUND ON)
   endif()
+  set(TSAR_INCLUDE_PATH "lib/clang/${LLVM_VERSION}/include")
+  add_custom_target(tsar-resource-headers ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_PROPERTY:clang-resource-headers,RUNTIME_OUTPUT_DIRECTORY>"
+                                               "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}"
+    COMMENT "Copy header files to ${TSAR_INCLUDE_PATH}...")
+  add_dependencies(tsar-resource-headers clang-resource-headers)
+  set_target_properties(tsar-resource-headers PROPERTIES
+    FOLDER Misc
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}")
+  install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}
+    DESTINATION ${TSAR_INCLUDE_PATH}/.. FILES_MATCHING PATTERN *.h)
   set(CLANG_INCLUDE_DIR "${LLVM_BINARY_DIR}/$<CONFIG>/lib/clang/${LLVM_VERSION}/include")
   set(CLANG_EXECUTABLE "${LLVM_BINARY_DIR}/$<CONFIG>/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
   sapfor_install_llvm()
@@ -295,9 +311,35 @@ if(BUILD_TESTING)
   enable_testing()
 endif()
 
+foreach(C ${CMAKE_CONFIGURATION_TYPES})
+  string(TOUPPER ${C} SUFFIX)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${SUFFIX} "${CMAKE_CURRENT_BINARY_DIR}/${C}/bin")
+endforeach()
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+
 add_subdirectory(utils/TableGen)
 add_subdirectory(lib tsar)
 add_subdirectory(tools)
 add_subdirectory(test)
 
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
+
+# Build Config-file Package configuration.
+export(EXPORT TSARExports
+  FILE ${CMAKE_CURRENT_BINARY_DIR}/TSARExports.cmake NAMESPACE TSAR::)
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake"
+  COMPATIBILITY AnyNewerVersion)
+
+get_property(TSAR_LLVM_TOOLS GLOBAL PROPERTY TSAR_LLVM_TOOLS)
+
+configure_file(cmake/TSARConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake @ONLY)
+
+install(EXPORT TSARExports
+  FILE TSARExports.cmake NAMESPACE TSAR:: DESTINATION lib/cmake/tsar)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake
+  DESTINATION lib/cmake/tsar)
