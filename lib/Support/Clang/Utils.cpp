@@ -183,8 +183,8 @@ bool tsar::getRawTokenAfter(SourceLocation Loc, const SourceManager &SM,
 
 ExternalRewriter::ExternalRewriter(SourceRange SR, const SourceManager &SM,
     const LangOptions &LangOpts) : mSR(SR), mSM(SM), mLangOpts(LangOpts) {
-  mBuffer =
-      Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM, LangOpts);
+  mBuffer = std::string{
+      Lexer::getSourceText(CharSourceRange::getTokenRange(SR), SM, LangOpts)};
   mMapping.resize(2 * mBuffer.size());
   std::size_t OrigIdx = 0;
   for (auto I = mMapping.begin(), EI = mMapping.end(); I != EI; I += 2) {
