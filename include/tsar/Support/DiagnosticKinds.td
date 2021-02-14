@@ -180,11 +180,11 @@ def error_expect_function_param : Error<"expected function parameter name">;
 def note_record_member_unknown: Error<"record has no member '%0'">;
 def note_declared_here: Note<"declared here">;
 
-def warn_loop_swapping_diff_reduction: Warning<"unable to swap loops due to the different reduction kinds">;
-def warn_loop_swapping_unknown_reduction: Warning<"unable to swap loops due to unknown reduction kind">;
-def warn_loop_swapping_true_dependence: Warning<"unable to swap loops due to the true dependence">;
-def warn_loop_swapping_anti_dependence: Warning<"unable to swap loops due to the anti dependence">;
-def warn_loop_swapping_output_dependence: Warning<"unable to swap loops due to the output dependence">;
+def warn_loop_swapping_diff_reduction: Warning<"unable to swap loops due to different reduction kinds of variable '%0' declared at %1">;
+def warn_loop_swapping_unknown_reduction: Warning<"unable to swap loops due to unknown reduction kind of variable '%0' declared at %1">;
+def warn_loop_swapping_true_dependence: Warning<"unable to swap loops due to the true dependence of variable '%0' declared at %1">;
+def warn_loop_swapping_anti_dependence: Warning<"unable to swap loops due to the anti dependence of variable '%0' declared at %1">;
+def warn_loop_swapping_output_dependence: Warning<"unable to swap loops due to the output dependence of variable '%0' declared at %1">;
 def warn_loop_swapping_missing_loop: Warning<"not enough loops for swapping">;
 def warn_loop_swapping_redundant_loop: Warning<"too many loops for swapping, ignore redundant">;
 def warn_loop_swapping_no_loop_id: Warning<"cannot find loop ID to perform swapping">;

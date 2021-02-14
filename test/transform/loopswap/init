@@ -1,0 +1,15 @@
+loopswap_anti_1: action=init
+loopswap_true_1: action=init
+loopswap_diff_reduction_1: action=init
+loopswap_output_1: action=init
+loopswap_independent_1: action=init
+loopswap_same_reduction_1: action=init
+loopswap_missing_loop_1: action=init
+loopswap_redundant_loop_1: action=init
+loopswap_expect_compound_1: action=init
+loopswap_redundant_stmt_1: action=init
+loopswap_no_braces: action=init
+loopswap_private_fake: action=init
+loopswap_private: action=init
+loopswap_pragma_cascade: action=init
+loopswap_diff_cascade: action=init
