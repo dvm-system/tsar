@@ -356,12 +356,7 @@ public:
     auto InsertItr = I->second.begin();
     for (auto EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Loc)) >= 0 &&
-          MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getUpperBound(Loc)) <= 0) {
+      if (MemoryInfo::areJoinable(Curr, Loc)) {
         bool isChanged = true;
         if (MemoryInfo::getAATags(Curr) != MemoryInfo::getAATags(Loc))
           if (MemoryInfo::getAATags(Curr) ==
@@ -372,25 +367,16 @@ public:
               llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey(), Curr);
         else
           isChanged = false;
-        if (MemoryInfo::sizecmp(
-                MemoryInfo::getUpperBound(Curr),
-                MemoryInfo::getUpperBound(Loc)) < 0) {
-          MemoryInfo::setUpperBound(MemoryInfo::getUpperBound(Loc), Curr);
-          isChanged = true;
-        }
-        if (MemoryInfo::sizecmp(
-                MemoryInfo::getLowerBound(Curr),
-                MemoryInfo::getLowerBound(Loc)) > 0) {
-          MemoryInfo::setLowerBound(MemoryInfo::getLowerBound(Loc), Curr);
-          isChanged = true;
-        }
+        isChanged = MemoryInfo::join(Curr, Loc);
         return std::make_pair(iterator(I, Idx), isChanged);
       }
-      if (MemoryInfo::sizecmp(
+      if (MemoryInfo::getNumDims(Loc) == 0 && MemoryInfo::sizecmp(
               MemoryInfo::getLowerBound(*InsertItr),
               MemoryInfo::getLowerBound(Loc)) <= 0)
         ++InsertItr;
     }
+    if (MemoryInfo::getNumDims(Loc) > 0)
+      InsertItr = I->second.end();
     I->second.insert(InsertItr, Loc);
     return std::make_pair(iterator(I, Idx), true);
   }

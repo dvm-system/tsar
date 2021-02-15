@@ -194,9 +194,23 @@ namespace MemoryLocationRangeEquation {
     std::vector<std::pair<std::string, ValueT>> Variables;
   };
 
+  struct RangeTriplet {
+    bool IsEmpty;
+    MemoryLocationRange LeftRange;
+    MemoryLocationRange Intersection;
+    MemoryLocationRange RightRange;
+    RangeTriplet() : IsEmpty(true) {}
+    RangeTriplet(bool IsEmpty, const MemoryLocationRange &LR,
+        const MemoryLocationRange &CR, const MemoryLocationRange &RR) :
+        IsEmpty(IsEmpty), LeftRange(LR), Intersection(CR), RightRange(RR) {}
+    RangeTriplet(bool IsEmpty, const MemoryLocationRange &Sample) :
+        IsEmpty(IsEmpty), LeftRange(Sample), Intersection(Sample),
+        RightRange(Sample) {}
+  };
+
   /// Returns an intersection between two locations. If intersection is empty,
   /// return default MemoryLocationRange. 
-  MemoryLocationRange intersect(const MemoryLocationRange &LHS,
+  RangeTriplet intersect(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
     // TODO : check scalars
     typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
@@ -204,11 +218,10 @@ namespace MemoryLocationRangeEquation {
     typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
     typedef std::pair<ValueT, ValueT> VarRange;
     if (LHS.Ptr != RHS.Ptr || LHS.DimList.size() != RHS.DimList.size()) {
-      return MemoryLocationRange();
+      return RangeTriplet();
     }
     bool Intersected = true;
-    MemoryLocationRange ResultRange(LHS);
-    ResultRange.DimList.resize(LHS.DimList.size());
+    RangeTriplet ResultTriplet(false, LHS);
     for (size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -222,7 +235,7 @@ namespace MemoryLocationRangeEquation {
       VarRange XRange(0, Left.MaxIter), YRange(0, Right.MaxIter);
       ValueT PxMin = K1 * XRange.first + L1, PxMax = K1 * XRange.second + L1;
       ValueT PyMin = K2 * YRange.first + L2, PyMax = K2 * YRange.second + L2;
-      if (PxMax <= PyMin || PxMin >= PyMax) {
+      if (PxMax < PyMin || PxMin > PyMax) {
         Intersected = false;
         break;
       }
@@ -253,12 +266,35 @@ namespace MemoryLocationRangeEquation {
       ValueT Start = (K2 * A + L1) + Step * Shift;
       assert(Start >= 0 && "Start must be non-negative!");
       assert(Step >= 0 && "Step must be non-negative!");
-      ResultRange.DimList[I].Start = Start;
-      ResultRange.DimList[I].Step = Step;
-      ResultRange.DimList[I].MaxIter = Tmax;
-      ResultRange.DimList[I].DimSize = Left.DimSize;
+      auto &Intersection = ResultTriplet.Intersection.DimList[I];
+      auto &LeftRange = ResultTriplet.LeftRange.DimList[I];
+      auto &RightRange = ResultTriplet.RightRange.DimList[I];
+      Intersection.Start = Start;
+      Intersection.Step = Step;
+      Intersection.MaxIter = Tmax;
+      Intersection.DimSize = Left.DimSize;
+      LeftRange = Left;
+      LeftRange.MaxIter = Left.Start < Right.Start ?
+          (Start - Left.Start) / Left.Step :
+          (Start - Right.Start) / Right.Step;
+      RightRange = Right;
+      auto LeftEnd = Left.Start + Left.Step * Left.MaxIter;
+      auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
+      auto IntLastElem = Start + Step * Tmax;
+      if (LeftEnd > RightEnd && IntLastElem < LeftEnd) {
+        RightRange.Start = IntLastElem + Left.Step;
+        RightRange.MaxIter = std::ceil((LeftEnd - RightRange.Start + 1) /
+            double(Left.Step));
+      } else if (RightEnd >= LeftEnd && IntLastElem < RightEnd) {
+        RightRange.Start = IntLastElem + Right.Step;
+        RightRange.MaxIter = std::ceil((RightEnd - RightRange.Start + 1) /
+            double(Right.Step));
+      } else {
+        RightRange.Start = IntLastElem + Right.Step;
+        RightRange.MaxIter = 0;
+      }
     }
-    return Intersected ? ResultRange : MemoryLocationRange();
+    return Intersected ? ResultTriplet : RangeTriplet();
   }
 }
 }

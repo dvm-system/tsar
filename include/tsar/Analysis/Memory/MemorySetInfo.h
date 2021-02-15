@@ -115,6 +115,28 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
   static inline llvm::MemoryLocation make(const llvm::MemoryLocation &Loc) {
     return llvm::MemoryLocation(Loc);
   }
+  static inline uint64_t getNumDims(
+      const llvm::MemoryLocation &Loc) noexcept {
+    return 0;
+  }
+  static inline bool areJoinable(
+      const llvm::MemoryLocation &LHS, const llvm::MemoryLocation &RHS) {
+    return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
+        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
+  }
+  static inline bool join(llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS) {
+    bool isChanged = false;
+    if (sizecmp(getUpperBound(LHS), getUpperBound(RHS)) < 0) {
+      setUpperBound(getUpperBound(RHS), LHS);
+      isChanged = true;
+    }
+    if (sizecmp(getLowerBound(LHS), getLowerBound(RHS)) > 0) {
+      setLowerBound(getLowerBound(RHS), LHS);
+      isChanged = true;
+    }
+    return isChanged;
+  }
 };
 
 /// Provide specialization of MemorySetInfo for tsar::MemoryLocationRange
@@ -156,6 +178,82 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline MemoryLocationRange make(const MemoryLocationRange &Loc) {
     return MemoryLocationRange(Loc);
+  }
+  static inline uint64_t getNumDims(
+      const MemoryLocationRange &Loc) noexcept {
+    return Loc.DimList.size();
+  }
+  /*static inline bool areJoinable(
+      const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
+    if (LHS.DimList.size() != RHS.DimList.size())
+      return false;
+    if (LHS.DimList.size() == 0) {
+      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
+        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
+    }
+    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
+      auto &Left = LHS.DimList[I];
+      auto &Right = RHS.DimList[I];
+      uint64_t L1 = Left.Start, K1 = Left.Step;
+      uint64_t L2 = Right.Start, K2 = Right.Step;
+      if (K1 * Left.MaxIter + L1 <= L2 || L1 >= K2 * Right.MaxIter + L2)
+        return false;
+    }
+    return true;
+  }*/
+  static inline bool areJoinable(
+      const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
+    if (LHS.DimList.size() != RHS.DimList.size())
+      return false;
+    if (LHS.DimList.size() == 0) {
+      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
+        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
+    }
+    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
+      auto &Left = LHS.DimList[I];
+      auto &Right = RHS.DimList[I];
+      auto LeftEnd = Left.Start + Left.Step * Left.MaxIter;
+      auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
+      if (Left.Step != Right.Step ||
+          (Left.Start - Right.Start) % Left.Step != 0 ||
+          !(LeftEnd < Right.Start && (Right.Start - LeftEnd) == Left.Step) ||
+          !(RightEnd < Left.Start && (Left.Start - RightEnd) == Left.Step))
+        return false;
+    }
+    return true;
+  }
+  static inline bool join(MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS) {
+    if (LHS.DimList.size() != LHS.DimList.size())
+      return false;
+    if (LHS.DimList.size() == 0) {
+      if (sizecmp(getUpperBound(LHS), getUpperBound(RHS)) < 0) {
+        setUpperBound(getUpperBound(RHS), LHS);
+        return true;
+      }
+      if (sizecmp(getLowerBound(LHS), getLowerBound(RHS)) > 0) {
+        setLowerBound(getLowerBound(RHS), LHS);
+        return true;
+      }
+      return false;
+    }
+    bool isChanged = false;
+    for (size_t I = 0; I < LHS.DimList.size(); I++) {
+      auto &To = LHS.DimList[I];
+      auto &From = RHS.DimList[I];
+      if (From.Start < To.Start) {
+        To.MaxIter += (To.Start - From.Start) / From.Step;
+        To.Start = From.Start;
+        isChanged = true;
+      }
+      auto ToEnd = To.Start + To.Step * To.MaxIter;
+      auto FromEnd = From.Start + From.Step * From.MaxIter;
+      if (FromEnd > ToEnd) {
+        To.MaxIter += (FromEnd - ToEnd) / From.Step;
+        isChanged = true;
+      }
+    }
+    return isChanged;
   }
 };
 }
