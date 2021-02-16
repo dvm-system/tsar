@@ -195,22 +195,22 @@ namespace MemoryLocationRangeEquation {
   };
 
   struct RangeTriplet {
-    bool IsEmpty;
     MemoryLocationRange LeftRange;
     MemoryLocationRange Intersection;
     MemoryLocationRange RightRange;
-    RangeTriplet() : IsEmpty(true) {}
-    RangeTriplet(bool IsEmpty, const MemoryLocationRange &LR,
+    RangeTriplet() {}
+    RangeTriplet(const MemoryLocationRange &LR,
         const MemoryLocationRange &CR, const MemoryLocationRange &RR) :
-        IsEmpty(IsEmpty), LeftRange(LR), Intersection(CR), RightRange(RR) {}
-    RangeTriplet(bool IsEmpty, const MemoryLocationRange &Sample) :
-        IsEmpty(IsEmpty), LeftRange(Sample), Intersection(Sample),
+        LeftRange(LR), Intersection(CR), RightRange(RR) {}
+    RangeTriplet(const MemoryLocationRange &Sample) :
+        LeftRange(Sample), Intersection(Sample),
         RightRange(Sample) {}
+    bool isEmpty() { return Intersection.Ptr == nullptr; }
   };
 
   /// Returns an intersection between two locations. If intersection is empty,
   /// return default MemoryLocationRange. 
-  RangeTriplet intersect(const MemoryLocationRange &LHS,
+  inline RangeTriplet intersect(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
     // TODO : check scalars
     typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
@@ -221,7 +221,7 @@ namespace MemoryLocationRangeEquation {
       return RangeTriplet();
     }
     bool Intersected = true;
-    RangeTriplet ResultTriplet(false, LHS);
+    RangeTriplet ResultTriplet(LHS);
     for (size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -273,10 +273,13 @@ namespace MemoryLocationRangeEquation {
       Intersection.Step = Step;
       Intersection.MaxIter = Tmax;
       Intersection.DimSize = Left.DimSize;
+      // TODO: corrent part of remainder
       LeftRange = Left;
       LeftRange.MaxIter = Left.Start < Right.Start ?
           (Start - Left.Start) / Left.Step :
           (Start - Right.Start) / Right.Step;
+      if (LeftRange.Start == RightRange.Start)
+        ResultTriplet.LeftRange.Ptr = nullptr;
       RightRange = Right;
       auto LeftEnd = Left.Start + Left.Step * Left.MaxIter;
       auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
@@ -290,8 +293,7 @@ namespace MemoryLocationRangeEquation {
         RightRange.MaxIter = std::ceil((RightEnd - RightRange.Start + 1) /
             double(Right.Step));
       } else {
-        RightRange.Start = IntLastElem + Right.Step;
-        RightRange.MaxIter = 0;
+        ResultTriplet.RightRange.Ptr = nullptr;
       }
     }
     return Intersected ? ResultTriplet : RangeTriplet();

@@ -700,7 +700,8 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
           getValue().getRawData();
     } else {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
-      break;
+      if (DimensionN != 0)
+        break;
     }
     auto *SE = Fwk.getScalarEvolution();
     //LLVM_DEBUG(SE->print(dbgs()); dbgs() << "\n";);

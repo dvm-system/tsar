@@ -166,6 +166,22 @@ public:
       return make_range(iterator(mLocations.end(), 0),
                         iterator(mLocations.end(), 0));
     auto Tail(Loc);
+    if (MemoryInfo::getNumDims(Loc) > 0) {
+      for (auto &Curr : I->second) {
+        if (MemoryInfo::isEmpty(Tail))
+          return make_range(iterator(mLocations.begin(), 0),
+                            iterator(mLocations.end(), 0));
+        Ty LeftLoc, IntLoc, RightLoc;
+        if (MemoryInfo::getIntersection(Curr, Tail, LeftLoc, IntLoc, RightLoc)){
+          Tail = RightLoc;
+        }
+      }
+      if (MemoryInfo::isEmpty(Tail))
+        return make_range(iterator(mLocations.begin(), 0),
+                          iterator(mLocations.end(), 0));
+      return make_range(iterator(mLocations.end(), 0),
+                        iterator(mLocations.end(), 0));
+    }
     bool KnownStartIdx = false;
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
@@ -199,6 +215,22 @@ public:
       return make_range(const_iterator(mLocations.end(), 0),
                         const_iterator(mLocations.end(), 0));
     auto Tail(Loc);
+    if (MemoryInfo::getNumDims(Loc) > 0) {
+      for (auto &Curr : I->second) {
+        if (MemoryInfo::isEmpty(Tail))
+          return make_range(const_iterator(mLocations.begin(), 0),
+                            const_iterator(mLocations.end(), 0));
+        Ty LeftLoc, IntLoc, RightLoc;
+        if (MemoryInfo::getIntersection(Curr, Tail, LeftLoc, IntLoc, RightLoc)){
+          Tail = RightLoc;
+        }
+      }
+      if (MemoryInfo::isEmpty(Tail))
+        return make_range(const_iterator(mLocations.begin(), 0),
+                          const_iterator(mLocations.end(), 0));
+      return make_range(const_iterator(mLocations.end(), 0),
+                        const_iterator(mLocations.end(), 0));
+    }
     bool KnownStartIdx = false;
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
@@ -237,6 +269,13 @@ public:
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return;
+    if (MemoryInfo::getNumDims(Loc) > 0) {
+      for (auto &Curr : I->second) {
+        if (MemoryInfo::isSubset(Curr, Loc))
+          Locs.push_back(Curr);
+      }
+      return;
+    }
     bool IsEmptyList = true;
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
@@ -294,12 +333,7 @@ public:
       return iterator(mLocations.end(), 0);
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Loc)) > 0 &&
-          MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getUpperBound(Loc)) < 0)
+      if (MemoryInfo::hasIntersection(Curr, Loc))
         return iterator(I, Idx);
     }
     return iterator(mLocations.end(), 0);
@@ -312,12 +346,7 @@ public:
       return const_iterator(mLocations.end(), 0);
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Loc)) > 0 &&
-          MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getUpperBound(Loc)) < 0)
+      if (MemoryInfo::hasIntersection(Curr, Loc))
         return const_iterator(I, Idx);
     }
     return const_iterator(mLocations.end(), 0);

@@ -137,6 +137,23 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     }
     return isChanged;
   }
+  static inline bool hasIntersection(const llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS) {
+    return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
+           sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
+  }
+  static inline bool getIntersection(const llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS, llvm::MemoryLocation &L,
+      llvm::MemoryLocation &I, llvm::MemoryLocation &R) {
+    return false;
+  }
+  static inline bool isSubset(const llvm::MemoryLocation &A,
+      const llvm::MemoryLocation &B) {
+    return false;
+  }
+  static inline bool isEmpty(const llvm::MemoryLocation &Loc) {
+    return Loc.Ptr == nullptr;
+  }
 };
 
 /// Provide specialization of MemorySetInfo for tsar::MemoryLocationRange
@@ -183,24 +200,6 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       const MemoryLocationRange &Loc) noexcept {
     return Loc.DimList.size();
   }
-  /*static inline bool areJoinable(
-      const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
-    if (LHS.DimList.size() != RHS.DimList.size())
-      return false;
-    if (LHS.DimList.size() == 0) {
-      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
-        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
-    }
-    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
-      auto &Left = LHS.DimList[I];
-      auto &Right = RHS.DimList[I];
-      uint64_t L1 = Left.Start, K1 = Left.Step;
-      uint64_t L2 = Right.Start, K2 = Right.Step;
-      if (K1 * Left.MaxIter + L1 <= L2 || L1 >= K2 * Right.MaxIter + L2)
-        return false;
-    }
-    return true;
-  }*/
   static inline bool areJoinable(
       const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
     if (LHS.DimList.size() != RHS.DimList.size())
@@ -254,6 +253,33 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       }
     }
     return isChanged;
+  }
+  static inline bool hasIntersection(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS) {
+    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS);
+    return !Result.isEmpty();
+  }
+  static inline bool getIntersection(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS, MemoryLocationRange &L,
+      MemoryLocationRange &I, MemoryLocationRange &R) {
+    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS);
+    L = Result.LeftRange;
+    I = Result.Intersection;
+    R = Result.RightRange;
+    return Result.isEmpty();
+  }
+  /// Return true if A is subset of B.
+  static inline bool isSubset(const MemoryLocationRange &A,
+      const MemoryLocationRange &B) {
+    auto Result = MemoryLocationRangeEquation::intersect(A, B);
+    if (Result.isEmpty())
+      return false;
+    auto &Int = Result.Intersection;
+    return A.Ptr == Int.Ptr && A.Start == Int.Start &&
+           A.Width == Int.Width && A.DimList == Int.DimList;
+  }
+  static inline bool isEmpty(const MemoryLocationRange &Loc) {
+    return Loc.Ptr == nullptr;
   }
 };
 }
