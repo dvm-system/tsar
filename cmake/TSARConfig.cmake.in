@@ -3,6 +3,8 @@ set(TSAR_HOMEPAGE_URL "@TSAR_HOMEPAGE_URL@")
 
 set(TSAR_LLVM_VERSION @LLVM_VERSION@)
 
+set(TSAR_ENABLE_FORTRAN "@FLANG_FOUND@")
+
 # Set list of extenal tools, such as clang or llvm-link, available
 # from TSAR distribution.
 set(TSAR_LLVM_TOOLS @TSAR_LLVM_TOOLS@)
