@@ -305,7 +305,7 @@ set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
 
 # Build Config-file Package configuration.
 export(EXPORT TSARExports
-  FILE ${CMAKE_CURRENT_BINARY_DIR}/TSARExports.cmake NAMESPACE TSAR::)
+  FILE ${CMAKE_CURRENT_BINARY_DIR}/TSARExports.cmake)
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake"
@@ -313,11 +313,16 @@ write_basic_package_version_file(
 
 get_property(TSAR_LLVM_TOOLS GLOBAL PROPERTY TSAR_LLVM_TOOLS)
 
+set(TSAR_EXECUTABLE /bin/tsar${CMEAK_EXECUTABLE_SUFFIX})
+if (TSAR_SERVER)
+  set(TSAR_SERVER_EXECUTABLE /bin/tsar-server${CMEAK_EXECUTABLE_SUFFIX})
+endif()
+
 configure_file(cmake/TSARConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake @ONLY)
 
 install(EXPORT TSARExports
-  FILE TSARExports.cmake NAMESPACE TSAR:: DESTINATION lib/cmake/tsar)
+  FILE TSARExports.cmake DESTINATION lib/cmake/tsar)
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake
