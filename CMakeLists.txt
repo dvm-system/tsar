@@ -69,18 +69,17 @@ include(BCLUtils)
 include(llvm-utility)
 
 # There are three steps to configure LLVM and Clang:
-# 1.a (LOCAL_LLVM is ON, GIT mono repo is only supported):
+# 1.a (PACKAGE_LLVM is OFF, GIT mono repo is only supported):
 #    Use LLVM as TSAR subproject (add_subdirectory() is used to build LLVM).
 # 1.b (PACKAGE_LLVM is ON):
 #    Use previously installed LLVM package.
-# 2. Configure LLVM project ((in case of 1.a and 1.b only).
+# 2. Configure LLVM project (in case of 1.a only).
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
-option(LOCAL_LLVM "Use existing LLVM sources" OFF)
-option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
+option(PACKAGE_LLVM "Use previously installed LLVM package" OFF)
 
-set(LLVM_PROJECT_DIR "${CMAKE_BINARY_DIR}/llvm-project" CACHE PATH
-   "Root of LLVM source tree (path to llvm-project directory, usefull if LOCAL_LLVM is set to ON")
+set(LLVM_PROJECT_DIR "" CACHE PATH
+   "Root of LLVM source tree (path to llvm-project directory, usefull if PACKAGE_LLVM is set to OFF")
 
 set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
   "Version of installed LLVM package (useful only if PACKAGE_LLVM is set)")
@@ -88,11 +87,16 @@ set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(TSAR_SERVER "Build TSAR server shared library" OFF)
 
-option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
-option(BUILD_PROFILE "Build profile runtime" OFF)
-option(BUILD_OPT "Build LLVM optimizer" OFF)
-option(BUILD_LLC "Build LLVM IR static compiler" OFF)
-option(BUILD_LINK "Build LLVM bitcode linker" OFF)
+cmake_dependent_option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_PROFILE "Build profile runtime" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_OPT "Build LLVM optimizer" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_LLC "Build LLVM IR static compiler" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_LINK "Build LLVM bitcode linker" OFF
+  "NOT PACKAGE_LLVM" OFF)
 cmake_dependent_option(BUILD_FLANG "Build LLVM native Fortran compiler Flang" OFF UNIX OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
@@ -108,21 +112,7 @@ set(FLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/flang")
 
 set(FLANG_FOUND OFF)
 
-if (LOCAL_LLVM AND PACKAGE_LLVM)
-  message(FATAL_ERROR
-    "Options LOCAL_LLVM and PACKAGE_LLVM are not compatible")
-endif()
-if(NOT LOCAL_LLVM AND NOT PACKAGE_LLVM)
-  message(FATAL_ERROR
-    "One of options LOCAL_LLVM, PACKAGE_LLVM should be specified.")
-endif()
-
 if(PACKAGE_LLVM)
-  if (BUILD_CLANG OR BUILD_FLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE OR BUILD_LINK)
-    message(FATAL_ERROR
-      "Options BUILD_CLANG or BUILD_FLANG or BUILD_OPT or BUILD_LLC or BUILD_PROFILE or BUILD_LINK are not compatible with PACKAGE_LLVM")
-  endif()
-  unset(LLVM_DIR CACHE)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
   set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
   set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
@@ -140,6 +130,11 @@ if(PACKAGE_LLVM)
     endif()
   endif()
 else()
+  if (NOT LLVM_PROJECT_DIR)
+    message(FATAL_ERROR "Unable to find LLVM sources. \
+                         Set LLVM_PROJECT_DIR to build LLVM from sources or \
+                         use PACKAGE_LLVM option to access previously installed LLVM package.")
+  endif()
   if(NOT EXISTS ${LLVM_SOURCE_DIR})
     message(FATAL_ERROR "LLVM_SOURCE_DIR '${LLVM_SOURCE_DIR}' does not exist")
   endif()
@@ -162,6 +157,7 @@ else()
     set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
   endif()
   set(LLVM_ENABLE_PROJECTS ${LLVM_PROJECTS} CACHE STRING "" FORCE)
+  unset(LLVM_DIR CACHE)
   add_subdirectory(${LLVM_SOURCE_DIR} ${LLVM_BINARY_DIR} EXCLUDE_FROM_ALL)
   find_package(LLVM CONFIG HINTS ${LLVM_BINARY_DIR} NO_DEFAULT_PATH)
   if(NOT LLVM_FOUND)
