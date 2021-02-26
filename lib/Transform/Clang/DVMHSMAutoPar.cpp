@@ -53,9 +53,13 @@ using namespace tsar;
 #define DEBUG_TYPE "clang-dvmh-sm-parallel"
 
 namespace {
+using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
+using VariableT = ClangDependenceAnalyzer::VariableT;
+using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
+using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
+
 class PragmaRegion : public ParallelLevel {
 public:
-  using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
   using ClauseList =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
                         bcl::tagged<SortedVarListT, trait::ReadOccurred>,
@@ -82,8 +86,6 @@ private:
 
 class PragmaActual : public ParallelItem {
 public:
-  using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
-
   static bool classof(const ParallelItem *Item) noexcept {
     return Item->getKind() == static_cast<unsigned>(DirectiveId::DvmActual);
   }
@@ -101,8 +103,6 @@ private:
 
 class PragmaGetActual : public ParallelItem {
 public:
-  using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
-
   static bool classof(const ParallelItem *Item) noexcept {
     return Item->getKind() == static_cast<unsigned>(DirectiveId::DvmGetActual);
   }
@@ -120,12 +120,9 @@ private:
 
 class PragmaParallel : public ParallelItem {
 public:
-  using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
-  using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
-  using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
   using AcrossVarListT =
-      std::map<std::string, trait::DIDependence::DistanceVector,
-               std::less<std::string>>;
+      std::map<VariableT, trait::DIDependence::DistanceVector,
+               ClangDependenceAnalyzer::VariableLess>;
   using LoopNestT = SmallVector<ObjectID, 4>;
   using VarMappingT =
       DenseMap<ObjectID, SmallVector<std::pair<ObjectID, bool>, 4>>;
@@ -240,10 +237,7 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
   for (auto &Dep : ASTDepInfo.get<trait::Dependence>()) {
     auto AccessItr =
         find_if(AccessInfo->scope_accesses(LoopID), [&Dep](auto &Access) {
-          if (auto DIEM = dyn_cast<DIEstimateMemory>(Access.getArray())) {
-            return DIEM->getVariable()->getName() == Dep.first;
-          }
-          return false;
+            return Access.getArray() == Dep.first.get<MD>();
         });
     if (AccessItr == AccessInfo->scope_end(LoopID))
       return false;
@@ -307,13 +301,13 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
 } // namespace
 
 ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
-    const DFLoop &IR, const clang::ForStmt &AST,
+    const DFLoop &IR, const clang::ForStmt &For,
     const FunctionAnalysis &Provider,
     tsar::ClangDependenceAnalyzer &ASTRegionAnalysis, ParallelItem *PI) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
   if (!ASTDepInfo.get<trait::FirstPrivate>().empty() ||
       !ASTDepInfo.get<trait::LastPrivate>().empty() ||
-      ASTDepInfo.get<trait::Induction>().empty()) {
+      !ASTDepInfo.get<trait::Induction>().get<AST>()) {
     if (PI)
       PI->finalize();
     return PI;
@@ -366,7 +360,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     if (!PL[IR.getLoop()].isHostOnly() && Localized) {
       if (!ASTDepInfo.get<trait::ReadOccurred>().empty()) {
         DVMHActual = std::make_unique<PragmaActual>();
-            DVMHActual->getMemory()
+        DVMHActual->getMemory()
             .insert(ASTDepInfo.get<trait::ReadOccurred>().begin(),
                     ASTDepInfo.get<trait::ReadOccurred>().end());
         DVMHRegion->getClauses().get<trait::ReadOccurred>().insert(
@@ -663,10 +657,24 @@ void ClangDVMHSMParallelization::optimizeLevel(
 }
 
 static inline void addVarList(
-    const ClangDependenceAnalyzer::SortedVarListT &VarInfoList,
+    const std::set<std::string> &VarInfoList,
     SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
-  auto I = VarInfoList.begin(), EI = VarInfoList.end();
+  auto I{ VarInfoList.begin() }, EI{ VarInfoList.end() };
+  Clause.append(I->begin(), I->end());
+  for (++I; I != EI; ++I) {
+    Clause.append({ ',', ' ' });
+    Clause.append(I->begin(), I->end());
+  }
+  Clause.push_back(')');
+}
+
+static inline void addVarList(const SortedVarListT &VarInfoList,
+    SmallVectorImpl<char> &Clause) {
+  Clause.push_back('(');
+  auto name = [](auto &V) { return V.get<AST>()->getName(); };
+  auto I{map_iterator(VarInfoList.begin(), name)},
+      EI{map_iterator(VarInfoList.end(), name)};
   Clause.append(I->begin(), I->end());
   for (++I; I != EI; ++I) {
     Clause.append({ ',', ' ' });
@@ -698,7 +706,7 @@ static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
   PragmaStr.push_back(')');
   // We sort arrays to ensure the same order of variables after
   // different launches of parallelization.
-  ClangDependenceAnalyzer::SortedVarListT MappingStr;
+  std::set<std::string, std::less<std::string>> MappingStr;
   for (auto &Mapping : Parallel.getClauses().get<trait::DirectAccess>()) {
     auto &DIEM = cast<DIEstimateMemory>(*DIAT.find(*Mapping.first));
     SmallString<32> Tie{DIEM.getVariable()->getName()};
@@ -719,8 +727,7 @@ static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
   addVarList(MappingStr, PragmaStr);
 }
 
-static inline void addClauseIfNeed(StringRef Name,
-    ClangDependenceAnalyzer::SortedVarListT &Vars,
+static inline void addClauseIfNeed(StringRef Name, SortedVarListT &Vars,
     SmallVectorImpl<char> &PragmaStr) {
   if (!Vars.empty()) {
     PragmaStr.append(Name.begin(), Name.end());
@@ -754,13 +761,14 @@ static void addReductionIfNeed(
     auto VarItr = VarInfoList[I].begin(), VarItrE = VarInfoList[I].end();
     ParallelFor.append(RedKind.begin(), RedKind.end());
     ParallelFor.push_back('(');
-    ParallelFor.append(VarItr->begin(), VarItr->end());
+    auto VarName{ VarItr->get<AST>()->getName() };
+    ParallelFor.append(VarName.begin(), VarName.end());
     ParallelFor.push_back(')');
     for (++VarItr; VarItr != VarItrE; ++VarItr) {
       ParallelFor.push_back(',');
       ParallelFor.append(RedKind.begin(), RedKind.end());
       ParallelFor.push_back('(');
-      ParallelFor.append(VarItr->begin(), VarItr->end());
+      ParallelFor.append(VarName.begin(), VarName.end());
       ParallelFor.push_back(')');
     }
     ParallelFor.push_back(')');
@@ -811,7 +819,7 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
               PragmaStr += "across(";
               for (auto &Across :
                 Parallel->getClauses().get<trait::Dependence>()) {
-                PragmaStr += Across.first;
+                PragmaStr += Across.first.get<AST>()->getName();
                 for (auto &Range : Across.second) {
                   PragmaStr += "[";
                   if (Range.first)

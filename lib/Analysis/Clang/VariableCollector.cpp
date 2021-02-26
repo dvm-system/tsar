@@ -72,7 +72,7 @@ bool VariableCollector::VisitDeclStmt(clang::DeclStmt *DS) {
   return true;
 }
 
-std::pair<clang::VarDecl *, VariableCollector::DeclSearch>
+std::tuple<clang::VarDecl *, DIMemory *, VariableCollector::DeclSearch>
 VariableCollector::findDecl(const DIMemory &DIM,
     const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer) {
@@ -83,19 +83,20 @@ VariableCollector::findDecl(const DIMemory &DIM,
     // locations in the alias tree, which subsequently implies
     // new metadata-level memory locations.
     if (CSMemoryItr == ClientToServer.end())
-      return std::make_pair(nullptr, Unknown);
+      return std::tuple(nullptr, nullptr, Unknown);
     auto *DIVar =
         cast<DIEstimateMemory>(CSMemoryItr->get<Origin>())->getVariable();
     assert(DIVar && "Variable must not be null!");
     auto MatchItr = ASTToClient.find<MD>(DIVar);
     if (MatchItr == ASTToClient.end())
       if (isStubVariable(*DIVar))
-          return std::make_pair(nullptr, Unknown);
+          return std::tuple(nullptr, nullptr, Unknown);
       else
-        return std::make_pair(nullptr, Invalid);
+        return std::tuple(nullptr, nullptr, Invalid);
     auto ASTRefItr = CanonicalRefs.find(MatchItr->get<AST>());
     if (ASTRefItr == CanonicalRefs.end())
-      return std::make_pair(MatchItr->get<AST>(), Implicit);
+      return std::tuple(MatchItr->get<AST>(), CSMemoryItr->get<Origin>(),
+                        Implicit);
     if (DIEM->getExpression()->getNumElements() > 0) {
       auto *Expr = DIEM->getExpression();
       auto NumDeref = llvm::count(Expr->getElements(), dwarf::DW_OP_deref);
@@ -109,9 +110,9 @@ VariableCollector::findDecl(const DIMemory &DIM,
           Expr->isFragment() && Expr->getNumElements() == 3 &&
           !DIEM->isSized()) {
         ASTRefItr->second.front() = {DIEM, DK_Strong};
-        return std::make_pair(MatchItr->get<AST>(), isa<DILocalVariable>(DIVar)
-                                                        ? CoincideLocal
-                                                        : CoincideGlobal);
+        return std::tuple(MatchItr->get<AST>(), CSMemoryItr->get<Origin>(),
+                          isa<DILocalVariable>(DIVar) ? CoincideLocal
+                                                      : CoincideGlobal);
       }
       auto *T = getCanonicalUnqualifiedType(ASTRefItr->first);
       auto isZeroOffsets = [](DIExpression *Expr) {
@@ -159,16 +160,17 @@ VariableCollector::findDecl(const DIMemory &DIM,
           ASTRefItr->second[NumDeref].Kind = DK_Partial;
         }
       }
-      return std::make_pair(MatchItr->get<AST>(), Derived);
+      return std::tuple(MatchItr->get<AST>(), CSMemoryItr->get<Origin>(),
+                        Derived);
     }
     ASTRefItr->second.front() = {DIEM, DK_Strong};
-    return std::make_pair(MatchItr->get<AST>(), isa<DILocalVariable>(DIVar)
-                                                    ? CoincideLocal
-                                                    : CoincideGlobal);
+    return std::tuple(MatchItr->get<AST>(), CSMemoryItr->get<Origin>(),
+                      isa<DILocalVariable>(DIVar) ? CoincideLocal
+                                                  : CoincideGlobal);
   }
   if (cast<DIUnknownMemory>(M)->isDistinct())
-    return std::make_pair(nullptr, Unknown);
-  return std::make_pair(nullptr, Useless);
+    return std::tuple(nullptr, nullptr, Unknown);
+  return std::tuple(nullptr, nullptr, Useless);
 }
 
 bool VariableCollector::localize(DIAliasTrait &TS,
@@ -187,17 +189,17 @@ bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
     const ClonedDIMemoryMatcher &ClientToServer,
     SortedVarListT &VarNames, clang::VarDecl **Error) {
   auto Res = localize(T, DIN, ASTToClient, ClientToServer);
-  if (!std::get<1>(Res)) {
+  if (!std::get<2>(Res)) {
     if (Error)
-      *Error = std::get<0>(Res);
+      *Error = std::get<VarDecl *>(Res);
     return false;
   }
-  if (std::get<0>(Res) && !std::get<2>(Res))
-    VarNames.insert(std::string(std::get<0>(Res)->getName()));
+  if (std::get<VarDecl *>(Res) && !std::get<3>(Res))
+    VarNames.emplace(std::get<VarDecl *>(Res), std::get<DIMemory *>(Res));
   return true;
 }
 
-std::tuple<clang::VarDecl *, bool, bool> VariableCollector::localize(
+std::tuple<clang::VarDecl *, DIMemory*, bool, bool> VariableCollector::localize(
     DIMemoryTrait &T, const DIAliasNode &DIN,
     const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer) {
@@ -206,15 +208,21 @@ std::tuple<clang::VarDecl *, bool, bool> VariableCollector::localize(
   // these variables are private by default. Moreover, these variables are
   // not visible outside the loop and could not be mentioned in clauses
   // before loop.
-  if (Search.first && CanonicalLocals.count(Search.first))
-    return std::make_tuple(Search.first, true, true);
-  if (Search.second == VariableCollector::CoincideLocal) {
-    return std::make_tuple(Search.first, true, false);
-  } else if (Search.second == VariableCollector::CoincideGlobal) {
-    GlobalRefs.try_emplace(const_cast<DIAliasNode *>(&DIN), Search.first);
-    return std::make_tuple(Search.first, true, false);
-  } else if (Search.second != VariableCollector::Unknown) {
-    return std::make_tuple(Search.first, false, false);
+  if (std::get<VarDecl *>(Search) &&
+      CanonicalLocals.count(std::get<VarDecl *>(Search)))
+    return std::tuple(std::get<VarDecl *>(Search), std::get<DIMemory *>(Search),
+                      true, true);
+  if (std::get<DeclSearch>(Search) == VariableCollector::CoincideLocal) {
+    return std::tuple(std::get<VarDecl *>(Search), std::get<DIMemory *>(Search),
+                      true, false);
+  } else if (std::get<DeclSearch>(Search) == VariableCollector::CoincideGlobal) {
+    GlobalRefs.try_emplace(const_cast<DIAliasNode *>(&DIN),
+                           std::get<VarDecl *>(Search));
+    return std::tuple(std::get<VarDecl *>(Search), std::get<DIMemory *>(Search),
+                      true, false);
+  } else if (std::get<DeclSearch>(Search) != VariableCollector::Unknown) {
+    return std::tuple(std::get<VarDecl *>(Search), std::get<DIMemory *>(Search),
+                      false, false);
   }
-  return std::make_tuple(nullptr, true, false);
+  return std::tuple(nullptr, nullptr, true, false);
 }

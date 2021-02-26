@@ -29,6 +29,7 @@
 
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
+#include "tsar/Analysis/Memory/DIMemoryHandle.h"
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
@@ -44,8 +45,17 @@ struct VariableCollector
     : public clang::RecursiveASTVisitor<VariableCollector> {
   using DIMemoryMatcher = llvm::ClangDIMemoryMatcherPass::DIMemoryMatcher;
 
+  using VariableT = bcl::tagged_pair<bcl::tagged<clang::VarDecl *, AST>,
+                                     bcl::tagged<WeakDIMemoryHandle, MD>>;
+
+  struct VariableLess {
+    bool operator()(const VariableT &LHS, const VariableT &RHS) const {
+      return LHS.get<AST>()->getName() < RHS.get<AST>()->getName();
+    }
+  };
+
   // Sorted list of variables (to print their in algoristic order).
-  using SortedVarListT = std::set<std::string, std::less<std::string>>;
+  using SortedVarListT = std::set<VariableT, VariableLess>;
 
   enum DerivedKind : uint8_t {
     // Set if a metadata-level memory location covers all memory which
@@ -108,7 +118,7 @@ struct VariableCollector
 
   /// Find declaration for a specified memory, remember memory if it safely
   /// represent a found variable or its part (update `CanonicalRefs` map).
-  std::pair<clang::VarDecl *, DeclSearch>
+  std::tuple<clang::VarDecl *, DIMemory *, DeclSearch>
   findDecl(const DIMemory &DIM, const DIMemoryMatcher &ASTToClient,
            const ClonedDIMemoryMatcher &ClientToServer);
 
@@ -123,10 +133,10 @@ struct VariableCollector
   /// And program may become invalid if such variables are used in calls inside
   /// the loop body.
   /// \return On failure it returns the variable which prevents localization (or
-  /// nullptr if the variable not found). In this case the second argument in
-  /// tuple is false. Otherwise, it is true. The third argument is set to true
+  /// nullptr if the variable not found). In this case the third argument in
+  /// tuple is false. Otherwise, it is true. The fourth argument is set to true
   /// if the variable is defined inside the loop head or the loop body.
-  std::tuple<clang::VarDecl *, bool, bool>
+  std::tuple<clang::VarDecl *, DIMemory *, bool, bool>
   localize(DIMemoryTrait &T, const DIAliasNode &DIN,
            const DIMemoryMatcher &ASTToClient,
            const ClonedDIMemoryMatcher &ClientToServer);

@@ -190,9 +190,11 @@ struct ClausePrinter {
     ParallelFor += Clause;
     ParallelFor += '(';
     auto I = VarInfoList.begin(), EI = VarInfoList.end();
-    ParallelFor += *I;
+    ParallelFor += I->get<AST>()->getName();;
     for (++I; I != EI; ++I)
-      ParallelFor += ", " + *I;
+      (ParallelFor += ", ")
+          .append(I->get<AST>()->getName().begin(),
+                  I->get<AST>()->getName().end());
     ParallelFor += ')';
   }
 
@@ -218,9 +220,11 @@ struct ClausePrinter {
       default: llvm_unreachable("Unknown reduction kind!"); break;
       }
       auto VarItr = VarInfoList[I].begin(), VarItrE = VarInfoList[I].end();
-      ParallelFor += *VarItr;
+      ParallelFor += VarItr->get<AST>()->getName();
       for (++VarItr; VarItr != VarItrE; ++VarItr)
-        ParallelFor += ", " + *VarItr;
+        (ParallelFor += ", ")
+            .append(VarItr->get<AST>()->getName().begin(),
+                    VarItr->get<AST>()->getName().end());
       ParallelFor += ')';
     }
   }
@@ -472,7 +476,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     const FunctionAnalysis &Provider,
     ClangDependenceAnalyzer &ASTRegionAnalysis, ParallelItem *PI) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
-  if (ASTDepInfo.get<trait::Induction>().empty()) {
+  if (!ASTDepInfo.get<trait::Induction>().get<AST>()) {
     if (PI)
       PI->finalize();
     return PI;
