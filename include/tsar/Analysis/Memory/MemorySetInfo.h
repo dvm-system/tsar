@@ -208,6 +208,21 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
+    /*auto printDim = [](const MemoryLocationRange &Loc) {
+      llvm::dbgs() << "{";
+      for (auto &Dimension : Loc.DimList) {
+        llvm::dbgs() << "{Start: " << Dimension.Start << ", Step: " <<
+            Dimension.Step << ", MaxIter: " << Dimension.MaxIter <<
+            ", DimSize: " << Dimension.DimSize << "}";
+      }
+      llvm::dbgs() << "}";
+    };
+    llvm::dbgs() << "[INTERSECTION] Joinability (";
+    printDim(LHS);
+    llvm::dbgs() << ", ";
+    printDim(RHS);
+    llvm::dbgs() << "): ";*/
+    bool Result = true;
     for (size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -215,11 +230,14 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
       if (Left.Step != Right.Step ||
           (Left.Start - Right.Start) % Left.Step != 0 ||
-          !(LeftEnd < Right.Start && (Right.Start - LeftEnd) == Left.Step) ||
-          !(RightEnd < Left.Start && (Left.Start - RightEnd) == Left.Step))
-        return false;
+          (LeftEnd < Right.Start && (Right.Start - LeftEnd) != Left.Step) ||
+          (RightEnd < Left.Start && (Left.Start - RightEnd) != Left.Step)) {
+        Result = false;
+        break;
+      }
     }
-    return true;
+    //llvm::dbgs() << Result << "\n";
+    return Result;
   }
   static inline bool join(MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
@@ -256,6 +274,12 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline bool hasIntersection(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
+    if (LHS.DimList.size() != RHS.DimList.size())
+      return false;
+    if (LHS.DimList.size() == 0 && RHS.DimList.size() == 0) {
+      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
+             sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
+    }
     auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS);
     return !Result.isEmpty();
   }

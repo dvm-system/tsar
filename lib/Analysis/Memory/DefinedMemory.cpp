@@ -658,11 +658,10 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       dbgs() << "[ARRAY LOCATION] Dimension `" << I << "` size: " <<
           *ArrayPtr->getDimSize(I) << "\n";
     }
+    dbgs() << "[ARRAY LOCATION] Array info: " <<
+      *ArrayPtr->getBase() << ", IsAddress: " <<
+      ArrayPtr->isAddressOfVariable() << ".\n";
   );
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array info: " <<
-      *ArrayPtr->getBase() << "\n");
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] IsAddress: " <<
-      ArrayPtr->isAddressOfVariable() << ".\n");
   auto BaseType = ArrayPtr->getBase()->getType();
   auto ArrayType = cast<PointerType>(BaseType)->getElementType();
   if (ArrayPtr->isAddressOfVariable()) {
@@ -680,7 +679,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     return;
   }
   auto ElementType = std::get<2>(ArraySizeInfo);
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array elements type:  " <<
+  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element type:  " <<
       *ElementType << ".\n");
   size_t DimensionN = 0;
   MemoryLocationRange ResLoc(ArrayPtr->getBase(), 0,
@@ -695,48 +694,47 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     }
     Dimension DimInfo;
     auto DimSize = ArrayPtr->getDimSize(DimensionN);
-    if (DimSize->getSCEVType() == scConstant) {
-      DimInfo.DimSize = *cast<SCEVConstant>(DimSize)->getValue()->
-          getValue().getRawData();
+    if (auto *C = dyn_cast<SCEVConstant>(DimSize)) {
+      DimInfo.DimSize = C->getAPInt().getZExtValue();
     } else {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
       if (DimensionN != 0)
         break;
     }
     auto *SE = Fwk.getScalarEvolution();
-    //LLVM_DEBUG(SE->print(dbgs()); dbgs() << "\n";);
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
     if (!AddRecInfo.second)
       break;
     auto SCEV = AddRecInfo.first;
-    if (SCEV->getSCEVType() == scConstant) {
-      auto Range = *cast<SCEVConstant>(S)->getValue()->getValue().getRawData();
+    if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
+      auto Range = C->getAPInt().getSExtValue();
       DimInfo.Start = DimInfo.MaxIter = Range;
       DimInfo.Step = 1;
       ResLoc.DimList.push_back(DimInfo);
-    } else if (SCEV->getSCEVType() == scAddRecExpr) {
-      if (auto *DFL = dyn_cast<DFLoop>(R)) {
-        auto *StepSCEV = cast<SCEVAddRecExpr>(SCEV)->getOperand(1);
-        if (StepSCEV->getSCEVType() != scConstant) {
-          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant loop bounds.\n");
-          break;
-        }
-        auto StepNumber = *cast<SCEVConstant>(StepSCEV)->
-          getValue()->getValue().getRawData();
-        int64_t SignedRangeMin = *SE->getSignedRangeMin(SCEV).getRawData();
-        int64_t SignedRangeMax = *SE->getSignedRangeMax(SCEV).getRawData();
-        if (SignedRangeMin < 0 || SignedRangeMax < 0) {
-          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range bounds must be"
-                                "non-negative.\n");
-          break;
-        }
-        DimInfo.Start = SignedRangeMin;
-        DimInfo.MaxIter = (SignedRangeMax - SignedRangeMin) / StepNumber + 1;
-        DimInfo.Step = StepNumber;
-        ResLoc.DimList.push_back(DimInfo);
+    } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
+      auto *StepSCEV = C->getStepRecurrence(*SE);
+      if (!isa<SCEVConstant>(StepSCEV)) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant step.\n");
+        break;
       }
+      auto TripCount = SE->getSmallConstantTripCount(C->getLoop());
+      if (TripCount == 0) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Unknown or non-constant "
+                             "trip count.\n");
+        break;
+      }
+      int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
+      if (SignedRangeMin < 0) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range bounds must be "
+                              "non-negative.\n");
+        break;
+      }
+      DimInfo.Start = SignedRangeMin;
+      DimInfo.MaxIter = TripCount;
+      DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
+      ResLoc.DimList.push_back(DimInfo);
     }
-    DimensionN++;
+    ++DimensionN;
   }
   if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
     Inserter(Loc);

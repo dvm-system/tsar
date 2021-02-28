@@ -222,6 +222,7 @@ namespace MemoryLocationRangeEquation {
     }
     bool Intersected = true;
     RangeTriplet ResultTriplet(LHS);
+    llvm::dbgs() << "[INTERSECTION] Here I am, " << LHS.DimList.size() << ".\n";
     for (size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -241,10 +242,13 @@ namespace MemoryLocationRangeEquation {
       }
       LinearSystem System;
       System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
+      llvm::dbgs() << "[INTERSECTION] Before Instantiated.\n";
       System.instantiate(Info);
-      auto count = System.solve<ColumnInfo, llvm::raw_ostream, false>(
+      llvm::dbgs() << "[INTERSECTION] Instantiated.\n";
+      auto SolutionNumber = System.solve<ColumnInfo, llvm::raw_ostream, false>(
           Info, llvm::dbgs());
-      if (count == 0) {
+      llvm::dbgs() << "[INTERSECTION] Solution Number: " << SolutionNumber << ".\n";
+      if (SolutionNumber == 0) {
         Intersected = false;
         break;
       }
@@ -296,6 +300,7 @@ namespace MemoryLocationRangeEquation {
         ResultTriplet.RightRange.Ptr = nullptr;
       }
     }
+    llvm::dbgs() << "[INTERSECTION] End with result: " << Intersected << ".\n";
     return Intersected ? ResultTriplet : RangeTriplet();
   }
 }

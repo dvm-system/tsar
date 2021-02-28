@@ -75,8 +75,9 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   if (!Loc.DimList.empty()) {
     O << ", {";
     for (auto &Dimension : Loc.DimList)
-      O << "{" << Dimension.Start << ", " << Dimension.Step << ", " <<
-          Dimension.MaxIter << ", " << Dimension.DimSize << "}";
+      O << "{Start: " << Dimension.Start << ", Step: " << Dimension.Step <<
+          ", MaxIter: " << Dimension.MaxIter << ", DimSize: " <<
+          Dimension.DimSize << "}";
     O << "}";
   }
 }
