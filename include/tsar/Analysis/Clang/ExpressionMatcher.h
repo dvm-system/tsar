@@ -70,6 +70,8 @@ public:
     mUnmatchedAST.clear();
   }
 
+  void print(raw_ostream &OS, const Module *M) const override;
+
   /// Returns expression matcher for the analyzed function.
   const ExprMatcher & getMatcher() const noexcept { return mMatcher; }
 
