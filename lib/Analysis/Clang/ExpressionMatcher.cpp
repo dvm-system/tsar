@@ -59,44 +59,51 @@ public:
 
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
-  void VisitFromMacro(Stmt *S) {
-    assert(S->getBeginLoc().isMacroID() &&
-      "Expression must be expanded from macro!");
-    auto Loc = S->getBeginLoc();
+  void VisitFromMacro(DynTypedNode &&N, SourceLocation Loc) {
+    assert(Loc.isMacroID() && "Expression must be expanded from macro!");
     if (Loc.isInvalid())
       return;
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
     auto I{mLocToMacro->try_emplace(Loc.getRawEncoding()).first};
-    I->second.push_back(DynTypedNode::create(*S));
+    I->second.push_back(std::move(N));
   }
 
-  void MatchExpr(Stmt *S, SourceLocation ExprLoc) {
-    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: "; ExprLoc.print(dbgs(), *mSrcMgr);
-               dbgs() << " " << S->getStmtClassName() << "\n");
-    if (ExprLoc.isMacroID()) {
-      VisitFromMacro(S);
-    } else if (auto *I = findIRForLocation(ExprLoc)) {
-      mMatcher->emplace(DynTypedNode::create(*S), I);
+  void VisitItem(DynTypedNode &&N, SourceLocation Loc) {
+    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: match at";
+               Loc.print(dbgs(), *mSrcMgr); dbgs() << "\n");
+    if (Loc.isMacroID()) {
+      VisitFromMacro(std::move(N), Loc);
+    } else if (auto *I = findIRForLocation(Loc)) {
+      mMatcher->emplace(std::move(N), I);
       ++NumMatchExpr;
       --NumNonMatchIRExpr;
     } else {
-      mUnmatchedAST->insert(DynTypedNode::create(*S));
+      mUnmatchedAST->insert(std::move(N));
       ++NumNonMatchASTExpr;
     }
+  }
+
+  bool VisitVarDecl(VarDecl *D) {
+    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: visit " << D->getDeclKindName()
+                      << D->getName());
+    VisitItem(DynTypedNode::create(*D), D->getLocation());
+    return true;    
   }
 
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
+    LLVM_DEBUG(dbgs() << "[EXPR MATCHER: visit " << S->getStmtClassName()
+                      << "\n");
     if (auto CE = dyn_cast<CallExpr>(S)) {
       if (!CE->getDirectCallee()) {
         // We match expression which computes callee before this call.
         if (!TraverseStmt(CE->getCallee()))
           return false;
       }
-      MatchExpr(S, S->getBeginLoc());
+      VisitItem(DynTypedNode::create(*S), S->getBeginLoc());
       for (auto Arg : CE->arguments())
         if (!TraverseStmt(Arg))
           return false;
@@ -107,20 +114,20 @@ public:
       // Match order: `load` then `store`. Note, that `load` and `store` have
       // the same location in a source code.
       // For `++ <expr>` we match `++` with store and `<expr>` with load.
-      MatchExpr(UO->getSubExpr(), UO->getOperatorLoc());
-      MatchExpr(S, UO->getOperatorLoc());
+      VisitItem(DynTypedNode::create(*UO->getSubExpr()), UO->getOperatorLoc());
+      VisitItem(DynTypedNode::create(*S), UO->getOperatorLoc());
       return TraverseStmt(UO->getSubExpr());
     }
     if (isa<ReturnStmt>(S) || isa<DeclRefExpr>(S) ||
         isa<clang::UnaryOperator>(S) &&
             cast<clang::UnaryOperator>(S)->getOpcode() ==
                 clang::UnaryOperatorKind::UO_Deref)
-      MatchExpr(S, S->getBeginLoc());
+      VisitItem(DynTypedNode::create(*S), S->getBeginLoc());
     else if (auto BO = dyn_cast<clang::BinaryOperator>(S);
              BO && BO->isAssignmentOp())
-      MatchExpr(S, BO->getExprLoc());
+      VisitItem(DynTypedNode::create(*S), BO->getExprLoc());
     else if (auto *ME = dyn_cast<MemberExpr>(S))
-      MatchExpr(S, ME->getMemberLoc());
+      VisitItem(DynTypedNode::create(*S), ME->getMemberLoc());
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 };
