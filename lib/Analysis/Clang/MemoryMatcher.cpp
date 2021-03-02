@@ -143,10 +143,8 @@ public:
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
-    auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<VarDecl *>(D)));
-    if (!Pair.second)
-      Pair.first->second.push_back(D);
+    auto Itr{mLocToMacro->try_emplace(Loc.getRawEncoding()).first};
+    Itr->second.push_back(D);
   }
 
   bool VisitVarDecl(VarDecl *D) {
@@ -183,10 +181,8 @@ public:
         auto Var = DIIList.front()->getVariable();
         auto Loc = DIIList.front()->getDebugLoc();
         if (Var && Loc) {
-          auto Pair = mLocToIR->insert(
-            std::make_pair(Loc, TinyPtrVector<Value *>(&I)));
-          if (!Pair.second)
-            Pair.first->second.push_back(&I);
+          auto Itr{mLocToIR->try_emplace(Loc).first};
+          Itr->second.push_back(&I);
           ValueToName.try_emplace(&I, Var->getName());
         }
       }

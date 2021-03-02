@@ -98,34 +98,39 @@ struct DILocationMapInfo {
 namespace tsar {
 /// This is a base class which is inherited to match different entities (loops,
 /// variables, etc.).
-///
-/// \tparam IRPtrTy Pointer to IR entity.
-/// \tparam ASTPtrTy Pointer to AST entity.
-template<class IRPtrTy, class ASTPtrTy,
+template<class IRItemTy, class ASTItemTy,
   class IRLocationTy = llvm::DILocation *,
   class IRLocationMapInfo = llvm::DILocationMapInfo,
   class ASTLocationTy = unsigned,
   class ASTLocationMapInfo = llvm::DenseMapInfo<ASTLocationTy>,
   class MatcherTy = Bimap<
-    bcl::tagged<ASTPtrTy, AST>, bcl::tagged<IRPtrTy, IR>>,
-  class UnmatchedASTSetTy = std::set<ASTPtrTy>>
+    bcl::tagged<ASTItemTy, AST>, bcl::tagged<IRItemTy, IR>>,
+  class UnmatchedASTSetTy = llvm::DenseSet<ASTItemTy>>
 class MatchASTBase {
 public:
-  typedef MatcherTy Matcher;
+  using Matcher = MatcherTy;
 
-  typedef UnmatchedASTSetTy UnmatchedASTSet;
+  using UnmatchedASTSet = UnmatchedASTSetTy;
 
   /// This is a map from entity location to a queue of IR entities.
-  typedef llvm::DenseMap<IRLocationTy,
-    llvm::TinyPtrVector<IRPtrTy>, IRLocationMapInfo> LocToIRMap;
+  using LocToIRMap =
+      llvm::DenseMap<IRLocationTy,
+                     std::conditional_t<std::is_pointer_v<IRItemTy>,
+                                        llvm::TinyPtrVector<IRItemTy>,
+                                        llvm::SmallVector<IRItemTy, 1>>,
+                     IRLocationMapInfo>;
 
   /// \brief This is a map from location in a source file to an queue of AST
   /// entities, which are associated with this location.
   ///
   /// The key in this map is a raw encoding for location.
   /// To decode it use SourceLocation::getFromRawEncoding() method.
-  typedef llvm::DenseMap<ASTLocationTy,
-    llvm::TinyPtrVector<ASTPtrTy>, ASTLocationMapInfo> LocToASTMap;
+  using LocToASTMap =
+      llvm::DenseMap<ASTLocationTy,
+                     std::conditional_t<std::is_pointer_v<ASTItemTy>,
+                                        llvm::TinyPtrVector<ASTItemTy>,
+                                        llvm::SmallVector<ASTItemTy, 1>>,
+                     ASTLocationMapInfo>;
 
   /// \brief Constructor.
   ///
@@ -146,7 +151,7 @@ public:
   /// Finds low-level representation of an entity at the specified location.
   ///
   /// \return LLVM IR for an entity or `nullptr`.
-  IRPtrTy findIRForLocation(clang::SourceLocation Loc) {
+  IRItemTy findIRForLocation(clang::SourceLocation Loc) {
     auto LocItr = findItrForLocation(Loc);
     if (LocItr == mLocToIR->end())
       return nullptr;

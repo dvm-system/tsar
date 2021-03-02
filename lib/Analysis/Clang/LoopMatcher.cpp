@@ -105,10 +105,8 @@ public:
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
-    auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
-    if (!Pair.second)
-      Pair.first->second.push_back(S);
+    auto Itr{mLocToMacro->try_emplace(Loc.getRawEncoding()).first};
+    Itr->second.push_back(S);
   }
 
   bool VisitStmt(Stmt *S) {
@@ -174,11 +172,8 @@ public:
         auto HeaderLoc = HeadBB ?
           HeadBB->getTerminator()->getDebugLoc().get() : nullptr;
         if (HeaderLoc) {
-          auto Pair =
-            mLocToImplicit->insert(
-              std::make_pair(HeaderLoc, TinyPtrVector<Loop *>(L)));
-          if (!Pair.second)
-            Pair.first->second.push_back(L);
+          auto Itr{mLocToImplicit->try_emplace(HeaderLoc).first};
+          Itr->second.push_back(L);
         }
       }
     }
@@ -283,13 +278,11 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
     // If an appropriate loop will be found the counter will be decreased.
     ++NumNonMatchIRLoop;
     if (Loc) {
-      auto Pair = LocToLoop.insert(
-        std::make_pair(Loc, TinyPtrVector<Loop *>(L)));
       // In some cases different loops have the same locations. For example,
       // if these loops have been produced by one loop from a file that had been
-      // included multiple times. The other case is a loop defined in macro.
-      if (!Pair.second)
-        Pair.first->second.push_back(L);
+      // included multiple times. A loop defined in macro is another case.
+      auto Itr{LocToLoop.try_emplace(Loc).first};
+      Itr->second.push_back(L);
     }
   });
   // Matcher uses back() to extract element from the list. So, we change

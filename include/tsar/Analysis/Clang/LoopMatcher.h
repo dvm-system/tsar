@@ -32,8 +32,8 @@
 #include "tsar/Support/Tags.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/Pass.h>
-#include <set>
 
 namespace clang {
 class Stmt;
@@ -62,7 +62,7 @@ public:
     bcl::tagged<clang::Stmt *, tsar::AST>,
     bcl::tagged<llvm::Loop *, tsar::IR>> LoopMatcher;
 
-  typedef std::set<clang::Stmt *> LoopASTSet;
+  typedef llvm::DenseSet<clang::Stmt *> LoopASTSet;
 
   /// Pass identification, replacement for typeid.
   static char ID;

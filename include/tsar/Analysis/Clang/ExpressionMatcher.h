@@ -29,15 +29,12 @@
 #include "tsar/Support/Tags.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
+#include <clang/AST/ASTTypeTraits.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/Pass.h>
-#include <set>
 
 #ifndef TSAR_EXPRESSION_MATCHER_H
 #define TSAR_EXPRESSION_MATCHER_H
-
-namespace clang {
-class Stmt;
-}
 
 namespace llvm {
 class Value;
@@ -50,10 +47,10 @@ class ClangExprMatcherPass :
   public FunctionPass, private bcl::Uncopyable {
 public:
   using ExprMatcher = tsar::Bimap <
-    bcl::tagged<clang::Stmt *, tsar::AST>,
+    bcl::tagged<clang::DynTypedNode, tsar::AST>,
     bcl::tagged<llvm::Value *, tsar::IR>>;
 
-  using ExprASTSet = std::set<clang::Stmt *>;
+  using ExprASTSet = llvm::DenseSet<clang::DynTypedNode>;
 
   static char ID;
 

@@ -50,7 +50,7 @@ STATISTIC(NumNonMatchASTExpr, "Number of non-matched AST expressions");
 
 namespace {
 class MatchExprVisitor :
-  public MatchASTBase<Value *, Stmt *>,
+  public MatchASTBase<Value *, DynTypedNode>,
   public RecursiveASTVisitor<MatchExprVisitor> {
 public:
   MatchExprVisitor(SourceManager &SrcMgr, Matcher &MM,
@@ -68,10 +68,8 @@ public:
     Loc = mSrcMgr->getExpansionLoc(Loc);
     if (Loc.isInvalid())
       return;
-    auto Pair = mLocToMacro->insert(
-      std::make_pair(Loc.getRawEncoding(), TinyPtrVector<Stmt *>(S)));
-    if (!Pair.second)
-      Pair.first->second.push_back(S);
+    auto I{mLocToMacro->try_emplace(Loc.getRawEncoding()).first};
+    I->second.push_back(DynTypedNode::create(*S));
   }
 
   void MatchExpr(Stmt *S, SourceLocation ExprLoc) {
@@ -80,11 +78,11 @@ public:
     if (ExprLoc.isMacroID()) {
       VisitFromMacro(S);
     } else if (auto *I = findIRForLocation(ExprLoc)) {
-      mMatcher->emplace(S, I);
+      mMatcher->emplace(DynTypedNode::create(*S), I);
       ++NumMatchExpr;
       --NumNonMatchIRExpr;
     } else {
-      mUnmatchedAST->insert(S);
+      mUnmatchedAST->insert(DynTypedNode::create(*S));
       ++NumNonMatchASTExpr;
     }
   }
@@ -138,12 +136,21 @@ void ClangExprMatcherPass::print(raw_ostream &OS, const llvm::Module *M) const {
   for (auto &Match : mMatcher) {
     tsar::print(OS, cast<Instruction>(Match.get<IR>())->getDebugLoc(),
                 GO.PrintFilenameOnly);
-    OS << " ";
-    OS << Match.get<AST>()->getStmtClassName();
-    if (auto UO = dyn_cast<clang::UnaryOperator>(Match.get<AST>()))
-      OS << " '" << clang::UnaryOperator::getOpcodeStr(UO->getOpcode()) << "'";
-    else if (auto BO = dyn_cast<clang::BinaryOperator>(Match.get<AST>()))
-      OS << " '" << clang::BinaryOperator::getOpcodeStr(BO->getOpcode()) << "'";
+    if (auto *S{Match.get<AST>().get<Stmt>()}) {
+      OS << " ";
+      OS << S->getStmtClassName();
+      if (auto UO{ dyn_cast<clang::UnaryOperator>(S) })
+        OS << " '" << clang::UnaryOperator::getOpcodeStr(UO->getOpcode())
+           << "'";
+      else if (auto BO{ dyn_cast<clang::BinaryOperator>(S) })
+        OS << " '" << clang::BinaryOperator::getOpcodeStr(BO->getOpcode())
+           << "'";
+    } else if (auto * D{ Match.get<AST>().get<Decl>() }) {
+      OS << " ";
+      OS << D->getDeclKindName();
+      if (auto ND{ dyn_cast<NamedDecl>(D) })
+        OS << " '" << ND->getName() << "'";
+    }
     Match.get<IR>()->print(OS);
     OS << "\n";
   }
@@ -173,10 +180,8 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
     ++NumNonMatchIRExpr;
     auto Loc = I.getDebugLoc();
     if (Loc) {
-      auto Pair = LocToExpr.insert(
-        std::make_pair(Loc, TinyPtrVector<Value *>(&I)));
-      if (!Pair.second)
-        Pair.first->second.push_back(&I);
+      auto Itr{ LocToExpr.try_emplace(Loc).first };
+      Itr->second.push_back(&I);
     }
   }
   for (auto &Pair : LocToExpr)

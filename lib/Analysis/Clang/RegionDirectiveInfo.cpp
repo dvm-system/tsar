@@ -135,7 +135,7 @@ public:
   bool VisitCallExpr(CallExpr *CE) {
     if (mActiveRegions.empty())
       return true;
-    auto MatchItr = mExprs.find<AST>(CE);
+    auto MatchItr = mExprs.find<AST>(DynTypedNode::create(*CE));
     if (MatchItr == mExprs.end()) {
       toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
         tsar::diag::warn_region_add_call_unable);

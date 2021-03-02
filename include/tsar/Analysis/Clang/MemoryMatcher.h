@@ -31,7 +31,7 @@
 #include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/utility.h>
-#include <set>
+#include <llvm/ADT/DenseMap.h>
 
 namespace clang {
 class FuncDecl;
@@ -51,7 +51,7 @@ struct MemoryMatchInfo : private bcl::Uncopyable {
     bcl::tagged<clang::VarDecl*, tsar::AST>,
     bcl::tagged<llvm::Value *, tsar::IR>> MemoryMatcher;
 
-  typedef std::set<clang::VarDecl *> MemoryASTSet;
+  typedef llvm::DenseSet<clang::VarDecl *> MemoryASTSet;
 
   /// Memory matcher for the last analyzed module.
   MemoryMatcher Matcher;
