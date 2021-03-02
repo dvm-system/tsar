@@ -199,7 +199,8 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
   if (!FuncDecl)
     return false;
   MatchExpr.TraverseDecl(FuncDecl);
-  MatchExpr.matchInMacro(NumMatchExpr, NumNonMatchASTExpr, NumNonMatchIRExpr);
+  MatchExpr.matchInMacro(NumMatchExpr, NumNonMatchASTExpr, NumNonMatchIRExpr,
+                         true);
   return false;
 }
 

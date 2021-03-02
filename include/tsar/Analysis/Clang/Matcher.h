@@ -175,8 +175,11 @@ public:
   /// This matches entities from mLocToMacro and mLocToIR. It is recommended
   /// to evaluate at first all entities outside macros and then consider macros
   /// separately.
+  ///
+  /// \param [in] Strict If it is true, macros, containing exactly a single
+  /// item, are processed.
   void matchInMacro(llvm::Statistic &NumMatch, llvm::Statistic &NumNonMatchAST,
-      llvm::Statistic &NumNonMatchIR) {
+      llvm::Statistic &NumNonMatchIR, bool Strict = false) {
     for (auto &InMacro : *mLocToMacro) {
       clang:: PresumedLoc PLoc = mSrcMgr->getPresumedLoc(
         clang::SourceLocation::getFromRawEncoding(InMacro.first), false);
@@ -186,7 +189,8 @@ public:
       // a macro. Such entities are not going to be evaluated due to necessity
       // of additional analysis of AST.
       if (IREntityItr == mLocToIR->end() ||
-        IREntityItr->second.size() != InMacro.second.size()) {
+          IREntityItr->second.size() != InMacro.second.size() ||
+          Strict && InMacro.second.size() > 1) {
         NumNonMatchAST += InMacro.second.size();
         while (!InMacro.second.empty()) {
           mUnmatchedAST->insert(InMacro.second.back());
