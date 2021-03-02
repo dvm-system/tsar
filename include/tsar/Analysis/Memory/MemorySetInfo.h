@@ -208,20 +208,6 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
-    /*auto printDim = [](const MemoryLocationRange &Loc) {
-      llvm::dbgs() << "{";
-      for (auto &Dimension : Loc.DimList) {
-        llvm::dbgs() << "{Start: " << Dimension.Start << ", Step: " <<
-            Dimension.Step << ", MaxIter: " << Dimension.MaxIter <<
-            ", DimSize: " << Dimension.DimSize << "}";
-      }
-      llvm::dbgs() << "}";
-    };
-    llvm::dbgs() << "[INTERSECTION] Joinability (";
-    printDim(LHS);
-    llvm::dbgs() << ", ";
-    printDim(RHS);
-    llvm::dbgs() << "): ";*/
     bool Result = true;
     for (size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
@@ -236,7 +222,6 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         break;
       }
     }
-    //llvm::dbgs() << Result << "\n";
     return Result;
   }
   static inline bool join(MemoryLocationRange &LHS,
