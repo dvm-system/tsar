@@ -30,6 +30,7 @@ INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass);
 INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass);
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass);
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass);
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass);
 INITIALIZE_PASS_END(PointerReductionPass, "ptr-red",
                     "Pointer Reduction Pass", false, false)
 
@@ -39,6 +40,7 @@ void PointerReductionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopAttributesDeductionPass>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<DIEstimateMemoryPass>();
 }
 
 struct phiNodeLink {
@@ -49,7 +51,7 @@ struct phiNodeLink {
 
   explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
 
-  PHINode *getPhi() {
+  PHINode *getPhi() const {
     if (phiNode) {
       return phiNode;
     }
@@ -58,8 +60,8 @@ struct phiNodeLink {
 };
 
 struct PtrRedContext {
-  explicit PtrRedContext(Value *v, Function &f, Loop *l, bool changed)
-      : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed) {}
+  explicit PtrRedContext(Value *v, Function &f, Loop *l, DIBuilder *diBuilder, bool changed)
+      : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed), DIB(diBuilder) {}
 
   Value *V;
   DILocalVariable *DbgVar;
@@ -72,6 +74,7 @@ struct PtrRedContext {
   DenseMap<BasicBlock *, Instruction *> LastInstructions;
   DenseSet<BasicBlock *> ChangedLastInst;
   bool ValueChanged;
+  DIBuilder *DIB;
 };
 
 bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
@@ -124,8 +127,6 @@ DebugLoc firstDebugLocInRange(const T &BeginItr, const T &EndItr) {
 }
 
 void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, Instruction *InsertBefore, bool add) {
-  auto *DIB = new DIBuilder(*ctx.F.getParent());
-
   auto *parent = Inst->getParent();
   auto closestLoc = firstDebugLocInRange(parent->begin(), parent->end());
   auto Loc = DILocation::get(Inst->getContext(), 0, 0, closestLoc->getScope());
@@ -133,7 +134,8 @@ void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, Instruction *Inse
   if (add) {
     Inst->setDebugLoc(Loc);
   }
-  DIB->insertDbgValueIntrinsic(Inst, ctx.DbgVar, DIExpression::get(ctx.F.getContext(), {}), Loc, InsertBefore);
+
+  ctx.DIB->insertDbgValueIntrinsic(Inst, ctx.DbgVar, DIExpression::get(ctx.F.getContext(), {}), Loc, InsertBefore);
 }
 
 void insertLoadInstructions(PtrRedContext &ctx) {
@@ -358,6 +360,27 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
   return true;
 }
 
+void handlePointerDI(PtrRedContext &ctx, DIDerivedType *derived, AliasTree &AT, SmallVectorImpl<Metadata *> &MDs) {
+  auto &DL = ctx.F.getParent()->getDataLayout();
+  auto locSize = LocationSize::precise(DL.getTypeStoreSize(ctx.V->getType()->getPointerElementType()));
+  auto EM = AT.find(MemoryLocation(ctx.V, locSize));
+  if (EM == nullptr)
+    return;
+  auto *RawDIMem = getRawDIMemoryIfExists(*EM->getTopLevelParent(),ctx.F.getContext(),DL, AT.getDomTree());
+
+  auto *Scope = dyn_cast<DIScope>(ctx.L->getStartLoc()->getScope());
+  auto *NewVar = ctx.DIB->createAutoVariable(
+      Scope, "deref." + ctx.DbgVar->getName().str(),
+      ctx.DbgVar->getFile(), ctx.DbgVar->getLine(),
+      derived->getBaseType(), false,
+      DINode::FlagZero);
+
+  auto *Node = DINode::get(ctx.F.getContext(), {RawDIMem, NewVar, ctx.DbgVar});
+  MDs.push_back(Node);
+
+  ctx.DbgVar = NewVar;
+}
+
 bool PointerReductionPass::runOnFunction(Function &F) {
   auto &TraitPool = getAnalysis<DIMemoryTraitPoolWrapper>().get();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
@@ -372,7 +395,8 @@ bool PointerReductionPass::runOnFunction(Function &F) {
   //    with corresponding operations with this copied memory;
   // 5. Check if this helped; TODO
 
-  for_each_loop(LI, [this, &TraitPool, &LoopAttr, &AT, &TLI, &F](Loop *L) {
+  auto MDsToAttach = SmallVector<Metadata*, 8>();
+  for_each_loop(LI, [this, &TraitPool, &LoopAttr, &AT, &TLI, &F, &MDsToAttach](Loop *L) {
     if (!LoopAttr.hasAttr(*L, Attribute::NoUnwind) || LoopAttr.hasAttr(*L, Attribute::Returned)) {
       return;
     }
@@ -426,7 +450,10 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (auto *Load = dyn_cast<LoadInst>(Val)) {
         V = Load->getPointerOperand();
       }
-      auto ctx = PtrRedContext(V, F, L, Val != V);
+
+      auto DIB = new DIBuilder(*F.getParent());
+      auto ctx = PtrRedContext(V, F, L, DIB, Val != V);
+
       if (!validateValue(ctx)) {
         continue;
       }
@@ -436,22 +463,29 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       if (!analyzeAliasTree(V, AT, L, TLI)) {
         continue;
       }
+
       // find dbg.value call for V and save it for adding debug information later
       for (auto &BB : F.getBasicBlockList()) {
         for (auto &Inst : BB.getInstList()) {
-          if (auto *Dbg = dyn_cast<DbgValueInst>(&Inst)) {
-            if (Dbg->getValue() == V) {
-              ctx.DbgLoc = Dbg->getDebugLoc();
-              ctx.DbgVar = Dbg->getVariable();
+          if (auto *DbgVal = dyn_cast<DbgValueInst>(&Inst)) {
+            if (DbgVal->getValue() == V) {
+              ctx.DbgLoc = DbgVal->getDebugLoc();
+              ctx.DbgVar = DbgVal->getVariable();
             }
-          } else if (auto *Dbg = dyn_cast<DbgDeclareInst>(&Inst)) {
-            if (Dbg->getAddress() == V) {
-              ctx.DbgLoc = Dbg->getDebugLoc();
-              ctx.DbgVar = Dbg->getVariable();
+          } else if (auto *Declare = dyn_cast<DbgDeclareInst>(&Inst)) {
+            if (Declare->getAddress() == V) {
+              ctx.DbgLoc = Declare->getDebugLoc();
+              ctx.DbgVar = Declare->getVariable();
             }
           }
         }
       }
+
+      auto *derivedType = dyn_cast<DIDerivedType>(ctx.DbgVar->getType());
+      if (derivedType && V->getType()->isPointerTy()) {
+        handlePointerDI(ctx, derivedType, AT, MDsToAttach);
+      }
+
       //there are no dbg.value or dbg.declare calls for global variables
       if (dyn_cast<GlobalValue>(ctx.V)) {
         auto *DIB = new DIBuilder(*ctx.F.getParent());
@@ -470,5 +504,11 @@ bool PointerReductionPass::runOnFunction(Function &F) {
       freeLinks(ctx.PhiLinks);
     }
   });
+
+  if (!MDsToAttach.empty()) {
+    auto *MappingNode = DINode::get(F.getContext(), MDsToAttach);
+    F.setMetadata("alias.tree.mapping", MappingNode);
+  }
+
   return false;
 }

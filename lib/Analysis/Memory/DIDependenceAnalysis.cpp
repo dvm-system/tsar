@@ -631,6 +631,25 @@ bool handleLoopEmptyBindings(
   return true;
 }
 
+MDNode *mdNodeFromAliasTreeMapping(const Function *F, DIMemoryLocation &Loc) {
+  auto MD = F->getMetadata("alias.tree.mapping");
+  if (MD == nullptr) {
+    return nullptr;
+  }
+  for (auto &op : MD->operands()) {
+    if (auto *DIN = dyn_cast<MDNode>(op)) {
+      assert(DIN->getNumOperands() == 3 && "Alias tree mapping node must contain three elements");
+      auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
+      if (Loc.Var == DINewVar) {
+        auto *DIOldVar = dyn_cast<DIVariable>(DIN->getOperand(2));
+        Loc.Var = DIOldVar;
+        return dyn_cast<MDNode>(DIN->getOperand(0));
+      }
+    }
+  }
+  return nullptr;
+}
+
 /// Update traits of metadata-level locations related to a specified Phi-node
 /// in a specified loop. This function uses a specified `TraitInserter` functor
 /// to update traits for a single memory location.
@@ -654,7 +673,10 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
   if (DILocs.empty())
     return;
   for (auto &DILoc : DILocs) {
-    auto *MD = getRawDIMemoryIfExists(Phi->getContext(), DILoc);
+    auto *MD = mdNodeFromAliasTreeMapping(Phi->getFunction(), DILoc);
+    if (!MD) {
+      MD = getRawDIMemoryIfExists(Phi->getContext(), DILoc);
+    }
     // If a memory location is partially promoted we will try to use
     // dbg.declare or dbg.addr intrinsics to find the corresponding node in
     // the alias tree.
