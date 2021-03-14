@@ -21,11 +21,8 @@ int main(int argc, char const *argv[]) {
 	int *aOffset = a + 2;
 	int *bOffset = &(b[1]);
 
-	//Unresctrict calls:
-	int r3 = foo(a, a);
-	int r4 = foo(b, b);
-	int r5 = foo(a, aOffset);
-	int r6 = foo(bOffset, b);
+	//Non resctrict calls:
+	int r3 = foo(a, aOffset);
 	
-	return r1 + r2 + r3 + r4 + r5 + r6;
+	return r1 + r2 + r3;
 }

@@ -41,24 +41,24 @@ DenseSet<Value*> collectGlobalMemorySources(Module* M) {
 }
 
 DenseSet<Value*> collectMemorySources(Function* F) {
-    DenseSet<Value*> MemorySources;
-    for (auto& I : instructions(F)) {
+  DenseSet<Value*> MemorySources;
+  for (auto& I : instructions(F)) {
 
-        //collect arrays static allocations
-        if (auto* AllocaI = dyn_cast<AllocaInst>(&I)) {
-            if (auto* PointerAllocaTy = dyn_cast<PointerType>(AllocaI->getType())) {
-                MemorySources.insert(&I);
-            }
-        }
-
-        //collect malloc-like allocations
-        if (auto* CallI = dyn_cast<CallInst>(&I)) {
-            if (auto* PointerAllocaTy = dyn_cast<PointerType>(CallI->getType())) {
-                MemorySources.insert(&I);
-            }
-        }
+    //collect arrays static allocations
+    if (auto* AllocaI = dyn_cast<AllocaInst>(&I)) {
+      if (auto* PointerAllocaTy = dyn_cast<PointerType>(AllocaI->getType())) {
+        MemorySources.insert(&I);
+      }
     }
-    return MemorySources;
+
+    //collect malloc-like allocations
+    if (auto* CallI = dyn_cast<CallInst>(&I)) {
+      if (auto* PointerAllocaTy = dyn_cast<PointerType>(CallI->getType())) {
+        MemorySources.insert(&I);
+      }
+    }
+  }
+  return MemorySources;
 }
 
 int countPointerArguments(Function* F) {
@@ -150,11 +150,11 @@ DenseSet<CallInst*> collectCallsOfFunctionsWithPointerArguments(Function* F) {
 }
 
 DenseMap<CallInst*, FunctionCallWithMemorySources> initCallsToPtrArgumentsMemorySources(DenseSet<CallInst*>& FunctionsCalls) {
-    DenseMap<CallInst*, FunctionCallWithMemorySources> CallsToPtrArgumentsMemorySources;
-    for (auto* CallI : FunctionsCalls) {
-        CallsToPtrArgumentsMemorySources.insert(std::make_pair(CallI, FunctionCallWithMemorySources(CallI)));
-    }
-    return CallsToPtrArgumentsMemorySources;
+  DenseMap<CallInst*, FunctionCallWithMemorySources> CallsToPtrArgumentsMemorySources;
+  for (auto* CallI : FunctionsCalls) {
+    CallsToPtrArgumentsMemorySources.insert(std::make_pair(CallI, FunctionCallWithMemorySources(CallI)));
+  }
+  return CallsToPtrArgumentsMemorySources;
 }
 
 DenseMap<CallInst*, FunctionCallWithMemorySources> fillCallsToPtrArgumentsMemorySources(
@@ -225,8 +225,8 @@ DenseMap<CallInst*, FunctionCallWithMemorySources> fillCallsToPtrArgumentsMemory
             workList.push_back(ValueWithMemorySources(CallI, memorySources));
           }
         }
-//      } else if (auto* ConstExpr = dyn_cast<UnaryConstantExpr>(U)) {
-//        workList.push_back(ValueWithMemorySources(ConstExpr, memorySources));
+      } else if (auto* ConstExpr = dyn_cast<ConstantExpr>(U)) {
+        workList.push_back(ValueWithMemorySources(ConstExpr, memorySources));
       }
     }
   }
@@ -427,8 +427,8 @@ void runOnFunction(
   DenseMap<Function*, FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies,
   DenseSet<Value *>& GlobalMemorySources) {
   LLVM_DEBUG(
-      dbgs() << "[RESTRICTION ARGS] F:" << "\n";
-  F->dump();
+    dbgs() << "[RESTRICTION ARGS] F:" << "\n";
+    F->dump();
   );
 
   auto MemorySources = collectMemorySources(F);
@@ -436,8 +436,8 @@ void runOnFunction(
     MemorySources.insert(GM);
   }
   LLVM_DEBUG(
-      dbgs() << "[RESTRICTION ARGS] Allocation Instructions: " << "\n";
-  for (auto* I : MemorySources) {
+    dbgs() << "[RESTRICTION ARGS] Allocation Instructions: " << "\n";
+    for (auto* I : MemorySources) {
       dbgs() << "\t";
       I->dump();
       dbgs() << "\tUsers: " << "\n";
@@ -446,62 +446,62 @@ void runOnFunction(
           U->dump();
       }
       dbgs() << "\n";
-  }
+    }
   );
 
   // because we already analyzed real arguments for the F calls
   if (KnownRestrictFunctions.count(F)) {
-      int i = 0;
-      for (auto& Arg : F->args()) {
-          if (KnownRestrictFunctions[F].count(i)) {
-              MemorySources.insert(&Arg);
-          }
-          i++;
+    int i = 0;
+    for (auto& Arg : F->args()) {
+      if (KnownRestrictFunctions[F].count(i)) {
+          MemorySources.insert(&Arg);
       }
+      i++;
+    }
   }
 
   auto TargetFunctionsCalls = collectCallsOfFunctionsWithPointerArguments(F);
   LLVM_DEBUG(
-      dbgs() << "[RESTRICTION ARGS] TargetFunctionsCalls Instructions: " << "\n";
-  for (auto* I : TargetFunctionsCalls) {
+    dbgs() << "[RESTRICTION ARGS] TargetFunctionsCalls Instructions: " << "\n";
+    for (auto* I : TargetFunctionsCalls) {
       dbgs() << "\t";
       I->dump();
-  }
+    }
   );
 
   DenseMap<Function*, DenseSet<int>> LocallyAnalysedFunctions;
   for (auto* FCall : TargetFunctionsCalls) {
-      auto* LF = FCall->getCalledFunction();
-      LocallyAnalysedFunctions.insert(std::make_pair(LF, findPointerArgumentsIndexes(LF)));
+    auto* LF = FCall->getCalledFunction();
+    LocallyAnalysedFunctions.insert(std::make_pair(LF, findPointerArgumentsIndexes(LF)));
   }
 
   auto CallsToPtrArgumentsMemorySources = fillCallsToPtrArgumentsMemorySources(
-      TargetFunctionsCalls,
-      MemorySources,
-      FunctionsReturnValuesDependencies);
+    TargetFunctionsCalls,
+    MemorySources,
+    FunctionsReturnValuesDependencies);
   LLVM_DEBUG(
-      dbgs() << "[RESTRICTION ARGS] CallsToPtrArgumentsMemorySources: " << "\n";
+    dbgs() << "[RESTRICTION ARGS] CallsToPtrArgumentsMemorySources: " << "\n";
   for (auto& CallInfo : CallsToPtrArgumentsMemorySources) {
-      auto* CallI = CallInfo.second.mCallI;
-      auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
-      dbgs() << "Call: ";
-      CallI->dump();
-      dbgs() << "Args memory sources:\n";
-      for (auto& S : ArgumentsSources) {
-          dbgs() << "\t" << S.first << ":\n";
-          for (auto* MS : S.second) {
-              dbgs() << "\t\t";
-              MS->dump();
-          }
+    auto* CallI = CallInfo.second.mCallI;
+    auto& ArgumentsSources = CallInfo.second.mArgumentMemorySources;
+    dbgs() << "Call: ";
+    CallI->dump();
+    dbgs() << "Args memory sources:\n";
+    for (auto& S : ArgumentsSources) {
+      dbgs() << "\t" << S.first << ":\n";
+      for (auto* MS : S.second) {
+        dbgs() << "\t\t";
+        MS->dump();
       }
-      dbgs() << "\n";
+    }
+    dbgs() << "\n";
   }
   );
 
   auto RestrictFunctionsCallsByArgument = collectRestrictFunctionsCallsByArguments(
-      CallsToPtrArgumentsMemorySources, FunctionsReturnValuesDependencies);
+    CallsToPtrArgumentsMemorySources, FunctionsReturnValuesDependencies);
   auto LocalRestrictFunctionsInfo = collectRestrictFunctionsInfoByArguments(
-      RestrictFunctionsCallsByArgument, TargetFunctionsCalls);
+    RestrictFunctionsCallsByArgument, TargetFunctionsCalls);
 
   DenseMap<Function*, DenseSet<int>> LocalNonRestrictFunctionsInfo;
   for (auto& AnalysedFunctionInfo : LocallyAnalysedFunctions) {
@@ -568,7 +568,7 @@ void runOnFunction(
     if (KnownRestrictFunctions.count(LNRF)) {
       for (auto LocalNonRestrictArg : FNonRestrictArgs) {
         if (KnownRestrictFunctions[LNRF].count(LocalNonRestrictArg)) {
-            KnownRestrictFunctions[LNRF].erase(LocalNonRestrictArg);
+          KnownRestrictFunctions[LNRF].erase(LocalNonRestrictArg);
         }
       }
       if (KnownRestrictFunctions[LNRF].empty()) {
@@ -609,111 +609,111 @@ void runOnFunction(
 }
 
 FunctionResultArgumentsMemoryDependencies findReturnValueDependencies(Function* F, DenseMap<Function*,
-    FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies) {
-    FunctionResultArgumentsMemoryDependencies dependencies;
-    LLVM_DEBUG(
-        dbgs() << "[RESTRICTION ARGS] F:" << "\n";
+  FunctionResultArgumentsMemoryDependencies>& FunctionsReturnValuesDependencies) {
+  FunctionResultArgumentsMemoryDependencies dependencies;
+  LLVM_DEBUG(
+    dbgs() << "[RESTRICTION ARGS] F:" << "\n";
     F->dump();
-    );
-    if (F->getReturnType()->isPointerTy()) {
-        int i = 0;
-        for (auto& Arg : F->args()) {
-            if (Arg.getType()->isPointerTy()) {
-                SmallVector<Value*, 16> workList;
-                workList.push_back(&Arg);
-                while (!workList.empty()) {
-                    auto* workValue = workList.back();
-                    workList.pop_back();
-                    for (auto* U : workValue->users()) {
-                        if (auto* GepU = dyn_cast<GetElementPtrInst>(U)) {
-                            workList.push_back(U);
-                        }
-                        if (auto* CastI = dyn_cast<CastInst>(U)) {
-                            workList.push_back(U);
-                        }
-                        if (auto* SelectI = dyn_cast<SelectInst>(U)) {
-                            workList.push_back(U);
-                        }
-                        if (auto* CallI = dyn_cast<CallInst>(U)) {
-                            auto* CalledF = CallI->getCalledFunction();
-                            if (FunctionsReturnValuesDependencies.count(CalledF) &&
-                                !FunctionsReturnValuesDependencies[CalledF].mInfluencingArgumentsIndexes.empty()) {
-                                for (int callArgIdx = 0; callArgIdx < CallI->getNumArgOperands(); callArgIdx++) {
-                                    auto* CallArg = CallI->getArgOperand(callArgIdx);
-                                    if (workValue == CallArg &&
-                                        FunctionsReturnValuesDependencies[CalledF].mInfluencingArgumentsIndexes.count(callArgIdx)) {
-                                        LLVM_DEBUG(
-                                            dbgs() << "Inner call result depends on argument " << i << " callArgIdx: " << callArgIdx
-                                            << " Call: ";
-                                        CallI->dump();
-                                        );
-                                        workList.push_back(U);
-                                    }
-                                }
-                            }
-                        }
-                        auto* RetI = dyn_cast<Instruction>(U);
-                        if (RetI && RetI->isTerminator()) {
-                            LLVM_DEBUG(
-                                dbgs() << "Found Terminator inst: ";
-                            RetI->dump();
-                            );
-                            dependencies.mInfluencingArgumentsIndexes.insert(i);
-                        }
-                    }
-                }
+  );
+  if (F->getReturnType()->isPointerTy()) {
+    int i = 0;
+    for (auto& Arg : F->args()) {
+      if (Arg.getType()->isPointerTy()) {
+        SmallVector<Value*, 16> workList;
+        workList.push_back(&Arg);
+        while (!workList.empty()) {
+          auto* workValue = workList.back();
+          workList.pop_back();
+          for (auto* U : workValue->users()) {
+            if (auto* GepU = dyn_cast<GetElementPtrInst>(U)) {
+              workList.push_back(U);
             }
-            i++;
+            if (auto* CastI = dyn_cast<CastInst>(U)) {
+              workList.push_back(U);
+            }
+            if (auto* SelectI = dyn_cast<SelectInst>(U)) {
+              workList.push_back(U);
+            }
+            if (auto* CallI = dyn_cast<CallInst>(U)) {
+              auto* CalledF = CallI->getCalledFunction();
+              if (FunctionsReturnValuesDependencies.count(CalledF) &&
+                !FunctionsReturnValuesDependencies[CalledF].mInfluencingArgumentsIndexes.empty()) {
+                for (int callArgIdx = 0; callArgIdx < CallI->getNumArgOperands(); callArgIdx++) {
+                  auto* CallArg = CallI->getArgOperand(callArgIdx);
+                  if (workValue == CallArg &&
+                    FunctionsReturnValuesDependencies[CalledF].mInfluencingArgumentsIndexes.count(callArgIdx)) {
+                    LLVM_DEBUG(
+                      dbgs() << "Inner call result depends on argument " << i << " callArgIdx: " << callArgIdx
+                      << " Call: ";
+                      CallI->dump();
+                    );
+                    workList.push_back(U);
+                  }
+                }
+              }
+            }
+            auto* RetI = dyn_cast<Instruction>(U);
+            if (RetI && RetI->isTerminator()) {
+              LLVM_DEBUG(
+                dbgs() << "Found Terminator inst: ";
+                RetI->dump();
+              );
+              dependencies.mInfluencingArgumentsIndexes.insert(i);
+            }
+          }
         }
-        // if result not depends on arguments, function may return unique memory for every call
-        // (malloc wrapper as example) or may not (some static return)
-        if (dependencies.mInfluencingArgumentsIndexes.empty()) {
-            dependencies.mIsRestrict = F->returnDoesNotAlias();
-            LLVM_DEBUG(
-                dbgs() << "Function returnDoesNotAlias: " << F->returnDoesNotAlias() << "\n";
-            );
-        }
+      }
+      i++;
     }
-    LLVM_DEBUG(
-        dbgs() << "Function  " << F->getName() << " return depends on "
-        << dependencies.mInfluencingArgumentsIndexes.size() << " args: " << "\n";
+  // if result not depends on arguments, function may return unique memory for every call
+  // (malloc wrapper as example) or may not (some static return)
+    if (dependencies.mInfluencingArgumentsIndexes.empty()) {
+      dependencies.mIsRestrict = F->returnDoesNotAlias();
+      LLVM_DEBUG(
+        dbgs() << "Function returnDoesNotAlias: " << F->returnDoesNotAlias() << "\n";
+      );
+    }
+  }
+  LLVM_DEBUG(
+    dbgs() << "Function  " << F->getName() << " return depends on "
+    << dependencies.mInfluencingArgumentsIndexes.size() << " args: " << "\n";
     for (auto Idx : dependencies.mInfluencingArgumentsIndexes) {
-        dbgs() << "\t\t" << Idx << "\n";
+      dbgs() << "\t\t" << Idx << "\n";
     }
     dbgs() << "mIsRestrict:  " << dependencies.mIsRestrict
-        << " returnDoesNotAlias: " << F->returnDoesNotAlias() << "\n";
-    );
-    return dependencies;
+      << " returnDoesNotAlias: " << F->returnDoesNotAlias() << "\n";
+  );
+  return dependencies;
 }
 
 DenseMap<Function*, FunctionResultArgumentsMemoryDependencies> findFunctionsReturnValueDependencies(CallGraph& CG) {
-    DenseMap<Function*, FunctionResultArgumentsMemoryDependencies> FunctionsReturnValuesDependencies;
-    for (scc_iterator<CallGraph*> CallGraphIterator = scc_begin(&CG); !CallGraphIterator.isAtEnd(); ++CallGraphIterator) {
-        const std::vector<CallGraphNode*>& NodeVec = *CallGraphIterator;
-        if (NodeVec.size() > 1) {
-            LLVM_DEBUG(
-                dbgs() << "[RESTRICTION ARGS] Can't process recursion in the Call Graph. First func: \n";
-            NodeVec[0]->dump();
-            );
-        }
-        else {
-            for (CallGraphNode* CGNode : *CallGraphIterator) {
-                if (Function* F = CGNode->getFunction()) {
-                    if (F->isIntrinsic())
-                        continue;
-                    auto dependencies = findReturnValueDependencies(F, FunctionsReturnValuesDependencies);
-                    FunctionsReturnValuesDependencies.insert(std::make_pair(F, dependencies));
-                }
-            }
-        }
+  DenseMap<Function*, FunctionResultArgumentsMemoryDependencies> FunctionsReturnValuesDependencies;
+  for (scc_iterator<CallGraph*> CallGraphIterator = scc_begin(&CG); !CallGraphIterator.isAtEnd(); ++CallGraphIterator) {
+    const std::vector<CallGraphNode*>& NodeVec = *CallGraphIterator;
+    if (NodeVec.size() > 1) {
+      LLVM_DEBUG(
+        dbgs() << "[RESTRICTION ARGS] Can't process recursion in the Call Graph. First func: \n";
+        NodeVec[0]->dump();
+      );
     }
-    return FunctionsReturnValuesDependencies;
+    else {
+      for (CallGraphNode* CGNode : *CallGraphIterator) {
+        if (Function* F = CGNode->getFunction()) {
+          if (F->isIntrinsic())
+            continue;
+          auto dependencies = findReturnValueDependencies(F, FunctionsReturnValuesDependencies);
+          FunctionsReturnValuesDependencies.insert(std::make_pair(F, dependencies));
+        }
+      }
+    }
+  }
+  return FunctionsReturnValuesDependencies;
 }
 
 bool RestrictionArgumentsPass::runOnModule(Module& M) {
   LLVM_DEBUG(
     dbgs() << "[RESTRICTION ARGS]" << "\n";
-  M.dump();
+    M.dump();
   );
 
   DenseMap<Function*, DenseSet<int>> RestrictFunctionsInfo;
@@ -744,11 +744,11 @@ bool RestrictionArgumentsPass::runOnModule(Module& M) {
 
   DenseSet<Value *> GlobalMemorySources = collectGlobalMemorySources(&M);
   LLVM_DEBUG(
-      dbgs() << "[RESTRICTION ARGS] Global memory sources: \n";
-      for (auto& GMS : GlobalMemorySources) {
-        dbgs() << "\t";
-        GMS->dump();
-      }
+    dbgs() << "[RESTRICTION ARGS] Global memory sources: \n";
+    for (auto& GMS : GlobalMemorySources) {
+      dbgs() << "\t";
+      GMS->dump();
+    }
   );
 
   for (auto* F : llvm::reverse(UpwardCalledFunctions)) {
@@ -758,13 +758,14 @@ bool RestrictionArgumentsPass::runOnModule(Module& M) {
   LLVM_DEBUG(
     dbgs() << "[RESTRICTION ARGS] Restrict Functions: \n";
     for (auto& FInfo : RestrictFunctionsInfo) {
-        auto F = FInfo.first;
-        auto& Args = FInfo.second;
-        dbgs() << "\t" << F->getName() << "\n";
-        std::set<int> orderedArgs(Args.begin(), Args.end());
-        for (auto ArgIdx : orderedArgs) {
-          dbgs() << "\t\t" << ArgIdx << "\n";
-        }
+      auto F = FInfo.first;
+      auto& Args = FInfo.second;
+      dbgs() << "\t" << F->getName() << "\n";
+      std::set<int> orderedArgs(Args.begin(), Args.end());
+      for (auto ArgIdx : orderedArgs) {
+        dbgs() << "\t\t" << ArgIdx << "\n";
+        F->addParamAttr(ArgIdx, Attribute::NoAlias);
+      }
     }
 
     dbgs() << "[RESTRICTION ARGS] Functions with Non Restrict calls:\n";
@@ -778,12 +779,26 @@ bool RestrictionArgumentsPass::runOnModule(Module& M) {
       }
     }
   );
+
+  for (auto& FInfo : RestrictFunctionsInfo) {
+    auto F = FInfo.first;
+//    auto& Args = FInfo.second;
+//    std::set<int> orderedArgs(Args.begin(), Args.end());
+    for (auto ArgIdx : FInfo.second) {
+      F->addParamAttr(ArgIdx, Attribute::NoAlias);
+    }
+    LLVM_DEBUG(
+        dbgs() << "\n[RESTRICTION ARGS] Function: " << F->getName() << " after processing:\n";
+        F->dump();
+    );
+  }
+
   return false;
 }
 
 void RestrictionArgumentsPass::getAnalysisUsage(llvm::AnalysisUsage& AU) const {
-    AU.addRequired<CallGraphWrapperPass>();
-    AU.setPreservesAll();
+  AU.addRequired<CallGraphWrapperPass>();
+  AU.setPreservesAll();
 }
 
 ModulePass* llvm::createRestrictionArgumentsPass() { return new RestrictionArgumentsPass; }
