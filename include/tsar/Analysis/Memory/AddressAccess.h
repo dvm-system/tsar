@@ -98,7 +98,7 @@ namespace llvm {
       initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
     }
 
-    std::vector<EValue> analyzeDst(Value* value, EValue parent);
+    std::vector<EValue> analyzeDst(Value* value, EValue parent, bool &unknown);
 
     std::vector<EValue> analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown);
 

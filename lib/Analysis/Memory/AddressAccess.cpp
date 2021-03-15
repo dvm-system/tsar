@@ -574,8 +574,28 @@ void AddressAccessAnalyser::setNocaptureToAll(Function *F) {
 
 /// \brief Sets traits for given ptr-value used to store,
 /// may return ptr-value "siblings" in future, thus it returns vector
-std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeDst(Value* value, EValue parent) {
-  return std::vector<AddressAccessAnalyser::EValue>();
+std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeDst(Value* value, EValue parent, bool &unknown) {
+  auto result = std::vector<AddressAccessAnalyser::EValue>();
+  auto instr = dyn_cast<Instruction>(value);
+  if (!instr) {
+    LLVM_DEBUG(errs() << "[ADDRESS-ACCESS] memory destination is not an instruction: "; value->print(errs());
+                      errs () << "\n";);
+    unknown = true;
+  } else {
+    switch (instr->getOpcode()) {
+      case Instruction::Alloca: {
+        LLVM_DEBUG(errs() << "Met alloca memory destination: "; instr->print(errs()); errs() << "\n";);
+        result.push_back(EValue(value, Traits(parent.second.rang + 1)));
+        break;
+      }
+      default: {  // todo: process noalias call, bitcast, gep, loads
+        LLVM_DEBUG(errs() << "Met unknown memory destination: "; instr->print(errs()); errs() << "\n";);
+        unknown = true;
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 /// \brief Returns vector of ptr-values, where parent may be "moved", sets traits for these values
@@ -587,7 +607,7 @@ std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeBranch(
     case Instruction::Store: {
       LLVM_DEBUG(errs() << "Met store: "; branch->print(errs()); errs() << "\n";);
       if (opNo == 0) {  // ptr is being stored itself
-        result = analyzeDst(branch->getOperand(opNo), parent);
+        result = analyzeDst(branch->getOperand(1), parent, unknown);
       } // ptr is being stored to, not interesting in any case
       break;
     }
@@ -627,6 +647,12 @@ ExposedResult AddressAccessAnalyser::isCaptured(Argument *arg) {
   std::set<Value*> seen;
   std::vector<EValue> workList = {EValue(arg, Traits(0, false))};
   while (!workList.empty()) {
+    for (auto &val : workList) {
+      LLVM_DEBUG(dbgs() << val.first->getName()
+                        << ",";);
+    }
+    LLVM_DEBUG(dbgs() << "\n";);
+
     auto&[value, v_traits] = workList.back();
     workList.pop_back();
     for (Use &use : value->uses()) {
@@ -655,6 +681,7 @@ ExposedResult AddressAccessAnalyser::isCaptured(Argument *arg) {
           // TODO: And this case is ok, but i don't see the big picture now, and what consequences of ignoring this are possible
           return ExposedResult::May;
         }
+        workList.push_back(child);
       }
     }
   }
