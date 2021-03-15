@@ -320,6 +320,12 @@ bool AddressAccessAnalyser::aliasesExposed(Value *QueryV, std::set<Value *> &Exp
     auto ExposedML = MemoryLocation(ExposedV,
                                     ExposedTy->isSized() ?
                                     DL.getTypeStoreSize(ExposedTy) : MemoryLocation::UnknownSize);
+    if (AA->isNoAlias(QueryML, ExposedML))
+      LLVM_DEBUG(dbgs() << "noalias\n";);
+    else if (AA->isMustAlias(QueryML, ExposedML))
+      LLVM_DEBUG(dbgs() << "mustalias\n";);
+    else
+      LLVM_DEBUG(dbgs() << "mayalias\n";);
     if (QueryV == ExposedV || !AA->isNoAlias(QueryML, ExposedML))
       return true;
   }
@@ -368,81 +374,133 @@ bool AddressAccessAnalyser::transitExposedProperty(Instruction &I, MemoryLocatio
   return modified;
 }
 
+ExposedTracker::ExposedTracker(Function *F, TargetLibraryInfo &TLI) {
+  for_each_memory(*F, TLI, [this](Instruction &I,
+                                  MemoryLocation &&Loc,
+                                  unsigned OpNo,
+                                  AccessInfo r,
+                                  AccessInfo w) {
+                    addUnknown(Loc.Ptr);
+                  },
+                  [this](Instruction &I, AccessInfo IsRead,
+                         AccessInfo isWrite) {
+                      LLVM_DEBUG(errs() << "Met unknown memory: "; I.print(errs()); errs() << "\n"; return;);
+                  });
+}
+
+void ExposedTracker::print() {
+  LLVM_DEBUG(dbgs() << "Exposed:\n";);
+  for (auto V : memLocs) {
+    if (V.second != ExposedResult::Yes)
+      continue;
+    V.first->print(dbgs());
+    LLVM_DEBUG(dbgs() << "\n";);
+  }
+  LLVM_DEBUG(dbgs() << "Local:\n";);
+  for (auto V : memLocs) {
+    if (V.second != ExposedResult::No)
+      continue;
+    V.first->print(dbgs());
+    LLVM_DEBUG(dbgs() << "\n";);
+  }
+  LLVM_DEBUG(dbgs() << "Unknown:\n";);
+  for (auto V : memLocs) {
+    if (V.second != ExposedResult::May)
+      continue;
+    V.first->print(dbgs());
+    LLVM_DEBUG(dbgs() << "\n";);
+  }
+}
 /// \brief Return all values referencing memory locations which are modified by
 /// this function and could be referenced from other functions
 std::set<Value *> AddressAccessAnalyser::getExposedMemLocs(Function *F) {
-  auto exposedMemLocs = std::set<Value *>();
-  // Init set with values trivially known to be exposed
-  for (auto &I : instructions(F)) {
-    LLVM_DEBUG(I.print(dbgs()););
-    LLVM_DEBUG(dbgs() << "\n";);
-    for (int OpNo = 0; OpNo < I.getNumOperands(); OpNo++) {
-      auto Op = I.getOperand(OpNo);
-      auto PointeeOp = dyn_cast<PointerType>(Op->getType());
-      if (!PointeeOp || !isTriviallyExposed(I, OpNo))
-        continue;
-      exposedMemLocs.insert(Op);
-    }
-  }
-  LLVM_DEBUG(dbgs() << "**********\n\n";);
-  // Transit exposed property
   auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
   auto &TLI = Provider.get<TargetLibraryInfoWrapperPass>().getTLI(*F);
-  bool modified = true;
-  int iteration = 0;
-  while (modified) {
-    modified = false;
-    LLVM_DEBUG(dbgs() << "Transit exposed iteration: " << iteration++ << "\n";);
-    for_each_memory(*F, TLI,
-                    [&modified, &exposedMemLocs, this](Instruction &I, MemoryLocation &&Loc,
-                                                       unsigned OpNo, AccessInfo r, AccessInfo w) {
-                        LLVM_DEBUG(I.print(dbgs()); dbgs() << "\n";);
-                        modified |= transitExposedProperty(I, Loc, OpNo, r, w, exposedMemLocs);
-                    },
-                    [&exposedMemLocs, this](Instruction &I, AccessInfo IsRead, AccessInfo isWrite) {
-                        LLVM_DEBUG(dbgs() << "Met unknown memory: "; I.print(dbgs()); dbgs() << "\n"; return;);
-                        llvm_unreachable("Met unknown memory");  // TODO: process conservatively
-//                        if (isWrite != AccessInfo::No) {
-//                          for (auto &op : I.operands()) {
-//                            exposedMemLocs.insert(op);
-//                          }
-//                        }
-                    });
-  }
-  // Filter out values referencing not modified locations
-  auto modifiedMemLocs = std::set<Value *>();
-  for_each_memory(*F, TLI,
-                  [&modifiedMemLocs](Instruction &I, MemoryLocation &&Loc,
-                                     unsigned, AccessInfo IsRead, AccessInfo isWrite) {
-                      if (isWrite != AccessInfo::No) {
-                        auto *Ptr = const_cast<Value *>(Loc.Ptr);
-                        modifiedMemLocs.insert(Ptr);
-                      }
-                  },
-                  [&modifiedMemLocs](Instruction &I, AccessInfo IsRead, AccessInfo isWrite) {
-                      if (isWrite != AccessInfo::No) {
-                        for (auto &op : I.operands()) {
-                          modifiedMemLocs.insert(op);
-                        }
-                      }
-                  });
-  auto intersection = std::set<Value *>();
-  std::set_intersection(exposedMemLocs.begin(), exposedMemLocs.end(),
-                        modifiedMemLocs.begin(), modifiedMemLocs.end(),
-                        std::inserter(intersection, intersection.begin()));
-  return intersection;
+  ExposedTracker(F, TLI).print();
+  return std::set<Value *>();
 }
 
-void AddressAccessAnalyser::runOnFunction(Function *F) {
-  auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
-  AA = &Provider.get<AAResultsWrapperPass>().getAAResults();
-  CurFunction = F;
+//void AddressAccessAnalyser::runOnFunction(Function *F) {
+//  auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
+//  AA = &Provider.get<AAResultsWrapperPass>().getAAResults();
+//  CurFunction = F;
+//
+//  for (auto V : getExposedMemLocs(F)) {
+//    V->print(dbgs());
+//    LLVM_DEBUG(dbgs() << "\n";);
+//  }
+//  LLVM_DEBUG(dbgs() << "-----------------\n\n";);
+//}
 
-  for (auto V : getExposedMemLocs(F)) {
-    V->print(dbgs());
-    LLVM_DEBUG(dbgs() << "\n";);
+
+//void AddressAccessAnalyser::runOnFunction(Function *F) {
+//  auto &Provider = getAnalysis<FunctionPassesProvider>(*F);
+//  AA = &Provider.get<AAResultsWrapperPass>().getAAResults();
+//  auto &TLI = Provider.get<TargetLibraryInfoWrapperPass>().getTLI(*F);
+//  CurFunction = F;
+//
+//  LLVM_DEBUG(errs() << "Whole function: "; F->getName(); errs() << "\n";);
+//  for (BasicBlock &BB : F->getBasicBlockList())
+//    for (Instruction &I: BB) {
+//      Instruction *Inst = &I;
+//      LLVM_DEBUG(I.print(errs()); errs() << "\n";);
+//    }
+//  int i = 0;
+//  LLVM_DEBUG(errs() << "\nMem locs: "; F->getName(); errs() << "\n";);
+//  for_each_memory(*F, TLI, [this, &i](Instruction &I,
+//                                  MemoryLocation &&Loc,
+//                                  unsigned OpNo,
+//                                  AccessInfo r,
+//                                  AccessInfo w) {
+//                      i += 1;
+//                      LLVM_DEBUG(errs() << "Met known memory: "; I.print(errs()); errs() << "\n";);
+////                      if (i!=10)
+////                        return;
+////                      auto SI = dyn_cast<StoreInst>(&I);
+////                      LLVM_DEBUG(SI->getValueOperand()->print(errs()); errs() << "\n";);
+////                      Argument* a_arg = nullptr;
+////                      for (auto& par : I.getFunction()->args())
+////                        if (par.getName() == "a") {
+////                          a_arg = &par;
+////                          LLVM_DEBUG(par.print(errs()); errs() << "\n";);
+////                          break;
+////                        }
+////                      LLVM_DEBUG(a_arg->print(errs()); errs() << "\n";);
+////                      std::set<Value*> set = {a_arg};
+////                      if (aliasesExposed(SI->getValueOperand(), set))
+////                        LLVM_DEBUG(errs() << "da \n";);
+////                      else
+////                        LLVM_DEBUG(errs() << "net \n";);
+////                      exit(0);
+//                      if (i!=8)
+//                        return;
+//                      auto LI = dyn_cast<LoadInst>(&I);
+//                      LLVM_DEBUG(LI->getPointerOperand()->print(errs()); errs() << "\n";);
+//                      std::set<Value*> set = {LI->getPointerOperand()};
+//                      if (aliasesExposed(LI->getPointerOperand(), set))
+//                        LLVM_DEBUG(errs() << "da \n";);
+//                      else
+//                        LLVM_DEBUG(errs() << "net \n";);
+//                      exit(0);
+//                  },
+//                  [this](Instruction &I, AccessInfo IsRead,
+//                         AccessInfo isWrite) {
+//                      LLVM_DEBUG(errs() << "Met unknown memory: "; I.print(errs()); errs() << "\n";);
+//                  });
+//}
+
+void AddressAccessAnalyser::runOnFunction(Function *F) {
+  LLVM_DEBUG(errs() << "Analyzing function: "; F->getName(); errs() << "\n";);
+  for (auto &arg : F->args()) {
+    if (!(arg.getType()->isPointerTy()))
+      continue;
+    if (isCaptured(&arg) == ExposedResult::No) {
+      LLVM_DEBUG(errs() << "Proved to be not captured: "; errs() << arg.getName(); errs() << "\n";);
+      arg.addAttr(Attribute::AttrKind::NoCapture);
+    }
+    else
+      LLVM_DEBUG(errs() << "Arg may be captured: "; errs() << arg.getName(); errs() << "\n";);
   }
-  LLVM_DEBUG(dbgs() << "-----------------\n\n";);
 }
 
 bool AddressAccessAnalyser::runOnModule(Module &M) {
@@ -477,6 +535,7 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
     }
     runOnFunction(F);
   }
+  exit(0);
   return false;
 }
 
@@ -511,4 +570,93 @@ void AddressAccessAnalyser::setNocaptureToAll(Function *F) {
   for (auto &arg : F->args())
     if (arg.getType()->isPointerTy())
       arg.addAttr(Attribute::AttrKind::NoCapture);
+}
+
+/// \brief Sets traits for given ptr-value used to store,
+/// may return ptr-value "siblings" in future, thus it returns vector
+std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeDst(Value* value, EValue parent) {
+  return std::vector<AddressAccessAnalyser::EValue>();
+}
+
+/// \brief Returns vector of ptr-values, where parent may be "moved", sets traits for these values
+/// unknown is set if there is no rule for given branch
+std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown) {
+  auto result = std::vector<AddressAccessAnalyser::EValue>();
+  auto ptr = branch->getOperand(opNo);
+  switch (branch->getOpcode()) {
+    case Instruction::Store: {
+      LLVM_DEBUG(errs() << "Met store: "; branch->print(errs()); errs() << "\n";);
+      if (opNo == 0) {  // ptr is being stored itself
+        result = analyzeDst(branch->getOperand(opNo), parent);
+      } // ptr is being stored to, not interesting in any case
+      break;
+    }
+    case Instruction::Load: {
+      LLVM_DEBUG(errs() << "Met load: "; branch->print(errs()); errs() << "\n";);
+      if (parent.second.rang != 0)  // loads from values of rang 0 don't pass info about parent pointer
+        result.push_back(EValue(branch, Traits(parent.second.rang - 1)));
+      break;
+    }
+    case Instruction::GetElementPtr: {
+      LLVM_DEBUG(errs() << "Met gep: "; branch->print(errs()); errs() << "\n";);
+      result.push_back(EValue(branch, parent.second));
+      break;
+    }
+    case Instruction::BitCast: {  // todo: which bitcasts are unsafe?
+      LLVM_DEBUG(errs() << "Met bitcast: "; branch->print(errs()); errs() << "\n";);
+      result.push_back(EValue(branch, parent.second));
+      break;
+    }
+    case Instruction::Call: {
+      LLVM_DEBUG(errs() << "Met call: "; branch->print(errs()); errs() << "\n";);
+      unknown = !(dyn_cast<CallBase>(branch)->getCalledFunction()->getArg(opNo)->hasNoCaptureAttr());
+      break;
+    }
+    default: {  // todo: process returns somehow
+      LLVM_DEBUG(errs() << "Met unknown usage: "; branch->print(errs()); errs() << "\n";);
+      unknown = true;
+      break;
+    }
+  }
+  return result;
+}
+
+ExposedResult AddressAccessAnalyser::isCaptured(Argument *arg) {
+  if (arg->hasNoCaptureAttr())
+    return ExposedResult::No;
+  std::set<Value*> seen;
+  std::vector<EValue> workList = {EValue(arg, Traits(0, false))};
+  while (!workList.empty()) {
+    auto&[value, v_traits] = workList.back();
+    workList.pop_back();
+    for (Use &use : value->uses()) {
+      auto instr = dyn_cast<Instruction>(use.getUser());
+      if (!instr) {
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] usage is not an instruction"
+                          << "\n";);
+        // TODO: I don't think that this branch in necessary, cause non-instr usages are BasicBlocks, Functions?
+        return ExposedResult::May;
+      }
+      bool unknown = false;
+      auto result = analyzeBranch(instr, EValue(value, v_traits), use.getOperandNo(), unknown);
+      if (unknown)
+        return ExposedResult::May;
+      for (auto &child : result) {
+        if (child.second.exposed)
+          return ExposedResult::Yes;
+        bool inserted;
+        std::tie(std::ignore, inserted) = seen.insert(child.first);
+        if (!inserted) {
+          LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] value was already seen"
+                            << "\n";);
+          // TODO: I need to think this through, cause now i only see a few cases when this is possible, namely:
+          // TODO: 1) when we store value to one place more than once, e.g.:
+          // TODO:     - %ptr = alloca; store %v, %ptr; store %ptr, %ptr2; %alias = load %ptr2; store %v, %alias;
+          // TODO: And this case is ok, but i don't see the big picture now, and what consequences of ignoring this are possible
+          return ExposedResult::May;
+        }
+      }
+    }
+  }
+  return ExposedResult::No;
 }

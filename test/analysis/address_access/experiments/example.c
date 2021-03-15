@@ -3,13 +3,13 @@
 //
 #include <stdlib.h>
 
-int* glob;
+int** glob;
 
-void fun1(int a, int b, int *ptra) {
-  int *ptr;
-  ptr = (int*) malloc(sizeof(int));
+void fun1(int *a, int *b, int **ptra) {
+  int **ptr;
+  ptr = (int**) malloc(sizeof(int*));
   glob = ptr;
 
-  *ptr = a;
-  *ptra = b;
+  int *c = &(a[3]);
+  *ptr = c;
 }

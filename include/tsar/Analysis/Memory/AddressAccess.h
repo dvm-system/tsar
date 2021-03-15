@@ -48,6 +48,19 @@ namespace tsar {
 }
 
 namespace llvm {
+  enum ExposedResult { No, Yes, May };
+
+  struct ExposedTracker {
+      std::map<const Value *, ExposedResult> memLocs;
+      ExposedTracker() : memLocs(std::map<const Value *, ExposedResult>()) {}
+      ExposedTracker(Function *, TargetLibraryInfo&);
+      ExposedResult query(Value *v) {return memLocs.find(v)->second;}
+      void addUnknown(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::May));}
+      void addExposed(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::Yes));}
+      void addLocal(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::No));}
+      void print();
+  };
+
   struct InstrDependencies {
     std::vector<Instruction *> deps;
     bool is_invalid;
@@ -59,6 +72,14 @@ namespace llvm {
             std::vector<Instruction *>()), is_invalid(is_invalid) {};
   };
 
+  struct Traits {
+    int rang;
+    bool exposed;
+    Traits() {};
+    Traits(int rang) : rang(rang), exposed(false) {};
+    Traits(int rang, bool exposed) : rang(rang), exposed(exposed) {};
+  };
+
   class AddressAccessAnalyser :
           public ModulePass, private bcl::Uncopyable {
 
@@ -66,6 +87,7 @@ namespace llvm {
     /// maps instructions on those which are dependent on them
     using DependentInfo = DenseMap<Instruction *, InstrDependencies *>;
     using AccessInfo = tsar::AccessInfo;
+    using EValue = std::pair<Value*, Traits>;  // extended value
     static bool isNonTrivialPointerType(Type *);
     Function *CurFunction = nullptr;
     AAResults* AA = nullptr;
@@ -75,6 +97,12 @@ namespace llvm {
     AddressAccessAnalyser() : ModulePass(ID) {
       initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
     }
+
+    std::vector<EValue> analyzeDst(Value* value, EValue parent);
+
+    std::vector<EValue> analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown);
+
+    ExposedResult isCaptured(Argument *arg);
 
     tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
 
