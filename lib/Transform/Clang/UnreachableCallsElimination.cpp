@@ -12,6 +12,7 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -50,6 +51,15 @@ public:
     mUnreachable(Unreachable),
     mSourceManager(Rewriter.getSourceMgr()) {}
 
+  inline clang::SourceLocation
+  shiftTokenIfSemi(clang::SourceLocation Loc) {
+  Token SemiTok;
+  return (!getRawTokenAfter(Loc, mSourceManager, mRewriter->getLangOpts(), SemiTok)
+      && SemiTok.is(tok::semi))
+      ? SemiTok.getLocation()
+      : Loc;
+  }
+
   bool TraverseCallExpr(CallExpr *CE) {
     if (!CE) {
       return true;
@@ -59,6 +69,7 @@ public:
 
     clang::SourceLocation BeginLoc = CE->getBeginLoc();
     clang::SourceLocation EndLoc = CE->getEndLoc();
+
     unsigned LineStart = mSourceManager.getSpellingLineNumber(BeginLoc);
     unsigned ColumnStart = mSourceManager.getSpellingColumnNumber(BeginLoc);
     unsigned LineEnd = mSourceManager.getSpellingLineNumber(EndLoc);
@@ -71,7 +82,9 @@ public:
     for (const auto &CR : mUnreachable) {
       if ((CR.LineStart < LineStart || (CR.LineStart == LineStart && CR.ColumnStart <= ColumnStart))
           && (CR.LineEnd > LineEnd || (CR.LineEnd == LineEnd && CR.ColumnEnd >= ColumnEnd))) {
-        mRewriter->RemoveText(CE->getSourceRange());
+        EndLoc = shiftTokenIfSemi(EndLoc);
+        clang::SourceRange SourceRangeToRemove{ BeginLoc, EndLoc };
+        mRewriter->RemoveText(SourceRangeToRemove);
         break;
       }
     }
