@@ -672,13 +672,14 @@ static inline void addVarList(
 static inline void addVarList(const SortedVarListT &VarInfoList,
     SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
-  auto name = [](auto &V) { return V.get<AST>()->getName(); };
-  auto I{map_iterator(VarInfoList.begin(), name)},
-      EI{map_iterator(VarInfoList.end(), name)};
-  Clause.append(I->begin(), I->end());
+  auto name = [](auto &V) { return V.template get<AST>()->getName(); };
+  auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
+  auto N{I->template get<AST>()->getName()};
+  Clause.append(N.begin(), N.end());
   for (++I; I != EI; ++I) {
     Clause.append({ ',', ' ' });
-    Clause.append(I->begin(), I->end());
+    auto N{I->template get<AST>()->getName()};
+    Clause.append(N.begin(), N.end());
   }
   Clause.push_back(')');
 }
