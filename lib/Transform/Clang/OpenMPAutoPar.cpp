@@ -214,7 +214,7 @@ struct ClausePrinter {
       case trait::Reduction::RK_Mult: ParallelFor += "*:"; break;
       case trait::Reduction::RK_Or: ParallelFor += "|:"; break;
       case trait::Reduction::RK_And: ParallelFor += "&:"; break;
-      case trait::Reduction::RK_Xor: ParallelFor + "^: "; break;
+      case trait::Reduction::RK_Xor: ParallelFor += "^:"; break;
       case trait::Reduction::RK_Max: ParallelFor += "max:"; break;
       case trait::Reduction::RK_Min: ParallelFor += "min:"; break;
       default: llvm_unreachable("Unknown reduction kind!"); break;
