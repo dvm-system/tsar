@@ -147,6 +147,8 @@ struct Options : private bcl::Uncopyable {
         DefaultQueryManager::PrintPassGroup>>> PrintOnly;
   llvm::cl::list<unsigned> PrintStep;
   llvm::cl::opt<bool> PrintFilename;
+  llvm::cl::opt<bool> DiscardValueNames;
+  llvm::cl::opt<bool> NoDiscardValueNames;
 
   llvm::cl::OptionCategory AnalysisCategory;
   llvm::cl::opt<bool> Check;
@@ -246,6 +248,10 @@ Options::Options() :
     cl::desc("Print results for a specified processing steps (comma separated list of steps)")),
   PrintFilename("print-filename", cl::cat(DebugCategory),
     cl::desc("Print only names of files instead of full paths")),
+  DiscardValueNames("fdiscard-value-names", cl::cat(DebugCategory),
+    cl::desc("Discard value names in LLVM IR")),
+  NoDiscardValueNames("fno-discard-value-names", cl::cat(DebugCategory),
+    cl::desc("Do not discard value names in LLVM IR")),
   AnalysisCategory("Analysis options"),
   Check("check", cl::cat(AnalysisCategory),
     cl::desc("Check user-defined properties")),
@@ -503,6 +509,10 @@ void Tool::storeCLOptions() {
     mCommandLine.emplace_back("-fno-show-source-location");
   if (Options::get().Verbose)
     mCommandLine.emplace_back("-v");
+  if (Options::get().DiscardValueNames)
+    mCommandLine.emplace_back("-fdiscard-value-names");
+  if (Options::get().NoDiscardValueNames)
+    mCommandLine.emplace_back("-fno-discard-value-names");
   if (!Options::get().LanguageStd.empty())
     mCommandLine.push_back("-std=" + Options::get().LanguageStd);
   if (Options::get().TimeReport)
