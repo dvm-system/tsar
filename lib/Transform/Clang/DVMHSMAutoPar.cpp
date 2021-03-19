@@ -752,7 +752,7 @@ static void addReductionIfNeed(
     case trait::Reduction::RK_Mult: RedKind += "product"; break;
     case trait::Reduction::RK_Or: RedKind += "or"; break;
     case trait::Reduction::RK_And: RedKind += "and"; break;
-    case trait::Reduction::RK_Xor: RedKind + "xor "; break;
+    case trait::Reduction::RK_Xor: RedKind += "xor"; break;
     case trait::Reduction::RK_Max: RedKind += "max"; break;
     case trait::Reduction::RK_Min: RedKind += "min"; break;
     default: llvm_unreachable("Unknown reduction kind!"); break;
