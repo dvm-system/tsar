@@ -745,13 +745,14 @@ bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
           if (auto *OmpParallel = dyn_cast<OMPParallelDirective>(PI.get())) {
             PragmaStr += omp::getOpenMPDirectiveName(
                 static_cast<omp::Directive>(PI->getKind()));
+            PragmaStr += " default(shared)";
             PragmaStr += "\n";
             ToInsertBefore.second.Before += PragmaStr;
             ToInsertBefore.second.Delimiter = "{\n";
           } else if (auto *OmpFor = dyn_cast<OMPForDirective>(PI.get())) {
             PragmaStr += omp::getOpenMPDirectiveName(
                 static_cast<omp::Directive>(PI->getKind()));
-            PragmaStr += " default(shared)";
+            PragmaStr += " ";
             bcl::for_each(OmpFor->getClauses(), ClausePrinter{PragmaStr});
             auto OmpOrderedItr =
                 llvm::find_if(OmpFor->children(), [](auto *Child) {
