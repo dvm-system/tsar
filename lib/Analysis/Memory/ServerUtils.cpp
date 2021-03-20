@@ -94,14 +94,17 @@ DILocalScope *cloneWithNewSubprogram(DILocalScope *Scope, DISubprogram *Sub) {
     return nullptr;
   if (isa<DISubprogram>(Scope))
     return Sub;
-  Scope = cast<DILocalScope>(Scope->clone().release());
-  for (unsigned I = 0, EI = Scope->getNumOperands(); I < EI; ++I)
-    if (auto Parent = dyn_cast_or_null<DILocalScope>(Scope->getOperand(I))) {
-      assert(Scope->getScope() == Parent &&
+  auto Clone{Scope->clone()};
+  for (unsigned I = 0, EI = Clone->getNumOperands(); I < EI; ++I)
+    if (auto Parent = dyn_cast_or_null<DILocalScope>(Clone->getOperand(I))) {
+      assert(cast<DILocalScope>(*Clone).getScope() == Parent &&
              "Unknown reference to local scope!");
-      Scope->replaceOperandWith(I, cloneWithNewSubprogram(Parent, Sub));
+      Clone->replaceOperandWith(I, cloneWithNewSubprogram(Parent, Sub));
     }
-  return Scope;
+  // Replace temporary node with a permanent one after all operands are
+  // cloned. Otherwise, metadata in the original module may be corrupted.
+  return cast<DILocalScope>(
+      MDNode::replaceWithPermanent<MDNode>(std::move(Clone)));
 }
 
 DILocation *cloneWithNewSubprogram(
@@ -173,6 +176,26 @@ MDNode * cloneWithNewSubprogram(
   SmallPtrSet<MDNode *, 8> Visited;
   return cloneWithNewSubprogram(MD, SubprogramMap, ClientToServer, Visited);
 }
+
+#ifdef LLVM_DEBUG
+void checkFuncDescription(llvm::Module &M, const Twine &Prefix) {
+  for (auto &F : M)
+    for (auto &I : instructions(&F))
+      if (auto &Loc{I.getDebugLoc()})
+        if (auto *Scope{Loc->getScope()})
+          if (auto *DISub{Scope->getSubprogram()})
+        if (!DISub->describes(&F)) {
+          dbgs() << Prefix;
+          dbgs()
+              << "function-to-subprogram mistmach at location attached to ";
+          I.print(dbgs());
+          Loc.print(dbgs());
+          dbgs() << ": function " << F.getName() << " subprogram: ";
+          DISub->print(dbgs());
+          dbgs() << "\n";
+        }
+}
+#endif
 }
 
 void ClientToServerMemory::initializeServer(
@@ -254,6 +277,8 @@ void ClientToServerMemory::initializeServer(
   for (auto *CU : Search.CUs)
     if (Visited.insert(CU).second)
       ServerCUs->addOperand(CU);
+  LLVM_DEBUG(checkFuncDescription(ClientM, "Error (on client): "));
+  LLVM_DEBUG(checkFuncDescription(ServerM, "Error (on server): "));
   // Prepare to mapping from origin to cloned DIMemory.
   auto &Env = P.getAnalysis<DIMemoryEnvironmentWrapper>();
   MDToDIMemoryMap CloneToOrigin;
