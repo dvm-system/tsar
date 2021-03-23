@@ -72,6 +72,22 @@ bool VariableCollector::VisitDeclStmt(clang::DeclStmt *DS) {
   return true;
 }
 
+bool VariableCollector::TraverseLoopIteration(clang::ForStmt *For) {
+  assert(For && "Statement must not be null!");
+  for (auto *Child : For->children()) {
+    if (!Child)
+      continue;
+    if (Child == For->getInit()) {
+      if (auto DS{dyn_cast<DeclStmt>(Child)})
+        if (!VisitDeclStmt(DS))
+          return false;
+    } else if (!TraverseStmt(Child)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::tuple<clang::VarDecl *, DIMemory *, VariableCollector::DeclSearch>
 VariableCollector::findDecl(const DIMemory &DIM,
     const DIMemoryMatcher &ASTToClient,

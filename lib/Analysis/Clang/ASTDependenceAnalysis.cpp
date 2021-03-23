@@ -57,7 +57,10 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
            tsar::diag::warn_parallel_no_induction);
     return false;
   }
-  mASTVars.TraverseStmt(mRegion);
+  if (auto *For{dyn_cast<ForStmt>(mRegion)})
+    mASTVars.TraverseLoopIteration(For);
+  else
+    mASTVars.TraverseStmt(mRegion);
   DenseSet<DIAliasNode *> DirectSideEffect;
   for (auto &TS : mDIDepSet) {
     if (TS.is<trait::DirectAccess>())

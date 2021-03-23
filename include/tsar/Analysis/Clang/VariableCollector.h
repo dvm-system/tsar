@@ -116,6 +116,10 @@ struct VariableCollector
   /// Remember all canonical declarations declared inside the loop.
   bool VisitDeclStmt(clang::DeclStmt *DS);
 
+  /// Traverse internal parts of the loop, do not traverse an initialization
+  /// part executed outside of the loop.
+  bool TraverseLoopIteration(clang::ForStmt *For);
+
   /// Find declaration for a specified memory, remember memory if it safely
   /// represent a found variable or its part (update `CanonicalRefs` map).
   std::tuple<clang::VarDecl *, DIMemory *, DeclSearch>
