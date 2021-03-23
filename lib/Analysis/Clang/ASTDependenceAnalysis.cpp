@@ -317,28 +317,16 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
 }
 
 bool ClangDependenceAnalyzer::evaluateDefUse() {
-  for (auto *TS : mInToLocalize) {
-    clang::VarDecl *Status = nullptr;
-    if (!mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
-          mDependenceInfo.get<trait::ReadOccurred>(), &Status)) {
-      toDiag(mDiags, mRegion->getBeginLoc(),
-             tsar::diag::warn_parallel_loop);
-      toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-             tsar::diag::note_parallel_localize_inout_unable);
-      return false;
-    }
-  }
-  for (auto *TS : mOutToLocalize) {
-    clang::VarDecl *Status = nullptr;
-    if (!mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
-          mDependenceInfo.get<trait::WriteOccurred>(), &Status)) {
-      toDiag(mDiags, mRegion->getBeginLoc(),
-             tsar::diag::warn_parallel_loop);
-      toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
-             tsar::diag::note_parallel_localize_inout_unable);
-      return false;
-    }
-  }
+  bool IsOk{true};
+  clang::VarDecl *Status{nullptr};
+  for (auto *TS : mInToLocalize)
+    IsOk &=
+        mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
+                          mDependenceInfo.get<trait::ReadOccurred>(), &Status);
+  for (auto *TS : mOutToLocalize)
+    IsOk &=
+        mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
+                          mDependenceInfo.get<trait::WriteOccurred>(), &Status);
   mDependenceInfo.get<trait::ReadOccurred>().insert(
       mDependenceInfo.get<trait::FirstPrivate>().begin(),
       mDependenceInfo.get<trait::FirstPrivate>().end());
@@ -349,5 +337,10 @@ bool ClangDependenceAnalyzer::evaluateDefUse() {
     mDependenceInfo.get<trait::WriteOccurred>().insert(Red.begin(), Red.end());
     mDependenceInfo.get<trait::ReadOccurred>().insert(Red.begin(), Red.end());
   }
-  return true;
+  if (!IsOk) {
+    toDiag(mDiags, mRegion->getBeginLoc(), tsar::diag::warn_parallel_loop);
+    toDiag(mDiags, Status ? Status->getLocation() : mRegion->getBeginLoc(),
+           tsar::diag::note_parallel_localize_inout_unable);
+  }
+  return IsOk;
 }

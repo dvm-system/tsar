@@ -193,11 +193,11 @@ bool VariableCollector::localize(DIAliasTrait &TS,
               const DIMemoryMatcher &ASTToClient,
               const ClonedDIMemoryMatcher &ClientToServer,
               SortedVarListT &VarNames, clang::VarDecl **Error) {
+  bool IsOk{true};
   for (auto &T : TS)
-    if (!localize(*T, *TS.getNode(),
-          ASTToClient, ClientToServer, VarNames, Error))
-      return false;
-  return true;
+    IsOk &= localize(*T, *TS.getNode(), ASTToClient, ClientToServer, VarNames,
+                     Error);
+  return IsOk;
 }
 
 bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,

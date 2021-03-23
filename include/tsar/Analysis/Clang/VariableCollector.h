@@ -161,8 +161,8 @@ struct VariableCollector
   /// Check whether it is possible to use high-level syntax to create copy for
   /// all memory locations in `TS` for each thread.
   ///
-  /// On failure if `Error` not nullptr set it to the first variable which
-  /// prevents localization (or to nullptr if variable not found).
+  /// On failure if `Error` not nullptr set it to one of variables which
+  /// prevent localization (or to nullptr if variable not found).
   bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
                 SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);

@@ -125,7 +125,8 @@ public:
                ClangDependenceAnalyzer::VariableLess>;
   using LoopNestT = SmallVector<ObjectID, 4>;
   using VarMappingT =
-      DenseMap<ObjectID, SmallVector<std::pair<ObjectID, bool>, 4>>;
+      std::map<VariableT, SmallVector<std::pair<ObjectID, bool>, 4>,
+               ClangDependenceAnalyzer::VariableLess>;
 
   using ClauseList =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
@@ -348,6 +349,14 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     DVMHParallel->getClauses().get<trait::Private>().insert(
         ASTDepInfo.get<trait::Private>().begin(),
         ASTDepInfo.get<trait::Private>().end());
+    for (const auto &V : ASTDepInfo.get<trait::WriteOccurred>())
+      DVMHParallel->getClauses()
+          .template get<trait::DirectAccess>()
+          .try_emplace(V);
+    for (const auto &V : ASTDepInfo.get<trait::ReadOccurred>())
+      DVMHParallel->getClauses()
+          .template get<trait::DirectAccess>()
+          .try_emplace(V);
     for (unsigned I = 0, EI = ASTDepInfo.get<trait::Reduction>().size(); I < EI;
          ++I)
       DVMHParallel->getClauses().get<trait::Reduction>()[I].insert(
@@ -603,11 +612,14 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
     for (auto &Access : AccessInfo.scope_accesses(ID)) {
       if (!isa<DIEstimateMemory>(Access.getArray()))
         continue;
-      auto MappingItr =
-          Clauses.template get<trait::DirectAccess>()
-              .try_emplace(Access.getArray()->getAsMDNode(), Access.size(),
-                           std::pair<ObjectID, bool>(nullptr, true))
-              .first;
+      auto MappingItr{find_if(
+          Clauses.template get<trait::DirectAccess>(), [&Access](auto V) {
+            return V.first.template get<MD>() == Access.getArray();
+          })};
+      if (MappingItr == Clauses.template get<trait::DirectAccess>().end())
+        continue;
+      MappingItr->second.assign(Access.size(),
+                                std::pair<ObjectID, bool>(nullptr, true));
       for (auto *Subscript : Access) {
         if (!Subscript || MappingItr->second[Subscript->getDimension()].first)
           continue;
@@ -684,11 +696,10 @@ static inline void addVarList(const SortedVarListT &VarInfoList,
   Clause.push_back(')');
 }
 
-static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
+static void addParallelMapping(Loop &L, const PragmaParallel &Parallel,
     const FunctionAnalysis &Provider, SmallVectorImpl<char> &PragmaStr) {
   auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
   auto &RI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
-  auto &DIAT = Provider.value<DIEstimateMemoryPass *>()->getAliasTree();
   auto &MemoryMatcher =
       Provider.value<MemoryMatcherImmutableWrapper *>()->get();
   SmallVector<std::pair<ObjectID, StringRef>, 4> Inductions;
@@ -708,10 +719,11 @@ static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
   // We sort arrays to ensure the same order of variables after
   // different launches of parallelization.
   std::set<std::string, std::less<std::string>> MappingStr;
-  for (auto &Mapping : Parallel.getClauses().get<trait::DirectAccess>()) {
-    auto &DIEM = cast<DIEstimateMemory>(*DIAT.find(*Mapping.first));
-    SmallString<32> Tie{DIEM.getVariable()->getName()};
-    for (auto &Map : Mapping.second) {
+  for (auto &[Var, Mapping] : Parallel.getClauses().get<trait::DirectAccess>()) {
+    if (Mapping.empty())
+      continue;
+    SmallString<32> Tie{Var.get<AST>()->getName()};
+    for (auto &Map : Mapping) {
       Tie += "[";
       if (Map.first) {
         if (!Map.second)
@@ -724,6 +736,8 @@ static void addParallelMapping(Loop &L, PragmaParallel &Parallel,
     }
     MappingStr.insert(std::string(Tie));
   }
+  if (MappingStr.empty())
+    return;
   PragmaStr.append({ ' ', 't', 'i', 'e' });
   addVarList(MappingStr, PragmaStr);
 }
