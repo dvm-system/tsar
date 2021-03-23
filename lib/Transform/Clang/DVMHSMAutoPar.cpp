@@ -618,6 +618,9 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
           })};
       if (MappingItr == Clauses.template get<trait::DirectAccess>().end())
         continue;
+      if (is_contained(Clauses.template get<trait::Private>(),
+                       MappingItr->first))
+        continue;
       MappingItr->second.assign(Access.size(),
                                 std::pair<ObjectID, bool>(nullptr, true));
       for (auto *Subscript : Access) {
