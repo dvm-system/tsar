@@ -769,6 +769,7 @@ static void addReductionIfNeed(
       ParallelFor.push_back(',');
       ParallelFor.append(RedKind.begin(), RedKind.end());
       ParallelFor.push_back('(');
+      auto VarName{ VarItr->get<AST>()->getName() };
       ParallelFor.append(VarName.begin(), VarName.end());
       ParallelFor.push_back(')');
     }
