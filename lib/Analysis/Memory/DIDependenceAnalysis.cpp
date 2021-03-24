@@ -24,19 +24,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "BitMemoryTrait.h"
 #include "tsar/ADT/PersistentMap.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
-#include "tsar/Analysis/PrintUtils.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/IRUtils.h"
@@ -50,10 +50,10 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
-#include <llvm/Support/raw_ostream.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <tuple>
 #include <utility>
@@ -591,10 +591,11 @@ trait::Reduction::Kind getReductionKind(
 }
 
 bool handleLoopEmptyBindings(
-        const Loop *L, const DIMemory *Mem,
+        const Loop *L, const DIMemoryTrait &DITraitItr,
         DIMemoryTraitRegionPool &Pool,
         const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR)
 {
+  auto *Mem = DITraitItr.getMemory();
   if (Mem->emptyBinding()) {
     return true;
   }
@@ -615,6 +616,10 @@ bool handleLoopEmptyBindings(
         }
       }
     }
+  }
+
+  if (!DITraitItr.is<trait::DirectAccess>()) {
+    return false;
   }
 
   for (auto &Trait: Pool) {
@@ -705,7 +710,7 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
         DIMTraitItr->getMemory()->isOriginal() ||
-        !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
+        !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
         !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
         isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       continue;
@@ -1513,7 +1518,7 @@ void DIDependencyAnalysisPass::analyzePrivatePromoted(Loop *L,
       continue;
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() || DIMTraitItr->getMemory()->isOriginal() ||
-        !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
+        !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
         !DIMTraitItr->is_any<trait::Anti, trait::Flow, trait::Output,
                              trait::LastPrivate, trait::SecondToLastPrivate,
                              trait::FirstPrivate, trait::DynamicPrivate>() ||
@@ -1551,7 +1556,7 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
              L->getStartLoc().print(dbgs()); dbgs() << "\n");
   for (auto &DIMTrait : Pool) {
     if (DIMTrait.getMemory()->isOriginal() ||
-        !handleLoopEmptyBindings(L, DIMTrait.getMemory(), Pool, DIAliasSTR) ||
+        !handleLoopEmptyBindings(L, DIMTrait, Pool, DIAliasSTR) ||
         isLockedTrait(DIMTrait, LockedTraits, DIAliasSTR))
       continue;
     DIMTrait.unset<trait::AddressAccess>();
@@ -1683,7 +1688,7 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
       DIMTraitItr->getMemory()->isOriginal() ||
-      !handleLoopEmptyBindings(L, DIMTraitItr->getMemory(), Pool, DIAliasSTR) ||
+      !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
       !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
       isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       return false;

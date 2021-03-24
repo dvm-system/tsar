@@ -14,6 +14,7 @@
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/Transforms/Scalar.h>
+#include <tsar/Analysis/Memory/Utils.h>
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "ptr-red"
@@ -64,7 +65,7 @@ struct PtrRedContext {
       : V(v), DbgVar(), DbgLoc(), F(f), L(l), ValueChanged(changed), DIB(diBuilder) {}
 
   Value *V;
-  DILocalVariable *DbgVar;
+  DIVariable *DbgVar;
   DILocation *DbgLoc;
   Function &F;
   Loop *L;
@@ -132,10 +133,15 @@ void insertDbgValueCall(PtrRedContext &ctx, Instruction *Inst, Instruction *Inse
   auto Loc = DILocation::get(Inst->getContext(), 0, 0, closestLoc->getScope());
 
   if (add) {
-    Inst->setDebugLoc(Loc);
+    Inst->setDebugLoc(ctx.DbgLoc);
   }
 
-  ctx.DIB->insertDbgValueIntrinsic(Inst, ctx.DbgVar, DIExpression::get(ctx.F.getContext(), {}), Loc, InsertBefore);
+  ctx.DIB->insertDbgValueIntrinsic(
+          Inst,
+          dyn_cast<DILocalVariable>(ctx.DbgVar),
+          DIExpression::get(ctx.F.getContext(), {}),
+          ctx.DbgLoc, InsertBefore
+  );
 }
 
 void insertLoadInstructions(PtrRedContext &ctx) {
@@ -360,7 +366,7 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
   return true;
 }
 
-void handlePointerDI(PtrRedContext &ctx, DIDerivedType *derived, AliasTree &AT, SmallVectorImpl<Metadata *> &MDs) {
+void handlePointerDI(PtrRedContext &ctx, DIType *DIT, AliasTree &AT, SmallVectorImpl<Metadata *> &MDs) {
   auto &DL = ctx.F.getParent()->getDataLayout();
   auto locSize = LocationSize::precise(DL.getTypeStoreSize(ctx.V->getType()->getPointerElementType()));
   auto EM = AT.find(MemoryLocation(ctx.V, locSize));
@@ -371,8 +377,8 @@ void handlePointerDI(PtrRedContext &ctx, DIDerivedType *derived, AliasTree &AT, 
   auto *Scope = dyn_cast<DIScope>(ctx.L->getStartLoc()->getScope());
   auto *NewVar = ctx.DIB->createAutoVariable(
       Scope, "deref." + ctx.DbgVar->getName().str(),
-      ctx.DbgVar->getFile(), ctx.DbgVar->getLine(),
-      derived->getBaseType(), false,
+      ctx.DbgLoc->getFile(), ctx.DbgVar->getLine(),
+      DIT, false,
       DINode::FlagZero);
 
   auto *Node = DINode::get(ctx.F.getContext(), {RawDIMem, NewVar, ctx.DbgVar});
@@ -481,17 +487,17 @@ bool PointerReductionPass::runOnFunction(Function &F) {
         }
       }
 
-      auto *derivedType = dyn_cast<DIDerivedType>(ctx.DbgVar->getType());
-      if (derivedType && V->getType()->isPointerTy()) {
-        handlePointerDI(ctx, derivedType, AT, MDsToAttach);
+      if (dyn_cast<GlobalValue>(ctx.V)) {
+        SmallVector<DIMemoryLocation, 4> DILocs;
+        auto res = findMetadata(ctx.V, DILocs, &AT.getDomTree());
+        ctx.DbgVar = res->Var;
+        ctx.DbgLoc = L->getStartLoc();
+        handlePointerDI(ctx, ctx.DbgVar->getType(), AT, MDsToAttach);
       }
 
-      //there are no dbg.value or dbg.declare calls for global variables
-      if (dyn_cast<GlobalValue>(ctx.V)) {
-        auto *DIB = new DIBuilder(*ctx.F.getParent());
-        auto *scope = dyn_cast<DIScope>(L->getStartLoc()->getScope());
-        ctx.DbgVar = DIB->createAutoVariable(scope, "sapfor.da", nullptr, 0, nullptr, false, DINode::FlagZero | DINode::FlagArtificial);
-        ctx.DbgLoc = L->getStartLoc();
+      auto *derivedType = dyn_cast<DIDerivedType>(ctx.DbgVar->getType());
+      if (!dyn_cast<GlobalValue>(ctx.V) && derivedType && V->getType()->isPointerTy()) {
+        handlePointerDI(ctx, derivedType->getBaseType(), AT, MDsToAttach);
       }
 
       insertLoadInstructions(ctx);
