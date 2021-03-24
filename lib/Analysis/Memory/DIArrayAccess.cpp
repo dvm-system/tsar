@@ -39,6 +39,7 @@
 #include "tsar/Unparse/Utils.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/Sequence.h>
+#include <llvm/Analysis/IVDescriptors.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/IR/Dominators.h>
@@ -51,7 +52,20 @@ using namespace tsar;
 #define DEBUG_TYPE "di-array-access"
 
 void DIAffineSubscript::print(raw_ostream &OS) const {
-  OS << getConstant();
+  auto printSymbol = [&OS](const Symbol &S) {
+    OS << S.Constant;
+    if (S.Kind != Symbol::SK_Constant) {
+      if (S.Variable) {
+        OS << " + ";
+        printDILocationSource(dwarf::DW_LANG_C, *S.Variable, OS);
+      } else {
+        OS << " + ?";
+      }
+      if (S.Kind == Symbol::SK_Induction)
+        OS << "@I";
+    }
+  };
+  printSymbol(getSymbol());
   for (unsigned I = 0, EI = getNumberOfMonoms(); I < EI; ++I) {
     uint64_t ID = 0;
     for (unsigned J = 0, EI = getMonom(I).Column->getNumOperands(); J < EI; ++J)
@@ -59,7 +73,9 @@ void DIAffineSubscript::print(raw_ostream &OS) const {
         bcl::shrinkPair(L->getLine(), L->getColumn(), ID);
         break;
       }
-    OS << " + " << getMonom(I).Value << "*L" << ID;
+    OS << " + ";
+    printSymbol(getMonom(I).Value);
+    OS << "*L" << ID;
   }
 }
 
@@ -630,8 +646,59 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
       Coef = SE.getZero(S->getType());
       ConstTerm = S;
     }
-    if (!isa<SCEVConstant>(ConstTerm))
-      continue;
+    DIMemory *VariableTerm{nullptr};
+    if (!isa<SCEVConstant>(ConstTerm)) {
+      if (!L || !L->getLoopPreheader())
+        continue;
+      SmallVector<PointerIntPair<Type *, 1, bool>, 1> TypeQueue;
+      while (auto Cast{dyn_cast<SCEVCastExpr>(ConstTerm)}) {
+        if (isa<SCEVSignExtendExpr>(Cast))
+          TypeQueue.emplace_back(Cast->getType(), true);
+        else
+          TypeQueue.emplace_back(Cast->getType(), false);
+        ConstTerm = Cast->getOperand();
+      }
+      if (!isa<SCEVAddExpr>(ConstTerm))
+        continue;
+      for (auto I{L->getHeader()->begin()}; isa<PHINode>(I); ++I) {
+        auto *Phi{cast<PHINode>(I)};
+        InductionDescriptor ID;
+        PredicatedScalarEvolution PSE{SE, const_cast<Loop &>(*L)};
+        if (!InductionDescriptor::isInductionPHI(Phi, L, PSE, ID))
+          continue;
+        auto Start{SE.getSCEV(ID.getStartValue())};
+        if (!SE.isSCEVable(ID.getStartValue()->getType()) ||
+            ConstTerm->getType() != Start->getType())
+          continue;
+        auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
+        auto Incoming{find_if(Phi->incoming_values(), [L, Phi](const auto &U) {
+          return L->contains(Phi->getIncomingBlock(U));
+        })};
+        Instruction *Users[] = {&Phi->getIncomingBlock(*Incoming)->back()};
+        SmallVector<DIMemoryLocation, 2> DILocs;
+        auto DILoc{findMetadata(*Incoming, Users, DT, DILocs)};
+        if (!DILoc)
+          continue;
+        auto &DIAT{Provider.get<DIEstimateMemoryPass>().getAliasTree()};
+        auto RawDIM{getRawDIMemoryIfExists(Phi->getContext(), *DILoc)};
+        if (!RawDIM)
+          continue;
+        auto DIMItr{DIAT.find(*RawDIM)};
+        assert(DIMItr != DIAT.memory_end() &&
+               "Existing memory must be presented in metadata alias "
+               "tree.");
+        VariableTerm = &*DIMItr;
+        ConstTerm = SE.getMinusSCEV(ConstTerm, Start);
+        for (auto &T : reverse(TypeQueue))
+          ConstTerm =
+              T.getInt()
+                  ? SE.getTruncateOrSignExtend(ConstTerm, T.getPointer())
+                  : SE.getTruncateOrZeroExtend(ConstTerm, T.getPointer());
+        break;
+      }
+      if (!isa<SCEVConstant>(ConstTerm))
+        continue;
+    }
     ObjectID MonomLoopID = nullptr;
     if (L) {
       if (!isa<SCEVConstant>(Coef))
@@ -641,19 +708,18 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
         continue;
     }
     auto ConstTermValue = cast<SCEVConstant>(ConstTerm)->getAPInt();
-    auto *DimAccess =
-        Access->make<DIAffineSubscript>(DimIdx, APSInt(ConstTermValue, false));
+    auto SymbolKind{VariableTerm ? DIAffineSubscript::Symbol::SK_Induction
+                                 : DIAffineSubscript::Symbol::SK_Constant};
+    DIAffineSubscript::Symbol Symbol{SymbolKind, APSInt(ConstTermValue, false),
+                                VariableTerm};
+    auto *DimAccess{Access->make<DIAffineSubscript>(DimIdx, Symbol)};
     if (L) {
       auto CoefValue = cast<SCEVConstant>(Coef)->getAPInt();
       DimAccess->emplaceMonom(MonomLoopID, APSInt(CoefValue, false));
     }
     LLVM_DEBUG(dbgs() << "[DI ARRAY ACCESS]: dimension " << DimIdx
-                      << " subscript " << DimAccess->getConstant();
-               for (unsigned I = 0, EI = DimAccess->getNumberOfMonoms(); I < EI;
-                    ++I)
-                 dbgs() << " + " << DimAccess->getMonom(I).Value << "*"
-                        << "I" << I;
-               dbgs() << "\n");
+                      << " subscript ";
+               DimAccess->print(dbgs()); dbgs() << "\n");
   }
   Accesses.add(Access.release(), LoopNest);
 }
@@ -666,17 +732,30 @@ void DIArrayAccessWrapper::getAnalysisUsage(AnalysisUsage &AU) const {
 static void
 copySubscriptToClient(const DIAffineSubscript &Subscript,
                       DenseMap<Metadata *, const Loop *> &ServerToClientLoop,
+                      ClonedDIMemoryMatcher &MemoryMatcher,
                       DIArrayAccess &Access) {
-  auto *ClientAccess = Access.make<DIAffineSubscript>(Subscript.getDimension(),
-                                                      Subscript.getConstant());
+  auto copySymbol = [&MemoryMatcher](const DIAffineSubscript::Symbol &S) {
+    auto Symbol{S};
+    if (S.Variable) {
+      if (auto I{MemoryMatcher.find<Clone>(&*S.Variable)};
+          I != MemoryMatcher.end())
+        Symbol.Variable = I->get<Origin>();
+      else
+        Symbol.Variable = nullptr;
+    }
+    return Symbol;
+  };
+  auto Symbol{copySymbol(Subscript.getSymbol())};
+  auto *ClientAccess =
+      Access.make<DIAffineSubscript>(Subscript.getDimension(), Symbol);
   for (auto &I : seq(0u, Subscript.getNumberOfMonoms())) {
     auto LoopItr = ServerToClientLoop.find(Subscript.getMonom(I).Column);
     if (LoopItr == ServerToClientLoop.end()) {
       Access.reset(Subscript.getDimension());
       break;
     }
-    ClientAccess->emplaceMonom(LoopItr->second->getLoopID(),
-                               Subscript.getMonom(I).Value);
+    auto Symbol{copySymbol(Subscript.getMonom(I).Value)};
+    ClientAccess->emplaceMonom(LoopItr->second->getLoopID(), std::move(Symbol));
   }
   LLVM_DEBUG(
       dbgs()
@@ -771,9 +850,10 @@ bool DIArrayAccessWrapper::runOnModule(Module &M) {
           Access.getReadInfo(), Access.getWriteInfo());
       for (auto DimIdx : seq(0u, Access.size())) {
         if (Access[DimIdx])
-          Access[DimIdx]->apply([&A, &ServerToClientLoop](const auto &To) {
-            copySubscriptToClient(To, ServerToClientLoop, *A);
-          });
+          Access[DimIdx]->apply(
+              [&A, &ServerToClientLoop, DIATMemory](const auto &To) {
+                copySubscriptToClient(To, ServerToClientLoop, *DIATMemory, *A);
+              });
       }
       mAccessInfo->add(A.release(), LoopNest);
     }

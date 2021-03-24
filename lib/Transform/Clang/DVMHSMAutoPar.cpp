@@ -628,13 +628,17 @@ static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
           continue;
         if (auto *Affine = dyn_cast<DIAffineSubscript>(Subscript)) {
           for (unsigned I = 0, EI = Affine->getNumberOfMonoms(); I < EI; ++I) {
-            if (Affine->getMonom(I).Value.isNullValue())
+            auto &Monom{Affine->getMonom(I)};
+            if (Monom.Value.Kind == DIAffineSubscript::Symbol::SK_Constant &&
+                Monom.Value.Constant.isNullValue())
               continue;
             auto Itr = find(Clauses.template get<trait::Induction>(),
-                            Affine->getMonom(I).Column);
+                            Monom.Column);
             if (Itr != Clauses.template get<trait::Induction>().end())
               MappingItr->second[Affine->getDimension()] = {
-                  *Itr, !Affine->getMonom(I).Value.isNegative()};
+                  *Itr,
+                  Monom.Value.Kind == DIAffineSubscript::Symbol::SK_Constant &&
+                      !Monom.Value.Constant.isNegative()};
           }
         }
       }

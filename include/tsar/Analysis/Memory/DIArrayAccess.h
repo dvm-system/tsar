@@ -197,42 +197,61 @@ DIArrayAccess::make(Args &&... Arg) {
 
 class DIAffineSubscript : public DIArraySubscript {
 public:
-  using Monom = milp::AMonom<Scope, llvm::APSInt>;
+  struct Symbol {
+    enum SymbolKind {
+      SK_Constant,
+      // The value in term is the sum of a constant and a variable.
+      SK_Variable,
+      // The value in term is the sum of a constant and a start value of an
+      // induction.
+      SK_Induction,
+    };
+
+    Symbol(const llvm::APSInt &C) :
+        Kind(SK_Constant), Constant(C), Variable(nullptr) {}
+    Symbol(SymbolKind SK, const llvm::APSInt &C, const WeakDIMemoryHandle DIM) :
+        Kind(SK), Constant(C), Variable(DIM) { }
+
+    SymbolKind Kind;
+    llvm::APSInt Constant;
+    WeakDIMemoryHandle Variable;
+  };
+
+  using Monom = milp::AMonom<Scope, Symbol>;
 
   static bool classof(const DIArraySubscript *A) {
     return A->getKind() == DIArraySubscript::kindof<DIAffineSubscript>();
   }
 
-  DIAffineSubscript(DIArrayAccess *Access, unsigned Dimension,
-                    const llvm::APSInt &C)
+  DIAffineSubscript(DIArrayAccess *Access, unsigned Dimension, const Symbol &S)
       : DIArraySubscript(Access, Dimension,
                          DIArraySubscript::kindof<DIAffineSubscript>()),
-        mConstant(C) {}
+        mSymbol(S) {}
 
   DIAffineSubscript(DIArrayAccess *Access, unsigned Dimension,
                     const DIAffineSubscript &Subscript)
       : DIArraySubscript(Access, Dimension,
                          DIArraySubscript::kindof<DIAffineSubscript>()),
-        mMonoms(Subscript.mMonoms), mConstant(Subscript.mConstant) {}
+        mMonoms(Subscript.mMonoms), mSymbol(Subscript.mSymbol) {}
 
   DIAffineSubscript(DIArrayAccess *Access, unsigned Dimension,
                     DIAffineSubscript &&Subscript)
       : DIArraySubscript(Access, Dimension,
                          DIArraySubscript::kindof<DIAffineSubscript>()),
         mMonoms(std::move(Subscript.mMonoms)),
-        mConstant(std::move(Subscript.mConstant)) {}
+        mSymbol(std::move(Subscript.mSymbol)) {}
 
   void addMonom(const Monom &M) { mMonoms.push_back(M); }
   void addMonom(Monom &&M) { mMonoms.push_back(std::move(M)); }
 
-  void emplaceMonom(ObjectID Loop, const llvm::APSInt &Factor) {
+  void emplaceMonom(ObjectID Loop, const Symbol &Factor) {
     mMonoms.emplace_back(Loop, Factor);
   }
 
   unsigned getNumberOfMonoms() const { return mMonoms.size(); }
-  Monom getMonom(unsigned Idx) const { return mMonoms[Idx]; }
+  const Monom & getMonom(unsigned Idx) const { return mMonoms[Idx]; }
 
-  llvm::APSInt getConstant() const { return mConstant; }
+  const Symbol & getSymbol() const noexcept { return mSymbol; }
 
   /// Print subscript.
   ///
@@ -242,7 +261,7 @@ public:
 
 private:
   llvm::SmallVector<Monom, 2> mMonoms;
-  llvm::APSInt mConstant;
+  Symbol mSymbol;
 };
 
 /// This track accesses to array accross RAUW.
