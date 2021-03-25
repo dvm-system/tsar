@@ -109,8 +109,12 @@ public:
     }
     if (mActiveRegions.empty())
       return RecursiveASTVisitor::TraverseStmt(S);
+    auto StashActivePragmaCount = mActiveRegions.size() - mNewActiveRegions;
     mNewPragma = nullptr;
-    auto StashActivePragmaCount = mActiveRegions.size();
+    mNewActiveRegions = 0;
+    LLVM_DEBUG(
+        dbgs() << "[OPT REGION]: number of active regions on the level entry "
+               << mActiveRegions.size() << "\n");
     if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S)) {
       auto MatchItr = mLoops.find<AST>(S);
       if (MatchItr == mLoops.end()) {
@@ -129,6 +133,9 @@ public:
     }
     auto Res = RecursiveASTVisitor::TraverseStmt(S);
     mActiveRegions.resize(StashActivePragmaCount);
+    LLVM_DEBUG(
+        dbgs() << "[OPT REGION]: number of active regions on the level exit "
+               << mActiveRegions.size() << "\n");
     return Res;
   }
 
@@ -141,13 +148,16 @@ public:
         tsar::diag::warn_region_add_call_unable);
     } else {
       bool AddToRegionError = false;
-      for (auto *R : mActiveRegions)
+      for (auto *R : mActiveRegions) {
+        LLVM_DEBUG(dbgs() << "[OPT REGION]: add to region ";
+                   TSAR_LLVM_DUMP(MatchItr->get<IR>()->dump()));
         if (!R->markForOptimization(*MatchItr->get<IR>())) {
           if (!AddToRegionError)
             toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
               tsar::diag::warn_region_add_call_unable);
           AddToRegionError = true;
         }
+      }
     }
     return true;
   }
