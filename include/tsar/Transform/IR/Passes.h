@@ -95,8 +95,13 @@ void initializeDependenceInlinerPassPass(PassRegistry &Registry);
 /// analysis.
 Pass *createDependenceInlinerPass(bool InsertLifetime = true);
 
-void initializePointerReductionPassPass(PassRegistry &Registry);
+/// Initialize a pass which attempts to promote pointer
+/// values to registers.
+void initializePointerScalarizerPassPass(PassRegistry &Registry);
 
-FunctionPass *createPointerReductionPass();
+/// Create a pass which attempts to promote pointer
+/// values to registers.
+FunctionPass *createPointerScalarizerPass();
+
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H

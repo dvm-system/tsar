@@ -591,65 +591,51 @@ trait::Reduction::Kind getReductionKind(
 }
 
 bool handleLoopEmptyBindings(
-        const Loop *L, const DIMemoryTrait &DITraitItr,
-        DIMemoryTraitRegionPool &Pool,
-        const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR)
-{
+    const Loop *L, const DIMemoryTrait &DITraitItr,
+    DIMemoryTraitRegionPool &Pool,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR) {
   auto *Mem = DITraitItr.getMemory();
-  if (Mem->emptyBinding()) {
+  if (Mem->emptyBinding())
     return true;
-  }
   for (auto &Loc : *Mem) {
-    if (Loc.pointsToAliveValue()) {
-      if (auto *I = dyn_cast<Instruction>(Loc)) {
-        if (L->contains(I)) {
-          return false;
-        }
-      }
-      if (auto *CE = dyn_cast<ConstantExpr>(Loc)) {
-        for (auto *User: CE->users()) {
-          if (auto *I = dyn_cast<Instruction>(User)) {
-            if (L->contains(I)) {
-              return false;
-            }
-          }
-        }
-      }
-    }
+    if (!Loc.pointsToAliveValue())
+      continue;
+    if (auto *I = dyn_cast<Instruction>(Loc))
+      if (L->contains(I))
+        return false;
+    if (auto *CE = dyn_cast<ConstantExpr>(Loc))
+      for (auto *User: CE->users())
+        if (auto *I = dyn_cast<Instruction>(User))
+          if (L->contains(I))
+            return false;
   }
-
-  if (!DITraitItr.is<trait::DirectAccess>()) {
+  if (!DITraitItr.is<trait::DirectAccess>())
     return false;
-  }
-
   for (auto &Trait: Pool) {
     auto *PoolNode = Trait.getMemory()->getAliasNode();
     auto *MemNode = Mem->getAliasNode();
 
     if (!DIAliasSTR.isUnreachable(PoolNode, MemNode) &&
         !DIAliasSTR.isEqual(PoolNode, MemNode))
-    {
       return false;
-    }
   }
-
   return true;
 }
 
 MDNode *mdNodeFromAliasTreeMapping(const Function *F, DIMemoryLocation &Loc) {
   auto MD = F->getMetadata("alias.tree.mapping");
-  if (MD == nullptr) {
+  if (MD == nullptr)
     return nullptr;
-  }
   for (auto &op : MD->operands()) {
-    if (auto *DIN = dyn_cast<MDNode>(op)) {
-      assert(DIN->getNumOperands() == 3 && "Alias tree mapping node must contain three elements");
-      auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
-      if (Loc.Var == DINewVar) {
-        auto *DIOldVar = dyn_cast<DIVariable>(DIN->getOperand(2));
-        Loc.Var = DIOldVar;
-        return dyn_cast<MDNode>(DIN->getOperand(0));
-      }
+    auto *DIN = dyn_cast<MDNode>(op);
+    if (!DIN)
+      continue;
+    assert(DIN->getNumOperands() == 3 && "Alias tree mapping node must contain three elements");
+    auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
+    if (Loc.Var == DINewVar) {
+      auto *DIOldVar = dyn_cast<DIVariable>(DIN->getOperand(2));
+      Loc.Var = DIOldVar;
+      return dyn_cast<MDNode>(DIN->getOperand(0));
     }
   }
   return nullptr;
