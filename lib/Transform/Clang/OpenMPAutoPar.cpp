@@ -55,8 +55,7 @@ public:
   }
 
   OMPParallelDirective(bool HostOnly = false)
-      : ParallelLevel(static_cast<unsigned>(llvm::omp::OMPD_parallel), false,
-                      nullptr) {}
+      : ParallelLevel(static_cast<unsigned>(llvm::omp::OMPD_parallel), false) {}
 };
 
 class OMPForDirective : public ParallelLevel {
@@ -77,9 +76,10 @@ public:
     return Item->getKind() == static_cast<unsigned>(llvm::omp::OMPD_for);
   }
 
-  OMPForDirective(OMPParallelDirective *Parent)
-      : ParallelLevel(static_cast<unsigned>(llvm::omp::OMPD_for), false,
-                     Parent) {}
+  OMPForDirective(OMPParallelDirective &Parent)
+      : ParallelLevel(static_cast<unsigned>(llvm::omp::OMPD_for), false) {
+    parent_insert(&Parent);
+  }
 
   ClauseList &getClauses() noexcept { return mClauses; }
   const ClauseList &getClauses() const noexcept { return mClauses; }
@@ -99,9 +99,10 @@ public:
     return Item->getKind() == static_cast<unsigned>(llvm::omp::OMPD_ordered);
   }
 
-  OMPOrderedDirective(OMPForDirective *Parent)
-      : ParallelItem(static_cast<unsigned>(llvm::omp::OMPD_ordered), true,
-                     Parent) {}
+  OMPOrderedDirective(OMPForDirective &Parent)
+      : ParallelItem(static_cast<unsigned>(llvm::omp::OMPD_ordered), true) {
+    parent_insert(&Parent);
+  }
 
   unsigned depth() const noexcept { return mDepth; }
 
@@ -288,9 +289,10 @@ inline Stmt *getScope(Loop *L,
 
 inline OMPForDirective *isParallel(const Loop *L,
                                    Parallelization &ParallelizationInfo) {
-  if (auto ID = L->getLoopID())
-    return ParallelizationInfo.find<OMPForDirective>(L->getHeader(), ID)
-        .dyn_cast();
+  if (auto ID = L->getLoopID()) {
+    auto Ref{ ParallelizationInfo.find<OMPForDirective>(L->getHeader(), ID) };
+    return cast_or_null<OMPForDirective>(Ref);
+  }
   return nullptr;
 }
 
@@ -303,7 +305,8 @@ void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
       ParallelizationInfo.find<ParallelMarker<OMPParallelDirective>>(
           ToMerge.back()->getExitingBlock(), ToMerge.back()->getLoopID(),
           false);
-  MergedMarker.get()->setParent(MergedRegion.get());
+  cast<ParallelMarker<OMPParallelDirective>>(MergedMarker)
+      ->parent_insert(MergedRegion.getUnchecked());
   auto remove = [&ParallelizationInfo](BasicBlock *BB, auto RegionItr,
       auto PEdgeItr, ParallelBlock &OppositePB, ParallelBlock &FromPB) {
     if (FromPB.size() == 1) {
@@ -460,7 +463,7 @@ Optional<bool> ClangOpenMPParallelization::addOrUpdateOrderedIfNeed(
     return None;
   }
   if (OmpOrderedItr == OmpFor.child_end()) {
-    auto OmpOrdered = std::make_unique<OMPOrderedDirective>(&OmpFor);
+    auto OmpOrdered = std::make_unique<OMPOrderedDirective>(OmpFor);
     OmpOrderedItr = OmpFor.child_insert(OmpOrdered.get());
     mOutermostOrderedLoops.emplace_back(DFL.getLoop(), std::move(OmpOrdered));
   }
@@ -487,7 +490,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
   Optional<bool> Finalize;
   if (!PI) {
     auto OmpParallel = std::make_unique<OMPParallelDirective>();
-    auto OmpFor = std::make_unique<OMPForDirective>(OmpParallel.get());
+    auto OmpFor = std::make_unique<OMPForDirective>(*OmpParallel.get());
     OmpParallel->child_insert(OmpFor.get());
     PI = OmpFor.get();
     OmpFor->getClauses().get<trait::Private>().insert(
@@ -639,13 +642,12 @@ bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
       if (ParallelItr == mParallelizationInfo.end())
         continue;
       for (auto &PL : ParallelItr->get<ParallelLocation>()) {
-        if (PL.Anchor.is<Instruction *>()) {
+        if (PL.Anchor.is<Value*>()) {
+          auto Anchor = cast<Instruction>(PL.Anchor.get<Value *>());
           for (auto &PI : PL.Entry) {
             SmallString<128> PragmaStr{ "#pragma omp " };
             if (auto *OmpOrdered = dyn_cast<OMPOrderedDirective>(PI.get())) {
-              auto *OmpFor = cast<OMPForDirective>(OmpOrdered->getParent());
-              auto *L =
-                  LI.getLoopFor(PL.Anchor.get<Instruction *>()->getParent());
+              auto *L = LI.getLoopFor(Anchor->getParent());
               assert(L && "Ordered directive must be placed inside a loop body!");
               auto LMatchItr = LM.find<IR>(L);
               assert(LMatchItr != LM.end() &&
@@ -684,14 +686,13 @@ bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
           for (auto &PI : PL.Exit) {
             if (auto *Marker =
                     dyn_cast<ParallelMarker<OMPOrderedDirective>>(PI.get())) {
-              auto *OmpOrdered = cast<OMPOrderedDirective>(Marker->getParent());
+              auto *OmpOrdered =
+                  cast<OMPOrderedDirective>(Marker->parent_front());
               SmallString<128> PragmaStr{"#pragma omp "};
               PragmaStr += omp::getOpenMPDirectiveName(
                   static_cast<omp::Directive>(OmpOrdered->getKind()));
               PragmaStr += " depend(source)\n";
-              auto *OmpFor = cast<OMPForDirective>(OmpOrdered->getParent());
-              auto *L =
-                  LI.getLoopFor(PL.Anchor.get<Instruction *>()->getParent());
+              auto *L = LI.getLoopFor(Anchor->getParent());
               assert(L && "Ordered directive must be placed inside a loop body!");
               auto LMatchItr = LM.find<IR>(L);
               assert(LMatchItr != LM.end() &&
