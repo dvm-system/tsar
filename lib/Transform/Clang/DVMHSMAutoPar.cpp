@@ -1812,6 +1812,14 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
             HasEndNewline = true;
           }
         }
+        auto &ParentCtx{TfmCtx->getContext().getParentMapContext()};
+        auto Parents{ParentCtx.getParents(*ToInsert)};
+        assert(!Parents.empty() && "Statement must be inside a function body!");
+        if (!Parents.begin()->get<CompoundStmt>()) {
+          TfmCtx->getRewriter().InsertTextBefore(BeginLoc, "{\n");
+          TfmCtx->getRewriter().InsertTextAfterToken(
+              EndLoc, HasEndNewline ? "}" : "\n}");
+        }
       }
     }
   }
