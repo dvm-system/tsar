@@ -189,6 +189,8 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
            "Def-use set must exist for a function!");
     Wrapper->try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
+    LLVM_DEBUG(dbgs() << "[GLOBAL DEFINED MEMORY]: leave " << F->getName()
+                      << "\n";);
   }
   return false;
 }

@@ -647,6 +647,10 @@ template<typename FuncT>
 void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     const ReachDFFwk &Fwk, FuncT &&Inserter) {
   typedef MemoryLocationRange::Dimension Dimension;
+  if (!Loc.DimList.empty()) {
+    Inserter(Loc);
+    return;
+  }
   auto LocInfo = Fwk.getDelinearizeInfo()->findRange(Loc.Ptr);
   auto ArrayPtr = LocInfo.first;
   if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
@@ -693,8 +697,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       break;
     }
     Dimension DimInfo;
-    auto DimSize = ArrayPtr->getDimSize(DimensionN);
-    if (auto *C = dyn_cast<SCEVConstant>(DimSize)) {
+    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN))) {
       DimInfo.DimSize = C->getAPInt().getZExtValue();
     } else {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
@@ -708,10 +711,21 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     auto SCEV = AddRecInfo.first;
     if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
       auto Range = C->getAPInt().getSExtValue();
-      DimInfo.Start = DimInfo.MaxIter = Range;
+      DimInfo.Start = Range;
+      DimInfo.TripCount = 1;
       DimInfo.Step = 1;
       ResLoc.DimList.push_back(DimInfo);
     } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
+      if (auto *DFL = dyn_cast<DFLoop>(R)) {
+        if (DFL->getLoop() != C->getLoop() || DFL->getLoop() == nullptr ||
+            C->getLoop() == nullptr) {
+          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
+          break;
+        }
+      } else {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");
+        break;
+      }
       auto *StepSCEV = C->getStepRecurrence(*SE);
       if (!isa<SCEVConstant>(StepSCEV)) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant step.\n");
@@ -730,7 +744,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
         break;
       }
       DimInfo.Start = SignedRangeMin;
-      DimInfo.MaxIter = TripCount;
+      DimInfo.TripCount = TripCount;
       DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
       ResLoc.DimList.push_back(DimInfo);
     }
@@ -746,7 +760,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       auto &DimInfo = ResLoc.DimList[I];
       dbgs() << "Dimension: '" << I << "':\n";
       dbgs() << "\tStart:" << DimInfo.Start << "\n";
-      dbgs() << "\tMaxIter:" << DimInfo.MaxIter << "\n";
+      dbgs() << "\tTripCount:" << DimInfo.TripCount << "\n";
       dbgs() << "\tStep:" << DimInfo.Step << "\n";
       dbgs() << "\tDimSize:" << DimInfo.DimSize << "\n";
     }
@@ -815,7 +829,20 @@ void ReachDFFwk::collapse(DFRegion *R) {
             break;
         }
       }
-      if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop)) {
+      auto &MustReachIn = RS->getIn().MustReach;
+      if (!Loc.DimList.empty()) {
+        SmallVector<MemoryLocationRange, 0> LC, RC;
+        MemoryLocationRange Int;
+        if (MustReachIn.overlap(Loc, Int, LC, RC)) {
+          for (auto &L : RC) {
+            LLVM_DEBUG(dbgs() << "[COLLAPSE] Add Use location.\n");
+            DefUse->addUse(L);
+          }
+        } else {
+          DefUse->addUse(Loc);
+        }
+      } else if (!MustReachIn.contain(Loc) && !(StartInLoop && EndInLoop)) {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
         addLocationToSet(R, Loc, *this,
             [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
       }
@@ -841,15 +868,42 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //     X = ...;
     // }
     for (auto &Loc : DU->getDefs()) {
-      if (ExitingDefs.MustReach.contain(Loc)) {
-        addLocationToSet(R, Loc, *this,
-            [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
+      if (auto *DFL = dyn_cast<DFLoop>(R)) {
+        auto *LatchNode = DFL->getLatchNode();
+        auto DefItr = getDefInfo().find(LatchNode);
+        if (DefItr != getDefInfo().end() && DefItr->get<ReachSet>()) {
+          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check latch node.\n");
+          DefItr->get<ReachSet>()->getIn().MustReach.dump(&getDomTree());
+          LLVM_DEBUG(printLocationSource(dbgs(), Loc, &getDomTree()));
+          LLVM_DEBUG(dbgs() << "\n");
+          llvm::SmallVector<MemoryLocationRange, 0> Locs;
+          DefItr->get<ReachSet>()->getIn().MustReach.findCoveredBy(Loc, Locs);
+          if (!Locs.empty()) {
+            for (auto &L : Locs) {
+              addLocationToSet(R, L, *this,
+                  [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
+            }
+            LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Add loc from latch node.\n");
+            continue;
+          }
+        }
+      }
+      llvm::SmallVector<MemoryLocationRange, 0> Locs;
+      ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
+      if (!Locs.empty()) {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
+        for (auto &L : Locs) {
+          addLocationToSet(R, L, *this,
+              [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
+        }
       } else {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
         addLocationToSet(R, Loc, *this,
             [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);});
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
+      LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
       addLocationToSet(R, Loc, *this,
           [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); });
     }

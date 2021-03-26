@@ -62,21 +62,21 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   O << "<";
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
-  if (!Loc.Start.hasValue())
+  if (!Loc.LowerBound.hasValue())
     O << "?";
   else
-    O << Loc.Start.getValue();
+    O << Loc.LowerBound.getValue();
   O << ", ";
-  if (!Loc.getEnd().hasValue())
+  if (!Loc.UpperBound.hasValue())
     O << "?";
   else
-    O << Loc.getEnd().getValue();
+    O << Loc.UpperBound.getValue();
   O << ">";
   if (!Loc.DimList.empty()) {
     O << ", {";
     for (auto &Dimension : Loc.DimList)
       O << "{Start: " << Dimension.Start << ", Step: " << Dimension.Step <<
-          ", MaxIter: " << Dimension.MaxIter << ", DimSize: " <<
+          ", TripCount: " << Dimension.TripCount << ", DimSize: " <<
           Dimension.DimSize << "}";
     O << "}";
   }

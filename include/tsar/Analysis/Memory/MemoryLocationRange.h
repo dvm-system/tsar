@@ -36,16 +36,17 @@ using LocationSize = llvm::LocationSize;
 /// Representation for a memory location with shifted start position.
 ///
 /// The difference from llvm::MemoryLocation is that the current location
-/// starts at `Ptr + Start` address. In case of llvm::MemoryLocation
-/// Start is always 0.
+/// starts at `Ptr + LowerBound` address. In case of llvm::MemoryLocation
+/// LowerBound is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
 
   struct Dimension {
     uint64_t Start;
     uint64_t Step;
-    uint64_t MaxIter;
+    uint64_t TripCount;
     uint64_t DimSize;
+    Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
     inline bool operator==(const Dimension &Other) const {
       return Start == Other.Start &&
              Step == Other.Step &&
@@ -54,8 +55,8 @@ struct MemoryLocationRange {
   };
 
   const llvm::Value * Ptr;
-  LocationSize Start;
-  LocationSize Width;
+  LocationSize LowerBound;
+  LocationSize UpperBound;
   llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
 
@@ -121,42 +122,35 @@ struct MemoryLocationRange {
   }
 
   explicit MemoryLocationRange(const llvm::Value *Ptr = nullptr,
-                               LocationSize Start = 0,
-                               LocationSize Width = UnknownSize,
+                               LocationSize LowerBound = 0,
+                               LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
-      : Ptr(Ptr), Start(Start), Width(Width),
+      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
         AATags(AATags) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
-      : Ptr(Loc.Ptr), Start(0), Width(Loc.Size), AATags(Loc.AATags) {}
+      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags) {}
+
+  MemoryLocationRange(const MemoryLocationRange &Loc)
+      : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
+        AATags(Loc.AATags), DimList(Loc.DimList) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
-    Start = 0;
-    Width = Loc.Size;
+    LowerBound = 0;
+    UpperBound = Loc.Size;
     AATags = Loc.AATags;
     return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
-      Start == Other.Start && Width == Other.Width &&
+      LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
       DimList == Other.DimList;
   }
-
-  LocationSize getEnd() const {
-    if (!Start.hasValue() || !Width.hasValue())
-      return LocationSize::unknown();
-    return Start.getValue() + Width.getValue();
-  }
-
-  void setEnd(LocationSize Size) {
-    if (!Start.hasValue() || !Width.hasValue())
-      Width = LocationSize::unknown();
-    else
-      Width = Size.getValue() - Start.getValue();
-  }
 };
+
+typedef llvm::SmallVector<MemoryLocationRange, 0> LocationList;
 
 namespace MemoryLocationRangeEquation {
   typedef int64_t ColumnT;
@@ -194,51 +188,112 @@ namespace MemoryLocationRangeEquation {
     std::vector<std::pair<std::string, ValueT>> Variables;
   };
 
-  struct RangeTriplet {
-    MemoryLocationRange LeftRange;
-    MemoryLocationRange Intersection;
-    MemoryLocationRange RightRange;
-    RangeTriplet() {}
-    RangeTriplet(const MemoryLocationRange &LR,
-        const MemoryLocationRange &CR, const MemoryLocationRange &RR) :
-        LeftRange(LR), Intersection(CR), RightRange(RR) {}
-    RangeTriplet(const MemoryLocationRange &Sample) :
-        LeftRange(Sample), Intersection(Sample),
-        RightRange(Sample) {}
-    bool isEmpty() { return Intersection.Ptr == nullptr; }
-  };
-
   /// Returns an intersection between two locations. If intersection is empty,
   /// return default MemoryLocationRange. 
-  inline RangeTriplet intersect(const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS) {
+  inline bool intersect(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS, MemoryLocationRange &Int,
+      llvm::SmallVector<MemoryLocationRange, 0> &LC,
+      llvm::SmallVector<MemoryLocationRange, 0> &RC) {
     // TODO : check scalars
     typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
     typedef BAEquation::Monom Monom;
     typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
     typedef std::pair<ValueT, ValueT> VarRange;
-    if (LHS.Ptr != RHS.Ptr || LHS.DimList.size() != RHS.DimList.size()) {
-      return RangeTriplet();
+    typedef MemoryLocationRange::Dimension Dimension;
+    if (LHS.Ptr != RHS.Ptr || !LHS.Ptr ||
+        LHS.DimList.size() != RHS.DimList.size()) {
+      Int.Ptr = nullptr;
+      return false;
     }
+    /*auto sizecmp = [](llvm::LocationSize LHS, llvm::LocationSize RHS) {
+      if (LHS == RHS || !LHS.hasValue() && !RHS.hasValue())
+        return 0;
+      if (!LHS.hasValue())
+        return 1;
+      if (!RHS.hasValue())
+        return -1;
+      return LHS.getValue() < RHS.getValue() ? -1 :
+        LHS.getValue() == RHS.getValue() ? 0 : 1;
+    };
+    if (LHS.DimList.empty()) {
+      Int.Ptr = nullptr;
+      if (sizecmp(LHS.UpperBound, RHS.LowerBound) > 0 &&
+          sizecmp(LHS.LowerBound, RHS.UpperBound) < 0) {
+        Int.Ptr = LHS.Ptr;
+        Int.UpperBound = sizecmp(LHS.UpperBound, RHS.UpperBound) < 0 ?
+            LHS.UpperBound : RHS.UpperBound;
+        Int.LowerBound = sizecmp(LHS.LowerBound, RHS.LowerBound) > 0 ?
+            LHS.LowerBound : RHS.LowerBound;
+        if (sizecmp(LHS.LowerBound, RHS.LowerBound) < 0) {
+          auto &Left = LC.emplace_back(MemoryLocationRange(Int));
+          Left.LowerBound = LHS.LowerBound;
+          Left.UpperBound = Int.LowerBound;
+        }
+        if (sizecmp(LHS.UpperBound, RHS.LowerBound) < 0) {
+          auto &Left = LC.emplace_back(MemoryLocationRange(Int));
+          Left.LowerBound = LHS.LowerBound;
+          Left.UpperBound = Int.LowerBound;
+        }
+        return true;
+      }
+      return false;
+    }*/
+    auto diff = [](const Dimension &D, const Dimension &I,
+        llvm::SmallVector<Dimension, 0> &Res) {
+      if (D.Start < I.Start) {
+        auto &Left = Res.emplace_back(Dimension());
+        Left.Step = D.Step;
+        Left.DimSize = D.DimSize;
+        Left.Start = D.Start;
+        Left.TripCount = (I.Start - D.Start) / D.Step;
+      }
+      auto DEnd = D.Start + D.Step * (D.TripCount - 1);
+      auto IEnd = I.Start + I.Step * (I.TripCount - 1);
+      if (DEnd > IEnd) {
+        auto &Right = Res.emplace_back(Dimension());
+        Right.Step = D.Step;
+        Right.DimSize = D.DimSize;
+        Right.Start = IEnd + D.Step;
+        Right.TripCount = (DEnd - IEnd) / D.Step;
+      }
+      if (I.TripCount > 1) {
+        // I.Step % D.Step is always 0 because I is a subset of D.
+        auto RepeatNumber = I.Step / D.Step - 1;
+        for (auto J = 0; J < RepeatNumber; ++J) {
+          auto &Center = Res.emplace_back(Dimension());
+          Center.Start = I.Start + (J + 1);
+          Center.Step = D.Step;
+          Center.DimSize = D.DimSize;
+          Center.TripCount = I.TripCount - 1;
+        }
+      }
+    };
     bool Intersected = true;
-    RangeTriplet ResultTriplet(LHS);
-    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
+    Int = LHS;
+    for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
+      auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
+      auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
+      if (LHS.LowerBound == RHS.LowerBound &&
+          LHS.UpperBound == RHS.UpperBound &&
+          LHS.DimList == RHS.DimList) {
+        Int.DimList[I] = Left;
+        continue;
+      } else if (LeftEnd < Right.Start || RightEnd < Left.Start) {
+        Intersected = false;
+        break;
+      }
+      assert(Left.DimSize == Right.DimSize &&
+          "It is forbidden to compare arrays of different dimension sizes!");
       ColumnInfo Info;
-      // Px = L1 + K1 * X
-      // Py = L2 + K2 * Y
       ValueT L1 = Left.Start, K1 = Left.Step;
       ValueT L2 = Right.Start, K2 = Right.Step;
       Info.addVariable(std::make_pair("X", K1));
       Info.addVariable(std::make_pair("Y", -K2));
-      VarRange XRange(0, Left.MaxIter), YRange(0, Right.MaxIter);
-      ValueT PxMin = K1 * XRange.first + L1, PxMax = K1 * XRange.second + L1;
-      ValueT PyMin = K2 * YRange.first + L2, PyMax = K2 * YRange.second + L2;
-      if (PxMax < PyMin || PxMin > PyMax) {
-        Intersected = false;
-        break;
-      }
+      assert(Left.TripCount > 0 && Right.TripCount > 0 &&
+          "Trip count must be positive!");
+      VarRange XRange(0, Left.TripCount - 1), YRange(0, Right.TripCount - 1);
       LinearSystem System;
       System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
       System.instantiate(Info);
@@ -249,8 +304,7 @@ namespace MemoryLocationRangeEquation {
         break;
       }
       auto &Solution = System.getSolution();
-      auto &LineX = Solution[0];
-      auto &LineY = Solution[1];
+      auto &LineX = Solution[0], &LineY = Solution[1];
       ValueT A = LineX.Constant, B = -LineX.RHS.Value;
       ValueT C = LineY.Constant, D = -LineY.RHS.Value;
       ValueT TXmin = std::ceil((XRange.first - A) / double(B));
@@ -266,37 +320,51 @@ namespace MemoryLocationRangeEquation {
       ValueT Start = (K2 * A + L1) + Step * Shift;
       assert(Start >= 0 && "Start must be non-negative!");
       assert(Step >= 0 && "Step must be non-negative!");
-      auto &Intersection = ResultTriplet.Intersection.DimList[I];
-      auto &LeftRange = ResultTriplet.LeftRange.DimList[I];
-      auto &RightRange = ResultTriplet.RightRange.DimList[I];
+      auto &Intersection = Int.DimList[I];
       Intersection.Start = Start;
       Intersection.Step = Step;
-      Intersection.MaxIter = Tmax;
+      Intersection.TripCount = Tmax + 1;
       Intersection.DimSize = Left.DimSize;
-      // TODO: corrent part of remainder
-      LeftRange = Left;
-      LeftRange.MaxIter = Left.Start < Right.Start ?
-          (Start - Left.Start) / Left.Step :
-          (Start - Right.Start) / Right.Step;
-      if (LeftRange.Start == RightRange.Start)
-        ResultTriplet.LeftRange.Ptr = nullptr;
-      RightRange = Right;
-      auto LeftEnd = Left.Start + Left.Step * Left.MaxIter;
-      auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
-      auto IntLastElem = Start + Step * Tmax;
-      if (LeftEnd > RightEnd && IntLastElem < LeftEnd) {
-        RightRange.Start = IntLastElem + Left.Step;
-        RightRange.MaxIter = std::ceil((LeftEnd - RightRange.Start + 1) /
-            double(Left.Step));
-      } else if (RightEnd >= LeftEnd && IntLastElem < RightEnd) {
-        RightRange.Start = IntLastElem + Right.Step;
-        RightRange.MaxIter = std::ceil((RightEnd - RightRange.Start + 1) /
-            double(Right.Step));
-      } else {
-        ResultTriplet.RightRange.Ptr = nullptr;
+      auto LeftCompl = Left;
+      auto RightCompl = Right;
+      llvm::SmallVector<Dimension, 0> LeftDiff, RightDiff;
+      diff(Left, Intersection, LeftDiff);
+      diff(Right, Intersection, RightDiff);
+      if (LHS.DimList.size() == 1) {
+        for (auto &LeftD : LeftDiff) {
+          auto &R = LC.emplace_back(MemoryLocationRange(
+              LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+          R.DimList.push_back(LeftD);
+        }
+        for (auto &RightD : RightDiff) {
+          auto &R = RC.emplace_back(MemoryLocationRange(
+              LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+          R.DimList.push_back(RightD);
+        }
       }
     }
-    return Intersected ? ResultTriplet : RangeTriplet();
+    auto PrintRange = [](const MemoryLocationRange &R) {
+      auto &Dim = R.DimList[0];
+      //std::string IsEmp = R.Ptr == nullptr ? "Yes" : "No";
+      llvm::dbgs() << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
+      llvm::dbgs() << Dim.Start << " + " << Dim.Step << " * T, T in [" << 0 <<
+          ", " << Dim.TripCount << ")} ";
+    };
+    llvm::dbgs() << "[SOLUTION]:\n";
+    llvm::dbgs() << "Left: ";
+    for (auto &R : LC) {
+      PrintRange(R);
+    }
+    llvm::dbgs() << "\nIntersection: ";
+    PrintRange(Int);
+    llvm::dbgs() << "\nRight: ";
+    for (auto &R : RC) {
+      PrintRange(R);
+    }
+    llvm::dbgs() << "\n";
+    if (!Intersected)
+      Int.Ptr = nullptr;
+    return Intersected;
   }
 }
 }
@@ -314,8 +382,8 @@ template <> struct DenseMapInfo<tsar::MemoryLocationRange> {
   }
   static unsigned getHashValue(const tsar::MemoryLocationRange &Val) {
     return DenseMapInfo<const Value *>::getHashValue(Val.Ptr) ^
-           DenseMapInfo<LocationSize>::getHashValue(Val.Start) ^
-           DenseMapInfo<LocationSize>::getHashValue(Val.Width) ^
+           DenseMapInfo<LocationSize>::getHashValue(Val.LowerBound) ^
+           DenseMapInfo<LocationSize>::getHashValue(Val.UpperBound) ^
            DenseMapInfo<AAMDNodes>::getHashValue(Val.AATags);
   }
   static bool isEqual(const MemoryLocation &LHS, const MemoryLocation &RHS) {

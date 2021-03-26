@@ -160,11 +160,25 @@ public:
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
 
+  bool overlap(const MemoryLocationRange &Loc,
+      MemoryLocationRange &Int,
+      llvm::SmallVector<MemoryLocationRange, 0> &LC,
+      llvm::SmallVector<MemoryLocationRange, 0> &RC) const {
+    assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    return mLocations.getOverlapResult(Loc, Int, LC, RC);
+  }
+
   /// Returns true if there is a location in this value which is contained
   /// in the specified location.
   bool cover(const MemoryLocationRange &Loc) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mKind != KIND_FULL && mLocations.cover(Loc);
+  }
+
+  void findCoveredBy(const MemoryLocationRange &Loc,
+      llvm::SmallVector<MemoryLocationRange, 0> &Locs) const {
+    assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    mLocations.findCoveredBy(Loc, Locs);
   }
 
   /// Returns true if the value does not contain any location.

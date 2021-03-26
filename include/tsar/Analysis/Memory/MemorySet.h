@@ -27,6 +27,7 @@
 
 #include "tsar/Analysis/Memory/MemorySetInfo.h"
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/iterator_range.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Metadata.h>
@@ -165,23 +166,32 @@ public:
     if (I == mLocations.end())
       return make_range(iterator(mLocations.end(), 0),
                         iterator(mLocations.end(), 0));
-    auto Tail(Loc);
     if (MemoryInfo::getNumDims(Loc) > 0) {
+      llvm::DenseSet<Ty> Tails { Loc };
       for (auto &Curr : I->second) {
-        if (MemoryInfo::isEmpty(Tail))
+        if (Tails.empty())
           return make_range(iterator(mLocations.begin(), 0),
                             iterator(mLocations.end(), 0));
-        Ty LeftLoc, IntLoc, RightLoc;
-        if (MemoryInfo::getIntersection(Curr, Tail, LeftLoc, IntLoc, RightLoc)){
-          Tail = RightLoc;
+        llvm::DenseSet<Ty> NewTails;
+        for (auto &Tail : Tails) {
+          Ty IntLoc;
+          llvm::SmallVector<Ty, 0> LeftCompl, RightCompl;
+          if (MemoryInfo::intersect(Curr, Tail, LeftCompl, IntLoc, RightCompl)){
+            if (!LeftCompl.empty())
+              NewTails.append(LeftCompl.begin(), LeftCompl.end());
+            if (!RightCompl.empty())
+              NewTails.append(RightCompl.begin(), RightCompl.end());
+          }
         }
+        Tails = NewTails;
       }
-      if (MemoryInfo::isEmpty(Tail))
+      if (Tails.empty())
         return make_range(iterator(mLocations.begin(), 0),
                           iterator(mLocations.end(), 0));
       return make_range(iterator(mLocations.end(), 0),
                         iterator(mLocations.end(), 0));
     }
+    auto Tail(Loc);
     bool KnownStartIdx = false;
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
@@ -210,49 +220,75 @@ public:
   /// Union of returned locations contains a specified location.
   template<class Ty>
   llvm::iterator_range<const_iterator> findContaining(const Ty &Loc) const {
+    //llvm::dbgs() << "[MEMSET] Find containing.\n";
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return make_range(const_iterator(mLocations.end(), 0),
                         const_iterator(mLocations.end(), 0));
-    auto Tail(Loc);
+    //llvm::dbgs() << "[MEMSET] Not end, mLoc size: " << I->second.size() << "\n";
+    //llvm::dbgs() << "[MEMSET] Loc info: " << MemoryInfo::getLowerBound(Loc)
+    //    << ", " << MemoryInfo::getUpperBound(Loc) << "\n";
     if (MemoryInfo::getNumDims(Loc) > 0) {
+      llvm::SmallVector<Ty, 2> Tails { Loc };
       for (auto &Curr : I->second) {
-        if (MemoryInfo::isEmpty(Tail))
+        if (Tails.empty())
           return make_range(const_iterator(mLocations.begin(), 0),
                             const_iterator(mLocations.end(), 0));
-        Ty LeftLoc, IntLoc, RightLoc;
-        if (MemoryInfo::getIntersection(Curr, Tail, LeftLoc, IntLoc, RightLoc)){
-          Tail = RightLoc;
+        llvm::SmallVector<Ty, 2> NewTails;
+        for (auto &Tail : Tails) {
+          Ty IntLoc;
+          llvm::SmallVector<Ty, 0> LeftCompl, RightCompl;
+          if (MemoryInfo::intersect(Curr, Tail, LeftCompl, IntLoc, RightCompl)){
+            if (!LeftCompl.empty())
+              NewTails.append(LeftCompl.begin(), LeftCompl.end());
+            if (!RightCompl.empty())
+              NewTails.append(RightCompl.begin(), RightCompl.end());
+          }
         }
+        Tails = NewTails;
       }
-      if (MemoryInfo::isEmpty(Tail))
+      if (Tails.empty())
         return make_range(const_iterator(mLocations.begin(), 0),
                           const_iterator(mLocations.end(), 0));
       return make_range(const_iterator(mLocations.end(), 0),
                         const_iterator(mLocations.end(), 0));
     }
+    auto Tail(Loc);
+    //llvm::dbgs() << "[MEMSET] Skip array.\n";
     bool KnownStartIdx = false;
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
+      //llvm::dbgs() << "[MEMSET] New curr.\n";
+      //llvm::dbgs() << "[MEMSET] Curr info: " << MemoryInfo::getLowerBound(Curr)
+      //  << ", " << MemoryInfo::getUpperBound(Curr) << "\n";
       if (MemoryInfo::sizecmp(
               MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) <= 0)
+              MemoryInfo::getLowerBound(Tail)) <= 0) {
+        //llvm::dbgs() << "[MEMSET] Continue.\n";
         continue;
+      }
       if (!KnownStartIdx)
         StartIdx = Idx;
       if (MemoryInfo::sizecmp(
               MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) > 0)
+              MemoryInfo::getLowerBound(Tail)) > 0) {
+        //llvm::dbgs() << "[MEMSET] Return 1.\n";
         return make_range(const_iterator(mLocations.end(), 0),
                           const_iterator(mLocations.end(), 0));
+      }
       MemoryInfo::setLowerBound(
         MemoryInfo::sizeinc(MemoryInfo::getUpperBound(Curr)), Tail);
+      //llvm::dbgs() << "[MEMSET] Tail info: " << MemoryInfo::getLowerBound(Tail)
+      //  << ", " << MemoryInfo::getUpperBound(Tail) << "\n";  
       if (MemoryInfo::sizecmp(
               MemoryInfo::getUpperBound(Tail),
-              MemoryInfo::getLowerBound(Tail)) < 0)
+              MemoryInfo::getLowerBound(Tail)) < 0) {
+      //  llvm::dbgs() << "[MEMSET] Return 2.\n";
         return make_range(const_iterator(I, StartIdx), const_iterator(I, Idx));
+      }
     }
+    //llvm::dbgs() << "[MEMSET] Return 3.\n";
     return make_range(const_iterator(mLocations.end(), 0),
                       const_iterator(mLocations.end(), 0));
   }
@@ -271,8 +307,10 @@ public:
       return;
     if (MemoryInfo::getNumDims(Loc) > 0) {
       for (auto &Curr : I->second) {
-        if (MemoryInfo::isSubset(Curr, Loc))
-          Locs.push_back(Curr);
+        Ty IntLoc;
+        llvm::SmallVector<Ty, 0> LeftCompl, RightCompl;
+        if (MemoryInfo::intersect(Curr, Loc, LeftCompl, IntLoc, RightCompl))
+          Locs.push_back(IntLoc);
       }
       return;
     }
@@ -350,6 +388,21 @@ public:
         return const_iterator(I, Idx);
     }
     return const_iterator(mLocations.end(), 0);
+  }
+
+  template<class Ty> bool getOverlapResult(const Ty &Loc, Ty &Int,
+      llvm::SmallVector<Ty, 0> &LC, llvm::SmallVector<Ty, 0> &RC) const {
+    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
+    if (I == mLocations.end())
+      return false;
+    for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
+      auto &Curr = I->second[Idx];
+      if (MemoryInfo::getNumDims(Curr) != MemoryInfo::getNumDims(Loc))
+        continue;
+      if (MemoryInfo::intersect(Curr, Loc, LC, Int, RC))
+        return true;
+    }
+    return false;
   }
 
   /// Return true if there is a location in this set which may overlap
@@ -499,6 +552,19 @@ public:
         return false;
     }
     return true;
+  }
+
+  template<class Ty> void clarify(const Ty &Loc,
+      llvm::SmallVector<const Ty *, 0> &Locs) const {
+    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
+    if (I == mLocations.end())
+      return;
+    for (auto &Curr : I->second) {
+      if (MemoryInfo::getNumDims(Curr) > 0) {
+        llvm::dbgs() << "[MEMSET] Location is clarified.\n";
+        Locs.push_back(&Curr);
+      }
+    }
   }
 private:
   template<class SizeT>

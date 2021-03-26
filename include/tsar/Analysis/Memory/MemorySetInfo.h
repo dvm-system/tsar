@@ -147,13 +147,6 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
       llvm::MemoryLocation &I, llvm::MemoryLocation &R) {
     return false;
   }
-  static inline bool isSubset(const llvm::MemoryLocation &A,
-      const llvm::MemoryLocation &B) {
-    return false;
-  }
-  static inline bool isEmpty(const llvm::MemoryLocation &Loc) {
-    return Loc.Ptr == nullptr;
-  }
 };
 
 /// Provide specialization of MemorySetInfo for tsar::MemoryLocationRange
@@ -164,20 +157,20 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline LocationSize getLowerBound(
       const MemoryLocationRange &Loc) noexcept {
-    return Loc.Start;
+    return Loc.LowerBound;
   }
   static inline void setLowerBound(
       LocationSize Size, MemoryLocationRange &Loc) noexcept {
 
-    Loc.Start = Size;
+    Loc.LowerBound = Size;
   }
   static inline LocationSize getUpperBound(
       const MemoryLocationRange &Loc) noexcept {
-    return Loc.getEnd();
+    return Loc.UpperBound;
   }
   static inline void setUpperBound(
       LocationSize Size, MemoryLocationRange &Loc) noexcept {
-    return Loc.setEnd(Size);
+    Loc.UpperBound = Size;
   }
   static inline int8_t sizecmp(llvm::LocationSize LHS, llvm::LocationSize RHS) {
     return MemorySetInfo<llvm::MemoryLocation>::sizecmp(LHS, RHS);
@@ -209,11 +202,13 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
     bool Result = true;
-    for (size_t I = 0; I < LHS.DimList.size(); ++I) {
+    for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
-      auto LeftEnd = Left.Start + Left.Step * Left.MaxIter;
-      auto RightEnd = Right.Start + Right.Step * Right.MaxIter;
+      assert(Left.TripCount > 0 && Right.TripCount > 0 &&
+          "Trip count of dimension must be positive!");
+      auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
+      auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
       if (Left.Step != Right.Step ||
           (Left.Start - Right.Start) % Left.Step != 0 ||
           (LeftEnd < Right.Start && (Right.Start - LeftEnd) != Left.Step) ||
@@ -244,14 +239,14 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       auto &To = LHS.DimList[I];
       auto &From = RHS.DimList[I];
       if (From.Start < To.Start) {
-        To.MaxIter += (To.Start - From.Start) / From.Step;
+        To.TripCount += (To.Start - From.Start) / From.Step;
         To.Start = From.Start;
         isChanged = true;
       }
-      auto ToEnd = To.Start + To.Step * To.MaxIter;
-      auto FromEnd = From.Start + From.Step * From.MaxIter;
+      auto ToEnd = To.Start + To.Step * (To.TripCount - 1);
+      auto FromEnd = From.Start + From.Step * (From.TripCount - 1);
       if (FromEnd > ToEnd) {
-        To.MaxIter += (FromEnd - ToEnd) / From.Step;
+        To.TripCount += (FromEnd - ToEnd) / From.Step;
         isChanged = true;
       }
     }
@@ -265,30 +260,15 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
              sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
     }
-    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS);
-    return !Result.isEmpty();
+    MemoryLocationRange Int;
+    LocationList LC, RC;
+    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS, Int, LC, RC);
+    return Result;
   }
-  static inline bool getIntersection(const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS, MemoryLocationRange &L,
-      MemoryLocationRange &I, MemoryLocationRange &R) {
-    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS);
-    L = Result.LeftRange;
-    I = Result.Intersection;
-    R = Result.RightRange;
-    return Result.isEmpty();
-  }
-  /// Return true if A is subset of B.
-  static inline bool isSubset(const MemoryLocationRange &A,
-      const MemoryLocationRange &B) {
-    auto Result = MemoryLocationRangeEquation::intersect(A, B);
-    if (Result.isEmpty())
-      return false;
-    auto &Int = Result.Intersection;
-    return A.Ptr == Int.Ptr && A.Start == Int.Start &&
-           A.Width == Int.Width && A.DimList == Int.DimList;
-  }
-  static inline bool isEmpty(const MemoryLocationRange &Loc) {
-    return Loc.Ptr == nullptr;
+  static inline bool intersect(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS, LocationList &L,
+      MemoryLocationRange &I, LocationList &R) {
+    return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
   }
 };
 }
