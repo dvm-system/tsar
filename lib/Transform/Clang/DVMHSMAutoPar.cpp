@@ -48,6 +48,7 @@
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <clang/AST/ParentMapContext.h>
+#include <clang/Lex/Lexer.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/PostOrderIterator.h>
 #include <llvm/Analysis/CallGraph.h>
@@ -1568,7 +1569,6 @@ addPragmaToStmt(const Stmt *ToInsert,
     } else {
       llvm_unreachable("An unknown pragma has been attached to a loop!");
     }
-    PragmaStr += "\n";
     assert(ToInsert && "Insertion location must be known!");
     PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
   }
@@ -1641,7 +1641,6 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
       auto &PragmaStr{std::get<Insertion::PragmaString>(*AfterItr)};
       PragmaStr += "\n";
       pragmaDataStr(PIRef, PragmaStr);
-      PragmaStr += "\n";
     }
   }
 }
@@ -1776,12 +1775,44 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
     // Update sources.
     for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
       auto BeginLoc{ToInsert->getBeginLoc()};
+      bool IsBeginChanged{false};
       for (auto &&[PI, Str] : Pragmas.Before)
-        TfmCtx->getRewriter().InsertTextAfter(BeginLoc, Str);
+        if (!Str.empty()) {
+          if (!IsBeginChanged) {
+            auto &SM{TfmCtx->getRewriter().getSourceMgr()};
+            auto Identation{Lexer::getIndentationForLine(BeginLoc, SM)};
+            bool Invalid{false};
+            auto Column{SM.getPresumedColumnNumber(BeginLoc, &Invalid)};
+            if (Invalid || Column > Identation.size() + 1)
+              TfmCtx->getRewriter().InsertTextAfter(BeginLoc, "\n");
+          }
+          TfmCtx->getRewriter().InsertTextAfter(BeginLoc, Str);
+          IsBeginChanged = true;
+        }
       auto EndLoc{
           shiftTokenIfSemi(ToInsert->getEndLoc(), TfmCtx->getContext())};
+      bool IsEndChanged{false};
       for (auto &&[PI, Str] : Pragmas.After)
-        TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, Str);
+        if (!Str.empty()) {
+          TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, Str);
+          IsEndChanged = true;
+        }
+      if (IsBeginChanged || IsEndChanged) {
+        bool HasEndNewline{false};
+        if (IsEndChanged) {
+          auto &Ctx{TfmCtx->getContext()};
+          auto &SM{Ctx.getSourceManager()};
+          Token NextTok;
+          bool IsEndInvalid{false}, IsNextInvalid{false};
+          if (getRawTokenAfter(EndLoc, SM, Ctx.getLangOpts(), NextTok) ||
+              SM.getPresumedLineNumber(NextTok.getLocation(), &IsNextInvalid) ==
+                  SM.getPresumedLineNumber(EndLoc, &IsEndInvalid) ||
+              IsNextInvalid || IsEndInvalid) {
+            TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, "\n");
+            HasEndNewline = true;
+          }
+        }
+      }
     }
   }
   return false;
