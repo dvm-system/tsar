@@ -151,21 +151,21 @@ struct VariableCollector
   /// On success to create a local copy of a memory source-level variable
   /// should be mentioned in a clauses like private or reduction.
   /// This variable will be stored in a list of variables `VarNames`.
-  /// \post On failure if `Error` not nullptr set it to the variable which
-  /// prevents localization (or to nullptr if variable not found).
+  /// \post On failure if `Error` not nullptr add the variable which
+  /// prevents localization inside the list.
   bool localize(DIMemoryTrait &T, const DIAliasNode &DIN,
                 const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
+                SortedVarListT &VarNames, SortedVarListT *Error = nullptr);
 
   /// Check whether it is possible to use high-level syntax to create copy for
   /// all memory locations in `TS` for each thread.
   ///
-  /// On failure if `Error` not nullptr set it to one of variables which
-  /// prevent localization (or to nullptr if variable not found).
+  /// \post On failure if `Error` not nullptr add the variable which
+  /// prevents localization inside the list.
   bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
+                SortedVarListT &VarNames, SortedVarListT *Error = nullptr);
 
   /// Map of variable which is referenced in a scope. The value in the map is
   /// metadat-level memory locations which represent a derived memory from

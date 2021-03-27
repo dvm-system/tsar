@@ -192,7 +192,7 @@ VariableCollector::findDecl(const DIMemory &DIM,
 bool VariableCollector::localize(DIAliasTrait &TS,
               const DIMemoryMatcher &ASTToClient,
               const ClonedDIMemoryMatcher &ClientToServer,
-              SortedVarListT &VarNames, clang::VarDecl **Error) {
+              SortedVarListT &VarNames, SortedVarListT *Error) {
   bool IsOk{true};
   for (auto &T : TS)
     IsOk &= localize(*T, *TS.getNode(), ASTToClient, ClientToServer, VarNames,
@@ -203,11 +203,11 @@ bool VariableCollector::localize(DIAliasTrait &TS,
 bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
     const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer,
-    SortedVarListT &VarNames, clang::VarDecl **Error) {
+    SortedVarListT &VarNames, SortedVarListT *Error) {
   auto Res = localize(T, DIN, ASTToClient, ClientToServer);
   if (!std::get<2>(Res)) {
-    if (Error)
-      *Error = std::get<VarDecl *>(Res);
+    if (Error && std::get<VarDecl *>(Res))
+      Error->emplace(std::get<VarDecl *>(Res), std::get<DIMemory *>(Res));
     return false;
   }
   if (std::get<VarDecl *>(Res) && !std::get<3>(Res))

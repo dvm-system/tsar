@@ -142,7 +142,7 @@ def note_parallel_localize_induction_unable : Note<"unable to localize induction
 def note_parallel_localize_inout_unable : Note<"unable to localize inout variable">;
 def note_parallel_localize_global_unable : Note<"unable to localize global variable">;
 def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents parallel execution">;
-def note_parallel_variable_not_analyzed : Note<"can not analyze variable '%0'">;
+def note_parallel_variable_not_analyzed : Note<"cannot analyze variable">;
 def note_parallel_across_direction_unknown : Note<"unable to implement pipeline execution for a loop with unknown step">;
 def note_parallel_ordered_entry_unknown : Note<"unable to place 'ordered' directive in the loop with an unknown entry point">;
 
