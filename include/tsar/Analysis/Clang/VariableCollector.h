@@ -34,6 +34,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/TinyPtrVector.h>
+#include <set>
 
 namespace tsar {
 class DIEstimateMemory;
@@ -54,8 +55,13 @@ struct VariableCollector
     }
   };
 
-  // Sorted list of variables (to print their in algoristic order).
+  /// Sorted list of variables (to print their in algoristic order).
   using SortedVarListT = std::set<VariableT, VariableLess>;
+
+  /// Sorted list of variables (to print their in algoristic order).
+  /// Variables with the same key may have different metadata-level locations
+  /// attached to them.
+  using SortedVarMultiListT = std::multiset<VariableT, VariableLess>;
 
   enum DerivedKind : uint8_t {
     // Set if a metadata-level memory location covers all memory which
@@ -156,7 +162,7 @@ struct VariableCollector
   bool localize(DIMemoryTrait &T, const DIAliasNode &DIN,
                 const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, SortedVarListT *Error = nullptr);
+                SortedVarListT &VarNames, SortedVarMultiListT *Error = nullptr);
 
   /// Check whether it is possible to use high-level syntax to create copy for
   /// all memory locations in `TS` for each thread.
@@ -165,7 +171,7 @@ struct VariableCollector
   /// prevents localization inside the list.
   bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, SortedVarListT *Error = nullptr);
+                SortedVarListT &VarNames, SortedVarMultiListT *Error = nullptr);
 
   /// Map of variable which is referenced in a scope. The value in the map is
   /// metadat-level memory locations which represent a derived memory from

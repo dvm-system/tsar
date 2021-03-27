@@ -69,6 +69,7 @@ using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
 using VariableT = ClangDependenceAnalyzer::VariableT;
 using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
 using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
+using SortedVarMultiListT = ClangDependenceAnalyzer::SortedVarMultiListT;
 
 class PragmaRegion : public ParallelLevel {
 public:
@@ -176,8 +177,8 @@ public:
                                    bcl::tagged<VariableT, VariableT>>,
                   4>;
   using VarMappingT =
-      std::map<VariableT, SmallVector<std::pair<ObjectID, bool>, 4>,
-               ClangDependenceAnalyzer::VariableLess>;
+      std::multimap<VariableT, SmallVector<std::pair<ObjectID, bool>, 4>,
+                    ClangDependenceAnalyzer::VariableLess>;
 
   using ClauseList =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
@@ -426,25 +427,32 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     std::unique_ptr<PragmaGetActual> DVMHGetActual;
     std::unique_ptr<PragmaRegion> DVMHRegion;
     auto DVMHParallel{std::make_unique<PragmaParallel>()};
-    auto Localized = ASTRegionAnalysis.evaluateDefUse();
+    SortedVarMultiListT NotLocalized;
+    auto Localized = ASTRegionAnalysis.evaluateDefUse(&NotLocalized);
     if (Localized) {
+      assert(NotLocalized.empty() && "All variables must be localized!");
       DVMHRegion = std::make_unique<PragmaRegion>();
       DVMHRegion->finalize();
       DVMHRegion->child_insert(DVMHParallel.get());
       DVMHParallel->parent_insert(DVMHRegion.get());
+      for (const auto &V : ASTDepInfo.get<trait::WriteOccurred>())
+        DVMHParallel->getClauses().template get<trait::DirectAccess>().emplace(
+            std::piecewise_construct, std::forward_as_tuple(V),
+            std::forward_as_tuple());
+      for (const auto &V : ASTDepInfo.get<trait::ReadOccurred>())
+        DVMHParallel->getClauses().template get<trait::DirectAccess>().emplace(
+            std::piecewise_construct, std::forward_as_tuple(V),
+            std::forward_as_tuple());
+    } else {
+      for (const auto &V : NotLocalized)
+        DVMHParallel->getClauses().template get<trait::DirectAccess>().emplace(
+            std::piecewise_construct, std::forward_as_tuple(V),
+            std::forward_as_tuple());
     }
     PI = DVMHParallel.get();
     DVMHParallel->getClauses().get<trait::Private>().insert(
         ASTDepInfo.get<trait::Private>().begin(),
         ASTDepInfo.get<trait::Private>().end());
-    for (const auto &V : ASTDepInfo.get<trait::WriteOccurred>())
-      DVMHParallel->getClauses()
-          .template get<trait::DirectAccess>()
-          .try_emplace(V);
-    for (const auto &V : ASTDepInfo.get<trait::ReadOccurred>())
-      DVMHParallel->getClauses()
-          .template get<trait::DirectAccess>()
-          .try_emplace(V);
     for (unsigned I = 0, EI = ASTDepInfo.get<trait::Reduction>().size(); I < EI;
          ++I)
       DVMHParallel->getClauses().get<trait::Reduction>()[I].insert(

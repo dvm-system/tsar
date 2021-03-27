@@ -43,8 +43,8 @@ public:
   using VariableT = VariableCollector::VariableT;
   using VariableLess = VariableCollector::VariableLess;
 
-  /// Sorted list of variables (to print their in algoristic order).
   using SortedVarListT = VariableCollector::SortedVarListT;
+  using SortedVarMultiListT = VariableCollector::SortedVarMultiListT;
 
   /// List of dependence distances.
   using DistanceInfo = bcl::tagged_tuple<
@@ -83,7 +83,7 @@ public:
   }
 
   bool evaluateDependency();
-  bool evaluateDefUse();
+  bool evaluateDefUse(SortedVarMultiListT *Errors = nullptr);
 
   const ASTRegionTraitInfo & getDependenceInfo() const noexcept {
     return mDependenceInfo;
