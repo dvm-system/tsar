@@ -347,6 +347,8 @@ bool ClangDependenceAnalyzer::evaluateDefUse() {
     mDependenceInfo.get<trait::WriteOccurred>().insert(Red.begin(), Red.end());
     mDependenceInfo.get<trait::ReadOccurred>().insert(Red.begin(), Red.end());
   }
+  mDependenceInfo.get<trait::ReadOccurred>().insert(REs.begin(), REs.end());
+  mDependenceInfo.get<trait::WriteOccurred>().insert(WEs.begin(), WEs.end());
   if (!IsOk) {
     toDiag(mDiags, mRegion->getBeginLoc(), tsar::diag::warn_parallel_loop);
     if (REs.empty() && WEs.empty()) {
