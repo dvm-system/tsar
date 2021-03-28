@@ -755,3 +755,80 @@ ExposedResult AddressAccessAnalyser::isCaptured(Argument *arg) {
   }
   return ExposedResult::No;
 }
+
+
+bool AddressAccessAnalyser::isCapturedSteens(Argument *arg) {
+    if (arg->hasNoCaptureAttr())
+        return false;
+    std::map<Value*, int> registry;
+    std::set<Instruction*> seenInstrs;
+    std::queue<Value*> queue;
+    registry.insert(std::pair<Value*, int>(arg, 0));
+    queue.push(arg);
+    while (!queue.empty()) {
+        auto curValue = queue.front();
+        auto curRang = registry.find(curValue)->second;
+        queue.pop();
+        if (isa<Argument>(curValue)) {
+            if (registry.find(curValue)->second != 0) {
+                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue an argument of rang != 0"; curValue->print(errs()); errs() << "\n";);
+                return true;
+            }
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is an argument of rang == 0"; curValue->print(errs()); errs() << "\n";);
+        }
+        else if (isa<GlobalValue>(curValue)) {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a global value"; curValue->print(errs()); errs() << "\n";);
+            return true;
+        }
+        else if (isa<LoadInst>(curValue)) {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a load: "; curValue->print(errs()); errs() << "\n";);
+            auto LI = dyn_cast<LoadInst>(curValue);
+            registry.insert(std::pair<Value*, int>(LI->getPointerOperand(), curRang + 1));
+            queue.push(LI->getPointerOperand());
+        }
+        else if (isa<CallBase>(curValue)) {
+            // todo: replace this hardcode with an attribute of some kind
+            if (dyn_cast<CallBase>(curValue)->getCalledFunction()->getName() != "malloc") {
+                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a may-alias call: "; curValue->print(errs()); errs() << "\n";);
+                return true;
+            }
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a no-alias call: "; curValue->print(errs()); errs() << "\n";);
+        }
+        else if (isa<GetElementPtrInst>(curValue)) {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a gep: "; curValue->print(errs()); errs() << "\n";);
+            // todo: can it be a bad case here?
+        }
+        else {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a something unknown: "; curValue->print(errs()); errs() << "\n";);
+            return true;
+        }
+        for (Use &use : curValue->uses()) {
+            auto instr = dyn_cast<Instruction>(use.getUser());
+            auto opNo = use.getOperandNo();
+            if (!instr) {
+                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] usage is not an instruction"
+                                  << "\n";);
+                // TODO: I don't think that this branch in necessary, cause non-instr usages are BasicBlocks, Functions?
+                return true;
+            }
+            if (seenInstrs.find(instr) != seenInstrs.end()) {
+                LLVM_DEBUG(errs() << "Met seen instr: "; instr->print(errs()); errs() << "\n";);
+                continue;
+            }
+            switch (instr->getOpcode()) {
+                case Instruction::Store: {
+                    LLVM_DEBUG(errs() << "Met store: "; instr->print(errs()); errs() << "\n";);
+                    if (opNo == 0) {  // ptr is being stored itself
+                        result = analyzeDst(branch->getOperand(1), parent, unknown);
+                    } // ptr is being stored to, not interesting in any case
+                    break;
+                }
+                default: {
+                    LLVM_DEBUG(errs() << "Met unknown usage: "; instr->print(errs()); errs() << "\n";);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}

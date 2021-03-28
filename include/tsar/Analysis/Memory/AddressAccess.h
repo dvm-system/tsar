@@ -107,6 +107,8 @@ namespace llvm {
 
     ExposedResult isCaptured(Argument *arg);
 
+    bool isCapturedSteens(Argument *arg);
+
     tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
 
     void setNocaptureToAll(Function* );
