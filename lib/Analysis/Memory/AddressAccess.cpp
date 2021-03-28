@@ -572,8 +572,7 @@ void AddressAccessAnalyser::setNocaptureToAll(Function *F) {
       arg.addAttr(Attribute::AttrKind::NoCapture);
 }
 
-/// \brief Sets traits for given ptr-value used to store,
-/// may return ptr-value "siblings" in future, thus it returns vector
+// TODO: delete
 std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeDst(Value* value, EValue parent, bool &unknown) {
   auto result = std::vector<AddressAccessAnalyser::EValue>();
   auto instr = dyn_cast<Instruction>(value);
@@ -598,11 +597,80 @@ std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeDst(Val
   return result;
 }
 
+/// \brief For given value of pointer type returns it's base pointer, sets unknown if we don't know how to handle it
+/// Example code:
+///     %ptr = alloca i32**, align 8        ; %ptr is a base location, cause this is a memory allocation
+///     %call = call i8* @malloc(i64 8)
+///     %3 = bitcast i8* %call to i32**
+///     store i32** %3, i32*** %ptr
+///     %4 = load i32**, i32*** %ptr        ; %4 is not a base pointer, cause it's a 'load' result (from %ptr)
+///     store i32* %a, i32** %4             ; <------- met %4 as a 'store' destination ------->
+/// Result: getBasePtr(%4, EValue(%a, rang=0), &flag) -> Evalue(%ptr, rang=2)
+AddressAccessAnalyser::EValue AddressAccessAnalyser::getBasePtr(
+        Value *value,
+        EValue parent,
+        bool &unknown
+) {
+    auto result = EValue(nullptr, Traits(parent.second.rang + 1));
+    while (!result.first || unknown) {  // iterate while base pointer wasn't found
+        auto instr = dyn_cast<Instruction>(value);
+        if (!instr) {
+            LLVM_DEBUG(errs() << "[ADDRESS-ACCESS] memory destination is not an instruction: "; value->print(errs());
+                               errs() << "\n";);
+            unknown = true;
+        } else {
+            switch (instr->getOpcode()) {
+                case Instruction::Alloca: {
+                    LLVM_DEBUG(errs() << "Met alloca memory destination: "; instr->print(errs()); errs() << "\n";);
+                    result.first = instr;
+                    break;
+                }
+                case Instruction::Call: {
+                    // todo: replace it with an attribute of some kind
+                    if (dyn_cast<CallBase>(instr)->getCalledFunction()->getName() == "malloc") {
+                        LLVM_DEBUG(errs() << "Met heap allocator memory destination: "; instr->print(errs()); errs()
+                                << "\n";);
+                        result.first = instr;
+                    }
+                    else {
+                        LLVM_DEBUG(errs() << "Met call destination: "; instr->print(errs()); errs()
+                                << "\n";);
+                        unknown = true;
+                    }
+                    break;
+                }
+                case Instruction::GetElementPtr: {
+                    LLVM_DEBUG(errs() << "Met gep destination: "; instr->print(errs()); errs() << "\n";);
+                    value = dyn_cast<GetElementPtrInst>(instr)->getPointerOperand();
+                    break;
+                }
+                case Instruction::BitCast: {  // todo: process bitcast
+                    LLVM_DEBUG(errs() << "Met bitcast destination: "; instr->print(errs()); errs() << "\n";);
+                    auto *BCI = dyn_cast<BitCastInst>(instr);
+                    unknown = true;
+                    break;
+                }
+                case Instruction::Load: {
+                    LLVM_DEBUG(errs() << "Met load destination: "; instr->print(errs()); errs() << "\n";);
+                    value = dyn_cast<LoadInst>(instr)->getPointerOperand();
+                    result.second.rang += 1;
+                    break;
+                }
+                default: {
+                    LLVM_DEBUG(errs() << "Met unknown memory destination: "; instr->print(errs()); errs() << "\n";);
+                    unknown = true;
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+}
+
 /// \brief Returns vector of ptr-values, where parent may be "moved", sets traits for these values
 /// unknown is set if there is no rule for given branch
 std::vector<AddressAccessAnalyser::EValue> AddressAccessAnalyser::analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown) {
   auto result = std::vector<AddressAccessAnalyser::EValue>();
-  auto ptr = branch->getOperand(opNo);
   switch (branch->getOpcode()) {
     case Instruction::Store: {
       LLVM_DEBUG(errs() << "Met store: "; branch->print(errs()); errs() << "\n";);

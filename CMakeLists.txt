@@ -71,11 +71,10 @@ include(llvm-utility)
 # 2. Configure LLVM project ((in case of 1.a and 1.b only).
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
-option(LOCAL_LLVM "Use existing LLVM sources" OFF)
-option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
+option(LOCAL_LLVM "Use existing LLVM sources" ON)
+option(PACKAGE_LLVM "Use previously installed LLVM package" OFF)
 
-set(LLVM_PROJECT_DIR "${CMAKE_BINARY_DIR}/llvm-project" CACHE PATH
-   "Root of LLVM source tree (path to llvm-project directory, usefull if LOCAL_LLVM is set to ON")
+set(LLVM_PROJECT_DIR "/Users/vladislav.volodkin/CLionProjects/llvm-project")
 
 set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
   "Version of installed LLVM package (useful only if PACKAGE_LLVM is set)")
@@ -133,6 +132,7 @@ if(PACKAGE_LLVM)
     endif()
   endif()
 else()
+  set(LLVM_SOURCE_DIR "/Users/vladislav.volodkin/CLionProjects/llvm-project/llvm")
   if(NOT EXISTS ${LLVM_SOURCE_DIR})
     message(FATAL_ERROR "LLVM_SOURCE_DIR '${LLVM_SOURCE_DIR}' does not exist")
   endif()
@@ -270,8 +270,7 @@ if (MSVC)
   endif()
 endif()
 
-set(PTS_EXECUTABLE "" CACHE FILEPATH
-  "Path to PTS (targets to run TSAR tests are generated if it is specified)")
+set(PTS_EXECUTABLE "/Users/vladislav.volodkin/CLionProjects/pts/bin/pts.pl")
 get_filename_component(PTS_PLUGIN_PATH utils ABSOLUTE)
 get_filename_component(PTS_SETENV_PATH test ABSOLUTE)
 

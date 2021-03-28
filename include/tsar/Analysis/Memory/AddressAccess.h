@@ -72,6 +72,7 @@ namespace llvm {
             std::vector<Instruction *>()), is_invalid(is_invalid) {};
   };
 
+  /// \brief:
   struct Traits {
     int rang;
     bool exposed;
@@ -99,6 +100,8 @@ namespace llvm {
     }
 
     std::vector<EValue> analyzeDst(Value* value, EValue parent, bool &unknown);
+
+    EValue getBasePtr(Value* value, EValue parent, bool &unknown);
 
     std::vector<EValue> analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown);
 
