@@ -402,8 +402,10 @@ bool AnalysisReader::runOnFunction(Function &F) {
   trait::Info Info;
   if (!Parser.parse(Info)) {
     for (auto D : Parser.errors()) {
-      DiagnosticInfoPGOProfile Diag(mDataFile.data(), D, DS_Note);
-      F.getContext().diagnose(Diag);
+      // Build diagnostic in-place of call to diagnose(), because diagnostic
+      // class uses temporary objects available only at construction time.
+      F.getContext().diagnose(
+          DiagnosticInfoPGOProfile(mDataFile.data(), D, DS_Note));
     }
     F.getContext().diagnose(DiagnosticInfoPGOProfile(mDataFile.data(),
       "unable to parse external analysis results"));
