@@ -114,38 +114,29 @@ struct ScalarizerContext {
   SmallVector<LoadInst *, 2> InsertedLoads;
   DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
   DenseSet<PHINode *> UniqueNodes;
-  DenseMap<BasicBlock *, Instruction *> LastInstructions;
+  DenseMap<BasicBlock *, Value *> LastValues;
   DenseSet<BasicBlock *> ChangedLastInst;
   bool ValueChanged;
   DIBuilder *DIB;
 };
 
-bool hasVolatileLoadInstInLoop(Value *V, Loop *L) {
-  for (auto *User : V->users()) {
-    auto *LI = dyn_cast<LoadInst>(User);
-    if (!LI)
-      continue;
-    if (L->contains(LI) && LI->isVolatile())
-      return true;
+bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
+  for (auto *User : Ctx.V->users()) {
+    if (auto *LI = dyn_cast<LoadInst>(User))
+      if (LI->isVolatile() && Ctx.L->contains(LI))
+        return true;
+    if (auto *SI = dyn_cast<StoreInst>(User))
+      if (SI->isVolatile() && Ctx.L->contains(SI))
+        return true;
   }
   return false;
 }
 
 bool validateValue(const ScalarizerContext &Ctx) {
-  if (dyn_cast<GEPOperator>(Ctx.V))
-    return false;
   for (auto *User : Ctx.V->users()) {
-    auto *GEP = dyn_cast<GetElementPtrInst>(User);
-    auto *Call = dyn_cast<CallInst>(User);
     auto *Store = dyn_cast<StoreInst>(User);
     if (Ctx.ValueChanged && Store && Ctx.L->contains(Store))
       return false;
-    if (GEP && Ctx.L->contains(GEP))
-      return false;
-    if (Call) {
-      if (Ctx.L->contains(Call->getParent()) && Call->getParent() != Ctx.L->getExitingBlock())
-        return false;
-    }
   }
   return true;
 }
@@ -155,10 +146,9 @@ void insertDbgValueCall(ScalarizerContext &Ctx,
   if (Add)
     I->setDebugLoc(Ctx.DbgLoc);
   Ctx.DIB->insertDbgValueIntrinsic(
-          I,
-    dyn_cast<DILocalVariable>(Ctx.DbgVar),
+    I, dyn_cast<DILocalVariable>(Ctx.DbgVar),
     DIExpression::get(Ctx.F.getContext(), {}),
-          Ctx.DbgLoc, InsertBefore
+    Ctx.DbgLoc, InsertBefore
   );
 }
 
@@ -185,7 +175,7 @@ void insertStoreInstructions(ScalarizerContext &Ctx) {
   Ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
     auto storeVal = Ctx.ValueChanged ? Ctx.InsertedLoads.front() : Ctx.V;
-    new StoreInst(Ctx.LastInstructions[BB], storeVal, BB->getFirstNonPHI());
+    new StoreInst(Ctx.LastValues[BB], storeVal, BB->getFirstNonPHI());
   }
 }
 
@@ -206,36 +196,42 @@ void getAllStoreOperands(LoadInst *I, DenseMap<StoreInst *, Instruction *> &Stor
 
 void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
   SmallVector<Instruction *, 16> Loads;
-  DenseMap<StoreInst *, Instruction *> Stores;
-  auto ReplaceLoads = [&](LoadInst *Load, Instruction *ReplaceWith) {
+  DenseMap<StoreInst *, Value *> Stores;
+  auto ReplaceLoads = [&](LoadInst *Load, Value *ReplaceWith) {
     DenseMap<StoreInst *, Instruction *> storeInstructions;
     getAllStoreOperands(Load, storeInstructions);
     for (auto &Pair : storeInstructions) {
-      Ctx.LastInstructions[Pair.second->getParent()] = Pair.second;
+      Ctx.LastValues[Pair.second->getParent()] = Pair.second;
       Ctx.ChangedLastInst.insert(Pair.second->getParent());
     }
     Stores.insert(storeInstructions.begin(), storeInstructions.end());
     Load->replaceAllUsesWith(ReplaceWith);
   };
   for (auto &Instr : BB->getInstList()) {
-    auto *Load = dyn_cast<LoadInst>(&Instr);
-    if (!Load || Load->getPointerOperand() != Ctx.V || Load->user_empty())
-      continue;
-    Instruction *LI = Ctx.LastInstructions[BB];
-    if (!Ctx.ValueChanged) {
-      ReplaceLoads(Load, LI);
-    } else {
-      for (auto *user : Load->users())
-        if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
-          ReplaceLoads(LoadChild, LI);
-          Loads.push_back(LoadChild);
-        }
-      ReplaceLoads(Load, Ctx.InsertedLoads.front());
+    auto *SI = dyn_cast<StoreInst>(&Instr);
+    auto *LI = dyn_cast<LoadInst>(&Instr);
+    if (SI && SI->getPointerOperand() == Ctx.V) {
+      Stores.insert({SI, SI->getValueOperand()});
+      Ctx.LastValues[SI->getParent()] = SI->getValueOperand();
+      Ctx.ChangedLastInst.insert(SI->getParent());
+    } else if (LI && LI->getPointerOperand() == Ctx.V && !LI->user_empty()) {
+      Value *Last = Ctx.LastValues[BB];
+      if (!Ctx.ValueChanged) {
+        ReplaceLoads(LI, Last);
+      } else {
+        for (auto *user : LI->users())
+          if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
+            ReplaceLoads(LoadChild, Last);
+            Loads.push_back(LoadChild);
+          }
+        ReplaceLoads(LI, Ctx.InsertedLoads.front());
+      }
+      Loads.push_back(LI);
     }
-    Loads.push_back(Load);
   }
   for (auto &Pair : Stores)
-    insertDbgValueCall(Ctx, Pair.second, Pair.first, false);
+    if (auto *I = dyn_cast<Instruction>(Pair.second))
+      insertDbgValueCall(Ctx, I, Pair.first, false);
   for (auto *Load : Loads) {
     Load->dropAllReferences();
     Load->eraseFromParent();
@@ -245,7 +241,7 @@ void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
     Pair.first->eraseFromParent();
   }
   if (pred_size(BB) == 1 && Ctx.ChangedLastInst.find(BB) == Ctx.ChangedLastInst.end())
-    Ctx.LastInstructions[BB] = Ctx.LastInstructions[BB->getSinglePredecessor()];
+    Ctx.LastValues[BB] = Ctx.LastValues[BB->getSinglePredecessor()];
 }
 
 void handleLoads(ScalarizerContext &Ctx,
@@ -293,9 +289,9 @@ void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = false) {
     insertPhiNodes(Ctx, Succ);
   // all nodes and links are created at this point and BB = loop predecessor
   if (Init) {
-    Ctx.LastInstructions[BB] = Ctx.InsertedLoads.back();
+    Ctx.LastValues[BB] = Ctx.InsertedLoads.back();
     for (auto &P : Ctx.PhiLinks)
-      Ctx.LastInstructions[P.getFirst()] = P.getSecond()->getPhi();
+      Ctx.LastValues[P.getFirst()] = P.getSecond()->getPhi();
   }
 }
 
@@ -303,8 +299,8 @@ void fillPhiNodes(ScalarizerContext &Ctx) {
   for (auto *Phi : Ctx.UniqueNodes) {
     auto *BB = Phi->getParent();
     for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
-      if (Ctx.LastInstructions.find(*Pred) != Ctx.LastInstructions.end()) {
-        Phi->addIncoming(Ctx.LastInstructions[*Pred], *Pred);
+      if (Ctx.LastValues.find(*Pred) != Ctx.LastValues.end()) {
+        Phi->addIncoming(Ctx.LastValues[*Pred], *Pred);
       } else {
         auto *load = new LoadInst(Ctx.V->getType()->getPointerElementType(),
             Ctx.V, "dummy.load." + Ctx.V->getName(), *Pred);
@@ -337,30 +333,44 @@ void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
 
 bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
   auto STR = SpanningTreeRelation<AliasTree *>(&AT);
-  auto *EM = AT.find(MemoryLocation(V));
+  auto *EM = AT.find(MemoryLocation(V, LocationSize(0)));
+  if (!EM)
+    return false;
+  EM = EM->getTopLevelParent();
   for (auto *BB : L->getBlocks()) {
     for (auto &Inst : BB->getInstList()) {
       if (dyn_cast<Value>(&Inst) == V)
         return false;
-      bool writesToV = false;
-      auto memLambda = [&STR, &V, &writesToV, &AT, &EM](
+      SmallVector<BasicBlock *, 8> ExitBlocks;
+      L->getExitBlocks(ExitBlocks);
+      bool InExit  = std::any_of(ExitBlocks.begin(), ExitBlocks.end(), [&Inst](BasicBlock *EB) {
+        return Inst.getParent() == EB;
+      });
+      if (InExit)
+        continue;
+      bool HasWrite = false;
+      auto memLambda = [&STR, &HasWrite, &AT, &EM](
           Instruction &I, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo W) {
-        if (writesToV || W == AccessInfo::No || Loc.Ptr == V)
+        if (HasWrite || W == AccessInfo::No)
           return;
-        auto instEM = AT.find(Loc);
-        if (EM && instEM && !STR.isUnreachable(EM->getAliasNode(AT), instEM->getAliasNode(AT)))
-          writesToV = true;
+        auto InstEM = AT.find(Loc);
+        assert(InstEM && "alias tree node is empty");
+        auto *EMNode = EM->getAliasNode(AT);
+        auto *InstNode = InstEM->getAliasNode(AT);
+        if (!STR.isEqual(EMNode, InstNode) && !STR.isUnreachable(EMNode, InstNode))
+          HasWrite = true;
       };
-      auto unknownMemLambda = [&writesToV, &AT, &STR, &EM](
+      auto unknownMemLambda = [&HasWrite, &AT, &STR, &EM](
           Instruction &I, AccessInfo, AccessInfo W) {
-        if (writesToV || W == AccessInfo::No)
+        if (HasWrite || W == AccessInfo::No)
           return;
         auto *instEM = AT.findUnknown(&I);
-        if (EM && instEM && !STR.isUnreachable(instEM, EM->getAliasNode(AT)))
-          writesToV = true;
+        auto *EMNode = EM->getAliasNode(AT);
+        if (!STR.isEqual(instEM, EMNode) && !STR.isUnreachable(instEM, EMNode))
+          HasWrite = true;
       };
       for_each_memory(Inst, TLI, memLambda, unknownMemLambda);
-      if (writesToV)
+      if (HasWrite)
         return false;
     }
   }
@@ -417,54 +427,45 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       if (!T.is_any<trait::Anti, trait::Flow, trait::Output>())
         continue;
       for (auto &V : *T.getMemory()) {
-        if (!V.pointsToAliveValue() || isa<UndefValue>(V))
+        if (!V.pointsToAliveValue() || isa<UndefValue>(V) || isa<LoadInst>(V))
           continue;
-        bool HasLoad = false, HasStore = false;
         for (auto *User : V->users()) {
-          if (auto *LI = dyn_cast<LoadInst>(User))
-            if (L->contains(LI))
-              HasLoad = true;
-          if (auto *LI = dyn_cast<StoreInst>(User))
-            if (L->contains(LI))
-              HasStore = true;
-          if (HasLoad && HasStore) {
-            Values.insert(V);
-            break;
-          }
+          if (auto *SI = dyn_cast<StoreInst>(User))
+            if (L->contains(SI)) {
+              Values.insert(V);
+              break;
+            }
         }
       }
     }
-    SmallPtrSet<Value *, 8> ToDelete;
-    for (auto *Val : Values)
-      if (auto *Load = dyn_cast<LoadInst>(Val))
-        ToDelete.insert(Load->getPointerOperand());
-    for (auto *el : ToDelete)
-      Values.erase(el);
-    if (!Values.empty())
-      for (auto &T: *Pool)
-        T.unset<trait::NoPromotedScalar>();
+    int NumTransformed = 0;
     for (auto *Val : Values) {
-      auto *V = Val;
-      if (auto *Load = dyn_cast<LoadInst>(Val))
-        V = Load->getPointerOperand();
+      bool MultipleLoad = false;
+      for (auto *User1 : Val->users())
+        if (isa<LoadInst>(User1))
+          for (auto *User2 : User1->users())
+            if (isa<LoadInst>(User2))
+              MultipleLoad = true;
       auto DIB = new DIBuilder(*F.getParent());
-      auto Ctx = ScalarizerContext(V, F, L, DIB, Val != V);
+      auto Ctx = ScalarizerContext(Val, F, L, DIB, MultipleLoad);
       if (!validateValue(Ctx) ||
-          hasVolatileLoadInstInLoop(V, L) ||
-          !analyzeAliasTree(V, AT, L, TLI))
+          hasVolatileInstInLoop(Ctx) ||
+          !analyzeAliasTree(Val, AT, L, TLI))
         continue;
-      // find dbg.value call for V and save it for adding debug information later
+      // find dbg.value call for Val and save it for adding debug information later
       for (auto &BB : F.getBasicBlockList()) {
         for (auto &Inst : BB.getInstList()) {
-          if (auto *DbgVal = dyn_cast<DbgValueInst>(&Inst)) {
-            if (DbgVal->getValue() == V) {
-              Ctx.DbgLoc = DbgVal->getDebugLoc();
-              Ctx.DbgVar = DbgVal->getVariable();
+          if (Ctx.DbgVar && Ctx.DbgLoc)
+            continue;
+          if (auto *DVI = dyn_cast<DbgValueInst>(&Inst)) {
+            if (DVI->getValue() == Val) {
+              Ctx.DbgLoc = DVI->getDebugLoc();
+              Ctx.DbgVar = DVI->getVariable();
             }
-          } else if (auto *Declare = dyn_cast<DbgDeclareInst>(&Inst)) {
-            if (Declare->getAddress() == V) {
-              Ctx.DbgLoc = Declare->getDebugLoc();
-              Ctx.DbgVar = Declare->getVariable();
+          } else if (auto *DDI = dyn_cast<DbgDeclareInst>(&Inst)) {
+            if (DDI->getAddress() == Val) {
+              Ctx.DbgLoc = DDI->getDebugLoc();
+              Ctx.DbgVar = DDI->getVariable();
             }
           }
         }
@@ -477,7 +478,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
         handlePointerDI(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       }
       auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
-      if (!dyn_cast<GlobalValue>(Ctx.V) && derivedType && V->getType()->isPointerTy())
+      if (!dyn_cast<GlobalValue>(Ctx.V) && derivedType && Val->getType()->isPointerTy())
         handlePointerDI(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
 
       insertLoadInstructions(Ctx);
@@ -488,7 +489,11 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       deleteRedundantPhiNodes(Ctx);
       insertStoreInstructions(Ctx);
       freeLinks(Ctx.PhiLinks);
+      NumTransformed++;
     }
+    if (NumTransformed > 0)
+      for (auto &T: *Pool)
+        T.unset<trait::NoPromotedScalar>();
   });
   if (!MDsToAttach.empty()) {
     auto *MappingNode = DINode::get(F.getContext(), MDsToAttach);
