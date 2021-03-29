@@ -491,15 +491,20 @@ std::set<Value *> AddressAccessAnalyser::getExposedMemLocs(Function *F) {
 
 void AddressAccessAnalyser::runOnFunction(Function *F) {
   LLVM_DEBUG(errs() << "Analyzing function: "; F->getName(); errs() << "\n";);
+  for (BasicBlock &BB : F->getBasicBlockList())
+      for (Instruction &I: BB) {
+          I.print(errs()); errs() << "\n";
+      }
+
   for (auto &arg : F->args()) {
     if (!(arg.getType()->isPointerTy()))
       continue;
-    if (isCaptured(&arg) == ExposedResult::No) {
-      LLVM_DEBUG(errs() << "Proved to be not captured: "; errs() << arg.getName(); errs() << "\n";);
-      arg.addAttr(Attribute::AttrKind::NoCapture);
+    if (isCapturedSteens(&arg))
+        LLVM_DEBUG(errs() << "Arg may be captured: "; errs() << arg.getName(); errs() << "\n";);
+    else {
+        LLVM_DEBUG(errs() << "Proved to be not captured: "; errs() << arg.getName(); errs() << "\n";);
+        arg.addAttr(Attribute::AttrKind::NoCapture);
     }
-    else
-      LLVM_DEBUG(errs() << "Arg may be captured: "; errs() << arg.getName(); errs() << "\n";);
   }
 }
 
@@ -768,23 +773,24 @@ bool AddressAccessAnalyser::isCapturedSteens(Argument *arg) {
     while (!queue.empty()) {
         auto curValue = queue.front();
         auto curRang = registry.find(curValue)->second;
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curRang: "; errs() << curRang; errs() << "\n";);
         queue.pop();
         if (isa<Argument>(curValue)) {
             if (registry.find(curValue)->second != 0) {
-                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue an argument of rang != 0"; curValue->print(errs()); errs() << "\n";);
+                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue an argument of rang != 0: "; curValue->print(errs()); errs() << "\n";);
                 return true;
             }
-            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is an argument of rang == 0"; curValue->print(errs()); errs() << "\n";);
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is an argument of rang == 0: "; curValue->print(errs()); errs() << "\n";);
         }
         else if (isa<GlobalValue>(curValue)) {
-            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a global value"; curValue->print(errs()); errs() << "\n";);
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a global value: "; curValue->print(errs()); errs() << "\n";);
             return true;
         }
         else if (isa<LoadInst>(curValue)) {
-            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a load: "; curValue->print(errs()); errs() << "\n";);
-            auto LI = dyn_cast<LoadInst>(curValue);
-            registry.insert(std::pair<Value*, int>(LI->getPointerOperand(), curRang + 1));
-            queue.push(LI->getPointerOperand());
+              LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a load: "; curValue->print(errs()); errs() << "\n";);
+              auto LI = dyn_cast<LoadInst>(curValue);
+              registry.insert(std::pair<Value*, int>(LI->getPointerOperand(), curRang + 1));
+              queue.push(LI->getPointerOperand());
         }
         else if (isa<CallBase>(curValue)) {
             // todo: replace this hardcode with an attribute of some kind
@@ -797,6 +803,13 @@ bool AddressAccessAnalyser::isCapturedSteens(Argument *arg) {
         else if (isa<GetElementPtrInst>(curValue)) {
             LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a gep: "; curValue->print(errs()); errs() << "\n";);
             // todo: can it be a bad case here?
+        }
+        else if (isa<AllocaInst>(curValue)) {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a alloca: "; curValue->print(errs()); errs() << "\n";);
+        }
+        else if (isa<BitCastInst>(curValue)) {
+            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a bitcast: "; curValue->print(errs()); errs() << "\n";);
+            // todo: add to lists
         }
         else {
             LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a something unknown: "; curValue->print(errs()); errs() << "\n";);
@@ -814,13 +827,44 @@ bool AddressAccessAnalyser::isCapturedSteens(Argument *arg) {
             if (seenInstrs.find(instr) != seenInstrs.end()) {
                 LLVM_DEBUG(errs() << "Met seen instr: "; instr->print(errs()); errs() << "\n";);
                 continue;
-            }
+            } else
+                seenInstrs.insert(instr);
             switch (instr->getOpcode()) {
                 case Instruction::Store: {
-                    LLVM_DEBUG(errs() << "Met store: "; instr->print(errs()); errs() << "\n";);
                     if (opNo == 0) {  // ptr is being stored itself
-                        result = analyzeDst(branch->getOperand(1), parent, unknown);
-                    } // ptr is being stored to, not interesting in any case
+                        LLVM_DEBUG(errs() << "Met store (stored itself): "; instr->print(errs()); errs() << "\n";);
+                        auto *V = dyn_cast<StoreInst>(instr)->getPointerOperand();
+                        registry.insert(std::pair<Value*,int>(V, curRang + 1));
+                        queue.push(V);
+                    } else {
+                        LLVM_DEBUG(errs() << "Met store (stored TO): "; instr->print(errs()); errs() << "\n";);
+                        auto *V = dyn_cast<StoreInst>(instr)->getValueOperand();
+                        registry.insert(std::pair<Value*,int>(V, curRang - 1));
+                        queue.push(V);
+                    }
+                    break;
+                }
+                case Instruction::Load: {
+                    LLVM_DEBUG(errs() << "Met load (loaded from): "; instr->print(errs()); errs() << "\n";);
+                    registry.insert(std::pair<Value*,int>(instr, curRang - 1));
+                    queue.push(instr);
+                    break;
+                }
+                case Instruction::GetElementPtr: {
+                    LLVM_DEBUG(errs() << "Met gep (geped from): "; instr->print(errs()); errs() << "\n";);
+                    registry.insert(std::pair<Value*,int>(instr, curRang));
+                    queue.push(instr);
+                    break;
+                }
+                case Instruction::BitCast: {
+                    LLVM_DEBUG(errs() << "Met bcast (bcasted from): "; instr->print(errs()); errs() << "\n";);
+                    registry.insert(std::pair<Value*,int>(instr, curRang));
+                    queue.push(instr);
+                    break;
+                }
+                case Instruction::Call: {
+                    LLVM_DEBUG(errs() << "Met call "; instr->print(errs()); errs() << "\n";);
+                    // todo: process interprocedure
                     break;
                 }
                 default: {

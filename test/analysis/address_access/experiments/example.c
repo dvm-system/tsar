@@ -5,10 +5,10 @@
 
 int** glob;
 
-void fun1(int *a) {
+void fun1(int *a) { // captured 
   int **ptr;
   ptr = (int**) malloc(sizeof(int*));
-  glob = ptr;
+  glob = ptr;  // without this instr it's not captured (analysis works)
 
   int *c = &(a[3]);
   *ptr = c;
@@ -29,26 +29,28 @@ Whole function:
   store i32* %a, i32** %a.addr, align 8, !tbaa !23
   call void @llvm.dbg.declare(metadata i32** %a.addr, metadata !20, metadata !DIExpression()), !dbg !27
   %0 = bitcast i32*** %ptr to i8*, !dbg !28
-  call void @llvm.lifetime.start.p0i8(i64 8, i8* %0) #4, !dbg !28
+  call void @llvm.lifetime.start.p0i8(i64 8, i8* %0) #5, !dbg !28
   call void @llvm.dbg.declare(metadata i32*** %ptr, metadata !21, metadata !DIExpression()), !dbg !29
-  %call = call i8* @malloc(i64 8) #5, !dbg !30
-  %1 = bitcast i8* %call to i32**, !dbg !31
-  store i32** %1, i32*** %ptr, align 8, !dbg !32, !tbaa !23
-  %2 = load i32**, i32*** %ptr, align 8, !dbg !33, !tbaa !23
-  store i32** %2, i32*** @glob, align 8, !dbg !34, !tbaa !23
-  %3 = bitcast i32** %c to i8*, !dbg !35
-  call void @llvm.lifetime.start.p0i8(i64 8, i8* %3) #4, !dbg !35
+  br label %1, !dbg !30
+  %call = call i8* @malloc(i64 8) #6, !dbg !30
+  br label %2, !dbg !31
+  %3 = bitcast i8* %call to i32**, !dbg !31
+  store i32** %3, i32*** %ptr, align 8, !dbg !32, !tbaa !23
+  %4 = load i32**, i32*** %ptr, align 8, !dbg !33, !tbaa !23
+  store i32** %4, i32*** @glob, align 8, !dbg !34, !tbaa !23
+  %5 = bitcast i32** %c to i8*, !dbg !35
+  call void @llvm.lifetime.start.p0i8(i64 8, i8* %5) #5, !dbg !35
   call void @llvm.dbg.declare(metadata i32** %c, metadata !22, metadata !DIExpression()), !dbg !36
-  %4 = load i32*, i32** %a.addr, align 8, !dbg !37, !tbaa !23
-  %arrayidx = getelementptr inbounds i32, i32* %4, i64 3, !dbg !37
+  %6 = load i32*, i32** %a.addr, align 8, !dbg !37, !tbaa !23
+  %arrayidx = getelementptr inbounds i32, i32* %6, i64 3, !dbg !37
   store i32* %arrayidx, i32** %c, align 8, !dbg !36, !tbaa !23
-  %5 = load i32*, i32** %c, align 8, !dbg !38, !tbaa !23
-  %6 = load i32**, i32*** %ptr, align 8, !dbg !39, !tbaa !23
-  store i32* %5, i32** %6, align 8, !dbg !40, !tbaa !23
-  %7 = bitcast i32** %c to i8*, !dbg !41
-  call void @llvm.lifetime.end.p0i8(i64 8, i8* %7) #4, !dbg !41
-  %8 = bitcast i32*** %ptr to i8*, !dbg !41
-  call void @llvm.lifetime.end.p0i8(i64 8, i8* %8) #4, !dbg !41
+  %7 = load i32*, i32** %c, align 8, !dbg !38, !tbaa !23
+  %8 = load i32**, i32*** %ptr, align 8, !dbg !39, !tbaa !23
+  store i32* %7, i32** %8, align 8, !dbg !40, !tbaa !23
+  %9 = bitcast i32** %c to i8*, !dbg !41
+  call void @llvm.lifetime.end.p0i8(i64 8, i8* %9) #5, !dbg !41
+  %10 = bitcast i32*** %ptr to i8*, !dbg !41
+  call void @llvm.lifetime.end.p0i8(i64 8, i8* %10) #5, !dbg !41
   ret void, !dbg !41
 */
 
