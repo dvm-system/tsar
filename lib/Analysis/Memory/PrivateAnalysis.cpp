@@ -945,9 +945,14 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
             // access or if we do not know how it will be used.
             if (isa<PtrToIntOperator>(User))
               return true;
-            if (auto *SI = dyn_cast<StoreInst>(I.first))
-              return I.second->getOperandNo() !=
-                     StoreInst::getPointerOperandIndex();
+            if (auto *SI = dyn_cast<StoreInst>(I.first)) {
+              if (I.second->getOperandNo() ==
+                  StoreInst::getPointerOperandIndex())
+                return false;
+              if (pointsToLocalMemory(*SI->getPointerOperand(), *Lp))
+                return false;
+              return true;
+            }
             // Address should be also remembered if it is a function parameter
             // because it is not known how it is used inside a function.
             auto *Call = dyn_cast<CallBase>(I.first);
