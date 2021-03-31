@@ -25,6 +25,7 @@
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/MetadataUtils.h"
+#include <llvm/IR/IntrinsicInst.h>
 #include <regex>
 
 using namespace llvm;
@@ -88,5 +89,27 @@ llvm::Argument * getArgument(llvm::Function &F, std::size_t ArgNo) {
   auto ArgItrE = F.arg_end();
   for (std::size_t I = 0; ArgItr != ArgItrE && I <= ArgNo; ++I, ++ArgItr);
   return ArgItr != ArgItrE ? &*ArgItr : nullptr;
+}
+
+bool pointsToLocalMemory(const Value &V, const Loop &L) {
+  if (!isa<AllocaInst>(V))
+    return false;
+  bool StartInLoop{false}, EndInLoop{false};
+  for (auto *V1 : V.users())
+    if (auto *BC{dyn_cast<BitCastInst>(V1)})
+      for (auto *V2 : BC->users())
+        if (auto *II{dyn_cast<IntrinsicInst>(V2)}) {
+          auto *BB{II->getParent()};
+          if (L.contains(BB)) {
+            auto ID{II->getIntrinsicID()};
+            if (!StartInLoop && ID == llvm::Intrinsic::lifetime_start)
+              StartInLoop = true;
+            else if (!EndInLoop && ID == llvm::Intrinsic::lifetime_end)
+              EndInLoop = true;
+            if (StartInLoop && EndInLoop)
+              return true;
+          }
+        }
+  return false;
 }
 }

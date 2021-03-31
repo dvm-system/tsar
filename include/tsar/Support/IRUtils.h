@@ -69,6 +69,10 @@ inline bool hasUnderlyingPointer(llvm::Type *Ty) {
   return false;
 }
 
+/// Return true if a specified value points to the memory which is only
+/// available inside a specific loop.
+bool pointsToLocalMemory(const llvm::Value &V, const llvm::Loop &L);
+
 namespace detail {
 /// Applies a specified function object to each loop in a loop tree.
 template<class Function>
