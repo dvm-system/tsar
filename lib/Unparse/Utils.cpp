@@ -72,7 +72,6 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   else
     O << Loc.UpperBound.getValue();
   O << ">";
-  O << "; Pointer: " << Loc.Ptr << "; ";
   if (!Loc.DimList.empty()) {
     O << ", {";
     for (auto &Dimension : Loc.DimList)
@@ -81,6 +80,7 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
           Dimension.DimSize << "}";
     O << "}";
   }
+  O << " [" << Loc.Ptr << "]";
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,
     const DominatorTree *DT) {

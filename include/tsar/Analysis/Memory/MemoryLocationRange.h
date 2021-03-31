@@ -40,6 +40,17 @@ using LocationSize = llvm::LocationSize;
 /// LowerBound is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
+  enum LocKind {
+    FIRST_KIND = 0,
+    SCALAR = FIRST_KIND,
+    NON_COLLAPSABLE,
+    COLLAPSABLE,
+    COLLAPSED,
+    EXPLICIT,
+    LAST_KIND = EXPLICIT,
+    INVALID_KIND,
+    NUMBER_KIND = INVALID_KIND,
+  };
 
   struct Dimension {
     uint64_t Start;
@@ -59,6 +70,7 @@ struct MemoryLocationRange {
   LocationSize UpperBound;
   llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
+  LocKind Kind;
 
   /// Return a location with information about the memory reference by the given
   /// instruction.
@@ -126,14 +138,23 @@ struct MemoryLocationRange {
                                LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags) {}
+        AATags(AATags), Kind(LocKind::SCALAR) {}
+
+  explicit MemoryLocationRange(const llvm::Value *Ptr,
+                               LocationSize LowerBound,
+                               LocationSize UpperBound,
+                               LocKind Kind,
+                               const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
+      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
+        AATags(AATags), Kind(Kind) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
-      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags) {}
+      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags),
+        Kind(LocKind::SCALAR) {}
 
   MemoryLocationRange(const MemoryLocationRange &Loc)
       : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
-        AATags(Loc.AATags), DimList(Loc.DimList) {}
+        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
@@ -146,7 +167,7 @@ struct MemoryLocationRange {
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
       LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
-      DimList == Other.DimList;
+      DimList == Other.DimList && Kind == Other.Kind;
   }
 };
 
@@ -338,14 +359,14 @@ namespace MemoryLocationRangeEquation {
         if (LC) {
           for (auto &LeftD : LeftDiff) {
             auto &R = LC->emplace_back(MemoryLocationRange(
-                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.Kind, LHS.AATags));
             R.DimList.push_back(LeftD);
           }
         }
         if (RC) {
           for (auto &RightD : RightDiff) {
             auto &R = RC->emplace_back(MemoryLocationRange(
-                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.Kind, LHS.AATags));
             R.DimList.push_back(RightD);
           }
         }

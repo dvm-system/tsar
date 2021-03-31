@@ -226,22 +226,55 @@ public:
   }
 };
 
+#ifndef NDEBUG
+inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
+                                     MemoryLocationRange::LocKind Kind) {
+  typedef MemoryLocationRange::LocKind LocKind;
+  switch (Kind)
+  {
+  case LocKind::SCALAR:
+    OS << "SCALAR";
+    break;
+  case LocKind::NON_COLLAPSABLE:
+    OS << "NON_COLLAPSABLE";
+    break;
+  case LocKind::COLLAPSABLE:
+    OS << "COLLAPSABLE";
+    break;
+  case LocKind::COLLAPSED:
+    OS << "COLLAPSED";
+    break;
+  case LocKind::EXPLICIT:
+    OS << "EXPLICIT";
+  case LocKind::INVALID_KIND:
+    OS << "INVALID_KIND";
+  default:
+    OS << "UNKNOWN";
+    break;
+  }
+  return OS;
+}
+#endif
+
 template<typename FuncT>
 void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     const ReachDFFwk *Fwk, FuncT &&Inserter, bool IgnoreLoopMismatch=true) {
   typedef MemoryLocationRange::Dimension Dimension;
+  typedef MemoryLocationRange::LocKind LocKind;
   assert(Fwk && "Data-flow framework must not be null");
-  //LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Location Ptr: " << Loc.Ptr << "\n");
-  if (!Loc.DimList.empty()) {
-    //LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Location has already been collapsed.\n");
+  if (Loc.Kind == LocKind::COLLAPSED || Loc.Kind == LocKind::NON_COLLAPSABLE) {
     Inserter(Loc);
     return;
   }
+  if (Loc.Kind == LocKind::EXPLICIT)
+    return;
+  MemoryLocationRange ResLoc(Loc);
   auto LocInfo = Fwk->getDelinearizeInfo()->findRange(Loc.Ptr);
   auto ArrayPtr = LocInfo.first;
   if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to delinearize location.\n");
-    Inserter(Loc);
+    ResLoc.Kind = LocKind::SCALAR;
+    Inserter(ResLoc);
     return;
   }
   LLVM_DEBUG(
@@ -266,16 +299,20 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
   if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
       ArrayPtr->getNumberOfDims() != 1) {
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get array size.\n");
-    Inserter(Loc);
+    ResLoc.Kind = LocKind::NON_COLLAPSABLE;
+    Inserter(ResLoc);
     return;
   }
-  auto ElementType = std::get<2>(ArraySizeInfo);
+  auto ElemType = std::get<2>(ArraySizeInfo);
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element type:  " <<
-      *ElementType << ".\n");
+      *ElemType << ".\n");
   size_t DimensionN = 0;
-  MemoryLocationRange ResLoc(ArrayPtr->getBase(), 0,
-      uint64_t(Fwk->getDataLayout().getTypeStoreSize(ElementType)));
+  ResLoc.Ptr = ArrayPtr->getBase();
+  ResLoc.LowerBound = 0;
+  ResLoc.UpperBound = uint64_t(Fwk->getDataLayout().getTypeStoreSize(ElemType));
+  ResLoc.Kind = LocKind::COLLAPSED;
   for (auto *S : LocInfo.second->Subscripts) {
+    ResLoc.Kind = LocKind::NON_COLLAPSABLE;
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
     if (!ArrayPtr->isKnownDimSize(DimensionN) && DimensionN != 0) {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get dimension "
@@ -288,13 +325,15 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       DimInfo.DimSize = C->getAPInt().getZExtValue();
     } else {
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
-      if (DimensionN != 0)
+      if (DimensionN != 0) {
         break;
+      }
     }
     auto *SE = Fwk->getScalarEvolution();
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
-    if (!AddRecInfo.second)
+    if (!AddRecInfo.second) {
       break;
+    }
     auto SCEV = AddRecInfo.first;
     if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
       auto Range = C->getAPInt().getSExtValue();
@@ -302,22 +341,25 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       DimInfo.TripCount = 1;
       DimInfo.Step = 1;
       ResLoc.DimList.push_back(DimInfo);
+      ResLoc.Kind = LocKind::COLLAPSED;
     } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
       if (!R) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Region == nullptr.\n");
+        ResLoc.Kind = LocKind::COLLAPSABLE;
         break;
       }
       if (auto *DFL = dyn_cast<DFLoop>(R)) {
-        if (DFL->getLoop() != C->getLoop() || DFL->getLoop() == nullptr ||
-            C->getLoop() == nullptr) {
+        assert(DFL->getLoop() && C->getLoop() &&
+            "Loops for the DFLoop and AddRecExpr must be specified!");
+        if (!C->getLoop()->contains(DFL->getLoop())) {
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
+          //if (Loc.Kind == LocKind::NON_COLLAPSABLE)
+          //  Inserter(Loc);
           return;
-          //if (!IgnoreLoopMismatch)
-          //  return;
         }
       } else {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");
-        break;
+        return;
       }
       auto *StepSCEV = C->getStepRecurrence(*SE);
       if (!isa<SCEVConstant>(StepSCEV)) {
@@ -340,14 +382,24 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       DimInfo.TripCount = TripCount;
       DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
       ResLoc.DimList.push_back(DimInfo);
+      ResLoc.Kind = LocKind::COLLAPSED;
+    } else {
+      break;
     }
     ++DimensionN;
   }
   if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
-    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to collapse location.\n");
-    Inserter(Loc);
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Collapse incomplete location. Kind: "
+        << ResLoc.Kind << "\n");
+    assert(ResLoc.Kind != LocKind::COLLAPSED &&
+        "An incomplete location cannot be of the `collapsed` kind!");
+    MemoryLocationRange NewLoc(Loc);
+    NewLoc.Kind = ResLoc.Kind;
+    Inserter(NewLoc);
     return;
   }
+  assert(ResLoc.Kind == LocKind::COLLAPSED &&
+      "Array location must be of the `collapsed` kind!");
   LLVM_DEBUG(
     dbgs() << "[ARRAY LOCATION] Dimension info:\n";
     for (size_t I = 0; I < ResLoc.DimList.size(); I++) {
@@ -474,15 +526,13 @@ void intializeDefUseSetLog(
   }
   dbgs() << "Outward exposed must define locations:\n";
   for (auto &Loc : DU.getDefs())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << " (" << Loc.Kind << ")\n";
   dbgs() << "Outward exposed may define locations:\n";
   for (auto &Loc : DU.getMayDefs())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << " (" << Loc.Kind << ")\n";
   dbgs() << "Outward exposed uses:\n";
-  for (auto &Loc : DU.getUses()) {
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << " (";
-    printLocationSource(dbgs(), *Loc.Ptr, &DT), dbgs() << ")\n";
-  }
+  for (auto &Loc : DU.getUses())
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << " (" << Loc.Kind << ")\n";
   dbgs() << "Explicitly accessed locations:\n";
   for (auto &Loc : DU.getExplicitAccesses())
     printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
