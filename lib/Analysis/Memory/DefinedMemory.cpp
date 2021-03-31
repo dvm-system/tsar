@@ -226,6 +226,142 @@ public:
   }
 };
 
+template<typename FuncT>
+void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
+    const ReachDFFwk *Fwk, FuncT &&Inserter, bool IgnoreLoopMismatch=true) {
+  typedef MemoryLocationRange::Dimension Dimension;
+  assert(Fwk && "Data-flow framework must not be null");
+  //LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Location Ptr: " << Loc.Ptr << "\n");
+  if (!Loc.DimList.empty()) {
+    //LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Location has already been collapsed.\n");
+    Inserter(Loc);
+    return;
+  }
+  auto LocInfo = Fwk->getDelinearizeInfo()->findRange(Loc.Ptr);
+  auto ArrayPtr = LocInfo.first;
+  if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to delinearize location.\n");
+    Inserter(Loc);
+    return;
+  }
+  LLVM_DEBUG(
+    for (auto I = 0; I < ArrayPtr->getNumberOfDims(); I++) {
+      dbgs() << "[ARRAY LOCATION] Dimension `" << I << "` size: " <<
+          *ArrayPtr->getDimSize(I) << "\n";
+    }
+    dbgs() << "[ARRAY LOCATION] Array info: " <<
+      *ArrayPtr->getBase() << ", IsAddress: " <<
+      ArrayPtr->isAddressOfVariable() << ".\n";
+  );
+  auto BaseType = ArrayPtr->getBase()->getType();
+  auto ArrayType = cast<PointerType>(BaseType)->getElementType();
+  if (ArrayPtr->isAddressOfVariable()) {
+    ArrayType = cast<PointerType>(ArrayType)->getElementType();
+    // TODO: ArrayPtr = ?
+  }
+  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array type: " << *ArrayType << ".\n");
+  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Element type: " <<
+      ArrayType->getTypeID() << ".\n");
+  auto ArraySizeInfo = arraySize(ArrayType);
+  if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
+      ArrayPtr->getNumberOfDims() != 1) {
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get array size.\n");
+    Inserter(Loc);
+    return;
+  }
+  auto ElementType = std::get<2>(ArraySizeInfo);
+  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element type:  " <<
+      *ElementType << ".\n");
+  size_t DimensionN = 0;
+  MemoryLocationRange ResLoc(ArrayPtr->getBase(), 0,
+      uint64_t(Fwk->getDataLayout().getTypeStoreSize(ElementType)));
+  for (auto *S : LocInfo.second->Subscripts) {
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
+    if (!ArrayPtr->isKnownDimSize(DimensionN) && DimensionN != 0) {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get dimension "
+                           "size for required dimension `" << DimensionN <<
+                           "`.\n");
+      break;
+    }
+    Dimension DimInfo;
+    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN))) {
+      DimInfo.DimSize = C->getAPInt().getZExtValue();
+    } else {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
+      if (DimensionN != 0)
+        break;
+    }
+    auto *SE = Fwk->getScalarEvolution();
+    auto AddRecInfo = computeSCEVAddRec(S, *SE);
+    if (!AddRecInfo.second)
+      break;
+    auto SCEV = AddRecInfo.first;
+    if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
+      auto Range = C->getAPInt().getSExtValue();
+      DimInfo.Start = Range;
+      DimInfo.TripCount = 1;
+      DimInfo.Step = 1;
+      ResLoc.DimList.push_back(DimInfo);
+    } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
+      if (!R) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Region == nullptr.\n");
+        break;
+      }
+      if (auto *DFL = dyn_cast<DFLoop>(R)) {
+        if (DFL->getLoop() != C->getLoop() || DFL->getLoop() == nullptr ||
+            C->getLoop() == nullptr) {
+          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
+          return;
+          //if (!IgnoreLoopMismatch)
+          //  return;
+        }
+      } else {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");
+        break;
+      }
+      auto *StepSCEV = C->getStepRecurrence(*SE);
+      if (!isa<SCEVConstant>(StepSCEV)) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant step.\n");
+        break;
+      }
+      auto TripCount = SE->getSmallConstantTripCount(C->getLoop());
+      if (TripCount == 0) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Unknown or non-constant "
+                             "trip count.\n");
+        break;
+      }
+      int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
+      if (SignedRangeMin < 0) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range bounds must be "
+                              "non-negative.\n");
+        break;
+      }
+      DimInfo.Start = SignedRangeMin;
+      DimInfo.TripCount = TripCount;
+      DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
+      ResLoc.DimList.push_back(DimInfo);
+    }
+    ++DimensionN;
+  }
+  if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
+    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to collapse location.\n");
+    Inserter(Loc);
+    return;
+  }
+  LLVM_DEBUG(
+    dbgs() << "[ARRAY LOCATION] Dimension info:\n";
+    for (size_t I = 0; I < ResLoc.DimList.size(); I++) {
+      auto &DimInfo = ResLoc.DimList[I];
+      dbgs() << "Dimension: '" << I << "':\n";
+      dbgs() << "\tStart:" << DimInfo.Start << "\n";
+      dbgs() << "\tTripCount:" << DimInfo.TripCount << "\n";
+      dbgs() << "\tStep:" << DimInfo.Step << "\n";
+      dbgs() << "\tDimSize:" << DimInfo.DimSize << "\n";
+    }
+  );
+  Inserter(ResLoc);
+}
+
 /// This functor adds into a specified DefUseSet all locations from a specified
 /// AliasNode which aliases with a specified memory location. Derived classes
 /// should be used to specify access modes (Def/MayDef/Use).
@@ -236,8 +372,8 @@ class AddKnownAccessFunctor :
 public:
   AddKnownAccessFunctor(AAResults &AA, const DataLayout &DL,
       const DFRegionInfo &DFI, const DominatorTree &DT, const Instruction &Inst,
-      const MemoryLocation &Loc, DefUseSet &DU) :
-    Base(AA, DL, DFI, DT, Inst, DU),  mLoc(Loc) {}
+      const MemoryLocation &Loc, DefUseSet &DU, ReachDFFwk *DFF) :
+    Base(AA, DL, DFI, DT, Inst, DU),  mLoc(Loc), DFF(DFF) {}
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
@@ -284,24 +420,27 @@ public:
 
 private:
   void addMust(const MemoryLocationRange &Loc) {
-    static_cast<ImpTy *>(this)->addMust(Loc);
+    addLocationToSet(nullptr, Loc, DFF,
+        [this](auto &Loc) { static_cast<ImpTy *>(this)->addMust(Loc); });
   }
 
   void addMay(const MemoryLocationRange &Loc) {
-    static_cast<ImpTy *>(this)->addMay(Loc);
+    addLocationToSet(nullptr, Loc, DFF,
+        [this](auto &Loc) { static_cast<ImpTy *>(this)->addMay(Loc); });
   }
 
   const MemoryLocation &mLoc;
+  ReachDFFwk *DFF;
 };
 
 /// This macro determine functors according to a specified memory access modes.
-#define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST) \
+#define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST, DFF) \
 class NAME : public BASE<NAME> { \
 public: \
   NAME(AAResults &AA, const DataLayout &DL, const DFRegionInfo &DFI, \
       const DominatorTree &DT, const Instruction &Inst, \
-      MEM &Loc, DefUseSet &DU) : \
-    BASE<NAME>(AA, DL, DFI, DT, Inst, Loc, DU) {} \
+      MEM &Loc, DefUseSet &DU, ReachDFFwk *DFF) : \
+    BASE<NAME>(AA, DL, DFI, DT, Inst, Loc, DU, DFF) {} \
 private: \
   friend BASE<NAME>; \
   void addMust(const MemoryLocationRange &Loc) { MUST; } \
@@ -309,17 +448,17 @@ private: \
 };
 
 ADD_ACCESS_FUNCTOR(AddDefFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addMayDef(Loc), mDU.addDef(Loc))
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addDef(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddMayDefFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc))
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddUseFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc))
+  const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
-  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addDef(Loc); mDU.addUse(Loc))
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addDef(Loc); mDU.addUse(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
-  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc), DFF)
 
 #ifndef NDEBUG
 void intializeDefUseSetLog(
@@ -340,8 +479,10 @@ void intializeDefUseSetLog(
   for (auto &Loc : DU.getMayDefs())
     printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
   dbgs() << "Outward exposed uses:\n";
-  for (auto &Loc : DU.getUses())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+  for (auto &Loc : DU.getUses()) {
+    printLocationSource(dbgs(), Loc, &DT), dbgs() << " (";
+    printLocationSource(dbgs(), *Loc.Ptr, &DT), dbgs() << ")\n";
+  }
   dbgs() << "Explicitly accessed locations:\n";
   for (auto &Loc : DU.getExplicitAccesses())
     printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
@@ -482,7 +623,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     auto &DT = DFF->getDomTree();
     auto &DFI = DFF->getRegionInfo();
     for_each_memory(I, TLI,
-      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU](Instruction &I,
+      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU, DFF](Instruction &I,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         // EM may be smaller than Loc if it is known that access out of the
@@ -542,23 +683,24 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         case AccessInfo::No:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         case AccessInfo::May:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU,
+                                               DFF));
           else
             for_each_alias(&AT, AN,
-                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         case AccessInfo::Must:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           else
             for_each_alias(&AT, AN,
-                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         }
       },
@@ -643,131 +785,6 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
   return false;
 }
 
-template<typename FuncT>
-void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
-    const ReachDFFwk &Fwk, FuncT &&Inserter) {
-  typedef MemoryLocationRange::Dimension Dimension;
-  if (!Loc.DimList.empty()) {
-    Inserter(Loc);
-    return;
-  }
-  auto LocInfo = Fwk.getDelinearizeInfo()->findRange(Loc.Ptr);
-  auto ArrayPtr = LocInfo.first;
-  if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
-    Inserter(Loc);
-    return;
-  }
-  LLVM_DEBUG(
-    for (auto I = 0; I < ArrayPtr->getNumberOfDims(); I++) {
-      dbgs() << "[ARRAY LOCATION] Dimension `" << I << "` size: " <<
-          *ArrayPtr->getDimSize(I) << "\n";
-    }
-    dbgs() << "[ARRAY LOCATION] Array info: " <<
-      *ArrayPtr->getBase() << ", IsAddress: " <<
-      ArrayPtr->isAddressOfVariable() << ".\n";
-  );
-  auto BaseType = ArrayPtr->getBase()->getType();
-  auto ArrayType = cast<PointerType>(BaseType)->getElementType();
-  if (ArrayPtr->isAddressOfVariable()) {
-    ArrayType = cast<PointerType>(ArrayType)->getElementType();
-    // TODO: ArrayPtr = ?
-  }
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array type: " << *ArrayType << ".\n");
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Element type: " <<
-      ArrayType->getTypeID() << ".\n");
-  auto ArraySizeInfo = arraySize(ArrayType);
-  if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
-      ArrayPtr->getNumberOfDims() != 1) {
-    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get array size.\n");
-    Inserter(Loc);
-    return;
-  }
-  auto ElementType = std::get<2>(ArraySizeInfo);
-  LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element type:  " <<
-      *ElementType << ".\n");
-  size_t DimensionN = 0;
-  MemoryLocationRange ResLoc(ArrayPtr->getBase(), 0,
-      uint64_t(Fwk.getDataLayout().getTypeStoreSize(ElementType)));
-  for (auto *S : LocInfo.second->Subscripts) {
-    LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
-    if (!ArrayPtr->isKnownDimSize(DimensionN) && DimensionN != 0) {
-      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get dimension "
-                           "size for required dimension `" << DimensionN <<
-                           "`.\n");
-      break;
-    }
-    Dimension DimInfo;
-    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN))) {
-      DimInfo.DimSize = C->getAPInt().getZExtValue();
-    } else {
-      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
-      if (DimensionN != 0)
-        break;
-    }
-    auto *SE = Fwk.getScalarEvolution();
-    auto AddRecInfo = computeSCEVAddRec(S, *SE);
-    if (!AddRecInfo.second)
-      break;
-    auto SCEV = AddRecInfo.first;
-    if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
-      auto Range = C->getAPInt().getSExtValue();
-      DimInfo.Start = Range;
-      DimInfo.TripCount = 1;
-      DimInfo.Step = 1;
-      ResLoc.DimList.push_back(DimInfo);
-    } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
-      if (auto *DFL = dyn_cast<DFLoop>(R)) {
-        if (DFL->getLoop() != C->getLoop() || DFL->getLoop() == nullptr ||
-            C->getLoop() == nullptr) {
-          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
-          break;
-        }
-      } else {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");
-        break;
-      }
-      auto *StepSCEV = C->getStepRecurrence(*SE);
-      if (!isa<SCEVConstant>(StepSCEV)) {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant step.\n");
-        break;
-      }
-      auto TripCount = SE->getSmallConstantTripCount(C->getLoop());
-      if (TripCount == 0) {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Unknown or non-constant "
-                             "trip count.\n");
-        break;
-      }
-      int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
-      if (SignedRangeMin < 0) {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Range bounds must be "
-                              "non-negative.\n");
-        break;
-      }
-      DimInfo.Start = SignedRangeMin;
-      DimInfo.TripCount = TripCount;
-      DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
-      ResLoc.DimList.push_back(DimInfo);
-    }
-    ++DimensionN;
-  }
-  if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
-    Inserter(Loc);
-    return;
-  }
-  LLVM_DEBUG(
-    dbgs() << "[ARRAY LOCATION] Dimension info:\n";
-    for (size_t I = 0; I < ResLoc.DimList.size(); I++) {
-      auto &DimInfo = ResLoc.DimList[I];
-      dbgs() << "Dimension: '" << I << "':\n";
-      dbgs() << "\tStart:" << DimInfo.Start << "\n";
-      dbgs() << "\tTripCount:" << DimInfo.TripCount << "\n";
-      dbgs() << "\tStep:" << DimInfo.Step << "\n";
-      dbgs() << "\tDimSize:" << DimInfo.DimSize << "\n";
-    }
-  );
-  Inserter(ResLoc);
-}
-
 void ReachDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
   typedef RegionDFTraits<ReachDFFwk *> RT;
@@ -793,6 +810,11 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses()) {
+      LLVM_DEBUG(
+        dbgs() << "[COLLAPSE] Check use: ";
+        printLocationSource(dbgs(), *Loc.Ptr, &getDomTree());
+        dbgs() << "\n";
+      );
       bool StartInLoop = false, EndInLoop = false;
       auto *EM = AT.find(Loc);
       if (EM == nullptr)
@@ -831,10 +853,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
       }
       auto &MustReachIn = RS->getIn().MustReach;
       if (!Loc.DimList.empty()) {
-        SmallVector<MemoryLocationRange, 0> LC, RC;
-        MemoryLocationRange Int;
-        if (MustReachIn.overlap(Loc, Int, LC, RC)) {
-          for (auto &L : RC) {
+        SmallVector<MemoryLocationRange, 0> UseDiff;
+        if (MustReachIn.subtractFrom(Loc, UseDiff)) {
+          for (auto &L : UseDiff) {
             LLVM_DEBUG(dbgs() << "[COLLAPSE] Add Use location.\n");
             DefUse->addUse(L);
           }
@@ -843,7 +864,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
         }
       } else if (!MustReachIn.contain(Loc) && !(StartInLoop && EndInLoop)) {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
-        addLocationToSet(R, Loc, *this,
+        addLocationToSet(R, Loc, this,
             [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
       }
     }
@@ -880,7 +901,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
           DefItr->get<ReachSet>()->getIn().MustReach.findCoveredBy(Loc, Locs);
           if (!Locs.empty()) {
             for (auto &L : Locs) {
-              addLocationToSet(R, L, *this,
+              addLocationToSet(R, L, this,
                   [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
             }
             LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Add loc from latch node.\n");
@@ -893,18 +914,18 @@ void ReachDFFwk::collapse(DFRegion *R) {
       if (!Locs.empty()) {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
         for (auto &L : Locs) {
-          addLocationToSet(R, L, *this,
+          addLocationToSet(R, L, this,
               [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
         }
       } else {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-        addLocationToSet(R, Loc, *this,
+        addLocationToSet(R, Loc, this,
             [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);});
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
       LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-      addLocationToSet(R, Loc, *this,
+      addLocationToSet(R, Loc, this,
           [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); });
     }
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());

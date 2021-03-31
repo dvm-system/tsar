@@ -160,12 +160,11 @@ public:
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
 
-  bool overlap(const MemoryLocationRange &Loc,
-      MemoryLocationRange &Int,
-      llvm::SmallVector<MemoryLocationRange, 0> &LC,
-      llvm::SmallVector<MemoryLocationRange, 0> &RC) const {
+  bool subtractFrom(const MemoryLocationRange &Loc,
+      llvm::SmallVector<MemoryLocationRange, 0> &Compl) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    return mLocations.getOverlapResult(Loc, Int, LC, RC);
+    //llvm::dbgs() << "[MEMSET] Check overlap.\n";
+    return mLocations.subtractFrom(Loc, Compl);
   }
 
   /// Returns true if there is a location in this value which is contained

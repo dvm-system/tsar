@@ -311,11 +311,6 @@ public:
     return mAddressUnknowns.insert(I).second;
   }
 
-  void clarify(const MemoryLocationRange &Loc,
-    llvm::SmallVector<const MemoryLocationRange *, 0> &Locs) const {
-    mDefs.clarify(Loc, Locs);
-  }
-
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -500,20 +495,8 @@ template<> struct DataFlowTraits<ReachDFFwk *> {
   static void meetOperator(
     const ValueType &LHS, ValueType &RHS, ReachDFFwk *Fwk, GraphType) {
     auto &DT = Fwk->getDomTree();
-    llvm::dbgs() << "[MEET OPERATOR] Compare sets:\n";
-    llvm::dbgs() << "Left:\n";
-    llvm::dbgs() << "MUST REACH DEFINITIONS:\n";
-    LHS.MustReach.dump(&DT);
-    llvm::dbgs() << "MAY REACH DEFINITIONS:\n";
-    LHS.MayReach.dump(&DT);
-    llvm::dbgs() << "Right:\n";
-    llvm::dbgs() << "MUST REACH DEFINITIONS:\n";
-    RHS.MustReach.dump(&DT);
-    llvm::dbgs() << "MAY REACH DEFINITIONS:\n";
     RHS.MayReach.dump(&DT);
-    
     auto Res = RHS.MustReach.intersect(LHS.MustReach);
-    llvm::dbgs() << "[MEET OPERATOR] INTERSECTS ? " << Res << "\n";
     RHS.MayReach.merge(LHS.MayReach);
   }
   static bool transferFunction(ValueType, DFNode *, ReachDFFwk *, GraphType);

@@ -192,8 +192,8 @@ namespace MemoryLocationRangeEquation {
   /// return default MemoryLocationRange. 
   inline bool intersect(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS, MemoryLocationRange &Int,
-      llvm::SmallVector<MemoryLocationRange, 0> &LC,
-      llvm::SmallVector<MemoryLocationRange, 0> &RC) {
+      llvm::SmallVector<MemoryLocationRange, 0> *LC,
+      llvm::SmallVector<MemoryLocationRange, 0> *RC) {
     // TODO : check scalars
     typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
     typedef BAEquation::Monom Monom;
@@ -328,22 +328,30 @@ namespace MemoryLocationRangeEquation {
       auto LeftCompl = Left;
       auto RightCompl = Right;
       llvm::SmallVector<Dimension, 0> LeftDiff, RightDiff;
-      diff(Left, Intersection, LeftDiff);
-      diff(Right, Intersection, RightDiff);
+      if (LC) {
+        diff(Left, Intersection, LeftDiff);
+      }
+      if (RC) {
+        diff(Right, Intersection, RightDiff);
+      }
       if (LHS.DimList.size() == 1) {
-        for (auto &LeftD : LeftDiff) {
-          auto &R = LC.emplace_back(MemoryLocationRange(
-              LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
-          R.DimList.push_back(LeftD);
+        if (LC) {
+          for (auto &LeftD : LeftDiff) {
+            auto &R = LC->emplace_back(MemoryLocationRange(
+                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+            R.DimList.push_back(LeftD);
+          }
         }
-        for (auto &RightD : RightDiff) {
-          auto &R = RC.emplace_back(MemoryLocationRange(
-              LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
-          R.DimList.push_back(RightD);
+        if (RC) {
+          for (auto &RightD : RightDiff) {
+            auto &R = RC->emplace_back(MemoryLocationRange(
+                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.AATags));
+            R.DimList.push_back(RightD);
+          }
         }
       }
     }
-    auto PrintRange = [](const MemoryLocationRange &R) {
+    /*auto PrintRange = [](const MemoryLocationRange &R) {
       auto &Dim = R.DimList[0];
       //std::string IsEmp = R.Ptr == nullptr ? "Yes" : "No";
       llvm::dbgs() << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
@@ -361,7 +369,7 @@ namespace MemoryLocationRangeEquation {
     for (auto &R : RC) {
       PrintRange(R);
     }
-    llvm::dbgs() << "\n";
+    llvm::dbgs() << "\n";*/
     if (!Intersected)
       Int.Ptr = nullptr;
     return Intersected;

@@ -202,6 +202,7 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
     bool Result = true;
+    //llvm::dbgs() << "[MEMSET] Check joinability for arrays.\n";
     for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -261,13 +262,13 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
              sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
     }
     MemoryLocationRange Int;
-    LocationList LC, RC;
-    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS, Int, LC, RC);
+    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS, Int,
+        nullptr, nullptr);
     return Result;
   }
   static inline bool intersect(const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS, LocationList &L,
-      MemoryLocationRange &I, LocationList &R) {
+      const MemoryLocationRange &RHS, LocationList *L,
+      MemoryLocationRange &I, LocationList *R) {
     return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
   }
 };

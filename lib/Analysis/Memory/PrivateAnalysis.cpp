@@ -779,45 +779,39 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
       SharedTrait = BitMemoryTrait::SharedJoin;
       DefTrait = BitMemoryTrait::Shared;
     }
-    llvm::SmallVector<const MemoryLocationRange *, 0> Locs { &Loc };
-    DefUse.clarify(Loc, Locs);
-    LLVM_DEBUG(dbgs() << "[PRIVATE] Clarified: " << Locs.size() << "locations.\n");
-    for (auto *LocPtr : Locs) {
-      auto &ClarLoc = *LocPtr;
-      if (!DefUse.hasUse(ClarLoc)) {
-        LLVM_DEBUG(dbgs() << "[PRIVATE] Check private.\n");
-        if (!LS.getOut().overlap(ClarLoc)) {
-          CurrTraits &= BitMemoryTrait::Private | SharedTrait;
-        } else {
-          auto *Expr = mSE->getSCEV(const_cast<Value *>(ClarLoc.Ptr));
-          bool IsInvariant =
-            isLoopInvariant(Expr, L, *mTLI, *mSE, DefUse, *mAliasTree, AliasSTR);
-          if (IsInvariant && DefUse.hasDef(ClarLoc))
-            CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
-          else if (IsInvariant && LatchDefs.MustReach.contain(ClarLoc) &&
-                  !ExitingDefs.MayReach.overlap(ClarLoc))
-            // These location will be stored as second to last private, i.e.
-            // the last definition of these locations is executed on the
-            // second to the last loop iteration (on the last iteration the
-            // loop condition check is executed only).
-            // It is possible that there is only one (last) iteration in
-            // the loop. In this case the location has not been assigned and
-            // must be declared as a first private.
-            CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
-            BitMemoryTrait::FirstPrivate | SharedTrait;
-          else
-            // There is no certainty that the location is always assigned
-            // the value in the loop. Therefore, it must be declared as a
-            // first private, to preserve the value obtained before the loop
-            // if it has not been assigned.
-            CurrTraits &= BitMemoryTrait::DynamicPrivate &
-            BitMemoryTrait::FirstPrivate | SharedTrait;
-        }
-      } else if ((DefUse.hasMayDef(ClarLoc) || DefUse.hasDef(ClarLoc))) {
-        CurrTraits &= DefTrait;
-      } else {
-        CurrTraits &= BitMemoryTrait::Readonly;
+    if (!DefUse.hasUse(Loc)) {
+      LLVM_DEBUG(dbgs() << "[PRIVATE] Location doesn't have use.\n");
+      if (!LS.getOut().overlap(Loc))
+        CurrTraits &= BitMemoryTrait::Private | SharedTrait;
+      else {
+        auto *Expr = mSE->getSCEV(const_cast<Value *>(Loc.Ptr));
+        bool IsInvariant =
+          isLoopInvariant(Expr, L, *mTLI, *mSE, DefUse, *mAliasTree, AliasSTR);
+        if (IsInvariant && DefUse.hasDef(Loc))
+          CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
+        else if (IsInvariant && LatchDefs.MustReach.contain(Loc) &&
+                 !ExitingDefs.MayReach.overlap(Loc))
+          // These location will be stored as second to last private, i.e.
+          // the last definition of these locations is executed on the
+          // second to the last loop iteration (on the last iteration the
+          // loop condition check is executed only).
+          // It is possible that there is only one (last) iteration in
+          // the loop. In this case the location has not been assigned and
+          // must be declared as a first private.
+          CurrTraits &= BitMemoryTrait::SecondToLastPrivate &
+          BitMemoryTrait::FirstPrivate | SharedTrait;
+        else
+          // There is no certainty that the location is always assigned
+          // the value in the loop. Therefore, it must be declared as a
+          // first private, to preserve the value obtained before the loop
+          // if it has not been assigned.
+          CurrTraits &= BitMemoryTrait::DynamicPrivate &
+          BitMemoryTrait::FirstPrivate | SharedTrait;
       }
+    } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))) {
+      CurrTraits &= DefTrait;
+    } else {
+      CurrTraits &= BitMemoryTrait::Readonly;
     }
     LLVM_DEBUG(updateTraitsLog(Base, CurrTraits));
   }
