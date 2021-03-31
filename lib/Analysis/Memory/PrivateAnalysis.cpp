@@ -780,7 +780,6 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
       DefTrait = BitMemoryTrait::Shared;
     }
     if (!DefUse.hasUse(Loc)) {
-      LLVM_DEBUG(dbgs() << "[PRIVATE] Location doesn't have use.\n");
       if (!LS.getOut().overlap(Loc))
         CurrTraits &= BitMemoryTrait::Private | SharedTrait;
       else {
@@ -1410,11 +1409,6 @@ public:
       else
         OS << T.getMemory()->getSize().getValue();
       OS << ">";
-      if (T.getMemory()->front()) {
-        OS << " (";
-        printLocationSource(OS, *T.getMemory()->front(), mDT);
-        OS << ")";
-      }
       traitToStr(T.get<Trait>(), OS);
       OS << " ";
     }

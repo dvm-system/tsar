@@ -246,8 +246,10 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
     break;
   case LocKind::EXPLICIT:
     OS << "EXPLICIT";
+    break;
   case LocKind::INVALID_KIND:
     OS << "INVALID_KIND";
+    break;
   default:
     OS << "UNKNOWN";
     break;
@@ -258,10 +260,12 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 
 template<typename FuncT>
 void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
-    const ReachDFFwk *Fwk, FuncT &&Inserter, bool IgnoreLoopMismatch=true) {
+    const ReachDFFwk *Fwk, FuncT &&Inserter, bool IgnoreLoopMismatch=false) {
   typedef MemoryLocationRange::Dimension Dimension;
   typedef MemoryLocationRange::LocKind LocKind;
   assert(Fwk && "Data-flow framework must not be null");
+  if (Loc.Kind == LocKind::COLLAPSED)
+    assert(Loc.DimList.size() > 0 && "Collapsed array location must not be empty!");
   if (Loc.Kind == LocKind::COLLAPSED || Loc.Kind == LocKind::NON_COLLAPSABLE) {
     Inserter(Loc);
     return;
@@ -351,7 +355,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
       if (auto *DFL = dyn_cast<DFLoop>(R)) {
         assert(DFL->getLoop() && C->getLoop() &&
             "Loops for the DFLoop and AddRecExpr must be specified!");
-        if (!C->getLoop()->contains(DFL->getLoop())) {
+        if (!C->getLoop()->contains(DFL->getLoop()) && !IgnoreLoopMismatch) {
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
           //if (Loc.Kind == LocKind::NON_COLLAPSABLE)
           //  Inserter(Loc);
@@ -392,7 +396,7 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Collapse incomplete location. Kind: "
         << ResLoc.Kind << "\n");
     assert(ResLoc.Kind != LocKind::COLLAPSED &&
-        "An incomplete location cannot be of the `collapsed` kind!");
+        "An incomplete array location cannot be of the `collapsed` kind!");
     MemoryLocationRange NewLoc(Loc);
     NewLoc.Kind = ResLoc.Kind;
     Inserter(NewLoc);
@@ -862,7 +866,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto &Loc : DU->getUses()) {
       LLVM_DEBUG(
         dbgs() << "[COLLAPSE] Check use: ";
-        printLocationSource(dbgs(), *Loc.Ptr, &getDomTree());
+        printLocationSource(dbgs(), Loc, &getDomTree());
         dbgs() << "\n";
       );
       bool StartInLoop = false, EndInLoop = false;
@@ -901,21 +905,28 @@ void ReachDFFwk::collapse(DFRegion *R) {
             break;
         }
       }
+      MemoryLocationRange NewLoc(Loc);
       auto &MustReachIn = RS->getIn().MustReach;
-      if (!Loc.DimList.empty()) {
+      if (NewLoc.DimList.empty()) {
+        if (!MustReachIn.contain(NewLoc) && !(StartInLoop && EndInLoop)) {
+          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
+          addLocationToSet(R, NewLoc, this,
+              [&NewLoc](auto &Loc){ NewLoc = Loc; });
+        }
+      }
+      if (!NewLoc.DimList.empty()) {
         SmallVector<MemoryLocationRange, 0> UseDiff;
-        if (MustReachIn.subtractFrom(Loc, UseDiff)) {
+        if (MustReachIn.subtractFrom(NewLoc, UseDiff)) {
           for (auto &L : UseDiff) {
             LLVM_DEBUG(dbgs() << "[COLLAPSE] Add Use location.\n");
-            DefUse->addUse(L);
+            addLocationToSet(R, L, this,
+                [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
           }
         } else {
-          DefUse->addUse(Loc);
+          LLVM_DEBUG(dbgs() << "[COLLAPSE] Add unbroken Use location.\n");
+          addLocationToSet(R, NewLoc, this,
+                [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
         }
-      } else if (!MustReachIn.contain(Loc) && !(StartInLoop && EndInLoop)) {
-        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
-        addLocationToSet(R, Loc, this,
-            [&DefUse](auto &Loc){ DefUse->addUse(Loc); });
       }
     }
     // It is possible that some locations are only written in the loop.
@@ -944,9 +955,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
         auto DefItr = getDefInfo().find(LatchNode);
         if (DefItr != getDefInfo().end() && DefItr->get<ReachSet>()) {
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check latch node.\n");
-          DefItr->get<ReachSet>()->getIn().MustReach.dump(&getDomTree());
-          LLVM_DEBUG(printLocationSource(dbgs(), Loc, &getDomTree()));
-          LLVM_DEBUG(dbgs() << "\n");
+          //DefItr->get<ReachSet>()->getIn().MustReach.dump(&getDomTree());
+          //LLVM_DEBUG(printLocationSource(dbgs(), Loc, &getDomTree()));
+          //LLVM_DEBUG(dbgs() << "\n");
           llvm::SmallVector<MemoryLocationRange, 0> Locs;
           DefItr->get<ReachSet>()->getIn().MustReach.findCoveredBy(Loc, Locs);
           if (!Locs.empty()) {
@@ -986,6 +997,22 @@ void ReachDFFwk::collapse(DFRegion *R) {
       DefUse->addAddressUnknowns(Loc);
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
+  }
+  for (auto &Loc : DefUse->getExplicitAccesses()) {
+    LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Explicit Accesses.\n");
+    MemoryLocationRange ExpLoc;
+    addLocationToSet(R, Loc, this, [&ExpLoc](auto &Loc){ ExpLoc = Loc; },
+                      true);
+    if (ExpLoc.Kind != MemoryLocationRange::LocKind::COLLAPSED)
+      continue;
+    MemoryLocationRange NewLoc(Loc);
+    NewLoc.Kind = MemoryLocationRange::LocKind::EXPLICIT;
+    if (DefUse->getDefs().overlap(ExpLoc))
+      DefUse->addDef(NewLoc);
+    if (DefUse->getMayDefs().overlap(ExpLoc))
+      DefUse->addMayDef(NewLoc);
+    if (DefUse->getUses().overlap(ExpLoc))
+      DefUse->addUse(NewLoc);
   }
   LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
 }

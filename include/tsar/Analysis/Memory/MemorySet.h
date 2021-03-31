@@ -389,6 +389,8 @@ public:
         if (MemoryInfo::intersect(Curr, LocToSub, nullptr, Intersection,
             &NewLocsToSub)) {
           Intersected = true;
+        } else {
+          NewLocsToSub.push_back(LocToSub);
         }
       }
       LocsToSub = std::move(NewLocsToSub);
