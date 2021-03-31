@@ -796,6 +796,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
   auto &Socket{SocketInfo.getActive()->second};
   if (Level.is<Function *>()) {
     auto RF{Socket.getAnalysis<DIEstimateMemoryPass>(F)};
+    if (!RF)
+      return false;
     auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
     mDistinctMemory.clear();
     for (auto &DIM :
@@ -886,6 +888,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
   };
   auto &TLI{getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F)};
   auto RF{Socket.getAnalysis<DIEstimateMemoryPass>(F)};
+  if (!RF)
+    return false;
   auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
   SpanningTreeRelation<const DIAliasTree *> ServerSTR{&ServerDIAT};
   auto addGetActualIf =

@@ -128,9 +128,19 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
           if (!Callee->doesNotReadMemory() && !Callee->isSpeculatable() &&
               (!isa<IntrinsicInst>(I) ||
                !isDbgInfoIntrinsic(Callee->getIntrinsicID()) &&
-                   !isMemoryMarkerIntrinsic(Callee->getIntrinsicID())))
-            AllowGPU &=
-                cast<Function>(getValue(Callee))->onlyAccessesArgMemory();
+                   !isMemoryMarkerIntrinsic(Callee->getIntrinsicID()))) {
+            if (auto OnServer{cast_or_null<Function>(getValue(Callee))}) {
+              AllowGPU &= OnServer->onlyAccessesArgMemory();
+            } else {
+              AllowGPU = false;
+              // TDOD (kaniandr@gmail.com): sometimes mapping is lost after
+              // some transform passes if the function is internal
+              LLVM_DEBUG(dbgs() << "[PARALLEL LOOP]: callee traits for '"
+                                << Callee->getName()
+                                << "' are not available on server: ";
+                         SLoc.print(dbgs()); dbgs() << "\n");
+            }
+          }
         }
       }
     auto *LoopID = L->getLoopID();
