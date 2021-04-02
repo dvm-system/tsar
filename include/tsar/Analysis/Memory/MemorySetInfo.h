@@ -266,9 +266,12 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         nullptr, nullptr);
     return Result;
   }
-  static inline bool intersect(const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS, LocationList *L,
-      MemoryLocationRange &I, LocationList *R) {
+  static inline bool intersect(
+      const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS,
+      llvm::SmallVector<MemoryLocationRange, 0> *L,
+      MemoryLocationRange &I,
+      llvm::SmallVector<MemoryLocationRange, 0> *R) {
     return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
   }
 };

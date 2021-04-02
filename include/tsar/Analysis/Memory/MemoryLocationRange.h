@@ -171,11 +171,10 @@ struct MemoryLocationRange {
   }
 };
 
-typedef llvm::SmallVector<MemoryLocationRange, 0> LocationList;
-
 namespace MemoryLocationRangeEquation {
   typedef int64_t ColumnT;
   typedef int64_t ValueT;
+  typedef MemoryLocationRange::Dimension Dimension;
 
   struct ColumnInfo {
     void addVariable(const std::pair<std::string, ValueT> &Var) {
@@ -209,60 +208,98 @@ namespace MemoryLocationRangeEquation {
     std::vector<std::pair<std::string, ValueT>> Variables;
   };
 
-  /// Returns an intersection between two locations. If intersection is empty,
-  /// return default MemoryLocationRange. 
-  inline bool intersect(const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS, MemoryLocationRange &Int,
-      llvm::SmallVector<MemoryLocationRange, 0> *LC,
-      llvm::SmallVector<MemoryLocationRange, 0> *RC) {
-    // TODO : check scalars
-    typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
-    typedef BAEquation::Monom Monom;
-    typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
-    typedef std::pair<ValueT, ValueT> VarRange;
-    typedef MemoryLocationRange::Dimension Dimension;
-    if (LHS.Ptr != RHS.Ptr || !LHS.Ptr ||
-        LHS.DimList.size() != RHS.DimList.size()) {
-      Int.Ptr = nullptr;
-      return false;
+  class DimensionGraph {
+  public:
+    typedef llvm::SmallVector<MemoryLocationRange, 0> LocationList;
+    DimensionGraph(std::size_t Depth, LocationList *LC, LocationList *RC)
+        : mLC(LC), mRC(RC) {
+      mNodes.resize(Depth + 1);
+      assert(mNodes.size() != 0 && "Node list must not be empty!");
+      mSource = &mNodes[0].emplace_back();
     }
-    /*auto sizecmp = [](llvm::LocationSize LHS, llvm::LocationSize RHS) {
-      if (LHS == RHS || !LHS.hasValue() && !RHS.hasValue())
-        return 0;
-      if (!LHS.hasValue())
-        return 1;
-      if (!RHS.hasValue())
-        return -1;
-      return LHS.getValue() < RHS.getValue() ? -1 :
-        LHS.getValue() == RHS.getValue() ? 0 : 1;
-    };
-    if (LHS.DimList.empty()) {
-      Int.Ptr = nullptr;
-      if (sizecmp(LHS.UpperBound, RHS.LowerBound) > 0 &&
-          sizecmp(LHS.LowerBound, RHS.UpperBound) < 0) {
-        Int.Ptr = LHS.Ptr;
-        Int.UpperBound = sizecmp(LHS.UpperBound, RHS.UpperBound) < 0 ?
-            LHS.UpperBound : RHS.UpperBound;
-        Int.LowerBound = sizecmp(LHS.LowerBound, RHS.LowerBound) > 0 ?
-            LHS.LowerBound : RHS.LowerBound;
-        if (sizecmp(LHS.LowerBound, RHS.LowerBound) < 0) {
-          auto &Left = LC.emplace_back(MemoryLocationRange(Int));
-          Left.LowerBound = LHS.LowerBound;
-          Left.UpperBound = Int.LowerBound;
+
+    void addLevel(const Dimension &L, const Dimension &I, const Dimension &R,
+                  std::size_t LevelN){
+      if (!mLC && !mRC)
+        return;
+      assert(mSource && "Source Node of a DimensionGraph must be null.");
+      LevelN += 1;
+      assert(LevelN != 0 && "Level number must not be zero!");
+      auto &CurLevel = mNodes[LevelN];
+      if (mLC)
+        difference(L, I, CurLevel);
+      auto Idx = CurLevel.size();
+      if (mLC) {
+        if (LevelN <= 1) {
+          for (auto &N : CurLevel)
+            mSource->LeftChildren.push_back(&N);
+        } else {
+          for (auto &BeforeLastNodes : mNodes[LevelN - 2])
+            for (auto *Child : BeforeLastNodes.LeftChildren)
+              for (std::size_t I = 0; I < Idx; ++I)
+                Child->LeftChildren.push_back(&CurLevel[I]);
         }
-        if (sizecmp(LHS.UpperBound, RHS.LowerBound) < 0) {
-          auto &Left = LC.emplace_back(MemoryLocationRange(Int));
-          Left.LowerBound = LHS.LowerBound;
-          Left.UpperBound = Int.LowerBound;
-        }
-        return true;
       }
-      return false;
-    }*/
-    auto diff = [](const Dimension &D, const Dimension &I,
-        llvm::SmallVector<Dimension, 0> &Res) {
+      if (mRC) {
+        difference(R, I, CurLevel);
+        if (LevelN <= 1) {
+          for (std::size_t I = Idx; I < CurLevel.size(); ++I)
+            mSource->RightChildren.push_back(&CurLevel[I]);
+        } else {
+          for (auto &BeforeLastNodes : mNodes[LevelN - 2])
+            for (auto *Child : BeforeLastNodes.RightChildren)
+              for (std::size_t I = Idx; I < CurLevel.size(); ++I)
+                Child->RightChildren.push_back(&CurLevel[I]);
+        }
+      }
+      CurLevel.push_back(Node(I, true));
+      if (mLC) {
+        if (LevelN <= 1) {
+          mSource->LeftChildren.push_back(&CurLevel.back());
+        } else {
+          for (auto &BeforeLastNodes : mNodes[LevelN - 2])
+            for (auto *Child : BeforeLastNodes.LeftChildren)
+              Child->LeftChildren.push_back(&CurLevel.back());
+        }
+      }
+      if (mRC) {
+        if (LevelN <= 1) {
+          mSource->RightChildren.push_back(&CurLevel.back());
+        } else {
+          for (auto &BeforeLastNodes : mNodes[LevelN - 2])
+            for (auto *Child : BeforeLastNodes.RightChildren)
+              Child->RightChildren.push_back(&CurLevel.back());
+        }
+      }
+    }
+
+    void generateRanges(const MemoryLocationRange &Loc) {
+      MemoryLocationRange NewLoc(Loc);
+      if (mLC)
+        for (auto *Child : mSource->LeftChildren)
+          fillDimension(Child, true, NewLoc, 0, mLC, Child->IsIntersection);
+      if (mRC)
+        for (auto *Child : mSource->RightChildren)
+          fillDimension(Child, false, NewLoc, 0, mRC, Child->IsIntersection);
+    }
+
+    friend llvm::raw_ostream &operator<<(
+        llvm::raw_ostream &OS, const DimensionGraph &G);
+  private:
+    struct Node {
+      Dimension Dim;
+      llvm::SmallVector<Node *, 0> LeftChildren, RightChildren;
+      bool IsIntersection;
+      Node(bool IsIntersection = false) : IsIntersection(IsIntersection) {}
+      Node(const Dimension &Dim, bool IsIntersection = false)
+          : Dim(Dim), IsIntersection(IsIntersection) {}
+    };
+    /// Finds difference between dimensions D and I where I is a subset of D
+    /// and adds results in Res.
+    void difference(const Dimension &D, const Dimension &I,
+        llvm::SmallVector<Node, 3> &Res) {
       if (D.Start < I.Start) {
-        auto &Left = Res.emplace_back(Dimension());
+        auto &Left = Res.emplace_back().Dim;
         Left.Step = D.Step;
         Left.DimSize = D.DimSize;
         Left.Start = D.Start;
@@ -271,7 +308,7 @@ namespace MemoryLocationRangeEquation {
       auto DEnd = D.Start + D.Step * (D.TripCount - 1);
       auto IEnd = I.Start + I.Step * (I.TripCount - 1);
       if (DEnd > IEnd) {
-        auto &Right = Res.emplace_back(Dimension());
+        auto &Right = Res.emplace_back().Dim;
         Right.Step = D.Step;
         Right.DimSize = D.DimSize;
         Right.Start = IEnd + D.Step;
@@ -281,16 +318,82 @@ namespace MemoryLocationRangeEquation {
         // I.Step % D.Step is always 0 because I is a subset of D.
         auto RepeatNumber = I.Step / D.Step - 1;
         for (auto J = 0; J < RepeatNumber; ++J) {
-          auto &Center = Res.emplace_back(Dimension());
+          auto &Center = Res.emplace_back().Dim;
           Center.Start = I.Start + (J + 1);
           Center.Step = D.Step;
           Center.DimSize = D.DimSize;
           Center.TripCount = I.TripCount - 1;
         }
       }
-    };
+    }
+    
+    void fillDimension(Node *N, bool IsLeft, MemoryLocationRange &Loc,
+                       std::size_t Depth, LocationList *List, bool IntFlag) {
+      Loc.DimList[Depth] = N->Dim;
+      if (Depth + 2 == mNodes.size()) {
+        if (!IntFlag) {
+          List->push_back(Loc);
+        }
+      } else {
+        llvm::SmallVector<Node *, 0> &ChildList = IsLeft ?
+            N->LeftChildren : N->RightChildren;
+        for (auto *Child : ChildList)
+          fillDimension(Child, IsLeft, Loc, Depth + 1, List,
+              IntFlag & Child->IsIntersection);
+      }
+    }
+
+    Node *mSource;
+    llvm::SmallVector<llvm::SmallVector<Node, 3>, 4> mNodes;
+    LocationList *mLC, *mRC;
+  };
+
+  inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
+                                       const DimensionGraph &G) {
+    OS << "Dimension Graph:\n";
+    std::size_t N = 0;
+    for (auto &Level : G.mNodes) {
+      OS << "Level " << N << ":\n";
+      for (auto &Node : Level) {
+        auto &Dim = Node.Dim;
+        OS << "[" << &Node << "] ";
+        OS << "(" << (Node.IsIntersection ? "I" : "N") << ")";
+        OS << "{Start: " << Dim.Start << ", Step: " << Dim.Step <<
+            ", TripCount: " << Dim.TripCount << ", DimSize: " <<
+            Dim.DimSize << "} ";
+        OS << "[L: ";
+        for (auto *Child : Node.LeftChildren)
+          OS << Child << ", ";
+        OS << "][R: ";
+        for (auto *Child : Node.RightChildren)
+          OS << Child << ", ";
+        OS << "]\n";
+      }
+      ++N;
+      OS << "\n";
+    }
+    OS << "Has Left: " << (G.mLC ? "Yes" : "No") << "\n";
+    OS << "Has Right: " << (G.mRC ? "Yes" : "No") << "\n";
+    return OS;
+  }
+
+  /// Finds an intersection between locations LHS and RHS. 
+  inline bool intersect(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS, MemoryLocationRange &Int,
+      llvm::SmallVector<MemoryLocationRange, 0> *LC,
+      llvm::SmallVector<MemoryLocationRange, 0> *RC) {
+    typedef milp::BAEquation<ColumnT, ValueT> BAEquation;
+    typedef BAEquation::Monom Monom;
+    typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
+    typedef std::pair<ValueT, ValueT> VarRange;
+    if (LHS.Ptr != RHS.Ptr || !LHS.Ptr ||
+        LHS.DimList.size() != RHS.DimList.size()) {
+      Int.Ptr = nullptr;
+      return false;
+    }
     bool Intersected = true;
     Int = LHS;
+    DimensionGraph DimGraph(LHS.DimList.size(), LC, RC);
     for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
@@ -346,32 +449,10 @@ namespace MemoryLocationRangeEquation {
       Intersection.Step = Step;
       Intersection.TripCount = Tmax + 1;
       Intersection.DimSize = Left.DimSize;
-      auto LeftCompl = Left;
-      auto RightCompl = Right;
-      llvm::SmallVector<Dimension, 0> LeftDiff, RightDiff;
-      if (LC) {
-        diff(Left, Intersection, LeftDiff);
-      }
-      if (RC) {
-        diff(Right, Intersection, RightDiff);
-      }
-      if (LHS.DimList.size() == 1) {
-        if (LC) {
-          for (auto &LeftD : LeftDiff) {
-            auto &R = LC->emplace_back(MemoryLocationRange(
-                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.Kind, LHS.AATags));
-            R.DimList.push_back(LeftD);
-          }
-        }
-        if (RC) {
-          for (auto &RightD : RightDiff) {
-            auto &R = RC->emplace_back(MemoryLocationRange(
-                LHS.Ptr, LHS.LowerBound, LHS.UpperBound, LHS.Kind, LHS.AATags));
-            R.DimList.push_back(RightD);
-          }
-        }
-      }
+      DimGraph.addLevel(Left, Intersection, Right, I);
     }
+    //llvm::dbgs() << "[SOLUTION] " << DimGraph;
+    DimGraph.generateRanges(LHS);
     /*auto PrintRange = [](const MemoryLocationRange &R) {
       auto &Dim = R.DimList[0];
       //std::string IsEmp = R.Ptr == nullptr ? "Yes" : "No";
@@ -381,15 +462,17 @@ namespace MemoryLocationRangeEquation {
     };
     llvm::dbgs() << "[SOLUTION]:\n";
     llvm::dbgs() << "Left: ";
-    for (auto &R : LC) {
-      PrintRange(R);
-    }
+    if (LC)
+      for (auto &R : *LC) {
+        PrintRange(R);
+      }
     llvm::dbgs() << "\nIntersection: ";
     PrintRange(Int);
     llvm::dbgs() << "\nRight: ";
-    for (auto &R : RC) {
-      PrintRange(R);
-    }
+    if (RC)
+      for (auto &R : *RC) {
+        PrintRange(R);
+      }
     llvm::dbgs() << "\n";*/
     if (!Intersected)
       Int.Ptr = nullptr;

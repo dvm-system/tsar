@@ -359,11 +359,13 @@ void addLocationToSet(DFRegion *R, const MemoryLocationRange &Loc,
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
           //if (Loc.Kind == LocKind::NON_COLLAPSABLE)
           //  Inserter(Loc);
-          return;
+          if (!IgnoreLoopMismatch)
+            return;
         }
       } else {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");
-        return;
+        if (!IgnoreLoopMismatch)
+          return;
       }
       auto *StepSCEV = C->getStepRecurrence(*SE);
       if (!isa<SCEVConstant>(StepSCEV)) {
@@ -981,13 +983,13 @@ void ReachDFFwk::collapse(DFRegion *R) {
       } else {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
         addLocationToSet(R, Loc, this,
-            [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);});
+            [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);}, true);
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
       LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
       addLocationToSet(R, Loc, this,
-          [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); });
+          [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
     }
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
