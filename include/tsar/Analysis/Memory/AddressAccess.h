@@ -30,66 +30,13 @@
 #include <llvm/Pass.h>
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 
-namespace tsar {
-  struct PreservedParametersInfo {
-    using StoredPtrArguments = llvm::DenseSet<int>;
-    using FunctionToArguments = llvm::DenseMap<
-            const llvm::Function *, StoredPtrArguments *>;
-
-    FunctionToArguments infoByFun;
-    bool failed;  /// set if analysis has failed
-    PreservedParametersInfo() :
-      infoByFun(FunctionToArguments()), failed(false) {};
-
-    void addFunction(llvm::Function *F) {
-      infoByFun[F] = new StoredPtrArguments();
-    }
-  };
-}
-
 namespace llvm {
-  enum ExposedResult { No, Yes, May };
-
-  struct ExposedTracker {
-      std::map<const Value *, ExposedResult> memLocs;
-      ExposedTracker() : memLocs(std::map<const Value *, ExposedResult>()) {}
-      ExposedTracker(Function *, TargetLibraryInfo&);
-      ExposedResult query(Value *v) {return memLocs.find(v)->second;}
-      void addUnknown(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::May));}
-      void addExposed(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::Yes));}
-      void addLocal(const Value *v) {memLocs.insert(std::pair<const Value*, ExposedResult>(v, ExposedResult::No));}
-      void print();
-  };
-
-  struct InstrDependencies {
-    std::vector<Instruction *> deps;
-    bool is_invalid;
-
-    InstrDependencies() :
-            deps(std::vector<Instruction *>()), is_invalid(false) {};
-
-    explicit InstrDependencies(bool is_invalid) : deps(
-            std::vector<Instruction *>()), is_invalid(is_invalid) {};
-  };
-
-  /// \brief:
-  struct Traits {
-    int rang;
-    bool exposed;
-    Traits() {};
-    Traits(int rang) : rang(rang), exposed(false) {};
-    Traits(int rang, bool exposed) : rang(rang), exposed(exposed) {};
-  };
-
   class AddressAccessAnalyser :
           public ModulePass, private bcl::Uncopyable {
 
     using ValueSet = DenseSet<llvm::Value *>;
     /// maps instructions on those which are dependent on them
-    using DependentInfo = DenseMap<Instruction *, InstrDependencies *>;
     using AccessInfo = tsar::AccessInfo;
-    using EValue = std::pair<Value*, Traits>;  // extended value
-    static bool isNonTrivialPointerType(Type *);
     Function *CurFunction = nullptr;
     AAResults* AA = nullptr;
   public:
@@ -99,67 +46,26 @@ namespace llvm {
       initializeAddressAccessAnalyserPass(*PassRegistry::getPassRegistry());
     }
 
-    std::vector<EValue> analyzeDst(Value* value, EValue parent, bool &unknown);
-
-    EValue getBasePtr(Value* value, EValue parent, bool &unknown);
-
-    std::vector<EValue> analyzeBranch(Instruction* branch, EValue parent, int opNo, bool &unknown);
-
-    ExposedResult isCaptured(Argument *arg);
-
-    bool isCapturedSteens(Argument *arg);
-
-    tsar::PreservedParametersInfo &getAA() { return mParameterAccesses; };
-
-    void setNocaptureToAll(Function* );
-
-    bool isStored(Value *);
-
-    /// initializes mDepInfo
-    void initDepInfo(Function *);
-
-    /// returns values which may contain incoming value as a result
-    /// of execution instruction
-    std::vector<Value *> useMovesTo(Value *, Instruction *, bool &);
-
-    /// tries to construct tree of local usages of the argument's value
-    /// returns true on success
-    bool constructUsageTree(Argument *arg);
-
-    bool isTriviallyExposed(Instruction& I, int OpNo);
-
-    bool aliasesExposed(Value *V, std::set<Value *> &exposed);
-
-    bool transitExposedProperty(Instruction& I, MemoryLocation &Loc, int OpNo, AccessInfo isRead,
-                                AccessInfo isWrite, std::set<Value *>& exposed);
-
-    std::set<Value *> getExposedMemLocs(Function *F);
-
-    void runOnFunction(Function *F);
+    void getAnalysisUsage(AnalysisUsage &AU) const override;
 
     bool runOnModule(Module &M) override;
 
-    void getAnalysisUsage(AnalysisUsage &AU) const override;
+    void runOnFunction(Function *F);
+
+    static bool isNonTrivialPointerType(Type *);
+
+    static void setNocaptureToAll(Function* );
+
+    static bool isCaptured(Argument *arg);
+
+    static std::tuple<Value*,int,bool> applyDefinitionConstraint(Value *V, std::map<Value*, int> &registry);
+
+    static std::tuple<Value*,int,bool> applyUsageConstraint(Instruction *I, int opNo, int curRang);
 
     void print(raw_ostream &OS, const Module *M) const override;
 
-    void releaseMemory() override {
-      if (mDepInfo) {
-        for (auto pair : *mDepInfo)
-          delete (pair.second);
-        delete (mDepInfo);
-      }
-    };
-
-    /// contains indexes of arguments which may be preserved by the function
-    tsar::PreservedParametersInfo mParameterAccesses;
-  private:
-    /// contains instructions which other instructions may be dependent on
-    DependentInfo *mDepInfo = nullptr;
+    void releaseMemory() override {};
   };
-
-  using AddressAccessAnalyserWrapper =
-  AnalysisWrapperPass<tsar::PreservedParametersInfo>;
 }
 
 #endif //SAPFOR_ADDRESSACCESS_H

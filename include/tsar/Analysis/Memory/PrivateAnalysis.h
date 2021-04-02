@@ -358,7 +358,6 @@ private:
   const DataLayout *mDL = nullptr;
   TargetLibraryInfo *mTLI = nullptr;
   ScalarEvolution *mSE = nullptr;
-  tsar::PreservedParametersInfo *mAA = nullptr;
 };
 }
 #endif//TSAR_PRIVATE_ANALYSIS_H
