@@ -33,12 +33,6 @@
 namespace llvm {
   class AddressAccessAnalyser :
           public ModulePass, private bcl::Uncopyable {
-
-    using ValueSet = DenseSet<llvm::Value *>;
-    /// maps instructions on those which are dependent on them
-    using AccessInfo = tsar::AccessInfo;
-    Function *CurFunction = nullptr;
-    AAResults* AA = nullptr;
   public:
     static char ID;
 
@@ -50,7 +44,7 @@ namespace llvm {
 
     bool runOnModule(Module &M) override;
 
-    void runOnFunction(Function *F);
+    static void runOnFunction(Function *F);
 
     static bool isNonTrivialPointerType(Type *);
 
