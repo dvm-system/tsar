@@ -32,20 +32,9 @@ namespace llvm {
 class PassRegistry;
 class FunctionPass;
 class ModulePass;
-class StringRef;
 
 /// Initialize all source-to-source transformation passes.
 void initializeClangTransform(PassRegistry &Registry);
-
-/// Initializes a pass to reformat sources after transformation using Clang.
-void initializeClangFormatPassPass(PassRegistry& Registry);
-
-/// Creates a pass to reformat sources after transformation using Clang.
-llvm::ModulePass *createClangFormatPass();
-
-/// Creates a pass to reformat sources after transformation using Clang.
-llvm::ModulePass* createClangFormatPass(
-  llvm::StringRef OutputSuffix, bool NoFormat);
 
 /// Initialize a pass to replace the occurrences of variables
 /// with direct assignments.

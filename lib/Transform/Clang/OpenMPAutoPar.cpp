@@ -438,10 +438,10 @@ Optional<bool> ClangOpenMPParallelization::addOrUpdateOrderedIfNeed(
     if (BodyEntryBB) {
       toDiag(ASTRegionAnalysis.getDiagnostics(),
              ASTRegionAnalysis.getRegion()->getBeginLoc(),
-             diag::warn_parallel_loop);
+             tsar::diag::warn_parallel_loop);
       toDiag(ASTRegionAnalysis.getDiagnostics(),
              ASTRegionAnalysis.getRegion()->getBeginLoc(),
-             diag::note_parallel_ordered_entry_unknown);
+             tsar::diag::note_parallel_ordered_entry_unknown);
       return None;
     }
     BodyEntryBB = Succ;
@@ -449,10 +449,10 @@ Optional<bool> ClangOpenMPParallelization::addOrUpdateOrderedIfNeed(
   if (!BodyEntryBB) {
     toDiag(ASTRegionAnalysis.getDiagnostics(),
            ASTRegionAnalysis.getRegion()->getBeginLoc(),
-           diag::warn_parallel_loop);
+           tsar::diag::warn_parallel_loop);
     toDiag(ASTRegionAnalysis.getDiagnostics(),
            ASTRegionAnalysis.getRegion()->getBeginLoc(),
-           diag::note_parallel_ordered_entry_unknown);
+           tsar::diag::note_parallel_ordered_entry_unknown);
     return None;
   }
   if (OmpOrderedItr == OmpFor.child_end()) {

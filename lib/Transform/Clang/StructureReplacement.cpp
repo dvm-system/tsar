@@ -241,9 +241,10 @@ bool checkMacroBoundsAndEmitDiag(T *Obj, SourceLocation FuncLoc,
                                  const SourceManager &SrcMgr,
                                  const LangOptions &LangOpts) {
   auto diag = [&SrcMgr, &FuncLoc](SourceLocation Loc) {
-    toDiag(SrcMgr.getDiagnostics(), FuncLoc, diag::warn_disable_replace_struct);
+    toDiag(SrcMgr.getDiagnostics(), FuncLoc,
+           tsar::diag::warn_disable_replace_struct);
     toDiag(SrcMgr.getDiagnostics(), Loc,
-           diag::note_replace_struct_macro_prevent);
+           tsar::diag::note_replace_struct_macro_prevent);
   };
   if (Obj->getBeginLoc().isMacroID() &&
       !Lexer::isAtStartOfMacroExpansion(Obj->getBeginLoc(), SrcMgr, LangOpts)) {
@@ -315,13 +316,13 @@ public:
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-            diag::warn_remove_directive_in_macro);
+            tsar::diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
           toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-            diag::warn_remove_directive_in_include);
+            tsar::diag::warn_remove_directive_in_include);
         else
           toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-            diag::warn_remove_directive);
+            tsar::diag::warn_remove_directive);
       mInClause = ClauseId::Replace;
       Clauses.resize(StashSize);
       auto I = Clauses.begin(), EI = Clauses.end();
@@ -380,9 +381,9 @@ public:
         });
     if (MemberItr == StructDecl->field_end()) {
       toDiag(mSrcMgr.getDiagnostics(), SL->getBeginLoc(),
-             diag::error_replace_md);
+             tsar::diag::error_replace_md);
       toDiag(mSrcMgr.getDiagnostics(), StructDecl->getLocation(),
-             diag::note_record_member_unknown)
+             tsar::diag::note_record_member_unknown)
           << SL->getString();
       return false;
     }
@@ -417,9 +418,9 @@ public:
     auto &CurrMD = mCurrFunc->Targets.back();
     if (mCurrMetaTargetParam >= CurrMD.TargetDecl->getNumParams()) {
       toDiag(mSrcMgr.getDiagnostics(), mCurrMetaBeginLoc,
-        diag::error_function_args_number) << mCurrMetaTargetParam + 1;
+        tsar::diag::error_function_args_number) << mCurrMetaTargetParam + 1;
       toDiag(mSrcMgr.getDiagnostics(), CurrMD.TargetDecl->getLocation(),
-        diag::note_declared_at);
+        clang::diag::note_declared_at);
       return false;
     }
     auto Res = RecursiveASTVisitor::TraverseCompoundStmt(CS);
@@ -448,7 +449,7 @@ private:
     if (mCurrWithTarget) {
       SmallString<32> Out;
       toDiag(mSrcMgr.getDiagnostics(), mCurrClauseBeginLoc,
-             diag::error_directive_clause_twice)
+             tsar::diag::error_directive_clause_twice)
           << getPragmaText(ClauseId::Replace, Out).trim('\n')
           << getName(ClauseId::With);
       return false;
@@ -459,8 +460,9 @@ private:
         return true;
     }
     toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
-      diag::error_clause_expect_function) << getName(ClauseId::With);
-    toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(), diag::note_declared_at);
+      tsar::diag::error_clause_expect_function) << getName(ClauseId::With);
+    toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(),
+           clang::diag::note_declared_at);
     return false;
   }
 
@@ -544,14 +546,14 @@ private:
                                       RHSTy, Expr, Sema::AA_Passing);
       if (ConvertTy == Sema::Incompatible) {
         toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
-               diag::error_replace_md_type_incompatible)
+               tsar::diag::error_replace_md_type_incompatible)
                 << (mCurrMetaMember ? 0 : 1);
         toDiag(mSrcMgr.getDiagnostics(),
                mCurrMetaMember ? mCurrMetaMember->getLocation()
                                : TargetParam->getLocation(),
-               diag::note_declared_at);
+               clang::diag::note_declared_at);
         toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(),
-          diag::note_declared_at);
+          clang::diag::note_declared_at);
         return false;
       }
       unsigned ParamIdx = 0;
@@ -565,15 +567,15 @@ private:
       CurrMD.Parameters[ParamIdx].TargetMember = mCurrMetaMember;
       if (CurrMD.Parameters[ParamIdx].TargetParam) {
         toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
-          diag::error_replace_md_param_twice);
+          tsar::diag::error_replace_md_param_twice);
         return false;
       }
       CurrMD.Parameters[ParamIdx].TargetParam = mCurrMetaTargetParam;
     } else {
       toDiag(mSrcMgr.getDiagnostics(), Expr->getLocation(),
-        diag::error_expect_function_param);
+        tsar::diag::error_expect_function_param);
       toDiag(mSrcMgr.getDiagnostics(), ND->getLocation(),
-        diag::note_declared_at);
+        clang::diag::note_declared_at);
       return false;
     }
     return true;
@@ -590,15 +592,15 @@ private:
           mCurrFunc->Candidates.try_emplace(PD);
         } else {
           toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-                 diag::warn_disable_replace_struct_no_struct);
+                 tsar::diag::warn_disable_replace_struct_no_struct);
         }
       } else {
         toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-          diag::warn_disable_replace_struct_no_pointer);
+          tsar::diag::warn_disable_replace_struct_no_pointer);
       }
     } else {
       toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-        diag::warn_disable_replace_struct_no_param);
+        tsar::diag::warn_disable_replace_struct_no_param);
     }
     return true;
   }
@@ -611,18 +613,18 @@ private:
     unsigned ParamIdx = mCurrFunc->Targets.back().Parameters.size();
     if (!mCurrFunc->Targets.back().valid(&ParamIdx)) {
       toDiag(mSrcMgr.getDiagnostics(), BeginLoc,
-             diag::error_replace_md_missing);
+             tsar::diag::error_replace_md_missing);
       toDiag(mSrcMgr.getDiagnostics(),
              mCurrFunc->Definition->getParamDecl(ParamIdx)->getLocation(),
-             diag::note_replace_md_no_param);
+             tsar::diag::note_replace_md_no_param);
       mCurrFunc->Targets.pop_back();
       return false;
     } else if (TargetFD->getNumParams() != mCurrMetaTargetParam) {
       toDiag(mSrcMgr.getDiagnostics(), EndLoc,
-             diag::error_replace_md_target_param_expected);
+             tsar::diag::error_replace_md_target_param_expected);
       toDiag(mSrcMgr.getDiagnostics(),
              TargetFD->getParamDecl(mCurrMetaTargetParam)->getLocation(),
-             diag::note_replace_md_no_param);
+             tsar::diag::note_replace_md_no_param);
       mCurrFunc->Targets.pop_back();
       return false;
     }
@@ -656,13 +658,13 @@ ReplacementMetadata * findRequestMetadata(
   auto TargetItr = ReplacementInfo.find(Request.get<FunctionDecl>());
   auto toDiagNoMetadata = [&Request, &SrcMgr]() {
     toDiag(SrcMgr.getDiagnostics(), Request.get<CallExpr>()->getBeginLoc(),
-           diag::warn_replace_call_unable);
+           tsar::diag::warn_replace_call_unable);
     toDiag(SrcMgr.getDiagnostics(), Request.get<SourceLocation>(),
-           diag::note_replace_call_no_md)
+           tsar::diag::note_replace_call_no_md)
         << Request.get<FunctionDecl>();
     toDiag(SrcMgr.getDiagnostics(),
            Request.get<FunctionDecl>()->getLocation(),
-           diag::note_declared_at);
+           clang::diag::note_declared_at);
   };
   if (TargetItr == ReplacementInfo.end()) {
     toDiagNoMetadata();
@@ -673,7 +675,7 @@ ReplacementMetadata * findRequestMetadata(
   if (!CalleeFD) {
     toDiag(SrcMgr.getDiagnostics(),
            Request.get<clang::CallExpr>()->getBeginLoc(),
-      diag::warn_replace_call_indirect_unable);
+      tsar::diag::warn_replace_call_indirect_unable);
     return nullptr;
   }
   auto &TargetInfo = *TargetItr->get<FunctionInfo>();
@@ -767,9 +769,9 @@ public:
           if (!ParamMeta.TargetMember) {
             toDiag(mSrcMgr.getDiagnostics(),
                    ReplacementItr->get<NamedDecl>()->getBeginLoc(),
-                   diag::warn_disable_replace_struct);
+                   tsar::diag::warn_disable_replace_struct);
             toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-                   diag::note_replace_struct_arrow);
+                   tsar::diag::note_replace_struct_arrow);
             mReplacements.Candidates.erase(ReplacementItr->get<NamedDecl>());
             break;
           }
@@ -789,9 +791,9 @@ public:
       auto ND = Expr->getFoundDecl();
       if (mReplacements.Candidates.count(ND)) {
         toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
-          diag::warn_disable_replace_struct);
+          tsar::diag::warn_disable_replace_struct);
         toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-          diag::note_replace_struct_arrow);
+          tsar::diag::note_replace_struct_arrow);
         mReplacements.Candidates.erase(ND);
       }
     } else {
@@ -810,9 +812,9 @@ public:
       if (ReplacementItr != mReplacements.Candidates.end()) {
         if (!Expr->isArrow()) {
           toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
-            diag::warn_disable_replace_struct);
+            tsar::diag::warn_disable_replace_struct);
           toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
-            diag::note_replace_struct_arrow);
+            tsar::diag::note_replace_struct_arrow);
           mReplacements.Candidates.erase(ReplacementItr);
         } else if (!checkMacroBoundsAndEmitDiag(
                        Expr, mReplacements.Definition->getLocation(), mSrcMgr,
@@ -868,9 +870,9 @@ public:
   bool VisitTagType(TagType *TT) {
     if (!mGlobalInfo.findOutermostDecl(TT->getDecl())) {
       toDiag(mSrcMgr.getDiagnostics(), mRootDecl->getLocation(),
-             diag::warn_disable_replace_struct);
+             tsar::diag::warn_disable_replace_struct);
       toDiag(mSrcMgr.getDiagnostics(), mCheckDecl->getBeginLoc(),
-             diag::note_replace_struct_decl);
+             tsar::diag::note_replace_struct_decl);
       mIsOk = false;
       return false;
     }
@@ -1349,18 +1351,18 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
   if (!SrcMgr.isWrittenInSameFile(FuncRange.getBegin(), FuncRange.getEnd())) {
     FuncInfo.Candidates.clear();
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
-      diag::warn_disable_replace_struct);
+      tsar::diag::warn_disable_replace_struct);
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getBeginLoc(),
-      diag::note_source_range_not_single_file);
+      tsar::diag::note_source_range_not_single_file);
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getEndLoc(),
-      diag::note_end_location);
+      tsar::diag::note_end_location);
     return;
   }
   if (SrcMgr.getFileCharacteristic(FuncInfo.Definition->getBeginLoc()) !=
     SrcMgr::C_User) {
     FuncInfo.Candidates.clear();
     toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
-      diag::warn_disable_replace_struct_system);
+      tsar::diag::warn_disable_replace_struct_system);
     return;
   }
   bool HasMacro = false;
@@ -1368,9 +1370,9 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
     if (!HasMacro) {
       HasMacro = true;
       toDiag(SrcMgr.getDiagnostics(), FuncInfo.Definition->getLocation(),
-             diag::warn_disable_replace_struct);
+             tsar::diag::warn_disable_replace_struct);
       toDiag(SrcMgr.getDiagnostics(), Loc,
-             diag::note_replace_struct_macro_prevent);
+             tsar::diag::note_replace_struct_macro_prevent);
     }
   };
   if (FuncInfo.Definition->getLocation().isMacroID()) {
@@ -1487,9 +1489,9 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
           if (CalleeItr == mReplacementInfo.end()) {
             toDiag(SrcMgr.getDiagnostics(),
                    Itr->get<NamedDecl>()->getLocation(),
-                   diag::warn_disable_replace_struct);
+                   tsar::diag::warn_disable_replace_struct);
             toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getBeginLoc(),
-              diag::note_replace_struct_arrow);
+              tsar::diag::note_replace_struct_arrow);
             FuncInfo->Candidates.erase(Itr);
             IsChanged = true;
           } else {
@@ -1498,9 +1500,9 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
                         I))) {
               toDiag(SrcMgr.getDiagnostics(),
                      Itr->get<NamedDecl>()->getLocation(),
-                     diag::warn_disable_replace_struct);
+                     tsar::diag::warn_disable_replace_struct);
               toDiag(SrcMgr.getDiagnostics(), Call->getArg(I)->getBeginLoc(),
-                     diag::note_replace_struct_arrow);
+                     tsar::diag::note_replace_struct_arrow);
               FuncInfo->Candidates.erase(Itr);
               IsChanged = true;
             } else {
@@ -1582,9 +1584,9 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
         Context.resize(StashContextSize);
         NewParams.clear();
         toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-          diag::warn_disable_replace_struct);
+          tsar::diag::warn_disable_replace_struct);
         toDiag(SrcMgr.getDiagnostics(), R.Member->getBeginLoc(),
-          diag::note_replace_struct_decl);
+          tsar::diag::note_replace_struct_decl);
         break;
       }
       if (!NewParams.empty())
@@ -1639,7 +1641,7 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
       if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr,
         LangOpts, CommaTok)) {
         toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-          diag::warn_transform_internal);
+          tsar::diag::warn_transform_internal);
         return false;
       }
       if (CommaTok.is(tok::comma))
@@ -1659,9 +1661,9 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
         SrcMgr.getExpansionLoc(PD->getBeginLoc()),
         SrcMgr.getExpansionLoc(EndLoc)).getAsRange());
       toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-        diag::remark_replace_struct);
+        tsar::diag::remark_replace_struct);
       toDiag(SrcMgr.getDiagnostics(), PD->getBeginLoc(),
-        diag::remark_remove_de_decl);
+        tsar::diag::remark_remove_de_decl);
       // Do not update TheLastParam variable. If the current parameter is the
       // last in the list and if it is removed than the previous parameter
       // in the list become the last one.

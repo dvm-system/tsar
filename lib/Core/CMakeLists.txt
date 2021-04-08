@@ -37,24 +37,28 @@ endif()
 # Do not specify dependencies in case of PACKAGE_LLVM because Clang and LLVM
 # libraries are not top-level targets in this case. So this works incorrect.
 if(NOT PACKAGE_LLVM)
+  if(Flang_FOUND)
+    add_dependencies(TSARTool TSARTransformFlang TSARFrontendFlang
+      TSARSupportFlang)
+  endif()
   add_dependencies(TSARTool
+    TSARTransformAST
     TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
     TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory
     TSARAnalysis TSARUnparse TSARSupportClang TSARSupport
     ${CLANG_LIBS} ${LLVM_LIBS} ${FLANG_LIBS} BCL::Core)
-  if(Flang_FOUND)
-    add_dependencies(TSARTool TSARFrontendFlang)
-  endif()
+endif()
+
+if (FLANG_FOUND)
+  target_link_libraries(TSARTool PRIVATE TSARTransformFlang TSARFrontendFlang
+    TSARSupportFlang)
 endif()
 
 target_link_libraries(TSARTool PRIVATE
+  TSARTransformAST
   TSARTransformClang TSARTransformMixed TSARTransformIR TSARFrontendClang
   TSARAnalysisClang TSARAnalysisParallel TSARAnalysisReader TSARAnalysisMemory
   TSARAnalysis TSARUnparse TSARSupportClang TSARSupport BCL::Core)
-
-if (FLANG_FOUND)
-  target_link_libraries(TSARTool PRIVATE TSARFrontendFlang)
-endif()
 
 if(WIN32)
   # clangDriver uses version.dll.

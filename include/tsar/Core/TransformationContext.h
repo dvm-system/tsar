@@ -32,7 +32,10 @@
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Pass.h>
+#include <llvm/Support/raw_ostream.h>
 #include <functional>
+#include <optional>
+#include <variant>
 
 namespace llvm {
 class DICompileUnit;
@@ -42,8 +45,53 @@ class Module;
 namespace tsar {
 class ClangTransformationContext;
 
-/// A prototype of a filename adjuster.
+/// A wrapper for a file stream that atomically overwrites the target.
 ///
+/// Creates a file output stream for a temporary file in the constructor,
+/// which is later accessible via getStream() if ok() return true.
+/// Flushes the stream and moves the temporary file to the target location
+/// in the destructor.
+/// \note If temporary file can not be created, it try to write original file
+/// directly.
+class AtomicallyMovedFile {
+  /// Checks that file can be written and that temporary file can be used.
+  ///
+  /// \return False if file can not be written. In this case appropriate
+  /// diagnostics will be written.
+  bool checkStatus();
+
+public:
+  using Args2T = std::tuple<std::string, std::string>;
+  using Args3T = std::tuple<std::string, std::string, std::string>;
+  using ErrorArgsT = std::variant<Args2T, Args3T>;
+  using ErrorT = std::optional<std::tuple<unsigned, ErrorArgsT>>;
+
+  /// Creates a file output stream for a temporary file which is later
+  /// accessible via getStream() if ok() return true.
+  ///
+  /// Specify `Error` to access error description if any.
+  AtomicallyMovedFile(llvm::StringRef File, ErrorT *Error = nullptr);
+
+  /// Flushes the stream and moves the temporary file to the target location.
+  ~AtomicallyMovedFile();
+
+  /// Returns true if a file stream has been successfully created.
+  bool hasStream() { return static_cast<bool>(mFileStream); }
+
+  /// Returns created file stream.
+  llvm::raw_ostream &getStream() {
+    assert(hasStream() && "File stream is not available!");
+    return *mFileStream;
+  }
+
+private:
+  llvm::StringRef mFilename;
+  ErrorT *mError;
+  llvm::SmallString<128> mTempFilename;
+  std::unique_ptr<llvm::raw_fd_ostream> mFileStream;
+  bool mUseTemporary;
+};
+
 /// Filename adjuster is responsible for modification of filenames before the
 /// files are used to writer or read data.
 typedef std::function<std::string(llvm::StringRef)> FilenameAdjuster;
@@ -99,7 +147,7 @@ public:
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   virtual std::pair<std::string, bool>
-  release(const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const = 0;
+  release(const FilenameAdjuster &FA = getDumpFilenameAdjuster()) = 0;
 
   auto getKind() const noexcept { return mKind; }
 

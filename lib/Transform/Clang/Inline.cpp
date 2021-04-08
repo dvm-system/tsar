@@ -84,7 +84,7 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   auto &Rewriter = TfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   if (Context.getLangOpts().CPlusPlus)
-    toDiag(Context.getDiagnostics(), diag::warn_inline_support_cpp);
+    toDiag(Context.getDiagnostics(), tsar::diag::warn_inline_support_cpp);
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
   ASTImportInfo ImportStub;
   const auto *ImportInfo = &ImportStub;

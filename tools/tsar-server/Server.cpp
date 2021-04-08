@@ -142,6 +142,8 @@ public:
     // synchronization is necessary.
     Passes.add(createAnalysisWaitServerPass());
     Passes.add(createPrivateServerPass(mConnection, mStdErr));
+    Passes.add(createAnalysisReleaseServerPass());
+    Passes.add(createAnalysisCloseConnectionPass());
     Passes.add(createVerifierPass());
     Passes.run(*M);
   }

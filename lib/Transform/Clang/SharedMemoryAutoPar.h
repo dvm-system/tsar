@@ -30,7 +30,6 @@
 #include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <bcl/cell.h>
 #include <bcl/tagged.h>

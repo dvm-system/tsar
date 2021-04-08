@@ -44,6 +44,10 @@ class Warning<string str>   : Diagnostic<str, Warning>;
 class Error<string str>     : Diagnostic<str, Error>;
 class Fatal<string str>     : Diagnostic<str, Fatal>;
 
+//Copy of some Clang diagnostics to use them with other frontends.
+def err_fe_unable_to_open_output : Error<"unable to open output file '%0': '%1'">;
+def err_unable_to_rename_temp: Error<"unable to rename temporary '%0' to output file '%1': '%2'">;
+
 def err_import_named : Error<"unable to import declaration %0">;
 def err_import : Error<"unable to import">;
 def warn_import_typedef : Warning<"import of typedef declaration is partially supported">;
@@ -130,6 +134,7 @@ def note_decl_insert_macro_prevent : Note<"unable to create declaration '%0' in 
 def remark_parallel_loop : Remark<"parallel execution of loop is possible">;
 def warn_parallel_loop : Warning<"unable to create parallel directive">;
 def warn_parallel_not_canonical : Warning<"unable to create parallel directive for loop not in canonical form">;
+def warn_parallel_no_induction : Warning<"unable to create parallel directive for loop without induction variable">;
 def note_parallel_multiple_induction : Note<"loop has multiple inducition variables">;
 def note_parallel_localize_private_unable : Note<"unable to localize privatizable variable">;
 def note_parallel_localize_reduction_unable : Note<"unable to localize reduction variable">;
@@ -179,3 +184,7 @@ def error_expect_function_param : Error<"expected function parameter name">;
 
 def note_record_member_unknown: Error<"record has no member '%0'">;
 def note_declared_here: Note<"declared here">;
+
+
+// Fortran-specific diagnostics.
+def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;

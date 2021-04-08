@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Memory/TraitFilter.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Reader/Passes.h"
+#include "tsar/Analysis/Memory/AllocasModRef.h"
 #ifdef APC_FOUND
 # include "tsar/APC/Passes.h"
 #endif
@@ -35,7 +36,7 @@
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassBarrier.h"
-#include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/AST/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #include <clang/Frontend/CompilerInstance.h>
@@ -71,6 +72,14 @@ void addImmutableAliasAnalysis(legacy::PassManager &Passes) {
   Passes.add(createCFLAndersAAWrapperPass());
   Passes.add(createTypeBasedAAWrapperPass());
   Passes.add(createScopedNoAliasAAWrapperPass());
+  Passes.add(createAllocasAAWrapperPass());
+  Passes.add(
+      createExternalAAWrapperPass([](Pass &P, Function &F, AAResults &AAR) {
+        if (auto AAP = P.getAnalysisIfAvailable<AllocasAAWrapperPass>()) {
+          AAP->getResult().analyzeFunction(F);
+          AAR.addAAResult(AAP->getResult());
+        }
+      }));
 }
 
 void addInitialTransformations(legacy::PassManager &Passes) {
@@ -374,7 +383,7 @@ void TransformationQueryManager::run(llvm::Module *M,
   Passes.add(mTfmPass->getNormalCtor()());
   if (auto *GI = getPassRegistry().groupInfo(*mTfmPass))
     GI->addAfterPass(Passes);
-  Passes.add(createClangFormatPass());
+  Passes.add(createASTFormatPass());
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }
@@ -402,4 +411,3 @@ void CheckQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   Passes.add(createVerifierPass());
   Passes.run(*M);
 }
-

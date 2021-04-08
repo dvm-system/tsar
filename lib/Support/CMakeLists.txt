@@ -1,5 +1,5 @@
 set(SUPPORT_SOURCES SCEVUtils.cpp GlobalOptions.cpp Utils.cpp Directives.cpp
-  PassBarrier.cpp EmptyPass.cpp)
+  PassBarrier.cpp EmptyPass.cpp Diagnostic.cpp RewriterBase.cpp)
 
 if(MSVC_IDE)
   file(GLOB SUPPORT_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -32,3 +32,7 @@ tsar_tablegen(DiagnosticKinds.inc -gen-tsar-diags-defs
 add_dependencies(TSARSupport DirectivesGen DiagnosticKinds)
 
 add_subdirectory(Clang)
+
+if(FLANG_FOUND)
+  add_subdirectory(Flang)
+endif()

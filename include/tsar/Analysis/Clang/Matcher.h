@@ -65,24 +65,32 @@ struct DILocationMapInfo {
     return DenseMapInfo<decltype(Pair)>::getHashValue(Pair);
   }
   static bool isEqual(const DILocation *LHS, const DILocation *RHS) {
+    if (LHS == RHS)
+      return true;
     auto TK = getTombstoneKey();
     auto EK = getEmptyKey();
-    llvm::SmallString<128> LHSPath, RHSPath;
-    return LHS == RHS ||
-      RHS != TK && LHS != TK && RHS != EK && LHS != EK &&
-      LHS->getLine() == RHS->getLine() &&
-      LHS->getColumn() == RHS->getColumn() &&
-      tsar::getAbsolutePath(*LHS->getScope(), LHSPath) ==
-        tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
+    if (RHS == TK || LHS == TK || RHS == EK || LHS == EK ||
+        LHS->getLine() != RHS->getLine() ||
+        LHS->getColumn() != RHS->getColumn())
+      return false;
+    sys::fs::UniqueID LHSId, RHSId;
+    SmallString<128> LHSPath, RHSPath;
+    return !sys::fs::getUniqueID(
+               tsar::getAbsolutePath(*LHS->getScope(), LHSPath), LHSId) &&
+           !sys::fs::getUniqueID(
+               tsar::getAbsolutePath(*RHS->getScope(), RHSPath), RHSId) &&
+           LHSId == RHSId;
   }
   static bool isEqual(const clang::PresumedLoc &LHS, const DILocation *RHS) {
-    llvm::SmallString<128> LHSPath, RHSPath;
-    return !isEqual(RHS, getTombstoneKey()) &&
-      !isEqual(RHS, getEmptyKey()) &&
-      LHS.getLine() == RHS->getLine() &&
-      LHS.getColumn() == RHS->getColumn() &&
-      tsar::getNativePath(LHS.getFilename(), LHSPath) ==
-      tsar::getAbsolutePath(*RHS->getScope(), RHSPath);
+    if (isEqual(RHS, getTombstoneKey()) || isEqual(RHS, getEmptyKey()) ||
+        LHS.getLine() != RHS->getLine() || LHS.getColumn() != RHS->getColumn())
+      return false;
+    sys::fs::UniqueID LHSId, RHSId;
+    SmallString<128> LHSPath, RHSPath;
+    return !sys::fs::getUniqueID(LHS.getFilename(), LHSId) &&
+           !sys::fs::getUniqueID(
+               tsar::getAbsolutePath(*RHS->getScope(), RHSPath), RHSId) &&
+           LHSId == RHSId;
   }
 };
 }

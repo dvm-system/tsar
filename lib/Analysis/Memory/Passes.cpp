@@ -46,5 +46,6 @@ void llvm::initializeMemoryAnalysis(PassRegistry &Registry) {
   initializeGlobalDefinedMemoryPass(Registry);
   initializeGlobalLiveMemoryPass(Registry);
   initializeDIArrayAccessWrapperPass(Registry);
+  initializeAllocasAAWrapperPassPass(Registry);
   initializeAddressAccessAnalyserPass(Registry);
 }

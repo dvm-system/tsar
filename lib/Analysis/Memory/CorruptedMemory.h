@@ -553,7 +553,7 @@ private:
     return isSameAfterRebuildEstimate(M, Replacement);
   }
 
-#ifndef NDEBUG
+#ifdef LLVM_DEBUG
   void pomotedCandidatesLog() {
     llvm::dbgs() << "[DI ALIAS TREE]: safely promoted candidates ";
     for (auto &Loc : mSmallestFragments)

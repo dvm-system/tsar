@@ -15,10 +15,11 @@ endif()
 set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
   TSARAnalysisMemory TSARAnalysisParallel TSARTransformIR TSARTransformMixed
   TSARTransformClang TSARAnalysisClang TSARFrontendClang TSARSupportClang
-  TSARUnparse PROPERTY POSITION_INDEPENDENT_CODE ON)
+  TSARUnparse TSARTransformAST PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 if (FLANG_FOUND)
-  set_property(TARGET TSARFrontendFlang PROPERTY POSITION_INDEPENDENT_CODE ON)
+  set_property(TARGET TSARFrontendFlang TSARSupportFlang TSARTransformFlang
+    PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(TSARServer SHARED
@@ -54,4 +55,4 @@ set_target_properties(tsar-server PROPERTIES
 set_target_properties(tsar-server PROPERTIES
   INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 
-install(TARGETS tsar-server DESTINATION bin)
+install(TARGETS tsar-server EXPORT TSARExports RUNTIME DESTINATION bin)

@@ -129,6 +129,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoCaretDiagnostics;
   llvm::cl::opt<bool> ShowSourceLocation;
   llvm::cl::opt<bool> NoShowSourceLocation;
+  llvm::cl::list<std::string> EnableWarnings;
   llvm::cl::opt<std::string> BuildPath;
   llvm::cl::alias BuildPathA;
 
@@ -155,8 +156,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoInBoundsSubscripts;
   llvm::cl::opt<bool> AnalyzeLibFunc;
   llvm::cl::opt<bool> NoAnalyzeLibFunc;
-  llvm::cl::opt<bool> IgnoreRedundantMemory;
-  llvm::cl::opt<bool> NoIgnoreRedundantMemory;
+  llvm::cl::opt<GlobalOptions::IgnoreRedundantMemoryKind> IgnoreRedundantMemory;
   llvm::cl::opt<bool> UnsafeTfmAnalysis;
   llvm::cl::opt<bool> NoUnsafeTfmAnalysis;
   llvm::cl::opt<bool> ExternalCalls;
@@ -164,6 +164,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> MathErrno;
   llvm::cl::opt<bool> NoMathErrno;
   llvm::cl::opt<bool> Inline;
+  llvm::cl::opt<unsigned> MemoryAccessInlineThreshold;
   llvm::cl::opt<bool> NoInline;
   llvm::cl::opt<bool> LoadSources;
   llvm::cl::opt<bool> NoLoadSources;
@@ -221,6 +222,8 @@ Options::Options() :
     cl::desc("Print source file/line/column information in diagnostic")),
   NoShowSourceLocation("fno-show-source-location", cl::cat(CompileCategory),
     cl::desc("Do not print source file/line/column information in diagnostic.")),
+  EnableWarnings("W", cl::cat(CompileCategory), cl::value_desc("warning"),
+    cl::desc("Enable the specified warning"), cl::Prefix),
   BuildPath("build-path", cl::desc("Starting point to look up for compilation database in upward direction"),
     cl::cat(CompileCategory)),
   BuildPathA("p", cl::aliasopt(BuildPath), cl::desc("Alias for -build-path")),
@@ -259,9 +262,23 @@ Options::Options() :
   NoAnalyzeLibFunc("fno-analyze-library-functions", cl::cat(AnalysisCategory),
     cl::desc("Do not perform analysis of library functions")),
   IgnoreRedundantMemory("fignore-redundant-memory", cl::cat(AnalysisCategory),
-    cl::desc("Try to discard influence of redundant memory on the analysis results")),
-  NoIgnoreRedundantMemory("fno-ignore-redundant-memory", cl::cat(AnalysisCategory),
-    cl::desc("Do not discard influence of redundant memory on the analysis results(default)")),
+    cl::init(GlobalOptions::IRMK_No),
+    cl::desc("Try to discard influence of redundant memory "
+             "on the analysis results"),
+    cl::values(clEnumValN(GlobalOptions::IRMK_No, "disable",
+                  "Always analyze redundant memory (default)"),
+               clEnumValN(GlobalOptions::IRMK_Strict, "strict",
+                   "Analyze redundant memory before source-to-source "
+                   "program transformation"),
+               clEnumValN(GlobalOptions::IRMK_Bounded, "bounded",
+                   "Source-to-source transform passes ignore unused tails "
+                   "of redundant memory locations"),
+               clEnumValN(GlobalOptions::IRMK_Partial, "partial",
+                   "Source-to-source transform passes ignore unused parts "
+                   "of redundant memory locations"),
+               clEnumValN(GlobalOptions::IRMK_Weak, "weak",
+                   "Source-to-source transform passes ignore the whole "
+                   " redundant memory locations"))),
   UnsafeTfmAnalysis("funsafe-tfm-analysis", cl::cat(AnalysisCategory),
     cl::desc("Perform analysis after unsafe transformations")),
   NoUnsafeTfmAnalysis("fno-unsafe-tfm-analysis", cl::cat(AnalysisCategory),
@@ -276,6 +293,10 @@ Options::Options() :
      cl::desc("Prevent math functions to indicate errors by setting errno")),
   Inline("finline", cl::cat(AnalysisCategory),
     cl::desc("Allow to inline function calls to improve analysis accuracy (default)")),
+  MemoryAccessInlineThreshold("inline-memory-access-count", cl::init(500),
+   cl::Hidden, cl::cat(AnalysisCategory),
+    cl::desc("A function is only inlined if the number of memory "
+             "accesses in the caller does not exceed this value")),
   NoInline("fno-inline", cl::cat(AnalysisCategory),
     cl::desc("Do not inline function calls to decrease analysis time")),
   LoadSources("fload-sources", cl::cat(AnalysisCategory),
@@ -470,7 +491,8 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-fstandalone-debug");
   mCommandLine.emplace_back("-gcolumn-info");
-  mCommandLine.emplace_back("-Wunknown-pragmas");
+  for (auto &Warning : Options::get().EnableWarnings)
+    mCommandLine.push_back("-W" + Warning);
   if (Options::get().CaretDiagnostics)
     mCommandLine.emplace_back("-fcaret-diagnostics");
   if (Options::get().NoCaretDiagnostics)
@@ -569,16 +591,7 @@ void Tool::storeCLOptions() {
     Options::get().AnalyzeLibFunc.error(Msg);
     exit(1);
   }
-  mGlobalOpts.IgnoreRedundantMemory =
-    Options::get().IgnoreRedundantMemory;
-  if (Options::get().IgnoreRedundantMemory &&
-      Options::get().NoIgnoreRedundantMemory) {
-    std::string Msg("error - this option is incompatible with");
-    Msg.append(" -")
-       .append(Options::get().NoIgnoreRedundantMemory.ArgStr.data());
-    Options::get().IgnoreRedundantMemory.error(Msg);
-    exit(1);
-  }
+  mGlobalOpts.IgnoreRedundantMemory = Options::get().IgnoreRedundantMemory;
   mGlobalOpts.UnsafeTfmAnalysis = Options::get().UnsafeTfmAnalysis;
   if (Options::get().UnsafeTfmAnalysis &&
       Options::get().NoUnsafeTfmAnalysis) {
@@ -601,6 +614,8 @@ void Tool::storeCLOptions() {
     Options::get().Inline.error(Msg);
     exit(1);
   }
+  mGlobalOpts.MemoryAccessInlineThreshold =
+      Options::get().MemoryAccessInlineThreshold;
   mGlobalOpts.OptRegions = Options::get().OptRegion;
   mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));

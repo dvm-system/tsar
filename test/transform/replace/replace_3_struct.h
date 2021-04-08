@@ -1,3 +1,0 @@
-struct STy {
-  DataTy X;
-};

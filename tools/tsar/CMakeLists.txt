@@ -22,4 +22,4 @@ target_link_libraries(tsar TSARTool ${CLANG_LIBS} ${FLANG_LIBS} ${LLVM_LIBS} BCL
 
 set_target_properties(tsar PROPERTIES FOLDER "${TSAR_FOLDER}")
 
-install(TARGETS tsar RUNTIME DESTINATION bin)
+install(TARGETS tsar EXPORT TSARExports RUNTIME DESTINATION bin)

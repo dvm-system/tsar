@@ -31,9 +31,13 @@
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Core/tsar-config.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Transform/AST/Passes.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
+#ifdef FLANG_FOUND
+# include "tsar/Transform/Flang/Passes.h"
+#endif
 #ifdef APC_FOUND
 # include "tsar/APC/Passes.h"
 #endif
@@ -50,7 +54,11 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeClangAnalysis(Registry);
   initializeIRTransform(Registry);
   initializeMixedTransform(Registry);
+  initializeASTTransform(Registry);
   initializeClangTransform(Registry);
+#ifdef FLANG_FOUND
+  initializeFlangTransform(Registry);
+#endif
 #ifdef APC_FOUND
   initializeAPC(Registry);
 #endif

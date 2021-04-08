@@ -35,6 +35,17 @@ using ColumnTy = unsigned;
 using DistanceTy = int;
 using IdTy = std::size_t;
 
+/// Definition of a JSON-object which represents a function.
+JSON_OBJECT_BEGIN(Function)
+JSON_OBJECT_PAIR_5(Function
+  , File, std::string
+  , Line, LineTy
+  , Column, ColumnTy
+  , Name, std::string
+  , Pure, bool)
+JSON_OBJECT_END(Function)
+
+
 /// Definition of a JSON-object which represents a variable.
 JSON_OBJECT_BEGIN(Var)
 JSON_OBJECT_PAIR_4(Var,
@@ -70,13 +81,17 @@ JSON_OBJECT_END(Loop)
 /// Definition of a top-level JSON-object with name 'Info', which contains
 /// list of variables and loops.
 JSON_OBJECT_BEGIN(Info)
-  JSON_OBJECT_ROOT_PAIR_2(Info,
-    Vars, std::vector<trait::Var>, Loops, std::vector<trait::Loop>)
+  JSON_OBJECT_ROOT_PAIR_3(Info
+   , Functions, std::vector<trait::Function>
+   , Vars, std::vector<trait::Var>
+   , Loops, std::vector<trait::Loop>
+  )
   Info() : JSON_INIT_ROOT{}
 JSON_OBJECT_END(Info)
 }
 }
 
+JSON_DEFAULT_TRAITS(tsar::trait::, Function)
 JSON_DEFAULT_TRAITS(tsar::trait::, Var)
 JSON_DEFAULT_TRAITS(tsar::trait::, Distance)
 JSON_DEFAULT_TRAITS(tsar::trait::, Loop)

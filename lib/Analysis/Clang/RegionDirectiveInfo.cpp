@@ -72,7 +72,7 @@ public:
         return true;
       if (mNewPragma) {
         toDiag(mSrcMgr.getDiagnostics(), mNewPragma->getBeginLoc(),
-          diag::warn_unexpected_directive);
+          tsar::diag::warn_unexpected_directive);
         mActiveRegions.resize(mActiveRegions.size() - mNewActiveRegions);
       }
       SmallVector<Stmt *, 1> Clauses;
@@ -101,7 +101,7 @@ public:
           isa<DoStmt>(S))) {
       if (mNewPragma) {
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-          diag::warn_unexpected_directive);
+          tsar::diag::warn_unexpected_directive);
         mActiveRegions.resize(mActiveRegions.size() - mNewActiveRegions);
         mNewPragma = nullptr;
       }
@@ -115,14 +115,14 @@ public:
       auto MatchItr = mLoops.find<AST>(S);
       if (MatchItr == mLoops.end()) {
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-          diag::warn_region_add_loop_unable);
+          tsar::diag::warn_region_add_loop_unable);
       } else {
         bool AddToRegionError = false;
         for (auto *R : mActiveRegions)
           if (!R->markForOptimization(*MatchItr->get<IR>())) {
             if (!AddToRegionError)
               toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-                diag::warn_region_add_loop_unable);
+                tsar::diag::warn_region_add_loop_unable);
             AddToRegionError = true;
           }
       }
@@ -138,14 +138,14 @@ public:
     auto MatchItr = mExprs.find<AST>(CE);
     if (MatchItr == mExprs.end()) {
       toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
-        diag::warn_region_add_call_unable);
+        tsar::diag::warn_region_add_call_unable);
     } else {
       bool AddToRegionError = false;
       for (auto *R : mActiveRegions)
         if (!R->markForOptimization(*MatchItr->get<IR>())) {
           if (!AddToRegionError)
             toDiag(mSrcMgr.getDiagnostics(), CE->getBeginLoc(),
-              diag::warn_region_add_call_unable);
+              tsar::diag::warn_region_add_call_unable);
           AddToRegionError = true;
         }
     }

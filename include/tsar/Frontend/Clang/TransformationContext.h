@@ -26,7 +26,6 @@
 #define TSAR_CLANG_TRANSFORMATION_CONTEXT_H
 
 #include "tsar/Core/TransformationContext.h"
-#include <llvm/Support/raw_ostream.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 
 namespace clang {
@@ -38,46 +37,6 @@ class ASTContext;
 }
 
 namespace tsar {
-/// \brief A wrapper for a file stream that atomically overwrites the target.
-///
-/// Creates a file output stream for a temporary file in the constructor,
-/// which is later accessible via getStream() if ok() return true.
-/// Flushes the stream and moves the temporary file to the target location
-/// in the destructor.
-/// \note If temporary file can not be created, it try to write original file
-/// directly.
-class AtomicallyMovedFile {
-  /// Checks that file can be written and that temporary file can be used.
-  ///
-  /// \return False if file can not be written. In this case appropriate
-  /// diagnostics will be written.
-  bool checkStatus();
-
-public:
-  /// Creates a file output stream for a temporary file which is later
-  /// accessible via getStream() if ok() return true.
-  AtomicallyMovedFile(clang::DiagnosticsEngine &DE, llvm::StringRef File);
-
-  /// Flushes the stream and moves the temporary file to the target location.
-  ~AtomicallyMovedFile();
-
-  /// Returns true if a file stream has been successfully created.
-  bool hasStream() { return static_cast<bool>(mFileStream); }
-
-  /// Returns created file stream.
-  llvm::raw_ostream &getStream() {
-    assert(hasStream() && "File stream is not available!");
-    return *mFileStream;
-  }
-
-private:
-  clang::DiagnosticsEngine &mDiagnostics;
-  llvm::StringRef mFilename;
-  llvm::SmallString<128> mTempFilename;
-  std::unique_ptr<llvm::raw_fd_ostream> mFileStream;
-  bool mUseTemporary;
-};
-
 class ClangTransformationContext : public TransformationContextBase {
 public:
   static bool classof(const TransformationContextBase *Ctx) noexcept {
@@ -133,7 +92,7 @@ public:
   /// input file has been saved. The second value is 'true' if all changes
   /// have been successfully saved.
   std::pair<std::string, bool> release(
-    const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const override;
+    const FilenameAdjuster &FA = getDumpFilenameAdjuster()) override;
 
   /// Save all changes in a specified buffer to disk (in file with a specified
   /// name), emits diagnostic messages in case of error.

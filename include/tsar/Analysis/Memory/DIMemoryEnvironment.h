@@ -72,7 +72,7 @@ public:
     // It is not possible to delete handles here, because a handle may not be
     // a dynamic object. So, we only check that there is no active handles.
     assert(mMemoryHandles.empty() &&
-      "Memory handles must be deleted before environmment!");
+      "Memory handles must be deleted before environment!");
   }
 
   /// Map from a memory to list of handles.

@@ -35,6 +35,7 @@
 #include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
+#include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
@@ -43,6 +44,7 @@
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitJSON.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Unparse/Utils.h"
@@ -52,7 +54,6 @@
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/RedirectIO.h>
@@ -101,8 +102,10 @@ JSON_OBJECT_END(FileList)
 /// number of explored traits, such as induction, reduction, data dependencies,
 /// etc.
 JSON_OBJECT_BEGIN(Statistic)
-JSON_OBJECT_ROOT_PAIR_5(Statistic,
+JSON_OBJECT_ROOT_PAIR_7(Statistic,
   Functions, unsigned,
+  UserFunctions, unsigned,
+  ParallelLoops, unsigned,
   Files, std::map<BCL_JOIN(std::string, unsigned)>,
   Loops, std::map<BCL_JOIN(Analysis, unsigned)>,
   Variables, std::map<BCL_JOIN(Analysis, unsigned)>,
@@ -112,7 +115,7 @@ JSON_OBJECT_ROOT_PAIR_5(Statistic,
     template<class Trait> inline void operator()(unsigned &C) { C = 0; }
   };
 
-  Statistic() : JSON_INIT_ROOT, JSON_INIT(Statistic, 0) {
+  Statistic() : JSON_INIT_ROOT, JSON_INIT(Statistic, 0, 0, 0) {
     (*this)[Statistic::Traits].for_each(InitTraitsFunctor());
   }
   ~Statistic() override = default;
@@ -919,8 +922,9 @@ private:
 
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
-unsigned incrementTraitCount(Function &F, const GlobalOptions &GO,
-    ServerPrivateProvider &P, AnalysisSocket &S, TraitMap &TM) {
+std::pair<unsigned, unsigned> incrementTraitCount(Function &F,
+    const GlobalOptions &GO, ServerPrivateProvider &P, AnalysisSocket &S,
+    TraitMap &TM) {
   auto RF =  S.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
   assert(RF && "Dependence analysis must be available!");
   auto RM = S.getAnalysis<AnalysisClientServerMatcherWrapper>();
@@ -930,9 +934,12 @@ unsigned incrementTraitCount(Function &F, const GlobalOptions &GO,
   auto &DIDepInfo = RF->value<DIDependencyAnalysisPass *>()->getDependencies();
   auto &CToS = **RM->value<AnalysisClientServerMatcherWrapper *>();
   auto &LMP = P.get<LoopMatcherPass>();
-  unsigned NotAnalyzedLoops = 0;
+  auto &ParallelInfo = P.get<ParallelLoopPass>().getParallelLoopInfo();
+  unsigned ParallelLoops = 0, NotAnalyzedLoops = 0;
   for (auto &Match : LMP.getMatcher()) {
     auto *L = Match.get<IR>();
+    if (ParallelInfo.count(L))
+      ++ParallelLoops;
     if (!L->getLoopID()) {
       ++NotAnalyzedLoops;
       continue;
@@ -960,7 +967,7 @@ unsigned incrementTraitCount(Function &F, const GlobalOptions &GO,
       }
     }
   }
-  return NotAnalyzedLoops;
+  return std::pair(ParallelLoops, NotAnalyzedLoops);
 }
 
 msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
@@ -1040,13 +1047,17 @@ std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
   std::pair<unsigned, unsigned> Loops(0, 0);
   auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
   for (Function &F : M) {
+    if (isMemoryMarkerIntrinsic(F.getIntrinsicID()) ||
+        isDbgInfoIntrinsic(F.getIntrinsicID()))
+      continue;
+    ++Stat[msg::Statistic::Functions];
     auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     if (SrcMgr.getFileCharacteristic(Decl->getBeginLoc())
         != clang::SrcMgr::C_User)
       continue;
-    ++Stat[msg::Statistic::Functions];
+    ++Stat[msg::Statistic::UserFunctions];
     // Analysis are not available for functions without body.
     if (F.isDeclaration())
       continue;
@@ -1054,8 +1065,9 @@ std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
     auto &LMP = Provider.get<LoopMatcherPass>();
     Loops.first += LMP.getMatcher().size();
     Loops.second += LMP.getUnmatchedAST().size();
-    auto NotAnalyzedLoops = incrementTraitCount(
+    auto [ParallelLoops, NotAnalyzedLoops] = incrementTraitCount(
         F, *mGlobalOpts, Provider, *mSocket, Stat[msg::Statistic::Traits]);
+    Stat[msg::Statistic::ParallelLoops] += ParallelLoops;
     Loops.first -= NotAnalyzedLoops;
     Loops.second += NotAnalyzedLoops;
   }

@@ -43,6 +43,8 @@ void AddPragmaHandlers(clang::Preprocessor &PP, ContainerT &C) {
          DId < DirectiveId::NumDirectives; ++DId) {
       if (tsar::getParent(DId) != NId)
         continue;
+      if (tsar::getParent(DId) == DirectiveNamespaceId::Dvm)
+        continue;
       auto *PR = new PragmaReplacer(DId, *NR);
       NR->AddPragma(PR);
       for (ClauseId CId = ClauseId::NotClause + 1;

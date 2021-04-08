@@ -119,7 +119,7 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
           continue;
         auto Callee =
             dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
-        if (!Callee && !hasFnAttr(*Callee, AttrKind::DirectUserCallee)) {
+        if (!Callee || !hasFnAttr(*Callee, AttrKind::DirectUserCallee)) {
           LLVM_DEBUG(dbgs() << "[PARALLEL LOOP]: indirect call of user-defined "
                                "function prevents parallelization: ";
                      SLoc.print(dbgs()); dbgs() << "\n");

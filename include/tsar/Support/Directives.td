@@ -89,7 +89,8 @@ def Spf : Namespace<"spf">;
 def Dvm : Namespace<"dvm">;
 
 // Define one directive which may contain multiple clauses.
-class Directive<string name, Namespace parent = Spf> {
+class Directive<string name, Namespace parent = Spf, bit has_body = 0> {
+  bit HasBody = has_body;
   string Name = name;
   Namespace Parent = parent;
 }
@@ -100,13 +101,19 @@ def Assert     : Directive<"assert">;
 def Region     : Directive<"region">;
 def Metadata   : Directive<"metadata">;
 
-def DvmTemplate  : Directive<"template", Dvm>;
-def DvmArray     : Directive<"array", Dvm>;
-def DvmInherit   : Directive<"inherit", Dvm>;
-def DvmRegion    : Directive<"region", Dvm>;
-def DvmParallel  : Directive<"parallel", Dvm>;
-def DvmActual    : Directive<"actual", Dvm>;
-def DvmGetActual : Directive<"get_actual", Dvm>;
+def DvmTemplate     : Directive<"template", Dvm, 1>;
+def DvmArray        : Directive<"array", Dvm>;
+def DvmInherit      : Directive<"inherit", Dvm, 1>;
+def DvmRegion       : Directive<"region", Dvm>;
+def DvmHostSection  : Directive<"host_section", Dvm>;
+def DvmParallel     : Directive<"parallel", Dvm, 1>;
+def DvmActual       : Directive<"actual", Dvm, 1>;
+def DvmGetActual    : Directive<"get_actual", Dvm, 1>;
+def DvmRedistribute : Directive<"redistribute", Dvm, 1>;
+def DvmRealign      : Directive<"realign", Dvm, 1>;
+def DvmRemoteAccess : Directive<"remote_access", Dvm, 1>;
+def DvmInterval     : Directive<"interval", Dvm, 1>;
+def DvmEndInterval  : Directive<"endinterval", Dvm>;
 
 // Define one clause.
 class Clause<string name, Directive parent, list<Expr> expr_list = []> {
@@ -140,8 +147,6 @@ def AssertNoMacro : Clause<"nomacro", Assert>;
 
 def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
-
-def DvmAlign : Clause<"align", DvmArray>;
 
 def ReplaceMetadata : Clause<"replace", Metadata,
   [LParen,
@@ -205,3 +210,35 @@ def ReplaceMetadata : Clause<"replace", Metadata,
     ]>,
   RParen]>;
 
+// DVMH clauses
+def DvmTemplateBody : Clause<"", DvmTemplate>;
+def DvmActualBody : Clause<"", DvmActual>;
+def DvmParallelBody : Clause<"", DvmParallel>;
+def DvmGetActualBody : Clause<"", DvmGetActual>;
+def DvmRedistributeBody : Clause<"", DvmRedistribute>;
+def DvmRealignBody : Clause<"", DvmRegion>;
+def DvmRemoteAccessBody : Clause<"", DvmRemoteAccess>;
+def DvmInheritBody : Clause<"", DvmInherit>;
+def DvmIntervalBody : Clause<"", DvmInterval>;
+
+def DvmArrayDistribute : Clause<"distribute", DvmArray>;
+def DvmAlign : Clause<"align", DvmArray>;
+def DvmShadow : Clause<"shadow", DvmArray>;
+
+def DvmTemplateDistribute : Clause<"distribute", DvmTemplate>;
+
+def DvmParallelPrivate : Clause<"private", DvmParallel>;
+def DvmParallelReduction : Clause<"reduction", DvmParallel>;
+def DvmParallelRemoteAccess : Clause<"remote_access", DvmParallel>;
+def DvmParallelShadowRenew : Clause<"shadow_renew", DvmParallel>;
+def DvmParallelAcross : Clause<"accross", DvmParallel>;
+def DvmParallelStage : Clause<"staget", DvmParallel>;
+def DvmParallelCudaBlock : Clause<"cuda_block", DvmParallel>;
+
+def DvmRegionIn : Clause<"in", DvmRegion>;
+def DvmRegionOut : Clause<"out", DvmRegion>;
+def DvmRegionLocal : Clause<"local", DvmRegion>;
+def DvmRegionInOut : Clause<"inout", DvmRegion>;
+def DvmRegionInLocal : Clause<"inlocal", DvmRegion>;
+def DvmRegionTarget : Clause<"target", DvmRegion>;
+def DvmRegionAsync : Clause<"async", DvmRegion>;

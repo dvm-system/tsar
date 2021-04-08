@@ -107,19 +107,24 @@ struct DILocalScopeMapInfo {
       return false;
     auto LineColumnLHS = getLineColumn(LHS);
     auto LineColumnRHS = getLineColumn(RHS);
+    sys::fs::UniqueID LHSId, RHSId;
     SmallString<128> LHSPath, RHSPath;
     return LineColumnLHS == LineColumnRHS &&
-           getAbsolutePath(*LHS, LHSPath) == getAbsolutePath(*RHS, RHSPath);
+           !sys::fs::getUniqueID(tsar::getAbsolutePath(*LHS, LHSPath), LHSId) &&
+           !sys::fs::getUniqueID(tsar::getAbsolutePath(*RHS, RHSPath), RHSId) &&
+           LHSId == RHSId;
   }
   static bool isEqual(const clang::PresumedLoc &LHS, const DILocalScope *RHS) {
     if (isEqual(RHS, getTombstoneKey()) || isEqual(RHS, getEmptyKey()))
       return false;
     auto LineColumn = getLineColumn(RHS);
+    sys::fs::UniqueID LHSId, RHSId;
     SmallString<128> LHSPath, RHSPath;
     return (!LineColumn.first || LHS.getLine() == LineColumn.first) &&
            (!LineColumn.second || LHS.getColumn() == LineColumn.second) &&
-           getNativePath(LHS.getFilename(), LHSPath) ==
-               getAbsolutePath(*RHS, RHSPath);
+           !sys::fs::getUniqueID(LHS.getFilename(), LHSId) &&
+           !sys::fs::getUniqueID(tsar::getAbsolutePath(*RHS, RHSPath), RHSId) &&
+           LHSId == RHSId;
   }
 };
 

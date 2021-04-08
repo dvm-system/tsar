@@ -218,5 +218,11 @@ void initializeAddressAccessAnalyserPass(PassRegistry &Registry);
 
 /// Create a pass calculating preserved parameters
 Pass * createAddressAccessAnalyserPass();
+
+/// Initialize a pass to access alias results for allocas.
+void initializeAllocasAAWrapperPassPass(PassRegistry &Regitsry);
+
+/// Create a pass to access alias results for allocas.
+ImmutablePass *createAllocasAAWrapperPass();
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

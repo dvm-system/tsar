@@ -38,6 +38,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
@@ -45,7 +46,6 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/marray.h>
@@ -120,12 +120,12 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
   auto LMatchItr = LM.find<IR>(&L);
   if (LMatchItr != LM.end())
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
-           clang::diag::remark_parallel_loop);
+           tsar::diag::remark_parallel_loop);
   auto DFL = cast<DFLoop>(RI.getRegionFor(&L));
   auto CanonicalItr = CL.find_as(DFL);
   if (CanonicalItr == CL.end() || !(**CanonicalItr).isCanonical()) {
     toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
-           clang::diag::warn_parallel_not_canonical);
+           tsar::diag::warn_parallel_not_canonical);
     if (PI)
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
@@ -335,7 +335,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
         mRegions.push_back(R);
       else
         toDiag(mTfmCtx->getContext().getDiagnostics(),
-               clang::diag::warn_region_not_found) << Name;
+               tsar::diag::warn_region_not_found) << Name;
   }
   auto NumberOfSCCs = buildAdjacentList();
   bcl::marray<bool, 2> Reachability({NumberOfSCCs, NumberOfSCCs});
@@ -427,4 +427,3 @@ INITIALIZE_PROVIDER(ClangSMParallelProvider,
 ClangSMParallelization::ClangSMParallelization(char &ID) : ModulePass(ID) {
   initializeClangSMParallelProviderPass(*PassRegistry::getPassRegistry());
 }
-

@@ -29,12 +29,14 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/GlobalOptions.h"
-#include "tsar/Support/PassAAProvider.h"
 #include "tsar/Transform/IR/Passes.h"
 #include <bcl/utility.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AssumptionCache.h>
 #include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
@@ -77,8 +79,20 @@ public:
     initializeDependenceInlinerPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnSCC(CallGraphSCC &SCC) override { return inlineCalls(SCC); }
+  bool runOnSCC(CallGraphSCC &SCC) override;
   InlineCost getInlineCost(CallBase &CB) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    LegacyInlinerBase::getAnalysisUsage(AU);
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequired<GlobalOptionsImmutableWrapper>();
+  }
+
+private:
+  void evaluateCostOnSCC(CallGraphSCC &SCC);
+
+  DenseMap<Function *, unsigned> mAnalysisCost;
+  unsigned mCurrentSCCCost;
 };
 }
 
@@ -132,6 +146,37 @@ void DependenceInlinerAttributer::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
+void DependenceInlinerPass::evaluateCostOnSCC(CallGraphSCC &SCC) {
+  mCurrentSCCCost = 0;
+  LLVM_DEBUG(
+      dbgs() << "[DEPENDENDENCE INLINER]: evaluate analysis cost\n");
+  for (auto &CGN : SCC) {
+    if (auto *F{CGN->getFunction()}) {
+      auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*F);
+      for_each_memory(
+          *F, TLI,
+          [this](Instruction &, MemoryLocation &&, unsigned, AccessInfo,
+                 AccessInfo) { ++mCurrentSCCCost; },
+          [this](Instruction &, AccessInfo, AccessInfo) { ++mCurrentSCCCost; });
+      LLVM_DEBUG(dbgs() << "[DEPENDENDENCE INLINER]: proccess " << F->getName()
+                        << ", update number of memory accesse: "
+                        << mCurrentSCCCost << "\n");
+    }
+  }
+}
+
+bool DependenceInlinerPass::runOnSCC(CallGraphSCC &SCC) {
+  evaluateCostOnSCC(SCC);
+  for (auto &CGN : SCC)
+    if (auto *F{CGN->getFunction()})
+      mAnalysisCost[F] = mCurrentSCCCost;
+  auto Res = inlineCalls(SCC);
+  for (auto &CGN : SCC)
+    if (auto *F{CGN->getFunction()})
+      mAnalysisCost[F] = mCurrentSCCCost;
+  return Res;
+}
+
 InlineCost DependenceInlinerPass::getInlineCost(CallBase &CB) {
   if (!CB.getMetadata(getAsString(AttrKind::Inline)))
     return InlineCost::getNever("no dependence");
@@ -143,7 +188,10 @@ InlineCost DependenceInlinerPass::getInlineCost(CallBase &CB) {
   auto IsViable = isInlineViable(*Callee);
   if (!IsViable.isSuccess())
     return InlineCost::getNever(IsViable.getFailureReason());
-  return InlineCost::getAlways("dependence inliner");
+  auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*Callee);
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  auto Cost = mCurrentSCCCost + mAnalysisCost[Callee];
+  return InlineCost::get(Cost, GO.MemoryAccessInlineThreshold);
 }
 
   bool DependenceInlinerAttributer::runOnModule(Module &M) {
@@ -221,7 +269,8 @@ InlineCost DependenceInlinerPass::getInlineCost(CallBase &CB) {
               if (auto DISub = dyn_cast_or_null<DISubprogram>(
                       C.get<ObjectID>()))
                 dbgs() << " (call to " << DISub->getName() << ")";
-              CallItr->second->print(dbgs())
+              CallItr->second->print(dbgs());
+              dbgs() << "\n";
             );
           }
         }

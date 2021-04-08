@@ -23,6 +23,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/Clang/Diagnostic.h"
+#include <bcl/tuple_utils.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>
@@ -33,66 +35,6 @@
 using namespace tsar;
 using namespace llvm;
 using namespace clang;
-
-bool AtomicallyMovedFile::checkStatus() {
-  llvm::sys::fs::file_status Status;
-  llvm::sys::fs::status(mFilename, Status);
-  if (llvm::sys::fs::exists(Status)) {
-    if (!llvm::sys::fs::can_write(mFilename)) {
-      std::error_code EC;
-      mDiagnostics.Report(diag::err_fe_unable_to_open_output)
-        << mFilename << EC.message();
-      return false;
-    }
-    if (!llvm::sys::fs::is_regular_file(Status))
-      mUseTemporary = false;
-  }
-  return true;
-}
-
-
-AtomicallyMovedFile::AtomicallyMovedFile(DiagnosticsEngine &DE, StringRef File) :
-  mDiagnostics(DE), mFilename(File), mUseTemporary(true) {
-  if (!checkStatus())
-    return;
-  if (mUseTemporary) {
-    mTempFilename = mFilename;
-    mTempFilename += "-%%%%%%%%";
-    int FD;
-    std::error_code EC =
-      llvm::sys::fs::createUniqueFile(mTempFilename.str(), FD, mTempFilename);
-    if (!EC)
-      mFileStream.reset(new llvm::raw_fd_ostream(FD, true));
-    // If it is unable to use temporary, so write to the file directly.
-    if (!mFileStream)
-      mUseTemporary = false;
-  }
-  if (!mUseTemporary) {
-    std::error_code EC;
-    mFileStream.reset(
-      new llvm::raw_fd_ostream(mFilename, EC, llvm::sys::fs::F_Text));
-    if (EC)
-      mDiagnostics.Report(diag::err_fe_unable_to_open_output)
-      << mFilename << EC.message();
-  }
-}
-
-AtomicallyMovedFile::~AtomicallyMovedFile() {
-  if (!hasStream()) return;
-  mFileStream->flush();
-#ifdef LLVM_ON_WIN32
-  // Win32 does not allow rename/removing opened files.
-  mFileStream.reset();
-#endif
-  if (!mUseTemporary)
-    return;
-  if (std::error_code EC =
-    llvm::sys::fs::rename(mTempFilename.str(), mFilename)) {
-    mDiagnostics.Report(clang::diag::err_unable_to_rename_temp)
-      << mTempFilename << mFilename << EC.message();
-    llvm::sys::fs::remove(mTempFilename.str());
-  }
-}
 
 ClangTransformationContext::ClangTransformationContext(CompilerInstance &CI,
     ASTContext &Ctx, CodeGenerator &Gen)
@@ -123,7 +65,8 @@ void ClangTransformationContext::reset(clang::CompilerInstance &CI,
 }
 
 std::pair<std::string, bool> ClangTransformationContext::release(
-    const FilenameAdjuster &FA) const {
+    const FilenameAdjuster &FA) {
+  assert(hasInstance() && "Rewriter is not configured!");
   DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();
   std::unique_ptr<llvm::raw_fd_ostream> OS;
   bool AllWritten = true;
@@ -133,13 +76,25 @@ std::pair<std::string, bool> ClangTransformationContext::release(
     const FileEntry *Entry =
       mRewriter.getSourceMgr().getFileEntryForID(I->first);
     std::string Name = FA(Entry->getName());
-    AtomicallyMovedFile File(Diagnostics, Name);
-    if (File.hasStream()) {
-      I->second.write(File.getStream());
+    AtomicallyMovedFile::ErrorT Error;
+    {
+      AtomicallyMovedFile File(Name, &Error);
+      if (File.hasStream())
+        I->second.write(File.getStream());
+    }
+    if (Error) {
+      AllWritten = false;
+      std::visit(
+          [this, &Diagnostics, &Error](const auto &Args) {
+            bcl::forward_as_args(Args, [this, &Diagnostics,
+                                        &Error](const auto &... Args) {
+              (toDiag(Diagnostics, std::get<unsigned>(*Error)) << ... << Args);
+            });
+          },
+          std::get<AtomicallyMovedFile::ErrorArgsT>(*Error));
+    } else {
       if (I->first == mRewriter.getSourceMgr().getMainFileID())
         MainFile = Name;
-    } else {
-      AllWritten = false;
     }
   }
   return std::make_pair(std::move(MainFile), AllWritten);
@@ -147,9 +102,23 @@ std::pair<std::string, bool> ClangTransformationContext::release(
 
 void TransformationContext::release(StringRef Filename,
     const RewriteBuffer &Buffer) {
+  assert(hasInstance() && "Rewriter is not configured!");
   DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();
   std::unique_ptr<llvm::raw_fd_ostream> OS;
-  AtomicallyMovedFile File(Diagnostics, Filename);
-  if (File.hasStream())
-    Buffer.write(File.getStream());
+  AtomicallyMovedFile::ErrorT Error;
+  {
+    AtomicallyMovedFile File(Filename, &Error);
+    if (File.hasStream())
+      Buffer.write(File.getStream());
+  }
+  if (Error) {
+    std::visit(
+        [this, &Diagnostics, &Error](const auto &Args) {
+          bcl::forward_as_args(Args, [this, &Diagnostics,
+                                      &Error](const auto &... Args) {
+            (toDiag(Diagnostics, std::get<unsigned>(*Error)) << ... << Args);
+          });
+        },
+        std::get<AtomicallyMovedFile::ErrorArgsT>(*Error));
+  }
 }

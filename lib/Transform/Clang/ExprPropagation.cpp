@@ -256,13 +256,13 @@ public:
         if (!IsPossible.first)
           if (IsPossible.second & PragmaFlags::IsInMacro)
             toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-              diag::warn_remove_directive_in_macro);
+              tsar::diag::warn_remove_directive_in_macro);
           else if (IsPossible.second & PragmaFlags::IsInHeader)
             toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-              diag::warn_remove_directive_in_include);
+              tsar::diag::warn_remove_directive_in_include);
           else
             toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-              diag::warn_remove_directive);
+              tsar::diag::warn_remove_directive);
         Rewriter::RewriteOptions RemoveEmptyLine;
         /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
         /// set to true then removing (in RewriterBuffer) works incorrect.
@@ -387,7 +387,7 @@ public:
         }
       if (!HasNamedDecl)
         toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
-          diag::warn_unexpected_directive);
+          tsar::diag::warn_unexpected_directive);
       assert(mDeclPropagateScope.first && "Top level scope must not be null!");
       if (hasMacro(mDeclPropagateScope.first)) {
         mDeclsToPropagate.clear();
@@ -405,7 +405,7 @@ public:
       }
     } else if (!isa<CompoundStmt>(S)) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
-        diag::warn_unexpected_directive);
+        tsar::diag::warn_unexpected_directive);
     }
     mClauses.clear();
     return RecursiveASTVisitor::VisitStmt(S);
@@ -454,7 +454,7 @@ public:
       auto DiagItr = mReplacementDiag.top()->get<Diagnostic>().find(ND);
       if (DiagItr != mReplacementDiag.top()->get<Diagnostic>().end()) {
         toDiag(mContext.getDiagnostics(), Ref->getLocation(),
-          diag::warn_disable_propagate);
+          tsar::diag::warn_disable_propagate);
         for (auto &Diag : DiagItr->get<Diagnostic>())
           toDiag(mSrcMgr.getDiagnostics(), Diag.first, Diag.second);
       }
@@ -464,7 +464,7 @@ public:
     auto IncludeToFID = mSrcMgr.getDecomposedIncludedLoc(Loc.first).first;
     if (IncludeToFID.isValid() && !mImportInfo.MainFiles.count(Loc.first)) {
       toDiag(mSrcMgr.getDiagnostics(), Ref->getLocation(),
-        diag::warn_disable_propagate_in_include);
+        tsar::diag::warn_disable_propagate_in_include);
       return true;
     }
     for (auto *AccessDecl : ReplacementItr->get<Access>()) {
@@ -474,9 +474,9 @@ public:
            mVisibleDecls[Itr->second].back() != AccessDecl) &&
           !mGlobalInfo.findOutermostDecl(AccessDecl)) {
         toDiag(mContext.getDiagnostics(), Ref->getLocation(),
-          diag::warn_disable_propagate);
+          tsar::diag::warn_disable_propagate);
         toDiag(mContext.getDiagnostics(), AccessDecl->getLocation(),
-          diag::note_propagate_hidden_dep);
+          tsar::diag::note_propagate_hidden_dep);
         LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable propagate due to "
                           << "hidden declaration of ";
                    AccessDecl->getDeclName().dump());
@@ -502,7 +502,7 @@ private:
       [&HasMacro, this](clang::SourceLocation Loc) {
         if (!HasMacro) {
           toDiag(mContext.getDiagnostics(), Loc,
-            diag::warn_propagate_macro_prevent);
+            tsar::diag::warn_propagate_macro_prevent);
           HasMacro = true;
       }
     });
@@ -600,9 +600,9 @@ private:
             if (!DiagInfo.second)
               continue;
             DiagInfo.first->get<Diagnostic>().emplace_back(
-              RHS->getExprLoc(), diag::note_propagate_not_available);
+              RHS->getExprLoc(), tsar::diag::note_propagate_not_available);
             DiagInfo.first->get<Diagnostic>().emplace_back(
-              ND->getLocation(), diag::note_propagate_new_value);
+              ND->getLocation(), tsar::diag::note_propagate_new_value);
           }
           break;
         }
@@ -616,7 +616,7 @@ private:
             auto DiagInfo = UsageDiagItr->get<Diagnostic>().try_emplace(D);
             if (DiagInfo.second)
               DiagInfo.first->get<Diagnostic>().emplace_back(
-                RHS->getExprLoc(), diag::note_propagate_recurrence);
+                RHS->getExprLoc(), tsar::diag::note_propagate_recurrence);
             continue;
           }
           auto Info = Candidates.try_emplace(D);

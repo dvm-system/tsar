@@ -39,9 +39,20 @@ static const char * const NamespaceNameTable[] = {
 /// Table of string directive names indexed by enum value.
 static const char * const DirectiveNameTable[] = {
   "not_directive",
-#define GET_DIRECTIVE_NAME_TABLE
+#define DIRECTIVE(ID, Name, HasBody) Name,
+#define GET_DIRECTIVE_LIST
 #include "tsar/Support/Directives.gen"
-#undef GET_DIRECTIVE_NAME_TABLE
+#undef GET_DIRECTIVE_LIST
+#undef DIRECTIVE
+};
+
+static constexpr bool DirectiveBodyTable[] = {
+  false,
+#define DIRECTIVE(ID, Name, HasBody) HasBody,
+#define GET_DIRECTIVE_LIST
+#include "tsar/Support/Directives.gen"
+#undef GET_DIRECTIVE_LIST
+#undef DIRECTIVE
 };
 
 /// Table of string clause names indexed by enum value.
@@ -146,11 +157,16 @@ StringRef getName(ClauseExpr EK) noexcept {
   return ClauseExprNameTable[static_cast<unsigned>(EK)];
 }
 
+bool hasBody(DirectiveId Id) noexcept {
+  assert(Id < DirectiveId::NumDirectives && Id > DirectiveId::NotDirective &&
+    "Invalid directive ID!");
+  return DirectiveBodyTable[static_cast<unsigned>(Id)];
+}
+
 bool isSingle(ClauseExpr EK) noexcept {
   assert(EK < ClauseExpr::NumExprs && EK > ClauseExpr::NotExpr &&
     "Invalid clause expression kind!");
   return ClauseExprSingleTable[static_cast<unsigned>(EK)];
-
 }
 
 DirectiveNamespaceId getParent(DirectiveId Id) noexcept {
@@ -200,8 +216,6 @@ bool getTsarClause(DirectiveId Directive, StringRef Name, ClauseId &Id) {
   const char* const *Start = &ClauseNameTable[0];
   const char* const *End =
     &ClauseNameTable[(unsigned)ClauseId::NumClauses];
-  if (Name.empty())
-    return false;
   const char* const *I = std::find_if(Start, End,
     [&Name, &Start, &Directive](const char * const &C) {
       return Name == C && getParent((ClauseId)(&C - Start)) == Directive; });

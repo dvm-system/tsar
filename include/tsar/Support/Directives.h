@@ -41,9 +41,11 @@ enum class DirectiveNamespaceId : unsigned {
 /// This enum contains a value for every directive known by TSAR.
 enum class DirectiveId : unsigned {
   NotDirective = 0,
-#define GET_DIRECTIVE_ENUM_VALUES
+#define DIRECTIVE(ID, Name, HasBody) ID,
+#define GET_DIRECTIVE_LIST
 #include "tsar/Support/Directives.gen"
-#undef GET_DIRECTIVE_ENUM_VALUES
+#undef GET_DIRECTIVE_LIST
+#undef DIRECTIVE
   NumDirectives
 };
 
@@ -78,6 +80,10 @@ llvm::StringRef getName(ClauseId Id) noexcept;
 
 /// Returns string representation of expression kind.
 llvm::StringRef getName(ClauseExpr EK) noexcept;
+
+/// Return `true` if a specified directive has a body.
+/// To represent the body prototype a clause with the empty name is used.
+bool hasBody(DirectiveId Id) noexcept;
 
 /// Returns `true` if a specified expression contains a single operand.
 bool isSingle(ClauseExpr EK) noexcept;

@@ -30,7 +30,7 @@ clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
   switch (DiagId) {
   default: return Diags.Report(Loc, DiagId);
 #define DIAG(ENUM,LEVEL,DESC) \
-  case clang::diag::ENUM: \
+  case tsar::diag::ENUM: \
     { \
       unsigned CustomId = Diags.getCustomDiagID( \
         clang::DiagnosticsEngine::LEVEL, DESC); \
@@ -46,7 +46,7 @@ clang::DiagnosticBuilder toDiag(clang::DiagnosticsEngine &Diags,
   switch (DiagId) {
   default: return Diags.Report(DiagId);
 #define DIAG(ENUM,LEVEL,DESC) \
-  case clang::diag::ENUM: \
+  case tsar::diag::ENUM: \
     { \
       unsigned CustomId = Diags.getCustomDiagID( \
         clang::DiagnosticsEngine::LEVEL, DESC); \

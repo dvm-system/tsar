@@ -26,6 +26,7 @@
 #define TSAR_FLANG_TRANSFORMATION_CONTEXT_H
 
 #include "tsar/Core/TransformationContext.h"
+#include "tsar/Support/Flang/Rewriter.h"
 #include <flang/Parser/parsing.h>
 #include <flang/Semantics/semantics.h>
 #include <llvm/ADT/StringMap.h>
@@ -49,19 +50,22 @@ public:
     , mOptions(Opts)
     , mContext(DefaultKinds, Opts.features, mAllSources) {}
 
+  void initialize(const llvm::Module &M, const llvm::DICompileUnit &CU);
+
   bool hasInstance() const override {
     auto *This{const_cast<FlangTransformationContext *>(this)};
     return This->mParsing.parseTree().has_value() &&
            !This->mParsing.messages().AnyFatalError() &&
-           !This->mContext.AnyFatalError();
+           !This->mContext.AnyFatalError() &&
+           mRewriter;
   }
 
-  bool hasModification() const noexcept override { return false; }
+  bool hasModification() const override {
+    return hasInstance() && mRewriter->hasModification();
+  }
 
   std::pair<std::string, bool> release(
-      const FilenameAdjuster &FA = getDumpFilenameAdjuster()) const override {
-    return {"", false};
-  }
+      const FilenameAdjuster &FA = getDumpFilenameAdjuster()) override;
 
   auto &getParsing() noexcept { return mParsing; }
   const auto &getParsing() const noexcept { return mParsing; }
@@ -70,6 +74,16 @@ public:
 
   auto &getContext() noexcept { return mContext; }
   const auto &getContext() const noexcept { return mContext; }
+
+  auto &getRewriter() {
+    assert(hasInstance() && "Transformation context is not configured!");
+    return *mRewriter;
+  }
+
+  const auto &getRewriter() const {
+    assert(hasInstance() && "Transformation context is not configured!");
+    return *mRewriter;
+  }
 
   /// Return a declaration for a mangled name.
   ///
@@ -80,14 +94,13 @@ public:
     return (I != mGlobals.end()) ? I->getValue() : nullptr;
   }
 
-  void initializeDemangler(const llvm::Module &M, const llvm::DICompileUnit &CU);
-
 private:
   Fortran::parser::AllSources mAllSources;
   Fortran::parser::Options mOptions;
   Fortran::parser::Parsing mParsing{mAllSources};
   Fortran::semantics::SemanticsContext mContext;
   MangledToSourceMapT mGlobals;
+  std::unique_ptr<FlangRewriter> mRewriter{nullptr};
 };
 }
 

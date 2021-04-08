@@ -32,6 +32,7 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/TinyPtrVector.h>
 
 namespace tsar {
 class DIEstimateMemory;
@@ -45,6 +46,35 @@ struct VariableCollector
 
   // Sorted list of variables (to print their in algoristic order).
   using SortedVarListT = std::set<std::string, std::less<std::string>>;
+
+  enum DerivedKind : uint8_t {
+    // Set if a metadata-level memory location covers all memory which
+    // is represented with a corresponding source-level location.
+    // For example, <*A, ?> and int *A.
+    DK_Strong,
+    // Set if metadata-level memory location has a limited size. However,
+    // the corresponding source-level location has unknown size.
+    // For example, <*A. 100> and int *A. In some cases analyzer can determine
+    // a number of only accessible bytes.
+    DK_Bounded,
+    // Set if metadata-level memory location overlaps with a source-level
+    // location. For examle, <A[5], 1>, <A[6], 1> and int *A.
+    DK_Partial,
+    DK_Weak
+  };
+
+  struct DerivedMemory {
+    llvm::TinyPtrVector<DIEstimateMemory *> Memory;
+    DerivedKind Kind;
+
+    DerivedMemory() = default;
+
+    DerivedMemory(DIEstimateMemory *M, DerivedKind K) : Memory(M), Kind(K) {
+      assert(M && "Memory location must not be null!");
+    }
+
+    operator bool() const { return Kind != DK_Weak && !Memory.empty(); }
+  };
 
   enum DeclSearch : uint8_t {
     /// Set if memory safely represent a local variable.
@@ -123,12 +153,6 @@ struct VariableCollector
                 const ClonedDIMemoryMatcher &ClientToServer,
                 SortedVarListT &VarNames, clang::VarDecl **Error = nullptr);
 
-  /// Induction variable mentioned in a head of a canonical loop.
-  ///
-  /// TODO (kaniandr@gmail.com): set it to nullptr if analyzed scope is not a
-  /// canonical loop.
-  clang::VarDecl * Induction = nullptr;
-
   /// Map of variable which is referenced in a scope. The value in the map is
   /// metadat-level memory locations which represent a derived memory from
   /// a specified variable (key in the map).
@@ -137,7 +161,7 @@ struct VariableCollector
   /// and value contains `<A,8>` to represent A, <*A,?> to represent *A,
   /// and <*A[?],?> to represent **A. If there are no `nullptr` in a value
   /// then all memory derived from the key variable can be safely represented.
-  llvm::DenseMap<clang::VarDecl *, llvm::SmallVector<DIEstimateMemory *, 2>>
+  llvm::DenseMap<clang::VarDecl *, llvm::SmallVector<DerivedMemory, 2>>
       CanonicalRefs;
 
   /// Set of local variables declared in an analyzed scope (canonical

@@ -26,6 +26,7 @@
 #define TSAR_CLANG_UTILS_H
 
 #include "tsar/Support/Directives.h"
+#include "tsar/Support/RewriterBase.h"
 #include <clang/Basic/SourceLocation.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/Lex/Token.h>
@@ -113,9 +114,15 @@ void getRawMacrosAndIncludes(
 bool getRawTokenAfter(clang::SourceLocation Loc, const clang::SourceManager &SM,
   const clang::LangOptions &LangOpts, clang::Token &Tok);
 
+struct ClangExternalRewriterInfo {
+  using SourceLocationT = clang::SourceLocation;
+  using SourceRangeT = clang::SourceRange;
+};
+
 /// This is similar to clang::Rewriter, however this class enables to rewrite
 /// some copy of input buffer.
-class ExternalRewriter {
+class ExternalRewriter :
+  public RewriterBase<ExternalRewriter, ClangExternalRewriterInfo> {
 public:
   /// Creates rewriter to update copy of source text in a specified range.
   ExternalRewriter(clang::SourceRange SR, const clang::SourceManager &SM,
@@ -129,24 +136,6 @@ public:
   /// return `false` on success and `true` in case of errors.
   bool InsertText(clang::SourceLocation Loc, clang::StringRef NewStr,
     bool InsertAfter = true);
-
-  /// \brief Inserts a specified string at a specified location in the buffer,
-  /// return `false` on success and `true` in case of errors.
-  ///
-  /// The text is inserted before the specified location. This is
-  /// method is the same as InsertText with "InsertAfter == false".
-  bool InsertTextBefore(clang::SourceLocation Loc, clang::StringRef NewStr) {
-    return InsertText(Loc, NewStr, false);
-  }
-
-  /// \brief Inserts a specified string at a specified location in the buffer,
-  /// return `false` on success and `true` in case of errors.
-  ///
-  /// Text is inserted after any other text that has been previously inserted
-  /// at the some point (the default behavior for InsertText).
-  bool InsertTextAfter(clang::SourceLocation Loc, clang::StringRef NewStr) {
-    return InsertText(Loc, NewStr, true);
-  }
 
   /// Insert the specified string after the token in the specified location.
   bool InsertTextAfterToken(clang::SourceLocation Loc, clang::StringRef NewStr);
@@ -175,15 +164,13 @@ public:
   /// Returns initial range which is rewritten by this rewriter.
   clang::SourceRange getSourceRange() const { return mSR; }
 
-  /// Returns current state of the text in the initial range.
-  clang::StringRef getBuffer() const { return mBuffer; }
-
   const clang::SourceManager & getSourceMgr() const noexcept { return mSM; }
   const clang::LangOptions & getLangOpts() const noexcept { return mLangOpts; }
 
 private:
-  void ReplaceText(unsigned OrigBegin, std::size_t Length,
-    clang::StringRef NewStr);
+  using RewriterBaseImpl::getRewrittenText;
+  using RewriterBaseImpl::InsertText;
+  using RewriterBaseImpl::ReplaceText;
 
   unsigned ComputeOrigOffset(clang::SourceLocation Loc) const {
     unsigned Base = mSR.getBegin().getRawEncoding();
@@ -194,8 +181,6 @@ private:
   clang::SourceRange mSR;
   const clang::SourceManager &mSM;
   const clang::LangOptions &mLangOpts;
-  std::string mBuffer;
-  std::vector<std::size_t> mMapping;
 };
 
   /// \brief Constructs correct language declaration of a specified

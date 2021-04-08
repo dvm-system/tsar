@@ -95,13 +95,13 @@ public:
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            diag::warn_remove_directive_in_macro);
+            tsar::diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            diag::warn_remove_directive_in_include);
+            tsar::diag::warn_remove_directive_in_include);
         else
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            diag::warn_remove_directive);
+            tsar::diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
       /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
       /// set to true then removing (in RewriterBuffer) works incorrect.
@@ -125,7 +125,7 @@ public:
         [&HasMacro, this](clang::SourceLocation Loc) {
           if (!HasMacro) {
             toDiag(mContext.getDiagnostics(), Loc,
-              diag::warn_rename_macro_prevent);
+              tsar::diag::warn_rename_macro_prevent);
             HasMacro = true;
         }
       });
@@ -143,7 +143,7 @@ public:
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
-        diag::warn_unexpected_directive);
+        tsar::diag::warn_unexpected_directive);
       mClauses.clear();
     }
     return RecursiveASTVisitor::VisitStmt(S);
@@ -152,7 +152,7 @@ public:
   bool VisitDecl(Decl * D) {
     if (!mClauses.empty()) {
       toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
-        diag::warn_unexpected_directive);
+        tsar::diag::warn_unexpected_directive);
       mClauses.clear();
     }
     return RecursiveASTVisitor::VisitDecl(D);

@@ -230,8 +230,8 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
     Options.isFixedForm =
       (Extension == ".f" || Extension == ".F" || Extension == ".ff");
     Options.searchDirectories.emplace_back("."s);
-    auto TfmCtx{ std::make_unique<FlangTransformationContext>(
-       Options, DefaultKinds) };
+    auto TfmCtx{
+        std::make_unique<FlangTransformationContext>(Options, DefaultKinds)};
     auto &Parsing{ TfmCtx->getParsing() };
     Parsing.Prescan(std::string{ Path }, TfmCtx->getOptions());
     if (!Parsing.messages().empty() &&
@@ -262,7 +262,7 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
       errs() << IRSource << " semantic errors in " << Path << '\n';
       return nullptr;
     }
-    TfmCtx->initializeDemangler(M, CU);
+    TfmCtx->initialize(M, CU);
     return TfmCtx;
   }
 };

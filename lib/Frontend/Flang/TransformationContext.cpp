@@ -23,6 +23,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Frontend/Flang/TransformationContext.h"
+#include "tsar/Support/Flang/Diagnostic.h"
+#include <bcl/tuple_utils.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 
@@ -58,7 +60,8 @@ void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
     const NameHierarchyMapT &NameHierarchy, MangledToSourceMapT &Map) {
   if (auto *S{Parent.symbol()}) {
     Names.push_back(S->name().ToString());
-    if (Parent.kind() == semantics::Scope::Kind::Subprogram)
+    if (Parent.kind() == semantics::Scope::Kind::Subprogram ||
+        Parent.kind() == semantics::Scope::Kind::MainProgram)
       if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end())
         Map.try_emplace(I->second, S);
     for (auto &Child : Parent.children())
@@ -68,7 +71,7 @@ void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
 }
 }
 
-void FlangTransformationContext::initializeDemangler(
+void FlangTransformationContext::initialize(
     const Module &M, const DICompileUnit &CU) {
   assert(hasInstance() && "Transformation context is not configured!");
   NameHierarchyMapT NameHierarchy;
@@ -77,4 +80,44 @@ void FlangTransformationContext::initializeDemangler(
     NameHierarchyMapT::key_type Names;
     match(Child, Names, NameHierarchy, mGlobals);
   }
+  mRewriter = std::make_unique<FlangRewriter>(mParsing.cooked());
+  mParsing.cooked().CompileProvenanceRangeToOffsetMappings();
 }
+
+std::pair<std::string, bool> FlangTransformationContext::release(
+    const FilenameAdjuster &FA) {
+  assert(hasInstance() && "Rewriter is not configured!");
+  std::unique_ptr<llvm::raw_fd_ostream> OS;
+  bool AllWritten = true;
+  std::string MainFile;
+  for (auto I = mRewriter->buffer_begin(), E = mRewriter->buffer_end(); I != E;
+       ++I) {
+    if (!I->second->hasModification())
+      continue;
+    const auto *File = I->first;
+    std::string Name = FA(File->path());
+    AtomicallyMovedFile::ErrorT Error;
+    {
+      AtomicallyMovedFile File(Name, &Error);
+      if (File.hasStream())
+        I->second->write(File.getStream());
+    }
+    if (Error) {
+      auto Pos{*mParsing.cooked().GetCharBlock(I->second->getRange())};
+      AllWritten = false;
+      std::visit(
+          [this, &Error, Pos](const auto &Args) {
+            bcl::forward_as_args(
+                Args, [this, &Error, Pos](const auto &... Args) {
+                  toDiag(mContext, Pos, std::get<unsigned>(*Error), Args...);
+                });
+          },
+          std::get<AtomicallyMovedFile::ErrorArgsT>(*Error));
+    } else {
+      if (I->second.get() == mRewriter->getMainBuffer())
+        MainFile = Name;
+    }
+  }
+  mContext.messages().Emit(errs(), mParsing.cooked());
+  return std::make_pair(std::move(MainFile), AllWritten);
+  }

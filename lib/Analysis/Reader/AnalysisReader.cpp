@@ -31,7 +31,9 @@
 #include "tsar/Analysis/Reader/AnalysisJSON.h"
 #include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
+#include "tsar/Unparse/SourceUnparserUtils.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
@@ -56,6 +58,16 @@ struct File {};
 struct Line {};
 struct Column {};
 struct Identifier {};
+
+/// Position of a function in a source code.
+using FunctionT = bcl::tagged_tuple<
+  bcl::tagged<sys::fs::UniqueID, File>,
+  bcl::tagged<trait::LineTy, Line>,
+  bcl::tagged<std::string, Identifier>>;
+
+/// Map from a function location to a function index in the list of functions in
+/// external analysis results.
+using FunctionCache = std::map<FunctionT, std::size_t>;
 
 /// Position in a source code.
 using LocationT = bcl::tagged_tuple<
@@ -89,6 +101,9 @@ using TraitT = bcl::tagged_tuple<
     Optional<trait::json_::LoopImpl::WriteOccurred::ValueType::const_iterator>,
       trait::WriteOccurred>,
   bcl::tagged<
+    Optional<trait::json_::LoopImpl::ReadOccurred::ValueType::const_iterator>,
+      trait::ReadOccurred>,
+  bcl::tagged<
     Optional<trait::json_::LoopImpl::Output::ValueType::const_iterator>,
       trait::Output>,
   bcl::tagged<
@@ -116,9 +131,10 @@ struct IsOnlyImpl<bcl::tagged_tuple_size<TraitT>::value, Tags...> {
 
 template<std::size_t Idx, class... Tags> struct IsOnlyAnyOfImpl {
   static bool is(const TraitT &Traits) {
+    // We have to only check that traits except Tags... are not set.
     if (bcl::is_contained<typename bcl::tagged_tuple_tag<Idx, TraitT>::type,
                           Tags...>::value)
-      return IsOnlyImpl<Idx + 1, Tags...>::is(Traits);
+      return IsOnlyAnyOfImpl<Idx + 1, Tags...>::is(Traits);
     return !std::get<Idx>(Traits) &&
       IsOnlyAnyOfImpl<Idx + 1, Tags...>::is(Traits);
   }
@@ -160,6 +176,26 @@ public:
 private:
   std::string mDataFile;
 };
+
+/// Extract a list of analyzed functions from external analysis results.
+FunctionCache buildFunctionCache(const trait::Info &Info) {
+    FunctionCache Res;
+  for (std::size_t I = 0, EI = Info[trait::Info::Functions].size(); I < EI;
+       ++I) {
+    auto &F = Info[trait::Info::Functions][I];
+    LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: add function to cache "
+                      << F[trait::Function::Name] << ":"
+                      << F[trait::Function::File] << ":"
+                      << F[trait::Function::Line] << ":"
+                      << F[trait::Function::Column] << "\n");
+    sys::fs::UniqueID ID;
+    if (sys::fs::getUniqueID(F[trait::Function::File], ID))
+      continue;
+    Res.emplace(
+        FunctionT{ID, F[trait::Function::Line], F[trait::Function::Name]}, I);
+  }
+  return Res;
+}
 
 /// Extract a list of analyzed loops from external analysis results.
 LoopCache buildLoopCache(const trait::Info &Info) {
@@ -232,10 +268,27 @@ TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
   addToCache<trait::Private>(trait::Loop::Private, Info, L, Res);
   addToCache<trait::UseAfterLoop>(trait::Loop::UseAfterLoop, Info, L, Res);
   addToCache<trait::WriteOccurred>(trait::Loop::WriteOccurred, Info, L, Res);
+  addToCache<trait::ReadOccurred>(trait::Loop::ReadOccurred, Info, L, Res);
   addToCache<trait::Output>(trait::Loop::Output, Info, L, Res);
   addToCache<trait::Anti>(trait::Loop::Anti, Info, L, Res);
   addToCache<trait::Flow>(trait::Loop::Flow, Info, L, Res);
   return Res;
+}
+
+const trait::Function *findFunction(const DISubprogram *DISub,
+    const FunctionCache &Cache, const trait::Info &Info) {
+  sys::fs::UniqueID ID;
+  if (sys::fs::getUniqueID(DISub->getFilename(), ID))
+    return nullptr;
+  FunctionT F{ID, DISub->getLine(), DISub->getName()};
+  auto FuncItr = Cache.find(F);
+  if (FuncItr != Cache.end())
+    return &Info[trait::Info::Functions][FuncItr->second];
+  F.get<Identifier>() = DISub->getLinkageName().str();
+  FuncItr = Cache.find(F);
+  return (FuncItr == Cache.end())
+             ? nullptr
+             : &Info[trait::Info::Functions][FuncItr->second];
 }
 
 /// Find traits for a specified loop in external analysis results.
@@ -328,6 +381,9 @@ void AnalysisReader::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 bool AnalysisReader::runOnFunction(Function &F) {
+  auto DWLang = getLanguage(F);
+  if (!DWLang)
+    return false;
   if (mDataFile.empty()) {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
     if (!GO.AnalysisUse.empty())
@@ -353,6 +409,7 @@ bool AnalysisReader::runOnFunction(Function &F) {
       "unable to parse external analysis results"));
     return false;
   }
+  auto FunctionCache = buildFunctionCache(Info);
   auto LoopCache = buildLoopCache(Info);
   for (auto &TraitLoop : TraitPool) {
     auto LoopID = cast<MDNode>(TraitLoop.get<Region>());
@@ -365,6 +422,27 @@ bool AnalysisReader::runOnFunction(Function &F) {
                       << (*L)[trait::Loop::Column] << "\n");
     auto TraitCache = buildTraitCache(Info, *L);
     for (auto &DITrait : *TraitLoop.get<Pool>()) {
+      if (auto *DIUM{ dyn_cast<DIUnknownMemory>(DITrait.getMemory()) };
+          DIUM && DIUM->isExec()) {
+        auto *MD{DIUM->getMetadata()};
+        assert(MD && "MDNode must not be null!");
+        if (auto *DISub{dyn_cast<DISubprogram>(MD)})
+          if (auto *F{findFunction(DISub, FunctionCache, Info)}) {
+            LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update traits for the "
+                              << (*F)[trait::Function::Name] << " function at "
+                              << (*F)[trait::Function::File] << ":"
+                              << (*F)[trait::Function::Line] << ":"
+                              << (*F)[trait::Function::Column] << "\n");
+            if ((*F)[trait::Function::Pure]) {
+              DITrait.unset<trait::DirectAccess, trait::ExplicitAccess,
+                            trait::AddressAccess>();
+              DITrait.set<trait::Redundant, trait::NoAccess>();
+            }
+            LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set traits to ";
+                       DITrait.print(dbgs()); dbgs() << "\n");
+          }
+        continue;
+      }
       if (DITrait.is_any<trait::NoAccess, trait::Readonly, trait::Reduction,
                          trait::Induction>())
         continue;
@@ -374,28 +452,39 @@ bool AnalysisReader::runOnFunction(Function &F) {
       auto *DIVar = DIEM->getVariable();
       auto *DIExpr = DIEM->getExpression();
       assert(DIVar && DIExpr && "Invalid memory location!");
-      if (DIExpr->getNumElements() > 1)
-        continue;
-      if (DIExpr->getNumElements() == 1 && !DIExpr->startsWithDeref())
-        continue;
       VariableT Var;
       SmallVector<DebugLoc, 1> DbgLocs;
       DIEM->getDebugLoc(DbgLocs);
-      if (DbgLocs.size() > 1)
-        continue;
+      DILocation *DefinitionLoc = nullptr;
       if (DbgLocs.empty()) {
         // Column may be omitted for global variables only, because there are
         // no more than one variable with the same name in a global scope.
         if (!isa<DIGlobalVariable>(DIVar))
           continue;
-        Var.get<Line>() = DIVar->getLine();
-        Var.get<Column>() = 0;
+        DefinitionLoc = DILocation::get(F.getContext(), DIVar->getLine(), 0,
+          DIVar->getScope());
+
+      } else if (DbgLocs.size() > 1) {
+        DefinitionLoc = DbgLocs.front().get();
+        for (auto &DbgLoc : DbgLocs)
+          if (DbgLoc.getLine() < DefinitionLoc->getLine())
+            DefinitionLoc = DbgLoc.get();
+          else if (DbgLoc.getLine() == DefinitionLoc->getLine() &&
+            DbgLoc.getCol() < DefinitionLoc->getColumn())
+            DefinitionLoc = DbgLoc.get();
       } else {
-        Var.get<Line>() = DbgLocs.front().getLine();
-        Var.get<Column>() = DbgLocs.front().getCol();
+        DefinitionLoc = DbgLocs.front().get();
       }
-      Var.get<Identifier>() =
-        ((DIExpr->startsWithDeref() ? "^" : "") + DIVar->getName()).str();
+      Var.get<Line>() = DefinitionLoc->getLine();
+      Var.get<Column>() = DefinitionLoc->getColumn();
+      SmallString<32> LocToString;
+      DIMemoryLocation TmpLoc{ const_cast<DIVariable *>(DIEM->getVariable()),
+                              const_cast<DIExpression *>(DIEM->getExpression()),
+                              DefinitionLoc, DIEM->isTemplate() };
+      if (!unparseToString(*DWLang, TmpLoc, LocToString))
+        continue;
+      std::replace(LocToString.begin(), LocToString.end(), '*', '^');
+      Var.get<Identifier>() = std::string(LocToString);
       sys::fs::UniqueID FileID;
       if (sys::fs::getUniqueID(DIVar->getFilename(), FileID)) {
         LLVM_DEBUG(
