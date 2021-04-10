@@ -59,9 +59,8 @@ struct MemoryLocationRange {
     uint64_t DimSize;
     Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
     inline bool operator==(const Dimension &Other) const {
-      return Start == Other.Start &&
-             Step == Other.Step &&
-             DimSize == Other.DimSize;
+      return Start == Other.Start && Step == Other.Step &&
+             TripCount == Other.TripCount && DimSize == Other.DimSize;
     }
   };
 
@@ -208,9 +207,15 @@ namespace MemoryLocationRangeEquation {
     std::vector<std::pair<std::string, ValueT>> Variables;
   };
 
+  /// \brief A special directed acyclic graph designed to generate dimension 
+  /// differences for multidimensional arrays.
   class DimensionGraph {
   public:
     typedef llvm::SmallVector<MemoryLocationRange, 0> LocationList;
+    /// Initializes the dimension graph. Let I = L intersect R. Depth is the 
+    /// number of dimensions of I, L, and R. LC and RC are lists of memory 
+    /// locations to which the differences between memory locations L and I, R 
+    /// and I respectively will be added.
     DimensionGraph(std::size_t Depth, LocationList *LC, LocationList *RC)
         : mLC(LC), mRC(RC) {
       mNodes.resize(Depth + 1);
@@ -218,6 +223,9 @@ namespace MemoryLocationRangeEquation {
       mSource = &mNodes[0].emplace_back();
     }
 
+    /// Initializes the level with number LevelN to the dimension graph. L and R
+    /// are elementary dimensions in original memory locations, I is the
+    /// intersection between L and R.
     void addLevel(const Dimension &L, const Dimension &I, const Dimension &R,
                   std::size_t LevelN){
       if (!mLC && !mRC)
@@ -273,6 +281,8 @@ namespace MemoryLocationRangeEquation {
       }
     }
 
+    /// Generates memory locations and adds them to lists LC and RC defined in
+    /// the constructor.
     void generateRanges(const MemoryLocationRange &Loc) {
       MemoryLocationRange NewLoc(Loc);
       if (mLC)
@@ -283,8 +293,11 @@ namespace MemoryLocationRangeEquation {
           fillDimension(Child, false, NewLoc, 0, mRC, Child->IsIntersection);
     }
 
-    friend llvm::raw_ostream &operator<<(
-        llvm::raw_ostream &OS, const DimensionGraph &G);
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
+                                         const DimensionGraph &G);
+    friend void printSolutionInfo(llvm::raw_ostream &OS,
+                                  const MemoryLocationRange &Int,
+                                  const DimensionGraph &G);
   private:
     struct Node {
       Dimension Dim;
@@ -377,7 +390,45 @@ namespace MemoryLocationRangeEquation {
     return OS;
   }
 
-  /// Finds an intersection between locations LHS and RHS. 
+  inline void printSolutionInfo(llvm::raw_ostream &OS,
+                                const MemoryLocationRange &Int,
+                                const DimensionGraph &G) {
+    auto PrintRange = [&OS](const MemoryLocationRange &R) {
+      auto &Dim = R.DimList[0];
+      OS << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
+      OS << Dim.Start << " + " << Dim.Step << " * T, T in [" << 0 <<
+          ", " << Dim.TripCount << ")} ";
+    };
+    OS << "[EQUATION] Solution:\n" << G;
+    OS << "Left: ";
+    if (G.mLC)
+      for (auto &R : *G.mLC) {
+        PrintRange(R);
+      }
+    OS << "\nIntersection: ";
+    PrintRange(Int);
+    OS << "\nRight: ";
+    if (G.mRC)
+      for (auto &R : *G.mRC) {
+        PrintRange(R);
+      }
+    OS << "\n[EQUATION] Solution has been printed.\n";
+  }
+
+  /// \brief Finds an intersection between non-scalar memory locations LHS and
+  /// RHS.
+  ///
+  /// \param [in] LHS The first location to intersect.
+  /// \param [in] RHS The second location to intersect. 
+  /// \param [out] Int The result of intersection. If intersection is empty, 
+  /// Int.Ptr will be set to `nullptr`.
+  /// \param [out] LC List of memory locations to which the difference 
+  /// between locations LHS and Int will be added. It will not change if the
+  /// intersection is empty.
+  /// \param [out] RC List of memory locations to which the difference 
+  /// between locations RHS and Int will be added. It will not change if the
+  /// intersection is empty.
+  /// \return `true` if intersection is not empty, `false` otherwise.
   inline bool intersect(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS, MemoryLocationRange &Int,
       llvm::SmallVector<MemoryLocationRange, 0> *LC,
@@ -387,7 +438,8 @@ namespace MemoryLocationRangeEquation {
     typedef milp::BinomialSystem<ColumnT, ValueT, 0, 0, 1> LinearSystem;
     typedef std::pair<ValueT, ValueT> VarRange;
     if (LHS.Ptr != RHS.Ptr || !LHS.Ptr ||
-        LHS.DimList.size() != RHS.DimList.size()) {
+        LHS.DimList.size() != RHS.DimList.size() ||
+        LHS.DimList.size() == 0) {
       Int.Ptr = nullptr;
       return false;
     }
@@ -451,31 +503,11 @@ namespace MemoryLocationRangeEquation {
       Intersection.DimSize = Left.DimSize;
       DimGraph.addLevel(Left, Intersection, Right, I);
     }
-    //llvm::dbgs() << "[SOLUTION] " << DimGraph;
-    DimGraph.generateRanges(LHS);
-    /*auto PrintRange = [](const MemoryLocationRange &R) {
-      auto &Dim = R.DimList[0];
-      //std::string IsEmp = R.Ptr == nullptr ? "Yes" : "No";
-      llvm::dbgs() << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
-      llvm::dbgs() << Dim.Start << " + " << Dim.Step << " * T, T in [" << 0 <<
-          ", " << Dim.TripCount << ")} ";
-    };
-    llvm::dbgs() << "[SOLUTION]:\n";
-    llvm::dbgs() << "Left: ";
-    if (LC)
-      for (auto &R : *LC) {
-        PrintRange(R);
-      }
-    llvm::dbgs() << "\nIntersection: ";
-    PrintRange(Int);
-    llvm::dbgs() << "\nRight: ";
-    if (RC)
-      for (auto &R : *RC) {
-        PrintRange(R);
-      }
-    llvm::dbgs() << "\n";*/
-    if (!Intersected)
+    if (Intersected)
+      DimGraph.generateRanges(LHS);
+    else
       Int.Ptr = nullptr;
+    //printSolutionInfo(llvm::dbgs(), Int, DimGraph);
     return Intersected;
   }
 }

@@ -175,12 +175,12 @@ public:
         llvm::DenseSet<Ty> NewTails;
         for (auto &Tail : Tails) {
           Ty IntLoc;
-          llvm::SmallVector<Ty, 0> LeftCompl, RightCompl;
-          if (MemoryInfo::intersect(Curr, Tail, &LeftCompl, IntLoc, &RightCompl)){
-            if (!LeftCompl.empty())
-              NewTails.append(LeftCompl.begin(), LeftCompl.end());
-            if (!RightCompl.empty())
-              NewTails.append(RightCompl.begin(), RightCompl.end());
+          llvm::SmallVector<Ty, 0> LeftComp, RightComp;
+          if (MemoryInfo::intersect(Curr, Tail, IntLoc, &LeftComp, &RightComp)){
+            if (!LeftComp.empty())
+              NewTails.append(LeftComp.begin(), LeftComp.end());
+            if (!RightComp.empty())
+              NewTails.append(RightComp.begin(), RightComp.end());
           }
         }
         Tails = std::move(NewTails);
@@ -233,12 +233,12 @@ public:
         llvm::SmallVector<Ty, 2> NewTails;
         for (auto &Tail : Tails) {
           Ty IntLoc;
-          llvm::SmallVector<Ty, 0> LeftCompl, RightCompl;
-          if (MemoryInfo::intersect(Curr, Tail, &LeftCompl, IntLoc, &RightCompl)){
-            if (!LeftCompl.empty())
-              NewTails.append(LeftCompl.begin(), LeftCompl.end());
-            if (!RightCompl.empty())
-              NewTails.append(RightCompl.begin(), RightCompl.end());
+          llvm::SmallVector<Ty, 0> LeftComp, RightComp;
+          if (MemoryInfo::intersect(Curr, Tail, IntLoc, &LeftComp, &RightComp)){
+            if (!LeftComp.empty())
+              NewTails.append(LeftComp.begin(), LeftComp.end());
+            if (!RightComp.empty())
+              NewTails.append(RightComp.begin(), RightComp.end());
           }
         }
         Tails = std::move(NewTails);
@@ -291,7 +291,7 @@ public:
     if (MemoryInfo::getNumDims(Loc) > 0) {
       for (auto &Curr : I->second) {
         Ty IntLoc;
-        if (MemoryInfo::intersect(Curr, Loc, nullptr, IntLoc, nullptr))
+        if (MemoryInfo::intersect(Curr, Loc, IntLoc, nullptr, nullptr))
           Locs.push_back(IntLoc);
       }
       return;
@@ -372,8 +372,10 @@ public:
     return const_iterator(mLocations.end(), 0);
   }
 
+  /// Subtracts locations of this set from the specified location and puts
+  /// the result to the list.
   template<class Ty> bool subtractFrom(const Ty &Loc,
-      llvm::SmallVector<Ty, 0> &Compl) const {
+      llvm::SmallVector<Ty, 0> &Locs) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return false;
@@ -386,7 +388,7 @@ public:
       llvm::SmallVector<Ty, 0> NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
         Ty Intersection;
-        if (MemoryInfo::intersect(Curr, LocToSub, nullptr, Intersection,
+        if (MemoryInfo::intersect(Curr, LocToSub, Intersection, nullptr,
             &NewLocsToSub)) {
           Intersected = true;
         } else {
@@ -395,8 +397,7 @@ public:
       }
       LocsToSub = std::move(NewLocsToSub);
     }
-    Compl = std::move(LocsToSub);
-    //llvm::dbgs() << "[MEMSET] Overlap result: " << Intersected << "\n";
+    Locs = std::move(LocsToSub);
     return Intersected;
   }
 
@@ -433,9 +434,7 @@ public:
     auto InsertItr = I->second.begin();
     for (auto EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      //llvm::dbgs() << "[MEMSET] Joinable?\n";
       if (MemoryInfo::areJoinable(Curr, Loc)) {
-        //llvm::dbgs() << "[MEMSET] Joinable.\n";
         bool isChanged = true;
         if (MemoryInfo::getAATags(Curr) != MemoryInfo::getAATags(Loc))
           if (MemoryInfo::getAATags(Curr) ==

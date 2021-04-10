@@ -142,9 +142,12 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
            sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
   }
-  static inline bool getIntersection(const llvm::MemoryLocation &LHS,
-      const llvm::MemoryLocation &RHS, llvm::MemoryLocation &L,
-      llvm::MemoryLocation &I, llvm::MemoryLocation &R) {
+  static inline bool intersect(
+      const llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS,
+      llvm::MemoryLocation &I,
+      llvm::SmallVector< llvm::MemoryLocation, 0> *L,
+      llvm::SmallVector< llvm::MemoryLocation, 0> *R) {
     return false;
   }
 };
@@ -202,12 +205,14 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
     bool Result = true;
-    //llvm::dbgs() << "[MEMSET] Check joinability for arrays.\n";
+    std::size_t JoinableDimCount = 0;
     for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
       assert(Left.TripCount > 0 && Right.TripCount > 0 &&
           "Trip count of dimension must be positive!");
+      if (Left == Right)
+        continue;
       auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
       auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
       if (Left.Step != Right.Step ||
@@ -217,8 +222,9 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         Result = false;
         break;
       }
+      ++JoinableDimCount;
     }
-    return Result;
+    return Result & (JoinableDimCount <= 1);
   }
   static inline bool join(MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
@@ -262,15 +268,14 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
              sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
     }
     MemoryLocationRange Int;
-    auto Result = MemoryLocationRangeEquation::intersect(LHS, RHS, Int,
+    return MemoryLocationRangeEquation::intersect(LHS, RHS, Int,
         nullptr, nullptr);
-    return Result;
   }
   static inline bool intersect(
       const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS,
-      llvm::SmallVector<MemoryLocationRange, 0> *L,
       MemoryLocationRange &I,
+      llvm::SmallVector<MemoryLocationRange, 0> *L,
       llvm::SmallVector<MemoryLocationRange, 0> *R) {
     return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
   }

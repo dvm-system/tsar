@@ -160,10 +160,11 @@ public:
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
 
+  /// Subtracts all locations containing in the current set from Loc and
+  /// puts the result in Compl.
   bool subtractFrom(const MemoryLocationRange &Loc,
       llvm::SmallVector<MemoryLocationRange, 0> &Compl) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    //llvm::dbgs() << "[MEMSET] Check overlap.\n";
     return mLocations.subtractFrom(Loc, Compl);
   }
 
@@ -174,6 +175,8 @@ public:
     return mKind != KIND_FULL && mLocations.cover(Loc);
   }
 
+  /// Find list of locations which are contained in a specified location Loc
+  /// and puts them to Locs.
   void findCoveredBy(const MemoryLocationRange &Loc,
       llvm::SmallVector<MemoryLocationRange, 0> &Locs) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");

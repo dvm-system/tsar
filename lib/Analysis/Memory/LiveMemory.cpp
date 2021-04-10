@@ -155,10 +155,10 @@ bool DataFlowTraits<LiveDFFwk*>::transferFunction(
   }
   dbgs() << "IN:\n";
   for (auto &Loc : newIn)
-    (printLocationSource(dbgs(), Loc, DFF->getDomTree()), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "OUT:\n";
   for (auto &Loc : LS->getOut())
-    (printLocationSource(dbgs(), Loc, DFF->getDomTree()), dbgs() << "\n");
+    (printLocationSource(dbgs(), Loc.Ptr, DFF->getDomTree()), dbgs() << "\n");
   dbgs() << "[END LIVE]\n";
   );
   if (LS->getIn() != newIn) {

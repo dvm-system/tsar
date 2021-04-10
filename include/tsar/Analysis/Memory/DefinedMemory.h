@@ -46,9 +46,7 @@
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/DenseMap.h>
-#include <llvm/ADT/SmallSet.h>
 #include <llvm/Analysis/AliasSetTracker.h>
-#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #ifdef LLVM_DEBUG
 # include <llvm/IR/Instruction.h>
 #endif//DEBUG
@@ -494,9 +492,7 @@ template<> struct DataFlowTraits<ReachDFFwk *> {
   static void initialize(DFNode *, ReachDFFwk *, GraphType);
   static void meetOperator(
     const ValueType &LHS, ValueType &RHS, ReachDFFwk *Fwk, GraphType) {
-    auto &DT = Fwk->getDomTree();
-    RHS.MayReach.dump(&DT);
-    auto Res = RHS.MustReach.intersect(LHS.MustReach);
+    RHS.MustReach.intersect(LHS.MustReach);
     RHS.MayReach.merge(LHS.MayReach);
   }
   static bool transferFunction(ValueType, DFNode *, ReachDFFwk *, GraphType);
