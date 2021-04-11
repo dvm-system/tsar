@@ -32,18 +32,9 @@
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassProvider.h"
 #include <llvm/ADT/DenseSet.h>
-#include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
-#include <llvm/IR/Dominators.h>
-#include <llvm/Analysis/AliasAnalysis.h>
-#include <llvm/Analysis/AliasSetTracker.h>
-#include "tsar/Analysis/Memory/Utils.h"
-#include <llvm/IR/InstIterator.h>
-#include <vector>
-#include "tsar/Support/PassAAProvider.h"
-#include <algorithm>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Operator.h>
@@ -54,7 +45,6 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/InitializePasses.h"
 #include <queue>
-#include <unordered_set>
 #include "llvm/Analysis/MemorySSA.h"
 
 #undef DEBUG_TYPE
@@ -117,11 +107,11 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
 }
 
 void AddressAccessAnalyser::runOnFunction(Function *F) {
-  LLVM_DEBUG(errs() << "Analyzing function: "; F->getName(); errs() << "\n";);
-  for (BasicBlock &BB : F->getBasicBlockList())
-      for (Instruction &I: BB) {
-          I.print(errs()); errs() << "\n";
-      }
+  LLVM_DEBUG(errs() << "Analyzing function: "; errs() << F->getName(); errs() << "\n";);
+//  for (BasicBlock &BB : F->getBasicBlockList())
+//      for (Instruction &I: BB) {
+//          I.print(errs()); errs() << "\n";
+//      }
 
   for (auto &arg : F->args()) {
     if (!(arg.getType()->isPointerTy()))
@@ -163,7 +153,10 @@ bool AddressAccessAnalyser::isCaptured(Argument *arg) {
     queue.push(arg);
     while (!queue.empty()) {
         auto curValue = queue.front();
+        auto curRang = registry.find(curValue)->second;
         queue.pop();
+        if (curRang < 0)
+          continue;
         auto [newNode, newRang, success] = applyDefinitionConstraint(curValue, registry);
         if (!success)
           return true;
@@ -190,7 +183,6 @@ bool AddressAccessAnalyser::isCaptured(Argument *arg) {
                 continue;
             } else
                 seenInstrs.insert(instr);
-            auto curRang = registry.find(curValue)->second;
             auto [newNode, newRang, success] = applyUsageConstraint(instr, opNo, curRang);
             if (!success)
               return true;
@@ -288,8 +280,15 @@ std::tuple<Value*,int,bool> AddressAccessAnalyser::applyUsageConstraint(Instruct
       auto calledFun = dyn_cast<CallBase>(instr)->getCalledFunction();
       if (!calledFun)
         success = false;
-      else
-        success = dyn_cast<CallBase>(instr)->getCalledFunction()->getArg(opNo)->hasNoCaptureAttr();
+      else {
+        auto fun = dyn_cast<CallBase>(instr)->getCalledFunction();
+        if (fun->isVarArg() && fun->getName() == "printf")  // TODO: handle var arg, so this crutch wont be required
+          success = true;
+        else if (fun->isVarArg())
+          success = false;
+        else
+          success = fun->getArg(opNo)->hasNoCaptureAttr();
+      }
       return std::tuple<Value*,int,bool>(nullptr, -1, success);
     }
     default: {
@@ -300,18 +299,16 @@ std::tuple<Value*,int,bool> AddressAccessAnalyser::applyUsageConstraint(Instruct
 }
 
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
+  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Printing pointer, nocapture args for all analyzed functions\n";);
   for (const Function &FF: *m) {
     const Function *F = &FF;
     if (F->isIntrinsic() || tsar::hasFnAttr(*F, AttrKind::LibFunc))
       continue;
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Function [" << F->getName().begin()
-                      << "]:\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] [" << F->getName().begin()<< "]: ";);
     for (auto &arg : F->args()) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\t"; dbgs() << arg.getName().begin() << ": ";);
-      if (arg.hasNoCaptureAttr())
-        LLVM_DEBUG(dbgs() << "NoCapture\n";);
-      else
-        LLVM_DEBUG(dbgs() << "May be captured\n";);
+      if (arg.getType()->isPointerTy() && arg.hasNoCaptureAttr())
+        LLVM_DEBUG(dbgs() << arg.getName().begin() << ", ";);
     }
+    LLVM_DEBUG(dbgs() << "\n";);
   }
 }
