@@ -109,6 +109,18 @@ public:
           return false;
       return true;
     }
+    if (auto *U{dyn_cast<UnaryExprOrTypeTraitExpr>(S)};
+        U && U->isArgumentType()) {
+      // If the statement is sizeof(int[M][K]), references to M and K are
+      // visited twice, so we traverse them manually to avoid double matching.
+      if (auto *T{
+              dyn_cast<VariableArrayType>(U->getArgumentType().getTypePtr())}) {
+        for (auto *C : U->children())
+          if (TraverseStmt(C))
+            return false;
+        return true;
+      }
+    }
     if (auto UO = dyn_cast<clang::UnaryOperator>(S);
         UO && (UO->isPrefix() || UO->isPostfix())) {
       // Match order: `load` then `store`. Note, that `load` and `store` have
