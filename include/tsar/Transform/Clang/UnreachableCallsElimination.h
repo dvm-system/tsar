@@ -26,9 +26,6 @@ public:
 
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-
-private:
-  std::vector<llvm::coverage::CountedRegion> Unreachable{};
 };
 }
 #endif//TSAR_CLANG_UNREACHABLE_CALLS__H

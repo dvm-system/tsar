@@ -31,6 +31,7 @@
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
+class ImmutablePass;
 class ModulePass;
 
 /// Initialize all passes to perform source-base analysis of C programs.
@@ -149,5 +150,11 @@ void initializeClangIncludeTreeOnlyViewerPass(PassRegistry &Registry);
 /// Create a pass to display source file tree (filenames instead of
 /// full paths).
 ModulePass *createClangIncludeTreeOnlyViewer();
+
+/// Initialize a pass to obtain unreachable CountedRegions
+void initializeClangUnreachableCountedRegionsPass(PassRegistry &Registry);
+
+/// Create a pass to obtain unreachable CountedRegions
+ImmutablePass *createClangUnreachableCountedRegions();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H
