@@ -663,7 +663,14 @@ static void mergeSiblingRegions(ItrT I, ItrT EI,
   if (I == EI)
     return;
   auto &LoopMatcher = Provider.value<LoopMatcherPass *>()->getMatcher();
-  auto *ParentScope = getScope(*I, LoopMatcher, ASTCtx);
+  // At least one loop must be parallel, so IR-to-AST match is always known for
+  // this loop.
+  auto *ParentScope{[&]() -> clang::Stmt * {
+    for (auto Itr{I}; Itr != EI; ++Itr)
+      if (auto *S{getScope(*Itr, LoopMatcher, ASTCtx)})
+        return S;
+    return nullptr;
+  }()};
   assert(ParentScope && "Unable to find AST scope for a parallel loop!");
   SmallVector<Loop *, 4> ToMerge;
   bool IsHostOnly = false;
