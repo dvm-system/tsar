@@ -196,9 +196,10 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
         mParallelCallees.try_emplace(Callee, mAdjacentList[Callee].get<Id>());
       }
   }
-  if (!PI || PI && !PI->isFinal())
-    return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
-  return PI;
+  bool Parallelized{PI != nullptr};
+  if (!PI || !PI->isFinal())
+    Parallelized |= findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+  return Parallelized;
 }
 
 void ClangSMParallelization::initializeProviderOnClient() {
