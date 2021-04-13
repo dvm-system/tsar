@@ -71,7 +71,7 @@ public:
   }
 
   void VisitItem(DynTypedNode &&N, SourceLocation Loc) {
-    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: match at";
+    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: match at ";
                Loc.print(dbgs(), *mSrcMgr); dbgs() << "\n");
     if (Loc.isMacroID()) {
       VisitFromMacro(std::move(N), Loc);
@@ -87,7 +87,7 @@ public:
 
   bool VisitVarDecl(VarDecl *D) {
     LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: visit " << D->getDeclKindName()
-                      << D->getName());
+                      << D->getName() << "\n");
     VisitItem(DynTypedNode::create(*D), D->getLocation());
     return true;    
   }
@@ -95,7 +95,7 @@ public:
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
-    LLVM_DEBUG(dbgs() << "[EXPR MATCHER: visit " << S->getStmtClassName()
+    LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: visit " << S->getStmtClassName()
                       << "\n");
     if (auto CE = dyn_cast<CallExpr>(S)) {
       if (!CE->getDirectCallee()) {
