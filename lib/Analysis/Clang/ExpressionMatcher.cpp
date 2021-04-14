@@ -116,7 +116,7 @@ public:
       if (auto *T{
               dyn_cast<VariableArrayType>(U->getArgumentType().getTypePtr())}) {
         for (auto *C : U->children())
-          if (TraverseStmt(C))
+          if (!TraverseStmt(C))
             return false;
         return true;
       }
