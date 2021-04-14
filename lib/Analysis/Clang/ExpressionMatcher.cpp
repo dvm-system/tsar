@@ -93,20 +93,30 @@ public:
   }
 
   bool TraverseStmt(Stmt *S) {
+    struct StashParent {
+      StashParent(Stmt *S, SmallVectorImpl<Stmt *> &Ps) : Parents(Ps) {
+        Parents.push_back(S);
+      }
+      ~StashParent() { Parents.pop_back(); }
+      SmallVectorImpl<Stmt *> &Parents;
+    };
     if (!S)
       return true;
     LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: visit " << S->getStmtClassName()
                       << "\n");
     if (auto CE = dyn_cast<CallExpr>(S)) {
       if (!CE->getDirectCallee()) {
+        StashParent [[maybe_unused]] Stash{CE->getCallee(), mParents};
         // We match expression which computes callee before this call.
         if (!TraverseStmt(CE->getCallee()))
           return false;
       }
       VisitItem(DynTypedNode::create(*S), S->getBeginLoc());
-      for (auto Arg : CE->arguments())
+      for (auto Arg : CE->arguments()) {
+        StashParent [[maybe_unused]] Stash{Arg, mParents};
         if (!TraverseStmt(Arg))
           return false;
+      }
       return true;
     }
     if (auto *U{dyn_cast<UnaryExprOrTypeTraitExpr>(S)};
@@ -115,11 +125,29 @@ public:
       // visited twice, so we traverse them manually to avoid double matching.
       if (auto *T{
               dyn_cast<VariableArrayType>(U->getArgumentType().getTypePtr())}) {
-        for (auto *C : U->children())
+        for (auto *C : U->children()) {
+          StashParent [[maybe_unused]] Stash{C, mParents};
           if (!TraverseStmt(C))
             return false;
+        }
         return true;
       }
+    }
+    if (auto *SE{dyn_cast<ArraySubscriptExpr>(S)}) {
+      {
+        // We use scope to reload stash on exit.
+        StashParent [[maybe_unused]] Stash{S, mParents};
+        if (!RecursiveASTVisitor::TraverseStmt(S))
+          return false;
+      }
+      auto [InArraySubscriptBase, InStore] = isInArraySubscriptBaseAndStore(S);
+      // Match current statement if it is an innermost array subscript
+      // expression. Note, that assignment-like expressions have been already
+      // matched.
+      if (!mHasChildArraySubscript && !InStore)
+        VisitItem(DynTypedNode::create(*SE), SE->getExprLoc());
+      mHasChildArraySubscript = InArraySubscriptBase;
+      return true;
     }
     if (auto UO = dyn_cast<clang::UnaryOperator>(S);
         UO && (UO->isPrefix() || UO->isPostfix())) {
@@ -128,7 +156,18 @@ public:
       // For `++ <expr>` we match `++` with store and `<expr>` with load.
       VisitItem(DynTypedNode::create(*UO->getSubExpr()), UO->getOperatorLoc());
       VisitItem(DynTypedNode::create(*S), UO->getOperatorLoc());
+      StashParent [[maybe_unused]] Stash{UO->getSubExpr(), mParents};
       return TraverseStmt(UO->getSubExpr());
+    }
+    if (auto DRE{dyn_cast<DeclRefExpr>(S)}) {
+      // There is no load from pointer if the variable has an array type.
+      // We do not match reference to the array name to avoid multiple match
+      // with a single `load` instruction (ArraySubscriptExpr must be matched
+      // only).
+      if (auto VD{dyn_cast<VarDecl>(DRE->getDecl())};
+          VD && isa<clang::ArrayType>(VD->getType()) &&
+          isInArraySubscriptBaseAndStore(S).first)
+        return true;
     }
     if (isa<ReturnStmt>(S) || isa<DeclRefExpr>(S) ||
         isa<clang::UnaryOperator>(S) &&
@@ -144,8 +183,36 @@ public:
     } else if (auto *ME = dyn_cast<MemberExpr>(S)) {
       VisitItem(DynTypedNode::create(*S), ME->getMemberLoc());
     }
+    StashParent [[maybe_unused]] Stash{S, mParents};
     return RecursiveASTVisitor::TraverseStmt(S);
   }
+
+private:
+  std::pair<bool, bool> isInArraySubscriptBaseAndStore(const Stmt *S) {
+    auto *Prev{S};
+    bool IsInArraySubscriptBase{false};
+    for (auto *P : reverse(mParents)) {
+      if (auto *SE{dyn_cast<ArraySubscriptExpr>(P)}) {
+        if (SE->getBase() != Prev)
+          return std::pair{IsInArraySubscriptBase, false};
+        IsInArraySubscriptBase = true;
+      } else {
+        if (auto BO{ dyn_cast<clang::BinaryOperator>(P) };
+          BO && BO->isAssignmentOp() && BO->getLHS() == Prev)
+          return std::pair{ IsInArraySubscriptBase, true };
+        if (auto UO{ dyn_cast<clang::UnaryOperator>(P) };
+          UO && (UO->isPrefix() || UO->isPostfix()))
+          return std::pair{ IsInArraySubscriptBase, true };
+        if (!isa<CastExpr>(P))
+          return std::pair{ IsInArraySubscriptBase, false };
+      }
+      Prev = P;
+    }
+    return std::pair{IsInArraySubscriptBase, false};
+  }
+
+  SmallVector<Stmt *, 8> mParents;
+  bool mHasChildArraySubscript{false};
 };
 }
 
