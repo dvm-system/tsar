@@ -133,13 +133,17 @@ public:
     if (isa<ReturnStmt>(S) || isa<DeclRefExpr>(S) ||
         isa<clang::UnaryOperator>(S) &&
             cast<clang::UnaryOperator>(S)->getOpcode() ==
-                clang::UnaryOperatorKind::UO_Deref)
+                clang::UnaryOperatorKind::UO_Deref) {
       VisitItem(DynTypedNode::create(*S), S->getBeginLoc());
-    else if (auto BO = dyn_cast<clang::BinaryOperator>(S);
-             BO && BO->isAssignmentOp())
+    } else if (auto BO = dyn_cast<clang::BinaryOperator>(S);
+             BO && BO->isAssignmentOp()) {
+      // In case of compound assignment (for example,  +=) match load at first.
+      if (BO->isCompoundAssignmentOp())
+        VisitItem(DynTypedNode::create(*BO->getLHS()), BO->getExprLoc());
       VisitItem(DynTypedNode::create(*S), BO->getExprLoc());
-    else if (auto *ME = dyn_cast<MemberExpr>(S))
+    } else if (auto *ME = dyn_cast<MemberExpr>(S)) {
       VisitItem(DynTypedNode::create(*S), ME->getMemberLoc());
+    }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 };
