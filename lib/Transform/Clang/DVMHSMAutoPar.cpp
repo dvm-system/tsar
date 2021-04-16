@@ -638,9 +638,9 @@ static void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
   };
   auto removeStartOfRegion = [&copyActual, &copyInOut, &remove, &MergedActual,
                               &ParallelizationInfo](Loop *L) {
-    auto HeaderBB = L->getExitingBlock();
+    auto HeaderBB = L->getHeader();
     auto ID = L->getLoopID();
-    auto Region = ParallelizationInfo.find<PragmaRegion>(L->getHeader(), ID);
+    auto Region = ParallelizationInfo.find<PragmaRegion>(HeaderBB, ID);
     copyInOut(cast<PragmaRegion>(*Region));
     auto &EntryPB = Region.getPL()->Entry;
     auto ActualItr = copyActual(EntryPB, MergedActual);
