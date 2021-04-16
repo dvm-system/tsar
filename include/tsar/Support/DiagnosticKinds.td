@@ -145,6 +145,7 @@ def note_parallel_reduction_unknown : Note<"unknown reduction operation prevents
 def note_parallel_variable_not_analyzed : Note<"cannot analyze variable">;
 def note_parallel_across_direction_unknown : Note<"unable to implement pipeline execution for a loop with unknown step">;
 def note_parallel_ordered_entry_unknown : Note<"unable to place 'ordered' directive in the loop with an unknown entry point">;
+def note_parallel_across_tie_unable : Note<"unable to tie dependence with the parallel loop">;
 
 def warn_region_add_loop_unable : Warning<"unable to mark loop for optimization">;
 def warn_region_add_call_unable : Warning<"unable to mark function call for optimization">;

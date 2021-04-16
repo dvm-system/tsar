@@ -706,6 +706,101 @@ static void mergeSiblingRegions(ItrT I, ItrT EI,
 }
 
 template <typename ItrT>
+static void sanitizeAcrossLoops(ItrT I, ItrT EI,
+    const FunctionAnalysis &Provider, const ASTContext &ASTCtx,
+    Parallelization &ParallelizationInfo) {
+  auto &LoopMatcher = Provider.value<LoopMatcherPass *>()->getMatcher();
+  for (; I != EI; ++I) {
+    auto *Parallel{isParallel(*I, ParallelizationInfo)};
+    if (!Parallel)
+      continue;
+    SmallVector<const Decl *, 4> UntiedVars;
+    auto &Clauses{Parallel->getClauses()};
+    for (auto &&[V, Distances] : Clauses.template get<trait::Dependence>()) {
+      auto Range{Clauses.template get<trait::DirectAccess>().equal_range(V)};
+      auto TieItr{find_if(Range.first, Range.second, [&V](const auto &Tie) {
+        return Tie.first.template get<MD>() == V.template get<MD>();
+      })};
+      if (TieItr == Range.second) {
+        UntiedVars.emplace_back(V.template get<AST>());
+      } else if (TieItr != Range.second) {
+        for (unsigned LoopIdx{0}, LoopIdxE = Distances.size();
+             LoopIdx < LoopIdxE; ++LoopIdx) {
+          auto [L, R] = Distances[LoopIdx];
+          if ((L || R) && (LoopIdx >= TieItr->second.size() ||
+                           !TieItr->second[LoopIdx].first)) {
+            UntiedVars.emplace_back(V.template get<AST>());
+            break;
+          }
+        }
+      }
+    }
+    if (UntiedVars.empty())
+      continue;
+    toDiag(ASTCtx.getDiagnostics(),
+           LoopMatcher.find<IR>(*I)->template get<AST>()->getBeginLoc(),
+           tsar::diag::warn_parallel_loop);
+    for (auto *D : UntiedVars)
+      toDiag(ASTCtx.getDiagnostics(), D->getLocation(),
+             tsar::diag::note_parallel_across_tie_unable);
+    // Remote parallel loop, enclosing region and actualization directives.
+    auto ID{(**I).getLoopID()};
+    auto ExitingBB{(**I).getExitingBlock()};
+    auto Marker{ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
+        ExitingBB, ID, false)};
+    auto &ExitPB{Marker.getPL()->Exit};
+    if (ExitPB.size() == 1 ||
+        ExitPB.size() == 2 && all_of(ExitPB, [&Marker](auto &PI) {
+          return *Marker.getPI() == PI ||
+                 PI->getKind() ==
+                     static_cast<unsigned>(DirectiveId::DvmGetActual);
+        })) {
+      if (Marker.getPL()->Entry.empty() &&
+          Marker.getPE()->template get<ParallelLocation>().size() == 1)
+        ParallelizationInfo.erase(ExitingBB);
+      else
+        ExitPB.clear();
+    } else {
+      ExitPB.erase(Marker.getPI());
+      if (auto GetActualItr{find_if(ExitPB,
+                                    [](auto &PI) {
+                                      return PI->getKind() ==
+                                             static_cast<unsigned>(
+                                                 DirectiveId::DvmGetActual);
+                                    })};
+          GetActualItr != ExitPB.end())
+        ExitPB.erase(GetActualItr);
+    }
+    auto HeaderBB{(**I).getHeader()};
+    auto Region{ParallelizationInfo.find<PragmaRegion>(HeaderBB, ID)};
+    auto &EntryPB{Region.getPL()->Entry};
+    if (EntryPB.size() == 2 ||
+        EntryPB.size() == 3 && all_of(EntryPB, [&Region, Parallel](auto &PI) {
+          return *Region.getPI() == PI || Parallel == PI.get() ||
+                 PI->getKind() == static_cast<unsigned>(DirectiveId::DvmActual);
+        })) {
+      if (Region.getPL()->Exit.empty() &&
+          Region.getPE()->template get<ParallelLocation>().size() == 1)
+        ParallelizationInfo.erase(HeaderBB);
+      else
+        EntryPB.clear();
+    } else {
+      EntryPB.erase(Region.getPI());
+      EntryPB.erase(find_if(
+          EntryPB, [Parallel](auto &PI) { return PI.get() == Parallel; }));
+      if (auto ActualItr{find_if(EntryPB,
+                                 [](auto &PI) {
+                                   return PI->getKind() ==
+                                          static_cast<unsigned>(
+                                              DirectiveId::DvmActual);
+                                 })};
+          ActualItr != EntryPB.end())
+        EntryPB.erase(ActualItr);
+    }
+  }
+}
+
+template <typename ItrT>
 static void optimizeLevelImpl(ItrT I, ItrT EI, const FunctionAnalysis &Provider,
     const DIArrayAccessInfo &AccessInfo, Parallelization &ParallelizationInfo) {
   for (; I != EI; ++I) {
@@ -775,9 +870,14 @@ void ClangDVMHSMParallelization::optimizeLevel(
       getAnalysis<TransformationEnginePass>()->getContext(*M)->getContext();
   if (Level.is<Function *>()) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+    sanitizeAcrossLoops(LI.begin(), LI.end(), Provider, ASTCtx,
+                        mParallelizationInfo);
     mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
                       mParallelizationInfo);
   } else {
+    sanitizeAcrossLoops(Level.get<Loop *>()->begin(),
+                        Level.get<Loop *>()->end(), Provider, ASTCtx,
+                        mParallelizationInfo);
     mergeSiblingRegions(Level.get<Loop *>()->begin(),
                         Level.get<Loop *>()->end(), Provider, ASTCtx,
                         mParallelizationInfo);
