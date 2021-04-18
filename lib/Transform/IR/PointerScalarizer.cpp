@@ -1,8 +1,8 @@
-//===- PointerScalarizer.cpp - Promoting certain values after SROA  --------- *- C++ -*-===//
+//=== PointerScalarizer.cpp - Promoting certain values after SROA * C++ *-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2021 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,23 +49,57 @@ using namespace llvm;
 namespace {
 class PointerScalarizerPass : public FunctionPass, private bcl::Uncopyable {
 public:
-    static char ID;
+  static char ID;
 
-    PointerScalarizerPass() : FunctionPass(ID) {
-      initializePointerScalarizerPassPass(*PassRegistry::getPassRegistry());
+  PointerScalarizerPass() : FunctionPass(ID) {
+    initializePointerScalarizerPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnFunction(Function &F) override;
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<DIMemoryTraitPoolWrapper>();
+    AU.addRequired<LoopAttributesDeductionPass>();
+    AU.addRequired<EstimateMemoryPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequired<DIEstimateMemoryPass>();
+  }
+};
+
+struct phiNodeLink {
+  PHINode *phiNode;
+  phiNodeLink *parent;
+
+  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) {}
+
+  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
+
+  PHINode *getPhi() const {
+    if (phiNode) {
+      return phiNode;
     }
+    return parent->getPhi();
+  }
+};
 
-    bool runOnFunction(Function &F) override;
+struct ScalarizerContext {
+  explicit ScalarizerContext(Value *V, Function &F, Loop *L, DIBuilder *DIB, bool Changed)
+      : V(V), DbgVar(), DbgLoc(), F(F), L(L), ValueChanged(Changed), DIB(DIB) {}
 
-    void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.addRequired<LoopInfoWrapperPass>();
-      AU.addRequired<DIMemoryTraitPoolWrapper>();
-      AU.addRequired<LoopAttributesDeductionPass>();
-      AU.addRequired<EstimateMemoryPass>();
-      AU.addRequired<TargetLibraryInfoWrapperPass>();
-      AU.addRequired<DIEstimateMemoryPass>();
-    }
-  };
+  Value *V;
+  DIVariable *DbgVar;
+  DILocation *DbgLoc;
+  Function &F;
+  Loop *L;
+  SmallVector<LoadInst *, 2> InsertedLoads;
+  DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
+  DenseSet<PHINode *> UniqueNodes;
+  DenseMap<BasicBlock *, Value *> LastValues;
+  DenseSet<BasicBlock *> ChangedLastInst;
+  bool ValueChanged;
+  DIBuilder *DIB;
+};
 }
 
 char PointerScalarizerPass::ID = 0;
@@ -85,42 +119,7 @@ FunctionPass * llvm::createPointerScalarizerPass() {
   return new PointerScalarizerPass();
 }
 
-struct phiNodeLink {
-  PHINode *phiNode;
-  phiNodeLink *parent;
-
-  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) {}
-
-  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
-
-  PHINode *getPhi() const {
-    if (phiNode) {
-      return phiNode;
-    }
-    return parent->getPhi();
-  }
-};
-
-struct ScalarizerContext {
-  explicit ScalarizerContext(Value *V, Function &F,
-      Loop *L, DIBuilder *DIB, bool Changed)
-  : V(V), DbgVar(), DbgLoc(), F(F), L(L), ValueChanged(Changed), DIB(DIB) {}
-
-  Value *V;
-  DIVariable *DbgVar;
-  DILocation *DbgLoc;
-  Function &F;
-  Loop *L;
-  SmallVector<LoadInst *, 2> InsertedLoads;
-  DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
-  DenseSet<PHINode *> UniqueNodes;
-  DenseMap<BasicBlock *, Value *> LastValues;
-  DenseSet<BasicBlock *> ChangedLastInst;
-  bool ValueChanged;
-  DIBuilder *DIB;
-};
-
-bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
+static inline bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
   for (auto *User : Ctx.V->users()) {
     if (auto *LI = dyn_cast<LoadInst>(User))
       if (LI->isVolatile() && Ctx.L->contains(LI))
@@ -132,16 +131,18 @@ bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
   return false;
 }
 
-bool validateValue(const ScalarizerContext &Ctx) {
+static inline bool validateValue(const ScalarizerContext &Ctx) {
   for (auto *User : Ctx.V->users()) {
     auto *Store = dyn_cast<StoreInst>(User);
-    if (Ctx.ValueChanged && Store && Ctx.L->contains(Store))
+    if (Ctx.ValueChanged &&
+        Store && Ctx.L->contains(Store) &&
+        Store->getPointerOperand() == Ctx.V)
       return false;
   }
   return true;
 }
 
-void insertDbgValueCall(ScalarizerContext &Ctx,
+static inline void insertDbgValueCall(ScalarizerContext &Ctx,
     Instruction *I, Instruction *InsertBefore, bool Add) {
   if (Add)
     I->setDebugLoc(Ctx.DbgLoc);
@@ -152,25 +153,25 @@ void insertDbgValueCall(ScalarizerContext &Ctx,
   );
 }
 
-void insertLoadInstructions(ScalarizerContext &Ctx) {
+static void insertLoadInstructions(ScalarizerContext &Ctx) {
   auto *BeforeInstr = new LoadInst(
     Ctx.V->getType()->getPointerElementType(),
     Ctx.V, "load." + Ctx.V->getName(),
-    &Ctx.L->getLoopPredecessor()->back());
+    &Ctx.L->getLoopPreheader()->back());
   Ctx.InsertedLoads.push_back(BeforeInstr);
 
-  auto *insertBefore = &Ctx.L->getLoopPredecessor()->back();
+  auto *insertBefore = &Ctx.L->getLoopPreheader()->back();
   insertDbgValueCall(Ctx, BeforeInstr, insertBefore, true);
   if (Ctx.ValueChanged) {
     auto BeforeInstr2 = new LoadInst(
       BeforeInstr->getType()->getPointerElementType(),
       BeforeInstr, "load.ptr." + Ctx.V->getName(),
-      &Ctx.L->getLoopPredecessor()->back());
+      &Ctx.L->getLoopPreheader()->back());
     Ctx.InsertedLoads.push_back(BeforeInstr2);
   }
 }
 
-void insertStoreInstructions(ScalarizerContext &Ctx) {
+static inline void insertStoreInstructions(ScalarizerContext &Ctx) {
   SmallVector<BasicBlock *, 8> ExitBlocks;
   Ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
@@ -179,7 +180,7 @@ void insertStoreInstructions(ScalarizerContext &Ctx) {
   }
 }
 
-void getAllStoreOperands(LoadInst *I, DenseMap<StoreInst *, Instruction *> &Stores) {
+static void getAllStoreOperands(LoadInst *I, DenseMap<StoreInst *, Instruction *> &Stores) {
   for (auto *User : I->users()) {
     auto *Child = dyn_cast<Instruction>(User);
     if (!Child)
@@ -194,7 +195,7 @@ void getAllStoreOperands(LoadInst *I, DenseMap<StoreInst *, Instruction *> &Stor
   }
 }
 
-void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
+static void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
   SmallVector<Instruction *, 16> Loads;
   DenseMap<StoreInst *, Value *> Stores;
   auto ReplaceLoads = [&](LoadInst *Load, Value *ReplaceWith) {
@@ -244,7 +245,7 @@ void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
     Ctx.LastValues[BB] = Ctx.LastValues[BB->getSinglePredecessor()];
 }
 
-void handleLoads(ScalarizerContext &Ctx,
+static void handleLoads(ScalarizerContext &Ctx,
     BasicBlock *BB,
     DenseSet<BasicBlock *> &Completed,
     bool Init = false) {
@@ -259,34 +260,35 @@ void handleLoads(ScalarizerContext &Ctx,
     }
 }
 
-void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &PhiLinks) {
+static inline void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &PhiLinks) {
   for (auto It : PhiLinks)
     delete It.second;
 }
 
-void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = false) {
-  if (Ctx.PhiLinks.find(BB) != Ctx.PhiLinks.end())
+static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = false) {
+  if (Ctx.PhiLinks.count(BB))
     return;
-  bool needsCreate = false;
+  bool NeedsCreate = false;
   if (pred_size(BB) == 1 && !Init) {
-    if (Ctx.PhiLinks.find(BB->getSinglePredecessor()) != Ctx.PhiLinks.end()) {
-      auto *parentLink = Ctx.PhiLinks.find(BB->getSinglePredecessor())->second;
+    if (auto Itr{Ctx.PhiLinks.find(BB->getSinglePredecessor())}; Itr != Ctx.PhiLinks.end()) {
+      auto *parentLink = Itr->second;
       Ctx.PhiLinks[BB] = new phiNodeLink(parentLink);
     } else {
-      needsCreate = true;
+      NeedsCreate = true;
     }
   } else if (!Init) {
-    needsCreate = true;
+    NeedsCreate = true;
   }
-  if (needsCreate) {
-    auto *phi = PHINode::Create(Ctx.InsertedLoads.back()->getType(), 0,
-        "phi." + BB->getName(), &BB->front());
-    insertDbgValueCall(Ctx, phi, BB->getFirstNonPHI(), true);
-    Ctx.PhiLinks[BB] = new phiNodeLink(phi);
-    Ctx.UniqueNodes.insert(phi);
+  if (NeedsCreate) {
+    auto *Phi = PHINode::Create(Ctx.InsertedLoads.back()->getType(), 0,
+        "Phi." + BB->getName(), &BB->front());
+    insertDbgValueCall(Ctx, Phi, BB->getFirstNonPHI(), true);
+    Ctx.PhiLinks[BB] = new phiNodeLink(Phi);
+    Ctx.UniqueNodes.insert(Phi);
   }
   for (auto *Succ : successors(BB))
-    insertPhiNodes(Ctx, Succ);
+    if (Ctx.L->contains(Succ))
+      insertPhiNodes(Ctx, Succ);
   // all nodes and links are created at this point and BB = loop predecessor
   if (Init) {
     Ctx.LastValues[BB] = Ctx.InsertedLoads.back();
@@ -295,7 +297,7 @@ void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = false) {
   }
 }
 
-void fillPhiNodes(ScalarizerContext &Ctx) {
+static void fillPhiNodes(ScalarizerContext &Ctx) {
   for (auto *Phi : Ctx.UniqueNodes) {
     auto *BB = Phi->getParent();
     for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
@@ -303,14 +305,14 @@ void fillPhiNodes(ScalarizerContext &Ctx) {
         Phi->addIncoming(Ctx.LastValues[*Pred], *Pred);
       } else {
         auto *load = new LoadInst(Ctx.V->getType()->getPointerElementType(),
-            Ctx.V, "dummy.load." + Ctx.V->getName(), *Pred);
+            Ctx.V, "dummy.load." + Ctx.V->getName(), &(*Pred)->back());
         Phi->addIncoming(load, *Pred);
       }
     }
   }
 }
 
-void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
+static void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
   for (auto *Phi : Ctx.UniqueNodes) {
     bool hasSameOperands = true;
     auto *operand = Phi->getOperand(0);
@@ -331,7 +333,7 @@ void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
   }
 }
 
-bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
+static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
   auto STR = SpanningTreeRelation<AliasTree *>(&AT);
   auto *EM = AT.find(MemoryLocation(V, LocationSize(0)));
   if (!EM)
@@ -339,33 +341,23 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
   EM = EM->getTopLevelParent();
   for (auto *BB : L->getBlocks()) {
     for (auto &Inst : BB->getInstList()) {
-      if (dyn_cast<Value>(&Inst) == V)
-        return false;
-      SmallVector<BasicBlock *, 8> ExitBlocks;
-      L->getExitBlocks(ExitBlocks);
-      bool InExit  = std::any_of(ExitBlocks.begin(), ExitBlocks.end(), [&Inst](BasicBlock *EB) {
-        return Inst.getParent() == EB;
-      });
-      if (InExit)
-        continue;
       bool HasWrite = false;
-      auto memLambda = [&STR, &HasWrite, &AT, &EM](
+      auto *EMNode = EM->getAliasNode(AT);
+      auto memLambda = [&STR, &HasWrite, &AT, &EM, &EMNode](
           Instruction &I, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo W) {
         if (HasWrite || W == AccessInfo::No)
           return;
         auto InstEM = AT.find(Loc);
         assert(InstEM && "alias tree node is empty");
-        auto *EMNode = EM->getAliasNode(AT);
         auto *InstNode = InstEM->getAliasNode(AT);
-        if (!STR.isEqual(EMNode, InstNode) && !STR.isUnreachable(EMNode, InstNode))
+        if (InstEM->getTopLevelParent() != EM && !STR.isUnreachable(EMNode, InstNode))
           HasWrite = true;
       };
-      auto unknownMemLambda = [&HasWrite, &AT, &STR, &EM](
+      auto unknownMemLambda = [&HasWrite, &AT, &STR, &EMNode](
           Instruction &I, AccessInfo, AccessInfo W) {
         if (HasWrite || W == AccessInfo::No)
           return;
         auto *instEM = AT.findUnknown(&I);
-        auto *EMNode = EM->getAliasNode(AT);
         if (!STR.isEqual(instEM, EMNode) && !STR.isUnreachable(instEM, EMNode))
           HasWrite = true;
       };
@@ -377,7 +369,7 @@ bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) 
   return true;
 }
 
-void handlePointerDI(ScalarizerContext &Ctx,
+static void createDbgInfo(ScalarizerContext &Ctx,
     DIType *DIT, AliasTree &AT,
     SmallVectorImpl<Metadata *> &MDs) {
   auto &DL = Ctx.F.getParent()->getDataLayout();
@@ -395,7 +387,7 @@ void handlePointerDI(ScalarizerContext &Ctx,
           Ctx.DbgLoc->getFile(), Ctx.DbgVar->getLine(),
       DIT, false,
       DINode::FlagZero);
-  auto *Node = DINode::get(Ctx.F.getContext(), {RawDIMem, NewVar, Ctx.DbgVar});
+  auto *Node = DINode::get(Ctx.F.getContext(), {RawDIMem, NewVar});
   MDs.push_back(Node);
   Ctx.DbgVar = NewVar;
 }
@@ -416,6 +408,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
     //    with corresponding operations with the copied memory;
     // 5. Map inserted instructions with the original value using DI nodes.
     if (!L->getLoopID() ||
+        !L->getLoopPreheader() ||
         !LoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
         LoopAttr.hasAttr(*L, Attribute::Returned))
       return;
@@ -423,22 +416,29 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
     if (!Pool)
       return;
     SmallDenseSet<Value *> Values;
+    SmallDenseMap<Value *, DIMemoryTrait *> ValueTraitMapping;
     for (auto &T : *Pool) {
       if (!T.is_any<trait::Anti, trait::Flow, trait::Output>())
         continue;
       for (auto &V : *T.getMemory()) {
-        if (!V.pointsToAliveValue() || isa<UndefValue>(V) || isa<LoadInst>(V))
+        if (!V.pointsToAliveValue() ||
+            isa<UndefValue>(V) ||
+            isa<GetElementPtrInst>(V) ||
+            isa<LoadInst>(V))
           continue;
+        if (auto *I = dyn_cast<Instruction>(V))
+          if (L->contains(I))
+            continue;
         for (auto *User : V->users()) {
           if (auto *SI = dyn_cast<StoreInst>(User))
-            if (L->contains(SI)) {
+            if (L->contains(SI) && SI->getPointerOperand() == V) {
               Values.insert(V);
+              ValueTraitMapping[V] = &T;
               break;
             }
         }
       }
     }
-    int NumTransformed = 0;
     for (auto *Val : Values) {
       bool MultipleLoad = false;
       for (auto *User1 : Val->users())
@@ -450,8 +450,10 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       auto Ctx = ScalarizerContext(Val, F, L, DIB, MultipleLoad);
       if (!validateValue(Ctx) ||
           hasVolatileInstInLoop(Ctx) ||
-          !analyzeAliasTree(Val, AT, L, TLI))
+          !analyzeAliasTree(Val, AT, L, TLI)) {
+        ValueTraitMapping.erase(Val);
         continue;
+      }
       // find dbg.value call for Val and save it for adding debug information later
       for (auto &BB : F.getBasicBlockList()) {
         for (auto &Inst : BB.getInstList()) {
@@ -475,11 +477,14 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
         auto MD = findMetadata(Ctx.V, DILocs, &AT.getDomTree());
         Ctx.DbgVar = MD->Var;
         Ctx.DbgLoc = L->getStartLoc();
-        handlePointerDI(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
+        createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
+      } else {
+        auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
+        if (derivedType && Val->getType()->isPointerTy())
+          createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
+        else
+          createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       }
-      auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
-      if (!dyn_cast<GlobalValue>(Ctx.V) && derivedType && Val->getType()->isPointerTy())
-        handlePointerDI(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
 
       insertLoadInstructions(Ctx);
       insertPhiNodes(Ctx, L->getLoopPredecessor(), true);
@@ -489,11 +494,9 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       deleteRedundantPhiNodes(Ctx);
       insertStoreInstructions(Ctx);
       freeLinks(Ctx.PhiLinks);
-      NumTransformed++;
     }
-    if (NumTransformed > 0)
-      for (auto &T: *Pool)
-        T.unset<trait::NoPromotedScalar>();
+    for (auto &Pair: ValueTraitMapping)
+      Pair.getSecond()->unset<trait::NoPromotedScalar>();
   });
   if (!MDsToAttach.empty()) {
     auto *MappingNode = DINode::get(F.getContext(), MDsToAttach);

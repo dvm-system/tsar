@@ -24,19 +24,19 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "BitMemoryTrait.h"
 #include "tsar/ADT/PersistentMap.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
-#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
+#include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/PrivateAnalysis.h"
 #include "tsar/Analysis/Memory/Utils.h"
-#include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/IRUtils.h"
@@ -50,10 +50,10 @@
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/InitializePasses.h>
-#include <llvm/Support/Debug.h>
+#include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/Debug.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <tuple>
 #include <utility>
@@ -603,20 +603,30 @@ bool handleLoopEmptyBindings(
     if (auto *I = dyn_cast<Instruction>(Loc))
       if (L->contains(I))
         return false;
-    if (auto *CE = dyn_cast<ConstantExpr>(Loc))
-      for (auto *User: CE->users())
-        if (auto *I = dyn_cast<Instruction>(User))
-          if (L->contains(I))
-            return false;
+    if (auto *CE = dyn_cast<ConstantExpr>(Loc)) {
+      SmallVector<ConstantExpr *, 4> WorkList{CE};
+      do {
+        auto *Expr = WorkList.pop_back_val();
+        for (auto &ExprU : Expr->uses()) {
+          auto ExprUse = ExprU.getUser();
+          if (auto ExprUseInst = dyn_cast<Instruction>(ExprUse))
+            if (L->contains(ExprUseInst))
+              return false;
+            else if (auto ExprUseExpr = dyn_cast<ConstantExpr>(ExprUse))
+              WorkList.push_back(ExprUseExpr);
+        }
+      } while (!WorkList.empty());
+    }
   }
   if (!DITraitItr.is<trait::DirectAccess>())
     return false;
   for (auto &Trait: Pool) {
+    if (!Trait.is<trait::DirectAccess>())
+      continue;
     auto *PoolNode = Trait.getMemory()->getAliasNode();
     auto *MemNode = Mem->getAliasNode();
 
-    if (!DIAliasSTR.isUnreachable(PoolNode, MemNode) &&
-        !DIAliasSTR.isEqual(PoolNode, MemNode))
+    if (Trait.getMemory() != Mem && !DIAliasSTR.isUnreachable(PoolNode, MemNode))
       return false;
   }
   return true;
@@ -633,8 +643,6 @@ MDNode *mdNodeFromAliasTreeMapping(const Function *F, DIMemoryLocation &Loc) {
     assert(DIN->getNumOperands() == 3 && "Alias tree mapping node must contain three elements");
     auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
     if (Loc.Var == DINewVar) {
-      auto *DIOldVar = dyn_cast<DIVariable>(DIN->getOperand(2));
-      Loc.Var = DIOldVar;
       return dyn_cast<MDNode>(DIN->getOperand(0));
     }
   }
