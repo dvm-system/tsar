@@ -104,6 +104,7 @@ INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
 INITIALIZE_PROVIDER_END(GlobalDefinedMemoryProvider, "global-def-mem-provider",
                         "Global Defined Memory Analysis (Provider)")
 
@@ -135,7 +136,6 @@ void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
-  AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.setPreservesAll();
 }
 
@@ -183,7 +183,7 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
     auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DefInfo, DI, SE, DL, *Wrapper);
+    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, DefInfo, *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&

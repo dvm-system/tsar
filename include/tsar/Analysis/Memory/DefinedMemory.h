@@ -36,8 +36,6 @@
 #include "tsar/ADT/DataFlow.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/DFRegionInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
@@ -58,11 +56,13 @@ class Value;
 class Instruction;
 class StoreInst;
 class TargetLibraryInfo;
+class ScalarEvolution;
 }
 
 namespace tsar {
 class AliasTree;
 class DFRegionInfo;
+class DelinearizeInfo;
 
 /// \brief This contains locations which have outward exposed definitions or
 /// uses in a data-flow node.
@@ -370,28 +370,28 @@ public:
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
-      DefinedMemoryInfo &DefInfo, const DelinearizeInfo &DI,
-      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL) :
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, DefinedMemoryInfo &DefInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
-    mDT(&DT), mDefInfo(&DefInfo), mDI(&DI), mSE(&SE), mDL(&DL) {}
+    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mDefInfo(&DefInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
-      DefinedMemoryInfo &DefInfo, const DelinearizeInfo &DI,
-      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, DefinedMemoryInfo &DefInfo,
       InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
-    mDefInfo(&DefInfo), mDI(&DI), mSE(&SE), mDL(&DL),
+    mDI(&DI), mSE(&SE), mDL(&DL), mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
-      const llvm::DominatorTree &DT, DefinedMemoryInfo &DefInfo,
-      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
-      const llvm::DataLayout &DL, InterprocDefUseInfo &InterprocDUInfo) :
-    mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDefInfo(&DefInfo),
-    mDI(&DI), mSE(&SE), mDL(&DL), mInterprocDUInfo(&InterprocDUInfo) {}
+      const llvm::DominatorTree &DT, const DelinearizeInfo &DI,
+      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
+      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL),
+    mDefInfo(&DefInfo), mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -433,7 +433,6 @@ public:
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
-  
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
@@ -491,7 +490,7 @@ template<> struct DataFlowTraits<ReachDFFwk *> {
   }
   static void initialize(DFNode *, ReachDFFwk *, GraphType);
   static void meetOperator(
-    const ValueType &LHS, ValueType &RHS, ReachDFFwk *Fwk, GraphType) {
+    const ValueType &LHS, ValueType &RHS, ReachDFFwk *, GraphType) {
     RHS.MustReach.intersect(LHS.MustReach);
     RHS.MayReach.merge(LHS.MayReach);
   }

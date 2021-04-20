@@ -163,7 +163,7 @@ public:
   /// Subtracts all locations containing in the current set from Loc and
   /// puts the result in Compl.
   bool subtractFrom(const MemoryLocationRange &Loc,
-      llvm::SmallVector<MemoryLocationRange, 0> &Compl) const {
+      llvm::SmallVectorImpl<MemoryLocationRange> &Compl) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     return mLocations.subtractFrom(Loc, Compl);
   }
@@ -178,7 +178,7 @@ public:
   /// Find list of locations which are contained in a specified location Loc
   /// and puts them to Locs.
   void findCoveredBy(const MemoryLocationRange &Loc,
-      llvm::SmallVector<MemoryLocationRange, 0> &Locs) const {
+      llvm::SmallVectorImpl<MemoryLocationRange> &Locs) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
     mLocations.findCoveredBy(Loc, Locs);
   }

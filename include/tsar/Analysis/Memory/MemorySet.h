@@ -375,17 +375,18 @@ public:
   /// Subtracts locations of this set from the specified location and puts
   /// the result to the list.
   template<class Ty> bool subtractFrom(const Ty &Loc,
-      llvm::SmallVector<Ty, 0> &Locs) const {
+      llvm::SmallVectorImpl<Ty> &Locs) const {
+    typedef llvm::SmallVector<Ty, 4> LocationList;
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return false;
     bool Intersected = false;
-    llvm::SmallVector<Ty, 0> LocsToSub { Loc };
+    LocationList LocsToSub { Loc };
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
       if (MemoryInfo::getNumDims(Curr) != MemoryInfo::getNumDims(Loc))
         continue;
-      llvm::SmallVector<Ty, 0> NewLocsToSub;
+      LocationList NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
         Ty Intersection;
         if (MemoryInfo::intersect(Curr, LocToSub, Intersection, nullptr,

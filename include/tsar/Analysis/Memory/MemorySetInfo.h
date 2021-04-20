@@ -146,8 +146,8 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
       const llvm::MemoryLocation &LHS,
       const llvm::MemoryLocation &RHS,
       llvm::MemoryLocation &I,
-      llvm::SmallVector< llvm::MemoryLocation, 0> *L,
-      llvm::SmallVector< llvm::MemoryLocation, 0> *R) {
+      llvm::SmallVectorImpl<llvm::MemoryLocation> *L,
+      llvm::SmallVectorImpl<llvm::MemoryLocation> *R) {
     return false;
   }
 };
@@ -275,8 +275,8 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS,
       MemoryLocationRange &I,
-      llvm::SmallVector<MemoryLocationRange, 0> *L,
-      llvm::SmallVector<MemoryLocationRange, 0> *R) {
+      llvm::SmallVectorImpl<MemoryLocationRange> *L,
+      llvm::SmallVectorImpl<MemoryLocationRange> *R) {
     return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
   }
 };
