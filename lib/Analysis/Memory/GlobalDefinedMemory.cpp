@@ -183,7 +183,8 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
     auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, DefInfo, *Wrapper);
+    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, GO, DefInfo,
+                           *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&

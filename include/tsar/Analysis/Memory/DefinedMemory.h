@@ -40,6 +40,7 @@
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Support/AnalysisWrapperPass.h"
+#include "tsar/Support/GlobalOptions.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -371,27 +372,29 @@ public:
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
       const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
-      const llvm::DataLayout &DL, DefinedMemoryInfo &DefInfo) :
+      const llvm::DataLayout &DL, const GlobalOptions &GO,
+      DefinedMemoryInfo &DefInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
-    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mDefInfo(&DefInfo) {}
+    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
       const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
-      const llvm::DataLayout &DL, DefinedMemoryInfo &DefInfo,
-      InterprocDefUseInfo &InterprocDUInfo) :
+      const llvm::DataLayout &DL, const GlobalOptions &GO,
+      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
-    mDI(&DI), mSE(&SE), mDL(&DL), mDefInfo(&DefInfo),
+    mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree &DT, const DelinearizeInfo &DI,
       llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
-      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
+      const GlobalOptions &GO, DefinedMemoryInfo &DefInfo,
+      InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL),
-    mDefInfo(&DefInfo), mInterprocDUInfo(&InterprocDUInfo) {}
+    mGO(&GO), mDefInfo(&DefInfo), mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -430,6 +433,9 @@ public:
   /// Returns data layout.
   const llvm::DataLayout & getDataLayout() const noexcept { return *mDL; }
 
+  /// Returns global options.
+  const GlobalOptions & getGlobalOptions() const noexcept { return *mGO; }
+
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
@@ -440,9 +446,10 @@ private:
   const DFRegionInfo *mRegionInfo;
   DefinedMemoryInfo *mDefInfo;
   InterprocDefUseInfo *mInterprocDUInfo = nullptr;
-  const DelinearizeInfo *mDI = nullptr;
-  llvm::ScalarEvolution *mSE = nullptr;
+  const DelinearizeInfo *mDI;
+  llvm::ScalarEvolution *mSE;
   const llvm::DataLayout *mDL;
+  const GlobalOptions *mGO;
 };
 
 /// This represents results of interprocedural reach definition analysis.

@@ -160,11 +160,13 @@ public:
     return mKind == KIND_FULL || mLocations.overlap(Loc);
   }
 
-  /// Subtracts all locations containing in the current set from Loc and
+  /// Subtracts all locations containing in this value from Loc and
   /// puts the result in Compl.
   bool subtractFrom(const MemoryLocationRange &Loc,
       llvm::SmallVectorImpl<MemoryLocationRange> &Compl) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
+    if (mKind == KIND_FULL)
+      return false;
     return mLocations.subtractFrom(Loc, Compl);
   }
 
@@ -180,7 +182,10 @@ public:
   void findCoveredBy(const MemoryLocationRange &Loc,
       llvm::SmallVectorImpl<MemoryLocationRange> &Locs) const {
     assert(mKind != INVALID_KIND && "Collection is corrupted!");
-    mLocations.findCoveredBy(Loc, Locs);
+    if (mKind == KIND_FULL)
+      Locs.push_back(Loc);
+    else
+      mLocations.findCoveredBy(Loc, Locs);
   }
 
   /// Returns true if the value does not contain any location.

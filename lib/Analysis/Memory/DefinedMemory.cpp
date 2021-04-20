@@ -64,6 +64,7 @@ INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
 
@@ -76,13 +77,15 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
   auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto &DL = F.getParent()->getDataLayout();
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, mDefInfo,
-        *GDM);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, GO,
+                           mDefInfo, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   } else {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, mDefInfo);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, GO,
+                           mDefInfo);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   }
   return false;
@@ -96,6 +99,7 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.addRequired<DelinearizationPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -334,9 +338,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     auto *SE = Fwk->getScalarEvolution();
     assert(SE && "ScalarEvolution must be specified!");
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
-    if (!AddRecInfo.second) {
+    if (Fwk->getGlobalOptions().IsSafeTypeCast && !AddRecInfo.second)
       break;
-    }
     auto SCEV = AddRecInfo.first;
     if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
       auto Range = C->getAPInt().getSExtValue();
@@ -962,32 +965,37 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //   if (...)
     //     X = ...;
     // }
+    llvm::SmallVector<MemoryLocationRange, 4> Locs;
     for (auto &Loc : DU->getDefs()) {
       if (auto *DFL = dyn_cast<DFLoop>(R)) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check latch node.\n");
-        llvm::SmallVector<MemoryLocationRange, 4> Locs;
         LatchDefs->MustReach.findCoveredBy(Loc, Locs);
         if (!Locs.empty()) {
+          LLVM_DEBUG(dbgs() <<
+              "[ARRAY LOCATION] Add location from a latch node.\n");
+          for (auto &L : Locs) {
+            addLocation(R, L, this,
+                [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
+          } 
+        } else {
+          LLVM_DEBUG(dbgs() <<
+              "[COLLAPSE] Collapse MayDef location of a latch node.\n");
+          addLocation(R, Loc, this,
+              [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
+        }
+      } else {
+        ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
+        if (!Locs.empty()) {
+          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
           for (auto &L : Locs) {
             addLocation(R, L, this,
                 [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
           }
-          LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Add loc from latch node.\n");
-          continue;
+        } else {
+          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
+          addLocation(R, Loc, this,
+              [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
         }
-      }
-      llvm::SmallVector<MemoryLocationRange, 4> Locs;
-      ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
-      if (!Locs.empty()) {
-        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
-        for (auto &L : Locs) {
-          addLocation(R, L, this,
-              [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
-        }
-      } else {
-        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-        addLocation(R, Loc, this,
-            [&DefUse](auto &Loc){ DefUse->addMayDef(Loc);}, true);
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
