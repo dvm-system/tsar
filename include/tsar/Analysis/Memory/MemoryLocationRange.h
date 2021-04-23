@@ -25,6 +25,7 @@
 #ifndef TSAR_MEMORY_LOCATION_RANGE_H
 #define TSAR_MEMORY_LOCATION_RANGE_H
 
+#include <llvm/ADT/APInt.h>
 #include <llvm/Analysis/MemoryLocation.h>
 
 namespace tsar {
@@ -236,7 +237,7 @@ namespace MemoryLocationRangeEquation {
   private:
     struct Node {
       Dimension Dim;
-      llvm::SmallVector<Node *, 0> LeftChildren, RightChildren;
+      llvm::SmallVector<Node *, 4> LeftChildren, RightChildren;
       bool IsIntersection;
       Node(bool IsIntersection = false) : IsIntersection(IsIntersection) {}
       Node(const Dimension &Dim, bool IsIntersection = false)
@@ -259,9 +260,7 @@ namespace MemoryLocationRangeEquation {
   /// RHS.
   ///
   /// \param [in] LHS The first location to intersect.
-  /// \param [in] RHS The second location to intersect. 
-  /// \param [out] Int The result of intersection. If intersection is empty, 
-  /// Int.Ptr will be set to `nullptr`.
+  /// \param [in] RHS The second location to intersect.
   /// \param [out] LC List of memory locations to store the difference 
   /// between locations LHS and Int. It will not be changed if the intersection
   /// is empty. If `LC == nullptr`, the difference will not be calculated and
@@ -270,12 +269,12 @@ namespace MemoryLocationRangeEquation {
   /// between locations RHS and Int. It will not be changed if the intersection
   /// is empty. If `RC == nullptr`, the difference will not be calculated and
   /// will not be stored anywhere.
-  /// \return `true` if intersection is not empty, `false` otherwise.
-  bool intersect(const MemoryLocationRange &LHS,
-                 const MemoryLocationRange &RHS,
-                 MemoryLocationRange &Int,
-                 llvm::SmallVectorImpl<MemoryLocationRange> *LC,
-                 llvm::SmallVectorImpl<MemoryLocationRange> *RC);
+  /// \return The result of intersection.
+  llvm::Optional<MemoryLocationRange> intersect(
+      const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS,
+      llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
+      llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr);
 }
 }
 

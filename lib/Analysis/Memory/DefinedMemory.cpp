@@ -386,10 +386,12 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       }
       DimInfo.Start = SignedRangeMin;
       DimInfo.TripCount = TripCount;
-      if (DimInfo.Start + DimInfo.TripCount >= DimSize && DimensionN != 0) {
-        // Index out of bounds
-      }
       DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
+      if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >= DimSize &&
+          DimensionN != 0) {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array index out of bounds.");
+        break;
+      }
       ResLoc.DimList.push_back(DimInfo);
       ResLoc.Kind = LocKind::COLLAPSED;
     } else {
@@ -399,7 +401,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
   }
   if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Collapse incomplete location. Kind: "
-        << ResLoc.Kind << "\n");
+        << ResLoc.Kind << ", bounds: [" << Loc.LowerBound << ", " <<
+        Loc.UpperBound << "]\n");
     assert(ResLoc.Kind != LocKind::COLLAPSED &&
         "An incomplete array location cannot be of the `collapsed` kind!");
     MemoryLocationRange NewLoc(Loc);
@@ -858,11 +861,15 @@ void ReachDFFwk::collapse(DFRegion *R) {
   DFNode *ExitNode = R->getExitNode();
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
   const DefinitionInfo *LatchDefs = nullptr;
+  bool HasTrips = false;
   if (auto *DFL = dyn_cast<DFLoop>(R)) {
     LatchDefs = &RT::getValue(DFL->getLatchNode(), this);
-    /*if (getScalarEvolution() &&
-        getScalarEvolution()->getSmallConstantTripCount(DFL->getLoop()) < 1)
-      return;*/
+    assert(getScalarEvolution() && "ScalarEvolution must be specified!");
+    auto TripCount = getScalarEvolution()->getSmallConstantTripCount(
+        DFL->getLoop());
+    LLVM_DEBUG(dbgs() << "[COLLAPSE] Total trip count: " << TripCount << "\n");
+    HasTrips = bool(TripCount > 0);
+    LLVM_DEBUG(dbgs() << "[COLLAPSE] HasTrips: " << HasTrips << "\n");
   }
   for (DFNode *N : R->getNodes()) {
     auto DefItr = getDefInfo().find(N);
@@ -967,7 +974,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // }
     llvm::SmallVector<MemoryLocationRange, 4> Locs;
     for (auto &Loc : DU->getDefs()) {
-      if (auto *DFL = dyn_cast<DFLoop>(R)) {
+      auto *DFL = dyn_cast<DFLoop>(R);
+      if (DFL && HasTrips) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check latch node.\n");
         LatchDefs->MustReach.findCoveredBy(Loc, Locs);
         if (!Locs.empty()) {
@@ -1021,7 +1029,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
       continue;
     MemoryLocationRange NewLoc(Loc);
     NewLoc.Kind = MemoryLocationRange::LocKind::EXPLICIT;
-    if (DefUse->getDefs().cover(ExpLoc))
+    if (DefUse->getDefs().contain(ExpLoc))
       DefUse->addDef(NewLoc);
     if (DefUse->getMayDefs().overlap(ExpLoc))
       DefUse->addMayDef(NewLoc);

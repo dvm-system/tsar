@@ -142,13 +142,12 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
            sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
   }
-  static inline bool intersect(
+  static inline llvm::Optional<llvm::MemoryLocation> intersect(
       const llvm::MemoryLocation &LHS,
       const llvm::MemoryLocation &RHS,
-      llvm::MemoryLocation &I,
       llvm::SmallVectorImpl<llvm::MemoryLocation> *L,
       llvm::SmallVectorImpl<llvm::MemoryLocation> *R) {
-    return false;
+    return llvm::None;
   }
 };
 
@@ -198,13 +197,13 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline bool areJoinable(
       const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
+    assert(LHS.Ptr == RHS.Ptr && "Pointers of locations must be equal!");
     if (LHS.DimList.size() != RHS.DimList.size())
       return false;
-    if (LHS.DimList.size() == 0) {
+    if (LHS.DimList.empty()) {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
-    bool Result = true;
     std::size_t JoinableDimCount = 0;
     for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
@@ -216,68 +215,68 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
       auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
       if (Left.Step != Right.Step ||
-          (Left.Start - Right.Start) % Left.Step != 0 ||
+          (Left.Start >= Right.Start &&
+              (Left.Start - Right.Start) % Left.Step != 0) ||
+          (Right.Start >= Left.Start &&
+              (Right.Start - Left.Start) % Left.Step != 0) ||
           (LeftEnd < Right.Start && (Right.Start - LeftEnd) != Left.Step) ||
-          (RightEnd < Left.Start && (Left.Start - RightEnd) != Left.Step)) {
-        Result = false;
-        break;
-      }
+          (RightEnd < Left.Start && (Left.Start - RightEnd) != Left.Step))
+        return false;
       ++JoinableDimCount;
     }
-    return Result & (JoinableDimCount <= 1);
+    return JoinableDimCount <= 1;
   }
-  static inline bool join(MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS) {
-    if (LHS.DimList.size() != LHS.DimList.size())
+  static inline bool join(const MemoryLocationRange &What,
+      MemoryLocationRange &To) {
+    assert(What.Ptr == To.Ptr && "Pointers of locations must be equal!");
+    assert(areJoinable(What, To) && "Locations must be joinable!");
+    if (To.DimList.size() != What.DimList.size())
       return false;
-    if (LHS.DimList.size() == 0) {
-      if (sizecmp(getUpperBound(LHS), getUpperBound(RHS)) < 0) {
-        setUpperBound(getUpperBound(RHS), LHS);
+    if (To.DimList.empty()) {
+      if (sizecmp(getUpperBound(To), getUpperBound(What)) < 0) {
+        setUpperBound(getUpperBound(What), To);
         return true;
       }
-      if (sizecmp(getLowerBound(LHS), getLowerBound(RHS)) > 0) {
-        setLowerBound(getLowerBound(RHS), LHS);
+      if (sizecmp(getLowerBound(To), getLowerBound(What)) > 0) {
+        setLowerBound(getLowerBound(What), To);
         return true;
       }
       return false;
     }
-    bool isChanged = false;
-    for (size_t I = 0; I < LHS.DimList.size(); I++) {
-      auto &To = LHS.DimList[I];
-      auto &From = RHS.DimList[I];
-      if (From.Start < To.Start) {
-        To.TripCount += (To.Start - From.Start) / From.Step;
-        To.Start = From.Start;
-        isChanged = true;
+    bool IsChanged = false;
+    for (size_t I = 0; I < To.DimList.size(); I++) {
+      auto &DimTo = To.DimList[I];
+      auto &DimFrom = What.DimList[I];
+      if (DimFrom.Start < DimTo.Start) {
+        DimTo.TripCount += (DimTo.Start - DimFrom.Start) / DimFrom.Step;
+        DimTo.Start = DimFrom.Start;
+        IsChanged = true;
       }
-      auto ToEnd = To.Start + To.Step * (To.TripCount - 1);
-      auto FromEnd = From.Start + From.Step * (From.TripCount - 1);
+      auto ToEnd = DimTo.Start + DimTo.Step * (DimTo.TripCount - 1);
+      auto FromEnd = DimFrom.Start + DimFrom.Step * (DimFrom.TripCount - 1);
       if (FromEnd > ToEnd) {
-        To.TripCount += (FromEnd - ToEnd) / From.Step;
-        isChanged = true;
+        DimTo.TripCount += (FromEnd - ToEnd) / DimFrom.Step;
+        IsChanged = true;
       }
     }
-    return isChanged;
+    return IsChanged;
   }
   static inline bool hasIntersection(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
     if (LHS.DimList.size() != RHS.DimList.size())
       return false;
-    if (LHS.DimList.size() == 0 && RHS.DimList.size() == 0) {
+    if (LHS.DimList.empty()) {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
              sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
     }
-    MemoryLocationRange Int;
-    return MemoryLocationRangeEquation::intersect(LHS, RHS, Int,
-        nullptr, nullptr);
+    return MemoryLocationRangeEquation::intersect(LHS, RHS).hasValue();
   }
-  static inline bool intersect(
+  static inline llvm::Optional<MemoryLocationRange> intersect(
       const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS,
-      MemoryLocationRange &I,
-      llvm::SmallVectorImpl<MemoryLocationRange> *L,
-      llvm::SmallVectorImpl<MemoryLocationRange> *R) {
-    return MemoryLocationRangeEquation::intersect(LHS, RHS, I, L, R);
+      llvm::SmallVectorImpl<MemoryLocationRange> *L = nullptr,
+      llvm::SmallVectorImpl<MemoryLocationRange> *R = nullptr) {
+    return MemoryLocationRangeEquation::intersect(LHS, RHS, L, R);
   }
 };
 }

@@ -27,7 +27,6 @@
 
 #include "tsar/Analysis/Memory/MemorySetInfo.h"
 #include <llvm/ADT/DenseMap.h>
-#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/iterator_range.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Metadata.h>
@@ -159,95 +158,38 @@ public:
   /// Return iterator that points to the ending of locations.
   const_iterator end() const { return const_iterator(mLocations.end(), 0); }
 
-  /// Union of returned locations contains a specified location.
+  /// Return true if union of set locations contains a specified location.
+  /// If `Locs != nullptr`, this locations will be stored to it. 
   template<class Ty>
-  llvm::iterator_range<iterator> findContaining(const Ty &Loc) {
+  bool findContaining(const Ty &Loc,
+                      llvm::SmallVectorImpl<Ty> *Locs = nullptr) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
-      return make_range(iterator(mLocations.end(), 0),
-                        iterator(mLocations.end(), 0));
-    if (MemoryInfo::getNumDims(Loc) > 0) {
-      llvm::DenseSet<Ty> Tails { Loc };
-      for (auto &Curr : I->second) {
-        if (Tails.empty())
-          return make_range(iterator(mLocations.begin(), 0),
-                            iterator(mLocations.end(), 0));
-        llvm::DenseSet<Ty> NewTails;
-        for (auto &Tail : Tails) {
-          Ty IntLoc;
-          llvm::SmallVector<Ty, 0> LeftComp, RightComp;
-          if (MemoryInfo::intersect(Curr, Tail, IntLoc, &LeftComp, &RightComp)){
-            if (!LeftComp.empty())
-              NewTails.append(LeftComp.begin(), LeftComp.end());
-            if (!RightComp.empty())
-              NewTails.append(RightComp.begin(), RightComp.end());
-          }
-        }
-        Tails = std::move(NewTails);
-      }
-      if (Tails.empty())
-        return make_range(iterator(mLocations.begin(), 0),
-                          iterator(mLocations.end(), 0));
-      return make_range(iterator(mLocations.end(), 0),
-                        iterator(mLocations.end(), 0));
-    }
-    auto Tail(Loc);
-    bool KnownStartIdx = false;
-    for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
-         Idx < EIdx; ++Idx) {
-      auto &Curr = I->second[Idx];
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) <= 0)
-        continue;
-      if (!KnownStartIdx)
-        StartIdx = Idx;
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) > 0)
-        return make_range(iterator(mLocations.end(), 0),
-                          iterator(mLocations.end(), 0));
-      MemoryInfo::setLowerBound(MemoryInfo::getUpperBound(Curr) + 1, Tail);
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Tail),
-              MemoryInfo::getLowerBound(Tail)) < 0)
-        return make_range(iterator(I, StartIdx), iterator(I, Idx));
-    }
-    return make_range(iterator(mLocations.end(), 0),
-                      iterator(mLocations.end(), 0));
-  }
-
-  /// Union of returned locations contains a specified location.
-  template<class Ty>
-  llvm::iterator_range<const_iterator> findContaining(const Ty &Loc) const {
-    auto I = mLocations.find(MemoryInfo::getPtr(Loc));
-    if (I == mLocations.end())
-      return make_range(const_iterator(mLocations.end(), 0),
-                        const_iterator(mLocations.end(), 0));
+      return false;
+    llvm::SmallVector<Ty, 4> UnionLocs;
     if (MemoryInfo::getNumDims(Loc) > 0) {
       llvm::SmallVector<Ty, 2> Tails { Loc };
       for (auto &Curr : I->second) {
-        if (Tails.empty())
-          return make_range(const_iterator(mLocations.begin(), 0),
-                            const_iterator(mLocations.end(), 0));
+        if (Tails.empty()) {
+          if (Locs)
+            Locs->append(UnionLocs.begin(), UnionLocs.end());
+          return true;
+        }
         llvm::SmallVector<Ty, 2> NewTails;
         for (auto &Tail : Tails) {
-          Ty IntLoc;
-          llvm::SmallVector<Ty, 0> LeftComp, RightComp;
-          if (MemoryInfo::intersect(Curr, Tail, IntLoc, &LeftComp, &RightComp)){
-            if (!LeftComp.empty())
-              NewTails.append(LeftComp.begin(), LeftComp.end());
-            if (!RightComp.empty())
-              NewTails.append(RightComp.begin(), RightComp.end());
-          }
+          if (MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails).hasValue())
+            UnionLocs.push_back(Curr);
+          else
+            NewTails.push_back(Tail);
         }
         Tails = std::move(NewTails);
       }
-      if (Tails.empty())
-        return make_range(const_iterator(mLocations.begin(), 0),
-                          const_iterator(mLocations.end(), 0));
-      return make_range(const_iterator(mLocations.end(), 0),
-                        const_iterator(mLocations.end(), 0));
+      if (Tails.empty()) {
+        if (Locs)
+          Locs->append(UnionLocs.begin(), UnionLocs.end());
+        return true;
+      }
+      return false;
     }
     auto Tail(Loc);
     bool KnownStartIdx = false;
@@ -263,23 +205,26 @@ public:
       if (MemoryInfo::sizecmp(
               MemoryInfo::getLowerBound(Curr),
               MemoryInfo::getLowerBound(Tail)) > 0)
-        return make_range(const_iterator(mLocations.end(), 0),
-                          const_iterator(mLocations.end(), 0));
-      MemoryInfo::setLowerBound(
-        MemoryInfo::sizeinc(MemoryInfo::getUpperBound(Curr)), Tail);
+        return false;
+      MemoryInfo::setLowerBound(MemoryInfo::sizeinc(
+                                MemoryInfo::getUpperBound(Curr)), Tail);
       if (MemoryInfo::sizecmp(
               MemoryInfo::getUpperBound(Tail),
-              MemoryInfo::getLowerBound(Tail)) < 0)
-        return make_range(const_iterator(I, StartIdx), const_iterator(I, Idx));
+              MemoryInfo::getLowerBound(Tail)) < 0) {
+          if (Locs) {
+            for (std::size_t LocIdx = StartIdx; LocIdx < Idx; ++LocIdx)
+              UnionLocs.push_back(I->second[LocIdx]);
+          }
+          return true;
+        }
     }
-    return make_range(const_iterator(mLocations.end(), 0),
-                      const_iterator(mLocations.end(), 0));
+    return false;
   }
 
   /// Return true if there are locations in this set which contain
   /// a specified location.
   template<class Ty> bool contain(const Ty &Loc) const {
-    return findContaining(Loc).begin() != end();
+    return findContaining(Loc);
   }
 
   /// Find list of locations which are contained in a specified location.
@@ -290,9 +235,9 @@ public:
       return;
     if (MemoryInfo::getNumDims(Loc) > 0) {
       for (auto &Curr : I->second) {
-        Ty IntLoc;
-        if (MemoryInfo::intersect(Curr, Loc, IntLoc, nullptr, nullptr))
-          Locs.push_back(IntLoc);
+        auto IntOpt = MemoryInfo::intersect(Curr, Loc);
+        if (IntOpt.hasValue())
+          Locs.push_back(IntOpt.getValue());
       }
       return;
     }
@@ -345,7 +290,7 @@ public:
     findCoveredBy(Loc, CoveredBy);
     return !CoveredBy.empty();
   }
-
+  
   /// Return location which may overlap with a specified location.
   template<class Ty> iterator findOverlappedWith(const Ty &Loc) {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
@@ -388,9 +333,8 @@ public:
         continue;
       LocationList NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
-        Ty Intersection;
-        if (MemoryInfo::intersect(Curr, LocToSub, Intersection, nullptr,
-            &NewLocsToSub)) {
+        if (MemoryInfo::intersect(Curr, LocToSub, nullptr,
+                                  &NewLocsToSub).hasValue()) {
           Intersected = true;
         } else {
           NewLocsToSub.push_back(LocToSub);
@@ -446,7 +390,7 @@ public:
               llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey(), Curr);
         else
           isChanged = false;
-        isChanged = MemoryInfo::join(Curr, Loc);
+        isChanged = MemoryInfo::join(Loc, Curr);
         return std::make_pair(iterator(I, Idx), isChanged);
       }
       if (MemoryInfo::getNumDims(Loc) == 0 && MemoryInfo::sizecmp(
