@@ -55,6 +55,20 @@ namespace tsar {
 ///     Set the metadata nodes for a specified location.
 /// - static LocationTy make(Ty &)
 ///     Construct new memory location from the other one.
+/// - static inline uint64_t getNumDims(const LocationTy &)
+///     Return a number of dimensions of a specified location.
+/// - static inline bool areJoinable(const LocationTy &, const LocationTy &)
+///     Return `true` if one location can be joined to another, `false` 
+///     otherwise.
+/// - static inline bool join(const LocationTy &What, LocationTy &To)
+///     Join `What` location to `To` if they are joinable.
+/// - static inline bool hasIntersection(const LocationTy &, const LocationTy &)
+///     Return `true` if locations have an intersection, `false` otherwise.
+/// - inline llvm::Optional<LocationTy> intersect(
+///       const LocationTy &A, const LocationTy &B,
+///       llvm::SmallVectorImpl<LocationTy> *L,
+///       llvm::SmallVectorImpl<LocationTy> *R)
+///     Return the result of intersection of locations A and B.
 /// - Copy-constructor must be also available.
 /// In methods presented above the following denotements are used:
 /// - LocationTy is a type of memory locations which are stored in memory set.

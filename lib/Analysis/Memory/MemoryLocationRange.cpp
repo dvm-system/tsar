@@ -1,3 +1,27 @@
+//===- MemoryLocationRange.cpp ---- Memory Location Range -------*- C++ -*-===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file provides utility analysis objects describing memory locations.
+//
+//===----------------------------------------------------------------------===//
+
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include <bcl/Equation.h>
 #include <llvm/Support/Debug.h>
@@ -119,8 +143,6 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
         "Trip count must be positive!");
     ValueT L1 = Left.Start, K1 = Left.Step;
     ValueT L2 = Right.Start, K2 = Right.Step;
-    //Info.addVariable(std::make_pair("X", K1));
-    //Info.addVariable(std::make_pair("Y", -K2));
     VarRange XRange(0, Left.TripCount - 1), YRange(0, Right.TripCount - 1);
     LinearSystem System;
     System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
