@@ -173,91 +173,16 @@ namespace MemoryLocationRangeEquation {
   typedef MemoryLocationRange::Dimension Dimension;
 
   struct ColumnInfo {
-    void addVariable(const std::pair<std::string, ValueT> &Var) {
-      Variables.push_back(Var);
-    }
+    std::array<char, 3> Variables = {'X', 'Y', 'T'};
 
-    template<typename T>
-    T get(ColumnT Column) const {
-      return Variables[Column].second;
-    }
-
-    ColumnT parameterColumn() {
-      Variables.push_back(std::make_pair("T", 0));
-      return Variables.size() - 1;
-    }
-
-    ColumnT parameterColumn(ColumnT Column) {
-      Variables.push_back(Variables[Column]);
-      Variables.back().first += "'";
-      return Variables.size() - 1;
-    }
-
-    bool isParameter(ColumnT Column) const {
-      return Column > 1;
-    }
-
-    std::string name(ColumnT Column) const {
-      return Variables[Column].first;
-    }
-
-    std::vector<std::pair<std::string, ValueT>> Variables;
+    template<typename T> T get(ColumnT Column) const { return 0; }
+    ColumnT parameterColumn() { return 2; }
+    bool isParameter(ColumnT Column) const { return Column > 1; }
+    char name(ColumnT Column) const { return Variables[Column]; }
   };
 
-  /// \brief A special directed acyclic graph designed to generate dimension 
-  /// differences for multidimensional arrays.
-  class DimensionGraph {
-  public:
-    typedef llvm::SmallVectorImpl<MemoryLocationRange> LocationList;
-    /// Initializes the dimension graph. Let I = L intersect R. Depth is the 
-    /// number of dimensions of I, L, and R. LC and RC are lists of memory 
-    /// locations to which the differences between memory locations L and I, R 
-    /// and I respectively will be added.
-    DimensionGraph(std::size_t Depth, LocationList *LC, LocationList *RC)
-        : mLC(LC), mRC(RC) {
-      mNodes.resize(Depth + 1);
-      assert(mNodes.size() != 0 && "Node list must not be empty!");
-      mSource = &mNodes[0].emplace_back();
-    }
-
-    /// Initializes the level with number LevelN to the dimension graph. L and R
-    /// are elementary dimensions in original memory locations, I is the
-    /// intersection between L and R.
-    void addLevel(const Dimension &L, const Dimension &I, const Dimension &R,
-                  std::size_t LevelN);
-
-    /// Generates memory locations and adds them to lists LC and RC defined in
-    /// the constructor.
-    void generateRanges(const MemoryLocationRange &Loc);
-
-    void printGraph(llvm::raw_ostream &OS);
-    
-    void printSolutionInfo(llvm::raw_ostream &OS,
-                           const MemoryLocationRange &Int);
-  private:
-    struct Node {
-      Dimension Dim;
-      llvm::SmallVector<Node *, 4> LeftChildren, RightChildren;
-      bool IsIntersection;
-      Node(bool IsIntersection = false) : IsIntersection(IsIntersection) {}
-      Node(const Dimension &Dim, bool IsIntersection = false)
-          : Dim(Dim), IsIntersection(IsIntersection) {}
-    };
-    /// Finds difference between dimensions D and I where I is a subset of D
-    /// and adds results in Res.
-    void difference(const Dimension &D, const Dimension &I,
-        llvm::SmallVector<Node, 3> &Res);
-    
-    void fillDimension(Node *N, bool IsLeft, MemoryLocationRange &Loc,
-                       std::size_t Depth, LocationList *List, bool IntFlag);
-
-    Node *mSource;
-    llvm::SmallVector<llvm::SmallVector<Node, 3>, 4> mNodes;
-    LocationList *mLC, *mRC;
-  };
-
-  /// \brief Finds an intersection between non-scalar memory locations LHS and
-  /// RHS.
+  /// \brief Finds an intersection between memory locations LHS and RHS, one of 
+  /// which can be scalar.
   ///
   /// \param [in] LHS The first location to intersect.
   /// \param [in] RHS The second location to intersect.
@@ -269,12 +194,19 @@ namespace MemoryLocationRangeEquation {
   /// between locations RHS and Int. It will not be changed if the intersection
   /// is empty. If `RC == nullptr`, the difference will not be calculated and
   /// will not be stored anywhere.
-  /// \return The result of intersection.
+  /// \param [out] Threshold The maximum number of locations that can be 
+  /// obtained as a result of calculating the differences. If it is exceeded, 
+  /// exact differences will not be saved.
+  /// \return The result of intersection. If it is None, intersection is empty.
+  /// If it is a location, but DimList of the returned location is empty, then
+  /// the intersection may exist but can't be calculated. Otherwise, the
+  /// returned location is an exact intersection.
   llvm::Optional<MemoryLocationRange> intersect(
       const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS,
       llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
-      llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr);
+      llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
+      std::size_t Threshold = 10);
 }
 }
 

@@ -177,10 +177,9 @@ public:
         }
         llvm::SmallVector<Ty, 2> NewTails;
         for (auto &Tail : Tails) {
-          auto Result = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
-          if (Result.hasValue()) {
-            // If 
-            if (MemoryInfo::getNumDims(Result.getValue()) > 0)
+          auto IntOpt = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
+          if (IntOpt.hasValue()) {
+            if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
               UnionLocs.push_back(Curr);
             else
               return false;
@@ -246,8 +245,10 @@ public:
       auto &Curr = I->second[Idx];
       if (MemoryInfo::getNumDims(Loc) > 0 || MemoryInfo::getNumDims(Curr) > 0) {
         auto IntOpt = MemoryInfo::intersect(Curr, Loc);
-        if (IntOpt.hasValue())
-          Locs.push_back(IntOpt.getValue());
+        if (IntOpt.hasValue()) {
+          if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
+            Locs.push_back(IntOpt.getValue());
+        }
         continue;
       }
       if (MemoryInfo::sizecmp(
@@ -341,10 +342,10 @@ public:
         continue;
       LocationList NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
-        auto Result = MemoryInfo::intersect(Curr, LocToSub, nullptr,
+        auto IntOpt = MemoryInfo::intersect(Curr, LocToSub, nullptr,
                                             &NewLocsToSub);
-        if (Result.hasValue()) {
-          if (MemoryInfo::getNumDims(Result.getValue()) > 0)
+        if (IntOpt.hasValue()) {
+          if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
             Intersected = true;
         } else {
           NewLocsToSub.push_back(LocToSub);
