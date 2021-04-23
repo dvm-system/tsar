@@ -119,6 +119,8 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     return llvm::None;
   if (LHS.DimList.size() != RHS.DimList.size())
     return GetIncompleteLoc(LHS);
+  assert(LHS.Kind == LocKind::COLLAPSED && RHS.Kind == LocKind::COLLAPSED &&
+         "Intersected locations must be of the `collapsed` kind!");
   if (LHS.LowerBound == RHS.LowerBound &&
       LHS.UpperBound == RHS.UpperBound &&
       LHS.DimList == RHS.DimList) {

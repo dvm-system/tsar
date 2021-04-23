@@ -246,43 +246,40 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
     assert(areJoinable(What, To) && "Locations must be joinable!");
     if (To.DimList.size() != What.DimList.size())
       return false;
+    bool IsChanged = false;
     if (To.DimList.empty()) {
       if (sizecmp(getUpperBound(To), getUpperBound(What)) < 0) {
         setUpperBound(getUpperBound(What), To);
-        return true;
+        IsChanged = true;
       }
       if (sizecmp(getLowerBound(To), getLowerBound(What)) > 0) {
         setLowerBound(getLowerBound(What), To);
-        return true;
-      }
-      return false;
-    }
-    bool IsChanged = false;
-    for (size_t I = 0; I < To.DimList.size(); I++) {
-      auto &DimTo = To.DimList[I];
-      auto &DimFrom = What.DimList[I];
-      if (DimFrom.Start < DimTo.Start) {
-        DimTo.TripCount += (DimTo.Start - DimFrom.Start) / DimFrom.Step;
-        DimTo.Start = DimFrom.Start;
         IsChanged = true;
       }
-      auto ToEnd = DimTo.Start + DimTo.Step * (DimTo.TripCount - 1);
-      auto FromEnd = DimFrom.Start + DimFrom.Step * (DimFrom.TripCount - 1);
-      if (FromEnd > ToEnd) {
-        DimTo.TripCount += (FromEnd - ToEnd) / DimFrom.Step;
-        IsChanged = true;
+    } else {
+      for (size_t I = 0; I < To.DimList.size(); I++) {
+        auto &DimTo = To.DimList[I];
+        auto &DimFrom = What.DimList[I];
+        if (DimFrom.Start < DimTo.Start) {
+          DimTo.TripCount += (DimTo.Start - DimFrom.Start) / DimFrom.Step;
+          DimTo.Start = DimFrom.Start;
+          IsChanged = true;
+        }
+        auto ToEnd = DimTo.Start + DimTo.Step * (DimTo.TripCount - 1);
+        auto FromEnd = DimFrom.Start + DimFrom.Step * (DimFrom.TripCount - 1);
+        if (FromEnd > ToEnd) {
+          DimTo.TripCount += (FromEnd - ToEnd) / DimFrom.Step;
+          IsChanged = true;
+        }
       }
     }
     return IsChanged;
   }
   static inline bool hasIntersection(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
-    if (LHS.DimList.size() != RHS.DimList.size())
-      return false;
-    if (LHS.DimList.empty()) {
+    if (LHS.DimList.empty() && RHS.DimList.empty())
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
              sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
-    }
     return MemoryLocationRangeEquation::intersect(LHS, RHS).hasValue();
   }
   static inline llvm::Optional<MemoryLocationRange> intersect(

@@ -404,7 +404,9 @@ public:
         isChanged = MemoryInfo::join(Loc, Curr);
         return std::make_pair(iterator(I, Idx), isChanged);
       }
-      if (MemoryInfo::getNumDims(Loc) == 0 && MemoryInfo::sizecmp(
+      if (MemoryInfo::getNumDims(Loc) == 0 &&
+          MemoryInfo::getNumDims(*InsertItr) == 0 &&
+          MemoryInfo::sizecmp(
               MemoryInfo::getLowerBound(*InsertItr),
               MemoryInfo::getLowerBound(Loc)) <= 0)
         ++InsertItr;
@@ -505,7 +507,6 @@ public:
     }
     return true;
   }
-
 private:
   template<class SizeT>
   static const SizeT & max(const SizeT &L, const SizeT &R) {
