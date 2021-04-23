@@ -177,9 +177,14 @@ public:
         }
         llvm::SmallVector<Ty, 2> NewTails;
         for (auto &Tail : Tails) {
-          if (MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails).hasValue())
-            UnionLocs.push_back(Curr);
-          else
+          auto Result = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
+          if (Result.hasValue()) {
+            // If 
+            if (MemoryInfo::getNumDims(Result.getValue()) > 0)
+              UnionLocs.push_back(Curr);
+            else
+              return false;
+          } else
             NewTails.push_back(Tail);
         }
         Tails = std::move(NewTails);
@@ -196,6 +201,9 @@ public:
     for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
          Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
+      // We don't know if collapsed location Curr contains scalar Loc.
+      if (MemoryInfo::getNumDims(Curr) > 0)
+        return false;
       if (MemoryInfo::sizecmp(
               MemoryInfo::getUpperBound(Curr),
               MemoryInfo::getLowerBound(Tail)) <= 0)
@@ -213,7 +221,7 @@ public:
               MemoryInfo::getLowerBound(Tail)) < 0) {
           if (Locs) {
             for (std::size_t LocIdx = StartIdx; LocIdx < Idx; ++LocIdx)
-              UnionLocs.push_back(I->second[LocIdx]);
+              Locs->push_back(I->second[LocIdx]);
           }
           return true;
         }
@@ -233,17 +241,15 @@ public:
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return;
-    if (MemoryInfo::getNumDims(Loc) > 0) {
-      for (auto &Curr : I->second) {
-        auto IntOpt = MemoryInfo::intersect(Curr, Loc);
-        if (IntOpt.hasValue())
-          Locs.push_back(IntOpt.getValue());
-      }
-      return;
-    }
     bool IsEmptyList = true;
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
+      if (MemoryInfo::getNumDims(Loc) > 0 || MemoryInfo::getNumDims(Curr) > 0) {
+        auto IntOpt = MemoryInfo::intersect(Curr, Loc);
+        if (IntOpt.hasValue())
+          Locs.push_back(IntOpt.getValue());
+        continue;
+      }
       if (MemoryInfo::sizecmp(
               MemoryInfo::getUpperBound(Curr),
               MemoryInfo::getLowerBound(Loc)) <= 0)
@@ -325,6 +331,8 @@ public:
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return false;
+    if (MemoryInfo::getNumDims(Loc) < 1)
+      return false;
     bool Intersected = false;
     LocationList LocsToSub { Loc };
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
@@ -333,9 +341,11 @@ public:
         continue;
       LocationList NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
-        if (MemoryInfo::intersect(Curr, LocToSub, nullptr,
-                                  &NewLocsToSub).hasValue()) {
-          Intersected = true;
+        auto Result = MemoryInfo::intersect(Curr, LocToSub, nullptr,
+                                            &NewLocsToSub);
+        if (Result.hasValue()) {
+          if (MemoryInfo::getNumDims(Result.getValue()) > 0)
+            Intersected = true;
         } else {
           NewLocsToSub.push_back(LocToSub);
         }
