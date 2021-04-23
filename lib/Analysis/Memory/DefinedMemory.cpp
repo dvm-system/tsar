@@ -976,7 +976,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     for (auto &Loc : DU->getDefs()) {
       auto *DFL = dyn_cast<DFLoop>(R);
       if (DFL && HasTrips) {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check latch node.\n");
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check LatchDefs.\n");
         LatchDefs->MustReach.findCoveredBy(Loc, Locs);
         if (!Locs.empty()) {
           LLVM_DEBUG(dbgs() <<
@@ -992,6 +992,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
               [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
         }
       } else {
+        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check ExitingDefs.\n");
         ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
         if (!Locs.empty()) {
           LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
