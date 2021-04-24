@@ -54,10 +54,11 @@ struct MemoryLocationRange {
     uint64_t Start;
     uint64_t Step;
     uint64_t TripCount;
-    Dimension() : Start(0), Step(0), TripCount(0) {}
+    uint64_t DimSize;
+    Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
     inline bool operator==(const Dimension &Other) const {
       return Start == Other.Start && Step == Other.Step &&
-             TripCount == Other.TripCount;
+             TripCount == Other.TripCount && DimSize == Other.DimSize;
     }
   };
 
@@ -202,8 +203,8 @@ namespace MemoryLocationRangeEquation {
   /// the intersection may exist but can't be calculated. Otherwise, the
   /// returned location is an exact intersection.
   llvm::Optional<MemoryLocationRange> intersect(
-      const MemoryLocationRange &LHS,
-      const MemoryLocationRange &RHS,
+      MemoryLocationRange LHS,
+      MemoryLocationRange RHS,
       llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
       llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
       std::size_t Threshold = 10);

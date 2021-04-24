@@ -345,10 +345,20 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
   for (auto *S : LocInfo.second->Subscripts) {
     ResLoc.Kind = LocKind::NON_COLLAPSABLE;
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
+    if (!ArrayPtr->isKnownDimSize(DimensionN) && DimensionN != 0) {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Failed to get dimension "
+                           "size for required dimension `" << DimensionN <<
+                           "`.\n");
+      break;
+    }
     Dimension DimInfo;
-    uint64_t DimSize = 0;
-    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN)))
-      DimSize = C->getAPInt().getZExtValue();
+    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN))) {
+      DimInfo.DimSize = C->getAPInt().getZExtValue();
+    } else {
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Non-constant dimension size.\n");
+      if (DimensionN != 0)
+        break;
+    }
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
     if (Fwk->getGlobalOptions().IsSafeTypeCast && !AddRecInfo.second)
       break;
@@ -398,8 +408,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       DimInfo.Start = SignedRangeMin;
       DimInfo.TripCount = TripCount;
       DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
-      if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >= DimSize &&
-          DimensionN != 0) {
+      if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >=
+          DimInfo.DimSize && DimensionN != 0) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array index out of bounds.");
         break;
       }
@@ -431,6 +441,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       dbgs() << "\tStart:" << DimInfo.Start << "\n";
       dbgs() << "\tTripCount:" << DimInfo.TripCount << "\n";
       dbgs() << "\tStep:" << DimInfo.Step << "\n";
+      dbgs() << "\tDimSize:" << DimInfo.DimSize << "\n";
     }
   );
   Inserter(ResLoc);
@@ -986,8 +997,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //     X = ...;
     // }
     for (auto &Loc : DU->getDefs()) {
-      auto *DFL = dyn_cast<DFLoop>(R);
-      if (DFL && HasTrips) {
+      if (dyn_cast<DFLoop>(R) && HasTrips) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check LatchDefs.\n");
         llvm::SmallVector<MemoryLocationRange, 4> Locs;
         LatchDefs->MustReach.findCoveredBy(Loc, Locs);

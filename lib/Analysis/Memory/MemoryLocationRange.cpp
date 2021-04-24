@@ -41,6 +41,7 @@ bool difference(const Dimension &D, const Dimension &I,
     Left.Step = D.Step;
     Left.Start = D.Start;
     Left.TripCount = (I.Start - D.Start) / D.Step;
+    Left.DimSize = D.DimSize;
   }
   auto DEnd = D.Start + D.Step * (D.TripCount - 1);
   auto IEnd = I.Start + I.Step * (I.TripCount - 1);
@@ -49,6 +50,7 @@ bool difference(const Dimension &D, const Dimension &I,
     Right.Step = D.Step;
     Right.Start = IEnd + D.Step;
     Right.TripCount = (DEnd - IEnd) / D.Step;
+    Right.DimSize = D.DimSize;
   }
   if (I.TripCount > 1) {
     // I.Step % D.Step is always 0 because I is a subset of D.
@@ -60,6 +62,7 @@ bool difference(const Dimension &D, const Dimension &I,
       Center.Start = I.Start + D.Step * (J + 1);
       Center.Step = D.Step;
       Center.TripCount = I.TripCount - 1;
+      Center.DimSize = D.DimSize;
     }
   }
   return true;
@@ -73,7 +76,7 @@ void printSolutionInfo(llvm::raw_ostream &OS,
     auto &Dim = R.DimList[0];
     OS << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
     OS << Dim.Start << " + " << Dim.Step << " * T, T in [" << 0 <<
-        ", " << Dim.TripCount << ")} ";
+        ", " << Dim.TripCount << "), DimSize: " << Dim.DimSize << "} ";
   };
   OS << "\n[EQUATION] Solution:\n";
   OS << "Left: ";
@@ -90,11 +93,52 @@ void printSolutionInfo(llvm::raw_ostream &OS,
     }
   OS << "\n[EQUATION] Solution has been printed.\n";
 }
+
+void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
+  typedef MemoryLocationRange::LocKind LocKind;
+  if (What.Kind != LocKind::DEFAULT)
+    return;
+  if (!What.LowerBound.hasValue() || !What.UpperBound.hasValue())
+    return;
+  auto Lower = What.LowerBound.getValue();
+  auto Upper = What.UpperBound.getValue();
+  auto DimN = From.DimList.size();
+  if (DimN == 0)
+    return;
+  std::vector<uint64_t> SizesInBytes(DimN + 1, 0);
+  assert(From.UpperBound.hasValue() &&
+      "UpperBound of a collapsed array location must have a value!");
+  auto ElemSize = From.UpperBound.getValue();
+  if (Lower % ElemSize != 0 || Upper % ElemSize != 0)
+    return;
+  SizesInBytes.back() = ElemSize;
+  for (int64_t DimIdx = DimN - 1; DimIdx >= 0; DimIdx--) {
+    SizesInBytes[DimIdx] = From.DimList[DimIdx].DimSize *
+                            SizesInBytes[DimIdx + 1];
+    if (SizesInBytes[DimIdx] == 0)
+      assert(DimIdx == 0 && "Collapsed memory location should not contain "
+          "dimensions of size 0, except for the 0th dimension.");
+  }
+  MemoryLocationRange ResLoc(What);
+  ResLoc.DimList.resize(DimN);
+  for (int64_t Idx = DimN - 1; Idx >= 0; Idx--) {
+    auto &Dim = ResLoc.DimList[Idx];
+    auto SizeInBytes = SizesInBytes[Idx + 1];
+    uint64_t LowerI = Lower / SizeInBytes;
+    uint64_t UpperI = (Upper - 1) / SizeInBytes;
+    Dim.Start = LowerI;
+    Dim.Step = 1;
+    Dim.TripCount = UpperI - LowerI + 1;
+    Dim.DimSize = From.DimList[Idx].DimSize;
+  }
+  ResLoc.Kind = LocKind::COLLAPSED;
+  What = ResLoc;
+}
 };
 
 llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
-    const MemoryLocationRange &LHS,
-    const MemoryLocationRange &RHS,
+    MemoryLocationRange LHS,
+    MemoryLocationRange RHS,
     llvm::SmallVectorImpl<MemoryLocationRange> *LC,
     llvm::SmallVectorImpl<MemoryLocationRange> *RC,
     std::size_t Threshold) {
@@ -106,6 +150,7 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
   assert(LHS.Ptr && RHS.Ptr &&
       "Pointers of intersected memory locations must not be null!");
   assert((LHS.Kind != LocKind::DEFAULT || RHS.Kind != LocKind::DEFAULT) &&
+         (!LHS.DimList.empty() || !RHS.DimList.empty()) &&
       "It is forbidden to calculate an intersection between scalar variables.");
   // Return a location that may be an intersection, but cannot be calculated 
   // exactly.
@@ -117,6 +162,10 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
   };
   if (LHS.Ptr != RHS.Ptr)
     return llvm::None;
+  if (LHS.Kind == LocKind::DEFAULT)
+    delinearize(RHS, LHS);
+  else if (RHS.Kind == LocKind::DEFAULT)
+    delinearize(LHS, RHS);
   if (LHS.DimList.size() != RHS.DimList.size())
     return GetIncompleteLoc(LHS);
   assert(LHS.Kind == LocKind::COLLAPSED && RHS.Kind == LocKind::COLLAPSED &&
@@ -129,6 +178,8 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
     auto &Left = LHS.DimList[I];
     auto &Right = RHS.DimList[I];
+    if (Left.DimSize != Right.DimSize)
+      return GetIncompleteLoc(LHS);
     auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
     auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
     if (LeftEnd < Right.Start || RightEnd < Left.Start) {
@@ -179,6 +230,7 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     Intersection.Start = Start;
     Intersection.Step = Step;
     Intersection.TripCount = Tmax + 1;
+    Intersection.DimSize = Left.DimSize; // ???
     assert(Start >= 0 && "Start must be non-negative!");
     assert(Step > 0 && "Step must be positive!");
     assert(Intersection.TripCount > 0 && "Trip count must be non-negative!");
