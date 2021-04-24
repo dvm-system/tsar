@@ -786,7 +786,7 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
         auto *Expr = mSE->getSCEV(const_cast<Value *>(Loc.Ptr));
         bool IsInvariant =
           isLoopInvariant(Expr, L, *mTLI, *mSE, DefUse, *mAliasTree, AliasSTR);
-        if (IsInvariant && DefUse.hasDef(Loc))
+        if (IsInvariant && ExitingDefs.MustReach.contain(Loc))
           CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
         else if (IsInvariant && LatchDefs.MustReach.contain(Loc) &&
                  !ExitingDefs.MayReach.overlap(Loc))

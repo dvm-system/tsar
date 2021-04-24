@@ -121,11 +121,9 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     return GetIncompleteLoc(LHS);
   assert(LHS.Kind == LocKind::COLLAPSED && RHS.Kind == LocKind::COLLAPSED &&
          "Intersected locations must be of the `collapsed` kind!");
-  if (LHS.LowerBound == RHS.LowerBound &&
-      LHS.UpperBound == RHS.UpperBound &&
-      LHS.DimList == RHS.DimList) {
+  if (LHS.LowerBound == RHS.LowerBound && LHS.UpperBound == RHS.UpperBound &&
+      LHS.DimList == RHS.DimList)
     return LHS;
-  }
   bool Intersected = true;
   MemoryLocationRange Int(LHS);
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
@@ -140,7 +138,7 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     ColumnInfo Info;
     assert(Left.Start >= 0 && Right.Start >= 0 && "Start must be non-negative!");
     // We guarantee that K1 and K2 will not be equal to 0.
-    assert(Left.Step > 0 && Right.Step > 0 && "Steps must be non-negative!");
+    assert(Left.Step > 0 && Right.Step > 0 && "Steps must be positive!");
     assert(Left.TripCount > 0 && Right.TripCount > 0 &&
         "Trip count must be positive!");
     ValueT L1 = Left.Start, K1 = Left.Step;

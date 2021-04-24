@@ -258,6 +258,18 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 }
 #endif
 
+/// If memory location `Loc` is associated with an array, collect information 
+/// about array accesses, create new memory location `ResLoc` and use it in 
+/// `Inserter`. If the information was collected successfully and meets certain 
+/// conditions, `ResLoc.DimList` will be filled with information about the 
+/// dimensions of the array, and the `ResLoc.Kind` will be set to `COLLAPSED`.
+/// Otherwise, the `ResLoc.Kind` will be set to `NON_COLLAPSABLE`.
+///
+/// If `R == nullptr`, this means that the collection of information is about a 
+/// single array access within the basic block, this is used in
+/// `DataFlowTraits<ReachDFFwk*>::initialize()`. If `R != nullptr`, it 
+/// may be necessary to ignore memory location that is not associated with `R`. 
+/// `IgnoreLoopMismatch` is used for this.
 template<typename FuncT>
 void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     const ReachDFFwk *Fwk, FuncT &&Inserter, bool IgnoreLoopMismatch=false) {
@@ -328,6 +340,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
   ResLoc.UpperBound = Fwk->getDataLayout().getTypeStoreSize(ElemType).
       getFixedSize();
   ResLoc.Kind = LocKind::COLLAPSED;
+  auto *SE = Fwk->getScalarEvolution();
+  assert(SE && "ScalarEvolution must be specified!");
   for (auto *S : LocInfo.second->Subscripts) {
     ResLoc.Kind = LocKind::NON_COLLAPSABLE;
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
@@ -335,15 +349,12 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     uint64_t DimSize = 0;
     if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN)))
       DimSize = C->getAPInt().getZExtValue();
-    auto *SE = Fwk->getScalarEvolution();
-    assert(SE && "ScalarEvolution must be specified!");
     auto AddRecInfo = computeSCEVAddRec(S, *SE);
     if (Fwk->getGlobalOptions().IsSafeTypeCast && !AddRecInfo.second)
       break;
     auto SCEV = AddRecInfo.first;
     if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
-      auto Range = C->getAPInt().getSExtValue();
-      DimInfo.Start = Range;
+      DimInfo.Start = C->getAPInt().getSExtValue();
       DimInfo.TripCount = 1;
       DimInfo.Step = 1;
       ResLoc.DimList.push_back(DimInfo);
@@ -414,7 +425,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       "Array location must be of the `collapsed` kind!");
   LLVM_DEBUG(
     dbgs() << "[ARRAY LOCATION] Dimension info:\n";
-    for (size_t I = 0; I < ResLoc.DimList.size(); I++) {
+    for (std::size_t I = 0; I < ResLoc.DimList.size(); ++I) {
       auto &DimInfo = ResLoc.DimList[I];
       dbgs() << "Dimension: '" << I << "':\n";
       dbgs() << "\tStart:" << DimInfo.Start << "\n";
@@ -423,6 +434,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     }
   );
   Inserter(ResLoc);
+  if (!R)
+    Inserter(Loc);
 }
 
 /// This functor adds into a specified DefUseSet all locations from a specified
@@ -972,11 +985,11 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //   if (...)
     //     X = ...;
     // }
-    llvm::SmallVector<MemoryLocationRange, 4> Locs;
     for (auto &Loc : DU->getDefs()) {
       auto *DFL = dyn_cast<DFLoop>(R);
       if (DFL && HasTrips) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check LatchDefs.\n");
+        llvm::SmallVector<MemoryLocationRange, 4> Locs;
         LatchDefs->MustReach.findCoveredBy(Loc, Locs);
         if (!Locs.empty()) {
           LLVM_DEBUG(dbgs() <<
@@ -991,20 +1004,20 @@ void ReachDFFwk::collapse(DFRegion *R) {
           addLocation(R, Loc, this,
               [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
         }
-      } else {
-        LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check ExitingDefs.\n");
-        ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
-        if (!Locs.empty()) {
-          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
-          for (auto &L : Locs) {
-            addLocation(R, L, this,
-                [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
-          }
-        } else {
-          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-          addLocation(R, Loc, this,
-              [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
+      }
+      LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check ExitingDefs.\n");
+      llvm::SmallVector<MemoryLocationRange, 4> Locs;
+      ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
+      if (!Locs.empty()) {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
+        for (auto &L : Locs) {
+          addLocation(R, L, this,
+              [&DefUse](auto &Loc){ DefUse->addDef(Loc); });
         }
+      } else {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
+        addLocation(R, Loc, this,
+            [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
@@ -1025,16 +1038,16 @@ void ReachDFFwk::collapse(DFRegion *R) {
     LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Explicit Accesses.\n");
     MemoryLocationRange ExpLoc;
     addLocation(R, Loc, this, [&ExpLoc](auto &Loc){ ExpLoc = Loc; },
-                      true);
+                true);
     if (ExpLoc.Kind != MemoryLocationRange::LocKind::COLLAPSED)
       continue;
     MemoryLocationRange NewLoc(Loc);
     NewLoc.Kind = MemoryLocationRange::LocKind::EXPLICIT;
-    if (DefUse->getDefs().contain(ExpLoc))
+    if (DefUse->hasDef(ExpLoc))
       DefUse->addDef(NewLoc);
-    if (DefUse->getMayDefs().overlap(ExpLoc))
+    if (DefUse->hasMayDef(ExpLoc))
       DefUse->addMayDef(NewLoc);
-    if (DefUse->getUses().overlap(ExpLoc))
+    if (DefUse->hasUse(ExpLoc))
       DefUse->addUse(NewLoc);
   }
   LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
