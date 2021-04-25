@@ -407,7 +407,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       }
       DimInfo.Start = SignedRangeMin;
       DimInfo.TripCount = TripCount;
-      DimInfo.Step = cast<SCEVConstant>(StepSCEV)->getAPInt().getZExtValue();
+      DimInfo.Step = std::abs(cast<SCEVConstant>(StepSCEV)->
+                              getAPInt().getSExtValue());
       if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >=
           DimInfo.DimSize && DimensionN != 0) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array index out of bounds.");

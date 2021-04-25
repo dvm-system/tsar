@@ -110,27 +110,52 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   assert(From.UpperBound.hasValue() &&
       "UpperBound of a collapsed array location must have a value!");
   auto ElemSize = From.UpperBound.getValue();
-  auto SizeInBytes1 = ElemSize;
-  for (std::size_t I = 1; I < From.DimList.size(); ++I)
-    SizeInBytes1 *= From.DimList[I].DimSize;
-  if (Lower % SizeInBytes1 != 0 || Upper % SizeInBytes1 != 0)
+  std::vector<uint64_t> SizesInBytes(DimN + 1, 0);
+  if (Lower % ElemSize != 0 || Upper % ElemSize != 0)
     return;
-  MemoryLocationRange ResLoc(What);
-  ResLoc.DimList.resize(DimN);
-  auto &FirstDim = ResLoc.DimList[0];
-  FirstDim.Start = Lower / SizeInBytes1;
-  FirstDim.Step = 1;
-  FirstDim.TripCount = Upper / SizeInBytes1 - FirstDim.Start;
-  FirstDim.DimSize = From.DimList[0].DimSize;
-  for (auto Idx = 1; Idx < DimN; ++Idx) {
-    auto &Dim = ResLoc.DimList[Idx];
-    Dim.Start = 0;
-    Dim.Step = 1;
-    Dim.DimSize = From.DimList[Idx].DimSize;
-    Dim.TripCount = Dim.DimSize;
+  SizesInBytes.back() = ElemSize;
+  for (int64_t DimIdx = DimN - 1; DimIdx >= 0; DimIdx--) {
+    SizesInBytes[DimIdx] = From.DimList[DimIdx].DimSize *
+                            SizesInBytes[DimIdx + 1];
+    if (SizesInBytes[DimIdx] == 0)
+      assert(DimIdx == 0 && "Collapsed memory location should not contain "
+          "dimensions of size 0, except for the 0th dimension.");
   }
-  ResLoc.Kind = LocKind::COLLAPSED;
-  What = ResLoc;
+  std::vector<uint64_t> LowerIdx(DimN, 0), UpperIdx(DimN, 0);
+  for (std::size_t I = 0; I < DimN; ++I) {
+    auto CurrSize = SizesInBytes[I], NextSize = SizesInBytes[I + 1];
+    LowerIdx[I] = CurrSize > 0 ? (Lower % CurrSize) / NextSize :
+                                  Lower / NextSize;
+    UpperIdx[I] = CurrSize > 0 ?  ((Upper - 1) % CurrSize) / NextSize :
+                                  (Upper - 1) / NextSize;
+  }
+  if (LowerIdx[DimN - 1] == 0 &&
+      UpperIdx[DimN - 1] + 1 == From.DimList[DimN - 1].DimSize) {
+    for (std::size_t I = 1; I < DimN - 1; ++I)
+      if (LowerIdx[I] != 0 || UpperIdx[I] + 1 != From.DimList[I].DimSize)
+        return;
+    What.DimList.resize(DimN);
+    for (std::size_t I = 0; I < DimN; ++I) {
+      auto &Dim = What.DimList[I];
+      Dim.Start = LowerIdx[I];
+      Dim.Step = 1;
+      Dim.TripCount = UpperIdx[I] - LowerIdx[I] + 1;
+      Dim.DimSize = From.DimList[I].DimSize;
+    }
+  } else {
+    for (std::size_t I = 0; I < DimN - 1; ++I)
+      if (LowerIdx[I] != UpperIdx[I])
+        return;
+    What.DimList.resize(DimN);
+    for (std::size_t I = 0; I < DimN; ++I) {
+      auto &Dim = What.DimList[I];
+      Dim.Start = LowerIdx[I];
+      Dim.Step = 1;
+      Dim.TripCount = UpperIdx[I] - LowerIdx[I] + 1;
+      Dim.DimSize = From.DimList[I].DimSize;
+    }
+  }
+  What.Kind = LocKind::COLLAPSED;
 }
 };
 
