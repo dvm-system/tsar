@@ -102,34 +102,32 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
     return;
   auto Lower = What.LowerBound.getValue();
   auto Upper = What.UpperBound.getValue();
-  auto DimN = From.DimList.size();
+  if (Lower >= Upper)
+    return;
+  const auto DimN = From.DimList.size();
   if (DimN == 0)
     return;
-  std::vector<uint64_t> SizesInBytes(DimN + 1, 0);
   assert(From.UpperBound.hasValue() &&
       "UpperBound of a collapsed array location must have a value!");
   auto ElemSize = From.UpperBound.getValue();
-  if (Lower % ElemSize != 0 || Upper % ElemSize != 0)
+  auto SizeInBytes1 = ElemSize;
+  for (std::size_t I = 1; I < From.DimList.size(); ++I)
+    SizeInBytes1 *= From.DimList[I].DimSize;
+  if (Lower % SizeInBytes1 != 0 || Upper % SizeInBytes1 != 0)
     return;
-  SizesInBytes.back() = ElemSize;
-  for (int64_t DimIdx = DimN - 1; DimIdx >= 0; DimIdx--) {
-    SizesInBytes[DimIdx] = From.DimList[DimIdx].DimSize *
-                            SizesInBytes[DimIdx + 1];
-    if (SizesInBytes[DimIdx] == 0)
-      assert(DimIdx == 0 && "Collapsed memory location should not contain "
-          "dimensions of size 0, except for the 0th dimension.");
-  }
   MemoryLocationRange ResLoc(What);
   ResLoc.DimList.resize(DimN);
-  for (int64_t Idx = DimN - 1; Idx >= 0; Idx--) {
+  auto &FirstDim = ResLoc.DimList[0];
+  FirstDim.Start = Lower / SizeInBytes1;
+  FirstDim.Step = 1;
+  FirstDim.TripCount = Upper / SizeInBytes1 - FirstDim.Start;
+  FirstDim.DimSize = From.DimList[0].DimSize;
+  for (auto Idx = 1; Idx < DimN; ++Idx) {
     auto &Dim = ResLoc.DimList[Idx];
-    auto SizeInBytes = SizesInBytes[Idx + 1];
-    uint64_t LowerI = Lower / SizeInBytes;
-    uint64_t UpperI = (Upper - 1) / SizeInBytes;
-    Dim.Start = LowerI;
+    Dim.Start = 0;
     Dim.Step = 1;
-    Dim.TripCount = UpperI - LowerI + 1;
     Dim.DimSize = From.DimList[Idx].DimSize;
+    Dim.TripCount = Dim.DimSize;
   }
   ResLoc.Kind = LocKind::COLLAPSED;
   What = ResLoc;
