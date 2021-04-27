@@ -782,8 +782,6 @@ bool RestrictionArgumentsPass::runOnModule(Module& M) {
 
   for (auto& FInfo : RestrictFunctionsInfo) {
     auto F = FInfo.first;
-//    auto& Args = FInfo.second;
-//    std::set<int> orderedArgs(Args.begin(), Args.end());
     for (auto ArgIdx : FInfo.second) {
       F->addParamAttr(ArgIdx, Attribute::NoAlias);
     }

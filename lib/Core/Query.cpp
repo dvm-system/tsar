@@ -172,6 +172,7 @@ void addAfterFunctionInlineAnalysis(
 
 void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
   Passes.add(createPassBarrier());
+  Passes.add(createRestrictionArgumentsPass());
   Passes.add(
       createProcessDIMemoryTraitPass(markIf<trait::Lock, trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
