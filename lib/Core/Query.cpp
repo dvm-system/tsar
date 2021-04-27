@@ -154,6 +154,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
   Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createRestrictionArgumentsPass());
 }
 
 void addAfterFunctionInlineAnalysis(
@@ -171,6 +172,7 @@ void addAfterFunctionInlineAnalysis(
 
 void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
   Passes.add(createPassBarrier());
+  Passes.add(createRestrictionArgumentsPass());
   Passes.add(
       createProcessDIMemoryTraitPass(markIf<trait::Lock, trait::HeaderAccess>));
   Passes.add(createLoopRotatePass());
