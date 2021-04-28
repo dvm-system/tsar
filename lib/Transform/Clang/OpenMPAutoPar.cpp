@@ -255,12 +255,11 @@ trait::DIDependence::DistanceVector makeOrderedRange(
       auto Size = EnclosingPNestSize + Dist.size();
       if (Size < DV.size())
         DV.resize(Size);
-      for (unsigned I = EnclosingPNestSize, EI = EnclosingPNestSize + DV.size();
-           I < EI; ++I) {
-        if (*Dist[I].first < *DV[I].first)
-          DV[I].first = *Dist[I].first;
-        if (*Dist[I].second > DV[I].second)
-          DV[I].second = Dist[I].second;
+      for (unsigned I = EnclosingPNestSize, EI = DV.size(); I < EI; ++I) {
+        if (*Dist[I - EnclosingPNestSize].first < *DV[I].first)
+          DV[I].first = *Dist[I - EnclosingPNestSize].first;
+        if (*Dist[I - EnclosingPNestSize].second > DV[I].second)
+          DV[I].second = Dist[I - EnclosingPNestSize].second;
       }
     }
   };
