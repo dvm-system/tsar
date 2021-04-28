@@ -608,6 +608,8 @@ void buildOrederedSink(const trait::DIDependence::DistanceVector &SinkRange,
   } else {
     auto Dist = *SinkRange[CurrDepth].first;
     auto MaxDist = *SinkRange[CurrDepth].second;
+    if (Dist > MaxDist)
+      std::swap(Dist, MaxDist);
     for (; Dist <= MaxDist; ++Dist) {
       SinkTemplate[CurrDepth] = Dist;
       buildOrederedSink(SinkRange, Depth, Inductions, CurrDepth + 1,
