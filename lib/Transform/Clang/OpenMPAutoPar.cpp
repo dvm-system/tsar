@@ -674,12 +674,14 @@ bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
                 buildOrederedSink(Sink, OmpOrdered->depth(), Inductions, 0,
                                   SinkTemplate, PragmaStr);
               PragmaStr += "\n";
-              ToBodyBegin.second.After += PragmaStr;
-              ToBodyBegin.second.AfterAfterToken = false;
               if (!isa<CompoundStmt>(For->getBody())) {
                 ToBodyBegin.second.Delimiter = "{\n";
                 ToBodyBegin.second.DelimiterAfterToken = false;
+              } else {
+                ToBodyBegin.second.After += "\n";
+                ToBodyBegin.second.AfterAfterToken = true;
               }
+              ToBodyBegin.second.After += PragmaStr;
             } else {
               llvm_unreachable(
                   "An unknown pragma has been attached to an instruction!");
