@@ -453,16 +453,18 @@ public:
     if (ScopeItr == mScopeToAccesses.end())
       return mArrayAccesses.end();
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end() ? mArrayAccesses.end()
-                                              : ArrayItr->get<Begin>();
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
+               ? mArrayAccesses.end()
+               : ArrayItr->get<Begin>();
   }
   array_iterator array_end(const Array &A, const Scope &S) {
     auto ScopeItr = mScopeToAccesses.find(S);
     if (ScopeItr == mScopeToAccesses.end())
       return mArrayAccesses.end();
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end() ? mArrayAccesses.end()
-                                              : ArrayItr->get<End>();
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
+               ? mArrayAccesses.end()
+               : ArrayItr->get<End>();
   }
 
   /// Iterate over all accesses to a specified array in a scope.
@@ -472,7 +474,7 @@ public:
     if (ScopeItr == mScopeToAccesses.end())
       return llvm::make_range(mArrayAccesses.end(), mArrayAccesses.end());
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end()
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
                ? llvm::make_range(mArrayAccesses.end(), mArrayAccesses.end())
                : llvm::make_range(ArrayItr->get<Begin>(), ArrayItr->get<End>());
   }
@@ -482,16 +484,18 @@ public:
     if (ScopeItr == mScopeToAccesses.end())
       return mArrayAccesses.end();
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end() ? mArrayAccesses.end()
-                                              : ArrayItr->get<Begin>();
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
+               ? mArrayAccesses.end()
+               : ArrayItr->get<Begin>();
   }
   const_array_iterator array_end(const Array &A, const Scope &S) const {
     auto ScopeItr = mScopeToAccesses.find(S);
     if (ScopeItr == mScopeToAccesses.end())
       return mArrayAccesses.end();
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end() ? mArrayAccesses.end()
-                                              : ArrayItr->get<End>();
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
+               ? mArrayAccesses.end()
+               : ArrayItr->get<End>();
   }
 
   /// Iterate over all accesses to a specified array in a scope.
@@ -501,7 +505,7 @@ public:
     if (ScopeItr == mScopeToAccesses.end())
       return llvm::make_range(mArrayAccesses.end(), mArrayAccesses.end());
     auto ArrayItr = ScopeItr->get<ArrayToAccessMap>().find(A);
-    return ArrayItr == mArrayToAccesses.end()
+    return ArrayItr == ScopeItr->get<ArrayToAccessMap>().end()
                ? llvm::make_range(mArrayAccesses.end(), mArrayAccesses.end())
                : llvm::make_range(const_array_iterator(ArrayItr->get<Begin>()),
                                   const_array_iterator(ArrayItr->get<End>()));
