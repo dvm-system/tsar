@@ -244,8 +244,8 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
   case LocKind::COLLAPSED:
     OS << "COLLAPSED";
     break;
-  case LocKind::EXPLICIT:
-    OS << "EXPLICIT";
+  case LocKind::HINT:
+    OS << "HINT";
     break;
   case LocKind::INVALID_KIND:
     OS << "INVALID_KIND";
@@ -283,7 +283,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     Inserter(Loc);
     return;
   }
-  if (Loc.Kind == LocKind::EXPLICIT)
+  if (Loc.Kind == LocKind::HINT)
     return;
   MemoryLocationRange ResLoc(Loc);
   auto LocInfo = Fwk->getDelinearizeInfo()->findRange(Loc.Ptr);
@@ -310,6 +310,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     Inserter(ResLoc);
     return;
   }
+  
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array type: " << *ArrayType << ".\n");
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Element type: " <<
       ArrayType->getTypeID() << ".\n");
@@ -324,17 +325,16 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
   auto ElemType = std::get<2>(ArraySizeInfo);
   LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Array element type:  " <<
       *ElemType << ".\n");
-  if (Fwk->getDataLayout().getTypeStoreSize(ElemType).isScalable()) {
+  if (Fwk->getDataLayout().getTypeStoreSize(ElemType).isScalable() ||
+      LocInfo.second->Subscripts.size() != ArrayPtr->getNumberOfDims() ||
+      !Loc.LowerBound.hasValue() || !Loc.UpperBound.hasValue() ||
+      Loc.LowerBound.getValue() != 0 ||
+      Loc.UpperBound.getValue() != Fwk->getDataLayout().
+                                   getTypeStoreSize(ElemType).getFixedSize()) {
     ResLoc.Kind = LocKind::NON_COLLAPSABLE;
     Inserter(ResLoc);
     return;
   }
-  if (LocInfo.second->Subscripts.size() != ArrayPtr->getNumberOfDims()) {
-    ResLoc.Kind = LocKind::NON_COLLAPSABLE;
-    Inserter(ResLoc);
-    return;
-  }
-  size_t DimensionN = 0;
   ResLoc.Ptr = ArrayPtr->getBase();
   ResLoc.LowerBound = 0;
   ResLoc.UpperBound = Fwk->getDataLayout().getTypeStoreSize(ElemType).
@@ -342,6 +342,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
   ResLoc.Kind = LocKind::COLLAPSED;
   auto *SE = Fwk->getScalarEvolution();
   assert(SE && "ScalarEvolution must be specified!");
+  size_t DimensionN = 0;
   for (auto *S : LocInfo.second->Subscripts) {
     ResLoc.Kind = LocKind::NON_COLLAPSABLE;
     LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Subscript: " << *S << "\n");
@@ -364,6 +365,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       break;
     auto SCEV = AddRecInfo.first;
     if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
+      if (C->getAPInt().isNegative())
+        break;
       DimInfo.Start = C->getAPInt().getSExtValue();
       DimInfo.TripCount = 1;
       DimInfo.Step = 1;
@@ -416,9 +419,8 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
       }
       ResLoc.DimList.push_back(DimInfo);
       ResLoc.Kind = LocKind::COLLAPSED;
-    } else {
+    } else
       break;
-    }
     ++DimensionN;
   }
   if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
@@ -446,8 +448,6 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
     }
   );
   Inserter(ResLoc);
-  if (!R)
-    Inserter(Loc);
 }
 
 /// This functor adds into a specified DefUseSet all locations from a specified
@@ -510,11 +510,13 @@ private:
   void addMust(const MemoryLocationRange &Loc) {
     addLocation(nullptr, Loc, DFF,
         [this](auto &Loc) { static_cast<ImpTy *>(this)->addMust(Loc); });
+    static_cast<ImpTy *>(this)->addMust(Loc);
   }
 
   void addMay(const MemoryLocationRange &Loc) {
     addLocation(nullptr, Loc, DFF,
         [this](auto &Loc) { static_cast<ImpTy *>(this)->addMay(Loc); });
+    static_cast<ImpTy *>(this)->addMay(Loc);
   }
 
   const MemoryLocation &mLoc;
@@ -907,6 +909,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses()) {
+      if (Loc.Kind == MemoryLocationRange::LocKind::HINT)
+        continue;
       LLVM_DEBUG(
         dbgs() << "[COLLAPSE] Check use: ";
         printLocationSource(dbgs(), Loc, &getDomTree());
@@ -998,6 +1002,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //     X = ...;
     // }
     for (auto &Loc : DU->getDefs()) {
+      if (Loc.Kind == MemoryLocationRange::LocKind::HINT)
+        continue;
       if (dyn_cast<DFLoop>(R) && HasTrips) {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check LatchDefs.\n");
         llvm::SmallVector<MemoryLocationRange, 4> Locs;
@@ -1032,6 +1038,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
       }
     }
     for (auto &Loc : DU->getMayDefs()) {
+      if (Loc.Kind == MemoryLocationRange::LocKind::HINT)
+        continue;
       LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
       addLocation(R, Loc, this,
           [&DefUse](auto &Loc){ DefUse->addMayDef(Loc); }, true);
@@ -1047,18 +1055,50 @@ void ReachDFFwk::collapse(DFRegion *R) {
   }
   for (auto &Loc : DefUse->getExplicitAccesses()) {
     LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Explicit Accesses.\n");
+    auto *EM{AT.find(Loc)};
+    if (EM) {
+      if (auto *DFL{dyn_cast<DFLoop>(R)})
+        if (auto *GEP{dyn_cast<GetElementPtrInst>(EM->front())})
+          if (all_of(GEP->indices(), [this, DFL](auto &Idx) {
+                auto *SE{getScalarEvolution()};
+                auto *S{SE->getSCEV(Idx)};
+                return SE->isLoopInvariant(S, DFL->getLoop());
+              }))
+            EM = nullptr;
+          else
+            EM = EM->getTopLevelParent();
+    }
     MemoryLocationRange ExpLoc;
     addLocation(R, Loc, this, [&ExpLoc](auto &Loc){ ExpLoc = Loc; },
                 true);
-    if (ExpLoc.Kind != MemoryLocationRange::LocKind::COLLAPSED)
-      continue;
     MemoryLocationRange NewLoc(Loc);
-    NewLoc.Kind = MemoryLocationRange::LocKind::EXPLICIT;
-    if (DefUse->hasDef(ExpLoc))
+    NewLoc.Kind = MemoryLocationRange::LocKind::HINT;
+    if ((ExpLoc.Kind == MemoryLocationRange::LocKind::COLLAPSED &&
+         DefUse->hasDef(ExpLoc)) ||
+        (EM &&
+         any_of(
+             *EM, [EM, &DefUse](auto *Ptr) {
+               return DefUse->hasDef(
+                   MemoryLocation{Ptr, EM->getSize(), EM->getAAInfo()});
+             })))
       DefUse->addDef(NewLoc);
-    if (DefUse->hasMayDef(ExpLoc))
+    if ((ExpLoc.Kind == MemoryLocationRange::LocKind::COLLAPSED &&
+         DefUse->hasMayDef(ExpLoc)) ||
+        (EM &&
+         any_of(
+             *EM, [EM, &DefUse](auto *Ptr) {
+               return DefUse->hasMayDef(
+                   MemoryLocation{Ptr, EM->getSize(), EM->getAAInfo()});
+             })))
       DefUse->addMayDef(NewLoc);
-    if (DefUse->hasUse(ExpLoc))
+    if ((ExpLoc.Kind == MemoryLocationRange::LocKind::COLLAPSED &&
+         DefUse->hasUse(ExpLoc)) ||
+        (EM &&
+         any_of(
+             *EM, [EM, &DefUse](auto *Ptr) {
+               return DefUse->hasUse(
+                   MemoryLocation{Ptr, EM->getSize(), EM->getAAInfo()});
+             })))
       DefUse->addUse(NewLoc);
   }
   LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));

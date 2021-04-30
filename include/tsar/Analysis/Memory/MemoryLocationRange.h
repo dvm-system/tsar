@@ -44,8 +44,8 @@ struct MemoryLocationRange {
     DEFAULT = FIRST_KIND,
     NON_COLLAPSABLE,
     COLLAPSED,
-    EXPLICIT,
-    LAST_KIND = EXPLICIT,
+    HINT,
+    LAST_KIND = HINT,
     INVALID_KIND,
     NUMBER_KIND = INVALID_KIND,
   };
