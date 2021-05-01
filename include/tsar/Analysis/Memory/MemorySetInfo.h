@@ -133,13 +133,13 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
       const llvm::MemoryLocation &Loc) noexcept {
     return 0;
   }
-  static inline bool areJoinable(
-      const llvm::MemoryLocation &LHS, const llvm::MemoryLocation &RHS) {
+  static inline bool areJoinable(const llvm::MemoryLocation &LHS,
+                                 const llvm::MemoryLocation &RHS) {
     return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
   }
-  static inline bool join(llvm::MemoryLocation &LHS,
-      const llvm::MemoryLocation &RHS) {
+  static inline bool join(const llvm::MemoryLocation &RHS,
+                          llvm::MemoryLocation &LHS) {
     bool isChanged = false;
     if (sizecmp(getUpperBound(LHS), getUpperBound(RHS)) < 0) {
       setUpperBound(getUpperBound(RHS), LHS);
@@ -212,7 +212,8 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   static inline bool areJoinable(
       const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
     assert(LHS.Ptr == RHS.Ptr && "Pointers of locations must be equal!");
-    if (LHS.DimList.size() != RHS.DimList.size())
+    if (LHS.DimList.size() != RHS.DimList.size() ||
+        LHS.Kind != RHS.Kind)
       return false;
     if (LHS.DimList.empty()) {
       return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
@@ -277,9 +278,6 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline bool hasIntersection(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
-    if (LHS.DimList.empty() && RHS.DimList.empty())
-      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
-             sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
     return MemoryLocationRangeEquation::intersect(LHS, RHS).hasValue();
   }
   static inline llvm::Optional<MemoryLocationRange> intersect(

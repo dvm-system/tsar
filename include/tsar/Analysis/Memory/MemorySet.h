@@ -159,71 +159,33 @@ public:
   const_iterator end() const { return const_iterator(mLocations.end(), 0); }
 
   /// Return true if union of set locations contains a specified location.
-  /// If `Locs != nullptr`, this locations will be stored to it. 
+  /// These locations will be stored to `Locs`. 
   template<class Ty>
   bool findContaining(const Ty &Loc,
-                      llvm::SmallVectorImpl<Ty> *Locs = nullptr) const {
+                      llvm::SmallVectorImpl<LocationTy> &Locs) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return false;
-    llvm::SmallVector<Ty, 4> UnionLocs;
-    if (MemoryInfo::getNumDims(Loc) > 0) {
-      llvm::SmallVector<Ty, 2> Tails { Loc };
-      for (auto &Curr : I->second) {
-        if (Tails.empty()) {
-          if (Locs)
-            Locs->append(UnionLocs.begin(), UnionLocs.end());
-          return true;
-        }
-        llvm::SmallVector<Ty, 2> NewTails;
-        for (auto &Tail : Tails) {
-          auto IntOpt = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
-          if (IntOpt.hasValue()) {
-            if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
-              UnionLocs.push_back(Curr);
-            else
-              return false;
-          } else
-            NewTails.push_back(Tail);
-        }
-        Tails = std::move(NewTails);
+    llvm::SmallVector<Ty, 4> UnionLocs, Tails { Loc };
+    for (auto &Curr : I->second) {
+      if (Tails.empty())
+        break;
+      llvm::SmallVector<Ty, 4> NewTails;
+      for (auto &Tail : Tails) {
+        auto IntOpt = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
+        if (IntOpt.hasValue()) {
+          if (MemoryInfo::getPtr(IntOpt.getValue()))
+            UnionLocs.push_back(Curr);
+          else
+            return false;
+        } else
+          NewTails.push_back(Tail);
       }
-      if (Tails.empty()) {
-        if (Locs)
-          Locs->append(UnionLocs.begin(), UnionLocs.end());
-        return true;
-      }
-      return false;
+      Tails = std::move(NewTails);
     }
-    auto Tail(Loc);
-    bool KnownStartIdx = false;
-    for (std::size_t Idx = 0, StartIdx = 0, EIdx = I->second.size();
-         Idx < EIdx; ++Idx) {
-      auto &Curr = I->second[Idx];
-      // We don't know if collapsed location Curr contains scalar Loc.
-      if (MemoryInfo::getNumDims(Curr) > 0)
-        return false;
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) <= 0)
-        continue;
-      if (!KnownStartIdx)
-        StartIdx = Idx;
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getLowerBound(Tail)) > 0)
-        return false;
-      MemoryInfo::setLowerBound(MemoryInfo::sizeinc(
-                                MemoryInfo::getUpperBound(Curr)), Tail);
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Tail),
-              MemoryInfo::getLowerBound(Tail)) < 0) {
-          if (Locs) {
-            for (std::size_t LocIdx = StartIdx; LocIdx < Idx; ++LocIdx)
-              Locs->push_back(I->second[LocIdx]);
-          }
-          return true;
-        }
+    if (Tails.empty()) {
+      Locs.append(UnionLocs.begin(), UnionLocs.end());
+      return true;
     }
     return false;
   }
@@ -231,71 +193,33 @@ public:
   /// Return true if there are locations in this set which contain
   /// a specified location.
   template<class Ty> bool contain(const Ty &Loc) const {
-    return findContaining(Loc);
+    llvm::SmallVector<Ty, 4> Locs;
+    return findContaining(Loc, Locs);
   }
 
   /// Find list of locations which are contained in a specified location.
-  template<class Ty> void findCoveredBy(const Ty &Loc,
+  template<class Ty> bool findCoveredBy(const Ty &Loc,
       llvm::SmallVectorImpl<LocationTy> &Locs) const {
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
-      return;
-    bool IsEmptyList = true;
-    for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
-      auto &Curr = I->second[Idx];
-      if (MemoryInfo::getNumDims(Loc) > 0 || MemoryInfo::getNumDims(Curr) > 0) {
-        auto IntOpt = MemoryInfo::intersect(Curr, Loc);
-        if (IntOpt.hasValue()) {
-          if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
-            Locs.push_back(IntOpt.getValue());
-        }
-        continue;
-      }
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getUpperBound(Curr),
-              MemoryInfo::getLowerBound(Loc)) <= 0)
-        continue;
-      if (MemoryInfo::sizecmp(
-              MemoryInfo::getLowerBound(Curr),
-              MemoryInfo::getUpperBound(Loc)) >= 0)
-        return;
-      LocationTy CoveredLoc(Loc);
-      MemoryInfo::setLowerBound(max(MemoryInfo::getLowerBound(Curr),
-                                    MemoryInfo::getLowerBound(Loc)),
-                                CoveredLoc);
-      MemoryInfo::setUpperBound(min(MemoryInfo::getUpperBound(Curr),
-                                    MemoryInfo::getUpperBound(Loc)),
-                                CoveredLoc);
-
-      if (IsEmptyList) {
-        Locs.push_back(std::move(CoveredLoc));
-        IsEmptyList = false;
-      } else {
-        if (MemoryInfo::sizecmp(
-                MemoryInfo::getLowerBound(CoveredLoc),
-                MemoryInfo::getUpperBound(Locs.back())) <= 0 &&
-            MemoryInfo::sizecmp(
-                MemoryInfo::getUpperBound(CoveredLoc),
-                MemoryInfo::getLowerBound(Locs.back())) >= 0) {
-          MemoryInfo::setLowerBound(
-              min(MemoryInfo::getLowerBound(CoveredLoc),
-                  MemoryInfo::getLowerBound(Locs.back())),
-              Locs.back());
-          MemoryInfo::setUpperBound(
-              max(MemoryInfo::getUpperBound(CoveredLoc),
-                  MemoryInfo::getUpperBound(Locs.back())),
-              Locs.back());
-        }
+      return false;
+    bool IsCovered = false;
+    for (auto &Curr : I->second) {
+      auto IntOpt = MemoryInfo::intersect(Curr, Loc);
+      if (IntOpt.hasValue()) {
+        IsCovered = true;
+        if (MemoryInfo::getPtr(IntOpt.getValue()))
+          Locs.push_back(IntOpt.getValue());
       }
     }
+    return IsCovered;
   }
 
   /// Return true if there are locations in this set which are contained
   /// in a specified location.
   template<class Ty> bool cover(const Ty &Loc) const {
     llvm::SmallVector<LocationTy, 2> CoveredBy;
-    findCoveredBy(Loc, CoveredBy);
-    return !CoveredBy.empty();
+    return findCoveredBy(Loc, CoveredBy);
   }
   
   /// Return location which may overlap with a specified location.
@@ -345,7 +269,7 @@ public:
         auto IntOpt = MemoryInfo::intersect(Curr, LocToSub, nullptr,
                                             &NewLocsToSub);
         if (IntOpt.hasValue()) {
-          if (MemoryInfo::getNumDims(IntOpt.getValue()) > 0)
+          if (MemoryInfo::getPtr(IntOpt.getValue()))
             Intersected = true;
         } else {
           NewLocsToSub.push_back(LocToSub);

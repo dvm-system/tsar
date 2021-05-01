@@ -383,8 +383,7 @@ void addLocation(DFRegion *R, const MemoryLocationRange &Loc,
             "Loops for the DFLoop and AddRecExpr must be specified!");
         if (!C->getLoop()->contains(DFL->getLoop()) && !IgnoreLoopMismatch) {
           LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Invalid matching of loops.\n");
-          if (!IgnoreLoopMismatch)
-            return;
+          return;
         }
       } else {
         LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] R is not a loop region.\n");

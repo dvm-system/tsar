@@ -96,7 +96,7 @@ void printSolutionInfo(llvm::raw_ostream &OS,
 
 void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   typedef MemoryLocationRange::LocKind LocKind;
-  if (What.Kind != LocKind::DEFAULT)
+  if (What.Kind != LocKind::DEFAULT || From.Kind != LocKind::COLLAPSED)
     return;
   if (!What.LowerBound.hasValue() || !What.UpperBound.hasValue())
     return;
@@ -157,6 +157,50 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   }
   What.Kind = LocKind::COLLAPSED;
 }
+
+llvm::Optional<MemoryLocationRange> intersectScalar(
+    MemoryLocationRange LHS,
+    MemoryLocationRange RHS,
+    llvm::SmallVectorImpl<MemoryLocationRange> *LC,
+    llvm::SmallVectorImpl<MemoryLocationRange> *RC) {
+  typedef MemoryLocationRange::LocKind LocKind;
+  if (LHS.Ptr != RHS.Ptr)
+    return llvm::None;
+  assert(LHS.Kind != LocKind::COLLAPSED && RHS.Kind != LocKind::COLLAPSED &&
+      "It is forbidden to calculate an intersection between non-scalar "
+      "variables!");
+  if (!LHS.LowerBound.hasValue() || !LHS.UpperBound.hasValue() ||
+      !RHS.LowerBound.hasValue() || !RHS.UpperBound.hasValue()) {
+    if ((LHS.UpperBound.hasValue() && RHS.LowerBound.getValue() &&
+         LHS.UpperBound.getValue() <= RHS.LowerBound.getValue()) ||
+        (LHS.LowerBound.hasValue() && RHS.UpperBound.hasValue() &&
+         LHS.LowerBound.getValue() >= RHS.UpperBound.getValue())) 
+      return llvm::None;
+    return MemoryLocationRange();
+  }
+  if (LHS.UpperBound.getValue() > RHS.LowerBound.getValue() &&
+      LHS.LowerBound.getValue() < RHS.UpperBound.getValue()) {
+    MemoryLocationRange Int(LHS);
+    Int.LowerBound = std::max(LHS.LowerBound.getValue(),
+                              RHS.LowerBound.getValue());
+    Int.UpperBound = std::min(LHS.UpperBound.getValue(),
+                              RHS.UpperBound.getValue());
+    if (LC) {
+      if (LHS.LowerBound.getValue() < Int.LowerBound.getValue())
+        LC->emplace_back(LHS).UpperBound = Int.LowerBound.getValue();
+      if (LHS.UpperBound.getValue() > Int.UpperBound.getValue())
+        LC->emplace_back(LHS).LowerBound = Int.UpperBound.getValue();
+    }
+    if (RC) {
+      if (RHS.LowerBound.getValue() < Int.LowerBound.getValue())
+        RC->emplace_back(RHS).UpperBound = Int.LowerBound.getValue();
+      if (RHS.UpperBound.getValue() > Int.UpperBound.getValue())
+        RC->emplace_back(RHS).LowerBound = Int.UpperBound.getValue();
+    }
+    return Int;
+  }
+  return llvm::None;
+}
 };
 
 llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
@@ -172,27 +216,23 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
   typedef MemoryLocationRange::LocKind LocKind;
   assert(LHS.Ptr && RHS.Ptr &&
       "Pointers of intersected memory locations must not be null!");
-  assert((LHS.Kind != LocKind::DEFAULT || RHS.Kind != LocKind::DEFAULT) &&
-         (!LHS.DimList.empty() || !RHS.DimList.empty()) &&
-      "It is forbidden to calculate an intersection between scalar variables.");
   // Return a location that may be an intersection, but cannot be calculated 
   // exactly.
-  auto GetIncompleteLoc = [](const MemoryLocationRange &Sample) {
-    MemoryLocationRange Loc(Sample);
-    Loc.Kind = LocKind::NON_COLLAPSABLE;
-    Loc.DimList.clear();
-    return Loc;
+  auto GetIncompleteLoc = []() {
+    return MemoryLocationRange();
   };
   if (LHS.Ptr != RHS.Ptr)
     return llvm::None;
-  if (LHS.Kind == LocKind::DEFAULT)
+  if (LHS.Kind == LocKind::DEFAULT && RHS.Kind == LocKind::COLLAPSED)
     delinearize(RHS, LHS);
-  else if (RHS.Kind == LocKind::DEFAULT)
+  else if (RHS.Kind == LocKind::DEFAULT && LHS.Kind == LocKind::COLLAPSED)
     delinearize(LHS, RHS);
+  if (LHS.Kind != LocKind::COLLAPSED && RHS.Kind != LocKind::COLLAPSED)
+    return intersectScalar(LHS, RHS, LC, RC);
+  if (LHS.Kind != LocKind::COLLAPSED || RHS.Kind != LocKind::COLLAPSED)
+    return GetIncompleteLoc();
   if (LHS.DimList.size() != RHS.DimList.size())
-    return GetIncompleteLoc(LHS);
-  assert(LHS.Kind == LocKind::COLLAPSED && RHS.Kind == LocKind::COLLAPSED &&
-         "Intersected locations must be of the `collapsed` kind!");
+    return GetIncompleteLoc();
   if (LHS.LowerBound == RHS.LowerBound && LHS.UpperBound == RHS.UpperBound &&
       LHS.DimList == RHS.DimList)
     return LHS;
@@ -202,7 +242,7 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     auto &Left = LHS.DimList[I];
     auto &Right = RHS.DimList[I];
     if (Left.DimSize != Right.DimSize)
-      return GetIncompleteLoc(LHS);
+      return GetIncompleteLoc();
     auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
     auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
     if (LeftEnd < Right.Start || RightEnd < Left.Start) {
@@ -253,14 +293,16 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     Intersection.Start = Start;
     Intersection.Step = Step;
     Intersection.TripCount = Tmax + 1;
-    Intersection.DimSize = Left.DimSize; // ???
+    Intersection.DimSize = Left.DimSize;
     assert(Start >= 0 && "Start must be non-negative!");
     assert(Step > 0 && "Step must be positive!");
     assert(Intersection.TripCount > 0 && "Trip count must be non-negative!");
     if (LC) {
       llvm::SmallVector<Dimension, 3> ComplLeft;
       if (!difference(Left, Intersection, ComplLeft, Threshold)) {
-        LC->push_back(GetIncompleteLoc(LHS));
+        auto &IncLoc = LC->emplace_back(LHS);
+        IncLoc.DimList.clear();
+        IncLoc.Kind = LocKind::NON_COLLAPSABLE;
       } else {
         for (auto &Comp : ComplLeft) {
           auto &NewLoc = LC->emplace_back(LHS);
@@ -271,7 +313,9 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     if (RC) {
       llvm::SmallVector<Dimension, 3> ComplRight;
       if (!difference(Right, Intersection, ComplRight, Threshold)) {
-        RC->push_back(GetIncompleteLoc(RHS));
+        auto &IncLoc = RC->emplace_back(RHS);
+        IncLoc.DimList.clear();
+        IncLoc.Kind = LocKind::NON_COLLAPSABLE;
       } else {
         for (auto &Comp : ComplRight) {
           auto &NewLoc = RC->emplace_back(RHS);
