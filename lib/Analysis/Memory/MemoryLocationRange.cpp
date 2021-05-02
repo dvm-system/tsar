@@ -171,7 +171,7 @@ llvm::Optional<MemoryLocationRange> intersectScalar(
       "variables!");
   if (!LHS.LowerBound.hasValue() || !LHS.UpperBound.hasValue() ||
       !RHS.LowerBound.hasValue() || !RHS.UpperBound.hasValue()) {
-    if ((LHS.UpperBound.hasValue() && RHS.LowerBound.getValue() &&
+    if ((LHS.UpperBound.hasValue() && RHS.LowerBound.hasValue() &&
          LHS.UpperBound.getValue() <= RHS.LowerBound.getValue()) ||
         (LHS.LowerBound.hasValue() && RHS.UpperBound.hasValue() &&
          LHS.LowerBound.getValue() >= RHS.UpperBound.getValue())) 

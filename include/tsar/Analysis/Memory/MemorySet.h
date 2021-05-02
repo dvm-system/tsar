@@ -385,6 +385,31 @@ public:
     return IsChanged;
   }
 
+  /// 
+  template<class Ty> void clarify(
+      llvm::SmallVectorImpl<std::pair<Ty, Ty>> &From) {
+    llvm::SmallVector<Ty, 4> NewLocs;
+    for (auto &Pair : From) {
+      auto &OtherLoc = Pair.second;
+      bool HasExactIntersection = false;
+      if (mLocations.find(MemoryInfo::getPtr(OtherLoc)) != mLocations.end()) {
+        for (auto &Loc : mLocations[MemoryInfo::getPtr(OtherLoc)]) {
+          auto IntOpt = MemoryInfo::intersect(Loc, OtherLoc);
+          if (IntOpt.hasValue() && MemoryInfo::getPtr(IntOpt.getValue())) {
+            HasExactIntersection = true;
+            break;
+          }
+        }
+      }
+      if (!HasExactIntersection) {
+        MemoryInfo::setNonCollapsable(Pair.first);
+        NewLocs.push_back(std::move(Pair.first));
+      }
+    }
+    for (auto &Loc : NewLocs)
+      insert(Loc);
+  }
+
   /// Compare two sets.
   template<class Ty> bool operator!=(const MemorySet<Ty> &RHS) const {
     return !(*this == RHS);

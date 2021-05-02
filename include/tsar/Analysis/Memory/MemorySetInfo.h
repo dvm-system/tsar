@@ -287,6 +287,9 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       llvm::SmallVectorImpl<MemoryLocationRange> *R = nullptr) {
     return MemoryLocationRangeEquation::intersect(LHS, RHS, L, R);
   }
+  static inline void setNonCollapsable(MemoryLocationRange &Loc) {
+    Loc.Kind = MemoryLocationRange::LocKind::NON_COLLAPSABLE;
+  }
 };
 }
 #endif//TSAR_MEMORY_SET_INFO_H
