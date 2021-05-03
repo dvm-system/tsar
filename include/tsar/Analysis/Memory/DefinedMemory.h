@@ -113,6 +113,10 @@ public:
     return addDef(MemoryLocationRange::get(I));
   }
 
+  bool addDefs(const LocationSet &Defs) {
+    return mDefs.insert(Defs.begin(), Defs.end());
+  }
+
   /// Returns set of the may defined locations.
   const LocationSet & getMayDefs() const { return mMayDefs; }
 
@@ -149,6 +153,10 @@ public:
     return addMayDef(MemoryLocationRange::get(I));
   }
 
+  bool addMayDefs(const LocationSet &MayDefs) {
+    return mMayDefs.insert(MayDefs.begin(), MayDefs.end());
+  }
+
   /// Returns set of the locations which get values outside a data-flow node.
   const LocationSet & getUses() const { return mUses; }
 
@@ -179,6 +187,10 @@ public:
     assert(I && "Instruction must not be null!");
     assert(I->mayReadFromMemory() && "Instruction does not read memory!");
     return addUse(MemoryLocationRange::get(I));
+  }
+
+  bool addUses(const LocationSet &Uses) {
+    return mUses.insert(Uses.begin(), Uses.end());
   }
 
   /// Returns locations accesses to which are performed explicitly.
