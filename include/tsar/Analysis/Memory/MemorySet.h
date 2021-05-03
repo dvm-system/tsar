@@ -385,7 +385,13 @@ public:
     return IsChanged;
   }
 
-  /// 
+  /// \brief Clarify information about the memory locations in this set.
+  ///
+  /// \param [in] From List of pairs of memory locations, on which
+  /// clarification of information will occur. The first location of the pair is 
+  /// the original memory location, the second location is the aggregated memory 
+  /// location. If the second location does not have an exact intersection with 
+  /// any location of this set, the first location will be added to this set.
   template<class Ty> void clarify(
       llvm::SmallVectorImpl<std::pair<Ty, Ty>> &From) {
     llvm::SmallVector<Ty, 4> NewLocs;

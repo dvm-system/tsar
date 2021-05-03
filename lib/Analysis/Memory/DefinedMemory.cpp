@@ -259,8 +259,8 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 #endif
 
 /// If memory location `Loc` is associated with an array, collect information 
-/// about array accesses, create new memory location `ResLoc` and use it in 
-/// `Inserter`. If the information was collected successfully and meets certain 
+/// about array accesses, and create new memory location `ResLoc`. If 
+/// information was collected successfully and meets certain 
 /// conditions, `ResLoc.DimList` will be filled with information about the 
 /// dimensions of the array, and the `ResLoc.Kind` will be set to `COLLAPSED`.
 /// Otherwise, the `ResLoc.Kind` will be set to `NON_COLLAPSABLE`.
@@ -270,6 +270,11 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 /// `DataFlowTraits<ReachDFFwk*>::initialize()`. If `R != nullptr`, it 
 /// may be necessary to ignore memory location that is not associated with `R`. 
 /// `IgnoreLoopMismatch` is used for this.
+///
+/// Return a pair consisting of an aggregated memory location and boolean value.
+/// If returned location is of kind `COLLAPSED` and does not belong to the 
+/// loop nest associated with region `R`, this value will be set to `false`,
+/// `true` otherwise.
 std::pair<MemoryLocationRange, bool> aggregate(
     DFRegion *R, const MemoryLocationRange &Loc,
     const ReachDFFwk *Fwk, bool IgnoreLoopMismatch=false) {
@@ -889,13 +894,6 @@ void ReachDFFwk::collapse(DFRegion *R) {
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
   const DefinitionInfo *LatchDefs = nullptr;
   bool HasTrips = false;
-  auto Distribute = [](const AggrResult &Res, const MemoryLocationRange &OrigLoc,
-                       LocationSet &Own, LocationList &Other) {
-    if (Res.second)
-      Own.insert(Res.first);
-    else
-      Other.push_back(std::make_pair(OrigLoc, Res.first));
-  };
   if (auto *DFL = dyn_cast<DFLoop>(R)) {
     LatchDefs = &RT::getValue(DFL->getLatchNode(), this);
     assert(getScalarEvolution() && "ScalarEvolution must be specified!");
@@ -903,8 +901,16 @@ void ReachDFFwk::collapse(DFRegion *R) {
         DFL->getLoop());
     LLVM_DEBUG(dbgs() << "[COLLAPSE] Total trip count: " << TripCount << "\n");
     HasTrips = bool(TripCount > 0);
-    LLVM_DEBUG(dbgs() << "[COLLAPSE] HasTrips: " << HasTrips << "\n");
   }
+  // Distribute memory locations into two collections: a set of own memory 
+  // locations of the region and a list of other memory locations.
+  auto distribute = [](const AggrResult &Res, const MemoryLocationRange &OrigLoc,
+                       LocationSet &Own, LocationList &Other) {
+    if (Res.second)
+      Own.insert(Res.first);
+    else
+      Other.push_back(std::make_pair(OrigLoc, Res.first));
+  };
   for (DFNode *N : R->getNodes()) {
     auto DefItr = getDefInfo().find(N);
     assert(DefItr != getDefInfo().end() &&
@@ -913,7 +919,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     auto &RS = DefItr->get<ReachSet>();
     auto &DU = DefItr->get<DefUseSet>();
     auto &MustReachIn = RS->getIn().MustReach;
-    MemorySet<MemoryLocationRange> OwnUses, OwnMayDefs, OwnDefs;
+    LocationSet OwnUses, OwnMayDefs, OwnDefs;
     LocationList OtherUses, OtherMayDefs, OtherDefs;
     // We calculate a set of locations (Uses)
     // which get values outside the loop or from previous loop iterations.
@@ -959,13 +965,8 @@ void ReachDFFwk::collapse(DFRegion *R) {
       }
       if (StartInLoop && EndInLoop)
         continue;
-      if (Loc.DimList.empty()) {
-        if (!MustReachIn.contain(Loc)) {
-          LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
-          Distribute(aggregate(R, Loc, this), Loc, OwnUses, OtherUses);
-        }
-      } else
-        OwnUses.insert(Loc);
+      LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Use location.\n");
+      distribute(aggregate(R, Loc, this), Loc, OwnUses, OtherUses);
     }
     OwnUses.clarify(OtherUses);
     for (auto &Loc : OwnUses) {
@@ -980,7 +981,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
           LLVM_DEBUG(dbgs() << "[COLLAPSE] Add unbroken Use location.\n");
           DefUse->addUse(Loc);
         }
-      } else
+      } else if (!MustReachIn.contain(Loc))
         DefUse->addUse(Loc);
     }
     // It is possible that some locations are only written in the loop.
@@ -1003,6 +1004,23 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //   if (...)
     //     X = ...;
     // }
+    // 
+    // When calculating a set of must define locations (Defs), we need to 
+    // consider only those definitions that reach the exit from the current 
+    // region. We cannot simply insert all location from the nested regions into 
+    // Defs. Consider the following example.
+    // for (;;) { // R1
+    //   for (int I = 0; I < 6; ++I) // R2
+    //     A[I] = ...
+    //   for (int J = 4; J < 10; ++J) // R3
+    //     A[J] = ...
+    // }
+    // A[0, 6) has a definition in R2, A[4, 10) has a definition in R3, but only
+    // A[4, 6) reaches the exit from R1. We need to use 
+    // `ExitingDefs.MustReach.findCoveredBy(Loc, Locs)` to find those parts of 
+    // a specified memory location that reach the exit from the current region.
+    // If R1 is a loop region and it has a trip count greater than zero, then
+    // we need to check LatchDefs in addition to ExitingDefs.
     for (auto &Loc : DU->getDefs()) {
       if (Loc.Kind == MemoryLocationRange::LocKind::HINT)
         continue;
@@ -1014,11 +1032,11 @@ void ReachDFFwk::collapse(DFRegion *R) {
           LLVM_DEBUG(dbgs() <<
               "[ARRAY LOCATION] Add location from a latch node.\n");
           for (auto &L : Locs)
-            Distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
+            distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
         } else {
           LLVM_DEBUG(dbgs() <<
               "[COLLAPSE] Collapse MayDef location of a latch node.\n");
-          Distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+          distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
         }
       }
       LLVM_DEBUG(dbgs() << "[ARRAY LOCATION] Check ExitingDefs.\n");
@@ -1027,10 +1045,10 @@ void ReachDFFwk::collapse(DFRegion *R) {
       if (!Locs.empty()) {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse Def location.\n");
         for (auto &L : Locs)
-          Distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
+          distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
       } else {
         LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-        Distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+        distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
       }
     }
     OwnDefs.clarify(OtherDefs);
@@ -1039,7 +1057,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
       if (Loc.Kind == MemoryLocationRange::LocKind::HINT)
         continue;
       LLVM_DEBUG(dbgs() << "[COLLAPSE] Collapse MayDef location.\n");
-      Distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+      distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
     }
     OwnMayDefs.clarify(OtherMayDefs);
     DefUse->addMayDefs(OwnMayDefs);

@@ -113,6 +113,9 @@ public:
     return addDef(MemoryLocationRange::get(I));
   }
 
+  /// Specifies that all locations in a set have definition in a data-flow node.
+  ///
+  /// \return False if all locations have been already specified.
   bool addDefs(const LocationSet &Defs) {
     return mDefs.insert(Defs.begin(), Defs.end());
   }
@@ -153,6 +156,10 @@ public:
     return addMayDef(MemoryLocationRange::get(I));
   }
 
+  /// Specifies that all locations in a set may have definition in a data-flow 
+  /// node.
+  ///
+  /// \return False if all locations have been already specified.
   bool addMayDefs(const LocationSet &MayDefs) {
     return mMayDefs.insert(MayDefs.begin(), MayDefs.end());
   }
@@ -189,6 +196,9 @@ public:
     return addUse(MemoryLocationRange::get(I));
   }
 
+  /// Specifies that all locations in a set get values outside a data-flow node.
+  ///
+  /// \return False if all locations have been already specified.
   bool addUses(const LocationSet &Uses) {
     return mUses.insert(Uses.begin(), Uses.end());
   }

@@ -218,9 +218,6 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
       "Pointers of intersected memory locations must not be null!");
   // Return a location that may be an intersection, but cannot be calculated 
   // exactly.
-  auto GetIncompleteLoc = []() {
-    return MemoryLocationRange();
-  };
   if (LHS.Ptr != RHS.Ptr)
     return llvm::None;
   if (LHS.Kind == LocKind::DEFAULT && RHS.Kind == LocKind::COLLAPSED)
@@ -230,9 +227,9 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
   if (LHS.Kind != LocKind::COLLAPSED && RHS.Kind != LocKind::COLLAPSED)
     return intersectScalar(LHS, RHS, LC, RC);
   if (LHS.Kind != LocKind::COLLAPSED || RHS.Kind != LocKind::COLLAPSED)
-    return GetIncompleteLoc();
+    return MemoryLocationRange();
   if (LHS.DimList.size() != RHS.DimList.size())
-    return GetIncompleteLoc();
+    return MemoryLocationRange();
   if (LHS.LowerBound == RHS.LowerBound && LHS.UpperBound == RHS.UpperBound &&
       LHS.DimList == RHS.DimList)
     return LHS;
@@ -242,7 +239,7 @@ llvm::Optional<MemoryLocationRange> MemoryLocationRangeEquation::intersect(
     auto &Left = LHS.DimList[I];
     auto &Right = RHS.DimList[I];
     if (Left.DimSize != Right.DimSize)
-      return GetIncompleteLoc();
+      return MemoryLocationRange();
     auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
     auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
     if (LeftEnd < Right.Start || RightEnd < Left.Start) {

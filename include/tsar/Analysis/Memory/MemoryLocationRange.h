@@ -158,6 +158,7 @@ struct MemoryLocationRange {
     LowerBound = 0;
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
+    Kind = DEFAULT;
     return *this;
   }
 
@@ -199,7 +200,7 @@ namespace MemoryLocationRangeEquation {
   /// obtained as a result of calculating the differences. If it is exceeded, 
   /// exact differences will not be saved.
   /// \return The result of intersection. If it is None, intersection is empty.
-  /// If it is a location, but DimList of the returned location is empty, then
+  /// If it is a location, but `Ptr` of the returned location is `nullptr`, then
   /// the intersection may exist but can't be calculated. Otherwise, the
   /// returned location is an exact intersection.
   llvm::Optional<MemoryLocationRange> intersect(

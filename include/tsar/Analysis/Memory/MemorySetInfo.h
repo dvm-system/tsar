@@ -64,11 +64,13 @@ namespace tsar {
 ///     Join `What` location to `To` if they are joinable.
 /// - static inline bool hasIntersection(const LocationTy &, const LocationTy &)
 ///     Return `true` if locations have an intersection, `false` otherwise.
-/// - inline llvm::Optional<LocationTy> intersect(
+/// - static inline llvm::Optional<LocationTy> intersect(
 ///       const LocationTy &A, const LocationTy &B,
 ///       llvm::SmallVectorImpl<LocationTy> *L,
 ///       llvm::SmallVectorImpl<LocationTy> *R)
 ///     Return the result of intersection of locations A and B.
+/// - static inline void setNonCollapsable(llvm::MemoryLocation &)
+///     Set `NON_COLLAPSABLE` kind for a specified location.
 /// - Copy-constructor must be also available.
 /// In methods presented above the following denotements are used:
 /// - LocationTy is a type of memory locations which are stored in memory set.
@@ -162,6 +164,9 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
       llvm::SmallVectorImpl<llvm::MemoryLocation> *L,
       llvm::SmallVectorImpl<llvm::MemoryLocation> *R) {
     return llvm::None;
+  }
+  static inline void setNonCollapsable(llvm::MemoryLocation &Loc) {
+    return;
   }
 };
 
