@@ -149,13 +149,5 @@ void initializeClangIncludeTreeOnlyViewerPass(PassRegistry &Registry);
 /// Create a pass to display source file tree (filenames instead of
 /// full paths).
 ModulePass *createClangIncludeTreeOnlyViewer();
-
-/// Initialize a pass to match AST statements in a high-level
-/// code and appropriate instructions in low-level LLVM IR.
-void initializeInstructionMatcherPassPass(PassRegistry& Registry);
-
-/// Creates a pass to match AST statements in a high-level
-/// code and appropriate instructions in low-level LLVM IR.
-FunctionPass* createInstructionMatcherPass();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H

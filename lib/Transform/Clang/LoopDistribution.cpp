@@ -26,7 +26,6 @@
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
-#include "tsar/Analysis/Clang/InstructionMatcher.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
@@ -90,7 +89,6 @@ INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
-INITIALIZE_PASS_DEPENDENCY(InstructionMatcherPass)
 INITIALIZE_PASS_IN_GROUP_END(LoopDistributionPass, "loop-distribution",
     "Loop Distribution", false, false,
     TransformationQueryManager::getPassRegistry())
@@ -336,7 +334,6 @@ void LoopDistributionPass::getAnalysisUsage(AnalysisUsage& AU) const {
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<GlobalOptionsImmutableWrapper>();
     AU.addRequired<AnalysisSocketImmutableWrapper>();
-    AU.addRequired<InstructionMatcherPass>();
     AU.setPreservesAll();
 }
 
