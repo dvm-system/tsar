@@ -1107,7 +1107,10 @@ public:
   /// a specified one (Loc) if it is known that access out of the EM size leads
   /// to undefined behavior.
   const EstimateMemory * find(const MemoryLocationRange &Loc) const {
-    return find(llvm::MemoryLocation(Loc.Ptr, Loc.UpperBound, Loc.AATags));
+    return Loc.Kind == MemoryLocationRange::LocKind::COLLAPSED ?
+           find(llvm::MemoryLocation(Loc.Ptr, LocationSize::unknown(),
+                Loc.AATags)) :
+           find(llvm::MemoryLocation(Loc.Ptr, Loc.UpperBound, Loc.AATags));
   }
 
   /// Returns the smallest estimate memory location which covers a specified

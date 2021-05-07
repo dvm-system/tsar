@@ -167,49 +167,50 @@ struct MemoryLocationRange {
       LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
       DimList == Other.DimList && Kind == Other.Kind;
   }
+
+  llvm::StringRef getKindAsString() const {
+    switch (Kind) {
+    case LocKind::DEFAULT:
+      return "DEFAULT";
+    case LocKind::NON_COLLAPSABLE:
+      return "NON_COLLAPSABLE";
+    case LocKind::COLLAPSED:
+      return "COLLAPSED";
+    case LocKind::HINT:
+      return "HINT";
+    case LocKind::INVALID_KIND:
+      return "INVALID_KIND";
+    }
+    return "UNKNOWN";
+  }
 };
 
-namespace MemoryLocationRangeEquation {
-  typedef int64_t ColumnT;
-  typedef int64_t ValueT;
-  typedef MemoryLocationRange::Dimension Dimension;
-
-  struct ColumnInfo {
-    std::array<char, 3> Variables = {'X', 'Y', 'T'};
-
-    template<typename T> T get(ColumnT Column) const { return 0; }
-    ColumnT parameterColumn() { return 2; }
-    bool isParameter(ColumnT Column) const { return Column > 1; }
-    char name(ColumnT Column) const { return Variables[Column]; }
-  };
-
-  /// \brief Finds an intersection between memory locations LHS and RHS, one of 
-  /// which can be scalar.
-  ///
-  /// \param [in] LHS The first location to intersect.
-  /// \param [in] RHS The second location to intersect.
-  /// \param [out] LC List of memory locations to store the difference 
-  /// between locations LHS and Int. It will not be changed if the intersection
-  /// is empty. If `LC == nullptr`, the difference will not be calculated and
-  /// will not be stored anywhere.
-  /// \param [out] RC List of memory locations to store the difference 
-  /// between locations RHS and Int. It will not be changed if the intersection
-  /// is empty. If `RC == nullptr`, the difference will not be calculated and
-  /// will not be stored anywhere.
-  /// \param [out] Threshold The maximum number of locations that can be 
-  /// obtained as a result of calculating the differences. If it is exceeded, 
-  /// exact differences will not be saved.
-  /// \return The result of intersection. If it is None, intersection is empty.
-  /// If it is a location, but `Ptr` of the returned location is `nullptr`, then
-  /// the intersection may exist but can't be calculated. Otherwise, the
-  /// returned location is an exact intersection.
-  llvm::Optional<MemoryLocationRange> intersect(
-      MemoryLocationRange LHS,
-      MemoryLocationRange RHS,
-      llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
-      llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
-      std::size_t Threshold = 10);
-}
+/// \brief Finds an intersection between memory locations LHS and RHS, one of 
+/// which can be scalar.
+///
+/// \param [in] LHS The first location to intersect.
+/// \param [in] RHS The second location to intersect.
+/// \param [out] LC List of memory locations to store the difference 
+/// between locations LHS and Int. It will not be changed if the intersection
+/// is empty. If `LC == nullptr`, the difference will not be calculated and
+/// will not be stored anywhere.
+/// \param [out] RC List of memory locations to store the difference 
+/// between locations RHS and Int. It will not be changed if the intersection
+/// is empty. If `RC == nullptr`, the difference will not be calculated and
+/// will not be stored anywhere.
+/// \param [out] Threshold The maximum number of locations that can be 
+/// obtained as a result of calculating the differences. If it is exceeded, 
+/// exact differences will not be saved.
+/// \return The result of intersection. If it is None, intersection is empty.
+/// If it is a location, but `Ptr` of the returned location is `nullptr`, then
+/// the intersection may exist but can't be calculated. Otherwise, the
+/// returned location is an exact intersection.
+llvm::Optional<MemoryLocationRange> intersect(
+    MemoryLocationRange LHS,
+    MemoryLocationRange RHS,
+    llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
+    llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
+    unsigned Threshold = 10);
 }
 
 namespace llvm {

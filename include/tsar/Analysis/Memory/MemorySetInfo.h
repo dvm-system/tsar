@@ -140,18 +140,18 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
   }
-  static inline bool join(const llvm::MemoryLocation &RHS,
-                          llvm::MemoryLocation &LHS) {
-    bool isChanged = false;
-    if (sizecmp(getUpperBound(LHS), getUpperBound(RHS)) < 0) {
-      setUpperBound(getUpperBound(RHS), LHS);
-      isChanged = true;
+  static inline bool join(const llvm::MemoryLocation &What,
+                          llvm::MemoryLocation &To) {
+    bool IsChanged = false;
+    if (sizecmp(getUpperBound(To), getUpperBound(What)) < 0) {
+      setUpperBound(getUpperBound(What), To);
+      IsChanged = true;
     }
-    if (sizecmp(getLowerBound(LHS), getLowerBound(RHS)) > 0) {
-      setLowerBound(getLowerBound(RHS), LHS);
-      isChanged = true;
+    if (sizecmp(getLowerBound(To), getLowerBound(What)) > 0) {
+      setLowerBound(getLowerBound(What), To);
+      IsChanged = true;
     }
-    return isChanged;
+    return IsChanged;
   }
   static inline bool hasIntersection(const llvm::MemoryLocation &LHS,
       const llvm::MemoryLocation &RHS) {
@@ -283,14 +283,14 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline bool hasIntersection(const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS) {
-    return MemoryLocationRangeEquation::intersect(LHS, RHS).hasValue();
+    return tsar::intersect(LHS, RHS).hasValue();
   }
   static inline llvm::Optional<MemoryLocationRange> intersect(
       const MemoryLocationRange &LHS,
       const MemoryLocationRange &RHS,
       llvm::SmallVectorImpl<MemoryLocationRange> *L = nullptr,
       llvm::SmallVectorImpl<MemoryLocationRange> *R = nullptr) {
-    return MemoryLocationRangeEquation::intersect(LHS, RHS, L, R);
+    return tsar::intersect(LHS, RHS, L, R);
   }
   static inline void setNonCollapsable(MemoryLocationRange &Loc) {
     Loc.Kind = MemoryLocationRange::LocKind::NON_COLLAPSABLE;

@@ -78,7 +78,7 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
 /// Print information available from a source code for the specified memory
 /// location and its size (<location, size>).
 void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
-    const llvm::DominatorTree *DT = nullptr);
+    const llvm::DominatorTree *DT = nullptr, bool IsDebug = false);
 
 /// Print information available from a source code for the specified memory
 /// location and its size (<location, size>).

@@ -36,11 +36,11 @@
 #include "tsar/ADT/DataFlow.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Support/AnalysisWrapperPass.h"
-#include "tsar/Support/GlobalOptions.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
@@ -64,6 +64,7 @@ namespace tsar {
 class AliasTree;
 class DFRegionInfo;
 class DelinearizeInfo;
+struct GlobalOptions;
 
 /// \brief This contains locations which have outward exposed definitions or
 /// uses in a data-flow node.

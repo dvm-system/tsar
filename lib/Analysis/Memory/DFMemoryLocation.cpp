@@ -64,10 +64,7 @@ void LocationDFValue::print(raw_ostream &OS, const DominatorTree *DT) const {
     return;
   }
   for (auto &Loc: mLocations) {
-    printLocationSource(OS, Loc.Ptr, DT);
-    OS << " (";
     printLocationSource(OS, Loc, DT);
-    OS << ")";
     OS << " " << *Loc.Ptr << "\n";
   }
 }

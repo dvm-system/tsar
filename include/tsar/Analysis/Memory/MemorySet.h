@@ -173,21 +173,16 @@ public:
       llvm::SmallVector<Ty, 4> NewTails;
       for (auto &Tail : Tails) {
         auto IntOpt = MemoryInfo::intersect(Curr, Tail, nullptr, &NewTails);
-        if (IntOpt.hasValue()) {
-          if (MemoryInfo::getPtr(IntOpt.getValue()))
-            UnionLocs.push_back(Curr);
-          else
-            return false;
-        } else
+        if (IntOpt && MemoryInfo::getPtr(*IntOpt))
+          UnionLocs.push_back(Curr);
+        else
           NewTails.push_back(Tail);
       }
       Tails = std::move(NewTails);
     }
-    if (Tails.empty()) {
+    if (Tails.empty())
       Locs.append(UnionLocs.begin(), UnionLocs.end());
-      return true;
-    }
-    return false;
+    return Tails.empty();
   }
 
   /// Return true if there are locations in this set which contain
@@ -256,24 +251,18 @@ public:
     auto I = mLocations.find(MemoryInfo::getPtr(Loc));
     if (I == mLocations.end())
       return false;
-    if (MemoryInfo::getNumDims(Loc) < 1)
-      return false;
     bool Intersected = false;
     LocationList LocsToSub { Loc };
     for (std::size_t Idx = 0, EIdx = I->second.size(); Idx < EIdx; ++Idx) {
       auto &Curr = I->second[Idx];
-      if (MemoryInfo::getNumDims(Curr) != MemoryInfo::getNumDims(Loc))
-        continue;
       LocationList NewLocsToSub;
       for (auto &LocToSub : LocsToSub) {
         auto IntOpt = MemoryInfo::intersect(Curr, LocToSub, nullptr,
                                             &NewLocsToSub);
-        if (IntOpt.hasValue()) {
-          if (MemoryInfo::getPtr(IntOpt.getValue()))
-            Intersected = true;
-        } else {
+        if (IntOpt && MemoryInfo::getPtr(*IntOpt))
+          Intersected = true;
+        else
           NewLocsToSub.push_back(LocToSub);
-        }
       }
       LocsToSub = std::move(NewLocsToSub);
     }
@@ -398,8 +387,9 @@ public:
     for (auto &Pair : From) {
       auto &OtherLoc = Pair.second;
       bool HasExactIntersection = false;
-      if (mLocations.find(MemoryInfo::getPtr(OtherLoc)) != mLocations.end()) {
-        for (auto &Loc : mLocations[MemoryInfo::getPtr(OtherLoc)]) {
+      if (auto Itr{mLocations.find(MemoryInfo::getPtr(OtherLoc))};
+          Itr != mLocations.end()) {
+        for (auto &Loc : Itr->second) {
           auto IntOpt = MemoryInfo::intersect(Loc, OtherLoc);
           if (IntOpt.hasValue() && MemoryInfo::getPtr(IntOpt.getValue())) {
             HasExactIntersection = true;
@@ -408,8 +398,8 @@ public:
         }
       }
       if (!HasExactIntersection) {
-        MemoryInfo::setNonCollapsable(Pair.first);
-        NewLocs.push_back(std::move(Pair.first));
+        NewLocs.push_back(Pair.first);
+        MemoryInfo::setNonCollapsable(NewLocs.back());
       }
     }
     for (auto &Loc : NewLocs)
