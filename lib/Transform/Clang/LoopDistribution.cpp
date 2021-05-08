@@ -53,7 +53,7 @@ using namespace tsar;
 
 namespace {
     class LoopDistributionPassInfo final : public PassGroupInfo {
-        void addBeforePass(legacy::PassManager& Passes) const override {
+        void addBeforePass(legacy::PassManager &Passes) const override {
             addImmutableAliasAnalysis(Passes);
             addInitialTransformations(Passes);
             Passes.add(createAnalysisSocketImmutableStorage());
@@ -66,7 +66,7 @@ namespace {
             Passes.add(createMemoryMatcherPass());
             Passes.add(createAnalysisWaitServerPass());
         }
-        void addAfterPass(legacy::PassManager& Passes) const override {
+        void addAfterPass(legacy::PassManager &Passes) const override {
             Passes.add(createAnalysisReleaseServerPass());
             Passes.add(createAnalysisCloseConnectionPass());
         }
@@ -96,97 +96,122 @@ INITIALIZE_PASS_IN_GROUP_END(LoopDistributionPass, "loop-distribution",
 namespace {
 class ASTVisitor : public RecursiveASTVisitor<ASTVisitor> {
 public:
-  ASTVisitor(FunctionPass& P, Function& F) {
-    mDFRI = &P.getAnalysis<DFRegionInfoPass>().getRegionInfo();
-    mTLI = &P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-    mAliasTree = &P.getAnalysis<EstimateMemoryPass>().getAliasTree();
-    mDomTree = &P.getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    auto& DIEMPass = P.getAnalysis<DIEstimateMemoryPass>();
+  ASTVisitor(FunctionPass& Pass, Function& Function) {
+    mDFRegion = &Pass.getAnalysis<DFRegionInfoPass>().getRegionInfo();
+    mTargetLibrary = &Pass.getAnalysis<TargetLibraryInfoWrapperPass>()
+        .getTLI(Function);
+    mAliasTree = &Pass.getAnalysis<EstimateMemoryPass>()
+        .getAliasTree();
+    mDominatorTree = &Pass.getAnalysis<DominatorTreeWrapperPass>()
+        .getDomTree();
+    auto& DIEMPass = Pass.getAnalysis<DIEstimateMemoryPass>();
     assert(DIEMPass.isConstructed() && "Alias tree must be constructed!");
-    mDIMInfo = new DIMemoryClientServerInfo(DIEMPass.getAliasTree(), P, F);
-    mSTR = new SpanningTreeRelation<const DIAliasTree*>(mDIMInfo->DIAT);
-    mCLI = &P.getAnalysis<CanonicalLoopPass>().getCanonicalLoopInfo();
-    mLM = &P.getAnalysis<LoopMatcherPass>().getMatcher();
-    mGO = &P.getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-    auto& SocketInfo = P.getAnalysis<AnalysisSocketImmutableWrapper>().get();
+    mServerDIMemory = new DIMemoryClientServerInfo(
+        DIEMPass.getAliasTree(), Pass, Function);
+    mSpanningTreeRelation = new SpanningTreeRelation<const DIAliasTree *>(
+        mServerDIMemory->DIAT);
+    mCanonicalLoop = &Pass.getAnalysis<CanonicalLoopPass>()
+        .getCanonicalLoopInfo();
+    mLoopMatcher = &Pass.getAnalysis<LoopMatcherPass>()
+        .getMatcher();
+    mGlobalOptions = &Pass.getAnalysis<GlobalOptionsImmutableWrapper>()
+        .getOptions();
+    auto& SocketInfo = Pass.getAnalysis<AnalysisSocketImmutableWrapper>().get();
     auto& Socket = SocketInfo.getActive()->second;
-    auto RF = Socket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass,
-        DependenceAnalysisWrapperPass>(F);
+    auto RF = Socket.getAnalysis<DIEstimateMemoryPass,
+        DIDependencyAnalysisPass, DependenceAnalysisWrapperPass>(Function);
     assert(RF && "Dependence analysis must be available!");
-    mDIAT = &RF->value<DIEstimateMemoryPass*>()->getAliasTree();
-    mDIDep = &RF->value<DIDependencyAnalysisPass*>()->getDependencies();
-    mDepInfo = &RF->value<DependenceAnalysisWrapperPass*>()->getDI();
+    mDIAliasTree = &RF->value<DIEstimateMemoryPass *>()->getAliasTree();
+    mDIDependency = &RF->value<DIDependencyAnalysisPass *>()->getDependencies();
+    mDependence = &RF->value<DependenceAnalysisWrapperPass *>()->getDI();
     auto RM = Socket.getAnalysis<AnalysisClientServerMatcherWrapper>();
     assert(RM && "Client to server IR-matcher must be available!");
-    auto Matcher = RM->value<AnalysisClientServerMatcherWrapper*>();
-    mGetLoopID = [Matcher](ObjectID ID) {
+    auto *Matcher = RM->value<AnalysisClientServerMatcherWrapper *>();
+    mGetLoopIdFunction = [Matcher](ObjectID ID) {
       auto ServerID = (*Matcher)->getMappedMD(ID);
-      return ServerID ? cast<MDNode>(*ServerID) : nullptr;
+      return ServerID
+          ? cast<MDNode>(*ServerID)
+          : nullptr;
     };
-    mGetInstruction = [Matcher](Instruction* I) {
+    mGetInstructionFunction = [Matcher](Instruction *I) {
       return cast<Instruction>((**Matcher)[I]);
     };
   }
 
-  bool TraverseStmt(Stmt *S) {
-    if (!S)
-      return RecursiveASTVisitor::TraverseStmt(S);
-    ForStmt* ForS = dyn_cast<ForStmt>(S);
-    if (!ForS)
-      return RecursiveASTVisitor::TraverseStmt(S);
+  [[maybe_unused]]
+  bool TraverseStmt(Stmt *Statement) {
+    if (!Statement) {
+      return RecursiveASTVisitor::TraverseStmt(Statement);
+    }
+    auto *ForStatement = dyn_cast<ForStmt>(Statement);
+    if (!ForStatement) {
+      return RecursiveASTVisitor::TraverseStmt(Statement);
+    }
+
     dbgs() << "Loop\n";
-    auto Match = mLM->find<AST>(ForS);
-    if (Match == mLM->end())
+    const auto LoopMatch = mLoopMatcher->find<AST>(ForStatement);
+    if (LoopMatch == mLoopMatcher->end()) {
       return false;
-    Loop* L = Match->get<IR>();
-    auto LoopDepth = L->getLoopDepth();
-    auto DFL = dyn_cast<DFRegion>(mDFRI->getRegionFor(L));
-    auto CanonItr = mCLI->find_as(DFL);
-    if (CanonItr == mCLI->end() || !(**CanonItr).isCanonical() ||
-      !(**CanonItr).getLoop())
+    }
+
+    auto *const Loop = LoopMatch->get<IR>();
+    const auto LoopDepth = Loop->getLoopDepth();
+    auto *DFLoopRegion = dyn_cast<DFRegion>(mDFRegion->getRegionFor(Loop));
+    const auto CanonicalLoopItr = mCanonicalLoop->find_as(DFLoopRegion);
+    if (CanonicalLoopItr == mCanonicalLoop->end()
+        || !(**CanonicalLoopItr).isCanonical()
+        || !(**CanonicalLoopItr).getLoop()) {
       return false;
+    }
+
     dbgs() << "Canonical loop\n";
     // TODO: See ParallelLoop.cpp, probably I should use for_each_loop instead.
-    MDNode* LoopID = L->getLoopID();
-    if (!LoopID || !(LoopID = mGetLoopID(LoopID))) {
+    auto *LoopID = Loop->getLoopID();
+    if (!LoopID || !(LoopID = mGetLoopIdFunction(LoopID))) {
       dbgs() << "Ignore loop without ID";
       return false;
     }
-    auto DepItr = mDIDep->find(LoopID);
-    if (DepItr == mDIDep->end())
+
+    const auto DependencyItr = mDIDependency->find(LoopID);
+    if (DependencyItr == mDIDependency->end()) {
       return false;
-    auto& DIDepSet = DepItr->get<DIDependenceSet>();
-    DenseSet<const DIAliasNode*> Coverage;
-    accessCoverage<bcl::SimpleInserter>(DIDepSet, *mDIAT, Coverage,
-      mGO->IgnoreRedundantMemory);
-    for (auto& TS : DIDepSet) {
-      if (!Coverage.count(TS.getNode()))
+    }
+
+    auto& DIDependenceSet = DependencyItr->get<tsar::DIDependenceSet>();
+    DenseSet<const DIAliasNode *> Coverage;
+    accessCoverage<bcl::SimpleInserter>(DIDependenceSet, *mDIAliasTree,
+      Coverage, mGlobalOptions->IgnoreRedundantMemory);
+    for (auto& AliasTrait : DIDependenceSet) {
+      if (!Coverage.count(AliasTrait.getNode())) {
         continue;
-      auto& DIMTraitItr = *TS.begin();
-      auto* DIMem = DIMTraitItr->getMemory();
-      if (DIMTraitItr->is<trait::Flow>()) {
-        printDILocationSource(dwarf::DW_LANG_C, *DIMem, dbgs());
+      }
+
+      auto& DIMemoryTraitItr = *AliasTrait.begin();
+      const auto *DIMemory = DIMemoryTraitItr->getMemory();
+      if (DIMemoryTraitItr->is<trait::Flow>()) {
+        printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
         dbgs() << "Flow dependency\n";
-      }
-      if (DIMTraitItr->is<trait::Anti>()) {
-        printDILocationSource(dwarf::DW_LANG_C, *DIMem, dbgs());
-        dbgs() << "Antiflow dependency\n";
-      }
-      if (!DIMTraitItr->is_any<trait::Flow, trait::Anti>())
         continue;
-      auto* DINode = DIMem->getAliasNode();
-      // TODO: For now I consider the only block in the loop
-      for (auto BB = L->block_begin(); BB != L->block_end(); ++BB) {
+      }
+      if (DIMemoryTraitItr->is<trait::Anti>()) {
+        printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
+        dbgs() << "Antiflow dependency\n";
+        continue;
+      }
+
+      const auto *DINode = DIMemory->getAliasNode();
+      for (const auto *BasicBlock = Loop->block_begin();
+          BasicBlock != Loop->block_end(); ++BasicBlock) {
         // Get all reads and writes of memory leading to dependencies
-        std::vector<Instruction*> Reads, Writes;
-        for_each_memory(**BB, *mTLI, [this, DINode, &Reads, &Writes](Instruction& I,
-          MemoryLocation&& Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
-          auto EM = mAliasTree->find(Loc);
+        std::vector<Instruction *> Reads, Writes;
+        for_each_memory(**BasicBlock, *mTargetLibrary, [this, DINode, &Reads, &Writes](Instruction &I,
+          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+          auto *EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
-          auto& DL = I.getModule()->getDataLayout();
-          auto* DIM = mDIMInfo->findFromClient(
-            *EM->getTopLevelParent(), DL, *mDomTree).get<Clone>();
-          if (!DIM || mSTR->isUnreachable(DINode, DIM->getAliasNode())) {
+          const auto &DL = I.getModule()->getDataLayout();
+          auto *DIM = mServerDIMemory->findFromClient(
+            *EM->getTopLevelParent(), DL, *mDominatorTree).get<Clone>();
+          if (!DIM || mSpanningTreeRelation->isUnreachable(DINode, DIM->getAliasNode())) {
             return;
           }
           dbgs() << "Instruction\n";
@@ -196,132 +221,121 @@ public:
           if (R != AccessInfo::No) {
             Reads.push_back(&I);
           }
-        }, [](Instruction& I, AccessInfo, AccessInfo W) {
+        }, [](Instruction &I, AccessInfo, AccessInfo W) {
           // TODO: Fill in
         });
         // Try to get write instructions after which should be split
-        std::set<Instruction*> Splits(Writes.begin(), Writes.end());
-        for (auto Write = Writes.begin(); Write != Writes.end(); ++Write) {
-          for (auto Read = Reads.begin(); Read != Reads.end(); ++Read) {
+        std::set<Instruction *> Splits(Writes.begin(), Writes.end());
+        for (auto &Write : Writes) {
+          for (auto &Read : Reads) {
             // TODO: Probably true instead of false
-            auto Dep = mDepInfo->depends(mGetInstruction(*Write),
-                mGetInstruction(*Read), false);
-            if (!Dep) continue;
-            auto Dir = Dep.get()->getDirection(LoopDepth);
-            if (Dir == tsar_impl::Dependence::DVEntry::EQ) {
+            const auto Dependence = mDependence->depends(
+                mGetInstructionFunction(Write),
+                mGetInstructionFunction(Read), false);
+            if (!Dependence) {
+              continue;
+            }
+
+            const auto Direction = Dependence->getDirection(LoopDepth);
+            if (Direction == tsar_impl::Dependence::DVEntry::EQ) {
               // TODO: Probably don't need to do so
               dbgs() << "Ignore loop independent dependence\n";
               continue;
             }
+
             // Get direction of the dependency
-            bool Flow = false, Anti = false;
-            if (Dir == tsar_impl::Dependence::DVEntry::ALL) {
+            auto Flow = false, Anti = false;
+            if (Direction == tsar_impl::Dependence::DVEntry::ALL) {
               Flow = true;
               Anti = true;
-            }
-            else if (Dep.get()->isFlow())
-              if (Dir == tsar_impl::Dependence::DVEntry::LT ||
-                  Dir == tsar_impl::Dependence::DVEntry::LE) {
+            } else if (Dependence->isFlow()) {
+              if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+                  Direction == tsar_impl::Dependence::DVEntry::LE) {
                 Flow = true;
               } else {
                 Anti = true;
               }
-            else if (Dep.get()->isAnti())
-              if (Dir == tsar_impl::Dependence::DVEntry::LT ||
-                  Dir == tsar_impl::Dependence::DVEntry::LE) {
+            } else if (Dependence->isAnti()) {
+              if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+                  Direction == tsar_impl::Dependence::DVEntry::LE) {
                 Anti = true;
-              }
-              else {
+              } else {
                 Flow = true;
               }
-            bool WriteBeforeRead = (**Write).comesBefore(*Read);
+            }
+
+            const auto WriteBeforeRead = Write->comesBefore(Read);
             // If this is bad instructions dependency, can't split between them
-            if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) continue;
-            // TODO: More effective version of this algo
-            for (auto Split = Writes.begin(); *Split != *Write; ++Split) {
-              if (!Splits.count(*Split)) continue;
-              if ((**Split).comesBefore(*Write) && (**Read).comesBefore(*Split)
-                || (**Split).comesBefore(*Read) && (**Write).comesBefore(*Split)) {
-                Splits.erase(*Split);
+            if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) {
+              continue;
+            }
+
+            for (auto &Split : Writes) {
+              if (!Splits.count(Split)) {
+                continue;
+              }
+              if (Split->comesBefore(Write) && Read->comesBefore(Split) ||
+                  Split->comesBefore(Read) && Write->comesBefore(Split)) {
+                Splits.erase(Split);
               }
             }
           }
         }
-        for (auto Split = Splits.begin(); Split != Splits.end(); ++Split) {
-          (**Split).dump();
+        dbgs() << "Splits:\n";
+        for (auto *Split : Splits) {
+          Split->dump();
         }
       }
       //auto *Alias = DIMem.getAliasNode();
     }
-    //
-    bool PrevIsInsideLoop = mIsInsideLoop;
+    const auto PrevIsInsideLoop = mIsInsideLoop;
     mIsInsideLoop = true;
-    bool result = RecursiveASTVisitor::TraverseStmt(ForS->getBody());
+    const auto Result = RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
     mIsInsideLoop = PrevIsInsideLoop;
-    return result;
+    return Result;
   }
 
 private:
-  DFRegionInfo* mDFRI;
-  TargetLibraryInfo* mTLI;
-  AliasTree* mAliasTree;
-  DominatorTree* mDomTree;
-  DIMemoryClientServerInfo* mDIMInfo;
-  SpanningTreeRelation<const DIAliasTree*>* mSTR;
-  const CanonicalLoopSet* mCLI;
-  const LoopMatcherPass::LoopMatcher* mLM;
-  const GlobalOptions* mGO;
-  DIAliasTree* mDIAT;
-  DIDependencInfo* mDIDep;
-  DependenceInfo* mDepInfo;
-  std::function<ObjectID(ObjectID)> mGetLoopID;
-  std::function<Instruction* (Instruction*)> mGetInstruction;
+  DFRegionInfo *mDFRegion;
+  TargetLibraryInfo *mTargetLibrary;
+  AliasTree *mAliasTree;
+  DominatorTree *mDominatorTree;
+  DIMemoryClientServerInfo *mServerDIMemory;
+  SpanningTreeRelation<const DIAliasTree *> *mSpanningTreeRelation;
+  const CanonicalLoopSet *mCanonicalLoop;
+  const LoopMatcherPass::LoopMatcher *mLoopMatcher;
+  const GlobalOptions *mGlobalOptions;
+  DIAliasTree *mDIAliasTree;
+  DIDependencInfo *mDIDependency;
+  DependenceInfo *mDependence;
+  std::function<ObjectID(ObjectID)> mGetLoopIdFunction;
+  std::function<Instruction * (Instruction *)> mGetInstructionFunction;
   bool mIsInsideLoop = false;
 };
 }
 
-bool LoopDistributionPass::runOnFunction(Function& F) {
-  auto M = F.getParent();
-  auto& TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+bool LoopDistributionPass::runOnFunction(Function& Function) {
+  auto *Module = Function.getParent();
+  auto& TransformationInfo =
+      getAnalysis<TransformationEnginePass>();
+  if (!TransformationInfo) {
     return false;
-  auto TfmCtx = TfmInfo->getContext(*M);
-  if (!TfmCtx || !TfmCtx->hasInstance())
+  }
+  auto *TransformationContext = TransformationInfo->getContext(*Module);
+  if (!TransformationContext || !TransformationContext->hasInstance()) {
     return false;
-  auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
-  if (!FuncDecl)
+  }
+  auto *FunctionDecl =
+      TransformationContext->getDeclForMangledName(Function.getName());
+  if (!FunctionDecl) {
     return false;
-  /*
-  auto& RgnInfo = getAnalysis<DFRegionInfoPass>().getRegionInfo();
-  auto& TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-  auto& AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  auto& DIEMPass = getAnalysis<DIEstimateMemoryPass>();
-  assert(DIEMPass.isConstructed() && "Alias tree must be constructed!");
-  auto& DIMInfo = DIMemoryClientServerInfo(DIEMPass.getAliasTree(), *this, F);
-  auto& DomTree = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  auto& SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
-  auto& Socket = SocketInfo.getActive()->second;
-  auto RF =
-      Socket.getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass, DependenceAnalysisWrapperPass>(F);
-  assert(RF && "Dependence analysis must be available!");
-  auto& DIAT = RF->value<DIEstimateMemoryPass*>()->getAliasTree();
-  auto& DIDepInfo = RF->value<DIDependencyAnalysisPass*>()->getDependencies();
-  auto& DepInfo = RF->value<DependenceAnalysisWrapperPass*>()->getDI();
-
-  auto RM = Socket.getAnalysis<AnalysisClientServerMatcherWrapper>();
-  assert(RM && "Client to server IR-matcher must be available!");
-  auto Matcher = RM->value<AnalysisClientServerMatcherWrapper*>();
-  auto& GlobalOpts = getAnalysis<GlobalOptionsImmutableWrapper>()
-      .getOptions();
-  auto& CLI = getAnalysis<CanonicalLoopPass>().getCanonicalLoopInfo();
-  auto& LoopInfo = getAnalysis<LoopMatcherPass>().getMatcher();
-  */
-  ASTVisitor LoopVisitor(*this, F);
-  LoopVisitor.TraverseDecl(FuncDecl);
+  }
+  ASTVisitor LoopVisitor(*this, Function);
+  LoopVisitor.TraverseDecl(FunctionDecl);
   return false;
 }
 
-void LoopDistributionPass::getAnalysisUsage(AnalysisUsage& AU) const {
+void LoopDistributionPass::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<TransformationEnginePass>();
     AU.addRequired<DFRegionInfoPass>();
     AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -337,6 +351,6 @@ void LoopDistributionPass::getAnalysisUsage(AnalysisUsage& AU) const {
     AU.setPreservesAll();
 }
 
-FunctionPass* llvm::createLoopDistributionPass() {
+FunctionPass * llvm::createLoopDistributionPass() {
     return new LoopDistributionPass();
 }
