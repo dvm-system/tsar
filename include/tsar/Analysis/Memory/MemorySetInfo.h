@@ -70,7 +70,7 @@ namespace tsar {
 ///       llvm::SmallVectorImpl<LocationTy> *R)
 ///     Return the result of intersection of locations A and B.
 /// - static inline void setNonCollapsable(llvm::MemoryLocation &)
-///     Set `NON_COLLAPSABLE` kind for a specified location.
+///     Set `NonCollapsable` kind for a specified location.
 /// - Copy-constructor must be also available.
 /// In methods presented above the following denotements are used:
 /// - LocationTy is a type of memory locations which are stored in memory set.
@@ -293,7 +293,8 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
     return tsar::intersect(LHS, RHS, L, R);
   }
   static inline void setNonCollapsable(MemoryLocationRange &Loc) {
-    Loc.Kind = MemoryLocationRange::LocKind::NON_COLLAPSABLE;
+    Loc.Kind = MemoryLocationRange::LocKind::NonCollapsable |
+               Loc.Kind & MemoryLocationRange::LocKind::Hint;
   }
 };
 }

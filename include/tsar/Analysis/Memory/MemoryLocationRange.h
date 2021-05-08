@@ -26,11 +26,14 @@
 #define TSAR_MEMORY_LOCATION_RANGE_H
 
 #include <llvm/ADT/APInt.h>
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/Analysis/MemoryLocation.h>
 
 namespace tsar {
 
 using LocationSize = llvm::LocationSize;
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// Representation for a memory location with shifted start position.
 ///
@@ -39,15 +42,12 @@ using LocationSize = llvm::LocationSize;
 /// LowerBound is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
-  enum LocKind {
-    FIRST_KIND = 0,
-    DEFAULT = FIRST_KIND,
-    NON_COLLAPSABLE,
-    COLLAPSED,
-    HINT,
-    LAST_KIND = HINT,
-    INVALID_KIND,
-    NUMBER_KIND = INVALID_KIND,
+  enum LocKind : uint8_t {
+    Default = 0,
+    NonCollapsable = 1u << 0,
+    Collapsed = 1u << 1,
+    Hint = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(Hint)
   };
 
   struct Dimension {
@@ -135,7 +135,7 @@ struct MemoryLocationRange {
                                LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags), Kind(LocKind::DEFAULT) {}
+        AATags(AATags), Kind(LocKind::Default) {}
 
   explicit MemoryLocationRange(const llvm::Value *Ptr,
                                LocationSize LowerBound,
@@ -147,7 +147,7 @@ struct MemoryLocationRange {
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
       : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags),
-        Kind(LocKind::DEFAULT) {}
+        Kind(LocKind::Default) {}
 
   MemoryLocationRange(const MemoryLocationRange &Loc)
       : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
@@ -158,7 +158,7 @@ struct MemoryLocationRange {
     LowerBound = 0;
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
-    Kind = DEFAULT;
+    Kind = Default;
     return *this;
   }
 
@@ -169,24 +169,25 @@ struct MemoryLocationRange {
   }
 
   llvm::StringRef getKindAsString() const {
-    switch (Kind) {
-    case LocKind::DEFAULT:
-      return "DEFAULT";
-    case LocKind::NON_COLLAPSABLE:
-      return "NON_COLLAPSABLE";
-    case LocKind::COLLAPSED:
-      return "COLLAPSED";
-    case LocKind::HINT:
-      return "HINT";
-    case LocKind::INVALID_KIND:
-      return "INVALID_KIND";
-    }
-    return "UNKNOWN";
+    auto append = [](const std::string &What, std::string &To) {
+      if (!To.empty())
+        To += " | ";
+      To += What;
+    };
+    std::string KindStr;
+    if (Kind == Hint || Kind == Default)
+      append("Default", KindStr);
+    if (Kind & NonCollapsable)
+      append("NonCollapsable", KindStr);
+    if (Kind & Collapsed)
+      append("Collapsed", KindStr);
+    if (Kind & Hint)
+      append("Hint", KindStr);
+    return KindStr;
   }
 };
 
-/// \brief Finds an intersection between memory locations LHS and RHS, one of 
-/// which can be scalar.
+/// \brief Finds an intersection between memory locations LHS and RHS.
 ///
 /// \param [in] LHS The first location to intersect.
 /// \param [in] RHS The second location to intersect.

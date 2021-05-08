@@ -90,13 +90,7 @@ void printSolutionInfo(llvm::raw_ostream &OS,
     const MemoryLocationRange &Int,
     llvm::SmallVectorImpl<MemoryLocationRange> *LC,
     llvm::SmallVectorImpl<MemoryLocationRange> *RC) {
-  auto PrintRange = [&OS](const MemoryLocationRange &R) {
-    auto &Dim = R.DimList[0];
-    OS << "{" << (R.Ptr == nullptr ? "Empty" : "Full") << " | ";
-    OS << Dim.Start << " + " << Dim.Step << " * T, T in [" << 0 <<
-        ", " << Dim.TripCount << "), DimSize: " << Dim.DimSize << "} ";
-  };
-  OS << "[EQUATION] Solution:\n";
+  OS << "[INTERSECT] Solution:\n";
   OS << "\tIntersection: ";
   printLocationSource(OS << "\t", Int);
   OS << "\n";
@@ -119,7 +113,9 @@ void printSolutionInfo(llvm::raw_ostream &OS,
 
 void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   typedef MemoryLocationRange::LocKind LocKind;
-  if (What.Kind != LocKind::DEFAULT || From.Kind != LocKind::COLLAPSED)
+  assert(!(What.Kind & LocKind::Collapsed) &&
+      "It is forbidden to delinearize collapsed location!");
+  if (What.Kind & LocKind::NonCollapsable || !(From.Kind & LocKind::Collapsed))
     return;
   if (!What.LowerBound.hasValue() || !What.UpperBound.hasValue())
     return;
@@ -141,7 +137,7 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   SizesInBytes.back() = ElemSize;
   for (int64_t DimIdx = DimN - 1; DimIdx >= 0; --DimIdx) {
     SizesInBytes[DimIdx] = From.DimList[DimIdx].DimSize *
-                            SizesInBytes[DimIdx + 1];
+                           SizesInBytes[DimIdx + 1];
     assert(SizesInBytes[DimIdx] != 0 || DimIdx == 0 &&
         "Collapsed memory location should not contain "
         "dimensions of size 0, except for the 0th dimension.");
@@ -175,7 +171,7 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   What.LowerBound = 0;
   What.UpperBound = ElemSize;
   What.DimList = std::move(DimList);
-  What.Kind = LocKind::COLLAPSED;
+  What.Kind = LocKind::Collapsed | (What.Kind & LocKind::Hint);
 }
 
 llvm::Optional<MemoryLocationRange> intersectScalar(
@@ -186,7 +182,7 @@ llvm::Optional<MemoryLocationRange> intersectScalar(
   typedef MemoryLocationRange::LocKind LocKind;
   if (LHS.Ptr != RHS.Ptr)
     return llvm::None;
-  assert(LHS.Kind != LocKind::COLLAPSED && RHS.Kind != LocKind::COLLAPSED &&
+  assert(!(LHS.Kind & LocKind::Collapsed) && !(RHS.Kind & LocKind::Collapsed) &&
       "It is forbidden to calculate an intersection between non-scalar "
       "variables!");
   if (!LHS.LowerBound.hasValue() || !LHS.UpperBound.hasValue() ||
@@ -239,24 +235,32 @@ llvm::Optional<MemoryLocationRange> intersect(
       "Pointers of intersected memory locations must not be null!");
   // Return a location that may be an intersection, but cannot be calculated 
   // exactly.
+  LLVM_DEBUG(
+    llvm::dbgs() << "[INTERSECT] Intersect locations:\n";
+    printLocationSource(llvm::dbgs() << "\t", LHS, nullptr, true);
+    llvm::dbgs() << "\n";
+    printLocationSource(llvm::dbgs() << "\t", RHS, nullptr, true);
+    llvm::dbgs() << "\n";
+  );
   if (LHS.Ptr != RHS.Ptr)
     return llvm::None;
-  if ((LHS.Kind == LocKind::DEFAULT || LHS.Kind == LocKind::HINT) &&
-       RHS.Kind == LocKind::COLLAPSED)
+  if (!(LHS.Kind & LocKind::Collapsed) &&
+      !(LHS.Kind & LocKind::NonCollapsable) &&
+       (RHS.Kind & LocKind::Collapsed))
     delinearize(RHS, LHS);
-  else if ((RHS.Kind == LocKind::DEFAULT || RHS.Kind == LocKind::HINT) &&
-            LHS.Kind == LocKind::COLLAPSED)
+  if (!(RHS.Kind & LocKind::Collapsed) &&
+      !(RHS.Kind & LocKind::NonCollapsable) &&
+       (LHS.Kind & LocKind::Collapsed))
     delinearize(LHS, RHS);
-  if (LHS.Kind != LocKind::COLLAPSED && RHS.Kind != LocKind::COLLAPSED)
+  if (!(LHS.Kind & LocKind::Collapsed) && !(RHS.Kind & LocKind::Collapsed))
     return intersectScalar(LHS, RHS, LC, RC);
-  if (LHS.Kind != LocKind::COLLAPSED || RHS.Kind != LocKind::COLLAPSED)
+  if (!(LHS.Kind & LocKind::Collapsed) || !(RHS.Kind & LocKind::Collapsed))
     return MemoryLocationRange();
   if (LHS.DimList.size() != RHS.DimList.size())
     return MemoryLocationRange();
   if (LHS.LowerBound == RHS.LowerBound && LHS.UpperBound == RHS.UpperBound &&
       LHS.DimList == RHS.DimList)
     return LHS;
-  bool Intersected = true;
   MemoryLocationRange Int(LHS);
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
     auto &Left = LHS.DimList[I];
@@ -265,10 +269,8 @@ llvm::Optional<MemoryLocationRange> intersect(
       return MemoryLocationRange();
     auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
     auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
-    if (LeftEnd < Right.Start || RightEnd < Left.Start) {
-      Intersected = false;
-      break;
-    }
+    if (LeftEnd < Right.Start || RightEnd < Left.Start)
+      return llvm::None;
     ColumnInfo Info;
     // We guarantee that K1 and K2 will not be equal to 0.
     assert(Left.Step > 0 && Right.Step > 0 && "Steps must be positive!");
@@ -281,10 +283,8 @@ llvm::Optional<MemoryLocationRange> intersect(
     System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
     System.instantiate(Info);
     auto SolutionNumber = System.solve<ColumnInfo, false>(Info);
-    if (SolutionNumber == 0) {
-      Intersected = false;
-      break;
-    }
+    if (SolutionNumber == 0)
+      return llvm::None;
     auto &Solution = System.getSolution();
     auto &LineX = Solution[0], &LineY = Solution[1];
     // B will be equal to 0 only if K1 is equal to 0 but K1 is always positive.
@@ -299,10 +299,8 @@ llvm::Optional<MemoryLocationRange> intersect(
     ValueT TYmax = std::floor((YRange.second - C) / double(D));
     ValueT Tmin = std::max(TXmin, TYmin);
     ValueT Tmax = std::min(TXmax, TYmax);
-    if (Tmax < Tmin) {
-      Intersected = false;
-      break;
-    }
+    if (Tmax < Tmin)
+      return llvm::None;
     ValueT Shift = Tmin;
     Tmin = 0;
     Tmax -= Shift;
@@ -321,10 +319,8 @@ llvm::Optional<MemoryLocationRange> intersect(
       if (!difference(Left, Intersection, ComplLeft, Threshold)) {
         return MemoryLocationRange();
       } else {
-        for (auto &Comp : ComplLeft) {
-          auto &NewLoc = LC->emplace_back(LHS);
-          NewLoc.DimList[I] = Comp;
-        }
+        for (auto &Comp : ComplLeft)
+          LC->emplace_back(LHS).DimList[I] = Comp;
       }
     }
     if (RC) {
@@ -332,15 +328,11 @@ llvm::Optional<MemoryLocationRange> intersect(
       if (!difference(Right, Intersection, ComplRight, Threshold)) {
         return MemoryLocationRange();
       } else {
-        for (auto &Comp : ComplRight) {
-          auto &NewLoc = RC->emplace_back(RHS);
-          NewLoc.DimList[I] = Comp;
-        }
+        for (auto &Comp : ComplRight)
+          RC->emplace_back(RHS).DimList[I] = Comp;
       }
     }
   }
-  if (!Intersected)
-    return llvm::None;
   LLVM_DEBUG(printSolutionInfo(llvm::dbgs(), Int, LC, RC));
   return Int;
 }
