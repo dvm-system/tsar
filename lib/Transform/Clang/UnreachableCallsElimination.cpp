@@ -160,12 +160,14 @@ public:
     if (!WS) {
       return true;
     }
+
     clang::Stmt *WhileBody = WS->getBody();
-    if (tryMakeEliminable(WhileBody)) {
-      clang::Stmt *Cond = WS->getCond();
-      makeEliminable(Cond);
+
+    if (isUnreachable(WhileBody)) {
+      makeEliminableFromTo(WS->getWhileLoc(), WhileBody->getEndLoc());
       return true;
     }
+
     return RecursiveASTVisitor::TraverseWhileStmt(WS);
   }
 
@@ -173,16 +175,14 @@ public:
     if (!FS) {
       return true;
     }
+
     clang::Stmt *ForBody = FS->getBody();
-    if (tryMakeEliminable(ForBody)) {
-      clang::Stmt *Init = FS->getInit();
-      makeEliminable(Init);
-      clang::Expr *Cond = FS->getCond();
-      makeEliminable(Cond);
-      clang::Expr *Inc = FS->getInc();
-      makeEliminable(Inc);
+
+    if (isUnreachable(ForBody)) {
+      makeEliminableFromTo(FS->getForLoc(), ForBody->getEndLoc());
       return true;
     }
+
     return RecursiveASTVisitor::TraverseForStmt(FS);
   }
 
