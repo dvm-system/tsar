@@ -182,68 +182,38 @@ static inline void insertStoreInstructions(ScalarizerContext &Ctx) {
   }
 }
 
-static void getAllStoreOperands(LoadInst *I, DenseMap<StoreInst *, Instruction *> &Stores) {
-  for (auto *User : I->users()) {
-    auto *Child = dyn_cast<Instruction>(User);
-    if (!Child)
-      continue;
-    for (auto *ChildUser : Child->users()) {
-      if (auto *Store = dyn_cast<StoreInst>(ChildUser))
-        if (Store->getPointerOperand() == I->getPointerOperand()) {
-          Stores[Store] = Child;
-          break;
-        }
-    }
-  }
-}
-
-static void handleLoadsInBB(BasicBlock *BB, ScalarizerContext &Ctx) {
+static void handleMemoryAccess(BasicBlock *BB, ScalarizerContext &Ctx) {
   SmallVector<Instruction *, 16> Loads;
   DenseMap<StoreInst *, Value *> Stores;
-  auto ReplaceLoads = [&](LoadInst *Load, Value *ReplaceWith) {
-    DenseMap<StoreInst *, Instruction *> storeInstructions;
-    getAllStoreOperands(Load, storeInstructions);
-    for (auto &Pair : storeInstructions) {
-      Ctx.LastValues[Pair.second->getParent()] = Pair.second;
-      Ctx.ChangedLastInst.insert(Pair.second->getParent());
-    }
-    Stores.insert(storeInstructions.begin(), storeInstructions.end());
-    Load->replaceAllUsesWith(ReplaceWith);
-  };
+  SmallVector<Instruction *, 16> ToDelete;
+  bool LastValuesChanged = false;
   for (auto &Instr : BB->getInstList()) {
     auto *SI = dyn_cast<StoreInst>(&Instr);
     auto *LI = dyn_cast<LoadInst>(&Instr);
-    if (SI && SI->getPointerOperand() == Ctx.V) {
-      Stores.insert({SI, SI->getValueOperand()});
+    if (SI && SI->getPointerOperand() == Ctx.V){
+      ToDelete.push_back(SI);
       Ctx.LastValues[SI->getParent()] = SI->getValueOperand();
-      Ctx.ChangedLastInst.insert(SI->getParent());
+      LastValuesChanged = true;
     } else if (LI && LI->getPointerOperand() == Ctx.V && !LI->user_empty()) {
       Value *Last = Ctx.LastValues[BB];
       if (!Ctx.ValueChanged) {
-        ReplaceLoads(LI, Last);
+        LI->replaceAllUsesWith(Last);
       } else {
         for (auto *user : LI->users())
           if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
-            ReplaceLoads(LoadChild, Last);
-            Loads.push_back(LoadChild);
+            LoadChild->replaceAllUsesWith(Last);
+            ToDelete.push_back(LoadChild);
           }
-        ReplaceLoads(LI, Ctx.InsertedLoads.front());
+        LI->replaceAllUsesWith(Ctx.InsertedLoads.front());
       }
-      Loads.push_back(LI);
+      ToDelete.push_back(LI);
     }
   }
-  for (auto &Pair : Stores)
-    if (auto *I = dyn_cast<Instruction>(Pair.second))
-      insertDbgValueCall(Ctx, I, Pair.first, false);
-  for (auto *Load : Loads) {
-    Load->dropAllReferences();
-    Load->eraseFromParent();
+  for (auto *I : ToDelete) {
+    I->dropAllReferences();
+    I->eraseFromParent();
   }
-  for (auto &Pair : Stores) {
-    Pair.first->dropAllReferences();
-    Pair.first->eraseFromParent();
-  }
-  if (pred_size(BB) == 1 && Ctx.ChangedLastInst.find(BB) == Ctx.ChangedLastInst.end())
+  if (pred_size(BB) == 1 && !LastValuesChanged)
     Ctx.LastValues[BB] = Ctx.LastValues[BB->getSinglePredecessor()];
 }
 
@@ -254,7 +224,7 @@ static void handleLoads(ScalarizerContext &Ctx,
   if (Completed.find(BB) != Completed.end())
     return;
   if (!Init)
-    handleLoadsInBB(BB, Ctx);
+    handleMemoryAccess(BB, Ctx);
   Completed.insert(BB);
   for (auto *Succ : successors(BB))
     if (Ctx.L->contains(Succ))
