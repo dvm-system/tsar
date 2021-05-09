@@ -62,67 +62,65 @@ public:
     mUnreachable(Unreachable),
     mSourceManager(Rewriter.getSourceMgr()) {}
 
-  // bool TraverseCallExpr(CallExpr *CE) {
-  //   if (!CE) {
-  //     return true;
-  //   }
+  bool TraverseStmt(clang::Stmt *S) {
+    if (!S) {
+      return true;
+    }
+    if (clang::CompoundStmt *CS = dyn_cast<clang::CompoundStmt>(S)) {
+      return RecursiveASTVisitor::TraverseCompoundStmt(CS);
+    }
+    if (clang::ReturnStmt *RS = dyn_cast<clang::ReturnStmt>(S)) {
+      return RecursiveASTVisitor::TraverseReturnStmt(RS);
+    }
 
-  //   clang::SourceLocation BeginLoc = CE->getBeginLoc();
-  //   clang::SourceLocation EndLoc = CE->getEndLoc();
+    if (isUnreachable(S)) {
+      makeEliminableFromTo(S->getBeginLoc(), S->getEndLoc());
+      return true;
+    }
 
-  //   unsigned LineStart = mSourceManager.getSpellingLineNumber(BeginLoc);
-  //   unsigned ColumnStart = mSourceManager.getSpellingColumnNumber(BeginLoc);
-  //   unsigned LineEnd = mSourceManager.getSpellingLineNumber(EndLoc);
-  //   unsigned ColumnEnd = mSourceManager.getSpellingColumnNumber(EndLoc);
-
-  //   std::cout << "CallExpr SourceLocation:" << std::endl;
-  //   std::cout << "\tstart: " << LineStart << ":" << ColumnStart
-  //       << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
-
-  //   for (const auto &CR : mUnreachable) {
-  //     if ((CR.LineStart < LineStart || (CR.LineStart == LineStart && CR.ColumnStart <= ColumnStart))
-  //         && (CR.LineEnd > LineEnd || (CR.LineEnd == LineEnd && CR.ColumnEnd >= ColumnEnd))) {
-
-  //       if (mCallExprIsBinaryOpRHS) {
-  //         std::cout << "\t\tcalled from BinaryOperator" << std::endl;
-  //         BeginLoc = mLastBinaryOpBeforeCallExpr;
-  //         mCallExprIsBinaryOpRHS = false;
-  //       }
-
-  //       EndLoc = shiftTokenIfSemi(EndLoc);
-
-  //       LineStart = mSourceManager.getSpellingLineNumber(BeginLoc);
-  //       ColumnStart = mSourceManager.getSpellingColumnNumber(BeginLoc);
-  //       LineEnd = mSourceManager.getSpellingLineNumber(EndLoc);
-  //       ColumnEnd = mSourceManager.getSpellingColumnNumber(EndLoc);
-
-  //       std::cout << "\tExtended CallExpr SourceLocation:" << std::endl;
-  //       std::cout << "\t\tstart: " << LineStart << ":" << ColumnStart
-  //           << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
-
-  //       clang::SourceRange SourceRangeToEliminate{ BeginLoc, EndLoc };
-  //       mSourceRangesToEliminate.push_back(SourceRangeToEliminate);
-  //       break;
-  //     }
-  //   }
-
-  //   return RecursiveASTVisitor::TraverseCallExpr(CE);
-  // }
+    return RecursiveASTVisitor::TraverseStmt(S);
+  }
 
   bool TraverseBinaryOperator(clang::BinaryOperator *BO) {
     if (!BO) {
       return true;
     }
-    if (BO->isLogicalOp()) {
+    if (!BO->isLogicalOp()) {
       return RecursiveASTVisitor::TraverseBinaryOperator(BO);
     }
+
     clang::Expr *RHS = BO->getRHS();
-    if (tryMakeEliminable(RHS)) {
+
+    if (isUnreachable(RHS)) {
+      makeEliminableFromTo(BO->getOperatorLoc(), RHS->getEndLoc());
       clang::Expr *LHS = BO->getLHS();
-      // return RecursiveASTVisitor::TraverseExpr(LHS);
       return RecursiveASTVisitor::TraverseStmt(LHS);
     }
+
     return RecursiveASTVisitor::TraverseBinaryOperator(BO);
+  }
+
+  bool TraverseConditionalOperator(clang::ConditionalOperator *CO) {
+    if (!CO) {
+      return true;
+    }
+
+    clang::Expr *Cond = CO->getCond();
+    clang::Expr *TrueExpr = CO->getTrueExpr();
+    clang::Expr *FalseExpr = CO->getFalseExpr();
+
+    if (isUnreachable(TrueExpr)) {
+      makeEliminableFromTo(CO->getBeginLoc(), CO->getColonLoc());
+      return true;
+    }
+
+    if (isUnreachable(FalseExpr)) {
+      makeEliminableFromTo(CO->getBeginLoc(), CO->getQuestionLoc());
+      makeEliminableFromTo(CO->getColonLoc(), CO->getEndLoc());
+      return true;
+    }
+
+    return RecursiveASTVisitor::TraverseConditionalOperator(CO);    
   }
 
   bool TraverseIfStmt(clang::IfStmt *IS) {
@@ -230,21 +228,6 @@ private:
   void makeEliminableLoc(const clang::SourceLocation &Loc) {
     clang::SourceRange SourceRangeToEliminate{ Loc, Loc };
     mSourceRangesToEliminate.push_back(SourceRangeToEliminate);
-  }
-
-  /// Marks S's source range as eliminable
-  void makeEliminable(clang::Stmt *S) {
-    mSourceRangesToEliminate.push_back(S->getSourceRange());
-  }
-
-  /// If S is unreachable marks S's source range as eliminable
-  /// else does nothing
-  bool tryMakeEliminable(clang::Stmt *S) {
-    if (isUnreachable(S)) {
-      makeEliminable(S);
-      return true;
-    }
-    return false;
   }
 
   void printUnreachableSorceRanges() {
