@@ -94,9 +94,13 @@ INITIALIZE_PASS_IN_GROUP_END(LoopDistributionPass, "loop-distribution",
     TransformationQueryManager::getPassRegistry())
 
 namespace {
+
+  typedef std::vector<Instruction *> DependencyInstructionVector;
+
 class ASTVisitor : public RecursiveASTVisitor<ASTVisitor> {
 public:
-  ASTVisitor(FunctionPass& Pass, Function& Function) {
+  ASTVisitor(FunctionPass& Pass, Function& Function,
+      ClangTransformationContext &TransformationContext) {
     mDFRegion = &Pass.getAnalysis<DFRegionInfoPass>().getRegionInfo();
     mTargetLibrary = &Pass.getAnalysis<TargetLibraryInfoWrapperPass>()
         .getTLI(Function);
@@ -116,6 +120,7 @@ public:
         .getMatcher();
     mGlobalOptions = &Pass.getAnalysis<GlobalOptionsImmutableWrapper>()
         .getOptions();
+    mSourceManager = &TransformationContext.getRewriter().getSourceMgr();
     auto& SocketInfo = Pass.getAnalysis<AnalysisSocketImmutableWrapper>().get();
     auto& Socket = SocketInfo.getActive()->second;
     auto RF = Socket.getAnalysis<DIEstimateMemoryPass,
@@ -148,14 +153,12 @@ public:
       return RecursiveASTVisitor::TraverseStmt(Statement);
     }
 
-    dbgs() << "Loop\n";
     const auto LoopMatch = mLoopMatcher->find<AST>(ForStatement);
     if (LoopMatch == mLoopMatcher->end()) {
       return false;
     }
 
     auto *const Loop = LoopMatch->get<IR>();
-    const auto LoopDepth = Loop->getLoopDepth();
     auto *DFLoopRegion = dyn_cast<DFRegion>(mDFRegion->getRegionFor(Loop));
     const auto CanonicalLoopItr = mCanonicalLoop->find_as(DFLoopRegion);
     if (CanonicalLoopItr == mCanonicalLoop->end()
@@ -164,11 +167,15 @@ public:
       return false;
     }
 
-    dbgs() << "Canonical loop\n";
+    LLVM_DEBUG(
+      dbgs() << "Found canonical loop at ";
+      ForStatement->getBeginLoc().print(dbgs(), *mSourceManager);
+      dbgs() << "\n";
+    );
     // TODO: See ParallelLoop.cpp, probably I should use for_each_loop instead.
     auto *LoopID = Loop->getLoopID();
     if (!LoopID || !(LoopID = mGetLoopIdFunction(LoopID))) {
-      dbgs() << "Ignore loop without ID";
+      LLVM_DEBUG(dbgs() << "Ignore loop without ID");
       return false;
     }
 
@@ -177,35 +184,38 @@ public:
       return false;
     }
 
-    auto& DIDependenceSet = DependencyItr->get<tsar::DIDependenceSet>();
+    auto &DIDependenceSet = DependencyItr->get<tsar::DIDependenceSet>();
     DenseSet<const DIAliasNode *> Coverage;
     accessCoverage<bcl::SimpleInserter>(DIDependenceSet, *mDIAliasTree,
       Coverage, mGlobalOptions->IgnoreRedundantMemory);
-    for (auto& AliasTrait : DIDependenceSet) {
+    DependencyInstructionVector DependencyReads, DependencyWrites;
+    for (auto &AliasTrait : DIDependenceSet) {
       if (!Coverage.count(AliasTrait.getNode())) {
         continue;
       }
 
-      auto& DIMemoryTraitItr = *AliasTrait.begin();
-      const auto *DIMemory = DIMemoryTraitItr->getMemory();
-      if (DIMemoryTraitItr->is<trait::Flow>()) {
-        printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
-        dbgs() << "Flow dependency\n";
-        continue;
-      }
-      if (DIMemoryTraitItr->is<trait::Anti>()) {
-        printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
-        dbgs() << "Antiflow dependency\n";
+      auto &DIMemoryTraitItr = *AliasTrait.begin();
+      if (!DIMemoryTraitItr->is_any<trait::Flow, trait::Anti>()) {
         continue;
       }
 
+      const auto *DIMemory = DIMemoryTraitItr->getMemory();
+      LLVM_DEBUG(
+        if (DIMemoryTraitItr->is<trait::Flow>()) {
+          printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
+          dbgs() << "Flow dependency\n";
+        }
+        if (DIMemoryTraitItr->is<trait::Anti>()) {
+          printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
+          dbgs() << "Antiflow dependency\n";
+        }
+      );
+
       const auto *DINode = DIMemory->getAliasNode();
-      for (const auto *BasicBlock = Loop->block_begin();
-          BasicBlock != Loop->block_end(); ++BasicBlock) {
+      for (const auto &BasicBlock : Loop->blocks()) {
         // Get all reads and writes of memory leading to dependencies
-        std::vector<Instruction *> Reads, Writes;
-        for_each_memory(**BasicBlock, *mTargetLibrary, [this, DINode, &Reads, &Writes](Instruction &I,
-          MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
+        for_each_memory(*BasicBlock, *mTargetLibrary, [this, DINode, &DependencyReads, &DependencyWrites](Instruction &I,
+          MemoryLocation &&Loc, unsigned, AccessInfo R, AccessInfo W) {
           auto *EM = mAliasTree->find(Loc);
           assert(EM && "Estimate memory location must not be null!");
           const auto &DL = I.getModule()->getDataLayout();
@@ -214,85 +224,94 @@ public:
           if (!DIM || mSpanningTreeRelation->isUnreachable(DINode, DIM->getAliasNode())) {
             return;
           }
-          dbgs() << "Instruction\n";
           if (W != AccessInfo::No) {
-            Writes.push_back(&I);
+            DependencyWrites.push_back(&I);
+            LLVM_DEBUG(dbgs() << "Write "; I.dump());
           }
           if (R != AccessInfo::No) {
-            Reads.push_back(&I);
+            DependencyReads.push_back(&I);
+            LLVM_DEBUG(dbgs() << "Read "; I.dump());
           }
         }, [](Instruction &I, AccessInfo, AccessInfo W) {
           // TODO: Fill in
         });
-        // Try to get write instructions after which should be split
-        std::set<Instruction *> Splits(Writes.begin(), Writes.end());
-        for (auto &Write : Writes) {
-          for (auto &Read : Reads) {
-            // TODO: Probably true instead of false
-            const auto Dependence = mDependence->depends(
-                mGetInstructionFunction(Write),
-                mGetInstructionFunction(Read), false);
-            if (!Dependence) {
-              continue;
-            }
-
-            const auto Direction = Dependence->getDirection(LoopDepth);
-            if (Direction == tsar_impl::Dependence::DVEntry::EQ) {
-              // TODO: Probably don't need to do so
-              dbgs() << "Ignore loop independent dependence\n";
-              continue;
-            }
-
-            // Get direction of the dependency
-            auto Flow = false, Anti = false;
-            if (Direction == tsar_impl::Dependence::DVEntry::ALL) {
-              Flow = true;
-              Anti = true;
-            } else if (Dependence->isFlow()) {
-              if (Direction == tsar_impl::Dependence::DVEntry::LT ||
-                  Direction == tsar_impl::Dependence::DVEntry::LE) {
-                Flow = true;
-              } else {
-                Anti = true;
-              }
-            } else if (Dependence->isAnti()) {
-              if (Direction == tsar_impl::Dependence::DVEntry::LT ||
-                  Direction == tsar_impl::Dependence::DVEntry::LE) {
-                Anti = true;
-              } else {
-                Flow = true;
-              }
-            }
-
-            const auto WriteBeforeRead = Write->comesBefore(Read);
-            // If this is bad instructions dependency, can't split between them
-            if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) {
-              continue;
-            }
-
-            for (auto &Split : Writes) {
-              if (!Splits.count(Split)) {
-                continue;
-              }
-              if (Split->comesBefore(Write) && Read->comesBefore(Split) ||
-                  Split->comesBefore(Read) && Write->comesBefore(Split)) {
-                Splits.erase(Split);
-              }
-            }
-          }
-        }
-        dbgs() << "Splits:\n";
-        for (auto *Split : Splits) {
-          Split->dump();
-        }
       }
-      //auto *Alias = DIMem.getAliasNode();
     }
+
+    // Try to get write instructions after which should be split
+    getLoopSplits(Loop, DependencyReads, DependencyWrites);
     const auto PrevIsInsideLoop = mIsInsideLoop;
     mIsInsideLoop = true;
     const auto Result = RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
     mIsInsideLoop = PrevIsInsideLoop;
     return Result;
+  }
+
+private:
+  void getLoopSplits(Loop *Loop, const DependencyInstructionVector &Reads,
+                     const DependencyInstructionVector &Writes) const {
+    const auto LoopDepth = Loop->getLoopDepth();
+    std::set<Instruction *> Splits(Writes.begin(), Writes.end());
+    for (const auto &Write : Writes) {
+      for (const auto &Read : Reads) {
+        // TODO: Probably true instead of false
+        const auto Dependence =
+            mDependence->depends(mGetInstructionFunction(Write),
+                                 mGetInstructionFunction(Read), false);
+        if (!Dependence) {
+          continue;
+        }
+
+        const auto Direction = Dependence->getDirection(LoopDepth);
+        if (Direction == tsar_impl::Dependence::DVEntry::EQ) {
+          LLVM_DEBUG(dbgs() << "Ignore loop independent dependence\n");
+          continue;
+        }
+
+        // Get direction of the dependency
+        auto Flow = false, Anti = false;
+        if (Direction == tsar_impl::Dependence::DVEntry::ALL) {
+          Flow = true;
+          Anti = true;
+        } else if (Dependence->isFlow()) {
+          if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+              Direction == tsar_impl::Dependence::DVEntry::LE) {
+            Flow = true;
+          } else {
+            Anti = true;
+          }
+        } else if (Dependence->isAnti()) {
+          if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+              Direction == tsar_impl::Dependence::DVEntry::LE) {
+            Anti = true;
+          } else {
+            Flow = true;
+          }
+        }
+
+        const auto WriteBeforeRead = Write->comesBefore(Read);
+        // If this is bad instructions dependency, can't split between them
+        if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) {
+          continue;
+        }
+
+        for (const auto &Split : Writes) {
+          if (!Splits.count(Split)) {
+            continue;
+          }
+          if (Split->comesBefore(Write) && Read->comesBefore(Split) ||
+              Split->comesBefore(Read) && Write->comesBefore(Split)) {
+            Splits.erase(Split);
+          }
+        }
+      }
+    }
+    LLVM_DEBUG(
+      dbgs() << "Found splits:\n";
+      for (auto *Split : Splits) {
+        Split->dump();
+      }
+    );
   }
 
 private:
@@ -305,6 +324,7 @@ private:
   const CanonicalLoopSet *mCanonicalLoop;
   const LoopMatcherPass::LoopMatcher *mLoopMatcher;
   const GlobalOptions *mGlobalOptions;
+  const SourceManager *mSourceManager;
   DIAliasTree *mDIAliasTree;
   DIDependencInfo *mDIDependency;
   DependenceInfo *mDependence;
@@ -330,7 +350,7 @@ bool LoopDistributionPass::runOnFunction(Function& Function) {
   if (!FunctionDecl) {
     return false;
   }
-  ASTVisitor LoopVisitor(*this, Function);
+  ASTVisitor LoopVisitor(*this, Function, *TransformationContext);
   LoopVisitor.TraverseDecl(FunctionDecl);
   return false;
 }
