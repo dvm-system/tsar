@@ -33,11 +33,13 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 
+#include <iostream>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils/Local.h>
 #include <tsar/Analysis/Memory/Utils.h>
 
 #undef DEBUG_TYPE
@@ -255,9 +257,10 @@ static void handleLoads(ScalarizerContext &Ctx,
     handleLoadsInBB(BB, Ctx);
   Completed.insert(BB);
   for (auto *Succ : successors(BB))
-    if (Ctx.L->contains(Succ)) {
+    if (Ctx.L->contains(Succ))
       handleLoads(Ctx, Succ, Completed);
-    }
+    else
+      Ctx.LastValues[Succ] = Ctx.LastValues[BB];
 }
 
 static inline void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &PhiLinks) {
@@ -301,36 +304,37 @@ static void fillPhiNodes(ScalarizerContext &Ctx) {
   for (auto *Phi : Ctx.UniqueNodes) {
     auto *BB = Phi->getParent();
     for (auto Pred = pred_begin(BB); Pred != pred_end(BB); Pred++) {
-      if (Ctx.LastValues.find(*Pred) != Ctx.LastValues.end()) {
+      if (Ctx.LastValues.find(*Pred) != Ctx.LastValues.end())
         Phi->addIncoming(Ctx.LastValues[*Pred], *Pred);
-      } else {
-        auto *load = new LoadInst(Ctx.V->getType()->getPointerElementType(),
-            Ctx.V, "dummy.load." + Ctx.V->getName(), &(*Pred)->back());
-        Phi->addIncoming(load, *Pred);
-      }
     }
   }
 }
 
 static void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
-  for (auto *Phi : Ctx.UniqueNodes) {
-    bool hasSameOperands = true;
-    auto *operand = Phi->getOperand(0);
-    for (int i = 0; i < Phi->getNumOperands(); ++i) {
-      if (operand != Phi->getOperand(i)) {
-        hasSameOperands = false;
-        break;
-      }
+  bool Changed = false;
+  do {
+    SmallVector<PHINode *, 4> ToDelete;
+    for (auto *Phi: Ctx.UniqueNodes) {
+      bool SameOperands = true;
+      auto *Op = Phi->getOperand(0);
+      for (auto *OtherOp: Phi->operand_values())
+        if (Op != OtherOp) {
+          SameOperands = false;
+          break;
+        }
+      if (SameOperands)
+        ToDelete.emplace_back(Phi);
     }
-    if (hasSameOperands) {
-      Phi->replaceAllUsesWith(operand);
+    Changed = !ToDelete.empty();
+    for (auto *Phi : ToDelete) {
+      Phi->replaceAllUsesWith(Phi->getOperand(0));
       Ctx.UniqueNodes.erase(Phi);
       Ctx.PhiLinks[Phi->getParent()]->phiNode = nullptr;
-      auto *Instr = dyn_cast<Instruction>(operand);
+      auto *Instr = dyn_cast<Instruction>(Phi->getOperand(0));
       Ctx.PhiLinks[Phi->getParent()]->parent = Ctx.PhiLinks[Instr->getParent()];
       Phi->eraseFromParent();
     }
-  }
+  } while (Changed);
 }
 
 static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo &TLI) {
@@ -343,15 +347,23 @@ static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo
     for (auto &Inst : BB->getInstList()) {
       bool HasWrite = false;
       auto *EMNode = EM->getAliasNode(AT);
-      auto memLambda = [&STR, &HasWrite, &AT, &EM, &EMNode](
+      auto memLambda = [&V, &STR, &HasWrite, &AT, &EM, &EMNode](
           Instruction &I, MemoryLocation &&Loc, unsigned, AccessInfo, AccessInfo W) {
         if (HasWrite || W == AccessInfo::No)
           return;
         auto InstEM = AT.find(Loc);
         assert(InstEM && "alias tree node is empty");
         auto *InstNode = InstEM->getAliasNode(AT);
-        if (InstEM->getTopLevelParent() != EM && !STR.isUnreachable(EMNode, InstNode))
+        if (InstEM->getTopLevelParent() != EM && !STR.isUnreachable(EMNode, InstNode)) {
           HasWrite = true;
+        } else if (InstEM->getTopLevelParent() == EM) {
+          if (auto *LI = dyn_cast<LoadInst>(&I))
+            if (LI->getPointerOperand() != V)
+              HasWrite = true;
+          if (auto *SI = dyn_cast<StoreInst>(&I))
+            if (SI->getPointerOperand() != V)
+              HasWrite = true;
+        }
       };
       auto unknownMemLambda = [&HasWrite, &AT, &STR, &EMNode](
           Instruction &I, AccessInfo, AccessInfo W) {
@@ -369,18 +381,22 @@ static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo
   return true;
 }
 
-static void createDbgInfo(ScalarizerContext &Ctx,
+static bool createDbgInfo(ScalarizerContext &Ctx,
     DIType *DIT, AliasTree &AT,
     SmallVectorImpl<Metadata *> &MDs) {
+  if (!Ctx.DbgVar || !Ctx.DbgLoc)
+    return false;
   auto &DL = Ctx.F.getParent()->getDataLayout();
   auto TypeSize = DL.getTypeStoreSize(Ctx.V->getType()->getPointerElementType());
   auto EM = AT.find(MemoryLocation(Ctx.V, LocationSize::precise(TypeSize)));
   if (EM == nullptr)
-    return;
+    return false;
   auto *RawDIMem = getRawDIMemoryIfExists(
-      *EM->getTopLevelParent(),
+      *EM,
       Ctx.F.getContext(), DL,
       AT.getDomTree());
+  if (!RawDIMem)
+    return false;
   auto *Scope = dyn_cast<DIScope>(Ctx.L->getStartLoc()->getScope());
   auto *NewVar = Ctx.DIB->createAutoVariable(
       Scope, "deref." + Ctx.DbgVar->getName().str(),
@@ -390,6 +406,7 @@ static void createDbgInfo(ScalarizerContext &Ctx,
   auto *Node = DINode::get(Ctx.F.getContext(), {RawDIMem, NewVar});
   MDs.push_back(Node);
   Ctx.DbgVar = NewVar;
+  return true;
 }
 
 bool PointerScalarizerPass::runOnFunction(Function &F) {
@@ -472,20 +489,22 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
           }
         }
       }
+      bool InsertedDIInfo = false;
       if (dyn_cast<GlobalValue>(Ctx.V)) {
         SmallVector<DIMemoryLocation, 4> DILocs;
         auto MD = findMetadata(Ctx.V, DILocs, &AT.getDomTree());
         Ctx.DbgVar = MD->Var;
         Ctx.DbgLoc = L->getStartLoc();
-        createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
+        InsertedDIInfo = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       } else {
         auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
         if (derivedType && Val->getType()->isPointerTy())
-          createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
+          InsertedDIInfo = createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
         else
-          createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
+          InsertedDIInfo = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       }
-
+      if (!InsertedDIInfo)
+        continue;
       insertLoadInstructions(Ctx);
       insertPhiNodes(Ctx, L->getLoopPredecessor(), true);
       DenseSet<BasicBlock *> Processed;
@@ -495,8 +514,9 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       insertStoreInstructions(Ctx);
       freeLinks(Ctx.PhiLinks);
     }
-    for (auto &Pair: ValueTraitMapping)
+    for (auto &Pair: ValueTraitMapping) {
       Pair.getSecond()->unset<trait::NoPromotedScalar>();
+    }
   });
   if (!MDsToAttach.empty()) {
     auto *MappingNode = DINode::get(F.getContext(), MDsToAttach);

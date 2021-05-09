@@ -640,7 +640,7 @@ MDNode *mdNodeFromAliasTreeMapping(const Function *F, DIMemoryLocation &Loc) {
     auto *DIN = dyn_cast<MDNode>(op);
     if (!DIN)
       continue;
-    assert(DIN->getNumOperands() == 3 && "Alias tree mapping node must contain three elements");
+    assert(DIN->getNumOperands() == 2 && "Alias tree mapping node must contain three elements");
     auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
     if (Loc.Var == DINewVar) {
       return dyn_cast<MDNode>(DIN->getOperand(0));
