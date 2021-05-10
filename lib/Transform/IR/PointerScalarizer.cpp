@@ -33,7 +33,6 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 
-#include <iostream>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/DIBuilder.h>
@@ -441,39 +440,33 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
         ValueTraitMapping.erase(Val);
         continue;
       }
-      // find dbg.value call for Val and save it for adding debug information later
-      for (auto &BB : F.getBasicBlockList()) {
-        for (auto &Inst : BB.getInstList()) {
-          if (Ctx.DbgVar && Ctx.DbgLoc)
-            continue;
-          if (auto *DVI = dyn_cast<DbgValueInst>(&Inst)) {
-            if (DVI->getValue() == Val) {
-              Ctx.DbgLoc = DVI->getDebugLoc();
-              Ctx.DbgVar = DVI->getVariable();
-            }
-          } else if (auto *DDI = dyn_cast<DbgDeclareInst>(&Inst)) {
-            if (DDI->getAddress() == Val) {
-              Ctx.DbgLoc = DDI->getDebugLoc();
-              Ctx.DbgVar = DDI->getVariable();
-            }
-          }
-        }
+      SmallVector<DIMemoryLocation, 4> DILocs;
+      Optional<DIMemoryLocation> DIM;
+      if (isa<AllocaInst>(Ctx.V)) {
+        DIM = findMetadata(Ctx.V, DILocs);
+      }else {
+        bool HasDbgInLoop = false;
+        for (auto *BB : L->getBlocks())
+          for (auto &I : BB->getInstList())
+            if (auto *DVI = dyn_cast<DbgValueInst>(&I))
+              if (DVI->getValue() == Ctx.V) {
+                HasDbgInLoop = true;
+                break;
+              }
+        if (!HasDbgInLoop)
+          DIM = findMetadata(Ctx.V, {&L->getHeader()->front()}, AT.getDomTree(), DILocs);
       }
-      bool InsertedDIInfo = false;
-      if (dyn_cast<GlobalValue>(Ctx.V)) {
-        SmallVector<DIMemoryLocation, 4> DILocs;
-        auto MD = findMetadata(Ctx.V, DILocs, &AT.getDomTree());
-        Ctx.DbgVar = MD->Var;
-        Ctx.DbgLoc = L->getStartLoc();
-        InsertedDIInfo = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
-      } else {
-        auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
-        if (derivedType && Val->getType()->isPointerTy())
-          InsertedDIInfo = createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
-        else
-          InsertedDIInfo = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
-      }
-      if (!InsertedDIInfo)
+      if (!DIM.hasValue() || !DIM->Var || !DIM->Loc)
+        continue;
+      Ctx.DbgVar = DIM->Var;
+      Ctx.DbgLoc = DIM->Loc;
+      bool InsertedDI = false;
+      auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
+      if (derivedType && Val->getType()->isPointerTy())
+        InsertedDI = createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
+      else
+        InsertedDI = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
+      if (!InsertedDI)
         continue;
       insertLoadInstructions(Ctx);
       insertPhiNodes(Ctx, L->getLoopPredecessor(), true);
