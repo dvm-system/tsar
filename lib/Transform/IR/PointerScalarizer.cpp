@@ -68,13 +68,19 @@ public:
   }
 };
 
-struct phiNodeLink {
+struct PhiNodeLink {
   PHINode *phiNode;
-  phiNodeLink *parent;
+  PhiNodeLink *parent;
 
-  explicit phiNodeLink(phiNodeLink *node) : phiNode(nullptr), parent(node) {}
+  PhiNodeLink() = default;
 
-  explicit phiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
+  explicit PhiNodeLink(PhiNodeLink *node) : phiNode(nullptr), parent(node) {}
+
+  explicit PhiNodeLink(PHINode *phi) : phiNode(phi), parent(nullptr) {}
+
+  bool hasValue() const {
+    return phiNode || (parent && parent->hasValue());
+  }
 
   PHINode *getPhi() const {
     if (phiNode) {
@@ -86,7 +92,10 @@ struct phiNodeLink {
 
 struct ScalarizerContext {
   explicit ScalarizerContext(Value *V, Function &F, Loop *L, DIBuilder *DIB, bool Changed)
-      : V(V), DbgVar(), DbgLoc(), F(F), L(L), ValueChanged(Changed), DIB(DIB) {}
+      : V(V), DbgVar(), DbgLoc(), F(F), L(L), ValueChanged(Changed), DIB(DIB), PhiLinks{} {
+    for (auto *BB : L->getBlocks())
+      PhiLinks.insert({BB, PhiNodeLink()});
+  }
 
   Value *V;
   DIVariable *DbgVar;
@@ -94,10 +103,9 @@ struct ScalarizerContext {
   Function &F;
   Loop *L;
   SmallVector<LoadInst *, 2> InsertedLoads;
-  DenseMap<BasicBlock *, phiNodeLink *> PhiLinks;
+  DenseMap<BasicBlock *, PhiNodeLink> PhiLinks;
   DenseSet<PHINode *> UniqueNodes;
   DenseMap<BasicBlock *, Value *> LastValues;
-  DenseSet<BasicBlock *> ChangedLastInst;
   bool ValueChanged;
   DIBuilder *DIB;
 };
@@ -232,22 +240,16 @@ static void handleLoads(ScalarizerContext &Ctx,
       Ctx.LastValues[Succ] = Ctx.LastValues[BB];
 }
 
-static inline void freeLinks(DenseMap<BasicBlock *, phiNodeLink *> &PhiLinks) {
-  for (auto It : PhiLinks)
-    delete It.second;
-}
-
 static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = false) {
-  if (Ctx.PhiLinks.count(BB))
+  if (Ctx.L->contains(BB) && Ctx.PhiLinks[BB].hasValue())
     return;
   bool NeedsCreate = false;
   if (pred_size(BB) == 1 && !Init) {
-    if (auto Itr{Ctx.PhiLinks.find(BB->getSinglePredecessor())}; Itr != Ctx.PhiLinks.end()) {
-      auto *parentLink = Itr->second;
-      Ctx.PhiLinks[BB] = new phiNodeLink(parentLink);
-    } else {
+    auto *Pred = BB->getSinglePredecessor();
+    if (Ctx.L->contains(Pred) && Ctx.PhiLinks[Pred].hasValue())
+      Ctx.PhiLinks[BB] = Ctx.PhiLinks[Pred];
+    else
       NeedsCreate = true;
-    }
   } else if (!Init) {
     NeedsCreate = true;
   }
@@ -255,7 +257,7 @@ static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = f
     auto *Phi = PHINode::Create(Ctx.InsertedLoads.back()->getType(), 0,
         "Phi." + BB->getName(), &BB->front());
     insertDbgValueCall(Ctx, Phi, BB->getFirstNonPHI(), true);
-    Ctx.PhiLinks[BB] = new phiNodeLink(Phi);
+    Ctx.PhiLinks[BB] = PhiNodeLink(Phi);
     Ctx.UniqueNodes.insert(Phi);
   }
   for (auto *Succ : successors(BB))
@@ -265,7 +267,7 @@ static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = f
   if (Init) {
     Ctx.LastValues[BB] = Ctx.InsertedLoads.back();
     for (auto &P : Ctx.PhiLinks)
-      Ctx.LastValues[P.getFirst()] = P.getSecond()->getPhi();
+      Ctx.LastValues[P.getFirst()] = P.getSecond().getPhi();
   }
 }
 
@@ -298,9 +300,9 @@ static void deleteRedundantPhiNodes(ScalarizerContext &Ctx) {
     for (auto *Phi : ToDelete) {
       Phi->replaceAllUsesWith(Phi->getOperand(0));
       Ctx.UniqueNodes.erase(Phi);
-      Ctx.PhiLinks[Phi->getParent()]->phiNode = nullptr;
+      Ctx.PhiLinks[Phi->getParent()].phiNode = nullptr;
       auto *Instr = dyn_cast<Instruction>(Phi->getOperand(0));
-      Ctx.PhiLinks[Phi->getParent()]->parent = Ctx.PhiLinks[Instr->getParent()];
+      Ctx.PhiLinks[Phi->getParent()] = Ctx.PhiLinks[Instr->getParent()];
       Phi->eraseFromParent();
     }
   } while (Changed);
@@ -475,7 +477,6 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       fillPhiNodes(Ctx);
       deleteRedundantPhiNodes(Ctx);
       insertStoreInstructions(Ctx);
-      freeLinks(Ctx.PhiLinks);
     }
     for (auto &Pair: ValueTraitMapping) {
       Pair.getSecond()->unset<trait::NoPromotedScalar>();
