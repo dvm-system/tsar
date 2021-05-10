@@ -1,3 +1,21 @@
+//=== DeadDeclsElimination.cpp - Dead Decls Elimination (Clang) --*- C++ -*===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2018 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
 //===---------------------------------------------------------------------===//
 //
 // This file defines a pass to obtain
@@ -46,7 +64,7 @@ ClangUnreachableCountedRegions::ClangUnreachableCountedRegions() : ImmutablePass
   initializeClangUnreachableCountedRegionsPass(*PassRegistry::getPassRegistry());
 }
 
-// obtains & stores unreachable CountedRegions
+// Obtains & stores unreachable CountedRegions
 void ClangUnreachableCountedRegions::initializePass() {
   std::string ObjectFilename{ "/home/alex000/Documents/Sapfor/working/main" };
   std::string ProfileFilename{ "/home/alex000/Documents/Sapfor/working/main.profdata" };
@@ -63,10 +81,10 @@ void ClangUnreachableCountedRegions::initializePass() {
 
   std::cout << "Coverage loading done" << std::endl;
 
-  const auto &Coverage = CoverageOrErr->get();  // std::unique_ptr<CoverageMapping> &Coverage
+  const auto &Coverage = CoverageOrErr->get();
   
-  for (auto &FRI : Coverage->getCoveredFunctions()) {  // FunctionRecordIterator &FRI
-    for (auto CR : FRI.CountedRegions) {  // std::vector<CountedRegion> CountedRegions
+  for (auto &FRI : Coverage->getCoveredFunctions()) {
+    for (auto CR : FRI.CountedRegions) {
       if (CR.ExecutionCount == 0) {
         Unreachable.push_back(CR);
       }
