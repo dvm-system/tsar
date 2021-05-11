@@ -24,6 +24,7 @@
 
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"

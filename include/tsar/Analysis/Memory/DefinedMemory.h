@@ -36,7 +36,6 @@
 #include "tsar/ADT/DataFlow.h"
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/DFRegionInfo.h"
-#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DFMemoryLocation.h"
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Analysis/Memory/Passes.h"

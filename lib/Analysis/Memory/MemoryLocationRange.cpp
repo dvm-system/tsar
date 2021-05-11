@@ -23,11 +23,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
-#include <bcl/Equation.h>
 #ifndef NDEBUG
 #include "tsar/Unparse/Utils.h"
-#include <llvm/Support/Debug.h>
 #endif
+#include <bcl/Equation.h>
+#include <llvm/Support/Debug.h>
 
 using namespace tsar;
 
@@ -76,8 +76,8 @@ bool difference(const Dimension &D, const Dimension &I,
       return false;
     for (auto J = 0; J < RepeatNumber; ++J) {
       auto &Center = Res.emplace_back();
-      Center.Start = I.Start + I.Step * (J + 1);
-      Center.Step = D.Step;
+      Center.Start = I.Start + D.Step * (J + 1);
+      Center.Step = I.Step;
       Center.TripCount = I.TripCount - 1;
       Center.DimSize = D.DimSize;
     }
