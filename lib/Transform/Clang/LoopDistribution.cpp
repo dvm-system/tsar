@@ -26,6 +26,7 @@
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
+#include "tsar/Analysis/Clang/ExpressionMatcher.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DependenceAnalysis.h"
@@ -87,6 +88,7 @@ INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(ClangExprMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
@@ -118,11 +120,13 @@ public:
         mServerDIMemory->DIAT);
     mCanonicalLoop = &Pass.getAnalysis<CanonicalLoopPass>()
         .getCanonicalLoopInfo();
+    mExpressionMatcher = &Pass.getAnalysis<ClangExprMatcherPass>().getMatcher();
     mLoopMatcher = &Pass.getAnalysis<LoopMatcherPass>()
         .getMatcher();
     mGlobalOptions = &Pass.getAnalysis<GlobalOptionsImmutableWrapper>()
         .getOptions();
     mSourceManager = &TransformationContext.getRewriter().getSourceMgr();
+    mASTContext = &TransformationContext.getContext();
     auto& SocketInfo = Pass.getAnalysis<AnalysisSocketImmutableWrapper>().get();
     auto& Socket = SocketInfo.getActive()->second;
     auto RF = Socket.getAnalysis<DIEstimateMemoryPass,
@@ -173,10 +177,11 @@ public:
     auto Splits = getLoopSplits(Loop, DIDependenceSet);
     LLVM_DEBUG(
       dbgs() << "Found splits:\n";
-      for (auto *Split : Splits) {
+      for (const auto *Split : Splits) {
         Split->dump();
       }
     );
+    processSplits(Splits);
 
     const auto PrevIsInsideLoop = mIsInsideLoop;
     mIsInsideLoop = true;
@@ -339,6 +344,19 @@ private:
     return Splits;
   }
 
+  void processSplits(const SplitInstructionVector &Splits) const {
+    for (auto *Split : Splits) {
+      const auto &ExpressionMatcherItr = mExpressionMatcher->find<IR>(Split);
+      if (ExpressionMatcherItr == mExpressionMatcher->end()) {
+        LLVM_DEBUG(dbgs() << "Store instruction can't be bound to AST node: ";
+                   Split->dump(););
+        continue;
+      }
+      const auto &SplitStatement = ExpressionMatcherItr->get<AST>();
+      SplitStatement.dump(dbgs(), *mASTContext);
+    }
+  }
+
 private:
   DFRegionInfo *mDFRegion;
   TargetLibraryInfo *mTargetLibrary;
@@ -347,9 +365,11 @@ private:
   DIMemoryClientServerInfo *mServerDIMemory;
   SpanningTreeRelation<const DIAliasTree *> *mSpanningTreeRelation;
   const CanonicalLoopSet *mCanonicalLoop;
+  const ClangExprMatcherPass::ExprMatcher *mExpressionMatcher;
   const LoopMatcherPass::LoopMatcher *mLoopMatcher;
   const GlobalOptions *mGlobalOptions;
   const SourceManager *mSourceManager;
+  const ASTContext *mASTContext;
   DIAliasTree *mDIAliasTree;
   DIDependencInfo *mDIDependency;
   DependenceInfo *mDependence;
@@ -381,19 +401,20 @@ bool LoopDistributionPass::runOnFunction(Function& Function) {
 }
 
 void LoopDistributionPass::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.addRequired<TransformationEnginePass>();
-    AU.addRequired<DFRegionInfoPass>();
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-    AU.addRequired<EstimateMemoryPass>();
-    AU.addRequired<DIEstimateMemoryPass>();
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<DependenceAnalysisWrapperPass>();
-    AU.addRequired<CanonicalLoopPass>();
-    AU.addRequired<LoopMatcherPass>();
-    AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<GlobalOptionsImmutableWrapper>();
-    AU.addRequired<AnalysisSocketImmutableWrapper>();
-    AU.setPreservesAll();
+  AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<DIEstimateMemoryPass>();
+  AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<DependenceAnalysisWrapperPass>();
+  AU.addRequired<CanonicalLoopPass>();
+  AU.addRequired<ClangExprMatcherPass>();
+  AU.addRequired<LoopMatcherPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
+  AU.setPreservesAll();
 }
 
 FunctionPass * llvm::createLoopDistributionPass() {
