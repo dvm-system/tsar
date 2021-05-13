@@ -780,13 +780,25 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
       DefTrait = BitMemoryTrait::Shared;
     }
     if (!DefUse.hasUse(Loc)) {
-      if (!LS.getOut().overlap(Loc))
+      // TODO (kaniandr@gmail.com): live memory analysis does not expand
+      // analysis results from aggregated array representation to explicit
+      // accesses, so we conservatively use analysis for the whole array
+      // instead of analysis results for an explicitly accessed memory location.
+      auto isLiveAggregate = [this, &LS](auto &Loc) {
+        auto BasePtr =
+            GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
+        if (BasePtr == Loc.Ptr)
+          return false;
+        return LS.getOut().overlap(
+            MemoryLocation(BasePtr, LocationSize::unknown(), Loc.AATags));
+      };
+      if (!LS.getOut().overlap(Loc) && !isLiveAggregate(Loc))
         CurrTraits &= BitMemoryTrait::Private | SharedTrait;
       else {
         auto *Expr = mSE->getSCEV(const_cast<Value *>(Loc.Ptr));
         bool IsInvariant =
           isLoopInvariant(Expr, L, *mTLI, *mSE, DefUse, *mAliasTree, AliasSTR);
-        if (IsInvariant && DefUse.hasDef(Loc))
+        if (IsInvariant && ExitingDefs.MustReach.contain(Loc))
           CurrTraits &= BitMemoryTrait::LastPrivate | SharedTrait;
         else if (IsInvariant && LatchDefs.MustReach.contain(Loc) &&
                  !ExitingDefs.MayReach.overlap(Loc))

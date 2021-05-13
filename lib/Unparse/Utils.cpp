@@ -58,7 +58,7 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
 }
 
 void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
-    const DominatorTree *DT) {
+    const DominatorTree *DT, bool IsDebug) {
   O << "<";
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
@@ -71,7 +71,30 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
     O << "?";
   else
     O << Loc.UpperBound.getValue();
+  if (!IsDebug) {
+    if (!Loc.DimList.empty()) {
+      O << ", ";
+      for (auto &Dim : Loc.DimList) {
+        O << "[";
+        O << Dim.Start << ":" << Dim.TripCount << ":" << Dim.Step << "," <<
+             Dim.DimSize;
+        O << "]";
+      }
+    }
+  }
   O << ">";
+  if (IsDebug) {
+    if (!Loc.DimList.empty()) {
+      O << ", {";
+      for (auto &Dimension : Loc.DimList)
+        O << "{Start: " << Dimension.Start << ", Step: " << Dimension.Step <<
+            ", TripCount: " << Dimension.TripCount << ", DimSize: " <<
+            Dimension.DimSize << "}";
+      O << "}";
+    }
+    O << " (" << Loc.getKindAsString() << ") ";
+    O << " [" << Loc.Ptr << "]";
+  }
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,
     const DominatorTree *DT) {

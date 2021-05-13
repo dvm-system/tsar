@@ -55,6 +55,22 @@ namespace tsar {
 ///     Set the metadata nodes for a specified location.
 /// - static LocationTy make(Ty &)
 ///     Construct new memory location from the other one.
+/// - static inline uint64_t getNumDims(const LocationTy &)
+///     Return a number of dimensions of a specified location.
+/// - static inline bool areJoinable(const LocationTy &, const LocationTy &)
+///     Return `true` if one location can be joined to another, `false` 
+///     otherwise.
+/// - static inline bool join(const LocationTy &What, LocationTy &To)
+///     Join `What` location to `To` if they are joinable.
+/// - static inline bool hasIntersection(const LocationTy &, const LocationTy &)
+///     Return `true` if locations have an intersection, `false` otherwise.
+/// - static inline llvm::Optional<LocationTy> intersect(
+///       const LocationTy &A, const LocationTy &B,
+///       llvm::SmallVectorImpl<LocationTy> *L,
+///       llvm::SmallVectorImpl<LocationTy> *R)
+///     Return the result of intersection of locations A and B.
+/// - static inline void setNonCollapsable(llvm::MemoryLocation &)
+///     Set `NonCollapsable` kind for a specified location.
 /// - Copy-constructor must be also available.
 /// In methods presented above the following denotements are used:
 /// - LocationTy is a type of memory locations which are stored in memory set.
@@ -115,6 +131,43 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
   static inline llvm::MemoryLocation make(const llvm::MemoryLocation &Loc) {
     return llvm::MemoryLocation(Loc);
   }
+  static inline uint64_t getNumDims(
+      const llvm::MemoryLocation &Loc) noexcept {
+    return 0;
+  }
+  static inline bool areJoinable(const llvm::MemoryLocation &LHS,
+                                 const llvm::MemoryLocation &RHS) {
+    return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
+        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
+  }
+  static inline bool join(const llvm::MemoryLocation &What,
+                          llvm::MemoryLocation &To) {
+    bool IsChanged = false;
+    if (sizecmp(getUpperBound(To), getUpperBound(What)) < 0) {
+      setUpperBound(getUpperBound(What), To);
+      IsChanged = true;
+    }
+    if (sizecmp(getLowerBound(To), getLowerBound(What)) > 0) {
+      setLowerBound(getLowerBound(What), To);
+      IsChanged = true;
+    }
+    return IsChanged;
+  }
+  static inline bool hasIntersection(const llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS) {
+    return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) > 0 &&
+           sizecmp(getLowerBound(LHS), getUpperBound(RHS)) < 0;
+  }
+  static inline llvm::Optional<llvm::MemoryLocation> intersect(
+      const llvm::MemoryLocation &LHS,
+      const llvm::MemoryLocation &RHS,
+      llvm::SmallVectorImpl<llvm::MemoryLocation> *L,
+      llvm::SmallVectorImpl<llvm::MemoryLocation> *R) {
+    return llvm::None;
+  }
+  static inline void setNonCollapsable(llvm::MemoryLocation &Loc) {
+    return;
+  }
 };
 
 /// Provide specialization of MemorySetInfo for tsar::MemoryLocationRange
@@ -156,6 +209,92 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
   }
   static inline MemoryLocationRange make(const MemoryLocationRange &Loc) {
     return MemoryLocationRange(Loc);
+  }
+  static inline uint64_t getNumDims(
+      const MemoryLocationRange &Loc) noexcept {
+    return Loc.DimList.size();
+  }
+  static inline bool areJoinable(
+      const MemoryLocationRange &LHS, const MemoryLocationRange &RHS) {
+    assert(LHS.Ptr == RHS.Ptr && "Pointers of locations must be equal!");
+    if (LHS.DimList.size() != RHS.DimList.size() ||
+        LHS.Kind != RHS.Kind)
+      return false;
+    if (LHS.DimList.empty()) {
+      return sizecmp(getUpperBound(LHS), getLowerBound(RHS)) >= 0 &&
+        sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
+    }
+    std::size_t JoinableDimCount = 0;
+    for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
+      auto &Left = LHS.DimList[I];
+      auto &Right = RHS.DimList[I];
+      assert(Left.TripCount > 0 && Right.TripCount > 0 &&
+          "Trip count of dimension must be positive!");
+      if (Left == Right)
+        continue;
+      auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
+      auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
+      if (Left.Step != Right.Step ||
+          (Left.Start >= Right.Start &&
+              (Left.Start - Right.Start) % Left.Step != 0) ||
+          (Right.Start >= Left.Start &&
+              (Right.Start - Left.Start) % Left.Step != 0) ||
+          (LeftEnd < Right.Start && (Right.Start - LeftEnd) != Left.Step) ||
+          (RightEnd < Left.Start && (Left.Start - RightEnd) != Left.Step))
+        return false;
+      ++JoinableDimCount;
+    }
+    return JoinableDimCount <= 1;
+  }
+  static inline bool join(const MemoryLocationRange &What,
+      MemoryLocationRange &To) {
+    assert(What.Ptr == To.Ptr && "Pointers of locations must be equal!");
+    assert(areJoinable(What, To) && "Locations must be joinable!");
+    if (To.DimList.size() != What.DimList.size())
+      return false;
+    bool IsChanged = false;
+    if (To.DimList.empty()) {
+      if (sizecmp(getUpperBound(To), getUpperBound(What)) < 0) {
+        setUpperBound(getUpperBound(What), To);
+        IsChanged = true;
+      }
+      if (sizecmp(getLowerBound(To), getLowerBound(What)) > 0) {
+        setLowerBound(getLowerBound(What), To);
+        IsChanged = true;
+      }
+    } else {
+      for (size_t I = 0; I < To.DimList.size(); I++) {
+        auto &DimTo = To.DimList[I];
+        auto &DimFrom = What.DimList[I];
+        if (DimFrom.Start < DimTo.Start) {
+          DimTo.TripCount += (DimTo.Start - DimFrom.Start) / DimFrom.Step;
+          DimTo.Start = DimFrom.Start;
+          IsChanged = true;
+        }
+        auto ToEnd = DimTo.Start + DimTo.Step * (DimTo.TripCount - 1);
+        auto FromEnd = DimFrom.Start + DimFrom.Step * (DimFrom.TripCount - 1);
+        if (FromEnd > ToEnd) {
+          DimTo.TripCount += (FromEnd - ToEnd) / DimFrom.Step;
+          IsChanged = true;
+        }
+      }
+    }
+    return IsChanged;
+  }
+  static inline bool hasIntersection(const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS) {
+    return tsar::intersect(LHS, RHS).hasValue();
+  }
+  static inline llvm::Optional<MemoryLocationRange> intersect(
+      const MemoryLocationRange &LHS,
+      const MemoryLocationRange &RHS,
+      llvm::SmallVectorImpl<MemoryLocationRange> *L = nullptr,
+      llvm::SmallVectorImpl<MemoryLocationRange> *R = nullptr) {
+    return tsar::intersect(LHS, RHS, L, R);
+  }
+  static inline void setNonCollapsable(MemoryLocationRange &Loc) {
+    Loc.Kind = MemoryLocationRange::LocKind::NonCollapsable |
+               Loc.Kind & MemoryLocationRange::LocKind::Hint;
   }
 };
 }
