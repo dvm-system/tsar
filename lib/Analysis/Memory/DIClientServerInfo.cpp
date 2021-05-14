@@ -62,6 +62,11 @@ DIClientServerInfo::DIClientServerInfo(llvm::Pass &P, llvm::Function &F) {
           auto Itr = MemoryMatcher->find<Origin>(M);
           return Itr != MemoryMatcher->end() ? Itr->get<Clone>() : nullptr;
         };
+        getClientMemory = [MemoryMatcher](DIMemory *M) {
+          assert(M && "Memory must not be null!");
+          auto Itr = MemoryMatcher->find<Clone>(M);
+          return Itr != MemoryMatcher->end() ? Itr->get<Origin>() : nullptr;
+        };
         if (auto R = Socket->getAnalysis<
               DIEstimateMemoryPass, DIDependencyAnalysisPass>(F)) {
           DIAT = &R->value<DIEstimateMemoryPass *>()->getAliasTree();
@@ -131,4 +136,3 @@ DIDependenceSet *DIMemoryClientServerInfo::findFromClient(const Loop &L) const {
     }
   return nullptr;
 }
-

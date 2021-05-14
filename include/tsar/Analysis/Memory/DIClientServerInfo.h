@@ -72,6 +72,9 @@ struct DIClientServerInfo {
   std::function<DIMemory *(DIMemory *)> getMemory = [](DIMemory *M) {
     return M;
   };
+  std::function<DIMemory *(DIMemory *)> getClientMemory = [](DIMemory *M) {
+    return M;
+  };
 
   /// Alias tree on server or on client or nullptr.
   DIAliasTree *DIAT = nullptr;
