@@ -1,8 +1,8 @@
-//===--- PrivateAnalysis.cpp - Private Variable Analyzer --------*- C++ -*-===//
+//===--- AddressAccess.cpp - Parameter capture analyzer --------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2021 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -57,13 +57,15 @@ using bcl::operator "" _b;
 
 char AddressAccessAnalyser::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(AddressAccessAnalyser, "address-access",
-                               "address-access", false, true,
-                               DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP_BEGIN(
+        AddressAccessAnalyser, "address-access",
+        "address-access", false, true,
+        DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
-INITIALIZE_PASS_IN_GROUP_END(AddressAccessAnalyser, "address-access",
-                             "address-access", false, true,
-                             DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP_END(
+        AddressAccessAnalyser, "address-access",
+        "address-access", false, true,
+        DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 Pass *llvm::createAddressAccessAnalyserPass() {
   return new AddressAccessAnalyser();
@@ -107,20 +109,24 @@ bool AddressAccessAnalyser::runOnModule(Module &M) {
 }
 
 void AddressAccessAnalyser::runOnFunction(Function *F) {
-  LLVM_DEBUG(errs() << "Analyzing function: "; errs() << F->getName(); errs() << "\n";);
+  LLVM_DEBUG(dbgs() << "Analyzing function: ";);
+  LLVM_DEBUG(dbgs() << F->getName(); dbgs() << "\n";);
 //  for (BasicBlock &BB : F->getBasicBlockList())
 //      for (Instruction &I: BB) {
-//          I.print(errs()); errs() << "\n";
+//          I.print(dbgs()); dbgs() << "\n";
 //      }
 
   for (auto &arg : F->args()) {
     if (!(arg.getType()->isPointerTy()))
       continue;
-    if (isCaptured(&arg))
-        LLVM_DEBUG(errs() << "Arg may be captured: "; errs() << arg.getName(); errs() << "\n";);
-    else {
-        LLVM_DEBUG(errs() << "Proved to be not captured: "; errs() << arg.getName(); errs() << "\n";);
-        arg.addAttr(Attribute::AttrKind::NoCapture);
+    if (isCaptured(&arg)) {
+      LLVM_DEBUG(dbgs() << "Arg may be captured: ";);
+      LLVM_DEBUG(dbgs() << arg.getName(); dbgs() << "\n";);
+    } else {
+      LLVM_DEBUG(
+              dbgs() << "Proved to be not captured: "; dbgs() << arg.getName();
+              dbgs() << "\n";);
+      arg.addAttr(Attribute::AttrKind::NoCapture);
     }
   }
 }
@@ -144,167 +150,195 @@ void AddressAccessAnalyser::setNocaptureToAll(Function *F) {
 }
 
 bool AddressAccessAnalyser::isCaptured(Argument *arg) {
-    if (arg->hasNoCaptureAttr())
-        return false;
-    std::map<Value*, int> registry;
-    std::set<Instruction*> seenInstrs;
-    std::queue<Value*> queue;
-    registry.insert(std::pair<Value*, int>(arg, 0));
-    queue.push(arg);
-    while (!queue.empty()) {
-        auto curValue = queue.front();
-        auto curRang = registry.find(curValue)->second;
-        queue.pop();
-        if (curRang < 0)
-          continue;
-        auto [newNode, newRang, success] = applyDefinitionConstraint(curValue, registry);
-        if (!success)
-          return true;
-        if (newNode) {
-          auto [iter, success] = registry.insert(std::pair<Value*,int>(newNode, newRang));
-          if (success)
-            queue.push(newNode);
-          if (!success && (iter->second != newRang)) {
-            LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] application of the definition lead to an already seen node, stop\n";);
-            return true;
-          }
-        }
-        for (Use &use : curValue->uses()) {
-            auto instr = dyn_cast<Instruction>(use.getUser());
-            auto opNo = use.getOperandNo();
-            if (!instr) {
-                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] usage is not an instruction"
-                                  << "\n";);
-                // TODO: I don't think that this branch in necessary, cause non-instr usages are BasicBlocks, Functions?
-                return true;
-            }
-            if (seenInstrs.find(instr) != seenInstrs.end()) {
-                LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet seen instr: "; instr->print(errs()); errs() << "\n";);
-                continue;
-            } else
-                seenInstrs.insert(instr);
-            auto [newNode, newRang, success] = applyUsageConstraint(instr, opNo, curRang);
-            if (!success)
-              return true;
-            if (newNode) {
-              auto [iter, success] = registry.insert(std::pair<Value*,int>(newNode, newRang));
-              if (success)
-                queue.push(newNode);
-              if (!success && (iter->second != newRang)) {
-                LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] application of the usage lead to an already seen node\n";);
-                return true;
-              }
-            }
-        }
-    }
+  if (arg->hasNoCaptureAttr())
     return false;
+  std::map<Value *, int> registry;
+  std::set<Instruction *> seenInstrs;
+  std::queue<Value *> queue;
+  registry.insert(std::pair<Value *, int>(arg, 0));
+  queue.push(arg);
+  while (!queue.empty()) {
+    auto curValue = queue.front();
+    auto curRang = registry.find(curValue)->second;
+    queue.pop();
+    if (curRang < 0)
+      continue;
+    auto[newNode, newRang, success] = applyDefinitionConstraint(curValue,
+                                                                registry);
+    if (!success)
+      return true;
+    if (newNode) {
+      auto[iter, success] = registry.insert(
+              std::pair<Value *, int>(newNode, newRang));
+      if (success)
+        queue.push(newNode);
+      if (!success && (iter->second != newRang)) {
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] application of the definition"
+                             " lead to an already seen node, stop\n";);
+        return true;
+      }
+    }
+    for (Use &use : curValue->uses()) {
+      auto instr = dyn_cast<Instruction>(use.getUser());
+      auto opNo = use.getOperandNo();
+      if (!instr) {
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] usage is not an instruction"
+                          << "\n";);
+        return true;
+      }
+      if (seenInstrs.find(instr) != seenInstrs.end()) {
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet seen instr: "; instr->print(
+                dbgs()); dbgs() << "\n";);
+        continue;
+      } else
+        seenInstrs.insert(instr);
+      auto[newNode, newRang, success] = applyUsageConstraint(instr, opNo,
+                                                             curRang);
+      if (!success)
+        return true;
+      if (newNode) {
+        auto[iter, success] = registry.insert(
+                std::pair<Value *, int>(newNode, newRang));
+        if (success)
+          queue.push(newNode);
+        if (!success && (iter->second != newRang)) {
+          LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] application of the usage "
+                               "lead to an already seen node\n";);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
-std::tuple<Value*,int,bool> AddressAccessAnalyser::applyDefinitionConstraint(Value *curValue, std::map<Value*, int> &registry) {
+std::tuple<Value *, int, bool>
+AddressAccessAnalyser::applyDefinitionConstraint(
+        Value *curValue,
+        std::map<Value *, int> &registry
+) {
   auto curRang = registry.find(curValue)->second;
-  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curRang: "; errs() << curRang; errs() << "\n";);
+  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curRang: "; dbgs() << curRang; dbgs()
+          << "\n";);
   if (isa<Argument>(curValue)) {
     if (registry.find(curValue)->second != 0) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue an argument of rang != 0: "; curValue->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(nullptr, -1, false);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue an argument of rang "
+                           "!= 0: "; curValue->print(dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(nullptr, -1, false);
     }
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is an argument of rang == 0: "; curValue->print(errs()); errs() << "\n";);
-    return std::tuple<Value*,int,bool>(nullptr, -1, true);
-  }
-  else if (isa<GlobalValue>(curValue)) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a global value: "; curValue->print(errs()); errs() << "\n";);
-    return std::tuple<Value*,int,bool>(nullptr, -1, false);
-  }
-  else if (isa<LoadInst>(curValue)) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a load: "; curValue->print(errs()); errs() << "\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is an argument of rang "
+                         "== 0: "; curValue->print(dbgs()); dbgs() << "\n";);
+    return std::tuple<Value *, int, bool>(nullptr, -1, true);
+  } else if (isa<GlobalValue>(curValue)) {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a global value: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
+    return std::tuple<Value *, int, bool>(nullptr, -1, false);
+  } else if (isa<LoadInst>(curValue)) {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a load: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
     auto LI = dyn_cast<LoadInst>(curValue);
-    return std::tuple<Value*,int,bool>(LI->getPointerOperand(), curRang + 1, true);
-  }
-  else if (isa<CallBase>(curValue)) {
-    if (dyn_cast<CallBase>(curValue)->getCalledFunction()->returnDoesNotAlias()) {
-      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a no-alias call: "; curValue->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(nullptr, -1, true);
+    return std::tuple<Value *, int, bool>(LI->getPointerOperand(), curRang + 1,
+                                          true);
+  } else if (isa<CallBase>(curValue)) {
+    if (dyn_cast<CallBase>(
+            curValue)->getCalledFunction()->returnDoesNotAlias()) {
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a no-alias call: ";
+                         curValue->print(dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(nullptr, -1, true);
     }
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a may-alias call: "; curValue->print(errs()); errs() << "\n";);
-    return std::tuple<Value*,int,bool>(nullptr, -1, false);
-  }
-  else if (isa<GetElementPtrInst>(curValue)) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a gep: "; curValue->print(errs()); errs() << "\n";);
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a may-alias call: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
+    return std::tuple<Value *, int, bool>(nullptr, -1, false);
+  } else if (isa<GetElementPtrInst>(curValue)) {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a gep: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
     auto basePtr = dyn_cast<GetElementPtrInst>(curValue)->getPointerOperand();
-    return std::tuple<Value*,int,bool>(basePtr, curRang, true);
-  }
-  else if (isa<AllocaInst>(curValue)) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a alloca: "; curValue->print(errs()); errs() << "\n";);
-    return std::tuple<Value*,int,bool>(nullptr, -1, true);
-  }
-  else if (isa<BitCastInst>(curValue)) {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a bitcast: "; curValue->print(errs()); errs() << "\n";);
-    // todo: analyze safeness of this bitcast (it could be int bcasted to a pointer?)
+    return std::tuple<Value *, int, bool>(basePtr, curRang, true);
+  } else if (isa<AllocaInst>(curValue)) {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a alloca: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
+    return std::tuple<Value *, int, bool>(nullptr, -1, true);
+  } else if (isa<BitCastInst>(curValue)) {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a bitcast: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
     auto basePtr = dyn_cast<BitCastInst>(curValue)->getOperand(0);
-    return std::tuple<Value*,int,bool>(basePtr, curRang, true);
-  }
-  else {
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a something unknown: "; curValue->print(errs()); errs() << "\n";);
-    return std::tuple<Value*,int,bool>(nullptr, -1, false);
+    return std::tuple<Value *, int, bool>(basePtr, curRang, true);
+  } else {
+    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] curValue is a something unknown: ";
+                       curValue->print(dbgs()); dbgs() << "\n";);
+    return std::tuple<Value *, int, bool>(nullptr, -1, false);
   }
 }
 
-std::tuple<Value*,int,bool> AddressAccessAnalyser::applyUsageConstraint(Instruction *instr, int opNo, int curRang) {
+std::tuple<Value *, int, bool>
+AddressAccessAnalyser::applyUsageConstraint(Instruction *instr, int opNo,
+                                            int curRang) {
   switch (instr->getOpcode()) {
     case Instruction::Store: {
-      if (opNo == 0) {  // ptr is being stored itself
-        LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet store (stored itself): "; instr->print(errs()); errs() << "\n";);
+      if (opNo !=
+          StoreInst::getPointerOperandIndex()) {  // ptr is being stored itself
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet store (stored itself): ";
+                           instr->print(dbgs()); dbgs() << "\n";);
         auto *V = dyn_cast<StoreInst>(instr)->getPointerOperand();
-        return std::tuple<Value*,int,bool>(V, curRang + 1, true);
+        return std::tuple<Value *, int, bool>(V, curRang + 1, true);
       } else {
-        LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet store (stored TO): "; instr->print(errs()); errs() << "\n";);
+        LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet store (stored TO): ";
+                           instr->print(dbgs()); dbgs() << "\n";);
         auto *V = dyn_cast<StoreInst>(instr)->getValueOperand();
-        return std::tuple<Value*,int,bool>(V, curRang - 1, true);
+        return std::tuple<Value *, int, bool>(V, curRang - 1, true);
       }
     }
     case Instruction::Load: {
-      LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet load (loaded from): "; instr->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(instr, curRang - 1, true);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet load (loaded from): ";
+                         instr->print(dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(instr, curRang - 1, true);
     }
     case Instruction::GetElementPtr: {
-      LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet gep (geped from): "; instr->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(instr, curRang, true);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet gep (geped from): ";
+                         instr->print(dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(instr, curRang, true);
     }
     case Instruction::BitCast: {
-      LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet bcast (bcasted from): "; instr->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(instr, curRang, true);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet bcast (bcasted from): ";
+                         instr->print(dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(instr, curRang, true);
     }
     case Instruction::Call: {
-      LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet call "; instr->print(errs()); errs() << "\n";);
+      LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS]\tMet call "; instr->print(dbgs());
+                         dbgs() << "\n";);
       bool success;
       auto calledFun = dyn_cast<CallBase>(instr)->getCalledFunction();
       if (!calledFun)
         success = false;
       else {
         auto fun = dyn_cast<CallBase>(instr)->getCalledFunction();
-        if (fun->isVarArg() && fun->getName() == "printf")  // TODO: handle var arg, so this crutch wont be required
+        if (fun->isVarArg() && hasFnAttr(*fun, AttrKind::LibFunc))
           success = true;
         else if (fun->isVarArg())
           success = false;
         else
           success = fun->getArg(opNo)->hasNoCaptureAttr();
       }
-      return std::tuple<Value*,int,bool>(nullptr, -1, success);
+      return std::tuple<Value *, int, bool>(nullptr, -1, success);
     }
     default: {
-      LLVM_DEBUG(errs() << "[ADDRESS-ACCESS]\tMet unknown usage: "; instr->print(errs()); errs() << "\n";);
-      return std::tuple<Value*,int,bool>(nullptr, -1, false);
+      LLVM_DEBUG(
+              dbgs() << "[ADDRESS-ACCESS]\tMet unknown usage: "; instr->print(
+              dbgs()); dbgs() << "\n";);
+      return std::tuple<Value *, int, bool>(nullptr, -1, false);
     }
   }
 }
 
 void AddressAccessAnalyser::print(raw_ostream &OS, const Module *m) const {
-  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Printing pointer, nocapture args for all analyzed functions\n";);
+  LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] Printing pointer, nocapture args"
+                       "for all analyzed functions\n";);
   for (const Function &FF: *m) {
     const Function *F = &FF;
     if (F->isIntrinsic() || tsar::hasFnAttr(*F, AttrKind::LibFunc))
       continue;
-    LLVM_DEBUG(dbgs() << "[ADDRESS-ACCESS] [" << F->getName().begin()<< "]: ";);
+    LLVM_DEBUG(
+            dbgs() << "[ADDRESS-ACCESS] [" << F->getName().begin() << "]: ";);
     for (auto &arg : F->args()) {
       if (arg.getType()->isPointerTy() && arg.hasNoCaptureAttr())
         LLVM_DEBUG(dbgs() << arg.getName().begin() << ", ";);

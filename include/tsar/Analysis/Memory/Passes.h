@@ -40,7 +40,6 @@ class PassRegistry;
 class FunctionPass;
 class ImmutablePass;
 class ModulePass;
-class CallGraphSCCPass;
 
 /// Initialize all passes to perform analysis of memory accesses.
 void initializeMemoryAnalysis(PassRegistry &Registry);
