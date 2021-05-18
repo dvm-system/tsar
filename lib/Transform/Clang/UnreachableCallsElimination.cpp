@@ -53,7 +53,7 @@ using namespace tsar;
 #define DEBUG_TYPE "clang-unreachable-calls"
 
 class ClangCopyPropagationInfo final : public PassGroupInfo {
-  void addBeforePass(legacy::PassManager &PM) const override {
+  void addBeforePass(llvm::legacy::PassManager &PM) const override {
     PM.add(createClangUnreachableCountedRegions());
   }
 };
@@ -72,7 +72,7 @@ INITIALIZE_PASS_IN_GROUP_END(ClangUnreachableCallsElimination, "clang-unreachabl
   TransformationQueryManager::getPassRegistry())
 
 namespace {
-class CallExprVisitor : public RecursiveASTVisitor<CallExprVisitor> {
+class CallExprVisitor : public clang::RecursiveASTVisitor<CallExprVisitor> {
 public:
   explicit CallExprVisitor(clang::Rewriter &Rewriter,
       const std::vector<llvm::coverage::CountedRegion> &Unreachable)
@@ -84,19 +84,35 @@ public:
     if (!S) {
       return true;
     }
+
     if (clang::CompoundStmt *CS = dyn_cast<clang::CompoundStmt>(S)) {
       return RecursiveASTVisitor::TraverseCompoundStmt(CS);
     }
     if (clang::ReturnStmt *RS = dyn_cast<clang::ReturnStmt>(S)) {
-      return RecursiveASTVisitor::TraverseReturnStmt(RS);
+      return TraverseReturnStmt(RS);
     }
 
     if (isUnreachable(S)) {
-      makeEliminableFromTo(S->getBeginLoc(), S->getEndLoc());
+      makeEliminableFromTo(S->getBeginLoc(),
+          getNextTokenLoc(S->getBeginLoc()));  // semicolon
       return true;
     }
 
     return RecursiveASTVisitor::TraverseStmt(S);
+  }
+
+  bool TraverseReturnStmt(clang::ReturnStmt *RS) {
+    if (!RS) {
+      return true;
+    }
+
+    if (isUnreachable(RS)) {
+      mUnreachableReturnStmts.push_back(RS);
+      return true;
+    } else {
+      mHasReachableReturnStmt = true;
+      return RecursiveASTVisitor::TraverseReturnStmt(RS);
+    }
   }
 
   bool TraverseBinaryOperator(clang::BinaryOperator *BO) {
@@ -151,20 +167,39 @@ public:
     bool HasElse = IS->hasElseStorage();
 
     if (isUnreachable(Then)) {
-      makeEliminableFromTo(IS->getIfLoc(), Then->getEndLoc());
+      if (isa<clang::CompoundStmt>(Then)) {
+        makeEliminableFromTo(IS->getIfLoc(), Then->getEndLoc());
+      } else {
+        makeEliminableFromTo(IS->getIfLoc(),
+            getNextTokenLoc(Then->getEndLoc()));  // semicolon
+      }
       if (HasElse) {
-        makeEliminableFromTo(IS->getElseLoc(), Else->getBeginLoc());
-        makeEliminableLoc(Else->getEndLoc());
+        if (isa<clang::CompoundStmt>(Else)) {
+          makeEliminableFromTo(IS->getElseLoc(), Else->getBeginLoc());
+          makeEliminableLoc(Else->getEndLoc());
+        } else {
+          makeEliminableLoc(IS->getElseLoc());  // this eliminates the entire 'else' word
+        }
         return RecursiveASTVisitor::TraverseStmt(Else);
       }
       return true;
     }
 
     if (HasElse && isUnreachable(Else)) {
-      makeEliminableFromTo(IS->getElseLoc(), Else->getEndLoc());
-      makeEliminableFromTo(IS->getIfLoc(), Then->getBeginLoc());
-      makeEliminableLoc(Then->getEndLoc());
       clang::Stmt *Cond = IS->getCond();
+      if (isa<clang::CompoundStmt>(Else)) {
+        makeEliminableFromTo(IS->getElseLoc(), Else->getEndLoc());
+      } else {
+        makeEliminableFromTo(IS->getElseLoc(),
+            getNextTokenLoc(Else->getEndLoc()));  // semicolon
+      }
+      if (isa<clang::CompoundStmt>(Then)) {
+        makeEliminableFromTo(IS->getIfLoc(), Then->getBeginLoc());
+        makeEliminableLoc(Then->getEndLoc());
+      } else {
+        makeEliminableFromTo(IS->getIfLoc(),
+            getNextTokenLoc(Cond->getEndLoc()));  // right parethesis
+      }
       return RecursiveASTVisitor::TraverseStmt(Cond)
           && RecursiveASTVisitor::TraverseStmt(Then);
     }
@@ -180,7 +215,12 @@ public:
     clang::Stmt *WhileBody = WS->getBody();
 
     if (isUnreachable(WhileBody)) {
-      makeEliminableFromTo(WS->getWhileLoc(), WhileBody->getEndLoc());
+      if (isa<clang::CompoundStmt>(WhileBody)) {
+        makeEliminableFromTo(WS->getWhileLoc(), WhileBody->getEndLoc());
+      } else {
+        makeEliminableFromTo(WS->getWhileLoc(),
+            getNextTokenLoc(WhileBody->getEndLoc()));  // semicolon
+      }
       return true;
     }
 
@@ -195,7 +235,12 @@ public:
     clang::Stmt *ForBody = FS->getBody();
 
     if (isUnreachable(ForBody)) {
-      makeEliminableFromTo(FS->getForLoc(), ForBody->getEndLoc());
+      if (isa<clang::CompoundStmt>(ForBody)) {
+        makeEliminableFromTo(FS->getForLoc(), FS->getEndLoc());
+      } else {
+        makeEliminableFromTo(FS->getForLoc(),
+            getNextTokenLoc(FS->getEndLoc()));  // semicolon
+      }
       return true;
     }
 
@@ -203,10 +248,31 @@ public:
   }
 
   void eliminateUnreachableSourceRanges() {
+    if (mHasReachableReturnStmt) {
+      for (clang::ReturnStmt *RS : mUnreachableReturnStmts) {
+        makeEliminableFromTo(RS->getBeginLoc(),
+            getNextTokenLoc(RS->getEndLoc()));  // semicolon
+      }
+    }
+
     printUnreachableSorceRanges();
+
+    std::cout << "Starting unreachable code elimination..." << std::endl;
     for (const auto &SR : mSourceRangesToEliminate) {
+      clang::SourceLocation BeginLoc = SR.getBegin();
+      clang::SourceLocation EndLoc = SR.getEnd();
+
+      unsigned LineStart = mSourceManager.getExpansionLineNumber(BeginLoc);
+      unsigned ColumnStart = mSourceManager.getExpansionColumnNumber(BeginLoc);
+      unsigned LineEnd = mSourceManager.getExpansionLineNumber(EndLoc);
+      unsigned ColumnEnd = mSourceManager.getExpansionColumnNumber(EndLoc);
+
+      std::cout << "\tstart: " << LineStart << ":" << ColumnStart
+          << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
+
       mRewriter->RemoveText(SR);
     }
+    std::cout << std::endl;
   }
 
 private:
@@ -219,10 +285,10 @@ private:
     clang::SourceLocation BeginLoc = S->getBeginLoc();
     clang::SourceLocation EndLoc = S->getEndLoc();
 
-    unsigned LineStart = mSourceManager.getSpellingLineNumber(BeginLoc);
-    unsigned ColumnStart = mSourceManager.getSpellingColumnNumber(BeginLoc);
-    unsigned LineEnd = mSourceManager.getSpellingLineNumber(EndLoc);
-    unsigned ColumnEnd = mSourceManager.getSpellingColumnNumber(EndLoc);
+    unsigned LineStart = mSourceManager.getExpansionLineNumber(BeginLoc);
+    unsigned ColumnStart = mSourceManager.getExpansionColumnNumber(BeginLoc);
+    unsigned LineEnd = mSourceManager.getExpansionLineNumber(EndLoc);
+    unsigned ColumnEnd = mSourceManager.getExpansionColumnNumber(EndLoc);
 
     for (const auto &CR : mUnreachable) {
       if ((CR.LineStart < LineStart || (CR.LineStart == LineStart && CR.ColumnStart <= ColumnStart))
@@ -247,26 +313,38 @@ private:
     mSourceRangesToEliminate.push_back(SourceRangeToEliminate);
   }
 
+  /// Returns the location of the token following the token located in given location
+  /// (Here is used for obtaining ';' and ')' )
+  clang::SourceLocation getNextTokenLoc(clang::SourceLocation Loc) {
+    clang::Token NextToken;
+    getRawTokenAfter(Loc, mSourceManager, mRewriter->getLangOpts(), NextToken);
+    return NextToken.getLocation();
+  }
+
   void printUnreachableSorceRanges() {
     std::cout << "Unreachable source ranges:" << std::endl;
     for (const auto &SR : mSourceRangesToEliminate) {
       clang::SourceLocation BeginLoc = SR.getBegin();
       clang::SourceLocation EndLoc = SR.getEnd();
 
-      unsigned LineStart = mSourceManager.getSpellingLineNumber(BeginLoc);
-      unsigned ColumnStart = mSourceManager.getSpellingColumnNumber(BeginLoc);
-      unsigned LineEnd = mSourceManager.getSpellingLineNumber(EndLoc);
-      unsigned ColumnEnd = mSourceManager.getSpellingColumnNumber(EndLoc);
+      unsigned LineStart = mSourceManager.getExpansionLineNumber(BeginLoc);
+      unsigned ColumnStart = mSourceManager.getExpansionColumnNumber(BeginLoc);
+      unsigned LineEnd = mSourceManager.getExpansionLineNumber(EndLoc);
+      unsigned ColumnEnd = mSourceManager.getExpansionColumnNumber(EndLoc);
 
       std::cout << "\tstart: " << LineStart << ":" << ColumnStart
           << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
     }
+    std::cout << std::endl;
   }
 
   clang::Rewriter *mRewriter;
   clang::SourceManager &mSourceManager;
   std::vector<clang::SourceRange> mSourceRangesToEliminate;
   const std::vector<llvm::coverage::CountedRegion> &mUnreachable;
+
+  bool mHasReachableReturnStmt = false;
+  std::vector<clang::ReturnStmt *> mUnreachableReturnStmts;
 };
 }
 
