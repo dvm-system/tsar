@@ -24,17 +24,22 @@
 
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/IRUtils.h"
+#include "tsar/Support/SCEVUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
@@ -58,6 +63,9 @@ INITIALIZE_PASS_BEGIN(DefinedMemoryPass, "def-mem",
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(DefinedMemoryPass, "def-mem",
   "Defined Memory Region Analysis", false, true)
 
@@ -67,12 +75,18 @@ bool llvm::DefinedMemoryPass::runOnFunction(Function & F) {
   auto &AliasTree = getAnalysis<EstimateMemoryPass>().getAliasTree();
   const auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto *DFF = cast<DFFunction>(RegionInfo.getTopLevelRegion());
+  auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
+  auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+  auto &DL = F.getParent()->getDataLayout();
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &GDM = getAnalysis<GlobalDefinedMemoryWrapper>();
   if (GDM) {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, mDefInfo, *GDM);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, GO,
+                           mDefInfo, *GDM);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   } else {
-    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, mDefInfo);
+    ReachDFFwk ReachDefFwk(AliasTree, TLI, RegionInfo, DT, DI, SE, DL, GO,
+                           mDefInfo);
     solveDataFlowUpward(&ReachDefFwk, DFF);
   }
   return false;
@@ -84,6 +98,9 @@ void DefinedMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalDefinedMemoryWrapper>();
+  AU.addRequired<DelinearizationPass>();
+  AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -214,6 +231,181 @@ public:
   }
 };
 
+/// If memory location `Loc` is associated with an array, collect information 
+/// about array accesses, and create new memory location `ResLoc`. If 
+/// information was collected successfully and meets certain 
+/// conditions, `ResLoc.DimList` will be filled with information about the 
+/// dimensions of the array, and the `ResLoc.Kind` will be set to `Collapsed`.
+/// Otherwise, the `ResLoc.Kind` will be set to `NonCollapsable`.
+///
+/// If `R == nullptr`, this means that the collection of information is about a 
+/// single array access within the basic block, this is used in
+/// `DataFlowTraits<ReachDFFwk*>::initialize()`.
+///
+/// Return a pair consisting of an aggregated memory location and boolean value.
+/// If returned location is of kind `Collapsed` and does not belong to the 
+/// loop nest associated with region `R`, this value will be set to `false`,
+/// `true` otherwise.
+std::pair<MemoryLocationRange, bool> aggregate(
+    DFRegion *R, const MemoryLocationRange &Loc, const ReachDFFwk *Fwk) {
+  typedef MemoryLocationRange::Dimension Dimension;
+  typedef MemoryLocationRange::LocKind LocKind;
+  assert(Fwk && "Data-flow framework must not be null");
+  assert(!(Loc.Kind & LocKind::Collapsed) || Loc.DimList.size() > 0 &&
+      "Collapsed array location must not be empty!");
+  // We will try to aggregate location if it is of kind `Default` only.
+  if (Loc.Kind != LocKind::Default)
+    return std::make_pair(Loc, true);
+  MemoryLocationRange ResLoc(Loc);
+  auto LocInfo = Fwk->getDelinearizeInfo()->findRange(Loc.Ptr);
+  auto ArrayPtr = LocInfo.first;
+  if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
+    LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to delinearize location.\n");
+    ResLoc.Kind = LocKind::Default;
+    return std::make_pair(ResLoc, true);
+  }
+  LLVM_DEBUG(dbgs() << "[AGGREGATE] Array info: " << *ArrayPtr->getBase() <<
+      ", IsAddress: " << ArrayPtr->isAddressOfVariable() << ".\n");
+  auto BaseType = ArrayPtr->getBase()->getType();
+  auto ArrayType = cast<PointerType>(BaseType)->getElementType();
+  if (ArrayPtr->isAddressOfVariable()) {
+    ResLoc.Kind = LocKind::NonCollapsable;
+    return std::make_pair(ResLoc, true);
+  }
+  LLVM_DEBUG(dbgs() << "[AGGREGATE] Array type: " << *ArrayType << ".\n");
+  LLVM_DEBUG(dbgs() << "[AGGREGATE] Element type: " <<
+      ArrayType->getTypeID() << ".\n");
+  auto ArraySizeInfo = arraySize(ArrayType);
+  if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
+      ArrayPtr->getNumberOfDims() != 1) {
+    LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to get array size.\n");
+    ResLoc.Kind = LocKind::NonCollapsable;
+    return std::make_pair(ResLoc, true);
+  }
+  auto ElemType = std::get<2>(ArraySizeInfo);
+  LLVM_DEBUG(dbgs() << "[AGGREGATE] Array element type:  " <<
+      *ElemType << ".\n");
+  if (Fwk->getDataLayout().getTypeStoreSize(ElemType).isScalable() ||
+      LocInfo.second->Subscripts.size() != ArrayPtr->getNumberOfDims() ||
+      !Loc.LowerBound.hasValue() || !Loc.UpperBound.hasValue() ||
+      Loc.LowerBound.getValue() != 0 ||
+      Loc.UpperBound.getValue() != Fwk->getDataLayout().
+                                   getTypeStoreSize(ElemType).getFixedSize()) {
+    ResLoc.Kind = LocKind::NonCollapsable;
+    return std::make_pair(ResLoc, true);
+  }
+  ResLoc.Ptr = ArrayPtr->getBase();
+  ResLoc.LowerBound = 0;
+  ResLoc.UpperBound = Fwk->getDataLayout().getTypeStoreSize(ElemType).
+      getFixedSize();
+  ResLoc.Kind = LocKind::Collapsed;
+  auto *SE = Fwk->getScalarEvolution();
+  assert(SE && "ScalarEvolution must be specified!");
+  std::size_t DimensionN = 0;
+  std::size_t LoopMatchCount = 0, ConstMatchCount = 0;
+  for (auto *S : LocInfo.second->Subscripts) {
+    ResLoc.Kind = LocKind::NonCollapsable;
+    LLVM_DEBUG(dbgs() << "[AGGREGATE] Subscript: " << *S << "\n");
+    if (!ArrayPtr->isKnownDimSize(DimensionN) && DimensionN != 0) {
+      LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to get dimension "
+                           "size for required dimension `" << DimensionN <<
+                           "`.\n");
+      break;
+    }
+    Dimension DimInfo;
+    if (auto *C = dyn_cast<SCEVConstant>(ArrayPtr->getDimSize(DimensionN))) {
+      DimInfo.DimSize = C->getAPInt().getZExtValue();
+    } else {
+      LLVM_DEBUG(dbgs() << "[AGGREGATE] Non-constant dimension size.\n");
+      if (DimensionN != 0)
+        break;
+    }
+    auto AddRecInfo = computeSCEVAddRec(S, *SE);
+    if (Fwk->getGlobalOptions().IsSafeTypeCast && !AddRecInfo.second)
+      break;
+    auto SCEV = AddRecInfo.first;
+    if (auto C = dyn_cast<SCEVConstant>(SCEV)) {
+      if (C->getAPInt().isNegative())
+        break;
+      ++ConstMatchCount;
+      DimInfo.Start = C->getAPInt().getSExtValue();
+      DimInfo.TripCount = 1;
+      DimInfo.Step = 1;
+      ResLoc.DimList.push_back(DimInfo);
+      ResLoc.Kind = LocKind::Collapsed;
+    } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
+      if (!R) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Region == nullptr.\n");
+        ResLoc.Kind = LocKind::Default;
+        break;
+      }
+      if (auto *DFL = dyn_cast<DFLoop>(R)) {
+        assert(DFL->getLoop() && C->getLoop() &&
+            "Loops for the DFLoop and AddRecExpr must be specified!");
+        if (DFL->getLoop()->contains(C->getLoop()))
+          ++LoopMatchCount;
+      }
+      auto *StepSCEV = C->getStepRecurrence(*SE);
+      if (!isa<SCEVConstant>(StepSCEV)) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Non-constant step.\n");
+        break;
+      }
+      auto TripCount = SE->getSmallConstantTripCount(C->getLoop());
+      if (TripCount <= 1) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Unknown or non-constant "
+                             "trip count.\n");
+        break;
+      }
+      int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
+      if (SignedRangeMin < 0) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Range bounds must be "
+                              "non-negative.\n");
+        break;
+      }
+      DimInfo.Start = SignedRangeMin;
+      DimInfo.TripCount = TripCount - 1;
+      DimInfo.Step = std::abs(cast<SCEVConstant>(StepSCEV)->
+                              getAPInt().getSExtValue());
+      if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >=
+          DimInfo.DimSize && DimensionN != 0) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Array index out of bounds.");
+        break;
+      }
+      ResLoc.DimList.push_back(DimInfo);
+      ResLoc.Kind = LocKind::Collapsed;
+    } else {
+      break;
+    }
+    ++DimensionN;
+  }
+  if (ResLoc.DimList.size() != ArrayPtr->getNumberOfDims()) {
+    LLVM_DEBUG(dbgs() << "[AGGREGATE] Collapse incomplete location. Kind: "
+        << ResLoc.getKindAsString() << "\n");
+    assert(ResLoc.Kind != LocKind::Collapsed &&
+        "An incomplete array location cannot be of the `collapsed` kind!");
+    MemoryLocationRange NewLoc(Loc);
+    NewLoc.Kind = ResLoc.Kind;
+    return std::make_pair(NewLoc, true);
+  }
+  bool IsOwn = true;
+  if (isa_and_nonnull<DFLoop>(R)) {
+    if (LoopMatchCount == 0 && ConstMatchCount != ArrayPtr->getNumberOfDims()) {
+      IsOwn = false;
+    } else if (LoopMatchCount > 0 &&
+               LoopMatchCount + ConstMatchCount < ArrayPtr->getNumberOfDims()) {
+      return std::make_pair(Loc, true);
+    }
+  }  
+  assert(ResLoc.Kind == LocKind::Collapsed &&
+      "Array location must be of the `collapsed` kind!");
+  LLVM_DEBUG(
+    dbgs() << "[AGGREGATE] Aggregated location: ";
+    printLocationSource(dbgs(), ResLoc, &Fwk->getDomTree(), true);
+    dbgs() << "\n";
+  );
+  return std::make_pair(ResLoc, IsOwn);
+}
+
 /// This functor adds into a specified DefUseSet all locations from a specified
 /// AliasNode which aliases with a specified memory location. Derived classes
 /// should be used to specify access modes (Def/MayDef/Use).
@@ -224,8 +416,8 @@ class AddKnownAccessFunctor :
 public:
   AddKnownAccessFunctor(AAResults &AA, const DataLayout &DL,
       const DFRegionInfo &DFI, const DominatorTree &DT, const Instruction &Inst,
-      const MemoryLocation &Loc, DefUseSet &DU) :
-    Base(AA, DL, DFI, DT, Inst, DU),  mLoc(Loc) {}
+      const MemoryLocation &Loc, DefUseSet &DU, ReachDFFwk *DFF) :
+    Base(AA, DL, DFI, DT, Inst, DU),  mLoc(Loc), DFF(DFF) {}
 
   void addEstimate(AliasEstimateNode &N) {
     for (auto &EM : N) {
@@ -263,7 +455,7 @@ public:
           if (this->mDU.hasDef(Range))
             continue;
           addMust(Range);
-        } else {
+        } else if (!AR.template is<trait::NoAlias>()) {
           addMay(ALoc);
         }
       }
@@ -272,24 +464,27 @@ public:
 
 private:
   void addMust(const MemoryLocationRange &Loc) {
+    static_cast<ImpTy *>(this)->addMust(aggregate(nullptr, Loc, DFF).first);
     static_cast<ImpTy *>(this)->addMust(Loc);
   }
 
   void addMay(const MemoryLocationRange &Loc) {
+    static_cast<ImpTy *>(this)->addMay(aggregate(nullptr, Loc, DFF).first);
     static_cast<ImpTy *>(this)->addMay(Loc);
   }
 
   const MemoryLocation &mLoc;
+  ReachDFFwk *DFF;
 };
 
 /// This macro determine functors according to a specified memory access modes.
-#define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST) \
+#define ADD_ACCESS_FUNCTOR(NAME, BASE, MEM, MAY, MUST, DFF) \
 class NAME : public BASE<NAME> { \
 public: \
   NAME(AAResults &AA, const DataLayout &DL, const DFRegionInfo &DFI, \
       const DominatorTree &DT, const Instruction &Inst, \
-      MEM &Loc, DefUseSet &DU) : \
-    BASE<NAME>(AA, DL, DFI, DT, Inst, Loc, DU) {} \
+      MEM &Loc, DefUseSet &DU, ReachDFFwk *DFF) : \
+    BASE<NAME>(AA, DL, DFI, DT, Inst, Loc, DU, DFF) {} \
 private: \
   friend BASE<NAME>; \
   void addMust(const MemoryLocationRange &Loc) { MUST; } \
@@ -297,17 +492,17 @@ private: \
 };
 
 ADD_ACCESS_FUNCTOR(AddDefFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addMayDef(Loc), mDU.addDef(Loc))
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addDef(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddMayDefFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc))
+  const MemoryLocation, mDU.addMayDef(Loc), mDU.addMayDef(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddUseFunctor, AddKnownAccessFunctor,
-  const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc))
+  const MemoryLocation, mDU.addUse(Loc), mDU.addUse(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
-  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addDef(Loc); mDU.addUse(Loc))
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addDef(Loc); mDU.addUse(Loc), DFF)
 ADD_ACCESS_FUNCTOR(AddMayDefUseFunctor, AddKnownAccessFunctor,
   const MemoryLocation,
-  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc))
+  mDU.addMayDef(Loc); mDU.addUse(Loc), mDU.addMayDef(Loc); mDU.addUse(Loc), DFF)
 
 #ifndef NDEBUG
 void intializeDefUseSetLog(
@@ -323,16 +518,16 @@ void intializeDefUseSetLog(
   }
   dbgs() << "Outward exposed must define locations:\n";
   for (auto &Loc : DU.getDefs())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT, true), dbgs() << "\n";
   dbgs() << "Outward exposed may define locations:\n";
   for (auto &Loc : DU.getMayDefs())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT, true), dbgs() << "\n";
   dbgs() << "Outward exposed uses:\n";
   for (auto &Loc : DU.getUses())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT, true), dbgs() << "\n";
   dbgs() << "Explicitly accessed locations:\n";
   for (auto &Loc : DU.getExplicitAccesses())
-    printLocationSource(dbgs(), Loc, &DT), dbgs() << "\n";
+    printLocationSource(dbgs(), Loc, &DT, true), dbgs() << "\n";
   for (auto *I : DU.getExplicitUnknowns())
     I->print(dbgs()), dbgs() << "\n";
   dbgs() << "[END DEFUSE]\n";
@@ -470,7 +665,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     auto &DT = DFF->getDomTree();
     auto &DFI = DFF->getRegionInfo();
     for_each_memory(I, TLI,
-      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU](Instruction &I,
+      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU, DFF](Instruction &I,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         // EM may be smaller than Loc if it is known that access out of the
@@ -530,23 +725,24 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         case AccessInfo::No:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         case AccessInfo::May:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU,
+                                               DFF));
           else
             for_each_alias(&AT, AN,
-                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         case AccessInfo::Must:
           if (R != AccessInfo::No)
             for_each_alias(&AT, AN,
-                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           else
             for_each_alias(&AT, AN,
-                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU));
+                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
           break;
         }
       },
@@ -634,6 +830,10 @@ bool DataFlowTraits<ReachDFFwk*>::transferFunction(
 void ReachDFFwk::collapse(DFRegion *R) {
   assert(R && "Region must not be null!");
   typedef RegionDFTraits<ReachDFFwk *> RT;
+  typedef std::pair<MemoryLocationRange, bool> AggrResult;
+  typedef std::pair<MemoryLocationRange, MemoryLocationRange> LocationPair;
+  typedef MemorySet<MemoryLocationRange> LocationSet;
+  typedef llvm::SmallVector<LocationPair, 4> LocationList;
   auto &AT = getAliasTree();
   auto &AA = AT.getAliasAnalysis();
   auto Pair = getDefInfo().insert(std::make_pair(R, std::make_tuple(
@@ -645,6 +845,33 @@ void ReachDFFwk::collapse(DFRegion *R) {
   // of execution paths of iterations of the loop.
   DFNode *ExitNode = R->getExitNode();
   const DefinitionInfo &ExitingDefs = RT::getValue(ExitNode, this);
+  const DefinitionInfo *LatchDefs = nullptr;
+  bool HasTrips = false;
+  if (auto *DFL = dyn_cast<DFLoop>(R)) {
+    LatchDefs = &RT::getValue(DFL->getLatchNode(), this);
+    assert(getScalarEvolution() && "ScalarEvolution must be specified!");
+    auto TripCount = getScalarEvolution()->getSmallConstantTripCount(
+        DFL->getLoop());
+    LLVM_DEBUG(dbgs() << "[COLLAPSE] Total trip count: " << TripCount << "\n");
+    HasTrips = bool(TripCount > 0);
+  }
+  // Distribute memory locations into two collections: a set of own memory 
+  // locations of the region and a list of other memory locations.
+  auto distribute = [](const AggrResult &Res, const MemoryLocationRange &OrigLoc,
+                       LocationSet &Own, LocationList &Other) {
+    if (Res.second)
+      Own.insert(Res.first);
+    else
+      Other.push_back(std::make_pair(OrigLoc, Res.first));
+  };
+  #ifndef NDEBUG
+  auto printLocInfo = [this](llvm::StringRef Msg,
+                             const MemoryLocationRange &Loc) {
+    dbgs() << Msg;
+    printLocationSource(dbgs(), Loc, &getDomTree());
+    dbgs() << " (" << Loc.getKindAsString() << ")\n";
+  };
+  #endif
   for (DFNode *N : R->getNodes()) {
     auto DefItr = getDefInfo().find(N);
     assert(DefItr != getDefInfo().end() &&
@@ -652,12 +879,19 @@ void ReachDFFwk::collapse(DFRegion *R) {
       "Data-flow value must be specified!");
     auto &RS = DefItr->get<ReachSet>();
     auto &DU = DefItr->get<DefUseSet>();
+    auto &MustReachIn = RS->getIn().MustReach;
+    LocationSet OwnUses, OwnMayDefs, OwnDefs;
+    LocationList OtherUses, OtherMayDefs, OtherDefs;
     // We calculate a set of locations (Uses)
     // which get values outside the loop or from previous loop iterations.
     // These locations can not be privatized.
     for (auto &Loc : DU->getUses()) {
+      if (Loc.Kind & MemoryLocationRange::LocKind::Hint)
+        continue;
       bool StartInLoop = false, EndInLoop = false;
       auto *EM = AT.find(Loc);
+      if (EM == nullptr)
+        continue;
       EM = EM->getTopLevelParent();
       auto *V = EM->front();
       // We're looking for alloca->bitcast->lifetime.start/end instructions
@@ -690,8 +924,23 @@ void ReachDFFwk::collapse(DFRegion *R) {
             break;
         }
       }
-      if (!RS->getIn().MustReach.contain(Loc) && !(StartInLoop && EndInLoop))
+      if (StartInLoop && EndInLoop)
+        continue;
+      LLVM_DEBUG(printLocInfo("[COLLAPSE] Collapse Use location: ", Loc));
+      distribute(aggregate(R, Loc, this), Loc, OwnUses, OtherUses);
+    }
+    OwnUses.clarify(OtherUses);
+    for (auto &Loc : OwnUses) {
+      SmallVector<MemoryLocationRange, 4> UseDiff;
+      if (MustReachIn.subtractFrom(Loc, UseDiff)) {
+        for (auto &L : UseDiff) {
+          LLVM_DEBUG(printLocInfo("[COLLAPSE] Add Use location: ", L));
+          DefUse->addUse(L);
+        }
+      } else {
+        LLVM_DEBUG(printLocInfo("[COLLAPSE] Add entire Use location: ", Loc));
         DefUse->addUse(Loc);
+      }
     }
     // It is possible that some locations are only written in the loop.
     // In this case this locations are not located at set of node uses but
@@ -713,14 +962,68 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //   if (...)
     //     X = ...;
     // }
+    // 
+    // When calculating a set of must define locations (Defs), we need to 
+    // consider only those definitions that reach the exit from the current 
+    // region. We cannot just insert all location from the nested regions into 
+    // Defs. Consider the following example.
+    // for (;;) { // R1
+    //   if (...) {
+    //     for (int I = 0; I < 6; ++I) // R2
+    //       A[I] = ...
+    //   } else {
+    //     for (int J = 4; J < 10; ++J) // R3
+    //       A[J] = ...
+    //   }
+    // }
+    // `A[0, 6)` has a definition in `R2`, `A[4, 10)` has a definition in `R3`, 
+    // but only `A[4, 6)` reaches the exit from `R1`. We need to use 
+    // `ExitingDefs.MustReach.findCoveredBy(Loc, Locs)` to find those parts of 
+    // a specified memory location that reach the exit from the current region.
+    // If `R1` is a loop region and it has a trip count greater than zero, then
+    // we need to check `LatchDefs` in addition to `ExitingDefs`.
     for (auto &Loc : DU->getDefs()) {
-      if (ExitingDefs.MustReach.contain(Loc))
-        DefUse->addDef(Loc);
-      else
-        DefUse->addMayDef(Loc);
+      if (Loc.Kind & MemoryLocationRange::LocKind::Hint)
+        continue;
+      if (isa<DFLoop>(R) && HasTrips) {
+        LLVM_DEBUG(dbgs() << "[COLLAPSE] Check LatchDefs.\n");
+        llvm::SmallVector<MemoryLocationRange, 4> Locs;
+        LatchDefs->MustReach.findCoveredBy(Loc, Locs);
+        if (!Locs.empty()) {
+          for (auto &L : Locs) {
+            LLVM_DEBUG(printLocInfo(
+                "[COLLAPSE] Add location from a latch node: ", L));
+            distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
+          }
+        } else {
+          LLVM_DEBUG(printLocInfo(
+              "[COLLAPSE] Collapse MayDef location of a latch node: ", Loc));
+          distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+        }
+      }
+      LLVM_DEBUG(dbgs() << "[COLLAPSE] Check ExitingDefs.\n");
+      llvm::SmallVector<MemoryLocationRange, 4> Locs;
+      ExitingDefs.MustReach.findCoveredBy(Loc, Locs);
+      if (!Locs.empty()) {
+        for (auto &L : Locs) {
+          LLVM_DEBUG(printLocInfo("[COLLAPSE] Collapse Def location: ", L));
+          distribute(aggregate(R, L, this), Loc, OwnDefs, OtherDefs);
+        }
+      } else {
+        LLVM_DEBUG(printLocInfo("[COLLAPSE] Collapse MayDef location: ", Loc));
+        distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+      }
     }
-    for (auto &Loc : DU->getMayDefs())
-      DefUse->addMayDef(Loc);
+    OwnDefs.clarify(OtherDefs);
+    DefUse->addDefs(OwnDefs);
+    for (auto &Loc : DU->getMayDefs()) {
+      if (Loc.Kind & MemoryLocationRange::LocKind::Hint)
+        continue;
+      LLVM_DEBUG(printLocInfo("[COLLAPSE] Collapse MayDef location: ", Loc));
+      distribute(aggregate(R, Loc, this), Loc, OwnMayDefs, OtherMayDefs);
+    }
+    OwnMayDefs.clarify(OtherMayDefs);
+    DefUse->addMayDefs(OwnMayDefs);
     DefUse->addExplicitAccesses(DU->getExplicitAccesses());
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
     for (auto Loc : DU->getAddressAccesses())
@@ -729,6 +1032,52 @@ void ReachDFFwk::collapse(DFRegion *R) {
       DefUse->addAddressUnknowns(Loc);
     for (auto Inst : DU->getUnknownInsts())
       DefUse->addUnknownInst(Inst);
+  }
+  for (auto &Loc : DefUse->getExplicitAccesses()) {
+    auto *EM{AT.find(Loc)};
+    if (EM) {
+      if (auto *DFL{dyn_cast<DFLoop>(R)})
+        if (auto *GEP{dyn_cast<GetElementPtrInst>(EM->front())})
+          if (all_of(GEP->indices(), [this, DFL](auto &Idx) {
+                auto *SE{getScalarEvolution()};
+                auto *S{SE->getSCEV(Idx)};
+                return SE->isLoopInvariant(S, DFL->getLoop());
+              }))
+            EM = nullptr;
+          else
+            EM = EM->getTopLevelParent();
+    }
+    LLVM_DEBUG(printLocInfo("[COLLAPSE] Collapse Explicit Access: ", Loc));
+    MemoryLocationRange ExpLoc = aggregate(R, Loc, this).first;
+    MemoryLocationRange NewLoc(Loc);
+    NewLoc.Kind |= MemoryLocationRange::LocKind::Hint;
+    // We use top-level parent (EM) if it is available to update def-use set.
+    // In the following example  `for (int I = 98; I >= 0; --I)  A[I] = A[I + 1];`
+    // `A[I]` does not alias `A[I+1]` because these are two different elements
+    // of array if a value of `I` is specified. In this case `A[I]` is not presented
+    // in  the `Use` set, so analysis recognizes `A` as privitizable. To overcome
+    // this issue we conservatively update def-use set according to accesses
+    // to the whole array `A`.
+    if (!DefUse->hasDef(Loc) &&
+        (ExpLoc.Kind == MemoryLocationRange::LocKind::Collapsed &&
+         DefUse->hasDef(ExpLoc)))
+      DefUse->addDef(NewLoc);
+    if (!DefUse->hasMayDef(Loc) &&
+        ((ExpLoc.Kind == MemoryLocationRange::LocKind::Collapsed &&
+          DefUse->hasMayDef(ExpLoc)) ||
+         (EM && any_of(*EM, [EM, &DefUse](auto *Ptr) {
+            return DefUse->hasMayDef(
+                MemoryLocation{Ptr, EM->getSize(), EM->getAAInfo()});
+          }))))
+      DefUse->addMayDef(NewLoc);
+    if (!DefUse->hasUse(Loc) &&
+        ((ExpLoc.Kind == MemoryLocationRange::LocKind::Collapsed &&
+          DefUse->hasUse(ExpLoc)) ||
+         (EM && any_of(*EM, [EM, &DefUse](auto *Ptr) {
+            return DefUse->hasUse(
+                MemoryLocation{Ptr, EM->getSize(), EM->getAAInfo()});
+          }))))
+      DefUse->addUse(NewLoc);
   }
   LLVM_DEBUG(intializeDefUseSetLog(*R, *DefUse, getDomTree()));
 }

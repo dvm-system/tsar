@@ -23,13 +23,16 @@
 
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassProvider.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/SCCIterator.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Pass.h>
@@ -89,7 +92,9 @@ private:
 using GlobalDefinedMemoryProvider = FunctionPassProvider<
   DFRegionInfoPass,
   EstimateMemoryPass,
-  DominatorTreeWrapperPass>;
+  DominatorTreeWrapperPass,
+  DelinearizationPass,
+  ScalarEvolutionWrapperPass>;
 }
 
 INITIALIZE_PROVIDER_BEGIN(GlobalDefinedMemoryProvider,
@@ -98,6 +103,8 @@ INITIALIZE_PROVIDER_BEGIN(GlobalDefinedMemoryProvider,
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
 INITIALIZE_PROVIDER_END(GlobalDefinedMemoryProvider, "global-def-mem-provider",
                         "Global Defined Memory Analysis (Provider)")
 
@@ -119,6 +126,7 @@ INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryProvider)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_END(GlobalDefinedMemory, "global-def-mem",
                     "Global Defined Memory Analysis", true, true)
 
@@ -127,6 +135,7 @@ void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalDefinedMemoryWrapper>();
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.setPreservesAll();
 }
 
@@ -143,7 +152,13 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
   if (!Wrapper)
     return false;
   Wrapper->clear();
+  auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
+  GlobalDefinedMemoryProvider::initialize<GlobalOptionsImmutableWrapper>(
+      [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
+        Wrapper.setOptions(&GO);
+      });
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  auto &DL = SCC.getDataLayout();
   for (scc_iterator<CallGraph *> SCC = scc_begin(&CG); !SCC.isAtEnd(); ++SCC) {
     /// TODO (kaniandr@gmail.com): implement analysis in case of recursion.
     if (SCC->size() > 1)
@@ -165,13 +180,18 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();
     const auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
     auto *DFF = cast<DFFunction>(RegInfo.getTopLevelRegion());
+    auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
+    auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DefInfo, *Wrapper);
+    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, GO, DefInfo,
+                           *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
            "Def-use set must exist for a function!");
     Wrapper->try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
+    LLVM_DEBUG(dbgs() << "[GLOBAL DEFINED MEMORY]: leave " << F->getName()
+                      << "\n";);
   }
   return false;
 }

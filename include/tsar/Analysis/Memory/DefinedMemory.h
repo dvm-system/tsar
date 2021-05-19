@@ -56,11 +56,14 @@ class Value;
 class Instruction;
 class StoreInst;
 class TargetLibraryInfo;
+class ScalarEvolution;
 }
 
 namespace tsar {
 class AliasTree;
 class DFRegionInfo;
+class DelinearizeInfo;
+struct GlobalOptions;
 
 /// \brief This contains locations which have outward exposed definitions or
 /// uses in a data-flow node.
@@ -110,6 +113,13 @@ public:
     return addDef(MemoryLocationRange::get(I));
   }
 
+  /// Specifies that all locations in a set have definition in a data-flow node.
+  ///
+  /// \return False if all locations have been already specified.
+  bool addDefs(const LocationSet &Defs) {
+    return mDefs.insert(Defs.begin(), Defs.end());
+  }
+
   /// Returns set of the may defined locations.
   const LocationSet & getMayDefs() const { return mMayDefs; }
 
@@ -146,6 +156,14 @@ public:
     return addMayDef(MemoryLocationRange::get(I));
   }
 
+  /// Specifies that all locations in a set may have definition in a data-flow 
+  /// node.
+  ///
+  /// \return False if all locations have been already specified.
+  bool addMayDefs(const LocationSet &MayDefs) {
+    return mMayDefs.insert(MayDefs.begin(), MayDefs.end());
+  }
+
   /// Returns set of the locations which get values outside a data-flow node.
   const LocationSet & getUses() const { return mUses; }
 
@@ -176,6 +194,13 @@ public:
     assert(I && "Instruction must not be null!");
     assert(I->mayReadFromMemory() && "Instruction does not read memory!");
     return addUse(MemoryLocationRange::get(I));
+  }
+
+  /// Specifies that all locations in a set get values outside a data-flow node.
+  ///
+  /// \return False if all locations have been already specified.
+  bool addUses(const LocationSet &Uses) {
+    return mUses.insert(Uses.begin(), Uses.end());
   }
 
   /// Returns locations accesses to which are performed explicitly.
@@ -368,18 +393,30 @@ public:
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, const GlobalOptions &GO,
       DefinedMemoryInfo &DefInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
-    mDT(&DT), mDefInfo(&DefInfo) {}
+    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
-      DefinedMemoryInfo &DefInfo,
-      InterprocDefUseInfo &InterprocDUInfo) :
+      const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
+      const llvm::DataLayout &DL, const GlobalOptions &GO,
+      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
-    mDefInfo(&DefInfo),
+    mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
+
+  /// Creates data-flow framework.
+  ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
+      const llvm::DominatorTree &DT, const DelinearizeInfo &DI,
+      llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
+      const GlobalOptions &GO, DefinedMemoryInfo &DefInfo,
+      InterprocDefUseInfo &InterprocDUInfo) :
+    mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL),
+    mGO(&GO), mDefInfo(&DefInfo), mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -409,10 +446,21 @@ public:
   /// Return hierarchy of regions.
   const DFRegionInfo &getRegionInfo() const noexcept { return *mRegionInfo; }
 
+  /// Returns delinearize info.
+  const DelinearizeInfo * getDelinearizeInfo() const noexcept { return mDI; }
+
+  /// Returns scalar evolution.
+  llvm::ScalarEvolution * getScalarEvolution() const noexcept { return mSE; }
+
+  /// Returns data layout.
+  const llvm::DataLayout & getDataLayout() const noexcept { return *mDL; }
+
+  /// Returns global options.
+  const GlobalOptions & getGlobalOptions() const noexcept { return *mGO; }
+
   /// Collapses a data-flow graph which represents a region to a one node
   /// in a data-flow graph of an outer region.
   void collapse(DFRegion *R);
-
 private:
   AliasTree *mAliasTree;
   llvm::TargetLibraryInfo *mTLI;
@@ -420,6 +468,10 @@ private:
   const DFRegionInfo *mRegionInfo;
   DefinedMemoryInfo *mDefInfo;
   InterprocDefUseInfo *mInterprocDUInfo = nullptr;
+  const DelinearizeInfo *mDI;
+  llvm::ScalarEvolution *mSE;
+  const llvm::DataLayout *mDL;
+  const GlobalOptions *mGO;
 };
 
 /// This represents results of interprocedural reach definition analysis.
