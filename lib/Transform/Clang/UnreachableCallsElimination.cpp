@@ -43,6 +43,7 @@
 #include <vector>
 
 #include <iostream>
+#include <sstream>
 
 
 using namespace clang;
@@ -113,6 +114,39 @@ public:
       mHasReachableReturnStmt = true;
       return RecursiveASTVisitor::TraverseReturnStmt(RS);
     }
+  }
+
+  bool TraverseSwitchStmt(clang::SwitchStmt *SS) {
+    if (!SS) {
+      return true;
+    }
+ 
+    bool Res = true;
+    SwitchCase *Iter = SS->getSwitchCaseList();
+    SwitchCase *Prev = nullptr;
+ 
+    // clang visits cases (including default) in reversed order (???)
+    while (Iter) {
+      if (isUnreachable(Iter)) {
+        if (Prev) {
+          makeEliminableFromTo(Iter->getKeywordLoc(),
+              Prev->getKeywordLoc().getLocWithOffset(-1));
+        } else {
+          makeEliminableFromTo(Iter->getKeywordLoc(),
+              SS->getEndLoc().getLocWithOffset(-1));
+        }
+      } else {
+        if (clang::CaseStmt *CS = dyn_cast<clang::CaseStmt>(Iter)) {
+          Res = Res && RecursiveASTVisitor::TraverseCaseStmt(CS);
+        } else if (clang::DefaultStmt *DS = dyn_cast<clang::DefaultStmt>(Iter)) {
+          Res = Res && RecursiveASTVisitor::TraverseDefaultStmt(DS);
+        }
+      }
+      Prev = Iter;
+      Iter = Iter->getNextSwitchCase();;
+    }
+ 
+    return Res;
   }
 
   bool TraverseBinaryOperator(clang::BinaryOperator *BO) {
@@ -255,21 +289,9 @@ public:
       }
     }
 
-    printUnreachableSorceRanges();
-
-    std::cout << "Starting unreachable code elimination..." << std::endl;
+    std::cout << "Starting unreachable code elimination" << std::endl;
     for (const auto &SR : mSourceRangesToEliminate) {
-      clang::SourceLocation BeginLoc = SR.getBegin();
-      clang::SourceLocation EndLoc = SR.getEnd();
-
-      unsigned LineStart = mSourceManager.getExpansionLineNumber(BeginLoc);
-      unsigned ColumnStart = mSourceManager.getExpansionColumnNumber(BeginLoc);
-      unsigned LineEnd = mSourceManager.getExpansionLineNumber(EndLoc);
-      unsigned ColumnEnd = mSourceManager.getExpansionColumnNumber(EndLoc);
-
-      std::cout << "\tstart: " << LineStart << ":" << ColumnStart
-          << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
-
+      std::cout << "\t" << sourceRangeToString(SR) << std::endl;
       mRewriter->RemoveText(SR);
     }
     std::cout << std::endl;
@@ -321,21 +343,21 @@ private:
     return NextToken.getLocation();
   }
 
-  void printUnreachableSorceRanges() {
-    std::cout << "Unreachable source ranges:" << std::endl;
-    for (const auto &SR : mSourceRangesToEliminate) {
-      clang::SourceLocation BeginLoc = SR.getBegin();
-      clang::SourceLocation EndLoc = SR.getEnd();
+  std::string sourceLocToString(const clang::SourceLocation &Loc) {
+    unsigned Line = mSourceManager.getExpansionLineNumber(Loc);
+    unsigned Column = mSourceManager.getExpansionColumnNumber(Loc);
+    std::ostringstream out;
+    out << Line << ":" << Column;
+    return out.str();
+  }
 
-      unsigned LineStart = mSourceManager.getExpansionLineNumber(BeginLoc);
-      unsigned ColumnStart = mSourceManager.getExpansionColumnNumber(BeginLoc);
-      unsigned LineEnd = mSourceManager.getExpansionLineNumber(EndLoc);
-      unsigned ColumnEnd = mSourceManager.getExpansionColumnNumber(EndLoc);
-
-      std::cout << "\tstart: " << LineStart << ":" << ColumnStart
-          << ", end: " << LineEnd << ":" << ColumnEnd << std::endl;
-    }
-    std::cout << std::endl;
+  std::string sourceRangeToString(const clang::SourceRange &SR) {
+    clang::SourceLocation BeginLoc = SR.getBegin();
+    clang::SourceLocation EndLoc = SR.getEnd();
+    std::ostringstream out;
+    out << "from " << sourceLocToString(BeginLoc)
+        << " to " << sourceLocToString(EndLoc);
+    return out.str();
   }
 
   clang::Rewriter *mRewriter;
