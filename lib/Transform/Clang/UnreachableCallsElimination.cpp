@@ -95,7 +95,7 @@ public:
 
     if (isUnreachable(S)) {
       makeEliminableFromTo(S->getBeginLoc(),
-          getNextTokenLoc(S->getBeginLoc()));  // semicolon
+          shiftTokenIfEqualsGiven(S->getEndLoc()));  // semicolon
       return true;
     }
 
@@ -205,7 +205,7 @@ public:
         makeEliminableFromTo(IS->getIfLoc(), Then->getEndLoc());
       } else {
         makeEliminableFromTo(IS->getIfLoc(),
-            getNextTokenLoc(Then->getEndLoc()));  // semicolon
+            shiftTokenIfEqualsGiven(Then->getEndLoc()));  // semicolon
       }
       if (HasElse) {
         if (isa<clang::CompoundStmt>(Else)) {
@@ -220,22 +220,22 @@ public:
     }
 
     if (HasElse && isUnreachable(Else)) {
-      clang::Stmt *Cond = IS->getCond();
       if (isa<clang::CompoundStmt>(Else)) {
         makeEliminableFromTo(IS->getElseLoc(), Else->getEndLoc());
       } else {
         makeEliminableFromTo(IS->getElseLoc(),
-            getNextTokenLoc(Else->getEndLoc()));  // semicolon
+            shiftTokenIfEqualsGiven(Else->getEndLoc()));  // semicolon
       }
       if (isa<clang::CompoundStmt>(Then)) {
         makeEliminableFromTo(IS->getIfLoc(), Then->getBeginLoc());
         makeEliminableLoc(Then->getEndLoc());
       } else {
+        clang::Stmt *Cond = IS->getCond();
         makeEliminableFromTo(IS->getIfLoc(),
-            getNextTokenLoc(Cond->getEndLoc()));  // right parethesis
+            shiftTokenIfEqualsGiven(Cond->getEndLoc(),
+            clang::tok::r_paren));  // right parethesis
       }
-      return RecursiveASTVisitor::TraverseStmt(Cond)
-          && RecursiveASTVisitor::TraverseStmt(Then);
+      return RecursiveASTVisitor::TraverseStmt(Then);
     }
 
     return RecursiveASTVisitor::TraverseIfStmt(IS);
@@ -253,7 +253,7 @@ public:
         makeEliminableFromTo(WS->getWhileLoc(), WhileBody->getEndLoc());
       } else {
         makeEliminableFromTo(WS->getWhileLoc(),
-            getNextTokenLoc(WhileBody->getEndLoc()));  // semicolon
+            shiftTokenIfEqualsGiven(WhileBody->getEndLoc()));  // semicolon
       }
       return true;
     }
@@ -273,7 +273,7 @@ public:
         makeEliminableFromTo(FS->getForLoc(), FS->getEndLoc());
       } else {
         makeEliminableFromTo(FS->getForLoc(),
-            getNextTokenLoc(FS->getEndLoc()));  // semicolon
+            shiftTokenIfEqualsGiven(FS->getEndLoc()));  // semicolon
       }
       return true;
     }
@@ -285,7 +285,7 @@ public:
     if (mHasReachableReturnStmt) {
       for (clang::ReturnStmt *RS : mUnreachableReturnStmts) {
         makeEliminableFromTo(RS->getBeginLoc(),
-            getNextTokenLoc(RS->getEndLoc()));  // semicolon
+            shiftTokenIfEqualsGiven(RS->getEndLoc()));  // semicolon
       }
     }
 
@@ -335,12 +335,15 @@ private:
     mSourceRangesToEliminate.push_back(SourceRangeToEliminate);
   }
 
-  /// Returns the location of the token following the token located in given location
-  /// (Here is used for obtaining ';' and ')' )
-  clang::SourceLocation getNextTokenLoc(clang::SourceLocation Loc) {
+  /// If next token equals given one (semicolon by default) returns its location
+  /// Else returns given location unchanged
+  clang::SourceLocation shiftTokenIfEqualsGiven(clang::SourceLocation Loc,
+      clang::tok::TokenKind ShiftTo = clang::tok::semi) {
     clang::Token NextToken;
-    getRawTokenAfter(Loc, mSourceManager, mRewriter->getLangOpts(), NextToken);
-    return NextToken.getLocation();
+    return (!getRawTokenAfter(Loc, mSourceManager, mRewriter->getLangOpts(), NextToken)
+        && NextToken.is(ShiftTo))
+        ? NextToken.getLocation()
+        : Loc;
   }
 
   std::string sourceLocToString(const clang::SourceLocation &Loc) {
