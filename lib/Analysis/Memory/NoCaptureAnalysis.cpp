@@ -159,7 +159,7 @@ namespace {
         if (curRang < 0)
           continue;
         auto[newNode, newRang, success] = applyDefinitionConstraint(curValue,
-                                                                    registry);
+                                                                    curRang);
         if (!success)
           return true;
         if (newNode) {
@@ -212,14 +212,13 @@ namespace {
     static std::tuple<Value *, int, bool>
     applyDefinitionConstraint(
       Value *curValue,
-      std::map<Value *, int> &registry
+      int curRang
     ) {
-      auto curRang = registry.find(curValue)->second;
       LLVM_DEBUG(
         dbgs() << "[NOCAPTURE] curRang: "; dbgs() << curRang; dbgs()
         << "\n";);
       if (isa<Argument>(curValue)) {
-        if (registry.find(curValue)->second != 0) {
+        if (curRang != 0) {
           LLVM_DEBUG(dbgs() << "[NOCAPTURE] curValue an argument of rang "
                                "!= 0: "; curValue->print(dbgs()); dbgs()
             << "\n";);
