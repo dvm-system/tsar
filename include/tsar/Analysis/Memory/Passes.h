@@ -213,10 +213,10 @@ void initializeDIArrayAccessCollectorPass(PassRegistry &Registry);
 ModulePass *createDIArrayAccessCollector();
 
 /// Initialize a pass calculating preserved parameters
-void initializeAddressAccessAnalyserPass(PassRegistry &Registry);
+void initializeNoCaptureAnalysisPass(PassRegistry &Registry);
 
 /// Create a pass calculating preserved parameters
-Pass * createAddressAccessAnalyserPass();
+Pass * createNoCaptureAnalysisPass();
 
 /// Initialize a pass to access alias results for allocas.
 void initializeAllocasAAWrapperPassPass(PassRegistry &Regitsry);
