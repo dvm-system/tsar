@@ -11,6 +11,11 @@ if(SAPFOR_VERSION)
   set(TSAR_VERSION_MINOR ${SAPFOR_VERSION_MINOR})
   set(TSAR_VERSION_PATCH ${SAPFOR_VERSION_PATCH})
   set(TSAR_VERSION_SUFFIX ${SAPFOR_VERSION_SUFFIX})
+
+  set(PROJECT_VERSION ${TSAR_VERSION})
+  set(PROJECT_VERSION_MAJOR ${TSAR_VERSION_MAJOR})
+  set(PROJECT_VERSION_MINOR ${TSAR_VERSION_MINOR})
+  set(PROJECT_VERSION_PATCH ${TSAR_VERSION_PATCH})
 endif()
 
 option(TSAR_DIRTY_BUILD "Do not use commit-based TSAR version string" ON)
@@ -64,18 +69,17 @@ include(BCLUtils)
 include(llvm-utility)
 
 # There are three steps to configure LLVM and Clang:
-# 1.a (LOCAL_LLVM is ON, GIT mono repo is only supported):
+# 1.a (PACKAGE_LLVM is OFF, GIT mono repo is only supported):
 #    Use LLVM as TSAR subproject (add_subdirectory() is used to build LLVM).
 # 1.b (PACKAGE_LLVM is ON):
 #    Use previously installed LLVM package.
-# 2. Configure LLVM project ((in case of 1.a and 1.b only).
+# 2. Configure LLVM project (in case of 1.a only).
 # 4. Specify LLVM dependences (include directories, libraries, macros etc.
 
-option(LOCAL_LLVM "Use existing LLVM sources" OFF)
-option(PACKAGE_LLVM "Use previously installed LLVM package" ON)
+option(PACKAGE_LLVM "Use previously installed LLVM package" OFF)
 
-set(LLVM_PROJECT_DIR "${CMAKE_BINARY_DIR}/llvm-project" CACHE PATH
-   "Root of LLVM source tree (path to llvm-project directory, usefull if LOCAL_LLVM is set to ON")
+set(LLVM_PROJECT_DIR "" CACHE PATH
+   "Root of LLVM source tree (path to llvm-project directory, usefull if PACKAGE_LLVM is set to OFF")
 
 set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
   "Version of installed LLVM package (useful only if PACKAGE_LLVM is set)")
@@ -83,11 +87,16 @@ set(LLVM_VERSION ${LLVM_MIN_VERSION} CACHE STRING
 option(BUILD_TSAR "Build Traits Static Analyzer" ON)
 option(TSAR_SERVER "Build TSAR server shared library" OFF)
 
-option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF)
-option(BUILD_PROFILE "Build profile runtime" OFF)
-option(BUILD_OPT "Build LLVM optimizer" OFF)
-option(BUILD_LLC "Build LLVM IR static compiler" OFF)
-option(BUILD_LINK "Build LLVM bitcode linker" OFF)
+cmake_dependent_option(BUILD_CLANG "Build LLVM native C/C++/Objective-C compiler Clang" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_PROFILE "Build profile runtime" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_OPT "Build LLVM optimizer" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_LLC "Build LLVM IR static compiler" OFF
+  "NOT PACKAGE_LLVM" OFF)
+cmake_dependent_option(BUILD_LINK "Build LLVM bitcode linker" OFF
+  "NOT PACKAGE_LLVM" OFF)
 cmake_dependent_option(BUILD_FLANG "Build LLVM native Fortran compiler Flang" OFF UNIX OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
@@ -103,25 +112,13 @@ set(FLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/flang")
 
 set(FLANG_FOUND OFF)
 
-if (LOCAL_LLVM AND PACKAGE_LLVM)
-  message(FATAL_ERROR
-    "Options LOCAL_LLVM and PACKAGE_LLVM are not compatible")
-endif()
-if(NOT LOCAL_LLVM AND NOT PACKAGE_LLVM)
-  message(FATAL_ERROR
-    "One of options LOCAL_LLVM, PACKAGE_LLVM should be specified.")
-endif()
-
 if(PACKAGE_LLVM)
-  if (BUILD_CLANG OR BUILD_FLANG OR BUILD_OPT OR BUILD_LLC OR BUILD_PROFILE OR BUILD_LINK)
-    message(FATAL_ERROR
-      "Options BUILD_CLANG or BUILD_FLANG or BUILD_OPT or BUILD_LLC or BUILD_PROFILE or BUILD_LINK are not compatible with PACKAGE_LLVM")
-  endif()
-  unset(LLVM_DIR CACHE)
   find_package(LLVM ${LLVM_VERSION} REQUIRED CONFIG)
   set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
   set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
   set(FLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/flang")
+  set(CLANG_INCLUDE_DIR "${LLVM_BINARY_DIR}/lib/clang/${LLVM_VERSION}/include")
+  set(CLANG_EXECUTABLE "${LLVM_BINARY_DIR}/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
   if (EXISTS ${FLANG_SOURCE_DIR})
     set(FLANG_FOUND ON)
   else()
@@ -133,6 +130,11 @@ if(PACKAGE_LLVM)
     endif()
   endif()
 else()
+  if (NOT LLVM_PROJECT_DIR)
+    message(FATAL_ERROR "Unable to find LLVM sources. \
+                         Set LLVM_PROJECT_DIR to build LLVM from sources or \
+                         use PACKAGE_LLVM option to access previously installed LLVM package.")
+  endif()
   if(NOT EXISTS ${LLVM_SOURCE_DIR})
     message(FATAL_ERROR "LLVM_SOURCE_DIR '${LLVM_SOURCE_DIR}' does not exist")
   endif()
@@ -155,6 +157,7 @@ else()
     set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
   endif()
   set(LLVM_ENABLE_PROJECTS ${LLVM_PROJECTS} CACHE STRING "" FORCE)
+  unset(LLVM_DIR CACHE)
   add_subdirectory(${LLVM_SOURCE_DIR} ${LLVM_BINARY_DIR} EXCLUDE_FROM_ALL)
   find_package(LLVM CONFIG HINTS ${LLVM_BINARY_DIR} NO_DEFAULT_PATH)
   if(NOT LLVM_FOUND)
@@ -170,6 +173,19 @@ else()
   if (BUILD_FLANG)
     set(FLANG_FOUND ON)
   endif()
+  set(TSAR_INCLUDE_PATH "lib/clang/${LLVM_VERSION}/include")
+  add_custom_target(tsar-resource-headers ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_PROPERTY:clang-resource-headers,RUNTIME_OUTPUT_DIRECTORY>"
+                                               "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}"
+    COMMENT "Copy header files to ${TSAR_INCLUDE_PATH}...")
+  add_dependencies(tsar-resource-headers clang-resource-headers)
+  set_target_properties(tsar-resource-headers PROPERTIES
+    FOLDER Misc
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}")
+  install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_INCLUDE_PATH}
+    DESTINATION ${TSAR_INCLUDE_PATH}/.. FILES_MATCHING PATTERN *.h)
+  set(CLANG_INCLUDE_DIR "${LLVM_BINARY_DIR}/$<CONFIG>/lib/clang/${LLVM_VERSION}/include")
+  set(CLANG_EXECUTABLE "${LLVM_BINARY_DIR}/$<CONFIG>/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
 
@@ -196,9 +212,9 @@ llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 # Add targets to the list of necessary LLVM libraries (LLVM_LIBS).
 llvm_map_components_to_libnames(LLVM_TARGETS_LIBS ${LLVM_TARGETS_TO_BUILD})
 foreach(L ${LLVM_TARGETS_LIBS})
-    string(TOLOWER ${L} TO_COMPARE)
-    string(REGEX MATCH "(asmparser|info|codegen)$" FIND_RES ${TO_COMPARE})
-    if (FIND_RES)
+  string(TOLOWER ${L} TO_COMPARE)
+  string(REGEX MATCH "(asmparser|info|codegen|desc)$" FIND_RES ${TO_COMPARE})
+  if (FIND_RES)
     list(APPEND LLVM_LIBS "${L}")
   endif()
 endforeach()
@@ -270,26 +286,11 @@ if (MSVC)
   endif()
 endif()
 
-set(PTS_EXECUTABLE "" CACHE FILEPATH
-  "Path to PTS (targets to run TSAR tests are generated if it is specified)")
-get_filename_component(PTS_PLUGIN_PATH utils ABSOLUTE)
-get_filename_component(PTS_SETENV_PATH test ABSOLUTE)
-
-if(BUILD_TESTING)
-  find_package(Perl)
-  if (NOT PERL_FOUND)
-    message(SEND_ERROR "Could NOT find Perl which is required to run tests. "
-                       "Disable BUILD_TESTING option to skip testing.")
-  else()
-    message(STATUS "Perl version: ${PERL_VERSION_STRING}")
-  endif()
-  if (NOT EXISTS "${PTS_EXECUTABLE}")
-    message(SEND_ERROR "Could NOT find PTS which is required tu run tests. "
-                       "Disable BUILD_TESTING option to skip testing.")
-  endif()
-
-  enable_testing()
-endif()
+foreach(C ${CMAKE_CONFIGURATION_TYPES})
+  string(TOUPPER ${C} SUFFIX)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${SUFFIX} "${CMAKE_CURRENT_BINARY_DIR}/${C}/bin")
+endforeach()
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
 
 add_subdirectory(utils/TableGen)
 add_subdirectory(lib tsar)
@@ -297,3 +298,29 @@ add_subdirectory(tools)
 add_subdirectory(test)
 
 set_target_properties(${TSAR_TABLEGEN} PROPERTIES FOLDER "Tablegenning")
+
+# Build Config-file Package configuration.
+export(EXPORT TSARExports
+  FILE ${CMAKE_CURRENT_BINARY_DIR}/TSARExports.cmake)
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake"
+  COMPATIBILITY AnyNewerVersion)
+
+get_property(TSAR_LLVM_TOOLS GLOBAL PROPERTY TSAR_LLVM_TOOLS)
+set_property(GLOBAL APPEND PROPERTY PACKAGE_PREFIX_PATH ${CMAKE_CURRENT_BINARY_DIR})
+
+set(TSAR_EXECUTABLE /bin/tsar${CMEAK_EXECUTABLE_SUFFIX})
+if (TSAR_SERVER)
+  set(TSAR_SERVER_EXECUTABLE /bin/tsar-server${CMEAK_EXECUTABLE_SUFFIX})
+endif()
+
+configure_file(cmake/TSARConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake @ONLY)
+
+install(EXPORT TSARExports
+  FILE TSARExports.cmake DESTINATION lib/cmake/tsar)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/TSARConfigVersion.cmake
+  DESTINATION lib/cmake/tsar)
