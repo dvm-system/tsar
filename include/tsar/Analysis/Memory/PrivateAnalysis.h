@@ -38,7 +38,6 @@
 #include "tsar/Analysis/Memory/IRMemoryTrait.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
-#include "tsar/Analysis/Memory/AddressAccess.h"
 #include <bcl/utility.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Pass.h>

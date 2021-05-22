@@ -37,7 +37,6 @@
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"
-#include "tsar/Analysis/Memory/AddressAccess.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/IRUtils.h"
@@ -926,8 +925,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
       }
       if (UseInsts.empty())
         continue;
-      if (!any_of(UseInsts,
-              [Lp, User, this](std::pair<Instruction *, Use *> &I) {
+      if (!any_of(UseInsts, [Lp, User](std::pair<Instruction *, Use *> &I) {
             if (!Lp->contains(I.first->getParent()))
               return false;
             // The address is used inside the loop.
@@ -939,7 +937,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
               return I.second->getOperandNo() !=
                      StoreInst::getPointerOperandIndex();
             // Address should be also remembered if it is a function parameter
-            // and this parameter is preserved within this function
+            // because it is not known how it is used inside a function.
             auto *Call = dyn_cast<CallBase>(I.first);
             if (Call && Call->isArgOperand(I.second)) {
               if (auto Callee = llvm::dyn_cast<Function>(
