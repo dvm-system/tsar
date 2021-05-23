@@ -25,11 +25,15 @@
 #ifndef TSAR_MEMORY_LOCATION_RANGE_H
 #define TSAR_MEMORY_LOCATION_RANGE_H
 
+#include <llvm/ADT/APInt.h>
+#include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/Analysis/MemoryLocation.h>
 
 namespace tsar {
 
 using LocationSize = llvm::LocationSize;
+
+LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// Representation for a memory location with shifted start position.
 ///
@@ -38,11 +42,32 @@ using LocationSize = llvm::LocationSize;
 /// LowerBound is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
+  enum LocKind : uint8_t {
+    Default = 0,
+    NonCollapsable = 1u << 0,
+    Collapsed = 1u << 1,
+    Hint = 1u << 2,
+    LLVM_MARK_AS_BITMASK_ENUM(Hint)
+  };
+
+  struct Dimension {
+    uint64_t Start;
+    uint64_t Step;
+    uint64_t TripCount;
+    uint64_t DimSize;
+    Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
+    inline bool operator==(const Dimension &Other) const {
+      return Start == Other.Start && Step == Other.Step &&
+             TripCount == Other.TripCount && DimSize == Other.DimSize;
+    }
+  };
 
   const llvm::Value * Ptr;
   LocationSize LowerBound;
   LocationSize UpperBound;
+  llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
+  LocKind Kind;
 
   /// Return a location with information about the memory reference by the given
   /// instruction.
@@ -110,24 +135,83 @@ struct MemoryLocationRange {
                                LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags) {}
+        AATags(AATags), Kind(LocKind::Default) {}
+
+  explicit MemoryLocationRange(const llvm::Value *Ptr,
+                               LocationSize LowerBound,
+                               LocationSize UpperBound,
+                               LocKind Kind,
+                               const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
+      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
+        AATags(AATags), Kind(Kind) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
-      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags) {}
+      : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags),
+        Kind(LocKind::Default) {}
+
+  MemoryLocationRange(const MemoryLocationRange &Loc)
+      : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
+        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
     LowerBound = 0;
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
+    Kind = Default;
     return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
-      LowerBound == Other.LowerBound && UpperBound == Other.UpperBound ;
+      LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
+      DimList == Other.DimList && Kind == Other.Kind;
+  }
+
+  llvm::StringRef getKindAsString() const {
+    auto append = [](const std::string &What, std::string &To) {
+      if (!To.empty())
+        To += " | ";
+      To += What;
+    };
+    std::string KindStr;
+    if (Kind == Hint || Kind == Default)
+      append("Default", KindStr);
+    if (Kind & NonCollapsable)
+      append("NonCollapsable", KindStr);
+    if (Kind & Collapsed)
+      append("Collapsed", KindStr);
+    if (Kind & Hint)
+      append("Hint", KindStr);
+    return KindStr;
   }
 };
+
+/// \brief Finds an intersection between memory locations LHS and RHS.
+///
+/// \param [in] LHS The first location to intersect.
+/// \param [in] RHS The second location to intersect.
+/// \param [out] LC List of memory locations to store the difference 
+/// between locations LHS and Int. It will not be changed if the intersection
+/// is empty. If `LC == nullptr`, the difference will not be calculated and
+/// will not be stored anywhere.
+/// \param [out] RC List of memory locations to store the difference 
+/// between locations RHS and Int. It will not be changed if the intersection
+/// is empty. If `RC == nullptr`, the difference will not be calculated and
+/// will not be stored anywhere.
+/// \param [out] Threshold The maximum number of locations that can be 
+/// obtained as a result of calculating the differences. If it is exceeded, 
+/// exact differences will not be saved.
+/// \return The result of intersection. If it is None, intersection is empty.
+/// If it is a location, but `Ptr` of the returned location is `nullptr`, then
+/// the intersection may exist but can't be calculated. Otherwise, the
+/// returned location is an exact intersection.
+llvm::Optional<MemoryLocationRange> intersect(
+    MemoryLocationRange LHS,
+    MemoryLocationRange RHS,
+    llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
+    llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
+    unsigned Threshold = 10);
 }
 
 namespace llvm {
