@@ -147,8 +147,8 @@ namespace {
     static bool isCaptured(Argument *arg) {
       if (arg->hasNoCaptureAttr())
         return false;
-      std::map<Value *, int> registry;
-      std::set<Instruction *> seenInstrs;
+      llvm::DenseMap<Value *, int> registry;
+      llvm::DenseSet<Instruction *> seenInstrs;
       std::queue<Value *> queue;
       registry.insert(std::pair<Value *, int>(arg, 0));
       queue.push(arg);
