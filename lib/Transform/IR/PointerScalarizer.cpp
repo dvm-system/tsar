@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
@@ -141,11 +142,11 @@ static inline bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
 }
 
 static inline bool validateValue(const ScalarizerContext &Ctx) {
+  if (!Ctx.ValueChanged)
+    return true;
   for (auto *User : Ctx.V->users()) {
     auto *Store = dyn_cast<StoreInst>(User);
-    if (Ctx.ValueChanged &&
-        Store && Ctx.L->contains(Store) &&
-        Store->getPointerOperand() == Ctx.V)
+    if (Store && Ctx.L->contains(Store) && Store->getPointerOperand() == Ctx.V)
       return false;
   }
   return true;
@@ -184,8 +185,8 @@ static inline void insertStoreInstructions(ScalarizerContext &Ctx) {
   SmallVector<BasicBlock *, 8> ExitBlocks;
   Ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
-    auto storeVal = Ctx.ValueChanged ? Ctx.InsertedLoads.front() : Ctx.V;
-    new StoreInst(Ctx.LastValues[BB], storeVal, BB->getFirstNonPHI());
+    auto StoreVal = Ctx.ValueChanged ? Ctx.InsertedLoads.front() : Ctx.V;
+    new StoreInst(Ctx.LastValues[BB], StoreVal, BB->getFirstNonPHI());
   }
 }
 
@@ -340,8 +341,8 @@ static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo
           Instruction &I, AccessInfo, AccessInfo W) {
         if (HasWrite || W == AccessInfo::No)
           return;
-        auto *instEM = AT.findUnknown(&I);
-        if (!STR.isEqual(instEM, EMNode) && !STR.isUnreachable(instEM, EMNode))
+        auto *InstEM = AT.findUnknown(&I);
+        if (!STR.isEqual(InstEM, EMNode) && !STR.isUnreachable(InstEM, EMNode))
           HasWrite = true;
       };
       for_each_memory(Inst, TLI, memLambda, unknownMemLambda);
@@ -398,7 +399,8 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
     if (!L->getLoopID() ||
         !L->getLoopPreheader() ||
         !LoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
-        LoopAttr.hasAttr(*L, Attribute::Returned))
+        !LoopAttr.hasAttr(*L, Attribute::ReturnsTwice) ||
+        LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn))
       return;
     auto &Pool = TraitPool[L->getLoopID()];
     if (!Pool)
@@ -463,17 +465,17 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       Ctx.DbgVar = DIM->Var;
       Ctx.DbgLoc = DIM->Loc;
       bool InsertedDI = false;
-      auto *derivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
-      if (derivedType && Val->getType()->isPointerTy())
-        InsertedDI = createDbgInfo(Ctx, derivedType->getBaseType(), AT, MDsToAttach);
+      auto *DerivedType = dyn_cast<DIDerivedType>(Ctx.DbgVar->getType());
+      if (DerivedType && Val->getType()->isPointerTy())
+        InsertedDI = createDbgInfo(Ctx, DerivedType->getBaseType(), AT, MDsToAttach);
       else
         InsertedDI = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       if (!InsertedDI)
         continue;
       insertLoadInstructions(Ctx);
-      insertPhiNodes(Ctx, L->getLoopPredecessor(), true);
+      insertPhiNodes(Ctx, L->getLoopPreheader(), true);
       DenseSet<BasicBlock *> Processed;
-      handleLoads(Ctx, L->getLoopPredecessor(), Processed, true);
+      handleLoads(Ctx, L->getLoopPreheader(), Processed, true);
       fillPhiNodes(Ctx);
       deleteRedundantPhiNodes(Ctx);
       insertStoreInstructions(Ctx);
