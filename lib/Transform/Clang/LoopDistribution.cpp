@@ -183,6 +183,7 @@ public:
     );
     processSplits(Splits);
 
+    // TODO: Use this information.
     const auto PrevIsInsideLoop = mIsInsideLoop;
     mIsInsideLoop = true;
     const auto Result = RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
@@ -377,6 +378,46 @@ private:
   std::function<Instruction * (Instruction *)> mGetInstructionFunction;
   bool mIsInsideLoop = false;
 };
+
+class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
+ public:
+  CodeRewriter(FunctionPass &Pass, Function &Function,
+      ClangTransformationContext &TransformationContext) {
+    mRewriter = &TransformationContext.getRewriter();
+  }
+
+  [[maybe_unused]]
+  bool TraverseStmt(Stmt *Statement) {
+    if (!Statement) {
+      return RecursiveASTVisitor::TraverseStmt(Statement);
+    }
+
+    auto *ForStatement = dyn_cast<ForStmt>(Statement);
+    if (ForStatement) {
+      return TraverseForStmt(ForStatement);
+    }
+
+    return RecursiveASTVisitor::TraverseStmt(Statement);
+  }
+
+  [[maybe_unused]]
+  bool TraverseForStmt(ForStmt *ForStatement) {
+    dbgs() << "First time?";
+    ForStatement->dump();
+
+    // TODO: Use this information.
+    const auto PrevIsInsideLoop = mIsInsideLoop;
+    mIsInsideLoop = true;
+    const auto Result =
+        RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
+    mIsInsideLoop = PrevIsInsideLoop;
+    return Result;
+  }
+
+private:
+  Rewriter *mRewriter;
+  bool mIsInsideLoop = false;
+};
 }
 
 bool LoopDistributionPass::runOnFunction(Function& Function) {
@@ -395,8 +436,10 @@ bool LoopDistributionPass::runOnFunction(Function& Function) {
   if (!FunctionDecl) {
     return false;
   }
-  ASTVisitor LoopVisitor(*this, Function, *TransformationContext);
-  LoopVisitor.TraverseDecl(FunctionDecl);
+  //ASTVisitor LoopVisitor(*this, Function, *TransformationContext);
+  //LoopVisitor.TraverseDecl(FunctionDecl);
+  CodeRewriter Rewriter(*this, Function, *TransformationContext);
+  Rewriter.TraverseDecl(FunctionDecl);
   return false;
 }
 
