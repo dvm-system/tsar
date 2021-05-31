@@ -402,8 +402,10 @@ class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
 
   [[maybe_unused]]
   bool TraverseForStmt(ForStmt *ForStatement) {
-    dbgs() << "First time?";
-    ForStatement->dump();
+    dbgs() << "First time?\n";
+    //ForStatement->dump();
+
+    getLoopHeader(ForStatement);
 
     // TODO: Use this information.
     const auto PrevIsInsideLoop = mIsInsideLoop;
@@ -411,7 +413,28 @@ class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
     const auto Result =
         RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
     mIsInsideLoop = PrevIsInsideLoop;
-    return Result;
+    //return Result;
+    return true;
+  }
+
+  [[maybe_unused]]
+  bool VisitStmt(Stmt *Statement) {
+    if (!mIsInsideLoop) {
+      return true;
+    }
+
+    /*const char *InsertedText = "for (;;){}";
+    mRewriter->InsertText(Statement->getEndLoc(), InsertedText, true, true);*/
+    return false;
+  }
+
+private:
+  // TODO:
+  void getLoopHeader(ForStmt *ForStatement) const {
+    auto HeaderRange = SourceRange(ForStatement->getBeginLoc(),
+        ForStatement->getBody()->getBeginLoc());
+    HeaderRange.dump(mRewriter->getSourceMgr());
+    CharSourceRange::getCharRange(HeaderRange);
   }
 
 private:
