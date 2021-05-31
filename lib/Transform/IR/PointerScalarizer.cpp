@@ -92,8 +92,8 @@ struct PhiNodeLink {
 };
 
 struct ScalarizerContext {
-  explicit ScalarizerContext(Value *V, Function &F, Loop *L, DIBuilder *DIB, bool Changed)
-      : V(V), DbgVar(), DbgLoc(), F(F), L(L), ValueChanged(Changed), DIB(DIB), PhiLinks{} {
+  explicit ScalarizerContext(Value *V, Function &F, Loop *L, DIBuilder *DIB)
+      : V(V), DbgVar(), DbgLoc(), F(F), L(L), DIB(DIB), PhiLinks{} {
     for (auto *BB : L->getBlocks())
       PhiLinks.insert({BB, PhiNodeLink()});
   }
@@ -103,11 +103,10 @@ struct ScalarizerContext {
   DILocation *DbgLoc;
   Function &F;
   Loop *L;
-  SmallVector<LoadInst *, 2> InsertedLoads;
+  LoadInst *InsertedLoad;
   DenseMap<BasicBlock *, PhiNodeLink> PhiLinks;
   DenseSet<PHINode *> UniqueNodes;
   DenseMap<BasicBlock *, Value *> LastValues;
-  bool ValueChanged;
   DIBuilder *DIB;
 };
 }
@@ -141,17 +140,6 @@ static inline bool hasVolatileInstInLoop(ScalarizerContext &Ctx) {
   return false;
 }
 
-static inline bool validateValue(const ScalarizerContext &Ctx) {
-  if (!Ctx.ValueChanged)
-    return true;
-  for (auto *User : Ctx.V->users()) {
-    auto *Store = dyn_cast<StoreInst>(User);
-    if (Store && Ctx.L->contains(Store) && Store->getPointerOperand() == Ctx.V)
-      return false;
-  }
-  return true;
-}
-
 static inline void insertDbgValueCall(ScalarizerContext &Ctx,
     Instruction *I, Instruction *InsertBefore, bool Add) {
   if (Add)
@@ -168,25 +156,16 @@ static void insertLoadInstructions(ScalarizerContext &Ctx) {
     Ctx.V->getType()->getPointerElementType(),
     Ctx.V, "load." + Ctx.V->getName(),
     &Ctx.L->getLoopPreheader()->back());
-  Ctx.InsertedLoads.push_back(BeforeInstr);
-
+  Ctx.InsertedLoad = BeforeInstr;
   auto *insertBefore = &Ctx.L->getLoopPreheader()->back();
   insertDbgValueCall(Ctx, BeforeInstr, insertBefore, true);
-  if (Ctx.ValueChanged) {
-    auto BeforeInstr2 = new LoadInst(
-      BeforeInstr->getType()->getPointerElementType(),
-      BeforeInstr, "load.ptr." + Ctx.V->getName(),
-      &Ctx.L->getLoopPreheader()->back());
-    Ctx.InsertedLoads.push_back(BeforeInstr2);
-  }
 }
 
 static inline void insertStoreInstructions(ScalarizerContext &Ctx) {
   SmallVector<BasicBlock *, 8> ExitBlocks;
   Ctx.L->getExitBlocks(ExitBlocks);
   for (auto *BB : ExitBlocks) {
-    auto StoreVal = Ctx.ValueChanged ? Ctx.InsertedLoads.front() : Ctx.V;
-    new StoreInst(Ctx.LastValues[BB], StoreVal, BB->getFirstNonPHI());
+    new StoreInst(Ctx.LastValues[BB], Ctx.V, BB->getFirstNonPHI());
   }
 }
 
@@ -204,16 +183,7 @@ static void handleMemoryAccess(BasicBlock *BB, ScalarizerContext &Ctx) {
       LastValuesChanged = true;
     } else if (LI && LI->getPointerOperand() == Ctx.V && !LI->user_empty()) {
       Value *Last = Ctx.LastValues[BB];
-      if (!Ctx.ValueChanged) {
-        LI->replaceAllUsesWith(Last);
-      } else {
-        for (auto *user : LI->users())
-          if (auto *LoadChild = dyn_cast<LoadInst>(user)) {
-            LoadChild->replaceAllUsesWith(Last);
-            ToDelete.push_back(LoadChild);
-          }
-        LI->replaceAllUsesWith(Ctx.InsertedLoads.front());
-      }
+      LI->replaceAllUsesWith(Last);
       ToDelete.push_back(LI);
     }
   }
@@ -255,7 +225,7 @@ static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = f
     NeedsCreate = true;
   }
   if (NeedsCreate) {
-    auto *Phi = PHINode::Create(Ctx.InsertedLoads.back()->getType(), 0,
+    auto *Phi = PHINode::Create(Ctx.InsertedLoad->getType(), 0,
         "Phi." + BB->getName(), &BB->front());
     insertDbgValueCall(Ctx, Phi, BB->getFirstNonPHI(), true);
     Ctx.PhiLinks[BB] = PhiNodeLink(Phi);
@@ -266,7 +236,7 @@ static void insertPhiNodes(ScalarizerContext &Ctx, BasicBlock *BB, bool Init = f
       insertPhiNodes(Ctx, Succ);
   // all nodes and links are created at this point and BB = loop predecessor
   if (Init) {
-    Ctx.LastValues[BB] = Ctx.InsertedLoads.back();
+    Ctx.LastValues[BB] = Ctx.InsertedLoad;
     for (auto &P : Ctx.PhiLinks)
       Ctx.LastValues[P.getFirst()] = P.getSecond().getPhi();
   }
@@ -399,7 +369,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
     if (!L->getLoopID() ||
         !L->getLoopPreheader() ||
         !LoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
-        !LoopAttr.hasAttr(*L, Attribute::ReturnsTwice) ||
+        LoopAttr.hasAttr(*L, Attribute::ReturnsTwice) ||
         LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn))
       return;
     auto &Pool = TraitPool[L->getLoopID()];
@@ -430,16 +400,9 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       }
     }
     for (auto *Val : Values) {
-      bool MultipleLoad = false;
-      for (auto *User1 : Val->users())
-        if (isa<LoadInst>(User1))
-          for (auto *User2 : User1->users())
-            if (isa<LoadInst>(User2))
-              MultipleLoad = true;
       auto DIB = new DIBuilder(*F.getParent());
-      auto Ctx = ScalarizerContext(Val, F, L, DIB, MultipleLoad);
-      if (!validateValue(Ctx) ||
-          hasVolatileInstInLoop(Ctx) ||
+      auto Ctx = ScalarizerContext(Val, F, L, DIB);
+      if (hasVolatileInstInLoop(Ctx) ||
           !analyzeAliasTree(Val, AT, L, TLI)) {
         ValueTraitMapping.erase(Val);
         continue;
