@@ -326,7 +326,7 @@ static bool analyzeAliasTree(Value *V, AliasTree &AT, Loop *L, TargetLibraryInfo
 static bool createDbgInfo(ScalarizerContext &Ctx,
     DIType *DIT, AliasTree &AT,
     SmallVectorImpl<Metadata *> &MDs) {
-  if (!Ctx.DbgVar || !Ctx.DbgLoc)
+  if (!Ctx.DbgVar)
     return false;
   auto &DL = Ctx.F.getParent()->getDataLayout();
   auto TypeSize = DL.getTypeStoreSize(Ctx.V->getType()->getPointerElementType());
@@ -342,7 +342,7 @@ static bool createDbgInfo(ScalarizerContext &Ctx,
   auto *Scope = dyn_cast<DIScope>(Ctx.L->getStartLoc()->getScope());
   auto *NewVar = Ctx.DIB->createAutoVariable(
       Scope, "deref." + Ctx.DbgVar->getName().str(),
-          Ctx.DbgLoc->getFile(), Ctx.DbgVar->getLine(),
+          Ctx.DbgVar->getFile(), Ctx.DbgVar->getLine(),
       DIT, false,
       DINode::FlagZero);
   auto *Node = DINode::get(Ctx.F.getContext(), {RawDIMem, NewVar});
@@ -409,9 +409,9 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
       }
       SmallVector<DIMemoryLocation, 4> DILocs;
       Optional<DIMemoryLocation> DIM;
-      if (isa<AllocaInst>(Ctx.V)) {
+      if (isa<AllocaInst>(Ctx.V) || isa<GlobalVariable>(Ctx.V)) {
         DIM = findMetadata(Ctx.V, DILocs);
-      }else {
+      } else {
         bool HasDbgInLoop = false;
         for (auto *BB : L->getBlocks())
           for (auto &I : BB->getInstList())
@@ -423,7 +423,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
         if (!HasDbgInLoop)
           DIM = findMetadata(Ctx.V, {&L->getHeader()->front()}, AT.getDomTree(), DILocs);
       }
-      if (!DIM.hasValue() || !DIM->Var || !DIM->Loc)
+      if (!DIM || !DIM->isValid())
         continue;
       Ctx.DbgVar = DIM->Var;
       Ctx.DbgLoc = DIM->Loc;
@@ -435,6 +435,12 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
         InsertedDI = createDbgInfo(Ctx, Ctx.DbgVar->getType(), AT, MDsToAttach);
       if (!InsertedDI)
         continue;
+      if (!Ctx.DbgLoc)
+        Ctx.DbgLoc = DILocation::get(
+          F.getContext(),
+          DIM->Var->getLine(),
+          0,
+          Ctx.DbgVar->getScope());
       insertLoadInstructions(Ctx);
       insertPhiNodes(Ctx, L->getLoopPreheader(), true);
       DenseSet<BasicBlock *> Processed;
