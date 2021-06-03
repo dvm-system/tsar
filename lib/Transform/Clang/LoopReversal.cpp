@@ -156,23 +156,36 @@ private:
   SmallVectorImpl<clang::IntegerLiteral *> &mILs;
 };
 
-class MiniVisitor : public clang::RecursiveASTVisitor<MiniVisitor> {
-public:
-  MiniVisitor() : mDRE(NULL) {}
-  bool VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
-    if (!DRE)
-      return RecursiveASTVisitor::VisitDeclRefExpr(DRE);
-    mDRE = DRE;
-    return true;
-  }
-  clang::DeclRefExpr *getDRE() { return mDRE; }
-
-private:
-  clang::DeclRefExpr *mDRE;
-};
-
 class ClangLoopReverseVisitor
     : public clang::RecursiveASTVisitor<ClangLoopReverseVisitor> {
+  struct ExpressionInfo {
+    StringRef NewOp;
+    clang::SourceRange OpRange;
+    clang::SourceRange ExprRange;
+
+    operator bool() {
+      return !NewOp.empty() && OpRange.isValid();
+    }
+  };
+
+  struct IncrementInfo : public ExpressionInfo {
+    enum : uint8_t {
+      Default = 0,
+      Sub = 1u << 0,
+      Unary = 1u << 1,
+      Assign = 1u << 2,
+      LLVM_MARK_AS_BITMASK_ENUM(Assign)
+    } Flags{Default};
+  };
+
+  struct ConditionInfo : public ExpressionInfo {
+    enum : uint8_t {
+      Default = 0,
+      Exclude = 1u << 0,
+      LLVM_MARK_AS_BITMASK_ENUM(Exclude)
+    } Flags{Default};
+  };
+
 public:
   ClangLoopReverseVisitor(ClangLoopReverse &P, Function &F,
                           TransformationContext *TfmCtx,
@@ -219,175 +232,10 @@ public:
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
     switch (mStatus) {
-    case Status::SEARCH_PRAGMA: {
-      Pragma P{*S};
-      llvm::SmallVector<clang::Stmt *, 2> Clauses;
-      if (!findClause(P, ClauseId::LoopReverse, Clauses))
-        return RecursiveASTVisitor::TraverseStmt(S);
-      LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "found '"
-                        << getName(ClauseId::LoopReverse) << "' clause\n");
-      ClauseVisitor CV{mStringLiterals, mIntegerLiterals};
-      for (auto *C : Clauses)
-        for (auto *S: Pragma::clause(&C))
-          CV.TraverseStmt(S);
-      mIsStrict = !findClause(P, ClauseId::NoStrict, Clauses);
-      LLVM_DEBUG(if (!mIsStrict) dbgs()
-                 << DEBUG_PREFIX << "found '" << getName(ClauseId::NoStrict)
-                 << "' clause\n");
-      llvm::SmallVector<clang::CharSourceRange, 2> ToRemove;
-      auto IsPossible{pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
-                                          mImportInfo, ToRemove)};
-      if (!IsPossible.first)
-        if (IsPossible.second & PragmaFlags::IsInMacro)
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-                 tsar::diag::warn_remove_directive_in_macro);
-        else if (IsPossible.second & PragmaFlags::IsInHeader)
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-                 tsar::diag::warn_remove_directive_in_include);
-        else
-          toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
-                 tsar::diag::warn_remove_directive);
-      clang::Rewriter::RewriteOptions RemoveEmptyLine;
-      /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty
-      /// is set to true then removing (in RewriterBuffer) works
-      /// incorrect.
-      RemoveEmptyLine.RemoveLineIfEmpty = false;
-      for (auto SR : ToRemove)
-        mRewriter.RemoveText(SR, RemoveEmptyLine);
-      mStatus = Status::TRAVERSE_STMT;
-      return true;
-    }
-    case Status::TRAVERSE_STMT: {
-      if (!isa<clang::ForStmt>(S)) {
-        toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-               tsar::diag::err_reverse_not_forstmt);
-        resetVisitor();
-        return RecursiveASTVisitor::TraverseStmt(S);
-      }
-      bool HasMacro{false};
-      for_each_macro(S, mSrcMgr, mLangOpts, mRawInfo.Macros,
-                     [&HasMacro, this](clang::SourceLocation Loc) {
-                       if (!HasMacro) {
-                         toDiag(mSrcMgr.getDiagnostics(), Loc,
-                                tsar::diag::note_assert_no_macro);
-                         HasMacro = true;
-                       }
-                     });
-      if (HasMacro) {
-        resetVisitor();
-        return RecursiveASTVisitor::TraverseStmt(S);
-      }
-      mStatus = TRAVERSE_LOOPS;
-      if (!TraverseForStmt(cast<clang::ForStmt>(S)))
-        return false;
-      llvm::SmallBitVector ToTransform;
-      for (auto *Literal : mStringLiterals) {
-        auto LoopItr{find_if(mLoops, [Literal](auto &Info) {
-          return std::get<clang::VarDecl *>(Info)->getName() ==
-                 Literal->getString();
-        })};
-        if (LoopItr == mLoops.end()) {
-          toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
-                 tsar::diag::warn_reverse_cant_match);
-        } else {
-          ToTransform.resize(std::distance(mLoops.begin(), LoopItr), false);
-          ToTransform.push_back(true);
-        }
-      }
-      for (auto *Literal : mIntegerLiterals) {
-        auto LoopIdx{Literal->getValue().getZExtValue() - 1};
-        if (LoopIdx < mLoops.size()) {
-          ToTransform.resize(LoopIdx);
-          ToTransform.push_back(true);
-          LLVM_DEBUG(dbgs()
-                     << DEBUG_PREFIX << "match " << LoopIdx + 1 << " as "
-                     << std::get<clang::VarDecl *>(mLoops[LoopIdx])->getName()
-                     << "\n");
-        } else {
-          toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
-                 tsar::diag::warn_reverse_cant_match);
-        }
-      }
-      for (auto Num : ToTransform.set_bits()) {
-        auto *CanonicalInfo{std::get<const CanonicalLoopInfo *>(mLoops[Num])};
-        assert(CanonicalInfo && "CanonicalLoopInfo must not be null!");
-        if (!CanonicalInfo->isCanonical()) {
-          toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-                 tsar::diag::err_reverse_not_canonical);
-          continue;
-        }
-        Optional<APSInt> Start, End, Step;
-        if (mIsStrict) {
-          auto *Loop{CanonicalInfo->getLoop()->getLoop()};
-          if (!mDIMInfo.isValid()) {
-            toDiag(mSrcMgr.getDiagnostics(),
-                   CanonicalInfo->getASTLoop()->getBeginLoc(),
-                   tsar::diag::err_reverse_no_analysis);
-            continue;
-          }
-          auto *DIDepSet{mDIMInfo.findFromClient(*Loop)};
-          if (!DIDepSet) {
-            toDiag(mSrcMgr.getDiagnostics(),
-                   CanonicalInfo->getASTLoop()->getBeginLoc(),
-                   tsar::diag::err_reverse_no_analysis);
-            continue;
-          }
-          DenseSet<const DIAliasNode *> Coverage;
-          accessCoverage<bcl::SimpleInserter>(
-              *DIDepSet, *mDIMInfo.DIAT, Coverage,
-              mGlobalOpts.IgnoreRedundantMemory);
-          if (!Coverage.empty()) {
-            bool HasDependency{false};
-            for (auto &T : *DIDepSet) {
-              if (!Coverage.count(T.getNode()) || hasNoDep(T) ||
-                  T.is_any<trait::Private, trait::Reduction>())
-                continue;
-              if (T.is<trait::Induction>() && T.size() == 1)
-                if (auto DIEM{dyn_cast<DIEstimateMemory>(
-                        (*T.begin())->getMemory())};
-                    DIEM && DIEM->getExpression()->getNumElements() == 0) {
-                  auto *ClientDIM{mDIMInfo.getClientMemory(
-                      const_cast<DIEstimateMemory *>(DIEM))};
-                  assert(ClientDIM && "Origin memory must exist!");
-                  auto VarToDI{mDIMemMatcher.find<MD>(
-                      cast<DIEstimateMemory>(ClientDIM)->getVariable())};
-                  if (VarToDI->template get<AST>() ==
-                      std::get<clang::VarDecl *>(mLoops[Num])) {
-                    if (auto *Info{(*T.begin())->get<trait::Induction>()}) {
-                      Start = Info->getStart();
-                      Step = Info->getStep();
-                      End = Info->getEnd();
-                    }
-                    continue;
-                  }
-                }
-              HasDependency = true;
-              break;
-            }
-            if (HasDependency) {
-              toDiag(mSrcMgr.getDiagnostics(),
-                     CanonicalInfo->getASTLoop()->getBeginLoc(),
-                     tsar::diag::err_reverse_dependency);
-              continue;
-            }
-          }
-        }
-        if (transformLoop(*CanonicalInfo,
-                          *std::get<clang::VarDecl *>(mLoops[Num]), Start, Step,
-                          End)) {
-          LLVM_DEBUG(dbgs()
-                     << DEBUG_PREFIX << " transformed "
-                     << std::get<clang::VarDecl *>(mLoops[Num])->getName()
-                     << "\n");
-        } else
-          LLVM_DEBUG(dbgs()
-                     << DEBUG_PREFIX << " not transformed "
-                     << std::get<clang::VarDecl *>(mLoops[Num])->getName()
-                     << "\n");
-      }
-      resetVisitor();
-      return true;
-    }
+    case Status::SEARCH_PRAGMA:
+      return searchPragma(S);
+    case Status::TRAVERSE_STMT:
+      return traverseStmt(S);
     }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
@@ -401,99 +249,237 @@ public:
   }
 
 private:
-  struct IncrementInfo {
-    enum : uint8_t {
-      Default = 0,
-      Negative = 1u << 0,
-      Unary = 1u << 1,
-      Swap = 1u << 2,
-      LLVM_MARK_AS_BITMASK_ENUM(Swap)
-    } Flags{Default};
-    StringRef NewOp;
-    clang::SourceRange OpRange;
-    clang::SourceRange IncrRange;
-    clang::SourceRange VarRange;
-  };
+  bool searchPragma(clang::Stmt *S) {
+    assert(S && "Statement must not be null!");
+    assert(mStatus == SEARCH_PRAGMA && "Invalid visitor status!");
+    Pragma P{*S};
+    llvm::SmallVector<clang::Stmt *, 2> Clauses;
+    if (!findClause(P, ClauseId::LoopReverse, Clauses))
+      return RecursiveASTVisitor::TraverseStmt(S);
+    LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "found '"
+                      << getName(ClauseId::LoopReverse) << "' clause\n");
+    ClauseVisitor CV{mStringLiterals, mIntegerLiterals};
+    for (auto *C : Clauses)
+      for (auto *S : Pragma::clause(&C))
+        CV.TraverseStmt(S);
+    mIsStrict = !findClause(P, ClauseId::NoStrict, Clauses);
+    LLVM_DEBUG(if (!mIsStrict) dbgs()
+               << DEBUG_PREFIX << "found '" << getName(ClauseId::NoStrict)
+               << "' clause\n");
+    llvm::SmallVector<clang::CharSourceRange, 2> ToRemove;
+    auto IsPossible{pragmaRangeToRemove(P, Clauses, mSrcMgr, mLangOpts,
+                                        mImportInfo, ToRemove)};
+    if (!IsPossible.first)
+      if (IsPossible.second & PragmaFlags::IsInMacro)
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
+               tsar::diag::warn_remove_directive_in_macro);
+      else if (IsPossible.second & PragmaFlags::IsInHeader)
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
+               tsar::diag::warn_remove_directive_in_include);
+      else
+        toDiag(mSrcMgr.getDiagnostics(), Clauses.front()->getBeginLoc(),
+               tsar::diag::warn_remove_directive);
+    clang::Rewriter::RewriteOptions RemoveEmptyLine;
+    /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty
+    /// is set to true then removing (in RewriterBuffer) works
+    /// incorrect.
+    RemoveEmptyLine.RemoveLineIfEmpty = false;
+    for (auto SR : ToRemove)
+      mRewriter.RemoveText(SR, RemoveEmptyLine);
+    mStatus = Status::TRAVERSE_STMT;
+    return true;
+  }
 
-  struct ConditionInfo {
-    enum : uint8_t {
-      Default = 0,
-      Exclude = 1u << 0,
-      LLVM_MARK_AS_BITMASK_ENUM(Exclude)
-    } Flags{Default};
-    StringRef NewOp;
-    clang::SourceRange OpRange;
-    clang::SourceRange BoundRange;
-    clang::SourceRange VarRange;
-  };
+  bool traverseStmt(clang::Stmt *S) {
+    assert(S && "Statement must not be null!");
+    assert(mStatus == TRAVERSE_STMT && "Invalid visitor status!");
+    if (!isa<clang::ForStmt>(S)) {
+      toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+             tsar::diag::err_reverse_not_forstmt);
+      resetVisitor();
+      return RecursiveASTVisitor::TraverseStmt(S);
+    }
+    bool HasMacro{false};
+    for_each_macro(S, mSrcMgr, mLangOpts, mRawInfo.Macros,
+                   [&HasMacro, this](clang::SourceLocation Loc) {
+                     if (!HasMacro) {
+                       toDiag(mSrcMgr.getDiagnostics(), Loc,
+                              tsar::diag::note_assert_no_macro);
+                       HasMacro = true;
+                     }
+                   });
+    if (HasMacro) {
+      resetVisitor();
+      return RecursiveASTVisitor::TraverseStmt(S);
+    }
+    mStatus = TRAVERSE_LOOPS;
+    if (!TraverseForStmt(cast<clang::ForStmt>(S)))
+      return false;
+    llvm::SmallBitVector ToTransform;
+    for (auto *Literal : mStringLiterals) {
+      auto LoopItr{find_if(mLoops, [Literal](auto &Info) {
+        return std::get<clang::VarDecl *>(Info)->getName() ==
+               Literal->getString();
+      })};
+      if (LoopItr == mLoops.end()) {
+        toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
+               tsar::diag::warn_reverse_cant_match);
+      } else {
+        ToTransform.resize(std::distance(mLoops.begin(), LoopItr), false);
+        ToTransform.push_back(true);
+      }
+    }
+    for (auto *Literal : mIntegerLiterals) {
+      auto LoopIdx{Literal->getValue().getZExtValue() - 1};
+      if (LoopIdx < mLoops.size()) {
+        ToTransform.resize(LoopIdx);
+        ToTransform.push_back(true);
+        LLVM_DEBUG(
+            dbgs() << DEBUG_PREFIX << "match " << LoopIdx + 1 << " as "
+                   << std::get<clang::VarDecl *>(mLoops[LoopIdx])->getName()
+                   << "\n");
+      } else {
+        toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
+               tsar::diag::warn_reverse_cant_match);
+      }
+    }
+    for (auto Num : ToTransform.set_bits()) {
+      auto *CanonicalInfo{std::get<const CanonicalLoopInfo *>(mLoops[Num])};
+      assert(CanonicalInfo && "CanonicalLoopInfo must not be null!");
+      if (!CanonicalInfo->isCanonical()) {
+        toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+               tsar::diag::err_reverse_not_canonical);
+        continue;
+      }
+      Optional<APSInt> Start, Step, End;
+      if (mIsStrict &&
+          !checkDependencies(Num, *CanonicalInfo, Start, Step, End))
+        continue;
+      transformLoop(*CanonicalInfo, *std::get<clang::VarDecl *>(mLoops[Num]),
+                    Start, Step, End);
+    }
+    resetVisitor();
+    return true;
+  }
 
-  bool transformLoop(const CanonicalLoopInfo &CanonicalInfo,
-                     const clang::VarDecl &Induction, Optional<APSInt> &Start,
-                     Optional<APSInt> &Step, Optional<APSInt> &End) {
-    IncrementInfo IE;
-    if (auto *BO{dyn_cast<clang::BinaryOperator>(
-            CanonicalInfo.getASTLoop()->getInc())}) {
-      switch (BO->getOpcode()) {
-      default:
+  bool checkDependencies(unsigned LoopIdx,
+      const CanonicalLoopInfo &CanonicalInfo, Optional<APSInt> &Start,
+      Optional<APSInt> &Step, Optional<APSInt> &End) {
+    auto *Loop{CanonicalInfo.getLoop()->getLoop()};
+    if (!mDIMInfo.isValid()) {
+      toDiag(mSrcMgr.getDiagnostics(),
+             CanonicalInfo.getASTLoop()->getBeginLoc(),
+             tsar::diag::err_reverse_no_analysis);
+      return false;
+    }
+    auto *DIDepSet{mDIMInfo.findFromClient(*Loop)};
+    if (!DIDepSet) {
+      toDiag(mSrcMgr.getDiagnostics(),
+             CanonicalInfo.getASTLoop()->getBeginLoc(),
+             tsar::diag::err_reverse_no_analysis);
+      return false;
+    }
+    DenseSet<const DIAliasNode *> Coverage;
+    accessCoverage<bcl::SimpleInserter>(*DIDepSet, *mDIMInfo.DIAT, Coverage,
+                                        mGlobalOpts.IgnoreRedundantMemory);
+    if (!Coverage.empty()) {
+      bool HasDependency{false};
+      for (auto &T : *DIDepSet) {
+        if (!Coverage.count(T.getNode()) || hasNoDep(T) ||
+            T.is_any<trait::Private, trait::Reduction>())
+          continue;
+        if (T.is<trait::Induction>() && T.size() == 1)
+          if (auto DIEM{dyn_cast<DIEstimateMemory>((*T.begin())->getMemory())};
+              DIEM && DIEM->getExpression()->getNumElements() == 0) {
+            auto *ClientDIM{
+                mDIMInfo.getClientMemory(const_cast<DIEstimateMemory *>(DIEM))};
+            assert(ClientDIM && "Origin memory must exist!");
+            auto VarToDI{mDIMemMatcher.find<MD>(
+                cast<DIEstimateMemory>(ClientDIM)->getVariable())};
+            if (VarToDI->template get<AST>() ==
+                std::get<clang::VarDecl *>(mLoops[LoopIdx])) {
+              if (auto *Info{(*T.begin())->get<trait::Induction>()}) {
+                Start = Info->getStart();
+                Step = Info->getStep();
+                End = Info->getEnd();
+              }
+              continue;
+            }
+          }
+        toDiag(mSrcMgr.getDiagnostics(),
+               CanonicalInfo.getASTLoop()->getBeginLoc(),
+               tsar::diag::err_reverse_dependency);
         return false;
+      }
+    }
+    return true;
+  }
+
+
+  bool isInductionRef(clang::Stmt *S, const clang::VarDecl *Induction) {
+    do {
+      auto I(S->child_begin());
+      if (++I != S->child_end())
+        return false;
+      S = *S->child_begin();
+      if (auto *DRE{dyn_cast<clang::DeclRefExpr>(S)};
+          DRE && DRE->getDecl() == Induction)
+        return true;
+    } while (!S->children().empty());
+    return false;
+  };
+
+  IncrementInfo parseIncrement(const clang::Expr &Inc,
+                               const clang::VarDecl &Induction) {
+    IncrementInfo IE;
+    if (auto *BO{dyn_cast<clang::BinaryOperator>(&Inc)}) {
+      switch (BO->getOpcode()) {
       case clang::BinaryOperator::Opcode::BO_AddAssign:
-        IE.IncrRange = BO->getRHS()->getSourceRange();
+        IE.ExprRange = BO->getRHS()->getSourceRange();
         IE.NewOp = "-=";
-        IE.Flags |= IncrementInfo::Negative;
+        IE.Flags |= IncrementInfo::Sub;
         IE.OpRange = clang::SourceRange{
             BO->getOperatorLoc(), BO->getOperatorLoc().getLocWithOffset(1)};
         break;
       case clang::BinaryOperator::Opcode::BO_SubAssign:
-        IE.IncrRange = BO->getRHS()->getSourceRange();
+        IE.ExprRange = BO->getRHS()->getSourceRange();
         IE.NewOp = "+=";
         IE.OpRange = clang::SourceRange{
             BO->getOperatorLoc(), BO->getOperatorLoc().getLocWithOffset(1)};
         break;
       case clang::BinaryOperator::Opcode::BO_Assign:
+        IE.Flags |= IncrementInfo::Assign;
         if (auto *Op{dyn_cast<clang::BinaryOperator>(BO->getRHS())})
           switch (Op->getOpcode()) {
-          default:
-            return false;
           case clang::BinaryOperator::Opcode::BO_Add: {
-            auto *LHS{Op->getLHS()}, *RHS{Op->getRHS()};
-            IE.VarRange = LHS->getSourceRange();
-            IE.IncrRange = RHS->getSourceRange();
-            MiniVisitor MV;
-            MV.TraverseStmt(RHS);
-            if (auto *DRE{MV.getDRE()}) {
-              if (DRE->getDecl() == &Induction) {
-                IE.Flags |= IncrementInfo::Swap;
-                IE.VarRange = RHS->getSourceRange();
-                IE.IncrRange = LHS->getSourceRange();
-              }
-            }
-            IE.Flags |= IncrementInfo::Negative;
+            if (isInductionRef(Op->getRHS(), &Induction))
+              IE.ExprRange = Op->getLHS()->getSourceRange();
+            else if (isInductionRef(Op->getLHS(), &Induction))
+              IE.ExprRange = Op->getRHS()->getSourceRange();
+            else
+              return IncrementInfo{};
+            IE.Flags |= IncrementInfo::Sub;
             IE.NewOp = "-";
             IE.OpRange = clang::SourceRange{Op->getOperatorLoc()};
             break;
           }
           case clang::BinaryOperator::Opcode::BO_Sub:
-            IE.IncrRange = Op->getRHS()->getSourceRange();
+            IE.ExprRange = Op->getRHS()->getSourceRange();
             IE.OpRange = clang::SourceRange{Op->getOperatorLoc()};
             IE.NewOp = "+";
             break;
           }
-        else
-          return false;
         break;
       }
-    } else if (auto *UO{dyn_cast<clang::UnaryOperator>(
-                   CanonicalInfo.getASTLoop()->getInc())}) {
+    } else if (auto *UO{dyn_cast<clang::UnaryOperator>(&Inc)}) {
       IE.Flags |= IncrementInfo::Unary;
       switch (UO->getOpcode()) {
-      default:
-        return false;
       case clang::UnaryOperator::Opcode::UO_PostInc:
       case clang::UnaryOperator::Opcode::UO_PreInc:
         IE.NewOp = "--";
         IE.OpRange = clang::SourceRange(
             UO->getOperatorLoc(), UO->getOperatorLoc().getLocWithOffset(1));
-        IE.Flags |= IncrementInfo::Negative;
+        IE.Flags |= IncrementInfo::Sub;
         break;
       case clang::UnaryOperator::Opcode::UO_PostDec:
       case clang::UnaryOperator::Opcode::UO_PreDec:
@@ -502,23 +488,21 @@ private:
             UO->getOperatorLoc(), UO->getOperatorLoc().getLocWithOffset(1));
         break;
       }
-    } else {
-      return false;
     }
+    return IE;
+  }
+
+  ConditionInfo parseCondition(const clang::Expr &Cond,
+                               const clang::VarDecl &Induction) {
     ConditionInfo CE;
-    if (auto *BO{dyn_cast<clang::BinaryOperator>(
-            CanonicalInfo.getASTLoop()->getCond())}) {
-      auto *LHS{ BO->getLHS() }, *RHS{ BO->getRHS() };
-      CE.BoundRange = RHS->getSourceRange();
-      CE.VarRange = LHS->getSourceRange();
-      MiniVisitor MV;
-      MV.TraverseStmt(RHS);
-      bool Flag = false;
-      if (auto *DRE{MV.getDRE()}; DRE && DRE->getDecl() == &Induction)
-        std::swap(CE.BoundRange, CE.VarRange);
+    if (auto *BO{dyn_cast<clang::BinaryOperator>(&Cond)}) {
+      if (isInductionRef(BO->getRHS(), &Induction))
+        CE.ExprRange = BO->getLHS()->getSourceRange();
+      else if (isInductionRef(BO->getLHS(), &Induction))
+        CE.ExprRange = BO->getRHS()->getSourceRange();
+      else
+        return ConditionInfo{};
       switch (BO->getOpcode()) {
-      default:
-        return false;
       case clang::BinaryOperator::Opcode::BO_LE:
         CE.NewOp = ">=";
         CE.OpRange = clang::SourceRange{
@@ -540,9 +524,21 @@ private:
         CE.Flags |= ConditionInfo::Exclude;
         break;
       }
-    } else {
-      return false;
     }
+    return CE;
+  }
+
+  bool transformLoop(const CanonicalLoopInfo &CanonicalInfo,
+      const clang::VarDecl &Induction, const Optional<APSInt> &Start,
+      const Optional<APSInt> &Step, const Optional<APSInt> &End) {
+    IncrementInfo IE{
+        parseIncrement(*CanonicalInfo.getASTLoop()->getInc(), Induction)};
+    if (!IE)
+      return false;
+    ConditionInfo CE{
+        parseCondition(*CanonicalInfo.getASTLoop()->getCond(), Induction)};
+    if (!CE)
+      return false;
     clang::SourceRange InitRange;
     if (auto *BO{dyn_cast<clang::BinaryOperator>(
             CanonicalInfo.getASTLoop()->getInit())})
@@ -554,48 +550,47 @@ private:
       return false;
     auto InitStr{mRewriter.getRewrittenText(InitRange)};
     if (Start)
-      InitStr = std::to_string(Start->getSExtValue()); // TODO check sign
-    auto CondStr{mRewriter.getRewrittenText(CE.BoundRange)};
-    std::string NewInitStr;
-    if (End && Step) { // TODO check sign
-      NewInitStr = std::to_string(End->getSExtValue() - Step->getSExtValue());
+      InitStr = Start->toString(10);
+    auto CondStr{mRewriter.getRewrittenText(CE.ExprRange)};
+    SmallString<128> NewInitStr;
+    if (End && Step) {
+      (*End - *Step).toString(NewInitStr);
     } else if (IE.Flags & IncrementInfo::Unary) {
       if (CE.Flags & ConditionInfo::Exclude)
-        if (IE.Flags & IncrementInfo::Negative)
-          NewInitStr = "((" + CondStr + ")-1)";
+        if (IE.Flags & IncrementInfo::Sub)
+          NewInitStr = CondStr + "-1";
         else
-          NewInitStr = "((" + CondStr + ")+1)";
+          NewInitStr = CondStr + "+1";
       else
-        NewInitStr = "(" + CondStr + ")";
+        NewInitStr = CondStr;
     } else {
-      auto IncrStr{mRewriter.getRewrittenText(IE.IncrRange)};
+      auto IncrStr{mRewriter.getRewrittenText(IE.ExprRange)};
       if (CE.Flags & ConditionInfo::Exclude) {
-        if (IE.Flags & IncrementInfo::Negative)
-          NewInitStr = "((" + InitStr + ")+(((" + CondStr + ")-1)-(" + InitStr +
-                       "))/(" + IncrStr + ")*(" + IncrStr + "))";
+        if (IE.Flags & IncrementInfo::Sub)
+          NewInitStr = InitStr + "+(" + CondStr + " - 1 - (" + InitStr +
+                       "))/(" + IncrStr + ")*(" + IncrStr + ")";
         else
-          NewInitStr = "((" + InitStr + ")-((" + InitStr + ")-((" + CondStr +
-                       ")+1))/(" + IncrStr + ")*(" + IncrStr + "))";
+          NewInitStr = InitStr + "-(" + InitStr + "-(" + CondStr + "+1))/(" +
+                       IncrStr + ")*(" + IncrStr + ")";
 
       } else {
-        if (IE.Flags & IncrementInfo::Negative)
-          NewInitStr = "((" + InitStr + ")+((" + CondStr + ")-(" + InitStr +
-                       "))/(" + IncrStr + ")*(" + IncrStr + "))";
+        if (IE.Flags & IncrementInfo::Sub)
+          NewInitStr = InitStr + "+(" + CondStr + "-(" + InitStr + "))/(" +
+                       IncrStr + ")*(" + IncrStr + ")";
         else
-          NewInitStr = "((" + InitStr + ")-((" + InitStr + ")-(" + CondStr +
-                       "))/(" + IncrStr + ")*(" + IncrStr + "))";
+          NewInitStr = InitStr + "-(" + InitStr + "-(" + CondStr + "))/(" +
+                       IncrStr + ")*(" + IncrStr + ")";
       }
     }
-    if (IE.Flags & IncrementInfo::Swap) {
-      auto VarStr{mRewriter.getRewrittenText(IE.VarRange)};
-      auto IncrStr{mRewriter.getRewrittenText(IE.IncrRange)};
-      mRewriter.ReplaceText(IE.VarRange, IncrStr);
-      mRewriter.ReplaceText(IE.IncrRange, VarStr);
+    if (IE.Flags & IncrementInfo::Assign) {
+      mRewriter.InsertTextAfter(IE.ExprRange.getBegin(), "-(");
+      mRewriter.InsertTextAfterToken(IE.ExprRange.getEnd(), ")");
+    } else {
+      mRewriter.ReplaceText(IE.OpRange, IE.NewOp);
     }
-    mRewriter.ReplaceText(IE.OpRange, IE.NewOp);
     mRewriter.ReplaceText(CE.OpRange, CE.NewOp);
     mRewriter.ReplaceText(InitRange, NewInitStr);
-    mRewriter.ReplaceText(CE.BoundRange, InitStr);
+    mRewriter.ReplaceText(CE.ExprRange, InitStr);
     return true;
   }
 
