@@ -41,6 +41,7 @@
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Transform/Clang/Passes.h"
+#include "tsar/Transform/IR/InterprocAttr.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -110,6 +111,7 @@ void ClangLoopReverse::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ClangPerfectLoopPass>();
   AU.addRequired<DIEstimateMemoryPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<LoopAttributesDeductionPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<TransformationEnginePass>();
   AU.setPreservesAll();
@@ -128,6 +130,7 @@ INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(LoopAttributesDeductionPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_IN_GROUP_END(ClangLoopReverse, "clang-loop-reverse",
@@ -201,7 +204,8 @@ public:
             P.getAnalysis<ClangPerfectLoopPass>().getPerfectLoopInfo()),
         mCanonicalLoopInfo(
             P.getAnalysis<CanonicalLoopPass>().getCanonicalLoopInfo()),
-        mDIMInfo(P.getAnalysis<DIEstimateMemoryPass>().getAliasTree(), P, F) {}
+        mDIMInfo(P.getAnalysis<DIEstimateMemoryPass>().getAliasTree(), P, F),
+        mLoopAttr(P.getAnalysis<LoopAttributesDeductionPass>()) {}
 
   bool TraverseForStmt(clang::ForStmt *FS) {
     if (mStatus != TRAVERSE_LOOPS)
@@ -222,7 +226,7 @@ public:
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
       toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-             tsar::diag::err_reverse_not_forstmt);
+             tsar::diag::warn_reverse_not_for_loop);
       resetVisitor();
     }
     return RecursiveASTVisitor::TraverseDecl(D);
@@ -295,7 +299,7 @@ private:
     assert(mStatus == TRAVERSE_STMT && "Invalid visitor status!");
     if (!isa<clang::ForStmt>(S)) {
       toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-             tsar::diag::err_reverse_not_forstmt);
+             tsar::diag::warn_reverse_not_for_loop);
       resetVisitor();
       return RecursiveASTVisitor::TraverseStmt(S);
     }
@@ -323,7 +327,8 @@ private:
       })};
       if (LoopItr == mLoops.end()) {
         toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
-               tsar::diag::warn_reverse_cant_match);
+               tsar::diag::warn_reverse_induction_mismatch)
+            << Literal->getString();
       } else {
         ToTransform.resize(std::distance(mLoops.begin(), LoopItr), false);
         ToTransform.push_back(true);
@@ -340,7 +345,8 @@ private:
                    << "\n");
       } else {
         toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
-               tsar::diag::warn_reverse_cant_match);
+               tsar::diag::warn_reverse_number_mismatch)
+            << static_cast<unsigned>(LoopIdx);
       }
     }
     for (auto Num : ToTransform.set_bits()) {
@@ -348,13 +354,28 @@ private:
       assert(CanonicalInfo && "CanonicalLoopInfo must not be null!");
       if (!CanonicalInfo->isCanonical()) {
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-               tsar::diag::err_reverse_not_canonical);
+               tsar::diag::warn_reverse_not_canonical);
         continue;
       }
+      auto *L{CanonicalInfo->getLoop()->getLoop()};
       Optional<APSInt> Start, Step, End;
-      if (mIsStrict &&
-          !checkDependencies(Num, *CanonicalInfo, Start, Step, End))
-        continue;
+      if (mIsStrict) {
+        if (!L->getExitingBlock()) {
+          toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+                 tsar::diag::warn_reverse_multiple_exits);
+          continue;
+        }
+        if (!mLoopAttr.hasAttr(*L, AttrKind::AlwaysReturn) ||
+            !mLoopAttr.hasAttr(*L, AttrKind::NoIO) ||
+            !mLoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
+            mLoopAttr.hasAttr(*L, Attribute::ReturnsTwice)) {
+          toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+                 tsar::diag::warn_reverse_unsafe_cfg);
+          continue;
+        }
+        if (!checkDependencies(Num, *CanonicalInfo, Start, Step, End))
+          continue;
+      }
       transformLoop(*CanonicalInfo, *std::get<clang::VarDecl *>(mLoops[Num]),
                     Start, Step, End);
     }
@@ -369,14 +390,14 @@ private:
     if (!mDIMInfo.isValid()) {
       toDiag(mSrcMgr.getDiagnostics(),
              CanonicalInfo.getASTLoop()->getBeginLoc(),
-             tsar::diag::err_reverse_no_analysis);
+             tsar::diag::warn_reverse_no_analysis);
       return false;
     }
     auto *DIDepSet{mDIMInfo.findFromClient(*Loop)};
     if (!DIDepSet) {
       toDiag(mSrcMgr.getDiagnostics(),
              CanonicalInfo.getASTLoop()->getBeginLoc(),
-             tsar::diag::err_reverse_no_analysis);
+             tsar::diag::warn_reverse_no_analysis);
       return false;
     }
     DenseSet<const DIAliasNode *> Coverage;
@@ -408,7 +429,7 @@ private:
           }
         toDiag(mSrcMgr.getDiagnostics(),
                CanonicalInfo.getASTLoop()->getBeginLoc(),
-               tsar::diag::err_reverse_dependency);
+               tsar::diag::warn_reverse_dependency);
         return false;
       }
     }
@@ -536,21 +557,35 @@ private:
       const Optional<APSInt> &Step, const Optional<APSInt> &End) {
     IncrementInfo IE{
         parseIncrement(*CanonicalInfo.getASTLoop()->getInc(), Induction)};
-    if (!IE)
+    if (!IE) {
+        toDiag(mSrcMgr.getDiagnostics(),
+               CanonicalInfo.getASTLoop()->getBeginLoc(),
+               tsar::diag::warn_reverse_increment_complex);
       return false;
+    }
     ConditionInfo CE{
         parseCondition(*CanonicalInfo.getASTLoop()->getCond(), Induction)};
-    if (!CE)
+    if (!CE) {
+      toDiag(mSrcMgr.getDiagnostics(),
+             CanonicalInfo.getASTLoop()->getBeginLoc(),
+             tsar::diag::warn_reverse_condition_complex);
       return false;
+    }
     clang::SourceRange InitRange;
     if (auto *BO{dyn_cast<clang::BinaryOperator>(
-            CanonicalInfo.getASTLoop()->getInit())})
+            CanonicalInfo.getASTLoop()->getInit())};
+        BO && BO->getOpcode() == clang::BinaryOperator::Opcode::BO_Assign &&
+        isInductionRef(BO->getLHS(), &Induction)) {
       InitRange = BO->getRHS()->getSourceRange();
-    else if (auto *DS{dyn_cast<clang::DeclStmt>(
-                 CanonicalInfo.getASTLoop()->getInit())})
+    } else if (auto *DS{dyn_cast<clang::DeclStmt>(
+                   CanonicalInfo.getASTLoop()->getInit())}) {
       InitRange = DS->child_begin()->getSourceRange();
-    else
+    } else {
+      toDiag(mSrcMgr.getDiagnostics(),
+        CanonicalInfo.getASTLoop()->getBeginLoc(),
+        tsar::diag::warn_reverse_initialization_complex);
       return false;
+    }
     auto InitStr{mRewriter.getRewrittenText(InitRange)};
     if (Start)
       InitStr = Start->toString(10);
@@ -608,6 +643,7 @@ private:
   PerfectLoopInfo &mPerfectLoopInfo;
   const CanonicalLoopSet &mCanonicalLoopInfo;
   DIMemoryClientServerInfo mDIMInfo;
+  LoopAttributesDeductionPass &mLoopAttr;
   bool mIsStrict{true};
   enum Status {
     SEARCH_PRAGMA,
