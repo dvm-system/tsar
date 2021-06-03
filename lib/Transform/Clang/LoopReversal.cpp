@@ -417,7 +417,10 @@ private:
 
 
   bool isInductionRef(clang::Stmt *S, const clang::VarDecl *Induction) {
-    do {
+    if (auto *DRE{dyn_cast<clang::DeclRefExpr>(S)};
+        DRE && DRE->getDecl() == Induction)
+      return true;
+    while (!S->children().empty()) {
       auto I(S->child_begin());
       if (++I != S->child_end())
         return false;
@@ -425,7 +428,7 @@ private:
       if (auto *DRE{dyn_cast<clang::DeclRefExpr>(S)};
           DRE && DRE->getDecl() == Induction)
         return true;
-    } while (!S->children().empty());
+    }
     return false;
   };
 
