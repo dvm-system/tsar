@@ -102,7 +102,8 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
   for_each_loop(LI, [this, &F, &GO, &LoopAttr, &getLoopID, &getValue, DIAT,
                      DIDepInfo](Loop *L) {
     auto SLoc = L->getStartLoc();
-    if (!LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn) ||
+    if (!L->getExitingBlock() ||
+        !LoopAttr.hasAttr(*L, AttrKind::AlwaysReturn) ||
         !LoopAttr.hasAttr(*L, AttrKind::NoIO) ||
         !LoopAttr.hasAttr(*L, Attribute::NoUnwind) ||
         LoopAttr.hasAttr(*L, Attribute::ReturnsTwice)) {
