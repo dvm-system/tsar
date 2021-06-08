@@ -600,9 +600,11 @@ bool handleLoopEmptyBindings(
   for (auto &Loc : *Mem) {
     if (!Loc.pointsToAliveValue())
       continue;
-    if (auto *I = dyn_cast<Instruction>(Loc))
-      if (L->contains(I))
-        return false;
+    for (auto *User : Loc->users())
+      if (auto *I = dyn_cast<Instruction>(User))
+        if (L->contains(I)) {
+          return false;
+        }
     if (auto *CE = dyn_cast<ConstantExpr>(Loc)) {
       SmallVector<ConstantExpr *, 4> WorkList{CE};
       do {
@@ -1506,8 +1508,9 @@ void DIDependencyAnalysisPass::analyzePrivatePromoted(Loop *L,
   for (auto &Candidate : Privates) {
     if (OutwardUses.count(Candidate))
       continue;
-    auto *MD =
-        getRawDIMemoryIfExists(L->getHeader()->getContext(), Candidate);
+    auto MD{mdNodeFromAliasTreeMapping(L->getHeader()->getParent(), Candidate)};
+    if (!MD)
+      MD = getRawDIMemoryIfExists(L->getHeader()->getContext(), Candidate);
     if (!MD)
       continue;
     auto DIMTraitItr = Pool.find_as(MD);
@@ -1806,7 +1809,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const DIMemory *> LockedTraits, const GlobalOptions &GlobalOpts,
     DependenceSet &DepSet, DIDependenceSet &DIDepSet,
-    DIMemoryTraitRegionPool &Pool) {
+    DIMemoryTraitRegionPool &Pool, Loop *L) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
   auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
   auto ATraitItr = AN ? DepSet.find_as(AN) : DepSet.end();
@@ -1819,6 +1822,29 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       dbgs() << "\n";
     });
     auto DIMTraitItr = Pool.find_as(&M);
+    bool IsAccessed{false};
+    auto *F{L->getHeader()->getParent()}; // L - придется добавить как параметр к `analyzeNode`
+    if (auto MD{F->getMetadata("alias.tree.mapping")}) {
+      for (auto &Op : MD->operands()) {
+        auto *OpMD{dyn_cast<MDNode>(Op)};
+        if (!OpMD)
+          continue;
+        assert(OpMD->getNumOperands() == 2 &&
+               "Alias tree mapping node must contain two elements");
+        auto MappingMD{dyn_cast<MDNode>(OpMD->getOperand(0))};
+        if (MappingMD == M.getAsMDNode()) {
+          IsAccessed = true;
+        }
+      }
+    }
+    bool UsedInLoop = false;
+    if (IsAccessed)
+      for (auto &Loc : M)
+        if (auto *I = dyn_cast<Instruction>(Loc))
+          if (L->contains(I)) {
+            UsedInLoop = true;
+            break;
+          }
     if (M.isOriginal() || M.emptyBinding() || ATraitItr == DepSet.end()) {
       if (DIMTraitItr == Pool.end())
         continue;
@@ -1836,13 +1862,13 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
               MustNoAccessValues.insert(Bind);
           if (IsChanged) {
             clarify(DIMTrait, *DIMTraitItr);
-          } else {
+          } else if (!UsedInLoop) {
             LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
             LLVM_DEBUG(dbgs() << "[DA DI]: mark as redundant\n");
             DIMTraitItr->set<trait::Redundant>();
             DIMTraitItr->unset<trait::NoRedundant>();
           }
-        } else {
+        } else if (!UsedInLoop) {
           LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
           if ((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
               (M.emptyBinding() && M.isOriginal())) {
@@ -1889,7 +1915,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
         } else {
           clarify(DIMTrait, *DIMTraitItr);
         }
-      } else {
+      } else if (!UsedInLoop) {
         if (DIMTraitItr == Pool.end())
           continue;
         LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
@@ -2089,7 +2115,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
       analyzeNode(cast<DIAliasMemoryNode>(*DIN), DWLang, AliasSTR, DIAliasSTR,
-        LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool);
+        LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool, L);
       for (auto &DIM : cast<DIAliasMemoryNode>(*DIN))
         if (auto *DIEM = dyn_cast<DIEstimateMemory>(&DIM))
           if (DIEM->getExpression()->getNumElements() == 0)

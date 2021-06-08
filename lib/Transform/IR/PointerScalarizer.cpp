@@ -188,6 +188,10 @@ static void handleMemoryAccess(BasicBlock *BB, ScalarizerContext &Ctx) {
     }
   }
   for (auto *I : ToDelete) {
+    if (auto *LI = dyn_cast<LoadInst>(I)) {
+      if (auto OpInst = dyn_cast<Instruction>(LI->getOperand(0)))
+      insertDbgValueCall(Ctx, OpInst, I, false);
+    }
     I->dropAllReferences();
     I->eraseFromParent();
   }

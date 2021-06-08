@@ -157,7 +157,7 @@ private:
     ArrayRef<const tsar::DIMemory *> LockedTraits,
     const tsar::GlobalOptions &GlobalOpts,
     tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
-    tsar::DIMemoryTraitRegionPool &Pool);
+    tsar::DIMemoryTraitRegionPool &Pool, Loop *L);
 
   tsar::DIDependencInfo mDeps;
   tsar::AliasTree *mAT;
