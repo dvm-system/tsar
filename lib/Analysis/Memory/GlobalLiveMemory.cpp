@@ -23,6 +23,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -191,6 +192,7 @@ INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DefinedMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PROVIDER_END(GlobalLiveMemoryProvider, "global-live-mem-provider",
                         "Global Live Memory Analysis (Provider)")
 
@@ -224,6 +226,7 @@ void GlobalLiveMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalLiveMemoryWrapper>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.setPreservesAll();
 }
 
@@ -275,6 +278,9 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     GlobalLiveMemoryProvider::initialize<GlobalDefinedMemoryWrapper>(
         [&GDM](GlobalDefinedMemoryWrapper &Wrapper) { Wrapper.set(*GDM); });
   }
+  if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+    GlobalLiveMemoryProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   auto &DL = M.getDataLayout();
   LiveMemoryForCalls LiveSetForCalls;
   for (auto *CGN : llvm::reverse(Worklist)) {

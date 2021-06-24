@@ -242,6 +242,7 @@ class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
   INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)                         \
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)                         \
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)                    \
+  INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)                             \
   INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)                       \
   INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)                          \
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)                    \

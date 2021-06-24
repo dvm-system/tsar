@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
@@ -113,6 +114,7 @@ INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
@@ -139,6 +141,7 @@ void DependenceInlinerAttributer::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DependenceInlinerProvider>();
   AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<DIMemoryTraitPoolWrapper>();
   AU.addRequired<GlobalDefinedMemoryWrapper>();
@@ -225,6 +228,9 @@ InlineCost DependenceInlinerPass::getInlineCost(CallBase &CB) {
       [&GlobalLiveMemory](GlobalLiveMemoryWrapper &Wrapper) {
         Wrapper.set(GlobalLiveMemory);
       });
+    if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+      DependenceInlinerProvider::initialize<GlobalsAccessWrapper>(
+          [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
     auto InlineMDKind =
         M.getContext().getMDKindID(getAsString(AttrKind::Inline));
     auto InlineMD = MDNode::get(M.getContext(), {});

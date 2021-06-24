@@ -114,6 +114,7 @@ void addInitialTransformations(legacy::PassManager &Passes) {
 }
 
 void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
@@ -150,6 +151,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createRPOFunctionAttrsAnalysis());
   Passes.add(createPOFunctionAttrsAnalysis());
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
@@ -181,6 +183,7 @@ void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
   Passes.add(createLoopSimplifyPass());
   Passes.add(createLCSSAPass());
   Passes.add(createMemoryMatcherPass());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createCallExtractorPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
@@ -273,7 +276,9 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
     }
     delete P;
   };
+  Passes.add(createGlobalsAccessStorage());
   if (mUseServer) {
+    Passes.add(createGlobalsAccessCollector());
     Passes.add(createAnalysisSocketImmutableStorage());
     Passes.add(createDIMemoryTraitPoolStorage());
     Passes.add(createDIMemoryEnvironmentStorage());

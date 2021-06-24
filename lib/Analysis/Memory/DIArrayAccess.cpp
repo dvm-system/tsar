@@ -27,6 +27,7 @@
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/Utils.h"
@@ -511,6 +512,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PROVIDER_END(DIArrayAccessCollectorProvider,
                         "di-array-access-provider",
                         "Array Accesses Collector (Metadata, Provider)")
@@ -538,6 +540,7 @@ void DIArrayAccessCollector::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<DIArrayAccessCollectorProvider>();
   AU.setPreservesAll();
 }
@@ -556,6 +559,9 @@ bool DIArrayAccessCollector::runOnModule(Module &M) {
       });
   DIArrayAccessCollectorProvider::initialize<DIMemoryEnvironmentWrapper>(
       [&DIMEnv](DIMemoryEnvironmentWrapper &Wrapper) { Wrapper.set(*DIMEnv); });
+  if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+    DIArrayAccessCollectorProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   for (auto &F : M) {
     if (F.empty())
       continue;

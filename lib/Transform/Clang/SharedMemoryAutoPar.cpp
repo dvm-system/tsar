@@ -39,6 +39,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
@@ -85,6 +86,8 @@ void ClangSMParallelizationInfo::addBeforePass(
   Passes.add(createAnalysisSocketImmutableStorage());
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createGlobalsAccessStorage());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createDIEstimateMemoryPass());
   Passes.add(createDIMemoryAnalysisServer());
   Passes.add(createAnalysisWaitServerPass());
@@ -228,6 +231,9 @@ void ClangSMParallelization::initializeProviderOnClient() {
       [this](DIMemoryEnvironmentWrapper &Wrapper) {
         Wrapper.set(*mDIMEnv);
       });
+  if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+    ClangSMParallelProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
 }
 
 std::size_t ClangSMParallelization::buildAdjacentList() {
@@ -471,6 +477,7 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<ClangRegionCollector>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<DIArrayAccessWrapper>();

@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/MemorySetInfo.h"
 #include "tsar/Unparse/Utils.h"
@@ -287,7 +288,7 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
           Dptr.set<trait::CoincideAlias>();
         else if (Cmp > 0)
           Dptr.set<trait::CoverAlias>();
-        else 
+        else
           Dptr.set<trait::ContainedAlias>();
       }
       break;
@@ -1022,6 +1023,7 @@ INITIALIZE_PASS_BEGIN(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", false, true)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(EstimateMemoryPass, "estimate-mem",
   "Memory Estimator", false, true)
@@ -1029,6 +1031,7 @@ INITIALIZE_PASS_END(EstimateMemoryPass, "estimate-mem",
 void EstimateMemoryPass::getAnalysisUsage(AnalysisUsage & AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequiredTransitive<AAResultsWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
@@ -1093,6 +1096,13 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   };
   for (auto &Arg : F.args())
     addPointeeIfNeed(&Arg);
+  auto &GAP{getAnalysis<GlobalsAccessWrapper>()};
+  if (GAP)
+    if (auto GA{GAP->find(&F)}; GA != GAP->end()) {
+      for (auto &GV : GA->second)
+        if (GV && !isa<UndefValue>(GV))
+          addPointeeIfNeed(GV);
+    }
   for (auto &I : make_range(inst_begin(F), inst_end(F))) {
     addPointeeIfNeed(&I);
     for (auto *Op : I.operand_values()) {

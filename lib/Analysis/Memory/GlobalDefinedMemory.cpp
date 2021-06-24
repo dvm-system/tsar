@@ -25,6 +25,7 @@
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/PassProvider.h"
@@ -105,6 +106,7 @@ INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PROVIDER_END(GlobalDefinedMemoryProvider, "global-def-mem-provider",
                         "Global Defined Memory Analysis (Provider)")
 
@@ -136,6 +138,7 @@ void GlobalDefinedMemory::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.setPreservesAll();
 }
 
@@ -157,6 +160,10 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
       [&GO](GlobalOptionsImmutableWrapper &Wrapper) {
         Wrapper.setOptions(&GO);
       });
+  auto &GAP{getAnalysis<GlobalsAccessWrapper>()};
+  if (GAP)
+    GlobalDefinedMemoryProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto &DL = SCC.getDataLayout();
   for (scc_iterator<CallGraph *> SCC = scc_begin(&CG); !SCC.isAtEnd(); ++SCC) {
