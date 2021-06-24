@@ -896,6 +896,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
     const DefUseSet &DefUse, TraitMap &ExplicitAccesses,
     UnknownMap &ExplicitUnknowns, AliasMap &NodeTraits) {
   assert(L && "Loop must not be null!");
+  Loop *Lp = L->getLoop();
   for (Value *Ptr : DefUse.getAddressAccesses()) {
     const EstimateMemory* Base = mAliasTree->find(MemoryLocation(Ptr, 0));
     assert(Base && "Estimate memory location must not be null!");
@@ -907,7 +908,6 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
     // for example, a result of a call can be a pointer.
     if (!isa<AllocaInst>(Root->front()) && !isa<GlobalValue>(Root->front()))
       continue;
-    Loop *Lp = L->getLoop();
     // If this is an address of a location declared in the loop do not
     // remember it.
     if (auto AI = dyn_cast<AllocaInst>(Root->front()))
@@ -981,6 +981,25 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
         Pair.first->get<BitMemoryTrait>() =
           &I->get<TraitList>().front().get<BitMemoryTrait>();
       }
+      break;
+    }
+  }
+  for (auto &[Ptr, Insts] : DefUse.getAddressTransitives()) {
+    // TODO (kaniandr@gmail.com): extend address access analysis and set
+    // 'nocapture'-like attribute for global variables.
+    const EstimateMemory *Base = mAliasTree->find(MemoryLocation(Ptr, 0));
+    assert(Base && "Estimate memory location must not be null!");
+    auto Pair = ExplicitAccesses.insert(std::make_pair(Base, nullptr));
+    if (!Pair.second) {
+      *Pair.first->get<BitMemoryTrait>() &= BitMemoryTrait::AddressAccess;
+    } else {
+      auto I = NodeTraits.find(Base->getAliasNode(*mAliasTree));
+      I->get<TraitList>().push_front(
+          std::make_pair(Base, BitMemoryTrait(BitMemoryTrait::NoRedundant &
+                                              BitMemoryTrait::NoAccess &
+                                              BitMemoryTrait::AddressAccess)));
+      Pair.first->get<BitMemoryTrait>() =
+          &I->get<TraitList>().front().get<BitMemoryTrait>();
     }
   }
   for (auto *Unknown : DefUse.getAddressUnknowns()) {

@@ -231,19 +231,19 @@ public:
   }
 };
 
-/// If memory location `Loc` is associated with an array, collect information 
-/// about array accesses, and create new memory location `ResLoc`. If 
-/// information was collected successfully and meets certain 
-/// conditions, `ResLoc.DimList` will be filled with information about the 
+/// If memory location `Loc` is associated with an array, collect information
+/// about array accesses, and create new memory location `ResLoc`. If
+/// information was collected successfully and meets certain
+/// conditions, `ResLoc.DimList` will be filled with information about the
 /// dimensions of the array, and the `ResLoc.Kind` will be set to `Collapsed`.
 /// Otherwise, the `ResLoc.Kind` will be set to `NonCollapsable`.
 ///
-/// If `R == nullptr`, this means that the collection of information is about a 
+/// If `R == nullptr`, this means that the collection of information is about a
 /// single array access within the basic block, this is used in
 /// `DataFlowTraits<ReachDFFwk*>::initialize()`.
 ///
 /// Return a pair consisting of an aggregated memory location and boolean value.
-/// If returned location is of kind `Collapsed` and does not belong to the 
+/// If returned location is of kind `Collapsed` and does not belong to the
 /// loop nest associated with region `R`, this value will be set to `false`,
 /// `true` otherwise.
 std::pair<MemoryLocationRange, bool> aggregate(
@@ -395,7 +395,7 @@ std::pair<MemoryLocationRange, bool> aggregate(
                LoopMatchCount + ConstMatchCount < ArrayPtr->getNumberOfDims()) {
       return std::make_pair(Loc, true);
     }
-  }  
+  }
   assert(ResLoc.Kind == LocKind::Collapsed &&
       "Array location must be of the `collapsed` kind!");
   LLVM_DEBUG(
@@ -632,9 +632,6 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     }
     auto &DL = I.getModule()->getDataLayout();
     // Any call may access some addresses even if it does not access memory.
-    // TODO (kaniandr@gmail.com): use interprocedural analysis to clarify list
-    // of unknown address accesses. Now, accesses to global memory
-    // in a function call leads to unknown address access.
     if (auto *Call = dyn_cast<CallBase>(&I)) {
       bool UnknownAddressAccess = true;
       auto F = llvm::dyn_cast<Function>(
@@ -645,8 +642,13 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
           auto &DUS = InterDUItr->get<DefUseSet>();
           if (DUS->getAddressUnknowns().empty()) {
             UnknownAddressAccess = false;
-            for (auto *Ptr : DUS->getAddressAccesses())
-              UnknownAddressAccess |= isa<GlobalValue>(stripPointer(DL, Ptr));
+            for (auto *Ptr : DUS->getAddressAccesses()) {
+              if (auto *GV{
+                      dyn_cast<GlobalValue>(GetUnderlyingObject(Ptr, DL, 0))})
+                if (AT.find(MemoryLocation(GV, LocationSize::precise(0))))
+                  DU->addAddressTransitives(GV, &I);
+              else UnknownAddressAccess = true;
+            }
           }
         }
       }
@@ -664,15 +666,42 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     // 3. Unknown instructions will be remembered in DefUseSet.
     auto &DT = DFF->getDomTree();
     auto &DFI = DFF->getRegionInfo();
+    auto &AA = AT.getAliasAnalysis();
+    auto add = [&AT, &AA, &DL, &DFI, &DT, &DU,
+                DFF](AliasNode *AN, const Instruction &I,
+                     const MemoryLocation &Loc, AccessInfo W, AccessInfo R) {
+      switch (W) {
+      case AccessInfo::No:
+        if (R != AccessInfo::No)
+          for_each_alias(&AT, AN,
+                         AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
+        break;
+      case AccessInfo::May:
+        if (R != AccessInfo::No)
+          for_each_alias(
+              &AT, AN, AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
+        else
+          for_each_alias(&AT, AN,
+                         AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
+        break;
+      case AccessInfo::Must:
+        if (R != AccessInfo::No)
+          for_each_alias(&AT, AN,
+                         AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
+        else
+          for_each_alias(&AT, AN,
+                         AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
+        break;
+      }
+    };
     for_each_memory(I, TLI,
-      [&DL, &DFI, &DT, &AT, InterDUInfo, &TLI, &DU, DFF](Instruction &I,
+      [&AA, &DL, &AT, InterDUInfo, &DU, &add](Instruction &I,
           MemoryLocation &&Loc, unsigned Idx, AccessInfo R, AccessInfo W) {
         auto *EM = AT.find(Loc);
         // EM may be smaller than Loc if it is known that access out of the
         // EM size leads to undefined behavior.
         Loc.Size = EM->getSize();
         assert(EM && "Estimate memory location must not be null!");
-        auto &AA = AT.getAliasAnalysis();
         /// List of ambiguous pointers contains only one pointer for each set
         /// of must alias locations. So, it is not guaranteed that Loc is
         /// presented in this list. If it is not presented there than it will
@@ -721,42 +750,50 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
                 W = R = AccessInfo::May; break;
             }
         }
-        switch (W) {
-        case AccessInfo::No:
-          if (R != AccessInfo::No)
-            for_each_alias(&AT, AN,
-                           AddUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
-          break;
-        case AccessInfo::May:
-          if (R != AccessInfo::No)
-            for_each_alias(&AT, AN,
-                           AddMayDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU,
-                                               DFF));
-          else
-            for_each_alias(&AT, AN,
-                           AddMayDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
-          break;
-        case AccessInfo::Must:
-          if (R != AccessInfo::No)
-            for_each_alias(&AT, AN,
-                           AddDefUseFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
-          else
-            for_each_alias(&AT, AN,
-                           AddDefFunctor(AA, DL, DFI, DT, I, Loc, *DU, DFF));
-          break;
-        }
+        add(AN, I, Loc, W, R);
       },
-      [&DL, &DFI, &DT, &AT, &DU, InterDUInfo](Instruction &I, AccessInfo,
+      [&DL, &DFI, &DT, &AT, &DU, InterDUInfo, &add](Instruction &I, AccessInfo,
           AccessInfo) {
         if (auto *Call = dyn_cast<CallBase>(&I)) {
           auto F = llvm::dyn_cast<Function>(
             Call->getCalledOperand()->stripPointerCasts());
-          if (F && InterDUInfo) {
-            auto InterDUItr = InterDUInfo->find(F);
-            if (InterDUItr != InterDUInfo->end())
-              if (isPure(*F, *InterDUItr->get<DefUseSet>()))
+          if (F && InterDUInfo)
+            if (auto InterDUItr{InterDUInfo->find(F)};
+                InterDUItr != InterDUInfo->end()) {
+              auto [IsPure, GlobalsOnly] =
+                  isPure(*F, *InterDUItr->get<DefUseSet>());
+              if (IsPure)
                 return;
-          }
+              if (GlobalsOnly) {
+                bool HasUnknownAccess{false};
+                for (auto &Loc :
+                     InterDUItr->get<DefUseSet>()->getExplicitAccesses())
+                  if (auto *GV{dyn_cast<GlobalValue>(
+                          GetUnderlyingObject(Loc.Ptr, DL, 0))}) {
+                    auto EM{
+                        AT.find(MemoryLocation(GV, LocationSize::precise(0)))};
+                    if (!EM) {
+                      HasUnknownAccess = true;
+                      continue;
+                    }
+                    EM = EM->getTopLevelParent();
+                    AccessInfo W{AccessInfo::No}, R{AccessInfo::No};
+                    assert(!EM->isAmbiguous() &&
+                           "Global value cannot be ambiguous!");
+                    MemoryLocation Loc{EM->front(), EM->getSize(),
+                                       EM->getAAInfo()};
+                    if (InterDUItr->get<DefUseSet>()->hasDef(Loc))
+                      W = AccessInfo::Must;
+                    else if (InterDUItr->get<DefUseSet>()->hasMayDef(Loc))
+                      W = AccessInfo::May;
+                    if (InterDUItr->get<DefUseSet>()->hasUse(Loc))
+                      R = AccessInfo::Must;
+                    add(EM->getAliasNode(AT), I, Loc, W, R);
+                  }
+                if (!HasUnknownAccess)
+                  return;
+              }
+            }
         }
         auto *AN = AT.findUnknown(I);
         if (!AN)
@@ -855,7 +892,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
     LLVM_DEBUG(dbgs() << "[COLLAPSE] Total trip count: " << TripCount << "\n");
     HasTrips = bool(TripCount > 0);
   }
-  // Distribute memory locations into two collections: a set of own memory 
+  // Distribute memory locations into two collections: a set of own memory
   // locations of the region and a list of other memory locations.
   auto distribute = [](const AggrResult &Res, const MemoryLocationRange &OrigLoc,
                        LocationSet &Own, LocationList &Other) {
@@ -930,10 +967,10 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //   if (...)
     //     X = ...;
     // }
-    // 
-    // When calculating a set of must define locations (Defs), we need to 
-    // consider only those definitions that reach the exit from the current 
-    // region. We cannot just insert all location from the nested regions into 
+    //
+    // When calculating a set of must define locations (Defs), we need to
+    // consider only those definitions that reach the exit from the current
+    // region. We cannot just insert all location from the nested regions into
     // Defs. Consider the following example.
     // for (;;) { // R1
     //   if (...) {
@@ -944,9 +981,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
     //       A[J] = ...
     //   }
     // }
-    // `A[0, 6)` has a definition in `R2`, `A[4, 10)` has a definition in `R3`, 
-    // but only `A[4, 6)` reaches the exit from `R1`. We need to use 
-    // `ExitingDefs.MustReach.findCoveredBy(Loc, Locs)` to find those parts of 
+    // `A[0, 6)` has a definition in `R2`, `A[4, 10)` has a definition in `R3`,
+    // but only `A[4, 6)` reaches the exit from `R1`. We need to use
+    // `ExitingDefs.MustReach.findCoveredBy(Loc, Locs)` to find those parts of
     // a specified memory location that reach the exit from the current region.
     // If `R1` is a loop region and it has a trip count greater than zero, then
     // we need to check `LatchDefs` in addition to `ExitingDefs`.
@@ -996,6 +1033,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
     DefUse->addExplicitUnknowns(DU->getExplicitUnknowns());
     for (auto Loc : DU->getAddressAccesses())
       DefUse->addAddressAccess(Loc);
+    for (auto &&[Loc, Insts] : DU->getAddressTransitives())
+      for (auto *I : Insts)
+        DefUse->addAddressTransitives(Loc, I);
     for (auto Loc : DU->getAddressUnknowns())
       DefUse->addAddressUnknowns(Loc);
     for (auto Inst : DU->getUnknownInsts())

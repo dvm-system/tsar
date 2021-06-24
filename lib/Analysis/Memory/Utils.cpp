@@ -487,22 +487,27 @@ bool accessInvariantMemory(Instruction &I, TargetLibraryInfo &TLI,
   return Result;
 }
 
-bool isPure(const llvm::Function &F, const DefUseSet &DUS) {
+std::pair<bool, bool> isPure(const llvm::Function &F, const DefUseSet &DUS) {
   if (!DUS.getExplicitUnknowns().empty())
-    return false;
+    return std::pair{false, false};
   if (find_if(instructions(F), [](const Instruction &I) {
         return isa<IntToPtrInst>(I);
       }) != inst_end(F))
-    return false;
+    return std::pair{false, false};
   for (auto &Arg : F.args())
     if (auto Ty = dyn_cast<PointerType>(Arg.getType()))
       if (hasUnderlyingPointer(Ty->getElementType()))
-        return false;
+        return std::pair{false, false};
   auto &DL = F.getParent()->getDataLayout();
-  for (auto &Range : DUS.getExplicitAccesses())
-    if (isa<GlobalValue>(stripPointer(DL, const_cast<Value *>(Range.Ptr))))
-      return false;
-  return true;
+  bool HasGlobalAccess{false};
+  for (auto &Range : DUS.getExplicitAccesses()) {
+    auto *Ptr{GetUnderlyingObject(const_cast<Value *>(Range.Ptr), DL, 0)};
+    if (isa<GlobalValue>(Ptr))
+      HasGlobalAccess = true;
+    if (isa<GlobalValue>(stripPointer(DL, Ptr)))
+      return std::pair{false, false};
+  }
+  return std::pair{!HasGlobalAccess, HasGlobalAccess};
 }
 }
 

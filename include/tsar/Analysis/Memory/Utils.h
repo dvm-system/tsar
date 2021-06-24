@@ -155,8 +155,10 @@ bool isLoopInvariant(const llvm::SCEV *Expr, const llvm::Loop *L,
   const DefUseSet &DUS, const AliasTree &AT,
   const SpanningTreeRelation<const AliasTree *> &STR);
 
-/// Return 'true' if calls of a specified function has no side effects and
-/// do not access global memory.
-bool isPure(const llvm::Function &F, const DefUseSet &DUS);
+/// The first returned value is 'true' if calls of a specified function has no
+/// side effects and do not access global memory. Otherwise, if it accesses
+/// global variables in a simple way only (without dereferences) the second
+/// value will be 'true'.
+std::pair<bool, bool> isPure(const llvm::Function &F, const DefUseSet &DUS);
 }
 #endif//TSAR_MEMORY_UTILS_H

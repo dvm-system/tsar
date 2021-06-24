@@ -43,6 +43,7 @@
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #ifdef LLVM_DEBUG
@@ -82,6 +83,11 @@ public:
 
   /// Set of instructions.
   typedef llvm::SmallPtrSet<llvm::Instruction *, 32> InstructionSet;
+
+  // Set of pointers accessed in instructions to be attaced.
+  typedef llvm::SmallDenseMap<llvm::Value *,
+                              llvm::SmallVector<llvm::Instruction *, 8>, 32>
+      TransitiveMap;
 
   /// Set of memory locations.
   typedef MemorySet<MemoryLocationRange> LocationSet;
@@ -156,7 +162,7 @@ public:
     return addMayDef(MemoryLocationRange::get(I));
   }
 
-  /// Specifies that all locations in a set may have definition in a data-flow 
+  /// Specifies that all locations in a set may have definition in a data-flow
   /// node.
   ///
   /// \return False if all locations have been already specified.
@@ -332,6 +338,35 @@ public:
     return mAddressUnknowns.insert(I).second;
   }
 
+  /// Returns locations addresses of which are transitively evaluated in the
+  /// node.
+  const TransitiveMap &getAddressTransitives() const {
+    return mAddressTransitives;
+  }
+
+  /// Return `true` if there are transitive evaluation of an address in the
+  /// node.
+  bool hasAddressTransitives(llvm::Value *Ptr) const {
+    assert(Ptr && "Pointer must not be null!");
+    return mAddressTransitives.count(Ptr) != 0;
+  }
+
+  /// Specifie that there are transitive evaluation of an address in the node.
+  void addAddressTransitives(llvm::Value *Ptr, llvm::Instruction *I) {
+    assert(Ptr && "Pointer must not be null!");
+    return mAddressTransitives.try_emplace(Ptr).first->second.push_back(I);
+  }
+
+  /// Specifie that there are transitive evaluation of an address in the node.
+  ///
+  /// \return False if it has been already specified.
+  bool addAddressTransitives(llvm::Value *Ptr,
+                             llvm::ArrayRef<llvm::Instruction *> Insts) {
+    assert(Ptr && "Pointer must not be null!");
+    return mAddressTransitives.try_emplace(Ptr, Insts.begin(), Insts.end())
+        .second;
+  }
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -341,6 +376,7 @@ private:
   InstructionSet mUnknownInsts;
   InstructionSet mExplicitUnknowns;
   InstructionSet mAddressUnknowns;
+  TransitiveMap mAddressTransitives;
 };
 
 /// This presents information whether a location has definition after a node

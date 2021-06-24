@@ -355,7 +355,7 @@ public:
            "Defined memory analysis must be available for function!");
     /// TODO (kaniandr@gmail.com): deduce other useful attributes, such as,
     /// readonly, writeonly, readnone and speculatable.
-    if (isPure(F, *DefItr->get<DefUseSet>())) {
+    if (isPure(F, *DefItr->get<DefUseSet>()).first) {
       F.setOnlyAccessesArgMemory();
       /// TODO (kaniandr@gmail.com): traverse call graph to increase
       /// quality of deduction of 'nocaputre' attributes.
