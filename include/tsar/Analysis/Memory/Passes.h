@@ -217,5 +217,22 @@ void initializeAllocasAAWrapperPassPass(PassRegistry &Regitsry);
 
 /// Create a pass to access alias results for allocas.
 ImmutablePass *createAllocasAAWrapperPass();
+
+// Initialize a pass to store explicit accesses to global values in a function.
+void initializeGlobalsAccessStoragePass(PassRegistry &Registry);
+
+// Create a pass to store explicit accesses to global values in a function.
+ImmutablePass *createGlobalsAccessStorage();
+
+// Initialize a pass to collect explicit accesses to global values in a
+// function.
+void initializeGlobalsAccessCollectorPass(PassRegistry &Registry);
+
+// Create a pass to collect explicit accesses to global values in a function.
+ModulePass * createGlobalsAccessCollector();
+
+// Initialize a pass to access list of explicit accesses to global
+// values in a function.
+void initializeGlobalsAccessWrapperPass(PassRegistry &Registry);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

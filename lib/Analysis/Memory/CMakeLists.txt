@@ -6,7 +6,7 @@ set(ANALYSIS_SOURCES Passes.cpp DependenceAnalysis.cpp PrivateAnalysis.cpp
   Delinearization.cpp ServerUtils.cpp ClonedDIMemoryMatcher.cpp
   GlobalLiveMemory.cpp GlobalDefinedMemory.cpp DIClientServerInfo.cpp
   DIMemoryAnalysisServer.cpp DIArrayAccess.cpp AllocasModRef.cpp
-  MemoryLocationRange.cpp)
+  MemoryLocationRange.cpp GlobalsAccess.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
