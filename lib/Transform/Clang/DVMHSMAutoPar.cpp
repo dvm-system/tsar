@@ -216,13 +216,22 @@ class ClangDVMHSMParallelization : public ClangSMParallelization {
   /// Stack of lists which contain actual/get_actual directives.
   /// If optimization is successful for a level then the corresponding
   /// directives can be removed.
-  using RegionDataReplacement = std::vector<SmallVector<ParallelLevel *, 4>>;
+  ///
+  /// The 'Hierarchy' field contains directives which have to be inserted
+  /// instead of optimized ones from the 'Sibling' field.
+  using RegionDataReplacement = std::vector<bcl::tagged_pair<
+      bcl::tagged<SmallVector<ParallelLevel *, 4>, Sibling>,
+      bcl::tagged<SmallVector<ParallelItem *, 4>, Hierarchy>>>;
 
   /// Variables which are presented in some actual or get_actual directive
   /// correspondingly. The key is an alias node which contains a corresponding
-  /// memory on the analysis server. Hierarchy field identifies the innermost
-  /// level (in the RegionDataReplacement stack) which contains a corresponding
-  /// directive.
+  /// memory on the analysis server. The 'Hierarchy' field identifies the
+  /// innermost level (in the RegionDataReplacement stack) which contains a
+  /// corresponding directive. So, the levels under the 'Hierarchy' level does
+  /// not depend on a corresponding memory locations. It means that
+  /// optimization for the bellow level is possible even if some
+  /// actual/get_actual directives which accesses mentioned memory locations
+  /// cannot be inserted.
   using RegionDataCache = DenseMap<
       const DIAliasNode *, std::tuple<SmallVector<VariableT, 1>, unsigned>,
       DenseMapInfo<const DIAliasNode *>,
@@ -886,83 +895,143 @@ void ClangDVMHSMParallelization::optimizeLevel(
 
 bool ClangDVMHSMParallelization::optimizeGlobalIn(
     PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
-  if (Level.is<Loop *>()) {
+  LLVM_DEBUG(
+      dbgs() << "[DVMH SM]: global optimization, visit level downward\n");
+  if (Level.is<Loop *>())
     if (isParallel(Level.get<Loop *>(), mParallelizationInfo))
       return false;
-    if (auto *Parent{Level.get<Loop *>()->getParentLoop()};
-        Parent && isParallel(Parent, mParallelizationInfo))
-      return false;
-  } else {
-    mToActual.clear();
-    mToGetActual.clear();
-  }
   auto &F{Level.is<Function *>()
               ? *Level.get<Function *>()
               : *Level.get<Loop *>()->getHeader()->getParent()};
   auto &SocketInfo{**Provider.value<AnalysisSocketImmutableWrapper *>()};
   auto &Socket{SocketInfo.getActive()->second};
-  if (Level.is<Function *>()) {
-    auto RF{Socket.getAnalysis<DIEstimateMemoryPass>(F)};
-    if (!RF)
-      return false;
-    auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
-    mDistinctMemory.clear();
-    for (auto &DIM :
-         make_range(ServerDIAT.memory_begin(), ServerDIAT.memory_end()))
-      if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)};
-          DIUM && DIUM->isDistinct())
-        mDistinctMemory.insert(DIUM->getAliasNode());
-  }
   auto RM{Socket.getAnalysis<AnalysisClientServerMatcherWrapper,
                              ClonedDIMemoryMatcherWrapper>()};
   auto &ClientToServer{**RM->value<AnalysisClientServerMatcherWrapper *>()};
   auto &ServerF{cast<Function>(*ClientToServer[&F])};
   auto &CSMemoryMatcher{
       *(**RM->value<ClonedDIMemoryMatcherWrapper *>())[ServerF]};
-  auto collectForParallelBlock = [this, &CSMemoryMatcher](
-                                     ParallelBlock &PB, auto Anchor) {
-    for (auto &PI : PB) {
-      if (auto *Actual{dyn_cast<PragmaActual>(PI.get())}) {
-        for (auto &Var : Actual->getMemory()) {
-          auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-          auto I{
-              mToActual.try_emplace(DIMI->get<Clone>()->getAliasNode()).first};
-          if (!is_contained(I->get<VariableT>(), Var))
-            I->get<VariableT>().push_back(Var);
-          if (!Actual->isFinal())
-            I->get<Hierarchy>() = mReplacementFor.size() - 1;
-        }
-        if (!Actual->isFinal())
-          mReplacementFor.back().push_back(Actual);
-      } else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())}) {
-        for (auto &Var : GetActual->getMemory()) {
-          auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-          auto I{mToGetActual.try_emplace(DIMI->get<Clone>()->getAliasNode())
-                     .first};
-          if (!is_contained(I->get<VariableT>(), Var))
-            I->get<VariableT>().push_back(Var);
-          if (!GetActual->isFinal())
-            I->get<Hierarchy>() = mReplacementFor.size() - 1;
-        }
-        if (!GetActual->isFinal())
-          mReplacementFor.back().push_back(GetActual);
-      }
-    }
-  };
+  auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
   mReplacementFor.emplace_back();
-  for (auto &BB : F)
-    if (auto ParallelItr{mParallelizationInfo.find(&BB)};
-        ParallelItr != mParallelizationInfo.end())
-      for (auto &PL : ParallelItr->get<ParallelLocation>()) {
-        collectForParallelBlock(PL.Entry, PL.Anchor);
-        collectForParallelBlock(PL.Exit, PL.Anchor);
+  if (Level.is<Function *>()) {
+    mToActual.clear();
+    mToGetActual.clear();
+    mDistinctMemory.clear();
+    auto RF{Socket.getAnalysis<DIEstimateMemoryPass>(F)};
+    if (!RF)
+      return false;
+    auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
+    for (auto &DIM :
+         make_range(ServerDIAT.memory_begin(), ServerDIAT.memory_end()))
+      if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)};
+          DIUM && DIUM->isDistinct())
+        mDistinctMemory.insert(DIUM->getAliasNode());
+    auto collectForParallelBlock = [this,
+                                    &CSMemoryMatcher](ParallelBlock &PB,
+                                                      bool IsExplicitlyNested) {
+      for (auto &PI : PB) {
+        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())}) {
+          for (auto &Var : Actual->getMemory()) {
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+            auto I{mToActual.try_emplace(DIMI->get<Clone>()->getAliasNode())
+                       .first};
+            if (!is_contained(I->get<VariableT>(), Var))
+              I->get<VariableT>().push_back(Var);
+            if (IsExplicitlyNested && !Actual->isFinal() &&
+                !Actual->isRequired())
+              I->get<Hierarchy>() = mReplacementFor.size() - 1;
+          }
+          if (IsExplicitlyNested && !Actual->isFinal() && !Actual->isRequired())
+            mReplacementFor.back().get<Sibling>().push_back(Actual);
+        } else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())}) {
+          for (auto &Var : GetActual->getMemory()) {
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+            auto I{mToGetActual.try_emplace(DIMI->get<Clone>()->getAliasNode())
+                       .first};
+            if (!is_contained(I->get<VariableT>(), Var))
+              I->get<VariableT>().push_back(Var);
+            if (IsExplicitlyNested && !GetActual->isFinal() &&
+                !GetActual->isRequired())
+              I->get<Hierarchy>() = mReplacementFor.size() - 1;
+          }
+          if (IsExplicitlyNested && !GetActual->isFinal() &&
+              !GetActual->isRequired())
+            mReplacementFor.back().get<Sibling>().push_back(GetActual);
+        }
       }
-  // We go downward only if there are directives to optimize.
-  return !(mToActual.empty() && mToGetActual.empty());
+    };
+    for (auto &BB : F) {
+      auto *L{LI.getLoopFor(&BB)};
+      if (auto ParallelItr{mParallelizationInfo.find(&BB)};
+          ParallelItr != mParallelizationInfo.end())
+        for (auto &PL : ParallelItr->get<ParallelLocation>()) {
+          bool IsExplicitlyNested{!L || L && PL.Anchor.is<MDNode *>() &&
+                                            PL.Anchor.get<MDNode *>() ==
+                                                L->getLoopID() &&
+                                            !L->getParentLoop()};
+          collectForParallelBlock(PL.Exit, IsExplicitlyNested);
+          collectForParallelBlock(PL.Entry, IsExplicitlyNested);
+        }
+    }
+    LLVM_DEBUG(
+        dbgs() << "[DVMH SM]: number of directives to replace at a level "
+               << mReplacementFor.size() << " is "
+               << mReplacementFor.back().get<Sibling>().size() << "\n");
+    // We go downward only if there are directives to optimize.
+    return !(mToActual.empty() && mToGetActual.empty());
+  }
+  if (Level.is<Loop *>()) {
+    auto initializeReplacementLevel = [this,
+                                       &CSMemoryMatcher](ParallelBlock &PB) {
+      for (auto &PI : PB) {
+        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())}) {
+          if (Actual->isFinal() || Actual->isRequired())
+            continue;
+          for (auto &Var : Actual->getMemory()) {
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+            auto I{mToActual.find(DIMI->get<Clone>()->getAliasNode())};
+            I->get<Hierarchy>() = mReplacementFor.size() - 1;
+          }
+          mReplacementFor.back().get<Sibling>().push_back(Actual);
+        } else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())}) {
+          if (GetActual->isFinal() || GetActual->isRequired())
+            continue;
+          for (auto &Var : GetActual->getMemory()) {
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+            auto I{mToGetActual.find(DIMI->get<Clone>()->getAliasNode())};
+            I->get<Hierarchy>() = mReplacementFor.size() - 1;
+          }
+          mReplacementFor.back().get<Sibling>().push_back(GetActual);
+        }
+      }
+    };
+    for (auto *BB : Level.get<Loop *>()->blocks()) {
+      auto *L{LI.getLoopFor(BB)};
+      assert(L && "At least one loop must contain the current basic block!");
+      if (auto ParallelItr{mParallelizationInfo.find(BB)};
+          ParallelItr != mParallelizationInfo.end())
+        for (auto &PL : ParallelItr->get<ParallelLocation>()) {
+          // Process only blocks which are nested explicitly in the current
+          // level.
+          if (Level.get<Loop *>() == L ||
+              PL.Anchor.is<MDNode *>() &&
+                  PL.Anchor.get<MDNode *>() == L->getLoopID() &&
+                  Level.get<Loop *>() == L->getParentLoop()) {
+            initializeReplacementLevel(PL.Entry);
+            initializeReplacementLevel(PL.Exit);
+          }
+        }
+    }
+  }
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: number of directives to replace at a level "
+                    << mReplacementFor.size() << " is "
+                    << mReplacementFor.back().get<Sibling>().size() << "\n");
+  return true;
 }
 
 bool ClangDVMHSMParallelization::optimizeGlobalOut(
     PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: global optimization, visit level upward\n");
   auto &F{Level.is<Function *>()
               ? *Level.get<Function *>()
               : *Level.get<Loop *>()->getHeader()->getParent()};
@@ -1012,11 +1081,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
               true /*IsFinal*/)};
           for (auto &Var : Data.get<VariableT>())
             cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
-          for (auto *PL : mReplacementFor[std::min<unsigned>(
-                   Data.get<Hierarchy>(), mReplacementFor.size() - 1)]) {
-            PL->child_insert(GetActualRef.getUnchecked());
-            GetActualRef->parent_insert(PL);
-          }
+          mReplacementFor[Data.get<Hierarchy>()].get<Hierarchy>().push_back(
+              GetActualRef.getUnchecked());
         }
       };
   auto addTransferToWrite =
@@ -1034,11 +1100,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
               true /*IsFinal*/)};
           for (auto &Var : Data.get<VariableT>())
             cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
-          for (auto *PL : mReplacementFor[std::min<unsigned>(
-                   Data.get<Hierarchy>(), mReplacementFor.size() - 1)]) {
-            PL->child_insert(ActualRef.getUnchecked());
-            ActualRef->parent_insert(PL);
-          }
+          mReplacementFor[Data.get<Hierarchy>()].get<Hierarchy>().push_back(
+              ActualRef.getUnchecked());
           addGetActualIf(I, Data.get<DIAliasNode>(), InsertedGetActuals);
         }
       };
@@ -1149,13 +1212,26 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
           });
     }
   };
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: optimize level " << mReplacementFor.size()
+                    << "\n");
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: number of directives to optimize level "
+                    << mReplacementFor.back().get<Sibling>().size() << "\n");
+  // Normalize replacement level numbers which specify replacement levels which
+  // depends on corresponding memory locations.
+  for (auto &Data : mToActual)
+    Data.get<Hierarchy>() =
+        std::min<unsigned>(Data.get<Hierarchy>(), mReplacementFor.size() - 1);
+  for (auto &Data : mToGetActual)
+    Data.get<Hierarchy>() =
+        std::min<unsigned>(Data.get<Hierarchy>(), mReplacementFor.size() - 1);
+  SmallVector<ParallelItem *, 2> ConservativeReplacements;
   if (Level.is<Function *>()) {
     for (auto &BB : *Level.get<Function *>())
       collectParallelInductions(BB);
     // We conservatively actualize memory, which is available outside the
     // function, at the function entry point.
     // TODO (kaniandr@gmail.com): move `actual` directives to callers.
-    if (!mReplacementFor.back().empty()) {
+    if (!mReplacementFor.back().get<Sibling>().empty()) {
       auto &EntryBB{F.getEntryBlock()};
       auto ActualRef{mParallelizationInfo.emplace<PragmaActual>(
           &EntryBB, &F, true /*OnEntry*/, false /*IsRequired*/,
@@ -1171,7 +1247,6 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
               cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
           }
         }
-      SmallVector<ParallelItem *, 2> ConservativeReplacements;
       if (!cast<PragmaActual>(ActualRef)->getMemory().empty())
         ConservativeReplacements.push_back(ActualRef.getUnchecked());
       // We conservatively copy memory from the device before the exit from the
@@ -1199,13 +1274,6 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
       if (Level.get<Function *>() == getEntryPoint())
         for (auto *PI : ConservativeReplacements)
           cast<PragmaData>(PI)->skip();
-      // The created directives are necessary to remove optimized ones. So, we
-      // update replacement relation.
-      for (auto *PL : mReplacementFor.back())
-        for (auto *ToReplace : ConservativeReplacements) {
-          PL->child_insert(ToReplace);
-          ToReplace->parent_insert(PL);
-        }
     }
     // Process blocks inside the function and add `actual/get_actual` to
     // instructions which access memory.
@@ -1214,10 +1282,9 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
   } else {
     for (auto *BB : Level.get<Loop *>()->blocks())
       collectParallelInductions(*BB);
-    if (mReplacementFor.back().empty()) {
+    if (!mReplacementFor.back().get<Sibling>().empty()) {
       auto HeaderBB = Level.get<Loop *>()->getHeader();
       // We conservatively copy memory to the device, on the entry to the loop.
-      SmallVector<ParallelItem *, 2> ConservativeReplacements;
       for (auto *BB : children<Inverse<BasicBlock *>>(HeaderBB)) {
         if (Level.get<Loop *>()->contains(BB))
           continue;
@@ -1246,20 +1313,32 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         if (!cast<PragmaGetActual>(GetActualRef)->getMemory().empty())
           ConservativeReplacements.push_back(GetActualRef.getUnchecked());
       }
-      // The created directives are necessary to remove optimized ones. So, we
-      // update replacement relation.
-      for (auto *PL : mReplacementFor.back())
-        for (auto *ToReplace : ConservativeReplacements) {
-          PL->child_insert(ToReplace);
-          ToReplace->parent_insert(PL);
-        }
     }
     // Process blocks inside the function and add `actual/get_actual` to
     // instructions which access memory.
     for (auto *BB : Level.get<Loop *>()->blocks())
       processBB(*BB);
   }
+  // Update replacement relation after all inner levels have benn processed.
+  for (auto *PL : mReplacementFor.back().get<Sibling>())
+    for (auto *ToReplace : mReplacementFor.back().get<Hierarchy>()) {
+      PL->child_insert(ToReplace);
+      ToReplace->parent_insert(PL);
+    }
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: conservative replacement size is "
+                    << ConservativeReplacements.size() << "\n");
+  // The created directives are necessary to remove optimized ones. So, we
+  // update replacement relation.
+  for (auto *PL : mReplacementFor.back().get<Sibling>())
+    for (auto *ToReplace : ConservativeReplacements) {
+      PL->child_insert(ToReplace);
+      ToReplace->parent_insert(PL);
+    }
   mReplacementFor.pop_back();
+  if (!mReplacementFor.empty())
+    for (auto *ToReplace : ConservativeReplacements)
+      mReplacementFor.back().get<Sibling>().push_back(
+          cast<ParallelLevel>(ToReplace));
   return true;
 }
 
