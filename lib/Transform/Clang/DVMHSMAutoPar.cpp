@@ -1111,7 +1111,7 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
     auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
     // Process blocks which are only nested explicitly in the current level.
     if (auto *L{LI.getLoopFor(&BB)};
-        !(!L && Level.is<Function *>() || L && Level.getOpaqueValue() == L))
+        !(!L && Level.is<Function *>() || L && Level.dyn_cast<Loop *>() == L))
       return;
     for (auto &I : BB) {
       SmallPtrSet<const DIAliasNode *, 1> InsertedActuals, InsertedGetActuals;
