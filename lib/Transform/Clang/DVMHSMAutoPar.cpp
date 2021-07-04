@@ -1851,6 +1851,45 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
   }
 }
 
+static void
+printReplacementTree(ArrayRef<ParallelItem *> NotOptimizedPragmas,
+                     DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
+                     ClangTransformationContext &TfmCtx) {
+  traversePragmaDataPO(NotOptimizedPragmas,
+                       [&DeferredPragmas, &TfmCtx](ParallelItem *PI) {
+                         auto PD{cast<PragmaData>(PI)};
+                         auto PIItr{DeferredPragmas.find_as(PI)};
+                         assert(PIItr != DeferredPragmas.end() &&
+                                "Internal pragmas must be cached!");
+                         auto [PIRef, ToInsert] = *PIItr;
+                         dbgs() << "id: " << PD << " ";
+                         dbgs() << "skiped: " << PD->isSkipped() << " ";
+                         dbgs() << "invalid: " << PD->isInvalid() << " ";
+                         dbgs() << "final: " << PD->isFinal() << " ";
+                         dbgs() << "required: " << PD->isRequired() << " ";
+                         if (isa<PragmaActual>(PD))
+                           dbgs() << "actual: ";
+                         else if (isa<PragmaGetActual>(PD))
+                           dbgs() << "get_actual: ";
+                         if (PD->getMemory().empty())
+                           dbgs() << "- ";
+                         for (auto &Var : PD->getMemory()) {
+                           dbgs() << Var.get<AST>()->getName() << " ";
+                         }
+                         if (!PD->child_empty()) {
+                           dbgs() << "children: ";
+                           for (auto *Child : PD->children())
+                             dbgs() << Child << " ";
+                         }
+                         if (ToInsert) {
+                           dbgs() << "location: ";
+                           ToInsert->getBeginLoc().print(
+                               dbgs(), TfmCtx.getContext().getSourceManager());
+                         }
+                         dbgs() << "\n";
+                       });
+}
+
 bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
   ClangSMParallelization::runOnModule(M);
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
@@ -1990,6 +2029,8 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
         }
       }
     }
+    LLVM_DEBUG(dbgs() << "[DVMH SM]: optimized replacement tree:\n"; printReplacementTree(
+                   NotOptimizedPragmas, DeferredPragmas, *TfmCtx));
     // Build pragmas for necessary data transfer directives.
     insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
     // Update sources.
