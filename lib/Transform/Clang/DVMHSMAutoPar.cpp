@@ -1088,13 +1088,10 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
   auto addTransferToWrite =
       [this, &ServerSTR, &addGetActualIf](
           Instruction &I, const DIAliasNode *CurrentAN,
-          SmallPtrSetImpl<const DIAliasNode *> &InsertedActuals,
           SmallPtrSetImpl<const DIAliasNode *> &InsertedGetActuals) {
         for (auto &Data : mToActual) {
-          if (InsertedGetActuals.count(Data.get<DIAliasNode>()) ||
-              ServerSTR.isUnreachable(CurrentAN, Data.get<DIAliasNode>()))
+          if (ServerSTR.isUnreachable(CurrentAN, Data.get<DIAliasNode>()))
             continue;
-          InsertedActuals.insert(Data.get<DIAliasNode>());
           auto ActualRef{mParallelizationInfo.emplace<PragmaActual>(
               I.getParent(), &I, false /*OnEntry*/, false /*IsRequired*/,
               true /*IsFinal*/)};
@@ -1114,14 +1111,13 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         !(!L && Level.is<Function *>() || L && Level.dyn_cast<Loop *>() == L))
       return;
     for (auto &I : BB) {
-      SmallPtrSet<const DIAliasNode *, 1> InsertedActuals, InsertedGetActuals;
+      SmallPtrSet<const DIAliasNode *, 1> InsertedGetActuals;
       for_each_memory(
           I, TLI,
           [this, &Level, &ParallelLoops, &Provider, &CSMemoryMatcher,
-           &addGetActualIf, &addTransferToWrite, &InsertedActuals,
-           &InsertedGetActuals](Instruction &I, MemoryLocation &&Loc,
-                                unsigned OpIdx, AccessInfo IsRead,
-                                AccessInfo IsWrite) {
+           &addGetActualIf, &addTransferToWrite, &InsertedGetActuals](
+              Instruction &I, MemoryLocation &&Loc, unsigned OpIdx,
+              AccessInfo IsRead, AccessInfo IsWrite) {
             if (IsRead == AccessInfo::No && IsWrite == AccessInfo::No)
               return;
             auto &AT{Provider.value<EstimateMemoryPass *>()->getAliasTree()};
@@ -1138,8 +1134,7 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             if (!RawDIM) {
               for (auto *AN : mDistinctMemory) {
                 if (IsWrite != AccessInfo::No)
-                  addTransferToWrite(I, AN, InsertedActuals,
-                                     InsertedGetActuals);
+                  addTransferToWrite(I, AN, InsertedGetActuals);
                 if (IsRead != AccessInfo::No)
                   addGetActualIf(I, AN, InsertedGetActuals);
               }
@@ -1168,14 +1163,13 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
               // parallel loop which post-dominates induction variable access.
               if (anyLoopPostDominates(&*DIMItr, I.getParent()))
                 return;
-              addTransferToWrite(I, CurrentAN, InsertedActuals,
-                                 InsertedGetActuals);
+              addTransferToWrite(I, CurrentAN, InsertedGetActuals);
             }
             if (IsRead != AccessInfo::No)
               addGetActualIf(I, CurrentAN, InsertedGetActuals);
           },
           [this, &Provider, &CSMemoryMatcher, &addGetActualIf,
-           &addTransferToWrite, &InsertedActuals, &InsertedGetActuals](
+           &addTransferToWrite, &InsertedGetActuals](
               Instruction &I, AccessInfo IsRead, AccessInfo IsWrite) {
             if (IsRead == AccessInfo::No && IsWrite == AccessInfo::No)
               return;
