@@ -37,6 +37,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryHandle.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
@@ -873,16 +874,28 @@ void ClangDVMHSMParallelization::optimizeLevel(
                         mParallelizationInfo);
     }
   }
-  auto *M = Level.is<Function *>() ? Level.get<Function *>()->getParent() :
-    Level.get<Loop *>()->getHeader()->getModule();
-  auto &ASTCtx =
-      getAnalysis<TransformationEnginePass>()->getContext(*M)->getContext();
+  auto *F{Level.is<Function *>()
+              ? Level.get<Function *>()
+              : Level.get<Loop *>()->getHeader()->getParent()};
+  auto *DISub{findMetadata(F)};
+  if (!DISub)
+    return;
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
+  if (!TfmCtx || !TfmCtx->hasInstance())
+    return;
+  auto &ASTCtx{TfmCtx->getContext()};
   if (Level.is<Function *>()) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
     sanitizeAcrossLoops(LI.begin(), LI.end(), Provider, ASTCtx,
                         mParallelizationInfo);
     mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
-                      mParallelizationInfo);
+                        mParallelizationInfo);
   } else {
     sanitizeAcrossLoops(Level.get<Loop *>()->begin(),
                         Level.get<Loop *>()->end(), Provider, ASTCtx,
@@ -1501,7 +1514,8 @@ shiftTokenIfSemi(clang::SourceLocation Loc, const clang::ASTContext &Ctx) {
 static std::pair<clang::Stmt *, PointerUnion<llvm::Loop *, clang::Decl *>>
 findLocationToInsert(Parallelization::iterator PLocListItr,
     Parallelization::location_iterator PLocItr, const Function &F, LoopInfo &LI,
-    TransformationContext &TfmCtx, const ClangExprMatcherPass::ExprMatcher &EM,
+    ClangTransformationContext &TfmCtx,
+    const ClangExprMatcherPass::ExprMatcher &EM,
     const LoopMatcherPass::LoopMatcher &LM) {
   if (PLocItr->Anchor.is<MDNode *>()) {
     auto *L{LI.getLoopFor(PLocListItr->get<BasicBlock>())};
@@ -1839,9 +1853,23 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
 
 bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
   ClangSMParallelization::runOnModule(M);
-  auto *TfmCtx{getAnalysis<TransformationEnginePass>()->getContext(M)};
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
   for (auto F : make_range(mParallelizationInfo.func_begin(),
                            mParallelizationInfo.func_end())) {
+    auto *DISub{findMetadata(F)};
+    if (!DISub)
+      F->getContext().emitError(
+          "cannot transform sources: transformation context must be available");
+    auto *CU{DISub->getUnit()};
+    if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+      F->getContext().emitError(
+          "cannot transform sources: transformation context must be available");
+    auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                               TfmInfo->getContext(*CU))
+                         : nullptr};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      F->getContext().emitError(
+          "cannot transform sources: transformation context must be available");
     auto Provider{analyzeFunction(*F)};
     auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
     auto &LM{Provider.value<LoopMatcherPass *>()->getMatcher()};
