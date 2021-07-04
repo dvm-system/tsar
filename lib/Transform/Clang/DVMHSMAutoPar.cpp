@@ -1185,8 +1185,7 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             if (!RawDIM) {
               for (auto *AN : mDistinctMemory) {
                 if (IsWrite != AccessInfo::No)
-                  addTransferToWrite(I, AN, InsertedActuals,
-                                     InsertedGetActuals);
+                  addTransferToWrite(I, AN, InsertedGetActuals);
                 if (IsRead != AccessInfo::No)
                   addGetActualIf(I, AN, InsertedGetActuals);
               }
@@ -1199,8 +1198,7 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             DIAliasNode *CurrentAN{
                 CSMemoryMatchItr->get<Clone>()->getAliasNode()};
             if (IsWrite != AccessInfo::No)
-              addTransferToWrite(I, CurrentAN, InsertedActuals,
-                                 InsertedGetActuals);
+              addTransferToWrite(I, CurrentAN, InsertedGetActuals);
             if (IsRead != AccessInfo::No)
               addGetActualIf(I, CurrentAN, InsertedGetActuals);
           });
@@ -1285,8 +1283,9 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         auto ActualRef{mParallelizationInfo.emplace<PragmaActual>(
             BB, BB->getTerminator(), true /*OnEntry*/, false /*IsRequired*/)};
         for (auto &Data : mToActual)
-          for (auto &Var : Data.get<VariableT>())
-            cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
+          if (Data.get<Hierarchy>() == mReplacementFor.size() - 1)
+            for (auto &Var : Data.get<VariableT>())
+              cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
         if (!cast<PragmaActual>(ActualRef)->getMemory().empty())
           ConservativeReplacements.push_back(ActualRef.getUnchecked());
       }
@@ -1302,8 +1301,9 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         auto GetActualRef{mParallelizationInfo.emplace<PragmaGetActual>(
             BB, &*Inst, true /*OnEntry*/, false /*IsRequired*/)};
         for (auto &Data : mToGetActual)
-          for (auto &Var : Data.get<VariableT>())
-            cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
+          if (Data.get<Hierarchy>() == mReplacementFor.size() - 1)
+            for (auto &Var : Data.get<VariableT>())
+              cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
         if (!cast<PragmaGetActual>(GetActualRef)->getMemory().empty())
           ConservativeReplacements.push_back(GetActualRef.getUnchecked());
       }
