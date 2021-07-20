@@ -1097,6 +1097,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
   for (auto &Arg : F.args())
     addPointeeIfNeed(&Arg);
   auto &GAP{getAnalysis<GlobalsAccessWrapper>()};
+  assert(GAP && "Explicitly accessed globals must be collected!");
   if (GAP)
     if (auto GA{GAP->find(&F)}; GA != GAP->end()) {
       for (auto &GV : GA->second)
