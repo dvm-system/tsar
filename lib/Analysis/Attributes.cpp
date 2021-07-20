@@ -52,7 +52,7 @@ void removeFnAttr(llvm::Function &F, AttrKind Kind) {
   F.removeFnAttr(getAsString(Kind));
 }
 
-bool hasFnAttr(llvm::Function &F, AttrKind Kind) {
+bool hasFnAttr(const llvm::Function &F, AttrKind Kind) {
   return F.hasFnAttribute(getAsString(Kind));
 }
 

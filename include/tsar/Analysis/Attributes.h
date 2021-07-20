@@ -53,7 +53,7 @@ void addFnAttr(llvm::Function &F, AttrKind Kind,
 void removeFnAttr(llvm::Function &F, AttrKind Kind);
 
 /// Returns true if the function has a specified attribute.
-bool hasFnAttr(llvm::Function &F, AttrKind Kind);
+bool hasFnAttr(const llvm::Function &F, AttrKind Kind);
 
 /// Applies the given function object to each attribute.
 template<class Function> void for_each_attr(Function &&F) {
@@ -67,4 +67,3 @@ template<class Function> void for_each_attr(Function &&F) {
 bool isIOLibFuncName(llvm::StringRef FuncName);
 }
 #endif//TSAR_ATTRIBUTES_H
-
