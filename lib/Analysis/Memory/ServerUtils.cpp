@@ -323,8 +323,10 @@ void ClientToServerMemory::initializeServer(
   }
   // Passes are removed in backward direction and handlers should be removed
   // before memory environment.
+  PM.add(createGlobalsAccessStorage());
   PM.add(createClonedDIMemoryMatcherStorage());
   PM.add(createDIMemoryEnvironmentStorage());
+  PM.add(createGlobalsAccessCollector());
   PM.add(createClonedDIMemoryMatcher(std::move(CloneToOrigin)));
 }
 

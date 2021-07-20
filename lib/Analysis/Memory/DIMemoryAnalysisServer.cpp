@@ -147,7 +147,6 @@ public:
     legacy::PassManager &PM) override {
     auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>();
     PM.add(createGlobalOptionsImmutableWrapper(&GO.getOptions()));
-    PM.add(createGlobalsAccessStorage());
     PM.add(createGlobalDefinedMemoryStorage());
     PM.add(createGlobalLiveMemoryStorage());
     PM.add(createDIMemoryTraitPoolStorage());
