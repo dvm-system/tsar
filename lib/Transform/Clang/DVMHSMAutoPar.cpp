@@ -978,9 +978,6 @@ bool ClangDVMHSMParallelization::initializeIPO(
           addToList(GetActual->getMemory(), mIPOToGetActual);
     }
   }
-  //if (mIPOToActual.empty() && mIPOToGetActual.empty()) {
-  //  return true;
-  //}
   auto &SocketInfo{getAnalysis<AnalysisSocketImmutableWrapper>()};
   auto &Socket{SocketInfo->getActive()->second};
   auto RM{Socket.getAnalysis<AnalysisClientServerMatcherWrapper>()};
@@ -1108,8 +1105,12 @@ bool ClangDVMHSMParallelization::initializeIPO(
     dbgs() << "\n";
     dbgs() << "[DVMH SM]: disable IPO for: ";
     for (auto &&[F, Node] : functions())
-      if (auto I{mIPOMap.find(F)}; I == mIPOMap.end() || !I->get<bool>())
-        dbgs() << F->getName() << " ";
+      if (auto I{ mIPOMap.find(F) }; I == mIPOMap.end() || !I->get<bool>()) {
+        dbgs() << F->getName();
+        if (I != mIPOMap.end())
+          dbgs() << "(skip)";
+        dbgs() << " ";
+      }
     dbgs() << "\n";
     dbgs() << "[DVMH SM]: IPO, optimize accesses to ";
     dbgs() << "actual: ";
@@ -1179,7 +1180,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
                           SmallVectorImpl<VariableT> &ToOptimizeMemory) {
       for (PragmaData *PI : FromList)
         for (auto &Var : PI->getMemory()) {
-          assert(isa<DIGlobalVariable>(Var.get<MD>()->getVariable()) &&
+          assert(isa<DIGlobalVariable>(
+                     cast<DIEstimateMemory>(Var.get<MD>())->getVariable()) &&
                  "IPO is now implemented for global variables only!");
           auto CallerVar{findDIM(&**Var.get<MD>()->begin(), Var.get<AST>())};
           assert(CallerVar.get<MD>() &&
@@ -1242,8 +1244,11 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
                 Call->getCalledOperand()->stripPointerCasts())})
           collectInCallee(Call, Callee, IsFinal);
   };
-  assert(mReplacementFor.empty() && "Replacement stack must be empty!");
+  assert(!Level.is<Function *>() ||
+         mReplacementFor.empty() && "Replacement stack must be empty!");
   mReplacementFor.emplace_back();
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+                    << mReplacementFor.size() << ")\n");
   if (Level.is<Function *>()) {
     LLVM_DEBUG(dbgs() << "[DVMH SM]: process function "
                       << Level.get<Function *>()->getName() << "\n");
@@ -1256,12 +1261,16 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
                            "metadata-level alias tree for the function"
                         << F.getName() << "\n");
       mReplacementFor.pop_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       mIPORoot.invalidate();
       return false;
     }
     SmallVector<BasicBlock *, 8> OutermostBlocks;
     if (!OptimizeChildren) {
       mReplacementFor.emplace_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+                        << mReplacementFor.size() << ")\n");
     } else {
       assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
       if (!OptimizeAll || IPOInfoItr->get<bool>()) {
@@ -1293,6 +1302,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
         collectForIPO(mIPOToGetActual, mToGetActual);
       }
       mReplacementFor.emplace_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
       for (auto &DIM :
            make_range(ServerDIAT.memory_begin(), ServerDIAT.memory_end()))
@@ -1359,7 +1370,11 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
                         Call.second->getFunction(), true);
       }
       mReplacementFor.pop_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       return false;
     }
     assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
@@ -1688,7 +1703,11 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
     if (!needToOptimize(*Level.get<Function *>()).first) {
       for (auto *PL: mReplacementFor.back().get<Sibling>())
         PL->finalize();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
       return false;
     }
@@ -1777,6 +1796,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
       for (auto *PL: mReplacementFor.back().get<Sibling>())
         PL->finalize();
       mReplacementFor.pop_back();
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                        << mReplacementFor.size() << ")\n");
       return true;
     }
     for (auto *BB : Level.get<Loop *>()->blocks())
@@ -1841,6 +1862,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
       ToReplace->parent_insert(PL);
     }
   mReplacementFor.pop_back();
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                    << mReplacementFor.size() << ")\n");
   if (!Level.is<Function *>()) {
     for (auto *ToReplace : ConservativeReplacements)
       mReplacementFor.back().get<Sibling>().push_back(
@@ -1860,6 +1883,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
       }
     }
     mReplacementFor.pop_back();
+    LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+                      << mReplacementFor.size() << ")\n");
   }
   return true;
 }
