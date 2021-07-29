@@ -51,7 +51,6 @@
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
-#include <bcl/marray.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <clang/Basic/SourceManager.h>
@@ -102,14 +101,8 @@ void ClangSMParallelizationInfo::addAfterPass(
 }
 
 bool ClangSMParallelization::optimizeUpward(Loop &L,
-    const FunctionAnalysis &Provider) {
-  bool Optimize = true;
-  auto &F = *L.getHeader()->getParent();
-  if (!mRegions.empty() &&
-      std::none_of(mRegions.begin(), mRegions.end(),
-        [&L](const OptimizationRegion *R) { return R->contain(L); }))
-     Optimize = false;
-  return optimizeUpward(&L, L.begin(), L.end(), Provider, Optimize);
+                                            const FunctionAnalysis &Provider) {
+  return optimizeUpward(&L, L.begin(), L.end(), Provider);
 }
 
 bool ClangSMParallelization::findParallelLoops(Loop &L,
@@ -403,11 +396,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
                                          }))
       continue;
     // Check that current function is not reachable from any parallel region.
-    if (mParallelCallees.count(F) ||
-        llvm::any_of(mParallelCallees,
-                     [&Node, &Reachability](const auto &Parallel) {
-                       return Reachability[Parallel.second][Node.get<Id>()];
-                     })) {
+    if (isParallelCallee(*F, Node.get<Id>(), Reachability)) {
       LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: ignore function reachable from "
                            "parallel region "
                         << F->getName() << "\n");
@@ -419,42 +408,17 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
     findParallelLoops(F, LI.begin(), LI.end(), Provider, nullptr);
   }
-  for (auto &[F, Node] : mAdjacentList) {
-    if (Node.get<InCycle>() || !F || F->isIntrinsic() || F->isDeclaration() ||
+  if (!initializeIPO(M, Reachability))
+    return false;
+  for (auto &&[F, Node] : mAdjacentList) {
+    if (!F || F->isIntrinsic() || F->isDeclaration() ||
         hasFnAttr(*F, AttrKind::LibFunc))
       continue;
-    bool Optimize{true}, OptimizeChildren{true};
-    if (!mRegions.empty()) {
-      Optimize = OptimizeChildren = false;
-      for (const auto *R : mRegions) {
-        switch (R->contain(*F)) {
-          case OptimizationRegion::CS_No:
-          continue;
-          case OptimizationRegion::CS_Always:
-          case OptimizationRegion::CS_Condition:
-            Optimize = true;
-            [[fallthrough]];
-          case OptimizationRegion::CS_Child:
-            OptimizeChildren = true;
-            break;
-          default:
-            llvm_unreachable("Unkonwn region contain status!");
-        }
-        if (Optimize)
-          break;
-      }
-    }
-    if (!OptimizeChildren)
-      continue;
-    if (mParallelCallees.count(F) ||
-        llvm::any_of(mParallelCallees,
-                     [&Node, &Reachability](const auto &Parallel) {
-                       return Reachability[Parallel.second][Node.get<Id>()];
-                     }))
+    if (isParallelCallee(*F, Node.get<Id>(), Reachability))
       continue;
     auto Provider{analyzeFunction(*F)};
     auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
-    optimizeUpward(F, LI.begin(), LI.end(), Provider, Optimize);
+    optimizeUpward(F, LI.begin(), LI.end(), Provider);
   }
   return false;
 }
@@ -467,6 +431,37 @@ ClangSMParallelization::analyzeFunction(llvm::Function &F) {
     T = &Provider.get<std::remove_pointer_t<std::decay_t<decltype(T)>>>();
   });
   return Results;
+}
+
+std::pair<bool, bool>
+ClangSMParallelization::needToOptimize(const Function &F) const {
+  if (mRegions.empty())
+    return std::pair{true, true};
+  bool Optimize{false}, OptimizeChildren{false};
+  for (const auto *R : mRegions) {
+    switch (R->contain(F)) {
+    case OptimizationRegion::CS_No:
+      continue;
+    case OptimizationRegion::CS_Always:
+    case OptimizationRegion::CS_Condition:
+      Optimize = true;
+      [[fallthrough]];
+    case OptimizationRegion::CS_Child:
+      OptimizeChildren = true;
+      break;
+    default:
+      llvm_unreachable("Unkonwn region contain status!");
+    }
+    if (Optimize)
+      break;
+  }
+  return std::pair{Optimize, OptimizeChildren};
+}
+
+bool ClangSMParallelization::needToOptimize(const Loop &L) const {
+  if (mRegions.empty())
+    return true;
+  return any_of(mRegions, [&L](auto *R) { return R->contain(L); });
 }
 
 void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {

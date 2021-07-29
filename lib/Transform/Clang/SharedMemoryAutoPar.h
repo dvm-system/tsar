@@ -32,6 +32,7 @@
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <bcl/cell.h>
+#include <bcl/marray.h>
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/PointerUnion.h>
@@ -91,6 +92,7 @@ using FunctionAnalysis =
 /// This pass try to insert directives into a source code to obtain
 /// a parallel program for a shared memory.
 class ClangSMParallelization: public ModulePass, private bcl::Uncopyable {
+public:
   struct Id {};
   struct InCycle {};
   struct HasUnknownCalls {};
@@ -106,7 +108,6 @@ class ClangSMParallelization: public ModulePass, private bcl::Uncopyable {
                     bcl::tagged<bool, HasUnknownCalls>,
                     bcl::tagged<llvm::SmallSet<std::size_t, 16>, Adjacent>>>;
 
-public:
   ClangSMParallelization(char &ID);
 
   bool runOnModule(Module &M) override;
@@ -138,6 +139,14 @@ protected:
   virtual void optimizeLevel(PointerUnion<Loop *, Function *> Level,
       const FunctionAnalysis &Provider) {}
 
+  /// Initialize interprocedural optimization.
+  ///
+  /// \return `false` if optimization has to be omitted.
+  virtual bool initializeIPO(llvm::Module &M,
+                             bcl::marray<bool, 2> &Reachability) {
+    return false;
+  }
+
   /// Prepare level to upward optimization.
   ///
   /// Before the upward optimization levels in a function a traversed downward
@@ -166,9 +175,44 @@ protected:
 
   llvm::Function *getEntryPoint() noexcept { return mEntryPoint; }
 
-private:
-  /// Initialize provider before on the fly passes will be run on client.
-  void initializeProviderOnClient();
+  const AdjacentListT &functions() const noexcept { return mAdjacentList; }
+
+  // Return true if functions from a specified SCC might be called from an
+  // unknown external node.
+  bool hasExternalCalls(std::size_t Id) const {
+    return mExternalCalls.count(Id);
+  }
+
+  /// Return list of optimization regions.
+  llvm::ArrayRef<const tsar::OptimizationRegion *>
+  getOptimizationRegions() const {
+    return mRegions;
+  }
+
+  /// Check if a specified function should be optimized.
+  /// The first value is true if it is necessary to optimize the whole function.
+  /// The second value is true if at least part of functions (nested loops)
+  /// should be optimized.
+  std::pair<bool, bool> needToOptimize(const Function &F) const;
+
+  /// Return true if a specified loop should be optimized.
+  bool needToOptimize(const Loop &L) const;
+
+  /// Return true if a specified function is called from a parallel loop (may be
+  /// implicitly).
+  bool isParallelCallee(const Function &F, std::size_t Id,
+                        bcl::marray<bool, 2> &Reachability) const {
+    return mParallelCallees.count(&F) ||
+           llvm::any_of(mParallelCallees,
+                        [Id, &Reachability](const auto &Parallel) {
+                          return Reachability[Parallel.second][Id];
+                        });
+  }
+
+private :
+    /// Initialize provider before on the fly passes will be run on client.
+    void
+    initializeProviderOnClient();
 
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
@@ -192,12 +236,11 @@ private:
 
   template<class ItrT>
   bool optimizeUpward(PointerUnion<Loop *, Function *> Parent,
-      ItrT I, ItrT EI, const FunctionAnalysis &Provider, bool Optimize) {
-    if (Optimize) {
-      // We treat skipped levels as optimized ones.
-      if (!optimizeGlobalIn(Parent, Provider))
-        return true;
-    }
+      ItrT I, ItrT EI, const FunctionAnalysis &Provider) {
+    // We treat skipped levels as optimized ones.
+    if (!optimizeGlobalIn(Parent, Provider))
+      return true;
+    bool Optimize{true};
     for (; I != EI; ++I)
       Optimize &= optimizeUpward(**I, Provider);
     if (Optimize)

@@ -26,6 +26,7 @@
 #include "SharedMemoryAutoPar.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
@@ -55,8 +56,8 @@
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Dominators.h>
-
 
 using namespace clang;
 using namespace llvm;
@@ -240,6 +241,18 @@ class ClangDVMHSMParallelization : public ClangSMParallelization {
                           bcl::tagged<SmallVector<VariableT, 1>, VariableT>,
                           bcl::tagged<unsigned, Hierarchy>>>;
 
+  using IPOMap = DenseMap<
+      const Function *,
+      std::tuple<bool, SmallPtrSet<const Value *, 4>,
+                 SmallVector<PragmaActual *, 4>,
+                 SmallVector<PragmaGetActual *, 4>>,
+      DenseMapInfo<const Function *>,
+      TaggedDenseMapTuple<
+          bcl::tagged<const Function *, Function>, bcl::tagged<bool, bool>,
+          bcl::tagged<SmallPtrSet<const Value *, 4>, Value>,
+          bcl::tagged<SmallVector<PragmaActual *, 4>, PragmaActual>,
+          bcl::tagged<SmallVector<PragmaGetActual *, 4>, PragmaGetActual>>>;
+
 public:
   static char ID;
   ClangDVMHSMParallelization() : ClangSMParallelization(ID) {
@@ -250,6 +263,7 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     ClangSMParallelization::getAnalysisUsage(AU);
+    AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 
@@ -266,6 +280,9 @@ private:
   void optimizeLevel(PointerUnion<Loop *, Function *> Level,
     const FunctionAnalysis &Provider) override;
 
+  bool initializeIPO(llvm::Module &M,
+                     bcl::marray<bool, 2> &Reachability) override;
+
   bool optimizeGlobalIn(PointerUnion<Loop *, Function *> Level,
     const FunctionAnalysis &Provider) override;
 
@@ -273,15 +290,30 @@ private:
     const FunctionAnalysis &Provider) override;
 
   Parallelization mParallelizationInfo;
+
+  // Data structures for intraprocedural optimization
   RegionDataCache mToActual, mToGetActual;
   RegionDataReplacement mReplacementFor;
   SmallPtrSet<const DIAliasNode *, 8> mDistinctMemory;
+
+  // Data structures for interprocedural optimization.
+  DenseMap<const Value *, clang::VarDecl *> mIPOToActual, mIPOToGetActual;
+  IPOMap mIPOMap;
+  /// This directive is a stub which specifies in a replacement tree whether IPO
+  /// was successfull.
+  ///
+  /// Optimization is successfull if all descendant nodes {of the IPO root are
+  /// valid.
+  PragmaActual mIPORoot{false, false};
 };
 
 struct Insertion {
   using PragmaString = SmallString<128>;
   using PragmaList = SmallVector<std::tuple<ParallelItem *, PragmaString>, 2>;
   PragmaList Before, After;
+  TransformationContextBase *TfmCtx{nullptr};
+
+  explicit Insertion(TransformationContextBase *Ctx = nullptr) : TfmCtx{Ctx} {}
 };
 using LocationToPragmas = DenseMap<const Stmt *, Insertion>;
 } // namespace
@@ -906,6 +938,188 @@ void ClangDVMHSMParallelization::optimizeLevel(
   }
 }
 
+bool ClangDVMHSMParallelization::initializeIPO(
+    llvm::Module &M, bcl::marray<bool, 2> &Reachability) {
+  auto &GO{getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()};
+  auto addToList = [this, &DL = M.getDataLayout()](auto &Memory,
+                                                   auto &ToOptimize) {
+    for (auto &Var : Memory)
+      if (auto *DIEM{
+              dyn_cast_or_null<DIEstimateMemory>(Var.template get<MD>())};
+          DIEM && !DIEM->emptyBinding() && *DIEM->begin() &&
+          isa<GlobalVariable>(GetUnderlyingObject(*DIEM->begin(), DL, 0))) {
+        assert(DIEM->begin() + 1 == DIEM->end() &&
+               "Alias tree is corrupted: multiple binded globals!");
+        ToOptimize.try_emplace(*DIEM->begin(), Var.template get<AST>());
+      }
+  };
+  for (auto &PLocList : mParallelizationInfo) {
+    auto &LI{getAnalysis<LoopInfoWrapperPass>(
+                 *PLocList.get<BasicBlock>()->getParent())
+                 .getLoopInfo()};
+    if (auto *L{LI.getLoopFor(PLocList.get<BasicBlock>())}) {
+      if (!needToOptimize(*L))
+        continue;
+    } else if (!needToOptimize(*PLocList.get<BasicBlock>()->getParent())
+                    .first) {
+      continue;
+    }
+    for (auto &PLoc : PLocList.get<ParallelLocation>()) {
+      for (auto &PI : PLoc.Entry)
+        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())})
+          addToList(Actual->getMemory(), mIPOToActual);
+        else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())})
+          addToList(GetActual->getMemory(), mIPOToGetActual);
+      for (auto &PI : PLoc.Exit)
+        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())})
+          addToList(Actual->getMemory(), mIPOToActual);
+        else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())})
+          addToList(GetActual->getMemory(), mIPOToGetActual);
+    }
+  }
+  //if (mIPOToActual.empty() && mIPOToGetActual.empty()) {
+  //  return true;
+  //}
+  auto &SocketInfo{getAnalysis<AnalysisSocketImmutableWrapper>()};
+  auto &Socket{SocketInfo->getActive()->second};
+  auto RM{Socket.getAnalysis<AnalysisClientServerMatcherWrapper>()};
+  auto &ClientToServer{**RM->value<AnalysisClientServerMatcherWrapper *>()};
+  bool InRecursion{false};
+  auto Range{reverse(functions())};
+  for (auto FuncItr = Range.begin(), FuncItrE = Range.end();
+       FuncItr != FuncItrE; ++FuncItr) {
+    auto &&[F, Node] = *FuncItr;
+    if (F->isIntrinsic() || hasFnAttr(*F, AttrKind::LibFunc))
+      continue;
+    if (F->isDeclaration()) {
+      mIPOToActual.clear();
+      mIPOToGetActual.clear();
+      mIPORoot.invalidate();
+      break;
+    }
+    auto [OptimizeAll, OptimizeChildren] = needToOptimize(*F);
+    if (!OptimizeChildren)
+      continue;
+    if (isParallelCallee(*F, Node.get<Id>(), Reachability))
+      continue;
+    auto [ToIgnoreItr, IsNew] = mIPOMap.try_emplace(F);
+    if (!GO.NoExternalCalls && hasExternalCalls(Node.template get<Id>()) ||
+        Node.template get<InCycle>() || !OptimizeAll ||
+        any_of(F->users(), [](auto *U) { return !isa<CallBase>(U); }))
+      ToIgnoreItr->get<bool>() = false;
+    else if (IsNew)
+      ToIgnoreItr->get<bool>() = true;
+    if (!InRecursion && Node.template get<InCycle>()) {
+      auto StashItr{FuncItr};
+      for (; FuncItr != FuncItrE && FuncItr->second.template get<InCycle>();
+           ++FuncItr)
+        for (auto &I : instructions(*FuncItr->first))
+          for (auto &Op : I.operands()) {
+            auto Ptr{GetUnderlyingObject(Op.get(), M.getDataLayout(), 0)};
+            if (!isa<GlobalVariable>(Ptr) ||
+                (!mIPOToActual.count(Ptr) && !mIPOToGetActual.count(Ptr)))
+              continue;
+            if (auto *Call{dyn_cast<CallBase>(&I)};
+                Call && Call->isArgOperand(&Op))
+              if (auto Callee{dyn_cast<Function>(
+                      Call->getCalledOperand()->stripPointerCasts())}) {
+                if (auto SCCInfoItr{functions().find(Callee)};
+                    SCCInfoItr == functions().end() ||
+                    SCCInfoItr->second.get<Id>() != Node.get<Id>())
+                  continue;
+                Callee = &cast<Function>(*ClientToServer[Callee]);
+                if (Callee->arg_size() > Call->getArgOperandNo(&Op) &&
+                    Callee->getArg(Call->getArgOperandNo(&Op))
+                        ->hasAttribute(Attribute::NoCapture))
+                  ToIgnoreItr->get<Value>().insert(Ptr);
+              }
+          }
+      FuncItr = StashItr;
+      for (; FuncItr != FuncItrE && FuncItr->second.template get<InCycle>();
+           ++FuncItr) {
+        auto IPOInfoItr{mIPOMap.try_emplace(FuncItr->first).first};
+        IPOInfoItr->get<Value>() = ToIgnoreItr->get<Value>();
+      }
+      FuncItr = StashItr;
+      InRecursion = true;
+    } else if (InRecursion && !Node.template get<InCycle>()) {
+      InRecursion = false;
+    }
+    for (auto &I : instructions(F)) {
+      if (isa<LoadInst>(I))
+        continue;
+      for (auto &Op: I.operands()) {
+        auto Ptr{GetUnderlyingObject(Op.get(), M.getDataLayout(), 0)};
+        if (!isa<GlobalVariable>(Ptr) ||
+            (!mIPOToActual.count(Ptr) && !mIPOToGetActual.count(Ptr)))
+          continue;
+        if (auto *SI{dyn_cast<StoreInst>(&I)}) {
+          if (SI->getValueOperand() == Op) {
+            mIPOToActual.erase(Ptr);
+            mIPOToGetActual.erase(Ptr);
+          }
+        } else if (auto *Call{dyn_cast<CallBase>(&I)}) {
+            if (Call->isArgOperand(&Op)) {
+              if (auto Callee{dyn_cast<Function>(
+                      Call->getCalledOperand()->stripPointerCasts())}) {
+                Callee = &cast<Function>(*ClientToServer[Callee]);
+                if (Callee->arg_size() > Call->getArgOperandNo(&Op) &&
+                    Callee->getArg(Call->getArgOperandNo(&Op))
+                         ->hasAttribute(Attribute::NoCapture)) {
+                  if (!Callee->isDeclaration()) {
+                    auto [I, IsNew] = mIPOMap.try_emplace(Callee);
+                    if (IsNew)
+                      I->get<Value>() = ToIgnoreItr->get<Value>();
+                    I->get<Value>().insert(Ptr);
+                  }
+                  continue;
+                }
+              }
+            }
+          mIPOToActual.erase(Ptr);
+          mIPOToGetActual.erase(Ptr);
+        } else if (!isa<BitCastInst>(I) && !isa<GetElementPtrInst>(I)) {
+          mIPOToActual.erase(Ptr);
+          mIPOToGetActual.erase(Ptr);
+        }
+      }
+    }
+  }
+  LLVM_DEBUG(
+    dbgs() << "[DVMH SM]: enable IPO for: ";
+    for (auto &&[F, Node] : functions())
+      if (auto I{mIPOMap.find(F)}; I != mIPOMap.end() && I->get<bool>()) {
+        dbgs() << F->getName() << " ";
+        if (!I->get<Value>().empty()) {
+          dbgs() << "(exclude:";
+          for (auto *V : I->get<Value>()) {
+            if (auto VarItr{mIPOToActual.find(V)}; VarItr != mIPOToActual.end())
+              dbgs() << " " << VarItr->second->getName();
+            else if (auto VarItr{mIPOToGetActual.find(V)};
+                     VarItr != mIPOToGetActual.end())
+              dbgs() << " " << VarItr->second->getName();
+          }
+          dbgs() << ") ";
+        }
+      }
+    dbgs() << "\n";
+    dbgs() << "[DVMH SM]: disable IPO for: ";
+    for (auto &&[F, Node] : functions())
+      if (auto I{mIPOMap.find(F)}; I == mIPOMap.end() || !I->get<bool>())
+        dbgs() << F->getName() << " ";
+    dbgs() << "\n";
+    dbgs() << "[DVMH SM]: IPO, optimize accesses to ";
+    dbgs() << "actual: ";
+    for (auto [V, D] : mIPOToActual)
+      dbgs() << D->getName() << " ";
+    dbgs() << "get_actual: ";
+    for (auto [V, D] : mIPOToGetActual)
+      dbgs() << D->getName() << " ";
+    dbgs() << "\n";
+  );
+  return true;
+  }
+
 bool ClangDVMHSMParallelization::optimizeGlobalIn(
     PointerUnion<Loop *, Function *> Level, const FunctionAnalysis &Provider) {
   LLVM_DEBUG(
@@ -916,6 +1130,10 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
   auto &F{Level.is<Function *>()
               ? *Level.get<Function *>()
               : *Level.get<Loop *>()->getHeader()->getParent()};
+  auto [OptimizeAll, OptimizeChildren] = needToOptimize(F);
+  auto IPOInfoItr{mIPOMap.find(&F)};
+  if (IPOInfoItr == mIPOMap.end() && OptimizeChildren)
+    return false;
   auto &SocketInfo{**Provider.value<AnalysisSocketImmutableWrapper *>()};
   auto &Socket{SocketInfo.getActive()->second};
   auto RM{Socket.getAnalysis<AnalysisClientServerMatcherWrapper,
@@ -925,99 +1143,257 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
   auto &CSMemoryMatcher{
       *(**RM->value<ClonedDIMemoryMatcherWrapper *>())[ServerF]};
   auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
+  auto findDIM = [&F, &Provider](const Value *V, auto *D) -> VariableT {
+    assert(V && "Value must not be null!");
+    auto &AT{Provider.value<EstimateMemoryPass *>()->getAliasTree()};
+    auto &DIAT{Provider.value<DIEstimateMemoryPass *>()->getAliasTree()};
+    auto &DT{Provider.value<DominatorTreeWrapperPass *>()->getDomTree()};
+    const auto &DL{F.getParent()->getDataLayout()};
+    auto *EM{AT.find(MemoryLocation(V, LocationSize::precise(0)))};
+    VariableT Var;
+    Var.get<MD>() = nullptr;
+    Var.get<AST>() = D;
+    if (!EM)
+      return Var;
+    auto RawDIM{getRawDIMemoryIfExists(*EM->getTopLevelParent(), F.getContext(),
+                                       DL, DT)};
+    assert(RawDIM && "Accessed variable must be presented in alias tree!");
+    auto DIMOriginItr{DIAT.find(*RawDIM)};
+    assert(DIMOriginItr != DIAT.memory_end() &&
+           "Existing memory must be presented in metadata alias tree.");
+    Var.get<MD>() = &*DIMOriginItr;
+    return Var;
+  };
+  auto collectInCallee = [this, &CSMemoryMatcher, &findDIM](Instruction *Call,
+                                                            Function *Callee,
+                                                            bool IsFinal) {
+    auto IPOInfoItr{mIPOMap.find(Callee)};
+    if (IPOInfoItr == mIPOMap.end() || !IPOInfoItr->get<bool>())
+      return;
+    auto sortMemory = [this, &CSMemoryMatcher, &findDIM](
+                          auto &FromList, auto &LocalToOptimize, bool IsFinal,
+                          SmallVectorImpl<VariableT> &FinalMemory,
+                          SmallVectorImpl<VariableT> &ToOptimizeMemory) {
+      for (PragmaData *PI : FromList)
+        for (auto &Var : PI->getMemory()) {
+          assert(isa<DIGlobalVariable>(Var.get<MD>()->getVariable()) &&
+                 "IPO is now implemented for global variables only!");
+          auto CallerVar{findDIM(&**Var.get<MD>()->begin(), Var.get<AST>())};
+          assert(CallerVar.get<MD>() &&
+                 "Metadata-level memory location must not be null!");
+          if (!IsFinal) {
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*CallerVar.get<MD>())};
+            auto I{LocalToOptimize.find(DIMI->get<Clone>()->getAliasNode())};
+            if (I != LocalToOptimize.end()) {
+              I->template get<Hierarchy>() = mReplacementFor.size() - 1;
+              ToOptimizeMemory.push_back(std::move(CallerVar));
+              continue;
+            }
+          }
+          FinalMemory.push_back(std::move(CallerVar));
+        }
+    };
+    auto addPragma = [this, Call](auto &&Type, bool OnEntry, bool IsFinal,
+                                  ArrayRef<VariableT> Memory) -> PragmaData * {
+      auto Ref{mParallelizationInfo.emplace<std::decay_t<decltype(Type)>>(
+          Call->getParent(), Call, OnEntry /*OnEntry*/, false /*IsRequired*/,
+          IsFinal /*IsFinal*/)};
+      for (auto &Var : Memory)
+        cast<PragmaData>(Ref)->getMemory().insert(std::move(Var));
+      mIPORoot.child_insert(Ref.getUnchecked());
+      Ref.getUnchecked()->parent_insert(&mIPORoot);
+      return cast<PragmaData>(Ref);
+    };
+    if (!IPOInfoItr->get<PragmaActual>().empty()) {
+      SmallVector<VariableT, 4> FinalMemory, ToOptimizeMemory;
+      sortMemory(IPOInfoItr->get<PragmaActual>(), mToActual, IsFinal,
+                 FinalMemory, ToOptimizeMemory);
+      if (!FinalMemory.empty())
+        addPragma(*IPOInfoItr->get<PragmaActual>().front(), true, true,
+                  FinalMemory);
+      if (!ToOptimizeMemory.empty())
+        for (auto &Var : ToOptimizeMemory) {
+          mReplacementFor.back().get<Sibling>().push_back(
+              addPragma(*IPOInfoItr->get<PragmaActual>().front(), true, false,
+                        makeArrayRef(Var)));
+        }
+    }
+    if (!IPOInfoItr->get<PragmaGetActual>().empty()) {
+      SmallVector<VariableT, 4> FinalMemory, ToOptimizeMemory;
+      sortMemory(IPOInfoItr->get<PragmaActual>(), mToGetActual, IsFinal,
+                 FinalMemory, ToOptimizeMemory);
+      if (!FinalMemory.empty())
+        addPragma(*IPOInfoItr->get<PragmaGetActual>().front(), false, true,
+                  FinalMemory);
+      if (!ToOptimizeMemory.empty())
+        for (auto &Var : ToOptimizeMemory)
+          mReplacementFor.back().get<Sibling>().push_back(
+              addPragma(*IPOInfoItr->get<PragmaGetActual>().front(), false,
+                        false, makeArrayRef(Var)));
+    }
+  };
+  auto collectInCallees = [&collectInCallee](BasicBlock &BB, bool IsFinal) {
+    for (auto &I : BB)
+      if (auto *Call{dyn_cast<CallBase>(&I)})
+        if (auto Callee{dyn_cast<Function>(
+                Call->getCalledOperand()->stripPointerCasts())})
+          collectInCallee(Call, Callee, IsFinal);
+  };
+  assert(mReplacementFor.empty() && "Replacement stack must be empty!");
   mReplacementFor.emplace_back();
   if (Level.is<Function *>()) {
+    LLVM_DEBUG(dbgs() << "[DVMH SM]: process function "
+                      << Level.get<Function *>()->getName() << "\n");
     mToActual.clear();
     mToGetActual.clear();
     mDistinctMemory.clear();
     auto RF{Socket.getAnalysis<DIEstimateMemoryPass>(F)};
-    if (!RF)
+    if (!RF) {
+      LLVM_DEBUG(dbgs() << "[DVMH SM]: disable IPO due to absence of "
+                           "metadata-level alias tree for the function"
+                        << F.getName() << "\n");
+      mReplacementFor.pop_back();
+      mIPORoot.invalidate();
       return false;
-    auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
-    for (auto &DIM :
-         make_range(ServerDIAT.memory_begin(), ServerDIAT.memory_end()))
-      if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)};
-          DIUM && DIUM->isDistinct())
-        mDistinctMemory.insert(DIUM->getAliasNode());
-    auto collectForParallelBlock = [this,
-                                    &CSMemoryMatcher](ParallelBlock &PB,
-                                                      bool IsExplicitlyNested) {
-      for (auto &PI : PB) {
-        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())}) {
-          for (auto &Var : Actual->getMemory()) {
-            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-            auto I{mToActual.try_emplace(DIMI->get<Clone>()->getAliasNode())
-                       .first};
-            if (!is_contained(I->get<VariableT>(), Var))
-              I->get<VariableT>().push_back(Var);
-            if (IsExplicitlyNested && !Actual->isFinal() &&
-                !Actual->isRequired())
-              I->get<Hierarchy>() = mReplacementFor.size() - 1;
-          }
-          if (IsExplicitlyNested && !Actual->isFinal() && !Actual->isRequired())
-            mReplacementFor.back().get<Sibling>().push_back(Actual);
-        } else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())}) {
-          for (auto &Var : GetActual->getMemory()) {
-            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-            auto I{mToGetActual.try_emplace(DIMI->get<Clone>()->getAliasNode())
-                       .first};
-            if (!is_contained(I->get<VariableT>(), Var))
-              I->get<VariableT>().push_back(Var);
-            if (IsExplicitlyNested && !GetActual->isFinal() &&
-                !GetActual->isRequired())
-              I->get<Hierarchy>() = mReplacementFor.size() - 1;
-          }
-          if (IsExplicitlyNested && !GetActual->isFinal() &&
-              !GetActual->isRequired())
-            mReplacementFor.back().get<Sibling>().push_back(GetActual);
-        }
-      }
-    };
-    for (auto &BB : F) {
-      auto *L{LI.getLoopFor(&BB)};
-      if (auto ParallelItr{mParallelizationInfo.find(&BB)};
-          ParallelItr != mParallelizationInfo.end())
-        for (auto &PL : ParallelItr->get<ParallelLocation>()) {
-          bool IsExplicitlyNested{!L || L && PL.Anchor.is<MDNode *>() &&
-                                            PL.Anchor.get<MDNode *>() ==
-                                                L->getLoopID() &&
-                                            !L->getParentLoop()};
-          collectForParallelBlock(PL.Exit, IsExplicitlyNested);
-          collectForParallelBlock(PL.Entry, IsExplicitlyNested);
-        }
     }
-    LLVM_DEBUG(
-        dbgs() << "[DVMH SM]: number of directives to replace at a level "
-               << mReplacementFor.size() << " is "
-               << mReplacementFor.back().get<Sibling>().size() << "\n");
-    // We go downward only if there are directives to optimize.
-    return !(mToActual.empty() && mToGetActual.empty());
+    SmallVector<BasicBlock *, 8> OutermostBlocks;
+    if (!OptimizeChildren) {
+      mReplacementFor.emplace_back();
+    } else {
+      assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
+      if (!OptimizeAll || IPOInfoItr->get<bool>()) {
+        // We will add actualization directives for variables which are not
+        // explicitly accessed in the current function, only if IPO is possible
+        // or the function is partially located in an optimization region. To
+        // ensure IPO is active we will later add corresponding edges between
+        // the IPO root node and corresponding directives. Thus, we remember the
+        // IPO root node as a replacement target here.
+        mReplacementFor.back().get<Sibling>().push_back(&mIPORoot);
+        auto collectForIPO = [this, &CSMemoryMatcher, IPOInfoItr, &findDIM](
+                                 auto &IPOToOptimize, auto &LocalToOptimize) {
+          for (auto [V, D] : IPOToOptimize) {
+            if (IPOInfoItr->get<Value>().contains(V))
+              continue;
+            VariableT Var{findDIM(V, D)};
+            if (!Var.get<MD>())
+              continue;
+            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+            auto I{
+                LocalToOptimize.try_emplace(DIMI->get<Clone>()->getAliasNode())
+                    .first};
+            if (!is_contained(I->template get<VariableT>(), Var))
+              I->template get<VariableT>().push_back(std::move(Var));
+            I->template get<Hierarchy>() = mReplacementFor.size() - 1;
+          }
+        };
+        collectForIPO(mIPOToActual, mToActual);
+        collectForIPO(mIPOToGetActual, mToGetActual);
+      }
+      mReplacementFor.emplace_back();
+      auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
+      for (auto &DIM :
+           make_range(ServerDIAT.memory_begin(), ServerDIAT.memory_end()))
+        if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)};
+            DIUM && DIUM->isDistinct())
+          mDistinctMemory.insert(DIUM->getAliasNode());
+      auto collectInParallelBlock =
+          [this, &CSMemoryMatcher](ParallelBlock &PB, bool IsExplicitlyNested) {
+            auto collect = [this, &CSMemoryMatcher, IsExplicitlyNested](
+                               PragmaData *PD, auto &LocalToOptimize) {
+              if (PD->isFinal() || PD->isRequired())
+                return;
+              for (auto &Var : PD->getMemory()) {
+                auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+                auto [I, IsNew] = LocalToOptimize.try_emplace(
+                    DIMI->get<Clone>()->getAliasNode());
+                if (!is_contained(I->template get<VariableT>(), Var))
+                  I->template get<VariableT>().push_back(Var);
+                if (IsNew || IsExplicitlyNested)
+                  I->template get<Hierarchy>() = mReplacementFor.size() - 1;
+              }
+              if (IsExplicitlyNested)
+                mReplacementFor.back().get<Sibling>().push_back(PD);
+            };
+            for (auto &PI : PB)
+              if (auto *Actual{dyn_cast<PragmaActual>(PI.get())})
+                collect(Actual, mToActual);
+              else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())})
+                collect(GetActual, mToGetActual);
+          };
+      for (auto &BB : F) {
+        auto *L{LI.getLoopFor(&BB)};
+        if (!L)
+          OutermostBlocks.push_back(&BB);
+        if (auto ParallelItr{mParallelizationInfo.find(&BB)};
+            ParallelItr != mParallelizationInfo.end())
+          for (auto &PL : ParallelItr->get<ParallelLocation>()) {
+            bool IsExplicitlyNested{!L || L && PL.Anchor.is<MDNode *>() &&
+                                              PL.Anchor.get<MDNode *>() ==
+                                                  L->getLoopID() &&
+                                              !L->getParentLoop()};
+            collectInParallelBlock(PL.Exit, IsExplicitlyNested);
+            collectInParallelBlock(PL.Entry, IsExplicitlyNested);
+          }
+      }
+    }
+    if (mToActual.empty() && mToGetActual.empty()) {
+      LLVM_DEBUG(if (!OptimizeChildren) dbgs()
+                 << "[DVMH SM]: optimize region boundary function "
+                 << F.getName() << "\n");
+      // If the  current function is outside optimization regions
+      // (OptimizeChildrent == true), we extract actual/get_actual directives
+      // from callees and surround corresponding calls.
+      // We do the same if there is no memory to optimize in the current
+      // function.
+      auto &CG{getAnalysis<CallGraphWrapperPass>().getCallGraph()};
+      for (auto Call : *CG[&F]) {
+        if (!Call.second->getFunction() || !Call.first ||
+            !isa_and_nonnull<Instruction>(*Call.first))
+          continue;
+        if (!needToOptimize(*Call.second->getFunction()).first)
+          continue;
+        collectInCallee(cast<Instruction>(*Call.first),
+                        Call.second->getFunction(), true);
+      }
+      mReplacementFor.pop_back();
+      mReplacementFor.pop_back();
+      return false;
+    }
+    assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
+    // Fetch directives from callees if IPO is disabled for the current
+    // function.
+    if (!IPOInfoItr->get<bool>())
+      for (auto *BB : OutermostBlocks) {
+        collectInCallees(*BB, !OptimizeAll);
+      }
+      LLVM_DEBUG(
+          dbgs() << "[DVMH SM]: number of directives to replace at a level "
+                 << mReplacementFor.size() << " is "
+                 << mReplacementFor.back().get<Sibling>().size() << "\n");
+    return true;
   }
+  assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
   if (Level.is<Loop *>()) {
     auto initializeReplacementLevel = [this,
                                        &CSMemoryMatcher](ParallelBlock &PB) {
-      for (auto &PI : PB) {
-        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())}) {
-          if (Actual->isFinal() || Actual->isRequired())
-            continue;
-          for (auto &Var : Actual->getMemory()) {
-            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-            auto I{mToActual.find(DIMI->get<Clone>()->getAliasNode())};
-            I->get<Hierarchy>() = mReplacementFor.size() - 1;
-          }
-          mReplacementFor.back().get<Sibling>().push_back(Actual);
-        } else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())}) {
-          if (GetActual->isFinal() || GetActual->isRequired())
-            continue;
-          for (auto &Var : GetActual->getMemory()) {
-            auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
-            auto I{mToGetActual.find(DIMI->get<Clone>()->getAliasNode())};
-            I->get<Hierarchy>() = mReplacementFor.size() - 1;
-          }
-          mReplacementFor.back().get<Sibling>().push_back(GetActual);
+      auto initHierarchy = [this, CSMemoryMatcher](PragmaData *PD,
+                                                   auto &LocalToOptimize) {
+        if (PD->isFinal() || PD->isRequired())
+          return;
+        for (auto &Var : PD->getMemory()) {
+          auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
+          auto I{LocalToOptimize.find(DIMI->get<Clone>()->getAliasNode())};
+          I->template get<Hierarchy>() = mReplacementFor.size() - 1;
         }
-      }
+        mReplacementFor.back().get<Sibling>().push_back(PD);
+      };
+      for (auto &PI : PB)
+        if (auto *Actual{dyn_cast<PragmaActual>(PI.get())})
+          initHierarchy(Actual, mToActual);
+        else if (auto *GetActual{dyn_cast<PragmaGetActual>(PI.get())})
+          initHierarchy(GetActual, mToGetActual);
     };
+    bool NeedToOptimize{needToOptimize(*Level.get<Loop *>())};
     for (auto *BB : Level.get<Loop *>()->blocks()) {
       auto *L{LI.getLoopFor(BB)};
       assert(L && "At least one loop must contain the current basic block!");
@@ -1034,6 +1410,10 @@ bool ClangDVMHSMParallelization::optimizeGlobalIn(
             initializeReplacementLevel(PL.Exit);
           }
         }
+      // Fetch directives from callees if IPO is disabled for the current
+      // function.
+      if (Level.get<Loop *>() == L && !IPOInfoItr->get<bool>())
+        collectInCallees(*BB, !NeedToOptimize);
     }
   }
   LLVM_DEBUG(dbgs() << "[DVMH SM]: number of directives to replace at a level "
@@ -1048,6 +1428,8 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
   auto &F{Level.is<Function *>()
               ? *Level.get<Function *>()
               : *Level.get<Loop *>()->getHeader()->getParent()};
+  auto IPOInfoItr{mIPOMap.find(&F)};
+  assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
   auto &SocketInfo{**Provider.value<AnalysisSocketImmutableWrapper *>()};
   auto &Socket{SocketInfo.getActive()->second};
   auto RM{Socket.getAnalysis<AnalysisClientServerMatcherWrapper,
@@ -1081,9 +1463,61 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
     return false;
   auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
   SpanningTreeRelation<const DIAliasTree *> ServerSTR{&ServerDIAT};
+  auto initPragmaData = [this, &DL = F.getParent()->getDataLayout(),
+                         IPOInfoItr](auto &Data, auto &IPOVars,
+                                     IPOMap::iterator IPOCalleeItr,
+                                     PragmaData &D) {
+    bool ActiveIPO{IPOCalleeItr != mIPOMap.end() && IPOCalleeItr->get<bool>()};
+    bool IPOVariablesOnly{true};
+    for (auto &Var : Data.template get<VariableT>()) {
+      // Check whether this variable participates in IPO.
+      auto IsIPOVar{false};
+      if (auto MH{Var.template get<MD>()}; MH && !MH->emptyBinding())
+        if (auto BindItr{MH->begin()}; *BindItr)
+          if (auto Ptr{GetUnderlyingObject(*BindItr, DL, 0)};
+              IPOVars.count(Ptr) && (IPOCalleeItr == mIPOMap.end() ||
+                                     !IPOCalleeItr->get<Value>().count(Ptr)))
+            IsIPOVar = true;
+      // Do not actualize a variable accessed in a callee if it is not
+      // directly accessed in a function and can be optimized inside callee.
+      // If IPO is enabled this variable will be actualized separately.
+      if (IsIPOVar && ActiveIPO && Data.template get<Hierarchy>() == 0)
+        continue;
+      IPOVariablesOnly &= IsIPOVar;
+      D.getMemory().insert(Var);
+    }
+    if (D.getMemory().empty()) {
+      D.skip();
+      return;
+    }
+    mReplacementFor[Data.template get<Hierarchy>()]
+        .template get<Hierarchy>()
+        .push_back(&D);
+    if (ActiveIPO && IPOVariablesOnly) {
+      assert(Data.template get<Hierarchy>() != 0 &&
+             "Cycle in a replacement tree!");
+      if (IPOInfoItr->get<bool>()) {
+        // Do not attach this directive to callee if IPO is possible.
+        D.child_insert(&mIPORoot);
+        mIPORoot.parent_insert(&D);
+      } else {
+        // If IPO is disabled for the current function, then this directive is
+        // not necessary. If IPO is enabled for the entire progragram, another
+        // direcitve has been already inserted instead. If IPO is disabled for
+        // the entire program the intraprocedural optimization will be disabled
+        // for this function as well (limitation of the current implementation),
+        // so this directive is redundant.
+        D.skip();
+      }
+    } else {
+      D.finalize();
+    }
+  };
   auto addGetActualIf =
-      [this, &ServerSTR](Instruction &I, const DIAliasNode *AliasWith,
-                         SmallPtrSetImpl<const DIAliasNode *> &InsertedList) {
+      [this, &ServerSTR,
+       &initPragmaData](Instruction &I, const DIAliasNode *AliasWith,
+                        IPOMap::iterator IPOCalleeItr,
+                        SmallPtrSetImpl<const DIAliasNode *> &InsertedList) {
         for (auto &Data : mToGetActual) {
           if (InsertedList.count(Data.get<DIAliasNode>()) ||
               ServerSTR.isUnreachable(AliasWith, Data.get<DIAliasNode>()))
@@ -1091,28 +1525,26 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
           InsertedList.insert(Data.get<DIAliasNode>());
           auto GetActualRef{mParallelizationInfo.emplace<PragmaGetActual>(
               I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
-              true /*IsFinal*/)};
-          for (auto &Var : Data.get<VariableT>())
-            cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
-          mReplacementFor[Data.get<Hierarchy>()].get<Hierarchy>().push_back(
-              GetActualRef.getUnchecked());
+              false /*IsFinal*/)};
+          initPragmaData(Data, mIPOToGetActual, IPOCalleeItr,
+                         *cast<PragmaData>(GetActualRef));
         }
       };
   auto addTransferToWrite =
-      [this, &ServerSTR, &addGetActualIf](
+      [this, &ServerSTR, &addGetActualIf, &initPragmaData](
           Instruction &I, const DIAliasNode *CurrentAN,
+          IPOMap::iterator IPOCalleeItr,
           SmallPtrSetImpl<const DIAliasNode *> &InsertedGetActuals) {
         for (auto &Data : mToActual) {
           if (ServerSTR.isUnreachable(CurrentAN, Data.get<DIAliasNode>()))
             continue;
           auto ActualRef{mParallelizationInfo.emplace<PragmaActual>(
               I.getParent(), &I, false /*OnEntry*/, false /*IsRequired*/,
-              true /*IsFinal*/)};
-          for (auto &Var : Data.get<VariableT>())
-            cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
-          mReplacementFor[Data.get<Hierarchy>()].get<Hierarchy>().push_back(
-              ActualRef.getUnchecked());
-          addGetActualIf(I, Data.get<DIAliasNode>(), InsertedGetActuals);
+              false /*IsFinal*/)};
+          initPragmaData(Data, mIPOToActual, IPOCalleeItr,
+                         *cast<PragmaData>(ActualRef));
+          addGetActualIf(I, Data.get<DIAliasNode>(), IPOCalleeItr,
+                         InsertedGetActuals);
         }
       };
   auto processBB = [this, Level, &ParallelLoops, &TLI, &CSMemoryMatcher,
@@ -1124,13 +1556,19 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         !(!L && Level.is<Function *>() || L && Level.dyn_cast<Loop *>() == L))
       return;
     for (auto &I : BB) {
+      auto IPOCalleeItr{mIPOMap.end()};
+      if (auto Call{dyn_cast<CallBase>(&I)})
+        if (auto Callee{llvm::dyn_cast<Function>(
+                Call->getCalledOperand()->stripPointerCasts())})
+          IPOCalleeItr = mIPOMap.find(Callee);
       SmallPtrSet<const DIAliasNode *, 1> InsertedGetActuals;
       for_each_memory(
           I, TLI,
           [this, &Level, &ParallelLoops, &Provider, &CSMemoryMatcher,
-           &addGetActualIf, &addTransferToWrite, &InsertedGetActuals](
-              Instruction &I, MemoryLocation &&Loc, unsigned OpIdx,
-              AccessInfo IsRead, AccessInfo IsWrite) {
+           IPOCalleeItr, &addGetActualIf, &addTransferToWrite,
+           &InsertedGetActuals](Instruction &I, MemoryLocation &&Loc,
+                                unsigned OpIdx, AccessInfo IsRead,
+                                AccessInfo IsWrite) {
             if (IsRead == AccessInfo::No && IsWrite == AccessInfo::No)
               return;
             auto &AT{Provider.value<EstimateMemoryPass *>()->getAliasTree()};
@@ -1147,9 +1585,9 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             if (!RawDIM) {
               for (auto *AN : mDistinctMemory) {
                 if (IsWrite != AccessInfo::No)
-                  addTransferToWrite(I, AN, InsertedGetActuals);
+                  addTransferToWrite(I, AN, IPOCalleeItr, InsertedGetActuals);
                 if (IsRead != AccessInfo::No)
-                  addGetActualIf(I, AN, InsertedGetActuals);
+                  addGetActualIf(I, AN, IPOCalleeItr, InsertedGetActuals);
               }
               return;
             }
@@ -1176,12 +1614,12 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
               // parallel loop which post-dominates induction variable access.
               if (anyLoopPostDominates(&*DIMItr, I.getParent()))
                 return;
-              addTransferToWrite(I, CurrentAN, InsertedGetActuals);
+              addTransferToWrite(I, CurrentAN, IPOCalleeItr, InsertedGetActuals);
             }
             if (IsRead != AccessInfo::No)
-              addGetActualIf(I, CurrentAN, InsertedGetActuals);
+              addGetActualIf(I, CurrentAN, IPOCalleeItr, InsertedGetActuals);
           },
-          [this, &Provider, &CSMemoryMatcher, &addGetActualIf,
+          [this, &Provider, &CSMemoryMatcher, IPOCalleeItr, &addGetActualIf,
            &addTransferToWrite, &InsertedGetActuals](
               Instruction &I, AccessInfo IsRead, AccessInfo IsWrite) {
             if (IsRead == AccessInfo::No && IsWrite == AccessInfo::No)
@@ -1198,9 +1636,9 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             if (!RawDIM) {
               for (auto *AN : mDistinctMemory) {
                 if (IsWrite != AccessInfo::No)
-                  addTransferToWrite(I, AN, InsertedGetActuals);
+                  addTransferToWrite(I, AN, IPOCalleeItr, InsertedGetActuals);
                 if (IsRead != AccessInfo::No)
-                  addGetActualIf(I, AN, InsertedGetActuals);
+                  addGetActualIf(I, AN, IPOCalleeItr, InsertedGetActuals);
               }
               return;
             }
@@ -1211,16 +1649,15 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
             DIAliasNode *CurrentAN{
                 CSMemoryMatchItr->get<Clone>()->getAliasNode()};
             if (IsWrite != AccessInfo::No)
-              addTransferToWrite(I, CurrentAN, InsertedGetActuals);
+              addTransferToWrite(I, CurrentAN, IPOCalleeItr,
+                                 InsertedGetActuals);
             if (IsRead != AccessInfo::No)
-              addGetActualIf(I, CurrentAN, InsertedGetActuals);
+              addGetActualIf(I, CurrentAN, IPOCalleeItr, InsertedGetActuals);
           });
     }
   };
   LLVM_DEBUG(dbgs() << "[DVMH SM]: optimize level " << mReplacementFor.size()
                     << "\n");
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: number of directives to optimize level "
-                    << mReplacementFor.back().get<Sibling>().size() << "\n");
   // Normalize replacement level numbers which specify replacement levels which
   // depends on corresponding memory locations.
   for (auto &Data : mToActual)
@@ -1231,50 +1668,98 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
         std::min<unsigned>(Data.get<Hierarchy>(), mReplacementFor.size() - 1);
   SmallVector<ParallelItem *, 2> ConservativeReplacements;
   if (Level.is<Function *>()) {
+    LLVM_DEBUG(dbgs() << "[DVMH SM]: finalize function "
+                      << Level.get<Function *>()->getName() << "\n");
+    LLVM_DEBUG(
+      dbgs() << "[DVMH SM]: local actual: ";
+      for (auto &Data : mToActual)
+        for (auto &Var : Data.template get<VariableT>())
+          dbgs() << Var.get<AST>()->getName() << " ";
+      dbgs() << "\n";
+      dbgs() << "[DVMH SM]: local get_actual: ";
+      for (auto &Data : mToGetActual)
+        for (auto &Var : Data.template get<VariableT>())
+          dbgs() << Var.get<AST>()->getName() << " ";
+      dbgs() << "\n";
+    );
+    if (!needToOptimize(*Level.get<Function *>()).first) {
+      for (auto *PL: mReplacementFor.back().get<Sibling>())
+        PL->finalize();
+      mReplacementFor.pop_back();
+      mReplacementFor.pop_back();
+      return false;
+    }
     for (auto &BB : *Level.get<Function *>())
       collectParallelInductions(BB);
     // We conservatively actualize memory, which is available outside the
     // function, at the function entry point.
-    // TODO (kaniandr@gmail.com): move `actual` directives to callers.
     if (!mReplacementFor.back().get<Sibling>().empty()) {
+      auto ActiveIPO{IPOInfoItr != mIPOMap.end() && IPOInfoItr->get<bool>()};
       auto &EntryBB{F.getEntryBlock()};
+      auto addIfNeed = [&ConservativeReplacements,
+                        &DL = F.getParent()->getDataLayout(),
+                        &IPOInfoItr](auto &Memory, auto &IPOMemory,
+                                     auto *FinalPragma, auto *IPOPragma) {
+        for (auto &Data : Memory)
+          for (auto &Var : Data.template get<VariableT>()) {
+            if (auto *DIEM{
+                    dyn_cast<DIEstimateMemory>(Var.template get<MD>())}) {
+              auto *V{DIEM->getVariable()};
+              if (isa<DIGlobalVariable>(V) ||
+                  cast<DILocalVariable>(V)->isParameter()) {
+                if (auto BindItr{DIEM->begin()}; FinalPragma != IPOPragma &&
+                                                 !DIEM->emptyBinding() &&
+                                                 *BindItr)
+                  if (auto Ptr{GetUnderlyingObject(*BindItr, DL, 0)};
+                      IPOMemory.count(Ptr) &&
+                      !IPOInfoItr->get<Value>().count(Ptr))
+                    IPOPragma->getMemory().insert(Var);
+                  else
+                    FinalPragma->getMemory().insert(Var);
+                else
+                  FinalPragma->getMemory().insert(Var);
+              }
+            } else {
+              FinalPragma->getMemory().insert(Var);
+            }
+          }
+        if (!FinalPragma->getMemory().empty())
+          ConservativeReplacements.push_back(FinalPragma);
+        if (IPOPragma != FinalPragma && !IPOPragma->getMemory().empty()) {
+          ConservativeReplacements.push_back(IPOPragma);
+          IPOInfoItr->get<std::remove_pointer_t<decltype(IPOPragma)>>()
+              .push_back(IPOPragma);
+        }
+      };
       auto ActualRef{mParallelizationInfo.emplace<PragmaActual>(
           &EntryBB, &F, true /*OnEntry*/, false /*IsRequired*/,
           true /*IsFinal*/)};
-      for (auto &Data : mToActual)
-        for (auto &Var : Data.get<VariableT>()) {
-          if (auto *DIEM{dyn_cast<DIEstimateMemory>(Var.get<MD>())}) {
-            auto *V{DIEM->getVariable()};
-            if (isa<DIGlobalVariable>(V) ||
-                cast<DILocalVariable>(V)->isParameter())
-              cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
-          } else {
-              cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
-          }
-        }
-      if (!cast<PragmaActual>(ActualRef)->getMemory().empty())
-        ConservativeReplacements.push_back(ActualRef.getUnchecked());
+      auto *FinalActual{cast<PragmaActual>(ActualRef)};
+      auto *IPOActual{FinalActual};
+      if (ActiveIPO) {
+        auto IPOActualRef{mParallelizationInfo.emplace<PragmaActual>(
+            &EntryBB, &F, true /*OnEntry*/, false /*IsRequired*/,
+            false /*IsFinal*/)};
+        IPOActual = cast<PragmaActual>(IPOActualRef);
+      }
+      addIfNeed(mToActual, mIPOToActual, FinalActual, IPOActual);
       // We conservatively copy memory from the device before the exit from the
       // function.
-      // TODO (kaniandr@gmail.com): move `get_actual` directives to callers.
       for (auto &I : instructions(F)) {
         if (!isa<ReturnInst>(I))
           continue;
         auto GetActualRef{mParallelizationInfo.emplace<PragmaGetActual>(
             I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
             true /*IsFinal*/)};
-        for (auto &Data : mToGetActual)
-          for (auto &Var : Data.get<VariableT>())
-            if (auto *DIEM{dyn_cast<DIEstimateMemory>(Var.get<MD>())}) {
-              auto *V{DIEM->getVariable()};
-              if (isa<DIGlobalVariable>(V) ||
-                  cast<DILocalVariable>(V)->isParameter())
-                cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
-            } else {
-              cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
-            }
-        if (!cast<PragmaGetActual>(GetActualRef)->getMemory().empty())
-          ConservativeReplacements.push_back(GetActualRef.getUnchecked());
+        auto *FinalGetActual{cast<PragmaGetActual>(GetActualRef)};
+        auto *IPOGetActual{FinalGetActual};
+        if (ActiveIPO) {
+          auto IPOGetActualRef{mParallelizationInfo.emplace<PragmaGetActual>(
+              I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
+              false /*IsFinal*/)};
+          IPOGetActual = cast<PragmaGetActual>(IPOGetActualRef);
+        }
+        addIfNeed(mToGetActual, mIPOToGetActual, FinalGetActual, IPOGetActual);
       }
       if (Level.get<Function *>() == getEntryPoint())
         for (auto *PI : ConservativeReplacements)
@@ -1285,6 +1770,12 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
     for (auto &BB : *Level.get<Function *>())
       processBB(BB);
   } else {
+    if (!needToOptimize(*Level.get<Loop *>())) {
+      for (auto *PL: mReplacementFor.back().get<Sibling>())
+        PL->finalize();
+      mReplacementFor.pop_back();
+      return true;
+    }
     for (auto *BB : Level.get<Loop *>()->blocks())
       collectParallelInductions(*BB);
     if (!mReplacementFor.back().get<Sibling>().empty()) {
@@ -1326,6 +1817,11 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
     for (auto *BB : Level.get<Loop *>()->blocks())
       processBB(*BB);
   }
+  LLVM_DEBUG(
+      dbgs() << "[DVMH SM]: number of directives to optimize this level is "
+             << mReplacementFor.back().get<Sibling>().size() << "\n");
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: size of replacement target is "
+                    << mReplacementFor.back().get<Hierarchy>().size() << "\n");
   // Update replacement relation after all inner levels have benn processed.
   for (auto *PL : mReplacementFor.back().get<Sibling>())
     for (auto *ToReplace : mReplacementFor.back().get<Hierarchy>()) {
@@ -1342,10 +1838,26 @@ bool ClangDVMHSMParallelization::optimizeGlobalOut(
       ToReplace->parent_insert(PL);
     }
   mReplacementFor.pop_back();
-  if (!mReplacementFor.empty())
+  if (!Level.is<Function *>()) {
     for (auto *ToReplace : ConservativeReplacements)
       mReplacementFor.back().get<Sibling>().push_back(
           cast<ParallelLevel>(ToReplace));
+  } else if (!mReplacementFor.back().get<Sibling>().empty()) {
+    for (auto *PL : mReplacementFor.back().get<Sibling>())
+      for (auto *ToReplace : mReplacementFor.back().get<Hierarchy>()) {
+        PL->child_insert(ToReplace);
+        ToReplace->parent_insert(PL);
+      }
+    for (auto *PL : ConservativeReplacements) {
+      if (PL->isFinal())
+        continue;
+      for (auto *ToReplace : mReplacementFor.back().get<Sibling>()) {
+        cast<ParallelLevel>(PL)->child_insert(ToReplace);
+        ToReplace->parent_insert(PL);
+      }
+    }
+    mReplacementFor.pop_back();
+  }
   return true;
 }
 
@@ -1724,10 +2236,11 @@ addPragmaToStmt(const Stmt *ToInsert,
                 Parallelization::iterator PLocListItr,
                 Parallelization::location_iterator PLocItr,
                 const FunctionAnalysis &Provider,
+                TransformationContextBase *TfmCtx,
                 DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
                 std::vector<ParallelItem *> &NotOptimizedPragmas,
                 LocationToPragmas &PragmasToInsert) {
-  auto PragmaLoc{ToInsert ? PragmasToInsert.try_emplace(ToInsert).first
+  auto PragmaLoc{ToInsert ? PragmasToInsert.try_emplace(ToInsert, TfmCtx).first
                           : PragmasToInsert.end()};
   for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
        PIItr != PIItrE; ++PIItr) {
@@ -1810,11 +2323,7 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
   for (auto *PD : POTraverse) {
     // Do not skip directive (even if it is marked as skipped) if its children
     // are invalid.
-    if (PD->isInvalid() ||
-        (PD->isSkipped() &&
-         (PD->child_empty() ||
-          !cast<PragmaData>(*PD->child_begin())->isInvalid() ||
-          cast<PragmaData>(*PD->child_begin())->isSkipped())))
+    if (PD->isInvalid() || PD->isSkipped())
       continue;
     auto &&[PIRef, ToInsert] = *DeferredPragmas.find_as(PD);
     assert(PragmasToInsert.count(ToInsert) &&
@@ -1851,71 +2360,88 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
   }
 }
 
-static void
-printReplacementTree(ArrayRef<ParallelItem *> NotOptimizedPragmas,
-                     DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
-                     ClangTransformationContext &TfmCtx) {
-  traversePragmaDataPO(NotOptimizedPragmas,
-                       [&DeferredPragmas, &TfmCtx](ParallelItem *PI) {
-                         auto PD{cast<PragmaData>(PI)};
-                         auto PIItr{DeferredPragmas.find_as(PI)};
-                         assert(PIItr != DeferredPragmas.end() &&
-                                "Internal pragmas must be cached!");
-                         auto [PIRef, ToInsert] = *PIItr;
-                         dbgs() << "id: " << PD << " ";
-                         dbgs() << "skiped: " << PD->isSkipped() << " ";
-                         dbgs() << "invalid: " << PD->isInvalid() << " ";
-                         dbgs() << "final: " << PD->isFinal() << " ";
-                         dbgs() << "required: " << PD->isRequired() << " ";
-                         if (isa<PragmaActual>(PD))
-                           dbgs() << "actual: ";
-                         else if (isa<PragmaGetActual>(PD))
-                           dbgs() << "get_actual: ";
-                         if (PD->getMemory().empty())
-                           dbgs() << "- ";
-                         for (auto &Var : PD->getMemory()) {
-                           dbgs() << Var.get<AST>()->getName() << " ";
-                         }
-                         if (!PD->child_empty()) {
-                           dbgs() << "children: ";
-                           for (auto *Child : PD->children())
-                             dbgs() << Child << " ";
-                         }
-                         if (ToInsert) {
-                           dbgs() << "location: ";
-                           ToInsert->getBeginLoc().print(
-                               dbgs(), TfmCtx.getContext().getSourceManager());
-                         }
-                         dbgs() << "\n";
-                       });
+static void printReplacementTree(
+    ArrayRef<ParallelItem *> NotOptimizedPragmas,
+    const DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
+    LocationToPragmas &PragmasToInsert) {
+  traversePragmaDataPO(
+      NotOptimizedPragmas,
+      [&DeferredPragmas, &PragmasToInsert](ParallelItem *PI) {
+        auto PD{cast<PragmaData>(PI)};
+        dbgs() << "id: " << PD << " ";
+        dbgs() << "skiped: " << PD->isSkipped() << " ";
+        dbgs() << "invalid: " << PD->isInvalid() << " ";
+        dbgs() << "final: " << PD->isFinal() << " ";
+        dbgs() << "required: " << PD->isRequired() << " ";
+        if (isa<PragmaActual>(PD))
+          dbgs() << "actual: ";
+        else if (isa<PragmaGetActual>(PD))
+          dbgs() << "get_actual: ";
+        if (PD->getMemory().empty())
+          dbgs() << "- ";
+        for (auto &Var : PD->getMemory()) {
+          dbgs() << Var.get<AST>()->getName() << " ";
+        }
+        if (!PD->child_empty()) {
+          dbgs() << "children: ";
+          for (auto *Child : PD->children())
+            dbgs() << Child << " ";
+        }
+        if (auto PIItr{DeferredPragmas.find_as(PI)};
+            PIItr != DeferredPragmas.end()) {
+          auto [PIRef, ToInsert] = *PIItr;
+          if (ToInsert) {
+            dbgs() << "location: ";
+            if (auto TfmCtx{dyn_cast<ClangTransformationContext>(
+                    PragmasToInsert[ToInsert].TfmCtx)})
+              ToInsert->getBeginLoc().print(
+                  dbgs(), TfmCtx->getContext().getSourceManager());
+            else
+              llvm_unreachable("Unsupported type of a "
+                               "transformation context!");
+          }
+        } else {
+          dbgs() << "stub ";
+        }
+        dbgs() << "\n";
+      });
 }
 
 bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
   ClangSMParallelization::runOnModule(M);
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: insert data transfer directives\n");
+  std::vector<ParallelItem *> NotOptimizedPragmas;
+  DenseMap<ParallelItemRef, const Stmt *> DeferredPragmas;
+  LocationToPragmas PragmasToInsert;
   for (auto F : make_range(mParallelizationInfo.func_begin(),
                            mParallelizationInfo.func_end())) {
+    LLVM_DEBUG(dbgs() << "[DVMH SM]: process function " << F->getName()
+                      << "\n");
     auto *DISub{findMetadata(F)};
-    if (!DISub)
+    if (!DISub) {
       F->getContext().emitError(
           "cannot transform sources: transformation context must be available");
+      return false;
+    }
     auto *CU{DISub->getUnit()};
-    if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage())) {
       F->getContext().emitError(
           "cannot transform sources: transformation context must be available");
+      return false;
+    }
     auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                                TfmInfo->getContext(*CU))
                          : nullptr};
-    if (!TfmCtx || !TfmCtx->hasInstance())
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
       F->getContext().emitError(
           "cannot transform sources: transformation context must be available");
+      return false;
+    }
     auto Provider{analyzeFunction(*F)};
     auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
     auto &LM{Provider.value<LoopMatcherPass *>()->getMatcher()};
     auto &EM{Provider.value<ClangExprMatcherPass *>()->getMatcher()};
-    LocationToPragmas PragmasToInsert;
-    DenseMap<ParallelItemRef, const Stmt *> DeferredPragmas;
-    std::vector<ParallelItem *> NotOptimizedPragmas;
     for (auto &BB : *F) {
       auto PLocListItr{mParallelizationInfo.find(&BB)};
       if (PLocListItr == mParallelizationInfo.end())
@@ -1925,162 +2451,196 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
            PLocItr != PLocItrE; ++PLocItr) {
         auto [ToInsert, Scope] =
             findLocationToInsert(PLocListItr, PLocItr, *F, LI, *TfmCtx, EM, LM);
+          LLVM_DEBUG(
+            if (!ToInsert) {
+              dbgs() << "[DVMH SM]: unable to insert directive to: ";
+              if (auto *MD{PLocItr->Anchor.dyn_cast<MDNode *>()}) {
+                MD->print(dbgs());
+              } else if (auto *V{PLocItr->Anchor.dyn_cast<Value *>()}) {
+                if (auto *F{dyn_cast<Function>(V)}) {
+                  dbgs() << " function " << F->getName();
+                } else {
+                  V->print(dbgs());
+                  if (auto *I{dyn_cast<Instruction>(V)})
+                    dbgs() << " (function "
+                           << I->getFunction()->getName() << ")";
+                }
+              }
+              dbgs() << "\n";
+            }
+          );
         if (!ToInsert && !tryToIgnoreDirectives(PLocListItr, PLocItr))
           return false;
-        addPragmaToStmt(ToInsert, Scope, PLocListItr, PLocItr, Provider,
+        addPragmaToStmt(ToInsert, Scope, PLocListItr, PLocItr, Provider, TfmCtx,
                         DeferredPragmas, NotOptimizedPragmas, PragmasToInsert);
       }
     }
-    std::vector<PragmaData *> POTraverse;
-    // Optimize CPU-to-GPU data transfer. Try to skip unnecessary directives.
-    // We use post-ordered traversal to propagate the `skip` property in upward
-    // direction.
-    traversePragmaDataPO(NotOptimizedPragmas, [&DeferredPragmas, F, TfmCtx, &LI,
-                                               &EM, &LM,
-                                               &POTraverse](ParallelItem *PI) {
-      auto PD{cast<PragmaData>(PI)};
-      POTraverse.push_back(PD);
-      if (PD->isSkipped())
-        return;
-      bool IsRedundant{true};
-      for (auto *Child : PD->children()) {
-        auto ChildPD{cast<PragmaData>(Child)};
-        IsRedundant &= (!ChildPD->isInvalid() || ChildPD->isSkipped());
-      }
-      if (IsRedundant && !PD->isFinal() && !PD->isRequired()) {
+  }
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: IPO root ID: " << &mIPORoot << "\n";
+             dbgs() << "[DVMH SM]: initial replacement tree:\n";
+             printReplacementTree(NotOptimizedPragmas, DeferredPragmas,
+                                  PragmasToInsert));
+  std::vector<PragmaData *> POTraverse;
+  // Optimize CPU-to-GPU data transfer. Try to skip unnecessary directives.
+  // We use post-ordered traversal to propagate the `skip` property in upward
+  // direction.
+  traversePragmaDataPO(NotOptimizedPragmas, [this, &DeferredPragmas,
+                                             &POTraverse](ParallelItem *PI) {
+    auto PD{cast<PragmaData>(PI)};
+    POTraverse.push_back(PD);
+    if (PD->isSkipped())
+      return;
+    bool IsRedundant{!PD->children().empty()};
+    for (auto *Child : PD->children()) {
+      auto ChildPD{cast<PragmaData>(Child)};
+      IsRedundant &= (!ChildPD->isInvalid() || ChildPD->isSkipped());
+    }
+    if (IsRedundant && !PD->isFinal() && !PD->isRequired()) {
+      PD->skip();
+      return;
+    }
+    // Enable IPO only if all children of the IPO root is valid.
+    if (PI == &mIPORoot && !PD->children().empty() && !PD->isRequired()) {
+      mIPORoot.invalidate();
+      return;
+    }
+    auto PIItr{DeferredPragmas.find_as(PI)};
+    assert(PIItr != DeferredPragmas.end() &&
+           "Internal pragmas must be cached!");
+    auto [PIRef, ToInsert] = *PIItr;
+    if (PD->getMemory().empty()) {
+      PD->skip();
+    } else if (PIRef.isOnEntry()) {
+      // Do not mention variables in a directive if it has not been
+      // declared yet.
+      if (auto *DS{dyn_cast_or_null<DeclStmt>(ToInsert)};
+          DS && all_of(PD->getMemory(), [DS](auto &V) {
+            return is_contained(DS->getDeclGroup(), V.template get<AST>());
+          }))
         PD->skip();
-        return;
-      }
-      auto PIItr{DeferredPragmas.find_as(PI)};
-      assert(PIItr != DeferredPragmas.end() &&
-             "Internal pragmas must be cached!");
-      auto [PIRef, ToInsert] = *PIItr;
-      if (PD->getMemory().empty()) {
-        PD->skip();
-      } else if (PIRef.isOnEntry()) {
-        // Do not mention variables in a directive if it has not been
-        // declared yet.
-        if (auto *DS{dyn_cast_or_null<DeclStmt>(ToInsert)};
-            DS && all_of(PD->getMemory(), [DS](auto &V) {
-              return is_contained(DS->getDeclGroup(), V.template get<AST>());
-            }))
-          PD->skip();
-      }
-    });
-    bool IsOk{true};
-    // Now we check that there is any way to actualize data for each parallel
-    // region.
-    for (auto *PI : NotOptimizedPragmas)
-      if (cast<PragmaData>(PI)->isInvalid() &&
-          !cast<PragmaData>(PI)->isSkipped()) {
+    }
+  });
+  bool IsOk{true}, IsAllOptimized{true};
+  // Now we check that there is any way to actualize data for each parallel
+  // region.
+  for (auto *PI : NotOptimizedPragmas)
+    if (!cast<PragmaData>(PI)->isSkipped()) {
+      IsAllOptimized = false;
+      if (cast<PragmaData>(PI)->isInvalid()) {
         IsOk = false;
         // TODO: (kaniandr@gmail.com): emit error
       }
-    if (!IsOk)
-      return false;
-    // We look up for the lowest valid levels in the forest of directives and
-    // invalidate all directives below these levels.
-    //
-    // Let's consider the following not optimized yet example:
-    //
-    // function {
-    //   actual
-    //   region_1
-    //   get_actual
-    //   loop {
-    //     actual
-    //     region_2
-    //     get_actual
-    //   }
-    // }
-    // Optimization step produces the following forest of possible data transfer
-    // directives:
-    //              r2_a  r2_ga
-    // r1_a r1_ga   l_a  l_ga  loop_internal_directives
-    // f_a f_ga
-    //
-    // If we cannot insert some of directives from the
-    // 'loop_internal_directives' list, we have to invalidate l_a, l_ga,
-    // loop_internal_direcitves and also f_a and f_ga directives. Otherwise we
-    // obtain the following optimized version which is not correct (we miss
-    // directives surrounding the first region because f_a and f_ga suppress
-    // them):
-    // function {
-    // f_a
-    //   region_1
-    //   loop {
-    //     actual
-    //     region_2
-    //     get_actual
-    //   }
-    // f_ga
-    // }
+    }
+  if (!IsOk)
+    return false;
+  // TODO (kaniandr@gmail.com): at this moment we either makes a full IPO or
+  // disable all possible optimization. Try to find a valid combination of
+  // directives which yields a data transfer optimization. Is this search
+  // necessary or if a final directive is invalid, some source-to-source
+  // transformations can be always made to insert this directive successfully.
+  //
+  // We have to look up for the lowest valid levels in the forest of directives
+  // and invalidate all directives below these levels.
+  //
+  // Let's consider the following not optimized yet example:
+  //
+  // function {
+  //   actual
+  //   region_1
+  //   get_actual
+  //   loop {
+  //     actual
+  //     region_2
+  //     get_actual
+  //   }
+  // }
+  // Optimization step produces the following forest of possible data transfer
+  // directives:
+  //              r2_a  r2_ga
+  // r1_a r1_ga   l_a  l_ga  loop_internal_directives
+  // f_a f_ga
+  //
+  // If we cannot insert some of directives from the
+  // 'loop_internal_directives' list, we have to invalidate l_a, l_ga,
+  // loop_internal_direcitves and also f_a and f_ga directives. Otherwise we
+  // obtain the following optimized version which is not correct (we miss
+  // directives surrounding the first region because f_a and f_ga suppress
+  // them):
+  // function {
+  // f_a
+  //   region_1
+  //   loop {
+  //     actual
+  //     region_2
+  //     get_actual
+  //   }
+  // f_ga
+  // }
+  //
+  // Unfortunately, if we invalidate some directives in a function it may
+  // transitively invalidate directives in another function. It is not clear
+  // how to find a consistent combination of directives, so we disable
+  // optimization if some of the leaf directives cannot be inserted.
+  if (!IsAllOptimized) {
     for (auto *PD : llvm::reverse(POTraverse)) {
-      // Stop optimization here if the current directive cannot be skipped.
-      bool IsValid{PD->isSkipped()};
-      if (IsValid)
-        for (auto *Child : PD->children())
-          IsValid &= (!cast<PragmaData>(Child)->isInvalid() ||
-                      cast<PragmaData>(Child)->isSkipped());
-      if (!IsValid) {
-        for (auto *Child : PD->children()) {
-          cast<PragmaData>(Child)->invalidate();
-          cast<PragmaData>(Child)->actualize();
+      if (PD->parent_empty())
+        PD->actualize();
+      else
+        PD->skip();
+    }
+  }
+  LLVM_DEBUG(dbgs() << "[DVMH SM]: optimized replacement tree:\n";
+             printReplacementTree(NotOptimizedPragmas, DeferredPragmas,
+                                  PragmasToInsert));
+  // Build pragmas for necessary data transfer directives.
+  insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
+  // Update sources.
+  for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
+    auto BeginLoc{ToInsert->getBeginLoc()};
+    auto TfmCtx{cast<ClangTransformationContext>(Pragmas.TfmCtx)};
+    bool IsBeginChanged{false};
+    for (auto &&[PI, Str] : Pragmas.Before)
+      if (!Str.empty()) {
+        if (!IsBeginChanged) {
+          auto &SM{TfmCtx->getRewriter().getSourceMgr()};
+          auto Identation{Lexer::getIndentationForLine(BeginLoc, SM)};
+          bool Invalid{false};
+          auto Column{SM.getPresumedColumnNumber(BeginLoc, &Invalid)};
+          if (Invalid || Column > Identation.size() + 1)
+            TfmCtx->getRewriter().InsertTextAfter(BeginLoc, "\n");
+        }
+        TfmCtx->getRewriter().InsertTextAfter(BeginLoc, Str);
+        IsBeginChanged = true;
+      }
+    auto EndLoc{shiftTokenIfSemi(ToInsert->getEndLoc(), TfmCtx->getContext())};
+    bool IsEndChanged{false};
+    for (auto &&[PI, Str] : Pragmas.After)
+      if (!Str.empty()) {
+        TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, Str);
+        IsEndChanged = true;
+      }
+    if (IsBeginChanged || IsEndChanged) {
+      bool HasEndNewline{false};
+      if (IsEndChanged) {
+        auto &Ctx{TfmCtx->getContext()};
+        auto &SM{Ctx.getSourceManager()};
+        Token NextTok;
+        bool IsEndInvalid{false}, IsNextInvalid{false};
+        if (getRawTokenAfter(EndLoc, SM, Ctx.getLangOpts(), NextTok) ||
+            SM.getPresumedLineNumber(NextTok.getLocation(), &IsNextInvalid) ==
+                SM.getPresumedLineNumber(EndLoc, &IsEndInvalid) ||
+            IsNextInvalid || IsEndInvalid) {
+          TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, "\n");
+          HasEndNewline = true;
         }
       }
-    }
-    LLVM_DEBUG(dbgs() << "[DVMH SM]: optimized replacement tree:\n"; printReplacementTree(
-                   NotOptimizedPragmas, DeferredPragmas, *TfmCtx));
-    // Build pragmas for necessary data transfer directives.
-    insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
-    // Update sources.
-    for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
-      auto BeginLoc{ToInsert->getBeginLoc()};
-      bool IsBeginChanged{false};
-      for (auto &&[PI, Str] : Pragmas.Before)
-        if (!Str.empty()) {
-          if (!IsBeginChanged) {
-            auto &SM{TfmCtx->getRewriter().getSourceMgr()};
-            auto Identation{Lexer::getIndentationForLine(BeginLoc, SM)};
-            bool Invalid{false};
-            auto Column{SM.getPresumedColumnNumber(BeginLoc, &Invalid)};
-            if (Invalid || Column > Identation.size() + 1)
-              TfmCtx->getRewriter().InsertTextAfter(BeginLoc, "\n");
-          }
-          TfmCtx->getRewriter().InsertTextAfter(BeginLoc, Str);
-          IsBeginChanged = true;
-        }
-      auto EndLoc{
-          shiftTokenIfSemi(ToInsert->getEndLoc(), TfmCtx->getContext())};
-      bool IsEndChanged{false};
-      for (auto &&[PI, Str] : Pragmas.After)
-        if (!Str.empty()) {
-          TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, Str);
-          IsEndChanged = true;
-        }
-      if (IsBeginChanged || IsEndChanged) {
-        bool HasEndNewline{false};
-        if (IsEndChanged) {
-          auto &Ctx{TfmCtx->getContext()};
-          auto &SM{Ctx.getSourceManager()};
-          Token NextTok;
-          bool IsEndInvalid{false}, IsNextInvalid{false};
-          if (getRawTokenAfter(EndLoc, SM, Ctx.getLangOpts(), NextTok) ||
-              SM.getPresumedLineNumber(NextTok.getLocation(), &IsNextInvalid) ==
-                  SM.getPresumedLineNumber(EndLoc, &IsEndInvalid) ||
-              IsNextInvalid || IsEndInvalid) {
-            TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, "\n");
-            HasEndNewline = true;
-          }
-        }
-        auto &ParentCtx{TfmCtx->getContext().getParentMapContext()};
-        auto Parents{ParentCtx.getParents(*ToInsert)};
-        assert(!Parents.empty() && "Statement must be inside a function body!");
-        if (!Parents.begin()->get<CompoundStmt>()) {
-          TfmCtx->getRewriter().InsertTextBefore(BeginLoc, "{\n");
-          TfmCtx->getRewriter().InsertTextAfterToken(
-              EndLoc, HasEndNewline ? "}" : "\n}");
-        }
+      auto &ParentCtx{TfmCtx->getContext().getParentMapContext()};
+      auto Parents{ParentCtx.getParents(*ToInsert)};
+      assert(!Parents.empty() && "Statement must be inside a function body!");
+      if (!Parents.begin()->get<CompoundStmt>()) {
+        TfmCtx->getRewriter().InsertTextBefore(BeginLoc, "{\n");
+        TfmCtx->getRewriter().InsertTextAfterToken(EndLoc,
+                                                   HasEndNewline ? "}" : "\n}");
       }
     }
   }
