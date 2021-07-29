@@ -2503,8 +2503,11 @@ bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
       return;
     }
     // Enable IPO only if all children of the IPO root is valid.
-    if (PI == &mIPORoot && !PD->children().empty() && !PD->isRequired()) {
-      mIPORoot.invalidate();
+    if (PI == &mIPORoot) {
+      if (!PD->children().empty())
+        mIPORoot.invalidate();
+      else
+        mIPORoot.skip();
       return;
     }
     auto PIItr{DeferredPragmas.find_as(PI)};
