@@ -238,7 +238,7 @@ void DIArrayAccessInfo::erase(const Array &V) {
       ;
     Info.get<Begin>() = BeginItr;
     Info.get<End>() = EndItr;
-    if (I->get<Begin>() != mArrayAccesses.end()) {
+    if (I->get<Begin>() != mArrayAccesses.begin()) {
       auto PrevItr = I->get<Begin>();
       --PrevItr;
       auto PrevArrayItr =
