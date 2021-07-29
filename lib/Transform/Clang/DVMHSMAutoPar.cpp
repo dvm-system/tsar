@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SharedMemoryAutoPar.h"
+#include "tsar/ADT/PersistentMap.h"
 #include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/Attributes.h"
@@ -241,7 +242,7 @@ class ClangDVMHSMParallelization : public ClangSMParallelization {
                           bcl::tagged<SmallVector<VariableT, 1>, VariableT>,
                           bcl::tagged<unsigned, Hierarchy>>>;
 
-  using IPOMap = DenseMap<
+  using IPOMap = PersistentMap<
       const Function *,
       std::tuple<bool, SmallPtrSet<const Value *, 4>,
                  SmallVector<PragmaActual *, 4>,
@@ -1002,7 +1003,9 @@ bool ClangDVMHSMParallelization::initializeIPO(
       continue;
     if (isParallelCallee(*F, Node.get<Id>(), Reachability))
       continue;
-    auto [ToIgnoreItr, IsNew] = mIPOMap.try_emplace(F);
+    IPOMap::persistent_iterator ToIgnoreItr;
+    bool IsNew;
+    std::tie(ToIgnoreItr, IsNew) = mIPOMap.try_emplace(F);
     if (!GO.NoExternalCalls && hasExternalCalls(Node.template get<Id>()) ||
         Node.template get<InCycle>() || !OptimizeAll ||
         any_of(F->users(), [](auto *U) { return !isa<CallBase>(U); }))
