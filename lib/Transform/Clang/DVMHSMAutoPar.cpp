@@ -995,7 +995,7 @@ bool ClangDVMHSMParallelization::initializeIPO(
       mIPOToActual.clear();
       mIPOToGetActual.clear();
       mIPORoot.invalidate();
-      break;
+      continue;
     }
     auto [OptimizeAll, OptimizeChildren] = needToOptimize(*F);
     if (!OptimizeChildren)
