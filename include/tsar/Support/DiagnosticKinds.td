@@ -186,6 +186,14 @@ def error_expect_function_param : Error<"expected function parameter name">;
 def note_record_member_unknown: Error<"record has no member '%0'">;
 def note_declared_here: Note<"declared here">;
 
+def warn_disable_loop_interchange: Warning<"disable loop interchange">;
+def note_interchange_induction_mismatch: Note<"unable to find an interchangeable loop with the '%0' induction variable">;
+def note_interchange_irregular_loop_nest: Note<"irregular loop structure prevents transformation (use the 'nostrict' clause to force transformation)">;
+def warn_interchange_not_canonical: Warning<"unable to interchange loop being not in a canonical loop form">;
+def warn_interchange_not_perfect: Warning<"unable to interchange not perfectly nested loop">;
+def warn_interchange_not_for_loop: Warning<"unable to interchange not for-loop">;
+def warn_interchange_dependency: Warning<"unable to interchange loop with data dependencies (use the 'nostrict' clause to force transformation)">;
+def warn_interchange_no_analysis: Warning<"absence of analysis results prevents loop interchange (use the 'nostrict' clause to force transformation">;
 
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
