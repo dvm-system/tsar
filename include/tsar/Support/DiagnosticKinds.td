@@ -195,5 +195,18 @@ def warn_interchange_not_for_loop: Warning<"unable to interchange not for-loop">
 def warn_interchange_dependency: Warning<"unable to interchange loop with data dependencies (use the 'nostrict' clause to force transformation)">;
 def warn_interchange_no_analysis: Warning<"absence of analysis results prevents loop interchange (use the 'nostrict' clause to force transformation">;
 
+def warn_reverse_not_for_loop: Warning<"unable to reverse not for-loop">;
+def warn_disable_loop_reversal: Warning<"disable loop reversal">;
+def warn_reverse_induction_mismatch: Warning<"unable to find a reversible loop with the '%0' induction variable">;
+def warn_reverse_number_mismatch: Warning<"unable to find %0 reversible loop in the nest">;
+def warn_reverse_not_canonical: Warning<"unable to reverse loop being not in a canonical loop form">;
+def warn_reverse_multiple_exits: Warning<"unable to reverse loop having multiple exits (use the 'nostrict' clause to force transformation)">;
+def warn_reverse_unsafe_cfg: Warning<"unable to reverse loop with unsafe control flow (use the 'nostrict' clause to force transformation)">;
+def warn_reverse_no_analysis: Warning<"absence of analysis results prevents loop reversal (use the 'nostrict' clause to force transformation">;
+def warn_reverse_dependency: Warning<"unable to reverse loop with data dependencies (use the 'nostrict' clause to force transformation)">;
+def warn_reverse_increment_complex: Warning<"complex increment expression prevents loop reversal">;
+def warn_reverse_condition_complex: Warning<"complex conditional expression prevents loop reversal">;
+def warn_reverse_initialization_complex: Warning<"complex initialization expression prevents loop reversal">;
+
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;

@@ -87,5 +87,11 @@ FunctionPass * createClangLoopInterchange();
 
 /// Initialize a pass to intergchange loops in a loop nest.
 void initializeClangLoopInterchangePass(PassRegistry &Registry);
+
+/// Initialize a pass to reverse loop.
+void initializeClangLoopReversePass(PassRegistry &Registry);
+
+/// Create a pass to reverse loop.
+ModulePass *createClangLoopReverse();
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H
