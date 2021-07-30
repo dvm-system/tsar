@@ -1,5 +1,6 @@
 set(TRANSFORM_SOURCES Passes.cpp DeadCodeElimination.cpp InterprocAttr.cpp
-  MetadataUtils.cpp Utils.cpp CallExtractor.cpp DependenceInliner.cpp)
+  MetadataUtils.cpp Utils.cpp CallExtractor.cpp DependenceInliner.cpp
+  NoCaptureAnalysis.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

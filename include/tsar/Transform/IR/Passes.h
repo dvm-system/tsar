@@ -94,5 +94,11 @@ void initializeDependenceInlinerPassPass(PassRegistry &Registry);
 /// Create an inliner pass which handle functions which are necessary for
 /// analysis.
 Pass *createDependenceInlinerPass(bool InsertLifetime = true);
+
+/// Initialize a pass calculating preserved parameters.
+void initializeNoCaptureAnalysisPass(PassRegistry &Registry);
+
+/// Create a pass calculating preserved parameters.
+Pass * createNoCaptureAnalysisPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
