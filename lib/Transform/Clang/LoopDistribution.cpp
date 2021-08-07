@@ -41,6 +41,7 @@
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Unparse/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
@@ -382,8 +383,9 @@ private:
 class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
  public:
   CodeRewriter(FunctionPass &Pass, Function &Function,
-      ClangTransformationContext &TransformationContext) {
+               ClangTransformationContext &TransformationContext) {
     mRewriter = &TransformationContext.getRewriter();
+    mSourceMgr = &mRewriter->getSourceMgr();
   }
 
   [[maybe_unused]]
@@ -405,7 +407,8 @@ class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
     dbgs() << "First time?\n";
     //ForStatement->dump();
 
-    getLoopHeader(ForStatement);
+    mLoopHeaderSplitter = getLoopHeaderSplitter(ForStatement);
+    dbgs() << mLoopHeaderSplitter << "\n";
 
     // TODO: Use this information.
     const auto PrevIsInsideLoop = mIsInsideLoop;
@@ -423,23 +426,45 @@ class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
       return true;
     }
 
-    /*const char *InsertedText = "for (;;){}";
-    mRewriter->InsertText(Statement->getEndLoc(), InsertedText, true, true);*/
+    /*mRewriter->InsertText(Statement->getEndLoc(),
+      mLoopHeaderSplitter, true, true);*/
     return false;
   }
 
 private:
-  // TODO:
-  void getLoopHeader(ForStmt *ForStatement) const {
-    auto HeaderRange = SourceRange(ForStatement->getBeginLoc(),
-        ForStatement->getBody()->getBeginLoc());
-    HeaderRange.dump(mRewriter->getSourceMgr());
-    CharSourceRange::getCharRange(HeaderRange);
+  [[nodiscard]]
+  std::string getLoopHeaderSplitter(ForStmt *ForStatement) const {
+    std::string LoopHeaderSplitter;
+    raw_string_ostream SplitterStream(LoopHeaderSplitter);
+    SplitterStream << "}";
+    SplitterStream << getCharacterData(ForStatement->getBeginLoc(),
+      ForStatement->getBody()->getBeginLoc());
+    SplitterStream << "{";
+    return SplitterStream.str();
+  }
+
+  [[nodiscard]]
+  std::string getCharacterData(const SourceLocation BeginLoc,
+                               const SourceLocation EndLoc) const {
+    bool Invalid;
+    const auto BeginData = mSourceMgr->getCharacterData(BeginLoc, &Invalid);
+    if (Invalid) {
+      throw std::exception("Couldn't get character data");
+    }
+
+    const auto EndData = mSourceMgr->getCharacterData(EndLoc, &Invalid);
+    if (Invalid) {
+      throw std::exception("Couldn't get character data");
+    }
+
+    return std::string(BeginData, EndData);
   }
 
 private:
   Rewriter *mRewriter;
+  SourceManager *mSourceMgr;
   bool mIsInsideLoop = false;
+  std::string mLoopHeaderSplitter;
 };
 }
 
