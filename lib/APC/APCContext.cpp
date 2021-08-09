@@ -52,6 +52,43 @@ void sendMessage_1lvl(const std::wstring &toSend) {}
 void sendMessage_2lvl(const std::wstring &toSend) {}
 
 int langOfMessages = 1; // 0 - ENG, 1 - RUS
+int mpiProgram = 0;
+int keepFiles = 0;
+
+/// Load user-defined information from SPF directive (temporary not used).
+void fillAcrossInfoFromDirectives(
+    const LoopGraph *loopInfo,
+    std::vector<std::pair<std::pair<std::string, std::string>,
+                          std::vector<std::pair<int, int>>>> &acrossInfo) {}
+
+/// Load user-defined information from SPF directive (temporary not used).
+void fillInfoFromDirectives(const LoopGraph *loopInfo,
+    ParallelDirective *directive) {}
+
+/// Try to transform nest of loops to perfect nest.
+bool createNestedLoops(LoopGraph *current,
+    const std::map<LoopGraph *, void *> &depInfoForLoopGraph,
+    const std::map<std::string, FuncInfo *> &mapFuncInfo,
+    std::vector<Messages> &messages) {
+  return false;
+}
+bool analyzeLoopBody(
+    LoopGraph *loopV,
+    std::map<DIST::Array *,
+             std::vector<std::pair<bool, std::pair<std::string, int>>>>
+        &leftValues,
+    std::map<DIST::Array *,
+             std::vector<
+                 std::pair<bool, std::map<std::string, std::pair<int, int>>>>>
+        &rightValues,
+    std::string &base,
+    const std::map<DIST::Array *, std::vector<bool>> &dimsNotMatch,
+    const std::map<std::string, FuncInfo *> &mapFuncInfo) {
+  return true;
+}
+
+void createNeededException() { }
+
 //===----------------------------------------------------------------------===//
 
 APCContext::APCContext() : mImpl(new APCContextImpl) {}
@@ -60,7 +97,7 @@ APCContext::~APCContext() { delete mImpl; }
 void APCContext::initialize() {
   assert(!mIsInitialized && "Context has been already initialized!");
   mImpl->ParallelRegions.push_back(
-    make_unique<ParallelRegion>(mImpl->ParallelRegions.size(), "DEFAULT"));
+    std::make_unique<ParallelRegion>(mImpl->ParallelRegions.size(), "DEFAULT"));
 #ifndef NDEBUG
   mIsInitialized = true;
 #endif

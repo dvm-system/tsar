@@ -25,6 +25,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "AstWrapperImpl.h"
+#include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
@@ -42,6 +44,7 @@
 #include <apc/Utils/types.h>
 #include <bcl/utility.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Format.h>
@@ -97,15 +100,53 @@ void APCArrayInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-bool APCArrayInfoPass::runOnFunction(Function &F) {
+bool APCArrayInfoPass::runOnFunction(Function &Func) {
   releaseMemory();
-  auto &DL = F.getParent()->getDataLayout();
-  auto &DI = getAnalysis<DelinearizationPass>().getDelinearizeInfo();
-  auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-  auto &AT = getAnalysis<EstimateMemoryPass>().getAliasTree();
-  auto &DIAT = getAnalysis<DIEstimateMemoryPass>().getAliasTree();
+  auto *F = &Func;
+  auto *DI = &getAnalysis<DelinearizationPass>().getDelinearizeInfo();
+  auto *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+  auto *AT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
+  auto *DIAT = &getAnalysis<DIEstimateMemoryPass>().getAliasTree();
+  auto *ClientDIAT = DIAT;
+  std::function<ObjectID(const DIMemory &)> getMemoryID =
+      [](const DIMemory &DIM) {
+        return const_cast<MDNode *>(DIM.getAsMDNode());
+      };
+  std::function<MDNode *(MDNode *)> getMDNode = [](MDNode *MD) { return MD; };
+  if (auto *SInfo = getAnalysisIfAvailable<AnalysisSocketImmutableWrapper>()) {
+    auto ActiveItr = (*SInfo)->getActive();
+    if (ActiveItr != (*SInfo)->end()) {
+      auto &Socket = ActiveItr->second;
+      auto Matcher = Socket.getAnalysis<AnalysisClientServerMatcherWrapper,
+        ClonedDIMemoryMatcherWrapper>();
+      auto Provider = Socket.getAnalysis<
+        DelinearizationPass, DominatorTreeWrapperPass,
+        EstimateMemoryPass, DIEstimateMemoryPass>(Func);
+      if (Matcher && Provider) {
+        auto *IRMatcher = Matcher->value<AnalysisClientServerMatcherWrapper *>();
+        F = cast<Function>((**IRMatcher)[&Func]);
+        getMDNode = [IRMatcher](MDNode *MD) {
+          auto MappedMD = (*IRMatcher)->getMappedMD(MD);
+          return MappedMD ? cast<MDNode>(*MappedMD) : nullptr;
+        };
+        auto *MemoryMatcher =
+          (**Matcher->value<ClonedDIMemoryMatcherWrapper *>())[*F];
+        assert(MemoryMatcher && "Cloned memory matcher must not be null!");
+        getMemoryID = [MemoryMatcher](const DIMemory &DIM) {
+          auto Itr = MemoryMatcher->find<Clone>(const_cast<DIMemory *>(&DIM));
+          assert(Itr != MemoryMatcher->end() && "Memory must exist on client!");
+          return Itr->get<Origin>()->getAsMDNode();
+        };
+        DI = &Provider->value<DelinearizationPass *>()->getDelinearizeInfo();
+        DT = &Provider->value<DominatorTreeWrapperPass *>()->getDomTree();
+        AT = &Provider->value<EstimateMemoryPass *>()->getAliasTree();
+        DIAT = &Provider->value<DIEstimateMemoryPass *>()->getAliasTree();
+      }
+    }
+  }
+  auto &DL = F->getParent()->getDataLayout();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
-  for (auto *A: DI.getArrays()) {
+  for (auto *A: DI->getArrays()) {
     if (!A->isDelinearized() || !A->hasMetadata())
       continue;
     SmallVector<DIMemoryLocation, 4> DILocs;
@@ -113,7 +154,7 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     // Note, that delinearization of such array-member should be implemented
     // first. We can use GEP to determine which member of a structure
     // is accessed.
-    auto DILoc = findMetadata(A->getBase(), DILocs, &DT,
+    auto DILoc = findMetadata(A->getBase(), DILocs, DT,
       A->isAddressOfVariable() ? MDSearch::AddressOfVariable : MDSearch::Any);
     assert(DILoc && DILoc->isValid() &&
       "Metadata must be available for an array!");
@@ -123,54 +164,67 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
     auto DeclLoc = std::make_pair(DILoc->Var->getLine(), 0);
     if (DILoc->Loc)
       DeclLoc = std::make_pair(DILoc->Loc->getLine(), DILoc->Loc->getColumn());
-    auto Filename = (DILoc->Var->getFilename().empty() ?
-      StringRef(F.getParent()->getSourceFileName()) : DILoc->Var->getFilename());
+    auto Filename = (DILoc->Var->getFilename().empty()
+                         ? StringRef(F->getParent()->getSourceFileName())
+                         : DILoc->Var->getFilename());
     auto DeclScope = std::make_pair(Distribution::l_COMMON, std::string(""));
     if (auto DILocalVar = dyn_cast<DILocalVariable>(DILoc->Var)) {
       if (DILocalVar->isParameter())
         DeclScope.first = Distribution::l_PARAMETER;
       else
         DeclScope.first = Distribution::l_LOCAL;
-      DeclScope.second =  F.getName();
+      DeclScope.second =  F->getName().str();
     }
     // Unique name is '<file>:line:column:@<function>%<variable>.<member>'.
     auto UniqueName =
       (Filename + ":" + Twine(DeclLoc.first) + ":" + Twine(DeclLoc.second) +
-        "@" + F.getName() + "%" + DILoc->Var->getName()).str();
+        "@" + F->getName() + "%" + DILoc->Var->getName()).str();
     std::decay<
       decltype(std::declval<apc::Array>().GetDeclInfo())>
         ::type::value_type::second_type ShrinkedDeclLoc;
     auto getDbgLoc = [&F, &DILoc, &DeclLoc]() {
       DebugLoc DbgLoc(DILoc->Loc);
-      if (!DbgLoc && F.getSubprogram()) {
+      if (!DbgLoc && F->getSubprogram()) {
         DbgLoc = DILocation::get(
-          F.getContext(), DeclLoc.first, DeclLoc.second, F.getSubprogram());
+          F->getContext(), DeclLoc.first, DeclLoc.second, F->getSubprogram());
       }
       return DbgLoc;
     };
     if (!bcl::shrinkPair(DeclLoc.first, DeclLoc.second, ShrinkedDeclLoc))
-      emitUnableShrink(F.getContext(), F, getDbgLoc(), DS_Warning);
+      emitUnableShrink(F->getContext(), *F, getDbgLoc(), DS_Warning);
     // TODO (kaniandr@gmail.com): what should we do in case of multiple
     // allocation of the same array. There are different memory locations
-    // and different MDNodes for such arrays. Howevere, declaration points
+    // and different MDNodes for such arrays. However, declaration points
     // for these locations are identical.
-    auto *EM = AT.find(MemoryLocation(A->getBase(), 0));
+    auto *EM = AT->find(MemoryLocation(A->getBase(), 0));
     assert(EM && "Estimate memory must be presented in alias tree!");
-    auto RawDIM =
-      getRawDIMemoryIfExists(*EM->getTopLevelParent(), F.getContext(), DL, DT);
+    auto RawDIM = getRawDIMemoryIfExists(
+      *EM->getTopLevelParent(), F->getContext(), DL, *DT);
     assert(RawDIM && "Unknown raw memory!");
-    auto APCSymbol = new apc::Symbol(*DILoc);
+    assert(DIAT->find(*RawDIM) != DIAT->memory_end() &&
+           "Memory must exist in alias tree!");
+    auto &DIEM = cast<DIEstimateMemory>(*DIAT->find(*RawDIM));
+    // Search corresponding memory location on client if server is used.
+    auto ClientRawDIM = getMemoryID(DIEM);
+    assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
+           "Memory must exist in alias tree on client!");
+    auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
+    DIMemoryLocation DIClientLoc(ClientDIEM.getVariable(),
+                                 ClientDIEM.getExpression());
+    DIClientLoc.Loc = cast_or_null<DILocation>(getMDNode(DILoc->Loc));
+    DIClientLoc.Template = ClientDIEM.isTemplate();
+    auto APCSymbol = new apc::Symbol(std::move(DIClientLoc));
     APCCtx.addSymbol(APCSymbol);
-    auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName(),
+    auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName().str(),
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),
-      Filename, ShrinkedDeclLoc, std::move(DeclScope), APCSymbol,
-      { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
-    if (!APCCtx.addArray(RawDIM, APCArray)) {
+      Filename.str(), ShrinkedDeclLoc, std::move(DeclScope), APCSymbol, false,
+      false, { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
+    if (!APCCtx.addArray(ClientRawDIM, APCArray)) {
       // This pass may be executed in analysis mode. It depends on -print-only
       // and -print-step options. In case of parallelization pass manager must
       // invokes this pass only once for each function.
       delete APCArray;
-      mArrays.push_back(APCCtx.findArray(RawDIM));
+      mArrays.push_back(APCCtx.findArray(ClientRawDIM));
       mMultipleLaunch = true;
       continue;
     }
@@ -181,13 +235,14 @@ bool APCArrayInfoPass::runOnFunction(Function &F) {
       Sizes[I].first = 0;
       if (auto Size = dyn_cast<SCEVConstant>(A->getDimSize(I))) {
         if (!castAPInt(Size->getAPInt(), false, Sizes[I].second))
-          emitTypeOverflow(F.getContext(), F, getDbgLoc(),
+          emitTypeOverflow(F->getContext(), *F, getDbgLoc(),
             "unable to represent upper bound of " + Twine(I+1) + "dimension",
             DS_Warning);
       }
     }
     APCArray->SetSizes(Sizes);
   }
+  LLVM_DEBUG(print(dbgs(), F->getParent()));
   return false;
 }
 
@@ -234,4 +289,3 @@ void APCArrayInfoPass::print(raw_ostream &OS, const Module *M) const {
     OS << "\n";
   }
 }
-

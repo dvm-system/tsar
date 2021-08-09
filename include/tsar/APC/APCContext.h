@@ -37,6 +37,7 @@ struct LoopGraph;
 struct ParallelRegion;
 struct ArrayInfo;
 struct ArrayOp;
+class Expression;
 struct DataDirective;
 struct AlignRule;
 class Statement;
@@ -48,6 +49,7 @@ class ArrayAccessInfo;
 }
 
 namespace apc {
+using Expression = ::Expression;
 using FuncInfo = ::FuncInfo;
 using FuncParam = ::FuncParam;
 using LoopGraph = ::LoopGraph;

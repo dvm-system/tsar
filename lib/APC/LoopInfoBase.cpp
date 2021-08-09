@@ -32,6 +32,7 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/Utils.h"
@@ -48,8 +49,8 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/MemoryLocation.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Pass.h>
 
 using namespace llvm;
@@ -80,6 +81,7 @@ public:
     mSE = nullptr;
     mDT = nullptr;
     mAA = nullptr;
+    mPI = nullptr;
 #endif
   }
 
@@ -106,6 +108,7 @@ private:
   ScalarEvolution *mSE = nullptr;
   DominatorTree *mDT = nullptr;
   AAResults *mAA = nullptr;
+  ParallelLoopInfo *mPI = nullptr;
 
   std::vector<apc::LoopGraph *> mOuterLoops;
 };
@@ -124,6 +127,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
 INITIALIZE_PASS_IN_GROUP_END(APCLoopInfoBasePass, "apc-loop-info",
   "Loop Graph Builder (APC)", true, true,
     DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -140,6 +144,7 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
   mCanonical = &getAnalysis<CanonicalLoopPass>();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mAA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
+  mPI = &getAnalysis<ParallelLoopPass>().getParallelLoopInfo();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   for (auto I = LI.rbegin(), EI = LI.rend(); I != EI; ++I) {
     auto APCLoop = new apc::LoopGraph;
@@ -162,6 +167,7 @@ void APCLoopInfoBasePass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
+  AU.addRequired<ParallelLoopPass>();
   AU.setPreservesAll();
 }
 
@@ -193,7 +199,7 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
     if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), APCLoop.lineNum))
       emitUnableShrink(M->getContext(), *F, Loc, DS_Warning);
     if (auto Scope = dyn_cast_or_null<DIScope>(LocRange.getStart().getScope()))
-      APCLoop.fileName = Scope->getFilename();
+      APCLoop.fileName = Scope->getFilename().str();
   }
   if (auto &Loc = LocRange.getEnd())
     if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), APCLoop.lineNumAfterLoop))
@@ -205,7 +211,7 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   APCLoop.perfectLoop =
     !L.empty() && mPerfect->getPerfectLoopInfo().count(DFL) ? 1 : 0;
   bool KnownMaxBackageCount = false;
-  auto MaxBackedgeCount = mSE->getMaxBackedgeTakenCount(&L);
+  auto MaxBackedgeCount = mSE->getConstantMaxBackedgeTakenCount(&L);
   if (MaxBackedgeCount && !isa<SCEVCouldNotCompute>(MaxBackedgeCount)) {
     if (!castSCEV(MaxBackedgeCount, /*IsSigned=*/ false, APCLoop.countOfIters)) {
       emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
@@ -218,13 +224,19 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   evaluateInduction(L, *DFL, KnownMaxBackageCount, APCLoop);
   evaluateExits(L, *DFL, APCLoop);
   evaluateCalls(L, APCLoop);
+  if (!mPI->count(&L)) {
+    APCLoop.hasUnknownScalarDep = true;
+    APCLoop.hasUnknownArrayDep = true;
+  } else {
+    APCLoop.hasUnknownScalarDep = false;
+    APCLoop.hasUnknownArrayDep = false;
+  }
 }
 
 void APCLoopInfoBasePass::initNoAnalyzed(apc::LoopGraph &APCLoop) noexcept {
-  APCLoop.hasNonRectangularBounds = true;
-  APCLoop.hasUnknownArrayDep = true;
-  APCLoop.hasUnknownArrayAssigns = true;
-  APCLoop.hasIndirectAccess = true;
+  //APCLoop.hasNonRectangularBounds = true;
+  //APCLoop.hasUnknownArrayAssigns = true;
+  //APCLoop.hasIndirectAccess = true;
 }
 
 void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
@@ -241,7 +253,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
       if (auto DWLang = getLanguage(*DIM->Var)) {
         SmallString<16> DIName;
         if (unparseToString(*DWLang, *DIM, DIName))
-          APCLoop.loopSymbol = DIName.str();
+          APCLoop.loopSymbol = std::string(DIName);
       }
   }
 
@@ -262,7 +274,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
   }
   if (!castSCEV(Step, (*CanonItr)->isSigned(), StepVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
-      "unable to represent step of the loop", DS_Warning);     
+      "unable to represent step of the loop", DS_Warning);
     return;
   }
   if (StepVal == 0)
@@ -326,12 +338,12 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
   APCLoop.hasPrints = false;
   APCLoop.hasStops = false;
   APCLoop.hasNonPureProcedures = false;
-  for (auto *BB : L.blocks()) 
+  for (auto *BB : L.blocks())
     for (auto &I : *BB) {
-      CallSite CS(&I);
-      if (!CS)
+      auto *CB{dyn_cast<CallBase>(&I)};
+      if (!CB)
         continue;
-      auto Callee = CS.getCalledValue()->stripPointerCasts();
+      auto Callee = CB->getCalledOperand()->stripPointerCasts();
       if (auto II = dyn_cast<IntrinsicInst>(Callee))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
@@ -341,7 +353,7 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
         if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), ShrinkLoc))
           emitUnableShrink(M->getContext(), *F, Loc, DS_Warning);
       SmallString<16> CalleeName;
-      unparseCallee(CS, *M, *mDT, CalleeName);
+      unparseCallee(*CB, *M, *mDT, CalleeName);
       APCLoop.calls.emplace_back(CalleeName.str(), ShrinkLoc);
       static_assert(std::is_same<decltype(APCLoop.linesOfIO)::value_type,
         decltype(APCLoop.calls)::value_type::second_type>::value,
@@ -350,8 +362,8 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
         decltype(APCLoop.linesOfStop)::value_type>::value,
         "Different storage types of call locations!");
       auto CalleeFunc = dyn_cast<Function>(Callee);
-      if (!mAA->doesNotAccessMemory(CS) &&
-          !AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CS)))
+      if (!mAA->doesNotAccessMemory(CB) &&
+          !AAResults::onlyAccessesArgPointees(mAA->getModRefBehavior(CB)))
         APCLoop.hasNonPureProcedures = true;
       if (!CalleeFunc || !hasFnAttr(*CalleeFunc, AttrKind::NoIO)) {
         APCLoop.hasPrints = true;
@@ -365,7 +377,7 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
         APCLoop.hasStops = true;
         if (ShrinkLoc != 0)
           APCLoop.linesOfStop.push_back(ShrinkLoc);
-      } 
+      }
     }
 }
 
@@ -423,6 +435,8 @@ void APCLoopInfoBasePass::print(raw_ostream &OS, const Module *M) const {
         OS << "  has non rectangular bounds\n";
       if (L->hasUnknownArrayDep)
         OS << "  has unknown array dependencies\n";
+      if (L->hasUnknownScalarDep)
+        OS << "  has unknown scalar dependencies\n";
       if (L->hasUnknownArrayAssigns)
         OS << "  has unknown writes to an array\n";
       if (L->hasIndirectAccess)

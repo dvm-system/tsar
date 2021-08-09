@@ -25,6 +25,7 @@
 
 #include "AstWrapperImpl.h"
 #include "DistributionUtils.h"
+#include "MemoryServer.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
@@ -33,9 +34,9 @@
 #include "tsar/Analysis/Memory/Passes.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Core/Query.h"
-#include "tsar/Core/TransformationContext.h"
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/Clang/Diagnostic.h"
@@ -184,8 +185,9 @@ private:
     assert(DeclLoc.isValid() && "Location must be valid!");
     auto &Diags = mTfmCtx->getContext().getDiagnostics();
     if (Where.isMacroID()) {
-      toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
-      toDiag(Diags, DeclLoc, diag::note_apc_insert_macro_prevent);
+      toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
+          << DirStr.trim();
+      toDiag(Diags, DeclLoc, tsar::diag::note_apc_insert_macro_prevent);
       return;
     }
     auto DInfoItr = Decls.find(DeclLoc.getRawEncoding());
@@ -193,8 +195,9 @@ private:
     if (DInfoItr == Decls.end() || DInfoItr->second.IsSingleDeclStmt) {
       insertDirective(Where, DirStr);
     } else {
-      toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
-      toDiag(Diags, DeclLoc, diag::note_apc_not_single_decl_stmt);
+      toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
+          << DirStr.trim();
+      toDiag(Diags, DeclLoc, tsar::diag::note_apc_not_single_decl_stmt);
     }
   }
 
@@ -210,8 +213,9 @@ private:
       if (Itr->second == DirStr)
         return;
       auto &Diags = mTfmCtx->getContext().getDiagnostics();
-      toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) << DirStr.trim();
-      toDiag(Diags, Where, diag::note_apc_insert_multiple_directives);
+      toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
+          << DirStr.trim();
+      toDiag(Diags, Where, tsar::diag::note_apc_insert_multiple_directives);
       return;
     }
     auto &Rwr = mTfmCtx->getRewriter();
@@ -248,7 +252,7 @@ private:
     auto &SrcMgr = Ctx.getSourceManager();
     auto &Diags = Ctx.getDiagnostics();
     for (auto *Redecl : D->getFirstDecl()->redecls()) {
-      auto StartOfDecl = Redecl->getLocStart();
+      auto StartOfDecl = Redecl->getBeginLoc();
       // We have not inserted directives in a macro.
       if (StartOfDecl.isMacroID())
         continue;
@@ -261,7 +265,8 @@ private:
         getLocWithOffset(DecLoc.second);
       // Whether a distribution pragma acts on this declaration?
       if (mInsertedDirs.count(StartOfDecl.getRawEncoding()))
-        toDiag(Diags, StartOfDecl, diag::err_apc_not_distr_decl_directive);
+        toDiag(Diags, StartOfDecl,
+               tsar::diag::err_apc_not_distr_decl_directive);
     }
   }
 
@@ -287,7 +292,7 @@ private:
   /// List of already inserted directives at specified locations.
   DenseMap<unsigned, std::string> mInsertedDirs;
 
-  TransformationContext *mTfmCtx = nullptr;
+  ClangTransformationContext *mTfmCtx = nullptr;
 };
 
 using APCClangDVMHWriterProvider = FunctionPassProvider<
@@ -301,39 +306,50 @@ char APCClangDVMHWriter::ID = 0;
 namespace {
 class APCClangDVMHWriterInfo final : public PassGroupInfo {
   void addBeforePass(legacy::PassManager &Passes) const override {
-    // First step analysis.
-    Passes.add(createMemoryMatcherPass());
+    addImmutableAliasAnalysis(Passes);
+    addInitialTransformations(Passes);
+    Passes.add(createAnalysisSocketImmutableStorage());
+    Passes.add(createDIMemoryTraitPoolStorage());
     Passes.add(createDIMemoryEnvironmentStorage());
+    Passes.add(createGlobalsAccessStorage());
+    Passes.add(createGlobalsAccessCollector());
     Passes.add(createAPCContextStorage());
-    Passes.add(createAPCLoopInfoBasePass());
     Passes.add(createDIEstimateMemoryPass());
-    Passes.add(createCFGSimplificationPass());
-    // Second step analysis.
-    Passes.add(createSROAPass());
-    Passes.add(createEarlyCSEPass());
-    Passes.add(createCFGSimplificationPass());
-    Passes.add(createInstructionCombiningPass());
-    Passes.add(createLoopSimplifyPass());
-    Passes.add(createSCEVAAWrapperPass());
-    Passes.add(createGlobalsAAWrapperPass());
-    Passes.add(createRPOFunctionAttrsAnalysis());
-    Passes.add(createPOFunctionAttrsAnalysis());
+    Passes.add(new DVMHMemoryServer);
+    Passes.add(createAnalysisWaitServerPass());
     Passes.add(createMemoryMatcherPass());
-    Passes.add(createDIEstimateMemoryPass());
-    Passes.add(createAPCFunctionInfoPass());
+    Passes.add(createAnalysisWaitServerPass());
     Passes.add(createAPCArrayInfoPass());
+    // End of the second step of analysis on server.
+    Passes.add(createAnalysisReleaseServerPass());
+    Passes.add(createAnalysisWaitServerPass());
+    Passes.add(createAPCLoopInfoBasePass());
+    Passes.add(createAPCFunctionInfoPass());
+    // End of the third step of analysis on server.
     Passes.add(createAPCDataDistributionPass());
+    Passes.add(createAnalysisReleaseServerPass());
+    Passes.add(createAnalysisCloseConnectionPass());
   }
 };
 }
 
-INITIALIZE_PROVIDER_BEGIN(APCClangDVMHWriterProvider, "clang-apc-dvmh-provider",
+INITIALIZE_PROVIDER(DVMHMemoryServerProvider, "apc-dvmh-server-provider",
+  "DVMH Parallelization (APC, Server, Provider)")
+
+template<> char DVMHMemoryServerResponse::ID = 0;
+INITIALIZE_PASS(DVMHMemoryServerResponse, "apc-dvmh-server-response",
+  "DVMH Parallelization (APC, Server, Response)", true, false)
+
+char DVMHMemoryServer::ID = 0;
+INITIALIZE_PASS(DVMHMemoryServer, "dvmh-apc-server",
+  "DVMH Parallelization (APC, Server)", false, false)
+
+INITIALIZE_PROVIDER(APCClangDVMHWriterProvider, "clang-apc-dvmh-provider",
   "DVMH Parallelization (APC, Provider)")
-  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-  INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
-  INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
-INITIALIZE_PROVIDER_END(APCClangDVMHWriterProvider, "clang-apc-dvmh-provider",
-  "DVMH Parallelization (APC, Provider)")
+
+char InitializeProviderPass::ID = 0;
+INITIALIZE_PASS(InitializeProviderPass, "apc-dvmh-server-init-provider",
+  "DVMH Parallelization (APC, Server, Provider, Initialize)", true, true)
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCClangDVMHWriter, "clang-experimental-apc-dvmh",
   "DVMH Parallelization (Clang, APC, Experimental)", false, false,
@@ -343,9 +359,22 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCClangDVMHWriter, "clang-experimental-apc-dvmh"
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIGlobalMemoryMatcherPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
+  INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
   INITIALIZE_PASS_DEPENDENCY(ImmutableASTImportInfoPass)
   INITIALIZE_PASS_DEPENDENCY(APCClangDVMHWriterProvider)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
+  INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
+  INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServer)
+  INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServerResponse)
+  INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServerProvider)
+  INITIALIZE_PASS_DEPENDENCY(InitializeProviderPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryTraitPoolWrapper)
 INITIALIZE_PASS_IN_GROUP_END(APCClangDVMHWriter, "clang-experimental-apc-dvmh",
   "DVMH Parallelization (Clang, APC, Experimental)", false, false,
   TransformationQueryManager::getPassRegistry())
@@ -365,15 +394,16 @@ void APCClangDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   releaseMemory();
-  mTfmCtx = getAnalysis<TransformationEnginePass>().getContext(M);
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  mTfmCtx = TfmInfo ? TfmInfo->getContext(M) : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
       ": transformation context is not available");
     return false;
   }
   APCClangDVMHWriterProvider::initialize<TransformationEnginePass>(
-    [&M, this](TransformationEnginePass &TEP) {
-    TEP.setContext(M, mTfmCtx);
+    [&M, &TfmInfo](TransformationEnginePass &TEP) {
+    TEP.set(*TfmInfo);
   });
   auto &MatchInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
   APCClangDVMHWriterProvider::initialize<MemoryMatcherImmutableWrapper>(
@@ -402,7 +432,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     assert(isa<DILocalVariable>(DIVar) && "It must be a local variable!");
     auto Scope = DIVar->getScope();
     while (Scope && !isa<DISubprogram>(Scope))
-      Scope = Scope->getScope().resolve();
+      Scope = Scope->getScope();
     assert(Scope && "Local variable must be declared in a subprogram!");
     auto LocalItr = LocalVariables.try_emplace(cast<DISubprogram>(Scope)).first;
     LocalItr->second.push_back(&AR);
@@ -452,7 +482,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     }
     insertInherit(FD, Decls, InheritArgs, NotDistrCanonicalDecls);
   }
-  auto &GlobalMatcher = 
+  auto &GlobalMatcher =
     getAnalysis<ClangDIGlobalMemoryMatcherPass>().getMatcher();
   for (auto *AR : GlobalArrays) {
     auto *APCSymbol = AR->alignArray->GetDeclSymbol();
@@ -498,9 +528,9 @@ void APCClangDVMHWriter::initializeDeclInfo(const TranslationUnitDecl &Unit,
       CanonicalDecls.insert(VD->getCanonicalDecl());
       auto MergedLocItr = ImportInfo.RedeclLocs.find(VD);
       if (MergedLocItr == ImportInfo.RedeclLocs.end()) {
-        checkSingleDecl(VD->getLocStart(), VD->getLocation());
+        checkSingleDecl(VD->getBeginLoc(), VD->getLocation());
       } else {
-        auto &StartLocs = MergedLocItr->second.find(VD->getLocStart());
+        auto &StartLocs = MergedLocItr->second.find(VD->getBeginLoc());
         auto &Locs = MergedLocItr->second.find(VD->getLocation());
         for (std::size_t I = 0, EI = Locs.size(); I < EI; ++I)
           checkSingleDecl(StartLocs[I], Locs[I]);
@@ -555,14 +585,14 @@ void APCClangDVMHWriter::insertInherit(FunctionDecl *FD,
     Inherit += ")\n";
     if (!UnnamedArgsInMacro.empty()) {
       auto &Diags = mTfmCtx->getContext().getDiagnostics();
-      toDiag(Diags, Redecl->getLocStart(),
-        diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
+      toDiag(Diags, Redecl->getBeginLoc(),
+        tsar::diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
       for (auto &Arg : UnnamedArgsInMacro)
-        toDiag(Diags, Arg.first, diag::note_decl_insert_macro_prevent) <<
+        toDiag(Diags, Arg.first, tsar::diag::note_decl_insert_macro_prevent) <<
           Arg.second;
     }
     insertDataDirective(Redecl->getLocation(), Decls,
-      Redecl->getLocStart(), Inherit);
+      Redecl->getBeginLoc(), Inherit);
   }
 }
 
@@ -602,7 +632,7 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   auto *VarDef = VD->getDefinition();
   if (VarDef) {
     DefinitionLoc = VarDef->getLocation();
-    auto StartOfDecl = VarDef->getLocStart();
+    auto StartOfDecl = VarDef->getBeginLoc();
     insertDataDirective(DefinitionLoc, Decls, StartOfDecl, Align);
   }
   // Insert 'align' directive before a variable definition (if it is available)
@@ -610,7 +640,7 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   SmallString<16> Array;
   getPragmaText(DirectiveId::DvmArray, Array);
   for (auto *Redecl : VD->getFirstDecl()->redecls()) {
-    auto StartOfDecl = Redecl->getLocStart();
+    auto StartOfDecl = Redecl->getBeginLoc();
     auto RedeclLoc = Redecl->getLocation();
     switch (Redecl->isThisDeclarationADefinition()) {
     case VarDecl::Definition: break;
@@ -647,8 +677,8 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   if (DefinitionLoc.isInvalid()) {
     auto &Diags = mTfmCtx->getContext().getDiagnostics();
     toDiag(Diags, VD->getLocation(),
-      diag::err_apc_insert_dvm_directive) << StringRef(Align).trim();
-    toDiag(Diags, diag::note_apc_no_proper_definition) << VD->getName();
+      tsar::diag::err_apc_insert_dvm_directive) << StringRef(Align).trim();
+    toDiag(Diags, tsar::diag::note_apc_no_proper_definition) << VD->getName();
   }
   return DefinitionLoc;
 }
@@ -710,9 +740,9 @@ void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
       // not implemented, hence we conservatively disable insertion of directive
       // in an include file.
       if (SrcMgr.getDecomposedIncludedLoc(File.first).first.isValid()) {
-        toDiag(Diags, Where, diag::err_apc_insert_dvm_directive) <<
+        toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive) <<
           StringRef(Distribute).trim();
-        toDiag(Diags, Where, diag::note_apc_insert_include_prevent);
+        toDiag(Diags, Where, tsar::diag::note_apc_insert_include_prevent);
       }
       // Use `extern` in to avoid variable redefinition.
       if (TplInfo.HasDefinition)
@@ -733,6 +763,6 @@ void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
   if (DataDirs.distrRules.size() != InsertedTemplates.size())
     for (auto &TplInfo : DataDirs.distrRules)
       if (!InsertedTemplates.count(TplInfo.first))
-        toDiag(Diags, diag::err_apc_insert_template) <<
+        toDiag(Diags, tsar::diag::err_apc_insert_template) <<
           TplInfo.first->GetShortName();
 }

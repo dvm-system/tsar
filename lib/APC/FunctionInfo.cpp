@@ -40,6 +40,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/Pass.h>
 
 #undef DEBUG_TYPE
@@ -173,7 +174,7 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     /// TODO (kaniandr@gmail.com): should we emit warning or error if filename
     /// is not available from debug information.
     FI.fileName = DIFunc && !DIFunc->getFilename().empty() ?
-      DIFunc->getFilename() : StringRef(M.getSourceFileName());
+      DIFunc->getFilename().str() : M.getSourceFileName();
     // TODO (kaniandr@gmail.com): allow to use command line option to determine
     // entry point.
     if (auto DWLang = getLanguage(*Caller.first))
@@ -199,12 +200,12 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
             DIM = findMetadata(AI, DILocs);
       if (!DIM || !DIM->isValid() ||
           !cast<DILocalVariable>(DIM->Var)->isParameter()) {
-        FI.funcParams.identificators.push_back(Arg.getName());
+        FI.funcParams.identificators.push_back(Arg.getName().str());
         FI.funcParams.parameters.push_back(nullptr);
         FI.funcParams.parametersT.push_back(UNKNOWN_T);
         FI.funcParams.inout_types.push_back(IN_BIT | OUT_BIT);
       } else {
-        FI.funcParams.identificators.push_back(DIM->Var->getName());
+        FI.funcParams.identificators.push_back(DIM->Var->getName().str());
         FI.funcParams.parameters.push_back(nullptr);
         auto RawDIM = getRawDIMemoryIfExists(M.getContext(), *DIM);
         if (RawDIM && APCCtx.findArray(RawDIM))
@@ -216,21 +217,22 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     }
     FI.funcParams.countOfPars = FI.funcParams.identificators.size();
     for (auto &Callee : *Caller.second) {
-      if (auto II = dyn_cast<IntrinsicInst>(Callee.first))
+      if (!Callee.first)
+        continue;
+      if (auto II = dyn_cast<IntrinsicInst>(*Callee.first))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           continue;
       decltype(FI.linesOfIO)::value_type ShrinkCallLoc = 0;
-      if (auto &Loc = cast<Instruction>(Callee.first)->getDebugLoc())
+      if (auto &Loc = cast<Instruction>(*Callee.first)->getDebugLoc())
         if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), ShrinkCallLoc))
           emitUnableShrink(M.getContext(), *Caller.first, Loc, DS_Warning);
-      CallSite CS(Callee.first);
       SmallString<16> CalleeName;
       // TODO (kaniandr@gmail.com): should we add names for indirect calls,
       // for example if callee is a variable which is a pointer to a function?
       // Should we emit diagnostic if name is unknown?
-      if (unparseCallee(CS, M, DT, CalleeName))
-        FI.callsFrom.insert(CalleeName.str());
+      if (unparseCallee(*cast<CallBase>(*Callee.first), M, DT, CalleeName))
+        FI.callsFrom.insert(CalleeName.str().str());
       auto CalleeFunc = Callee.second->getFunction();
       if (!CalleeFunc || !hasFnAttr(*CalleeFunc, AttrKind::NoIO)) {
         if (ShrinkCallLoc != 0 ||
@@ -261,7 +263,9 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     auto &AA = getAnalysis<AAResultsWrapperPass>(
       const_cast<Function &>(*Caller.first)).getAAResults();
     for (auto &Callee : *Caller.second) {
-      if (auto II = dyn_cast<IntrinsicInst>(Callee.first))
+      if (!Callee.first)
+        continue;
+      if (auto II = dyn_cast<IntrinsicInst>(*Callee.first))
         if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
             isDbgInfoIntrinsic(II->getIntrinsicID()))
           continue;
@@ -273,13 +277,12 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
         continue;
       CalleeFI->callsTo.push_back(FI);
       apc::FuncParam Param;
-      CallSite CS(Callee.first);
-      assert(CS && "Can not construct CallSite for call!");
+      auto *CB{cast<CallBase>(*Callee.first)};
       for (auto &Arg : Callee.second->getFunction()->args()) {
         if (Arg.hasStructRetAttr())
           continue;
         Param.parameters.push_back(nullptr);
-        auto MRI = AA.getArgModRefInfo(CS, Arg.getArgNo());
+        auto MRI = AA.getArgModRefInfo(CB, Arg.getArgNo());
         Param.inout_types.push_back(0);
         // TODO (kaniandr@gmail.com): implement interprocedural analysis
         // to determine in/out attributes for arguments.
@@ -287,13 +290,13 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
           Param.inout_types.back() |= OUT_BIT;
         if (isRefSet(MRI))
           Param.inout_types.back() |= IN_BIT;
-        auto *ActualArg = CS.getArgument(Arg.getArgNo());
+        auto *ActualArg = CB->getArgOperand(Arg.getArgNo());
         SmallVector<DIMemoryLocation, 1> DILocs;
         auto DIM = findMetadata(ActualArg, DILocs);
         if (DIM) {
           assert(DIM->isValid() && "Metadata memory location must be valid!");
           if (DIM->Expr->getNumElements() == 0)
-            Param.identificators.push_back(DIM->Var->getName());
+            Param.identificators.push_back(DIM->Var->getName().str());
           else
             Param.identificators.emplace_back();
           auto RawDIM = getRawDIMemoryIfExists(M.getContext(), *DIM);
@@ -324,9 +327,9 @@ void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
       if (Params.parametersT[I] == ARRAY_T)
         OS << "    array\n";
       OS << "    access:";
-      if (Params.isArgIn(I))
+      if (Params.isArgIn((int)I))
         OS << " input";
-      if (Params.isArgOut(I))
+      if (Params.isArgOut((int)I))
         OS << " output";
       OS << "\n";
     }

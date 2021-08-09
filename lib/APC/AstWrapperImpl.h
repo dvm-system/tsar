@@ -36,4 +36,9 @@ private:
   tsar::DIMemoryLocation mMemory;
 };
 
+class Expression
+{
+
+};
+
 #endif//TSAR_AST_WRAPPER_IMPL_H
