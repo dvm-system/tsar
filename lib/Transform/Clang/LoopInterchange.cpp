@@ -362,7 +362,7 @@ public:
       llvm::SmallVector<clang::VarDecl *, 4> ValueSwaps;
       for (auto [Literal, Clause] : mSwaps) {
         auto Str{Literal->getString()};
-        unsigned InductIdx{0}, InductIdxE{mInductions.size()};
+        unsigned InductIdx{0}, InductIdxE = mInductions.size();
         for (; InductIdx < InductIdxE; ++InductIdx) {
           if (!std::get<clang::VarDecl *>(mInductions[InductIdx]))
             continue;
@@ -455,7 +455,7 @@ public:
       std::transform(mInductions.begin(), mInductions.begin() + MaxIdx + 1,
                      std::back_inserter(Order),
                      [](auto &I) { return std::get<clang::VarDecl *>(I); });
-      for (unsigned I{0}, EI{ValueSwaps.size()}; I < EI; I += 2) {
+      for (unsigned I{0}, EI = ValueSwaps.size(); I < EI; I += 2) {
         auto FirstItr{find(Order, ValueSwaps[I])};
         assert(FirstItr != Order.end() && "Induction must exist!");
         auto SecondItr{find(Order, ValueSwaps[I + 1])};
@@ -514,7 +514,7 @@ private:
   clang::ForStmt *isMemoryAccessedIn(const DIMemory *DIM, const Loop *L,
                                      LoopNest::iterator I,
                                      LoopNest::iterator EI) {
-    assert(std::get<const CanonicalLoopInfo *>(Induct) &&
+    assert(DIM &&
            "Results of canonical loop analysis must be available for a loop!");
     for (auto &Induct : make_range(I, EI)) {
       if (isMemoryAccessedIn(
