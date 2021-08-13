@@ -828,4 +828,5 @@ ModulePass *llvm::createClangOpenMPParallelization() {
 char ClangOpenMPParallelization::ID = 0;
 INITIALIZE_SHARED_PARALLELIZATION(ClangOpenMPParallelization,
                                   "clang-openmp-parallel",
-                                  "OpenMP Based Parallelization (Clang)")
+                                  "OpenMP Based Parallelization (Clang)",
+                                  ClangSMParallelizationInfo)

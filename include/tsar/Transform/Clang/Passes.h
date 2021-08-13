@@ -29,6 +29,7 @@
 #define TSAR_CLANG_TRANSFORM_PASSES_H
 
 namespace llvm {
+class ImmutablePass;
 class PassRegistry;
 class FunctionPass;
 class ModulePass;
@@ -67,6 +68,26 @@ void initializeClangOpenMPParallelizationPass(PassRegistry &Registry);
 
 /// Create a pass to perform OpenMP-based parallelization.
 ModulePass* createClangOpenMPParallelization();
+
+/// Initialize a storage for DVMH-base parallelization.
+void initializeDVMHParallelizationContextPass(PassRegistry &Registry);
+
+/// Create a storage for DVMH-base parallelization.
+ImmutablePass *createDVMHParallelizationContext();
+
+/// Initialize a pass to perform IPO of data transfer between CPU and GPU
+/// memories.
+void initializeDVMHDataTransferIPOPassPass(PassRegistry &Registry);
+
+/// Create a pass to perform IPO of data transfer between CPU and GPU
+/// memories.
+ModulePass *createDVMHDataTransferIPOPass();
+
+/// Initialize a pass to unparse DVMH-based parallelization.
+void initializeClangDVMHWriterPass(PassRegistry &Registry);
+
+/// Create a pass to unparse DVMH-based parallelization.
+ModulePass *createClangDVMHWriter();
 
 /// Initialize a pass to perform DVMH-based parallelization for shared memory.
 void initializeClangDVMHSMParallelizationPass(PassRegistry &Registry);

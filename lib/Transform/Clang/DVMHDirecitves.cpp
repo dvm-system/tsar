@@ -1,0 +1,39 @@
+//===- DVMHDirectives.cpp - Representation of DVMH Directives ----*- C++ -*===//
+//
+//                       Traits Static Analyzer (SAPFOR)
+//
+// Copyright 2021 DVM System Group
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file provides class to represent DVMH directives.
+//
+//===----------------------------------------------------------------------===//
+
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
+#include "llvm/Analysis/LoopInfo.h"
+
+using namespace llvm;
+using namespace tsar;
+using namespace tsar::dvmh;
+
+PragmaParallel *tsar::dvmh::isParallel(const Loop *L,
+                                       Parallelization &ParallelizationInfo) {
+  if (auto ID = L->getLoopID()) {
+    auto Ref{ParallelizationInfo.find<PragmaParallel>(L->getHeader(), ID)};
+    return cast_or_null<PragmaParallel>(Ref);
+  }
+  return nullptr;
+}

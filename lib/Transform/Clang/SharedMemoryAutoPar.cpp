@@ -100,11 +100,6 @@ void ClangSMParallelizationInfo::addAfterPass(
   Passes.add(createAnalysisCloseConnectionPass());
 }
 
-bool ClangSMParallelization::optimizeUpward(Loop &L,
-                                            const FunctionAnalysis &Provider) {
-  return optimizeUpward(&L, L.begin(), L.end(), Provider);
-}
-
 bool ClangSMParallelization::findParallelLoops(Loop &L,
     const FunctionAnalysis &Provider, ParallelItem *PI) {
   auto &F = *L.getHeader()->getParent();
@@ -326,10 +321,6 @@ static void addToReachability(const AdjacentListT &AdjacentList,
 
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
-  if (!(mEntryPoint = M.getFunction("main")))
-    mEntryPoint = M.getFunction("MAIN_");
-  // TODO (kaniandr@gmail.com): emit warning if entry point has not be found
-  // TODO (kaniandr@gmail.com): add option to manually specify entry point
   auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
   mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
   mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
@@ -408,18 +399,7 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
     findParallelLoops(F, LI.begin(), LI.end(), Provider, nullptr);
   }
-  if (!initializeIPO(M, Reachability))
-    return false;
-  for (auto &&[F, Node] : mAdjacentList) {
-    if (!F || F->isIntrinsic() || F->isDeclaration() ||
-        hasFnAttr(*F, AttrKind::LibFunc))
-      continue;
-    if (isParallelCallee(*F, Node.get<Id>(), Reachability))
-      continue;
-    auto Provider{analyzeFunction(*F)};
-    auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
-    optimizeUpward(F, LI.begin(), LI.end(), Provider);
-  }
+  finalize(M, Reachability);
   return false;
 }
 
