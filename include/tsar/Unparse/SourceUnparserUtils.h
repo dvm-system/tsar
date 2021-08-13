@@ -31,7 +31,7 @@
 namespace llvm {
 class raw_ostream;
 class DominatorTree;
-class CallSite;
+class CallBase;
 class Module;
 }
 
@@ -57,7 +57,7 @@ bool unparseDump(unsigned DWLang, const DIMemoryLocation &Loc,
 
 /// Unparses callee and appends result to a specified string,
 /// returns true on success.
-bool unparseCallee(const llvm::CallSite &CS, llvm::Module &M,
+bool unparseCallee(const llvm::CallBase &CB, llvm::Module &M,
   llvm::DominatorTree &DT, llvm::SmallVectorImpl<char> &S,
   bool IsMinimal = true);
 }
