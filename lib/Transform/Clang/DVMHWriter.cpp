@@ -364,7 +364,58 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   auto Parallel{cast<PragmaParallel>(PIRef)};
   getPragmaText(DirectiveId::DvmParallel, Str);
   Str.resize(Str.size() - 1);
-  if (Parallel->getClauses().get<trait::DirectAccess>().empty()) {
+  if (Parallel->getClauses().get<dvmh::Align>()) {
+    Str.push_back('(');
+    for (auto &LToI : Parallel->getClauses().get<trait::Induction>()) {
+      Str.push_back('[');
+      auto Name{LToI.get<VariableT>().get<AST>()->getName()};
+      Str.append(Name.begin(), Name.end());
+      Str.push_back(']');
+    }
+    Str.append({' ', 'o', 'n', ' '});
+    std::visit([&Str](auto &&V) {
+          if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
+            auto Name{V.template get<AST>()->getName()};
+            Str.append(Name.begin(), Name.end());
+          } else {
+            auto Name{V->getName()};
+            Str.append(Name.begin(), Name.end());
+          }
+      }, Parallel->getClauses().get<dvmh::Align>()->Target);
+    for (auto &A : Parallel->getClauses().get<dvmh::Align>()->Relation) {
+      Str.push_back('[');
+      if (A) {
+        std::visit(
+            [Parallel, &Str](auto &&V) {
+              if constexpr (std::is_same_v<dvmh::Align::Axis,
+                                           std::decay_t<decltype(V)>>) {
+                auto &Induct{Parallel->getClauses()
+                                 .get<trait::Induction>()[V.Dimension]
+                                 .get<VariableT>()};
+                auto Name{Induct.get<AST>()->getName()};
+                if (!V.Step.isOneValue()) {
+                  if (V.Step.isNegative())
+                    Str.push_back('(');
+                  V.Step.toString(Str);
+                  if (V.Step.isNegative())
+                    Str.push_back(')');
+                  Str.push_back('*');
+                }
+                Str.append(Name.begin(), Name.end());
+                if (!V.Offset.isNullValue()) {
+                  Str.push_back('+');
+                  V.Offset.toString(Str);
+                }
+              } else {
+                V.toString(Str);
+              }
+            },
+            *A);
+      }
+      Str.push_back(']');
+    }
+    Str.push_back(')');
+  } else if (Parallel->getClauses().get<trait::DirectAccess>().empty()) {
     Str.push_back('(');
     auto NestSize{
         std::to_string(Parallel->getClauses().get<trait::Induction>().size())};
@@ -373,25 +424,34 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   } else {
     addParallelMapping(L, *Parallel, Str);
   }
+  auto addShadow = [&Str](auto &Shadow) {
+    Str.append(Shadow.first.template get<AST>()->getName().begin(),
+               Shadow.first.template get<AST>()->getName().end());
+    for (auto &Range : Shadow.second) {
+      Str.push_back('[');
+      if (Range.first)
+        Range.first->toString(Str);
+      else
+        Str.push_back('0');
+      Str.push_back(':');
+      if (Range.second)
+        Range.second->toString(Str);
+      else
+        Str.push_back('0');
+      Str.push_back(']');
+    }
+  };
+  if (!Parallel->getClauses().get<Shadow>().empty()) {
+    Str.append(
+        {'s', 'h', 'a', 'd', 'o', 'w', '_', 'r', 'e', 'n', 'e', 'w', '('});
+    for (auto &Across : Parallel->getClauses().get<Shadow>())
+      addShadow(Across);
+    Str.push_back(')');
+  }
   if (!Parallel->getClauses().get<trait::Dependence>().empty()) {
     Str.append({'a', 'c', 'r', 'o', 's', 's', '('});
-    for (auto &Across : Parallel->getClauses().get<trait::Dependence>()) {
-      Str.append(Across.first.get<AST>()->getName().begin(),
-                 Across.first.get<AST>()->getName().end());
-      for (auto &Range : Across.second) {
-        Str.push_back('[');
-        if (Range.first)
-          Range.first->toString(Str);
-        else
-          Str.push_back('0');
-        Str.push_back(':');
-        if (Range.second)
-          Range.second->toString(Str);
-        else
-          Str.push_back('0');
-        Str.push_back(']');
-      }
-    }
+    for (auto &Across : Parallel->getClauses().get<trait::Dependence>())
+      addShadow(Across);
     Str.push_back(')');
   }
   addClauseIfNeed(" private", Parallel->getClauses().get<trait::Private>(),

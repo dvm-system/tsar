@@ -31,10 +31,13 @@
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
+#include <llvm/ADT/iterator.h>
+#include <llvm/ADT/Optional.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Pass.h>
 #include <map>
+#include <variant>
 
 namespace llvm {
 class Loop;
@@ -47,6 +50,27 @@ using VariableT = ClangDependenceAnalyzer::VariableT;
 using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
 using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
 using SortedVarMultiListT = ClangDependenceAnalyzer::SortedVarMultiListT;
+
+class Template {
+public:
+  explicit Template(llvm::StringRef Name) : mName(Name) {}
+  llvm::StringRef getName() const noexcept { return mName; }
+private:
+  std::string mName;
+};
+
+struct Align {
+  struct Axis {
+    unsigned Dimension;
+    llvm::APSInt Step;
+    llvm::APSInt Offset;
+  };
+  std::variant<VariableT, Template *> Target;
+  llvm::SmallVector<llvm::Optional<std::variant<Axis, llvm::APSInt>>, 4>
+      Relation;
+};
+
+struct Shadow {};
 
 class PragmaRegion : public ParallelLevel {
 public:
@@ -146,7 +170,7 @@ public:
 
 class PragmaParallel : public ParallelItem {
 public:
-  using AcrossVarListT =
+  using ShadowVarListT =
       std::map<VariableT, trait::DIDependence::DistanceVector,
                ClangDependenceAnalyzer::VariableLess>;
   using LoopNestT =
@@ -160,9 +184,11 @@ public:
   using ClauseList =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
                         bcl::tagged<ReductionVarListT, trait::Reduction>,
-                        bcl::tagged<AcrossVarListT, trait::Dependence>,
+                        bcl::tagged<ShadowVarListT, trait::Dependence>,
                         bcl::tagged<LoopNestT, trait::Induction>,
-                        bcl::tagged<VarMappingT, trait::DirectAccess>>;
+                        bcl::tagged<VarMappingT, trait::DirectAccess>,
+                        bcl::tagged<ShadowVarListT, Shadow>,
+                        bcl::tagged<llvm::Optional<Align>, Align>>;
 
   static bool classof(const ParallelItem *Item) noexcept {
     return Item->getKind() == static_cast<unsigned>(DirectiveId::DvmParallel);
@@ -197,7 +223,13 @@ PragmaParallel *isParallel(const llvm::Loop *L,
 namespace llvm {
 class DVMHParallelizationContext : public llvm::ImmutablePass,
                                    private bcl::Uncopyable {
+  using TemplateList = SmallVector<std::unique_ptr<tsar::dvmh::Template>, 1>;
+
 public:
+  using template_iterator = llvm::raw_pointer_iterator<TemplateList::iterator>;
+  using const_template_iterator =
+      llvm::raw_pointer_iterator<TemplateList::const_iterator>;
+
   static char ID;
   DVMHParallelizationContext() : ImmutablePass(ID) {
     initializeDVMHParallelizationContextPass(*PassRegistry::getPassRegistry());
@@ -224,6 +256,32 @@ public:
     mParallelCallees.insert(&F);
   }
 
+  tsar::dvmh::Template *makeTemplate(StringRef Name) {
+    mTemplates.push_back(std::make_unique<tsar::dvmh::Template>(Name));
+    return mTemplates.back().get();
+  }
+
+  template_iterator template_begin() {
+    return template_iterator(mTemplates.begin());
+  }
+  template_iterator template_end() {
+    return template_iterator(mTemplates.end());
+  }
+  auto templates() { return make_range(template_begin(), template_end()); }
+
+  const_template_iterator template_begin() const {
+    return const_template_iterator(mTemplates.begin());
+  }
+  const_template_iterator template_end() const {
+    return const_template_iterator(mTemplates.end());
+  }
+  auto templates() const {
+    return make_range(template_begin(), template_end());
+  }
+
+  bool template_empty() { return mTemplates.empty(); }
+  std::size_t template_size() { return mTemplates.size(); }
+
 private:
   tsar::Parallelization mParallelizationInfo;
 
@@ -234,6 +292,7 @@ private:
   /// valid.
   tsar::dvmh::PragmaActual mIPORoot{false, false};
 
+  TemplateList mTemplates;
   SmallPtrSet<const Function *, 16> mParallelCallees;
 };
 }

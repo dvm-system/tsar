@@ -25,18 +25,27 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AstWrapperImpl.h"
 #include "LoopGraphTraits.h"
+#include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
+#include "tsar/Analysis/Clang/ASTDependenceAnalysis.h"
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
+#include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/Utils.h"
 #include "tsar/Core/Query.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Support/Diagnostic.h"
 #include "tsar/Support/MetadataUtils.h"
@@ -44,6 +53,7 @@
 #include <apc/GraphLoop/graph_loops.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
 #include <bcl/utility.h>
+#include <clang/Basic/SourceManager.h>
 #include <llvm/ADT/DepthFirstIterator.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -74,9 +84,13 @@ public:
   void releaseMemory() override {
     mOuterLoops.clear();
 #if !defined NDEBUG
+    mSocket = nullptr;
     mAPCContext = nullptr;
+    mDIMemoryMatcher = nullptr;
+    mGlobalOpts = nullptr;
     mRegions = nullptr;
     mPerfect = nullptr;
+    mTfmCtx = nullptr;
     mCanonical = nullptr;
     mSE = nullptr;
     mDT = nullptr;
@@ -92,7 +106,7 @@ private:
   ///
   /// \post Do not override default values (star, end, step) if some of values
   /// can not be computed.
-  void evaluateInduction(const Loop &L, const DFLoop &DFL,
+  void evaluateInduction(const Loop &L, const CanonicalLoopInfo &CI,
     bool KnownMaxBackageCount, apc::LoopGraph &APCLoop);
   void evaluateExits(const Loop &L, const DFLoop &DFL, apc::LoopGraph &APCLoop);
   void evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop);
@@ -101,10 +115,14 @@ private:
   // in subsequent passes.
   void initNoAnalyzed(apc::LoopGraph &L) noexcept;
 
+  AnalysisSocket *mSocket{nullptr};
   APCContext *mAPCContext = nullptr;
   DFRegionInfo *mRegions = nullptr;
+  ClangTransformationContext *mTfmCtx{nullptr};
+  ClangDIMemoryMatcherPass *mDIMemoryMatcher{nullptr};
   ClangPerfectLoopPass *mPerfect = nullptr;
   CanonicalLoopPass *mCanonical = nullptr;
+  const GlobalOptions *mGlobalOpts{nullptr};
   ScalarEvolution *mSE = nullptr;
   DominatorTree *mDT = nullptr;
   AAResults *mAA = nullptr;
@@ -119,7 +137,10 @@ char APCLoopInfoBasePass::ID = 0;
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   "Loop Graph Builder (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
+  INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
+  INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
@@ -128,6 +149,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
+  INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_IN_GROUP_END(APCLoopInfoBasePass, "apc-loop-info",
   "Loop Graph Builder (APC)", true, true,
     DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -138,14 +160,33 @@ FunctionPass * llvm::createAPCLoopInfoBasePass() {
 
 bool APCLoopInfoBasePass::runOnFunction(Function &F) {
   releaseMemory();
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
+    return false;
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  mTfmCtx = TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                          TfmInfo->getContext(*CU))
+                    : nullptr;
+  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
+    F.getContext().emitError("can not transform sources"
+                              ": transformation context is not available");
+    return false;
+  }
   mAPCContext = &getAnalysis<APCContextWrapper>().get();
+  mDIMemoryMatcher = &getAnalysis<ClangDIMemoryMatcherPass>();
+  mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   mRegions = &getAnalysis<DFRegionInfoPass>().getRegionInfo();
   mPerfect = &getAnalysis<ClangPerfectLoopPass>();
+  mSocket = getAnalysis<AnalysisSocketImmutableWrapper>()->getActiveSocket();
   mCanonical = &getAnalysis<CanonicalLoopPass>();
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mAA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
   mPI = &getAnalysis<ParallelLoopPass>().getParallelLoopInfo();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+
   for (auto I = LI.rbegin(), EI = LI.rend(); I != EI; ++I) {
     auto APCLoop = new apc::LoopGraph;
     assert((*I)->getLoopID() && "Loop ID must not be null, "
@@ -160,6 +201,9 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
 
 void APCLoopInfoBasePass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<APCContextWrapper>();
+  AU.addRequired<GlobalOptionsImmutableWrapper>();
+  AU.addRequired<ClangDIMemoryMatcherPass>();
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<CanonicalLoopPass>();
   AU.addRequired<ClangPerfectLoopPass>();
@@ -168,6 +212,7 @@ void APCLoopInfoBasePass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<ParallelLoopPass>();
+  AU.addRequired<TransformationEnginePass>();
   AU.setPreservesAll();
 }
 
@@ -221,15 +266,74 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
       KnownMaxBackageCount = true;
     }
   }
-  evaluateInduction(L, *DFL, KnownMaxBackageCount, APCLoop);
+  auto CanonItr{mCanonical->getCanonicalLoopInfo().find_as(DFL)};
+  if (CanonItr != mCanonical->getCanonicalLoopInfo().end()) {
+    evaluateInduction(L, **CanonItr, KnownMaxBackageCount, APCLoop);
+    APCLoop.isFor = APCLoop.inCanonicalFrom = (**CanonItr).isCanonical();
+  }
   evaluateExits(L, *DFL, APCLoop);
   evaluateCalls(L, APCLoop);
-  if (!mPI->count(&L)) {
+  if (auto ParallelInfoItr{mPI->find(&L)};
+      ParallelInfoItr != mPI->end() &&
+      CanonItr != mCanonical->getCanonicalLoopInfo().end() &&
+      (**CanonItr).isCanonical()) {
+    auto RF{
+        mSocket->getAnalysis<DIEstimateMemoryPass, DIDependencyAnalysisPass>(
+            *F)};
+    assert(RF && "Dependence analysis must be available for a parallel loop!");
+    auto &DIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
+    auto &DIDepInfo{RF->value<DIDependencyAnalysisPass *>()->getDependencies()};
+    auto RM{mSocket->getAnalysis<AnalysisClientServerMatcherWrapper,
+                                 ClonedDIMemoryMatcherWrapper>()};
+    assert(RM && "Client to server IR-matcher must be available!");
+    auto &ClientToServer{**RM->value<AnalysisClientServerMatcherWrapper *>()};
+    assert(L.getLoopID() && "ID must be available for a parallel loop!");
+    auto ServerLoopID{cast<MDNode>(*ClientToServer.getMappedMD(L.getLoopID()))};
+    auto DIDepSet{DIDepInfo[ServerLoopID]};
+    auto *ServerF{cast<Function>(ClientToServer[F])};
+    auto *DIMemoryMatcher{
+        (**RM->value<ClonedDIMemoryMatcherWrapper *>())[*ServerF]};
+    assert(DIMemoryMatcher && "Cloned memory matcher must not be null!");
+    auto &ASTToClient = mDIMemoryMatcher->getMatcher();
+    auto *ForStmt{(**CanonItr).getASTLoop()};
+    assert(ForStmt && "Source-level representation of a loop must be available!");
+    auto &SrcMgr{mTfmCtx->getRewriter().getSourceMgr()};
+    auto &Diags{SrcMgr.getDiagnostics()};
+    ClangDependenceAnalyzer RegionAnalysis(
+        const_cast<clang::ForStmt *>(ForStmt), *mGlobalOpts, Diags, DIAT,
+        DIDepSet, *DIMemoryMatcher, ASTToClient);
+    if (RegionAnalysis.evaluateDependency()) {
+      auto &DepInfo{RegionAnalysis.getDependenceInfo()};
+      APCLoop.loopSymbol =
+          DepInfo.get<trait::Induction>().get<AST>()->getName().str();
+      APCLoop.hasUnknownScalarDep = false;
+      APCLoop.hasUnknownArrayDep = false;
+      auto *S{new apc::LoopStatement(L.getLoopID(),
+                                      DepInfo.get<trait::Induction>())};
+      S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
+      S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
+      dvmh::SortedVarMultiListT NotLocalized;
+      auto Localized{RegionAnalysis.evaluateDefUse(&NotLocalized)};
+      S->setIsHostOnly(!Localized || ParallelInfoItr->second.isHostOnly());
+      S->getTraits().get<trait::WriteOccurred>() =
+          DepInfo.get<trait::WriteOccurred>();
+      S->getTraits().get<trait::ReadOccurred>() =
+          DepInfo.get<trait::ReadOccurred>();
+      if (!Localized) {
+        S->getTraits().get<trait::WriteOccurred>().insert(NotLocalized.begin(),
+                                                          NotLocalized.end());
+        S->getTraits().get<trait::ReadOccurred>() =
+            S->getTraits().get<trait::WriteOccurred>();
+      }
+      mAPCContext->addStatement(S);
+      APCLoop.loop = S;
+    } else {
+      APCLoop.hasUnknownScalarDep = true;
+      APCLoop.hasUnknownArrayDep = true;
+    }
+  } else {
     APCLoop.hasUnknownScalarDep = true;
     APCLoop.hasUnknownArrayDep = true;
-  } else {
-    APCLoop.hasUnknownScalarDep = false;
-    APCLoop.hasUnknownArrayDep = false;
   }
 }
 
@@ -239,40 +343,27 @@ void APCLoopInfoBasePass::initNoAnalyzed(apc::LoopGraph &APCLoop) noexcept {
   //APCLoop.hasIndirectAccess = true;
 }
 
-void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
-  bool KnownMaxBackageCount, apc::LoopGraph &APCLoop) {
+void APCLoopInfoBasePass::evaluateInduction(const Loop &L,
+    const CanonicalLoopInfo &CI,  bool KnownMaxBackageCount,
+    apc::LoopGraph &APCLoop) {
   auto *M = L.getHeader()->getModule();
   auto *F = L.getHeader()->getParent();
-  auto CanonItr = mCanonical->getCanonicalLoopInfo().find_as(&DFL);
-  if (CanonItr == mCanonical->getCanonicalLoopInfo().end())
+  if (!(CI.isSigned() || CI.isUnsigned()))
     return;
-  if (auto Induct = (*CanonItr)->getInduction()) {
-    auto DIM = buildDIMemory(MemoryLocation(Induct),
-      M->getContext(), M->getDataLayout(), *mDT);
-    if (DIM && DIM->isValid())
-      if (auto DWLang = getLanguage(*DIM->Var)) {
-        SmallString<16> DIName;
-        if (unparseToString(*DWLang, *DIM, DIName))
-          APCLoop.loopSymbol = std::string(DIName);
-      }
-  }
-
-  if (!((*CanonItr)->isSigned() || (*CanonItr)->isUnsigned()))
-    return;
-  auto Start = (*CanonItr)->getStart();
-  auto End = (*CanonItr)->getEnd();
-  auto Step = (*CanonItr)->getStep();
+  auto Start = CI.getStart();
+  auto End = CI.getEnd();
+  auto Step = CI.getStep();
   if (!Start || !End || !Step)
     return;
   auto StartVal = APCLoop.startVal;
   auto EndVal = APCLoop.endVal;
   auto StepVal = APCLoop.stepVal;
-  if (!castSCEV(mSE->getSCEV(Start), (*CanonItr)->isSigned(), StartVal)) {
+  if (!castSCEV(mSE->getSCEV(Start), CI.isSigned(), StartVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
       "unable to represent lower bound of the loop", DS_Warning);
     return;
   }
-  if (!castSCEV(Step, (*CanonItr)->isSigned(), StepVal)) {
+  if (!castSCEV(Step, CI.isSigned(), StepVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
       "unable to represent step of the loop", DS_Warning);
     return;
@@ -285,7 +376,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
   auto Val = Const->getAPInt();
   // Try to convert value from <, >, != comparison to equivalent
   // value from <=, >= comparison.
-  switch ((*CanonItr)->getPredicate()) {
+  switch (CI.getPredicate()) {
   case CmpInst::ICMP_SLT: case CmpInst::ICMP_ULT: --Val; break;
   case CmpInst::ICMP_SGT: case CmpInst::ICMP_UGT: ++Val; break;
   case CmpInst::ICMP_NE: StepVal > 0 ?-Val : ++Val;
@@ -293,7 +384,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
   case CmpInst::ICMP_SLE: case CmpInst::ICMP_ULE: break;
   default: return;
   }
-  if (!castAPInt(Val, (*CanonItr)->isSigned(), EndVal)) {
+  if (!castAPInt(Val, CI.isSigned(), EndVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
       "unable to represent upper bound of the loop", DS_Warning);
       return;
@@ -301,7 +392,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L, const DFLoop &DFL,
   APCLoop.startVal = StartVal;
   APCLoop.endVal = EndVal;
   APCLoop.stepVal = StepVal;
-  if (!KnownMaxBackageCount && (*CanonItr)->isCanonical())
+  if (!KnownMaxBackageCount && CI.isCanonical())
     if (EndVal > StartVal && StepVal > 0 ||
         EndVal < StartVal && StepVal < 0)
       APCLoop.calculatedCountOfIters = APCLoop.countOfIters

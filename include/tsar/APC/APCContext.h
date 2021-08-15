@@ -48,7 +48,17 @@ class Array;
 class ArrayAccessInfo;
 }
 
+namespace tsar {
+class ParallelItem;
+namespace dvmh {
+class Template;
+}
+}
+
+using DirectiveImpl = tsar::ParallelItem *;
+
 namespace apc {
+using DirectiveImpl = ::DirectiveImpl;
 using Expression = ::Expression;
 using FuncInfo = ::FuncInfo;
 using FuncParam = ::FuncParam;
@@ -92,6 +102,13 @@ public:
   /// deallocation of the same memory.
   void addSymbol(apc::Symbol *S);
 
+  /// Add a new statement under of APCContext control, context releases memory
+  /// when it becomes unused.
+  ///
+  /// \pre The same statement should not be added twice. This may lead to
+  /// multiple deallocation of the same memory.
+  void addStatement(apc::Statement *S);
+
   /// Add loop with a specified ID under of APCContext control.
   ///
   /// If ManageMemory is set to true then context releases memory when it
@@ -106,8 +123,15 @@ public:
   /// releases memory when it becomes unused.
   bool addArray(ObjectID ID, apc::Array * A);
 
+  /// Add array with a specified ID under of APCContext control, context
+  /// releases memory when it becomes unused.
+  bool addArray(dvmh::Template *ID, apc::Array *A);
+
   /// Return array with a specified ID or nullptr.
   apc::Array * findArray(ObjectID ID);
+
+  /// Return array with a specified ID or nullptr.
+  apc::Array * findArray(dvmh::Template *ID);
 
   /// Return number of registered arrays.
   std::size_t getNumberOfArrays() const;

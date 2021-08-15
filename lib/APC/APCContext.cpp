@@ -112,6 +112,10 @@ void APCContext::addSymbol(apc::Symbol *S) {
   mImpl->Symbols.emplace_back(S);
 }
 
+void APCContext::addStatement(apc::Statement *S) {
+  mImpl->Statements.emplace_back(S);
+}
+
 bool APCContext::addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory) {
   if (!mImpl->Loops.try_emplace(ID, L).second)
     return false;
@@ -129,9 +133,18 @@ bool APCContext::addArray(ObjectID ID, apc::Array *A) {
   return mImpl->Arrays.try_emplace(ID, A).second;
 }
 
+bool APCContext::addArray(dvmh::Template *ID, apc::Array *A) {
+  return mImpl->Templates.try_emplace(ID, A).second;
+}
+
 apc::Array* APCContext::findArray(ObjectID ID) {
   auto I = mImpl->Arrays.find(ID);
   return I != mImpl->Arrays.end() ? I->second.get() : nullptr;
+}
+
+apc::Array* APCContext::findArray(dvmh::Template *ID) {
+  auto I = mImpl->Templates.find(ID);
+  return I != mImpl->Templates.end() ? I->second : nullptr;
 }
 
 std::size_t APCContext::getNumberOfArrays() const {

@@ -26,6 +26,7 @@
 
 #include "AstWrapperImpl.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
@@ -39,6 +40,7 @@
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Support/Tags.h"
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
 #include <apc/Distribution/Array.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
 #include <apc/Utils/types.h>
@@ -85,6 +87,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
 INITIALIZE_PASS_IN_GROUP_END(APCArrayInfoPass, "apc-array-info",
   "Array Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -97,6 +100,7 @@ void APCArrayInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<APCContextWrapper>();
   AU.addRequired<EstimateMemoryPass>();
   AU.addRequired<DIEstimateMemoryPass>();
+  AU.addRequired<ClangDIMemoryMatcherPass>();
   AU.setPreservesAll();
 }
 
@@ -107,6 +111,7 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
   auto *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto *AT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
   auto *DIAT = &getAnalysis<DIEstimateMemoryPass>().getAliasTree();
+  auto *DIMatcher = &getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto *ClientDIAT = DIAT;
   std::function<ObjectID(const DIMemory &)> getMemoryID =
       [](const DIMemory &DIM) {
@@ -209,11 +214,17 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
+    auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
+    assert(DIMemoryItr != DIMatcher->end() &&
+           "Unknown AST-level representation of an array!");
     DIMemoryLocation DIClientLoc(ClientDIEM.getVariable(),
                                  ClientDIEM.getExpression());
     DIClientLoc.Loc = cast_or_null<DILocation>(getMDNode(DILoc->Loc));
     DIClientLoc.Template = ClientDIEM.isTemplate();
-    auto APCSymbol = new apc::Symbol(std::move(DIClientLoc));
+    tsar::dvmh::VariableT Var;
+    Var.get<AST>() = DIMemoryItr->get<AST>();
+    Var.get<MD>() = &ClientDIEM;
+    auto APCSymbol = new apc::Symbol(std::move(Var));
     APCCtx.addSymbol(APCSymbol);
     auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName().str(),
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),

@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AstWrapperImpl.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
@@ -43,6 +44,7 @@
 #include "tsar/Support/SCEVUtils.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/Utils.h"
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
 #include <apc/DirectiveAnalyzer/DirectiveAnalyzer.h>
 #include <apc/Distribution/CreateDistributionDirs.h>
 #include <apc/GraphCall/graph_calls.h>
@@ -62,6 +64,7 @@
 
 using namespace llvm;
 using namespace tsar;
+using namespace tsar::dvmh;
 
 namespace {
 class APCDataDistributionPassInfo final : public PassGroupInfo {
@@ -154,7 +157,9 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCDataDistributionPass, "apc-data-distribution",
   INITIALIZE_PASS_DEPENDENCY(APCDataDistributionProvider)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
-INITIALIZE_PASS_IN_GROUP_END(APCDataDistributionPass, "apc-data-distribution",
+  INITIALIZE_PASS_DEPENDENCY(DVMHParallelizationContext)
+  INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+  INITIALIZE_PASS_IN_GROUP_END(APCDataDistributionPass, "apc-data-distribution",
   "Data Distribution Builder (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
@@ -170,10 +175,13 @@ void APCDataDistributionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<DIArrayAccessWrapper>();
+  AU.addRequired<DVMHParallelizationContext>();
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.setPreservesAll();
 }
 
 bool APCDataDistributionPass::runOnModule(Module &M) {
+  auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
   auto *DIArrayInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
   if (!DIArrayInfo)
     return false;
@@ -209,6 +217,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   ArrayAccessPool AccessPool;
   LoopToArrayMap Accesses;
   StringMap<std::map<int, apc::LoopGraph *>> Loops;
+  DenseMap<apc::LoopGraph *, BasicBlock *> APCToIRLoops;
   std::map<std::string, apc::FuncInfo *> Functions;
   std::vector<apc::LoopGraph *> OuterLoops;
   for (auto &F : M) {
@@ -228,12 +237,14 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     auto &DIAT = Provider.get<DIEstimateMemoryPass>().getAliasTree();
     auto &LoopsForFile = Loops.try_emplace(FI->fileName).first->second;
     for_each_loop(Provider.get<LoopInfoWrapperPass>().getLoopInfo(),
-      [&APCCtx, &LoopsForFile](Loop *L) {
+      [&APCCtx, &APCToIRLoops, &LoopsForFile](Loop *L) {
         auto ID = L->getLoopID();
         if (!ID)
           return;
-        if (auto APCLoop = APCCtx.findLoop(ID))
+        if (auto APCLoop = APCCtx.findLoop(ID)) {
           LoopsForFile.emplace(APCLoop->lineNum, APCLoop);
+          APCToIRLoops.try_emplace(APCLoop, L->getHeader());
+        }
       });
     for (auto *L : Provider.get<LoopInfoWrapperPass>().getLoopInfo()) {
       auto ID = L->getLoopID();
@@ -307,6 +318,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       }
     }
   }
+  // Build data distribution.
   // TODO (kaniandr@gmail.com): should it be a global container?
   std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
@@ -328,7 +340,127 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   for (auto TplInfo : DataDirs.distrRules)
     FullDistrVariant.push_back(TplInfo.second.size() - 1);
   APCRegion.SetCurrentVariant(std::move(FullDistrVariant));
+  for (auto *A : AllArrays.GetArrays()) {
+    if (A->IsTemplate()) {
+      auto *Tpl{ParallelCtx.makeTemplate(A->GetShortName())};
+      APCCtx.addArray(Tpl, A);
+      auto APCSymbol{new apc::Symbol(Tpl)};
+      APCCtx.addSymbol(APCSymbol);
+      A->SetDeclSymbol(APCSymbol);
+    }
+  }
   LLVM_DEBUG(print(dbgs(), &M));
+  // Build computation distribution.
+  std::vector<apc::ParallelRegion *> Regions{ &APCRegion };
+  std::vector<Messages> Msgs;
+  for (auto &LoopsForFile : Loops) {
+    if (LoopsForFile.second.empty())
+      continue;
+    createParallelDirectives(Accesses, Regions, LoopsForFile.second,
+      FormalToActual, Msgs);
+  }
+  UniteNestedDirectives(OuterLoops);
+  for (auto &LoopsForFile : Loops) {
+    std::vector<apc::LoopGraph *> LoopList;
+    for (auto &Info : LoopsForFile.second)
+      if (!Info.second->parent)
+        LoopList.push_back(Info.second);
+    std::vector<std::pair<int, apc::DirectiveImpl>> ParallelDirs;
+    std::vector<std::pair<apc::Array*, const DistrVariant*>> CurrentVariant;
+    for (std::size_t I = 0, EI = APCRegion.GetCurrentVariant().size(); I < EI;
+         ++I)
+      CurrentVariant.push_back(std::make_pair(
+          DataDirs.distrRules[I].first,
+          &DataDirs.distrRules[I].second[APCRegion.GetCurrentVariant()[I]]));
+    const std::map<apc::LoopGraph *, void *> DepInfoForLoopGraph;
+    selectParallelDirectiveForVariant(
+        nullptr, &APCRegion, ReducedG, AllArrays, LoopList, LoopsForFile.second,
+        Functions, CurrentVariant, DataDirs.alignRules, ParallelDirs,
+        APCRegion.GetId(), FormalToActual, DepInfoForLoopGraph, Msgs);
+    DenseMap<
+        Function *,
+        SmallVector<std::tuple<apc::LoopGraph *, BasicBlock *, ParallelItem *>,
+                    16>>
+        FuncToDirs;
+    for (auto &&[LpLoc, PI] : ParallelDirs) {
+      auto *APCLoop{LoopsForFile.second[LpLoc]};
+      auto *HeaderBB{APCToIRLoops[APCLoop]};
+      assert(HeaderBB && "Loop head must not be null!");
+      FuncToDirs.try_emplace(HeaderBB->getParent())
+          .first->second.emplace_back(APCLoop, HeaderBB, PI);
+    }
+    for (auto [F, DirInfo] : FuncToDirs) {
+      auto &LpInfo{getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo()};
+      for (auto [APCLoop, HeaderBB, PI] : DirInfo) {
+        std::unique_ptr<PragmaParallel> DVMHParallel{cast<PragmaParallel>(PI)};
+        std::unique_ptr<PragmaActual> DVMHActual;
+        std::unique_ptr<PragmaGetActual> DVMHGetActual;
+        std::unique_ptr<PragmaRegion> DVMHRegion;
+        auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
+        if (!LpStmt->isHostOnly()) {
+          DVMHRegion = std::make_unique<PragmaRegion>();
+          DVMHRegion->finalize();
+          DVMHRegion->child_insert(DVMHParallel.get());
+          DVMHParallel->parent_insert(DVMHRegion.get());
+          if (!LpStmt->getTraits().get<trait::ReadOccurred>().empty()) {
+            DVMHActual = std::make_unique<PragmaActual>(false);
+            DVMHActual->getMemory().insert(
+                LpStmt->getTraits().get<trait::ReadOccurred>().begin(),
+                LpStmt->getTraits().get<trait::ReadOccurred>().end());
+            DVMHRegion->getClauses().get<trait::ReadOccurred>().insert(
+                LpStmt->getTraits().get<trait::ReadOccurred>().begin(),
+                LpStmt->getTraits().get<trait::ReadOccurred>().end());
+          }
+          if (!LpStmt->getTraits().get<trait::WriteOccurred>().empty()) {
+            DVMHGetActual = std::make_unique<PragmaGetActual>(false);
+            DVMHGetActual->getMemory().insert(
+                LpStmt->getTraits().get<trait::WriteOccurred>().begin(),
+                LpStmt->getTraits().get<trait::WriteOccurred>().end());
+            DVMHRegion->getClauses().get<trait::WriteOccurred>().insert(
+                LpStmt->getTraits().get<trait::WriteOccurred>().begin(),
+                LpStmt->getTraits().get<trait::WriteOccurred>().end());
+          }
+          DVMHRegion->getClauses().get<trait::Private>().insert(
+              LpStmt->getTraits().get<trait::Private>().begin(),
+              LpStmt->getTraits().get<trait::Private>().end());
+        }
+        auto EntryInfo{ParallelCtx.getParallelization().try_emplace(HeaderBB)};
+        assert(EntryInfo.second && "Unable to create a parallel block!");
+        EntryInfo.first->get<ParallelLocation>().emplace_back();
+        EntryInfo.first->get<ParallelLocation>().back().Anchor =
+            LpStmt->getId();
+        auto *LLVMLoop{ LpInfo.getLoopFor(HeaderBB) };
+        assert(LLVMLoop && "LLVM IR representation of a loop must be known!");
+        auto ExitingBB{LLVMLoop->getExitingBlock()};
+        assert(ExitingBB && "Parallel loop must have a single exit!");
+        ParallelLocation *ExitLoc{nullptr};
+        if (ExitingBB == LLVMLoop->getHeader()) {
+          ExitLoc = &EntryInfo.first->get<ParallelLocation>().back();
+        } else {
+          auto ExitInfo{
+              ParallelCtx.getParallelization().try_emplace(ExitingBB)};
+          assert(ExitInfo.second && "Unable to create a parallel block!");
+          ExitInfo.first->get<ParallelLocation>().emplace_back();
+          ExitLoc = &ExitInfo.first->get<ParallelLocation>().back();
+          ExitLoc->Anchor = LpStmt->getId();
+        }
+        if (DVMHRegion)
+          ExitLoc->Exit.push_back(
+              std::make_unique<ParallelMarker<PragmaRegion>>(0,
+                                                             DVMHRegion.get()));
+        if (DVMHActual)
+          EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
+              std::move(DVMHActual));
+        if (DVMHRegion)
+          EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
+              std::move(DVMHRegion));
+        EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
+            std::move(DVMHParallel));
+        if (DVMHGetActual)
+          ExitLoc->Exit.push_back(std::move(DVMHGetActual));
+      }
+    }
+  }
   return false;
 }
 
@@ -349,4 +481,115 @@ void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
   dbgs() << "List of aligns:\n";
   for (auto &Rule : DataDirs.GenAlignsRules())
     OS << "  " << Rule << "\n";
+}
+
+apc::DirectiveImpl ParallelDirective::genDirective(
+    const std::vector<std::pair<apc::Array *, const DistrVariant *>>
+        &Distribution,
+    const std::vector<AlignRule> &AlignRules, apc::LoopGraph *CurrLoop,
+    DIST::GraphCSR<int, double, attrType> &ReducedG,
+    DIST::Arrays<int> &AllArrays,
+    const std::map<apc::Array *,
+                   std::pair<std::vector<ArrayOp>, std::vector<bool>>> &ReadOps,
+    const int RegionId,
+    const std::map<apc::Array *, std::set<apc::Array *>>
+        &ArrayLinksByFuncCalls) {
+  auto *Parallel = new PragmaParallel;
+  auto &Clauses{Parallel->getClauses()};
+  SmallVector<apc::LoopGraph *, 4> Nest;
+  auto LoopInNest{CurrLoop};
+  while (LoopInNest->perfectLoop) {
+    Nest.emplace_back(LoopInNest);
+    if (LoopInNest->children.empty() || LoopInNest->children.size() > 1)
+      break;
+    LoopInNest = LoopInNest->children.front();
+  }
+  for (unsigned I = 0, EI = parallel.size(); I < EI; ++I) {
+    if (parallel[I] != "*") {
+      auto Itr{find_if(Nest, [&Name = parallel[I]](auto &L) {
+        auto LpStmt{cast<apc::LoopStatement>(L->loop)};
+        return LpStmt->getInduction().template get<AST>()->getName() == Name;
+      })};
+      assert(Itr != Nest.end() && "Unknown parallel loop!");
+      auto LpStmt{cast<apc::LoopStatement>((**Itr).loop)};
+      Clauses.get<trait::Induction>().emplace_back(LpStmt->getId(),
+                                                   LpStmt->getInduction());
+      for (unsigned I = 0, EI = Clauses.get<trait::Reduction>().size(); I < EI;
+           ++I)
+        Clauses.get<trait::Reduction>()[I].insert(
+            LpStmt->getTraits().get<trait::Reduction>()[I].begin(),
+            LpStmt->getTraits().get<trait::Reduction>()[I].end());
+      Clauses.get<trait::Private>().insert(
+          LpStmt->getTraits().get<trait::Private>().begin(),
+          LpStmt->getTraits().get<trait::Private>().end());
+    }
+  }
+  for (auto &Induct : Clauses.get<trait::Induction>())
+    Clauses.get<trait::Private>().erase(Induct.get<VariableT>());
+  auto *MapTo{arrayRef2->IsLoopArray() ? arrayRef : arrayRef2};
+  Clauses.get<dvmh::Align>() = dvmh::Align{};
+  auto APCSymbol{MapTo->GetDeclSymbol()};
+  assert(APCSymbol && "Unknown array symbol!");
+  Clauses.get<dvmh::Align>()->Target = APCSymbol->getMemory();
+  auto &OnTo{arrayRef2->IsLoopArray() ? on : on2};
+  for (unsigned I = 0, EI = OnTo.size(); I < EI; ++I) {
+    if (OnTo[I].first == "*" ||
+        OnTo[I].second.first == 0 && OnTo[I].second.second == 0) {
+      Clauses.get<dvmh::Align>()->Relation.emplace_back(None);
+      continue;
+    }
+    if (OnTo[I].second.first == 0) {
+      Clauses.get<dvmh::Align>()->Relation.emplace_back(
+          APSInt{APInt{64, (uint64_t)OnTo[I].second.second, true}, true});
+      continue;
+    }
+    auto Itr{find_if(Clauses.get<trait::Induction>(), [&Name = OnTo[I].first](
+                                                          auto &L) {
+      return L.template get<VariableT>().template get<AST>()->getName() == Name;
+    })};
+    assert(Itr != Clauses.get<trait::Induction>().end() &&
+           "Unknown axis in parallel directive");
+    dvmh::Align::Axis Axis;
+    Axis.Dimension =
+        std::distance(Clauses.get<trait::Induction>().begin(), Itr);
+    Axis.Offset =
+        APSInt{APInt{64, (uint64_t)OnTo[I].second.second, true}, true};
+    Axis.Step = APSInt{APInt{64, (uint64_t)OnTo[I].second.first, true}, true};
+    Clauses.get<dvmh::Align>()->Relation.emplace_back(Axis);
+  }
+  if (!shadowRenew.empty()) {
+    std::set<apc::Array *> ArraysInAcross;
+    if (shadowRenewShifts.empty()) {
+      shadowRenewShifts.resize(shadowRenew.size());
+      for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I)
+        shadowRenewShifts[I].resize(shadowRenew[I].second.size());
+    }
+    for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I) {
+      std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
+      auto Bounds{genBounds(AlignRules, shadowRenew[I], shadowRenewShifts[I],
+                            ReducedG, AllArrays, ReadOps, false, RegionId,
+                            Distribution, ArraysInAcross, ShiftsByAccess,
+                            ArrayLinksByFuncCalls)};
+      if (Bounds.empty())
+        continue;
+      apc::Array *A{AllArrays.GetArrayByName(shadowRenew[I].first.second)};
+      assert(A && "Array must be known!");
+      auto ShadowItr{
+          Clauses.get<Shadow>()
+              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
+              .first};
+      for (unsigned Dim = 0, DimE = shadowRenew[I].second.size(); Dim < DimE;
+           ++Dim) {
+        auto Left{shadowRenew[I].second[Dim].first +
+                  shadowRenewShifts[I][Dim].first};
+        auto Right{shadowRenew[I].second[Dim].second +
+                   shadowRenewShifts[I][Dim].second};
+        ShadowItr->second.emplace_back(
+            APSInt{APInt{64, (uint64_t)Left, false}, false},
+            APSInt{APInt{64, (uint64_t)Right, false}, false});
+      }
+    }
+  }
+  Parallel->finalize();
+  return Parallel;
 }

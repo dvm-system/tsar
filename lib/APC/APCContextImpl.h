@@ -27,33 +27,40 @@
 
 #include "AstWrapperImpl.h"
 #include "tsar/Support/Tags.h"
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
 #include <apc/Distribution/Array.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphLoop/graph_loops.h>
 #include <apc/Utils/AstWrapper.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/PointerUnion.h>
 #include <llvm/IR/ValueHandle.h>
 
 namespace tsar {
 struct APCContextImpl {
   using SymbolPool = std::vector<std::unique_ptr<Symbol>>;
+  using StatementPool = std::vector<std::unique_ptr<Statement>>;
   using ParallelRegionPool = std::vector<std::unique_ptr<ParallelRegion>>;
 
   using LoopPool = std::vector<std::unique_ptr<LoopGraph>>;
   using LoopMap = llvm::DenseMap<ObjectID, LoopGraph *>;
 
-  using ArrayMap = llvm::DenseMap<ObjectID, std::unique_ptr<Distribution::Array>>;
+  using ArrayMap = llvm::DenseMap<ObjectID, std::unique_ptr<DIST::Array>>;
+  using TemplateMap = llvm::DenseMap<dvmh::Template *, DIST::Array *>;
 
-  using FunctionMap = llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
+  using FunctionMap =
+      llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
 
   SymbolPool Symbols;
+  StatementPool Statements;
   ParallelRegionPool ParallelRegions;
 
   LoopPool OuterLoops;
   LoopMap Loops;
 
   ArrayMap Arrays;
+  TemplateMap Templates;
 
   FunctionMap Functions;
 };

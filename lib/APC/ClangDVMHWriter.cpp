@@ -40,7 +40,9 @@
 #include "tsar/Support/PassProvider.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
 #include "tsar/Support/Clang/Utils.h"
+#include "tsar/Transform/Clang/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include <apc/Distribution/DvmhDirective.h>
 #include <apc/ParallelizationRegions/ParRegions.h>
@@ -66,6 +68,7 @@
 using namespace clang;
 using namespace llvm;
 using namespace tsar;
+using namespace tsar::dvmh;
 
 namespace {
 /// Collect declaration traits.
@@ -308,12 +311,13 @@ class APCClangDVMHWriterInfo final : public PassGroupInfo {
   void addBeforePass(legacy::PassManager &Passes) const override {
     addImmutableAliasAnalysis(Passes);
     addInitialTransformations(Passes);
+    Passes.add(createAPCContextStorage());
+    Passes.add(createDVMHParallelizationContext());
     Passes.add(createAnalysisSocketImmutableStorage());
     Passes.add(createDIMemoryTraitPoolStorage());
     Passes.add(createDIMemoryEnvironmentStorage());
     Passes.add(createGlobalsAccessStorage());
     Passes.add(createGlobalsAccessCollector());
-    Passes.add(createAPCContextStorage());
     Passes.add(createDIEstimateMemoryPass());
     Passes.add(new DVMHMemoryServer);
     Passes.add(createAnalysisWaitServerPass());
@@ -327,6 +331,8 @@ class APCClangDVMHWriterInfo final : public PassGroupInfo {
     Passes.add(createAPCFunctionInfoPass());
     // End of the third step of analysis on server.
     Passes.add(createAPCDataDistributionPass());
+    Passes.add(createDVMHDataTransferIPOPass());
+    Passes.add(createClangDVMHWriter());
     Passes.add(createAnalysisReleaseServerPass());
     Passes.add(createAnalysisCloseConnectionPass());
   }
@@ -423,8 +429,9 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   for (auto &AR : DataDirs.alignRules) {
     auto *APCSymbol = AR.alignArray->GetDeclSymbol();
     assert(APCSymbol && "Symbol must not be null!");
-    assert(APCSymbol->getMemory().isValid() && "Memory must be valid!");
-    auto *DIVar = APCSymbol->getMemory().Var;
+    auto *DIVar = cast<DIEstimateMemory>(
+                      std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
+                      ->getVariable();
     if (isa<DIGlobalVariable>(DIVar)) {
       GlobalArrays.insert(&AR);
       continue;
@@ -471,7 +478,10 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     SmallVector<DILocalVariable *, 8> InheritArgs;
     for (auto *AR : Info.second) {
       auto *APCSymbol = AR->alignArray->GetDeclSymbol();
-      auto *DIVar = cast<DILocalVariable>(APCSymbol->getMemory().Var);
+      auto *DIVar = cast<DILocalVariable>(
+          cast<DIEstimateMemory>(
+              std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
+              ->getVariable());
       auto Itr = Matcher.find<MD>(DIVar);
       assert(Itr != Matcher.end() && "Source-level location must be available!");
       if (DIVar->isParameter())
@@ -486,7 +496,9 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     getAnalysis<ClangDIGlobalMemoryMatcherPass>().getMatcher();
   for (auto *AR : GlobalArrays) {
     auto *APCSymbol = AR->alignArray->GetDeclSymbol();
-    auto *DIVar = APCSymbol->getMemory().Var;
+    auto *DIVar = cast<DIEstimateMemory>(
+                      std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
+                      ->getVariable();
     auto Itr = GlobalMatcher.find<MD>(DIVar);
     assert(Itr != GlobalMatcher.end() &&
       "Source-level location must be available!");
@@ -564,7 +576,7 @@ void APCClangDVMHWriter::insertInherit(FunctionDecl *FD,
         } else {
           SmallVector<char, 16> Name;
           // We add brackets due to the following case
-          // void foo(double *A);
+          // void foo(double *A);createOptimalDistribution
           // #define M
           // void foo(double *M);
           // Without brackets we obtain 'void foo(double *MA)' instead of

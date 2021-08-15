@@ -27,18 +27,76 @@
 #define TSAR_AST_WRAPPER_IMPL_H
 
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Transform/Clang/DVMHDirecitves.h"
 
 class Symbol {
 public:
-  explicit Symbol(tsar::DIMemoryLocation DIM) : mMemory(DIM) {}
-  const tsar::DIMemoryLocation & getMemory() const noexcept { return mMemory; }
+  explicit Symbol(tsar::dvmh::VariableT DIM) : mMemory(DIM) {}
+  explicit Symbol(tsar::dvmh::Template *DIM) : mMemory(DIM) {}
+
+  const auto & getMemory() const noexcept { return mMemory; }
 private:
-  tsar::DIMemoryLocation mMemory;
+  std::variant<tsar::dvmh::VariableT, tsar::dvmh::Template *> mMemory;
 };
 
-class Expression
-{
-
+class Expression {
 };
+
+class Statement {
+public:
+  enum Kind {
+    FIRST_KIND = 0,
+    KIND_LOOP = FIRST_KIND,
+    LAST_KIND = KIND_LOOP,
+    INVALID_KIND,
+    NUMBER_KIND = INVALID_KIND
+  };
+
+  virtual ~Statement() {}
+
+  Kind getKind() const noexcept { return mKind; }
+
+protected:
+  explicit Statement(Kind K) : mKind(K) {}
+
+private:
+  Kind mKind{ INVALID_KIND};
+};
+
+namespace apc {
+class LoopStatement : public Statement {
+public:
+  using TraitList = bcl::tagged_tuple<
+      bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::Private>,
+      bcl::tagged<tsar::dvmh::ReductionVarListT, tsar::trait::Reduction>,
+      bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::ReadOccurred>,
+      bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::WriteOccurred>>;
+
+  static bool classof(const Statement *R) {
+    return R->getKind() == KIND_LOOP;
+  }
+
+  LoopStatement(tsar::ObjectID Id, tsar::dvmh::VariableT I)
+      : Statement(KIND_LOOP), mId(Id), mInduction(I) {}
+
+  const tsar::dvmh::VariableT &getInduction() const noexcept {
+    return mInduction;
+  }
+  tsar::ObjectID getId() const noexcept { return mId; }
+
+  TraitList &getTraits() noexcept { return mTraits; }
+  const TraitList &getTraits() const noexcept { return mTraits; }
+
+  bool isHostOnly() const noexcept { return mIsHostOnly; }
+  void setIsHostOnly(bool IsHostOnly) noexcept { mIsHostOnly = IsHostOnly; }
+
+private:
+  tsar::ObjectID mId{nullptr};
+  tsar::dvmh::VariableT mInduction;
+  TraitList mTraits;
+  bool mIsHostOnly{true};
+};
+}
 
 #endif//TSAR_AST_WRAPPER_IMPL_H
