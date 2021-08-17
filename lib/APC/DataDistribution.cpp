@@ -590,6 +590,69 @@ apc::DirectiveImpl ParallelDirective::genDirective(
       }
     }
   }
+  if (!across.empty()) {
+    std::set<apc::Array *> ArraysInAcross;
+    if (acrossShifts.empty()) {
+      acrossShifts.resize(across.size());
+      for (unsigned I = 0, EI = across.size(); I < EI; ++I)
+        acrossShifts[I].resize(across[I].second.size());
+    }
+    for (unsigned I = 0, EI = across.size(); I < EI; ++I) {
+      std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
+      auto Bounds{genBounds(AlignRules, across[I], acrossShifts[I], ReducedG,
+                            AllArrays, ReadOps, true, RegionId, Distribution,
+                            ArraysInAcross, ShiftsByAccess,
+                            ArrayLinksByFuncCalls)};
+      if (Bounds.empty())
+        continue;
+      apc::Array *A{AllArrays.GetArrayByName(across[I].first.second)};
+      assert(A && "Array must be known!");
+      auto AcrossItr{
+          Clauses.get<trait::Dependence>()
+              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
+              .first};
+      for (unsigned Dim = 0, DimE = across[I].second.size(); Dim < DimE;
+           ++Dim) {
+        auto Left{across[I].second[Dim].first + acrossShifts[I][Dim].first};
+        auto Right{across[I].second[Dim].second + acrossShifts[I][Dim].second};
+        AcrossItr->second.emplace_back(
+            APSInt{APInt{64, (uint64_t)Left, false}, false},
+            APSInt{APInt{64, (uint64_t)Right, false}, false});
+      }
+    }
+  }
   Parallel->finalize();
   return Parallel;
+}
+
+void fillAcrossInfoFromDirectives(
+    const LoopGraph *L,
+    std::vector<std::pair<std::pair<std::string, std::string>,
+                          std::vector<std::pair<int, int>>>> &AcrossInfo) {
+  auto LpStmt{cast_or_null<apc::LoopStatement>(L->loop)};
+  if (!LpStmt)
+    return;
+  for (auto &&[Var, Distance] : LpStmt->getTraits().get<trait::Dependence>()) {
+    AcrossInfo.emplace_back();
+    AcrossInfo.back().first.first = Var.get<AST>()->getName();
+    auto DIEM{cast<DIEstimateMemory>(Var.get<MD>())};
+    SmallVector<DebugLoc, 1> DbgLocs;
+    DIEM->getDebugLoc(DbgLocs);
+    AcrossInfo.back().first.second = APCContext::getUniqueName(
+        *DIEM->getVariable(), *LpStmt->getFunction(),
+        !DbgLocs.empty() && DbgLocs.front() ? DbgLocs.front().get() : nullptr);
+    for (auto Range : Distance) {
+      int Left{0}, Right{0};
+      if (Range.first)
+        Left = Range.first->getSExtValue();
+      if (Range.second)
+        Right = Range.second->getSExtValue();
+      AcrossInfo.back().second.emplace_back(Left, Right);
+    }
+  }
+}
+
+void fillInfoFromDirectives(const LoopGraph *L,
+                            ParallelDirective *D) {
+  fillAcrossInfoFromDirectives(L, D->across);
 }

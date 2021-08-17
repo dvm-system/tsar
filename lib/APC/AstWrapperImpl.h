@@ -64,10 +64,15 @@ private:
   Kind mKind{ INVALID_KIND};
 };
 
+namespace llvm{
+class Function;
+}
+
 namespace apc {
 class LoopStatement : public Statement {
 public:
   using TraitList = bcl::tagged_tuple<
+      bcl::tagged<tsar::dvmh::ShadowVarListT, tsar::trait::Dependence>,
       bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::Private>,
       bcl::tagged<tsar::dvmh::ReductionVarListT, tsar::trait::Reduction>,
       bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::ReadOccurred>,
@@ -77,13 +82,16 @@ public:
     return R->getKind() == KIND_LOOP;
   }
 
-  LoopStatement(tsar::ObjectID Id, tsar::dvmh::VariableT I)
-      : Statement(KIND_LOOP), mId(Id), mInduction(I) {}
+  LoopStatement(llvm::Function *F, tsar::ObjectID Id, tsar::dvmh::VariableT I)
+      : Statement(KIND_LOOP), mFunction(F), mId(Id), mInduction(I) {}
 
   const tsar::dvmh::VariableT &getInduction() const noexcept {
     return mInduction;
   }
   tsar::ObjectID getId() const noexcept { return mId; }
+
+  llvm::Function *getFunction() noexcept { return mFunction; }
+  llvm::Function *getFunction() const noexcept { return mFunction; }
 
   TraitList &getTraits() noexcept { return mTraits; }
   const TraitList &getTraits() const noexcept { return mTraits; }
@@ -91,11 +99,21 @@ public:
   bool isHostOnly() const noexcept { return mIsHostOnly; }
   void setIsHostOnly(bool IsHostOnly) noexcept { mIsHostOnly = IsHostOnly; }
 
+  unsigned getPossibleAcrossDepth() const noexcept {
+    return mPossibleAcrossDepth;
+  }
+
+  void setPossibleAcrossDepth(unsigned Depth) noexcept {
+    mPossibleAcrossDepth = Depth;
+  }
+
 private:
+  llvm::Function *mFunction{nullptr};
   tsar::ObjectID mId{nullptr};
   tsar::dvmh::VariableT mInduction;
   TraitList mTraits;
   bool mIsHostOnly{true};
+  unsigned mPossibleAcrossDepth{0};
 };
 }
 

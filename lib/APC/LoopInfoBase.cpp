@@ -36,6 +36,7 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Clang/PerfectLoop.h"
+#include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/Utils.h"
@@ -87,6 +88,7 @@ public:
     mSocket = nullptr;
     mAPCContext = nullptr;
     mDIMemoryMatcher = nullptr;
+    mDIAccessInfo = nullptr;
     mGlobalOpts = nullptr;
     mRegions = nullptr;
     mPerfect = nullptr;
@@ -122,6 +124,7 @@ private:
   ClangDIMemoryMatcherPass *mDIMemoryMatcher{nullptr};
   ClangPerfectLoopPass *mPerfect = nullptr;
   CanonicalLoopPass *mCanonical = nullptr;
+  DIArrayAccessInfo *mAccessInfo{nullptr};
   const GlobalOptions *mGlobalOpts{nullptr};
   ScalarEvolution *mSE = nullptr;
   DominatorTree *mDT = nullptr;
@@ -142,6 +145,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(DIArrayAccessWrapper)
   INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
   INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
   INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
@@ -185,8 +189,8 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
   mSE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   mAA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
   mPI = &getAnalysis<ParallelLoopPass>().getParallelLoopInfo();
+  mAccessInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-
   for (auto I = LI.rbegin(), EI = LI.rend(); I != EI; ++I) {
     auto APCLoop = new apc::LoopGraph;
     assert((*I)->getLoopID() && "Loop ID must not be null, "
@@ -213,6 +217,7 @@ void APCLoopInfoBasePass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<ParallelLoopPass>();
   AU.addRequired<TransformationEnginePass>();
+  AU.addRequired<DIArrayAccessWrapper>();
   AU.setPreservesAll();
 }
 
@@ -308,8 +313,9 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
           DepInfo.get<trait::Induction>().get<AST>()->getName().str();
       APCLoop.hasUnknownScalarDep = false;
       APCLoop.hasUnknownArrayDep = false;
-      auto *S{new apc::LoopStatement(L.getLoopID(),
-                                      DepInfo.get<trait::Induction>())};
+      auto LoopID{L.getLoopID()};
+      auto *S{
+          new apc::LoopStatement(F, LoopID, DepInfo.get<trait::Induction>())};
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
       dvmh::SortedVarMultiListT NotLocalized;
@@ -324,6 +330,19 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
                                                           NotLocalized.end());
         S->getTraits().get<trait::ReadOccurred>() =
             S->getTraits().get<trait::WriteOccurred>();
+      }
+      if (!DepInfo.get<trait::Dependence>().empty()) {
+        auto ConstStep{dyn_cast_or_null<SCEVConstant>((*CanonItr)->getStep())};
+        if (!ConstStep || !mAccessInfo) {
+          APCLoop.hasUnknownArrayDep = true;
+        } else {
+          unsigned PossibleAcrossDepth{dvmh::processRegularDependencies(
+                  LoopID, ConstStep, DepInfo, *mAccessInfo,
+                  S->getTraits().get<trait::Dependence>())};
+          if (PossibleAcrossDepth == 0)
+            APCLoop.hasUnknownArrayDep = true;
+          S->setPossibleAcrossDepth(PossibleAcrossDepth);
+        }
       }
       mAPCContext->addStatement(S);
       APCLoop.loop = S;
