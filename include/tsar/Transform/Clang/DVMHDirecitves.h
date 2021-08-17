@@ -41,15 +41,20 @@
 
 namespace llvm {
 class Loop;
+class SCEVConstant;
 }
 
 namespace tsar {
+class DIArrayAccessInfo;
+
 namespace dvmh {
 using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
 using VariableT = ClangDependenceAnalyzer::VariableT;
 using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
 using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
 using SortedVarMultiListT = ClangDependenceAnalyzer::SortedVarMultiListT;
+using ShadowVarListT = std::map<VariableT, trait::DIDependence::DistanceVector,
+                                ClangDependenceAnalyzer::VariableLess>;
 
 class Template {
 public:
@@ -170,9 +175,6 @@ public:
 
 class PragmaParallel : public ParallelItem {
 public:
-  using ShadowVarListT =
-      std::map<VariableT, trait::DIDependence::DistanceVector,
-               ClangDependenceAnalyzer::VariableLess>;
   using LoopNestT =
       llvm::SmallVector<bcl::tagged_pair<bcl::tagged<ObjectID, llvm::Loop>,
                                          bcl::tagged<VariableT, VariableT>>,
@@ -217,7 +219,17 @@ private:
 /// has been parallelized.
 PragmaParallel *isParallel(const llvm::Loop *L,
                            Parallelization &ParallelizationInfo);
-}
+
+/// Build across clauses for a specified loop.
+///
+/// \pre Loop must contain regular data dependencies and constant step.
+/// \return Size of loop nest (the current loop is a top-level loop in the nest)
+/// that can be parallelized.
+unsigned processRegularDependencies(
+    ObjectID LoopID, const llvm::SCEVConstant *ConstStep,
+    const ClangDependenceAnalyzer::ASTRegionTraitInfo &ASTDepInfo,
+    DIArrayAccessInfo &AccessInfo, ShadowVarListT &AcrossInfo);
+} // namespace dvmh
 }
 
 namespace llvm {

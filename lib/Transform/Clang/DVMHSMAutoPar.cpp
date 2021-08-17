@@ -106,7 +106,7 @@ private:
     tsar::ClangDependenceAnalyzer &ASTRegionAnalysis,
     ParallelItem *PI) override;
 
-  bool processRegularDependenceis(const DFLoop &DFL,
+  bool processRegularDependencies(const DFLoop &DFL,
     const tsar::ClangDependenceAnalyzer &ASRegionAnalysis,
     const FunctionAnalysis &Provider, PragmaParallel &DVMHParallel);
 
@@ -117,7 +117,7 @@ private:
 };
 } // namespace
 
-bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
+bool ClangDVMHSMParallelization::processRegularDependencies(const DFLoop &DFL,
     const tsar::ClangDependenceAnalyzer &ASTRegionAnalysis,
     const FunctionAnalysis &Provider, PragmaParallel &DVMHParallel) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
@@ -143,86 +143,13 @@ bool ClangDVMHSMParallelization::processRegularDependenceis(const DFLoop &DFL,
   auto *AccessInfo = getAnalysis<DIArrayAccessWrapper>().getAccessInfo();
   if (!AccessInfo)
     return false;
-  unsigned PossibleAcrossDepth =
-    ASTDepInfo.get<trait::Dependence>()
-        .begin()->second.get<trait::Flow>().empty() ?
-    ASTDepInfo.get<trait::Dependence>()
-        .begin()->second.get<trait::Anti>().size() :
-    ASTDepInfo.get<trait::Dependence>()
-        .begin()->second.get<trait::Flow>().size();
-  auto updatePAD = [&PossibleAcrossDepth](auto &Dep, auto T) {
-    if (!Dep.second.template get<decltype(T)>().empty()) {
-      auto MinDepth = *Dep.second.template get<decltype(T)>().front().first;
-      unsigned PAD = 1;
-      for (auto InnerItr = Dep.second.template get<decltype(T)>().begin() + 1,
-                InnerItrE = Dep.second.template get<decltype(T)>().end();
-           InnerItr != InnerItrE; ++InnerItr, ++PAD)
-        if (InnerItr->first->isNegative()) {
-          auto Revert = -(*InnerItr->first);
-          Revert.setIsUnsigned(true);
-          if (Revert >= MinDepth)
-            break;
-        }
-      PossibleAcrossDepth = std::min(PossibleAcrossDepth, PAD);
-    }
-  };
-  for (auto &Dep : ASTDepInfo.get<trait::Dependence>()) {
-    auto AccessItr =
-        find_if(AccessInfo->scope_accesses(LoopID), [&Dep](auto &Access) {
-            return Access.getArray() == Dep.first.get<MD>();
-        });
-    if (AccessItr == AccessInfo->scope_end(LoopID))
-      return false;
-    Optional<unsigned> DependentDim;
-    unsigned NumberOfDims = 0;
-    for (auto &Access :
-         AccessInfo->array_accesses(AccessItr->getArray(), LoopID)) {
-      NumberOfDims = std::max(NumberOfDims, Access.size());
-      for (auto *Subscript : Access) {
-        if (!Subscript || !isa<DIAffineSubscript>(Subscript))
-          return false;
-        auto Affine = cast<DIAffineSubscript>(Subscript);
-        ObjectID AnotherColumn = nullptr;
-        for (unsigned Idx = 0, IdxE = Affine->getNumberOfMonoms(); Idx < IdxE;
-             ++Idx) {
-          if (Affine->getMonom(Idx).Column == LoopID) {
-            if (AnotherColumn ||
-                DependentDim && *DependentDim != Affine->getDimension())
-              return false;
-            DependentDim = Affine->getDimension();
-          } else {
-            if (DependentDim && *DependentDim == Affine->getDimension())
-              return false;
-            AnotherColumn = Affine->getMonom(Idx).Column;
-          }
-        }
-      }
-    }
-    if (!DependentDim)
-      return false;
-    updatePAD(Dep, trait::Flow{});
-    updatePAD(Dep, trait::Anti{});
-    auto I =
-        DVMHParallel.getClauses()
-            .get<trait::Dependence>()
-            .emplace(std::piecewise_construct, std::forward_as_tuple(Dep.first),
-                     std::forward_as_tuple())
-            .first;
-    I->second.resize(NumberOfDims);
-    auto getDistance = [&Dep](auto T) {
-      return Dep.second.get<decltype(T)>().empty()
-                 ? None
-                 : Dep.second.get<decltype(T)>().front().second;
-    };
-    if (ConstStep->getAPInt().isNegative())
-      I->second[*DependentDim] = {getDistance(trait::Anti{}),
-                                  getDistance(trait::Flow{})};
-
-    else
-      I->second[*DependentDim] = {getDistance(trait::Flow{}),
-                                  getDistance(trait::Anti{})};
-  }
-  PossibleAcrossDepth += DVMHParallel.getClauses().get<trait::Induction>().size();
+  unsigned PossibleAcrossDepth{dvmh::processRegularDependencies(
+      LoopID, ConstStep, ASTDepInfo, *AccessInfo,
+      DVMHParallel.getClauses().get<trait::Dependence>())};
+  if (PossibleAcrossDepth == 0)
+    return false;
+  PossibleAcrossDepth +=
+      DVMHParallel.getClauses().get<trait::Induction>().size();
   if (DVMHParallel.getPossibleAcrossDepth() == 0)
     DVMHParallel.setPossibleAcrossDepth(PossibleAcrossDepth);
   else
@@ -259,7 +186,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       PI->finalize();
       return PI;
     }
-    if (!processRegularDependenceis(IR, ASTRegionAnalysis, Provider,
+    if (!processRegularDependencies(IR, ASTRegionAnalysis, Provider,
                                     *DVMHParallel)) {
       PI->finalize();
       return PI;
@@ -300,7 +227,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       DVMHParallel->getClauses().get<trait::Reduction>()[I].insert(
           ASTDepInfo.get<trait::Reduction>()[I].begin(),
           ASTDepInfo.get<trait::Reduction>()[I].end());
-    if (!processRegularDependenceis(IR, ASTRegionAnalysis, Provider,
+    if (!processRegularDependencies(IR, ASTRegionAnalysis, Provider,
                                     *DVMHParallel))
       return nullptr;
     auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();

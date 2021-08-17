@@ -23,7 +23,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Transform/Clang/DVMHDirecitves.h"
+#include "tsar/Analysis/Memory/DIArrayAccess.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 
 using namespace llvm;
 using namespace tsar;
@@ -36,4 +38,87 @@ PragmaParallel *tsar::dvmh::isParallel(const Loop *L,
     return cast_or_null<PragmaParallel>(Ref);
   }
   return nullptr;
+}
+
+unsigned tsar::dvmh::processRegularDependencies(
+    ObjectID LoopID, const SCEVConstant *ConstStep,
+    const ClangDependenceAnalyzer::ASTRegionTraitInfo &ASTDepInfo,
+    DIArrayAccessInfo &AccessInfo, ShadowVarListT &AcrossInfo) {
+  assert(!ASTDepInfo.get<trait::Dependence>().empty() &&
+         "Unable to process loop without data dependencies!");
+  unsigned PossibleAcrossDepth =
+    ASTDepInfo.get<trait::Dependence>()
+        .begin()->second.get<trait::Flow>().empty() ?
+    ASTDepInfo.get<trait::Dependence>()
+        .begin()->second.get<trait::Anti>().size() :
+    ASTDepInfo.get<trait::Dependence>()
+        .begin()->second.get<trait::Flow>().size();
+  auto updatePAD = [&PossibleAcrossDepth](auto &Dep, auto T) {
+    if (!Dep.second.template get<decltype(T)>().empty()) {
+      auto MinDepth = *Dep.second.template get<decltype(T)>().front().first;
+      unsigned PAD = 1;
+      for (auto InnerItr = Dep.second.template get<decltype(T)>().begin() + 1,
+                InnerItrE = Dep.second.template get<decltype(T)>().end();
+           InnerItr != InnerItrE; ++InnerItr, ++PAD)
+        if (InnerItr->first->isNegative()) {
+          auto Revert = -(*InnerItr->first);
+          Revert.setIsUnsigned(true);
+          if (Revert >= MinDepth)
+            break;
+        }
+      PossibleAcrossDepth = std::min(PossibleAcrossDepth, PAD);
+    }
+  };
+  for (auto &Dep : ASTDepInfo.get<trait::Dependence>()) {
+    auto AccessItr =
+        find_if(AccessInfo.scope_accesses(LoopID), [&Dep](auto &Access) {
+            return Access.getArray() == Dep.first.get<MD>();
+        });
+    if (AccessItr == AccessInfo.scope_end(LoopID))
+      return 0;
+    Optional<unsigned> DependentDim;
+    unsigned NumberOfDims = 0;
+    for (auto &Access :
+         AccessInfo.array_accesses(AccessItr->getArray(), LoopID)) {
+      NumberOfDims = std::max(NumberOfDims, Access.size());
+      for (auto *Subscript : Access) {
+        if (!Subscript || !isa<DIAffineSubscript>(Subscript))
+          return 0;
+        auto Affine = cast<DIAffineSubscript>(Subscript);
+        ObjectID AnotherColumn = nullptr;
+        for (unsigned Idx = 0, IdxE = Affine->getNumberOfMonoms(); Idx < IdxE;
+             ++Idx) {
+          if (Affine->getMonom(Idx).Column == LoopID) {
+            if (AnotherColumn ||
+                DependentDim && *DependentDim != Affine->getDimension())
+              return 0;
+            DependentDim = Affine->getDimension();
+          } else {
+            if (DependentDim && *DependentDim == Affine->getDimension())
+              return 0;
+            AnotherColumn = Affine->getMonom(Idx).Column;
+          }
+        }
+      }
+    }
+    if (!DependentDim)
+      return 0;
+    updatePAD(Dep, trait::Flow{});
+    updatePAD(Dep, trait::Anti{});
+    auto I{AcrossInfo.try_emplace(Dep.first).first};
+    I->second.resize(NumberOfDims);
+    auto getDistance = [&Dep](auto T) {
+      return Dep.second.get<decltype(T)>().empty()
+                 ? None
+                 : Dep.second.get<decltype(T)>().front().second;
+    };
+    if (ConstStep->getAPInt().isNegative())
+      I->second[*DependentDim] = {getDistance(trait::Anti{}),
+                                  getDistance(trait::Flow{})};
+
+    else
+      I->second[*DependentDim] = {getDistance(trait::Flow{}),
+                                  getDistance(trait::Anti{})};
+  }
+  return PossibleAcrossDepth;
 }
