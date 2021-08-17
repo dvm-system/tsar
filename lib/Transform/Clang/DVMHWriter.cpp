@@ -445,8 +445,8 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   if (!Parallel->getClauses().get<Shadow>().empty()) {
     Str.append(
         {'s', 'h', 'a', 'd', 'o', 'w', '_', 'r', 'e', 'n', 'e', 'w', '('});
-    for (auto &Across : Parallel->getClauses().get<Shadow>())
-      addShadow(Across);
+    for (auto &Shadow : Parallel->getClauses().get<Shadow>())
+      addShadow(Shadow);
     Str.push_back(')');
   }
   if (!Parallel->getClauses().get<trait::Dependence>().empty()) {
