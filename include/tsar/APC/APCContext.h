@@ -75,14 +75,22 @@ using AlignRule = ::AlignRule;
 }
 
 namespace llvm {
+class DILocation;
+class DIVariable;
 class Function;
-}
+} // namespace llvm
+
 
 namespace tsar {
 struct APCContextImpl;
 
 class APCContext final : private bcl::Uncopyable {
 public:
+  /// Return a unique name for a specified variable which is accessed in a
+  /// specified function.
+  static std::string getUniqueName(const llvm::DIVariable &DIVar,
+      const llvm::Function &F, const llvm::DILocation *DILoc = nullptr);
+
   APCContext();
   ~APCContext();
 

@@ -180,10 +180,7 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
         DeclScope.first = Distribution::l_LOCAL;
       DeclScope.second =  F->getName().str();
     }
-    // Unique name is '<file>:line:column:@<function>%<variable>.<member>'.
-    auto UniqueName =
-      (Filename + ":" + Twine(DeclLoc.first) + ":" + Twine(DeclLoc.second) +
-        "@" + F->getName() + "%" + DILoc->Var->getName()).str();
+    auto UniqueName{APCCtx.getUniqueName(*DILoc->Var, *F, DILoc->Loc)};
     std::decay<
       decltype(std::declval<apc::Array>().GetDeclInfo())>
         ::type::value_type::second_type ShrinkedDeclLoc;

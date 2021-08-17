@@ -160,6 +160,21 @@ apc::FuncInfo * APCContext::findFunction(const llvm::Function &F) {
   return I != mImpl->Functions.end() ? I->second.get() : nullptr;
 }
 
+std::string APCContext::getUniqueName(const DIVariable &DIVar, const Function &F,
+                          const DILocation *DILoc) {
+  auto DeclLoc{std::pair(DIVar.getLine(), 0)};
+  if (DILoc)
+    DeclLoc = std::pair(DILoc->getLine(), DILoc->getColumn());
+  auto Filename{(DIVar.getFilename().empty()
+                     ? StringRef(F.getParent()->getSourceFileName())
+                     : DIVar.getFilename())};
+  // Unique name is '<file>:line:column:@<function>%<variable>.<member>'.
+  return (Filename + ":" + Twine(DeclLoc.first) + ":" + Twine(DeclLoc.second) +
+          "@" + (isa<DILocalVariable>(DIVar) ? F.getName() : "") + "%" +
+          DIVar.getName())
+      .str();
+}
+
 namespace {
 /// Storage for a current state of an automated parallelization process.
 class APCContextStorage : public ImmutablePass, private bcl::Uncopyable {
