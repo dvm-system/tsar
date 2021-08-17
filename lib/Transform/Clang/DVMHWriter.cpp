@@ -342,9 +342,10 @@ static void addParallelMapping(Loop &L, const PragmaParallel &Parallel,
       if (Map.first) {
         if (!Map.second)
           Tie += "-";
-        Tie += find_if(
-                   Parallel.getClauses().get<trait::Induction>(),
-                   [&Map](auto &LToI) { return LToI.get<Loop>() == Map.first; })
+        Tie += find_if(Parallel.getClauses().get<trait::Induction>(),
+                       [&Map](auto &LToI) {
+                         return LToI.template get<Loop>() == Map.first;
+                       })
                    ->get<VariableT>()
                    .get<AST>()
                    ->getName();
@@ -391,8 +392,8 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
                                            std::decay_t<decltype(V)>>) {
                 auto &Induct{Parallel->getClauses()
                                  .get<trait::Induction>()[V.Dimension]
-                                 .get<VariableT>()};
-                auto Name{Induct.get<AST>()->getName()};
+                                 .template get<VariableT>()};
+                auto Name{Induct.template get<AST>()->getName()};
                 if (!V.Step.isOneValue()) {
                   if (V.Step.isNegative())
                     Str.push_back('(');
