@@ -557,8 +557,38 @@ apc::DirectiveImpl ParallelDirective::genDirective(
     Axis.Step = APSInt{APInt{64, (uint64_t)OnTo[I].second.first, true}, true};
     Clauses.get<dvmh::Align>()->Relation.emplace_back(Axis);
   }
+  std::set<apc::Array *> ArraysInAcross;
+  if (!across.empty()) {
+    if (acrossShifts.empty()) {
+      acrossShifts.resize(across.size());
+      for (unsigned I = 0, EI = across.size(); I < EI; ++I)
+        acrossShifts[I].resize(across[I].second.size());
+    }
+    for (unsigned I = 0, EI = across.size(); I < EI; ++I) {
+      std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
+      auto Bounds{genBounds(AlignRules, across[I], acrossShifts[I], ReducedG,
+                            AllArrays, ReadOps, true, RegionId, Distribution,
+                            ArraysInAcross, ShiftsByAccess,
+                            ArrayLinksByFuncCalls)};
+      if (Bounds.empty())
+        continue;
+      apc::Array *A{AllArrays.GetArrayByName(across[I].first.second)};
+      assert(A && "Array must be known!");
+      auto AcrossItr{
+          Clauses.get<trait::Dependence>()
+              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
+              .first};
+      for (unsigned Dim = 0, DimE = across[I].second.size(); Dim < DimE;
+           ++Dim) {
+        auto Left{across[I].second[Dim].first + acrossShifts[I][Dim].first};
+        auto Right{across[I].second[Dim].second + acrossShifts[I][Dim].second};
+        AcrossItr->second.emplace_back(
+            APSInt{APInt{64, (uint64_t)Left, false}, false},
+            APSInt{APInt{64, (uint64_t)Right, false}, false});
+      }
+    }
+  }
   if (!shadowRenew.empty()) {
-    std::set<apc::Array *> ArraysInAcross;
     if (shadowRenewShifts.empty()) {
       shadowRenewShifts.resize(shadowRenew.size());
       for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I)
@@ -585,37 +615,6 @@ apc::DirectiveImpl ParallelDirective::genDirective(
         auto Right{shadowRenew[I].second[Dim].second +
                    shadowRenewShifts[I][Dim].second};
         ShadowItr->second.emplace_back(
-            APSInt{APInt{64, (uint64_t)Left, false}, false},
-            APSInt{APInt{64, (uint64_t)Right, false}, false});
-      }
-    }
-  }
-  if (!across.empty()) {
-    std::set<apc::Array *> ArraysInAcross;
-    if (acrossShifts.empty()) {
-      acrossShifts.resize(across.size());
-      for (unsigned I = 0, EI = across.size(); I < EI; ++I)
-        acrossShifts[I].resize(across[I].second.size());
-    }
-    for (unsigned I = 0, EI = across.size(); I < EI; ++I) {
-      std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
-      auto Bounds{genBounds(AlignRules, across[I], acrossShifts[I], ReducedG,
-                            AllArrays, ReadOps, true, RegionId, Distribution,
-                            ArraysInAcross, ShiftsByAccess,
-                            ArrayLinksByFuncCalls)};
-      if (Bounds.empty())
-        continue;
-      apc::Array *A{AllArrays.GetArrayByName(across[I].first.second)};
-      assert(A && "Array must be known!");
-      auto AcrossItr{
-          Clauses.get<trait::Dependence>()
-              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
-              .first};
-      for (unsigned Dim = 0, DimE = across[I].second.size(); Dim < DimE;
-           ++Dim) {
-        auto Left{across[I].second[Dim].first + acrossShifts[I][Dim].first};
-        auto Right{across[I].second[Dim].second + acrossShifts[I][Dim].second};
-        AcrossItr->second.emplace_back(
             APSInt{APInt{64, (uint64_t)Left, false}, false},
             APSInt{APInt{64, (uint64_t)Right, false}, false});
       }
