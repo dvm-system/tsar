@@ -532,6 +532,26 @@ apc::DirectiveImpl ParallelDirective::genDirective(
   assert(APCSymbol && "Unknown array symbol!");
   Clauses.get<dvmh::Align>()->Target = APCSymbol->getMemory();
   auto &OnTo{arrayRef2->IsLoopArray() ? on : on2};
+  auto LpStmt{cast<apc::LoopStatement>(CurrLoop->loop)};
+  auto &Start{LpStmt->getStart()};
+  auto &Step{LpStmt->getStep()};
+  APSInt StartTfm{APInt{64, 0, true}, false};
+  APSInt StepTfm{APInt{64, 1, true}, false};
+  auto BitWidth{StartTfm.getBitWidth()};
+  if (Start && Step) {
+    StartTfm = *Start;
+    if (StartTfm.isUnsigned())
+      StartTfm = APSInt{StartTfm.zext(StartTfm.getBitWidth() * 2), false};
+    StepTfm = *Step;
+    if (StepTfm.isUnsigned())
+      StepTfm = APSInt{StepTfm.zext(StepTfm.getBitWidth() * 2), false};
+    BitWidth = std::max(BitWidth, StartTfm.getBitWidth());
+    BitWidth = std::max(BitWidth, StepTfm.getBitWidth());
+    if (StartTfm.getBitWidth() < BitWidth)
+      StartTfm = StartTfm.extend(BitWidth);
+    if (StepTfm.getBitWidth() < BitWidth)
+      StepTfm = StepTfm.extend(BitWidth);
+  }
   for (unsigned I = 0, EI = OnTo.size(); I < EI; ++I) {
     if (OnTo[I].first == "*" ||
         OnTo[I].second.first == 0 && OnTo[I].second.second == 0) {
@@ -553,8 +573,11 @@ apc::DirectiveImpl ParallelDirective::genDirective(
     Axis.Dimension =
         std::distance(Clauses.get<trait::Induction>().begin(), Itr);
     Axis.Offset =
-        APSInt{APInt{64, (uint64_t)OnTo[I].second.second, true}, true};
-    Axis.Step = APSInt{APInt{64, (uint64_t)OnTo[I].second.first, true}, true};
+        APSInt{APInt{BitWidth, (uint64_t)OnTo[I].second.second, true}, false};
+    Axis.Offset = Axis.Offset - StartTfm;
+    Axis.Step =
+        APSInt{APInt{BitWidth, (uint64_t)OnTo[I].second.first, true}, false};
+    Axis.Step = Axis.Step / StepTfm;
     Clauses.get<dvmh::Align>()->Relation.emplace_back(Axis);
   }
   std::set<apc::Array *> ArraysInAcross;

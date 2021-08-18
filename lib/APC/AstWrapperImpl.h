@@ -29,6 +29,8 @@
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Transform/Clang/DVMHDirecitves.h"
+#include <llvm/ADT/APSInt.h>
+#include <llvm/ADT/Optional.h>
 
 class Symbol {
 public:
@@ -107,10 +109,23 @@ public:
     mPossibleAcrossDepth = Depth;
   }
 
+  void setStart(const llvm::APSInt &V){mStart = V; }
+  void setStep(const llvm::APSInt &V) { mStep = V; }
+  void setEnd(const llvm::APSInt &V) { mEnd = V; }
+
+  const llvm::Optional<llvm::APSInt> &getStart() const noexcept {
+    return mStart;
+  }
+  const llvm::Optional<llvm::APSInt> &getStep() const noexcept { return mStep; }
+  const llvm::Optional<llvm::APSInt> &getEnd() const noexcept { return mEnd; }
+
 private:
   llvm::Function *mFunction{nullptr};
   tsar::ObjectID mId{nullptr};
   tsar::dvmh::VariableT mInduction;
+  llvm::Optional<llvm::APSInt> mStart;
+  llvm::Optional<llvm::APSInt> mStep;
+  llvm::Optional<llvm::APSInt> mEnd;
   TraitList mTraits;
   bool mIsHostOnly{true};
   unsigned mPossibleAcrossDepth{0};

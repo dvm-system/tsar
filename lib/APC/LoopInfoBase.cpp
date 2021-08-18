@@ -108,8 +108,9 @@ private:
   ///
   /// \post Do not override default values (star, end, step) if some of values
   /// can not be computed.
-  void evaluateInduction(const Loop &L, const CanonicalLoopInfo &CI,
-    bool KnownMaxBackageCount, apc::LoopGraph &APCLoop);
+  std::tuple<bool, Optional<APSInt>, Optional<APSInt>, Optional<APSInt>>
+  evaluateInduction(const Loop &L, const CanonicalLoopInfo &CI,
+                    bool KnownMaxBackageCount, apc::LoopGraph &APCLoop);
   void evaluateExits(const Loop &L, const DFLoop &DFL, apc::LoopGraph &APCLoop);
   void evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop);
 
@@ -272,9 +273,28 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
     }
   }
   auto CanonItr{mCanonical->getCanonicalLoopInfo().find_as(DFL)};
+  bool KnownInductToCountDep{false};
+  Optional<APSInt> Start, Step, End;
   if (CanonItr != mCanonical->getCanonicalLoopInfo().end()) {
-    evaluateInduction(L, **CanonItr, KnownMaxBackageCount, APCLoop);
+    std::tie(KnownInductToCountDep, Start, Step, End) =
+        evaluateInduction(L, **CanonItr, KnownMaxBackageCount, APCLoop);
     APCLoop.isFor = APCLoop.inCanonicalFrom = (**CanonItr).isCanonical();
+  }
+  if (!KnownInductToCountDep) {
+    // If we cannot represent induction variable (in a head of for-loop) as
+    // a function of loop count we cannot represent array subscripts as
+    // a function of induction variable.
+    // Example:
+    // for (int I = 2; I < 100; ++I)
+    //   A[I] = ...
+    // LLVM IR of this loop has been transformed to
+    // for (int I1 = 0; I1 < 98; ++I1)
+    //   A[I1 + 2] = ...
+    // If we do not known relation between I and I1 we cannot transform
+    // subscripts to an original form. This means that we cannot set axis in
+    // `parallel on` directive for the original loop, so we disable
+    // parallelization of this loop.
+    APCLoop.hasUnknownArrayAssigns = true;
   }
   evaluateExits(L, *DFL, APCLoop);
   evaluateCalls(L, APCLoop);
@@ -316,6 +336,12 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
       auto LoopID{L.getLoopID()};
       auto *S{
           new apc::LoopStatement(F, LoopID, DepInfo.get<trait::Induction>())};
+      if (Start)
+        S->setStart(*Start);
+      if (Step)
+        S->setStep(*Step);
+      if (End)
+        S->setEnd(*End);
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
       dvmh::SortedVarMultiListT NotLocalized;
@@ -362,36 +388,49 @@ void APCLoopInfoBasePass::initNoAnalyzed(apc::LoopGraph &APCLoop) noexcept {
   //APCLoop.hasIndirectAccess = true;
 }
 
-void APCLoopInfoBasePass::evaluateInduction(const Loop &L,
-    const CanonicalLoopInfo &CI,  bool KnownMaxBackageCount,
-    apc::LoopGraph &APCLoop) {
+std::tuple<bool, Optional<APSInt>, Optional<APSInt>, Optional<APSInt>>
+APCLoopInfoBasePass::evaluateInduction(const Loop &L,
+                                       const CanonicalLoopInfo &CI,
+                                       bool KnownMaxBackageCount,
+                                       apc::LoopGraph &APCLoop) {
   auto *M = L.getHeader()->getModule();
   auto *F = L.getHeader()->getParent();
-  if (!(CI.isSigned() || CI.isUnsigned()))
-    return;
   auto Start = CI.getStart();
-  auto End = CI.getEnd();
   auto Step = CI.getStep();
-  if (!Start || !End || !Step)
-    return;
+  if (!(CI.isSigned() || CI.isUnsigned())) {
+    return std::tuple{!(Start && Step &&
+                        isa<SCEVConstant>(mSE->getSCEV(Start)) &&
+                        isa<SCEVConstant>(Step)),
+                      None, None, None};
+  }
+  auto End = CI.getEnd();
+  if (!Start || !End || !Step) {
+    return std::tuple{!(Start && Step &&
+                        isa<SCEVConstant>(mSE->getSCEV(Start)) &&
+                        isa<SCEVConstant>(Step)),
+                      None, None, None};
+  }
   auto StartVal = APCLoop.startVal;
   auto EndVal = APCLoop.endVal;
   auto StepVal = APCLoop.stepVal;
   if (!castSCEV(mSE->getSCEV(Start), CI.isSigned(), StartVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
       "unable to represent lower bound of the loop", DS_Warning);
-    return;
+    return std::tuple{true, None, None, None};
   }
+  APSInt StartAPSInt{cast<SCEVConstant>(mSE->getSCEV(Start))->getAPInt(),
+                          CI.isSigned()};
   if (!castSCEV(Step, CI.isSigned(), StepVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
-      "unable to represent step of the loop", DS_Warning);
-    return;
+                     "unable to represent step of the loop", DS_Warning);
+    return std::tuple{true, StartAPSInt, None, None};
   }
   if (StepVal == 0)
-    return;
+    return std::tuple{true, StartAPSInt, None, None};
+  APSInt StepAPSInt{cast<SCEVConstant>(Step)->getAPInt(), CI.isSigned()};
   auto Const = dyn_cast<SCEVConstant>(mSE->getSCEV(End));
   if (!Const)
-    return;
+    return std::tuple{true, StartAPSInt, StepAPSInt, None};
   auto Val = Const->getAPInt();
   // Try to convert value from <, >, != comparison to equivalent
   // value from <=, >= comparison.
@@ -401,13 +440,14 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L,
   case CmpInst::ICMP_NE: StepVal > 0 ?-Val : ++Val;
   case CmpInst::ICMP_EQ: case CmpInst::ICMP_SGE: case CmpInst::ICMP_UGE:
   case CmpInst::ICMP_SLE: case CmpInst::ICMP_ULE: break;
-  default: return;
+  default: return std::tuple{true, StartAPSInt, StepAPSInt, None};
   }
   if (!castAPInt(Val, CI.isSigned(), EndVal)) {
     emitTypeOverflow(M->getContext(), *F, L.getStartLoc(),
       "unable to represent upper bound of the loop", DS_Warning);
-      return;
+      return std::tuple{true, StartAPSInt, StepAPSInt, None};
   }
+  APSInt EndAPSInt{Val, CI.isSigned()};
   APCLoop.startVal = StartVal;
   APCLoop.endVal = EndVal;
   APCLoop.stepVal = StepVal;
@@ -416,6 +456,7 @@ void APCLoopInfoBasePass::evaluateInduction(const Loop &L,
         EndVal < StartVal && StepVal < 0)
       APCLoop.calculatedCountOfIters = APCLoop.countOfIters
         = (EndVal - StartVal) / StepVal + (EndVal - StartVal) % StepVal;
+  return std::tuple{true, StartAPSInt, StepAPSInt, EndAPSInt};
 }
 
 void APCLoopInfoBasePass::evaluateExits(const Loop &L, const DFLoop &DFL,
