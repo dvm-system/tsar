@@ -42,8 +42,9 @@ private:
   std::variant<tsar::dvmh::VariableT, tsar::dvmh::Template *> mMemory;
 };
 
-class Expression {
-};
+class File {};
+class Expression {};
+class ArrayRefExp {};
 
 class Statement {
 public:
