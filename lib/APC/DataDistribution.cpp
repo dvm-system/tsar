@@ -606,8 +606,8 @@ apc::DirectiveImpl ParallelDirective::genDirective(
         auto Left{across[I].second[Dim].first + acrossShifts[I][Dim].first};
         auto Right{across[I].second[Dim].second + acrossShifts[I][Dim].second};
         AcrossItr->second.emplace_back(
-            APSInt{APInt{64, (uint64_t)Left, false}, false},
-            APSInt{APInt{64, (uint64_t)Right, false}, false});
+            APSInt{APInt{64, (uint64_t)Left, false}, true},
+            APSInt{APInt{64, (uint64_t)Right, false}, true});
       }
     }
   }
@@ -638,8 +638,8 @@ apc::DirectiveImpl ParallelDirective::genDirective(
         auto Right{shadowRenew[I].second[Dim].second +
                    shadowRenewShifts[I][Dim].second};
         ShadowItr->second.emplace_back(
-            APSInt{APInt{64, (uint64_t)Left, false}, false},
-            APSInt{APInt{64, (uint64_t)Right, false}, false});
+            APSInt{APInt{64, (uint64_t)Left, false}, true},
+            APSInt{APInt{64, (uint64_t)Right, false}, true});
       }
     }
   }
