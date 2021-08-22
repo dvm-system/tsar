@@ -126,6 +126,7 @@ public:
         .getMatcher();
     mGlobalOptions = &Pass.getAnalysis<GlobalOptionsImmutableWrapper>()
         .getOptions();
+    mRewriter = &TransformationContext.getRewriter();
     mSourceManager = &TransformationContext.getRewriter().getSourceMgr();
     mASTContext = &TransformationContext.getContext();
     auto& SocketInfo = Pass.getAnalysis<AnalysisSocketImmutableWrapper>().get();
@@ -151,15 +152,8 @@ public:
   }
 
   [[maybe_unused]]
-  bool TraverseStmt(Stmt *Statement) {
-    if (!Statement) {
-      return RecursiveASTVisitor::TraverseStmt(Statement);
-    }
-    auto *ForStatement = dyn_cast<ForStmt>(Statement);
-    if (!ForStatement) {
-      return RecursiveASTVisitor::TraverseStmt(Statement);
-    }
-
+  bool TraverseForStmt(ForStmt *ForStatement) {
+    DynTypedNode::create(*ForStatement).dump(dbgs(), *mASTContext);
     const auto LoopMatch = mLoopMatcher->find<AST>(ForStatement);
     if (LoopMatch == mLoopMatcher->end()) {
       return false;
@@ -182,12 +176,13 @@ public:
         Split->dump();
       }
     );
-    processSplits(Splits);
+
+    processSplits(ForStatement, Splits);
 
     // TODO: Use this information.
     const auto PrevIsInsideLoop = mIsInsideLoop;
     mIsInsideLoop = true;
-    const auto Result = RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
+    const auto Result = TraverseStmt(ForStatement->getBody());
     mIsInsideLoop = PrevIsInsideLoop;
     return Result;
   }
@@ -241,11 +236,11 @@ private:
           if (DIMemoryTraitItr->is<trait::Flow>()) {
             printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
             dbgs() << "Flow dependency\n";
-          } if (DIMemoryTraitItr->is<trait::Anti>()) {
+          }
+          if (DIMemoryTraitItr->is<trait::Anti>()) {
             printDILocationSource(dwarf::DW_LANG_C, *DIMemory, dbgs());
             dbgs() << "Antiflow dependency\n";
           });
-
       const auto *DINode = DIMemory->getAliasNode();
       for (const auto &BasicBlock : Loop->blocks()) {
         // Get all reads and writes of memory leading to dependencies
@@ -346,7 +341,17 @@ private:
     return Splits;
   }
 
-  void processSplits(const SplitInstructionVector &Splits) const {
+  void processSplits(const ForStmt *ForStatement,
+                     const SplitInstructionVector &Splits) const {
+    const auto LoopHeaderSplitter = getLoopHeaderSplitter(ForStatement);
+    if (!LoopHeaderSplitter.hasValue()) {
+      dbgs() << "Couldn't get character data for ";
+      ForStatement->dump();
+      dbgs() << "\n";
+      return;
+    }
+
+    dbgs() << LoopHeaderSplitter.getValue() << "\n";
     for (auto *Split : Splits) {
       const auto &ExpressionMatcherItr = mExpressionMatcher->find<IR>(Split);
       if (ExpressionMatcherItr == mExpressionMatcher->end()) {
@@ -356,9 +361,46 @@ private:
       }
       const auto &SplitStatement = ExpressionMatcherItr->get<AST>();
       SplitStatement.dump(dbgs(), *mASTContext);
+      // TODO: Incorrect location
+      mRewriter->InsertText(SplitStatement.getSourceRange().getEnd(),
+                            LoopHeaderSplitter.getValue(), true, true);
     }
   }
 
+  [[nodiscard]]
+  Optional<std::string> getLoopHeaderSplitter(
+      const ForStmt *ForStatement) const {
+    auto LoopHeader = getCharacterData(
+        ForStatement->getBeginLoc(), ForStatement->getBody()->getBeginLoc());
+    if (!LoopHeader.hasValue()) {
+      return None;
+    }
+
+    std::string LoopHeaderSplitter;
+    raw_string_ostream SplitterStream(LoopHeaderSplitter);
+    SplitterStream << "}";
+    SplitterStream << LoopHeader.getValue();
+    SplitterStream << "{";
+    return SplitterStream.str();
+  }
+
+  [[nodiscard]]
+  Optional<std::string> getCharacterData(
+      const SourceLocation BeginLoc, const SourceLocation EndLoc) const {
+    bool Invalid;
+    const auto BeginData = mSourceManager->getCharacterData(BeginLoc, &Invalid);
+    if (Invalid) {
+      return None;
+    }
+
+    const auto EndData = mSourceManager->getCharacterData(EndLoc, &Invalid);
+    if (Invalid) {
+      return None;
+    }
+
+    return std::string(BeginData, EndData);
+  }
+  
 private:
   DFRegionInfo *mDFRegion;
   TargetLibraryInfo *mTargetLibrary;
@@ -370,6 +412,7 @@ private:
   const ClangExprMatcherPass::ExprMatcher *mExpressionMatcher;
   const LoopMatcherPass::LoopMatcher *mLoopMatcher;
   const GlobalOptions *mGlobalOptions;
+  Rewriter *mRewriter;
   const SourceManager *mSourceManager;
   const ASTContext *mASTContext;
   DIAliasTree *mDIAliasTree;
@@ -378,93 +421,6 @@ private:
   std::function<ObjectID(ObjectID)> mGetServerLoopIdFunction;
   std::function<Instruction * (Instruction *)> mGetInstructionFunction;
   bool mIsInsideLoop = false;
-};
-
-class CodeRewriter : public RecursiveASTVisitor<CodeRewriter> {
- public:
-  CodeRewriter(FunctionPass &Pass, Function &Function,
-               ClangTransformationContext &TransformationContext) {
-    mRewriter = &TransformationContext.getRewriter();
-    mSourceMgr = &mRewriter->getSourceMgr();
-  }
-
-  [[maybe_unused]]
-  bool TraverseStmt(Stmt *Statement) {
-    if (!Statement) {
-      return RecursiveASTVisitor::TraverseStmt(Statement);
-    }
-
-    auto *ForStatement = dyn_cast<ForStmt>(Statement);
-    if (ForStatement) {
-      return TraverseForStmt(ForStatement);
-    }
-
-    return RecursiveASTVisitor::TraverseStmt(Statement);
-  }
-
-  [[maybe_unused]]
-  bool TraverseForStmt(ForStmt *ForStatement) {
-    dbgs() << "First time?\n";
-    //ForStatement->dump();
-
-    mLoopHeaderSplitter = getLoopHeaderSplitter(ForStatement);
-    dbgs() << mLoopHeaderSplitter << "\n";
-
-    // TODO: Use this information.
-    const auto PrevIsInsideLoop = mIsInsideLoop;
-    mIsInsideLoop = true;
-    const auto Result =
-        RecursiveASTVisitor::TraverseStmt(ForStatement->getBody());
-    mIsInsideLoop = PrevIsInsideLoop;
-    //return Result;
-    return true;
-  }
-
-  [[maybe_unused]]
-  bool VisitStmt(Stmt *Statement) {
-    if (!mIsInsideLoop) {
-      return true;
-    }
-
-    /*mRewriter->InsertText(Statement->getEndLoc(),
-      mLoopHeaderSplitter, true, true);*/
-    return false;
-  }
-
-private:
-  [[nodiscard]]
-  std::string getLoopHeaderSplitter(ForStmt *ForStatement) const {
-    std::string LoopHeaderSplitter;
-    raw_string_ostream SplitterStream(LoopHeaderSplitter);
-    SplitterStream << "}";
-    SplitterStream << getCharacterData(ForStatement->getBeginLoc(),
-      ForStatement->getBody()->getBeginLoc());
-    SplitterStream << "{";
-    return SplitterStream.str();
-  }
-
-  [[nodiscard]]
-  std::string getCharacterData(const SourceLocation BeginLoc,
-                               const SourceLocation EndLoc) const {
-    bool Invalid;
-    const auto BeginData = mSourceMgr->getCharacterData(BeginLoc, &Invalid);
-    if (Invalid) {
-      throw std::exception("Couldn't get character data");
-    }
-
-    const auto EndData = mSourceMgr->getCharacterData(EndLoc, &Invalid);
-    if (Invalid) {
-      throw std::exception("Couldn't get character data");
-    }
-
-    return std::string(BeginData, EndData);
-  }
-
-private:
-  Rewriter *mRewriter;
-  SourceManager *mSourceMgr;
-  bool mIsInsideLoop = false;
-  std::string mLoopHeaderSplitter;
 };
 }
 
@@ -475,19 +431,20 @@ bool LoopDistributionPass::runOnFunction(Function& Function) {
   if (!TransformationInfo) {
     return false;
   }
+
   auto *TransformationContext = TransformationInfo->getContext(*Module);
   if (!TransformationContext || !TransformationContext->hasInstance()) {
     return false;
   }
+
   auto *FunctionDecl =
       TransformationContext->getDeclForMangledName(Function.getName());
   if (!FunctionDecl) {
     return false;
   }
-  //ASTVisitor LoopVisitor(*this, Function, *TransformationContext);
-  //LoopVisitor.TraverseDecl(FunctionDecl);
-  CodeRewriter Rewriter(*this, Function, *TransformationContext);
-  Rewriter.TraverseDecl(FunctionDecl);
+
+  ASTVisitor LoopVisitor(*this, Function, *TransformationContext);
+  LoopVisitor.TraverseDecl(FunctionDecl);
   return false;
 }
 
