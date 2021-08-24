@@ -88,7 +88,7 @@ public:
     mSocket = nullptr;
     mAPCContext = nullptr;
     mDIMemoryMatcher = nullptr;
-    mDIAccessInfo = nullptr;
+    mAccessInfo = nullptr;
     mGlobalOpts = nullptr;
     mRegions = nullptr;
     mPerfect = nullptr;

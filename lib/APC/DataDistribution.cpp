@@ -696,7 +696,7 @@ void fillAcrossInfoFromDirectives(
     return;
   for (auto &&[Var, Distance] : LpStmt->getTraits().get<trait::Dependence>()) {
     AcrossInfo.emplace_back();
-    AcrossInfo.back().first.first = Var.get<AST>()->getName();
+    AcrossInfo.back().first.first = Var.get<AST>()->getName().str();
     auto DIEM{cast<DIEstimateMemory>(Var.get<MD>())};
     AcrossInfo.back().first.second =
         APCContext::getUniqueName(*DIEM->getVariable(), *LpStmt->getFunction());
