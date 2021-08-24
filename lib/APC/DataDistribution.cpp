@@ -698,11 +698,8 @@ void fillAcrossInfoFromDirectives(
     AcrossInfo.emplace_back();
     AcrossInfo.back().first.first = Var.get<AST>()->getName();
     auto DIEM{cast<DIEstimateMemory>(Var.get<MD>())};
-    SmallVector<DebugLoc, 1> DbgLocs;
-    DIEM->getDebugLoc(DbgLocs);
-    AcrossInfo.back().first.second = APCContext::getUniqueName(
-        *DIEM->getVariable(), *LpStmt->getFunction(),
-        !DbgLocs.empty() && DbgLocs.front() ? DbgLocs.front().get() : nullptr);
+    AcrossInfo.back().first.second =
+        APCContext::getUniqueName(*DIEM->getVariable(), *LpStmt->getFunction());
     for (auto Range : Distance) {
       int Left{0}, Right{0};
       if (Range.first)

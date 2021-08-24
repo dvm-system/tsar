@@ -180,7 +180,7 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
         DeclScope.first = Distribution::l_LOCAL;
       DeclScope.second =  F->getName().str();
     }
-    auto UniqueName{APCCtx.getUniqueName(*DILoc->Var, *F, DILoc->Loc)};
+    auto UniqueName{APCCtx.getUniqueName(*DILoc->Var, *F)};
     std::decay<
       decltype(std::declval<apc::Array>().GetDeclInfo())>
         ::type::value_type::second_type ShrinkedDeclLoc;

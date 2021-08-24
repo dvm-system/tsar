@@ -88,7 +88,7 @@ public:
   /// Return a unique name for a specified variable which is accessed in a
   /// specified function.
   static std::string getUniqueName(const llvm::DIVariable &DIVar,
-      const llvm::Function &F, const llvm::DILocation *DILoc = nullptr);
+                                   const llvm::Function &F);
 
   APCContext();
   ~APCContext();
