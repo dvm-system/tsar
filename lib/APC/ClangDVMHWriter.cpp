@@ -595,7 +595,7 @@ void APCClangDVMHWriter::insertInherit(FunctionDecl *FD,
     DeclarationSet &NotDistrCanonicalDecls) {
   if (InheritArgs.empty())
     return;
-  NotDistrCanonicalDecls.erase(FD);
+  NotDistrCanonicalDecls.erase(FD->getCanonicalDecl());
   for (auto *Redecl : FD->getFirstDecl()->redecls()) {
     SmallString<64> Inherit;
     getPragmaText(DirectiveId::DvmInherit, Inherit);
