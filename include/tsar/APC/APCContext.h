@@ -31,6 +31,7 @@
 #include <apc/apc-config.h>
 #include <bcl/utility.h>
 
+struct Directive;
 struct FuncInfo;
 struct FuncParam;
 struct LoopGraph;
@@ -55,10 +56,8 @@ class Template;
 }
 }
 
-using DirectiveImpl = tsar::ParallelItem *;
-
 namespace apc {
-using DirectiveImpl = ::DirectiveImpl;
+using Directive = ::Directive;
 using Expression = ::Expression;
 using FuncInfo = ::FuncInfo;
 using FuncParam = ::FuncParam;

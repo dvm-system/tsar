@@ -377,6 +377,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCClangDVMHWriter, "clang-experimental-apc-dvmh"
   INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServer)
   INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServerResponse)
   INITIALIZE_PASS_DEPENDENCY(DVMHMemoryServerProvider)
+  INITIALIZE_PASS_DEPENDENCY(DVMHParallelizationContext)
   INITIALIZE_PASS_DEPENDENCY(InitializeProviderPass)
   INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
@@ -389,6 +390,7 @@ ModulePass * llvm::createAPCClangDVMHWriter() { return new APCClangDVMHWriter; }
 
 void APCClangDVMHWriter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<APCContextWrapper>();
+  AU.addRequired<DVMHParallelizationContext>();
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<ClangDIGlobalMemoryMatcherPass>();
@@ -506,9 +508,45 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     NotDistrCanonicalDecls.erase(Itr->get<AST>());
   }
   checkNotDistributedDecls(NotDistrCanonicalDecls);
+  auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
+  DenseMap<dvmh::Template *, apc::Array *> TemplatesMap;
+  for (auto &&[Tpl, Variant] : DataDirs.distrRules) {
+    if (!Tpl->IsTemplate())
+      continue;
+    TemplatesMap.try_emplace(
+        std::get<Template *>(Tpl->GetDeclSymbol()->getMemory()), Tpl);
+  }
+  auto visitRealign = [&TemplatesMap, &Templates](PragmaRealign *Realign,
+                                                  FileID FID) {
+    if (!Realign)
+      return;
+    if (auto *Tpl{std::get_if<Template *>(&Realign->with().Target)}) {
+      auto *OriginTpl{(**Tpl).getOrigin()};
+      OriginTpl = OriginTpl ? OriginTpl : *Tpl;
+      auto TplItr{Templates.try_emplace(FID).first};
+      TplItr->second.try_emplace(TemplatesMap[OriginTpl]);
+    }
+  };
+  // Search for 'realign' directives. We have to add a template declaration
+  // into a file if it contains realign to the template.
+  for (auto &&[BB, PLocList] : ParallelCtx.getParallelization()) {
+    auto FuncDecl{mTfmCtx->getDeclForMangledName(BB->getParent()->getName())};
+    assert(FuncDecl && "Declaration must exist for transformed function!");
+    auto &SrcMgr{mTfmCtx->getContext().getSourceManager()};
+    auto FID{SrcMgr.getFileID(FuncDecl->getBeginLoc())};
+    for (auto &PLoc : PLocList) {
+      for (auto &PI : PLoc.Entry)
+        visitRealign(dyn_cast<PragmaRealign>(PI.get()), FID);
+      for (auto &PI : PLoc.Exit)
+        visitRealign(dyn_cast<PragmaRealign>(PI.get()), FID);
+      }
+  }
   insertDistibution(APCRegion, DataDirs, Templates);
-  for (auto &TplInfo : DataDirs.distrRules)
+  for (auto &TplInfo : DataDirs.distrRules) {
     GIP.getRawInfo().Identifiers.insert(TplInfo.first->GetShortName());
+    for (auto &&[Dist, Name]  : TplInfo.first->GetAllClones())
+      GIP.getRawInfo().Identifiers.insert(Name);
+  }
   return false;
 }
 
@@ -715,36 +753,64 @@ void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
         continue;
       auto *Tpl = TplUsageItr->first;
       auto &TplInfo = TplUsageItr->second;
+      auto buildDistribute = [Tpl,
+                              &TplInfo](StringRef Name, bool IsDefinition,
+                                        auto &DistRule,
+                                        SmallVectorImpl<char> &Distribute) {
+        // Obtain "#pragma dvm template"
+        getPragmaText(DirectiveId::DvmTemplate, Distribute);
+        Distribute.pop_back();
+        Distribute.push_back(' ');
+        // Add size of each template dimension to pragma: "... [Size] ..."
+        auto &DimSizes = Tpl->GetSizes();
+        for (std::size_t DimIdx = 0, DimIdxE = Tpl->GetDimSize();
+             DimIdx < DimIdxE; ++DimIdx) {
+          assert(DimSizes[DimIdx].first == 0 &&
+                 "Lower dimension bound must be 0 for C language!");
+          Distribute.push_back('[');
+          SmallString<8> SizeData;
+          auto Size{Twine(DimSizes[DimIdx].second).toStringRef(SizeData)};
+          Distribute.append(Size.begin(), Size.end());
+          Distribute.push_back(']');
+        }
+        // Add distribution rules according to current distribution variant.
+        Distribute.append(
+            {' ', 'd', 'i', 's', 't', 'r', 'i', 'b', 'u', 't', 'e', ' '});
+        for (auto Kind : DistRule) {
+          Distribute.push_back('[');
+          switch (Kind) {
+          case BLOCK:
+            Distribute.append({'b', 'l', 'o', 'c', 'k'});
+            break;
+          case NONE:
+            break;
+          default:
+            llvm_unreachable("Unknown distribution rule!");
+            break;
+          }
+          Distribute.push_back(']');
+        }
+        Distribute.push_back('\n');
+        // Use `extern` in to avoid variable redefinition.
+        if (!IsDefinition)
+          Distribute.append({'e', 'x', 't', 'e', 'r', 'n'});
+        Distribute.append({'v', 'o', 'i', 'd', ' ', '*'});
+        Distribute.append(Name.begin(), Name.end());
+        Distribute.push_back(';');
+        Distribute.push_back('\n');
+      };
       SmallString<256> Distribute;
-      // Obtain "#pragma dvm template"
-      getPragmaText(DirectiveId::DvmTemplate, Distribute);
-      Distribute.pop_back(); Distribute += " ";
-      // Add size of each template dimension to pragma: "... [Size] ..."
-      auto &DimSizes = Tpl->GetSizes();
-      for (std::size_t DimIdx = 0, DimIdxE = Tpl->GetDimSize();
-           DimIdx < DimIdxE; ++DimIdx) {
-        assert(DimSizes[DimIdx].first == 0 &&
-          "Lower dimension bound must be 0 for C language!");
-        Distribute += "[";
-        Distribute += Twine(DimSizes[DimIdx].second).str();
-        Distribute += "]";
-      }
-      // Add distribution rules according to current distribution variant.
-      Distribute += " distribute ";
       auto &DistrVariant = Region.GetCurrentVariant();
       assert(DistrVariant[DistrRuleIdx] < AllTplDistrRules.second.size() &&
         "Variant index must be less than number of variants!");
       auto &DR = AllTplDistrRules.second[DistrVariant[DistrRuleIdx]];
-      for (auto Kind : DR.distRule) {
-        switch (Kind) {
-        case BLOCK: Distribute += "[block]"; break;
-        case NONE: Distribute += "[]"; break;
-        default:
-          llvm_unreachable("Unknown distribution rule!");
-          Distribute += "[]"; break;
-        }
+      buildDistribute(Tpl->GetShortName(), !TplInfo.HasDefinition, DR.distRule,
+                      Distribute);
+      for (auto &[DistrRule, Name] : Tpl->GetAllClones()) {
+        buildDistribute(Name, !TplInfo.HasDefinition, DistrRule, Distribute);
       }
-      Distribute += "\n";
+      Distribute.push_back('\n');
+      TplInfo.HasDefinition = true;
       auto Where =
         SrcMgr.getLocForStartOfFile(File.first).getLocWithOffset(PreInfo.Size);
       // TODO (kaniandr@gmail.com): do not insert directive in include file
@@ -756,14 +822,6 @@ void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
           StringRef(Distribute).trim();
         toDiag(Diags, Where, tsar::diag::note_apc_insert_include_prevent);
       }
-      // Use `extern` in to avoid variable redefinition.
-      if (TplInfo.HasDefinition)
-        Distribute += "extern";
-      else
-        TplInfo.HasDefinition = true;
-      Distribute += "void *";
-      Distribute += Tpl->GetShortName();
-      Distribute += ";\n\n";
       // Insert at the end of preamble.
       Where = getLocationToTransform(Where);
       assert(Where.isFileID() && "Location must not be in macro!");

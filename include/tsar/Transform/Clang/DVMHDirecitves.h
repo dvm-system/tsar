@@ -58,10 +58,24 @@ using ShadowVarListT = std::map<VariableT, trait::DIDependence::DistanceVector,
 
 class Template {
 public:
-  explicit Template(llvm::StringRef Name) : mName(Name) {}
+  explicit Template(llvm::StringRef Name, Template *Origin = nullptr)
+      : mName(Name), mOrigin(Origin) {}
   llvm::StringRef getName() const noexcept { return mName; }
+
+  Template *getCloneOrCreate(llvm::StringRef Name) {
+    auto I{mClones.insert(std::pair{Name, nullptr}).first};
+    if (!I->second)
+      I->second = std::make_unique<Template>(Name, this);
+    return I->second.get();
+  }
+
+  Template *getOrigin() noexcept { return mOrigin; }
+  const Template *getOrigin() const noexcept { return mOrigin; }
+
 private:
   std::string mName;
+  llvm::StringMap<std::unique_ptr<Template>> mClones;
+  Template *mOrigin{nullptr};
 };
 
 struct Align {
@@ -171,6 +185,31 @@ public:
   PragmaGetActual(bool IsRequired, bool IsFinal = false)
       : PragmaData(DirectiveId::DvmGetActual, IsRequired, IsFinal) {}
 
+};
+
+class PragmaRealign : public ParallelItem {
+public:
+  static bool classof(const ParallelItem *Item) noexcept {
+    return Item->getKind() == static_cast<unsigned>(DirectiveId::DvmRealign);
+  }
+
+  PragmaRealign(const VariableT &What, unsigned WhatDimSize,
+                const std::variant<VariableT, Template *> &With)
+      : ParallelItem(static_cast<unsigned>(DirectiveId::DvmRealign), false),
+        mWhat(What), mWhatDimSize(WhatDimSize) {
+    mAlign.Target = With;
+  }
+
+  const VariableT &what() const noexcept { return mWhat; }
+  unsigned getWhatDimSize() const noexcept { return mWhatDimSize; }
+  const Align &with() const noexcept { return mAlign; }
+
+  Align &with() noexcept { return mAlign; };
+
+private:
+  VariableT mWhat;
+  unsigned mWhatDimSize;
+  Align mAlign;
 };
 
 class PragmaParallel : public ParallelItem {

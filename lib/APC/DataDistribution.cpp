@@ -67,6 +67,18 @@ using namespace tsar;
 using namespace tsar::dvmh;
 
 namespace {
+struct DirectiveImpl : public apc::Directive {
+  explicit DirectiveImpl(apc::Statement *A, std::unique_ptr<ParallelItem> PI,
+                         int ShrinkedLoc, bool IsOnEntry = true)
+      : Anchor(A), Pragma(std::move(PI)), OnEntry(IsOnEntry) {
+    bcl::restoreShrinkedPair(ShrinkedLoc, line, col);
+  }
+
+  apc::Statement *Anchor;
+  bool OnEntry{true};
+  std::unique_ptr<ParallelItem> Pragma;
+};
+
 class APCDataDistributionPassInfo final : public PassGroupInfo {
   bool isNecessaryPass(llvm::AnalysisID ID) const override {
     static llvm::AnalysisID Passes[] = {
@@ -133,7 +145,7 @@ using APCDataDistributionProvider = FunctionPassProvider<
   EstimateMemoryPass,
   DIEstimateMemoryPass
 >;
-}
+} // namespace
 
 char APCDataDistributionPass::ID = 0;
 
@@ -217,7 +229,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   ArrayAccessPool AccessPool;
   LoopToArrayMap Accesses;
   StringMap<std::map<int, apc::LoopGraph *>> Loops;
-  DenseMap<apc::LoopGraph *, BasicBlock *> APCToIRLoops;
+  DenseMap<apc::Statement *, BasicBlock *> APCToIRLoops;
   std::map<std::string, apc::FuncInfo *> Functions;
   std::vector<apc::LoopGraph *> OuterLoops;
   for (auto &F : M) {
@@ -243,7 +255,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
           return;
         if (auto APCLoop = APCCtx.findLoop(ID)) {
           LoopsForFile.emplace(APCLoop->lineNum, APCLoop);
-          APCToIRLoops.try_emplace(APCLoop, L->getHeader());
+          APCToIRLoops.try_emplace(APCLoop->loop, L->getHeader());
         }
       });
     for (auto *L : Provider.get<LoopInfoWrapperPass>().getLoopInfo()) {
@@ -365,7 +377,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     for (auto &Info : LoopsForFile.second)
       if (!Info.second->parent)
         LoopList.push_back(Info.second);
-    std::vector<std::pair<int, apc::DirectiveImpl>> ParallelDirs;
+    std::vector<apc::Directive *> ParallelDirs;
     std::vector<std::pair<apc::Array*, const DistrVariant*>> CurrentVariant;
     for (std::size_t I = 0, EI = APCRegion.GetCurrentVariant().size(); I < EI;
          ++I)
@@ -377,26 +389,61 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         nullptr, &APCRegion, ReducedG, AllArrays, LoopList, LoopsForFile.second,
         Functions, CurrentVariant, DataDirs.alignRules, ParallelDirs,
         APCRegion.GetId(), FormalToActual, DepInfoForLoopGraph, Msgs);
+    using DirectiveList = SmallVector<DirectiveImpl *, 16>;
     DenseMap<
         Function *,
-        SmallVector<std::tuple<apc::LoopGraph *, BasicBlock *, ParallelItem *>,
-                    16>>
+        DenseMap<apc::Statement *, std::tuple<BasicBlock *, DirectiveList>>>
         FuncToDirs;
-    for (auto &&[LpLoc, PI] : ParallelDirs) {
-      auto *APCLoop{LoopsForFile.second[LpLoc]};
-      auto *HeaderBB{APCToIRLoops[APCLoop]};
+    for (auto *Dir : ParallelDirs) {
+      auto DirImpl{static_cast<DirectiveImpl *>(Dir)};
+      auto *HeaderBB{APCToIRLoops[DirImpl->Anchor]};
       assert(HeaderBB && "Loop head must not be null!");
-      FuncToDirs.try_emplace(HeaderBB->getParent())
-          .first->second.emplace_back(APCLoop, HeaderBB, PI);
+      auto FuncItr{FuncToDirs.try_emplace(HeaderBB->getParent()).first};
+      auto Itr{FuncItr->second.try_emplace(DirImpl->Anchor).first};
+      std::get<BasicBlock *>(Itr->second) = HeaderBB;
+      std::get<DirectiveList>(Itr->second).push_back(DirImpl);
     }
     for (auto [F, DirInfo] : FuncToDirs) {
       auto &LpInfo{getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo()};
-      for (auto [APCLoop, HeaderBB, PI] : DirInfo) {
-        std::unique_ptr<PragmaParallel> DVMHParallel{cast<PragmaParallel>(PI)};
+      for (auto &&[Anchor, DirList] : DirInfo) {
+        auto *LpStmt{cast<apc::LoopStatement>(Anchor)};
+        auto *HeaderBB{std::get<BasicBlock *>(DirList)};
+        auto EntryInfo{ParallelCtx.getParallelization().try_emplace(HeaderBB)};
+        assert(EntryInfo.second && "Unable to create a parallel block!");
+        EntryInfo.first->get<ParallelLocation>().emplace_back();
+        EntryInfo.first->get<ParallelLocation>().back().Anchor =
+            LpStmt->getId();
+        auto *LLVMLoop{ LpInfo.getLoopFor(HeaderBB) };
+        assert(LLVMLoop && "LLVM IR representation of a loop must be known!");
+        auto ExitingBB{LLVMLoop->getExitingBlock()};
+        assert(ExitingBB && "Parallel loop must have a single exit!");
+        ParallelLocation *ExitLoc{nullptr};
+        if (ExitingBB == LLVMLoop->getHeader()) {
+          ExitLoc = &EntryInfo.first->get<ParallelLocation>().back();
+        } else {
+          auto ExitInfo{
+              ParallelCtx.getParallelization().try_emplace(ExitingBB)};
+          assert(ExitInfo.second && "Unable to create a parallel block!");
+          ExitInfo.first->get<ParallelLocation>().emplace_back();
+          ExitLoc = &ExitInfo.first->get<ParallelLocation>().back();
+          ExitLoc->Anchor = LpStmt->getId();
+        }
+        std::unique_ptr<PragmaParallel> DVMHParallel;
+        for (auto &Dir : std::get<DirectiveList>(DirList)) {
+          if (isa<PragmaRealign>(Dir->Pragma) && Dir->OnEntry) {
+            EntryInfo.first->get<ParallelLocation>().back().Entry.push_back(
+              std::move(Dir->Pragma));
+            delete Dir;
+            Dir = nullptr;
+          } else if (isa<PragmaParallel>(Dir->Pragma)) {
+            DVMHParallel.reset(cast<PragmaParallel>(Dir->Pragma.release()));
+            delete Dir;
+            Dir = nullptr;
+          }
+        }
         std::unique_ptr<PragmaActual> DVMHActual;
         std::unique_ptr<PragmaGetActual> DVMHGetActual;
         std::unique_ptr<PragmaRegion> DVMHRegion;
-        auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
         if (!LpStmt->isHostOnly()) {
           DVMHRegion = std::make_unique<PragmaRegion>();
           DVMHRegion->finalize();
@@ -424,26 +471,6 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
               LpStmt->getTraits().get<trait::Private>().begin(),
               LpStmt->getTraits().get<trait::Private>().end());
         }
-        auto EntryInfo{ParallelCtx.getParallelization().try_emplace(HeaderBB)};
-        assert(EntryInfo.second && "Unable to create a parallel block!");
-        EntryInfo.first->get<ParallelLocation>().emplace_back();
-        EntryInfo.first->get<ParallelLocation>().back().Anchor =
-            LpStmt->getId();
-        auto *LLVMLoop{ LpInfo.getLoopFor(HeaderBB) };
-        assert(LLVMLoop && "LLVM IR representation of a loop must be known!");
-        auto ExitingBB{LLVMLoop->getExitingBlock()};
-        assert(ExitingBB && "Parallel loop must have a single exit!");
-        ParallelLocation *ExitLoc{nullptr};
-        if (ExitingBB == LLVMLoop->getHeader()) {
-          ExitLoc = &EntryInfo.first->get<ParallelLocation>().back();
-        } else {
-          auto ExitInfo{
-              ParallelCtx.getParallelization().try_emplace(ExitingBB)};
-          assert(ExitInfo.second && "Unable to create a parallel block!");
-          ExitInfo.first->get<ParallelLocation>().emplace_back();
-          ExitLoc = &ExitInfo.first->get<ParallelLocation>().back();
-          ExitLoc->Anchor = LpStmt->getId();
-        }
         if (DVMHRegion)
           ExitLoc->Exit.push_back(
               std::make_unique<ParallelMarker<PragmaRegion>>(0,
@@ -458,6 +485,18 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
             std::move(DVMHParallel));
         if (DVMHGetActual)
           ExitLoc->Exit.push_back(std::move(DVMHGetActual));
+        for (auto &Dir : std::get<DirectiveList>(DirList)) {
+          if (Dir && isa<PragmaRealign>(Dir->Pragma) && !Dir->OnEntry) {
+            ExitLoc->Exit.push_back(std::move(Dir->Pragma));
+            delete Dir;
+            Dir = nullptr;
+          }
+        }
+        all_of(std::get<DirectiveList>(DirList),
+               [](auto *Dir) { return Dir == nullptr; });
+        assert(all_of(std::get<DirectiveList>(DirList),
+                      [](auto *Dir) { return Dir == nullptr; }) &&
+               "Memory leak!");
       }
     }
   }
@@ -483,18 +522,19 @@ void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
     OS << "  " << Rule << "\n";
 }
 
-apc::DirectiveImpl ParallelDirective::genDirective(
+apc::Directive * ParallelDirective::genDirective(File *F,
     const std::vector<std::pair<apc::Array *, const DistrVariant *>>
         &Distribution,
     const std::vector<AlignRule> &AlignRules, apc::LoopGraph *CurrLoop,
     DIST::GraphCSR<int, double, attrType> &ReducedG,
     DIST::Arrays<int> &AllArrays,
-    const std::map<apc::Array *,
-                   std::pair<std::vector<ArrayOp>, std::vector<bool>>> &ReadOps,
-    const int RegionId,
+    const uint64_t RegionId,
     const std::map<apc::Array *, std::set<apc::Array *>>
         &ArrayLinksByFuncCalls) {
-  auto *Parallel = new PragmaParallel;
+  auto *DirImpl{new DirectiveImpl{
+      CurrLoop->loop, std::make_unique<PragmaParallel>(), CurrLoop->lineNum}};
+  auto *Parallel{cast<PragmaParallel>(DirImpl->Pragma.get())};
+  const auto &ReadOps{CurrLoop->readOps};
   auto &Clauses{Parallel->getClauses()};
   SmallVector<apc::LoopGraph *, 4> Nest;
   auto LoopInNest{CurrLoop};
@@ -560,7 +600,7 @@ apc::DirectiveImpl ParallelDirective::genDirective(
     }
     if (OnTo[I].second.first == 0) {
       Clauses.get<dvmh::Align>()->Relation.emplace_back(
-          APSInt{APInt{64, (uint64_t)OnTo[I].second.second, true}, true});
+          APSInt{APInt{64, (uint64_t)OnTo[I].second.second, true}, false});
       continue;
     }
     auto Itr{find_if(Clauses.get<trait::Induction>(), [&Name = OnTo[I].first](
@@ -644,7 +684,7 @@ apc::DirectiveImpl ParallelDirective::genDirective(
     }
   }
   Parallel->finalize();
-  return Parallel;
+  return DirImpl;
 }
 
 void fillAcrossInfoFromDirectives(
@@ -677,4 +717,47 @@ void fillAcrossInfoFromDirectives(
 void fillInfoFromDirectives(const LoopGraph *L,
                             ParallelDirective *D) {
   fillAcrossInfoFromDirectives(L, D->across);
+}
+
+std::pair<std::vector<Directive *>, std::vector<Directive *>>
+createRealignRules(Statement *S, const uint64_t RegionId, File *F,
+                   const std::string &TplCloneName,
+                   const std::map<apc::Array *, std::set<apc::Array *>>
+                       &ArrayLinksByFuncCalls,
+                   const std::set<apc::Array *> &AccessedArrays,
+                   const std::pair<int, int> Loc) {
+  std::pair<std::vector<Directive *>, std::vector<Directive *>> Res;
+  for (auto &A : AccessedArrays) {
+    if (A->GetNonDistributeFlag())
+      continue;
+    auto *RealRef{getRealArrayRef(A, RegionId, ArrayLinksByFuncCalls)};
+    auto Rules{RealRef->GetAlignRulesWithTemplate(RegionId)};
+    auto Links{RealRef->GetLinksWithTemplate(RegionId)};
+    auto *TplArray{RealRef->GetTemplateArray(RegionId)};
+    auto makeRealign = [A, &Links, &Rules,
+                        DimSize = TplArray->GetDimSize()](Template *With) {
+      auto Realign{std::make_unique<PragmaRealign>(
+          std::get<VariableT>(A->GetDeclSymbol()->getMemory()), A->GetDimSize(),
+          With)};
+      Realign->with().Relation.resize(DimSize);
+      for (unsigned Dim = 0, DimE = A->GetDimSize(); Dim < DimE; ++Dim) {
+        if (Links[Dim] != -1) {
+          dvmh::Align::Axis Axis;
+          Axis.Dimension = Dim;
+          Axis.Step =
+              APSInt{APInt{64, (uint64_t)Rules[Dim].first, true}, false};
+          Axis.Offset =
+              APSInt{APInt{64, (uint64_t)Rules[Dim].second, true}, false};
+          Realign->with().Relation[Links[Dim]] = std::move(Axis);
+        }
+      }
+      return Realign;
+    };
+    auto Tpl{std::get<Template *>(TplArray->GetDeclSymbol()->getMemory())};
+    auto *TplClone{Tpl->getCloneOrCreate(TplCloneName)};
+    Res.first.push_back(new DirectiveImpl{S, makeRealign(TplClone), Loc.first});
+    Res.second.push_back(
+        new DirectiveImpl{S, makeRealign(Tpl), Loc.second, false});
+  }
+  return Res;
 }

@@ -201,6 +201,7 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
     mOuterLoops.push_back(APCLoop);
     traverseInnerLoops(**I, *APCLoop);
   }
+  LLVM_DEBUG(print(dbgs(), F.getParent()));
   return false;
 }
 
@@ -242,6 +243,8 @@ void APCLoopInfoBasePass::traverseInnerLoops(
 
 void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   initNoAnalyzed(APCLoop);
+  auto LoopID{L.getLoopID()};
+  assert(LoopID && "ID must be available for a loop!");
   auto *M = L.getHeader()->getModule();
   auto *F = L.getHeader()->getParent();
   APCLoop.region = &mAPCContext->getDefaultRegion();
@@ -298,6 +301,19 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   }
   evaluateExits(L, *DFL, APCLoop);
   evaluateCalls(L, APCLoop);
+  for (auto &A : mAccessInfo->scope_accesses(LoopID)) {
+    auto *APCArray{mAPCContext->findArray(A.getArray()->getAsMDNode())};
+    if (!APCArray)
+      continue;
+    if (!APCArray->GetNonDistributeFlag()) {
+      APCLoop.usedArrays.insert(APCArray);
+      if (!A.isReadOnly())
+        APCLoop.usedArraysWrite.insert(APCArray);
+    }
+    APCLoop.usedArraysAll.insert(APCArray);
+    if (!A.isReadOnly())
+      APCLoop.usedArraysWriteAll.insert(APCArray);
+  }
   if (auto ParallelInfoItr{mPI->find(&L)};
       ParallelInfoItr != mPI->end() &&
       CanonItr != mCanonical->getCanonicalLoopInfo().end() &&
@@ -312,7 +328,6 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
                                  ClonedDIMemoryMatcherWrapper>()};
     assert(RM && "Client to server IR-matcher must be available!");
     auto &ClientToServer{**RM->value<AnalysisClientServerMatcherWrapper *>()};
-    assert(L.getLoopID() && "ID must be available for a parallel loop!");
     auto ServerLoopID{cast<MDNode>(*ClientToServer.getMappedMD(L.getLoopID()))};
     auto DIDepSet{DIDepInfo[ServerLoopID]};
     auto *ServerF{cast<Function>(ClientToServer[F])};
@@ -333,7 +348,6 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
           DepInfo.get<trait::Induction>().get<AST>()->getName().str();
       APCLoop.hasUnknownScalarDep = false;
       APCLoop.hasUnknownArrayDep = false;
-      auto LoopID{L.getLoopID()};
       auto *S{
           new apc::LoopStatement(F, LoopID, DepInfo.get<trait::Induction>())};
       if (Start)

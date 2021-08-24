@@ -360,6 +360,78 @@ static void addParallelMapping(Loop &L, const PragmaParallel &Parallel,
   addVarList(MappingStr, PragmaStr);
 }
 
+static void pragmaRealignStr(const ParallelItemRef &PIRef,
+                             SmallVectorImpl<char> &Str) {
+  auto Realign{cast<PragmaRealign>(PIRef)};
+  getPragmaText(DirectiveId::DvmRealign, Str);
+  Str.resize(Str.size() - 1);
+  Str.push_back('(');
+  auto WhatName{Realign->what().get<AST>()->getName()};
+  Str.append(WhatName.begin(), WhatName.end());
+  StringRef IdxPrefix{"iEX"};
+  for (unsigned I = 0, EI = Realign->getWhatDimSize(); I < EI; ++I) {
+    Str.push_back('[');
+    if (auto Itr{find_if(Realign->with().Relation,
+                         [I](const auto &A) {
+                           if (!A)
+                             return false;
+                           if (auto *V{std::get_if<dvmh::Align::Axis>(&*A)})
+                             return V->Dimension == I;
+                           return false;
+                         })};
+        Itr != Realign->with().Relation.end()) {
+      Str.append(IdxPrefix.begin(), IdxPrefix.end());
+      SmallString<2> SuffixData;
+      auto Suffix{Twine(I).toStringRef(SuffixData)};
+      Str.append(Suffix.begin(), Suffix.end());
+    }
+    Str.push_back(']');
+  }
+  Str.append({' ', 'w', 'i', 't', 'h', ' '});
+  std::visit(
+      [&Str](auto &&V) {
+        if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
+          auto Name{V.template get<AST>()->getName()};
+          Str.append(Name.begin(), Name.end());
+        } else {
+          auto Name{V->getName()};
+          Str.append(Name.begin(), Name.end());
+        }
+      },
+      Realign->with().Target);
+    for (auto &A : Realign->with().Relation) {
+      Str.push_back('[');
+      if (A) {
+        std::visit(
+            [IdxPrefix, &Str](auto &&V) {
+              if constexpr (std::is_same_v<dvmh::Align::Axis,
+                                           std::decay_t<decltype(V)>>) {
+                SmallString<8> NameData;
+                auto Name{(IdxPrefix + Twine(V.Dimension)).toStringRef(NameData)};
+                if (!V.Step.isOneValue()) {
+                  if (V.Step.isNegative())
+                    Str.push_back('(');
+                  V.Step.toString(Str);
+                  if (V.Step.isNegative())
+                    Str.push_back(')');
+                  Str.push_back('*');
+                }
+                Str.append(Name.begin(), Name.end());
+                if (!V.Offset.isNullValue()) {
+                  Str.push_back('+');
+                  V.Offset.toString(Str);
+                }
+              } else {
+                V.toString(Str);
+              }
+            },
+            *A);
+      }
+      Str.push_back(']');
+    }
+  Str.push_back(')');
+}
+
 static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
                               SmallVectorImpl<char> &Str) {
   auto Parallel{cast<PragmaParallel>(PIRef)};
@@ -495,6 +567,8 @@ addPragmaToStmt(const Stmt *ToInsert,
       pragmaParallelStr(PIRef, *Scope.get<Loop *>(), PragmaStr);
     } else if (isa<PragmaRegion>(PIRef)) {
       pragmaRegionStr(PIRef, PragmaStr);
+    } else if (isa<PragmaRealign>(PIRef)) {
+      pragmaRealignStr(PIRef, PragmaStr);
     } else if (auto *PD{dyn_cast<PragmaData>(PIRef)}) {
       // Even if this directive cannot be inserted (it is invalid) it should
       // be processed later. If it is replaced with some other directives,
@@ -521,7 +595,9 @@ addPragmaToStmt(const Stmt *ToInsert,
        PIItr != PIItrE; ++PIItr) {
     ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr, false};
     SmallString<128> PragmaStr{"\n"};
-    if (auto *PD{dyn_cast<PragmaData>(PIRef)}) {
+    if (isa<PragmaRealign>(PIRef)) {
+      pragmaRealignStr(PIRef, PragmaStr);
+    } else if (auto *PD{dyn_cast<PragmaData>(PIRef)}) {
       DeferredPragmas.try_emplace(PIRef, ToInsert);
       if (PD->parent_empty())
         NotOptimizedPragmas.push_back(PD);
