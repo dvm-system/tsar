@@ -332,46 +332,56 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   }
   // Build data distribution.
   // TODO (kaniandr@gmail.com): should it be a global container?
+  std::map<std::string, std::vector<apc::LoopGraph *>> FileToLoops;
+  for (auto &LoopsForFile : Loops) {
+    auto Itr{FileToLoops.try_emplace(LoopsForFile.first().str()).first};
+    for (auto &&[Line, Loop] : LoopsForFile.second)
+      Itr->second.push_back(Loop);
+  }
   std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
-  createLinksBetweenFormalAndActualParams(
-    FileToFunc, FormalToActual, ArrayRWs, APCMsgs);
-  processLoopInformationForFunction(Accesses);
-  addToDistributionGraph(Accesses, FormalToActual);
-  auto &G = APCRegion.GetGraphToModify();
-  auto &ReducedG = APCRegion.GetReducedGraphToModify();
-  auto &AllArrays = APCRegion.GetAllArraysToModify();
-  createOptimalDistribution(G, ReducedG, AllArrays, APCRegion.GetId(), false);
-  auto &DataDirs = APCRegion.GetDataDirToModify();
-  createDistributionDirs(
-    ReducedG, AllArrays, DataDirs, APCMsgs, FormalToActual);
-  createAlignDirs(
-    ReducedG, AllArrays, DataDirs, APCRegion.GetId(), FormalToActual, APCMsgs);
-  std::vector<int> FullDistrVariant;
-  FullDistrVariant.reserve(DataDirs.distrRules.size());
-  for (auto TplInfo : DataDirs.distrRules)
-    FullDistrVariant.push_back(TplInfo.second.size() - 1);
-  APCRegion.SetCurrentVariant(std::move(FullDistrVariant));
-  for (auto *A : AllArrays.GetArrays()) {
-    if (A->IsTemplate()) {
-      auto *Tpl{ParallelCtx.makeTemplate(A->GetShortName())};
-      APCCtx.addArray(Tpl, A);
-      auto APCSymbol{new apc::Symbol(Tpl)};
-      APCCtx.addSymbol(APCSymbol);
-      A->SetDeclSymbol(APCSymbol);
-    }
-  }
-  LLVM_DEBUG(print(dbgs(), &M));
-  // Build computation distribution.
-  std::vector<apc::ParallelRegion *> Regions{ &APCRegion };
+  auto &G{APCRegion.GetGraphToModify()};
+  auto &ReducedG{APCRegion.GetReducedGraphToModify()};
+  auto &AllArrays{APCRegion.GetAllArraysToModify()};
+  auto &DataDirs{APCRegion.GetDataDirToModify()};
+  std::vector<apc::ParallelRegion *> Regions{&APCRegion};
   std::vector<Messages> Msgs;
-  for (auto &LoopsForFile : Loops) {
-    if (LoopsForFile.second.empty())
-      continue;
-    createParallelDirectives(Accesses, Regions, LoopsForFile.second,
-      FormalToActual, Msgs);
+#ifndef LLVM_DEBUG
+  try {
+#endif
+    createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual,
+                                            ArrayRWs, APCMsgs);
+    processLoopInformationForFunction(Accesses);
+    addToDistributionGraph(Accesses, FormalToActual);
+    createOptimalDistribution(G, ReducedG, AllArrays, APCRegion.GetId(), false);
+    createDistributionDirs(ReducedG, AllArrays, DataDirs, APCMsgs,
+                           FormalToActual);
+    createAlignDirs(ReducedG, AllArrays, DataDirs, APCRegion.GetId(),
+                    FormalToActual, APCMsgs);
+    std::vector<int> FullDistrVariant;
+    FullDistrVariant.reserve(DataDirs.distrRules.size());
+    for (auto TplInfo : DataDirs.distrRules)
+      FullDistrVariant.push_back(TplInfo.second.size() - 1);
+    APCRegion.SetCurrentVariant(std::move(FullDistrVariant));
+    for (auto *A : AllArrays.GetArrays()) {
+      if (A->IsTemplate()) {
+        auto *Tpl{ParallelCtx.makeTemplate(A->GetShortName())};
+        APCCtx.addArray(Tpl, A);
+        auto APCSymbol{new apc::Symbol(Tpl)};
+        APCCtx.addSymbol(APCSymbol);
+        A->SetDeclSymbol(APCSymbol);
+      }
+    }
+    LLVM_DEBUG(print(dbgs(), &M));
+    // Build computation distribution.
+    createParallelDirectives(Accesses, Regions, FormalToActual, Msgs);
+    UniteNestedDirectives(OuterLoops);
+#ifndef LLVM_DEBUG
+  } catch (...) {
+    M.getContext().emitError(getGlobalBuffer());
+    return false;
   }
-  UniteNestedDirectives(OuterLoops);
+#endif
   for (auto &LoopsForFile : Loops) {
     std::vector<apc::LoopGraph *> LoopList;
     for (auto &Info : LoopsForFile.second)
@@ -385,10 +395,20 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
           DataDirs.distrRules[I].first,
           &DataDirs.distrRules[I].second[APCRegion.GetCurrentVariant()[I]]));
     const std::map<apc::LoopGraph *, void *> DepInfoForLoopGraph;
-    selectParallelDirectiveForVariant(
-        nullptr, &APCRegion, ReducedG, AllArrays, LoopList, LoopsForFile.second,
-        Functions, CurrentVariant, DataDirs.alignRules, ParallelDirs,
-        APCRegion.GetId(), FormalToActual, DepInfoForLoopGraph, Msgs);
+#ifndef LLVM_DEBUG
+    try {
+#endif
+      selectParallelDirectiveForVariant(
+          nullptr, &APCRegion, ReducedG, AllArrays, LoopList,
+          LoopsForFile.second, Functions, CurrentVariant, DataDirs.alignRules,
+          ParallelDirs, APCRegion.GetId(), FormalToActual, DepInfoForLoopGraph,
+          Msgs);
+#ifndef LLVM_DEBUG
+    } catch (...) {
+      M.getContext().emitError(getGlobalBuffer());
+      return false;
+    }
+#endif
     using DirectiveList = SmallVector<DirectiveImpl *, 16>;
     DenseMap<
         Function *,
