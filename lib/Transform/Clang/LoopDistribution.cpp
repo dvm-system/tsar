@@ -286,44 +286,7 @@ private:
     SplitInstructionVector Splits(Writes.begin(), Writes.end());
     for (const auto &Write : Writes) {
       for (const auto &Read : Reads) {
-        // TODO: Probably true instead of false
-        const auto Dependence =
-            mDependence->depends(mGetInstructionFunction(Write),
-                                 mGetInstructionFunction(Read), false);
-        if (!Dependence) {
-          continue;
-        }
-
-        const auto Direction = Dependence->getDirection(LoopDepth);
-        if (Direction == tsar_impl::Dependence::DVEntry::EQ) {
-          LLVM_DEBUG(dbgs() << "Ignore loop independent dependence\n");
-          continue;
-        }
-
-        // Get direction of the dependency
-        auto Flow = false, Anti = false;
-        if (Direction == tsar_impl::Dependence::DVEntry::ALL) {
-          Flow = true;
-          Anti = true;
-        } else if (Dependence->isFlow()) {
-          if (Direction == tsar_impl::Dependence::DVEntry::LT ||
-              Direction == tsar_impl::Dependence::DVEntry::LE) {
-            Flow = true;
-          } else {
-            Anti = true;
-          }
-        } else if (Dependence->isAnti()) {
-          if (Direction == tsar_impl::Dependence::DVEntry::LT ||
-              Direction == tsar_impl::Dependence::DVEntry::LE) {
-            Anti = true;
-          } else {
-            Flow = true;
-          }
-        }
-
-        const auto WriteBeforeRead = Write->comesBefore(Read);
-        // If this is bad instructions dependency, can't split between them
-        if (!(WriteBeforeRead && Anti || !WriteBeforeRead && Flow)) {
+        if (isSplittableDependence(Read, Write, LoopDepth)) {
           continue;
         }
 
@@ -339,6 +302,46 @@ private:
       }
     }
     return Splits;
+  }
+
+  bool isSplittableDependence(Instruction *Read, Instruction *Write,
+      const unsigned LoopDepth) const {
+    // TODO: Probably true instead of false
+    const auto Dependence = mDependence->depends(
+        mGetInstructionFunction(Write), mGetInstructionFunction(Read), false);
+    if (!Dependence) {
+      return false;
+    }
+
+    const auto Direction = Dependence->getDirection(LoopDepth);
+    if (Direction == tsar_impl::Dependence::DVEntry::EQ) {
+      return false;
+    }
+
+    // Get direction of the dependency
+    auto Flow = false, Anti = false;
+    if (Direction == tsar_impl::Dependence::DVEntry::ALL) {
+      Flow = true;
+      Anti = true;
+    } else if (Dependence->isFlow()) {
+      if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+          Direction == tsar_impl::Dependence::DVEntry::LE) {
+        Flow = true;
+      } else {
+        Anti = true;
+      }
+    } else if (Dependence->isAnti()) {
+      if (Direction == tsar_impl::Dependence::DVEntry::LT ||
+          Direction == tsar_impl::Dependence::DVEntry::LE) {
+        Anti = true;
+      } else {
+        Flow = true;
+      }
+    }
+
+    const auto WriteBeforeRead = Write->comesBefore(Read);
+    // If this is bad instructions dependency, can't split between them
+    return !(WriteBeforeRead && Anti || !WriteBeforeRead && Flow);
   }
 
   void processSplits(const ForStmt *ForStatement,
