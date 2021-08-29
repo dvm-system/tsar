@@ -24,7 +24,10 @@
 
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
@@ -40,6 +43,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/Pass.h>
 
@@ -50,6 +54,10 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+using APCFunctionInfoPassProvider =
+    FunctionPassAAProvider<DIEstimateMemoryPass, EstimateMemoryPass,
+                           DominatorTreeWrapperPass, AAResultsWrapperPass>;
+
 class APCFunctionInfoPassInfo final : public PassGroupInfo {
   bool isNecessaryPass(llvm::AnalysisID ID) const override {
     static llvm::AnalysisID Passes[] = {
@@ -126,15 +134,23 @@ std::pair<apc::FuncInfo *, bool> registerFunction(Function &F, APCContext &APCCt
 
 char APCFunctionInfoPass::ID = 0;
 
+INITIALIZE_PROVIDER(APCFunctionInfoPassProvider, "apc-function-info-provider",
+  "Function Collector (APC, Provider")
+
 INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
   "Function Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_IN_GROUP_INFO(APCFunctionInfoPassInfo);
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
+  INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+  INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+  INITIALIZE_PASS_DEPENDENCY(APCFunctionInfoPassProvider)
 INITIALIZE_PASS_IN_GROUP_END(APCFunctionInfoPass, "apc-function-info",
   "Function Collector (APC)", true, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
@@ -144,7 +160,10 @@ ModulePass * llvm::createAPCFunctionInfoPass() {
 }
 
 void APCFunctionInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<APCFunctionInfoPassProvider>();
+  AU.addRequired<DIMemoryEnvironmentWrapper>();
+  AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<AAResultsWrapperPass>();
@@ -154,6 +173,20 @@ void APCFunctionInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool APCFunctionInfoPass::runOnModule(Module &M) {
   releaseMemory();
+  auto &GlobalsAA{getAnalysis<GlobalsAAWrapperPass>().getResult() };
+  APCFunctionInfoPassProvider::initialize<
+      GlobalsAAResultImmutableWrapper>(
+      [&GlobalsAA](GlobalsAAResultImmutableWrapper &Wrapper) {
+        Wrapper.set(GlobalsAA);
+      });
+  auto &DIMEnv{getAnalysis<DIMemoryEnvironmentWrapper>()};
+  APCFunctionInfoPassProvider::initialize<DIMemoryEnvironmentWrapper>(
+      [&DIMEnv](DIMemoryEnvironmentWrapper &Wrapper) {
+        Wrapper.set(*DIMEnv);
+      });
+  if (auto &GAP{getAnalysis<GlobalsAccessWrapper>()})
+    APCFunctionInfoPassProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   for (auto &Caller : CG) {
@@ -187,31 +220,47 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       assert(APCLoop && "List of APC loops must be filled!");
       FI.loopsInFunc.push_back(APCLoop);
     }
-    auto &DT = getAnalysis<DominatorTreeWrapperPass>(
-      const_cast<Function &>(*Caller.first)).getDomTree();
+    auto &CallerF{const_cast<Function &>(*Caller.first)};
+    auto &Provider{getAnalysis<APCFunctionInfoPassProvider>(CallerF)};
+    auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
+    auto &DIAT{Provider.get<DIEstimateMemoryPass>().getAliasTree()};
+    SmallVector<std::pair<DIEstimateMemory *, apc::Array *>, 16> Args{
+        CallerF.arg_size(), std::pair{nullptr, nullptr}};
+    for (auto &DIM : make_range(DIAT.memory_begin(), DIAT.memory_end())) {
+      auto *DIEM{dyn_cast<DIEstimateMemory>(&DIM)};
+      if (!DIEM)
+        continue;
+      auto *DIVar{dyn_cast<DILocalVariable>(DIEM->getVariable())};
+      if (!DIVar)
+        continue;
+      if (!DIVar->isParameter())
+        continue;
+      auto ArgNum{DIVar->getArg() - 1};
+      assert(ArgNum < Args.size() && "Argument out of range!");
+      if (Args[ArgNum].second)
+        continue;
+      if (auto A{APCCtx.findArray(DIEM->getAsMDNode())})
+        Args[ArgNum] = std::pair{DIEM, A};
+    }
     for (auto &Arg : Caller.first->args()) {
       if (Arg.hasStructRetAttr())
         continue;
-      SmallVector<DIMemoryLocation, 1> DILocs;
-      auto DIM = findMetadata(&Arg, DILocs);
-      if (!DIM && Arg.getNumUses() == 1)
-        if (auto SI = dyn_cast<StoreInst>(*Arg.user_begin()))
-          if (auto *AI = dyn_cast<AllocaInst>(SI->getPointerOperand()))
-            DIM = findMetadata(AI, DILocs);
-      if (!DIM || !DIM->isValid() ||
-          !cast<DILocalVariable>(DIM->Var)->isParameter()) {
+      auto [DIEM, A] = Args[Arg.getArgNo()];
+      if (!DIEM) {
         FI.funcParams.identificators.push_back(Arg.getName().str());
         FI.funcParams.parameters.push_back(nullptr);
         FI.funcParams.parametersT.push_back(UNKNOWN_T);
         FI.funcParams.inout_types.push_back(IN_BIT | OUT_BIT);
       } else {
-        FI.funcParams.identificators.push_back(DIM->Var->getName().str());
+        FI.funcParams.identificators.push_back(
+            DIEM->getVariable()->getName().str());
         FI.funcParams.parameters.push_back(nullptr);
-        auto RawDIM = getRawDIMemoryIfExists(M.getContext(), *DIM);
-        if (RawDIM && APCCtx.findArray(RawDIM))
+        if (A) {
           FI.funcParams.parametersT.push_back(ARRAY_T);
-        else
+          FI.funcParams.parameters.back() = A;
+        } else {
           FI.funcParams.parametersT.push_back(UNKNOWN_T);
+        }
         FI.funcParams.inout_types.push_back(IN_BIT | OUT_BIT);
       }
     }
@@ -258,10 +307,11 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       continue;
     auto *FI = APCCtx.findFunction(*Caller.first);
     assert(FI && "Function should be registered in APC context!");
-    auto &DT = getAnalysis<DominatorTreeWrapperPass>(
-      const_cast<Function &>(*Caller.first)).getDomTree();
-    auto &AA = getAnalysis<AAResultsWrapperPass>(
-      const_cast<Function &>(*Caller.first)).getAAResults();
+    auto &Provider{getAnalysis<APCFunctionInfoPassProvider>(
+        const_cast<Function &>(*Caller.first))};
+    auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
+    auto &AT{Provider.get<EstimateMemoryPass>().getAliasTree()};
+    auto &AA{Provider.get<AAResultsWrapperPass>().getAAResults()};
     for (auto &Callee : *Caller.second) {
       if (!Callee.first)
         continue;
@@ -276,12 +326,15 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       if (!CalleeFI)
         continue;
       CalleeFI->callsTo.push_back(FI);
+      FI->callsFromV.insert(CalleeFI);
       apc::FuncParam Param;
       auto *CB{cast<CallBase>(*Callee.first)};
       for (auto &Arg : Callee.second->getFunction()->args()) {
         if (Arg.hasStructRetAttr())
           continue;
         Param.parameters.push_back(nullptr);
+        Param.identificators.emplace_back();
+        Param.parametersT.push_back(UNKNOWN_T);
         auto MRI = AA.getArgModRefInfo(CB, Arg.getArgNo());
         Param.inout_types.push_back(0);
         // TODO (kaniandr@gmail.com): implement interprocedural analysis
@@ -291,28 +344,35 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
         if (isRefSet(MRI))
           Param.inout_types.back() |= IN_BIT;
         auto *ActualArg = CB->getArgOperand(Arg.getArgNo());
-        SmallVector<DIMemoryLocation, 1> DILocs;
-        auto DIM = findMetadata(ActualArg, DILocs);
-        if (DIM) {
-          assert(DIM->isValid() && "Metadata memory location must be valid!");
-          if (DIM->Expr->getNumElements() == 0)
-            Param.identificators.push_back(DIM->Var->getName().str());
-          else
-            Param.identificators.emplace_back();
-          auto RawDIM = getRawDIMemoryIfExists(M.getContext(), *DIM);
-          if (RawDIM && APCCtx.findArray(RawDIM))
-            Param.parametersT.push_back(ARRAY_T);
-          else
-            Param.parametersT.push_back(UNKNOWN_T);
-        } else {
-          Param.identificators.emplace_back();
-          Param.parametersT.push_back(UNKNOWN_T);
+        if (ActualArg->getType()->isPointerTy()) {
+          int64_t Offset = 0;
+          // Strip 'getelementptr' with zero offset to recognize an array
+          // parameter.
+          auto BasePtr = GetPointerBaseWithConstantOffset(ActualArg, Offset,
+            M.getDataLayout());
+          if (Offset == 0)
+            ActualArg = BasePtr;
+          if (auto *EM{AT.find(MemoryLocation(ActualArg, 0))})
+            if (auto RawDIM{getRawDIMemoryIfExists(*EM->getTopLevelParent(),
+                                                   M.getContext(),
+                                                   M.getDataLayout(), DT)})
+              if (auto *A{APCCtx.findArray(RawDIM)}) {
+                Param.identificators.back() = A->GetShortName();
+                Param.parametersT.back() = ARRAY_T;
+                Param.parameters.back() = A;
+              }
         }
       }
       Param.countOfPars = Param.identificators.size();
-      CalleeFI->actualParams.push_back(std::move(Param));
+      FI->actualParams.push_back(std::move(Param));
+      decltype(FI->linesOfIO)::value_type ShrinkCallLoc = 0;
+      if (auto &Loc = cast<Instruction>(*Callee.first)->getDebugLoc())
+        if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), ShrinkCallLoc))
+          emitUnableShrink(M.getContext(), *Caller.first, Loc, DS_Warning);
+      FI->detailCallsFrom.emplace_back(CalleeFI->funcName, ShrinkCallLoc);
     }
   }
+  LLVM_DEBUG(print(dbgs(), &M));
   return false;
 }
 
@@ -320,13 +380,13 @@ void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
   if (mMultipleLaunch)
     OS << "warning: possible multiple launches of the pass for the same "
           "module: print merged results\n";
-  auto printParams = [&OS](const apc::FuncParam &Params) {
+  auto printParams = [&OS](const apc::FuncParam &Params, const Twine &Prefix) {
     for (std::size_t I = 0, EI = Params.countOfPars; I < EI; ++I) {
-      OS << "    idx: " << I << "\n";
-      OS << "    id: " << Params.identificators[I] << "\n";
+      OS << Prefix << "idx: " << I << "\n";
+      OS << Prefix << "id: " << Params.identificators[I] << "\n";
       if (Params.parametersT[I] == ARRAY_T)
-        OS << "    array\n";
-      OS << "    access:";
+        OS << Prefix << "array\n";
+      OS << Prefix << "access:";
       if (Params.isArgIn((int)I))
         OS << " input";
       if (Params.isArgOut((int)I))
@@ -361,18 +421,26 @@ void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
     if (FI->isMain)
       OS << "  entry point\n";
     OS << "  arguments:\n";
-    printParams(FI->funcParams);
+    printParams(FI->funcParams, "    ");
     OS << "  calls from this function: ";
     for (auto &Callee : FI->callsFrom)
       OS << Callee << " ";
     OS << "\n";
-    assert(FI->callsTo.size() == FI->actualParams.size() &&
+    OS << "  calls to this function: ";
+    for (auto &Callee : FI->callsTo)
+      OS << Callee->funcName << " ";
+    OS << "\n";
+    assert(FI->detailCallsFrom.size() == FI->actualParams.size() &&
       "Inconsistent number of actual parameters and calls!");
-    OS << "  calls to this function:\n";
-    for (std::size_t I = 0, EI = FI->callsTo.size(); I < EI; ++I) {
-      OS << "    " << FI->callsTo[I]->funcName << " with "
-         << FI->actualParams[I].countOfPars << " actual parameters\n";
-      printParams(FI->actualParams[I]);
+    OS << "  registered calls from this function:\n";
+    for (std::size_t I = 0, EI = FI->detailCallsFrom.size(); I < EI; ++I) {
+      std::pair<unsigned, unsigned> Start, End;
+      bcl::restoreShrinkedPair(FI->detailCallsFrom[I].second, Start.first,
+                               Start.second);
+      OS << "    " << FI->detailCallsFrom[I].first << " at " << Start.first
+         << ":" << Start.second << " with " << FI->actualParams[I].countOfPars
+         << " actual parameters\n";
+      printParams(FI->actualParams[I], "      ");
     }
     OS << "\n";
     print("has input/output", FI->linesOfIO);
