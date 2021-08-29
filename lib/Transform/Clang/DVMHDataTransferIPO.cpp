@@ -814,12 +814,14 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
              "Cycle in a replacement tree!");
       if (IPOInfoItr->get<bool>()) {
         // Do not attach this directive to callee if IPO is possible.
-        D.child_insert(&ParallelCtx.getIPORoot());
-        ParallelCtx.getIPORoot().parent_insert(&D);
+        if (!is_contained(D.children(), &ParallelCtx.getIPORoot())) {
+          D.child_insert(&ParallelCtx.getIPORoot());
+          ParallelCtx.getIPORoot().parent_insert(&D);
+        }
       } else {
         // If IPO is disabled for the current function, then this directive is
-        // not necessary. If IPO is enabled for the entire progragram, another
-        // direcitve has been already inserted instead. If IPO is disabled for
+        // not necessary. If IPO is enabled for the entire program, another
+        // directive has been already inserted instead. If IPO is disabled for
         // the entire program the intraprocedural optimization will be disabled
         // for this function as well (limitation of the current implementation),
         // so this directive is redundant.
@@ -833,18 +835,31 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       [this, &ParallelCtx, &ServerSTR,
        &initPragmaData](Instruction &I, const DIAliasNode *AliasWith,
                         IPOMap::iterator IPOCalleeItr,
-                        SmallPtrSetImpl<const DIAliasNode *> &InsertedList) {
+                        SmallPtrSetImpl<const DIAliasNode *> &InsertedList,
+                        PragmaGetActual *GetActual = nullptr) {
+        if (auto I{find_if(mToGetActual,
+                           [&ServerSTR, AliasWith, &InsertedList](auto &Data) {
+                             return !InsertedList.count(
+                                        Data.template get<DIAliasNode>()) &&
+                                    !ServerSTR.isUnreachable(
+                                        AliasWith,
+                                        Data.template get<DIAliasNode>());
+                           })};
+            I == mToGetActual.end())
+          return;
+        if (!GetActual) {
+          auto GetActualRef{
+              ParallelCtx.getParallelization().emplace<PragmaGetActual>(
+                  I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
+                  false /*IsFinal*/)};
+          GetActual = cast<PragmaGetActual>(GetActualRef);
+        }
         for (auto &Data : mToGetActual) {
           if (InsertedList.count(Data.get<DIAliasNode>()) ||
               ServerSTR.isUnreachable(AliasWith, Data.get<DIAliasNode>()))
             continue;
           InsertedList.insert(Data.get<DIAliasNode>());
-          auto GetActualRef{
-              ParallelCtx.getParallelization().emplace<PragmaGetActual>(
-                  I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
-                  false /*IsFinal*/)};
-          initPragmaData(Data, mIPOToGetActual, IPOCalleeItr,
-                         *cast<PragmaData>(GetActualRef));
+          initPragmaData(Data, mIPOToGetActual, IPOCalleeItr, *GetActual);
         }
       };
   auto addTransferToWrite =
@@ -852,17 +867,31 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
           Instruction &I, const DIAliasNode *CurrentAN,
           IPOMap::iterator IPOCalleeItr,
           SmallPtrSetImpl<const DIAliasNode *> &InsertedGetActuals) {
+        if (auto I{find_if(mToActual,
+                           [&ServerSTR, CurrentAN](auto &Data) {
+                             return !ServerSTR.isUnreachable(
+                                 CurrentAN, Data.template get<DIAliasNode>());
+                           })};
+            I == mToActual.end())
+          return;
+        auto ActualRef{ParallelCtx.getParallelization().emplace<PragmaActual>(
+            I.getParent(), &I, false /*OnEntry*/, false /*IsRequired*/,
+            false /*IsFinal*/)};
+        auto *Actual{cast<PragmaActual>(ActualRef)};
+        auto GetActualRef{
+            ParallelCtx.getParallelization().emplace<PragmaGetActual>(
+                I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
+                false /*IsFinal*/)};
+        auto *GetActual{cast<PragmaGetActual>(GetActualRef)};
         for (auto &Data : mToActual) {
           if (ServerSTR.isUnreachable(CurrentAN, Data.get<DIAliasNode>()))
             continue;
-          auto ActualRef{ParallelCtx.getParallelization().emplace<PragmaActual>(
-              I.getParent(), &I, false /*OnEntry*/, false /*IsRequired*/,
-              false /*IsFinal*/)};
-          initPragmaData(Data, mIPOToActual, IPOCalleeItr,
-                         *cast<PragmaData>(ActualRef));
+          initPragmaData(Data, mIPOToActual, IPOCalleeItr, *Actual);
           addGetActualIf(I, Data.get<DIAliasNode>(), IPOCalleeItr,
-                         InsertedGetActuals);
+                         InsertedGetActuals, GetActual);
         }
+        if (cast<PragmaData>(GetActualRef)->getMemory().empty())
+          cast<PragmaData>(GetActualRef)->skip();
       };
   auto processBB = [this, Level, &ParallelLoops, &TLI, &CSMemoryMatcher,
                     &Provider, &addGetActualIf,
