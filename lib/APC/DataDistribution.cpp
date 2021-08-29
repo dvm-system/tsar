@@ -745,9 +745,16 @@ createRealignRules(Statement *S, const uint64_t RegionId, File *F,
                    const std::set<apc::Array *> &AccessedArrays,
                    const std::pair<int, int> Loc) {
   std::pair<std::vector<Directive *>, std::vector<Directive *>> Res;
-  for (auto &A : AccessedArrays) {
+  SmallVector<apc::Array *, 8> SortedArrays;
+  for (auto *A : AccessedArrays) {
     if (A->GetNonDistributeFlag())
       continue;
+    SortedArrays.push_back(A);
+  }
+  sort(SortedArrays, [](auto &LHS, auto &RHS) {
+    return LHS->GetShortName() < RHS->GetShortName();
+  });
+  for (auto *A: SortedArrays) {
     auto *RealRef{getRealArrayRef(A, RegionId, ArrayLinksByFuncCalls)};
     auto Rules{RealRef->GetAlignRulesWithTemplate(RegionId)};
     auto Links{RealRef->GetLinksWithTemplate(RegionId)};

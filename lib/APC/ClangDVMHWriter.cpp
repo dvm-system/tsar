@@ -164,7 +164,7 @@ private:
 
   /// Insert inherit directive for all redeclarations of a specified function.
   void insertInherit(FunctionDecl *FD, const DeclarationInfoMap &Decls,
-    ArrayRef<const DILocalVariable *> InheritArgs,
+    MutableArrayRef<DILocalVariable *> InheritArgs,
     DeclarationSet &NotDistrCanonicalDecls);
 
   /// Initialize declaration information for global declarations and
@@ -591,10 +591,12 @@ void APCClangDVMHWriter::initializeDeclInfo(const TranslationUnitDecl &Unit,
 
 void APCClangDVMHWriter::insertInherit(FunctionDecl *FD,
     const DeclarationInfoMap &Decls,
-    ArrayRef<const DILocalVariable *> InheritArgs,
+    MutableArrayRef<DILocalVariable *> InheritArgs,
     DeclarationSet &NotDistrCanonicalDecls) {
   if (InheritArgs.empty())
     return;
+  sort(InheritArgs,
+       [](auto &LHS, auto &RHS) { return LHS->getName() < RHS->getName(); });
   NotDistrCanonicalDecls.erase(FD->getCanonicalDecl());
   for (auto *Redecl : FD->getFirstDecl()->redecls()) {
     SmallString<64> Inherit;
