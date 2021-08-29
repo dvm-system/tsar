@@ -41,7 +41,9 @@
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Unparse/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Basic/SourceLocation.h>
 #include <clang/Basic/SourceManager.h>
+#include <clang/Lex/Lexer.h>
 #include <llvm/ADT/Optional.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
@@ -127,7 +129,8 @@ public:
     mGlobalOptions = &Pass.getAnalysis<GlobalOptionsImmutableWrapper>()
         .getOptions();
     mRewriter = &TransformationContext.getRewriter();
-    mSourceManager = &TransformationContext.getRewriter().getSourceMgr();
+    mSourceManager = &mRewriter->getSourceMgr();
+    mLangOptions = &mRewriter->getLangOpts();
     mASTContext = &TransformationContext.getContext();
     auto& SocketInfo = Pass.getAnalysis<AnalysisSocketImmutableWrapper>().get();
     auto& Socket = SocketInfo.getActive()->second;
@@ -279,6 +282,7 @@ private:
     return getLoopSplits(Loop, DependencyReads, DependencyWrites);
   }
 
+  //TODO: Remove last write if exists
   SplitInstructionVector getLoopSplits(
       Loop *Loop, const DependencyInstructionVector &Reads,
                      const DependencyInstructionVector &Writes) const {
@@ -356,17 +360,11 @@ private:
 
     dbgs() << LoopHeaderSplitter.getValue() << "\n";
     for (auto *Split : Splits) {
-      const auto &ExpressionMatcherItr = mExpressionMatcher->find<IR>(Split);
-      if (ExpressionMatcherItr == mExpressionMatcher->end()) {
-        LLVM_DEBUG(dbgs() << "Store instruction can't be bound to AST node: ";
-                   Split->dump(););
-        continue;
+      const auto SplitLocation = getSplitSourceLocation(Split);
+      if (SplitLocation.hasValue()) {
+        mRewriter->InsertTextAfterToken(SplitLocation.getValue(),
+                                        LoopHeaderSplitter.getValue());
       }
-      const auto &SplitStatement = ExpressionMatcherItr->get<AST>();
-      SplitStatement.dump(dbgs(), *mASTContext);
-      // TODO: Incorrect location
-      mRewriter->InsertText(SplitStatement.getSourceRange().getEnd(),
-                            LoopHeaderSplitter.getValue(), true, true);
     }
   }
 
@@ -403,6 +401,19 @@ private:
 
     return std::string(BeginData, EndData);
   }
+
+  Optional<SourceLocation> getSplitSourceLocation(Instruction *Split) const {
+    const auto &ExpressionMatcherItr = mExpressionMatcher->find<IR>(Split);
+    if (ExpressionMatcherItr == mExpressionMatcher->end()) {
+      LLVM_DEBUG(dbgs() << "Store instruction can't be bound to AST node: ";
+                 Split->dump(););
+      return None;
+    }
+
+    const auto &SplitStatement = ExpressionMatcherItr->get<AST>();
+    return Lexer::getLocForEndOfToken(SplitStatement.getSourceRange().getEnd(),
+                                     0, *mSourceManager, *mLangOptions);
+  }
   
 private:
   DFRegionInfo *mDFRegion;
@@ -417,6 +428,7 @@ private:
   const GlobalOptions *mGlobalOptions;
   Rewriter *mRewriter;
   const SourceManager *mSourceManager;
+  const LangOptions *mLangOptions;
   const ASTContext *mASTContext;
   DIAliasTree *mDIAliasTree;
   DIDependencInfo *mDIDependency;
