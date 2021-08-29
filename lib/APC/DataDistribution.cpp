@@ -349,6 +349,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
 #ifndef LLVM_DEBUG
   try {
 #endif
+    checkCountOfIter(FileToLoops, FileToFunc, APCMsgs);
     createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual,
                                             ArrayRWs, APCMsgs);
     processLoopInformationForFunction(Accesses);
