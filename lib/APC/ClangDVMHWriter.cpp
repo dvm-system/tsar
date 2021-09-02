@@ -678,7 +678,24 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
     }
     Align += "]";
   }
-  Align += ")\n";
+  Align += ")";
+  auto Shadows{AR.alignArray->GetShadowSpec()};
+  if (auto I{find_if(Shadows,
+                     [](auto &S) { return S.first != 1 || S.second != 1; })};
+      I != Shadows.end()) {
+    Align += " ";
+    Align += getName(ClauseId::DvmShadow);
+    for (auto &S : Shadows) {
+      Align += "[";
+      Twine(S.first).toVector(Align);
+      if (S.first != S.second) {
+        Align += ":";
+        Twine(S.second).toVector(Align);
+      }
+      Align += "]";
+    }
+  }
+  Align += "\n";
   auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
   SourceLocation DefinitionLoc;
   auto *VarDef = VD->getDefinition();

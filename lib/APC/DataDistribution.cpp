@@ -553,6 +553,20 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       }
     }
   }
+#ifndef LLVM_DEBUG
+  try {
+#endif
+    std::set<apc::Array *> DistributedArrays;
+    copy_if(AllArrays.GetArrays(),
+            std::inserter(DistributedArrays, DistributedArrays.end()),
+            [](auto *A) { return !A->IsNotDistribute(); });
+    createShadowSpec(FileToLoops, FormalToActual, DistributedArrays);
+#ifndef LLVM_DEBUG
+  } catch (...) {
+    M.getContext().emitError(getGlobalBuffer());
+    return false;
+  }
+#endif
   return false;
 }
 
