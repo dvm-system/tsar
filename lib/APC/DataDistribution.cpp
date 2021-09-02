@@ -747,7 +747,7 @@ createRealignRules(Statement *S, const uint64_t RegionId, File *F,
   std::pair<std::vector<Directive *>, std::vector<Directive *>> Res;
   SmallVector<apc::Array *, 8> SortedArrays;
   for (auto *A : AccessedArrays) {
-    if (A->GetNonDistributeFlag())
+    if (A->IsNotDistribute())
       continue;
     SortedArrays.push_back(A);
   }

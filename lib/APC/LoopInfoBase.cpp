@@ -305,7 +305,7 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
     auto *APCArray{mAPCContext->findArray(A.getArray()->getAsMDNode())};
     if (!APCArray)
       continue;
-    if (!APCArray->GetNonDistributeFlag()) {
+    if (!APCArray->IsNotDistribute()) {
       APCLoop.usedArrays.insert(APCArray);
       if (!A.isReadOnly())
         APCLoop.usedArraysWrite.insert(APCArray);
