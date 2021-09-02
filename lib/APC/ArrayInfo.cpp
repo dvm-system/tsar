@@ -163,6 +163,9 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       A->isAddressOfVariable() ? MDSearch::AddressOfVariable : MDSearch::Any);
     assert(DILoc && DILoc->isValid() &&
       "Metadata must be available for an array!");
+    // Ignore compile time character constants.
+    if (isStubVariable(*DILoc->Var))
+      continue;
     auto DIElementTy = arrayElementDIType(DILoc->Var->getType());
     if (!DIElementTy)
       continue;
@@ -205,9 +208,12 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     assert(RawDIM && "Unknown raw memory!");
     assert(DIAT->find(*RawDIM) != DIAT->memory_end() &&
            "Memory must exist in alias tree!");
-    auto &DIEM = cast<DIEstimateMemory>(*DIAT->find(*RawDIM));
+    auto *DIEM{dyn_cast<DIEstimateMemory>(&*DIAT->find(*RawDIM))};
+    // Ignore results of memory allocation, for example 'malloc' call.
+    if (!DIEM)
+      continue;
     // Search corresponding memory location on client if server is used.
-    auto ClientRawDIM = getMemoryID(DIEM);
+    auto ClientRawDIM = getMemoryID(*DIEM);
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));

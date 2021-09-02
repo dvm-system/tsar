@@ -172,7 +172,9 @@ inline bool isStubType(llvm::DIType *DITy) {
 /// such types. How LLVM uses 'artificial' flag on variables?
 inline bool isStubVariable(llvm::DIVariable &DIVar) {
   return llvm::isa<llvm::DILocalVariable>(DIVar) &&
-         llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial();
+         llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial() ||
+         llvm::isa<llvm::DIGlobalVariable>(DIVar) &&
+         DIVar.getName() == "sapfor.var";
 }
 
 /// Convert path to a native form.
