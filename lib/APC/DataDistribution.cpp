@@ -359,6 +359,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                            FormalToActual);
     createAlignDirs(ReducedG, AllArrays, DataDirs, APCRegion.GetId(),
                     FormalToActual, APCMsgs);
+    // Normalize alignment, make all templates start from zero.
+    shiftAlignRulesForTemplates(AllArrays.GetArrays(), APCRegion.GetId(),
+                                DataDirs, FormalToActual);
     std::vector<int> FullDistrVariant;
     FullDistrVariant.reserve(DataDirs.distrRules.size());
     for (auto TplInfo : DataDirs.distrRules)
