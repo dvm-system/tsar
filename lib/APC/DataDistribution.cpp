@@ -352,8 +352,37 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     checkCountOfIter(FileToLoops, FileToFunc, APCMsgs);
     createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual,
                                             ArrayRWs, APCMsgs);
+    // Build a data distribution graph.
     processLoopInformationForFunction(Accesses);
     addToDistributionGraph(Accesses, FormalToActual);
+    // Exclude arrays from a data distribution.
+    std::map<std::string, std::vector<apc::LoopGraph *>> FilenameToLoops;
+    for (auto &LoopsForFile : Loops) {
+      auto Itr{FilenameToLoops.try_emplace(LoopsForFile.first().str()).first};
+      std::transform(LoopsForFile.second.begin(), LoopsForFile.second.end(),
+                     std::back_inserter(Itr->second),
+                     [](auto &Info) { return Info.second; });
+    }
+    // A stub variable which is not used at this moment.
+    std::map<PFIKeyT, apc::Array *> CreateArrays;
+    excludeArraysFromDistribution(FormalToActual, ArrayRWs, FileToLoops,
+                                  Regions, APCMsgs, CreateArrays);
+    for (auto LpI{Accesses.begin()}, LpEI{Accesses.end()}; LpI != LpEI;) {
+      for (auto ArrayI{LpI->second.begin()}, ArrayEI{LpI->second.end()};
+           ArrayI != ArrayEI;) {
+        if (ArrayI->first->IsNotDistribute())
+          ArrayI = LpI->second.erase(ArrayI);
+        else
+          ++ArrayI;
+      }
+      if (LpI->second.empty())
+        LpI = Accesses.erase(LpI);
+      else ++LpI;
+    }
+    // Rebuild the data distribution graph without excluded arrays.
+    processLoopInformationForFunction(Accesses);
+    addToDistributionGraph(Accesses, FormalToActual);
+    // Determine array distribution and alignment.
     createOptimalDistribution(G, ReducedG, AllArrays, APCRegion.GetId(), false);
     createDistributionDirs(ReducedG, AllArrays, DataDirs, APCMsgs,
                            FormalToActual);
