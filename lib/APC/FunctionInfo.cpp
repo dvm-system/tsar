@@ -286,7 +286,7 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       if (!CalleeFunc || !hasFnAttr(*CalleeFunc, AttrKind::NoIO)) {
         if (ShrinkCallLoc != 0 ||
             !std::count(FI.linesOfIO.begin(), FI.linesOfIO.end(), 0))
-          FI.linesOfIO.push_back(ShrinkCallLoc);
+          FI.linesOfIO.insert(ShrinkCallLoc);
       }
       if (!CalleeFunc ||
           !hasFnAttr(*CalleeFunc, AttrKind::AlwaysReturn) ||
@@ -297,7 +297,7 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
           "Different storage types of call locations!");
         if (ShrinkCallLoc != 0 ||
             !std::count(FI.linesOfIO.begin(), FI.linesOfIO.end(), 0))
-          FI.linesOfStop.push_back(ShrinkCallLoc);
+          FI.linesOfStop.insert(ShrinkCallLoc);
       }
     }
   }
@@ -394,9 +394,7 @@ void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
       OS << "\n";
     }
   };
-  auto print = [&OS](const Twine &Msg,
-      ArrayRef<
-        decltype(std::declval<apc::FuncInfo>().linesOfIO)::value_type> Locs) {
+  auto print = [&OS](const Twine &Msg, const auto &Locs) {
     if (Locs.empty())
       return;
     OS << "  " << Msg;

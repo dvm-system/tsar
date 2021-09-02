@@ -533,7 +533,7 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
       if (!CalleeFunc || !hasFnAttr(*CalleeFunc, AttrKind::NoIO)) {
         APCLoop.hasPrints = true;
         if (ShrinkLoc != 0)
-          APCLoop.linesOfIO.push_back(ShrinkLoc);
+          APCLoop.linesOfIO.insert(ShrinkLoc);
       }
       if (!CalleeFunc ||
           !hasFnAttr(*CalleeFunc, AttrKind::AlwaysReturn) ||
@@ -541,7 +541,7 @@ void APCLoopInfoBasePass::evaluateCalls(const Loop &L, apc::LoopGraph &APCLoop) 
           CalleeFunc->hasFnAttribute(Attribute::ReturnsTwice)) {
         APCLoop.hasStops = true;
         if (ShrinkLoc != 0)
-          APCLoop.linesOfStop.push_back(ShrinkLoc);
+          APCLoop.linesOfStop.insert(ShrinkLoc);
       }
     }
 }
@@ -576,8 +576,7 @@ void APCLoopInfoBasePass::print(raw_ostream &OS, const Module *M) const {
         }
         OS << "\n";
       }
-      auto print = [&OS](bool Flag, const Twine &Msg,
-          ArrayRef<decltype(L->linesOfExternalGoTo)::value_type> Locs) {
+      auto print = [&OS](bool Flag, const Twine &Msg, const auto &Locs) {
         if (!Flag)
           return;
         OS << "  " << Msg;
