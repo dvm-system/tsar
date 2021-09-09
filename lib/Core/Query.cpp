@@ -120,7 +120,7 @@ void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
   Passes.add(createPassBarrier());
-  Passes.add(createDIDependencyAnalysisPass());
+  Passes.add(createDIDependencyAnalysisPass(true));
   Passes.add(createProcessDIMemoryTraitPass(mark<trait::DirectAccess>));
   Passes.add(createAnalysisReader());
 }
