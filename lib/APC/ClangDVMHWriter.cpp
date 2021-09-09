@@ -672,9 +672,8 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   for (auto DimARIdx : TplDimAR) {
     Align += "[";
     if (DimARIdx < TplDimAR.size()) {
-      Align += genStringExpr(
-        AR.alignNames[AR.alignRuleWith[DimARIdx].first],
-        AR.alignRuleWith[DimARIdx].second);
+      Align += genStringExpr(AR.alignNames[DimARIdx],
+                             AR.alignRuleWith[DimARIdx].second);
     }
     Align += "]";
   }
