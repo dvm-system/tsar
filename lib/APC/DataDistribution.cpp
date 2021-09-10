@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "APCContextImpl.h"
 #include "AstWrapperImpl.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/AnalysisSocket.h"
@@ -224,6 +225,12 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   // be mentioned in #pragma dvm inherit(...) directive.
   // It is not possible to delinearize this array without interprocedural
   // analysis, so it has not been stored in the list of apc::Array.
+  std::map<apc::Array *, PFIKeyT> ArrayIds;
+  for (auto &&[Id, A] : APCCtx.mImpl->Arrays) {
+    auto &DeclInfo{*A->GetDeclInfo().begin()};
+    PFIKeyT PFIKey{DeclInfo.second, DeclInfo.first, A->GetShortName()};
+    ArrayIds.try_emplace(A.get(), PFIKey);
+  }
   FileToFuncMap FileToFunc;
   ArrayAccessSummary ArrayRWs;
   ArrayAccessPool AccessPool;
@@ -277,10 +284,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         auto *APCArray = APCCtx.findArray(Access.getArray()->getAsMDNode());
         if (!APCArray)
           continue;
-        auto &DeclInfo = *APCArray->GetDeclInfo().begin();
-        auto PFIKey = PFIKeyT(DeclInfo.second, DeclInfo.first,
-          APCArray->GetShortName());
-        ArrayRWs.emplace(std::move(PFIKey), std::make_pair(APCArray, nullptr));
+        ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
         LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: search for accesses to "
           << APCArray->GetShortName() << "\n");
 
@@ -338,6 +342,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     for (auto &&[Line, Loop] : LoopsForFile.second)
       Itr->second.push_back(Loop);
   }
+  std::set<apc::Array*> ArraysInAllRegions;
   std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
   auto &G{APCRegion.GetGraphToModify()};
@@ -352,6 +357,13 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     checkCountOfIter(FileToLoops, FileToFunc, APCMsgs);
     createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual,
                                             ArrayRWs, APCMsgs);
+    LLVM_DEBUG(
+      for (auto &[Formal, ActualList] : FormalToActual) {
+        dbgs() << Formal->GetName() << " -> ";
+        for (auto *A : ActualList)
+          dbgs() << A->GetName() << " ";
+        dbgs() << "\n";
+      });
     // Build a data distribution graph.
     processLoopInformationForFunction(Accesses);
     addToDistributionGraph(Accesses, FormalToActual);
@@ -364,9 +376,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                      [](auto &Info) { return Info.second; });
     }
     // A stub variable which is not used at this moment.
-    std::map<PFIKeyT, apc::Array *> CreateArrays;
+    std::map<PFIKeyT, apc::Array *> CreatedArrays;
     excludeArraysFromDistribution(FormalToActual, ArrayRWs, FileToLoops,
-                                  Regions, APCMsgs, CreateArrays);
+                                  Regions, APCMsgs, CreatedArrays);
     for (auto LpI{Accesses.begin()}, LpEI{Accesses.end()}; LpI != LpEI;) {
       for (auto ArrayI{LpI->second.begin()}, ArrayEI{LpI->second.end()};
            ArrayI != ArrayEI;) {
@@ -382,8 +394,14 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     // Rebuild the data distribution graph without excluded arrays.
     processLoopInformationForFunction(Accesses);
     addToDistributionGraph(Accesses, FormalToActual);
+    ArraysInAllRegions.insert(AllArrays.GetArrays().begin(),
+                              AllArrays.GetArrays().end());
     // Determine array distribution and alignment.
     createOptimalDistribution(G, ReducedG, AllArrays, APCRegion.GetId(), false);
+    compliteArrayUsage(AllArrays, CreatedArrays, FormalToActual, ArrayIds);
+    // TODO(kaniandr@gmail.com): call the next method for all parallel regions
+    // at these point.
+    remoteNotUsedArrays(CreatedArrays, ArraysInAllRegions, FormalToActual);
     createDistributionDirs(ReducedG, AllArrays, DataDirs, APCMsgs,
                            FormalToActual);
     createAlignDirs(ReducedG, AllArrays, DataDirs, APCRegion.GetId(),
