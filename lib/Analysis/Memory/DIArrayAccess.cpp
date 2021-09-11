@@ -261,7 +261,7 @@ void DIArrayAccessInfo::erase(const Array &V) {
   for (auto CurrItr = I->get<Begin>(); CurrItr != I->get<End>();) {
     auto &Access = *CurrItr;
     CurrItr = mArrayAccesses.erase(CurrItr);
-    mAccesses.remove(Access);
+    mAccesses.erase(Access);
   }
   mArrayToAccesses.erase(I);
 }
