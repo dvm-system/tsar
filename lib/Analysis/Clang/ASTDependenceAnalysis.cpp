@@ -143,11 +143,16 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
             }
           }
         } else {
-          auto *Induct{I->get<trait::Induction>()};
-          mDependenceInfo.get<trait::Induction>() = {
-              VariableT{std::get<VarDecl *>(Localized),
-                        std::get<DIMemory *>(Localized)},
-              Induct->getStart(), Induct->getEnd(), Induct->getStep()};
+          mDependenceInfo.get<trait::Induction>().get<trait::Induction>() = {
+              std::get<VarDecl *>(Localized), std::get<DIMemory *>(Localized)};
+          if (auto *Induct{I->get<trait::Induction>()}) {
+            mDependenceInfo.get<trait::Induction>().get<Begin>() =
+                Induct->getStart();
+            mDependenceInfo.get<trait::Induction>().get<End>() =
+                Induct->getEnd();
+            mDependenceInfo.get<trait::Induction>().get<Step>() =
+                Induct->getStep();
+          }
           if (!std::get<3>(Localized)) {
             mInToLocalize.push_back(&TS);
             mOutToLocalize.push_back(&TS);
