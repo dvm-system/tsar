@@ -287,26 +287,37 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
         LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: search for accesses to "
           << APCArray->GetShortName() << "\n");
-
+        auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
+        auto LpStmt{cast_or_null<apc::LoopStatement>(APCLoop->loop)};
         decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
         if (auto C{AffineAccess->getMonom(0).Value};
-            C.Kind != DIAffineSubscript::Symbol::SK_Constant ||
+            C.Kind != DIAffineSubscript::Symbol::SK_Constant &&
+                (C.Kind != DIAffineSubscript::Symbol::SK_Induction || !LpStmt ||
+                 C.Variable != LpStmt->getInduction().get<MD>()) ||
             !castAPInt(C.Constant, true, ABPair.first)) {
-          emitTypeOverflow(F.getContext(), F, DebugLoc(), //TODO
-            "unable to represent A constant in A*I + B subscript", DS_Warning);
+          // TODO (kaniandr@gmail.com): describe a representation issue properly.
+          emitTypeOverflow(
+              F.getContext(), F, DebugLoc(),
+              "unable to represent A constant in A*I + B subscript",
+              DS_Warning);
           continue;
         }
         if (AffineAccess->getSymbol().Kind !=
-                DIAffineSubscript::Symbol::SK_Constant ||
+                    DIAffineSubscript::Symbol::SK_Constant &&
+                (AffineAccess->getSymbol().Kind !=
+                     DIAffineSubscript::Symbol::SK_Induction ||
+                 !LpStmt ||
+                 AffineAccess->getSymbol().Variable !=
+                     LpStmt->getInduction().get<MD>()) ||
             !castAPInt(AffineAccess->getSymbol().Constant, true,
                        ABPair.second)) {
+          // TODO (kaniandr@gmail.com): describe a representation issue properly.
           emitTypeOverflow(
-              F.getContext(), F, DebugLoc(), // TODO
+              F.getContext(), F, DebugLoc(),
               "unable to represent B constant in A*I + B subscript",
               DS_Warning);
           continue;
         }
-        auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
         auto &APCLoopAccesses = Accesses.emplace(std::piecewise_construct,
           std::forward_as_tuple(APCLoop), std::forward_as_tuple()).first->second;
         auto &APCArrayAccessesC =
