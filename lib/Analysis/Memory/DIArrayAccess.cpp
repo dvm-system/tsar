@@ -652,29 +652,35 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
       Coef = SE.getZero(S->getType());
       ConstTerm = S;
     }
+    SmallVector<std::tuple<DIMemory *, const SCEV *, const SCEV *>, 2> Terms;
     DIMemory *VariableTerm{nullptr};
-    if (!isa<SCEVConstant>(ConstTerm)) {
+    if (!isa<SCEVConstant>(ConstTerm) || !isa<SCEVConstant>(Coef)) {
       if (!L || !L->getLoopPreheader())
         continue;
-      SmallVector<PointerIntPair<Type *, 1, bool>, 1> TypeQueue;
-      while (auto Cast{dyn_cast<SCEVCastExpr>(ConstTerm)}) {
-        if (isa<SCEVSignExtendExpr>(Cast))
-          TypeQueue.emplace_back(Cast->getType(), true);
-        else
-          TypeQueue.emplace_back(Cast->getType(), false);
-        ConstTerm = Cast->getOperand();
-      }
-      if (!isa<SCEVAddExpr>(ConstTerm))
-        continue;
+      using TypeQueqT = SmallVector<PointerIntPair<Type *, 1, bool>, 1>;
+      std::pair<TypeQueqT, TypeQueqT> TypeQueue;
+      auto stripTypeCast = [](const SCEV *S, auto &TQ) {
+        while (auto Cast{ dyn_cast<SCEVCastExpr>(S) }) {
+          if (isa<SCEVSignExtendExpr>(Cast))
+            TQ.emplace_back(Cast->getType(), true);
+          else
+            TQ.emplace_back(Cast->getType(), false);
+          S = Cast->getOperand();
+        }
+        return S;
+      };
+      ConstTerm = stripTypeCast(ConstTerm, TypeQueue.first);
+      Coef = stripTypeCast(Coef, TypeQueue.second);
       for (auto I{L->getHeader()->begin()}; isa<PHINode>(I); ++I) {
         auto *Phi{cast<PHINode>(I)};
         InductionDescriptor ID;
         PredicatedScalarEvolution PSE{SE, const_cast<Loop &>(*L)};
         if (!InductionDescriptor::isInductionPHI(Phi, L, PSE, ID))
           continue;
+        if (!SE.isSCEVable(ID.getStartValue()->getType()))
+          continue;
         auto Start{SE.getSCEV(ID.getStartValue())};
-        if (!SE.isSCEVable(ID.getStartValue()->getType()) ||
-            ConstTerm->getType() != Start->getType())
+        if (ConstTerm->getType() != Start->getType())
           continue;
         auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
         auto Incoming{find_if(Phi->incoming_values(), [L, Phi](const auto &U) {
@@ -693,22 +699,29 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
         assert(DIMItr != DIAT.memory_end() &&
                "Existing memory must be presented in metadata alias "
                "tree.");
-        VariableTerm = &*DIMItr;
-        ConstTerm = SE.getMinusSCEV(ConstTerm, Start);
-        for (auto &T : reverse(TypeQueue))
-          ConstTerm =
-              T.getInt()
-                  ? SE.getTruncateOrSignExtend(ConstTerm, T.getPointer())
-                  : SE.getTruncateOrZeroExtend(ConstTerm, T.getPointer());
-        break;
+        auto ConstT{SE.getMinusSCEV(ConstTerm, Start)};
+        auto Div{divide(SE, Coef, ID.getStep(), GlobalOpts.IsSafeTypeCast)};
+        auto CoefT{Div.Remainder->isZero() ? Div.Quotient
+                                           : SE.getCouldNotCompute()};
+        auto addTypeCast = [&SE](const SCEV * S, auto &TQ) {
+          for (auto &T : reverse(TQ))
+            S = T.getInt() ? SE.getTruncateOrSignExtend(S, T.getPointer())
+                           : SE.getTruncateOrZeroExtend(S, T.getPointer());
+          return S;
+        };
+        ConstT = addTypeCast(ConstT, TypeQueue.first);
+        CoefT = addTypeCast(CoefT, TypeQueue.second);
+        if (isa<SCEVConstant>(ConstT) && isa<SCEVConstant>(CoefT))
+          Terms.emplace_back(&*DIMItr, ConstT, CoefT);
       }
-      if (!isa<SCEVConstant>(ConstTerm))
+      if (Terms.empty())
         continue;
+      VariableTerm = std::get<0>(Terms.back());
+      ConstTerm = std::get<1>(Terms.back());
+      Coef = std::get<2>(Terms.back());
     }
     ObjectID MonomLoopID = nullptr;
     if (L) {
-      if (!isa<SCEVConstant>(Coef))
-        continue;
       MonomLoopID = L->getLoopID();
       if (!MonomLoopID)
         continue;
@@ -717,11 +730,13 @@ void IRToArrayInfoFunctor::operator()(Instruction &I, MemoryLocation &&Loc,
     auto SymbolKind{VariableTerm ? DIAffineSubscript::Symbol::SK_Induction
                                  : DIAffineSubscript::Symbol::SK_Constant};
     DIAffineSubscript::Symbol Symbol{SymbolKind, APSInt(ConstTermValue, false),
-                                VariableTerm};
+                                     VariableTerm};
     auto *DimAccess{Access->make<DIAffineSubscript>(DimIdx, Symbol)};
     if (L) {
       auto CoefValue = cast<SCEVConstant>(Coef)->getAPInt();
-      DimAccess->emplaceMonom(MonomLoopID, APSInt(CoefValue, false));
+      DIAffineSubscript::Symbol CoefSymbol{SymbolKind, APSInt(CoefValue, false),
+                                           VariableTerm};
+      DimAccess->emplaceMonom(MonomLoopID, CoefSymbol);
     }
     LLVM_DEBUG(dbgs() << "[DI ARRAY ACCESS]: dimension " << DimIdx
                       << " subscript ";
