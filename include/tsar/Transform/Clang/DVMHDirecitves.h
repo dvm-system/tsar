@@ -55,6 +55,7 @@ using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
 using SortedVarMultiListT = ClangDependenceAnalyzer::SortedVarMultiListT;
 using ShadowVarListT = std::map<VariableT, trait::DIDependence::DistanceVector,
                                 ClangDependenceAnalyzer::VariableLess>;
+using InductionInfo = ClangDependenceAnalyzer::InductionInfo;
 
 class Template {
 public:

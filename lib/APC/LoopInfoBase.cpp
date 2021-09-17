@@ -344,18 +344,15 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
         DIDepSet, *DIMemoryMatcher, ASTToClient);
     if (RegionAnalysis.evaluateDependency()) {
       auto &DepInfo{RegionAnalysis.getDependenceInfo()};
-      APCLoop.loopSymbol =
-          DepInfo.get<trait::Induction>().get<AST>()->getName().str();
+      APCLoop.loopSymbol = DepInfo.get<trait::Induction>()
+                               .get<trait::Induction>()
+                               .get<AST>()
+                               ->getName()
+                               .str();
       APCLoop.hasUnknownScalarDep = false;
       APCLoop.hasUnknownArrayDep = false;
       auto *S{
           new apc::LoopStatement(F, LoopID, DepInfo.get<trait::Induction>())};
-      if (Start)
-        S->setStart(*Start);
-      if (Step)
-        S->setStep(*Step);
-      if (End)
-        S->setEnd(*End);
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
       dvmh::SortedVarMultiListT NotLocalized;

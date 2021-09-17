@@ -85,11 +85,12 @@ public:
     return R->getKind() == KIND_LOOP;
   }
 
-  LoopStatement(llvm::Function *F, tsar::ObjectID Id, tsar::dvmh::VariableT I)
+  LoopStatement(llvm::Function *F, tsar::ObjectID Id,
+                tsar::dvmh::InductionInfo I)
       : Statement(KIND_LOOP), mFunction(F), mId(Id), mInduction(I) {}
 
   const tsar::dvmh::VariableT &getInduction() const noexcept {
-    return mInduction;
+    return mInduction.get<tsar::trait::Induction>();
   }
   tsar::ObjectID getId() const noexcept { return mId; }
 
@@ -110,23 +111,20 @@ public:
     mPossibleAcrossDepth = Depth;
   }
 
-  void setStart(const llvm::APSInt &V){mStart = V; }
-  void setStep(const llvm::APSInt &V) { mStep = V; }
-  void setEnd(const llvm::APSInt &V) { mEnd = V; }
-
   const llvm::Optional<llvm::APSInt> &getStart() const noexcept {
-    return mStart;
+    return mInduction.get<tsar::Begin>();
   }
-  const llvm::Optional<llvm::APSInt> &getStep() const noexcept { return mStep; }
-  const llvm::Optional<llvm::APSInt> &getEnd() const noexcept { return mEnd; }
+  const llvm::Optional<llvm::APSInt> &getStep() const noexcept {
+    return mInduction.get<tsar::Step>();
+  }
+  const llvm::Optional<llvm::APSInt> &getEnd() const noexcept {
+    return mInduction.get<tsar::End>();
+  }
 
 private:
   llvm::Function *mFunction{nullptr};
   tsar::ObjectID mId{nullptr};
-  tsar::dvmh::VariableT mInduction;
-  llvm::Optional<llvm::APSInt> mStart;
-  llvm::Optional<llvm::APSInt> mStep;
-  llvm::Optional<llvm::APSInt> mEnd;
+  tsar::dvmh::InductionInfo mInduction;
   TraitList mTraits;
   bool mIsHostOnly{true};
   unsigned mPossibleAcrossDepth{0};

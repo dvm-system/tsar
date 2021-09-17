@@ -478,7 +478,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     const FunctionAnalysis &Provider,
     ClangDependenceAnalyzer &ASTRegionAnalysis, ParallelItem *PI) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
-  if (!ASTDepInfo.get<trait::Induction>().get<AST>()) {
+  if (!ASTDepInfo.get<trait::Induction>().get<trait::Induction>().get<AST>()) {
     if (PI)
       PI->finalize();
     return PI;
@@ -535,7 +535,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
   } else {
     auto *OmpFor = cast<OMPForDirective>(PI);
     OmpFor->getClauses().get<trait::Private>().erase(
-        ASTDepInfo.get<trait::Induction>());
+        ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
     if (ASTDepInfo.get<trait::Private>() !=
             OmpFor->getClauses().get<trait::Private>() ||
         ASTDepInfo.get<trait::Reduction>() !=
@@ -543,7 +543,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
         !(Finalize =
               addOrUpdateOrderedIfNeed(DFL, ASTRegionAnalysis, *OmpFor))) {
       OmpFor->getClauses().get<trait::Private>().insert(
-          ASTDepInfo.get<trait::Induction>());
+          ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
       PI->finalize();
       return PI;
     }

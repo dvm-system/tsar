@@ -60,6 +60,13 @@ public:
   using ReductionVarListT =
       std::array<SortedVarListT, trait::DIReduction::RK_NumberOf>;
 
+  /// Description of an induction variable and its bounds.
+  using InductionInfo =
+      bcl::tagged_tuple<bcl::tagged<VariableT, trait::Induction>,
+                        bcl::tagged<trait::DIInduction::Constant, Begin>,
+                        bcl::tagged<trait::DIInduction::Constant, End>,
+                        bcl::tagged<trait::DIInduction::Constant, Step>>;
+
   /// List of traits.
   using ASTRegionTraitInfo =
       bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
@@ -69,7 +76,7 @@ public:
                         bcl::tagged<SortedVarListT, trait::WriteOccurred>,
                         bcl::tagged<ReductionVarListT, trait::Reduction>,
                         bcl::tagged<SortedVarDistanceT, trait::Dependence>,
-                        bcl::tagged<VariableT, trait::Induction>>;
+                        bcl::tagged<InductionInfo, trait::Induction>>;
 
   ClangDependenceAnalyzer(clang::Stmt *Region, const GlobalOptions &GO,
       clang::DiagnosticsEngine &Diags, DIAliasTree &DIAT,
@@ -79,7 +86,8 @@ public:
       mDIDepSet(DIDepSet), mDIMemoryMatcher(DIMemoryMatcher),
       mASTToClient(ASTToClient) {
     assert(Region && "Source-level region must not be null!");
-    mDependenceInfo.get<trait::Induction>() = { nullptr, nullptr };
+    mDependenceInfo.get<trait::Induction>().get<trait::Induction>() = {nullptr,
+                                                                       nullptr};
   }
 
   bool evaluateDependency();

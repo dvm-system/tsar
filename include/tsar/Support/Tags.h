@@ -60,6 +60,15 @@ struct Origin {};
 /// This tag is used to provide access to entities related to a cloned object.
 struct Clone {};
 
+/// This tag is used to represent the beginning of a range.
+struct Begin {};
+
+/// This tag is used to represent a range end.
+struct End {};
+
+/// This tag is used to represent step in a sequence of values.
+struct Step {};
+
 /// Identifier of an object, for example, loops.
 using ObjectID = llvm::MDNode *;
 }
