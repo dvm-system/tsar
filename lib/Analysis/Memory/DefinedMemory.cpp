@@ -257,6 +257,9 @@ std::pair<MemoryLocationRange, bool> aggregate(
   if (Loc.Kind != LocKind::Default)
     return std::make_pair(Loc, true);
   MemoryLocationRange ResLoc(Loc);
+  auto *SE = Fwk->getScalarEvolution();
+  assert(SE && "ScalarEvolution must be specified!");
+  ResLoc.SE = SE;
   auto LocInfo = Fwk->getDelinearizeInfo()->findRange(Loc.Ptr);
   auto ArrayPtr = LocInfo.first;
   if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
@@ -298,10 +301,9 @@ std::pair<MemoryLocationRange, bool> aggregate(
   ResLoc.UpperBound = Fwk->getDataLayout().getTypeStoreSize(ElemType).
       getFixedSize();
   ResLoc.Kind = LocKind::Collapsed;
-  auto *SE = Fwk->getScalarEvolution();
-  assert(SE && "ScalarEvolution must be specified!");
   std::size_t DimensionN = 0;
   std::size_t LoopMatchCount = 0, ConstMatchCount = 0;
+  auto Int64Ty = Type::getInt64Ty(SE->getContext());
   for (auto *S : LocInfo.second->Subscripts) {
     ResLoc.Kind = LocKind::NonCollapsable;
     LLVM_DEBUG(dbgs() << "[AGGREGATE] Subscript: " << *S << "\n");
@@ -327,9 +329,9 @@ std::pair<MemoryLocationRange, bool> aggregate(
       if (C->getAPInt().isNegative())
         break;
       ++ConstMatchCount;
-      DimInfo.Start = C->getAPInt().getSExtValue();
-      DimInfo.TripCount = 1;
-      DimInfo.Step = 1;
+      DimInfo.Start = DimInfo.End =
+          SE->getConstant(Int64Ty, C->getAPInt().getZExtValue());
+      DimInfo.Step = SE->getOne(Int64Ty);
       ResLoc.DimList.push_back(DimInfo);
       ResLoc.Kind = LocKind::Collapsed;
     } else if (auto C = dyn_cast<SCEVAddRecExpr>(SCEV)) {
@@ -355,18 +357,22 @@ std::pair<MemoryLocationRange, bool> aggregate(
                              "trip count.\n");
         break;
       }
-      int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
-      if (SignedRangeMin < 0) {
+      auto StartValue = SE->getSignedRangeMin(SCEV).getSExtValue();
+      if (StartValue < 0) {
         LLVM_DEBUG(dbgs() << "[AGGREGATE] Range bounds must be "
                               "non-negative.\n");
         break;
       }
-      DimInfo.Start = SignedRangeMin;
-      DimInfo.TripCount = TripCount - 1;
-      DimInfo.Step = std::abs(cast<SCEVConstant>(StepSCEV)->
-                              getAPInt().getSExtValue());
-      if (DimInfo.Start + DimInfo.Step * (DimInfo.TripCount - 1) >=
-          DimInfo.DimSize && DimensionN != 0) {
+      DimInfo.Start = SE->getConstant(Int64Ty, StartValue);
+      auto StepValue = std::abs(cast<SCEVConstant>(StepSCEV)->getAPInt().
+          getSExtValue());
+      DimInfo.Step = SE->getConstant(Int64Ty, StepValue);
+      DimInfo.End = SE->getConstant(Int64Ty,
+          StartValue + (TripCount - 2) * StepValue);
+      assert(DimInfo.Start && DimInfo.End && DimInfo.End &&
+          "Dimension bounds and step must be specified!");
+      if (StartValue + StepValue * (TripCount - 2) >= DimInfo.DimSize &&
+          DimensionN != 0) {
         LLVM_DEBUG(dbgs() << "[AGGREGATE] Array index out of bounds.");
         break;
       }

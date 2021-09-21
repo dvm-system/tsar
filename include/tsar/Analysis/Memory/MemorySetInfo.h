@@ -26,6 +26,7 @@
 #define TSAR_MEMORY_SET_INFO_H
 
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 namespace tsar {
 /// Provide traits for objects stored in a MemorySet.
@@ -230,22 +231,38 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         sizecmp(getLowerBound(LHS), getUpperBound(RHS)) <= 0;
     }
     std::size_t JoinableDimCount = 0;
+    auto SE = LHS.SE;
+    assert(SE && "ScalarEvolution must be specified!");
     for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
       auto &Left = LHS.DimList[I];
       auto &Right = RHS.DimList[I];
-      assert(Left.TripCount > 0 && Right.TripCount > 0 &&
-          "Trip count of dimension must be positive!");
       if (Left == Right)
         continue;
-      auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
-      auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
-      if (Left.Step != Right.Step ||
-          (Left.Start >= Right.Start &&
-              (Left.Start - Right.Start) % Left.Step != 0) ||
-          (Right.Start >= Left.Start &&
-              (Right.Start - Left.Start) % Left.Step != 0) ||
-          (LeftEnd < Right.Start && (Right.Start - LeftEnd) != Left.Step) ||
-          (RightEnd < Left.Start && (Left.Start - RightEnd) != Left.Step))
+      auto LeftStartConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.Start);
+      auto LeftEndConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.End);
+      auto LeftStepConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.Step);
+      auto RightStartConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.Start);
+      auto RightEndConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.End);
+      auto RightStepConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.Step);
+      assert(LeftStepConst && RightStepConst &&
+          "Dimension step must be constant!");
+      assert(LeftStartConst && LeftEndConst && RightStartConst &&
+           RightEndConst && "Dimension bounds must be constant!");
+      auto LeftStart = LeftStartConst->getValue()->getZExtValue();
+      auto LeftEnd = LeftEndConst->getValue()->getZExtValue();
+      auto LeftStep = LeftStepConst->getValue()->getZExtValue();
+      auto RightStart = RightStartConst->getValue()->getZExtValue();
+      auto RightEnd = RightEndConst->getValue()->getZExtValue();
+      auto RightStep = RightStepConst->getValue()->getZExtValue();
+      assert(LeftStart <= LeftEnd && RightStart <= RightEnd &&
+          "Start of dimension must be less or equal than End.");
+      if (LeftStep != RightStep ||
+          (LeftStart >= RightStart &&
+              (LeftStart - RightStart) % LeftStep != 0) ||
+          (RightStart >= LeftStart &&
+              (RightStart - LeftStart) % LeftStep != 0) ||
+          (LeftEnd < RightStart && (RightStart - LeftEnd) != LeftStep) ||
+          (RightEnd < LeftStart && (LeftStart - RightEnd) != LeftStep))
         return false;
       ++JoinableDimCount;
     }
@@ -271,15 +288,18 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       for (size_t I = 0; I < To.DimList.size(); I++) {
         auto &DimTo = To.DimList[I];
         auto &DimFrom = What.DimList[I];
-        if (DimFrom.Start < DimTo.Start) {
-          DimTo.TripCount += (DimTo.Start - DimFrom.Start) / DimFrom.Step;
+        auto Diff = llvm::dyn_cast<llvm::SCEVConstant>(
+            What.SE->getMinusSCEV(DimTo.Start, DimFrom.Start));
+        assert(Diff && "Difference must be constant!");
+        if (Diff->getValue()->getSExtValue() > 0) {
           DimTo.Start = DimFrom.Start;
           IsChanged = true;
         }
-        auto ToEnd = DimTo.Start + DimTo.Step * (DimTo.TripCount - 1);
-        auto FromEnd = DimFrom.Start + DimFrom.Step * (DimFrom.TripCount - 1);
-        if (FromEnd > ToEnd) {
-          DimTo.TripCount += (FromEnd - ToEnd) / DimFrom.Step;
+        Diff = llvm::dyn_cast<llvm::SCEVConstant>(
+              What.SE->getMinusSCEV(DimFrom.End, DimTo.End));
+        assert(Diff && "Difference must be constant!");
+        if (Diff->getValue()->getSExtValue() > 0) {
+          DimTo.End = DimFrom.End;
           IsChanged = true;
         }
       }

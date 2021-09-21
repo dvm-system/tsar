@@ -26,10 +26,14 @@
 #ifndef NDEBUG
 #include "tsar/Unparse/Utils.h"
 #endif
+#include "tsar/Support/SCEVUtils.h"
 #include <bcl/Equation.h>
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Support/Debug.h>
 
 using namespace tsar;
+using namespace llvm;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "def-mem"
@@ -52,33 +56,76 @@ struct ColumnInfo {
 /// and adds results to Res. Return `false` if Threshold is exceeded, `true`
 /// otherwise.
 bool difference(const Dimension &D, const Dimension &I,
-                llvm::SmallVectorImpl<Dimension> &Res, std::size_t Threshold) {
-  if (D.Start < I.Start) {
+                llvm::SmallVectorImpl<Dimension> &Res,
+                llvm::ScalarEvolution &SE, std::size_t Threshold) {
+  
+  // if D.Start < I.Start
+  auto DStepConst = dyn_cast<SCEVConstant>(D.Step);
+  auto IStepConst = dyn_cast<SCEVConstant>(I.Step);
+  assert(DStepConst && IStepConst && "Dimension step must be constant.");
+  auto DStartConst = dyn_cast<SCEVConstant>(D.Start);
+  auto IStartConst = dyn_cast<SCEVConstant>(I.Start);
+  assert(DStartConst && IStartConst && "Dimension start must be constant.");
+  if (DStartConst->getValue()->getZExtValue() <
+      IStartConst->getValue()->getZExtValue()) {
     auto &Left = Res.emplace_back();
     Left.Step = D.Step;
     Left.Start = D.Start;
-    Left.TripCount = (I.Start - D.Start) / D.Step;
+    Left.End = SE.getMinusSCEV(I.Start, D.Step);
+    assert(dyn_cast<SCEVConstant>(Left.Start) &&
+           dyn_cast<SCEVConstant>(Left.End) &&
+           "Dimension bounds must be constant.");
     Left.DimSize = D.DimSize;
   }
-  auto DEnd = D.Start + D.Step * (D.TripCount - 1);
-  auto IEnd = I.Start + I.Step * (I.TripCount - 1);
-  if (DEnd > IEnd) {
+  auto DEndConst = dyn_cast<SCEVConstant>(D.End);
+  auto IEndConst = dyn_cast<SCEVConstant>(I.End);
+  assert(DEndConst && IEndConst && "Dimension end must be constant.");
+  // if D.End > I.End
+  if (DEndConst->getValue()->getZExtValue() >
+      IEndConst->getValue()->getZExtValue()) {
     auto &Right = Res.emplace_back();
     Right.Step = D.Step;
-    Right.Start = IEnd + D.Step;
-    Right.TripCount = (DEnd - IEnd) / D.Step;
+    Right.Start = SE.getAddExpr(I.End, D.Step);
+    Right.End = D.End;
+    assert(dyn_cast<SCEVConstant>(Right.Start) &&
+           dyn_cast<SCEVConstant>(Right.End) &&
+           "Dimension start must be constant.");
     Right.DimSize = D.DimSize;
   }
-  if (I.TripCount > 1) {
+  // if I.TripCount > 1 (I.End > I.Start)
+  if (IEndConst->getValue()->getZExtValue() >
+      IStartConst->getValue()->getZExtValue()) {
     // I.Step % D.Step is always 0 because I is a subset of D.
-    auto RepeatNumber = I.Step / D.Step - 1;
-    if (RepeatNumber > Threshold)
+    auto Quotient = divide(SE, I.Step, D.Step).Quotient;
+    assert(dyn_cast<SCEVConstant>(Quotient) && "Quotient must be constant!");
+    // I.Step / D.Step - 1
+    auto RepeatNumber = SE.getMinusSCEV(
+        Quotient, SE.getOne(Quotient->getType()));
+    auto RepeatNumberConst = llvm::dyn_cast<llvm::SCEVConstant>(RepeatNumber);
+    assert(RepeatNumberConst && "Repeat Number must be constant.");
+    if (RepeatNumberConst->getValue()->getSExtValue() > Threshold)
       return false;
-    for (auto J = 0; J < RepeatNumber; ++J) {
+    // I.TripCount = (I.End - I.Start) / Step
+    auto CenterTripCount = SE.getMinusSCEV(divide(SE,
+        SE.getMinusSCEV(I.End, I.Start), I.Step).Quotient,
+        SE.getOne(I.Step->getType()));
+    assert(dyn_cast<SCEVConstant>(CenterTripCount) &&
+           "Trip count must be constant!");
+    for (auto J = 0; J < RepeatNumberConst->getValue()->getSExtValue(); ++J) {
       auto &Center = Res.emplace_back();
-      Center.Start = I.Start + D.Step * (J + 1);
+      //Center.Start = I.Start + D.Step * (J + 1);
+      Center.Start = SE.getAddExpr(I.Start, SE.getMulExpr(
+          D.Step, SE.getConstant(I.Start->getType(), J + 1)));
       Center.Step = I.Step;
-      Center.TripCount = I.TripCount - 1;
+      // Center.End = Center.Start + (Center.TripCount - 1) * Center.Step
+      Center.End = SE.getAddExpr(
+          Center.Start, SE.getMulExpr(CenterTripCount, Center.Step));
+      assert(dyn_cast<SCEVConstant>(Center.Start) &&
+             "Dimension start must be constant!");
+      assert(dyn_cast<SCEVConstant>(Center.Step) &&
+             "Dimension step must be constant!");
+      assert(dyn_cast<SCEVConstant>(Center.End) &&
+             "Dimension end must be constant!");
       Center.DimSize = D.DimSize;
     }
   }
@@ -152,19 +199,28 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   }
   llvm::SmallVector<Dimension, 4> DimList(DimN);
   bool HasPartialCoverage = false;
+  assert(From.SE && "ScalarEvolution must be specified!");
+  auto SE = From.SE;
   for (int64_t I = DimN - 1; I >= 0; --I) {
     auto &CurrDim = DimList[I];
-    CurrDim.Step = 1;
-    CurrDim.DimSize = From.DimList[I].DimSize;
+    auto &FromDim = From.DimList[I];
+    CurrDim.Step = SE->getOne(FromDim.Step->getType());
+    CurrDim.DimSize = FromDim.DimSize;
     if (HasPartialCoverage) {
       if (LowerIdx[I] != UpperIdx[I])
         return;
-      CurrDim.Start = LowerIdx[I];
-      CurrDim.TripCount = 1;
+      CurrDim.Start = SE->getConstant(FromDim.Start->getType(), LowerIdx[I]);
+      CurrDim.End = CurrDim.Start;
+      assert(dyn_cast<SCEVConstant>(CurrDim.Start) &&
+             dyn_cast<SCEVConstant>(CurrDim.End) &&
+             "Dimension bounds must be constant!");
     } else {
-      CurrDim.Start = LowerIdx[I];
-      CurrDim.TripCount = UpperIdx[I] - LowerIdx[I] + 1;
-      if (LowerIdx[I] != 0 || UpperIdx[I] + 1 != From.DimList[I].DimSize)
+      CurrDim.Start = SE->getConstant(FromDim.Start->getType(), LowerIdx[I]);
+      CurrDim.End = SE->getConstant(FromDim.End->getType(), UpperIdx[I]);
+      assert(dyn_cast<SCEVConstant>(CurrDim.Start) &&
+             dyn_cast<SCEVConstant>(CurrDim.End) &&
+             "Dimension bounds must be constant!");
+      if (LowerIdx[I] != 0 || UpperIdx[I] + 1 != FromDim.DimSize)
         HasPartialCoverage = true;
     }
   }
@@ -172,6 +228,7 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   What.UpperBound = ElemSize;
   What.DimList = std::move(DimList);
   What.Kind = LocKind::Collapsed | (What.Kind & LocKind::Hint);
+  What.SE = SE;
 }
 
 llvm::Optional<MemoryLocationRange> intersectScalar(
@@ -262,23 +319,40 @@ llvm::Optional<MemoryLocationRange> intersect(
       LHS.DimList == RHS.DimList)
     return LHS;
   MemoryLocationRange Int(LHS);
+  assert(LHS.SE && RHS.SE && "ScalarEvolution must be specified!");
+  auto &SE = *LHS.SE;
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
     auto &Left = LHS.DimList[I];
     auto &Right = RHS.DimList[I];
     if (Left.DimSize != Right.DimSize)
       return MemoryLocationRange();
-    auto LeftEnd = Left.Start + Left.Step * (Left.TripCount - 1);
-    auto RightEnd = Right.Start + Right.Step * (Right.TripCount - 1);
-    if (LeftEnd < Right.Start || RightEnd < Left.Start)
+    auto LeftStepConst = dyn_cast<SCEVConstant>(Left.Step);
+    auto RightStepConst = dyn_cast<SCEVConstant>(Right.Step);
+    assert(LeftStepConst && RightStepConst &&
+           "Dimension step must be constant!");
+    auto LeftStartConst = dyn_cast<SCEVConstant>(Left.Start);
+    auto LeftEndConst = dyn_cast<SCEVConstant>(Left.End);
+    auto RightStartConst = dyn_cast<SCEVConstant>(Right.Start);
+    auto RightEndConst = dyn_cast<SCEVConstant>(Right.End);
+    assert(LeftStartConst && LeftEndConst && RightStartConst &&
+           RightEndConst && "Dimension bounds must be constant!");
+    auto LeftStart = LeftStartConst->getValue()->getZExtValue();
+    auto LeftEnd = LeftEndConst->getValue()->getZExtValue();
+    auto LeftStep = LeftStepConst->getValue()->getZExtValue();
+    auto RightStart = RightStartConst->getValue()->getZExtValue();
+    auto RightEnd = RightEndConst->getValue()->getZExtValue();
+    auto RightStep = RightStepConst->getValue()->getZExtValue();
+    if (LeftEnd < RightStart || RightEnd < LeftStart)
       return llvm::None;
     ColumnInfo Info;
     // We guarantee that K1 and K2 will not be equal to 0.
-    assert(Left.Step > 0 && Right.Step > 0 && "Steps must be positive!");
-    assert(Left.TripCount > 0 && Right.TripCount > 0 &&
-        "Trip count must be positive!");
-    ValueT L1 = Left.Start, K1 = Left.Step;
-    ValueT L2 = Right.Start, K2 = Right.Step;
-    VarRange XRange(0, Left.TripCount - 1), YRange(0, Right.TripCount - 1);
+    assert(LeftStep > 0 && RightStep > 0 && "Steps must be positive!");
+    assert(LeftStart <= LeftEnd && RightStart <= RightEnd &&
+        "Start of dimension must be less or equal than End.");
+    ValueT L1 = LeftStart, K1 = LeftStep;
+    ValueT L2 = RightStart, K2 = RightStep;
+    VarRange XRange(0, (LeftEnd - LeftStart) / LeftStep),
+             YRange(0, (RightEnd - RightStart) / RightStep);
     LinearSystem System;
     System.push_back(Monom(0, K1), Monom(1, -K2), L2 - L1);
     System.instantiate(Info);
@@ -307,16 +381,15 @@ llvm::Optional<MemoryLocationRange> intersect(
     ValueT Step = K1 * B;
     ValueT Start = (K1 * A + L1) + Step * Shift;
     auto &Intersection = Int.DimList[I];
-    Intersection.Start = Start;
-    Intersection.Step = Step;
-    Intersection.TripCount = Tmax + 1;
+    Intersection.Start = SE.getConstant(Left.Start->getType(), Start);
+    Intersection.Step = SE.getConstant(Left.Step->getType(), Step);
+    Intersection.End = SE.getConstant(Left.End->getType(), Start + Step * Tmax);
     Intersection.DimSize = Left.DimSize;
     assert(Start >= 0 && "Start must be non-negative!");
     assert(Step > 0 && "Step must be positive!");
-    assert(Intersection.TripCount > 0 && "Trip count must be non-negative!");
     if (LC) {
       llvm::SmallVector<Dimension, 3> ComplLeft;
-      if (!difference(Left, Intersection, ComplLeft, Threshold)) {
+      if (!difference(Left, Intersection, ComplLeft, SE, Threshold)) {
         return MemoryLocationRange();
       } else {
         for (auto &Comp : ComplLeft)
@@ -325,7 +398,7 @@ llvm::Optional<MemoryLocationRange> intersect(
     }
     if (RC) {
       llvm::SmallVector<Dimension, 3> ComplRight;
-      if (!difference(Right, Intersection, ComplRight, Threshold)) {
+      if (!difference(Right, Intersection, ComplRight, SE, Threshold)) {
         return MemoryLocationRange();
       } else {
         for (auto &Comp : ComplRight)

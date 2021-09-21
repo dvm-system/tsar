@@ -28,6 +28,7 @@
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/Analysis/MemoryLocation.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 
 namespace tsar {
 
@@ -51,14 +52,14 @@ struct MemoryLocationRange {
   };
 
   struct Dimension {
-    uint64_t Start;
-    uint64_t Step;
-    uint64_t TripCount;
+    const llvm::SCEV *Start;
+    const llvm::SCEV *End;
+    const llvm::SCEV *Step;
     uint64_t DimSize;
-    Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
+    Dimension() : Start(nullptr), End(nullptr), Step(nullptr), DimSize(0) {}
     inline bool operator==(const Dimension &Other) const {
-      return Start == Other.Start && Step == Other.Step &&
-             TripCount == Other.TripCount && DimSize == Other.DimSize;
+      return Start == Other.Start && End == Other.End && Step == Other.Step &&
+             DimSize == Other.DimSize;
     }
   };
 
@@ -68,6 +69,7 @@ struct MemoryLocationRange {
   llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
   LocKind Kind;
+  llvm::ScalarEvolution *SE;
 
   /// Return a location with information about the memory reference by the given
   /// instruction.
@@ -135,23 +137,24 @@ struct MemoryLocationRange {
                                LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags), Kind(LocKind::Default) {}
+        AATags(AATags), SE(nullptr), Kind(LocKind::Default) {}
 
   explicit MemoryLocationRange(const llvm::Value *Ptr,
                                LocationSize LowerBound,
                                LocationSize UpperBound,
                                LocKind Kind,
+                               llvm::ScalarEvolution *SE,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
-      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags), Kind(Kind) {}
+      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound), Kind(Kind),
+        SE(SE), AATags(AATags) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
       : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags),
-        Kind(LocKind::Default) {}
+        Kind(LocKind::Default), SE(nullptr) {}
 
   MemoryLocationRange(const MemoryLocationRange &Loc)
       : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
-        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind) {}
+        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind), SE(Loc.SE) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
@@ -159,13 +162,14 @@ struct MemoryLocationRange {
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
     Kind = Default;
+    SE = nullptr;
     return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
       LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
-      DimList == Other.DimList && Kind == Other.Kind;
+      DimList == Other.DimList && SE == Other.SE && Kind == Other.Kind;
   }
 
   std::string getKindAsString() const {
