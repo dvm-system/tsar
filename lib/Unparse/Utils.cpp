@@ -100,11 +100,12 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   O << ">";
   if (IsDebug) {
     if (!Loc.DimList.empty()) {
+      O << " [" << Loc.Ptr << "]";
       O << ", {";
       for (auto &Dimension : Loc.DimList) {
         assert(Dimension.Start && Dimension.Step && Dimension.End && "Bounds.");
         O << "{Start: ";
-        O << "[Addr: " << Dimension.Start << "]";
+        O << "(" << Dimension.Start << ")";
         Dimension.Start->print(O);
         O << ", End: ";
         Dimension.End->print(O);
@@ -115,7 +116,6 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
       O << "}";
     }
     O << " (" << Loc.getKindAsString() << ") ";
-    O << " [" << Loc.Ptr << "]";
   }
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,

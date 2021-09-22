@@ -367,6 +367,20 @@ public:
         .second;
   }
 
+  /// TODO: description
+  void removeCollapsedLocations() {
+    auto Remove = [this](LocationSet &LS) {
+      LocationSet Dest;
+      for (auto &Loc : LS)
+        if (Loc.DimList.empty())
+          Dest.insert(Loc);
+      LS = std::move(Dest);
+    };
+    Remove(mDefs);
+    Remove(mMayDefs);
+    Remove(mUses);
+  }
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;

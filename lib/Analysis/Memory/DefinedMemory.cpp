@@ -369,7 +369,7 @@ std::pair<MemoryLocationRange, bool> aggregate(
       DimInfo.Step = SE->getConstant(Int64Ty, StepValue);
       DimInfo.End = SE->getConstant(Int64Ty,
           StartValue + (TripCount - 2) * StepValue);
-      assert(DimInfo.Start && DimInfo.End && DimInfo.End &&
+      assert(DimInfo.Start && DimInfo.End && DimInfo.Step &&
           "Dimension bounds and step must be specified!");
       if (StartValue + StepValue * (TripCount - 2) >= DimInfo.DimSize &&
           DimensionN != 0) {

@@ -103,15 +103,16 @@ bool difference(const Dimension &D, const Dimension &I,
         Quotient, SE.getOne(Quotient->getType()));
     auto RepeatNumberConst = llvm::dyn_cast<llvm::SCEVConstant>(RepeatNumber);
     assert(RepeatNumberConst && "Repeat Number must be constant.");
-    if (RepeatNumberConst->getValue()->getSExtValue() > Threshold)
+    if (RepeatNumberConst->getValue()->getZExtValue() > Threshold)
       return false;
-    // I.TripCount = (I.End - I.Start) / Step
-    auto CenterTripCount = SE.getMinusSCEV(divide(SE,
+    // I.TripCount = (I.End - I.Start) / Step + 1
+    // CenterTripCount = I.TripCount - 1 = (I.End - I.Start) / Step
+    auto CenterTripCountMinusOne = SE.getMinusSCEV(divide(SE,
         SE.getMinusSCEV(I.End, I.Start), I.Step).Quotient,
         SE.getOne(I.Step->getType()));
-    assert(dyn_cast<SCEVConstant>(CenterTripCount) &&
+    assert(dyn_cast<SCEVConstant>(CenterTripCountMinusOne) &&
            "Trip count must be constant!");
-    for (auto J = 0; J < RepeatNumberConst->getValue()->getSExtValue(); ++J) {
+    for (auto J = 0; J < RepeatNumberConst->getValue()->getZExtValue(); ++J) {
       auto &Center = Res.emplace_back();
       //Center.Start = I.Start + D.Step * (J + 1);
       Center.Start = SE.getAddExpr(I.Start, SE.getMulExpr(
@@ -119,7 +120,7 @@ bool difference(const Dimension &D, const Dimension &I,
       Center.Step = I.Step;
       // Center.End = Center.Start + (Center.TripCount - 1) * Center.Step
       Center.End = SE.getAddExpr(
-          Center.Start, SE.getMulExpr(CenterTripCount, Center.Step));
+          Center.Start, SE.getMulExpr(CenterTripCountMinusOne, Center.Step));
       assert(dyn_cast<SCEVConstant>(Center.Start) &&
              "Dimension start must be constant!");
       assert(dyn_cast<SCEVConstant>(Center.Step) &&
@@ -319,7 +320,7 @@ llvm::Optional<MemoryLocationRange> intersect(
       LHS.DimList == RHS.DimList)
     return LHS;
   MemoryLocationRange Int(LHS);
-  assert(LHS.SE && RHS.SE && "ScalarEvolution must be specified!");
+  assert(LHS.SE && RHS.SE && LHS.SE == RHS.SE && "ScalarEvolution must be specified!");
   auto &SE = *LHS.SE;
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
     auto &Left = LHS.DimList[I];
