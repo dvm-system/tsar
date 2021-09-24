@@ -406,6 +406,15 @@ public:
       insert(Loc);
   }
 
+  /// TODO: description
+  void removeCollapsed() {
+    MemorySet Dest;
+    for (auto &Loc : *this)
+      if (MemoryInfo::getNumDims(Loc) == 0)
+        Dest.insert(Loc);
+    *this = std::move(Dest);
+  }
+
   /// Compare two sets.
   template<class Ty> bool operator!=(const MemorySet<Ty> &RHS) const {
     return !(*this == RHS);

@@ -209,6 +209,13 @@ public:
     return mUses.insert(Uses.begin(), Uses.end());
   }
 
+  /// TODO: description
+  void removeCollapsedLocations() {
+    mDefs.removeCollapsed();
+    mMayDefs.removeCollapsed();
+    mUses.removeCollapsed();
+  }
+
   /// Returns locations accesses to which are performed explicitly.
   ///
   /// For example, if p = &x and to access x, *p is used, let us assume that
@@ -365,20 +372,6 @@ public:
     assert(Ptr && "Pointer must not be null!");
     return mAddressTransitives.try_emplace(Ptr, Insts.begin(), Insts.end())
         .second;
-  }
-
-  /// TODO: description
-  void removeCollapsedLocations() {
-    auto Remove = [this](LocationSet &LS) {
-      LocationSet Dest;
-      for (auto &Loc : LS)
-        if (Loc.DimList.empty())
-          Dest.insert(Loc);
-      LS = std::move(Dest);
-    };
-    Remove(mDefs);
-    Remove(mMayDefs);
-    Remove(mUses);
   }
 
 private:
