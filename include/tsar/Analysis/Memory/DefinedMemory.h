@@ -210,10 +210,21 @@ public:
   }
 
   /// TODO: description
-  void removeCollapsedLocations() {
-    mDefs.removeCollapsed();
-    mMayDefs.removeCollapsed();
-    mUses.removeCollapsed();
+  void updateCollapsedLocations() {
+    LocationSet DestDefs, DestMayDefs, DestUses;
+    for (auto &Loc : mDefs) {
+      if (Loc.Kind == MemoryLocationRange::LocKind::Collapsed)
+        DestMayDefs.insert(Loc.expand());
+      else
+        DestDefs.insert(Loc);
+    }
+    for (auto &Loc : mMayDefs)
+      DestMayDefs.insert(Loc.expand());
+    for (auto &Loc : mUses)
+      DestUses.insert(Loc.expand());
+    mDefs = std::move(DestDefs);
+    mMayDefs = std::move(DestMayDefs);
+    mUses = std::move(DestUses);
   }
 
   /// Returns locations accesses to which are performed explicitly.

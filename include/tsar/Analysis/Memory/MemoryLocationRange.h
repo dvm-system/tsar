@@ -189,6 +189,17 @@ struct MemoryLocationRange {
       append("Hint", KindStr);
     return KindStr;
   }
+
+  // TODO: description
+  MemoryLocationRange expand() const {
+    if (DimList.empty())
+      return *this;
+    assert(UpperBound.hasValue() && "UpperBound must have a value!");
+    auto FullSize = UpperBound.getValue();;
+    for (std::size_t I = 1; I < DimList.size(); ++I)
+      FullSize *= DimList[I].DimSize;
+    return MemoryLocationRange(Ptr, LowerBound, LocationSize(FullSize), AATags);
+  }
 };
 
 /// \brief Finds an intersection between memory locations LHS and RHS.

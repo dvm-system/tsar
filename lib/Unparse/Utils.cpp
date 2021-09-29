@@ -105,7 +105,6 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
       for (auto &Dimension : Loc.DimList) {
         assert(Dimension.Start && Dimension.Step && Dimension.End && "Bounds.");
         O << "{Start: ";
-        O << "(" << Dimension.Start << ")";
         Dimension.Start->print(O);
         O << ", End: ";
         Dimension.End->print(O);
