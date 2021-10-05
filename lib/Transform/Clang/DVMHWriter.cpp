@@ -437,16 +437,9 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   auto Parallel{cast<PragmaParallel>(PIRef)};
   getPragmaText(DirectiveId::DvmParallel, Str);
   Str.resize(Str.size() - 1);
-  if (Parallel->getClauses().get<dvmh::Align>()) {
-    Str.push_back('(');
-    for (auto &LToI : Parallel->getClauses().get<trait::Induction>()) {
-      Str.push_back('[');
-      auto Name{LToI.get<VariableT>().get<AST>()->getName()};
-      Str.append(Name.begin(), Name.end());
-      Str.push_back(']');
-    }
-    Str.append({' ', 'o', 'n', ' '});
-    std::visit([&Str](auto &&V) {
+  auto appendAlign = [Parallel, &Str](const dvmh::Align &V) {
+    std::visit(
+        [&Str](auto &&V) {
           if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
             auto Name{V.template get<AST>()->getName()};
             Str.append(Name.begin(), Name.end());
@@ -454,8 +447,9 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
             auto Name{V->getName()};
             Str.append(Name.begin(), Name.end());
           }
-      }, Parallel->getClauses().get<dvmh::Align>()->Target);
-    for (auto &A : Parallel->getClauses().get<dvmh::Align>()->Relation) {
+        },
+        V.Target);
+    for (auto &A : V.Relation) {
       Str.push_back('[');
       if (A) {
         std::visit(
@@ -487,6 +481,17 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
       }
       Str.push_back(']');
     }
+  };
+  if (Parallel->getClauses().get<dvmh::Align>()) {
+    Str.push_back('(');
+    for (auto &LToI : Parallel->getClauses().get<trait::Induction>()) {
+      Str.push_back('[');
+      auto Name{LToI.get<VariableT>().get<AST>()->getName()};
+      Str.append(Name.begin(), Name.end());
+      Str.push_back(']');
+    }
+    Str.append({' ', 'o', 'n', ' '});
+    appendAlign(*Parallel->getClauses().get<dvmh::Align>());
     Str.push_back(')');
   } else if (Parallel->getClauses().get<trait::DirectAccess>().empty()) {
     Str.push_back('(');
@@ -528,6 +533,16 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
     Str.append({'a', 'c', 'r', 'o', 's', 's', '('});
     for (auto &Across : Parallel->getClauses().get<trait::Dependence>()) {
       addShadow(Across);
+      Str.push_back(',');
+    }
+    Str.pop_back();
+    Str.push_back(')');
+  }
+  if (!Parallel->getClauses().get<Remote>().empty()) {
+    Str.append(
+        {'r', 'e', 'm', 'o', 't', 'e', '_', 'a', 'c', 'c', 'e', 's', 's', '('});
+    for (auto &R : Parallel->getClauses().get<Remote>()) {
+      appendAlign(R);
       Str.push_back(',');
     }
     Str.pop_back();

@@ -39,6 +39,7 @@
 
 namespace tsar {
 struct APCContextImpl {
+  using ExpressionPool = std::vector<std::unique_ptr<Expression>>;
   using SymbolPool = std::vector<std::unique_ptr<Symbol>>;
   using StatementPool = std::vector<std::unique_ptr<Statement>>;
   using ParallelRegionPool = std::vector<std::unique_ptr<ParallelRegion>>;
@@ -52,6 +53,7 @@ struct APCContextImpl {
   using FunctionMap =
       llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
 
+  ExpressionPool Expressions;
   SymbolPool Symbols;
   StatementPool Statements;
   ParallelRegionPool ParallelRegions;

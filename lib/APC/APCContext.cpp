@@ -98,6 +98,10 @@ ParallelRegion & APCContext::getDefaultRegion() {
   return *mImpl->ParallelRegions.front();
 }
 
+void APCContext::addExpression(apc::Expression *E) {
+  mImpl->Expressions.emplace_back(E);
+}
+
 void APCContext::addSymbol(apc::Symbol *S) {
   mImpl->Symbols.emplace_back(S);
 }

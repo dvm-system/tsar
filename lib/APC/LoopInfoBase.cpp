@@ -351,8 +351,10 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
                                .str();
       APCLoop.hasUnknownScalarDep = false;
       APCLoop.hasUnknownArrayDep = false;
-      auto *S{
-          new apc::LoopStatement(F, LoopID, DepInfo.get<trait::Induction>())};
+      auto *S{new apc::LoopStatement{F, LoopID, &APCLoop,
+                                     DepInfo.get<trait::Induction>()}};
+      APCLoop.loop = S;
+      mAPCContext->addStatement(S);
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
       dvmh::SortedVarMultiListT NotLocalized;
@@ -381,13 +383,22 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
           S->setPossibleAcrossDepth(PossibleAcrossDepth);
         }
       }
-      mAPCContext->addStatement(S);
-      APCLoop.loop = S;
     } else {
+      LLVM_DEBUG(dbgs() << "[APC LOOP]: unable to yield loop ("
+                        << APCLoop.lineNum
+                        << ") traits for AST-based representation\n");
+      APCLoop.loop = new apc::LoopStatement{F, LoopID, &APCLoop};
+      mAPCContext->addStatement(APCLoop.loop);
       APCLoop.hasUnknownScalarDep = true;
       APCLoop.hasUnknownArrayDep = true;
     }
   } else {
+    LLVM_DEBUG(
+        dbgs() << "[APC LOOP]: unable to analyze not "
+               << (ParallelInfoItr == mPI->end() ? "parallel" : "canonical")
+               << " loop (" << APCLoop.lineNum << ")\n");
+    APCLoop.loop = new apc::LoopStatement{ F, LoopID, &APCLoop };
+    mAPCContext->addStatement(APCLoop.loop);
     APCLoop.hasUnknownScalarDep = true;
     APCLoop.hasUnknownArrayDep = true;
   }

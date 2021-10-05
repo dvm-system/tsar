@@ -29,15 +29,20 @@
 #include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <apc/apc-config.h>
+#include <apc/Utils/types.h>
 #include <bcl/utility.h>
 
+struct AlignRule;
 struct Directive;
+struct DistrVariant;
 struct FuncInfo;
 struct FuncParam;
 struct LoopGraph;
+struct ParallelDirective;
 struct ParallelRegion;
 struct ArrayInfo;
 struct ArrayOp;
+class ArrayRefExp;
 class Expression;
 struct DataDirective;
 struct AlignRule;
@@ -47,6 +52,8 @@ class Symbol;
 namespace Distribution {
 class Array;
 class ArrayAccessInfo;
+template<typename vType> class Arrays;
+template<typename vType, typename wType, typename attrType> class GraphCSR;
 }
 
 namespace tsar {
@@ -57,20 +64,27 @@ class Template;
 }
 
 namespace apc {
+using AlignRule = ::AlignRule;
 using Directive = ::Directive;
+using DistrVariant = ::DistrVariant;
 using Expression = ::Expression;
 using FuncInfo = ::FuncInfo;
 using FuncParam = ::FuncParam;
 using LoopGraph = ::LoopGraph;
+using ParallelDirective = ::ParallelDirective;
 using ParallelRegion = ::ParallelRegion;
+using REMOTE_TYPE = ::REMOTE_TYPE;
 using Statement = ::Statement;
 using Symbol = ::Symbol;
+using ArrayRefExp = ::ArrayRefExp;
 using Array = Distribution::Array;
+template<typename T> using Arrays = Distribution::Arrays<T>;
 using ArrayInfo = ::ArrayInfo;
 using ArrayAccessInfo = Distribution::ArrayAccessInfo;
 using ArrayOp = ::ArrayOp;
 using DataDirective = ::DataDirective;
-using AlignRule = ::AlignRule;
+template <typename V, typename W, typename A>
+using GraphCSR = Distribution::GraphCSR<V, W, A>;
 }
 
 namespace llvm {
@@ -101,6 +115,13 @@ public:
 
   /// Returns default region which is a whole program.
   ParallelRegion & getDefaultRegion();
+
+  /// Add a new expression under of APCContext control, context releases memory
+  /// when it becomes unused.
+  ///
+  /// \pre The same expression should not be added twice. This may lead to
+  /// multiple deallocation of the same memory.
+  void addExpression(apc::Expression *E);
 
   /// Add a new symbol under of APCContext control, context releases memory
   /// when it becomes unused.

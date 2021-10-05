@@ -90,7 +90,58 @@ struct Align {
       Relation;
 };
 
+struct AlignLess {
+  bool operator()(const Align &LHS, const Align &RHS) const {
+    auto getName = [](const Align &A) {
+      llvm::StringRef Name;
+      std::visit(
+          [&Name](auto &&V) {
+            if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>)
+              Name = V.template get<AST>()->getName();
+            else
+              Name = V->getName();
+          },
+          A.Target);
+      return Name;
+    };
+    auto LHSName{getName(LHS)};
+    auto RHSName{getName(RHS)};
+    if (LHSName != RHSName)
+      return LHSName < RHSName;
+    if (LHS.Relation.size() != RHS.Relation.size())
+      return LHS.Relation.size() < RHS.Relation.size();
+    for (unsigned I = 0, EI = LHS.Relation.size(); I < EI; ++I) {
+      if (LHS.Relation[I] && !RHS.Relation[I])
+        return false;
+      if (RHS.Relation[I] && !LHS.Relation[I])
+        return true;
+      if (std::holds_alternative<llvm::APSInt>(*LHS.Relation[I]) &&
+          !std::holds_alternative<llvm::APSInt>(*RHS.Relation[I]))
+        return false;
+      if (std::holds_alternative<llvm::APSInt>(*RHS.Relation[I]) &&
+          !std::holds_alternative<llvm::APSInt>(*LHS.Relation[I]))
+        return true;
+      if (std::holds_alternative<llvm::APSInt>(*LHS.Relation[I]))
+        return std::get<llvm::APSInt>(*LHS.Relation[I]) <
+               std::get<llvm::APSInt>(*RHS.Relation[I]);
+        return false;
+        auto LHSAxis{ std::get<Align::Axis>(*LHS.Relation[I]) };
+        auto RHSAxis{ std::get<Align::Axis>(*LHS.Relation[I]) };
+        auto LHSTuple{
+            std::tuple{LHSAxis.Dimension, LHSAxis.Step, LHSAxis.Offset} };
+        auto RHSTuple{
+            std::tuple{RHSAxis.Dimension, RHSAxis.Step, RHSAxis.Offset} };
+        if (LHSTuple != RHSTuple)
+          return LHSTuple < RHSTuple;
+    }
+    return true;
+  }
+};
+
+using AlignVarListT = std::set<Align, AlignLess>;
+
 struct Shadow {};
+struct Remote {};
 
 class PragmaRegion : public ParallelLevel {
 public:
@@ -230,6 +281,7 @@ public:
                         bcl::tagged<LoopNestT, trait::Induction>,
                         bcl::tagged<VarMappingT, trait::DirectAccess>,
                         bcl::tagged<ShadowVarListT, Shadow>,
+                        bcl::tagged<AlignVarListT, Remote>,
                         bcl::tagged<llvm::Optional<Align>, Align>>;
 
   static bool classof(const ParallelItem *Item) noexcept {

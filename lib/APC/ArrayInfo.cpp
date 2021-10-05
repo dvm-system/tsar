@@ -227,7 +227,7 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     tsar::dvmh::VariableT Var;
     Var.get<AST>() = DIMemoryItr->get<AST>();
     Var.get<MD>() = &ClientDIEM;
-    auto APCSymbol = new apc::Symbol(std::move(Var));
+    auto APCSymbol = new apc::Symbol(&APCCtx, std::move(Var));
     APCCtx.addSymbol(APCSymbol);
     auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName().str(),
       A->getNumberOfDims(), APCCtx.getNumberOfArrays(),

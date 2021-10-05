@@ -46,12 +46,13 @@
 #include "tsar/Support/Tags.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Transform/Clang/DVMHDirecitves.h"
-#include <apc/DirectiveAnalyzer/DirectiveAnalyzer.h>
+#include <apc/DirectiveProcessing/directive_creator.h>
+#include <apc/DirectiveProcessing/DirectiveAnalyzer.h>
+#include <apc/DirectiveProcessing/remote_access.h>
 #include <apc/Distribution/CreateDistributionDirs.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphCall/graph_calls_func.h>
 #include <apc/GraphLoop/graph_loops.h>
-#include <apc/LoopAnalyzer/directive_creator.h>
 #include <bcl/utility.h>
 #include <bcl/ValuePtrWrapper.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -70,14 +71,16 @@ using namespace tsar::dvmh;
 namespace {
 struct DirectiveImpl : public apc::Directive {
   explicit DirectiveImpl(apc::Statement *A, std::unique_ptr<ParallelItem> PI,
-                         int ShrinkedLoc, bool IsOnEntry = true)
-      : Anchor(A), Pragma(std::move(PI)), OnEntry(IsOnEntry) {
+                         int ShrinkedLoc, apc::Directive *Raw = nullptr,
+                         bool IsOnEntry = true)
+      : Anchor(A), Pragma(std::move(PI)), OnEntry(IsOnEntry), RawPragma(Raw) {
     bcl::restoreShrinkedPair(ShrinkedLoc, line, col);
   }
 
   apc::Statement *Anchor;
   bool OnEntry{true};
   std::unique_ptr<ParallelItem> Pragma;
+  apc::Directive *RawPragma;
 };
 
 class APCDataDistributionPassInfo final : public PassGroupInfo {
@@ -101,7 +104,7 @@ using ArrayAccessPool =
 
 /// Map from a loop to a set of accessed arrays and descriptions of accesses.
 using LoopToArrayMap =
-  std::map<apc::LoopGraph *, std::map<apc::Array*, const apc::ArrayInfo*>>;
+  std::map<apc::LoopGraph *, std::map<apc::Array*, apc::ArrayInfo*>>;
 
 class APCDataDistributionPass : public ModulePass, private bcl::Uncopyable {
   /// Map from a file name to a list of functions which are located in a file.
@@ -235,25 +238,57 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   ArrayAccessSummary ArrayRWs;
   ArrayAccessPool AccessPool;
   LoopToArrayMap Accesses;
-  StringMap<std::map<int, apc::LoopGraph *>> Loops;
+  StringMap<bcl::tagged_pair<
+      bcl::tagged<std::map<int, apc::LoopGraph *>, apc::LoopGraph>,
+      bcl::tagged<std::vector<apc::ArrayRefExp *>, apc::ArrayRefExp>>>
+      Loops;
   DenseMap<apc::Statement *, BasicBlock *> APCToIRLoops;
   std::map<std::string, apc::FuncInfo *> Functions;
   std::vector<apc::LoopGraph *> OuterLoops;
+  auto findOrInsert = [&AccessPool, &Accesses](apc::LoopGraph *APCLoop,
+                                               apc::Array *APCArray) {
+    auto &APCLoopAccesses =
+        Accesses
+            .emplace(std::piecewise_construct, std::forward_as_tuple(APCLoop),
+                     std::forward_as_tuple())
+            .first->second;
+    auto &APCArrayAccesses =
+        APCLoopAccesses.emplace(APCArray, nullptr).first->second;
+    if (!APCArrayAccesses) {
+      AccessPool.emplace_back(APCArrayAccesses);
+      auto &Info = AccessPool.back();
+      Info->dimSize = APCArray->GetDimSize();
+      Info->readOps.resize(Info->dimSize);
+      Info->writeOps.resize(Info->dimSize);
+      Info->unrecReadOps.resize(Info->dimSize);
+    }
+    return APCArrayAccesses;
+  };
+  auto registerUnknownRead = [&APCCtx](apc::Array *APCArray,
+                                       unsigned NumberOfSubscripts,
+                                       unsigned DimIdx, apc::ArrayRefExp *Expr,
+                                       apc::ArrayInfo *APCArrayAccesses,
+                                       apc::REMOTE_TYPE RT = REMOTE_TRUE) {
+        APCArrayAccesses->unrecReadOps[DimIdx] = true;
+        auto [Itr, IsNew] =
+            APCArrayAccesses->arrayAccessUnrec.try_emplace(Expr);
+        if (IsNew) {
+          Itr->second.first = 0;
+          Itr->second.second.resize(NumberOfSubscripts, REMOTE_NONE);
+        }
+        Itr->second.second[DimIdx] |= RT;
+      };
   for (auto &F : M) {
     auto *FI = APCCtx.findFunction(F);
     if (!FI)
       continue;
     LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: process function "
-                      << F.getName() << "\n");
+      << F.getName() << "\n");
     Functions.emplace(FI->funcName, FI);
     auto Itr = FileToFunc.emplace(std::piecewise_construct,
       std::forward_as_tuple(FI->fileName), std::forward_as_tuple()).first;
     Itr->second.push_back(FI);
     auto &Provider = getAnalysis<APCDataDistributionProvider>(F);
-    auto &DT = Provider.get<DominatorTreeWrapperPass>().getDomTree();
-    auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
-    auto &AT = Provider.get<EstimateMemoryPass>().getAliasTree();
-    auto &DIAT = Provider.get<DIEstimateMemoryPass>().getAliasTree();
     auto &LoopsForFile = Loops.try_emplace(FI->fileName).first->second;
     for_each_loop(Provider.get<LoopInfoWrapperPass>().getLoopInfo(),
       [&APCCtx, &APCToIRLoops, &LoopsForFile](Loop *L) {
@@ -261,7 +296,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         if (!ID)
           return;
         if (auto APCLoop = APCCtx.findLoop(ID)) {
-          LoopsForFile.emplace(APCLoop->lineNum, APCLoop);
+          LoopsForFile.get<apc::LoopGraph>().emplace(APCLoop->lineNum, APCLoop);
           APCToIRLoops.try_emplace(APCLoop->loop, L->getHeader());
         }
       });
@@ -272,76 +307,131 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       if (auto APCLoop = APCCtx.findLoop(ID))
         OuterLoops.push_back(APCLoop);
     }
-    for (auto &Access : *DIArrayInfo) {
-      for (unsigned DimIdx = 0, DimIdxE = Access.size(); DimIdx < DimIdxE;
-           ++DimIdx) {
-        auto AffineAccess =
-            dyn_cast_or_null<DIAffineSubscript>(Access[DimIdx]);
-        if (!AffineAccess)
-          continue;
-        if (AffineAccess->getNumberOfMonoms() != 1)
-          continue;
-        auto *APCArray = APCCtx.findArray(Access.getArray()->getAsMDNode());
-        if (!APCArray)
-          continue;
-        ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
-        LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: search for accesses to "
-          << APCArray->GetShortName() << "\n");
-        auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
-        auto LpStmt{cast_or_null<apc::LoopStatement>(APCLoop->loop)};
-        decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
-        if (auto C{AffineAccess->getMonom(0).Value};
-            C.Kind != DIAffineSubscript::Symbol::SK_Constant &&
-                (C.Kind != DIAffineSubscript::Symbol::SK_Induction || !LpStmt ||
-                 C.Variable != LpStmt->getInduction().get<MD>()) ||
-            !castAPInt(C.Constant, true, ABPair.first)) {
-          // TODO (kaniandr@gmail.com): describe a representation issue properly.
-          emitTypeOverflow(
-              F.getContext(), F, DebugLoc(),
-              "unable to represent A constant in A*I + B subscript",
-              DS_Warning);
-          continue;
+  }
+  for (auto &Access : *DIArrayInfo) {
+    auto *APCArray{APCCtx.findArray(Access.getArray()->getAsMDNode())};
+    if (!APCArray)
+      continue;
+    auto *Scope{APCCtx.findLoop(Access.getParent())};
+    if (!Scope)
+      continue;
+    apc::ArrayRefExp *AccessExpr{nullptr};
+    if (!Access.isWriteOnly()) {
+      AccessExpr =
+          new apc::ArrayRefExp{&APCCtx, Scope, APCArray, Access.size()};
+      APCCtx.addExpression(AccessExpr);
+      auto *FI{APCCtx.findFunction(
+          *cast<apc::LoopStatement>(Scope->loop)->getFunction())};
+      assert(FI && "Function must be registered!");
+      Loops[FI->fileName].get<apc::ArrayRefExp>().push_back(AccessExpr);
+    }
+    for (unsigned DimIdx = 0, DimIdxE = Access.size(); DimIdx < DimIdxE;
+         ++DimIdx) {
+      auto AffineAccess = dyn_cast_or_null<DIAffineSubscript>(Access[DimIdx]);
+      if (!AffineAccess) {
+        if (!Access.isWriteOnly()) {
+          auto *APCLoop{Scope};
+          while (APCLoop) {
+            assert(AccessExpr && "Expression must not be null!");
+            registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                findOrInsert(APCLoop, APCArray));
+            APCLoop = APCLoop->parent;
+          }
         }
-        if (AffineAccess->getSymbol().Kind !=
-                    DIAffineSubscript::Symbol::SK_Constant &&
-                (AffineAccess->getSymbol().Kind !=
-                     DIAffineSubscript::Symbol::SK_Induction ||
-                 !LpStmt ||
-                 AffineAccess->getSymbol().Variable !=
-                     LpStmt->getInduction().get<MD>()) ||
-            !castAPInt(AffineAccess->getSymbol().Constant, true,
-                       ABPair.second)) {
-          // TODO (kaniandr@gmail.com): describe a representation issue properly.
-          emitTypeOverflow(
-              F.getContext(), F, DebugLoc(),
-              "unable to represent B constant in A*I + B subscript",
-              DS_Warning);
-          continue;
+        continue;
+      }
+      if (AffineAccess->getNumberOfMonoms() != 1) {
+        if (!Access.isWriteOnly()) {
+          if (AffineAccess->getNumberOfMonoms() == 0) {
+            if (auto &S{AffineAccess->getSymbol()};
+                S.Kind == DIAffineSubscript::Symbol::SK_Constant)
+              AccessExpr->setConstantSubscript(DimIdx, S.Constant);
+            auto *APCLoop{Scope};
+            while (APCLoop) {
+              assert(AccessExpr && "Expression must not be null!");
+              registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                  findOrInsert(APCLoop, APCArray));
+              APCLoop = APCLoop->parent;
+            }
+          } else {
+            for (unsigned I = 0, EI = AffineAccess->getNumberOfMonoms(); I < EI;
+                 ++I) {
+              auto &Monom{AffineAccess->getMonom(I)};
+              auto *APCLoop{APCCtx.findLoop(Monom.Column)};
+              assert(AccessExpr && "Expression must not be null!");
+              AccessExpr->registerRecInDim(DimIdx, APCLoop);
+              registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                  findOrInsert(APCLoop, APCArray));
+            }
+          }
         }
-        auto &APCLoopAccesses = Accesses.emplace(std::piecewise_construct,
-          std::forward_as_tuple(APCLoop), std::forward_as_tuple()).first->second;
-        auto &APCArrayAccessesC =
-          APCLoopAccesses.emplace(APCArray, nullptr).first->second;
-        if (!APCArrayAccessesC) {
-          AccessPool.emplace_back(APCArrayAccessesC);
-          auto &Info = AccessPool.back();
-          Info->dimSize = APCArray->GetDimSize();
-          Info->readOps.resize(Info->dimSize);
-          Info->writeOps.resize(Info->dimSize);
-          Info->unrecReadOps.resize(Info->dimSize);
+        continue;
+      }
+      ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
+      LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: search for accesses to "
+                        << APCArray->GetShortName() << "\n");
+      auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
+      auto LpStmt{cast_or_null<apc::LoopStatement>(APCLoop->loop)};
+      decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
+      if (auto C{AffineAccess->getMonom(0).Value};
+          C.Kind != DIAffineSubscript::Symbol::SK_Constant &&
+              (C.Kind != DIAffineSubscript::Symbol::SK_Induction || !LpStmt ||
+               C.Variable != LpStmt->getInduction().get<MD>()) ||
+          !castAPInt(C.Constant, true, ABPair.first)) {
+        if (!Access.isWriteOnly()) {
+          assert(AccessExpr && "Expression must not be null!");
+          AccessExpr->registerRecInDim(DimIdx, APCLoop);
+          registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                              findOrInsert(APCLoop, APCArray));
         }
-        APCArray->SetMappedDim(AffineAccess->getDimension());
-        auto *APCArrayAccesses = const_cast<ArrayInfo *>(APCArrayAccessesC);
-        LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: dimension " << DimIdx
-          << " subscript " << ABPair.first << " * I + "
-          << ABPair.second << " access type";
-        if (!Access.isReadOnly()) dbgs() << " write";
-        if (!Access.isWriteOnly()) dbgs() << " read";
-        dbgs() << "\n");
-        if (!Access.isReadOnly())
-          APCArrayAccesses->writeOps[DimIdx].coefficients.emplace(ABPair, 1.0);
-        if (!Access.isWriteOnly())
-          APCArrayAccesses->readOps[DimIdx].coefficients.emplace(ABPair, 1.0);
+        // TODO (kaniandr@gmail.com): describe a representation issue properly.
+        emitTypeOverflow(M.getContext(), *LpStmt->getFunction(), DebugLoc(),
+                         "unable to represent A constant in A*I + B subscript",
+                         DS_Warning);
+        continue;
+      }
+      if (AffineAccess->getSymbol().Kind !=
+                  DIAffineSubscript::Symbol::SK_Constant &&
+              (AffineAccess->getSymbol().Kind !=
+                   DIAffineSubscript::Symbol::SK_Induction ||
+               !LpStmt ||
+               AffineAccess->getSymbol().Variable !=
+                   LpStmt->getInduction().get<MD>()) ||
+          !castAPInt(AffineAccess->getSymbol().Constant, true, ABPair.second)) {
+        if (!Access.isWriteOnly()) {
+          assert(AccessExpr && "Expression must not be null!");
+          AccessExpr->registerRecInDim(DimIdx, APCLoop);
+          registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                              findOrInsert(APCLoop, APCArray));
+        }
+        // TODO (kaniandr@gmail.com): describe a representation issue properly.
+        emitTypeOverflow(M.getContext(), *LpStmt->getFunction(), DebugLoc(),
+                         "unable to represent B constant in A*I + B subscript",
+                         DS_Warning);
+        continue;
+      }
+      APCArray->SetMappedDim(AffineAccess->getDimension());
+      auto *APCArrayAccesses{findOrInsert(APCLoop, APCArray)};
+      LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: dimension " << DimIdx
+                        << " subscript " << ABPair.first << " * I + "
+                        << ABPair.second << " access type";
+                 if (!Access.isReadOnly()) dbgs() << " write";
+                 if (!Access.isWriteOnly()) dbgs() << " read"; dbgs() << "\n");
+      if (!Access.isReadOnly())
+        APCArrayAccesses->writeOps[DimIdx].coefficients.emplace(ABPair, 1.0);
+      if (!Access.isWriteOnly()) {
+        APCArrayAccesses->readOps[DimIdx].coefficients.emplace(ABPair, 1.0);
+        assert(AccessExpr && "Expression must not be null!");
+        AccessExpr->registerRecInDim(DimIdx, APCLoop);
+        registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                            APCArrayAccesses, REMOTE_FALSE);
+        auto [Itr, IsNew] =
+            APCArrayAccesses->arrayAccess.try_emplace(AccessExpr);
+        if (IsNew) {
+          Itr->second.first = 0;
+          Itr->second.second.resize(Access.size());
+        }
+        Itr->second.second[DimIdx].coefficients.emplace(ABPair, 1.0);
       }
     }
   }
@@ -350,10 +440,10 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   std::map<std::string, std::vector<apc::LoopGraph *>> FileToLoops;
   for (auto &LoopsForFile : Loops) {
     auto Itr{FileToLoops.try_emplace(LoopsForFile.first().str()).first};
-    for (auto &&[Line, Loop] : LoopsForFile.second)
+    for (auto &&[Line, Loop] : LoopsForFile.second.get<apc::LoopGraph>())
       Itr->second.push_back(Loop);
   }
-  std::set<apc::Array*> ArraysInAllRegions;
+  std::set<apc::Array *> ArraysInAllRegions;
   std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
   auto &G{APCRegion.GetGraphToModify()};
@@ -379,13 +469,6 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     processLoopInformationForFunction(Accesses);
     addToDistributionGraph(Accesses, FormalToActual);
     // Exclude arrays from a data distribution.
-    std::map<std::string, std::vector<apc::LoopGraph *>> FilenameToLoops;
-    for (auto &LoopsForFile : Loops) {
-      auto Itr{FilenameToLoops.try_emplace(LoopsForFile.first().str()).first};
-      std::transform(LoopsForFile.second.begin(), LoopsForFile.second.end(),
-                     std::back_inserter(Itr->second),
-                     [](auto &Info) { return Info.second; });
-    }
     // A stub variable which is not used at this moment.
     std::map<PFIKeyT, apc::Array *> CreatedArrays;
     excludeArraysFromDistribution(FormalToActual, ArrayRWs, FileToLoops,
@@ -429,7 +512,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       if (A->IsTemplate()) {
         auto *Tpl{ParallelCtx.makeTemplate(A->GetShortName())};
         APCCtx.addArray(Tpl, A);
-        auto APCSymbol{new apc::Symbol(Tpl)};
+        auto APCSymbol{new apc::Symbol(&APCCtx, Tpl)};
         APCCtx.addSymbol(APCSymbol);
         A->SetDeclSymbol(APCSymbol);
       }
@@ -446,7 +529,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
 #endif
   for (auto &LoopsForFile : Loops) {
     std::vector<apc::LoopGraph *> LoopList;
-    for (auto &Info : LoopsForFile.second)
+    for (auto &Info : LoopsForFile.second.get<apc::LoopGraph>())
       if (!Info.second->parent)
         LoopList.push_back(Info.second);
     std::vector<apc::Directive *> ParallelDirs;
@@ -462,9 +545,42 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
 #endif
       selectParallelDirectiveForVariant(
           nullptr, &APCRegion, ReducedG, AllArrays, LoopList,
-          LoopsForFile.second, Functions, CurrentVariant, DataDirs.alignRules,
-          ParallelDirs, APCRegion.GetId(), FormalToActual, DepInfoForLoopGraph,
-          Msgs);
+          LoopsForFile.second.get<apc::LoopGraph>(), Functions, CurrentVariant,
+          DataDirs.alignRules, ParallelDirs, APCRegion.GetId(), FormalToActual,
+          DepInfoForLoopGraph, Msgs);
+      for (auto *Expr : LoopsForFile.second.get<apc::ArrayRefExp>()) {
+        if (!Expr->isInLoop())
+          continue;
+        auto APCLoop{std::get<apc::LoopGraph *>(Expr->getScope())};
+        std::vector<apc::LoopGraph *> LoopNest;
+        while (APCLoop) {
+          LoopNest.push_back(APCLoop);
+          APCLoop = APCLoop->parent;
+        }
+        std::reverse(LoopNest.begin(), LoopNest.end());
+        std::vector<int> NumberOfDimsWithRec(LoopNest.size(), 0);
+        std::vector<int> DimWithRec(LoopNest.size(), 0);
+        int NumberOfRec{0}, MaxNumberOfRecInDim{0};
+        bool MultipleRecInDim{false};
+        for (unsigned DimIdx = 0, DimIdxE = Expr->size(); DimIdx < DimIdxE;
+             ++DimIdx) {
+          for (auto *L : Expr->getRecInDim(DimIdx)) {
+            auto I{find(LoopNest, L)};
+            auto Depth{std::distance(LoopNest.begin(), I)};
+            ++NumberOfDimsWithRec[Depth];
+            MultipleRecInDim |= (NumberOfDimsWithRec[Depth] > 1);
+            DimWithRec[Depth] = DimIdx;
+          }
+          NumberOfRec += Expr->getRecInDim(DimIdx).size();
+          MaxNumberOfRecInDim = std::max<int>(MaxNumberOfRecInDim,
+                                              Expr->getRecInDim(DimIdx).size());
+        }
+        checkArrayRefInLoopForRemoteStatus(
+            MultipleRecInDim, NumberOfRec, Expr->size(), MaxNumberOfRecInDim, 0,
+            Expr->getArray(), NumberOfDimsWithRec, Expr, Accesses, DimWithRec,
+            LoopsForFile.second.get<apc::LoopGraph>(), FormalToActual,
+            &APCRegion, LoopNest);
+      }
 #ifndef LLVM_DEBUG
     } catch (...) {
       M.getContext().emitError(getGlobalBuffer());
@@ -518,6 +634,38 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
             delete Dir;
             Dir = nullptr;
           } else if (isa<PragmaParallel>(Dir->Pragma)) {
+            assert(Dir->RawPragma &&
+                   "Raw representation of a parallel directive "
+                   "must be available!");
+#ifndef LLVM_DEBUG
+            try {
+#endif
+              auto RemoteList{createRemoteInParallel(
+                  std::pair{
+                      LpStmt->getLoop(),
+                      static_cast<apc::ParallelDirective *>(Dir->RawPragma)},
+                  AllArrays, Accesses, ReducedG, DataDirs,
+                  APCRegion.GetCurrentVariant(), Msgs, APCRegion.GetId(),
+                  FormalToActual)};
+              for (auto &&[Str, Expr] : RemoteList) {
+                dvmh::Align Align;
+                Align.Target = Expr->getArray()->GetDeclSymbol()->getMemory();
+                Align.Relation.resize(Expr->size());
+                for (unsigned I = 0, EI = Expr->size(); I < EI; ++I) {
+                  if (Expr->isConstantSubscript(I))
+                    Align.Relation[I] = Expr->getConstantSubscript(I);
+                }
+                cast<PragmaParallel>(*Dir->Pragma)
+                    .getClauses()
+                    .get<Remote>()
+                    .insert(std::move(Align));
+              }
+#ifndef LLVM_DEBUG
+            } catch (...) {
+              M.getContext().emitError(getGlobalBuffer());
+              return false;
+            }
+#endif
             DVMHParallel.reset(cast<PragmaParallel>(Dir->Pragma.release()));
             delete Dir;
             Dir = nullptr;
@@ -619,16 +767,18 @@ void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
 }
 
 apc::Directive * ParallelDirective::genDirective(File *F,
-    const std::vector<std::pair<apc::Array *, const DistrVariant *>>
+    const std::vector<std::pair<apc::Array *, const apc::DistrVariant *>>
         &Distribution,
-    const std::vector<AlignRule> &AlignRules, apc::LoopGraph *CurrLoop,
-    DIST::GraphCSR<int, double, attrType> &ReducedG,
-    DIST::Arrays<int> &AllArrays,
+    const std::vector<apc::AlignRule> &AlignRules, apc::LoopGraph *CurrLoop,
+    apc::GraphCSR<int, double, attrType> &ReducedG,
+    apc::Arrays<int> &AllArrays,
     const uint64_t RegionId,
     const std::map<apc::Array *, std::set<apc::Array *>>
         &ArrayLinksByFuncCalls) {
-  auto *DirImpl{new DirectiveImpl{
-      CurrLoop->loop, std::make_unique<PragmaParallel>(), CurrLoop->lineNum}};
+  cast<apc::LoopStatement>(CurrLoop->loop)->scheduleToParallelization();
+  auto *DirImpl{new DirectiveImpl{CurrLoop->loop,
+                                  std::make_unique<PragmaParallel>(),
+                                  CurrLoop->lineNum, this}};
   auto *Parallel{cast<PragmaParallel>(DirImpl->Pragma.get())};
   const auto &ReadOps{CurrLoop->readOps};
   auto &Clauses{Parallel->getClauses()};
@@ -726,9 +876,9 @@ apc::Directive * ParallelDirective::genDirective(File *F,
     for (unsigned I = 0, EI = across.size(); I < EI; ++I) {
       std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
       auto Bounds{genBounds(AlignRules, across[I], acrossShifts[I], ReducedG,
-                            AllArrays, ReadOps, true, RegionId, Distribution,
-                            ArraysInAcross, ShiftsByAccess,
-                            ArrayLinksByFuncCalls)};
+                            AllArrays, CurrLoop->remoteRegularReads, ReadOps,
+                            true, RegionId, Distribution, ArraysInAcross,
+                            ShiftsByAccess, ArrayLinksByFuncCalls)};
       if (Bounds.empty())
         continue;
       apc::Array *A{AllArrays.GetArrayByName(across[I].first.second)};
@@ -755,10 +905,10 @@ apc::Directive * ParallelDirective::genDirective(File *F,
     }
     for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I) {
       std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
-      auto Bounds{genBounds(AlignRules, shadowRenew[I], shadowRenewShifts[I],
-                            ReducedG, AllArrays, ReadOps, false, RegionId,
-                            Distribution, ArraysInAcross, ShiftsByAccess,
-                            ArrayLinksByFuncCalls)};
+      auto Bounds{genBounds(
+          AlignRules, shadowRenew[I], shadowRenewShifts[I], ReducedG, AllArrays,
+          CurrLoop->remoteRegularReads, ReadOps, false, RegionId, Distribution,
+          ArraysInAcross, ShiftsByAccess, ArrayLinksByFuncCalls)};
       if (Bounds.empty())
         continue;
       apc::Array *A{AllArrays.GetArrayByName(shadowRenew[I].first.second)};
@@ -860,4 +1010,57 @@ createRealignRules(Statement *S, const uint64_t RegionId, File *F,
         new DirectiveImpl{S, makeRealign(Tpl), Loc.second, false});
   }
   return Res;
+}
+
+bool apc::LoopGraph::hasParalleDirectiveBefore() {
+  return cast<apc::LoopStatement>(loop)->isScheduled();
+}
+
+void addRemoteLink(apc::ArrayRefExp *Expr,
+                   std::map<std::string, apc::ArrayRefExp *> &UniqueRemotes,
+                   const std::set<std::string> &RemotesInParallel,
+                   std::set<ArrayRefExp *> &AddedRemotes,
+                   std::vector<Messages> &Msgs, const int Line, bool WithConv) {
+  auto *RemoteExpr{Expr};
+  bool IsSimple{Expr->getArray()->GetDimSize() == Expr->size()};
+  SmallString<128> RemoteExprStr{Expr->getArray()->GetShortName()};
+  if (WithConv && IsSimple) {
+    for (unsigned I = 0, EI = Expr->size(); I < EI; ++I)
+      if (!Expr->isConstantSubscript(I)) {
+        IsSimple = false;
+        break;
+      }
+  }
+  for (unsigned I = 0, EI = Expr->size(); I < EI; ++I) {
+    RemoteExprStr += "[";
+    if (IsSimple) {
+      Expr->getConstantSubscript(I).toString(RemoteExprStr);
+    }
+    RemoteExprStr += "]";
+  }
+  auto REString{RemoteExprStr.str().str()};
+  if (RemotesInParallel.count(REString))
+    return;
+  auto [Itr, IsNew] = UniqueRemotes.try_emplace(REString);
+  if (!IsNew)
+    return;
+  if (WithConv) {
+    RemoteExpr = new apc::ArrayRefExp{
+        Expr->getContext(), Expr->getArray(),
+        static_cast<std::size_t>(Expr->getArray()->GetDimSize()) };
+    RemoteExpr->getContext()->addExpression(RemoteExpr);
+    if (IsSimple)
+      for (unsigned I = 0, EI = Expr->size(); I < EI; ++I)
+        RemoteExpr->setConstantSubscript(I, Expr->getConstantSubscript(I));
+  }
+  Itr->second = RemoteExpr;
+  AddedRemotes.insert(RemoteExpr);
+}
+
+apc::ArrayRefExp *createRemoteLink(const apc::Array *A) {
+  auto DropConstA{const_cast<apc::Array *>(A)};
+  auto Expr{new apc::ArrayRefExp(DropConstA->GetDeclSymbol()->getContext(),
+                                 DropConstA, DropConstA->GetDimSize())};
+  Expr->getContext()->addExpression(Expr);
+  return Expr;
 }
