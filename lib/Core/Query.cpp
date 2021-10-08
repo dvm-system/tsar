@@ -364,6 +364,8 @@ void InstrLLVMQueryManager::run(llvm::Module *M,
   Passes.add(createDINodeRetrieverPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDILoopRetrieverPass());
+  Passes.add(createGlobalsAccessStorage());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createInstrumentationPass(mInstrEntry, mInstrStart));
   Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
   Passes.run(*M);

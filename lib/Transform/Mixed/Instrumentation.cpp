@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/IRUtils.h"
@@ -105,6 +106,7 @@ INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PASS_END(InstrumentationPass, "instr-llvm",
   "LLVM IR Instrumentation", false, false)
 
@@ -120,6 +122,9 @@ bool InstrumentationPass::runOnModule(Module &M) {
     [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
       Wrapper.set(*MMWrapper);
   });
+  if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+    InstrumentationPassProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   Instrumentation::visit(M, *this);
   Function *EntryPoint = nullptr;
   if (!mInstrEntry.empty())
@@ -138,6 +143,7 @@ void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<InstrumentationPassProvider>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
 }
 
 ModulePass * llvm::createInstrumentationPass(
