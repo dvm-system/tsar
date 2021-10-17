@@ -28,6 +28,11 @@
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
+using llvm::cast;
+using llvm::dyn_cast;
+using llvm::isa;
+using llvm::SCEVConstant;
+
 namespace tsar {
 /// Provide traits for objects stored in a MemorySet.
 ///
@@ -238,22 +243,30 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       auto &Right = RHS.DimList[I];
       if (Left == Right)
         continue;
-      auto LeftStartConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.Start);
-      auto LeftEndConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.End);
-      auto LeftStepConst = llvm::dyn_cast<llvm::SCEVConstant>(Left.Step);
-      auto RightStartConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.Start);
-      auto RightEndConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.End);
-      auto RightStepConst = llvm::dyn_cast<llvm::SCEVConstant>(Right.Step);
-      assert(LeftStepConst && RightStepConst &&
+      assert(isa<SCEVConstant>(Left.Step) && isa<SCEVConstant>(Right.Step) &&
           "Dimension step must be constant!");
-      assert(LeftStartConst && LeftEndConst && RightStartConst &&
-           RightEndConst && "Dimension bounds must be constant!");
-      auto LeftStart = LeftStartConst->getValue()->getZExtValue();
-      auto LeftEnd = LeftEndConst->getValue()->getZExtValue();
-      auto LeftStep = LeftStepConst->getValue()->getZExtValue();
-      auto RightStart = RightStartConst->getValue()->getZExtValue();
-      auto RightEnd = RightEndConst->getValue()->getZExtValue();
-      auto RightStep = RightStepConst->getValue()->getZExtValue();
+      if (!isa<SCEVConstant>(Left.Start) || !isa<SCEVConstant>(Left.End) ||
+          !isa<SCEVConstant>(Right.Start) || !isa<SCEVConstant>(Right.End)) {
+        auto CmpLeftStartRightEnd = compareSCEVs(Left.Start, Right.End, SE);
+        auto CmpRightStartLeftEnd = compareSCEVs(Right.Start, Left.End, SE);
+        if (CmpLeftStartRightEnd && (*CmpLeftStartRightEnd == 0 || *CmpLeftStartRightEnd == 1) ||
+            CmpRightStartLeftEnd && (*CmpRightStartLeftEnd == 0 || *CmpRightStartLeftEnd == 1))
+          ++JoinableDimCount;
+        else
+          return false;
+      }
+      auto LeftStart = cast<SCEVConstant>(Left.Start)->
+                       getValue()->getZExtValue();
+      auto LeftEnd = cast<SCEVConstant>(Left.End)->
+                     getValue()->getZExtValue();
+      auto LeftStep = cast<SCEVConstant>(Left.Step)->
+                      getValue()->getZExtValue();
+      auto RightStart = cast<SCEVConstant>(Right.Start)->
+                        getValue()->getZExtValue();
+      auto RightEnd = cast<SCEVConstant>(Right.End)->
+                        getValue()->getZExtValue();
+      auto RightStep = cast<SCEVConstant>(Right.Step)->
+                       getValue()->getZExtValue();
       assert(LeftStart <= LeftEnd && RightStart <= RightEnd &&
           "Start of dimension must be less or equal than End.");
       if (LeftStep != RightStep ||
@@ -285,20 +298,34 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
         IsChanged = true;
       }
     } else {
+      auto SE = What.SE;
+      assert(SE && "ScalarEvolution must be specified!");
       for (size_t I = 0; I < To.DimList.size(); I++) {
         auto &DimTo = To.DimList[I];
         auto &DimFrom = What.DimList[I];
-        auto Diff = llvm::dyn_cast<llvm::SCEVConstant>(
-            What.SE->getMinusSCEV(DimTo.Start, DimFrom.Start));
-        assert(Diff && "Difference must be constant!");
-        if (Diff->getValue()->getSExtValue() > 0) {
+        if (!isa<SCEVConstant>(DimTo.Start) || !isa<SCEVConstant>(DimTo.End) ||
+            !isa<SCEVConstant>(DimFrom.Start) || !isa<SCEVConstant>(DimFrom.End)) {
+          auto CmpFromEndToStart = compareSCEVs(DimTo.Start, DimFrom.End, SE);
+          auto CmpToEndFromStart = compareSCEVs(DimFrom.Start, DimTo.End, SE);
+          if (CmpFromEndToStart && (*CmpFromEndToStart == 0 || *CmpFromEndToStart == 1)) {
+            DimTo.Start = DimFrom.Start;
+            IsChanged = true;
+          }
+          if (CmpToEndFromStart && (*CmpToEndFromStart == 0 || *CmpToEndFromStart == 1)) {
+            DimTo.End = DimFrom.End;
+            IsChanged = true;
+          }
+          continue;
+        }
+        auto DiffStart = compareSCEVs(DimTo.Start, DimFrom.Start, SE);
+        assert(DiffStart && "Difference must be constant!");
+        if (*DiffStart > 0) {
           DimTo.Start = DimFrom.Start;
           IsChanged = true;
         }
-        Diff = llvm::dyn_cast<llvm::SCEVConstant>(
-              What.SE->getMinusSCEV(DimFrom.End, DimTo.End));
-        assert(Diff && "Difference must be constant!");
-        if (Diff->getValue()->getSExtValue() > 0) {
+        auto DiffEnd = compareSCEVs(DimFrom.End, DimTo.End, SE);
+        assert(DiffEnd && "Difference must be constant!");
+        if (*DiffEnd > 0) {
           DimTo.End = DimFrom.End;
           IsChanged = true;
         }

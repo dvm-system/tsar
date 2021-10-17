@@ -250,6 +250,7 @@ std::pair<MemoryLocationRange, bool> aggregate(
     DFRegion *R, const MemoryLocationRange &Loc, const ReachDFFwk *Fwk) {
   typedef MemoryLocationRange::Dimension Dimension;
   typedef MemoryLocationRange::LocKind LocKind;
+  typedef ICmpInst::Predicate Predicate;
   assert(Fwk && "Data-flow framework must not be null");
   assert(!(Loc.Kind & LocKind::Collapsed) || Loc.DimList.size() > 0 &&
       "Collapsed array location must not be empty!");
@@ -351,28 +352,113 @@ std::pair<MemoryLocationRange, bool> aggregate(
         LLVM_DEBUG(dbgs() << "[AGGREGATE] Non-constant step.\n");
         break;
       }
+      auto AddRecStep = cast<SCEVConstant>(StepSCEV)->getAPInt().getSExtValue();
       auto TripCount = SE->getSmallConstantTripCount(C->getLoop());
-      if (TripCount <= 1) {
-        LLVM_DEBUG(dbgs() << "[AGGREGATE] Unknown or non-constant "
-                             "trip count.\n");
+      if (TripCount > 1) {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Aggregate constant range.\n");
+        int64_t SignedRangeMin = SE->getSignedRangeMin(SCEV).getSExtValue();
+        if (SignedRangeMin < 0) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Range bounds must be "
+                                "non-negative.\n");
+          break;
+        }
+        DimInfo.Start = SE->getConstant(Int64Ty, SignedRangeMin);
+        DimInfo.End = SE->getConstant(Int64Ty,
+            SignedRangeMin + std::abs(AddRecStep) * (TripCount - 2));
+      } else if (TripCount == 0) {
+        if (std::abs(AddRecStep) != 1)
+          break;
+        auto Bounds = C->getLoop()->getBounds(*SE);
+        if (!Bounds) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to get loop bounds.\n");
+          break;
+        }
+        auto *InitValue = &Bounds->getInitialIVValue();
+        auto *FinalValue = &Bounds->getFinalIVValue();
+        if (!SE->isSCEVable(InitValue->getType()) ||
+            !SE->isSCEVable(FinalValue->getType())) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Loop bound is not SCEVable.\n");
+          break;
+        }
+        if (!InitValue->getType()->isIntegerTy() ||
+            !FinalValue->getType()->isIntegerTy()) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Non-integer loop bound.\n");
+          break;
+        }
+        auto Predicate = Bounds->getCanonicalPredicate();
+        if (!ICmpInst::isRelational(Predicate)) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Bad predicate.\n");
+          break;
+        }
+        if (Bounds->getDirection() == Loop::LoopBounds::Direction::Unknown) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Unknown direction.\n");
+          break;
+        }
+        auto LoopStep = cast<SCEVConstant>(
+            SE->getSCEV(Bounds->getStepValue()))->getAPInt().getSExtValue();
+        auto InitSCEV = SE->getSCEV(InitValue);
+        auto FinalSCEV = SE->getSCEV(FinalValue);
+        if (Bounds->getDirection() == Loop::LoopBounds::Direction::Increasing &&
+           (Predicate == Predicate::ICMP_SGT ||
+            Predicate == Predicate::ICMP_SGE ||
+            Predicate == Predicate::ICMP_UGT ||
+            Predicate == Predicate::ICMP_UGE) ||
+           (Bounds->getDirection() == Loop::LoopBounds::Direction::Decreasing &&
+           (Predicate == Predicate::ICMP_SLT ||
+            Predicate == Predicate::ICMP_SLE ||
+            Predicate == Predicate::ICMP_ULT ||
+            Predicate == Predicate::ICMP_ULE))) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Unpredictable predicate.\n");
+          break;
+        }
+        if (Bounds->getDirection() == Loop::LoopBounds::Direction::Increasing) {
+          if (Predicate == Predicate::ICMP_SLT ||
+              Predicate == Predicate::ICMP_ULT) {
+            FinalSCEV = SE->getMinusSCEV(FinalSCEV, SE->getOne(Int64Ty));
+          }
+        } else {
+          //std::swap(InitSCEV, FinalSCEV);
+          if (Predicate == Predicate::ICMP_SGT ||
+              Predicate == Predicate::ICMP_UGT) {
+            FinalSCEV = SE->getAddExpr(SE->getOne(Int64Ty), FinalSCEV);
+          }
+        }
+        auto ZeroItr = C->evaluateAtIteration(SE->getZero(Int64Ty), *SE);
+        auto IdxExprStep = AddRecStep / LoopStep;
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] LoopStep: " << LoopStep <<
+            ", IdxExprStep: " << IdxExprStep << "\n");
+        if (LoopStep > 0 && IdxExprStep > 0) {
+          DimInfo.Start = ZeroItr;
+          DimInfo.End = C->evaluateAtIteration(
+              SE->getMinusSCEV(FinalSCEV, InitSCEV), *SE);
+        } else if (LoopStep > 0 && IdxExprStep < 0) {
+          DimInfo.Start = C->evaluateAtIteration(
+              SE->getMinusSCEV(FinalSCEV, InitSCEV), *SE);
+          DimInfo.End = ZeroItr;
+        } else if (LoopStep < 0 && IdxExprStep > 0) {
+          DimInfo.Start = C->evaluateAtIteration(
+              SE->getMinusSCEV(InitSCEV, FinalSCEV), *SE);
+          DimInfo.End = ZeroItr;
+        } else {
+          DimInfo.Start = ZeroItr;
+          DimInfo.End = C->evaluateAtIteration(
+              SE->getMinusSCEV(InitSCEV, FinalSCEV), *SE);
+        }
+        auto CmpStartEnd = compareSCEVs(DimInfo.Start, DimInfo.End, SE);
+        if (CmpStartEnd && *CmpStartEnd > 0) {
+          LLVM_DEBUG(dbgs() << "[AGGREGATE] Incorrect bounds.\n");
+          break;
+        }
+      } else {
+        LLVM_DEBUG(dbgs() << "[AGGREGATE] Invalid trip count.\n");
         break;
       }
-      auto StartValue = SE->getSignedRangeMin(SCEV).getSExtValue();
-      if (StartValue < 0) {
-        LLVM_DEBUG(dbgs() << "[AGGREGATE] Range bounds must be "
-                              "non-negative.\n");
-        break;
-      }
-      DimInfo.Start = SE->getConstant(Int64Ty, StartValue);
-      auto StepValue = std::abs(cast<SCEVConstant>(StepSCEV)->getAPInt().
-          getSExtValue());
-      DimInfo.Step = SE->getConstant(Int64Ty, StepValue);
-      DimInfo.End = SE->getConstant(Int64Ty,
-          StartValue + (TripCount - 2) * StepValue);
+      DimInfo.Step = SE->getConstant(Int64Ty, std::abs(AddRecStep));
       assert(DimInfo.Start && DimInfo.End && DimInfo.Step &&
           "Dimension bounds and step must be specified!");
-      if (StartValue + StepValue * (TripCount - 2) >= DimInfo.DimSize &&
-          DimensionN != 0) {
+      if (isa<SCEVConstant>(DimInfo.End) &&
+          cast<SCEVConstant>(DimInfo.End)->getAPInt().
+            getSExtValue() >= DimInfo.DimSize && DimensionN != 0) {
         LLVM_DEBUG(dbgs() << "[AGGREGATE] Array index out of bounds.");
         break;
       }

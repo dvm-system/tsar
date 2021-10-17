@@ -29,6 +29,7 @@
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 namespace tsar {
 
@@ -60,6 +61,32 @@ struct MemoryLocationRange {
     inline bool operator==(const Dimension &Other) const {
       return Start == Other.Start && End == Other.End && Step == Other.Step &&
              DimSize == Other.DimSize;
+    }
+    inline void print(llvm::raw_ostream &OS, bool IsDebug = false) const {
+      auto PrintSCEV = [](const llvm::SCEV *Expr, llvm::raw_ostream &OS) {
+        if (!Expr)
+          OS << "(nullptr)";
+        else
+          Expr->print(OS);
+      };
+      if (IsDebug) {
+        OS << "{Start: ";
+        PrintSCEV(Start, OS);
+        OS << ", End: ";
+        PrintSCEV(End, OS);
+        OS << ", Step: ";
+        PrintSCEV(Step, OS);
+        OS << ", DimSize: " << DimSize << "}";
+      } else {
+        OS << "[";
+        PrintSCEV(Start, OS);
+        OS << ":";
+        PrintSCEV(End, OS);
+        OS << ":";
+        PrintSCEV(Step, OS);
+        OS << "," << DimSize;
+        OS << "]";
+      }
     }
   };
 
@@ -227,6 +254,18 @@ llvm::Optional<MemoryLocationRange> intersect(
     llvm::SmallVectorImpl<MemoryLocationRange> *LC = nullptr,
     llvm::SmallVectorImpl<MemoryLocationRange> *RC = nullptr,
     unsigned Threshold = 10);
+
+/// TODO: description.
+/// Returns distance between LHS and RHS.
+inline llvm::Optional<int64_t> compareSCEVs(const llvm::SCEV *LHS,
+                                            const llvm::SCEV *RHS,
+                                            llvm::ScalarEvolution *SE) {
+  assert(SE && "ScalarEvolution must be specified!");
+  assert(LHS && RHS && "SCEV must be specified!");
+  if (auto Const = llvm::dyn_cast<llvm::SCEVConstant>(SE->getMinusSCEV(LHS, RHS)))
+    return Const->getAPInt().getSExtValue();
+  return llvm::None;
+}
 }
 
 namespace llvm {
