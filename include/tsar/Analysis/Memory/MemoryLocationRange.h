@@ -168,7 +168,7 @@ struct MemoryLocationRange {
       DimList == Other.DimList && Kind == Other.Kind;
   }
 
-  llvm::StringRef getKindAsString() const {
+  std::string getKindAsString() const {
     auto append = [](const std::string &What, std::string &To) {
       if (!To.empty())
         To += " | ";
