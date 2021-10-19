@@ -18,9 +18,9 @@ set_property(TARGET TSARTool TSARSupport TSARAnalysis TSARAnalysisReader
   TSARUnparse TSARTransformAST PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 if (BUILD_APC)
-	set_property(TARGET APC APCCore APCDirectiveAnalyzer APCDistribution
-	  APCGraphLoopsBase APCGraphCall APCLoopAnalyzer APCUtils
-		PROPERTY POSITION_INDEPENDENT_CODE ON)
+ set_property(TARGET APC APCCore APCDirectiveProcessing APCDistribution
+   APCGraphLoopsBase APCGraphCall APCUtils
+   PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (FLANG_FOUND)
