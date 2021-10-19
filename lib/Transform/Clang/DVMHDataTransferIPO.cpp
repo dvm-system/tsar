@@ -1200,18 +1200,20 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
     for (auto *ToReplace : ConservativeReplacements)
       mReplacementFor.back().get<Sibling>().push_back(
           cast<ParallelLevel>(ToReplace));
-  } else if (!mReplacementFor.back().get<Sibling>().empty()) {
-    for (auto *PL : mReplacementFor.back().get<Sibling>())
-      for (auto *ToReplace : mReplacementFor.back().get<Hierarchy>()) {
-        PL->child_insert(ToReplace);
-        ToReplace->parent_insert(PL);
-      }
-    for (auto *PL : ConservativeReplacements) {
-      if (PL->isFinal())
-        continue;
-      for (auto *ToReplace : mReplacementFor.back().get<Sibling>()) {
-        cast<ParallelLevel>(PL)->child_insert(ToReplace);
-        ToReplace->parent_insert(PL);
+  } else {
+    if (!mReplacementFor.back().get<Sibling>().empty()) {
+      for (auto *PL : mReplacementFor.back().get<Sibling>())
+        for (auto *ToReplace : mReplacementFor.back().get<Hierarchy>()) {
+          PL->child_insert(ToReplace);
+          ToReplace->parent_insert(PL);
+        }
+      for (auto *PL : ConservativeReplacements) {
+        if (PL->isFinal())
+          continue;
+        for (auto *ToReplace : mReplacementFor.back().get<Sibling>()) {
+          cast<ParallelLevel>(PL)->child_insert(ToReplace);
+          ToReplace->parent_insert(PL);
+        }
       }
     }
     mReplacementFor.pop_back();
