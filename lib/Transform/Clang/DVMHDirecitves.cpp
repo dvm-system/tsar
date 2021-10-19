@@ -40,6 +40,18 @@ PragmaParallel *tsar::dvmh::isParallel(const Loop *L,
   return nullptr;
 }
 
+std::pair<PragmaParallel *, Loop *>
+tsar::dvmh::isInParallelNest(const Instruction &I, const LoopInfo &LI,
+                             Parallelization &PI) {
+  auto *L{LI.getLoopFor(I.getParent())};
+  while (L) {
+    if (auto *P{isParallel(L, PI)})
+      return std::pair{P, L};
+    L = L->getParentLoop();
+  }
+  return std::pair{nullptr, nullptr};
+}
+
 unsigned tsar::dvmh::processRegularDependencies(
     ObjectID LoopID, const SCEVConstant *ConstStep,
     const ClangDependenceAnalyzer::ASTRegionTraitInfo &ASTDepInfo,

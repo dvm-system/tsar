@@ -42,6 +42,7 @@
 namespace llvm {
 class Loop;
 class SCEVConstant;
+class Instruction;
 }
 
 namespace tsar {
@@ -311,6 +312,12 @@ private:
 /// has been parallelized.
 PragmaParallel *isParallel(const llvm::Loop *L,
                            Parallelization &ParallelizationInfo);
+
+/// Return parallelization directive and an outermost loop in a parallel nest
+/// if a specified instruction belongs to any parallel nest.
+std::pair<PragmaParallel *, llvm::Loop *>
+isInParallelNest(const llvm::Instruction &I, const llvm::LoopInfo &LI,
+                 Parallelization &PI);
 
 /// Build across clauses for a specified loop.
 ///
