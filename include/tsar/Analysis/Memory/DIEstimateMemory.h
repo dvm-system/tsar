@@ -524,6 +524,10 @@ public:
   DIAliasNode & operator=(const DIAliasNode &) = delete;
   DIAliasNode & operator=(DIAliasNode &&) = delete;
 
+
+  DIAliasTree *getAliasTree() noexcept { return mAT; }
+  const DIAliasTree *getAliasTree() const noexcept { return mAT; }
+
   /// Returns the kind of this node.
   Kind getKind() const noexcept { return mKind; }
 
@@ -555,7 +559,9 @@ protected:
   friend class DIAliasMemoryNode;
 
   /// Creates an empty node of a specified kind `K`.
-  explicit DIAliasNode(Kind K) : mKind(K) {};
+  explicit DIAliasNode(DIAliasTree *AT, Kind K) : mAT(AT), mKind(K) {
+    assert(AT && "Alias tree must not be null!");
+  };
 
   /// Specifies a parent for this node.
   void setParent(DIAliasNode &Parent) {
@@ -565,6 +571,7 @@ protected:
     mParent->mChildren.push_back(*this);
   }
 
+  DIAliasTree *mAT;
   Kind mKind;
   DIAliasNode *mParent = nullptr;
   ChildList mChildren;
@@ -582,7 +589,7 @@ private:
   friend class DIAliasTree;
 
   /// Default constructor.
-  DIAliasTopNode() : DIAliasNode(KIND_TOP) {}
+  DIAliasTopNode(DIAliasTree *AT) : DIAliasNode(AT, KIND_TOP) {}
 };
 
 class DIAliasMemoryNode : public DIAliasNode {
@@ -627,7 +634,7 @@ protected:
   friend DIAliasTree;
 
    /// Default constructor.
-  explicit DIAliasMemoryNode(Kind K) : DIAliasNode(K) {
+  explicit DIAliasMemoryNode(DIAliasTree *AT, Kind K) : DIAliasNode(AT, K) {
     assert(K == KIND_ESTIMATE || K == KIND_UNKNOWN &&
       "Alias memory node must be estimate or unknown only!");
   }
@@ -672,7 +679,8 @@ private:
   friend DIAliasTree;
 
   /// Default constructor.
-  explicit DIAliasEstimateNode() : DIAliasMemoryNode(KIND_ESTIMATE) {}
+  explicit DIAliasEstimateNode(DIAliasTree *AT)
+      : DIAliasMemoryNode(AT, KIND_ESTIMATE) {}
 };
 
 /// This represents information of accesses to unknown memory.
@@ -687,7 +695,8 @@ private:
   friend DIAliasTree;
 
   /// Default constructor.
-  explicit DIAliasUnknownNode() : DIAliasMemoryNode(KIND_UNKNOWN) {}
+  explicit DIAliasUnknownNode(DIAliasTree *AT)
+      : DIAliasMemoryNode(AT, KIND_UNKNOWN) {}
 };
 
 /// This uses MDNode * which represents DIMemory * to store and to search memory
