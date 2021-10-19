@@ -237,7 +237,17 @@ public:
 
   PragmaGetActual(bool IsRequired, bool IsFinal = false)
       : PragmaData(DirectiveId::DvmGetActual, IsRequired, IsFinal) {}
+};
 
+class PragmaRemoteAccess : public PragmaData {
+public:
+  static bool classof(const ParallelItem *Item) noexcept {
+    return Item->getKind() ==
+           static_cast<unsigned>(DirectiveId::DvmRemoteAccess);
+  }
+
+  PragmaRemoteAccess(bool IsRequired, bool IsFinal = false)
+      : PragmaData(DirectiveId::DvmRemoteAccess, IsRequired, IsFinal) {}
 };
 
 class PragmaRealign : public ParallelItem {

@@ -227,25 +227,30 @@ static inline void addVarList(
   Clause.push_back(')');
 }
 
-static inline unsigned addVarList(const SortedVarListT &VarInfoList,
+static inline void addVar(const VariableT &V,
+                              SmallVectorImpl<char> &Clause) {
+  auto Name{V.get<AST>()->getName()};
+  Clause.append(Name.begin(), Name.end());
+}
+
+template<typename AddT>
+static inline unsigned addVarList(const SortedVarListT &VarInfoList, AddT &&Add,
     SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
   auto name = [](auto &V) { return V.template get<AST>()->getName(); };
   auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
-  auto N{I->template get<AST>()->getName()};
-  Clause.append(N.begin(), N.end());
+  Add(*I, Clause);
   for (++I; I != EI; ++I) {
     Clause.append({ ',', ' ' });
-    auto N{I->template get<AST>()->getName()};
-    Clause.append(N.begin(), N.end());
+    Add(*I, Clause);
   }
   Clause.push_back(')');
   return Clause.size();
 }
 
-template <typename FilterT>
-static inline unsigned addVarList(const SortedVarListT &VarInfoList, FilterT &&F,
-    SmallVectorImpl<char> &Clause) {
+template <typename FilterT, typename AddT>
+static inline unsigned addVarList(const SortedVarListT &VarInfoList,
+    FilterT &&F, AddT &&Add, SmallVectorImpl<char> &Clause) {
   unsigned Count{0};
   Clause.push_back('(');
   auto Itr{VarInfoList.begin()}, ItrE{VarInfoList.end()};
@@ -255,14 +260,12 @@ static inline unsigned addVarList(const SortedVarListT &VarInfoList, FilterT &&F
     Clause.push_back(')');
     return Count;
   }
-  auto Name{Itr->get<AST>()->getName()};
-  Clause.append(Name.begin(), Name.end());
+  Add(*Itr, Clause);
   ++Count;
   for (++Itr; Itr != ItrE; ++Itr)
     if (F(*Itr)) {
       Clause.append({',', ' '});
-      auto Name{Itr->get<AST>()->getName()};
-      Clause.append(Name.begin(), Name.end());
+      Add(*Itr, Clause);
       ++Count;
     }
   Clause.push_back(')');
@@ -273,7 +276,7 @@ static inline void addClauseIfNeed(StringRef Name, const SortedVarListT &Vars,
     SmallVectorImpl<char> &PragmaStr) {
   if (!Vars.empty()) {
     PragmaStr.append(Name.begin(), Name.end());
-    addVarList(Vars, PragmaStr);
+    addVarList(Vars, addVar, PragmaStr);
   }
 }
 
@@ -667,9 +670,15 @@ static bool pragmaDataStr(FilterT Filter, const ParallelItemRef &PDRef,
   getPragmaText(static_cast<DirectiveId>(PD->getKind()), Str);
   // Remove the last '\n'.
   Str.pop_back();
+  auto add = !isa<PragmaRemoteAccess>(PD)
+                 ? addVar
+                 : [](const VariableT &V, SmallVectorImpl<char> &Clause) {
+                     addVar(V, Clause);
+                     Clause.append({'[', ']'});
+                   };
   if constexpr (std::is_same_v<decltype(Filter), std::true_type>)
-    addVarList(PD->getMemory(), Str);
-  else if (addVarList(PD->getMemory(), std::move(Filter), Str) == 0)
+    addVarList(PD->getMemory(), add, Str);
+  else if (addVarList(PD->getMemory(), std::move(Filter), add, Str) == 0)
     return false;
   return true;
 }
@@ -968,6 +977,34 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
         PD->actualize();
       else
         PD->skip();
+    }
+  }
+  for (auto &&[Position, Insertion] : PragmasToInsert) {
+    if (Insertion.Before.empty())
+      continue;
+    stable_sort(Insertion.Before, [](auto &LHS, auto &RHS) {
+      return isa<PragmaRemoteAccess>(std::get<ParallelItem *>(LHS)) &&
+        !isa<PragmaRemoteAccess>(std::get<ParallelItem *>(RHS));
+    });
+    if (auto Remote{dyn_cast<PragmaRemoteAccess>(
+            std::get<ParallelItem *>(*Insertion.Before.begin()))}) {
+      for (auto I{Insertion.Before.begin() + 1}, EI{Insertion.Before.end()};
+           I != EI && isa<PragmaRemoteAccess>(std::get<ParallelItem *>(*I));
+           ++I) {
+        auto R{cast<PragmaRemoteAccess>(std::get<ParallelItem *>(*I))};
+        Remote->getMemory().insert(R->getMemory().begin(),
+                                   R->getMemory().end());
+        // TODO (kaniandr@gmail.com): Do not remove this remote_access
+        // directive. It cannot be removed from ParalleizationInfo, otherwise
+        // the DefferedPragmas map will be invalidated because it uses iterator
+        // as a key. May be we should not store iterators in DefferedPragmas
+        // map. Note, that each value from the DefferedPragmas map should be
+        // stored in the PragmasToInsert collection, so do not remote this
+        // remote_access directive from the Insertion.Before.
+        Remote->child_insert(R);
+        R->parent_insert(Remote);
+        R->skip();
+      }
     }
   }
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: optimized replacement tree:\n";
