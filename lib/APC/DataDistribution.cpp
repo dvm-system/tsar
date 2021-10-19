@@ -24,11 +24,13 @@
 
 #include "APCContextImpl.h"
 #include "AstWrapperImpl.h"
+#include "tsar/ADT/SpanningTreeRelation.h"
 #include "tsar/Analysis/AnalysisServer.h"
 #include "tsar/Analysis/AnalysisSocket.h"
 #include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/DIArrayAccess.h"
+#include "tsar/Analysis/Memory/DIClientServerInfo.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/GlobalsAccess.h"
@@ -169,6 +171,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCDataDistributionPass, "apc-data-distribution",
    DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_IN_GROUP_INFO(APCDataDistributionPassInfo);
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
+  INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCDataDistributionProvider)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
@@ -185,6 +188,7 @@ ModulePass * llvm::createAPCDataDistributionPass() {
 
 void APCDataDistributionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<APCContextWrapper>();
+  AU.addRequired<AnalysisSocketImmutableWrapper>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<APCDataDistributionProvider>();
   AU.addRequired<GlobalOptionsImmutableWrapper>();
@@ -269,15 +273,17 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                                        unsigned DimIdx, apc::ArrayRefExp *Expr,
                                        apc::ArrayInfo *APCArrayAccesses,
                                        apc::REMOTE_TYPE RT = REMOTE_TRUE) {
-        APCArrayAccesses->unrecReadOps[DimIdx] = true;
-        auto [Itr, IsNew] =
-            APCArrayAccesses->arrayAccessUnrec.try_emplace(Expr);
-        if (IsNew) {
-          Itr->second.first = 0;
-          Itr->second.second.resize(NumberOfSubscripts, REMOTE_NONE);
-        }
-        Itr->second.second[DimIdx] |= RT;
-      };
+    if (RT != REMOTE_FALSE) {
+      LLVM_DEBUG(dbgs() << "[APC]: register unknown read operation\n");
+      APCArrayAccesses->unrecReadOps[DimIdx] = true;
+    }
+    auto [Itr, IsNew] = APCArrayAccesses->arrayAccessUnrec.try_emplace(Expr);
+    if (IsNew) {
+      Itr->second.first = 0;
+      Itr->second.second.resize(NumberOfSubscripts, REMOTE_NONE);
+    }
+    Itr->second.second[DimIdx] |= RT;
+  };
   for (auto &F : M) {
     auto *FI = APCCtx.findFunction(F);
     if (!FI)
@@ -325,6 +331,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       assert(FI && "Function must be registered!");
       Loops[FI->fileName].get<apc::ArrayRefExp>().push_back(AccessExpr);
     }
+    LLVM_DEBUG(dbgs() << "[APC]: explore an access to "
+                      << APCArray->GetShortName() << " in loop at "
+                      << Scope->lineNum << "\n");
     for (unsigned DimIdx = 0, DimIdxE = Access.size(); DimIdx < DimIdxE;
          ++DimIdx) {
       auto AffineAccess = dyn_cast_or_null<DIAffineSubscript>(Access[DimIdx]);
@@ -368,8 +377,6 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         continue;
       }
       ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
-      LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: search for accesses to "
-                        << APCArray->GetShortName() << "\n");
       auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
       auto LpStmt{cast_or_null<apc::LoopStatement>(APCLoop->loop)};
       decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
@@ -412,9 +419,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       }
       APCArray->SetMappedDim(AffineAccess->getDimension());
       auto *APCArrayAccesses{findOrInsert(APCLoop, APCArray)};
-      LLVM_DEBUG(dbgs() << "[APC DATA DISTRIBUTION]: dimension " << DimIdx
-                        << " subscript " << ABPair.first << " * I + "
-                        << ABPair.second << " access type";
+      LLVM_DEBUG(dbgs() << "[APC]: dimension " << DimIdx << " subscript "
+                        << ABPair.first << " * I + " << ABPair.second
+                        << " access type";
                  if (!Access.isReadOnly()) dbgs() << " write";
                  if (!Access.isWriteOnly()) dbgs() << " read"; dbgs() << "\n");
       if (!Access.isReadOnly())
@@ -517,7 +524,18 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         A->SetDeclSymbol(APCSymbol);
       }
     }
+#ifdef LLVM_DEBUG
+    auto dotGraphLog = [&APCRegion, &ReducedG, &AllArrays]() {
+      SmallString<256> FName{"graph_reduced_with_templ_reg"};
+      Twine(APCRegion.GetId()).toVector(FName);
+      FName += ".dot";
+      ReducedG.CreateGraphWiz(FName.c_str(),
+                              std::vector<std::tuple<int, int, attrType>>(),
+                              AllArrays, true);
+    };
+#endif
     LLVM_DEBUG(print(dbgs(), &M));
+    LLVM_DEBUG(dotGraphLog());
     // Build computation distribution.
     createParallelDirectives(Accesses, Regions, FormalToActual, Msgs);
     UniteNestedDirectives(OuterLoops);
@@ -649,7 +667,8 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                   FormalToActual)};
               for (auto &&[Str, Expr] : RemoteList) {
                 dvmh::Align Align;
-                Align.Target = Expr->getArray()->GetDeclSymbol()->getMemory();
+                auto S{Expr->getArray()->GetDeclSymbol()};
+                Align.Target = S->getVariable(F).getValue();
                 Align.Relation.resize(Expr->size());
                 for (unsigned I = 0, EI = Expr->size(); I < EI; ++I) {
                   if (Expr->isConstantSubscript(I))
@@ -722,18 +741,16 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
             Dir = nullptr;
           }
         }
-        all_of(std::get<DirectiveList>(DirList),
-               [](auto *Dir) { return Dir == nullptr; });
         assert(all_of(std::get<DirectiveList>(DirList),
                       [](auto *Dir) { return Dir == nullptr; }) &&
                "Memory leak!");
       }
     }
   }
+  std::set<apc::Array *> DistributedArrays;
 #ifndef LLVM_DEBUG
   try {
 #endif
-    std::set<apc::Array *> DistributedArrays;
     copy_if(AllArrays.GetArrays(),
             std::inserter(DistributedArrays, DistributedArrays.end()),
             [](auto *A) { return !A->IsNotDistribute(); });
@@ -744,6 +761,115 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
     return false;
   }
 #endif
+  auto &TLIP{getAnalysis<TargetLibraryInfoWrapperPass>()};
+  for (auto &ClientF : M) {
+    auto *FI = APCCtx.findFunction(ClientF);
+    if (!FI)
+      continue;
+    auto &TLI{TLIP.getTLI(ClientF)};
+    auto &Provider{getAnalysis<APCDataDistributionProvider>(ClientF)};
+    auto &ClientDIAT{Provider.get<DIEstimateMemoryPass>().getAliasTree()};
+    DIMemoryClientServerInfo ClientServerInfo(ClientDIAT, *this, ClientF);
+    auto &F{cast<Function>(*ClientServerInfo.getValue(&ClientF))};
+    SmallPtrSet<const DIAliasNode *, 8> DistinctMemory;
+    for (auto &DIM :
+         make_range(ClientServerInfo.DIAT->memory_begin(), ClientServerInfo.DIAT->memory_end()))
+      if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)};
+          DIUM && DIUM->isDistinct())
+        DistinctMemory.insert(DIUM->getAliasNode());
+    SpanningTreeRelation<const DIAliasTree *> STR{ClientServerInfo.DIAT};
+    DenseMap<const DIAliasNode *, SmallVector<VariableT, 1>> ToDistribute;
+    for (auto *A : DistributedArrays) {
+      if (A->IsTemplate())
+        continue;
+      auto *S{A->GetDeclSymbol()};
+      auto Var{S->getVariable(&ClientF)};
+      if (!Var)
+        continue;
+      auto DIMI{ClientServerInfo.getMemory(&*Var->get<MD>())};
+      auto I{ToDistribute.try_emplace(DIMI->getAliasNode()).first};
+      if (!is_contained(I->second, *Var))
+        I->second.push_back(std::move(*Var));
+    }
+    auto &LI{Provider.get<LoopInfoWrapperPass>().getLoopInfo()};
+    Optional<SmallVector<dvmh::VariableT, 8>> ToAccessDistinct;
+    for (auto &I : instructions(&ClientF)) {
+      // Do not attach remote_access to calls. It has to be inserted in the body
+      // of callee. If body is not available we cannot distribute an accessed
+      // array. This check must be performed earlier.
+      if (isa<CallBase>(I))
+        continue;
+      if (isInParallelNest(I, LI, ParallelCtx.getParallelization()).first)
+        continue;
+      SmallVector<dvmh::VariableT, 8> ToAccess;
+      auto addToAccessIfNeed = [&STR, &ToDistribute](auto *CurrentAN,
+                                                             auto &ToAccess) {
+        if (auto Itr{find_if(ToDistribute,
+                             [&STR, CurrentAN](auto &Data) {
+                               return !STR.isUnreachable(Data.first,
+                                                               CurrentAN);
+                             })};
+            Itr != ToDistribute.end())
+          ToAccess.append(Itr->second.begin(), Itr->second.end());
+      };
+      bool IsDistinctAccessed{false};
+      for_each_memory(
+          I, TLI,
+          [&DL = ClientF.getParent()->getDataLayout(), &Provider,
+           &ClientServerInfo, &ToDistribute, &addToAccessIfNeed, &ToAccess,
+           &IsDistinctAccessed](Instruction &I, MemoryLocation &&Loc,
+                                unsigned OpIdx, AccessInfo IsRead,
+                                AccessInfo IsWrite) {
+            if (IsRead == AccessInfo::No)
+              return;
+            auto &AT{Provider.get<EstimateMemoryPass>().getAliasTree()};
+            auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
+            auto *EM{AT.find(Loc)};
+            assert(EM && "Estimate memory must be presented in alias tree!");
+            auto CToSDIM{ ClientServerInfo.findFromClient(*EM, DL, DT) };
+            if (!CToSDIM.get<Origin>()) {
+              IsDistinctAccessed = true;
+              return;
+            }
+            addToAccessIfNeed(CToSDIM.get<Clone>()->getAliasNode(), ToAccess);
+          },
+          [&Provider, &ClientServerInfo, &addToAccessIfNeed, &ToAccess,
+           &IsDistinctAccessed](Instruction &I, AccessInfo IsRead,
+                                AccessInfo IsWrite) {
+            if (IsRead == AccessInfo::No)
+              return;
+            auto &AT{Provider.get<EstimateMemoryPass>().getAliasTree()};
+            auto *AN{AT.findUnknown(I)};
+            if (!AN)
+              return;
+            auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
+            auto CToSDIM{ClientServerInfo.findFromClient(
+                I, DT, tsar::DIUnknownMemory::NoFlags)};
+            if (!CToSDIM.get<Origin>()) {
+              IsDistinctAccessed = true;
+              return;
+            }
+            addToAccessIfNeed(CToSDIM.get<Clone>()->getAliasNode(), ToAccess);
+          });
+      if (IsDistinctAccessed && !ToAccessDistinct) {
+        ToAccessDistinct.emplace();
+        for (auto *AN : DistinctMemory)
+          addToAccessIfNeed(AN, *ToAccessDistinct);
+      }
+      if (!ToAccess.empty() ||
+          IsDistinctAccessed && !ToAccessDistinct->empty()) {
+        auto RemoteRef{
+            ParallelCtx.getParallelization().emplace<PragmaRemoteAccess>(
+                I.getParent(), &I, true /*OnEntry*/, false /*IsRequired*/,
+                false /*IsFinal*/)};
+        cast<PragmaRemoteAccess>(RemoteRef)->getMemory().insert(
+            ToAccess.begin(), ToAccess.end());
+        if (IsDistinctAccessed)
+          cast<PragmaRemoteAccess>(RemoteRef)->getMemory().insert(
+              ToAccessDistinct->begin(), ToAccessDistinct->end());
+      }
+    }
+  }
   return false;
 }
 
@@ -764,6 +890,8 @@ void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
   dbgs() << "List of aligns:\n";
   for (auto &Rule : DataDirs.GenAlignsRules())
     OS << "  " << Rule << "\n";
+  for (auto &AR : DataDirs.alignRules)
+    AR.alignArray->GetShadowSpec();
 }
 
 apc::Directive * ParallelDirective::genDirective(File *F,
@@ -775,6 +903,21 @@ apc::Directive * ParallelDirective::genDirective(File *F,
     const uint64_t RegionId,
     const std::map<apc::Array *, std::set<apc::Array *>>
         &ArrayLinksByFuncCalls) {
+#ifdef LLVM_DEBUG
+  auto parallelLog = [CurrLoop]() {
+    dbgs() << "[APC]: generate a parallel directive for ";
+    std::pair<unsigned, unsigned> StartLoc, EndLoc;
+    bcl::restoreShrinkedPair(CurrLoop->lineNum, StartLoc.first,
+                             StartLoc.second);
+    bcl::restoreShrinkedPair(CurrLoop->lineNumAfterLoop, EndLoc.first,
+                             EndLoc.second);
+    dbgs() << "a loop at " << CurrLoop->fileName
+           << format(":[%d:%d,%d:%d](shrink:[%d,%d])\n", StartLoc.first,
+                     StartLoc.second, EndLoc.first, EndLoc.second,
+                     CurrLoop->lineNum, CurrLoop->lineNumAfterLoop);
+  };
+#endif
+  LLVM_DEBUG(parallelLog());
   cast<apc::LoopStatement>(CurrLoop->loop)->scheduleToParallelization();
   auto *DirImpl{new DirectiveImpl{CurrLoop->loop,
                                   std::make_unique<PragmaParallel>(),
@@ -782,6 +925,7 @@ apc::Directive * ParallelDirective::genDirective(File *F,
   auto *Parallel{cast<PragmaParallel>(DirImpl->Pragma.get())};
   const auto &ReadOps{CurrLoop->readOps};
   auto &Clauses{Parallel->getClauses()};
+  auto *Func{cast<apc::LoopStatement>(CurrLoop->loop)->getFunction()};
   SmallVector<apc::LoopGraph *, 4> Nest;
   auto LoopInNest{CurrLoop};
   while (LoopInNest->perfectLoop) {
@@ -816,7 +960,14 @@ apc::Directive * ParallelDirective::genDirective(File *F,
   Clauses.get<dvmh::Align>() = dvmh::Align{};
   auto APCSymbol{MapTo->GetDeclSymbol()};
   assert(APCSymbol && "Unknown array symbol!");
-  Clauses.get<dvmh::Align>()->Target = APCSymbol->getMemory();
+  if (APCSymbol->isTemplate())
+    Clauses.get<dvmh::Align>()->Target = APCSymbol->getTemplate();
+  else {
+
+    Clauses.get<dvmh::Align>()->Target =
+      APCSymbol->getVariable(Func).getValue();
+
+  }
   auto &OnTo{arrayRef2->IsLoopArray() ? on : on2};
   auto LpStmt{cast<apc::LoopStatement>(CurrLoop->loop)};
   auto &Start{LpStmt->getStart()};
@@ -883,9 +1034,11 @@ apc::Directive * ParallelDirective::genDirective(File *F,
         continue;
       apc::Array *A{AllArrays.GetArrayByName(across[I].first.second)};
       assert(A && "Array must be known!");
+      assert(!A->IsTemplate() &&
+             "Template cannot be referenced in across clause!");
       auto AcrossItr{
           Clauses.get<trait::Dependence>()
-              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
+              .try_emplace(A->GetDeclSymbol()->getVariable(Func).getValue())
               .first};
       for (unsigned Dim = 0, DimE = across[I].second.size(); Dim < DimE;
            ++Dim) {
@@ -913,9 +1066,11 @@ apc::Directive * ParallelDirective::genDirective(File *F,
         continue;
       apc::Array *A{AllArrays.GetArrayByName(shadowRenew[I].first.second)};
       assert(A && "Array must be known!");
+      assert(!A->IsTemplate() &&
+             "Template cannot be referenced in shadow_renew clause!");
       auto ShadowItr{
           Clauses.get<Shadow>()
-              .try_emplace(std::get<VariableT>(A->GetDeclSymbol()->getMemory()))
+              .try_emplace(A->GetDeclSymbol()->getVariable(Func).getValue())
               .first};
       for (unsigned Dim = 0, DimE = shadowRenew[I].second.size(); Dim < DimE;
            ++Dim) {
@@ -979,15 +1134,17 @@ createRealignRules(Statement *S, const uint64_t RegionId, File *F,
   sort(SortedArrays, [](auto &LHS, auto &RHS) {
     return LHS->GetShortName() < RHS->GetShortName();
   });
+  auto LpStmt{cast<apc::LoopStatement>(S)};
+  auto *Func{LpStmt->getFunction()};
   for (auto *A: SortedArrays) {
     auto *RealRef{getRealArrayRef(A, RegionId, ArrayLinksByFuncCalls)};
     auto Rules{RealRef->GetAlignRulesWithTemplate(RegionId)};
     auto Links{RealRef->GetLinksWithTemplate(RegionId)};
     auto *TplArray{RealRef->GetTemplateArray(RegionId)};
-    auto makeRealign = [A, &Links, &Rules,
+    auto makeRealign = [A, Func, &Links, &Rules,
                         DimSize = TplArray->GetDimSize()](Template *With) {
       auto Realign{std::make_unique<PragmaRealign>(
-          std::get<VariableT>(A->GetDeclSymbol()->getMemory()), A->GetDimSize(),
+          A->GetDeclSymbol()->getVariable(Func).getValue(), A->GetDimSize(),
           With)};
       Realign->with().Relation.resize(DimSize);
       for (unsigned Dim = 0, DimE = A->GetDimSize(); Dim < DimE; ++Dim) {
@@ -1003,11 +1160,11 @@ createRealignRules(Statement *S, const uint64_t RegionId, File *F,
       }
       return Realign;
     };
-    auto Tpl{std::get<Template *>(TplArray->GetDeclSymbol()->getMemory())};
+    auto Tpl{TplArray->GetDeclSymbol()->getTemplate()};
     auto *TplClone{Tpl->getCloneOrCreate(TplCloneName)};
     Res.first.push_back(new DirectiveImpl{S, makeRealign(TplClone), Loc.first});
     Res.second.push_back(
-        new DirectiveImpl{S, makeRealign(Tpl), Loc.second, false});
+        new DirectiveImpl{S, makeRealign(Tpl), Loc.second, nullptr, false});
   }
   return Res;
 }

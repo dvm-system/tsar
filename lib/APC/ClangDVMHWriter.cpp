@@ -431,9 +431,9 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   for (auto &AR : DataDirs.alignRules) {
     auto *APCSymbol = AR.alignArray->GetDeclSymbol();
     assert(APCSymbol && "Symbol must not be null!");
-    auto *DIVar = cast<DIEstimateMemory>(
-                      std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
-                      ->getVariable();
+    auto *DIVar =
+        cast<DIEstimateMemory>(APCSymbol->getVariable().get<MD>().front())
+            ->getVariable();
     if (isa<DIGlobalVariable>(DIVar)) {
       GlobalArrays.insert(&AR);
       continue;
@@ -481,8 +481,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     for (auto *AR : Info.second) {
       auto *APCSymbol = AR->alignArray->GetDeclSymbol();
       auto *DIVar = cast<DILocalVariable>(
-          cast<DIEstimateMemory>(
-              std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
+          cast<DIEstimateMemory>(APCSymbol->getVariable().get<MD>().front())
               ->getVariable());
       auto Itr = Matcher.find<MD>(DIVar);
       assert(Itr != Matcher.end() && "Source-level location must be available!");
@@ -498,9 +497,9 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     getAnalysis<ClangDIGlobalMemoryMatcherPass>().getMatcher();
   for (auto *AR : GlobalArrays) {
     auto *APCSymbol = AR->alignArray->GetDeclSymbol();
-    auto *DIVar = cast<DIEstimateMemory>(
-                      std::get<VariableT>(APCSymbol->getMemory()).get<MD>())
-                      ->getVariable();
+    auto *DIVar =
+        cast<DIEstimateMemory>(APCSymbol->getVariable().get<MD>().front())
+            ->getVariable();
     auto Itr = GlobalMatcher.find<MD>(DIVar);
     assert(Itr != GlobalMatcher.end() &&
       "Source-level location must be available!");
@@ -513,8 +512,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   for (auto &&[Tpl, Variant] : DataDirs.distrRules) {
     if (!Tpl->IsTemplate())
       continue;
-    TemplatesMap.try_emplace(
-        std::get<Template *>(Tpl->GetDeclSymbol()->getMemory()), Tpl);
+    TemplatesMap.try_emplace(Tpl->GetDeclSymbol()->getTemplate(), Tpl);
   }
   auto visitRealign = [&TemplatesMap, &Templates](PragmaRealign *Realign,
                                                   FileID FID) {

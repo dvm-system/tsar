@@ -45,9 +45,16 @@ class APCContext;
 
 class Symbol {
 public:
+  using VariableT = bcl::tagged_pair<
+      bcl::tagged<clang::VarDecl *, tsar::AST>,
+      bcl::tagged<llvm::SmallVector<tsar::WeakDIMemoryHandle, 1>, tsar::MD>>;
+
   explicit Symbol(tsar::APCContext *Ctx, tsar::dvmh::VariableT DIM)
-      : mContext(Ctx), mMemory(DIM) {
+    : mContext(Ctx), mMemory(VariableT{}) {
     assert(Ctx && "Context must not be null!");
+    std::get<VariableT>(mMemory).get<tsar::AST>() = DIM.get<tsar::AST>();
+    std::get<VariableT>(mMemory).get<tsar::MD>().push_back(
+        DIM.get<tsar::MD>());
   }
   explicit Symbol(tsar::APCContext *Ctx, tsar::dvmh::Template *DIM)
       : mContext(Ctx), mMemory(DIM) {
@@ -56,13 +63,42 @@ public:
 
   virtual ~Symbol() {}
 
-  const auto & getMemory() const noexcept { return mMemory; }
+  bool isTemplate() const {
+    return std::holds_alternative<tsar::dvmh::Template *>(mMemory);
+  }
+
+  auto *getTemplate() { return std::get<tsar::dvmh::Template *>(mMemory); }
+  const auto *getTemplate() const {
+    return std::get<tsar::dvmh::Template *>(mMemory);
+  }
+
+  auto &getVariable() { return std::get<VariableT>(mMemory); }
+  const auto &getVariable() const { return std::get<VariableT>(mMemory); }
+
+  llvm::Optional<tsar::dvmh::VariableT>
+  getVariable(const llvm::Function *F) const {
+    assert(F && "Function must be specified!");
+    auto DIMItr{find_if(getVariable().get<tsar::MD>(), [F](auto MH) {
+      return F == &MH->getAliasNode()->getAliasTree()->getFunction();
+    })};
+    if (DIMItr == getVariable().get<tsar::MD>().end())
+      return llvm::None;
+    return tsar::dvmh::VariableT{getVariable().get<tsar::AST>(), *DIMItr};
+  }
+
+  void attachMemoryToVariable(tsar::DIMemory *DIM) {
+    assert(!isTemplate() && "Unable to attach memory to a template!");
+    assert(getVariable().get<tsar::MD>().front()->getAsMDNode() ==
+               DIM->getAsMDNode() &&
+           "Memory locations must have the same raw implementation!");
+    std::get<VariableT>(mMemory).get<tsar::MD>().push_back(DIM);
+  }
 
   tsar::APCContext *getContext() noexcept { return mContext; }
   const tsar::APCContext *getContext() const noexcept { return mContext; }
 private:
   tsar::APCContext *mContext;
-  std::variant<tsar::dvmh::VariableT, tsar::dvmh::Template *> mMemory;
+  std::variant<VariableT, tsar::dvmh::Template *> mMemory;
 };
 
 class File {};

@@ -217,6 +217,15 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
+    if (auto *A{APCCtx.findArray(ClientRawDIM)}) {
+      auto S{A->GetDeclSymbol()};
+      // This pass may be executed in analysis mode. It depends on -print-only
+      // and -print-step options. In case of parallelization pass manager must
+      // invokes this pass only once for each function.
+      mMultipleLaunch |= S->getVariable(&Func).hasValue();
+      S->attachMemoryToVariable(&ClientDIEM);
+      continue;
+    }
     auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
     assert(DIMemoryItr != DIMatcher->end() &&
            "Unknown AST-level representation of an array!");
@@ -234,9 +243,7 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       Filename.str(), ShrinkedDeclLoc, std::move(DeclScope), APCSymbol, false,
       false, { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
     if (!APCCtx.addArray(ClientRawDIM, APCArray)) {
-      // This pass may be executed in analysis mode. It depends on -print-only
-      // and -print-step options. In case of parallelization pass manager must
-      // invokes this pass only once for each function.
+      llvm_unreachable("Unable to add new array to an APC context!");
       delete APCArray;
       mArrays.push_back(APCCtx.findArray(ClientRawDIM));
       mMultipleLaunch = true;
