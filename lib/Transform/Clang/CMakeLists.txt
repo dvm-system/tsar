@@ -1,7 +1,7 @@
 set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp Inline.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp Format.cpp OpenMPAutoPar.cpp
   SharedMemoryAutoPar.cpp DVMHSMAutoPar.cpp StructureReplacement.cpp
-  LoopInterchange.cpp LoopReversal.cpp)
+  LoopInterchange.cpp LoopReversal.cpp RemoveFirstPrivate.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
