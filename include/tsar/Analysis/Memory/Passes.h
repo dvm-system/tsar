@@ -234,5 +234,9 @@ ModulePass * createGlobalsAccessCollector();
 // Initialize a pass to access list of explicit accesses to global
 // values in a function.
 void initializeGlobalsAccessWrapperPass(PassRegistry &Registry);
+
+FunctionPass *createAssumptionInfoPass();
+
+void initializeAssumptionInfoPassPass(PassRegistry& Registry);
 }
 #endif//TSAR_MEMORY_ANALYSIS_PASSES_H

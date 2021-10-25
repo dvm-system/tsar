@@ -2,7 +2,7 @@
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2021 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,8 +23,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/IR/RedundantEdgeElimination.h"
+#include "tsar/Transform/IR/Passes.h"
 #include <bcl/utility.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
@@ -34,6 +35,20 @@
 #define DEBUG_TYPE "red-edge"
 
 using namespace llvm;
+
+namespace {
+class RedundantEdgeEliminationPass :
+    public FunctionPass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  RedundantEdgeEliminationPass() : FunctionPass(ID) {
+    initializeRedundantEdgeEliminationPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnFunction(Function &F) override;
+};
+}
 
 char RedundantEdgeEliminationPass::ID = 0;
 
@@ -53,10 +68,12 @@ bool RedundantEdgeEliminationPass::runOnFunction(Function &F) {
       if (auto *BI = dyn_cast<BranchInst>(TI)) {
         LLVM_DEBUG(dbgs() << "[REDUNDANT EDGE] instruction: "; BI->dump());
         if (BI->isConditional() && isa<ConstantInt>(BI->getCondition())) {
+          auto IsCondTrue = !cast<ConstantInt>(BI->getCondition())->equalsInt(0);
+          BI->getSuccessor(IsCondTrue ? 1 : 0)->removePredecessor(&BB);
           ReplaceInstWithInst(
-              BI, cast<ConstantInt>(BI->getCondition())->equalsInt(0) ?
-                  BranchInst::Create(BI->getSuccessor(1)) :
-                  BranchInst::Create(BI->getSuccessor(0)));
+              BI, IsCondTrue ?
+                  BranchInst::Create(BI->getSuccessor(0)) :
+                  BranchInst::Create(BI->getSuccessor(1)));
           LLVM_DEBUG(dbgs() << "[REDUNDANT EDGE] after: "; BB.dump());
         }
       }

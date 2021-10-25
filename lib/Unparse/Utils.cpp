@@ -31,6 +31,7 @@
 #include "tsar/Unparse/DIUnparser.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Unparse/VariableLocation.h"
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Local.h>
@@ -91,13 +92,14 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   O << ">";
   if (IsDebug) {
     if (!Loc.DimList.empty()) {
-      O << " [" << Loc.Ptr << "]";
       O << ", {";
       for (auto &Dimension : Loc.DimList)
         Dimension.print(O, true);
       O << "}";
     }
     O << " (" << Loc.getKindAsString() << ") ";
+    O << " [" << Loc.Ptr << "]";
+    O << " [Underlying: " << getUnderlyingObject(Loc.Ptr, 0) << "]";
   }
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,

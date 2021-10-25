@@ -31,6 +31,7 @@
 namespace llvm {
 class ScalarEvolution;
 class SCEV;
+class SCEVAddRecExpr;
 }
 
 namespace tsar {
@@ -74,5 +75,35 @@ const llvm::SCEV* findGCD(llvm::ArrayRef<const llvm::SCEV *> Expressions,
 ///
 /// This function implements Sieve of Atkin with cache.
 std::vector<std::size_t> countPrimeNumbers(std::size_t Bound);
+
+/// If LHS and RHS have the same sequence of type casts, add them and cast 
+/// the result back to the original type.
+const llvm::SCEV *addSCEVAndCast(const llvm::SCEV *LHS,
+                                 const llvm::SCEV *RHS,
+                                 llvm::ScalarEvolution *SE);
+
+/// Add 1 to the expression S.
+const llvm::SCEV *addOneToSCEV(const llvm::SCEV *S, llvm::ScalarEvolution *SE);
+
+/// Subtract 1 from the expression S.
+const llvm::SCEV *subtractOneFromSCEV(const llvm::SCEV *S,
+                                      llvm::ScalarEvolution *SE);
+
+/// If LHS and RHS have the same sequence of type casts, subtract them and cast 
+/// the result back to the original type.
+const llvm::SCEV *subtractSCEVAndCast(const llvm::SCEV *LHS,
+                                      const llvm::SCEV *RHS,
+                                      llvm::ScalarEvolution *SE);
+
+/// Returns the distance between LHS and RHS if it can be calculated.
+llvm::Optional<int64_t> compareSCEVs(const llvm::SCEV *LHS,
+                                     const llvm::SCEV *RHS,
+                                     llvm::ScalarEvolution *SE);
+
+/// Return the value of this chain of recurrences at the specified
+/// iteration number.
+const llvm::SCEV *evaluateAtIteration(const llvm::SCEVAddRecExpr *ARE,
+                                      const llvm::SCEV *It,
+                                      llvm::ScalarEvolution *SE);
 }
 #endif//TSAR_SCEV_UTILS_H

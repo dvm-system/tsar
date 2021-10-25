@@ -52,6 +52,7 @@
 #include <llvm/Pass.h>
 
 namespace llvm {
+class AssumptionCache;
 class DominatorTree;
 class Value;
 class Instruction;
@@ -91,6 +92,11 @@ public:
 
   /// Set of memory locations.
   typedef MemorySet<MemoryLocationRange> LocationSet;
+
+  /// Set of data flow nodes with which memory locations from the 
+  /// ExplicitAccesses set are associated.
+  typedef llvm::SmallDenseMap<const llvm::Value *,
+      llvm::SmallDenseSet<const DFNode *>> ExplicitNodeMap;
 
   /// Returns set of the must defined locations.
   const LocationSet & getDefs() const { return mDefs; }
@@ -209,8 +215,9 @@ public:
     return mUses.insert(Uses.begin(), Uses.end());
   }
 
-  /// TODO: description
-  void updateCollapsedLocations() {
+  /// Replaced collapsed memory locations with its expanded forms which are 
+  /// of kind `Default`.
+  void summarizeCollapsedLocations() {
     LocationSet DestDefs, DestMayDefs, DestUses;
     for (auto &Loc : mDefs) {
       if (Loc.Kind == MemoryLocationRange::LocKind::Collapsed)
@@ -385,6 +392,42 @@ public:
         .second;
   }
 
+  /// Inserts a data flow node associated with a collapsable explicit access
+  /// ExplLoc. ColLoc is a collapsed memory location created from the ExplLoc. 
+  void addNodeOfCollapsableExplicitAccess(
+      const MemoryLocationRange &ExplLoc,
+      const MemoryLocationRange &ColLoc,
+      const DFNode *N) {
+    assert(ExplLoc.Ptr && "Location pointer must not be null!");
+    assert(ColLoc.Kind == MemoryLocationRange::LocKind::Collapsed &&
+        "Location must be of a `collapsed` kind!");
+    mCollapsableExplicitAccesses.try_emplace(ExplLoc.Ptr).first->second.insert(N);
+  }
+
+  /// Returns a map of collapsable explicit accesses with associated data flow
+  /// nodes.
+  const ExplicitNodeMap & getCollapsableExplicitAccesses() const {
+    return mCollapsableExplicitAccesses;
+  }
+
+  /// Specifies that there are a collapsable explicit access to all collapsable 
+  /// explicit accesses from a specified map.
+  void addCollapsableExplicitAccesses(const ExplicitNodeMap &ENM) {
+    for (auto Itr = ENM.begin(); Itr != ENM.end(); ++Itr) {
+      auto &NodeList = Itr->second;
+      mCollapsableExplicitAccesses.try_emplace(Itr->first).
+          first->second.insert(NodeList.begin(), NodeList.end());
+    }
+  }
+
+  /// Returns a pointer to a set of data flow nodes associated with the memory 
+  /// location Loc if it is collabsable. Returns `nullptr` otherwise.
+  const llvm::SmallDenseSet<const DFNode *> *
+  getNodesOfCollapsableExplicitAccess(const MemoryLocationRange &Loc) const {
+    auto Itr = mCollapsableExplicitAccesses.find(Loc.Ptr);
+    return Itr == mCollapsableExplicitAccesses.end() ? nullptr : &Itr->second;
+  }
+
 private:
   LocationSet mDefs;
   LocationSet mMayDefs;
@@ -395,6 +438,7 @@ private:
   InstructionSet mExplicitUnknowns;
   InstructionSet mAddressUnknowns;
   TransitiveMap mAddressTransitives;
+  ExplicitNodeMap mCollapsableExplicitAccesses;
 };
 
 /// This presents information whether a location has definition after a node
@@ -448,29 +492,32 @@ public:
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
       const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
-      const llvm::DataLayout &DL, const GlobalOptions &GO,
-      DefinedMemoryInfo &DefInfo) :
+      const llvm::DataLayout &DL, const AssumptionMap &AM,
+      const GlobalOptions &GO, DefinedMemoryInfo &DefInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI),
-    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo) {}
+    mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL), mAM(&AM), mGO(&GO),
+    mDefInfo(&DefInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const DFRegionInfo &DFI, const llvm::DominatorTree &DT,
       const DelinearizeInfo &DI, llvm::ScalarEvolution &SE,
-      const llvm::DataLayout &DL, const GlobalOptions &GO,
-      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
+      const llvm::DataLayout &DL, const AssumptionMap &AM,
+      const GlobalOptions &GO, DefinedMemoryInfo &DefInfo,
+      InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mRegionInfo(&DFI), mDT(&DT),
-    mDI(&DI), mSE(&SE), mDL(&DL), mGO(&GO), mDefInfo(&DefInfo),
+    mDI(&DI), mSE(&SE), mDL(&DL), mAM(&AM), mGO(&GO), mDefInfo(&DefInfo),
     mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Creates data-flow framework.
   ReachDFFwk(AliasTree &AT, llvm::TargetLibraryInfo &TLI,
       const llvm::DominatorTree &DT, const DelinearizeInfo &DI,
       llvm::ScalarEvolution &SE, const llvm::DataLayout &DL,
-      const GlobalOptions &GO, DefinedMemoryInfo &DefInfo,
-      InterprocDefUseInfo &InterprocDUInfo) :
+      const AssumptionMap &AM, const GlobalOptions &GO,
+      DefinedMemoryInfo &DefInfo, InterprocDefUseInfo &InterprocDUInfo) :
     mAliasTree(&AT), mTLI(&TLI), mDT(&DT), mDI(&DI), mSE(&SE), mDL(&DL),
-    mGO(&GO), mDefInfo(&DefInfo), mInterprocDUInfo(&InterprocDUInfo) {}
+    mGO(&GO), mAM(&AM), mDefInfo(&DefInfo),
+    mInterprocDUInfo(&InterprocDUInfo) {}
 
   /// Return results of interprocedural analysis or nullptr.
   InterprocDefUseInfo * getInterprocDefUseInfo() noexcept {
@@ -509,6 +556,11 @@ public:
   /// Returns data layout.
   const llvm::DataLayout & getDataLayout() const noexcept { return *mDL; }
 
+  /// Returns assumption map.
+  const AssumptionMap * getAssumptionMap() const noexcept {
+    return mAM;
+  }
+
   /// Returns global options.
   const GlobalOptions & getGlobalOptions() const noexcept { return *mGO; }
 
@@ -525,6 +577,7 @@ private:
   const DelinearizeInfo *mDI;
   llvm::ScalarEvolution *mSE;
   const llvm::DataLayout *mDL;
+  const AssumptionMap *mAM;
   const GlobalOptions *mGO;
 };
 

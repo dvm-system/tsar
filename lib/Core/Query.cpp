@@ -187,6 +187,8 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createMemoryMatcherPass());
   Passes.add(createGlobalsAccessCollector());
   Passes.add(createCallExtractorPass());
+  Passes.add(createRedundantEdgeEliminationPass());
+  Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());
@@ -219,6 +221,8 @@ void addAfterLoopRotateAnalysis(legacy::PassManager &Passes) {
   Passes.add(createMemoryMatcherPass());
   Passes.add(createGlobalsAccessCollector());
   Passes.add(createCallExtractorPass());
+  Passes.add(createRedundantEdgeEliminationPass());
+  Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createGlobalDefinedMemoryPass());
   Passes.add(createGlobalLiveMemoryPass());
   Passes.add(createFunctionMemoryAttrsAnalysis());

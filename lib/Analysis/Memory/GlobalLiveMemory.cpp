@@ -319,18 +319,17 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
     LS->setOut(MayLives);
     LiveDFFwk LiveFwk(IntraLiveInfo, DefInfo, DT);
     solveDataFlowDownward(&LiveFwk, TopRegion);
-    auto ExpandCollapsed = [](LiveSet *LS) {
+    auto ExpandCollapsed = [](LiveSet &LS) {
       typedef MemorySet<MemoryLocationRange> LocationSet;
-      assert(LS && "LiveSet must be specified!");
       LocationSet DestIn, DestOut;
       auto expand = [](const LocationSet &From, LocationSet &To) {
         for (auto Loc : From)
           To.insert(Loc.expand());
       };
-      expand(LS->getIn(), DestIn);
-      expand(LS->getOut(), DestOut);
-      LS->setIn(DestIn);
-      LS->setOut(DestOut);
+      expand(LS.getIn(), DestIn);
+      expand(LS.getOut(), DestOut);
+      LS.setIn(std::move(DestIn));
+      LS.setOut(std::move(DestOut));
     };
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*F);
     for (auto &CallRecord : *CGN) {
@@ -358,9 +357,9 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
             CallLiveOut.insert(MemoryLocationRange(Arg, 0, Loc.Size));
           },
           [](Instruction &, AccessInfo, AccessInfo) {});
-      ExpandCollapsed(CallLS.get());
+      ExpandCollapsed(*CallLS.get());
     }
-    ExpandCollapsed(IntraLiveInfo[TopRegion].get());
+    ExpandCollapsed(*IntraLiveInfo[TopRegion].get());
     Wrapper->try_emplace(F, std::move(IntraLiveInfo[TopRegion]));
   }
   LLVM_DEBUG(visitedFunctionsLog(LiveSetForCalls));

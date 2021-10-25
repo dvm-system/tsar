@@ -26,12 +26,8 @@
 #define TSAR_MEMORY_SET_INFO_H
 
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
+#include "tsar/Support/SCEVUtils.h"
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-
-using llvm::cast;
-using llvm::dyn_cast;
-using llvm::isa;
-using llvm::SCEVConstant;
 
 namespace tsar {
 /// Provide traits for objects stored in a MemorySet.
@@ -243,29 +239,37 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       auto &Right = RHS.DimList[I];
       if (Left == Right)
         continue;
-      assert(isa<SCEVConstant>(Left.Step) && isa<SCEVConstant>(Right.Step) &&
-          "Dimension step must be constant!");
-      if (!isa<SCEVConstant>(Left.Start) || !isa<SCEVConstant>(Left.End) ||
-          !isa<SCEVConstant>(Right.Start) || !isa<SCEVConstant>(Right.End)) {
-        auto CmpLeftStartRightEnd = compareSCEVs(Left.Start, Right.End, SE);
-        auto CmpRightStartLeftEnd = compareSCEVs(Right.Start, Left.End, SE);
-        if (CmpLeftStartRightEnd && (*CmpLeftStartRightEnd == 0 || *CmpLeftStartRightEnd == 1) ||
-            CmpRightStartLeftEnd && (*CmpRightStartLeftEnd == 0 || *CmpRightStartLeftEnd == 1))
+      assert(llvm::isa<llvm::SCEVConstant>(Left.Step) &&
+             llvm::isa<llvm::SCEVConstant>(Right.Step) &&
+             "Dimension step must be constant!");
+      if (!llvm::isa<llvm::SCEVConstant>(Left.Start) ||
+          !llvm::isa<llvm::SCEVConstant>(Left.End) ||
+          !llvm::isa<llvm::SCEVConstant>(Right.Start) ||
+          !llvm::isa<llvm::SCEVConstant>(Right.End)) {
+        auto CmpLSRE = compareSCEVs(Left.Start, Right.End, SE);
+        auto CmpRSLE = compareSCEVs(Right.Start, Left.End, SE);
+        if (Left.Step == Right.Step &&
+            llvm::isa<llvm::SCEVConstant>(Left.Step) &&
+            llvm::cast<llvm::SCEVConstant>(Left.Step)->
+                getAPInt().getSExtValue() == 1 &&
+            CmpLSRE && (*CmpLSRE == 0 || *CmpLSRE == 1) ||
+            CmpRSLE && (*CmpRSLE == 0 || *CmpRSLE == 1)) {
           ++JoinableDimCount;
-        else
-          return false;
+          continue;
+        } 
+        return false;
       }
-      auto LeftStart = cast<SCEVConstant>(Left.Start)->
+      auto LeftStart = llvm::cast<llvm::SCEVConstant>(Left.Start)->
                        getValue()->getZExtValue();
-      auto LeftEnd = cast<SCEVConstant>(Left.End)->
+      auto LeftEnd = llvm::cast<llvm::SCEVConstant>(Left.End)->
                      getValue()->getZExtValue();
-      auto LeftStep = cast<SCEVConstant>(Left.Step)->
+      auto LeftStep = llvm::cast<llvm::SCEVConstant>(Left.Step)->
                       getValue()->getZExtValue();
-      auto RightStart = cast<SCEVConstant>(Right.Start)->
+      auto RightStart = llvm::cast<llvm::SCEVConstant>(Right.Start)->
                         getValue()->getZExtValue();
-      auto RightEnd = cast<SCEVConstant>(Right.End)->
+      auto RightEnd = llvm::cast<llvm::SCEVConstant>(Right.End)->
                         getValue()->getZExtValue();
-      auto RightStep = cast<SCEVConstant>(Right.Step)->
+      auto RightStep = llvm::cast<llvm::SCEVConstant>(Right.Step)->
                        getValue()->getZExtValue();
       assert(LeftStart <= LeftEnd && RightStart <= RightEnd &&
           "Start of dimension must be less or equal than End.");
@@ -303,15 +307,17 @@ template<> struct MemorySetInfo<MemoryLocationRange> {
       for (size_t I = 0; I < To.DimList.size(); I++) {
         auto &DimTo = To.DimList[I];
         auto &DimFrom = What.DimList[I];
-        if (!isa<SCEVConstant>(DimTo.Start) || !isa<SCEVConstant>(DimTo.End) ||
-            !isa<SCEVConstant>(DimFrom.Start) || !isa<SCEVConstant>(DimFrom.End)) {
-          auto CmpFromEndToStart = compareSCEVs(DimTo.Start, DimFrom.End, SE);
-          auto CmpToEndFromStart = compareSCEVs(DimFrom.Start, DimTo.End, SE);
-          if (CmpFromEndToStart && (*CmpFromEndToStart == 0 || *CmpFromEndToStart == 1)) {
+        if (!llvm::isa<llvm::SCEVConstant>(DimTo.Start) ||
+            !llvm::isa<llvm::SCEVConstant>(DimTo.End) ||
+            !llvm::isa<llvm::SCEVConstant>(DimFrom.Start) ||
+            !llvm::isa<llvm::SCEVConstant>(DimFrom.End)) {
+          auto CmpTSFE = compareSCEVs(DimTo.Start, DimFrom.End, SE);
+          auto CmpFSTE = compareSCEVs(DimFrom.Start, DimTo.End, SE);
+          if (CmpTSFE && (*CmpTSFE == 0 || *CmpTSFE == 1)) {
             DimTo.Start = DimFrom.Start;
             IsChanged = true;
           }
-          if (CmpToEndFromStart && (*CmpToEndFromStart == 0 || *CmpToEndFromStart == 1)) {
+          if (CmpFSTE && (*CmpFSTE == 0 || *CmpFSTE == 1)) {
             DimTo.End = DimFrom.End;
             IsChanged = true;
           }
