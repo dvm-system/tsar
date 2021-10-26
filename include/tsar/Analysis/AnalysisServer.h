@@ -270,7 +270,7 @@ public:
       if (auto *F = R[tsar::AnalysisRequest::Function]) {
         auto &CloneF = OriginalToClone[F];
         if (!CloneF)
-          return { tsar::AnalysisSocket::Analysis };
+          return { tsar::AnalysisSocket::Data};
         // Check whether we already have required analysis.
         if (ActiveFunc == &*CloneF) {
           for (auto ID : R[tsar::AnalysisRequest::AnalysisIDs]) {
@@ -313,7 +313,7 @@ public:
                                   ActiveIDs};
             bcl::TypeList<ResponseT...>::for_each_type(FindImpl);
             if (Response[tsar::AnalysisResponse::Analysis].empty())
-              return {tsar::AnalysisSocket::Analysis};
+              return {tsar::AnalysisSocket::Data};
           }
         }
       } else {
@@ -331,7 +331,7 @@ public:
               ResultPass->getAdjustedAnalysisPointer(ID));
         }
       }
-      return tsar::AnalysisSocket::Analysis +
+      return tsar::AnalysisSocket::Data +
              json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
     }))
       ;

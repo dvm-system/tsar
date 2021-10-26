@@ -29,6 +29,7 @@
 #include <tsar/Support/AnalysisWrapperPass.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/IntrusiveRefCntPtr.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Pass.h>
@@ -123,7 +124,9 @@ inline FilenameAdjuster getBackupFilenameAdjuster() {
 /// A single configured instance of this class associated with a single source
 /// file (with additional include files) and command line options which is
 /// necessary to parse this file before it would be rewritten.
-class TransformationContextBase : private bcl::Uncopyable {
+class TransformationContextBase
+    : public llvm::ThreadSafeRefCountedBase<TransformationContextBase>,
+      private bcl::Uncopyable {
 public:
   enum Kind : uint8_t {
     TC_Flang,
@@ -162,7 +165,7 @@ private:
 class TransformationInfo final : private bcl::Uncopyable {
   using TransformationMap =
       llvm::DenseMap<llvm::DICompileUnit *,
-                     std::unique_ptr<tsar::TransformationContextBase>>;
+                     llvm::IntrusiveRefCntPtr<tsar::TransformationContextBase>>;
 
 public:
   /// Create storage for transformation contexts.
@@ -180,7 +183,7 @@ public:
 
   /// Set transformation context for a specified compilation unit.
   void setContext(llvm::DICompileUnit &CU,
-      std::unique_ptr<TransformationContextBase> &&Ctx) {
+      llvm::IntrusiveRefCntPtr<TransformationContextBase> Ctx) {
     mTransformPool.try_emplace(&CU, std::move(Ctx));
   }
 

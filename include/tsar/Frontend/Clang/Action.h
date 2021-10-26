@@ -30,6 +30,7 @@
 #include <bcl/utility.h>
 #include <clang/Tooling/Tooling.h>
 #include <memory>
+#include <vector>
 
 namespace tsar {
 class TransformationInfo;
