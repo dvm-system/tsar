@@ -826,7 +826,8 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
             auto &DT{Provider.get<DominatorTreeWrapperPass>().getDomTree()};
             auto *EM{AT.find(Loc)};
             assert(EM && "Estimate memory must be presented in alias tree!");
-            auto CToSDIM{ ClientServerInfo.findFromClient(*EM, DL, DT) };
+            auto CToSDIM{ClientServerInfo.findFromClient(
+                *EM->getTopLevelParent(), DL, DT)};
             if (!CToSDIM.get<Origin>()) {
               IsDistinctAccessed = true;
               return;
