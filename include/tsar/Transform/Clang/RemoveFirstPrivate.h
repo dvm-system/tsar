@@ -31,15 +31,15 @@
 
 namespace llvm {
 
-class ClangRemoveFirstPrivate : public FunctionPass, private bcl::Uncopyable {
+class ClangRemoveFirstPrivate : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  ClangRemoveFirstPrivate() : FunctionPass(ID) {
+  ClangRemoveFirstPrivate() : ModulePass(ID) {
     initializeClangRemoveFirstPrivatePass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnFunction(Function &F) override;
+  bool runOnModule(Module &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
