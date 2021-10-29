@@ -66,6 +66,10 @@ void ClangRemoveFirstPrivate::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-FunctionPass *llvm::createClangRemoveFirstPrivate() {
+bool ClangRemoveFirstPrivate::runOnModule(Module &M) {
+  return false;
+}
+
+ModulePass *llvm::createClangRemoveFirstPrivate() {
   return new ClangRemoveFirstPrivate();
 }

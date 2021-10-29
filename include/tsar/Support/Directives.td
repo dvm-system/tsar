@@ -158,6 +158,9 @@ def AssertNoMacro : Clause<"nomacro", Assert>;
 def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
+def RemoveFirstPrivate : Clause<"removefirstprivate", Transform,
+  [LParen, Identifier, Comma, OneOf<[Identifier, NumericConstant]>, RParen, ZeroOrMore<[Comma, LParen, Identifier, Comma, OneOf<[Identifier, NumericConstant]>, RParen]>]>;
+
 def ReplaceMetadata : Clause<"replace", Metadata,
   [LParen,
     Identifier, LParen,
