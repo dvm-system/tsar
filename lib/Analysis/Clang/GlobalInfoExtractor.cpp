@@ -29,6 +29,7 @@
 #include "tsar/Support/Clang/Utils.h"
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceManager.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 
@@ -62,25 +63,38 @@ void ClangGlobalInfoPass::getAnalysisUsage(AnalysisUsage& AU) const {
 bool ClangGlobalInfoPass::runOnModule(llvm::Module &M) {
   releaseMemory();
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
-  auto TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
+  if (!TfmInfo) {
     M.getContext().emitError("can not transform sources"
-        ": transformation context is not available");
+                             ": transformation context is not available");
     return false;
   }
-  auto &Context = TfmCtx->getContext();
-  auto &Rewriter = TfmCtx->getRewriter();
-  auto &SrcMgr = Rewriter.getSourceMgr();
-  auto &LangOpts = Rewriter.getLangOpts();
-  mGIE = std::make_unique<GlobalInfoExtractor>(SrcMgr, LangOpts);
-  mGIE->TraverseDecl(Context.getTranslationUnitDecl());
-  for (auto *File : mGIE->getFiles()) {
-    StringMap<SourceLocation> RawIncludes;
-    const llvm::MemoryBuffer *Buffer =
-      const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFile(File);
-    FileID FID = SrcMgr.translateFile(File);
-    getRawMacrosAndIncludes(FID, Buffer, SrcMgr, LangOpts,
-      mRawInfo.Macros, mRawInfo.Includes, mRawInfo.Identifiers);
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  for (auto *MD : CUs->operands()) {
+    auto *CU{cast<DICompileUnit>(MD)};
+    auto *TfmCtx{
+        dyn_cast_or_null<ClangTransformationContext>(TfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
+      M.getContext().emitError("cannot transform sources"
+                               ": transformation context is not available");
+      return false;
+    }
+    auto &Context = TfmCtx->getContext();
+    auto &Rewriter = TfmCtx->getRewriter();
+    auto &SrcMgr = Rewriter.getSourceMgr();
+    auto &LangOpts = Rewriter.getLangOpts();
+    auto Itr{mGI.try_emplace(
+                    TfmCtx, std::make_unique<ClangGlobalInfo>(SrcMgr, LangOpts))
+                 .first};
+    Itr->second->GIE.TraverseDecl(Context.getTranslationUnitDecl());
+    for (auto *File : Itr->second->GIE.getFiles()) {
+      StringMap<SourceLocation> RawIncludes;
+      const llvm::MemoryBuffer *Buffer =
+          const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFile(File);
+      FileID FID = SrcMgr.translateFile(File);
+      getRawMacrosAndIncludes(
+          FID, Buffer, SrcMgr, LangOpts, Itr->second->RI.Macros,
+          Itr->second->RI.Includes, Itr->second->RI.Identifiers);
+    }
   }
   return false;
 }

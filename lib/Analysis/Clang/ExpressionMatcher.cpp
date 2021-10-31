@@ -28,9 +28,11 @@
 #include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/PrintUtils.h"
 #include "tsar/Analysis/Clang/Matcher.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/IR/InstIterator.h>
@@ -217,12 +219,11 @@ private:
 }
 
 void ClangExprMatcherPass::print(raw_ostream &OS, const llvm::Module *M) const {
-  if (mMatcher.empty())
+  if (mMatcher.empty() || !mTfmCtx || !mTfmCtx->hasInstance())
     return;
   auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
   auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto TfmCtx = TfmInfo->getContext(*const_cast<Module *>(M));
-  auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+  auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   for (auto &Match : mMatcher) {
     tsar::print(OS, cast<Instruction>(Match.get<IR>())->getDebugLoc(),
                 GO.PrintFilenameOnly);
@@ -248,13 +249,19 @@ void ClangExprMatcherPass::print(raw_ostream &OS, const llvm::Module *M) const {
 
 bool ClangExprMatcherPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  auto TfmCtx = TfmInfo->getContext(*F.getParent());
-  if (!TfmCtx || !TfmCtx->hasInstance())
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;
-  auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  mTfmCtx = TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                          TfmInfo->getContext(*CU))
+                    : nullptr;
+  if (!mTfmCtx || !mTfmCtx->hasInstance())
+    return false;
+  auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   MatchExprVisitor::LocToIRMap LocToExpr;
   MatchExprVisitor::LocToASTMap LocToMacro;
   MatchExprVisitor MatchExpr(SrcMgr,
@@ -278,7 +285,7 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
     std::reverse(Pair.second.begin(), Pair.second.end());
   // It is necessary to build LocToExpr map also if FuncDecl is null,
   // because a number of unmatched expressions should be calculated.
-  auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
+  auto FuncDecl = mTfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
   MatchExpr.TraverseDecl(FuncDecl);

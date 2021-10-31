@@ -193,13 +193,14 @@ class ClangLoopReverseVisitor
 
 public:
   ClangLoopReverseVisitor(ClangLoopReverse &P, Function &F,
-                          TransformationContext *TfmCtx,
+                          ClangTransformationContext *TfmCtx,
                           const ASTImportInfo &ImportInfo)
       : mImportInfo(ImportInfo), mRewriter(TfmCtx->getRewriter()),
         mSrcMgr(mRewriter.getSourceMgr()), mLangOpts(mRewriter.getLangOpts()),
         mGlobalOpts(
             P.getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()),
-        mRawInfo(P.getAnalysis<ClangGlobalInfoPass>().getRawInfo()),
+        mRawInfo(
+            P.getAnalysis<ClangGlobalInfoPass>().getGlobalInfo(TfmCtx)->RI),
         mMemMatcher(P.getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher),
         mDIMemMatcher(P.getAnalysis<ClangDIMemoryMatcherPass>().getMatcher()),
         mPerfectLoopInfo(
@@ -216,7 +217,13 @@ public:
                     [FS](auto *Info) { return Info->getASTLoop() == FS; })};
     if (LI == mCanonicalLoopInfo.end())
       return RecursiveASTVisitor::VisitForStmt(FS);
-    auto *Induct{mMemMatcher.find<IR>((*LI)->getInduction())->get<AST>()};
+    auto Itr{mMemMatcher.find<IR>((*LI)->getInduction())};
+    auto InductItr{find_if(Itr->get<AST>(), [this](const clang::VarDecl *VD) {
+      return &mSrcMgr == &VD->getASTContext().getSourceManager();
+    })};
+    assert(InductItr != Itr->get<AST>().end() &&
+           "Matched variable must be presented in a current AST context.");
+    auto *Induct{*InductItr};
     mLoops.emplace_back(*LI, Induct);
     if (!mPerfectLoopInfo.count((*LI)->getLoop()))
       return true;
@@ -638,7 +645,7 @@ private:
   clang::Rewriter &mRewriter;
   clang::SourceManager &mSrcMgr;
   const clang::LangOptions &mLangOpts;
-  ClangGlobalInfoPass::RawInfo &mRawInfo;
+  ClangGlobalInfo::RawInfo &mRawInfo;
   const GlobalOptions &mGlobalOpts;
   MemoryMatchInfo::MemoryMatcher &mMemMatcher;
   const ClangDIMemoryMatcherPass::DIMemoryMatcher &mDIMemMatcher;
@@ -672,8 +679,10 @@ bool ClangLoopReverse::runOnFunction(Function &F) {
                              TfmInfo->getContext(*CU))
                        : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    F.getContext().emitError("can not transform sources"
-                              ": transformation context is not available");
+    F.getContext().emitError(
+        "cannot transform sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "' function");
     return false;
   }
   auto *FD{TfmCtx->getDeclForMangledName(F.getName())};

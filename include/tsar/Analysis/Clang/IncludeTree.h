@@ -42,6 +42,9 @@
 #include <vector>
 
 namespace tsar {
+class ClangTransformationContext;
+class TransformationContextBase;
+
 /// Represent a file in the file tree. Each file node contains a list of
 /// top-level declarations and includes which can be sorted according
 /// to a source code location.
@@ -90,8 +93,10 @@ public:
     return *Child.get<const OutermostDecl *>();
   }
 
-  FileNode(clang::FileID ID, const clang::SourceManager &SrcMgr)
-    : mFile(ID), mIncludeLoc(SrcMgr.getIncludeLoc(ID)) {}
+  FileNode(clang::FileID ID, ClangTransformationContext &TfmCtx);
+
+  auto &getTransformationContext() noexcept { return *mTfmCtx; }
+  const auto &getTransformationContext() const noexcept { return *mTfmCtx; }
 
   /// Return location of corresponding #include directive in a source code.
   clang::SourceLocation getLocation() const { return mIncludeLoc; }
@@ -127,9 +132,10 @@ public:
   }
 
   /// Sort all children according to their source code locations in this file.
-  void sort(const clang::SourceManager &SrcMgr);
+  void sort();
 
 private:
+  ClangTransformationContext *mTfmCtx{nullptr};
   clang::FileID mFile;
   clang::SourceLocation mIncludeLoc;
   ChildrenT mChildren;
@@ -265,10 +271,7 @@ class FileTree {
   };
 
 public:
-  explicit FileTree(const clang::SourceManager &SrcMgr) : mSrcMgr(SrcMgr) {}
-  const clang::SourceManager &getSourceManager() const noexcept {
-    return mSrcMgr;
-  }
+  FileTree() = default;
 
   /// This iterates over all node (files and top-level declarations) in a
   /// file tree.
@@ -290,12 +293,13 @@ public:
 
   /// Create a new file node which is not linked with any other file or
   /// declaration.
-  std::pair<file_iterator, bool> insert(clang::FileID ID) {
+  std::pair<file_iterator, bool> insert(clang::FileID ID,
+                                        ClangTransformationContext &TfmCtx) {
     auto Info = mFiles.try_emplace(ID);
     bool IsNew = false;
     if (!Info.first->second) {
       IsNew = true;
-      Info.first->second = std::make_unique<FileNode>(ID, mSrcMgr);
+      Info.first->second = std::make_unique<FileNode>(ID, TfmCtx);
     }
     return std::make_pair(file_iterator(Info.first, file_helper), IsNew);
   }
@@ -433,7 +437,22 @@ public:
   bool internal_empty() const { return mNumberOfInternals == 0; }
 
   /// Rebuild source tree.
-  void reconstruct(const GlobalInfoExtractor &GIE);
+  ///
+  /// \pre Iterator points to a pair of a transformation context and global
+  /// information.
+  template<typename ItrT> bool reconstruct(ItrT I, ItrT EI) {
+    clear();
+    bool IsOk{true};
+    for (; I != EI; ++I)
+      IsOk &= reconstruct(*I->first, I->second->GIE);
+    mNumberOfInternals = mRoots.size();
+    for (auto &FI : files()) {
+      FI.sort();
+      if (!FI.isInclude())
+        mRoots.push_back(&FI);
+    }
+    return IsOk;
+  }
 
   /// Remove all files and declarations from the tree.
   void clear() {
@@ -448,7 +467,10 @@ public:
                     const llvm::Twine &Name = "include") const;
 
 private:
-  const clang::SourceManager &mSrcMgr;
+  /// Rebuild source tree.
+  bool reconstruct(TransformationContextBase &TfmCtx,
+                   const GlobalInfoExtractor &GIE);
+
   FileMap mFiles;
   RootList mRoots;
   unsigned mNumberOfInternals = 0;

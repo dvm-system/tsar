@@ -230,11 +230,16 @@ private:
 
 bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  auto TfmCtx  = TfmInfo->getContext(*M);
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto *FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
@@ -298,15 +303,29 @@ bool ClangDIMemoryMatcherPass::runOnFunction(Function &F) {
   auto &MemInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
   for (auto &Match : MemInfo.Matcher) {
     SmallVector<DIMemoryLocation, 1> DILocs;
-    auto MD = findMetadata(Match.get<IR>(), DILocs, &DT,
+    if (auto Inst{dyn_cast<Instruction>(Match.get<IR>().front())};
+        Inst && Inst->getFunction() != &F)
+      continue;
+    auto MD = findMetadata(Match.get<IR>().front(), DILocs, &DT,
       MDSearch::AddressOfVariable);
     if (MD && MD->isValid() && MD->Expr->getNumElements() == 0) {
-      mMatcher.emplace(Match.get<AST>(), MD->Var);
-      if (mUnmatchedAST.erase(Match.get<AST>()))
-        --NumNonMatchASTMemory;
+      auto Itr{find_if(Match.get<AST>(), [TfmCtx](const VarDecl *VD) {
+        return &VD->getASTContext() == &TfmCtx->getContext();
+      })};
+      assert(Itr != Match.get<AST>().end() &&
+             "Matched variable must be presented in a current AST context.");
+      mMatcher.emplace(*Itr, MD->Var);
+      for (auto *D : Match.get<AST>())
+        if (mUnmatchedAST.erase(D))
+          --NumNonMatchASTMemory;
       ++NumMatchMemory;
     } else {
-      mUnmatchedAST.insert(Match.get<AST>());
+      auto Itr{find_if(Match.get<AST>(), [TfmCtx](const VarDecl *VD) {
+        return &VD->getASTContext() == &TfmCtx->getContext();
+      })};
+      assert(Itr != Match.get<AST>().end() &&
+             "Matched variable must be presented in a current AST context.");
+      mUnmatchedAST.insert(*Itr);
       ++NumNonMatchASTMemory;
     }
   }
@@ -341,19 +360,22 @@ void ClangDIGlobalMemoryMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
 bool ClangDIGlobalMemoryMatcherPass::runOnModule(llvm::Module &M) {
   auto &MemInfo = getAnalysis<MemoryMatcherImmutableWrapper>().get();
   for (auto &Match : MemInfo.Matcher) {
-    if (!isa<GlobalVariable>(Match.get<IR>()))
+    if (!isa<GlobalVariable>(Match.get<IR>().front()))
       continue;
     SmallVector<DIMemoryLocation, 1> DILocs;
-    findGlobalMetadata(cast<GlobalVariable>(Match.get<IR>()), DILocs);
+    findGlobalMetadata(cast<GlobalVariable>(Match.get<IR>().front()), DILocs);
     Optional<DIMemoryLocation> MD;
     if (DILocs.size() == 1 && (MD = DILocs.back()) &&
         MD->isValid() && MD->Expr->getNumElements() == 0) {
-      mMatcher.emplace(Match.get<AST>(), MD->Var);
-      if (mUnmatchedAST.erase(Match.get<AST>()))
-        --NumNonMatchASTMemory;
+      for (auto *D : Match.get<AST>())
+        mMatcher.emplace(D, MD->Var);
+      for (auto *D : Match.get<AST>())
+        if (mUnmatchedAST.erase(D))
+          --NumNonMatchASTMemory;
       ++NumMatchMemory;
     } else {
-      mUnmatchedAST.insert(Match.get<AST>());
+      for (auto *D: Match.get<AST>())
+        mUnmatchedAST.insert(D);
       ++NumNonMatchASTMemory;
     }
   }

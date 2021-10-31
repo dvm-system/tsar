@@ -99,7 +99,7 @@ private:
 
   const DataLayout *mDL = nullptr;
   DominatorTree *mDT = nullptr;
-  tsar::TransformationContext *mTfmCtx = nullptr;
+  tsar::ClangTransformationContext *mTfmCtx = nullptr;
 };
 
 class ClangCopyPropagationInfo final : public PassGroupInfo {
@@ -205,9 +205,9 @@ private:
       bcl::tagged<DiagnosticT, Diagnostic>>>;
 
 public:
-  DefUseVisitor(TransformationContext &TfmCtx,
+  DefUseVisitor(ClangTransformationContext &TfmCtx,
       const ASTImportInfo &ImportInfo,
-      const ClangGlobalInfoPass::RawInfo &RawInfo,
+      const ClangGlobalInfo::RawInfo &RawInfo,
       const GlobalInfoExtractor &GlobalInfo) :
     mTfmCtx(TfmCtx),
     mImportInfo(ImportInfo),
@@ -218,7 +218,7 @@ public:
     mSrcMgr(TfmCtx.getRewriter().getSourceMgr()),
     mLangOpts(TfmCtx.getRewriter().getLangOpts()) {}
 
-  TransformationContext & getTfmContext() noexcept { return mTfmCtx; }
+  ClangTransformationContext & getTfmContext() noexcept { return mTfmCtx; }
 
   /// Return set of replacements in subtrees of a tree which represents
   /// expression at a specified location (create empty set if it does not
@@ -655,13 +655,13 @@ private:
     }
   }
 
-  TransformationContext &mTfmCtx;
+  ClangTransformationContext &mTfmCtx;
   const ASTImportInfo &mImportInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
-  const ClangGlobalInfoPass::RawInfo &mRawInfo;
+  const ClangGlobalInfo::RawInfo &mRawInfo;
   const GlobalInfoExtractor &mGlobalInfo;
   UseLocationMap mUseLocs;
   DefLocationMap mDefLocs;
@@ -712,7 +712,8 @@ private:
 /// declarations are cleaned.
 void findAvailableDecls(Instruction &DI, Instruction &UI,
     const ClangDIMemoryMatcherPass::DIMemoryMatcher &DIMatcher,
-    unsigned DWLang, const DominatorTree &DT, TransformationContext &TfmCtx,
+    unsigned DWLang, const DominatorTree &DT,
+    ClangTransformationContext &TfmCtx,
     DefUseVisitor::DeclUseLocationMap::iterator &UseItr) {
   // Add Def instruction to list of operands because if it is a call
   // we should check that it has no side effect.
@@ -867,12 +868,19 @@ bool ClangExprPropagation::unparseReplacement(
 }
 
 bool ClangExprPropagation::runOnFunction(Function &F) {
-  auto *M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  mTfmCtx = TfmInfo ? TfmInfo->getContext(*M) : nullptr;
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
+    return false;
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  mTfmCtx = TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                          TfmInfo->getContext(*CU))
+                    : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
-    M->getContext().emitError("can not transform sources"
-      ": transformation context is not available");
+    F.getContext().emitError("cannot transform sources"
+                              ": transformation context is not available");
     return false;
   }
   auto FuncDecl = mTfmCtx->getDeclForMangledName(F.getName());
@@ -888,12 +896,14 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
+  auto *M = F.getParent();
   mDL = &M->getDataLayout();
   mDT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   auto &DIMatcher = getAnalysis<ClangDIMemoryMatcherPass>().getMatcher();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  DefUseVisitor Visitor(*mTfmCtx, *ImportInfo, GIP.getRawInfo(),
-                        GIP.getGlobalInfo());
+  auto *GI{GIP.getGlobalInfo(mTfmCtx)};
+  assert(GI && "Global information must not be null!");
+  DefUseVisitor Visitor(*mTfmCtx, *ImportInfo, GI->RI, GI->GIE);
   DenseSet<Value *> WorkSet;
   // Search for PROPAGATION candidates.
   for (auto &I : instructions(F)) {

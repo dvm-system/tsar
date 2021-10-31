@@ -217,25 +217,25 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
+    auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
+    assert(DIMemoryItr != DIMatcher->end() &&
+           "Unknown AST-level representation of an array!");
+    tsar::dvmh::VariableT Var;
+    Var.get<AST>() = DIMemoryItr->get<AST>();
+    Var.get<MD>() = &ClientDIEM;
     if (auto *A{APCCtx.findArray(ClientRawDIM)}) {
       auto S{A->GetDeclSymbol()};
       // This pass may be executed in analysis mode. It depends on -print-only
       // and -print-step options. In case of parallelization pass manager must
       // invokes this pass only once for each function.
       mMultipleLaunch |= S->getVariable(&Func).hasValue();
-      S->attachMemoryToVariable(&ClientDIEM);
+      S->addRedeclaration(std::move(Var));
       continue;
     }
-    auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
-    assert(DIMemoryItr != DIMatcher->end() &&
-           "Unknown AST-level representation of an array!");
     DIMemoryLocation DIClientLoc(ClientDIEM.getVariable(),
                                  ClientDIEM.getExpression());
     DIClientLoc.Loc = cast_or_null<DILocation>(getMDNode(DILoc->Loc));
     DIClientLoc.Template = ClientDIEM.isTemplate();
-    tsar::dvmh::VariableT Var;
-    Var.get<AST>() = DIMemoryItr->get<AST>();
-    Var.get<MD>() = &ClientDIEM;
     auto APCSymbol = new apc::Symbol(&APCCtx, std::move(Var));
     APCCtx.addSymbol(APCSymbol);
     auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName().str(),

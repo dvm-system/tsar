@@ -86,9 +86,10 @@ bool tsar::getBaseInductionsForNest(Loop &Outermost, unsigned SizeOfNest,
     assert(Induction &&
            "Induction variable must not be null in canonical loop!");
     auto MatchItr = MM.Matcher.find<IR>(Induction);
-    assert(MatchItr != MM.Matcher.end() &&
+    assert(MatchItr != MM.Matcher.end() && !MatchItr->get<AST>().empty() &&
            "AST-level variable representation must be available!");
-    Inductions.emplace_back(L.getLoopID(), MatchItr->get<AST>()->getName());
+    Inductions.emplace_back(L.getLoopID(),
+                            MatchItr->get<AST>().front()->getName());
     return true;
   };
   if (!addToInductions(Outermost))

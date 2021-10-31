@@ -26,10 +26,12 @@
 
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -139,21 +141,30 @@ private:
 }
 
 bool ClangNoMacroAssert::runOnFunction(Function &F) {
-  auto *M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(*M) : nullptr};
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
+    return false;
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M->getContext().emitError("can not check sources"
-        ": transformation context is not available");
-    if (mIsInvalid)
-      *mIsInvalid = true;
+    F.getContext().emitError(
+        "cannot check sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "' function");
     return false;
   }
   auto &SrcMgr = TfmCtx->getContext().getSourceManager();
   auto &LangOpts = TfmCtx->getContext().getLangOpts();
   auto *Unit = TfmCtx->getContext().getTranslationUnitDecl();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  NoMacroChecker Checker(SrcMgr, LangOpts, GIP.getRawInfo().Macros);
+  auto *GI{ GIP.getGlobalInfo(TfmCtx) };
+  assert(GI && "Global information must not be null!");
+  NoMacroChecker Checker(SrcMgr, LangOpts, GI->RI.Macros);
   Checker.TraverseDecl(Unit);
   if (mIsInvalid)
     *mIsInvalid = Checker.isInvalid();

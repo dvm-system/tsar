@@ -230,9 +230,8 @@ public:
   }
 
   auto getContext() {
-    auto Request{(Twine(Data) + Twine(Delimiter)).str()};
     for (auto &Callback : mReceiveCallbacks)
-      Callback(Request);
+      Callback({Data, Delimiter});
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
     assert(mResponseKind == Data && "Unknown response: wait for data!");

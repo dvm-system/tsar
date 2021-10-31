@@ -804,24 +804,26 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
                            PIP.getParallelization().func_end())) {
     LLVM_DEBUG(dbgs() << "[DVMH SM]: process function " << F->getName()
                       << "\n");
+    auto emitTfmError = [F]() {
+      F->getContext().emitError("cannot transform sources: transformation "
+                                "context is not available for the '" +
+                                F->getName() + "' function");
+    };
     auto *DISub{findMetadata(F)};
     if (!DISub) {
-      F->getContext().emitError(
-          "cannot transform sources: transformation context must be available");
+      emitTfmError();
       return false;
     }
     auto *CU{DISub->getUnit()};
     if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage())) {
-      F->getContext().emitError(
-          "cannot transform sources: transformation context must be available");
+      emitTfmError();
       return false;
     }
     auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                                TfmInfo->getContext(*CU))
                          : nullptr};
     if (!TfmCtx || !TfmCtx->hasInstance()) {
-      F->getContext().emitError(
-          "cannot transform sources: transformation context must be available");
+      emitTfmError();
       return false;
     }
     auto &Provider{getAnalysis<ClangDVMHWriterProvider>(*F)};

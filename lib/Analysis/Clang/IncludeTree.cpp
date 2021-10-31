@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Clang/IncludeTree.h"
+#include "tsar/Frontend/Clang/TransformationContext.h"
 #include <llvm/Analysis/DOTGraphTraitsPass.h>
 #include "tsar/Core/Query.h"
 #include <clang/Basic/FileManager.h>
@@ -38,7 +39,12 @@ using namespace tsar;
 
 #define DEBUG_TYPE "clang-include-tree";
 
-void FileNode::sort(const clang::SourceManager &SrcMgr) {
+FileNode::FileNode(clang::FileID ID, ClangTransformationContext &TfmCtx)
+    : mTfmCtx(&TfmCtx), mFile(ID),
+      mIncludeLoc(TfmCtx.getContext().getSourceManager().getIncludeLoc(ID)) {}
+
+void FileNode::sort() {
+  auto &SrcMgr{mTfmCtx->getContext().getSourceManager()};
   llvm::sort(
     mChildren.begin(), mChildren.end(),
     [this, &SrcMgr](const EdgeT &LHS, const EdgeT &RHS) {
@@ -50,39 +56,38 @@ void FileNode::sort(const clang::SourceManager &SrcMgr) {
     });
 }
 
-void FileTree::reconstruct(const GlobalInfoExtractor &GIE) {
-  clear();
+bool FileTree::reconstruct(TransformationContextBase &TfmCtx,
+                           const GlobalInfoExtractor &GIE) {
+  auto *TfmCtxImpl{dyn_cast<ClangTransformationContext>(&TfmCtx)};
+  if (!TfmCtxImpl)
+    return false;
+  auto &SrcMgr{TfmCtxImpl->getContext().getSourceManager()};
   for (auto &OuterDeclList : GIE.getOutermostDecls())
     for (auto &OuterDecl : OuterDeclList.second) {
-      auto Loc = mSrcMgr.getDecomposedLoc(
-        mSrcMgr.getExpansionLoc(OuterDecl.getDescendant()->getLocation()));
+      auto Loc = SrcMgr.getDecomposedLoc(
+        SrcMgr.getExpansionLoc(OuterDecl.getDescendant()->getLocation()));
       if (Loc.first.isInvalid()) {
         mRoots.emplace_back(&OuterDecl);
         continue;
       }
-      auto FileInfo = insert(Loc.first);
+      auto FileInfo = insert(Loc.first, *TfmCtxImpl);
       assert(FileInfo.first != file_end() && "FileNode must not be null!");
       FileInfo.first->push_back(&OuterDecl);
       mDeclToFile.try_emplace(&OuterDecl, &*FileInfo.first);
-      Loc = mSrcMgr.getDecomposedIncludedLoc(Loc.first);
+      Loc = SrcMgr.getDecomposedIncludedLoc(Loc.first);
       // Do not use FileInfo.first iterator after insert() inside the loop
       // because insert() may invalidate iterators.
       auto *FN = &*FileInfo.first;
       while (Loc.first.isValid()) {
-        auto ParentInfo = insert(Loc.first);
+        auto ParentInfo = insert(Loc.first, *TfmCtxImpl);
         assert(ParentInfo.first != file_end() && "FileNode must not be null!");
         ParentInfo.first->push_back(FN);
         FileInfo = std::move(ParentInfo);
         auto *FN = &*FileInfo.first;
-        Loc = mSrcMgr.getDecomposedIncludedLoc(Loc.first);
+        Loc = SrcMgr.getDecomposedIncludedLoc(Loc.first);
       }
     }
-  mNumberOfInternals = mRoots.size();
-  for (auto &FI : files()) {
-    FI.sort(mSrcMgr);
-    if (!FI.isInclude())
-      mRoots.push_back(&FI);
-  }
+  return true;
 }
 
 namespace llvm {
@@ -98,11 +103,12 @@ template <> struct DOTGraphTraits<FileTree *> : public DefaultDOTGraphTraits {
   }
 
   std::string getNodeLabel(tsar::FileNode::ChildT *N, tsar::FileTree *G) {
-    auto &SrcMgr = G->getSourceManager();
     std::string Str;
     raw_string_ostream OS(Str);
     if (FileNode::isFile(*N)) {
       auto &FN = FileNode::asFile(*N);
+      auto &SrcMgr{
+          FN.getTransformationContext().getContext().getSourceManager()};
       auto *FEntry = SrcMgr.getFileEntryForID(FN.getFile());
       assert(FEntry && "FileEntry must not be null!");
       auto Path = FEntry->getName();
@@ -120,6 +126,7 @@ template <> struct DOTGraphTraits<FileTree *> : public DefaultDOTGraphTraits {
       }
     } else {
       auto &DN = FileNode::asDecl(*N);
+      auto &SrcMgr{DN.getDescendant()->getASTContext().getSourceManager()};
       OS << DN.getDescendant()->getName();
       auto Loc = DN.getDescendant()->getLocation();
       if (Loc.isValid()) {
@@ -175,10 +182,13 @@ void ClangIncludeTreePass::getAnalysisUsage(AnalysisUsage &AU) const {
 bool ClangIncludeTreePass::runOnModule(llvm::Module &M) {
   releaseMemory();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  auto &SrcMgr = GIP.getGlobalInfo().getSourceManager();
-  if (!mFileTree || &SrcMgr != &mFileTree->getSourceManager())
-    mFileTree = std::make_unique<FileTree>(SrcMgr);
-  mFileTree->reconstruct(GIP.getGlobalInfo());
+  if (!mFileTree)
+    mFileTree = std::make_unique<FileTree>();
+  if (!mFileTree->reconstruct(GIP.getGlobalInfo().begin(),
+                              GIP.getGlobalInfo().end()))
+    M.getContext().emitError("cannot analyze sources"
+                             ": construction of an include tree is only "
+                             "implemented for can C/C++ sources");
   return false;
 }
 

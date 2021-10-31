@@ -54,6 +54,7 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/IntrusiveConnection.h>
@@ -910,7 +911,7 @@ private:
   bcl::RedirectIO *mStdErr;
 
   TransformationInfo *mTfmInfo = nullptr;
-  TransformationContext *mTfmCtx  = nullptr;
+  ClangTransformationContext *mTfmCtx  = nullptr;
   const GlobalOptions *mGlobalOpts = nullptr;
   AnalysisSocket *mSocket = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
@@ -1568,9 +1569,34 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     M.getContext().emitError("intrusive connection is not established");
     return false;
   }
-  auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  auto CXXCUItr{find_if(CUs->operands(), [](auto *MD) {
+    auto *CU{dyn_cast<DICompileUnit>(MD)};
+    return CU &&
+           (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()));
+  })};
+  if (CXXCUItr == CUs->op_end()) {
+    M.getContext().emitError(
+        "cannot transform sources"
+        ": transformation of C/C++ sources are only possible now");
+    return false;
+  }
+  if (CUs->getNumOperands() != 1) {
+    M.getContext().emitError("cannot transform sources"
+      ": server is only implemented for a single source file now");
+    return false;
+  }
+  auto &TfmInfoPass{getAnalysis<TransformationEnginePass>()};
   mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
-  mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
+  mTfmCtx = mTfmInfo
+                ? cast_or_null<ClangTransformationContext>(
+                      mTfmInfo->getContext(cast<DICompileUnit>(**CXXCUItr)))
+                : nullptr;
+  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
+    M.getContext().emitError("cannot transform sources"
+                             ": transformation context is not available");
+    return false;
+  }
   auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
   mSocket = SocketInfo.getActiveSocket();
   assert(mSocket && "Active socket must be specified!");

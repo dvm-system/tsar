@@ -51,10 +51,10 @@ namespace tsar {
 class DFLoop;
 class AnalysisSocketInfo;
 class ClangDependenceAnalyzer;
-class ClangTransformationContext;
 class DIMemoryEnvironment;
 class ParallelItem;
 class OptimizationRegion;
+class TransformationContextBase;
 class TransformationInfo;
 struct GlobalOptions;
 struct MemoryMatchInfo;
@@ -115,7 +115,7 @@ public:
 
   void releaseMemory() override {
     mRegions.clear();
-    mTfmCtx = nullptr;
+    mTfmInfo = nullptr;
     mGlobalOpts = nullptr;
     mMemoryMatcher = nullptr;
     mGlobalsAA = nullptr;
@@ -186,17 +186,19 @@ private :
 
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
-  bool findParallelLoops(Loop &L, const FunctionAnalysis &Provider,
-      tsar::ParallelItem *PI);
+    bool findParallelLoops(Loop &L, const FunctionAnalysis &Provider,
+                           tsar::TransformationContextBase &TfmCtx,
+                           tsar::ParallelItem *PI);
 
   /// Parallelize outermost parallel loops in the range.
   template <class ItrT>
-  bool findParallelLoops(PointerUnion<Loop *, Function *> Parent,
-      ItrT I, ItrT EI, const FunctionAnalysis &Provider,
-      tsar::ParallelItem *PI) {
+    bool findParallelLoops(PointerUnion<Loop *, Function *> Parent, ItrT I,
+                           ItrT EI, const FunctionAnalysis &Provider,
+                           tsar::TransformationContextBase &TfmCtx,
+                           tsar::ParallelItem *PI) {
     auto Parallelized = false;
     for (; I != EI; ++I)
-      Parallelized |= findParallelLoops(**I, Provider, PI);
+      Parallelized |= findParallelLoops(**I, Provider, TfmCtx, PI);
     if (Parallelized)
       optimizeLevel(Parent, Provider);
     return Parallelized;
@@ -205,8 +207,7 @@ private :
 
   std::size_t buildAdjacentList();
 
-  tsar::ClangTransformationContext *mTfmCtx = nullptr;
-  tsar::TransformationInfo *mTfmInfo = nullptr;
+  tsar::TransformationInfo *mTfmInfo= nullptr;
   const tsar::GlobalOptions *mGlobalOpts = nullptr;
   tsar::MemoryMatchInfo *mMemoryMatcher = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;

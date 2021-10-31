@@ -91,8 +91,6 @@ public:
     initializeClangDVMHSMParallelizationPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnModule(llvm::Module &M) override;
-
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     ClangSMParallelization::getAnalysisUsage(AU);
     AU.addRequired<LoopInfoWrapperPass>();
@@ -665,11 +663,6 @@ void ClangDVMHSMParallelization::finalize(llvm::Module &M,
     if (isParallelCallee(*F, Node.get<Id>(), Reachability))
       ParallelCtx.markAsParallelCallee(*F);
   }
-}
-
-bool ClangDVMHSMParallelization::runOnModule(llvm::Module &M) {
-  ClangSMParallelization::runOnModule(M);
-  return false;
 }
 
 ModulePass *llvm::createClangDVMHSMParallelization() {

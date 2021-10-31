@@ -100,7 +100,7 @@ std::pair<std::string, bool> ClangTransformationContext::release(
   return std::make_pair(std::move(MainFile), AllWritten);
 }
 
-void TransformationContext::release(StringRef Filename,
+void ClangTransformationContext::release(StringRef Filename,
     const RewriteBuffer &Buffer) {
   assert(hasInstance() && "Rewriter is not configured!");
   DiagnosticsEngine &Diagnostics = mRewriter.getSourceMgr().getDiagnostics();

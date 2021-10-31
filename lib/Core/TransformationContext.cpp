@@ -125,14 +125,3 @@ AtomicallyMovedFile::~AtomicallyMovedFile() {
     llvm::sys::fs::remove(mTempFilename.str());
   }
 }
-
-ClangTransformationContext * TransformationInfo::getContext(llvm::Module &M) {
-  auto CUs = M.getNamedMetadata("llvm.dbg.cu");
-  if (CUs->getNumOperands() > 1)
-    return nullptr;
-  auto *CU = cast<DICompileUnit>(*CUs->op_begin());
-  auto I = mTransformPool.find(CU);
-  return I != mTransformPool.end()
-             ? dyn_cast<ClangTransformationContext>(I->second.get())
-             : nullptr;
-}

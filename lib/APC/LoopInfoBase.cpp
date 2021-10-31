@@ -176,8 +176,10 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
                           TfmInfo->getContext(*CU))
                     : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
-    F.getContext().emitError("can not transform sources"
-                              ": transformation context is not available");
+    F.getContext().emitError(
+        "can not transform sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "` function");
     return false;
   }
   mAPCContext = &getAnalysis<APCContextWrapper>().get();

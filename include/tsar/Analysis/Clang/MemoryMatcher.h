@@ -28,6 +28,7 @@
 #define TSAR_MEMORY_MATCHER_H
 
 #include "tsar/ADT/Bimap.h"
+#include "tsar/ADT/ListBimap.h"
 #include "tsar/Support/AnalysisWrapperPass.h"
 #include "tsar/Support/Tags.h"
 #include <bcl/utility.h>
@@ -47,7 +48,7 @@ namespace tsar {
 ///
 /// Note that matcher contains canonical declarations (Decl::getCanonicalDecl).
 struct MemoryMatchInfo : private bcl::Uncopyable {
-  typedef tsar::Bimap<
+  typedef tsar::ListBimap<
     bcl::tagged<clang::VarDecl*, tsar::AST>,
     bcl::tagged<llvm::Value *, tsar::IR>> MemoryMatcher;
 

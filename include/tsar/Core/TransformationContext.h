@@ -27,10 +27,12 @@
 #define TSAR_TRANSFORMATION_ENGINE_H
 
 #include <tsar/Support/AnalysisWrapperPass.h>
+#include <bcl/tagged.h>
 #include <bcl/utility.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/IntrusiveRefCntPtr.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
@@ -44,8 +46,6 @@ class Module;
 }
 
 namespace tsar {
-class ClangTransformationContext;
-
 /// A wrapper for a file stream that atomically overwrites the target.
 ///
 /// Creates a file output stream for a temporary file in the constructor,
@@ -168,6 +168,24 @@ class TransformationInfo final : private bcl::Uncopyable {
                      llvm::IntrusiveRefCntPtr<tsar::TransformationContextBase>>;
 
 public:
+  using value_type =
+      bcl::tagged_pair<bcl::tagged<llvm::DICompileUnit *, llvm::DICompileUnit>,
+                       bcl::tagged<tsar::TransformationContextBase *,
+                                   tsar::TransformationContextBase>>;
+
+private:
+  struct iterator_helper {
+    value_type &operator() ( TransformationMap::value_type &V ) const {
+      Storage = value_type{ V.first, V.second.get() };
+      return Storage;
+    }
+    mutable value_type Storage;
+  };
+
+public:
+  using iterator =
+      llvm::mapped_iterator<TransformationMap::iterator, iterator_helper>;
+
   /// Create storage for transformation contexts.
   ///
   /// \param [in] CL Command line which has been used to run analysis.
@@ -176,10 +194,6 @@ public:
 
   /// Returns command line which has been used to run analysis.
   llvm::ArrayRef<std::string> getCommandLine() const { return mCommandLine; }
-
-  /// Return transformation context for the module or null.
-  [[deprecated("use getContext(llvm::DICompileUnit &)")]]
-  tsar::ClangTransformationContext *getContext(llvm::Module &M);
 
   /// Set transformation context for a specified compilation unit.
   void setContext(llvm::DICompileUnit &CU,
@@ -194,6 +208,11 @@ public:
   }
 
   bool empty() const { return mTransformPool.empty(); }
+
+  auto contexts() {
+    return llvm::make_range(iterator{mTransformPool.begin(), iterator_helper{}},
+                            iterator{mTransformPool.end(), iterator_helper{}});
+  }
 
 private:
   TransformationMap mTransformPool;

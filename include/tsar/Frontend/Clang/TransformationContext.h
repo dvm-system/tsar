@@ -115,9 +115,6 @@ private:
   clang::CodeGenerator *mGen = nullptr;
   clang::ASTContext *mCtx = nullptr;
 };
-
-using TransformationContext [[deprecated("use ClangTransformationContext")]]
-    = ClangTransformationContext;
 }
 
 #endif//TSAR_CLANG_TRANSFORMATION_CONTEXT_H

@@ -36,6 +36,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringSet.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -77,12 +78,12 @@ namespace {
 /// other warnings.
 class ClangRenamer : public RecursiveASTVisitor<ClangRenamer> {
 public:
-  ClangRenamer(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
-      ClangGlobalInfoPass::RawInfo &RawInfo) :
-    mTfmCtx(&TfmCtx), mImportInfo(ImportInfo),
-    mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
-    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-    mLangOpts(mRewriter.getLangOpts()) {}
+  ClangRenamer(ClangTransformationContext &TfmCtx,
+               const ASTImportInfo &ImportInfo,
+               ClangGlobalInfo::RawInfo &RawInfo)
+      : mTfmCtx(&TfmCtx), mImportInfo(ImportInfo), mRawInfo(&RawInfo),
+        mRewriter(TfmCtx.getRewriter()), mContext(TfmCtx.getContext()),
+        mSrcMgr(mRewriter.getSourceMgr()), mLangOpts(mRewriter.getLangOpts()) {}
 
   bool TraverseStmt(Stmt *S) {
     if (!S)
@@ -203,9 +204,9 @@ private:
   }
 #endif
 
-  TransformationContext *mTfmCtx;
+  ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
-  ClangGlobalInfoPass::RawInfo *mRawInfo;
+  ClangGlobalInfo::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
@@ -220,18 +221,28 @@ private:
 
 bool ClangRenameLocalPass::runOnModule(llvm::Module &M) {
   auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
-        ": transformation context is not available");
+  if (!TfmInfo) {
+    M.getContext().emitError("cannot transform sources"
+                             ": transformation context is not available");
     return false;
   }
-  ASTImportInfo ImportStub;
-  const auto *ImportInfo = &ImportStub;
-  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
-    ImportInfo = &ImportPass->getImportInfo();
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangRenamer Vis(*TfmCtx, *ImportInfo, GIP.getRawInfo());
-  Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  for (auto *MD : CUs->operands()) {
+    auto *CU{cast<DICompileUnit>(MD)};
+    auto *TfmCtx{
+        dyn_cast_or_null<ClangTransformationContext>(TfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
+      M.getContext().emitError("cannot transform sources"
+                               ": transformation context is not available");
+      return false;
+    }
+    ASTImportInfo ImportStub;
+    const auto *ImportInfo = &ImportStub;
+    if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+      ImportInfo = &ImportPass->getImportInfo();
+    auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+    ClangRenamer Vis(*TfmCtx, *ImportInfo, GIP.getGlobalInfo(TfmCtx)->RI);
+    Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
+  }
   return false;
 }

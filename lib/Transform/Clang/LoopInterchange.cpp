@@ -191,7 +191,8 @@ public:
                               const ASTImportInfo &ImportInfo)
       : mImportInfo(ImportInfo), mRewriter(TfmCtx->getRewriter()),
         mSrcMgr(mRewriter.getSourceMgr()), mLangOpts(mRewriter.getLangOpts()),
-        mRawInfo(P.getAnalysis<ClangGlobalInfoPass>().getRawInfo()),
+        mRawInfo(
+            P.getAnalysis<ClangGlobalInfoPass>().getGlobalInfo(TfmCtx)->RI),
         mGlobalOpts(
             P.getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()),
         mMemMatcher(P.getAnalysis<MemoryMatcherImmutableWrapper>()->Matcher),
@@ -221,7 +222,12 @@ public:
       IsCanonical = true;
       IsPerfect = mPerfectLoopInfo.count((*CanonicalItr)->getLoop());
       auto VarItr{mMemMatcher.find<IR>((*CanonicalItr)->getInduction())};
-      std::get<clang::VarDecl *>(mInductions.back()) = VarItr->get<AST>();
+      auto ASTItr{find_if(VarItr->get<AST>(), [this](const clang::VarDecl *VD) {
+        return &mSrcMgr == &VD->getASTContext().getSourceManager();
+      })};
+      assert(ASTItr != VarItr->get<AST>().end() &&
+             "Matched variable must be presented in a current AST context.");
+    std::get<clang::VarDecl *>(mInductions.back()) = *ASTItr;
       std::get<const CanonicalLoopInfo *>(mInductions.back()) = *CanonicalItr;
     }
     if (!IsCanonical)
@@ -609,7 +615,7 @@ private:
   clang::Rewriter &mRewriter;
   clang::SourceManager &mSrcMgr;
   const clang::LangOptions &mLangOpts;
-  ClangGlobalInfoPass::RawInfo &mRawInfo;
+  ClangGlobalInfo::RawInfo &mRawInfo;
   const GlobalOptions &mGlobalOpts;
   MemoryMatchInfo::MemoryMatcher &mMemMatcher;
   const ClangDIMemoryMatcherPass::DIMemoryMatcher &mDIMemMatcher;
@@ -643,8 +649,10 @@ bool ClangLoopInterchange::runOnFunction(Function &F) {
                              TfmInfo->getContext(*CU))
                        : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    F.getContext().emitError("can not transform sources"
-                              ": transformation context is not available");
+    F.getContext().emitError(
+        "cannot transform sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "' function");
     return false;
   }
   auto *FD{TfmCtx->getDeclForMangledName(F.getName())};

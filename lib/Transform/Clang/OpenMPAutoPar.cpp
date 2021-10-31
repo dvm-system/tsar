@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/Clang/Utils.h"
 #include "tsar/Analysis/DFRegionInfo.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Passes.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/Passes.h"
@@ -36,6 +37,7 @@
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <clang/AST/ParentMapContext.h>
 #include <llvm/Frontend/OpenMP/OMPConstants.h>
@@ -413,19 +415,29 @@ void ClangOpenMPParallelization::optimizeLevel(
   }
   mOutermostOrderedLoops.clear();
   // Merge neighboring parallel regions.
-  auto *M = Level.is<Function *>() ? Level.get<Function *>()->getParent() :
-    Level.get<Loop *>()->getHeader()->getModule();
-  auto &ASTCtx =
-      getAnalysis<TransformationEnginePass>()->getContext(*M)->getContext();
-  if (Level.is<Function *>()) {
-    auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
-    mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
-                      mParallelizationInfo);
-  } else {
-    mergeSiblingRegions(Level.get<Loop *>()->begin(),
-                        Level.get<Loop *>()->end(), Provider, ASTCtx,
-                        mParallelizationInfo);
-  }
+  auto *F{Level.is<Function *>()
+              ? Level.get<Function *>()
+              : Level.get<Loop *>()->getHeader()->getParent()};
+  if (auto *DISub{findMetadata(F)})
+    if (auto *CU{DISub->getUnit()};
+        isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+      auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+      auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                                 TfmInfo->getContext(*CU))
+                           : nullptr};
+      if (TfmCtx && TfmCtx->hasInstance()) {
+        auto &ASTCtx{TfmCtx->getContext()};
+        if (Level.is<Function *>()) {
+          auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+          mergeSiblingRegions(LI.begin(), LI.end(), Provider, ASTCtx,
+                              mParallelizationInfo);
+        } else {
+          mergeSiblingRegions(Level.get<Loop *>()->begin(),
+                              Level.get<Loop *>()->end(), Provider, ASTCtx,
+                              mParallelizationInfo);
+        }
+      }
+    }
 }
 
 Optional<bool> ClangOpenMPParallelization::addOrUpdateOrderedIfNeed(
@@ -484,7 +496,6 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     return PI;
   }
   auto *M = DFL.getLoop()->getHeader()->getModule();
-  auto &TfmCtx = *getAnalysis<TransformationEnginePass>()->getContext(*M);
   auto LoopID = DFL.getLoop()->getLoopID();
   Optional<bool> Finalize;
   if (!PI) {
@@ -619,9 +630,31 @@ void buildOrederedSink(const trait::DIDependence::DistanceVector &SinkRange,
 
 bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
   ClangSMParallelization::runOnModule(M);
-  auto *TfmCtx = getAnalysis<TransformationEnginePass>()->getContext(M);
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
   for (auto F : make_range(mParallelizationInfo.func_begin(),
                            mParallelizationInfo.func_end())) {
+    auto emitTfmError = [F]() {
+      F->getContext().emitError("cannot transform sources: transformation "
+                                "context is not available for the '" +
+                                F->getName() + "' function");
+    };
+    auto *DISub{findMetadata(F)};
+    if (!DISub) {
+      emitTfmError();
+      return false;
+    }
+    auto *CU{DISub->getUnit()};
+    if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage())) {
+      emitTfmError();
+      return false;
+    }
+    auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                               TfmInfo->getContext(*CU))
+                         : nullptr};
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
+      emitTfmError();
+      return false;
+    }
     auto Provider = analyzeFunction(*F);
     auto &LI = Provider.value<LoopInfoWrapperPass*>()->getLoopInfo();
     auto &LM = Provider.value<LoopMatcherPass *>()->getMatcher();

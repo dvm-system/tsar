@@ -33,6 +33,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -438,7 +439,7 @@ private:
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
       return;
-    auto AI = MemMatch->get<IR>();
+    auto AI = MemMatch->get<IR>().front();
     if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
     LInfo->setInduction(AI);
@@ -689,11 +690,16 @@ DeclarationMatcher makeLoopMatcher() {
 
 bool CanonicalLoopPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  auto TfmCtx = TfmInfo->getContext(*M);
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
