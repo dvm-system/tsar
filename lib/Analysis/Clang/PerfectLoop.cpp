@@ -139,7 +139,7 @@ bool ClangPerfectLoopPass::runOnFunction(Function &F) {
 
 void ClangPerfectLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequiredTransitive<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
   AU.setPreservesAll();
 }

@@ -1405,10 +1405,10 @@ void PrivateRecognitionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
-  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequiredTransitive<DFRegionInfoPass>();
   AU.addRequired<DefinedMemoryPass>();
   AU.addRequired<LiveMemoryPass>();
-  AU.addRequired<EstimateMemoryPass>();
+  AU.addRequiredTransitive<EstimateMemoryPass>();
   AU.addRequired<DependenceAnalysisWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();

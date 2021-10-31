@@ -309,7 +309,7 @@ bool LoopMatcherPass::runOnFunction(Function &F) {
 }
 
 void LoopMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequiredTransitive<LoopInfoWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
   AU.setPreservesAll();
 }

@@ -739,7 +739,7 @@ void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIEstimateMemoryPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequiredTransitive<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<EstimateMemoryPass>();
