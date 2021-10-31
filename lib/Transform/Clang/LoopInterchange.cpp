@@ -92,6 +92,8 @@ void ClangLoopInterchangeInfo::addBeforePass(
   Passes.add(createAnalysisSocketImmutableStorage());
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createGlobalsAccessStorage());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createDIEstimateMemoryPass());
   Passes.add(createDIMemoryAnalysisServer());
   Passes.add(createAnalysisWaitServerPass());
