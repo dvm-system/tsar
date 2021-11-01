@@ -112,9 +112,15 @@ class APCClangDVMHWriter : public ModulePass, private bcl::Uncopyable {
     bool HasDefinition = false;
   };
 
+  struct ArrayLess {
+    bool operator()(const apc::Array *LHS, const apc::Array *RHS) const {
+      return LHS->GetShortName() < RHS->GetShortName();
+    }
+  };
+
   /// Contains templates which are used in program files.
   using TemplateInFileUsage =
-    DenseMap<FileID, SmallDenseMap<apc::Array *, TemplateInfo, 1>>;
+    DenseMap<FileID, std::map<apc::Array *, TemplateInfo, ArrayLess>>;
 
   /// Set of declarations.
   using DeclarationSet = DenseSet<Decl *>;
@@ -418,8 +424,14 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   auto &APCRegion = APCCtx.getDefaultRegion();
   auto &DataDirs = APCRegion.GetDataDir();
   struct ArraysToAlign {
-    DenseMap<const AlignRule *, dvmh::VariableT> Globals;
-    DenseMap<Function *, SmallVector<const AlignRule *, 16>> Locals;
+    struct AlignRuleLess {
+      bool operator()(const apc::AlignRule *LHS, const apc::AlignRule *RHS) const {
+        return AL(LHS->alignArray, RHS->alignArray);
+      }
+      ArrayLess AL;
+    };
+    std::map<const apc::AlignRule *, dvmh::VariableT, AlignRuleLess> Globals;
+    DenseMap<Function *, SmallVector<const apc::AlignRule *, 16>> Locals;
   };
   DenseMap<ClangTransformationContext *, ArraysToAlign> ArraysInContext;
   auto emitTfmError = [](const Function &F) {
@@ -484,6 +496,10 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
       }
     };
     for (auto &&[F, Vars] : Arrays.Locals) {
+      sort(Vars, [](auto &LHS, auto &RHS) {
+        return LHS->alignArray->GetShortName() <
+               RHS->alignArray->GetShortName();
+      });
       auto *FD{cast<FunctionDecl>(TfmCtx->getDeclForMangledName(F->getName()))};
       assert(FD && "AST-level function declaration must not be null!");
       DeclarationInfoExtractor Visitor(Decls);
