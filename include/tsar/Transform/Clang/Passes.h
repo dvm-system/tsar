@@ -93,5 +93,12 @@ void initializeClangLoopReversePass(PassRegistry &Registry);
 
 /// Create a pass to reverse loop.
 ModulePass *createClangLoopReverse();
+
+/// Creates a pass for splitting variable declarations into single ones.
+llvm::ModulePass * createClangSplitDeclsPass();
+
+/// Initializes a pass for splitting variable declarations into single ones.
+void initializeClangSplitDeclsPassPass(PassRegistry &Registry);
+
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

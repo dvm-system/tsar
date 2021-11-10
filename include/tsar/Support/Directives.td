@@ -130,6 +130,8 @@ def NoInline : Clause<"noinline", Transform>;
 
 def Propagate : Clause<"propagate", Transform>;
 
+def SplitDeclaration : Clause<"splitdeclaration", Transform>;
+
 def Rename : Clause<"rename", Transform>;
 
 def LoopInterchange : Clause<"interchange", Transform,
