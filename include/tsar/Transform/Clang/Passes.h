@@ -58,7 +58,7 @@ llvm::ModulePass * createClangRenameLocalPass();
 void initializeClangRenameLocalPassPass(PassRegistry &Registry);
 
 /// Creates a pass to perform remove-firstprivate.
-ModulePass * createClangRemoveFirstPrivate();
+FunctionPass * createClangRemoveFirstPrivate();
 
 /// Initializes a pass to perform remove-firstprivate.
 void initializeClangRemoveFirstPrivatePass(PassRegistry &Registry);
