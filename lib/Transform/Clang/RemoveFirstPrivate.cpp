@@ -161,21 +161,6 @@ private:
     return nullptr;
   }
 
-  /// Return true if there is a side effect inside a specified statement.
-  const Stmt * findSideEffect(const Stmt &S) {
-    if (!isa<CallExpr>(S) &&
-        !(isa<BinaryOperator>(S) && cast<BinaryOperator>(S).isAssignmentOp()) &&
-        !(isa<UnaryOperator>(S) &&
-          cast<UnaryOperator>(S).isIncrementDecrementOp())) {
-      for (auto Child : make_range(S.child_begin(), S.child_end()))
-        if (Child)
-          if (auto SideEffect = findSideEffect(*Child))
-          return SideEffect;
-      return nullptr;
-    }
-    return &S;
-  }
-
   bool isInPragma = false;
   bool waitingForVar = true;
   std::map<NamedDecl *, DeclarationInfo> mDeadDecls;
