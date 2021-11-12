@@ -139,6 +139,9 @@ def Rename : Clause<"rename", Transform>;
 def LoopInterchange : Clause<"interchange", Transform,
   [LParen, PPIdentifier, Comma, PPIdentifier, RParen]>;
 
+def RemoveRedarray : Clause<"remove_redarray", Transform,
+  [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
+
 def Replace : Clause<"replace", Transform,
   [ZeroOrOne<[LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>]>;
 
