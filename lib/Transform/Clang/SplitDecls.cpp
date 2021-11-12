@@ -33,8 +33,10 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include "clang/Rewrite/Core/Rewriter.h"
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallString.h>
+#include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -42,13 +44,14 @@
 #include <llvm/Support/raw_ostream.h>
 #include <vector>
 #include <string>
+#include <stack>
 
 using namespace llvm;
 using namespace clang;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-split"
+#define DEBUG_TYPE "clang-split-decls"
 
 char ClangSplitDeclsPass::ID = 0;
 
@@ -57,7 +60,7 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(ClangSplitDeclsPass, "clang-split",
   tsar::TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_IN_GROUP_END(ClangSplitDeclsPass, "clang-split",
+INITIALIZE_PASS_IN_GROUP_END(ClangSplitDeclsPass, "clang-split-decls",
   "Separation of variable declaration statements (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
 
@@ -75,6 +78,7 @@ namespace {
 /// The visitor searches a pragma `split` and performs splitting for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
+bool isNotSingleFlag = false;
 class ClangSplitter : public RecursiveASTVisitor<ClangSplitter> {
 public:
   ClangSplitter(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
@@ -85,10 +89,21 @@ public:
     mLangOpts(mRewriter.getLangOpts()) {}
 
   bool TraverseStmt(Stmt *S) { // to traverse the parse tree and visit each statement
-    if (!S)
+    if (!S) {
       return RecursiveASTVisitor::TraverseStmt(S);
+    }
     Pragma P(*S); // the Pragma class is used to check if a statement is a pragma or not
     if (findClause(P, ClauseId::SplitDeclaration, mClauses)) { // mClauses contains all SplitDeclaration pragmas
+      std::vector<std::string> inits;
+      while (starts.size()) {
+        SourceRange toInsert(starts.top(), ends.top());
+        CharSourceRange txtToInsert(toInsert, true);
+        starts.pop();
+        ends.pop();
+        txtStr = mRewriter.getRewrittenText(txtToInsert);
+        txtStr += ";\n";
+        inits.push_back(txtStr);
+      }
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove; // a vector of statements that will match the root in the tree
       auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
                                             mImportInfo, ToRemove); // ToRemove - the range of positions we want to remove
@@ -108,7 +123,22 @@ public:
       RemoveEmptyLine.RemoveLineIfEmpty = false;
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
+      if (isNotSingleFlag) {
+        SourceRange toInsert(start, end);
+        mRewriter.RemoveText(toInsert, RemoveEmptyLine);
+      }
+      //Rewriter::RewriteOptions RemoveEmptyLine;
+      for (std::vector<std::string>::iterator it = inits.begin(); it != inits.end(); ++it) {
+        mRewriter.InsertTextAfterToken(end, *it);
+      }
       return true;
+    }
+    Rewriter::RewriteOptions RemoveEmptyLine;
+    RemoveEmptyLine.RemoveLineIfEmpty = false;
+
+    if (isNotSingleFlag) {
+      SourceRange toInsert(start, end);
+      mRewriter.RemoveText(toInsert, RemoveEmptyLine);
     }
     if (mClauses.empty() || !isa<CompoundStmt>(S) &&
         !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
@@ -140,10 +170,58 @@ public:
     return Res;
   }
 
+  void buildTxtStr(std::string varType, std::string varName) {
+    std::vector<std::string> tokens;
+    std::string delimiter(" ");
+    size_t prev = 0;
+    size_t next;
+    size_t delta = delimiter.length();
+    while((next = varType.find(delimiter, prev)) != std::string::npos){
+      tokens.push_back(varType.substr(prev, next-prev));
+      prev = next + delta;
+    }
+    tokens.push_back(varType.substr(prev));
+    txtStr = "";
+    for (std::string token : tokens) {
+      if (token == tokens.back())
+        txtStr += varName + token + ";\n";
+      else
+        txtStr += token + " ";
+    }
+  }
+
+  bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
+    if (isNotSingleFlag) {
+      std::string varType = S->getType().getAsString();
+      SourceLocation locat = S->getLocation();
+      CharSourceRange txtToInsert(locat, true);
+      std::string varName = S->getName().str();
+      int n = varType.length();
+      char char_array[n + 1];
+      strcpy(char_array, varType.c_str());
+      if (strchr(char_array, '[')) {
+        buildTxtStr(varType, varName);
+      } else {
+        txtStr = varType + " " + varName + ";\n";
+      }
+      mRewriter.InsertTextAfterToken(end, txtStr);
+    }
+    return true;
+  }
+
+  bool TraverseDeclStmt(DeclStmt *S) {
+    if(!S->isSingleDecl()) {
+      isNotSingleFlag = true;
+      start = S->getBeginLoc();
+      end = S->getEndLoc();
+    } else {
+      isNotSingleFlag = false;
+    }
+    return RecursiveASTVisitor::TraverseDeclStmt(S);
+  }
+
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
-      toDiag(mContext.getDiagnostics(), mClauses.front()->getBeginLoc(),
-        tsar::diag::warn_unexpected_directive);
       mClauses.clear();
     }
     return RecursiveASTVisitor::VisitStmt(S);
@@ -157,6 +235,7 @@ public:
     }
     return RecursiveASTVisitor::VisitDecl(D);
   }
+
   private:
 
   TransformationContext *mTfmCtx;
@@ -168,6 +247,12 @@ public:
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
   bool mActiveSplit = false;
+  DenseSet<DeclStmt*> mMultipleDecls;
+  std::stack<SourceLocation> starts;
+  std::stack<SourceLocation> ends;
+  SourceLocation start;
+  SourceLocation end;
+  std::string txtStr;
 };
 }
 

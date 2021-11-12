@@ -30,22 +30,21 @@
 
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
-#include <llvm/Pass.h> // здесь объявлены базовые классы FunctionPass и ModulPass
+#include <llvm/Pass.h>
 
 namespace llvm {
 /// This pass separates variable declaration statements that contain multiple
 /// variable declarations at once into single declarations.
-class ClangSplitDeclsPass : public ModulePass, private bcl::Uncopyable { // модульный проход
+class ClangSplitDeclsPass : public ModulePass, private bcl::Uncopyable {
 public:
-  static char ID; // ID, по которому менеджер проходов понимает, какой это проход
+  static char ID;
 
   ClangSplitDeclsPass() : ModulePass(ID) {
-    initializeClangSplitDeclsPassPass(*PassRegistry::getPassRegistry()); // конструктор
+    initializeClangSplitDeclsPassPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnModule(Module &M) override; // модульный проход, принимает на вход модуль, основной метод
-  void getAnalysisUsage(AnalysisUsage &AU) const override; // указание проходов, которые автоматически будут запущены перед выполнением
-  // данного прохода
+  bool runOnModule(Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 }
 #endif//TSAR_CLANG_SPLIT_DECLS_H
