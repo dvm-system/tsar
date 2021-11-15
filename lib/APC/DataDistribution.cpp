@@ -868,6 +868,10 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
         if (IsDistinctAccessed)
           cast<PragmaRemoteAccess>(RemoteRef)->getMemory().insert(
               ToAccessDistinct->begin(), ToAccessDistinct->end());
+        ParallelCtx.getParallelization()
+            .emplace<ParallelMarker<PragmaRemoteAccess>>(
+                I.getParent(), &I, false /*OnEntry*/, 0,
+                cast<PragmaRemoteAccess>(RemoteRef));
       }
     }
   }

@@ -187,6 +187,13 @@ static bool tryToIgnoreDirectives(Parallelization::iterator PLocListItr,
         PD->invalidate();
         continue;
       }
+    } else if (auto *Marker{
+                   dyn_cast<ParallelMarker<PragmaData>>(PIItr->get())}) {
+      auto *PD{Marker->getBase()};
+      if (!PD->isRequired()) {
+        PD->invalidate();
+        continue;
+      }
     }
     // TODO: (kaniandr@gmail.com): emit error
     LLVM_DEBUG(dbgs() << "[DVMH WRITER]: error: unable to insert on entry: "
@@ -200,6 +207,13 @@ static bool tryToIgnoreDirectives(Parallelization::iterator PLocListItr,
       // Some data directives could be redundant.
       // So, we will emit errors later when redundant directives are
       // already ignored.
+      if (!PD->isRequired()) {
+        PD->invalidate();
+        continue;
+      }
+    } else if (auto *Marker{
+                   dyn_cast<ParallelMarker<PragmaData>>(PIItr->get())}) {
+      auto *PD{Marker->getBase()};
       if (!PD->isRequired()) {
         PD->invalidate();
         continue;
@@ -593,13 +607,14 @@ addPragmaToStmt(const Stmt *ToInsert,
       pragmaRegionStr(PIRef, PragmaStr);
     } else if (isa<PragmaRealign>(PIRef)) {
       pragmaRealignStr(PIRef, PragmaStr);
-    } else if (auto *PD{dyn_cast<PragmaData>(PIRef)}) {
+    } else if (isa<PragmaData>(PIRef) ||
+               isa<ParallelMarker<PragmaData>>(PIRef)) {
       // Even if this directive cannot be inserted (it is invalid) it should
       // be processed later. If it is replaced with some other directives,
       // this directive changes status to CK_Skip. The new status may allow us
       // to ignore some other directives later.
       DeferredPragmas.try_emplace(PIRef, ToInsert);
-      if (PD->parent_empty())
+      if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
         NotOptimizedPragmas.push_back(PD);
       // Mark the position of the directive in the source code. It will be later
       // created their only if necessary.
@@ -621,15 +636,16 @@ addPragmaToStmt(const Stmt *ToInsert,
     SmallString<128> PragmaStr{"\n"};
     if (isa<PragmaRealign>(PIRef)) {
       pragmaRealignStr(PIRef, PragmaStr);
-    } else if (auto *PD{dyn_cast<PragmaData>(PIRef)}) {
+    } else if (auto *Marker{dyn_cast<ParallelMarker<PragmaRegion>>(PIRef)}) {
+      PragmaStr = "}";
+    } else if (isa<PragmaData>(PIRef) ||
+               isa<ParallelMarker<PragmaData>>(PIRef)) {
       DeferredPragmas.try_emplace(PIRef, ToInsert);
-      if (PD->parent_empty())
+      if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
         NotOptimizedPragmas.push_back(PD);
       if (ToInsert)
         PragmaLoc->second.After.emplace_back(PIItr->get(), "");
       continue;
-    } else if (auto *Marker{dyn_cast<ParallelMarker<PragmaRegion>>(PIRef)}) {
-      PragmaStr = "}";
     } else {
       llvm_unreachable("An unknown pragma has been attached to a loop!");
     }
@@ -676,6 +692,14 @@ static bool pragmaDataStr(FilterT Filter, const ParallelItemRef &PDRef,
                      addVar(V, Clause);
                      Clause.append({'[', ']'});
                    };
+  struct OnReturnT {
+    ~OnReturnT() {
+      if (isa<PragmaRemoteAccess>(PDRef))
+        Str.append({'\n', '{'});
+    }
+    const ParallelItemRef &PDRef;
+    SmallVectorImpl<char> &Str;
+  } OnReturn{PDRef, Str};
   if constexpr (std::is_same_v<decltype(Filter), std::true_type>)
     addVarList(PD->getMemory(), add, Str);
   else if (addVarList(PD->getMemory(), std::move(Filter), add, Str) == 0)
@@ -1009,11 +1033,18 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       }
     }
   }
+
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: optimized replacement tree:\n";
              printReplacementTree(NotOptimizedPragmas, DeferredPragmas,
                                   PragmasToInsert));
   // Build pragmas for necessary data transfer directives.
   insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
+  for (auto &&[PIRef, ToInsert] : DeferredPragmas)
+    if (ToInsert)
+      if (auto *Marker{dyn_cast<ParallelMarker<PragmaRemoteAccess>>(PIRef)})
+        if (auto *Remote{Marker->getBase()};
+            !Remote->isInvalid() && !Remote->isSkipped())
+          PragmasToInsert[ToInsert].After.emplace_back(Marker, "\n}");
   // Update sources.
   for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
     auto BeginLoc{ToInsert->getBeginLoc()};
