@@ -483,9 +483,14 @@ static void sanitizeAcrossLoops(ItrT I, ItrT EI,
       if (TieItr == Range.second) {
         UntiedVars.emplace_back(V.template get<AST>());
       } else if (TieItr != Range.second) {
-        for (unsigned LoopIdx{0}, LoopIdxE = Distances.size();
+        for (unsigned LoopIdx{0},
+             LoopIdxE =
+                 Distances.template get<trait::DIDependence::DistanceVector>()
+                     .size();
              LoopIdx < LoopIdxE; ++LoopIdx) {
-          auto [L, R] = Distances[LoopIdx];
+          auto [L, R] =
+              Distances
+                  .template get<trait::DIDependence::DistanceVector>()[LoopIdx];
           if ((L || R) && (LoopIdx >= TieItr->second.size() ||
                            !TieItr->second[LoopIdx].first)) {
             UntiedVars.emplace_back(V.template get<AST>());

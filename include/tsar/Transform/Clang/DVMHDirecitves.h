@@ -49,13 +49,22 @@ namespace tsar {
 class DIArrayAccessInfo;
 
 namespace dvmh {
+
+struct Shadow {};
+struct Corner {};
+struct Remote {};
+
 using DistanceInfo = ClangDependenceAnalyzer::DistanceInfo;
 using VariableT = ClangDependenceAnalyzer::VariableT;
 using ReductionVarListT = ClangDependenceAnalyzer::ReductionVarListT;
 using SortedVarListT = ClangDependenceAnalyzer::SortedVarListT;
 using SortedVarMultiListT = ClangDependenceAnalyzer::SortedVarMultiListT;
-using ShadowVarListT = std::map<VariableT, trait::DIDependence::DistanceVector,
-                                ClangDependenceAnalyzer::VariableLess>;
+using ShadowVarListT =
+    std::map<VariableT,
+             bcl::tagged_pair<bcl::tagged<trait::DIDependence::DistanceVector,
+                                          trait::DIDependence::DistanceVector>,
+                              bcl::tagged<bool, Corner>>,
+             ClangDependenceAnalyzer::VariableLess>;
 using InductionInfo = ClangDependenceAnalyzer::InductionInfo;
 
 class Template {
@@ -140,9 +149,6 @@ struct AlignLess {
 };
 
 using AlignVarListT = std::set<Align, AlignLess>;
-
-struct Shadow {};
-struct Remote {};
 
 class PragmaRegion : public ParallelLevel {
 public:

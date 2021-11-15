@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Transform/Clang/DVMHDirecitves.h"
+#include <bcl/Equation.h>
 #include <llvm/ADT/APSInt.h>
 #include <llvm/ADT/Optional.h>
 
@@ -142,7 +143,37 @@ private:
 
 class ArrayRefExp : public Expression {
   using RecurrenceList = llvm::SmallVector<LoopGraph *, 1>;
+
 public:
+  struct AffineSubscript {
+    AffineSubscript(llvm::APSInt A, LoopGraph *I, llvm::APSInt B) {
+      assert(I && "Induction variable must not be null!");
+      mConstants.push_back(std::move(B));
+      mConstants.push_back(std::move(A));
+      mLoops.push_back(I);
+    }
+
+    void emplace_back(llvm::APSInt A, LoopGraph *I) {
+      assert(I && "Induction variable must not be null!");
+      mConstants.push_back(std::move(A));
+      mLoops.push_back(I);
+    }
+
+    unsigned size() const { return mLoops.size(); }
+
+    auto getMonom(unsigned Idx) {
+      return milp::AMonom<LoopGraph *, llvm::APSInt>{mLoops[Idx],
+                                                     mConstants[Idx + 1]};
+    }
+
+    const auto &getConstant() { return mConstants.front(); }
+
+    llvm::ArrayRef<LoopGraph *> getRec() const { return mLoops; }
+  private:
+    llvm::SmallVector<llvm::APSInt, 2> mConstants;
+    RecurrenceList mLoops;
+  };
+
   ArrayRefExp(tsar::APCContext *Ctx, Distribution::Array *A,
               std::size_t NumOfSubscripts)
       : Expression(Ctx), mArray(A), mRecInDim(NumOfSubscripts) {
@@ -171,7 +202,22 @@ public:
   llvm::ArrayRef<LoopGraph *> getRecInDim(unsigned DimIdx) const {
     if (auto RL{std::get_if<RecurrenceList>(&mRecInDim[DimIdx])})
       return *RL;
+    if (auto AS{std::get_if<AffineSubscript>(&mRecInDim[DimIdx])})
+      return AS->getRec();
     return llvm::ArrayRef<LoopGraph *>{};
+  }
+
+  bool isAffineSubscript(unsigned DimIdx) const {
+    return std::holds_alternative<AffineSubscript>(mRecInDim[DimIdx]);
+  }
+
+  void setAffineSubscript(unsigned DimIdx, AffineSubscript S) {
+    mRecInDim[DimIdx] = std::move(S);
+  }
+
+  const AffineSubscript &getAffineSubscript(unsigned DimIdx) const {
+    assert(isAffineSubscript(DimIdx) && "Subscript expression must be affine!");
+    return std::get<AffineSubscript>(mRecInDim[DimIdx]);
   }
 
   bool isConstantSubscript(unsigned DimIdx) const {
@@ -196,7 +242,9 @@ public:
 
 private:
   Distribution::Array *mArray;
-  llvm::SmallVector<std::variant<RecurrenceList, llvm::APSInt>, 4> mRecInDim;
+  llvm::SmallVector<std::variant<RecurrenceList, AffineSubscript, llvm::APSInt>,
+                    4>
+      mRecInDim;
 };
 
 class Statement {
@@ -296,6 +344,14 @@ public:
     return mInduction.get<tsar::End>();
   }
 
+  void addImmediateAccess(ArrayRefExp *A) {
+    assert(A && "Access must not be null!");
+    mImmediateAccess.push_back(A);
+  }
+  llvm::ArrayRef<ArrayRefExp *> getImmediateAccesses() const noexcept {
+    return mImmediateAccess;
+  }
+
 private:
   llvm::Function *mFunction{nullptr};
   tsar::ObjectID mId{nullptr};
@@ -305,6 +361,7 @@ private:
   bool mIsHostOnly{true};
   bool mIsScheduledToParallelization{false};
   unsigned mPossibleAcrossDepth{0};
+  std::vector<ArrayRefExp *> mImmediateAccess;
 };
 }
 #endif//TSAR_AST_WRAPPER_IMPL_H

@@ -118,19 +118,20 @@ unsigned tsar::dvmh::processRegularDependencies(
     updatePAD(Dep, trait::Flow{});
     updatePAD(Dep, trait::Anti{});
     auto I{AcrossInfo.try_emplace(Dep.first).first};
-    I->second.resize(NumberOfDims);
+    I->second.get<trait::DIDependence::DistanceVector>().resize(NumberOfDims);
+    I->second.get<Corner>() = false;
     auto getDistance = [&Dep](auto T) {
       return Dep.second.get<decltype(T)>().empty()
                  ? None
                  : Dep.second.get<decltype(T)>().front().second;
     };
     if (ConstStep->getAPInt().isNegative())
-      I->second[*DependentDim] = {getDistance(trait::Anti{}),
-                                  getDistance(trait::Flow{})};
+      I->second.get<trait::DIDependence::DistanceVector>()[*DependentDim] = {
+          getDistance(trait::Anti{}), getDistance(trait::Flow{})};
 
     else
-      I->second[*DependentDim] = {getDistance(trait::Flow{}),
-                                  getDistance(trait::Anti{})};
+      I->second.get<trait::DIDependence::DistanceVector>()[*DependentDim] = {
+          getDistance(trait::Flow{}), getDistance(trait::Anti{})};
   }
   return PossibleAcrossDepth;
 }

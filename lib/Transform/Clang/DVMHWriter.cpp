@@ -522,7 +522,8 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   auto addShadow = [&Str](auto &Shadow) {
     Str.append(Shadow.first.template get<AST>()->getName().begin(),
                Shadow.first.template get<AST>()->getName().end());
-    for (auto &Range : Shadow.second) {
+    for (auto &Range :
+         Shadow.second.template get<trait::DIDependence::DistanceVector>()) {
       Str.push_back('[');
       if (Range.first)
         Range.first->toString(Str);
@@ -535,6 +536,8 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
         Str.push_back('0');
       Str.push_back(']');
     }
+    if (Shadow.second.template get<Corner>())
+      Str.append({'(', 'c', 'o', 'r', 'n', 'e', 'r', ')'});
   };
   if (!Parallel->getClauses().get<Shadow>().empty()) {
     Str.append(

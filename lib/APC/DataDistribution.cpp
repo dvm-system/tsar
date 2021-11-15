@@ -52,6 +52,7 @@
 #include <apc/DirectiveProcessing/DirectiveAnalyzer.h>
 #include <apc/DirectiveProcessing/remote_access.h>
 #include <apc/Distribution/CreateDistributionDirs.h>
+#include <apc/Distribution/DvmhDirectiveBase.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <apc/GraphCall/graph_calls_func.h>
 #include <apc/GraphLoop/graph_loops.h>
@@ -326,6 +327,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       AccessExpr =
           new apc::ArrayRefExp{&APCCtx, Scope, APCArray, Access.size()};
       APCCtx.addExpression(AccessExpr);
+      LLVM_DEBUG(dbgs() << "[APC]: register immediate access in loop at "
+                        << Scope->lineNum << "\n");
+      cast<apc::LoopStatement>(Scope->loop)->addImmediateAccess(AccessExpr);
       auto *FI{APCCtx.findFunction(
           *cast<apc::LoopStatement>(Scope->loop)->getFunction())};
       assert(FI && "Function must be registered!");
@@ -378,11 +382,11 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       }
       ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
       auto *APCLoop = APCCtx.findLoop(AffineAccess->getMonom(0).Column);
-      auto LpStmt{cast_or_null<apc::LoopStatement>(APCLoop->loop)};
+      auto LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
       decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
       if (auto C{AffineAccess->getMonom(0).Value};
           C.Kind != DIAffineSubscript::Symbol::SK_Constant &&
-              (C.Kind != DIAffineSubscript::Symbol::SK_Induction || !LpStmt ||
+              (C.Kind != DIAffineSubscript::Symbol::SK_Induction ||
                C.Variable != LpStmt->getInduction().get<MD>()) ||
           !castAPInt(C.Constant, true, ABPair.first)) {
         if (!Access.isWriteOnly()) {
@@ -401,7 +405,6 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                   DIAffineSubscript::Symbol::SK_Constant &&
               (AffineAccess->getSymbol().Kind !=
                    DIAffineSubscript::Symbol::SK_Induction ||
-               !LpStmt ||
                AffineAccess->getSymbol().Variable !=
                    LpStmt->getInduction().get<MD>()) ||
           !castAPInt(AffineAccess->getSymbol().Constant, true, ABPair.second)) {
@@ -429,7 +432,9 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
       if (!Access.isWriteOnly()) {
         APCArrayAccesses->readOps[DimIdx].coefficients.emplace(ABPair, 1.0);
         assert(AccessExpr && "Expression must not be null!");
-        AccessExpr->registerRecInDim(DimIdx, APCLoop);
+        AccessExpr->setAffineSubscript(
+            DimIdx, {AffineAccess->getMonom(0).Value.Constant, APCLoop,
+                     AffineAccess->getSymbol().Constant});
         registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
                             APCArrayAccesses, REMOTE_FALSE);
         auto [Itr, IsNew] =
@@ -878,6 +883,43 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   return false;
 }
 
+static void collectAccesses(
+    LoopGraph *L,
+    DenseMap<apc::Array *, std::vector<std::vector<std::pair<int, int>>>>
+        &Accesses) {
+  for (auto *A : cast<apc::LoopStatement>(L->loop)->getImmediateAccesses()) {
+    auto &CurrentArray{Accesses[A->getArray()]};
+    CurrentArray.emplace_back();
+    auto &CurrentAccess{CurrentArray.back()};
+    using value_type = std::decay_t<decltype(CurrentAccess)>::value_type;
+    LLVM_DEBUG(dbgs() << "[APC]: collect affine accesses to "
+                      << A->getArray()->GetShortName() << " (" << A->getArray()
+                      << ")\n");
+    CurrentAccess.resize(
+        A->getArray()->GetDimSize(),
+        std::pair{std::numeric_limits<value_type::first_type>::min(),
+                  std::numeric_limits<value_type::second_type>::max()});
+    for (unsigned I = 0, EI = A->size(); I < EI; ++I) {
+      if (A->isAffineSubscript(I))
+        if (auto S{A->getAffineSubscript(I)};
+            S.size() == 1 &&
+            S.getConstant().getActiveBits() <=
+                sizeof(value_type::second_type) * CHAR_BIT &&
+            S.getMonom(0).Value.getActiveBits() <=
+                sizeof(value_type::first_type) * CHAR_BIT) {
+          CurrentAccess[I] = value_type{S.getMonom(0).Value.getSExtValue(),
+                                        S.getConstant().getSExtValue()};
+          LLVM_DEBUG(dbgs() << "[APC]: collect affine access in a loop nest "
+                            << S.getMonom(0).Value << " * I + "
+                            << S.getConstant() << "\n");
+        }
+    }
+  }
+  for (auto *Child : L->children)
+    collectAccesses(Child, Accesses);
+}
+
+
 void APCDataDistributionPass::print(raw_ostream &OS, const Module *M) const {
   if (mMultipleLaunch)
     OS << "warning: possible multiple launches of the pass for the same "
@@ -968,10 +1010,8 @@ apc::Directive * ParallelDirective::genDirective(File *F,
   if (APCSymbol->isTemplate())
     Clauses.get<dvmh::Align>()->Target = APCSymbol->getTemplate();
   else {
-
     Clauses.get<dvmh::Align>()->Target =
       APCSymbol->getVariable(Func).getValue();
-
   }
   auto &OnTo{arrayRef2->IsLoopArray() ? on : on2};
   auto LpStmt{cast<apc::LoopStatement>(CurrLoop->loop)};
@@ -1045,13 +1085,14 @@ apc::Directive * ParallelDirective::genDirective(File *F,
           Clauses.get<trait::Dependence>()
               .try_emplace(A->GetDeclSymbol()->getVariable(Func).getValue())
               .first};
+      AcrossItr->second.second = false;
       for (unsigned Dim = 0, DimE = across[I].second.size(); Dim < DimE;
            ++Dim) {
         auto Left{across[I].second[Dim].first + acrossShifts[I][Dim].first};
         auto Right{across[I].second[Dim].second + acrossShifts[I][Dim].second};
-        AcrossItr->second.emplace_back(
-            APSInt{APInt{64, (uint64_t)Left, false}, true},
-            APSInt{APInt{64, (uint64_t)Right, false}, true});
+        AcrossItr->second.get<trait::DIDependence::DistanceVector>()
+            .emplace_back(APSInt{APInt{64, (uint64_t)Left, false}, true},
+                          APSInt{APInt{64, (uint64_t)Right, false}, true});
       }
     }
   }
@@ -1061,6 +1102,11 @@ apc::Directive * ParallelDirective::genDirective(File *F,
       for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I)
         shadowRenewShifts[I].resize(shadowRenew[I].second.size());
     }
+    LLVM_DEBUG(dbgs() << "[APC]: collect affine accesses in the loop nest at "
+                      << CurrLoop->lineNum << "\n");
+    DenseMap<apc::Array *, std::vector<std::vector<std::pair<int, int>>>>
+        Accesses;
+    collectAccesses(CurrLoop, Accesses);
     for (unsigned I = 0, EI = shadowRenew.size(); I < EI; ++I) {
       std::vector<std::map<std::pair<int, int>, int>> ShiftsByAccess;
       auto Bounds{genBounds(
@@ -1073,6 +1119,8 @@ apc::Directive * ParallelDirective::genDirective(File *F,
       assert(A && "Array must be known!");
       assert(!A->IsTemplate() &&
              "Template cannot be referenced in shadow_renew clause!");
+      LLVM_DEBUG(dbgs() << "[APC]: calculate shadow_renew for "
+                        << A->GetShortName() << " (" << A << ")\n");
       auto ShadowItr{
           Clauses.get<Shadow>()
               .try_emplace(A->GetDeclSymbol()->getVariable(Func).getValue())
@@ -1083,15 +1131,19 @@ apc::Directive * ParallelDirective::genDirective(File *F,
                   shadowRenewShifts[I][Dim].first};
         auto Right{shadowRenew[I].second[Dim].second +
                    shadowRenewShifts[I][Dim].second};
-        ShadowItr->second.emplace_back(
-            APSInt{APInt{64, (uint64_t)Left, false}, true},
-            APSInt{APInt{64, (uint64_t)Right, false}, true});
+        ShadowItr->second.get<trait::DIDependence::DistanceVector>()
+            .emplace_back(APSInt{APInt{64, (uint64_t)Left, false}, true},
+                          APSInt{APInt{64, (uint64_t)Right, false}, true});
       }
+      ShadowItr->second.get<Corner>() =
+          (shadowRenew[I].second.size() > 1 &&
+           needCorner(A, ShiftsByAccess, Accesses[A]));
     }
   }
   Parallel->finalize();
   return DirImpl;
 }
+
 
 void fillAcrossInfoFromDirectives(
     const LoopGraph *L,
@@ -1106,7 +1158,7 @@ void fillAcrossInfoFromDirectives(
     auto DIEM{cast<DIEstimateMemory>(Var.get<MD>())};
     AcrossInfo.back().first.second =
         APCContext::getUniqueName(*DIEM->getVariable(), *LpStmt->getFunction());
-    for (auto Range : Distance) {
+    for (auto Range : Distance.first) {
       int Left{0}, Right{0};
       if (Range.first)
         Left = Range.first->getSExtValue();
