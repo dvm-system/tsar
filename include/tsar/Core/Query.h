@@ -56,6 +56,9 @@ class TransformationInfo;
 
 LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
+/// Print versions of all available tools to a specified stream.
+void printToolVersion(llvm::raw_ostream &OS);
+
 /// Add immutable alias analysis passes.
 void addImmutableAliasAnalysis(llvm::legacy::PassManager &Passes);
 

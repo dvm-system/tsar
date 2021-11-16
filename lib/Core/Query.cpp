@@ -31,6 +31,7 @@
 #include "tsar/Analysis/Memory/AllocasModRef.h"
 #ifdef APC_FOUND
 # include "tsar/APC/Passes.h"
+# include "tsar/APC/Utils.h"
 #endif
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
@@ -54,6 +55,7 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Pass.h>
+#include <llvm/Support/Host.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/InferFunctionAttrs.h>
@@ -61,12 +63,40 @@
 #include <llvm/Transforms/IPO/AlwaysInliner.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils.h>
+#ifdef lp_solve_FOUND
+# include <lp_solve/lp_solve_config.h>
+#endif
 
 using namespace clang;
 using namespace llvm;
 using namespace tsar;
 
 namespace tsar {
+void printToolVersion(raw_ostream &OS) {
+  OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
+  OS << "  version " << TSAR_VERSION_STRING << "\n";
+#ifdef APC_FOUND
+  OS << "  with "; printAPCVersion(OS);
+#endif
+#ifdef lp_solve_FOUND
+  OS << "  with lp_solve(" << LP_SOLVE_HOMEPAGE_URL << "):\n";
+  OS << "    version " << LP_SOLVE_VERSION_STRING << "\n";
+#endif
+#ifndef __OPTIMIZE__
+  OS << "  DEBUG build";
+#else
+  OS << "  Optimized build";
+#endif
+#ifndef NDEBUG
+  OS << " with assertions";
+#endif
+  OS << ".\n";
+  OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
+  auto CPU = sys::getHostCPUName();
+  OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
+}
+
+
 void addImmutableAliasAnalysis(legacy::PassManager &Passes) {
   Passes.add(createCFLSteensAAWrapperPass());
   Passes.add(createCFLAndersAAWrapperPass());
@@ -212,6 +242,9 @@ void DefaultQueryManager::addWithPrint(llvm::Pass *P, bool PrintResult,
 
 void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
+  auto &PrintOS{errs()};
+  if (!mPrintPasses.empty() && mGlobalOptions->PrintToolVersion)
+    printToolVersion(PrintOS);
   legacy::PassManager Passes;
   Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
   if (TfmInfo) {
@@ -223,7 +256,7 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   }
   addImmutableAliasAnalysis(Passes);
   addInitialTransformations(Passes);
-  auto addPrint = [&Passes, this](ProcessingStep CurrentStep) {
+  auto addPrint = [&Passes, this, &PrintOS](ProcessingStep CurrentStep) {
     if (!(CurrentStep & mPrintSteps))
       return;
     for (auto PI : mPrintPasses) {
@@ -241,10 +274,10 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
         llvm_unreachable("Printers does not support this kind of passes yet!");
         break;
       case PT_Function:
-        Passes.add(createFunctionPassPrinter(PI, errs()));
+        Passes.add(createFunctionPassPrinter(PI, PrintOS));
         break;
       case PT_Module:
-        Passes.add(createModulePassPrinter(PI, errs()));
+        Passes.add(createModulePassPrinter(PI, PrintOS));
         break;
       }
     }

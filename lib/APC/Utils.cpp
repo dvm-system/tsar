@@ -33,11 +33,11 @@ using namespace tsar;
 
 namespace tsar {
 void printAPCVersion(llvm::raw_ostream &OS) {
-  OS << "  APC (" << APC_HOMEPAGE_URL << "):\n";
+  OS << "APC (" << APC_HOMEPAGE_URL << "):\n";
   OS << "    version " << APC_VERSION_STRING << "\n";
   OS << "    language ";
 #ifdef APC_C
-  OS << "C";
+  OS << "C/C++";
 #endif
   OS << "\n";
 }
