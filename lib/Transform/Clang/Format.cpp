@@ -86,9 +86,7 @@ bool tsar::formatSourceAndPrepareToRelease(
         toDiag(Diags, StartLoc, tsar::diag::warn_reformat);
         continue;
       }
-      auto CurrSize = Buffer.second.size();
-      Buffer.second.InsertTextBefore(0, ReformatSrc.get());
-      Buffer.second.RemoveText(0, CurrSize);
+      Buffer.second.Initialize(ReformatSrc.get());
     }
   }
   return IsAllValid;
