@@ -76,6 +76,12 @@ ModulePass * createAPCClangDVMHWriter();
 /// Initialize a pass to insert DVMH-directives into a source program.
 void initializeAPCClangDVMHWriterPass(PassRegistry &Registry);
 
+/// Create a pass to determine limitations for data distribution.
+FunctionPass *createAPCDistrLimitsChecker();
+
+/// Initialize a pass  to determine limitations for data distribution.
+void initializeAPCDistrLimitsCheckerPass(PassRegistry &Registry);
+
 /// Create a pass to collect user directives.
 ModulePass *createAPCClangDirectivesCollector();
 
