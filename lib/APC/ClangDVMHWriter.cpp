@@ -346,6 +346,7 @@ class APCClangDVMHWriterInfo final : public PassGroupInfo {
     Passes.add(createAPCLoopInfoBasePass());
     Passes.add(createAPCFunctionInfoPass());
     // End of the third step of analysis on server.
+    Passes.add(createAPCClangDirectivesCollector());
     Passes.add(createAPCDataDistributionPass());
     Passes.add(createDVMHDataTransferIPOPass());
     Passes.add(createClangDVMHWriter());

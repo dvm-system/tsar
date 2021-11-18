@@ -75,6 +75,12 @@ ModulePass * createAPCClangDVMHWriter();
 
 /// Initialize a pass to insert DVMH-directives into a source program.
 void initializeAPCClangDVMHWriterPass(PassRegistry &Registry);
+
+/// Create a pass to collect user directives.
+ModulePass *createAPCClangDirectivesCollector();
+
+/// Initialize a pass to collect user directives.
+void initializeAPCClangDirectivesCollectorPass(PassRegistry &Registry);
 }
 
 #endif//TSAR_APC_PASSES_H

@@ -100,6 +100,7 @@ def Transform  : Directive<"transform">;
 def Assert     : Directive<"assert">;
 def Region     : Directive<"region">;
 def Metadata   : Directive<"metadata">;
+def Parallel   : Directive<"parallel">;
 
 def DvmTemplate     : Directive<"template", Dvm, 1>;
 def DvmArray        : Directive<"array", Dvm>;
@@ -121,6 +122,9 @@ class Clause<string name, Directive parent, list<Expr> expr_list = []> {
   Directive Parent = parent;
   list<Expr> ExprList = expr_list;
 }
+
+def ProcessPrivate : Clause<"processprivate", Parallel,
+  [LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>;
 
 def NoStrict : Clause<"nostrict", Transform>;
 
