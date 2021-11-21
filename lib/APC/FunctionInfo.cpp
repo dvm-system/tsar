@@ -243,14 +243,13 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
         Args[ArgNum] = std::pair{DIEM, A};
     }
     for (auto &Arg : Caller.first->args()) {
-      if (Arg.hasStructRetAttr())
-        continue;
       auto [DIEM, A] = Args[Arg.getArgNo()];
       if (!DIEM) {
         FI.funcParams.identificators.push_back(Arg.getName().str());
         FI.funcParams.parameters.push_back(nullptr);
         FI.funcParams.parametersT.push_back(UNKNOWN_T);
-        FI.funcParams.inout_types.push_back(IN_BIT | OUT_BIT);
+        FI.funcParams.inout_types.push_back(
+            Arg.hasStructRetAttr() ? OUT_BIT : IN_BIT | OUT_BIT);
       } else {
         FI.funcParams.identificators.push_back(
             DIEM->getVariable()->getName().str());
@@ -330,8 +329,6 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       apc::FuncParam Param;
       auto *CB{cast<CallBase>(*Callee.first)};
       for (auto &Arg : Callee.second->getFunction()->args()) {
-        if (Arg.hasStructRetAttr())
-          continue;
         Param.parameters.push_back(nullptr);
         Param.identificators.emplace_back();
         Param.parametersT.push_back(UNKNOWN_T);
@@ -438,7 +435,10 @@ void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
                                Start.second);
       OS << "    " << FI->detailCallsFrom[I].first << " at " << Start.first
          << ":" << Start.second << " with " << FI->actualParams[I].countOfPars
-         << " actual parameters\n";
+         << " actual parameters (";
+      assert(FI->parentForPointer[I] && "Call statement must not be null!");
+      static_cast<Instruction *>(FI->parentForPointer[I])->print(OS);
+      OS << ")\n";
       printParams(FI->actualParams[I], "      ");
     }
     OS << "\n";

@@ -30,6 +30,7 @@
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include <apc/Distribution/Array.h>
+#include <apc/GraphCall/graph_calls.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/InitializePasses.h>
@@ -141,8 +142,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
             APCArray->SetDistributeFlag(Distribution::NO_DISTR);
             return;
           }
-          auto *Callee{dyn_cast<Function>(
-              cast<CallBase>(I).getCalledOperand()->stripPointerCasts())};
+          auto *CB{cast<CallBase>(&I)};
+          auto *Callee{
+              dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts())};
           if (!Callee || Callee->isDeclaration() ||
               hasFnAttr(*Callee, AttrKind::LibFunc)) {
             LLVM_DEBUG(
@@ -150,6 +152,17 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                        << APCArray->GetName() << " (unknown function) ";
                 I.print(dbgs()); dbgs() << "\n");
             APCArray->SetDistributeFlag(Distribution::IO_PRIV);
+            return;
+          }
+          if (auto *APCCallee{APCCtx.findFunction(*Callee)};
+              !APCCallee || APCCallee->funcParams.countOfPars <= OpIdx ||
+              APCCallee->funcParams.parametersT[OpIdx] != ARRAY_T) {
+            LLVM_DEBUG(
+                dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
+                       << APCArray->GetName()
+                       << " (function prototype mismatch) ";
+                I.print(dbgs()); dbgs() << "\n");
+            APCArray->SetDistributeFlag(Distribution::NO_DISTR);
             return;
           }
         },
