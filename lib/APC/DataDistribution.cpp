@@ -468,6 +468,32 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
   try {
 #endif
     checkCountOfIter(FileToLoops, FileToFunc, APCMsgs);
+    for (auto &[File, Funcs] : FileToFunc)
+      for (auto *Func : Funcs)
+        for (unsigned CallFromIdx = 0, CallFromIdxE = Func->actualParams.size();
+             CallFromIdx < CallFromIdxE; ++CallFromIdx) {
+          auto &Actuals{Func->actualParams[CallFromIdx]};
+          assert(Func->parentForPointer[CallFromIdx] &&
+                 "Call statement must not be null!");
+          auto *CB{cast<CallBase>(
+              static_cast<Instruction *>(Func->parentForPointer[CallFromIdx]))};
+          auto Callee{
+              cast<Function>(CB->getCalledOperand()->stripPointerCasts())};
+          auto *APCCallee{APCCtx.findFunction(*Callee)};
+          assert(APCCallee && "Function must be registered!");
+          for (unsigned I = 0, EI = APCCallee->funcParams.countOfPars; I < EI;
+               ++I)
+            if (APCCallee->funcParams.parametersT[I] == ARRAY_T &&
+                Actuals.parametersT[I] != ARRAY_T) {
+              auto *A{static_cast<apc::Array *>(
+                  APCCallee->funcParams.parameters[I])};
+              A->SetDistributeFlag(Distribution::NO_DISTR);
+              LLVM_DEBUG(dbgs()
+                         << "[APC]: disable distribution of " << A->GetName()
+                         << " (unable to establish correspondence with actual "
+                            "parameter of an array type)\n");
+            }
+        }
     createLinksBetweenFormalAndActualParams(FileToFunc, FormalToActual,
                                             ArrayRWs, APCMsgs);
     LLVM_DEBUG(

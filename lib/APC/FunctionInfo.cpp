@@ -370,6 +370,7 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
         if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), ShrinkCallLoc))
           emitUnableShrink(M.getContext(), *Caller.first, Loc, DS_Warning);
       FI->detailCallsFrom.emplace_back(CalleeFI->funcName, ShrinkCallLoc);
+      FI->parentForPointer.push_back(*Callee.first);
     }
   }
   LLVM_DEBUG(print(dbgs(), &M));
