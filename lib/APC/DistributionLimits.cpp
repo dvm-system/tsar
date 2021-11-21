@@ -85,8 +85,29 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
   auto &AT{getAnalysis<EstimateMemoryPass>().getAliasTree()};
   auto &TLI{getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F)};
   for (auto &I : instructions(F)) {
-    if (isa<StoreInst>(I) || isa<LoadInst>(I))
+    if (isa<LoadInst>(I))
       continue;
+    if (auto *SI{dyn_cast<StoreInst>(&I)}) {
+      // Check whether we remember pointer to an array element for further use.
+      if (auto *Op{SI->getValueOperand()}; Op->getType()->isPointerTy()) {
+        auto *EM{AT.find(MemoryLocation{Op, LocationSize::precise(1)})};
+        assert(EM && "Estimate memory must be "
+                     "presented in alias tree!");
+        auto *TopEM{EM->getTopLevelParent()};
+        auto *RawDIM{getRawDIMemoryIfExists(*TopEM, I.getContext(), DL, DT)};
+        if (!RawDIM)
+          continue;
+        auto APCArray{APCCtx.findArray(RawDIM)};
+        if (!APCArray || APCArray->IsNotDistribute())
+          continue;
+        LLVM_DEBUG(
+            dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
+                   << APCArray->GetName() << " (store an address to memory) ";
+            I.print(dbgs()); dbgs() << "\n");
+        APCArray->SetDistributeFlag(Distribution::NO_DISTR);
+      }
+      continue;
+    }
     for_each_memory(
         I, TLI,
         [&APCCtx, &AT, &DL, &DT](Instruction &I, MemoryLocation &&Loc,
