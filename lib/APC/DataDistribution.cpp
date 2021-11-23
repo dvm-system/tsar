@@ -484,7 +484,8 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
           for (unsigned I = 0, EI = APCCallee->funcParams.countOfPars; I < EI;
                ++I)
             if (APCCallee->funcParams.parametersT[I] == ARRAY_T &&
-                Actuals.parametersT[I] != ARRAY_T) {
+                (Actuals.countOfPars <= I ||
+                Actuals.parametersT[I] != ARRAY_T)) {
               auto *A{static_cast<apc::Array *>(
                   APCCallee->funcParams.parameters[I])};
               A->SetDistributeFlag(Distribution::NO_DISTR);
