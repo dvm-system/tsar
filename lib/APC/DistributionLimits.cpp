@@ -80,6 +80,9 @@ void APCDistrLimitsChecker::getAnalysisUsage(AnalysisUsage& AU) const {
 }
 
 bool APCDistrLimitsChecker::runOnFunction(Function& F) {
+  // We use Distribution::SPF_PRIV and Distribution::IO_PRIV flags only
+  // because only these flags are propagated through actual-to-formal parameters
+  // relation in both directions (up and down).
   auto &APCCtx{*getAnalysis<APCContextWrapper>()};
   if (hasFnAttr(F, AttrKind::IndirectCall))
     if (auto *APCFunc{APCCtx.findFunction(F)})
@@ -119,7 +122,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
             dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                    << APCArray->GetName() << " (store an address to memory) ";
             I.print(dbgs()); dbgs() << "\n");
-        APCArray->SetDistributeFlag(Distribution::NO_DISTR);
+        APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
       }
       continue;
     }
@@ -144,7 +147,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                 dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                        << APCArray->GetName() << " (intrinsic) ";
                 I.print(dbgs()); dbgs() << "\n");
-            APCArray->SetDistributeFlag(Distribution::NO_DISTR);
+            APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
           if (!isa<CallBase>(I) || EM != TopEM) {
@@ -153,7 +156,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                        << APCArray->GetName()
                        << " (unsupported memory access) ";
                 I.print(dbgs()); dbgs() << "\n");
-            APCArray->SetDistributeFlag(Distribution::NO_DISTR);
+            APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
           auto *CB{cast<CallBase>(&I)};
@@ -176,7 +179,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                        << APCArray->GetName()
                        << " (function prototype mismatch) ";
                 I.print(dbgs()); dbgs() << "\n");
-            APCArray->SetDistributeFlag(Distribution::NO_DISTR);
+            APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
         },

@@ -488,7 +488,7 @@ bool APCDataDistributionPass::runOnModule(Module &M) {
                 Actuals.parametersT[I] != ARRAY_T)) {
               auto *A{static_cast<apc::Array *>(
                   APCCallee->funcParams.parameters[I])};
-              A->SetDistributeFlag(Distribution::NO_DISTR);
+              A->SetDistributeFlag(Distribution::SPF_PRIV);
               LLVM_DEBUG(dbgs()
                          << "[APC]: disable distribution of " << A->GetName()
                          << " (unable to establish correspondence with actual "
