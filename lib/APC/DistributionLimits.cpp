@@ -81,6 +81,20 @@ void APCDistrLimitsChecker::getAnalysisUsage(AnalysisUsage& AU) const {
 
 bool APCDistrLimitsChecker::runOnFunction(Function& F) {
   auto &APCCtx{*getAnalysis<APCContextWrapper>()};
+  if (hasFnAttr(F, AttrKind::IndirectCall))
+    if (auto *APCFunc{APCCtx.findFunction(F)})
+      for (unsigned I = 0, EI = APCFunc->funcParams.countOfPars; I < EI; ++I) {
+        if (APCFunc->funcParams.parametersT[I] == ARRAY_T) {
+          assert(APCFunc->funcParams.parameters[I] &&
+                 "Array must not be null!");
+          auto *A{static_cast<apc::Array *>(APCFunc->funcParams.parameters[I])};
+          LLVM_DEBUG(dbgs()
+                     << "[APC DISTRIBUTION LIMITS]: disable distribution of "
+                     << A->GetName()
+                     << " (parent function may be called indirectly)\n");
+          A->SetDistributeFlag(Distribution::SPF_PRIV);
+        }
+      }
   auto &DL{F.getParent()->getDataLayout()};
   auto &DT{getAnalysis<DominatorTreeWrapperPass>().getDomTree()};
   auto &AT{getAnalysis<EstimateMemoryPass>().getAliasTree()};
