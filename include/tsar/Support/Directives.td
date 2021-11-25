@@ -159,7 +159,7 @@ def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
 def RemoveFirstPrivate : Clause<"removefirstprivate", Transform,
-  [LParen, Identifier, Equal, OneOf<[Identifier, NumericConstant]>, ZeroOrMore<[Comma, Identifier, Equal, OneOf<[Identifier, NumericConstant]>]>, RParen]>;
+  [LParen, Identifier, Equal, OneOf<[Identifier, NumericConstant]>, ZeroOrMore<[NumericConstant]>, ZeroOrMore<[Comma, Identifier, Equal, OneOf<[Identifier, NumericConstant]>, ZeroOrMore<[NumericConstant]>]>, RParen]>;
 
 def ReplaceMetadata : Clause<"replace", Metadata,
   [LParen,

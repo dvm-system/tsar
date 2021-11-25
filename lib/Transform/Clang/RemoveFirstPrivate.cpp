@@ -1,4 +1,4 @@
-//=== DeadDeclsElimination.cpp - Dead Decls Elimination (Clang) --*- C++ -*===//
+//=== RemoveFirstPrivate.cpp - RFP (Clang) --*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -60,14 +60,43 @@ INITIALIZE_PASS_IN_GROUP_END(ClangRemoveFirstPrivate, "remove-firstprivate",
   "Initialize variables in for", false, false,
   TransformationQueryManager::getPassRegistry())
 
+
+bool isNameOfArray(std::string type) {
+  if (type.find('[') != std::string::npos || type.find('*') != std::string::npos) {
+    return true;
+  }
+  return false;
+}
+
+void replaceSqrBrWithAsterisk(std::string &str) {
+  size_t openingSqrBracket = str.find("[");
+  size_t closingSqrBracket = str.find("]");
+  str.erase(openingSqrBracket, closingSqrBracket - openingSqrBracket + 1);
+  str += "*";
+}
+
+struct vars {           // contains information about variables in
+  std::string var1Type; // removefirstprivate clause
+  std::string var2Type;
+  std::string var1Name;
+  std::string var2Name;
+  std::string count = "";
+};
+
 namespace {
 
 class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
+
+  std::string getStrByLoc(SourceLocation begin, SourceLocation end) {
+    SourceRange SR(begin, end);
+    CharSourceRange CSR(SR, true);
+    return mRewriter.getRewrittenText(CSR);
+  }
+
   struct DeclarationInfo {
     DeclarationInfo(Stmt *S) : Scope(S) {}
 
     Stmt *Scope;
-    SmallVector<Stmt *, 16> DeadAccesses;
   };
 public:
   explicit DeclVisitor(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
@@ -92,18 +121,37 @@ public:
       ast = RecursiveASTVisitor::TraverseStmt(S);
       isInPragma = false;
 
-
-      std::string txtStr;
+      std::string txtStr, beforeFor, forBody, type1, type2;
       std::vector<std::string> inits;
-      while (starts.size()) {
-        SourceRange toInsert(starts.top(), ends.top());
-        CharSourceRange txtToInsert(toInsert, true);
-        starts.pop();
-        ends.pop();
-
-        txtStr = mRewriter.getRewrittenText(txtToInsert);
-        txtStr += ";\n";
+      while (varStack.size()) {
+        if (isNameOfArray(varStack.top().var1Type)) {
+          if (varStack.top().count.empty()) {
+            varStack.pop();
+            continue; // count is mandatory for arrays, skip initialization if no count found
+          }
+          type1 = varStack.top().var1Type;
+          type2 = varStack.top().var2Type;
+          if (type1.find('[') != std::string::npos) {
+            replaceSqrBrWithAsterisk(type1);
+          }
+          if (type2.find('[') != std::string::npos) {
+            replaceSqrBrWithAsterisk(type2);
+          }
+          if (isNameOfArray(varStack.top().var2Type)) {   // arr1 = arr2
+            beforeFor = type1 + "var1Ptr" + " = " + varStack.top().var1Name + ";\n" +
+            type2 + "var2Ptr" + " = " + varStack.top().var2Name + ";\n";
+            forBody = "var1Ptr[i] = var2Ptr[i];\n";
+          } else {                                        // arr1 = val
+            beforeFor = type1 + "var1Ptr" + " = " + varStack.top().var1Name + ";\n";
+            forBody = "var1Ptr[i] = " + varStack.top().var2Name + ";\n";
+          }
+          txtStr = beforeFor;
+          txtStr += "for (int i = 0; i < " + varStack.top().count + "; i++) {\n" + forBody + "\n}\n";
+        } else {  // Initialize non-array variable
+          txtStr = varStack.top().var1Name + " = " + varStack.top().var2Name + ";\n";
+        }
         inits.push_back(txtStr);
+        varStack.pop();
       }
 
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -135,17 +183,39 @@ public:
   }
 
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
-    NamedDecl *named = nullptr;
     if (isInPragma) {
-
+      std::string varName = getStrByLoc(Ex -> getBeginLoc(), Ex -> getEndLoc());
       if (waitingForVar) {
-        starts.push(Ex -> getLocation());
+        ValueDecl *vd = Ex -> getDecl();
+        QualType qt = vd -> getType();
+        std::string typeStr = qt.getCanonicalType().getAsString();
+
+        vars tmp;
+        tmp.var1Type = typeStr;
+        tmp.var1Name = varName;
+        varStack.push(tmp);
+
       } else {
-        ends.push(Ex -> getLocation());
+
+        ValueDecl *vd = Ex -> getDecl();
+        QualType qt = vd -> getType();
+        std::string typeStr = qt.getCanonicalType().getAsString();
+        varStack.top().var2Type = typeStr;
+        varStack.top().var2Name = varName;
+
       }
       waitingForVar = !waitingForVar;
     }
     return RecursiveASTVisitor::TraverseDeclRefExpr(Ex);
+  }
+
+  bool TraverseIntegerLiteral(IntegerLiteral *IL) {
+    if (isInPragma && waitingForVar) {
+      if (varStack.size()) {
+        varStack.top().count = getStrByLoc(IL -> getBeginLoc(), IL -> getEndLoc());
+      }
+    }
+    return RecursiveASTVisitor::TraverseIntegerLiteral(IL);
   }
 
 #ifdef LLVM_DEBUG
@@ -163,12 +233,7 @@ private:
 
   bool isInPragma = false;
   bool waitingForVar = true;
-  std::map<NamedDecl *, DeclarationInfo> mDeadDecls;
   std::vector<Stmt*> mScopes;
-  // clang::Rewriter *mRewriter;
-  DenseSet<DeclStmt*> mMultipleDecls;
-  DenseMap<const clang::Type *, decltype(mDeadDecls)::const_iterator> mTypeDecls;
-  DeclRefExpr *mSimpleAssignLHS = nullptr;
 
   TransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
@@ -179,8 +244,7 @@ private:
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
 
-  std::stack<SourceLocation> starts;
-  std::stack<SourceLocation> ends;
+  std::stack<vars> varStack;
 
 };
 }
