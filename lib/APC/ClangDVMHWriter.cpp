@@ -352,6 +352,7 @@ class APCClangDVMHWriterInfo final : public PassGroupInfo {
     Passes.add(createAPCParallelizationPass());
     Passes.add(createDVMHDataTransferIPOPass());
     Passes.add(createClangDVMHWriter());
+    Passes.add(createAPCClangDiagnosticPrinter());
     Passes.add(createAnalysisReleaseServerPass());
     Passes.add(createAnalysisCloseConnectionPass());
   }

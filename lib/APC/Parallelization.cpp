@@ -102,7 +102,7 @@ using FileToFuncMap = std::map<std::string, std::vector<apc::FuncInfo *>>;
 using FileToLoopMap = std::map<std::string, std::vector<apc::LoopGraph *>>;
 
 /// Map from a file name to a list of messages emitted for this file.
-using FileToMessageMap = std::map<std::string, std::vector<apc::Messages>>;
+using FileToMessageMap = APCContextImpl::FileDiagnostics;
 
 /// Map from a loop to a set of accessed arrays and descriptions of accesses.
 using LoopToArrayMap =
@@ -943,41 +943,38 @@ bool APCParallelizationPass::runOnModule(Module &M) {
     collectArrayAccessInfo(M, Access, APCCtx, AccessPool, Files, ArrayRWs,
                            ArrayIds);
   auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
-  std::map<std::string, std::vector<Messages>> APCMsgs;
   FormalToActualMap FormalToActual;
   // Exclude arrays from a data distribution.
   // A stub variable which is not used at this moment.
   std::map<PFIKeyT, apc::Array *> CreatedArrays;
   std::set<apc::Array *> DistributedArrays;
   try {
-    checkCountOfIter(FileToLoop, FileToFunc, APCMsgs);
+    checkCountOfIter(FileToLoop, FileToFunc, APCCtx.mImpl->Diags);
     bindFormalAndActualPrameters(ArrayRWs, FileToFunc, FormalToActual,
-                                 APCMsgs);
+                                 APCCtx.mImpl->Diags);
     buildDataDistributionGraph(Regions, FormalToActual, ArrayRWs, FileToLoop,
-                               Files, CreatedArrays, APCMsgs);
+                               Files, CreatedArrays, APCCtx.mImpl->Diags);
     buildDataDistribution(Regions, FormalToActual, ArrayIds, APCCtx,
                           ParallelCtx, DistributedArrays, CreatedArrays,
-                          APCMsgs);
+                          APCCtx.mImpl->Diags);
     for (auto &FileInfo : Files) {
       createParallelDirectives(
           FileInfo.second.get<LoopToArrayMap>(), Regions, FormalToActual,
-          getObjectForFileFromMap(FileInfo.getKeyData(), APCMsgs));
+          getObjectForFileFromMap(FileInfo.getKeyData(), APCCtx.mImpl->Diags));
       UniteNestedDirectives(FileInfo.second.get<Root>());
       for (auto *APCRegion : Regions) {
         std::vector<apc::Directive *> ParallelDirs;
         selectComputationDistribution(FormalToActual, Functions, FileInfo,
-                                      *APCRegion, ParallelDirs, APCMsgs);
+                                      *APCRegion, ParallelDirs,
+                                      APCCtx.mImpl->Diags);
         updateParallelization(APCToIRLoops, FormalToActual, FileInfo,
-                              *APCRegion, ParallelCtx, ParallelDirs, APCMsgs);
+                              *APCRegion, ParallelCtx, ParallelDirs,
+                              APCCtx.mImpl->Diags);
       }
     }
     createShadowSpec(FileToLoop, FormalToActual, DistributedArrays);
   } catch (...) {
-    LLVM_DEBUG(
-    for (auto &&[File, Msgs] : APCMsgs)
-      for (auto &Msg : Msgs)
-        messagePrint(File, Msg, errs()));
-    LLVM_DEBUG(M.getContext().emitError(getGlobalBuffer()));
+    LLVM_DEBUG(dbgs() << getGlobalBuffer());
     return false;
   }
   for (auto &F : M)

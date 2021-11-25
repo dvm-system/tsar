@@ -93,6 +93,12 @@ ModulePass *createAPCClangDirectivesCollector();
 
 /// Initialize a pass to collect user directives.
 void initializeAPCClangDirectivesCollectorPass(PassRegistry &Registry);
+
+/// Initialize a pass to print diagnostic messages.
+void initializeAPCClangDiagnosticPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print diagnostic messages.
+ModulePass *createAPCClangDiagnosticPrinter();
 }
 
 #endif//TSAR_APC_PASSES_H

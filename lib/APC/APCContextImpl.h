@@ -53,6 +53,8 @@ struct APCContextImpl {
   using FunctionMap =
       llvm::DenseMap<llvm::Function *, std::unique_ptr<FuncInfo>>;
 
+  using FileDiagnostics = std::map<std::string, std::vector<Messages>>;
+
   ExpressionPool Expressions;
   SymbolPool Symbols;
   StatementPool Statements;
@@ -65,6 +67,8 @@ struct APCContextImpl {
   TemplateMap Templates;
 
   FunctionMap Functions;
+
+  FileDiagnostics Diags;
 };
 }
 

@@ -36,4 +36,5 @@ void llvm::initializeAPC(PassRegistry &Registry) {
   initializeAPCDistrLimitsCheckerPass(Registry);
   initializeAPCDistrLimitsIPOCheckerPass(Registry);
   initializeAPCClangDirectivesCollectorPass(Registry);
+  initializeAPCClangDiagnosticPrinterPass(Registry);
 }

@@ -1,6 +1,6 @@
 set(APC_SOURCES Passes.cpp APCContext.cpp Utils.cpp LoopInfoBase.cpp
   ArrayInfo.cpp FunctionInfo.cpp Parallelization.cpp ClangDVMHWriter.cpp
-  DistributionLimits.cpp DirectivesCollector.cpp)
+  DistributionLimits.cpp DirectivesCollector.cpp DiagnosticPrinter.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE APC_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
