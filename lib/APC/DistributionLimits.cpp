@@ -55,6 +55,17 @@ public:
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
+
+class APCDistrLimitsIPOChecker : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+  APCDistrLimitsIPOChecker() : ModulePass(ID) {
+    initializeAPCDistrLimitsIPOCheckerPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+};
 }
 
 char APCDistrLimitsChecker::ID = 0;
@@ -66,6 +77,19 @@ INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(APCDistrLimitsChecker, "apc-distribution-limits",
                       "Distribution Limitation Checker (APC)", true, true)
+
+ModulePass *llvm::createAPCDistrLimitsIPOChecker() {
+  return new APCDistrLimitsIPOChecker;
+}
+
+char APCDistrLimitsIPOChecker::ID = 0;
+INITIALIZE_PASS_BEGIN(APCDistrLimitsIPOChecker,
+                      "apc-ipo-distribution-limits",
+                      "IPO Distribution Limitation Checker (APC)", true, true)
+INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
+INITIALIZE_PASS_END(APCDistrLimitsIPOChecker, "apc-ipo-distribution-limits",
+                    "IPO Distribution Limitation Global Checker (APC)", true,
+                    true)
 
 FunctionPass *llvm::createAPCDistrLimitsChecker() {
   return new APCDistrLimitsChecker;
@@ -184,6 +208,44 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
           }
         },
         [](Instruction &I, AccessInfo IsRead, AccessInfo IsWrite) {});
+  }
+  return false;
+}
+
+void APCDistrLimitsIPOChecker::getAnalysisUsage(AnalysisUsage& AU) const {
+  AU.addRequired<APCContextWrapper>();
+  AU.setPreservesAll();
+}
+
+bool APCDistrLimitsIPOChecker::runOnModule(Module& M) {
+  auto &APCCtx{getAnalysis<APCContextWrapper>().get()};
+  for (auto &F : M) {
+    auto *Func{APCCtx.findFunction(F)};
+    if (!Func)
+      continue;
+    for (unsigned CallFromIdx = 0, CallFromIdxE = Func->actualParams.size();
+         CallFromIdx < CallFromIdxE; ++CallFromIdx) {
+      auto &Actuals{Func->actualParams[CallFromIdx]};
+      assert(Func->parentForPointer[CallFromIdx] &&
+             "Call statement must not be null!");
+      auto *CB{cast<CallBase>(
+          static_cast<Instruction *>(Func->parentForPointer[CallFromIdx]))};
+      auto Callee{cast<Function>(CB->getCalledOperand()->stripPointerCasts())};
+      auto *APCCallee{APCCtx.findFunction(*Callee)};
+      assert(APCCallee && "Function must be registered!");
+      for (unsigned I = 0, EI = APCCallee->funcParams.countOfPars; I < EI; ++I)
+        if (APCCallee->funcParams.parametersT[I] == ARRAY_T &&
+            (Actuals.countOfPars <= I || Actuals.parametersT[I] != ARRAY_T)) {
+          auto *A{
+              static_cast<apc::Array *>(APCCallee->funcParams.parameters[I])};
+          A->SetDistributeFlag(Distribution::SPF_PRIV);
+          LLVM_DEBUG(dbgs()
+                     << "[APC DISTRIBUTION LIMITS]: disable distribution of "
+                     << A->GetName()
+                     << " (unable to establish correspondence with actual "
+                        "parameter of an array type)\n");
+        }
+    }
   }
   return false;
 }

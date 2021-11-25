@@ -64,11 +64,11 @@ void initializeAPCFunctionInfoPassPass(PassRegistry &Registry);
 /// Create a pass to collect function.
 ModulePass * createAPCFunctionInfoPass();
 
-/// Initialize a pass to determine rules for data distribution.
-void initializeAPCDataDistributionPassPass(PassRegistry &Registry);
+/// Initialize a core pass to perform program parallelization.
+void initializeAPCParallelizationPassPass(PassRegistry &Registry);
 
-/// Create a pass to determine rules for data distribution.
-ModulePass * createAPCDataDistributionPass();
+/// Create a core pass to perform program parallelization.
+ModulePass * createAPCParallelizationPass();
 
 /// Create a pass to insert DVMH-directives into a source program.
 ModulePass * createAPCClangDVMHWriter();
@@ -81,6 +81,12 @@ FunctionPass *createAPCDistrLimitsChecker();
 
 /// Initialize a pass  to determine limitations for data distribution.
 void initializeAPCDistrLimitsCheckerPass(PassRegistry &Registry);
+
+/// Create a pass to determine limitations for data distribution.
+ModulePass *createAPCDistrLimitsIPOChecker();
+
+/// Initialize a pass  to determine limitations for data distribution.
+void initializeAPCDistrLimitsIPOCheckerPass(PassRegistry &Registry);
 
 /// Create a pass to collect user directives.
 ModulePass *createAPCClangDirectivesCollector();

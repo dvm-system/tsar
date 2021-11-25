@@ -1,5 +1,5 @@
 set(APC_SOURCES Passes.cpp APCContext.cpp Utils.cpp LoopInfoBase.cpp
-  ArrayInfo.cpp FunctionInfo.cpp DataDistribution.cpp ClangDVMHWriter.cpp
+  ArrayInfo.cpp FunctionInfo.cpp Parallelization.cpp ClangDVMHWriter.cpp
   DistributionLimits.cpp DirectivesCollector.cpp)
 
 if(MSVC_IDE)

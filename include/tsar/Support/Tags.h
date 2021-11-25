@@ -69,6 +69,9 @@ struct End {};
 /// This tag is used to represent step in a sequence of values.
 struct Step {};
 
+/// This tag is used to provide access to a root object.
+struct Root {};
+
 /// Identifier of an object, for example, loops.
 using ObjectID = llvm::MDNode *;
 }
