@@ -48,6 +48,7 @@ struct DataDirective;
 struct AlignRule;
 class Statement;
 class Symbol;
+struct Messages;
 
 namespace Distribution {
 class Array;
@@ -85,6 +86,7 @@ using ArrayOp = ::ArrayOp;
 using DataDirective = ::DataDirective;
 template <typename V, typename W, typename A>
 using GraphCSR = Distribution::GraphCSR<V, W, A>;
+using Messages = Messages;
 }
 
 namespace llvm {

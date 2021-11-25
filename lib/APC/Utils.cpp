@@ -26,7 +26,9 @@
 #include "DistributionUtils.h"
 #include <apc/apc-config.h>
 #include <apc/Distribution/DvmhDirective.h>
+#include <llvm/ADT/Twine.h>
 #include <llvm/Support/raw_os_ostream.h>
+#include <codecvt>
 
 using namespace llvm;
 using namespace tsar;
@@ -42,14 +44,14 @@ void printAPCVersion(llvm::raw_ostream &OS) {
   OS << "\n";
 }
 
-SmallVector<std::size_t, 8> extractTplDimsAlignmentIndexes(
-    const apc::AlignRule &AR) {
-  SmallVector<std::size_t, 8> TplDimAR(
-    AR.alignWith->GetDimSize(), AR.alignWith->GetDimSize());
+SmallVector<std::size_t, 8>
+extractTplDimsAlignmentIndexes(const apc::AlignRule &AR) {
+  SmallVector<std::size_t, 8> TplDimAR(AR.alignWith->GetDimSize(),
+                                       AR.alignWith->GetDimSize());
   assert(AR.alignArray->GetDimSize() == AR.alignRuleWith.size() &&
-    "Number of alignment rules must be equal number of dims in array!");
+         "Number of alignment rules must be equal number of dims in array!");
   for (std::size_t ArrayDimIdx = 0, ArrayDimIdxE = AR.alignRuleWith.size();
-    ArrayDimIdx < ArrayDimIdxE; ++ArrayDimIdx)
+       ArrayDimIdx < ArrayDimIdxE; ++ArrayDimIdx)
     if (AR.alignRuleWith[ArrayDimIdx].first >= 0)
       TplDimAR[AR.alignRuleWith[ArrayDimIdx].first] = ArrayDimIdx;
   auto NewOrder = AR.alignWith->GetNewTemplateDimsOrder();
@@ -61,4 +63,31 @@ SmallVector<std::size_t, 8> extractTplDimsAlignmentIndexes(
   }
   return TplDimAR;
 }
+
+void messagePrint(const Twine &File, const apc::Messages &Msg,
+                  raw_ostream &OS) {
+  std::pair<unsigned, unsigned> Loc;
+  bcl::restoreShrinkedPair(Msg.line, Loc.first, Loc.second);
+  OS << File << ":" << Loc.first << ":" << Loc.second << ": ";
+  switch (Msg.type) {
+  case ERROR:
+    OS << "error";
+    break;
+  case WARR:
+    OS << "warning";
+    break;
+  case NOTE:
+    OS << "note";
+  }
+  OS << ": APC" << Msg.group << " ";
+  std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> WToString;
+  OS << WToString.to_bytes(Msg.engMessage) << "\n";
 }
+
+void messageToString(const Twine &File, const apc::Messages &Msg,
+                     SmallVectorImpl<char> &Out) {
+  raw_svector_ostream OS(Out);
+  messagePrint(File, Msg, OS);
+}
+
+} // namespace tsar
