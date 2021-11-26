@@ -230,7 +230,8 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
   auto &GO{getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()};
   auto addToList = [this, &DL = M.getDataLayout()](auto &Memory,
                                                    auto &ToOptimize) {
-    for (auto &Var : Memory)
+    for (auto &Align : Memory) {
+      auto &Var{std::get<VariableT>(Align.Target)};
       if (auto *DIEM{
               dyn_cast_or_null<DIEstimateMemory>(Var.template get<MD>())};
           DIEM && !DIEM->emptyBinding() && *DIEM->begin() &&
@@ -239,6 +240,7 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
                "Alias tree is corrupted: multiple binded globals!");
         ToOptimize.try_emplace(*DIEM->begin(), Var.template get<AST>());
       }
+    }
   };
   for (auto &PLocList : ParallelCtx.getParallelization()) {
     auto &LI{getAnalysis<LoopInfoWrapperPass>(
@@ -422,7 +424,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
     PointerUnion<Loop *, Function *> Level,
     const DVMHDataTransferIPOPassProvider &Provider) {
   LLVM_DEBUG(
-      dbgs() << "[DVMH SM]: global optimization, visit level downward\n");
+      dbgs() << "[DVMH IPO]: global optimization, visit level downward\n");
   auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
   if (Level.is<Loop *>())
     if (isParallel(Level.get<Loop *>(), ParallelCtx.getParallelization()))
@@ -473,7 +475,8 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
                           SmallVectorImpl<VariableT> &FinalMemory,
                           SmallVectorImpl<VariableT> &ToOptimizeMemory) {
       for (PragmaData *PI : FromList)
-        for (auto &Var : PI->getMemory()) {
+        for (auto &Align : PI->getMemory()) {
+          auto &Var{std::get<VariableT>(Align.Target)};
           assert(isa<DIGlobalVariable>(
                      cast<DIEstimateMemory>(Var.get<MD>())->getVariable()) &&
                  "IPO is now implemented for global variables only!");
@@ -500,7 +503,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
           Call->getParent(), Call, OnEntry /*OnEntry*/, false /*IsRequired*/,
           IsFinal /*IsFinal*/)};
       for (auto &Var : Memory)
-        cast<PragmaData>(Ref)->getMemory().insert(std::move(Var));
+        cast<PragmaData>(Ref)->getMemory().emplace(std::move(Var));
       ParallelCtx.getIPORoot().child_insert(Ref.getUnchecked());
       Ref.getUnchecked()->parent_insert(&ParallelCtx.getIPORoot());
       return cast<PragmaData>(Ref);
@@ -613,7 +616,8 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
                                PragmaData *PD, auto &LocalToOptimize) {
               if (PD->isFinal() || PD->isRequired())
                 return;
-              for (auto &Var : PD->getMemory()) {
+              for (auto &Align : PD->getMemory()) {
+                auto &Var{std::get<VariableT>(Align.Target)};
                 auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
                 auto [I, IsNew] = LocalToOptimize.try_emplace(
                     DIMI->get<Clone>()->getAliasNode());
@@ -695,7 +699,8 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
                                                    auto &LocalToOptimize) {
         if (PD->isFinal() || PD->isRequired())
           return;
-        for (auto &Var : PD->getMemory()) {
+        for (auto &Align : PD->getMemory()) {
+          auto &Var{std::get<VariableT>(Align.Target)};
           auto DIMI{CSMemoryMatcher.find<Origin>(&*Var.get<MD>())};
           auto I{LocalToOptimize.find(DIMI->get<Clone>()->getAliasNode())};
           I->template get<Hierarchy>() = mReplacementFor.size() - 1;
@@ -800,7 +805,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       if (IsIPOVar && ActiveIPO && Data.template get<Hierarchy>() == 0)
         continue;
       IPOVariablesOnly &= IsIPOVar;
-      D.getMemory().insert(Var);
+      D.getMemory().emplace(Var);
     }
     if (D.getMemory().empty()) {
       D.skip();
@@ -1063,14 +1068,14 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
                   if (auto Ptr{GetUnderlyingObject(*BindItr, DL, 0)};
                       IPOMemory.count(Ptr) &&
                       !IPOInfoItr->get<Value>().count(Ptr))
-                    IPOPragma->getMemory().insert(Var);
+                    IPOPragma->getMemory().emplace(Var);
                   else
-                    FinalPragma->getMemory().insert(Var);
+                    FinalPragma->getMemory().emplace(Var);
                 else
-                  FinalPragma->getMemory().insert(Var);
+                  FinalPragma->getMemory().emplace(Var);
               }
             } else {
-              FinalPragma->getMemory().insert(Var);
+              FinalPragma->getMemory().emplace(Var);
             }
           }
         if (!FinalPragma->getMemory().empty())
@@ -1144,7 +1149,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
         for (auto &Data : mToActual)
           if (Data.get<Hierarchy>() == mReplacementFor.size() - 1)
             for (auto &Var : Data.get<VariableT>())
-              cast<PragmaActual>(ActualRef)->getMemory().insert(Var);
+              cast<PragmaActual>(ActualRef)->getMemory().emplace(Var);
         if (!cast<PragmaActual>(ActualRef)->getMemory().empty())
           ConservativeReplacements.push_back(ActualRef.getUnchecked());
       }
@@ -1163,7 +1168,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
         for (auto &Data : mToGetActual)
           if (Data.get<Hierarchy>() == mReplacementFor.size() - 1)
             for (auto &Var : Data.get<VariableT>())
-              cast<PragmaGetActual>(GetActualRef)->getMemory().insert(Var);
+              cast<PragmaGetActual>(GetActualRef)->getMemory().emplace(Var);
         if (!cast<PragmaGetActual>(GetActualRef)->getMemory().empty())
           ConservativeReplacements.push_back(GetActualRef.getUnchecked());
       }

@@ -704,10 +704,8 @@ void APCParallelizationPass::updateParallelization(
               getObjectForFileFromMap(FileInfo.getKeyData(), APCMsgs),
               APCRegion.GetId(), FormalToActual)};
           for (auto &&[Str, Expr] : RemoteList) {
-            dvmh::Align Align;
             auto S{Expr->getArray()->GetDeclSymbol()};
-            Align.Target = S->getVariable(F).getValue();
-            Align.Relation.resize(Expr->size());
+            dvmh::Align Align{S->getVariable(F).getValue(), Expr->size()};
             for (unsigned I = 0, EI = Expr->size(); I < EI; ++I) {
               if (Expr->isConstantSubscript(I))
                 Align.Relation[I] = Expr->getConstantSubscript(I);
@@ -797,7 +795,8 @@ void APCParallelizationPass::addRemoteAccessDirectives(
     if (auto *DIUM{dyn_cast<DIUnknownMemory>(&DIM)}; DIUM && DIUM->isDistinct())
       DistinctMemory.insert(DIUM->getAliasNode());
   SpanningTreeRelation<const DIAliasTree *> STR{ClientServerInfo.DIAT};
-  DenseMap<const DIAliasNode *, SmallVector<VariableT, 1>> ToDistribute;
+  DenseMap<const DIAliasNode *, SmallVector<dvmh::Align, 1>>
+      ToDistribute;
   for (auto *A : DistributedArrays) {
     if (A->IsTemplate())
       continue;
@@ -807,11 +806,15 @@ void APCParallelizationPass::addRemoteAccessDirectives(
       continue;
     auto DIMI{ClientServerInfo.getMemory(&*Var->get<MD>())};
     auto I{ToDistribute.try_emplace(DIMI->getAliasNode()).first};
-    if (!is_contained(I->second, *Var))
-      I->second.push_back(std::move(*Var));
+    if (auto Itr{find_if(I->second,
+                         [&Var](const dvmh::Align &A) {
+                           return std::get<VariableT>(A.Target) == *Var;
+                         })};
+        Itr == I->second.end())
+      I->second.emplace_back(std::move(*Var), A->GetDimSize());
   }
   auto &LI{Provider.get<LoopInfoWrapperPass>().getLoopInfo()};
-  Optional<SmallVector<dvmh::VariableT, 8>> ToAccessDistinct;
+  Optional<SmallVector<dvmh::Align, 8>> ToAccessDistinct;
   for (auto &I : instructions(&ClientF)) {
     // Do not attach remote_access to calls. It has to be inserted in the body
     // of callee. If body is not available we cannot distribute an accessed
@@ -820,7 +823,7 @@ void APCParallelizationPass::addRemoteAccessDirectives(
       continue;
     if (isInParallelNest(I, LI, ParallelCtx.getParallelization()).first)
       continue;
-    SmallVector<dvmh::VariableT, 8> ToAccess;
+    SmallVector<dvmh::Align, 8> ToAccess;
     auto addToAccessIfNeed = [&STR, &ToDistribute](auto *CurrentAN,
                                                    auto &ToAccess) {
       if (auto Itr{find_if(ToDistribute,
@@ -1099,14 +1102,13 @@ apc::Directive * ParallelDirective::genDirective(File *F,
   for (auto &Induct : Clauses.get<trait::Induction>())
     Clauses.get<trait::Private>().erase(Induct.get<VariableT>());
   auto *MapTo{arrayRef2->IsLoopArray() ? arrayRef : arrayRef2};
-  Clauses.get<dvmh::Align>() = dvmh::Align{};
   auto APCSymbol{MapTo->GetDeclSymbol()};
   assert(APCSymbol && "Unknown array symbol!");
   if (APCSymbol->isTemplate())
-    Clauses.get<dvmh::Align>()->Target = APCSymbol->getTemplate();
+    Clauses.get<dvmh::Align>() = dvmh::Align{APCSymbol->getTemplate()};
   else {
-    Clauses.get<dvmh::Align>()->Target =
-      APCSymbol->getVariable(Func).getValue();
+    Clauses.get<dvmh::Align>() =
+        dvmh::Align{APCSymbol->getVariable(Func).getValue()};
   }
   auto &OnTo{arrayRef2->IsLoopArray() ? on : on2};
   auto LpStmt{cast<apc::LoopStatement>(CurrLoop->loop)};

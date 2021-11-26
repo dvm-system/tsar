@@ -90,6 +90,9 @@ private:
 };
 
 struct Align {
+  Align(const std::variant<VariableT, Template *> &T, unsigned NumberOfDims = 0)
+      : Target(T), Relation(NumberOfDims) {}
+
   struct Axis {
     unsigned Dimension;
     llvm::APSInt Step;
@@ -121,6 +124,8 @@ struct AlignLess {
     if (LHS.Relation.size() != RHS.Relation.size())
       return LHS.Relation.size() < RHS.Relation.size();
     for (unsigned I = 0, EI = LHS.Relation.size(); I < EI; ++I) {
+      if (!LHS.Relation[I] && !RHS.Relation[I])
+        continue;
       if (LHS.Relation[I] && !RHS.Relation[I])
         return false;
       if (RHS.Relation[I] && !LHS.Relation[I])
@@ -134,17 +139,16 @@ struct AlignLess {
       if (std::holds_alternative<llvm::APSInt>(*LHS.Relation[I]))
         return std::get<llvm::APSInt>(*LHS.Relation[I]) <
                std::get<llvm::APSInt>(*RHS.Relation[I]);
-        return false;
-        auto LHSAxis{ std::get<Align::Axis>(*LHS.Relation[I]) };
-        auto RHSAxis{ std::get<Align::Axis>(*LHS.Relation[I]) };
-        auto LHSTuple{
-            std::tuple{LHSAxis.Dimension, LHSAxis.Step, LHSAxis.Offset} };
-        auto RHSTuple{
-            std::tuple{RHSAxis.Dimension, RHSAxis.Step, RHSAxis.Offset} };
-        if (LHSTuple != RHSTuple)
-          return LHSTuple < RHSTuple;
+      auto LHSAxis{std::get<Align::Axis>(*LHS.Relation[I])};
+      auto RHSAxis{std::get<Align::Axis>(*LHS.Relation[I])};
+      auto LHSTuple{
+          std::tuple{LHSAxis.Dimension, LHSAxis.Step, LHSAxis.Offset}};
+      auto RHSTuple{
+          std::tuple{RHSAxis.Dimension, RHSAxis.Step, RHSAxis.Offset}};
+      if (LHSTuple != RHSTuple)
+        return LHSTuple < RHSTuple;
     }
-    return true;
+    return false;
   }
 };
 
@@ -196,8 +200,8 @@ public:
     return false;
   }
 
-  SortedVarListT &getMemory() noexcept { return mMemory; }
-  const SortedVarListT &getMemory() const noexcept { return mMemory; }
+  AlignVarListT &getMemory() noexcept { return mMemory; }
+  const AlignVarListT &getMemory() const noexcept { return mMemory; }
 
   bool isRequired() const noexcept { return mState & Required; }
   bool isSkipped() const noexcept { return mState & Skipped; }
@@ -217,7 +221,7 @@ protected:
   }
 
 private:
-  SortedVarListT mMemory;
+  AlignVarListT mMemory;
   State mState;
 };
 
@@ -265,8 +269,7 @@ public:
   PragmaRealign(const VariableT &What, unsigned WhatDimSize,
                 const std::variant<VariableT, Template *> &With)
       : ParallelItem(static_cast<unsigned>(DirectiveId::DvmRealign), false),
-        mWhat(What), mWhatDimSize(WhatDimSize) {
-    mAlign.Target = With;
+        mAlign(With), mWhat(What), mWhatDimSize(WhatDimSize) {
   }
 
   const VariableT &what() const noexcept { return mWhat; }

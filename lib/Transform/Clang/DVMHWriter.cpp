@@ -228,9 +228,8 @@ static bool tryToIgnoreDirectives(Parallelization::iterator PLocListItr,
   return true;
 }
 
-static inline void addVarList(
-    const std::set<std::string> &VarInfoList,
-    SmallVectorImpl<char> &Clause) {
+static inline void addVarList(const std::set<std::string> &VarInfoList,
+                              SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
   auto I{ VarInfoList.begin() }, EI{ VarInfoList.end() };
   Clause.append(I->begin(), I->end());
@@ -247,24 +246,97 @@ static inline void addVar(const VariableT &V,
   Clause.append(Name.begin(), Name.end());
 }
 
-template<typename AddT>
-static inline unsigned addVarList(const SortedVarListT &VarInfoList, AddT &&Add,
-    SmallVectorImpl<char> &Clause) {
+template<typename FunctionT>
+static void addVar(const dvmh::Align &A, FunctionT &&getIdxName,
+            SmallVectorImpl<char> &Str) {
+  std::visit(
+      [&Str](auto &&V) {
+        if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
+          auto Name{V.template get<AST>()->getName()};
+          Str.append(Name.begin(), Name.end());
+        } else {
+          auto Name{V->getName()};
+          Str.append(Name.begin(), Name.end());
+        }
+      },
+      A.Target);
+  for (auto &A : A.Relation) {
+    Str.push_back('[');
+    if (A) {
+      std::visit(
+          [&getIdxName, &Str](auto &&V) {
+            if constexpr (std::is_same_v<dvmh::Align::Axis,
+                                         std::decay_t<decltype(V)>>) {
+              SmallString<8> Name;
+              getIdxName(V.Dimension, Name);
+              if (!V.Step.isOneValue()) {
+                if (V.Step.isNegative())
+                  Str.push_back('(');
+                V.Step.toString(Str);
+                if (V.Step.isNegative())
+                  Str.push_back(')');
+                Str.push_back('*');
+              }
+              Str.append(Name.begin(), Name.end());
+              if (!V.Offset.isNullValue()) {
+                Str.push_back('+');
+                V.Offset.toString(Str);
+              }
+            } else {
+              V.toString(Str);
+            }
+          },
+          *A);
+    }
+    Str.push_back(']');
+  }
+}
+
+template<typename FunctionT>
+static void addVar1(const dvmh::Align &A, FunctionT &&getIdxName,
+                    SmallVectorImpl<char> &Str) {
+  addVar(A, getIdxName, Str);
+}
+
+static inline unsigned addVarList(const SortedVarListT &VarInfoList,
+                                  SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
-  auto name = [](auto &V) { return V.template get<AST>()->getName(); };
   auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
-  Add(*I, Clause);
+  addVar(*I, Clause);
   for (++I; I != EI; ++I) {
     Clause.append({ ',', ' ' });
-    Add(*I, Clause);
+    addVar(*I, Clause);
   }
   Clause.push_back(')');
   return Clause.size();
 }
 
-template <typename FilterT, typename AddT>
-static inline unsigned addVarList(const SortedVarListT &VarInfoList,
-    FilterT &&F, AddT &&Add, SmallVectorImpl<char> &Clause) {
+static inline unsigned addVarList(const AlignVarListT &VarInfoList,
+                                  SmallVectorImpl<char> &Clause) {
+  Clause.push_back('(');
+  auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
+  addVar(
+      *I,
+      [](unsigned Dim, SmallVectorImpl<char> &Name) {
+        ("I" + Twine(Dim)).toVector(Name);
+      },
+      Clause);
+  for (++I; I != EI; ++I) {
+    Clause.append({ ',', ' ' });
+    addVar(
+        *I,
+        [](unsigned Dim, SmallVectorImpl<char> &Name) {
+          ("I" + Twine(Dim)).toVector(Name);
+        },
+        Clause);
+  }
+  Clause.push_back(')');
+  return Clause.size();
+}
+
+template <typename FilterT>
+static inline unsigned addVarList(const AlignVarListT &VarInfoList,
+    FilterT &&F, SmallVectorImpl<char> &Clause) {
   unsigned Count{0};
   Clause.push_back('(');
   auto Itr{VarInfoList.begin()}, ItrE{VarInfoList.end()};
@@ -274,12 +346,22 @@ static inline unsigned addVarList(const SortedVarListT &VarInfoList,
     Clause.push_back(')');
     return Count;
   }
-  Add(*Itr, Clause);
+  addVar(
+      *Itr,
+      [](unsigned Dim, SmallVectorImpl<char> &Name) {
+        ("I" + Twine(Dim)).toVector(Name);
+      },
+      Clause);
   ++Count;
   for (++Itr; Itr != ItrE; ++Itr)
     if (F(*Itr)) {
       Clause.append({',', ' '});
-      Add(*Itr, Clause);
+      addVar(
+          *Itr,
+          [](unsigned Dim, SmallVectorImpl<char> &Name) {
+            ("I" + Twine(Dim)).toVector(Name);
+          },
+          Clause);
       ++Count;
     }
   Clause.push_back(')');
@@ -290,7 +372,7 @@ static inline void addClauseIfNeed(StringRef Name, const SortedVarListT &Vars,
     SmallVectorImpl<char> &PragmaStr) {
   if (!Vars.empty()) {
     PragmaStr.append(Name.begin(), Name.end());
-    addVarList(Vars, addVar, PragmaStr);
+    addVarList(Vars, PragmaStr);
   }
 }
 
@@ -405,47 +487,12 @@ static void pragmaRealignStr(const ParallelItemRef &PIRef,
     Str.push_back(']');
   }
   Str.append({' ', 'w', 'i', 't', 'h', ' '});
-  std::visit(
-      [&Str](auto &&V) {
-        if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
-          auto Name{V.template get<AST>()->getName()};
-          Str.append(Name.begin(), Name.end());
-        } else {
-          auto Name{V->getName()};
-          Str.append(Name.begin(), Name.end());
-        }
+  addVar(
+      Realign->with(),
+      [IdxPrefix](unsigned Dim, SmallVectorImpl<char> &Str) {
+        (IdxPrefix + Twine(Dim)).toVector(Str);
       },
-      Realign->with().Target);
-    for (auto &A : Realign->with().Relation) {
-      Str.push_back('[');
-      if (A) {
-        std::visit(
-            [IdxPrefix, &Str](auto &&V) {
-              if constexpr (std::is_same_v<dvmh::Align::Axis,
-                                           std::decay_t<decltype(V)>>) {
-                SmallString<8> NameData;
-                auto Name{(IdxPrefix + Twine(V.Dimension)).toStringRef(NameData)};
-                if (!V.Step.isOneValue()) {
-                  if (V.Step.isNegative())
-                    Str.push_back('(');
-                  V.Step.toString(Str);
-                  if (V.Step.isNegative())
-                    Str.push_back(')');
-                  Str.push_back('*');
-                }
-                Str.append(Name.begin(), Name.end());
-                if (!V.Offset.isNullValue()) {
-                  Str.push_back('+');
-                  V.Offset.toString(Str);
-                }
-              } else {
-                V.toString(Str);
-              }
-            },
-            *A);
-      }
-      Str.push_back(']');
-    }
+      Str);
   Str.push_back(')');
 }
 
@@ -454,51 +501,6 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
   auto Parallel{cast<PragmaParallel>(PIRef)};
   getPragmaText(DirectiveId::DvmParallel, Str);
   Str.resize(Str.size() - 1);
-  auto appendAlign = [Parallel, &Str](const dvmh::Align &V) {
-    std::visit(
-        [&Str](auto &&V) {
-          if constexpr (std::is_same_v<VariableT, std::decay_t<decltype(V)>>) {
-            auto Name{V.template get<AST>()->getName()};
-            Str.append(Name.begin(), Name.end());
-          } else {
-            auto Name{V->getName()};
-            Str.append(Name.begin(), Name.end());
-          }
-        },
-        V.Target);
-    for (auto &A : V.Relation) {
-      Str.push_back('[');
-      if (A) {
-        std::visit(
-            [Parallel, &Str](auto &&V) {
-              if constexpr (std::is_same_v<dvmh::Align::Axis,
-                                           std::decay_t<decltype(V)>>) {
-                auto &Induct{Parallel->getClauses()
-                                 .get<trait::Induction>()[V.Dimension]
-                                 .template get<VariableT>()};
-                auto Name{Induct.template get<AST>()->getName()};
-                if (!V.Step.isOneValue()) {
-                  if (V.Step.isNegative())
-                    Str.push_back('(');
-                  V.Step.toString(Str);
-                  if (V.Step.isNegative())
-                    Str.push_back(')');
-                  Str.push_back('*');
-                }
-                Str.append(Name.begin(), Name.end());
-                if (!V.Offset.isNullValue()) {
-                  Str.push_back('+');
-                  V.Offset.toString(Str);
-                }
-              } else {
-                V.toString(Str);
-              }
-            },
-            *A);
-      }
-      Str.push_back(']');
-    }
-  };
   if (Parallel->getClauses().get<dvmh::Align>()) {
     Str.push_back('(');
     for (auto &LToI : Parallel->getClauses().get<trait::Induction>()) {
@@ -508,7 +510,16 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
       Str.push_back(']');
     }
     Str.append({' ', 'o', 'n', ' '});
-    appendAlign(*Parallel->getClauses().get<dvmh::Align>());
+    addVar(
+        *Parallel->getClauses().get<dvmh::Align>(),
+        [&Parallel](unsigned Dim, SmallVectorImpl<char> &Str) {
+          auto &Induct{Parallel->getClauses()
+                           .get<trait::Induction>()[Dim]
+                           .template get<VariableT>()};
+          auto Name{Induct.template get<AST>()->getName()};
+          Str.append(Name.begin(), Name.end());
+        },
+        Str);
     Str.push_back(')');
   } else if (Parallel->getClauses().get<trait::DirectAccess>().empty()) {
     Str.push_back('(');
@@ -562,7 +573,16 @@ static void pragmaParallelStr(const ParallelItemRef &PIRef, Loop &L,
     Str.append(
         {'r', 'e', 'm', 'o', 't', 'e', '_', 'a', 'c', 'c', 'e', 's', 's', '('});
     for (auto &R : Parallel->getClauses().get<Remote>()) {
-      appendAlign(R);
+      addVar(
+          R,
+          [&Parallel](unsigned Dim, SmallVectorImpl<char> &Str) {
+            auto &Induct{Parallel->getClauses()
+                             .get<trait::Induction>()[Dim]
+                             .template get<VariableT>()};
+            auto Name{Induct.template get<AST>()->getName()};
+            Str.append(Name.begin(), Name.end());
+          },
+          Str);
       Str.push_back(',');
     }
     Str.pop_back();
@@ -689,12 +709,6 @@ static bool pragmaDataStr(FilterT Filter, const ParallelItemRef &PDRef,
   getPragmaText(static_cast<DirectiveId>(PD->getKind()), Str);
   // Remove the last '\n'.
   Str.pop_back();
-  auto add = !isa<PragmaRemoteAccess>(PD)
-                 ? addVar
-                 : [](const VariableT &V, SmallVectorImpl<char> &Clause) {
-                     addVar(V, Clause);
-                     Clause.append({'[', ']'});
-                   };
   struct OnReturnT {
     ~OnReturnT() {
       if (isa<PragmaRemoteAccess>(PDRef))
@@ -704,8 +718,8 @@ static bool pragmaDataStr(FilterT Filter, const ParallelItemRef &PDRef,
     SmallVectorImpl<char> &Str;
   } OnReturn{PDRef, Str};
   if constexpr (std::is_same_v<decltype(Filter), std::true_type>)
-    addVarList(PD->getMemory(), add, Str);
-  else if (addVarList(PD->getMemory(), std::move(Filter), add, Str) == 0)
+    addVarList(PD->getMemory(), Str);
+  else if (addVarList(PD->getMemory(), std::move(Filter), Str) == 0)
     return false;
   return true;
 }
@@ -738,8 +752,10 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
       auto &PragmaStr{std::get<Insertion::PragmaString>(*BeforeItr)};
       if (auto *DS{dyn_cast<DeclStmt>(ToInsert)})
         pragmaDataStr(
-            [DS](const VariableT &V) {
-              return !is_contained(DS->getDeclGroup(), V.get<AST>());
+            [DS](const dvmh::Align &A) {
+              if (auto *V{std::get_if<VariableT>(&A.Target)})
+                return !is_contained(DS->getDeclGroup(), V->get<AST>());
+              return true;
             },
             PIRef, PragmaStr);
       else
@@ -788,8 +804,15 @@ static void printReplacementTree(
           dbgs() << "get_actual: ";
         if (PD->getMemory().empty())
           dbgs() << "- ";
-        for (auto &Var : PD->getMemory()) {
-          dbgs() << Var.get<AST>()->getName() << " ";
+        for (auto &Align : PD->getMemory()) {
+          SmallString<16> Var;
+          addVar(
+              Align,
+              [](unsigned Dim, SmallVectorImpl<char> &Str) {
+                ("I" + Twine(Dim)).toVector(Str);
+              },
+              Var);
+          dbgs() << Var << " ";
         }
         if (!PD->child_empty()) {
           dbgs() << "children: ";
@@ -933,8 +956,10 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       // Do not mention variables in a directive if it has not been
       // declared yet.
       if (auto *DS{dyn_cast_or_null<DeclStmt>(ToInsert)};
-          DS && all_of(PD->getMemory(), [DS](auto &V) {
-            return is_contained(DS->getDeclGroup(), V.template get<AST>());
+          DS && all_of(PD->getMemory(), [DS](const dvmh::Align &Align) {
+            if (auto *V{std::get_if<VariableT>(&Align.Target)})
+              return is_contained(DS->getDeclGroup(), V->get<AST>());
+            return false;
           }))
         PD->skip();
     }
