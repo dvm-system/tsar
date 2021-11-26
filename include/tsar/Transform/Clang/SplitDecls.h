@@ -32,6 +32,17 @@
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 
+#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+#include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/AST/TypeLoc.h>
+#include <llvm/ADT/BitmaskEnum.h>
+#include <llvm/ADT/DenseMapInfo.h>
+#include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/StringSet.h>
+#include <map>
+#include <memory>
+#include <vector>
+
 namespace llvm {
 /// This pass separates variable declaration statements that contain multiple
 /// variable declarations at once into single declarations.

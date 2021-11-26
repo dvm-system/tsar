@@ -30,6 +30,7 @@
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/Clang/Utils.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -45,6 +46,8 @@
 #include <vector>
 #include <string>
 #include <stack>
+#include <iostream>
+#include <deque>
 
 using namespace llvm;
 using namespace clang;
@@ -79,6 +82,7 @@ namespace {
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
 bool isNotSingleFlag = false;
+bool isAfterNotSingleFlag = false;
 class ClangSplitter : public RecursiveASTVisitor<ClangSplitter> {
 public:
   ClangSplitter(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
@@ -94,16 +98,6 @@ public:
     }
     Pragma P(*S); // the Pragma class is used to check if a statement is a pragma or not
     if (findClause(P, ClauseId::SplitDeclaration, mClauses)) { // mClauses contains all SplitDeclaration pragmas
-      std::vector<std::string> inits;
-      while (starts.size()) {
-        SourceRange toInsert(starts.top(), ends.top());
-        CharSourceRange txtToInsert(toInsert, true);
-        starts.pop();
-        ends.pop();
-        txtStr = mRewriter.getRewrittenText(txtToInsert);
-        txtStr += ";\n";
-        inits.push_back(txtStr);
-      }
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove; // a vector of statements that will match the root in the tree
       auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
                                             mImportInfo, ToRemove); // ToRemove - the range of positions we want to remove
@@ -124,12 +118,8 @@ public:
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
       if (isNotSingleFlag) {
-        SourceRange toInsert(start, end);
+        SourceRange toInsert(notSingleDeclStart, notSingleDeclEnd);
         mRewriter.RemoveText(toInsert, RemoveEmptyLine);
-      }
-      //Rewriter::RewriteOptions RemoveEmptyLine;
-      for (std::vector<std::string>::iterator it = inits.begin(); it != inits.end(); ++it) {
-        mRewriter.InsertTextAfterToken(end, *it);
       }
       return true;
     }
@@ -137,8 +127,9 @@ public:
     RemoveEmptyLine.RemoveLineIfEmpty = false;
 
     if (isNotSingleFlag) {
-      SourceRange toInsert(start, end);
+      SourceRange toInsert(notSingleDeclStart, notSingleDeclEnd);
       mRewriter.RemoveText(toInsert, RemoveEmptyLine);
+
     }
     if (mClauses.empty() || !isa<CompoundStmt>(S) &&
         !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
@@ -190,30 +181,62 @@ public:
     }
   }
 
+  // bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
+  //   if (isNotSingleFlag) {
+  //     std::string varType = S->getType().getAsString();
+  //     SourceLocation locat = S->getLocation();
+  //     CharSourceRange txtToInsert(locat, true);
+  //     std::string varName = S->getName().str();
+  //     int n = varType.length();
+  //     char char_array[n + 1];
+  //     strcpy(char_array, varType.c_str());
+  //     if (strchr(char_array, '[')) {
+  //       buildTxtStr(varType, varName);
+  //     } else {
+  //       txtStr = varType + " " + varName + ";\n";
+  //     }
+  //     mRewriter.InsertTextAfterToken(notSingleDeclEnd, txtStr);
+  //   }
+  //   return true;
+  // }
+
   bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
     if (isNotSingleFlag) {
-      std::string varType = S->getType().getAsString();
-      SourceLocation locat = S->getLocation();
-      CharSourceRange txtToInsert(locat, true);
-      std::string varName = S->getName().str();
-      int n = varType.length();
-      char char_array[n + 1];
-      strcpy(char_array, varType.c_str());
-      if (strchr(char_array, '[')) {
-        buildTxtStr(varType, varName);
-      } else {
-        txtStr = varType + " " + varName + ";\n";
+      varDeclsNum++;
+      SourceRange toInsert(notSingleDeclStart, notSingleDeclEnd);
+      ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
+      SourceRange Range(S->getLocation());
+      varDeclsStarts.push_front(S->getBeginLoc());
+      varDeclsEnds.push_front(S->getEndLoc());
+      SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
+      if (varDeclsNum == 1) {
+        SourceRange toInsert2(Range.getBegin(), S->getEndLoc());
+        txtStr = Canvas.getRewrittenText(varDeclRange).str();
+        Canvas.RemoveText(toInsert2);
+        varDeclType = Canvas.getRewrittenText(varDeclRange);
       }
-      mRewriter.InsertTextAfterToken(end, txtStr);
+      if (varDeclsNum > 1) {
+        SourceRange prevVarDeclRange(varDeclsStarts.back(), varDeclsEnds.back());
+        varDeclsStarts.pop_back();
+        varDeclsEnds.pop_back();
+        Canvas.ReplaceText(prevVarDeclRange, varDeclType);
+        txtStr = Canvas.getRewrittenText(varDeclRange).str();
+        auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
+        txtStr.erase(it, txtStr.end());
+      }
+      mRewriter.InsertTextAfterToken(notSingleDeclEnd, txtStr + ";\n");
     }
     return true;
   }
 
   bool TraverseDeclStmt(DeclStmt *S) {
-    if(!S->isSingleDecl()) {
+    bool tmp;
+    if(!(S->isSingleDecl())) {
+      if (!isNotSingleFlag)
+        varDeclsNum = 0;
       isNotSingleFlag = true;
-      start = S->getBeginLoc();
-      end = S->getEndLoc();
+      notSingleDeclStart = S->getBeginLoc();
+      notSingleDeclEnd = S->getEndLoc();
     } else {
       isNotSingleFlag = false;
     }
@@ -248,11 +271,13 @@ public:
   SmallVector<Stmt *, 1> mClauses;
   bool mActiveSplit = false;
   DenseSet<DeclStmt*> mMultipleDecls;
-  std::stack<SourceLocation> starts;
-  std::stack<SourceLocation> ends;
-  SourceLocation start;
-  SourceLocation end;
+  std::deque<SourceLocation> varDeclsStarts;
+  std::deque<SourceLocation> varDeclsEnds;
+  int varDeclsNum = 0;
+  SourceLocation notSingleDeclStart;
+  SourceLocation notSingleDeclEnd;
   std::string txtStr;
+  std::string varDeclType;
 };
 }
 
