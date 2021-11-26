@@ -26,9 +26,9 @@
 #include "DistributionUtils.h"
 #include <apc/apc-config.h>
 #include <apc/Distribution/DvmhDirective.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Support/raw_os_ostream.h>
-#include <codecvt>
 
 using namespace llvm;
 using namespace tsar;
@@ -77,17 +77,24 @@ void messagePrint(const Twine &File, const apc::Messages &Msg,
     OS << "warning";
     break;
   case NOTE:
-    OS << "note";
+    OS << "remark";
   }
   OS << ": APC" << Msg.group << " ";
-  std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> WToString;
-  OS << WToString.to_bytes(Msg.engMessage) << "\n";
+  SmallString<256> Str;
+  messageToString(Msg, Str);
+  OS << Str << "\n";
 }
 
-void messageToString(const Twine &File, const apc::Messages &Msg,
-                     SmallVectorImpl<char> &Out) {
-  raw_svector_ostream OS(Out);
-  messagePrint(File, Msg, OS);
+void messageToString(const apc::Messages &Msg, SmallVectorImpl<char> &Out) {
+  for (const wchar_t &C : Msg.engMessage) {
+    auto *Raw{reinterpret_cast<const char *>(&C)};
+    unsigned NonZeroCount{0u};
+    for (unsigned I = 0; I < sizeof(wchar_t); ++I)
+      if (Raw[I] != 0) {
+        assert(NonZeroCount == 0 && "Unsupported message!");
+        ++NonZeroCount;
+        Out.push_back(Raw[I]);
+      }
+  }
 }
-
 } // namespace tsar

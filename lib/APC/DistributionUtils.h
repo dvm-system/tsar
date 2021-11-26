@@ -42,7 +42,7 @@ llvm::SmallVector<std::size_t, 8> extractTplDimsAlignmentIndexes(
     const apc::AlignRule &AR);
 
 /// Convert a specified message to a string representation.
-void messageToString(const llvm::Twine &File, const apc::Messages &Msg,
+void messageToString(const apc::Messages &Msg,
                      llvm::SmallVectorImpl<char> &Out);
 
 /// Print a specified message to a string representation.

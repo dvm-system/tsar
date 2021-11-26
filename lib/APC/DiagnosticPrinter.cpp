@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "APCContextImpl.h"
+#include "DistributionUtils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
@@ -33,7 +34,6 @@
 #include <llvm/ADT/StringSet.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
-#include <codecvt>
 
 using namespace clang;
 using namespace llvm;
@@ -112,7 +112,11 @@ bool APCClangDiagnosticPrinter::runOnModule(llvm::Module &M) {
             Loc = SrcMgr.translateFileLineCol(&FileRef->getFileEntry(),
                                               RawLoc.first, RawLoc.second);
           }
-          std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> WToString;
+          SmallString<256> Str;
+          messageToString(Msg, Str);
+          Str += " (";
+          Twine(Msg.group).toVector(Str);
+          Str += ")";
           unsigned CustomId{0};
           switch (Msg.type) {
           default:
@@ -120,18 +124,15 @@ bool APCClangDiagnosticPrinter::runOnModule(llvm::Module &M) {
           case ERROR:
             WasError = true;
             CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Error,
-                                         WToString.to_bytes(Msg.engMessage));
+                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Error, Str);
             break;
           case WARR:
             CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Warning,
-                                         WToString.to_bytes(Msg.engMessage));
+                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Warning, Str);
             break;
           case NOTE:
             CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Remark,
-                                         WToString.to_bytes(Msg.engMessage));
+                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Remark, Str);
             break;
           }
           SrcMgr.getDiagnostics().Report(Loc, CustomId);
