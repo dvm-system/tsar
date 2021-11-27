@@ -82,9 +82,37 @@ struct Insertion {
 };
 
 using LocationToPragmas = DenseMap<const Stmt *, Insertion>;
+using DeferredPragmaToLocations =
+    DenseMap<ParallelItemRef,
+             SmallVector<bcl::tagged_pair<bcl::tagged<const Stmt *, Stmt>,
+                                          bcl::tagged<bool, Begin>>,
+                         1>>;
+
+struct InsertLocation {
+  using InsertionList =
+      bcl::tagged_pair<bcl::tagged<SmallVector<clang::Stmt *, 1>, Begin>,
+                       bcl::tagged<SmallVector<clang::Stmt *, 1>, End>>;
+  using ScopeT = PointerUnion<llvm::Loop *, clang::Decl *>;
+
+  InsertionList OnEntry;
+  InsertionList OnExit;
+  ScopeT Scope{nullptr};
+
+  InsertLocation() = default;
+  InsertLocation(clang::Stmt *Stmt, ScopeT S = nullptr) : Scope(S) {
+    assert(Stmt && "Statement must not be null!");
+    OnEntry.get<Begin>().push_back(Stmt);
+    OnExit.get<End>().push_back(Stmt);
+  }
+
+  operator bool() const {
+    return (!OnEntry.get<Begin>().empty() || !OnEntry.get<End>().empty()) &&
+           (!OnExit.get<Begin>().empty() || !OnExit.get<End>().empty());
+  }
+};
 }
 
-static std::pair<clang::Stmt *, PointerUnion<llvm::Loop *, clang::Decl *>>
+static InsertLocation
 findLocationToInsert(Parallelization::iterator PLocListItr,
     Parallelization::location_iterator PLocItr, const Function &F, LoopInfo &LI,
     ClangTransformationContext &TfmCtx,
@@ -100,18 +128,18 @@ findLocationToInsert(Parallelization::iterator PLocListItr,
     auto LMatchItr{LM.find<IR>(L)};
     assert(LMatchItr != LM.end() &&
       "Unable to find AST representation for a loop!");
-    return std::pair{LMatchItr->get<AST>(), L};
+    return {LMatchItr->get<AST>(), L};
   }
   assert(PLocItr->Anchor.is<Value *>() &&
          "Directives must be attached to llvm::Value!");
   if (isa<Function>(PLocItr->Anchor.get<Value *>())) {
     auto *FD{TfmCtx.getDeclForMangledName(F.getName())};
     assert(FD && "AST representation of a function must be available!");
-    return std::pair{*FD->getBody()->child_begin(), FD};
+    return {*FD->getBody()->child_begin(), FD};
   }
   auto MatchItr{EM.find<IR>(PLocItr->Anchor.get<Value *>())};
   if (MatchItr == EM.end())
-    return std::pair{nullptr, nullptr};
+    return {};
   auto &ParentCtx{TfmCtx.getContext().getParentMapContext()};
   auto skipDecls = [&ParentCtx](auto Current) -> const Stmt * {
     for (; !Current.template get<DeclStmt>();) {
@@ -124,8 +152,7 @@ findLocationToInsert(Parallelization::iterator PLocListItr,
   };
   auto Current{MatchItr->get<AST>()};
   if (auto *D{Current.get<Decl>()})
-    return std::pair{const_cast<Stmt *>(skipDecls(Current)),
-                     const_cast<Decl *>(D)};
+    return {const_cast<Stmt *>(skipDecls(Current)), const_cast<Decl *>(D)};
   Stmt *ToInsert{nullptr};
   if (auto *ParentStmt{Current.get<Stmt>()}) {
     for (;;) {
@@ -172,7 +199,7 @@ findLocationToInsert(Parallelization::iterator PLocListItr,
       }
     }
   }
-  return std::pair{ToInsert, nullptr};
+  return ToInsert ? InsertLocation{ToInsert} : InsertLocation{};
 }
 
 static bool tryToIgnoreDirectives(Parallelization::iterator PLocListItr,
@@ -610,22 +637,38 @@ static void pragmaRegionStr(const ParallelItemRef &PIRef,
 }
 
 static void
-addPragmaToStmt(const Stmt *ToInsert,
-                PointerUnion<llvm::Loop *, clang::Decl *> Scope,
+addPragmaToStmt(const InsertLocation &ToInsert,
                 Parallelization::iterator PLocListItr,
                 Parallelization::location_iterator PLocItr,
                 TransformationContextBase *TfmCtx,
-                DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
+                DeferredPragmaToLocations &DeferredPragmas,
                 std::vector<ParallelItem *> &NotOptimizedPragmas,
                 LocationToPragmas &PragmasToInsert) {
-  auto PragmaLoc{ToInsert ? PragmasToInsert.try_emplace(ToInsert, TfmCtx).first
-                          : PragmasToInsert.end()};
+  if (ToInsert) {
+    auto initLocationForPragmas = [&TfmCtx, &PragmasToInsert](auto &Locs) {
+      for (auto *S : Locs)
+        PragmasToInsert.try_emplace(S, TfmCtx);
+    };
+    initLocationForPragmas(ToInsert.OnEntry.get<Begin>());
+    initLocationForPragmas(ToInsert.OnEntry.get<End>());
+    if (PLocItr->Exit.empty()) {
+      initLocationForPragmas(ToInsert.OnExit.get<Begin>());
+      initLocationForPragmas(ToInsert.OnExit.get<End>());
+    }
+  }
+  SmallVector<LocationToPragmas::iterator, 1> Before, After;
+  auto findLocations = [&PragmasToInsert](auto &Locs, auto &Out) {
+    for (auto *S : Locs)
+      Out.push_back(PragmasToInsert.find(S));
+  };
+  findLocations(ToInsert.OnEntry.get<Begin>(), Before);
+  findLocations(ToInsert.OnEntry.get<End>(), After);
   for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
        PIItr != PIItrE; ++PIItr) {
     ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr, true};
     SmallString<128> PragmaStr;
     if (isa<PragmaParallel>(PIRef)) {
-      pragmaParallelStr(PIRef, *Scope.get<Loop *>(), PragmaStr);
+      pragmaParallelStr(PIRef, *ToInsert.Scope.get<Loop *>(), PragmaStr);
     } else if (isa<PragmaRegion>(PIRef)) {
       pragmaRegionStr(PIRef, PragmaStr);
     } else if (isa<PragmaRealign>(PIRef)) {
@@ -636,23 +679,37 @@ addPragmaToStmt(const Stmt *ToInsert,
       // be processed later. If it is replaced with some other directives,
       // this directive changes status to CK_Skip. The new status may allow us
       // to ignore some other directives later.
-      DeferredPragmas.try_emplace(PIRef, ToInsert);
+      auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
+      for (auto &PragmaLoc : Before)
+        DeferredLocs.emplace_back(PragmaLoc->first, true);
+      for (auto &PragmaLoc : After)
+        DeferredLocs.emplace_back(PragmaLoc->first, false);
       if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
         NotOptimizedPragmas.push_back(PD);
       // Mark the position of the directive in the source code. It will be later
       // created their only if necessary.
-      if (ToInsert)
+      for (auto &PragmaLoc: Before)
         PragmaLoc->second.Before.emplace_back(PIItr->get(), "");
+      for (auto &PragmaLoc: After)
+        PragmaLoc->second.After.emplace_back(PIItr->get(), "");
       continue;
     } else {
       llvm_unreachable("An unknown pragma has been attached to a loop!");
     }
     PragmaStr += "\n";
-    assert(ToInsert && "Insertion location must be known!");
-    PragmaLoc->second.Before.emplace_back(PIItr->get(), std::move(PragmaStr));
+    assert(!Before.empty() ||
+           !After.empty() && "Insertion location must be known!");
+    for (auto &PragmaLoc : Before)
+      PragmaLoc->second.Before.emplace_back(PIItr->get(), std::move(PragmaStr));
+    for (auto &PragmaLoc : After)
+      PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
   }
   if (PLocItr->Exit.empty())
     return;
+  Before.clear();
+  After.clear();
+  findLocations(ToInsert.OnExit.get<Begin>(), Before);
+  findLocations(ToInsert.OnExit.get<End>(), After);
   for (auto PIItr{PLocItr->Exit.begin()}, PIItrE{PLocItr->Exit.end()};
        PIItr != PIItrE; ++PIItr) {
     ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr, false};
@@ -663,17 +720,27 @@ addPragmaToStmt(const Stmt *ToInsert,
       PragmaStr = "}";
     } else if (isa<PragmaData>(PIRef) ||
                isa<ParallelMarker<PragmaData>>(PIRef)) {
-      DeferredPragmas.try_emplace(PIRef, ToInsert);
+      auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
+      for (auto &PragmaLoc : Before)
+        DeferredLocs.emplace_back(PragmaLoc->first, true);
+      for (auto &PragmaLoc : After)
+        DeferredLocs.emplace_back(PragmaLoc->first, false);
       if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
         NotOptimizedPragmas.push_back(PD);
-      if (ToInsert)
+      for (auto &PragmaLoc: Before)
+        PragmaLoc->second.Before.emplace_back(PIItr->get(), "");
+      for (auto &PragmaLoc: After)
         PragmaLoc->second.After.emplace_back(PIItr->get(), "");
       continue;
     } else {
       llvm_unreachable("An unknown pragma has been attached to a loop!");
     }
-    assert(ToInsert && "Insertion location must be known!");
-    PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
+    assert(!Before.empty() ||
+           !After.empty() && "Insertion location must be known!");
+    for (auto &PragmaLoc : Before)
+      PragmaLoc->second.Before.emplace_back(PIItr->get(), std::move(PragmaStr));
+    for (auto &PragmaLoc : After)
+      PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
   }
 }
 
@@ -731,7 +798,7 @@ static inline bool pragmaDataStr(ParallelItemRef &PDRef,
 
 static void
 insertPragmaData(ArrayRef<PragmaData *> POTraverse,
-                 DenseMap<ParallelItemRef, const Stmt *> DeferredPragmas,
+                 DeferredPragmaToLocations &DeferredPragmas,
                  LocationToPragmas &PragmasToInsert) {
   for (auto *PD : POTraverse) {
     // Do not skip directive (even if it is marked as skipped) if its children
@@ -739,38 +806,40 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
     if (PD->isInvalid() || PD->isSkipped())
       continue;
     auto &&[PIRef, ToInsert] = *DeferredPragmas.find_as(PD);
-    assert(PragmasToInsert.count(ToInsert) &&
-           "Pragma position must be cached!");
-    auto &Position{PragmasToInsert[ToInsert]};
-    if (PIRef.isOnEntry()) {
-      auto BeforeItr{
-          find_if(Position.Before, [PI = PIRef.getPI()->get()](auto &Pragma) {
-            return std::get<ParallelItem *>(Pragma) == PI;
-          })};
-      assert(BeforeItr != Position.Before.end() &&
+    for (auto &Loc : ToInsert) {
+      assert(PragmasToInsert.count(Loc.get<Stmt>()) &&
              "Pragma position must be cached!");
-      auto &PragmaStr{std::get<Insertion::PragmaString>(*BeforeItr)};
-      if (auto *DS{dyn_cast<DeclStmt>(ToInsert)})
-        pragmaDataStr(
-            [DS](const dvmh::Align &A) {
-              if (auto *V{std::get_if<VariableT>(&A.Target)})
-                return !is_contained(DS->getDeclGroup(), V->get<AST>());
-              return true;
-            },
-            PIRef, PragmaStr);
-      else
+      auto &Position{PragmasToInsert[Loc.get<Stmt>()]};
+      if (Loc.get<Begin>()) {
+        auto BeforeItr{
+            find_if(Position.Before, [PI = PIRef.getPI()->get()](auto &Pragma) {
+              return std::get<ParallelItem *>(Pragma) == PI;
+            })};
+        assert(BeforeItr != Position.Before.end() &&
+               "Pragma position must be cached!");
+        auto &PragmaStr{std::get<Insertion::PragmaString>(*BeforeItr)};
+        if (auto *DS{dyn_cast<DeclStmt>(Loc.get<Stmt>())})
+          pragmaDataStr(
+              [DS](const dvmh::Align &A) {
+                if (auto *V{std::get_if<VariableT>(&A.Target)})
+                  return !is_contained(DS->getDeclGroup(), V->get<AST>());
+                return true;
+              },
+              PIRef, PragmaStr);
+        else
+          pragmaDataStr(PIRef, PragmaStr);
+        PragmaStr += "\n";
+      } else {
+        auto AfterItr{
+            find_if(Position.After, [PI = PIRef.getPI()->get()](auto &Pragma) {
+              return std::get<ParallelItem *>(Pragma) == PI;
+            })};
+        assert(AfterItr != Position.After.end() &&
+               "Pragma position must be cached!");
+        auto &PragmaStr{std::get<Insertion::PragmaString>(*AfterItr)};
+        PragmaStr += "\n";
         pragmaDataStr(PIRef, PragmaStr);
-      PragmaStr += "\n";
-    } else {
-      auto AfterItr{
-          find_if(Position.After, [PI = PIRef.getPI()->get()](auto &Pragma) {
-            return std::get<ParallelItem *>(Pragma) == PI;
-          })};
-      assert(AfterItr != Position.After.end() &&
-             "Pragma position must be cached!");
-      auto &PragmaStr{std::get<Insertion::PragmaString>(*AfterItr)};
-      PragmaStr += "\n";
-      pragmaDataStr(PIRef, PragmaStr);
+      }
     }
   }
 }
@@ -787,7 +856,7 @@ shiftTokenIfSemi(clang::SourceLocation Loc, const clang::ASTContext &Ctx) {
 
 static void printReplacementTree(
     ArrayRef<ParallelItem *> NotOptimizedPragmas,
-    const DenseMap<ParallelItemRef, const Stmt *> &DeferredPragmas,
+    const DeferredPragmaToLocations &DeferredPragmas,
     LocationToPragmas &PragmasToInsert) {
   traversePragmaDataPO(
       NotOptimizedPragmas,
@@ -824,15 +893,16 @@ static void printReplacementTree(
         if (auto PIItr{DeferredPragmas.find_as(PI)};
             PIItr != DeferredPragmas.end()) {
           auto [PIRef, ToInsert] = *PIItr;
-          if (ToInsert) {
-            dbgs() << "location: ";
+          dbgs() << "location: ";
+          for (auto &Loc: ToInsert) {
             if (auto TfmCtx{dyn_cast<ClangTransformationContext>(
-                    PragmasToInsert[ToInsert].TfmCtx)})
-              ToInsert->getBeginLoc().print(
+                    PragmasToInsert[Loc.get<Stmt>()].TfmCtx)})
+              Loc.get<Stmt>()->getBeginLoc().print(
                   dbgs(), TfmCtx->getContext().getSourceManager());
             else
               llvm_unreachable("Unsupported type of a "
                                "transformation context!");
+            dbgs() << (Loc.get<Begin>() ? " (before)" : " (after)") << " ";
           }
         } else {
           dbgs() << "stub ";
@@ -849,7 +919,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       });
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: insert data transfer directives\n");
   std::vector<ParallelItem *> NotOptimizedPragmas;
-  DenseMap<ParallelItemRef, const Stmt *> DeferredPragmas;
+  DeferredPragmaToLocations DeferredPragmas;
   LocationToPragmas PragmasToInsert;
   auto &PIP{getAnalysis<DVMHParallelizationContext>()};
   for (auto F : make_range(PIP.getParallelization().func_begin(),
@@ -889,8 +959,8 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       for (auto PLocItr{PLocListItr->get<ParallelLocation>().begin()},
            PLocItrE{PLocListItr->get<ParallelLocation>().end()};
            PLocItr != PLocItrE; ++PLocItr) {
-        auto [ToInsert, Scope] =
-            findLocationToInsert(PLocListItr, PLocItr, *F, LI, *TfmCtx, EM, LM);
+        auto ToInsert{findLocationToInsert(PLocListItr, PLocItr, *F, LI,
+                                           *TfmCtx, EM, LM)};
           LLVM_DEBUG(
             if (!ToInsert) {
               dbgs() << "[DVMH WRITER]: unable to insert directive to: ";
@@ -911,7 +981,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
           );
         if (!ToInsert && !tryToIgnoreDirectives(PLocListItr, PLocItr))
           return false;
-        addPragmaToStmt(ToInsert, Scope, PLocListItr, PLocItr, TfmCtx,
+        addPragmaToStmt(ToInsert, PLocListItr, PLocItr, TfmCtx,
                         DeferredPragmas, NotOptimizedPragmas, PragmasToInsert);
       }
     }
@@ -954,16 +1024,23 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
     auto [PIRef, ToInsert] = *PIItr;
     if (PD->getMemory().empty()) {
       PD->skip();
-    } else if (PIRef.isOnEntry()) {
+    } else if (!ToInsert.empty() && all_of(ToInsert, [PD](auto &Loc) {
+                 if (!Loc.template get<Begin>())
+                   return false;
+                 if (auto *DS{
+                         dyn_cast_or_null<DeclStmt>(Loc.template get<Stmt>())};
+                     DS &&
+                     all_of(PD->getMemory(), [DS](const dvmh::Align &Align) {
+                       if (auto *V{std::get_if<VariableT>(&Align.Target)})
+                         return is_contained(DS->getDeclGroup(), V->get<AST>());
+                       return false;
+                     }))
+                   return true;
+                 return false;
+               })) {
       // Do not mention variables in a directive if it has not been
       // declared yet.
-      if (auto *DS{dyn_cast_or_null<DeclStmt>(ToInsert)};
-          DS && all_of(PD->getMemory(), [DS](const dvmh::Align &Align) {
-            if (auto *V{std::get_if<VariableT>(&Align.Target)})
-              return is_contained(DS->getDeclGroup(), V->get<AST>());
-            return false;
-          }))
-        PD->skip();
+      PD->skip();
     }
   });
   bool IsOk{true}, IsAllOptimized{true};
@@ -1073,11 +1150,18 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
   // Build pragmas for necessary data transfer directives.
   insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
   for (auto &&[PIRef, ToInsert] : DeferredPragmas)
-    if (ToInsert)
+    if (!ToInsert.empty())
       if (auto *Marker{dyn_cast<ParallelMarker<PragmaRemoteAccess>>(PIRef)})
         if (auto *Remote{Marker->getBase()};
-            !Remote->isInvalid() && !Remote->isSkipped())
-          PragmasToInsert[ToInsert].After.emplace_back(Marker, "\n}");
+            !Remote->isInvalid() && !Remote->isSkipped()) {
+          for (auto &Loc : ToInsert)
+            if (Loc.get<Begin>())
+              PragmasToInsert[Loc.get<Stmt>()].Before.emplace_back(Marker,
+                                                                   "\n}");
+            else
+              PragmasToInsert[Loc.get<Stmt>()].After.emplace_back(Marker,
+                                                                  "\n}");
+        }
   // Update sources.
   for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
     auto BeginLoc{ToInsert->getBeginLoc()};
