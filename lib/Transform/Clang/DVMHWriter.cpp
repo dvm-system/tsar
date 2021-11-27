@@ -48,7 +48,7 @@ using namespace tsar;
 using namespace tsar::dvmh;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-dvmh-parallel"
+#define DEBUG_TYPE "clang-dvmh-writer"
 
 namespace {
 using ClangDVMHWriterProvider =
@@ -794,7 +794,7 @@ static void printReplacementTree(
       [&DeferredPragmas, &PragmasToInsert](ParallelItem *PI) {
         auto PD{cast<PragmaData>(PI)};
         dbgs() << "id: " << PD << " ";
-        dbgs() << "skiped: " << PD->isSkipped() << " ";
+        dbgs() << "skipped: " << PD->isSkipped() << " ";
         dbgs() << "invalid: " << PD->isInvalid() << " ";
         dbgs() << "final: " << PD->isFinal() << " ";
         dbgs() << "required: " << PD->isRequired() << " ";
@@ -802,6 +802,8 @@ static void printReplacementTree(
           dbgs() << "actual: ";
         else if (isa<PragmaGetActual>(PD))
           dbgs() << "get_actual: ";
+        else if (isa<PragmaRemoteAccess>(PD))
+          dbgs() << "remote_access: ";
         if (PD->getMemory().empty())
           dbgs() << "- ";
         for (auto &Align : PD->getMemory()) {
@@ -852,7 +854,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
   auto &PIP{getAnalysis<DVMHParallelizationContext>()};
   for (auto F : make_range(PIP.getParallelization().func_begin(),
                            PIP.getParallelization().func_end())) {
-    LLVM_DEBUG(dbgs() << "[DVMH SM]: process function " << F->getName()
+    LLVM_DEBUG(dbgs() << "[DVMH WRITER]: process function " << F->getName()
                       << "\n");
     auto emitTfmError = [F]() {
       F->getContext().emitError("cannot transform sources: transformation "
@@ -972,6 +974,9 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       IsAllOptimized = false;
       if (cast<PragmaData>(PI)->isInvalid()) {
         IsOk = false;
+        LLVM_DEBUG(
+            dbgs() << "[DVMH WRITER]: error: unable to insert data directive "
+                   << PI << "\n");
         // TODO: (kaniandr@gmail.com): emit error
       }
     }
@@ -1135,7 +1140,8 @@ ClangDVMHWriter::ClangDVMHWriter() : ModulePass(ID) {
 }
 
 char ClangDVMHWriter::ID = 0;
-INITIALIZE_PASS_BEGIN(ClangDVMHWriter, "dvmh-writer", "DVMH Writer (Clang)", false, false)
+INITIALIZE_PASS_BEGIN(ClangDVMHWriter, "clang-dvmh-writer",
+                      "DVMH Writer (Clang)", false, false)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
@@ -1143,7 +1149,8 @@ INITIALIZE_PASS_DEPENDENCY(LoopMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(ClangExprMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(DVMHParallelizationContext)
 INITIALIZE_PASS_DEPENDENCY(ClangDVMHWriterProvider)
-INITIALIZE_PASS_END(ClangDVMHWriter, "dvmh-writer", "DVMH Writer (Clang)", false, false)
+INITIALIZE_PASS_END(ClangDVMHWriter, "clang-dvmh-writer", "DVMH Writer (Clang)",
+                    false, false)
 
 ModulePass *llvm::createClangDVMHWriter() { return new ClangDVMHWriter; }
 
