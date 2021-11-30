@@ -1023,7 +1023,11 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
   // Now we check that there is any way to actualize data for each parallel
   // region.
   for (auto *PI : NotOptimizedPragmas)
-    if (!cast<PragmaData>(PI)->isSkipped()) {
+    if (!cast<PragmaData>(PI)->isSkipped() &&
+        !cast<PragmaData>(PI)->child_empty()) {
+      LLVM_DEBUG(
+          dbgs() << "[DVMH WRITER]: warning: unable to optimize data directive "
+                 << PI << "\n");
       IsAllOptimized = false;
       if (cast<PragmaData>(PI)->isInvalid()) {
         IsOk = false;
@@ -1119,7 +1123,6 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       }
     }
   }
-
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: optimized replacement tree:\n";
              printReplacementTree(NotOptimizedPragmas, DeferredPragmas,
                                   PragmasToInsert));
