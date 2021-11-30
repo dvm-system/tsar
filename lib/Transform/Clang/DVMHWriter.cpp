@@ -94,50 +94,51 @@ struct InsertLocation {
                        bcl::tagged<SmallVector<clang::Stmt *, 1>, End>>;
   using ScopeT = PointerUnion<llvm::Loop *, clang::Decl *>;
 
-  InsertionList OnEntry;
-  InsertionList OnExit;
+  InsertionList ToInsert;
   ScopeT Scope{nullptr};
 
   InsertLocation() = default;
-  InsertLocation(clang::Stmt *Stmt, ScopeT S = nullptr) : Scope(S) {
-    assert(Stmt && "Statement must not be null!");
-    OnEntry.get<Begin>().push_back(Stmt);
-    OnExit.get<End>().push_back(Stmt);
-  }
 
   operator bool() const {
-    return (!OnEntry.get<Begin>().empty() || !OnEntry.get<End>().empty()) &&
-           (!OnExit.get<Begin>().empty() || !OnExit.get<End>().empty());
+    return (!ToInsert.get<Begin>().empty() || !ToInsert.get<End>().empty());
   }
 };
 }
 
+template<typename Tag>
 static InsertLocation
-findLocationToInsert(Parallelization::iterator PLocListItr,
-    Parallelization::location_iterator PLocItr, const Function &F, LoopInfo &LI,
-    ClangTransformationContext &TfmCtx,
-    const ClangExprMatcherPass::ExprMatcher &EM,
-    const LoopMatcherPass::LoopMatcher &LM) {
-  if (PLocItr->Anchor.is<MDNode *>()) {
-    auto *L{LI.getLoopFor(PLocListItr->get<BasicBlock>())};
-    auto ID{PLocItr->Anchor.get<MDNode *>()};
+findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
+                     ClangTransformationContext &TfmCtx,
+                     const ClangExprMatcherPass::ExprMatcher &EM,
+                     const LoopMatcherPass::LoopMatcher &LM) {
+  assert(PIRef && "Invalid parallel item!");
+  assert((std::is_same_v<Tag, Begin> && PIRef.isOnEntry() ||
+         std::is_same_v<Tag, End> && !PIRef.isOnEntry()) &&
+             "Inconsistent call!");
+  InsertLocation Loc;
+  if (PIRef.getPL()->Anchor.is<MDNode *>()) {
+    auto *L{LI.getLoopFor(PIRef.getPE()->get<BasicBlock>())};
+    auto ID{PIRef.getPL()->Anchor.get<MDNode *>()};
     while (L->getLoopID() && L->getLoopID() != ID)
       L = L->getParentLoop();
-    assert(L &&
-      "A parallel directive has been attached to an unknown loop!");
+    assert(L && "A parallel directive has been attached to an unknown loop!");
     auto LMatchItr{LM.find<IR>(L)};
     assert(LMatchItr != LM.end() &&
-      "Unable to find AST representation for a loop!");
-    return {LMatchItr->get<AST>(), L};
+           "Unable to find AST representation for a loop!");
+    Loc.Scope = L;
+    Loc.ToInsert.get<Tag>().push_back(LMatchItr->get<AST>());
+    return Loc;
   }
-  assert(PLocItr->Anchor.is<Value *>() &&
+  assert(PIRef.getPL()->Anchor.is<Value *>() &&
          "Directives must be attached to llvm::Value!");
-  if (isa<Function>(PLocItr->Anchor.get<Value *>())) {
+  if (isa<Function>(PIRef.getPL()->Anchor.get<Value *>())) {
     auto *FD{TfmCtx.getDeclForMangledName(F.getName())};
     assert(FD && "AST representation of a function must be available!");
-    return {*FD->getBody()->child_begin(), FD};
+    Loc.Scope = FD;
+    Loc.ToInsert.get<Tag>().push_back(*FD->getBody()->child_begin());
+    return Loc;
   }
-  auto MatchItr{EM.find<IR>(PLocItr->Anchor.get<Value *>())};
+  auto MatchItr{EM.find<IR>(PIRef.getPL()->Anchor.get<Value *>())};
   if (MatchItr == EM.end())
     return {};
   auto &ParentCtx{TfmCtx.getContext().getParentMapContext()};
@@ -151,8 +152,10 @@ findLocationToInsert(Parallelization::iterator PLocListItr,
     return &Current.template getUnchecked<DeclStmt>();
   };
   auto Current{MatchItr->get<AST>()};
-  if (auto *D{Current.get<Decl>()})
-    return {const_cast<Stmt *>(skipDecls(Current)), const_cast<Decl *>(D)};
+  if (auto *D{Current.get<Decl>()}) {
+    Loc.Scope = const_cast<Decl *>(D);
+    Loc.ToInsert.get<Tag>().push_back(const_cast<Stmt *>(skipDecls(Current)));
+  }
   Stmt *ToInsert{nullptr};
   if (auto *ParentStmt{Current.get<Stmt>()}) {
     for (;;) {
@@ -199,60 +202,32 @@ findLocationToInsert(Parallelization::iterator PLocListItr,
       }
     }
   }
-  return ToInsert ? InsertLocation{ToInsert} : InsertLocation{};
+  if (ToInsert)
+    Loc.ToInsert.get<Tag>().push_back(ToInsert);
+  return Loc;
 }
 
-static bool tryToIgnoreDirectives(Parallelization::iterator PLocListItr,
-    Parallelization::location_iterator PLocItr) {
-  for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
-       PIItr != PIItrE; ++PIItr) {
-    if (auto *PD{dyn_cast<PragmaData>(PIItr->get())}) {
-      // Some data directives could be redundant.
-      // So, we will emit errors later when redundant directives are
-      // already ignored.
-      if (!PD->isRequired()) {
-        PD->invalidate();
-        continue;
-      }
-    } else if (auto *Marker{
-                   dyn_cast<ParallelMarker<PragmaData>>(PIItr->get())}) {
-      auto *PD{Marker->getBase()};
-      if (!PD->isRequired()) {
-        PD->invalidate();
-        continue;
-      }
+static bool tryToIgnoreDirective(ParallelItem &PI) {
+  if (auto *PD{dyn_cast<PragmaData>(&PI)}) {
+    // Some data directives could be redundant.
+    // So, we will emit errors later when redundant directives are
+    // already ignored.
+    if (!PD->isRequired()) {
+      PD->invalidate();
+      return true;
     }
-    // TODO: (kaniandr@gmail.com): emit error
-    LLVM_DEBUG(dbgs() << "[DVMH WRITER]: error: unable to insert on entry: "
-                      << getName(static_cast<DirectiveId>((**PIItr).getKind()))
-                      << "\n");
-    return false;
-  }
-  for (auto PIItr{PLocItr->Exit.begin()}, PIItrE{PLocItr->Exit.end()};
-       PIItr != PIItrE; ++PIItr) {
-    if (auto *PD{dyn_cast<PragmaData>(PIItr->get())}) {
-      // Some data directives could be redundant.
-      // So, we will emit errors later when redundant directives are
-      // already ignored.
-      if (!PD->isRequired()) {
-        PD->invalidate();
-        continue;
-      }
-    } else if (auto *Marker{
-                   dyn_cast<ParallelMarker<PragmaData>>(PIItr->get())}) {
-      auto *PD{Marker->getBase()};
-      if (!PD->isRequired()) {
-        PD->invalidate();
-        continue;
-      }
+  } else if (auto *Marker{dyn_cast<ParallelMarker<PragmaData>>(&PI)}) {
+    auto *PD{Marker->getBase()};
+    if (!PD->isRequired()) {
+      PD->invalidate();
+      return true;
     }
-    // TODO: (kaniandr@gmail.com): emit error
-    LLVM_DEBUG(dbgs() << "[DVMH WRITER]: error: unable to insert on exit: "
-                      << getName(static_cast<DirectiveId>((**PIItr).getKind()))
-                      << "\n");
-    return false;
   }
-  return true;
+  // TODO: (kaniandr@gmail.com): emit error
+  LLVM_DEBUG(dbgs() << "[DVMH WRITER]: error: unable to insert: "
+                    << getName(static_cast<DirectiveId>(PI.getKind()))
+                    << "\n");
+  return false;
 }
 
 static inline void addVarList(const std::set<std::string> &VarInfoList,
@@ -638,109 +613,58 @@ static void pragmaRegionStr(const ParallelItemRef &PIRef,
 
 static void
 addPragmaToStmt(const InsertLocation &ToInsert,
-                Parallelization::iterator PLocListItr,
-                Parallelization::location_iterator PLocItr,
+                ParallelItemRef &PIRef,
                 TransformationContextBase *TfmCtx,
+                const Twine &Prefix, const Twine &Suffix,
                 DeferredPragmaToLocations &DeferredPragmas,
                 std::vector<ParallelItem *> &NotOptimizedPragmas,
                 LocationToPragmas &PragmasToInsert) {
-  if (ToInsert) {
-    auto initLocationForPragmas = [&TfmCtx, &PragmasToInsert](auto &Locs) {
-      for (auto *S : Locs)
-        PragmasToInsert.try_emplace(S, TfmCtx);
-    };
-    initLocationForPragmas(ToInsert.OnEntry.get<Begin>());
-    initLocationForPragmas(ToInsert.OnEntry.get<End>());
-    if (PLocItr->Exit.empty()) {
-      initLocationForPragmas(ToInsert.OnExit.get<Begin>());
-      initLocationForPragmas(ToInsert.OnExit.get<End>());
-    }
-  }
-  SmallVector<LocationToPragmas::iterator, 1> Before, After;
-  auto findLocations = [&PragmasToInsert](auto &Locs, auto &Out) {
-    for (auto *S : Locs)
-      Out.push_back(PragmasToInsert.find(S));
-  };
-  findLocations(ToInsert.OnEntry.get<Begin>(), Before);
-  findLocations(ToInsert.OnEntry.get<End>(), After);
-  for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
-       PIItr != PIItrE; ++PIItr) {
-    ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr, true};
-    SmallString<128> PragmaStr;
-    if (isa<PragmaParallel>(PIRef)) {
-      pragmaParallelStr(PIRef, *ToInsert.Scope.get<Loop *>(), PragmaStr);
-    } else if (isa<PragmaRegion>(PIRef)) {
-      pragmaRegionStr(PIRef, PragmaStr);
-    } else if (isa<PragmaRealign>(PIRef)) {
-      pragmaRealignStr(PIRef, PragmaStr);
-    } else if (isa<PragmaData>(PIRef) ||
-               isa<ParallelMarker<PragmaData>>(PIRef)) {
-      // Even if this directive cannot be inserted (it is invalid) it should
-      // be processed later. If it is replaced with some other directives,
-      // this directive changes status to CK_Skip. The new status may allow us
-      // to ignore some other directives later.
-      auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
-      for (auto &PragmaLoc : Before)
-        DeferredLocs.emplace_back(PragmaLoc->first, true);
-      for (auto &PragmaLoc : After)
-        DeferredLocs.emplace_back(PragmaLoc->first, false);
-      if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
-        NotOptimizedPragmas.push_back(PD);
+  SmallString<128> PragmaStr;
+    Prefix.toVector(PragmaStr);
+  if (isa<PragmaParallel>(PIRef)) {
+    assert(ToInsert.Scope && "A scope must be known!");
+    pragmaParallelStr(PIRef, *ToInsert.Scope.get<Loop *>(), PragmaStr);
+  } else if (isa<PragmaRegion>(PIRef)) {
+    pragmaRegionStr(PIRef, PragmaStr);
+  } else if (isa<PragmaRealign>(PIRef)) {
+    pragmaRealignStr(PIRef, PragmaStr);
+  } else if (auto *Marker{dyn_cast<ParallelMarker<PragmaRegion>>(PIRef)}) {
+    PragmaStr = "}";
+  } else if (isa<PragmaData>(PIRef) || isa<ParallelMarker<PragmaData>>(PIRef)) {
+    // Even if this directive cannot be inserted (it is invalid) it should
+    // be processed later. If it is replaced with some other directives,
+    // this directive changes status to CK_Skip. The new status may allow us
+    // to ignore some other directives later.
+    auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
+    for (auto *S : ToInsert.ToInsert.get<Begin>()) {
+      auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
+      DeferredLocs.emplace_back(PragmaLoc.first, true);
       // Mark the position of the directive in the source code. It will be later
       // created their only if necessary.
-      for (auto &PragmaLoc: Before)
-        PragmaLoc->second.Before.emplace_back(PIItr->get(), "");
-      for (auto &PragmaLoc: After)
-        PragmaLoc->second.After.emplace_back(PIItr->get(), "");
-      continue;
-    } else {
-      llvm_unreachable("An unknown pragma has been attached to a loop!");
+      PragmaLoc.second.Before.emplace_back(&*PIRef, "");
     }
-    PragmaStr += "\n";
-    assert(!Before.empty() ||
-           !After.empty() && "Insertion location must be known!");
-    for (auto &PragmaLoc : Before)
-      PragmaLoc->second.Before.emplace_back(PIItr->get(), std::move(PragmaStr));
-    for (auto &PragmaLoc : After)
-      PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
-  }
-  if (PLocItr->Exit.empty())
+    for (auto *S : ToInsert.ToInsert.get<End>()) {
+      auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
+      DeferredLocs.emplace_back(PragmaLoc.first, false);
+      // Mark the position of the directive in the source code. It will be later
+      // created their only if necessary.
+      PragmaLoc.second.After.emplace_back(&*PIRef, "");
+    }
+    if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
+      NotOptimizedPragmas.push_back(PD);
     return;
-  Before.clear();
-  After.clear();
-  findLocations(ToInsert.OnExit.get<Begin>(), Before);
-  findLocations(ToInsert.OnExit.get<End>(), After);
-  for (auto PIItr{PLocItr->Exit.begin()}, PIItrE{PLocItr->Exit.end()};
-       PIItr != PIItrE; ++PIItr) {
-    ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr, false};
-    SmallString<128> PragmaStr{"\n"};
-    if (isa<PragmaRealign>(PIRef)) {
-      pragmaRealignStr(PIRef, PragmaStr);
-    } else if (auto *Marker{dyn_cast<ParallelMarker<PragmaRegion>>(PIRef)}) {
-      PragmaStr = "}";
-    } else if (isa<PragmaData>(PIRef) ||
-               isa<ParallelMarker<PragmaData>>(PIRef)) {
-      auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
-      for (auto &PragmaLoc : Before)
-        DeferredLocs.emplace_back(PragmaLoc->first, true);
-      for (auto &PragmaLoc : After)
-        DeferredLocs.emplace_back(PragmaLoc->first, false);
-      if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
-        NotOptimizedPragmas.push_back(PD);
-      for (auto &PragmaLoc: Before)
-        PragmaLoc->second.Before.emplace_back(PIItr->get(), "");
-      for (auto &PragmaLoc: After)
-        PragmaLoc->second.After.emplace_back(PIItr->get(), "");
-      continue;
-    } else {
-      llvm_unreachable("An unknown pragma has been attached to a loop!");
-    }
-    assert(!Before.empty() ||
-           !After.empty() && "Insertion location must be known!");
-    for (auto &PragmaLoc : Before)
-      PragmaLoc->second.Before.emplace_back(PIItr->get(), std::move(PragmaStr));
-    for (auto &PragmaLoc : After)
-      PragmaLoc->second.After.emplace_back(PIItr->get(), std::move(PragmaStr));
+  } else {
+    llvm_unreachable("An unknown pragma has been attached to a loop!");
+  }
+  Suffix.toVector(PragmaStr);
+  assert(ToInsert && "A location for a pragma must be known!");
+  for (auto *S : ToInsert.ToInsert.get<Begin>()) {
+    auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
+    PragmaLoc.second.Before.emplace_back(&*PIRef, std::move(PragmaStr));
+  }
+  for (auto *S : ToInsert.ToInsert.get<End>()) {
+    auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
+    PragmaLoc.second.After.emplace_back(&*PIRef, std::move(PragmaStr));
   }
 }
 
@@ -959,30 +883,44 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       for (auto PLocItr{PLocListItr->get<ParallelLocation>().begin()},
            PLocItrE{PLocListItr->get<ParallelLocation>().end()};
            PLocItr != PLocItrE; ++PLocItr) {
-        auto ToInsert{findLocationToInsert(PLocListItr, PLocItr, *F, LI,
-                                           *TfmCtx, EM, LM)};
-          LLVM_DEBUG(
-            if (!ToInsert) {
-              dbgs() << "[DVMH WRITER]: unable to insert directive to: ";
-              if (auto *MD{PLocItr->Anchor.dyn_cast<MDNode *>()}) {
-                MD->print(dbgs());
-              } else if (auto *V{PLocItr->Anchor.dyn_cast<Value *>()}) {
-                if (auto *F{dyn_cast<Function>(V)}) {
-                  dbgs() << " function " << F->getName();
-                } else {
-                  V->print(dbgs());
-                  if (auto *I{dyn_cast<Instruction>(V)})
-                    dbgs() << " (function "
-                           << I->getFunction()->getName() << ")";
+        auto processDirective =
+            [&PLocListItr, &PLocItr, F, &LI, TfmCtx, EM, &LM, &DeferredPragmas,
+             &NotOptimizedPragmas,
+             &PragmasToInsert](ParallelBlock::iterator PIItr, auto Tag) {
+              ParallelItemRef PIRef{PLocListItr, PLocItr, PIItr,
+                                    std::is_same_v<decltype(Tag), Begin>};
+              auto ToInsert{findLocationToInsert<decltype(Tag)>(
+                  PIRef, *F, LI, *TfmCtx, EM, LM)};
+              LLVM_DEBUG(if (!ToInsert) {
+                dbgs() << "[DVMH WRITER]: unable to insert directive to: ";
+                if (auto *MD{PLocItr->Anchor.dyn_cast<MDNode *>()}) {
+                  MD->print(dbgs());
+                } else if (auto *V{PLocItr->Anchor.dyn_cast<Value *>()}) {
+                  if (auto *F{dyn_cast<Function>(V)}) {
+                    dbgs() << " function " << F->getName();
+                  } else {
+                    V->print(dbgs());
+                    if (auto *I{dyn_cast<Instruction>(V)})
+                      dbgs() << " (function " << I->getFunction()->getName()
+                             << ")";
+                  }
                 }
-              }
-              dbgs() << "\n";
-            }
-          );
-        if (!ToInsert && !tryToIgnoreDirectives(PLocListItr, PLocItr))
-          return false;
-        addPragmaToStmt(ToInsert, PLocListItr, PLocItr, TfmCtx,
-                        DeferredPragmas, NotOptimizedPragmas, PragmasToInsert);
+                dbgs() << "\n";
+              });
+              if (!ToInsert && !tryToIgnoreDirective(**PIItr))
+                return false;
+              addPragmaToStmt(ToInsert, PIRef, TfmCtx,
+                              std::is_same_v<decltype(Tag), Begin> ? "" : "\n",
+                              std::is_same_v<decltype(Tag), Begin> ? "\n" : "",
+                              DeferredPragmas, NotOptimizedPragmas,
+                              PragmasToInsert);
+            };
+        for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
+             PIItr != PIItrE; ++PIItr)
+          processDirective(PIItr, Begin{});
+        for (auto PIItr{PLocItr->Exit.begin()}, PIItrE{PLocItr->Exit.end()};
+             PIItr != PIItrE; ++PIItr)
+          processDirective(PIItr, End{});
       }
     }
   }
