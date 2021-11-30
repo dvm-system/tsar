@@ -169,35 +169,76 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
                        : &Parents.begin()->getUnchecked<Stmt>();
       if (isa<CompoundStmt>(ParentStmt))
         break;
+      auto addBefore = [](clang::Stmt *S) {
+        if (auto *CS{dyn_cast<CompoundStmt>(S)}; CS && !CS->body_empty())
+          return *CS->body_begin();
+        return S;
+      };
       if (auto If{dyn_cast<IfStmt>(ParentStmt)}) {
-        // TODO (kaniandr@gmail.com): insert directives from Entry
-        // attached to condition before the `if-stmt` and insert
-        // directives from Exit at the beginning of each branch and
-        // after if-stmt (if there is no `else` branch.
         if (If->getCond() == ToInsert ||
-            If->getConditionVariableDeclStmt() == ToInsert)
-          ToInsert = nullptr;
+            If->getConditionVariableDeclStmt() == ToInsert) {
+          if constexpr (std::is_same_v<Tag, End>)
+            if (!PIRef->isMarker()) {
+              auto *Branch{If->getThen()};
+              Loc.ToInsert.get<Begin>().push_back(
+                  addBefore(const_cast<Stmt *>(If->getThen())));
+              if (auto *Else{If->getElse()})
+                Loc.ToInsert.get<Begin>().push_back(
+                    addBefore(const_cast<Stmt *>(Else)));
+              else
+                Loc.ToInsert.get<End>().push_back(
+                    const_cast<Stmt *>(ParentStmt));
+              return Loc;
+            }
+          ToInsert = const_cast<Stmt *>(ParentStmt);
+        }
         break;
       }
       if (auto For{dyn_cast<ForStmt>(ParentStmt)}) {
-        // TODO (kaniandr@gmail.com): insert directives attached to another
-        // parts of loops
-        if (For->getBody() != ToInsert)
-          ToInsert = nullptr;
+        if (For->getBody() != ToInsert) {
+          if constexpr (std::is_same_v<Tag, End>)
+            if (!PIRef->isMarker()) {
+              Loc.ToInsert.get<Begin>().push_back(
+                  addBefore(const_cast<Stmt *>(For->getBody())));
+              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
+              return Loc;
+            }
+            ToInsert = const_cast<Stmt *>(ParentStmt);
+        }
         break;
       }
       if (auto While{dyn_cast<WhileStmt>(ParentStmt)}) {
-        // TODO (kaniandr@gmail.com): insert directives attached to another
-        // parts of loops
-        if (While->getBody() != ToInsert)
-          ToInsert = nullptr;
+        if (While->getBody() != ToInsert) {
+          if constexpr (std::is_same_v<Tag, End>)
+            if (!PIRef->isMarker()) {
+              Loc.ToInsert.get<Begin>().push_back(
+                  addBefore(const_cast<Stmt *>(While->getBody())));
+              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
+              return Loc;
+            }
+          ToInsert = const_cast<Stmt *>(ParentStmt);
+        }
         break;
       }
       if (auto Do{dyn_cast<DoStmt>(ParentStmt)}) {
-        // TODO (kaniandr@gmail.com): insert directives attached to another
-        // parts of loops
-        if (Do->getBody() != ToInsert)
-          ToInsert = nullptr;
+          ToInsert = const_cast<Stmt *>(ParentStmt);
+        if (Do->getBody() != ToInsert) {
+          if (!PIRef->isMarker()) {
+            if constexpr (std::is_same_v<Tag, Begin>) {
+              auto *LastOp{Do->getBody()};
+              if (auto *CS{dyn_cast<CompoundStmt>(Do->getBody())};
+                  CS && !CS->body_empty())
+                LastOp = *CS->body_rbegin();
+              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(LastOp));
+            } else {
+              Loc.ToInsert.get<Begin>().push_back(
+                  addBefore(const_cast<Stmt *>(Do->getBody())));
+              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
+            }
+            return Loc;
+          }
+          ToInsert = const_cast<Stmt *>(ParentStmt);
+        }
         break;
       }
     }
@@ -292,12 +333,6 @@ static void addVar(const dvmh::Align &A, FunctionT &&getIdxName,
     }
     Str.push_back(']');
   }
-}
-
-template<typename FunctionT>
-static void addVar1(const dvmh::Align &A, FunctionT &&getIdxName,
-                    SmallVectorImpl<char> &Str) {
-  addVar(A, getIdxName, Str);
 }
 
 static inline unsigned addVarList(const SortedVarListT &VarInfoList,
@@ -914,13 +949,16 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
                               std::is_same_v<decltype(Tag), Begin> ? "\n" : "",
                               DeferredPragmas, NotOptimizedPragmas,
                               PragmasToInsert);
+              return true;
             };
         for (auto PIItr{PLocItr->Entry.begin()}, PIItrE{PLocItr->Entry.end()};
              PIItr != PIItrE; ++PIItr)
-          processDirective(PIItr, Begin{});
+          if (!processDirective(PIItr, Begin{}))
+            return false;
         for (auto PIItr{PLocItr->Exit.begin()}, PIItrE{PLocItr->Exit.end()};
              PIItr != PIItrE; ++PIItr)
-          processDirective(PIItr, End{});
+          if (!processDirective(PIItr, End{}))
+            return false;
       }
     }
   }
