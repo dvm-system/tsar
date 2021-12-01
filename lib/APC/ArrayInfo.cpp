@@ -139,8 +139,8 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
         assert(MemoryMatcher && "Cloned memory matcher must not be null!");
         getMemoryID = [MemoryMatcher](const DIMemory &DIM) {
           auto Itr = MemoryMatcher->find<Clone>(const_cast<DIMemory *>(&DIM));
-          assert(Itr != MemoryMatcher->end() && "Memory must exist on client!");
-          return Itr->get<Origin>()->getAsMDNode();
+          return Itr != MemoryMatcher->end() ? Itr->get<Origin>()->getAsMDNode()
+                                             : nullptr;
         };
         DI = &Provider->value<DelinearizationPass *>()->getDelinearizeInfo();
         DT = &Provider->value<DominatorTreeWrapperPass *>()->getDomTree();
@@ -214,6 +214,8 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       continue;
     // Search corresponding memory location on client if server is used.
     auto ClientRawDIM = getMemoryID(*DIEM);
+    if (!ClientRawDIM)
+      continue;
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
