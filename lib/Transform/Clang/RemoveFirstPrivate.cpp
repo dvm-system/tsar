@@ -22,7 +22,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "tsar/Transform/Clang/RemoveFirstPrivate.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
@@ -31,15 +30,17 @@
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
+#include "tsar/Analysis/Memory/Utils.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/Basic/SourceLocation.h>
-#include <llvm/ADT/DenseMap.h>
-#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
-#include <vector>
+#include "tsar/Transform/Clang/Passes.h"
+#include <bcl/utility.h>
+#include <llvm/Pass.h>
 #include <stack>
 
 using namespace clang;
@@ -48,6 +49,43 @@ using namespace tsar;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-rfp"
+
+static bool isNameOfArray(std::string type) {
+  if (type.find('[') != std::string::npos || type.find('*') != std::string::npos) {
+    return true;
+  }
+  return false;
+}
+
+static void replaceSqrBrWithAsterisk(std::string &str) {
+  size_t openingSqrBracket = str.find("[");
+  size_t closingSqrBracket = str.find("]");
+  str.erase(openingSqrBracket, closingSqrBracket - openingSqrBracket + 1);
+  str += "*";
+}
+
+namespace {
+
+class ClangRemoveFirstPrivate : public FunctionPass, private bcl::Uncopyable {
+public:
+  static char ID;
+
+  ClangRemoveFirstPrivate() : FunctionPass(ID) {
+    initializeClangRemoveFirstPrivatePass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnFunction(Function &F) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+};
+
+struct vars {           // contains information about variables in
+  std::string var1Type; // removefirstprivate clause
+  std::string var2Type;
+  std::string var1Name;
+  std::string var2Name;
+  std::string count = "";
+};
+}
 
 char ClangRemoveFirstPrivate::ID = 0;
 
@@ -60,38 +98,9 @@ INITIALIZE_PASS_IN_GROUP_END(ClangRemoveFirstPrivate, "remove-firstprivate",
   "Initialize variables in for", false, false,
   TransformationQueryManager::getPassRegistry())
 
-
-bool isNameOfArray(std::string type) {
-  if (type.find('[') != std::string::npos || type.find('*') != std::string::npos) {
-    return true;
-  }
-  return false;
-}
-
-void replaceSqrBrWithAsterisk(std::string &str) {
-  size_t openingSqrBracket = str.find("[");
-  size_t closingSqrBracket = str.find("]");
-  str.erase(openingSqrBracket, closingSqrBracket - openingSqrBracket + 1);
-  str += "*";
-}
-
-struct vars {           // contains information about variables in
-  std::string var1Type; // removefirstprivate clause
-  std::string var2Type;
-  std::string var1Name;
-  std::string var2Name;
-  std::string count = "";
-};
-
 namespace {
 
 class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
-
-  std::string getStrByLoc(SourceLocation begin, SourceLocation end) {
-    SourceRange SR(begin, end);
-    CharSourceRange CSR(SR, true);
-    return mRewriter.getRewrittenText(CSR);
-  }
 
   struct DeclarationInfo {
     DeclarationInfo(Stmt *S) : Scope(S) {}
@@ -129,8 +138,6 @@ public:
             varStack.pop();
             continue; // count is mandatory for arrays, skip initialization if no count found
           }
-          type1 = varStack.top().var1Type;
-          type2 = varStack.top().var2Type;
           if (type1.find('[') != std::string::npos) {
             replaceSqrBrWithAsterisk(type1);
           }
@@ -138,15 +145,11 @@ public:
             replaceSqrBrWithAsterisk(type2);
           }
           if (isNameOfArray(varStack.top().var2Type)) {   // arr1 = arr2
-            beforeFor = type1 + "var1Ptr" + " = " + varStack.top().var1Name + ";\n" +
-            type2 + "var2Ptr" + " = " + varStack.top().var2Name + ";\n";
-            forBody = "var1Ptr[i] = var2Ptr[i];\n";
+            forBody = varStack.top().var1Name + "[i] = " + varStack.top().var2Name + "[i];\n";
           } else {                                        // arr1 = val
-            beforeFor = type1 + "var1Ptr" + " = " + varStack.top().var1Name + ";\n";
-            forBody = "var1Ptr[i] = " + varStack.top().var2Name + ";\n";
+            forBody = varStack.top().var1Name + "[i] = " + varStack.top().var2Name + ";\n";
           }
-          txtStr = beforeFor;
-          txtStr += "for (int i = 0; i < " + varStack.top().count + "; i++) {\n" + forBody + "\n}\n";
+          txtStr = "for (int i = 0; i < " + varStack.top().count + "; i++) {\n" + forBody + "\n}\n";
         } else {  // Initialize non-array variable
           txtStr = varStack.top().var1Name + " = " + varStack.top().var2Name + ";\n";
         }
@@ -183,8 +186,11 @@ public:
   }
 
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
+    std::string varName;
     if (isInPragma) {
-      std::string varName = getStrByLoc(Ex -> getBeginLoc(), Ex -> getEndLoc());
+      if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())}) {
+        varName = Var -> getName();
+      }
       if (waitingForVar) {
         ValueDecl *vd = Ex -> getDecl();
         QualType qt = vd -> getType();
@@ -212,7 +218,7 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
     if (isInPragma && waitingForVar) {
       if (varStack.size()) {
-        varStack.top().count = getStrByLoc(IL -> getBeginLoc(), IL -> getEndLoc());
+        varStack.top().count = std::to_string(IL -> getValue().getLimitedValue());
       }
     }
     return RecursiveASTVisitor::TraverseIntegerLiteral(IL);
@@ -251,13 +257,25 @@ private:
 
 bool ClangRemoveFirstPrivate::runOnFunction(Function &F) {
   auto *M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(*M) : nullptr};
+
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
+    return false;
+  auto *CU{DISub->getUnit()};
+  if (isC(CU->getSourceLanguage()) && isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M->getContext().emitError("can not transform sources"
-      ": transformation context is not available");
+    F.getContext().emitError(
+        "cannot transform sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "' function");
     return false;
   }
+
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
