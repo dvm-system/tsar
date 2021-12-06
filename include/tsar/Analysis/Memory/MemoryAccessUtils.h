@@ -72,8 +72,9 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
     auto Callee =
       llvm::dyn_cast<Function>(Call->getCalledOperand()->stripPointerCasts());
     llvm::LibFunc LibId;
+    bool IsMarker{false};
     if (auto II = llvm::dyn_cast<IntrinsicInst>(Call)) {
-      bool IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
+      IsMarker = isMemoryMarkerIntrinsic(II->getIntrinsicID());
       foreachIntrinsicMemArg(*II,
           [IsMarker, Call, &TLI, &Func, &isValidPtr](unsigned Idx) {
         auto Loc = MemoryLocation::getForArgument(Call, Idx, TLI);
@@ -109,10 +110,11 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
          Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       }
     }
-    if (!Call->onlyAccessesArgMemory() && Call->mayReadOrWriteMemory())
+    if (!IsMarker && !Call->onlyAccessesArgMemory() &&
+        Call->mayReadOrWriteMemory())
       UnknownFunc(*Call,
-        Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
-        Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
+                  Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+                  Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
   };
   switch (I.getOpcode()) {
   default:
