@@ -74,7 +74,7 @@ void ClangCountedRegionsExtractor::initializePass() {
   ArrayRef<StringRef> ObjectFilenameRefs{ ObjectFilenameRef };
   StringRef ProfileFilenameRef{ ProfileFilename };
 
-  auto CoverageOrErr = llvm::coverage::CoverageMapping::load(ObjectFilenameRefs, ProfileFilenameRef);
+  auto CoverageOrErr = coverage::CoverageMapping::load(ObjectFilenameRefs, ProfileFilenameRef);
   if (!CoverageOrErr) {
     errs() << "COVERAGE ERROR\n";
     return;
@@ -99,7 +99,7 @@ void ClangCountedRegionsExtractor::initializePass() {
   std::cout << std::endl;
 }
 
-const std::vector<llvm::coverage::CountedRegion> &
+const std::vector<coverage::CountedRegion> &
 ClangCountedRegionsExtractor::getCountedRegions() const noexcept {
 	return CountedRegions;
 }

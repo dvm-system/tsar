@@ -37,4 +37,5 @@ void llvm::initializeClangTransform(PassRegistry &Registry) {
   initializeClangDVMHSMParallelizationPass(Registry);
   initializeClangLoopInterchangePass(Registry);
   initializeClangLoopReversePass(Registry);
+  initializeClangLoopWeightsEstimatorPass(Registry);
 }

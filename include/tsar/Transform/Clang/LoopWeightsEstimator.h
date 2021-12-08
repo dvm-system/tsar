@@ -1,4 +1,4 @@
-//=== CycleWeightsEstimator.h - Cycle Weights Estimator (Clang) --*- C++ -*===//
+//=== LoopWeightsEstimator.h - Loop Weights Estimator (Clang) --*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -18,30 +18,36 @@
 //
 //===---------------------------------------------------------------------===//
 //
-// This file declares a pass to estimate cycle weights in a source code.
+// This file declares a pass to estimate loop weights in a source code.
 //
 //===---------------------------------------------------------------------===//
 
-#ifndef TSAR_CLANG_CYCLE_WEIGHTS_H
-#define TSAR_CLANG_CYCLE_WEIGHTS_H
+#ifndef TSAR_CLANG_LOOP_WEIGHTS_H
+#define TSAR_CLANG_LOOP_WEIGHTS_H
 
 
 #include <bcl/utility.h>
 #include "tsar/Transform/Clang/Passes.h"
+#include <llvm/IR/Metadata.h>
 #include <llvm/Pass.h>
-#include <vector>
+
+#include <map>
 
 
 namespace llvm {
-/// This per-module pass performs estimation of cycle weights
-class ClangCycleWeightsEstimator : public ModulePass, private bcl::Uncopyable {
+/// This per-module pass performs estimation of loop weights
+class ClangLoopWeightsEstimator : public ModulePass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  ClangCycleWeightsEstimator();
+  ClangLoopWeightsEstimator();
 
   bool runOnModule(Module &M) override;
+  const std::map<MDNode *, uint64_t> &getLoopWeights() const noexcept;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  std::map<MDNode *, uint64_t> LoopEffectiveWeights{};
 };
 }
-#endif//TSAR_CLANG_CYCLE_WEIGHTS_H
+#endif//TSAR_CLANG_LOOP_WEIGHTS_H

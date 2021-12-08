@@ -93,5 +93,11 @@ void initializeClangLoopReversePass(PassRegistry &Registry);
 
 /// Create a pass to reverse loop.
 ModulePass *createClangLoopReverse();
+
+/// Initialize a pass to estimate loop weights in a source code.
+void initializeClangLoopWeightsEstimatorPass(PassRegistry &Registry);
+
+/// Create a pass to estimate loop weights in a source code.
+ModulePass *createClangLoopWeightsEstimator();
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H

@@ -43,11 +43,11 @@ public:
   ClangCountedRegionsExtractor();
 
   void initializePass() override;
-  const std::vector<llvm::coverage::CountedRegion> &getCountedRegions() const noexcept;
+  const std::vector<coverage::CountedRegion> &getCountedRegions() const noexcept;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  std::vector<llvm::coverage::CountedRegion> CountedRegions{};
+  std::vector<coverage::CountedRegion> CountedRegions{};
 };
 }
 #endif//TSAR_CLANG_COUNTED_REGIONS_EXTRACTOR_H
