@@ -207,13 +207,13 @@ public:
   }
 
   bool TraverseForStmt(clang::ForStmt *FS) {
-    if (mStatus != GET_REFERENCES)
+    if (mStatus != REPLACE_ARRAY_ACCESSES)
       return RecursiveASTVisitor::TraverseForStmt(FS);
     auto CanonicalItr{find_if(mCanonicalLoopInfo, [FS](auto *Info) {
       return Info->getASTLoop() == FS;
     })};
     auto IsCanonical{false}, IsPerfect{false};
-    mInductions.emplace_back(nullptr, nullptr, FS, Ok, VarList{}, nullptr);
+    //mInductions.emplace_back(nullptr, nullptr, FS, Ok, VarList{}, nullptr);
     if (CanonicalItr != mCanonicalLoopInfo.end() &&
         (*CanonicalItr)->isCanonical()) {
       IsCanonical = true;
@@ -328,6 +328,7 @@ public:
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine);
       Clauses.clear();
+      // TODO: insert variable declaration here
       mStatus = TRAVERSE_STMT;
       return true;
     }
@@ -351,8 +352,9 @@ public:
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      mStatus = GET_REFERENCES;
+      mStatus = REPLACE_ARRAY_ACCESSES;
       auto Res = TraverseForStmt(cast<clang::ForStmt>(S));
+      // TODO: insert array filling somewhere here
       if (!Res) {
         resetVisitor();
         return false;
@@ -360,31 +362,8 @@ public:
       // Match induction names from clauses to loop induction variables.
       unsigned MaxIdx{0};
       llvm::SmallVector<clang::VarDecl *, 4> ValueSwaps;
-      int
-      for (auto [Literal, Clause] : mSwaps) {
-        auto Str{Literal->getString()};
-        unsigned InductIdx{0}, InductIdxE = mInductions.size();
-        for (; InductIdx < InductIdxE; ++InductIdx) {
-          if (!std::get<clang::VarDecl *>(mInductions[InductIdx]))
-            continue;
-          if (std::get<clang::VarDecl *>(mInductions[InductIdx])->getName() ==
-              Str) {
-            ValueSwaps.push_back(
-                std::get<clang::VarDecl *>(mInductions[InductIdx]));
-            MaxIdx = (InductIdx > MaxIdx) ? InductIdx : MaxIdx;
-            break;
-          }
-        }
-        if (InductIdx == InductIdxE) {
-          toDiag(mSrcMgr.getDiagnostics(), Clause->getBeginLoc(),
-                 tsar::diag::warn_disable_loop_interchange);
-          toDiag(mSrcMgr.getDiagnostics(), Literal->getBeginLoc(),
-                 tsar::diag::note_interchange_induction_mismatch)
-              << Str;
-          resetVisitor();
-          return RecursiveASTVisitor::TraverseStmt(S);
-        }
-      }
+
+
       // Check whether transfromation is possible.
       auto checkLoop = [this](unsigned I, unsigned MaxIdx) {
         auto checkPrivatizable = [](VarList &L, auto I, auto EI) {
@@ -623,7 +602,7 @@ private:
   enum Status {
     SEARCH_PRAGMA,
     TRAVERSE_STMT,
-    GET_REFERENCES
+    REPLACE_ARRAY_ACCESSES
   } mStatus{SEARCH_PRAGMA};
   SmallVector<std::tuple<clang::StringLiteral *, clang::Stmt *>, 4> mSwaps;
 
