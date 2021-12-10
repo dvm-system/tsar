@@ -103,6 +103,7 @@ public:
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove; // a vector of statements that will match the root in the tree
       auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
                                             mImportInfo, ToRemove); // ToRemove - the range of positions we want to remove
+      SplitDeclarationFlag = true;
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
@@ -128,16 +129,16 @@ public:
     Rewriter::RewriteOptions RemoveEmptyLine;
     RemoveEmptyLine.RemoveLineIfEmpty = false;
 
-    if (isNotSingleFlag) {
+    if (SplitDeclarationFlag && isNotSingleFlag) {
       SourceRange toInsert(notSingleDeclStart, notSingleDeclEnd);
       mRewriter.RemoveText(toInsert, RemoveEmptyLine);
-      bool isFirstVar = true;
       while (varDeclsNames.size()) {
         if (isFirstVar) {
           mRewriter.InsertTextAfterToken(notSingleDeclEnd, varDeclsNames.back());
           isFirstVar = false;
+        } else {
+          mRewriter.InsertTextAfterToken(notSingleDeclEnd, varDeclType + varDeclsNames.back());
         }
-        mRewriter.InsertTextAfterToken(notSingleDeclEnd, varDeclType + varDeclsNames.back());
         varDeclsNames.pop_back();
       }
     }
@@ -191,18 +192,19 @@ public:
     }
   }
 
-bool TraverseTypeLoc(TypeLoc Loc) {
-  if (isNotSingleFlag && varDeclsNum == 1) {
-    TypeRange = Loc.getSourceRange();
-    std::string type = mRewriter.getRewrittenText(TypeRange);
-    std::cout << "type = " << type << std::endl;
-    varDeclType = type;
-    return RecursiveASTVisitor::TraverseTypeLoc(Loc);
+  bool TraverseTypeLoc(TypeLoc Loc) {
+    if (isNotSingleFlag && varDeclsNum == 1) {
+      SourceRange varDeclRange(start, Loc.getEndLoc());
+     // TypeRange = Loc.getSourceRange();
+      std::string type = mRewriter.getRewrittenText(varDeclRange);
+      std::cout << "type = " << type << std::endl;
+      varDeclType = type;
+      return RecursiveASTVisitor::TraverseTypeLoc(Loc);
+    }
+    return true;
   }
-  return true;
-}
 
-bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
+  bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
     if (isNotSingleFlag) {
       varDeclsNum++;
       SourceRange toInsert(notSingleDeclStart, notSingleDeclEnd);
@@ -213,9 +215,8 @@ bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each sta
       varDeclsEnds.push_front(S->getEndLoc());
       SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
       if (varDeclsNum == 1) {
+        isFirstVar = true;
         SourceRange toInsert2(Range.getBegin(), S->getEndLoc());
-        std::cout << "toInsert2" << Canvas.getRewrittenText(toInsert2).str() << std::endl;
-        std::cout << "varDeclRange" << Canvas.getRewrittenText(varDeclRange).str() << std::endl;
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
       }
       if (varDeclsNum > 1) {
@@ -226,15 +227,18 @@ bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each sta
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
         auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
         txtStr.erase(it, txtStr.end());
+        //txtStr.erase(txtStr.find(","),1);
+        std::cout << "varDeclsNum = " << varDeclsNum << " " << txtStr << std::endl;
       }
       varDeclsNames.push_front(txtStr + ";\n");
     }
     return true;
   }
 
-  bool TraverseDeclStmt(DeclStmt *S) {
+  bool VisitDeclStmt(DeclStmt *S) {
     bool tmp;
     if(!(S->isSingleDecl())) {
+      start = S->getBeginLoc();
       if (!isNotSingleFlag)
         varDeclsNum = 0;
       isNotSingleFlag = true;
@@ -243,7 +247,7 @@ bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each sta
     } else {
       isNotSingleFlag = false;
     }
-    return RecursiveASTVisitor::TraverseDeclStmt(S);
+    return true;
   }
 
   bool VisitStmt(Stmt *S) {
@@ -282,8 +286,11 @@ bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each sta
   SourceLocation notSingleDeclEnd;
   SourceRange TypeRange;
   bool isArrayTypeFlag = false;
+  bool SplitDeclarationFlag = false;
+  bool isFirstVar = true;
   std::string txtStr;
   std::string varDeclType;
+  SourceLocation start;
 };
 }
 
