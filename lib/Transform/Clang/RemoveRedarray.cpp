@@ -360,6 +360,7 @@ public:
       // Match induction names from clauses to loop induction variables.
       unsigned MaxIdx{0};
       llvm::SmallVector<clang::VarDecl *, 4> ValueSwaps;
+      int
       for (auto [Literal, Clause] : mSwaps) {
         auto Str{Literal->getString()};
         unsigned InductIdx{0}, InductIdxE = mInductions.size();
@@ -625,6 +626,7 @@ private:
     GET_REFERENCES
   } mStatus{SEARCH_PRAGMA};
   SmallVector<std::tuple<clang::StringLiteral *, clang::Stmt *>, 4> mSwaps;
+
   LoopNest mInductions;
 };
 } // namespace
