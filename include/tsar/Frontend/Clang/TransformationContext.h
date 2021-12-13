@@ -63,6 +63,12 @@ public:
     return *mCtx;
   }
 
+  /// Return context.
+  const clang::ASTContext & getContext() const {
+    assert(hasInstance() && "Context is not configured!");
+    return *mCtx;
+  }
+
   /// Return compiler instance.
   const clang::CompilerInstance & getCompilerInstance() const {
     assert(hasInstance() && "Context is not configured!");

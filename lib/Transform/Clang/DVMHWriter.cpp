@@ -73,8 +73,18 @@ public:
 };
 
 struct Insertion {
+  enum Kind {
+    // Insert in any available position.
+    Default,
+    // Attach to the nearest statement.
+    Bind,
+    // Insert only if the same directive should be inserted and it has Default
+    // or Bind kind.
+    Merge
+  };
   using PragmaString = SmallString<128>;
-  using PragmaList = SmallVector<std::tuple<ParallelItem *, PragmaString>, 2>;
+  using PragmaList =
+      SmallVector<std::tuple<ParallelItem *, PragmaString, Kind>, 2>;
   PragmaList Before, After;
   TransformationContextBase *TfmCtx{nullptr};
 
@@ -89,15 +99,20 @@ using DeferredPragmaToLocations =
                          1>>;
 
 struct InsertLocation {
-  using InsertionList =
-      bcl::tagged_pair<bcl::tagged<SmallVector<clang::Stmt *, 1>, Begin>,
-                       bcl::tagged<SmallVector<clang::Stmt *, 1>, End>>;
+  using InsertionList = bcl::tagged_pair<
+      bcl::tagged<SmallVector<std::tuple<clang::Stmt *, Insertion::Kind>, 1>, Begin>,
+      bcl::tagged<SmallVector<std::tuple<clang::Stmt *, Insertion::Kind>, 1>, End>>;
   using ScopeT = PointerUnion<llvm::Loop *, clang::Decl *>;
 
   InsertionList ToInsert;
   ScopeT Scope{nullptr};
 
   InsertLocation() = default;
+
+  void invalidate() {
+    ToInsert.get<Begin>().clear();
+    ToInsert.get<End>().clear();
+  }
 
   operator bool() const {
     return (!ToInsert.get<Begin>().empty() || !ToInsert.get<End>().empty());
@@ -126,7 +141,8 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
     assert(LMatchItr != LM.end() &&
            "Unable to find AST representation for a loop!");
     Loc.Scope = L;
-    Loc.ToInsert.get<Tag>().push_back(LMatchItr->get<AST>());
+    Loc.ToInsert.get<Tag>().emplace_back(LMatchItr->get<AST>(),
+                                         Insertion::Bind);
     return Loc;
   }
   assert(PIRef.getPL()->Anchor.is<Value *>() &&
@@ -135,7 +151,8 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
     auto *FD{TfmCtx.getDeclForMangledName(F.getName())};
     assert(FD && "AST representation of a function must be available!");
     Loc.Scope = FD;
-    Loc.ToInsert.get<Tag>().push_back(*FD->getBody()->child_begin());
+    Loc.ToInsert.get<Tag>().emplace_back(*FD->getBody()->child_begin(),
+                                         Insertion::Default);
     return Loc;
   }
   auto MatchItr{EM.find<IR>(PIRef.getPL()->Anchor.get<Value *>())};
@@ -151,100 +168,158 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
     }
     return &Current.template getUnchecked<DeclStmt>();
   };
+  auto addBefore = [](clang::Stmt *S) {
+    if (auto *CS{dyn_cast<CompoundStmt>(S)}; CS && !CS->body_empty())
+      return *CS->body_begin();
+    return S;
+  };
+  auto addAfter = [](clang::Stmt *S) {
+    if (auto *CS{dyn_cast<CompoundStmt>(S)}; CS && !CS->body_empty())
+      return *CS->body_rbegin();
+    return S;
+  };
   auto Current{MatchItr->get<AST>()};
-  if (auto *D{Current.get<Decl>()}) {
-    Loc.Scope = const_cast<Decl *>(D);
-    Loc.ToInsert.get<Tag>().push_back(const_cast<Stmt *>(skipDecls(Current)));
+  if (auto *D{Current.get<Decl>()};
+      D && !D->getDeclContext()->isFunctionOrMethod()) {
+    // TODO (kaniandr@gmail.com): attach pragmas to global declarations.
+    Loc.invalidate();
+    return Loc;
   }
-  Stmt *ToInsert{nullptr};
-  if (auto *ParentStmt{Current.get<Stmt>()}) {
-    for (;;) {
-      ToInsert = const_cast<Stmt *>(ParentStmt);
-      auto Parents{ParentCtx.getParents(*ParentStmt)};
-      assert(!Parents.empty() &&
-             (Parents.begin()->get<Stmt>() || Parents.begin()->get<Decl>()) &&
-             "Executable statement must be in compound statement!");
-      ParentStmt = Parents.begin()->get<Decl>()
-                       ? skipDecls(*Parents.begin())
-                       : &Parents.begin()->getUnchecked<Stmt>();
-      if (isa<CompoundStmt>(ParentStmt))
-        break;
-      auto addBefore = [](clang::Stmt *S) {
-        if (auto *CS{dyn_cast<CompoundStmt>(S)}; CS && !CS->body_empty())
-          return *CS->body_begin();
-        return S;
-      };
-      if (auto If{dyn_cast<IfStmt>(ParentStmt)}) {
-        if (If->getCond() == ToInsert ||
-            If->getConditionVariableDeclStmt() == ToInsert) {
-          if constexpr (std::is_same_v<Tag, End>)
-            if (!PIRef->isMarker()) {
-              auto *Branch{If->getThen()};
-              Loc.ToInsert.get<Begin>().push_back(
-                  addBefore(const_cast<Stmt *>(If->getThen())));
-              if (auto *Else{If->getElse()})
-                Loc.ToInsert.get<Begin>().push_back(
-                    addBefore(const_cast<Stmt *>(Else)));
-              else
-                Loc.ToInsert.get<End>().push_back(
-                    const_cast<Stmt *>(ParentStmt));
-              return Loc;
-            }
-          ToInsert = const_cast<Stmt *>(ParentStmt);
-        }
-        break;
-      }
-      if (auto For{dyn_cast<ForStmt>(ParentStmt)}) {
-        if (For->getBody() != ToInsert) {
-          if constexpr (std::is_same_v<Tag, End>)
-            if (!PIRef->isMarker()) {
-              Loc.ToInsert.get<Begin>().push_back(
-                  addBefore(const_cast<Stmt *>(For->getBody())));
-              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
-              return Loc;
-            }
-            ToInsert = const_cast<Stmt *>(ParentStmt);
-        }
-        break;
-      }
-      if (auto While{dyn_cast<WhileStmt>(ParentStmt)}) {
-        if (While->getBody() != ToInsert) {
-          if constexpr (std::is_same_v<Tag, End>)
-            if (!PIRef->isMarker()) {
-              Loc.ToInsert.get<Begin>().push_back(
-                  addBefore(const_cast<Stmt *>(While->getBody())));
-              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
-              return Loc;
-            }
-          ToInsert = const_cast<Stmt *>(ParentStmt);
-        }
-        break;
-      }
-      if (auto Do{dyn_cast<DoStmt>(ParentStmt)}) {
-          ToInsert = const_cast<Stmt *>(ParentStmt);
-        if (Do->getBody() != ToInsert) {
+  auto *ParentStmt{Current.get<Decl>() ? skipDecls(Current)
+                                       : &Current.getUnchecked<Stmt>()};
+  for (;;) {
+    auto ToInsert{const_cast<Stmt *>(ParentStmt)};
+    auto Parents{ParentCtx.getParents(*ParentStmt)};
+    assert(!Parents.empty() &&
+           (Parents.begin()->get<Stmt>() || Parents.begin()->get<Decl>()) &&
+           "Executable statement must be in compound statement!");
+    ParentStmt = Parents.begin()->template get<Decl>()
+                     ? skipDecls(*Parents.begin())
+                     : &Parents.begin()->template getUnchecked<Stmt>();
+    if (isa<CompoundStmt>(ParentStmt)) {
+      Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
+      return Loc;
+    }
+    if (auto If{dyn_cast<IfStmt>(ParentStmt)}) {
+      auto BindToStmt{Insertion::Default};
+      if (If->getCond() == ToInsert ||
+          If->getConditionVariableDeclStmt() == ToInsert) {
+        if constexpr (std::is_same_v<Tag, End>) {
           if (!PIRef->isMarker()) {
-            if constexpr (std::is_same_v<Tag, Begin>) {
-              auto *LastOp{Do->getBody()};
-              if (auto *CS{dyn_cast<CompoundStmt>(Do->getBody())};
-                  CS && !CS->body_empty())
-                LastOp = *CS->body_rbegin();
-              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(LastOp));
-            } else {
-              Loc.ToInsert.get<Begin>().push_back(
-                  addBefore(const_cast<Stmt *>(Do->getBody())));
-              Loc.ToInsert.get<End>().push_back(const_cast<Stmt *>(ParentStmt));
-            }
-            return Loc;
+            Loc.ToInsert.get<Begin>().emplace_back(
+                addBefore(const_cast<Stmt *>(If->getThen())),
+                Insertion::Default);
+            if (auto *Else{If->getElse()})
+              Loc.ToInsert.get<Begin>().emplace_back(
+                  addBefore(const_cast<Stmt *>(Else)), Insertion::Default);
+            else
+              Loc.ToInsert.get<End>().emplace_back(
+                  const_cast<Stmt *>(ParentStmt), Insertion::Default);
+          } else {
+            Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
           }
-          ToInsert = const_cast<Stmt *>(ParentStmt);
+        } else if (!PIRef->isMarker()) {
+          Loc.ToInsert.get<Tag>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                               Insertion::Default);
+        } else {
+          Loc.invalidate();
         }
-        break;
+      } else {
+        Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
       }
+      return Loc;
+    }
+    if (auto For{dyn_cast<ForStmt>(ParentStmt)}) {
+      if (For->getBody() != ToInsert) {
+        if constexpr (std::is_same_v<Tag, End>) {
+          if (!PIRef->isMarker()) {
+            Loc.ToInsert.get<Begin>().emplace_back(
+                addBefore(const_cast<Stmt *>(For->getBody())),
+                ToInsert != For->getInit() ? Insertion::Default
+                                           : Insertion::Merge);
+            Loc.ToInsert.get<End>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                                 ToInsert == For->getInc()
+                                                     ? Insertion::Merge
+                                                     : Insertion::Default);
+          } else {
+            Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
+          }
+        } else if (!PIRef->isMarker()) {
+          if (ToInsert != For->getInc() || isa<PragmaRemoteAccess>(PIRef))
+            Loc.ToInsert.get<Begin>().emplace_back(
+                const_cast<Stmt *>(ParentStmt), Insertion::Default);
+          if (ToInsert != For->getInit() && !isa<PragmaRemoteAccess>(PIRef))
+            Loc.ToInsert.get<End>().emplace_back(
+                addAfter(const_cast<Stmt *>(For->getBody())),
+                Insertion::Default);
+        } else {
+          Loc.invalidate();
+        }
+      } else {
+        Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
+      }
+      return Loc;
+    }
+    if (auto While{dyn_cast<WhileStmt>(ParentStmt)}) {
+      if (While->getBody() != ToInsert) {
+        if constexpr (std::is_same_v<Tag, End>) {
+          if (!PIRef->isMarker()) {
+            Loc.ToInsert.get<Begin>().emplace_back(
+                addBefore(const_cast<Stmt *>(While->getBody())),
+                Insertion::Default);
+            Loc.ToInsert.get<End>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                                 Insertion::Default);
+          } else {
+            Loc.ToInsert.get<End>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                                 Insertion::Bind);
+          }
+        } else if (!PIRef->isMarker()) {
+          if (!isa<PragmaRemoteAccess>(PIRef))
+            Loc.ToInsert.get<End>().emplace_back(
+                addAfter(const_cast<Stmt *>(While->getBody())),
+                Insertion::Default);
+          Loc.ToInsert.get<Tag>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                               Insertion::Default);
+        } else {
+          Loc.invalidate();
+        }
+      } else {
+        Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
+      }
+      return Loc;
+    }
+    if (auto Do{dyn_cast<DoStmt>(ParentStmt)}) {
+      ToInsert = const_cast<Stmt *>(ParentStmt);
+      if (Do->getBody() != ToInsert) {
+        if (!PIRef->isMarker()) {
+          if constexpr (std::is_same_v<Tag, Begin>) {
+            if (isa<PragmaRemoteAccess>(PIRef))
+              Loc.ToInsert.get<Begin>().emplace_back(
+                  const_cast<Stmt *>(ParentStmt), Insertion::Default);
+            else
+              Loc.ToInsert.get<End>().emplace_back(
+                  addAfter(const_cast<Stmt *>(Do->getBody())),
+                  Insertion::Default);
+          } else {
+            Loc.ToInsert.get<Begin>().emplace_back(
+                addBefore(const_cast<Stmt *>(Do->getBody())),
+                Insertion::Merge);
+            Loc.ToInsert.get<End>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                                 Insertion::Default);
+          }
+        } else {
+          if constexpr (std::is_same_v<Tag, End>)
+            Loc.ToInsert.get<Tag>().emplace_back(const_cast<Stmt *>(ParentStmt),
+                                                 Insertion::Bind);
+          else
+            Loc.invalidate();
+        }
+      } else {
+        Loc.ToInsert.get<Tag>().emplace_back(ToInsert, Insertion::Bind);
+      }
+      return Loc;
     }
   }
-  if (ToInsert)
-    Loc.ToInsert.get<Tag>().push_back(ToInsert);
   return Loc;
 }
 
@@ -271,16 +346,18 @@ static bool tryToIgnoreDirective(ParallelItem &PI) {
   return false;
 }
 
-static inline void addVarList(const std::set<std::string> &VarInfoList,
+static inline unsigned addVarList(const std::set<std::string> &VarInfoList,
                               SmallVectorImpl<char> &Clause) {
   Clause.push_back('(');
   auto I{ VarInfoList.begin() }, EI{ VarInfoList.end() };
   Clause.append(I->begin(), I->end());
-  for (++I; I != EI; ++I) {
+  unsigned Count{1};
+  for (++I; I != EI; ++I, ++Count) {
     Clause.append({ ',', ' ' });
     Clause.append(I->begin(), I->end());
   }
   Clause.push_back(')');
+  return Count;
 }
 
 static inline void addVar(const VariableT &V,
@@ -337,19 +414,21 @@ static void addVar(const dvmh::Align &A, FunctionT &&getIdxName,
 
 static inline unsigned addVarList(const SortedVarListT &VarInfoList,
                                   SmallVectorImpl<char> &Clause) {
+  unsigned Count{0};
   Clause.push_back('(');
   auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
   addVar(*I, Clause);
-  for (++I; I != EI; ++I) {
+  for (++I, ++Count; I != EI; ++I, ++Count) {
     Clause.append({ ',', ' ' });
     addVar(*I, Clause);
   }
   Clause.push_back(')');
-  return Clause.size();
+  return Count;
 }
 
 static inline unsigned addVarList(const AlignVarListT &VarInfoList,
                                   SmallVectorImpl<char> &Clause) {
+  unsigned Count{0};
   Clause.push_back('(');
   auto I{VarInfoList.begin()}, EI{VarInfoList.end()};
   addVar(
@@ -358,7 +437,7 @@ static inline unsigned addVarList(const AlignVarListT &VarInfoList,
         ("I" + Twine(Dim)).toVector(Name);
       },
       Clause);
-  for (++I; I != EI; ++I) {
+  for (++I, ++Count; I != EI; ++I, ++Count) {
     Clause.append({ ',', ' ' });
     addVar(
         *I,
@@ -368,7 +447,7 @@ static inline unsigned addVarList(const AlignVarListT &VarInfoList,
         Clause);
   }
   Clause.push_back(')');
-  return Clause.size();
+  return Count;
 }
 
 template <typename FilterT>
@@ -671,19 +750,19 @@ addPragmaToStmt(const InsertLocation &ToInsert,
     // this directive changes status to CK_Skip. The new status may allow us
     // to ignore some other directives later.
     auto &DeferredLocs{DeferredPragmas.try_emplace(PIRef).first->second};
-    for (auto *S : ToInsert.ToInsert.get<Begin>()) {
+    for (auto [S, K] : ToInsert.ToInsert.get<Begin>()) {
       auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
       DeferredLocs.emplace_back(PragmaLoc.first, true);
       // Mark the position of the directive in the source code. It will be later
       // created their only if necessary.
-      PragmaLoc.second.Before.emplace_back(&*PIRef, "");
+      PragmaLoc.second.Before.emplace_back(&*PIRef, "", K);
     }
-    for (auto *S : ToInsert.ToInsert.get<End>()) {
+    for (auto [S, K] : ToInsert.ToInsert.get<End>()) {
       auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
       DeferredLocs.emplace_back(PragmaLoc.first, false);
       // Mark the position of the directive in the source code. It will be later
       // created their only if necessary.
-      PragmaLoc.second.After.emplace_back(&*PIRef, "");
+      PragmaLoc.second.After.emplace_back(&*PIRef, "", K);
     }
     if (auto *PD{dyn_cast<PragmaData>(PIRef)}; PD && PD->parent_empty())
       NotOptimizedPragmas.push_back(PD);
@@ -693,13 +772,13 @@ addPragmaToStmt(const InsertLocation &ToInsert,
   }
   Suffix.toVector(PragmaStr);
   assert(ToInsert && "A location for a pragma must be known!");
-  for (auto *S : ToInsert.ToInsert.get<Begin>()) {
+  for (auto [S, K] : ToInsert.ToInsert.get<Begin>()) {
     auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
-    PragmaLoc.second.Before.emplace_back(&*PIRef, std::move(PragmaStr));
+    PragmaLoc.second.Before.emplace_back(&*PIRef, std::move(PragmaStr), K);
   }
-  for (auto *S : ToInsert.ToInsert.get<End>()) {
+  for (auto [S, K] : ToInsert.ToInsert.get<End>()) {
     auto &PragmaLoc{*PragmasToInsert.try_emplace(S, TfmCtx).first};
-    PragmaLoc.second.After.emplace_back(&*PIRef, std::move(PragmaStr));
+    PragmaLoc.second.After.emplace_back(&*PIRef, std::move(PragmaStr), K);
   }
 }
 
@@ -744,15 +823,53 @@ static bool pragmaDataStr(FilterT Filter, const ParallelItemRef &PDRef,
     SmallVectorImpl<char> &Str;
   } OnReturn{PDRef, Str};
   if constexpr (std::is_same_v<decltype(Filter), std::true_type>)
-    addVarList(PD->getMemory(), Str);
-  else if (addVarList(PD->getMemory(), std::move(Filter), Str) == 0)
-    return false;
-  return true;
+    return addVarList(PD->getMemory(), Str) != 0;
+  else
+    return addVarList(PD->getMemory(), std::move(Filter), Str) != 0;
 }
 
 static inline bool pragmaDataStr(ParallelItemRef &PDRef,
     SmallVectorImpl<char> &Str) {
   return pragmaDataStr(std::true_type{}, PDRef, Str);
+}
+
+/// Return true if a specified variable `A` is available in a scope which
+/// contains a pragma at location `Loc`.
+static bool isPragmaInDeclScope(
+    ParentMapContext &ParentCtx,
+    const DeferredPragmaToLocations::value_type::second_type::value_type &Loc,
+    const dvmh::Align &A) {
+  auto skipDecls = [&ParentCtx](DynTypedNode Current) -> const Stmt * {
+    for (; !Current.template get<DeclStmt>();) {
+      auto Parents{ParentCtx.getParents(Current)};
+      assert(!Parents.empty() &&
+             "Declaration must be in declaration statement!");
+      Current = *Parents.begin();
+    }
+    return &Current.template getUnchecked<DeclStmt>();
+  };
+  auto skipUntil = [&ParentCtx](const Stmt &S, const Stmt &Until) {
+    auto Current{DynTypedNode::create(S)};
+    for (;;) {
+      auto Parents{ParentCtx.getParents(Current)};
+      if (Parents.empty())
+        return false;
+      Current = *Parents.begin();
+      if (auto *PS{Current.get<Stmt>()}) {
+        if (PS == &Until)
+          return true;
+      } else {
+        return false;
+      }
+    }
+    return false;
+  };
+  if (auto *V{std::get_if<VariableT>(&A.Target)};
+      V && V->get<AST>()->getDeclContext()->isFunctionOrMethod()) {
+    auto *DS{skipDecls(DynTypedNode::create(*V->get<AST>()))};
+    return !skipUntil(*DS, *Loc.get<Stmt>());
+  }
+  return true;
 }
 
 static void
@@ -769,6 +886,9 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
       assert(PragmasToInsert.count(Loc.get<Stmt>()) &&
              "Pragma position must be cached!");
       auto &Position{PragmasToInsert[Loc.get<Stmt>()]};
+      auto &ASTCtx{cast<ClangTransformationContext>(Position.TfmCtx)
+                              ->getContext()};
+      auto &ParentCtx{ASTCtx.getParentMapContext()};
       if (Loc.get<Begin>()) {
         auto BeforeItr{
             find_if(Position.Before, [PI = PIRef.getPI()->get()](auto &Pragma) {
@@ -777,17 +897,27 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
         assert(BeforeItr != Position.Before.end() &&
                "Pragma position must be cached!");
         auto &PragmaStr{std::get<Insertion::PragmaString>(*BeforeItr)};
+        auto StashPragmaSize{PragmaStr.size()};
+        bool NotEmptyPragma{true};
         if (auto *DS{dyn_cast<DeclStmt>(Loc.get<Stmt>())})
-          pragmaDataStr(
-              [DS](const dvmh::Align &A) {
+          NotEmptyPragma = pragmaDataStr(
+              [DS, &ParentCtx, &Loc](const dvmh::Align &A) {
+                if (!isPragmaInDeclScope(ParentCtx, Loc, A))
+                  return false;
                 if (auto *V{std::get_if<VariableT>(&A.Target)})
                   return !is_contained(DS->getDeclGroup(), V->get<AST>());
                 return true;
               },
               PIRef, PragmaStr);
         else
-          pragmaDataStr(PIRef, PragmaStr);
+          NotEmptyPragma = pragmaDataStr(
+              [&ParentCtx, &Loc](const dvmh::Align &A) {
+                return isPragmaInDeclScope(ParentCtx, Loc, A);
+              },
+              PIRef, PragmaStr);
         PragmaStr += "\n";
+        if (!NotEmptyPragma)
+          PragmaStr.resize(StashPragmaSize);
       } else {
         auto AfterItr{
             find_if(Position.After, [PI = PIRef.getPI()->get()](auto &Pragma) {
@@ -796,8 +926,14 @@ insertPragmaData(ArrayRef<PragmaData *> POTraverse,
         assert(AfterItr != Position.After.end() &&
                "Pragma position must be cached!");
         auto &PragmaStr{std::get<Insertion::PragmaString>(*AfterItr)};
+        auto StashPragmaSize{PragmaStr.size()};
         PragmaStr += "\n";
-        pragmaDataStr(PIRef, PragmaStr);
+        if (!pragmaDataStr(
+                [&ParentCtx, &Loc](const dvmh::Align &A) {
+                  return isPragmaInDeclScope(ParentCtx, Loc, A);
+                },
+                PIRef, PragmaStr))
+          PragmaStr.resize(StashPragmaSize);
       }
     }
   }
@@ -870,6 +1006,163 @@ static void printReplacementTree(
       });
 }
 
+namespace {
+struct DeclStmtSearch : public RecursiveASTVisitor<DeclStmtSearch> {
+  bool VisitDeclStmt(DeclStmt *) {
+    Found = true;
+    return true;
+  }
+  bool Found{false};
+};
+}
+
+#ifdef LLVM_DEBUG
+static void insertLocationLog(const ParallelItemRef &PIRef,
+                              const InsertLocation &ToInsert,
+                              const ClangTransformationContext &TfmCtx) {
+  if (!ToInsert)
+    dbgs() << "[DVMH WRITER]: unable to insert ";
+  else
+    dbgs() << "[DVMH WRITER]: insertion points for ";
+  if ((**PIRef.getPI()).isMarker())
+    dbgs() << "marker";
+  else
+    dbgs() << "directive "
+           << getName(
+                  static_cast<tsar::DirectiveId>((**PIRef.getPI()).getKind()));
+  dbgs() << " " << PIRef.getPI()->get();
+  dbgs() << " to ";
+  if (auto *MD{PIRef.getPL()->Anchor.dyn_cast<MDNode *>()}) {
+    MD->print(dbgs());
+  } else if (auto *V{PIRef.getPL()->Anchor.dyn_cast<Value *>()}) {
+    if (auto *F{dyn_cast<Function>(V)}) {
+      dbgs() << "function " << F->getName();
+    } else {
+      V->print(dbgs());
+      if (auto *I{dyn_cast<Instruction>(V)})
+        dbgs() << " (function " << I->getFunction()->getName() << ")";
+    }
+  }
+  auto insertLocationLog = [&TfmCtx](auto &List) {
+    for (auto [S, K] : List) {
+      auto &SrcMgr{TfmCtx.getContext().getSourceManager()};
+      dbgs() << " ";
+      S->getBeginLoc().print(dbgs(), SrcMgr);
+      switch (K) {
+      case Insertion::Bind:
+        dbgs() << "(bind)";
+        break;
+      case Insertion::Merge:
+        dbgs() << "(merge)";
+        break;
+      }
+    }
+  };
+  dbgs() << " before:";
+  insertLocationLog(ToInsert.ToInsert.get<Begin>());
+  dbgs() << " after:";
+  insertLocationLog(ToInsert.ToInsert.get<End>());
+  dbgs() << "\n";
+}
+#endif
+
+static bool canMergeDirectives(const Insertion::PragmaList &Pragmas) {
+  for (auto &P : Pragmas)
+    if (std::get<Insertion::Kind>(P) == Insertion::Merge)
+      if (auto *PD{dyn_cast<PragmaData>(std::get<ParallelItem *>(P))})
+        if (!all_of(PD->getMemory(), [PD, &Pragmas](auto &M) {
+              auto Itr{find_if(Pragmas, [PD, &M](auto &ToMerge) {
+                auto *ToMergePD{
+                    dyn_cast<PragmaData>(std::get<ParallelItem *>(ToMerge))};
+                if (!ToMergePD || ToMergePD == PD ||
+                    ToMergePD->getKind() != PD->getKind())
+                  return false;
+                return ToMergePD->getMemory().count(M) != 0;
+              })};
+              return Itr != Pragmas.end();
+            })) {
+          if (!tryToIgnoreDirective(*PD)) {
+            LLVM_DEBUG(dbgs() << "[DVMH WRITER]: uanble to merge directive "
+                              << PD << "\n");
+            return false;
+          }
+        }
+  return true;
+}
+
+static bool closeRemoteAccesses(DeferredPragmaToLocations &DeferredPragmas,
+                                LocationToPragmas &PragmasToInsert) {
+  for (auto &&[PIRef, ToInsert] : DeferredPragmas)
+    if (!ToInsert.empty())
+      if (auto *Marker{dyn_cast<ParallelMarker<PragmaRemoteAccess>>(PIRef)})
+        if (auto *Remote{Marker->getBase()};
+            !Remote->isInvalid() && !Remote->isSkipped()) {
+          auto &&[RemoteRef, RemoteToInsert] = *DeferredPragmas.find_as(Remote);
+          if (RemoteToInsert.size() != 1 || ToInsert.size() != 1) {
+            LLVM_DEBUG(dbgs()
+                       << "[DVMH WRITER]: unable to insert remote access "
+                          "directive: multiple begin/end positions");
+            return false;
+          }
+          auto *TfmCtx{cast<ClangTransformationContext>(
+              PragmasToInsert[RemoteToInsert.front().get<Stmt>()].TfmCtx)};
+          auto &ParentCtx{TfmCtx->getContext().getParentMapContext()};
+          auto RemoteParent{
+              ParentCtx.getParents(*RemoteToInsert.front().get<Stmt>())};
+          assert(!RemoteParent.empty() &&
+                 "Remote access must be inserted in a scope");
+          auto &RPS{RemoteParent.begin()->getUnchecked<Stmt>()};
+          auto RemoteMarkerParent{
+              ParentCtx.getParents(*ToInsert.front().get<Stmt>())};
+          assert(!RemoteMarkerParent.empty() &&
+                 "Remote access must be inserted in a scope");
+          auto &RMPS{RemoteMarkerParent.begin()->getUnchecked<Stmt>()};
+          if (&RPS != &RMPS) {
+            LLVM_DEBUG(
+                dbgs()
+                << "[DVMH WRITER]: unable to insert remote access directive: "
+                   "inconsistent begin and end insertion points");
+            return false;
+          }
+          if (auto *CS{dyn_cast<CompoundStmt>(&RPS)}) {
+            auto I{find(CS->children(), RemoteToInsert.front().get<Stmt>())};
+            auto EI{find(CS->children(), ToInsert.front().get<Stmt>())};
+            if (!RemoteToInsert.front().get<Begin>())
+              ++I;
+            if (!ToInsert.front().get<Begin>())
+              ++EI;
+            DeclStmtSearch DSS;
+            for (I; I != EI; ++I) {
+              DSS.TraverseStmt(const_cast<Stmt *>(*I));
+              if (DSS.Found) {
+                LLVM_DEBUG(dbgs() << "[DVMH WRITER]: unable to insert remote "
+                                     "access directive: initialization inside "
+                                     "the remote access scope");
+                return false;
+              }
+            }
+          } else {
+            DeclStmtSearch DSS;
+            DSS.TraverseStmt(
+                const_cast<Stmt *>(RemoteToInsert.front().get<Stmt>()));
+            if (DSS.Found) {
+              LLVM_DEBUG(dbgs() << "[DVMH WRITER]: unable to insert remote "
+                                   "access directive: initialization inside "
+                                   "the remote access scope");
+              return false;
+            }
+          }
+          for (auto &Loc : ToInsert)
+            if (Loc.get<Begin>())
+              PragmasToInsert[Loc.get<Stmt>()].Before.emplace_back(
+                  Marker, "\n}", Insertion::Bind);
+            else
+              PragmasToInsert[Loc.get<Stmt>()].After.emplace_back(
+                  Marker, "\n}", Insertion::Bind);
+        }
+  return true;
+}
+
 bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
   ClangDVMHWriterProvider::initialize<TransformationEnginePass>(
@@ -926,22 +1219,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
                                     std::is_same_v<decltype(Tag), Begin>};
               auto ToInsert{findLocationToInsert<decltype(Tag)>(
                   PIRef, *F, LI, *TfmCtx, EM, LM)};
-              LLVM_DEBUG(if (!ToInsert) {
-                dbgs() << "[DVMH WRITER]: unable to insert directive to: ";
-                if (auto *MD{PLocItr->Anchor.dyn_cast<MDNode *>()}) {
-                  MD->print(dbgs());
-                } else if (auto *V{PLocItr->Anchor.dyn_cast<Value *>()}) {
-                  if (auto *F{dyn_cast<Function>(V)}) {
-                    dbgs() << " function " << F->getName();
-                  } else {
-                    V->print(dbgs());
-                    if (auto *I{dyn_cast<Instruction>(V)})
-                      dbgs() << " (function " << I->getFunction()->getName()
-                             << ")";
-                  }
-                }
-                dbgs() << "\n";
-              });
+              LLVM_DEBUG(insertLocationLog(PIRef, ToInsert, *TfmCtx));
               if (!ToInsert && !tryToIgnoreDirective(**PIItr))
                 return false;
               addPragmaToStmt(ToInsert, PIRef, TfmCtx,
@@ -962,6 +1240,9 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       }
     }
   }
+  for (auto &&[S, I] : PragmasToInsert)
+    if (!canMergeDirectives(I.Before) || !canMergeDirectives(I.After))
+      return false;
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: IPO root ID: " << &PIP.getIPORoot()
                     << "\n";
              dbgs() << "[DVMH WRITER]: initial replacement tree:\n";
@@ -972,6 +1253,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
   // We use post-ordered traversal to propagate the `skip` property in upward
   // direction.
   traversePragmaDataPO(NotOptimizedPragmas, [this, &PIP, &DeferredPragmas,
+                                             &PragmasToInsert,
                                              &POTraverse](ParallelItem *PI) {
     auto PD{cast<PragmaData>(PI)};
     POTraverse.push_back(PD);
@@ -997,22 +1279,31 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
     auto PIItr{DeferredPragmas.find_as(PI)};
     assert(PIItr != DeferredPragmas.end() &&
            "Internal pragmas must be cached!");
-    auto [PIRef, ToInsert] = *PIItr;
+    auto &&[PIRef, ToInsert] = *PIItr;
     if (PD->getMemory().empty()) {
       PD->skip();
-    } else if (!ToInsert.empty() && all_of(ToInsert, [PD](auto &Loc) {
-                 if (!Loc.template get<Begin>())
-                   return false;
-                 if (auto *DS{
-                         dyn_cast_or_null<DeclStmt>(Loc.template get<Stmt>())};
-                     DS &&
-                     all_of(PD->getMemory(), [DS](const dvmh::Align &Align) {
-                       if (auto *V{std::get_if<VariableT>(&Align.Target)})
-                         return is_contained(DS->getDeclGroup(), V->get<AST>());
-                       return false;
-                     }))
-                   return true;
-                 return false;
+    } else if (!ToInsert.empty() &&
+               all_of(ToInsert, [PD, &PragmasToInsert](auto &Loc) {
+                 if (Loc.template get<Begin>()) {
+                   auto *S{Loc.template get<Stmt>()};
+                   auto *DS{dyn_cast_or_null<DeclStmt>(S)};
+                   if (DS &&
+                       all_of(PD->getMemory(), [DS](const dvmh::Align &Align) {
+                         if (auto *V{std::get_if<VariableT>(&Align.Target)})
+                           return is_contained(DS->getDeclGroup(),
+                                               V->get<AST>());
+                         return false;
+                       }))
+                     return true;
+                 }
+                 auto &Position{PragmasToInsert[Loc.template get<Stmt>()]};
+                 auto &ASTCtx{cast<ClangTransformationContext>(Position.TfmCtx)
+                                  ->getContext()};
+                 auto &ParentCtx{ASTCtx.getParentMapContext()};
+                 return all_of(PD->getMemory(),
+                               [&ParentCtx, &Loc](const dvmh::Align &A) {
+                                 return !isPragmaInDeclScope(ParentCtx, Loc, A);
+                               });
                })) {
       // Do not mention variables in a directive if it has not been
       // declared yet.
@@ -1095,32 +1386,62 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
         PD->skip();
     }
   }
-  for (auto &&[Position, Insertion] : PragmasToInsert) {
-    if (Insertion.Before.empty())
-      continue;
-    stable_sort(Insertion.Before, [](auto &LHS, auto &RHS) {
-      return isa<PragmaRemoteAccess>(std::get<ParallelItem *>(LHS)) &&
-        !isa<PragmaRemoteAccess>(std::get<ParallelItem *>(RHS));
-    });
-    if (auto Remote{dyn_cast<PragmaRemoteAccess>(
-            std::get<ParallelItem *>(*Insertion.Before.begin()))}) {
-      for (auto I{Insertion.Before.begin() + 1}, EI{Insertion.Before.end()};
-           I != EI && isa<PragmaRemoteAccess>(std::get<ParallelItem *>(*I));
-           ++I) {
-        auto R{cast<PragmaRemoteAccess>(std::get<ParallelItem *>(*I))};
-        Remote->getMemory().insert(R->getMemory().begin(),
-                                   R->getMemory().end());
-        // TODO (kaniandr@gmail.com): Do not remove this remote_access
+  auto merge = [](auto &List) {
+    auto CurrItr{List.end()};
+    for (auto I{List.begin()}, EI{List.end()}; I != EI; ++I) {
+      if (CurrItr != List.end() &&
+          std::get<ParallelItem *>(*CurrItr)->getKind() ==
+              std::get<ParallelItem *>(*I)->getKind()) {
+        // TODO (kaniandr@gmail.com): Do not remove this data
         // directive. It cannot be removed from ParalleizationInfo, otherwise
-        // the DefferedPragmas map will be invalidated because it uses iterator
-        // as a key. May be we should not store iterators in DefferedPragmas
-        // map. Note, that each value from the DefferedPragmas map should be
-        // stored in the PragmasToInsert collection, so do not remote this
-        // remote_access directive from the Insertion.Before.
-        Remote->child_insert(R);
-        R->parent_insert(Remote);
-        R->skip();
+        // the DefferedPragmas map will be invalidated because it uses
+        // iterator as a key. May be we should not store iterators in
+        // DefferedPragmas map. Note, that each value from the DefferedPragmas
+        // map should be stored in the PragmasToInsert collection, so do not
+        // remove this data directive from the List.
+        auto *PD{cast<PragmaData>(std::get<ParallelItem *>(*I))};
+        if (PD->isSkipped())
+          continue;
+        auto *Merge{cast<PragmaData>(std::get<ParallelItem *>(*CurrItr))};
+        Merge->getMemory().insert(PD->getMemory().begin(),
+                                  PD->getMemory().end());
+        Merge->child_insert(PD);
+        PD->parent_insert(Merge);
+        PD->skip();
+        continue;
       }
+      CurrItr = (isa<PragmaData>(std::get<ParallelItem *>(*I)) &&
+                 !cast<PragmaData>(std::get<ParallelItem *>(*I))->isSkipped())
+                    ? I
+                    : List.end();
+    }
+  };
+  for (auto &&[Position, Insertion] : PragmasToInsert) {
+    if (!Insertion.Before.empty()) {
+      stable_sort(Insertion.Before, [](auto &LHS, auto &RHS) {
+        return (std::get<Insertion::Kind>(LHS) !=
+                    std::get<Insertion::Kind>(RHS) &&
+                (std::get<Insertion::Kind>(LHS) == Insertion::Bind ||
+                 std::get<Insertion::Kind>(RHS) == Insertion::Bind))
+                   ? std::get<Insertion::Kind>(LHS) != Insertion::Bind &&
+                         std::get<Insertion::Kind>(RHS) == Insertion::Bind
+                   : !isa<PragmaRemoteAccess>(std::get<ParallelItem *>(LHS)) &&
+                         isa<PragmaRemoteAccess>(std::get<ParallelItem *>(RHS));
+      });
+      merge(Insertion.Before);
+    }
+    if (!Insertion.After.empty()) {
+      stable_sort(Insertion.After, [](auto &LHS, auto &RHS) {
+        return (std::get<Insertion::Kind>(LHS) !=
+                    std::get<Insertion::Kind>(RHS) &&
+                (std::get<Insertion::Kind>(LHS) == Insertion::Bind ||
+                 std::get<Insertion::Kind>(RHS) == Insertion::Bind))
+                   ? std::get<Insertion::Kind>(LHS) == Insertion::Bind &&
+                         std::get<Insertion::Kind>(RHS) != Insertion::Bind
+                   : !isa<PragmaRemoteAccess>(std::get<ParallelItem *>(LHS)) &&
+                         isa<PragmaRemoteAccess>(std::get<ParallelItem *>(RHS));
+      });
+      merge(Insertion.After);
     }
   }
   LLVM_DEBUG(dbgs() << "[DVMH WRITER]: optimized replacement tree:\n";
@@ -1128,25 +1449,14 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
                                   PragmasToInsert));
   // Build pragmas for necessary data transfer directives.
   insertPragmaData(POTraverse, DeferredPragmas, PragmasToInsert);
-  for (auto &&[PIRef, ToInsert] : DeferredPragmas)
-    if (!ToInsert.empty())
-      if (auto *Marker{dyn_cast<ParallelMarker<PragmaRemoteAccess>>(PIRef)})
-        if (auto *Remote{Marker->getBase()};
-            !Remote->isInvalid() && !Remote->isSkipped()) {
-          for (auto &Loc : ToInsert)
-            if (Loc.get<Begin>())
-              PragmasToInsert[Loc.get<Stmt>()].Before.emplace_back(Marker,
-                                                                   "\n}");
-            else
-              PragmasToInsert[Loc.get<Stmt>()].After.emplace_back(Marker,
-                                                                  "\n}");
-        }
+  if (!closeRemoteAccesses(DeferredPragmas, PragmasToInsert))
+    return false;
   // Update sources.
   for (auto &&[ToInsert, Pragmas] : PragmasToInsert) {
     auto BeginLoc{ToInsert->getBeginLoc()};
     auto TfmCtx{cast<ClangTransformationContext>(Pragmas.TfmCtx)};
     bool IsBeginChanged{false};
-    for (auto &&[PI, Str] : Pragmas.Before)
+    for (auto &&[PI, Str, BindToStmt] : Pragmas.Before)
       if (!Str.empty()) {
         if (!IsBeginChanged) {
           auto &SM{TfmCtx->getRewriter().getSourceMgr()};
@@ -1161,7 +1471,7 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       }
     auto EndLoc{shiftTokenIfSemi(ToInsert->getEndLoc(), TfmCtx->getContext())};
     bool IsEndChanged{false};
-    for (auto &&[PI, Str] : Pragmas.After)
+    for (auto &&[PI, Str, BindToStmt] : Pragmas.After)
       if (!Str.empty()) {
         TfmCtx->getRewriter().InsertTextAfterToken(EndLoc, Str);
         IsEndChanged = true;
