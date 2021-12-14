@@ -108,7 +108,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
   // because only these flags are propagated through actual-to-formal parameters
   // relation in both directions (up and down).
   auto &APCCtx{*getAnalysis<APCContextWrapper>()};
-  if (hasFnAttr(F, AttrKind::IndirectCall))
+  if (hasFnAttr(F, AttrKind::IndirectCall) || F.users().empty())
     if (auto *APCFunc{APCCtx.findFunction(F)})
       for (unsigned I = 0, EI = APCFunc->funcParams.countOfPars; I < EI; ++I) {
         if (APCFunc->funcParams.parametersT[I] == ARRAY_T) {
@@ -118,7 +118,10 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
           LLVM_DEBUG(dbgs()
                      << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                      << A->GetName()
-                     << " (parent function may be called indirectly)\n");
+                     << (F.users().empty()
+                             ? " (no function calls)"
+                             : " (parent function may be called indirectly)")
+                     << "\n");
           A->SetDistributeFlag(Distribution::SPF_PRIV);
         }
       }
