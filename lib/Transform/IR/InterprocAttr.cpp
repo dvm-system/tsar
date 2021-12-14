@@ -158,7 +158,12 @@ bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
           Users.push_back(U);
         }
       } while (!Worklist.empty());
-      if (any_of(Users, [](auto *U) { return !isa<CallBase>(U); }))
+      if (any_of(Users, [](auto *U) {
+            return !isa<CallBase>(U) &&
+                   (!isa<BitCastOperator>(U) || any_of(U->users(), [](auto *U) {
+                     return !isa<CallBase>(U);
+                   }));
+          }))
         addFnAttr(F, AttrKind::IndirectCall);
     }
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
