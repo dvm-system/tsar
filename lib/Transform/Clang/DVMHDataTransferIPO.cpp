@@ -296,9 +296,13 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
     IPOMap::persistent_iterator ToIgnoreItr;
     bool IsNew;
     std::tie(ToIgnoreItr, IsNew) = mIPOMap.try_emplace(F);
-    if (!GO.NoExternalCalls && ExternalCalls.count(F) ||
-        InCycle || !OptimizeAll ||
-        any_of(F->users(), [](auto *U) { return !isa<CallBase>(U); }))
+    if (!GO.NoExternalCalls && ExternalCalls.count(F) || InCycle ||
+        !OptimizeAll || any_of(F->users(), [](auto *U) {
+          return !isa<CallBase>(U) &&
+                 (!isa<BitCastOperator>(U) || any_of(U->users(), [](auto *U) {
+                   return !isa<CallBase>(U);
+                 }));
+        }))
       ToIgnoreItr->get<bool>() = false;
     else if (IsNew)
       ToIgnoreItr->get<bool>() = true;
