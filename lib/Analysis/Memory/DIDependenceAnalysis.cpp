@@ -1660,7 +1660,13 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
                                  &RedKind](Loop *InnerL) {
     if (!InnerL->getLoopID())
       return false;
-    auto &InnerPool = *(*mTraitPool)[InnerL->getLoopID()];
+    auto InnerPoolItr = mTraitPool->find(InnerL->getLoopID());
+    // Pool of traits is empty if the inner loop is located in a function
+    // which is called in the outer loop. After internal inlining these
+    // loop are in the same function.
+    if (InnerPoolItr == mTraitPool->end())
+      return false;
+    auto &InnerPool = *InnerPoolItr->get<tsar::Pool>();
     for (auto &DIMTraitItr : Traits) {
       auto InnerTraitItr = InnerPool.find_as(DIMTraitItr->getMemory());
       if (InnerTraitItr == InnerPool.end())
