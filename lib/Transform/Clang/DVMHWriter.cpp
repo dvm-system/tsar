@@ -180,7 +180,8 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
   };
   auto Current{MatchItr->get<AST>()};
   if (auto *D{Current.get<Decl>()};
-      D && !D->getDeclContext()->isFunctionOrMethod()) {
+      D &&
+      (isa<ParmVarDecl>(D) || !D->getDeclContext()->isFunctionOrMethod())) {
     // TODO (kaniandr@gmail.com): attach pragmas to global declarations.
     Loc.invalidate();
     return Loc;
@@ -865,7 +866,8 @@ static bool isPragmaInDeclScope(
     return false;
   };
   if (auto *V{std::get_if<VariableT>(&A.Target)};
-      V && V->get<AST>()->getDeclContext()->isFunctionOrMethod()) {
+      V && !isa<ParmVarDecl>(V->get<AST>()) &&
+      V->get<AST>()->getDeclContext()->isFunctionOrMethod()) {
     auto *DS{skipDecls(DynTypedNode::create(*V->get<AST>()))};
     return !skipUntil(*DS, *Loc.get<Stmt>());
   }
