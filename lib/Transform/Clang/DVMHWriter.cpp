@@ -1084,7 +1084,7 @@ static bool canMergeDirectives(const Insertion::PragmaList &Pragmas) {
               return Itr != Pragmas.end();
             })) {
           if (!tryToIgnoreDirective(*PD)) {
-            LLVM_DEBUG(dbgs() << "[DVMH WRITER]: uanble to merge directive "
+            LLVM_DEBUG(dbgs() << "[DVMH WRITER]: unable to merge directive "
                               << PD << "\n");
             return false;
           }
@@ -1103,7 +1103,7 @@ static bool closeRemoteAccesses(DeferredPragmaToLocations &DeferredPragmas,
           if (RemoteToInsert.size() != 1 || ToInsert.size() != 1) {
             LLVM_DEBUG(dbgs()
                        << "[DVMH WRITER]: unable to insert remote access "
-                          "directive: multiple begin/end positions");
+                          "directive: multiple begin/end positions\n");
             return false;
           }
           auto *TfmCtx{cast<ClangTransformationContext>(
@@ -1123,7 +1123,7 @@ static bool closeRemoteAccesses(DeferredPragmaToLocations &DeferredPragmas,
             LLVM_DEBUG(
                 dbgs()
                 << "[DVMH WRITER]: unable to insert remote access directive: "
-                   "inconsistent begin and end insertion points");
+                   "inconsistent begin and end insertion points\n");
             return false;
           }
           if (auto *CS{dyn_cast<CompoundStmt>(&RPS)}) {
@@ -1139,7 +1139,7 @@ static bool closeRemoteAccesses(DeferredPragmaToLocations &DeferredPragmas,
               if (DSS.Found) {
                 LLVM_DEBUG(dbgs() << "[DVMH WRITER]: unable to insert remote "
                                      "access directive: initialization inside "
-                                     "the remote access scope");
+                                     "the remote access scope\n");
                 return false;
               }
             }
@@ -1150,7 +1150,7 @@ static bool closeRemoteAccesses(DeferredPragmaToLocations &DeferredPragmas,
             if (DSS.Found) {
               LLVM_DEBUG(dbgs() << "[DVMH WRITER]: unable to insert remote "
                                    "access directive: initialization inside "
-                                   "the remote access scope");
+                                   "the remote access scope\n");
               return false;
             }
           }
