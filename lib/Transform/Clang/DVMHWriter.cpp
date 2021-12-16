@@ -1431,7 +1431,8 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
     auto &&[PIRef, ToInsert] = *PIItr;
     if (PD->getMemory().empty()) {
       PD->skip();
-    } else if (all_of(ToInsert, [PD, &PragmasToInsert,
+    } else if (!ToInsert.isAlwaysInvalid() &&
+               all_of(ToInsert, [PD, &PragmasToInsert,
                                  TfmCtx = ToInsert.TfmCtx](auto &Loc) {
                  if (Loc.isBefore()) {
                    auto *S{Loc.getStmt()};
@@ -1456,6 +1457,10 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
                })) {
       // Do not mention variables in a directive if it has not been
       // declared yet.
+      LLVM_DEBUG(
+          dbgs()
+          << "[DVMH WRITER]: skip directive outside the declaration scope "
+          << PD << "\n");
       PD->skip();
     }
   });
