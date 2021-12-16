@@ -197,8 +197,8 @@ private:
     assert(DeclLoc.isValid() && "Location must be valid!");
     auto &Diags = TfmCtx.getContext().getDiagnostics();
     if (Where.isMacroID()) {
-      toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
-        << DirStr.trim();
+      toDiag(Diags, Where, tsar::diag::err_directive_insert_unable)
+          << DirStr.trim();
       toDiag(Diags, DeclLoc, tsar::diag::note_apc_insert_macro_prevent);
       return;
     }
@@ -207,7 +207,7 @@ private:
     if (DInfoItr == Decls.end() || DInfoItr->second.IsSingleDeclStmt) {
       insertDirective(Where, DirStr, TfmCtx);
     } else {
-      toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
+      toDiag(Diags, Where, tsar::diag::err_directive_insert_unable)
         << DirStr.trim();
       toDiag(Diags, DeclLoc, tsar::diag::note_apc_not_single_decl_stmt);
     }
@@ -229,7 +229,7 @@ private:
         if (Itr->second == DirStr)
           return;
         auto &Diags = CtxToTransform->getContext().getDiagnostics();
-        toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive)
+        toDiag(Diags, Where, tsar::diag::err_directive_insert_unable)
             << DirStr.trim();
         toDiag(Diags, Where, tsar::diag::note_apc_insert_multiple_directives);
         return;
@@ -351,8 +351,8 @@ class APCClangDVMHWriterInfo final : public PassGroupInfo {
     Passes.add(createAPCDistrLimitsIPOChecker());
     Passes.add(createAPCParallelizationPass());
     Passes.add(createDVMHDataTransferIPOPass());
-    Passes.add(createClangDVMHWriter());
     Passes.add(createAPCClangDiagnosticPrinter());
+    Passes.add(createClangDVMHWriter());
     Passes.add(createAnalysisReleaseServerPass());
     Passes.add(createAnalysisCloseConnectionPass());
   }
@@ -419,6 +419,11 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
                              ": transformation context is not available");
     return false;
   }
+  if (none_of(TfmInfo->contexts(), [](const auto &Info) {
+        return Info.template get<TransformationContextBase>()
+            ->hasModification();
+      }))
+    return false;
   auto &GIP{getAnalysis<ClangGlobalInfoPass>()};
   ASTImportInfo ImportStub;
   const auto *Import = &ImportStub;
@@ -658,7 +663,7 @@ void APCClangDVMHWriter::insertInherit(
     if (!UnnamedArgsInMacro.empty()) {
       auto &Diags = TfmCtx.getContext().getDiagnostics();
       toDiag(Diags, Redecl->getBeginLoc(),
-        tsar::diag::err_apc_insert_dvm_directive) << StringRef(Inherit).trim();
+        tsar::diag::err_directive_insert_unable) << StringRef(Inherit).trim();
       for (auto &Arg : UnnamedArgsInMacro)
         toDiag(Diags, Arg.first, tsar::diag::note_decl_insert_macro_prevent) <<
           Arg.second;
@@ -765,7 +770,7 @@ SourceLocation APCClangDVMHWriter::insertAlignment(const  ASTImportInfo &Import,
   if (DefinitionLoc.isInvalid()) {
     auto &Diags = TfmCtx.getContext().getDiagnostics();
     toDiag(Diags, VD->getLocation(),
-      tsar::diag::err_apc_insert_dvm_directive) << StringRef(Align).trim();
+      tsar::diag::err_directive_insert_unable) << StringRef(Align).trim();
     toDiag(Diags, tsar::diag::note_apc_no_proper_definition) << VD->getName();
   }
   return DefinitionLoc;
@@ -857,7 +862,7 @@ void APCClangDVMHWriter::insertDistibution(const apc::ParallelRegion &Region,
       // not implemented, hence we conservatively disable insertion of directive
       // in an include file.
       if (SrcMgr.getDecomposedIncludedLoc(File.first).first.isValid()) {
-        toDiag(Diags, Where, tsar::diag::err_apc_insert_dvm_directive) <<
+        toDiag(Diags, Where, tsar::diag::err_directive_insert_unable) <<
           StringRef(Distribute).trim();
         toDiag(Diags, Where, tsar::diag::note_apc_insert_include_prevent);
       }
