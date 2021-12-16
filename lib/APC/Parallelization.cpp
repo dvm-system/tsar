@@ -190,8 +190,8 @@ private:
 
   void updateParallelization(APCToIRLoopsMap &APCToIRLoops,
       const FormalToActualMap &FormalToActual,
-      const FileInfoMap::value_type &FileInfo, apc::ParallelRegion &APCRegion,
-      DVMHParallelizationContext &ParallelCtx,
+      const FileInfoMap::value_type &FileInfo, const NameToFunctionMap &Functions,
+      apc::ParallelRegion &APCRegion, DVMHParallelizationContext &ParallelCtx,
       std::vector<apc::Directive *> &ParallelDirs, FileToMessageMap &APCMsgs);
 
   void addRemoteAccessDirectives(
@@ -558,7 +558,7 @@ void APCParallelizationPass::buildDataDistribution(const RegionList &Regions,
     auto &AllArrays{APCRegion->GetAllArraysToModify()};
     auto &DataDirs{APCRegion->GetDataDirToModify()};
     createDistributionDirs(ReducedG, AllArrays, DataDirs, APCMsgs,
-                           FormalToActual);
+                           FormalToActual, false);
     createAlignDirs(ReducedG, AllArrays, DataDirs, APCRegion->GetId(),
                     FormalToActual, APCMsgs);
     // Normalize alignment, make all templates start from zero.
@@ -644,8 +644,8 @@ void APCParallelizationPass:: selectComputationDistribution(
 
 void APCParallelizationPass::updateParallelization(
     APCToIRLoopsMap &APCToIRLoops, const FormalToActualMap &FormalToActual,
-    const FileInfoMap::value_type &FileInfo, apc::ParallelRegion &APCRegion,
-    DVMHParallelizationContext &ParallelCtx,
+    const FileInfoMap::value_type &FileInfo, const NameToFunctionMap &Functions,
+    apc::ParallelRegion &APCRegion, DVMHParallelizationContext &ParallelCtx,
     std::vector<apc::Directive *> &ParallelDirs, FileToMessageMap &APCMsgs) {
   using DirectiveList = SmallVector<DirectiveImpl *, 16>;
   DenseMap<Function *,
@@ -702,7 +702,7 @@ void APCParallelizationPass::updateParallelization(
               AllArrays, FileInfo.second.get<LoopToArrayMap>(), ReducedG,
               DataDirs, APCRegion.GetCurrentVariant(),
               getObjectForFileFromMap(FileInfo.getKeyData(), APCMsgs),
-              APCRegion.GetId(), FormalToActual)};
+              APCRegion.GetId(), FormalToActual, Functions)};
           for (auto &&[Str, Expr] : RemoteList) {
             auto S{Expr->getArray()->GetDeclSymbol()};
             dvmh::Align Align{S->getVariable(F).getValue(), Expr->size()};
@@ -970,7 +970,7 @@ bool APCParallelizationPass::runOnModule(Module &M) {
         selectComputationDistribution(FormalToActual, Functions, FileInfo,
                                       *APCRegion, ParallelDirs,
                                       APCCtx.mImpl->Diags);
-        updateParallelization(APCToIRLoops, FormalToActual, FileInfo,
+        updateParallelization(APCToIRLoops, FormalToActual, FileInfo, Functions,
                               *APCRegion, ParallelCtx, ParallelDirs,
                               APCCtx.mImpl->Diags);
       }
@@ -1327,7 +1327,9 @@ bool apc::LoopGraph::hasParalleDirectiveBefore() {
   return cast<apc::LoopStatement>(loop)->isScheduled();
 }
 
-void addRemoteLink(apc::ArrayRefExp *Expr,
+void addRemoteLink(const apc::LoopGraph *Loop,
+                   const std::map<std ::string, apc::FuncInfo *> &Functions,
+                   apc::ArrayRefExp *Expr,
                    std::map<std::string, apc::ArrayRefExp *> &UniqueRemotes,
                    const std::set<std::string> &RemotesInParallel,
                    std::set<ArrayRefExp *> &AddedRemotes,
