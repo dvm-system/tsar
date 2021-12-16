@@ -310,7 +310,8 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
               Loc.emplace_back(const_cast<Stmt *>(ParentStmt), false,
                                InsertLocation::Default);
           } else {
-            Loc.emplace_back(ToInsert, PIRef.isOnEntry(), InsertLocation::Bind);
+            Loc.emplace_back(const_cast<Stmt *>(ParentStmt), PIRef.isOnEntry(),
+                             InsertLocation::Bind);
           }
         } else if (!PIRef->isMarker()) {
           Loc.emplace_back(const_cast<Stmt *>(ParentStmt), PIRef.isOnEntry(),
@@ -336,7 +337,8 @@ findLocationToInsert(ParallelItemRef &PIRef, const Function &F, LoopInfo &LI,
                                  ? InsertLocation::Merge
                                  : InsertLocation::Default);
           } else {
-            Loc.emplace_back(ToInsert, PIRef.isOnEntry(), InsertLocation::Bind);
+            Loc.emplace_back(const_cast<Stmt *>(ParentStmt), PIRef.isOnEntry(),
+                             InsertLocation::Bind);
           }
         } else if (!PIRef->isMarker()) {
           if (ToInsert != For->getInc() || isa<PragmaRemoteAccess>(PIRef))
