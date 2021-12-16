@@ -122,16 +122,17 @@ struct InsertLocation {
 
   explicit InsertLocation(TransformationContextBase *TC) : TfmCtx(TC) {}
 
-  bool isValid() const {
-    return !mIsValid || (mIsValid = (!ToInsert.empty() &&
-                                     all_of(ToInsert, [](const auto &Info) {
-                                       return Info.isValid();
-                                     })));
+  bool isAlwaysInvalid() const noexcept {
+    return mIsInvalid || ToInsert.empty();
   }
-
+  bool isInvalid() const {
+    return isAlwaysInvalid() ||
+           any_of(ToInsert, [](const auto &Info) { return !Info.isValid(); });
+  }
+  bool isValid() const { return !isInvalid(); }
   operator bool() const { return isValid(); }
 
-  void invalidate() noexcept { mIsValid = false; }
+  void invalidate() noexcept { mIsInvalid = true; }
 
   template <typename... T> void emplace_back(T &&...V) {
     ToInsert.emplace_back(std::forward<T>(V)...);
@@ -144,6 +145,7 @@ struct InsertLocation {
   auto end() const { return ToInsert.end(); }
 
   auto size() const { return ToInsert.size(); }
+  bool empty() const { return ToInsert.empty(); }
 
   void print(raw_ostream &OS) const {
     if (!isa<ClangTransformationContext>(TfmCtx)) {
@@ -190,7 +192,7 @@ struct InsertLocation {
   TransformationContextBase *TfmCtx{nullptr};
 
 private:
-  mutable bool mIsValid{false};
+  mutable bool mIsInvalid{false};
 };
 
 struct Insertion {
