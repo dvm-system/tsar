@@ -42,6 +42,7 @@
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 #include <stack>
+#include <iostream>
 
 using namespace clang;
 using namespace llvm;
@@ -50,7 +51,7 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-rfp"
 
-static int getDimensionsNum(QualType qt) {
+static int getDimensionsNum(QualType qt, std::vector<int>& default_dimensions) {
   int res = 0;
   if (qt -> isPointerType()) {    // todo: multidimensional dynamyc-sized arrays
     return 1;
@@ -58,6 +59,10 @@ static int getDimensionsNum(QualType qt) {
   while(1) {
     if (qt -> isArrayType()) {
       auto at = qt->getAsArrayTypeUnsafe();
+      if (auto t =  dyn_cast_or_null<ConstantArrayType>(at)) { // get size
+          uint64_t dim = t -> getSize().getLimitedValue();
+          default_dimensions.push_back(dim);
+      }
       qt = at -> getElementType();
       res++;
     } else {
@@ -84,9 +89,9 @@ struct vars {                   // contains information about variables in
   bool rvalIsArray = false;     // removefirstprivate clause
   std::string lvalName;
   std::string rvalName;
-  std::string count = "";
   int dimensionsNum;
   std::vector<int> dimensions;
+  std::vector<int> default_dimensions;
 };
 }
 
@@ -136,14 +141,14 @@ public:
       std::string txtStr, beforeFor, forBody, lval, rval, indeces;
       std::vector<std::string> inits;
       while (varStack.size()) {
-        for (std::vector<int>::iterator it = varStack.top().dimensions.begin();
-             it != varStack.top().dimensions.end();
-             it ++) {
-        }
         if (varStack.top().dimensionsNum) {   // lvalue is array
-          if (varStack.top().count.empty()) {
-            varStack.pop();
-            continue; // count is mandatory for arrays, skip initialization if no count found
+          if (varStack.top().dimensions.size() < varStack.top().dimensionsNum) {
+            if (varStack.top().default_dimensions.size() == varStack.top().dimensionsNum) {
+              varStack.top().dimensions = varStack.top().default_dimensions;
+            } else {
+              varStack.pop();
+              continue;         // dimensions ar mandatory for arrays, skip
+            }                   // initialization if no dimensions found
           }
           forBody = std::string();
           indeces = std::string();
@@ -209,7 +214,6 @@ public:
       if (waitingForDimensions && curDimensionNum == varStack.top().dimensionsNum) {
         waitingForDimensions = false;
         curDimensionNum = 0;
-
       }
       if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())}) {
         varName = Var -> getName();
@@ -221,8 +225,8 @@ public:
         vars tmp;
 
         tmp.lvalName = varName;
-        tmp.dimensionsNum = getDimensionsNum(qt);
         varStack.push(tmp);
+        varStack.top().dimensionsNum = getDimensionsNum(qt, varStack.top().default_dimensions);
       } else {              // get rvalue
         ValueDecl *vd = Ex -> getDecl();
         QualType qt = vd -> getType();
@@ -244,12 +248,15 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
     if (isInPragma) {
+      if (waitingForDimensions && curDimensionNum == varStack.top().dimensionsNum) {
+        waitingForDimensions = false;
+        curDimensionNum = 0;
+      }
       int val = IL -> getValue().getLimitedValue();
       if (waitingForDimensions) {
         if (varStack.size()) {
           varStack.top().dimensions.push_back(val);
           curDimensionNum++;
-          varStack.top().count = std::to_string(val);
         }
       } else if (!waitingForVar) {    // get rvalue
         varStack.top().rvalName = std::to_string(val);
