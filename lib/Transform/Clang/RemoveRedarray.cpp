@@ -527,7 +527,7 @@ public:
       std::string ArrName = ArrayLiteral->GetString();
       ArrName += "_subscr_";
       for (auto Subscr: mArraySubscriptExpr) {
-        mRewriter.ReplaceText(Subscr->getBeginLoc(), SUbscr->getEndLoc(), ArrName + "0"); // for now, for test purposes
+        mRewriter.ReplaceText(Subscr->getBeginLoc(), Subscr->getEndLoc(), ArrName + "0"); // for now, for test purposes
       }
     }
     case GET_ALL_ARRAY_SUBSCRIPTS: {
