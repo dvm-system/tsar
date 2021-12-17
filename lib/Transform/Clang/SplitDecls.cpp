@@ -41,6 +41,7 @@
 #include <llvm/ADT/SmallString.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/StringSet.h>
+#include "llvm/IR/DebugInfoMetadata.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -83,8 +84,6 @@ namespace {
 /// The visitor searches a pragma `split` and performs splitting for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
-bool isNotSingleFlag = false;
-bool isAfterNotSingleFlag = false;
 class ClangSplitter : public RecursiveASTVisitor<ClangSplitter> {
 public:
   ClangSplitter(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
@@ -172,26 +171,6 @@ public:
     return Res;
   }
 
-  void buildTxtStr(std::string varType, std::string varName) {
-    std::vector<std::string> tokens;
-    std::string delimiter(" ");
-    size_t prev = 0;
-    size_t next;
-    size_t delta = delimiter.length();
-    while((next = varType.find(delimiter, prev)) != std::string::npos){
-      tokens.push_back(varType.substr(prev, next-prev));
-      prev = next + delta;
-    }
-    tokens.push_back(varType.substr(prev));
-    txtStr = "";
-    for (std::string token : tokens) {
-      if (token == tokens.back())
-        txtStr += varName + token + ";\n";
-      else
-        txtStr += token + " ";
-    }
-  }
-
   bool TraverseTypeLoc(TypeLoc Loc) {
     if (isNotSingleFlag && varDeclsNum == 1) {
       SourceRange varDeclRange(start, Loc.getEndLoc());
@@ -227,6 +206,11 @@ public:
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
         auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
         txtStr.erase(it, txtStr.end());
+        size_t foundIndex = txtStr.find("\n");
+        if (foundIndex != std::string::npos)
+        {
+            txtStr.erase(foundIndex, 2);
+        }
         //txtStr.erase(txtStr.find(","),1);
         std::cout << "varDeclsNum = " << varDeclsNum << " " << txtStr << std::endl;
       }
@@ -236,7 +220,6 @@ public:
   }
 
   bool VisitDeclStmt(DeclStmt *S) {
-    bool tmp;
     if(!(S->isSingleDecl())) {
       start = S->getBeginLoc();
       if (!isNotSingleFlag)
@@ -287,6 +270,8 @@ public:
   SourceRange TypeRange;
   bool isArrayTypeFlag = false;
   bool SplitDeclarationFlag = false;
+  bool isNotSingleFlag = false;
+  bool isAfterNotSingleFlag = false;
   bool isFirstVar = true;
   std::string txtStr;
   std::string varDeclType;
@@ -295,19 +280,34 @@ public:
 }
 
 bool ClangSplitDeclsPass::runOnModule(llvm::Module &M) {
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
-        ": transformation context is not available");
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  if (!TfmInfo) {
+    M.getContext().emitError("cannot transform sources"
+                             ": transformation context is not available");
     return false;
   }
   ASTImportInfo ImportStub;
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  ClangSplitter Vis(*TfmCtx, *ImportInfo, GIP.getRawInfo());
-  Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-  return false;
+  auto &GIP{getAnalysis<ClangGlobalInfoPass>()};
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  for (auto *MD : CUs->operands()) {
+    auto *CU{cast<DICompileUnit>(MD)};
+    auto *TfmCtx{
+        dyn_cast_or_null<ClangTransformationContext>(TfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
+      M.getContext().emitError("cannot transform sources"
+                               ": transformation context is not available");
+      return false;
+    }
+    ASTImportInfo ImportStub;
+    const auto *ImportInfo = &ImportStub;
+    if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+      ImportInfo = &ImportPass->getImportInfo();
+    auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+    ClangSplitter Vis(*TfmCtx, *ImportInfo, GIP.getRawInfo());
+    Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
+    return false;
+  }
 }
