@@ -206,88 +206,102 @@ public:
       mSTR = SpanningTreeRelation<const DIAliasTree *>{mDIMInfo.DIAT};
   }
 
-  bool TraverseForStmt(clang::ForStmt *FS) {
-    if (mStatus != REPLACE_ARRAY_ACCESSES)
-      return RecursiveASTVisitor::TraverseForStmt(FS);
-    auto CanonicalItr{find_if(mCanonicalLoopInfo, [FS](auto *Info) {
-      return Info->getASTLoop() == FS;
-    })};
-    auto IsCanonical{false}, IsPerfect{false};
-    //mInductions.emplace_back(nullptr, nullptr, FS, Ok, VarList{}, nullptr);
-    if (CanonicalItr != mCanonicalLoopInfo.end() &&
-        (*CanonicalItr)->isCanonical()) {
-      IsCanonical = true;
-      IsPerfect = mPerfectLoopInfo.count((*CanonicalItr)->getLoop());
-      auto VarItr{mMemMatcher.find<IR>((*CanonicalItr)->getInduction())};
-      std::get<clang::VarDecl *>(mInductions.back()) = VarItr->get<AST>();
-      std::get<const CanonicalLoopInfo *>(mInductions.back()) = *CanonicalItr;
+  // bool TraverseForStmt(clang::ForStmt *FS) {
+  //   if (mStatus != REPLACE_ARRAY_ACCESSES)
+  //     return RecursiveASTVisitor::TraverseForStmt(FS);
+  //   auto CanonicalItr{find_if(mCanonicalLoopInfo, [FS](auto *Info) {
+  //     return Info->getASTLoop() == FS;
+  //   })};
+  //   auto IsCanonical{false}, IsPerfect{false};
+  //   //mInductions.emplace_back(nullptr, nullptr, FS, Ok, VarList{}, nullptr);
+  //   if (CanonicalItr != mCanonicalLoopInfo.end() &&
+  //       (*CanonicalItr)->isCanonical()) {
+  //     IsCanonical = true;
+  //     IsPerfect = mPerfectLoopInfo.count((*CanonicalItr)->getLoop());
+  //     auto VarItr{mMemMatcher.find<IR>((*CanonicalItr)->getInduction())};
+  //     std::get<clang::VarDecl *>(mInductions.back()) = VarItr->get<AST>();
+  //     std::get<const CanonicalLoopInfo *>(mInductions.back()) = *CanonicalItr;
+  //   }
+  //   if (!IsCanonical)
+  //     std::get<LoopKind>(mInductions.back()) |= NotCanonical;
+  //   if (!IsPerfect)
+  //     std::get<LoopKind>(mInductions.back()) |= NotPerfect;
+  //   if (!mIsStrict || !IsCanonical) {
+  //     if (!IsCanonical)
+  //       std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
+  //     return RecursiveASTVisitor::TraverseForStmt(FS);
+  //   }
+  //   auto Dependency{false};
+  //   auto *L{(*CanonicalItr)->getLoop()->getLoop()};
+  //   if (!mDIMInfo.isValid()) {
+  //     std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
+  //     return RecursiveASTVisitor::TraverseForStmt(FS);
+  //   }
+  //   auto *DIDepSet{mDIMInfo.findFromClient(*L)};
+  //   if (!DIDepSet) {
+  //     std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
+  //     return RecursiveASTVisitor::TraverseForStmt(FS);
+  //   }
+  //   DenseSet<const DIAliasNode *> Coverage;
+  //   accessCoverage<bcl::SimpleInserter>(*DIDepSet, *mDIMInfo.DIAT, Coverage,
+  //                                       mGlobalOpts.IgnoreRedundantMemory);
+  //   if (!Coverage.empty())
+  //     for (auto &Trait : *DIDepSet) {
+  //       if (!Coverage.count(Trait.getNode()) || hasNoDep(Trait) ||
+  //           Trait.is_any<trait::Private, trait::Reduction>())
+  //         continue;
+  //       if(Trait.is_any<trait::Induction, trait::SecondToLastPrivate>() &&
+  //         Trait.size() == 1) {
+  //         if (auto DIEM{
+  //                 dyn_cast<DIEstimateMemory>((*Trait.begin())->getMemory())};
+  //             DIEM && DIEM->getExpression()->getNumElements() == 0) {
+  //           auto *ClientDIM{
+  //               mDIMInfo.getClientMemory(const_cast<DIEstimateMemory *>(DIEM))};
+  //           assert(ClientDIM && "Origin memory must exist!");
+  //           auto VarToDI{mDIMemMatcher.find<MD>(
+  //               cast<DIEstimateMemory>(ClientDIM)->getVariable())};
+  //           if (Trait.is<trait::Induction>()) {
+  //             if (VarToDI->template get<AST>() ==
+  //                 std::get<clang::VarDecl *>(mInductions.back())) {
+  //               std::get<const DIMemory *>(mInductions.back()) = DIEM;
+  //               continue;
+  //             }
+  //           } else {
+  //             std::get<VarList>(mInductions.back())
+  //                 .push_back(VarToDI->template get<AST>());
+  //             continue;
+  //           }
+  //         }
+  //       }
+  //       std::get<LoopKind>(mInductions.back()) |= HasDependency;
+  //       break;
+  //     }
+  //   return RecursiveASTVisitor::TraverseForStmt(FS);
+  // }
+
+  // bool TraverseDecl(clang::Decl *D) {
+  //   if (!D)
+  //     return RecursiveASTVisitor::TraverseDecl(D);
+  //   if (mStatus == TRAVERSE_STMT) {
+  //     toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
+  //            tsar::diag::warn_interchange_not_for_loop); // TODO: change this warning
+  //     resetVisitor();
+  //   }
+  //   return RecursiveASTVisitor::TraverseDecl(D);
+  // }
+
+  bool TraverseBinaryOperator(clang::BinaryOperator * B) {
+    if (mStatus != GET_ALL_ARRAY_SUBSCRIPTS) {
+      return RecursiveASTVisitor::TraverseBinaryOperator(B);
     }
-    if (!IsCanonical)
-      std::get<LoopKind>(mInductions.back()) |= NotCanonical;
-    if (!IsPerfect)
-      std::get<LoopKind>(mInductions.back()) |= NotPerfect;
-    if (!mIsStrict || !IsCanonical) {
-      if (!IsCanonical)
-        std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
-      return RecursiveASTVisitor::TraverseForStmt(FS);
-    }
-    auto Dependency{false};
-    auto *L{(*CanonicalItr)->getLoop()->getLoop()};
-    if (!mDIMInfo.isValid()) {
-      std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
-      return RecursiveASTVisitor::TraverseForStmt(FS);
-    }
-    auto *DIDepSet{mDIMInfo.findFromClient(*L)};
-    if (!DIDepSet) {
-      std::get<LoopKind>(mInductions.back()) |= NotAnalyzed;
-      return RecursiveASTVisitor::TraverseForStmt(FS);
-    }
-    DenseSet<const DIAliasNode *> Coverage;
-    accessCoverage<bcl::SimpleInserter>(*DIDepSet, *mDIMInfo.DIAT, Coverage,
-                                        mGlobalOpts.IgnoreRedundantMemory);
-    if (!Coverage.empty())
-      for (auto &Trait : *DIDepSet) {
-        if (!Coverage.count(Trait.getNode()) || hasNoDep(Trait) ||
-            Trait.is_any<trait::Private, trait::Reduction>())
-          continue;
-        if(Trait.is_any<trait::Induction, trait::SecondToLastPrivate>() &&
-          Trait.size() == 1) {
-          if (auto DIEM{
-                  dyn_cast<DIEstimateMemory>((*Trait.begin())->getMemory())};
-              DIEM && DIEM->getExpression()->getNumElements() == 0) {
-            auto *ClientDIM{
-                mDIMInfo.getClientMemory(const_cast<DIEstimateMemory *>(DIEM))};
-            assert(ClientDIM && "Origin memory must exist!");
-            auto VarToDI{mDIMemMatcher.find<MD>(
-                cast<DIEstimateMemory>(ClientDIM)->getVariable())};
-            if (Trait.is<trait::Induction>()) {
-              if (VarToDI->template get<AST>() ==
-                  std::get<clang::VarDecl *>(mInductions.back())) {
-                std::get<const DIMemory *>(mInductions.back()) = DIEM;
-                continue;
-              }
-            } else {
-              std::get<VarList>(mInductions.back())
-                  .push_back(VarToDI->template get<AST>());
-              continue;
-            }
-          }
-        }
-        std::get<LoopKind>(mInductions.back()) |= HasDependency;
-        break;
-      }
-    return RecursiveASTVisitor::TraverseForStmt(FS);
+    return TraverseStmt(B);
   }
 
-  bool TraverseDecl(clang::Decl *D) {
-    if (!D)
-      return RecursiveASTVisitor::TraverseDecl(D);
-    if (mStatus == TRAVERSE_STMT) {
-      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-             tsar::diag::warn_interchange_not_for_loop); // TODO: change this warning
-      resetVisitor();
+  bool TraverseUnaryOperator(clang::UnaryOperator *U) {
+    if (mStatus != GET_ALL_ARRAY_SUBSCRIPTS) {
+      return RecursiveASTVisitor::TraverseUnaryOperator(U);
     }
-    return RecursiveASTVisitor::TraverseDecl(D);
+    return TraverseStmt(U);
   }
 
   bool TraverseStmt(clang::Stmt *S) {
@@ -352,8 +366,24 @@ public:
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      mStatus = REPLACE_ARRAY_ACCESSES;
-      auto Res = TraverseForStmt(cast<clang::ForStmt>(S));
+      auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
+      auto [SizeLiteral, SizeStmt] = mSwaps[1];
+      std::string ArrName = ArrayLiteral->GetString();
+      ArrName += "_subscr_";
+      std::string ToInsert = cast<clang::DeclRefExpr>(S)->GetType().GetAsString();
+      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt.GetValue()); i++) { // getValue probably does not work
+        if (i > 0) {
+          ToInsert += ",";
+        }
+        ToInsert += (" " + ArrName + std::to_string(i));
+      }
+      ToInsert += (";" + std::endl);
+      mRewriter.InsertTextBefore(S->GetBeginLoc(),
+                                ToInsert); // insert array variables
+                                                      // definitions here
+      mStatus = FIND_OP;
+      return RecursiveASTVisitor::TraverseStmt(S);
+      //auto Res = TraverseForStmt(cast<clang::ForStmt>(S));
       // TODO: insert array filling somewhere here
       if (!Res) {
         resetVisitor();
@@ -476,6 +506,54 @@ public:
       LLVM_DEBUG(dbgs() << DEBUG_PREFIX << ": finish pragma processing\n");
       resetVisitor();
       return true;
+    }
+    case FIND_OP: {
+      if (!isa<clang::BinaryOperator>(S) && !isa<clang::UnaryOperator>(S)) {
+        return RecursiveASTVisitor::TraverseStmt(S);
+      }
+      mStatus = GET_ALL_ARRAY_SUBSCRIPTS;
+      if (isa<clang::BinaryOperator>(S)) {
+        auto Res = TraverseBinaryOperator(cast<clang::BinaryOperator>(S));
+      } else {
+        auto Res = TraverseUnaryOperator(cast<clang::UnaryOperator>(S));
+      }
+      mStatus = FIND_OP;
+      if (mArraySubscriptExpr.size() == 0) {
+        return RecursiveASTVisitor::TraverseStmt(S);
+      }
+      std::string CaseBody = mRewriter.getRewrittenText(S->getBeginLoc(), S->getEndLoc());
+      auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt.GetValue()); // this probably does not work
+      auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
+      std::string ArrName = ArrayLiteral->GetString();
+      ArrName += "_subscr_";
+      for (auto Subscr: mArraySubscriptExpr) {
+        mRewriter.ReplaceText(Subscr->getBeginLoc(), SUbscr->getEndLoc(), ArrName + "0"); // for now, for test purposes
+      }
+    }
+    case GET_ALL_ARRAY_SUBSCRIPTS: {
+      if (!isa<clang::ArraySubscriptExpr>(S)) {
+        return RecursiveASTVisitor::TraverseStmt(S);
+      }
+      mIsSubscriptUseful = false;
+      mStatus = CHECK_SUBSCRIPT;
+      auto Res = TraverseStmt(S);
+      mStatus = GET_ALL_ARRAY_SUBSCRIPTS;
+      if (mIsSubscriptUseful) {
+        mArraySubscriptExpr.push_back(cast<clang::ArraySubscriptExpr>(S));
+      }
+      return RecursiveASTVisitor::TraverseStmt(S);
+    }
+    case CHECK_SUBSCRIPT: {
+      if (!isa<clang::DeclRefExpr>(S)) {
+        return RecursiveASTVisitor::TraverseStmt(S);
+      }
+      auto Arr = cast<clang::DeclRefExpr>(S);
+      auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
+      if (ArrayLiteral->GetString() == Arr->GetNameInfo().GetName()) {
+        mIsSubscriptUseful = true;
+        return true;
+      }
+      return RecursiveASTVisitor::TraverseStmt(S);
     }
     }
     return RecursiveASTVisitor::TraverseStmt(S);
@@ -602,9 +680,13 @@ private:
   enum Status {
     SEARCH_PRAGMA,
     TRAVERSE_STMT,
-    REPLACE_ARRAY_ACCESSES
+    FIND_OP,
+    GET_ALL_ARRAY_SUBSCRIPTS,
+    CHECK_SUBSCRIPT,
   } mStatus{SEARCH_PRAGMA};
   SmallVector<std::tuple<clang::StringLiteral *, clang::Stmt *>, 4> mSwaps;
+  std::vector<clang::ArraySubscriptExpr *> mArraySubscriptExpr;
+  bool mIsSubscriptUseful;
 
   LoopNest mInductions;
 };
