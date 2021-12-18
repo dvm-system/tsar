@@ -352,6 +352,28 @@ void APCParallelizationPass::collectArrayAccessInfo(
   LLVM_DEBUG(dbgs() << "[APC]: explore an access to "
                     << APCArray->GetShortName() << " in loop at "
                     << Scope->lineNum << "\n");
+  if (Access.empty()) {
+    auto *APCLoop{Scope};
+    while (APCLoop) {
+      APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
+      APCLoop->hasUnknownDistributedMap = true;
+      if (!Access.isWriteOnly()) {
+        assert(AccessExpr && "Expression must not be null!");
+        for (unsigned DimIdx = 0, DimIdxE = APCArray->GetDimSize();
+             DimIdx < DimIdxE; ++DimIdx)
+          registerUnknownRead(
+              APCArray, DimIdxE, DimIdx, AccessExpr,
+              findOrInsert(APCLoop, APCArray, FileInfo.get<LoopToArrayMap>()));
+      }
+      if (!Access.isReadOnly()) {
+        APCLoop->hasUnknownArrayAssigns = true;
+        APCLoop->hasWritesToNonDistribute |= APCArray->IsNotDistribute();
+      }
+      APCLoop = APCLoop->parent;
+    }
+    return;
+  }
+  SmallDenseMap<apc::LoopGraph *, uint8_t, 8> NumberOfDimsForLoop;
   for (unsigned DimIdx = 0, DimIdxE = Access.size(); DimIdx < DimIdxE;
        ++DimIdx) {
     auto AffineAccess = dyn_cast_or_null<DIAffineSubscript>(Access[DimIdx]);
@@ -369,6 +391,12 @@ void APCParallelizationPass::collectArrayAccessInfo(
       continue;
     }
     if (AffineAccess->getNumberOfMonoms() != 1) {
+      for (unsigned I = 0, EI = AffineAccess->getNumberOfMonoms(); I < EI;
+           ++I) {
+        auto &Monom{AffineAccess->getMonom(I)};
+        auto *APCLoop{APCCtx.findLoop(Monom.Column)};
+        ++NumberOfDimsForLoop.try_emplace(APCLoop, 0).first->second;
+      }
       if (!Access.isWriteOnly()) {
         if (AffineAccess->getNumberOfMonoms() == 0) {
           if (auto &S{AffineAccess->getSymbol()};
@@ -399,6 +427,7 @@ void APCParallelizationPass::collectArrayAccessInfo(
     }
     ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
     auto *APCLoop{APCCtx.findLoop(AffineAccess->getMonom(0).Column)};
+    ++NumberOfDimsForLoop.try_emplace(APCLoop, 0).first->second;
     auto LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
     decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
     if (auto C{AffineAccess->getMonom(0).Value};
@@ -465,6 +494,22 @@ void APCParallelizationPass::collectArrayAccessInfo(
       Itr->second.second[DimIdx].coefficients.emplace(ABPair, 1.0);
     }
   }
+  auto *APCLoop{Scope};
+  while (APCLoop) {
+    APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
+    APCLoop->hasWritesToNonDistribute |=
+        !Access.isReadOnly() && APCArray->IsNotDistribute();
+    if (!APCLoop->hasUnknownDistributedMap ||
+        (!APCLoop->hasUnknownArrayAssigns && !Access.isReadOnly())) {
+      auto Itr{NumberOfDimsForLoop.find(APCLoop)};
+      APCLoop->hasUnknownArrayAssigns |=
+          (!Access.isReadOnly() &&
+           (Itr == NumberOfDimsForLoop.end() || Itr->second > 1));
+      APCLoop->hasUnknownDistributedMap |=
+          (Itr == NumberOfDimsForLoop.end() || Itr->second > 1);
+    }
+    APCLoop = APCLoop->parent;
+    }
 }
 
 void APCParallelizationPass::bindFormalAndActualPrameters(
@@ -942,6 +987,15 @@ bool APCParallelizationPass::runOnModule(Module &M) {
   ArrayAccessSummary ArrayRWs;
   collectFunctionsAndLoops(M, APCCtx, Functions, FileToFunc, Files, FileToLoop,
                            APCToIRLoops);
+  // Initial initialization of loop properties that depends on arrays accesses
+  // to be collected further.
+  for (auto &&[F, LoopList] : FileToLoop)
+    for (auto *APCLoop : LoopList) {
+      APCLoop->hasUnknownArrayAssigns = false;
+      APCLoop->hasIndirectAccess = false;
+      APCLoop->hasUnknownDistributedMap = false;
+      APCLoop->withoutDistributedArrays = true;
+    }
   for (auto &Access : *DIArrayInfo)
     collectArrayAccessInfo(M, Access, APCCtx, AccessPool, Files, ArrayRWs,
                            ArrayIds);

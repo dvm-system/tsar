@@ -408,8 +408,10 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
 
 void APCLoopInfoBasePass::initNoAnalyzed(apc::LoopGraph &APCLoop) noexcept {
   //APCLoop.hasNonRectangularBounds = true;
-  //APCLoop.hasUnknownArrayAssigns = true;
-  //APCLoop.hasIndirectAccess = true;
+  APCLoop.hasUnknownArrayAssigns = true;
+  APCLoop.hasIndirectAccess = true;
+  APCLoop.hasUnknownDistributedMap = true;
+  APCLoop.withoutDistributedArrays = false;
 }
 
 std::tuple<bool, Optional<APSInt>, Optional<APSInt>, Optional<APSInt>>
