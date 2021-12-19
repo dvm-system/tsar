@@ -34,6 +34,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/ADT/SCCIterator.h>
+#include <llvm/InitializePasses.h>
 #include <llvm/IR/DebugLoc.h>
 #include <llvm/IR/Function.h>
 #include "llvm/IR/Instruction.h"
@@ -71,9 +72,9 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(ClangLoopWeightsEstimator, "clang-loop-weights",
 INITIALIZE_PASS_IN_GROUP_INFO(ClangCopyPropagationInfo);
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-// INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)  // causes build error "‘initializeCallGraphWrapperPassPass’ was not declared in this scope"
-// INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)  // the same
-// INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)  // the same
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)  // causes build error "‘initializeCallGraphWrapperPassPass’ was not declared in this scope"
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)  // the same
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)  // the same
 INITIALIZE_PASS_DEPENDENCY(ClangCountedRegionsExtractor)
 INITIALIZE_PASS_IN_GROUP_END(ClangLoopWeightsEstimator, "clang-loop-weights",
   "Loop Weights Estimator (Clang)", false, false,
@@ -110,6 +111,9 @@ bool operator>=(const coverage::LineColPair &lhs, const coverage::LineColPair &r
 uint64_t getExecutionCount(Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs) {
   const auto &DL = I->getDebugLoc();
+  if (!DL) {
+    return 0;
+  }
   coverage::LineColPair ILineCol{ DL.getLine(), DL.getCol() };
   coverage::LineColPair MinEnclosingStartLoc{ 0, 0 };
   coverage::LineColPair MinEnclosingEndLoc{ -1, -1 };
@@ -127,25 +131,20 @@ uint64_t getExecutionCount(Instruction *I,
   return InstructionExecutionCount;
 }
 
-uint64_t getExecutionCount(Function *F,
-    const std::vector<llvm::coverage::CountedRegion> &CRs) {
-  return getExecutionCount(&*inst_begin(F), CRs);
-}
-
 uint64_t getInstructionEffectiveWeight(Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs,
     TargetTransformInfo &TTI,
-    std::map<llvm::Function *, std::pair<uint64_t, uint64_t>>
-        &FunctionEffectiveWeightsAndExecutionCounts) {
+    std::map<llvm::Function *, uint64_t> &FunctionEffectiveWeights) {
   uint64_t InstructionExecutionCount = getExecutionCount(I, CRs);
   uint64_t InstructionEffectiveWeight =
       TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency)
       * InstructionExecutionCount;
   Function *Called = nullptr;
   if ((isa<CallInst>(I) || isa<InvokeInst>(I))
-      && (Called = cast<CallBase>(I)->getCalledFunction())) {
-    uint64_t CalledEffectiveWeight = FunctionEffectiveWeightsAndExecutionCounts[Called].first;
-    uint64_t CalledExecutionCount = FunctionEffectiveWeightsAndExecutionCounts[Called].second;
+      && (Called = cast<CallBase>(I)->getCalledFunction())
+      && !(Called->isIntrinsic())) {
+    uint64_t CalledEffectiveWeight = FunctionEffectiveWeights[Called];
+    uint64_t CalledExecutionCount = Called->getEntryCount().getCount();
     InstructionEffectiveWeight +=
         CalledEffectiveWeight * InstructionExecutionCount / CalledExecutionCount;
   }
@@ -160,26 +159,30 @@ ClangLoopWeightsEstimator::ClangLoopWeightsEstimator() : ModulePass(ID) {
 bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
   auto &CRs = getAnalysis<ClangCountedRegionsExtractor>().getCountedRegions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  std::map<Function *, std::pair<uint64_t, uint64_t>> FunctionEffectiveWeightsAndExecutionCounts;
+  std::map<Function *, uint64_t> FunctionEffectiveWeights;
   for (scc_iterator<CallGraph *> SCCIt = scc_begin(&CG); !SCCIt.isAtEnd(); ++SCCIt) {
     for (auto *CGN : *SCCIt) {
-      if (Function *F = CGN->getFunction()) {
+      Function *F = nullptr;
+      if ((F = CGN->getFunction()) && !(F->isIntrinsic())) {
         auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*F);
         std::map<Instruction *, uint64_t> InstructionEffectiveWeights;
         uint64_t FunctionEffectiveWeight = 0;
         for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
           uint64_t InstructionEffectiveWeight = getInstructionEffectiveWeight(&*I, CRs, TTI,
-              FunctionEffectiveWeightsAndExecutionCounts);
+              FunctionEffectiveWeights);
           InstructionEffectiveWeights[&*I] = InstructionEffectiveWeight;
           FunctionEffectiveWeight += InstructionEffectiveWeight;
         }
-        FunctionEffectiveWeightsAndExecutionCounts[F].first = FunctionEffectiveWeight;
-        FunctionEffectiveWeightsAndExecutionCounts[F].second = getExecutionCount(F, CRs);
-        auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+        FunctionEffectiveWeights[F] = FunctionEffectiveWeight;
+        bool *Changed = new bool();
+        *Changed = false;
+        auto &LI = getAnalysis<LoopInfoWrapperPass>(*F, Changed).getLoopInfo();
         auto Loops = LI.getLoopsInPreorder();
-        for (Loop *L = *Loops.begin(), *LEnd = *Loops.end(); L != LEnd; ++L) {
+        for (Loop **LPtr = Loops.begin(), **LEndPtr = Loops.end(); LPtr != LEndPtr; ++LPtr) {
           uint64_t LoopEffectiveWeight = 0;
-          for (BasicBlock *BB = *L->block_begin(), *BBEnd = *L->block_end(); BB != BBEnd; ++BB) {
+          Loop *L = *LPtr;
+          for (auto BBPtr = L->block_begin(), BBEndPtr = L->block_end(); BBPtr != BBEndPtr; ++BBPtr) {
+            BasicBlock *BB = *BBPtr;
             for (Instruction &I : *BB) {
               LoopEffectiveWeight += InstructionEffectiveWeights[&I];
             }
