@@ -141,9 +141,7 @@ public:
         varDeclsNames.pop_back();
       }
     }
-    varDeclsStarts.clear();
-    varDeclsEnds.clear();
-    varDeclsNames.clear();
+
     if (mClauses.empty() || !isa<CompoundStmt>(S) &&
         !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
       return RecursiveASTVisitor::TraverseStmt(S);
@@ -177,7 +175,6 @@ public:
   bool TraverseTypeLoc(TypeLoc Loc) {
     if (isNotSingleFlag && varDeclsNum == 1) {
       SourceRange varDeclRange(start, Loc.getEndLoc());
-     // TypeRange = Loc.getSourceRange();
       std::string type = mRewriter.getRewrittenText(varDeclRange);
       std::cout << "type = " << type << std::endl;
       varDeclType = type;
@@ -198,7 +195,6 @@ public:
       SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
       if (varDeclsNum == 1) {
         isFirstVar = true;
-        SourceRange toInsert2(Range.getBegin(), S->getEndLoc());
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
         std::cout << "first varDeclsNum = " << varDeclsNum << " " << txtStr << std::endl;
       }
@@ -206,17 +202,13 @@ public:
         SourceRange prevVarDeclRange(varDeclsStarts.back(), varDeclsEnds.back());
         varDeclsStarts.pop_back();
         varDeclsEnds.pop_back();
-        std::cout << Canvas.getRewrittenText(prevVarDeclRange).str() << std::endl;
         Canvas.ReplaceText(prevVarDeclRange, "");
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
         auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
         txtStr.erase(it, txtStr.end());
         size_t foundIndex = txtStr.find("\n");
         if (foundIndex != std::string::npos)
-        {
-            txtStr.erase(foundIndex, 2);
-        }
-        //txtStr.erase(txtStr.find(","),1);
+          txtStr.erase(foundIndex, 2);
         std::cout << "varDeclsNum = " << varDeclsNum << " " << txtStr << std::endl;
       }
       varDeclsNames.push_front(txtStr + ";\n");
@@ -228,9 +220,11 @@ public:
     if(!(S->isSingleDecl())) {
       start = S->getBeginLoc();
       //if (!isNotSingleFlag) {
-        std::cout << "hi\n";
         varDeclsNum = 0;
       //}
+      varDeclsStarts.clear();
+      varDeclsEnds.clear();
+      varDeclsNames.clear();
       isNotSingleFlag = true;
       notSingleDeclStart = S->getBeginLoc();
       notSingleDeclEnd = S->getEndLoc();
@@ -270,12 +264,12 @@ public:
   DenseSet<DeclStmt*> mMultipleDecls;
   std::deque<SourceLocation> varDeclsStarts;
   std::deque<SourceLocation> varDeclsEnds;
+  std::deque<SourceRange> Ranges;
   std::deque<std::string> varDeclsNames;
   int varDeclsNum = 0;
   SourceLocation notSingleDeclStart;
   SourceLocation notSingleDeclEnd;
   SourceRange TypeRange;
-  bool isArrayTypeFlag = false;
   bool SplitDeclarationFlag = false;
   bool isNotSingleFlag = false;
   bool isAfterNotSingleFlag = false;
