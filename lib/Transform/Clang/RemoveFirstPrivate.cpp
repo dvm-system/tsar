@@ -42,7 +42,6 @@
 #include <bcl/utility.h>
 #include <llvm/Pass.h>
 #include <stack>
-#include <iostream>
 
 using namespace clang;
 using namespace llvm;
@@ -53,20 +52,23 @@ using namespace tsar;
 
 static int getDimensionsNum(QualType qt, std::vector<int>& default_dimensions) {
   int res = 0;
-  if (qt -> isPointerType()) {    // todo: multidimensional dynamyc-sized arrays
-    return 1;
-  }
+  bool sizeIsKnown = true;
   while(1) {
     if (qt -> isArrayType()) {
       auto at = qt->getAsArrayTypeUnsafe();
-      if (auto t =  dyn_cast_or_null<ConstantArrayType>(at)) { // get size
-          uint64_t dim = t -> getSize().getLimitedValue();
-          default_dimensions.push_back(dim);
+      auto t =  dyn_cast_or_null<ConstantArrayType>(at);
+      if (sizeIsKnown && t) { // get size
+        uint64_t dim = t -> getSize().getLimitedValue();
+        default_dimensions.push_back(dim);
       }
       qt = at -> getElementType();
       res++;
+    } else if (qt -> isPointerType()) {
+        sizeIsKnown = false;
+        qt = qt -> getPointeeType();
+        res++;
     } else {
-      return res;
+        return res;
     }
   }
 }
