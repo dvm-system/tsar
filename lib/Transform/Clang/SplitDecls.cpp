@@ -141,6 +141,9 @@ public:
         varDeclsNames.pop_back();
       }
     }
+    varDeclsStarts.clear();
+    varDeclsEnds.clear();
+    varDeclsNames.clear();
     if (mClauses.empty() || !isa<CompoundStmt>(S) &&
         !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
       return RecursiveASTVisitor::TraverseStmt(S);
@@ -197,11 +200,13 @@ public:
         isFirstVar = true;
         SourceRange toInsert2(Range.getBegin(), S->getEndLoc());
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
+        std::cout << "first varDeclsNum = " << varDeclsNum << " " << txtStr << std::endl;
       }
       if (varDeclsNum > 1) {
         SourceRange prevVarDeclRange(varDeclsStarts.back(), varDeclsEnds.back());
         varDeclsStarts.pop_back();
         varDeclsEnds.pop_back();
+        std::cout << Canvas.getRewrittenText(prevVarDeclRange).str() << std::endl;
         Canvas.ReplaceText(prevVarDeclRange, "");
         txtStr = Canvas.getRewrittenText(varDeclRange).str();
         auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
@@ -222,8 +227,10 @@ public:
   bool VisitDeclStmt(DeclStmt *S) {
     if(!(S->isSingleDecl())) {
       start = S->getBeginLoc();
-      if (!isNotSingleFlag)
+      //if (!isNotSingleFlag) {
+        std::cout << "hi\n";
         varDeclsNum = 0;
+      //}
       isNotSingleFlag = true;
       notSingleDeclStart = S->getBeginLoc();
       notSingleDeclEnd = S->getEndLoc();
