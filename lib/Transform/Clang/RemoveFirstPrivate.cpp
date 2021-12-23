@@ -55,7 +55,7 @@ static int getDimensionsNum(QualType qt, std::vector<int>& default_dimensions) {
   bool sizeIsKnown = true;
   while(1) {
     if (qt -> isArrayType()) {
-      auto at = qt->getAsArrayTypeUnsafe();
+      auto at = qt -> getAsArrayTypeUnsafe();
       auto t =  dyn_cast_or_null<ConstantArrayType>(at);
       if (sizeIsKnown && t) { // get size
         uint64_t dim = t -> getSize().getLimitedValue();
@@ -133,9 +133,7 @@ public:
     Pragma P(*S);
 
     if (findClause(P, ClauseId::RemoveFirstPrivate, mClauses)) {
-
       auto locationForInits = S -> getEndLoc();
-
       isInPragma = true;
       ast = RecursiveASTVisitor::TraverseStmt(S);
       isInPragma = false;
@@ -163,7 +161,7 @@ public:
             int intCounter = it - varStack.top().dimensions.begin();
             std::string strCounter = "i" + std::to_string(intCounter);
             indeces += "[" + strCounter + "]";
-            txtStr += "for (int " + strCounter + "; " + strCounter + " < " +
+            txtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
           }
           if (varStack.top().rvalIsArray) {
@@ -223,7 +221,6 @@ public:
       if (waitingForVar) {  // get lvalue
         ValueDecl *vd = Ex -> getDecl();
         QualType qt = vd -> getType();
-        std::string typeStr = qt.getCanonicalType().getAsString();
         vars tmp;
 
         tmp.lvalName = varName;
@@ -235,7 +232,6 @@ public:
         if (qt -> isArrayType() || qt -> isPointerType()) {
           varStack.top().rvalIsArray = true;
         }
-        std::string typeStr = qt.getCanonicalType().getAsString();
         varStack.top().rvalName = varName;
         if (varStack.top().dimensionsNum > 0) {
           waitingForDimensions = true;
