@@ -112,6 +112,8 @@ void initializeClangLoopInterchangePass(PassRegistry &Registry);
 /// Initialize a pass to reverse loop.
 void initializeClangLoopReversePass(PassRegistry &Registry);
 
+void initializeClangRemoveRedarrayPass(PassRegistry &Registry);
+
 /// Create a pass to reverse loop.
 ModulePass *createClangLoopReverse();
 }

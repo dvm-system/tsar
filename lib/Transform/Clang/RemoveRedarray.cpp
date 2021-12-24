@@ -201,7 +201,8 @@ public:
         mAT(P.getAnalysis<EstimateMemoryPass>().getAliasTree()),
         mTLI(P.getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F)),
         mDT(P.getAnalysis<DominatorTreeWrapperPass>().getDomTree()),
-        mDIMInfo(P.getAnalysis<DIEstimateMemoryPass>().getAliasTree(), P, F) {
+        mDIMInfo(P.getAnalysis<DIEstimateMemoryPass>().getAliasTree(), P, F)
+        {
     if (mDIMInfo.isValid())
       mSTR = SpanningTreeRelation<const DIAliasTree *>{mDIMInfo.DIAT};
   }
@@ -279,16 +280,23 @@ public:
   //   return RecursiveASTVisitor::TraverseForStmt(FS);
   // }
 
-  // bool TraverseDecl(clang::Decl *D) {
-  //   if (!D)
-  //     return RecursiveASTVisitor::TraverseDecl(D);
-  //   if (mStatus == TRAVERSE_STMT) {
-  //     toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
-  //            tsar::diag::warn_interchange_not_for_loop); // TODO: change this warning
-  //     resetVisitor();
-  //   }
-  //   return RecursiveASTVisitor::TraverseDecl(D);
-  // }
+  bool TraverseVarDecl(clang::VarDecl *VD) {
+    if (mStatus == FIND_INDEX) {
+      mIndex = VD;
+    }
+    return RecursiveASTVisitor::TraverseDecl(VD);
+  }
+
+  bool TraverseDecl(clang::Decl *D) {
+    if (!D)
+      return RecursiveASTVisitor::TraverseDecl(D);
+    if (mStatus == TRAVERSE_STMT) {
+      toDiag(mSrcMgr.getDiagnostics(), D->getLocation(),
+             tsar::diag::warn_interchange_not_for_loop); // TODO: change this warning
+      resetVisitor();
+    }
+    return RecursiveASTVisitor::TraverseDecl(D);
+  }
 
   bool TraverseBinaryOperator(clang::BinaryOperator * B) {
     if (mStatus != GET_ALL_ARRAY_SUBSCRIPTS) {
@@ -368,144 +376,156 @@ public:
       }
       auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
       auto [SizeLiteral, SizeStmt] = mSwaps[1];
-      std::string ArrName = ArrayLiteral->GetString();
+      std::string ArrName = ArrayLiteral->getString().str();
       ArrName += "_subscr_";
-      std::string ToInsert = cast<clang::DeclRefExpr>(S)->GetType().GetAsString();
-      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt.GetValue()); i++) { // getValue probably does not work
+      std::string ToInsert = cast<clang::DeclRefExpr>(S)->getType().getAsString();
+      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
         if (i > 0) {
           ToInsert += ",";
         }
         ToInsert += (" " + ArrName + std::to_string(i));
       }
-      ToInsert += (";" + std::endl);
-      mRewriter.InsertTextBefore(S->GetBeginLoc(),
+      ToInsert += (";\n");
+      mRewriter.InsertTextBefore(S->getBeginLoc(),
                                 ToInsert); // insert array variables
                                                       // definitions here
+      mStatus = FIND_INDEX;
+      auto Res = RecursiveASTVisitor::TraverseStmt(S);
       mStatus = FIND_OP;
-      return RecursiveASTVisitor::TraverseStmt(S);
+      Res = RecursiveASTVisitor::TraverseStmt(S);
+      // fill array here
+      return true;
+
       //auto Res = TraverseForStmt(cast<clang::ForStmt>(S));
       // TODO: insert array filling somewhere here
-      if (!Res) {
-        resetVisitor();
-        return false;
-      }
-      // Match induction names from clauses to loop induction variables.
-      unsigned MaxIdx{0};
-      llvm::SmallVector<clang::VarDecl *, 4> ValueSwaps;
+      // if (!Res) {
+      //   resetVisitor();
+      //   return false;
+      // }
+      // // Match induction names from clauses to loop induction variables.
+      // unsigned MaxIdx{0};
+      // llvm::SmallVector<clang::VarDecl *, 4> ValueSwaps;
 
 
-      // Check whether transfromation is possible.
-      auto checkLoop = [this](unsigned I, unsigned MaxIdx) {
-        auto checkPrivatizable = [](VarList &L, auto I, auto EI) {
-          for (auto *V : L)
-            if (EI == std::find_if(I, EI, [V](auto &Induct) {
-                  return std::get<clang::VarDecl *>(Induct) == V;
-                }))
-              return false;
+      // // Check whether transfromation is possible.
+      // auto checkLoop = [this](unsigned I, unsigned MaxIdx) {
+      //   auto checkPrivatizable = [](VarList &L, auto I, auto EI) {
+      //     for (auto *V : L)
+      //       if (EI == std::find_if(I, EI, [V](auto &Induct) {
+      //             return std::get<clang::VarDecl *>(Induct) == V;
+      //           }))
+      //         return false;
 
-          return true;
-        };
-        if (std::get<LoopKind>(mInductions[I]) & NotCanonical) {
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_interchange_not_canonical);
-        } else if (std::get<LoopKind>(mInductions[I]) & HasDependency) {
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_interchange_dependency);
-        } else if (!mIsStrict) {
-          return true;
-        } else if (std::get<LoopKind>(mInductions[I]) & NotAnalyzed) {
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_interchange_no_analysis);
-        } else if (!checkPrivatizable(std::get<VarList>(mInductions[I]),
-                                      mInductions.begin() + I + 1,
-                                      mInductions.end())) {
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_interchange_dependency);
-        } else if (auto *For{isMemoryAccessedIn(
-                       std::get<const DIMemory *>(mInductions[I]),
-                       std::get<const CanonicalLoopInfo *>(mInductions[I])
-                           ->getLoop()
-                           ->getLoop(),
-                       mInductions.begin() + I + 1,
-                       mInductions.begin() + MaxIdx + 1)}) {
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_disable_loop_interchange);
-          toDiag(mSrcMgr.getDiagnostics(), For->getBeginLoc(),
-                 tsar::diag::note_interchange_irregular_loop_nest);
-        } else {
-          return true;
-        }
-        return false;
-      };
-      auto IsPossible(true);
-      for (auto I{0u}; I < MaxIdx; I++) {
-        if (std::get<LoopKind>(mInductions[I]) & NotPerfect) {
-          IsPossible = false;
-          toDiag(mSrcMgr.getDiagnostics(),
-                 std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
-                 tsar::diag::warn_interchange_not_perfect);
-        } else {
-          IsPossible &= checkLoop(I, MaxIdx);
-        }
-      }
-      // Check the innermost loop which participates in the transformation.
-      // Note, the it may have not canonical loop form.
-      IsPossible &= checkLoop(MaxIdx, MaxIdx);
-      if (!IsPossible) {
-        resetVisitor();
-        return RecursiveASTVisitor::TraverseStmt(S);
-      }
-      // Deduce new order.
-      SmallVector<clang::VarDecl *, 4> Order;
-      std::transform(mInductions.begin(), mInductions.begin() + MaxIdx + 1,
-                     std::back_inserter(Order),
-                     [](auto &I) { return std::get<clang::VarDecl *>(I); });
-      for (unsigned I{0}, EI = ValueSwaps.size(); I < EI; I += 2) {
-        auto FirstItr{find(Order, ValueSwaps[I])};
-        assert(FirstItr != Order.end() && "Induction must exist!");
-        auto SecondItr{find(Order, ValueSwaps[I + 1])};
-        assert(SecondItr != Order.end() && "Induction must exist!");
-        std::swap(*FirstItr, *SecondItr);
-      }
-      // Collect sources of loop headers before the transformation. Note, do not
-      // use Rewriter::ReplaceText(SourceRange, SourceRange) because it uses
-      // Rewriter::getRangeSize(SourceRange) to compute a length of a destination
-      // as well as a length of a source and this method uses rewritten text to
-      // collect size. Thus, the size of the source can be computed in the wrong
-      // way because the transformation of outer loops has already taken place.
-      SmallVector<std::string, 4> Sources;
-      for (auto I{0u}; I < MaxIdx + 1; I++) {
-        clang::SourceRange Source{
-            std::get<clang::ForStmt *>(mInductions[I])->getInit()->getBeginLoc(),
-            std::get<clang::ForStmt *>(mInductions[I])->getInc()->getEndLoc()};
-        Sources.push_back(mRewriter.getRewrittenText(Source));
-      }
-      // Interchange loop headers.
-      for (auto I{0u}; I < MaxIdx + 1 ; I++) {
-        if (Order[I] != std::get<clang::VarDecl *>(mInductions[I])) {
-          auto OriginItr{find_if(mInductions, [What = Order[I]](auto &Induct) {
-            return std::get<clang::VarDecl *>(Induct) == What;
-          })};
-          clang::SourceRange Destination(
-              std::get<clang::ForStmt *>(mInductions[I])
-                  ->getInit()
-                  ->getBeginLoc(),
-              std::get<clang::ForStmt *>(mInductions[I])
-                  ->getInc()
-                  ->getEndLoc());
-          mRewriter.ReplaceText(
-              Destination,
-              Sources[std::distance(mInductions.begin(), OriginItr)]);
-        }
-      }
-      LLVM_DEBUG(dbgs() << DEBUG_PREFIX << ": finish pragma processing\n");
-      resetVisitor();
-      return true;
+      //     return true;
+      //   };
+      //   if (std::get<LoopKind>(mInductions[I]) & NotCanonical) {
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_interchange_not_canonical);
+      //   } else if (std::get<LoopKind>(mInductions[I]) & HasDependency) {
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_interchange_dependency);
+      //   } else if (!mIsStrict) {
+      //     return true;
+      //   } else if (std::get<LoopKind>(mInductions[I]) & NotAnalyzed) {
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_interchange_no_analysis);
+      //   } else if (!checkPrivatizable(std::get<VarList>(mInductions[I]),
+      //                                 mInductions.begin() + I + 1,
+      //                                 mInductions.end())) {
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_interchange_dependency);
+      //   } else if (auto *For{isMemoryAccessedIn(
+      //                  std::get<const DIMemory *>(mInductions[I]),
+      //                  std::get<const CanonicalLoopInfo *>(mInductions[I])
+      //                      ->getLoop()
+      //                      ->getLoop(),
+      //                  mInductions.begin() + I + 1,
+      //                  mInductions.begin() + MaxIdx + 1)}) {
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_disable_loop_interchange);
+      //     toDiag(mSrcMgr.getDiagnostics(), For->getBeginLoc(),
+      //            tsar::diag::note_interchange_irregular_loop_nest);
+      //   } else {
+      //     return true;
+      //   }
+      //   return false;
+      // };
+      // auto IsPossible(true);
+      // for (auto I{0u}; I < MaxIdx; I++) {
+      //   if (std::get<LoopKind>(mInductions[I]) & NotPerfect) {
+      //     IsPossible = false;
+      //     toDiag(mSrcMgr.getDiagnostics(),
+      //            std::get<clang::ForStmt *>(mInductions[I])->getBeginLoc(),
+      //            tsar::diag::warn_interchange_not_perfect);
+      //   } else {
+      //     IsPossible &= checkLoop(I, MaxIdx);
+      //   }
+      // }
+      // // Check the innermost loop which participates in the transformation.
+      // // Note, the it may have not canonical loop form.
+      // IsPossible &= checkLoop(MaxIdx, MaxIdx);
+      // if (!IsPossible) {
+      //   resetVisitor();
+      //   return RecursiveASTVisitor::TraverseStmt(S);
+      // }
+      // // Deduce new order.
+      // SmallVector<clang::VarDecl *, 4> Order;
+      // std::transform(mInductions.begin(), mInductions.begin() + MaxIdx + 1,
+      //                std::back_inserter(Order),
+      //                [](auto &I) { return std::get<clang::VarDecl *>(I); });
+      // for (unsigned I{0}, EI = ValueSwaps.size(); I < EI; I += 2) {
+      //   auto FirstItr{find(Order, ValueSwaps[I])};
+      //   assert(FirstItr != Order.end() && "Induction must exist!");
+      //   auto SecondItr{find(Order, ValueSwaps[I + 1])};
+      //   assert(SecondItr != Order.end() && "Induction must exist!");
+      //   std::swap(*FirstItr, *SecondItr);
+      // }
+      // // Collect sources of loop headers before the transformation. Note, do not
+      // // use Rewriter::ReplaceText(SourceRange, SourceRange) because it uses
+      // // Rewriter::getRangeSize(SourceRange) to compute a length of a destination
+      // // as well as a length of a source and this method uses rewritten text to
+      // // collect size. Thus, the size of the source can be computed in the wrong
+      // // way because the transformation of outer loops has already taken place.
+      // SmallVector<std::string, 4> Sources;
+      // for (auto I{0u}; I < MaxIdx + 1; I++) {
+      //   clang::SourceRange Source{
+      //       std::get<clang::ForStmt *>(mInductions[I])->getInit()->getBeginLoc(),
+      //       std::get<clang::ForStmt *>(mInductions[I])->getInc()->getEndLoc()};
+      //   Sources.push_back(mRewriter.getRewrittenText(Source));
+      // }
+      // // Interchange loop headers.
+      // for (auto I{0u}; I < MaxIdx + 1 ; I++) {
+      //   if (Order[I] != std::get<clang::VarDecl *>(mInductions[I])) {
+      //     auto OriginItr{find_if(mInductions, [What = Order[I]](auto &Induct) {
+      //       return std::get<clang::VarDecl *>(Induct) == What;
+      //     })};
+      //     clang::SourceRange Destination(
+      //         std::get<clang::ForStmt *>(mInductions[I])
+      //             ->getInit()
+      //             ->getBeginLoc(),
+      //         std::get<clang::ForStmt *>(mInductions[I])
+      //             ->getInc()
+      //             ->getEndLoc());
+      //     mRewriter.ReplaceText(
+      //         Destination,
+      //         Sources[std::distance(mInductions.begin(), OriginItr)]);
+      //   }
+      // }
+      // LLVM_DEBUG(dbgs() << DEBUG_PREFIX << ": finish pragma processing\n");
+      // resetVisitor();
+      // return true;
+    }
+    case FIND_INDEX: {
+      // if (!isa<clang::VarDecl>(S)) {
+      //   return RecursiveASTVisitor::TraverseStmt(S);
+      // }
+      // mIndex = cast<clang::VarDecl*>(S);
+      return RecursiveASTVisitor::TraverseStmt(S);
     }
     case FIND_OP: {
       if (!isa<clang::BinaryOperator>(S) && !isa<clang::UnaryOperator>(S)) {
@@ -521,14 +541,17 @@ public:
       if (mArraySubscriptExpr.size() == 0) {
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      std::string CaseBody = mRewriter.getRewrittenText(S->getBeginLoc(), S->getEndLoc());
-      auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt.GetValue()); // this probably does not work
+      auto [SizeLiteral, SizeStmt] = mSwaps[1];
+      std::string CaseBody = mRewriter.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
+      auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue();
       auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
-      std::string ArrName = ArrayLiteral->GetString();
+      std::string ArrName = ArrayLiteral->getString().str();
       ArrName += "_subscr_";
+      auto IndexName = mIndex->getName();
       for (auto Subscr: mArraySubscriptExpr) {
-        mRewriter.ReplaceText(Subscr->getBeginLoc(), Subscr->getEndLoc(), ArrName + "0"); // for now, for test purposes
+        mRewriter.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), ArrName + "0"); // for now, for test purposes
       }
+      return RecursiveASTVisitor::TraverseStmt(S);
     }
     case GET_ALL_ARRAY_SUBSCRIPTS: {
       if (!isa<clang::ArraySubscriptExpr>(S)) {
@@ -549,7 +572,7 @@ public:
       }
       auto Arr = cast<clang::DeclRefExpr>(S);
       auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
-      if (ArrayLiteral->GetString() == Arr->GetNameInfo().GetName()) {
+      if (ArrayLiteral->getString().str() == Arr->getNameInfo().getName().getAsString()) {
         mIsSubscriptUseful = true;
         return true;
       }
@@ -569,97 +592,97 @@ private:
 
   /// Return true if a specified induction variable `DIM` of a loop `L` may be
   /// accessed in an any header of specified canonical loops.
-  clang::ForStmt *isMemoryAccessedIn(const DIMemory *DIM, const Loop *L,
-                                     LoopNest::iterator I,
-                                     LoopNest::iterator EI) {
-    assert(DIM &&
-           "Results of canonical loop analysis must be available for a loop!");
-    for (auto &Induct : make_range(I, EI)) {
-      if (isMemoryAccessedIn(
-              DIM, std::get<const CanonicalLoopInfo *>(Induct)->getStart()) ||
-          isMemoryAccessedIn(
-              DIM, std::get<const CanonicalLoopInfo *>(Induct)->getEnd()) ||
-          isMemoryAccessedIn(
-              DIM, L, std::get<const CanonicalLoopInfo *>(Induct)->getStep()))
-        return std::get<clang::ForStmt *>(Induct);
-    }
-    return nullptr;
-  }
+  // clang::ForStmt *isMemoryAccessedIn(const DIMemory *DIM, const Loop *L,
+  //                                    LoopNest::iterator I,
+  //                                    LoopNest::iterator EI) {
+  //   assert(DIM &&
+  //          "Results of canonical loop analysis must be available for a loop!");
+  //   for (auto &Induct : make_range(I, EI)) {
+  //     if (isMemoryAccessedIn(
+  //             DIM, std::get<const CanonicalLoopInfo *>(Induct)->getStart()) ||
+  //         isMemoryAccessedIn(
+  //             DIM, std::get<const CanonicalLoopInfo *>(Induct)->getEnd()) ||
+  //         isMemoryAccessedIn(
+  //             DIM, L, std::get<const CanonicalLoopInfo *>(Induct)->getStep()))
+  //       return std::get<clang::ForStmt *>(Induct);
+  //   }
+  //   return nullptr;
+  // }
 
-  /// Return true if a specified induction variable `DIM` of a loop `L` may be
-  /// accessed in a specified expression `S`.
-  bool isMemoryAccessedIn(const DIMemory *DIM, const Loop *L, const SCEV *S) {
-    if (!S)
-      return true;
-    struct SCEVMemorySearch {
-      SCEVMemorySearch(const Loop *Lp) : L(Lp) {}
-      bool follow(const SCEV *S) {
-        if (auto *AddRec{dyn_cast<SCEVAddRecExpr>(S)};
-            AddRec && AddRec->getLoop() == L)
-          L = nullptr;
-        else if (auto *Unknown{dyn_cast<SCEVUnknown>(S)})
-          Values.push_back(Unknown->getValue());
-        return true;
-      }
-      bool isDone() {
-        // Finish search if reference to a loop has been found.
-        return !L;
-      }
-      SmallVector<Value *, 4> Values;
-      const Loop *L;
-    } Visitor{L};
-    visitAll(S, Visitor);
-    if (!Visitor.L)
-      return true;
-    for (auto *V : Visitor.Values)
-      if (isMemoryAccessedIn(DIM, V))
-        return true;
-    return false;
-  }
+  // /// Return true if a specified induction variable `DIM` of a loop `L` may be
+  // /// accessed in a specified expression `S`.
+  // bool isMemoryAccessedIn(const DIMemory *DIM, const Loop *L, const SCEV *S) {
+  //   if (!S)
+  //     return true;
+  //   struct SCEVMemorySearch {
+  //     SCEVMemorySearch(const Loop *Lp) : L(Lp) {}
+  //     bool follow(const SCEV *S) {
+  //       if (auto *AddRec{dyn_cast<SCEVAddRecExpr>(S)};
+  //           AddRec && AddRec->getLoop() == L)
+  //         L = nullptr;
+  //       else if (auto *Unknown{dyn_cast<SCEVUnknown>(S)})
+  //         Values.push_back(Unknown->getValue());
+  //       return true;
+  //     }
+  //     bool isDone() {
+  //       // Finish search if reference to a loop has been found.
+  //       return !L;
+  //     }
+  //     SmallVector<Value *, 4> Values;
+  //     const Loop *L;
+  //   } Visitor{L};
+  //   visitAll(S, Visitor);
+  //   if (!Visitor.L)
+  //     return true;
+  //   for (auto *V : Visitor.Values)
+  //     if (isMemoryAccessedIn(DIM, V))
+  //       return true;
+  //   return false;
+  // }
 
-  /// Return true if a specified induction variable `DIM` of a loop `L` may be
-  /// accessed in a specified value `V`.
-  bool isMemoryAccessedIn(const DIMemory *DIM, Value *V) {
-    if (!V)
-      return true;
-    if (isa<ConstantData>(V))
-      return false;
-    if (auto *Inst{dyn_cast<Instruction>(V)}) {
-      auto &DL{Inst->getModule()->getDataLayout()};
-      bool Result{false};
-      auto DIN{DIM->getAliasNode()};
-      for_each_memory(
-          *Inst, mTLI,
-          [this, DIN, &DL, &Result](Instruction &, MemoryLocation &&Loc,
-                                    unsigned, AccessInfo R, AccessInfo W) {
-            if (Result)
-              return;
-            if (R == AccessInfo::No && W == AccessInfo::No)
-              return;
-            auto EM{mAT.find(Loc)};
-            assert(EM && "Estimate memory location must not be null!");
-            auto *DIM{mDIMInfo.findFromClient(*EM->getTopLevelParent(), DL, mDT)
-                          .get<Clone>()};
-            Result = !DIM || !mSTR->isUnreachable(DIM->getAliasNode(), DIN);
-          },
-          [this, DIN, &Result](Instruction &I, AccessInfo, AccessInfo) {
-            return;
-            if (Result || (Result = !isa<CallBase>(I)))
-              return;
-            auto *DIM{mDIMInfo.findFromClient(I, mDT, DIUnknownMemory::NoFlags)
-                          .get<Clone>()};
-            assert(DIM && "Metadata-level memory must be available!");
-            Result = !DIM || !mSTR->isUnreachable(DIM->getAliasNode(), DIN);
-          });
-      if (Result)
-        return true;
-      for (auto &Op : Inst->operands())
-        if (!isa<ConstantData>(Op) && !isa<GlobalValue>(Op) &&
-            isMemoryAccessedIn(DIM, Op))
-          return true;
-    }
-    return false;
-  }
+  // /// Return true if a specified induction variable `DIM` of a loop `L` may be
+  // /// accessed in a specified value `V`.
+  // bool isMemoryAccessedIn(const DIMemory *DIM, Value *V) {
+  //   if (!V)
+  //     return true;
+  //   if (isa<ConstantData>(V))
+  //     return false;
+  //   if (auto *Inst{dyn_cast<Instruction>(V)}) {
+  //     auto &DL{Inst->getModule()->getDataLayout()};
+  //     bool Result{false};
+  //     auto DIN{DIM->getAliasNode()};
+  //     for_each_memory(
+  //         *Inst, mTLI,
+  //         [this, DIN, &DL, &Result](Instruction &, MemoryLocation &&Loc,
+  //                                   unsigned, AccessInfo R, AccessInfo W) {
+  //           if (Result)
+  //             return;
+  //           if (R == AccessInfo::No && W == AccessInfo::No)
+  //             return;
+  //           auto EM{mAT.find(Loc)};
+  //           assert(EM && "Estimate memory location must not be null!");
+  //           auto *DIM{mDIMInfo.findFromClient(*EM->getTopLevelParent(), DL, mDT)
+  //                         .get<Clone>()};
+  //           Result = !DIM || !mSTR->isUnreachable(DIM->getAliasNode(), DIN);
+  //         },
+  //         [this, DIN, &Result](Instruction &I, AccessInfo, AccessInfo) {
+  //           return;
+  //           if (Result || (Result = !isa<CallBase>(I)))
+  //             return;
+  //           auto *DIM{mDIMInfo.findFromClient(I, mDT, DIUnknownMemory::NoFlags)
+  //                         .get<Clone>()};
+  //           assert(DIM && "Metadata-level memory must be available!");
+  //           Result = !DIM || !mSTR->isUnreachable(DIM->getAliasNode(), DIN);
+  //         });
+  //     if (Result)
+  //       return true;
+  //     for (auto &Op : Inst->operands())
+  //       if (!isa<ConstantData>(Op) && !isa<GlobalValue>(Op) &&
+  //           isMemoryAccessedIn(DIM, Op))
+  //         return true;
+  //   }
+  //   return false;
+  // }
 
   const ASTImportInfo mImportInfo;
   clang::Rewriter &mRewriter;
@@ -680,6 +703,7 @@ private:
   enum Status {
     SEARCH_PRAGMA,
     TRAVERSE_STMT,
+    FIND_INDEX,
     FIND_OP,
     GET_ALL_ARRAY_SUBSCRIPTS,
     CHECK_SUBSCRIPT,
@@ -687,12 +711,13 @@ private:
   SmallVector<std::tuple<clang::StringLiteral *, clang::Stmt *>, 4> mSwaps;
   std::vector<clang::ArraySubscriptExpr *> mArraySubscriptExpr;
   bool mIsSubscriptUseful;
+  clang::VarDecl* mIndex;
 
   LoopNest mInductions;
 };
 } // namespace
 
-bool ClangLoopInterchange::runOnFunction(Function &F) {
+bool ClangRemoveRedarray::runOnFunction(Function &F) {
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
@@ -715,6 +740,6 @@ bool ClangLoopInterchange::runOnFunction(Function &F) {
   const auto *ImportInfo{&ImportStub};
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  ClangLoopInterchangeVisitor(*this, F, TfmCtx, *ImportInfo).TraverseDecl(FD);
+  ClangRemoveRedarrayVisitor(*this, F, TfmCtx, *ImportInfo).TraverseDecl(FD);
   return false;
 }
