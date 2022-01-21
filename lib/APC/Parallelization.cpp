@@ -1399,6 +1399,7 @@ void addRemoteLink(const apc::LoopGraph *Loop,
                    std::map<std::string, apc::ArrayRefExp *> &UniqueRemotes,
                    const std::set<std::string> &RemotesInParallel,
                    std::set<ArrayRefExp *> &AddedRemotes,
+                   const std::vector<std::string>& MapToLoop,
                    std::vector<Messages> &Msgs, const int Line, bool WithConv) {
   auto *RemoteExpr{Expr};
   bool IsSimple{Expr->getArray()->GetDimSize() == Expr->size()};

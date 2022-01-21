@@ -240,10 +240,11 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     DIClientLoc.Template = ClientDIEM.isTemplate();
     auto APCSymbol = new apc::Symbol(&APCCtx, std::move(Var));
     APCCtx.addSymbol(APCSymbol);
-    auto APCArray = new apc::Array(UniqueName, DILoc->Var->getName().str(),
-      A->getNumberOfDims(), APCCtx.getNumberOfArrays(),
-      Filename.str(), ShrinkedDeclLoc, std::move(DeclScope), APCSymbol, false,
-      false, { APCCtx.getDefaultRegion().GetName() }, getSize(DIElementTy));
+    auto APCArray = new apc::Array(
+        UniqueName, DILoc->Var->getName().str(), A->getNumberOfDims(),
+        APCCtx.getNumberOfArrays(), Filename.str(), ShrinkedDeclLoc,
+        std::move(DeclScope), APCSymbol, false, false, false,
+        {APCCtx.getDefaultRegion().GetName()}, getSize(DIElementTy));
     if (!APCCtx.addArray(ClientRawDIM, APCArray)) {
       llvm_unreachable("Unable to add new array to an APC context!");
       delete APCArray;
