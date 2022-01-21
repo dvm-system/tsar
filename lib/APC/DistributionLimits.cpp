@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "APCContextImpl.h"
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
@@ -95,6 +96,7 @@ FunctionPass *llvm::createAPCDistrLimitsChecker() {
   return new APCDistrLimitsChecker;
 }
 
+
 void APCDistrLimitsChecker::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<APCContextWrapper>();
   AU.addRequired<DominatorTreeWrapperPass>();
@@ -122,6 +124,22 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                              ? " (no function calls)"
                              : " (parent function may be called indirectly)")
                      << "\n");
+          std::wstring MsgEn, MsgRu;
+          if (F.users().empty())
+            __spf_printToLongBuf(
+                MsgEn, L"disable distribution of '%s': no function calls",
+                to_wstring(A->GetShortName()).c_str());
+          else
+            __spf_printToLongBuf(MsgEn,
+                                 L"disable distribution of '%s': parent "
+                                 L"function may be called indirectly",
+                                 to_wstring(A->GetShortName()).c_str());
+          __spf_printToLongBuf(MsgRu, R68,
+                               to_wstring(A->GetShortName()).c_str());
+          getObjectForFileFromMap(APCFunc->fileName.c_str(),
+                                  APCCtx.mImpl->Diags)
+              .push_back(
+                  Messages{WARR, APCFunc->linesNum.first, MsgRu, MsgEn, 1037});
           A->SetDistributeFlag(Distribution::SPF_PRIV);
         }
       }
@@ -129,6 +147,19 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
   auto &DT{getAnalysis<DominatorTreeWrapperPass>().getDomTree()};
   auto &AT{getAnalysis<EstimateMemoryPass>().getAliasTree()};
   auto &TLI{getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F)};
+  auto toMessages = [&Diags = APCCtx.mImpl->Diags](
+                        DebugLoc Loc, const apc::Array &A, const wchar_t *Msg) {
+    std::wstring MsgEn, MsgRu;
+    __spf_printToLongBuf(MsgEn, Msg, to_wstring(A.GetShortName()).c_str());
+    __spf_printToLongBuf(MsgRu, R68, to_wstring(A.GetShortName()).c_str());
+    auto DiagLoc{*A.GetDeclInfo().begin()};
+    if (Loc) {
+      if (bcl::shrinkPair(Loc.getLine(), Loc.getCol(), DiagLoc.second))
+        DiagLoc.first = cast<DIScope>(Loc.getScope())->getFilename().str();
+    }
+    getObjectForFileFromMap(DiagLoc.first.c_str(), Diags)
+        .push_back(Messages{WARR, DiagLoc.second, MsgRu, MsgEn, 1037});
+  };
   for (auto &I : instructions(F)) {
     if (isa<LoadInst>(I))
       continue;
@@ -149,15 +180,17 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
             dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                    << APCArray->GetName() << " (store an address to memory) ";
             I.print(dbgs()); dbgs() << "\n");
+        toMessages(I.getDebugLoc(), *APCArray,
+                   L"disable distribution of '%s': store an address to memory");
         APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
       }
       continue;
     }
     for_each_memory(
         I, TLI,
-        [&APCCtx, &AT, &DL, &DT](Instruction &I, MemoryLocation &&Loc,
-                                 unsigned OpIdx, AccessInfo IsRead,
-                                 AccessInfo IsWrite) {
+        [&APCCtx, &AT, &DL, &DT,
+         &toMessages](Instruction &I, MemoryLocation &&Loc, unsigned OpIdx,
+                      AccessInfo IsRead, AccessInfo IsWrite) {
           auto *EM{AT.find(Loc)};
           assert(EM && "Estimate memory must be presented in alias tree!");
           auto *TopEM{EM->getTopLevelParent()};
@@ -173,7 +206,10 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
             LLVM_DEBUG(
                 dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                        << APCArray->GetName() << " (intrinsic) ";
-                I.print(dbgs()); dbgs() << "\n");
+                I.print(dbgs()); dbgs() << "\n");  std::wstring MsgEn, MsgRu;
+            toMessages(
+                I.getDebugLoc(), *APCArray,
+                L"disable distribution of '%s': unsupported memory access");
             APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
@@ -183,6 +219,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                        << APCArray->GetName()
                        << " (unsupported memory access) ";
                 I.print(dbgs()); dbgs() << "\n");
+            toMessages(
+                I.getDebugLoc(), *APCArray,
+                L"disable distribution of '%s': unsupported memory access");
             APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
@@ -195,6 +234,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                 dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                        << APCArray->GetName() << " (unknown function) ";
                 I.print(dbgs()); dbgs() << "\n");
+            toMessages(
+                I.getDebugLoc(), *APCArray,
+                L"disable distribution of '%s': unknown function call");
             APCArray->SetDistributeFlag(Distribution::IO_PRIV);
             return;
           }
@@ -206,6 +248,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                        << APCArray->GetName()
                        << " (function prototype mismatch) ";
                 I.print(dbgs()); dbgs() << "\n");
+            toMessages(
+                I.getDebugLoc(), *APCArray,
+                L"disable distribution of '%s': function prototype mismatch");
             APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             return;
           }
@@ -247,6 +292,17 @@ bool APCDistrLimitsIPOChecker::runOnModule(Module& M) {
                      << A->GetName()
                      << " (unable to establish correspondence with actual "
                         "parameter of an array type)\n");
+          std::wstring MsgEn, MsgRu;
+          __spf_printToLongBuf(MsgEn,
+                               L"disable distribution of '%s': unable to "
+                               L"establish correspondence with actual "
+                               "parameter of an array type",
+                               to_wstring(A->GetShortName()).c_str());
+          __spf_printToLongBuf(MsgRu, R68,
+                               to_wstring(A->GetShortName()).c_str());
+          auto DiagLoc{*A->GetDeclInfo().begin()};
+          getObjectForFileFromMap(DiagLoc.first.c_str(), APCCtx.mImpl->Diags)
+              .push_back(Messages{WARR, DiagLoc.second, MsgRu, MsgEn, 1037});
         }
     }
   }

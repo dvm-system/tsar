@@ -442,10 +442,16 @@ void APCParallelizationPass::collectArrayAccessInfo(
             APCArray, DimIdxE, DimIdx, AccessExpr,
             findOrInsert(APCLoop, APCArray, FileInfo.get<LoopToArrayMap>()));
       }
-      // TODO (kaniandr@gmail.com): describe a representation issue properly.
-      emitTypeOverflow(M.getContext(), *LpStmt->getFunction(), DebugLoc(),
-                       "unable to represent A constant in A*I + B subscript",
-                       DS_Warning);
+      std::wstring MsgEn, MsgRu;
+      __spf_printToLongBuf(
+          MsgEn,
+          L"unable to represent A constant in A*I + B subscript in "
+          L"access to %s",
+          to_wstring(APCArray->GetShortName()).c_str());
+      __spf_printToLongBuf(MsgRu, R57,
+                           to_wstring(APCArray->GetShortName()).c_str());
+      getObjectForFileFromMap(APCLoop->fileName.c_str(), APCCtx.mImpl->Diags)
+          .push_back(Messages{WARR, APCLoop->lineNum, MsgRu, MsgEn, 1023});
       continue;
     }
     if (AffineAccess->getSymbol().Kind !=
@@ -462,10 +468,16 @@ void APCParallelizationPass::collectArrayAccessInfo(
             APCArray, DimIdxE, DimIdx, AccessExpr,
             findOrInsert(APCLoop, APCArray, FileInfo.get<LoopToArrayMap>()));
       }
-      // TODO (kaniandr@gmail.com): describe a representation issue properly.
-      emitTypeOverflow(M.getContext(), *LpStmt->getFunction(), DebugLoc(),
-                       "unable to represent B constant in A*I + B subscript",
-                       DS_Warning);
+      std::wstring MsgEn, MsgRu;
+      __spf_printToLongBuf(
+          MsgEn,
+          L"unable to represent B constant in A*I + B subscript in "
+          L"access to %s",
+          to_wstring(APCArray->GetShortName()).c_str());
+      __spf_printToLongBuf(MsgRu, R57,
+                           to_wstring(APCArray->GetShortName()).c_str());
+      getObjectForFileFromMap(APCLoop->fileName.c_str(), APCCtx.mImpl->Diags)
+          .push_back(Messages{WARR, APCLoop->lineNum, MsgRu, MsgEn, 1023});
       continue;
     }
     APCArray->SetMappedDim(AffineAccess->getDimension());
