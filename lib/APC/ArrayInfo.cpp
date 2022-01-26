@@ -169,12 +169,6 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     auto DIElementTy = arrayElementDIType(DILoc->Var->getType());
     if (!DIElementTy)
       continue;
-    auto DeclLoc = std::make_pair(DILoc->Var->getLine(), 0);
-    if (DILoc->Loc)
-      DeclLoc = std::make_pair(DILoc->Loc->getLine(), DILoc->Loc->getColumn());
-    auto Filename = (DILoc->Var->getFilename().empty()
-                         ? StringRef(F->getParent()->getSourceFileName())
-                         : DILoc->Var->getFilename());
     auto DeclScope = std::make_pair(Distribution::l_COMMON, std::string(""));
     if (auto DILocalVar = dyn_cast<DILocalVariable>(DILoc->Var)) {
       if (DILocalVar->isParameter())
@@ -184,19 +178,6 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       DeclScope.second =  F->getName().str();
     }
     auto UniqueName{APCCtx.getUniqueName(*DILoc->Var, *F)};
-    std::decay<
-      decltype(std::declval<apc::Array>().GetDeclInfo())>
-        ::type::value_type::second_type ShrinkedDeclLoc;
-    auto getDbgLoc = [&F, &DILoc, &DeclLoc]() {
-      DebugLoc DbgLoc(DILoc->Loc);
-      if (!DbgLoc && F->getSubprogram()) {
-        DbgLoc = DILocation::get(
-          F->getContext(), DeclLoc.first, DeclLoc.second, F->getSubprogram());
-      }
-      return DbgLoc;
-    };
-    if (!bcl::shrinkPair(DeclLoc.first, DeclLoc.second, ShrinkedDeclLoc))
-      emitUnableShrink(F->getContext(), *F, getDbgLoc(), DS_Warning);
     // TODO (kaniandr@gmail.com): what should we do in case of multiple
     // allocation of the same array. There are different memory locations
     // and different MDNodes for such arrays. However, declaration points
@@ -219,6 +200,39 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     assert(ClientDIAT->find(*ClientRawDIM) != ClientDIAT->memory_end() &&
            "Memory must exist in alias tree on client!");
     auto &ClientDIEM = cast<DIEstimateMemory>(*ClientDIAT->find(*ClientRawDIM));
+    auto *ClientDIVar{ClientDIEM.getVariable()};
+    auto DeclLoc = std::make_pair(ClientDIVar->getLine(), 0);
+    SmallVector<DebugLoc, 1> DbgLocs;
+    ClientDIEM.getDebugLoc(DbgLocs);
+    if (!DbgLocs.empty()) {
+      DebugLoc DbgLoc;
+      for (auto &Loc : DbgLocs) {
+        if (!Loc || Loc.getLine() != ClientDIVar->getLine() ||
+            cast<DIScope>(Loc.getScope())->getFilename() !=
+                ClientDIVar->getFilename())
+          continue;
+        if (!DbgLoc || Loc.getCol() < DbgLoc.getCol())
+          DbgLoc = Loc;
+      }
+      DeclLoc = std::make_pair(DbgLoc->getLine(), DbgLoc->getColumn());
+    }
+    std::decay<
+      decltype(std::declval<apc::Array>().GetDeclInfo())>
+        ::type::value_type::second_type ShrinkedDeclLoc;
+    auto getDbgLoc = [&F, &DbgLocs, &DeclLoc]() {
+      DebugLoc DbgLoc;
+      if (!DbgLocs.empty() && DbgLocs.front())
+        DbgLoc = DbgLocs.front();
+      else if (F->getSubprogram())
+        DbgLoc = DILocation::get(F->getContext(), DeclLoc.first, DeclLoc.second,
+                                 F->getSubprogram());
+      return DbgLoc;
+    };
+    if (!bcl::shrinkPair(DeclLoc.first, DeclLoc.second, ShrinkedDeclLoc))
+      emitUnableShrink(F->getContext(), *F, getDbgLoc(), DS_Warning);
+    auto Filename = (ClientDIVar->getFilename().empty()
+                         ? StringRef(F->getParent()->getSourceFileName())
+                         : ClientDIVar->getFilename());
     auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
     assert(DIMemoryItr != DIMatcher->end() &&
            "Unknown AST-level representation of an array!");
@@ -234,14 +248,10 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       S->addRedeclaration(std::move(Var));
       continue;
     }
-    DIMemoryLocation DIClientLoc(ClientDIEM.getVariable(),
-                                 ClientDIEM.getExpression());
-    DIClientLoc.Loc = cast_or_null<DILocation>(getMDNode(DILoc->Loc));
-    DIClientLoc.Template = ClientDIEM.isTemplate();
     auto APCSymbol = new apc::Symbol(&APCCtx, std::move(Var));
     APCCtx.addSymbol(APCSymbol);
     auto APCArray = new apc::Array(
-        UniqueName, DILoc->Var->getName().str(), A->getNumberOfDims(),
+        UniqueName, Var.get<AST>()->getName().str(), A->getNumberOfDims(),
         APCCtx.getNumberOfArrays(), Filename.str(), ShrinkedDeclLoc,
         std::move(DeclScope), APCSymbol, false, false, false,
         {APCCtx.getDefaultRegion().GetName()}, getSize(DIElementTy));
