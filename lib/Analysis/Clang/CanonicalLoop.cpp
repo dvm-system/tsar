@@ -568,6 +568,20 @@ private:
         Expr->print(dbgs()); dbgs() << "\n";
       });
     LInfo->markAsCanonical();
+    if (auto *Parent{L->getParentLoop()}) {
+      auto *ParentDIDepSet = mDIMInfo->findFromClient(*Parent);
+      if (!ParentDIDepSet) {
+        LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: parent loop is not analyzed\n");
+        return;
+      }
+      if (std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Init)) &&
+          std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Increment)) &&
+          std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Condition)))
+        LInfo->markAsRectangular();
+    }
   }
 
   CanonicalLoopSet *mCanonicalLoopInfo = nullptr;
@@ -736,7 +750,10 @@ void CanonicalLoopPass::print(raw_ostream &OS, const llvm::Module *M) const {
     tsar::print(OS, DFL->getLoop()->getStartLoc(),
                 GlobalOpts.PrintFilenameOnly);
     OS << " is " << (Info->isCanonical() ? "semantically" : "syntactically")
-       << " canonical\n";
+       << " canonical";
+    if (Info->isRectangular())
+      OS << "and rectangular";
+    OS << "\n";
   }
 }
 

@@ -284,6 +284,8 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
     std::tie(KnownInductToCountDep, Start, Step, End) =
         evaluateInduction(L, **CanonItr, KnownMaxBackageCount, APCLoop);
     APCLoop.isFor = APCLoop.inCanonicalFrom = (**CanonItr).isCanonical();
+    APCLoop.hasNonRectangularBounds =
+        L.getParentLoop() && !(**CanonItr).isRectangular();
   }
   if (!KnownInductToCountDep) {
     // If we cannot represent induction variable (in a head of for-loop) as
@@ -407,7 +409,6 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
 }
 
 void APCLoopInfoBasePass::initNoAnalyzed(apc::LoopGraph &APCLoop) noexcept {
-  //APCLoop.hasNonRectangularBounds = true;
   APCLoop.hasUnknownArrayAssigns = true;
   APCLoop.hasIndirectAccess = true;
   APCLoop.hasUnknownDistributedMap = true;
