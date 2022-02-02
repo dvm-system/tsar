@@ -162,8 +162,7 @@ private:
 
   void collectArrayAccessInfo(
       Module &M, DIArrayAccess &Access, APCContext &APCCtx,
-      ArrayAccessPool &AccessPool, FileInfoMap &Files,
-      ArrayAccessSummary &ArrayRWs, ArrayToKeyMap &ArrayIds);
+      ArrayAccessPool &AccessPool, FileInfoMap &Files, ArrayToKeyMap &ArrayIds);
 
   void bindFormalAndActualPrameters(
     const ArrayAccessSummary &ArrayRWs, FileToFuncMap FileToFunc,
@@ -293,8 +292,7 @@ void APCParallelizationPass::collectFunctionsAndLoops(Module &M,
 
 void APCParallelizationPass::collectArrayAccessInfo(
     Module &M, DIArrayAccess &Access, APCContext &APCCtx,
-    ArrayAccessPool &AccessPool, FileInfoMap &Files,
-    ArrayAccessSummary &ArrayRWs, ArrayToKeyMap &ArrayIds) {
+    ArrayAccessPool &AccessPool, FileInfoMap &Files, ArrayToKeyMap &ArrayIds) {
   auto findOrInsert = [&AccessPool](apc::LoopGraph *APCLoop,
                                     apc::Array *APCArray,
                                     LoopToArrayMap &LToA) {
@@ -352,22 +350,35 @@ void APCParallelizationPass::collectArrayAccessInfo(
   LLVM_DEBUG(dbgs() << "[APC]: explore an access to "
                     << APCArray->GetShortName() << " in loop at "
                     << Scope->lineNum << "\n");
+  auto skipAccess = [APCArray](apc::LoopGraph *APCLoop) {
+    if (!APCArray->IsNotDistribute())
+      return false;
+    auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
+    assert(LpStmt && "IR-level description of a looop must not be null!");
+    auto Var{APCArray->GetDeclSymbol()->getVariable(LpStmt->getFunction())};
+    assert(Var && "Variable must not be null!");
+    if (LpStmt->getTraits().get<trait::Private>().count(*Var))
+      return true;
+    return false;
+  };
   if (Access.empty()) {
     auto *APCLoop{Scope};
     while (APCLoop) {
-      APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
-      APCLoop->hasUnknownDistributedMap = true;
-      if (!Access.isWriteOnly()) {
-        assert(AccessExpr && "Expression must not be null!");
-        for (unsigned DimIdx = 0, DimIdxE = APCArray->GetDimSize();
-             DimIdx < DimIdxE; ++DimIdx)
-          registerUnknownRead(
-              APCArray, DimIdxE, DimIdx, AccessExpr,
-              findOrInsert(APCLoop, APCArray, FileInfo.get<LoopToArrayMap>()));
-      }
-      if (!Access.isReadOnly()) {
-        APCLoop->hasUnknownArrayAssigns = true;
-        APCLoop->hasWritesToNonDistribute |= APCArray->IsNotDistribute();
+      if (!skipAccess(APCLoop)) {
+        APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
+        APCLoop->hasUnknownDistributedMap = true;
+        if (!Access.isWriteOnly()) {
+          assert(AccessExpr && "Expression must not be null!");
+          for (unsigned DimIdx = 0, DimIdxE = APCArray->GetDimSize();
+               DimIdx < DimIdxE; ++DimIdx)
+            registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                findOrInsert(APCLoop, APCArray,
+                                             FileInfo.get<LoopToArrayMap>()));
+        }
+        if (!Access.isReadOnly()) {
+          APCLoop->hasUnknownArrayAssigns = true;
+          APCLoop->hasWritesToNonDistribute |= APCArray->IsNotDistribute();
+        }
       }
       APCLoop = APCLoop->parent;
     }
@@ -381,10 +392,12 @@ void APCParallelizationPass::collectArrayAccessInfo(
       if (!Access.isWriteOnly()) {
         auto *APCLoop{Scope};
         while (APCLoop) {
-          assert(AccessExpr && "Expression must not be null!");
-          registerUnknownRead(
-              APCArray, DimIdxE, DimIdx, AccessExpr,
-              findOrInsert(APCLoop, APCArray, FileInfo.get<LoopToArrayMap>()));
+          if (!skipAccess(APCLoop)) {
+            assert(AccessExpr && "Expression must not be null!");
+            registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                findOrInsert(APCLoop, APCArray,
+                                             FileInfo.get<LoopToArrayMap>()));
+          }
           APCLoop = APCLoop->parent;
         }
       }
@@ -404,10 +417,12 @@ void APCParallelizationPass::collectArrayAccessInfo(
             AccessExpr->setConstantSubscript(DimIdx, S.Constant);
           auto *APCLoop{Scope};
           while (APCLoop) {
-            assert(AccessExpr && "Expression must not be null!");
-            registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
-                                findOrInsert(APCLoop, APCArray,
-                                             FileInfo.get<LoopToArrayMap>()));
+            if (!skipAccess(APCLoop)) {
+              assert(AccessExpr && "Expression must not be null!");
+              registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
+                                  findOrInsert(APCLoop, APCArray,
+                                               FileInfo.get<LoopToArrayMap>()));
+            }
             APCLoop = APCLoop->parent;
           }
         } else {
@@ -415,6 +430,8 @@ void APCParallelizationPass::collectArrayAccessInfo(
                ++I) {
             auto &Monom{AffineAccess->getMonom(I)};
             auto *APCLoop{APCCtx.findLoop(Monom.Column)};
+            if (skipAccess(APCLoop))
+              continue;
             assert(AccessExpr && "Expression must not be null!");
             AccessExpr->registerRecInDim(DimIdx, APCLoop);
             registerUnknownRead(APCArray, DimIdxE, DimIdx, AccessExpr,
@@ -425,9 +442,10 @@ void APCParallelizationPass::collectArrayAccessInfo(
       }
       continue;
     }
-    ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
     auto *APCLoop{APCCtx.findLoop(AffineAccess->getMonom(0).Column)};
     ++NumberOfDimsForLoop.try_emplace(APCLoop, 0).first->second;
+    if (skipAccess(APCLoop))
+      continue;
     auto LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
     decltype(std::declval<apc::ArrayOp>().coefficients)::key_type ABPair;
     if (auto C{AffineAccess->getMonom(0).Value};
@@ -508,20 +526,22 @@ void APCParallelizationPass::collectArrayAccessInfo(
   }
   auto *APCLoop{Scope};
   while (APCLoop) {
-    APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
-    APCLoop->hasWritesToNonDistribute |=
-        !Access.isReadOnly() && APCArray->IsNotDistribute();
-    if (!APCLoop->hasUnknownDistributedMap ||
-        (!APCLoop->hasUnknownArrayAssigns && !Access.isReadOnly())) {
-      auto Itr{NumberOfDimsForLoop.find(APCLoop)};
-      APCLoop->hasUnknownArrayAssigns |=
-          (!Access.isReadOnly() &&
-           (Itr == NumberOfDimsForLoop.end() || Itr->second > 1));
-      APCLoop->hasUnknownDistributedMap |=
-          (Itr == NumberOfDimsForLoop.end() || Itr->second > 1);
+    if (!skipAccess(APCLoop)) {
+      APCLoop->withoutDistributedArrays &= APCArray->IsNotDistribute();
+      APCLoop->hasWritesToNonDistribute |=
+          !Access.isReadOnly() && APCArray->IsNotDistribute();
+      if (!APCLoop->hasUnknownDistributedMap ||
+          (!APCLoop->hasUnknownArrayAssigns && !Access.isReadOnly())) {
+        auto Itr{NumberOfDimsForLoop.find(APCLoop)};
+        APCLoop->hasUnknownArrayAssigns |=
+            (!Access.isReadOnly() &&
+             (Itr == NumberOfDimsForLoop.end() || Itr->second > 1));
+        APCLoop->hasUnknownDistributedMap |=
+            (Itr == NumberOfDimsForLoop.end() || Itr->second > 1);
+      }
     }
     APCLoop = APCLoop->parent;
-    }
+  }
 }
 
 void APCParallelizationPass::bindFormalAndActualPrameters(
@@ -1008,19 +1028,23 @@ bool APCParallelizationPass::runOnModule(Module &M) {
       APCLoop->hasUnknownDistributedMap = false;
       APCLoop->withoutDistributedArrays = true;
     }
-  for (auto &Access : *DIArrayInfo)
-    collectArrayAccessInfo(M, Access, APCCtx, AccessPool, Files, ArrayRWs,
-                           ArrayIds);
-  auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
-  FormalToActualMap FormalToActual;
-  // Exclude arrays from a data distribution.
-  // A stub variable which is not used at this moment.
-  std::map<PFIKeyT, apc::Array *> CreatedArrays;
+  for (auto &Access : *DIArrayInfo) {
+    auto *APCArray{APCCtx.findArray(Access.getArray()->getAsMDNode())};
+    if (!APCArray)
+      continue;
+    ArrayRWs.emplace(ArrayIds[APCArray], std::make_pair(APCArray, nullptr));
+  }
   std::set<apc::Array *> DistributedArrays;
+  auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
   try {
+    FormalToActualMap FormalToActual;
     checkCountOfIter(FileToLoop, FileToFunc, APCCtx.mImpl->Diags);
     bindFormalAndActualPrameters(ArrayRWs, FileToFunc, FormalToActual,
                                  APCCtx.mImpl->Diags);
+    for (auto &Access : *DIArrayInfo)
+      collectArrayAccessInfo(M, Access, APCCtx, AccessPool, Files, ArrayIds);
+    // A stub variable which is not used at this moment.
+    std::map<PFIKeyT, apc::Array *> CreatedArrays;
     buildDataDistributionGraph(Regions, FormalToActual, ArrayRWs, FileToLoop,
                                Files, CreatedArrays, APCCtx.mImpl->Diags);
     buildDataDistribution(Regions, FormalToActual, ArrayIds, APCCtx,
