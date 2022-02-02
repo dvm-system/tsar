@@ -30,6 +30,7 @@
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
+#include "tsar/Support/IRUtils.h"
 #include <apc/Distribution/Array.h>
 #include <apc/GraphCall/graph_calls.h>
 #include <llvm/IR/Dominators.h>
@@ -75,6 +76,7 @@ INITIALIZE_PASS_BEGIN(APCDistrLimitsChecker, "apc-distribution-limits",
 INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(APCDistrLimitsChecker, "apc-distribution-limits",
                       "Distribution Limitation Checker (APC)", true, true)
@@ -101,6 +103,7 @@ void APCDistrLimitsChecker::getAnalysisUsage(AnalysisUsage& AU) const {
   AU.addRequired<APCContextWrapper>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<EstimateMemoryPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.setPreservesAll();
 }
@@ -257,6 +260,37 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
         },
         [](Instruction &I, AccessInfo IsRead, AccessInfo IsWrite) {});
   }
+  for_each_loop(
+      getAnalysis<LoopInfoWrapperPass>().getLoopInfo(),
+      [&APCCtx, &toMessages](const Loop *L) {
+        auto Id{L->getLoopID()};
+        if (!Id)
+          return;
+        auto APCLoop{APCCtx.findLoop(Id)};
+        if (!APCLoop)
+          return;
+        if (APCLoop->hasUnknownScalarDep || APCLoop->hasUnknownArrayDep ||
+            !APCLoop->inCanonicalFrom)
+          return;
+        auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
+        assert(LpStmt && "IR-level description of a looop must not be null!");
+        for (auto &Var : LpStmt->getTraits().get<trait::Private>()) {
+          if (Var.get<MD>())
+            if (auto *APCArray{APCCtx.findArray(Var.get<MD>()->getAsMDNode())};
+                APCArray && !APCArray->IsNotDistribute()) {
+              LLVM_DEBUG(
+                  dbgs()
+                      << "[APC DISTRIBUTION LIMITS]: disable distribution of "
+                      << APCArray->GetName()
+                      << " (privatizable array in a parallelizable loop) ";
+                  L->print(dbgs()); dbgs() << "\n");
+              toMessages(L->getStartLoc(), *APCArray,
+                         L"disable distribution of '%s': privatizable array in "
+                         L"a parallelizable loop");
+              APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
+            }
+        }
+      });
   return false;
 }
 
