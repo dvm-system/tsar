@@ -542,15 +542,22 @@ public:
         return RecursiveASTVisitor::TraverseStmt(S);
       }
       auto [SizeLiteral, SizeStmt] = mSwaps[1];
-      std::string CaseBody = mRewriter.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
-      auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue();
-      auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
-      std::string ArrName = ArrayLiteral->getString().str();
-      ArrName += "_subscr_";
       auto IndexName = mIndex->getName();
-      for (auto Subscr: mArraySubscriptExpr) {
-        mRewriter.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), ArrName + "0"); // for now, for test purposes
+//      std::string CaseBody = mRewriter.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
+      std::string switchText = "switch (" + IndexName + ") {\n";
+      for (int i = 0; i < std::stoi(SizeLiteral->getString.str()); i++) {
+        ExternalRewriter Canvas(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()), mSrcMgr, mLangOpts);
+        auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue();
+        auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
+        std::string ArrName = ArrayLiteral->getString().str();
+        ArrName += "_subscr_";
+        for (auto Subscr: mArraySubscriptExpr) {
+          Canvas.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), ArrName + std::to_string(i));
+        }
+        std::string caseBody = Canvas.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
+        switchText += "case " + std::to_string(i) + ":\n" + caseBody + "\nbreak;\n";
       }
+      switchText += "}";
       return RecursiveASTVisitor::TraverseStmt(S);
     }
     case GET_ALL_ARRAY_SUBSCRIPTS: {
