@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangMessages.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/SourceLocation.h>
 #include <clang/Basic/SourceManager.h>
@@ -37,14 +38,14 @@ msg::Location getLocation(
   auto ExpansionLoc = SrcMgr.getExpansionLoc(SLoc);
   auto ExpansionFile = SrcMgr.getFileEntryForID(SrcMgr.getFileID(ExpansionLoc));
   assert(ExpansionFile && "FileEntry record must not be null!");
-  MsgLoc[msg::Location::File] = ExpansionFile->getUID();
+  MsgLoc[msg::Location::File] = ExpansionFile->getUniqueID();
   MsgLoc[msg::Location::Line] = SrcMgr.getExpansionLineNumber(SLoc);
   MsgLoc[msg::Location::Column] = SrcMgr.getExpansionColumnNumber(SLoc);
   auto SpellingLoc = SrcMgr.getSpellingLoc(SLoc);
   if (!SrcMgr.isWrittenInScratchSpace(SpellingLoc)) {
     auto SpellingFile = SrcMgr.getFileEntryForID(SrcMgr.getFileID(SpellingLoc));
     assert(SpellingFile && "FileEntry record must not be null!");
-    MsgLoc[msg::Location::MacroFile] = SpellingFile->getUID();
+    MsgLoc[msg::Location::MacroFile] = SpellingFile->getUniqueID();
     MsgLoc[msg::Location::MacroLine] = SrcMgr.getSpellingLineNumber(SLoc);
     MsgLoc[msg::Location::MacroColumn] = SrcMgr.getSpellingColumnNumber(SLoc);
   } else {
@@ -59,12 +60,15 @@ msg::Location getLocation(llvm::DebugLoc &Loc,
     const clang::SourceManager &SrcMgr) {
   assert(Loc && "Debug location must be valid!");
   msg::Location MsgLoc;
-  auto File = SrcMgr.getFileManager().getFile(Loc.get()->getFilename());
-  assert(File && "FileEntry record must not be null for LLVM IR location!");
-  MsgLoc[msg::Location::File] = (**File).getUID();
+  llvm::SmallString<128> Path;
+  llvm::sys::fs::UniqueID ID;
+  auto Error{llvm::sys::fs::getUniqueID(
+      getAbsolutePath(*Loc.get()->getScope(), Path), ID)};
+  assert(!Error && "Unknown path to file!");
+  MsgLoc[msg::Location::File] = ID;
   MsgLoc[msg::Location::Line] = Loc.getLine();
   MsgLoc[msg::Location::Column] = Loc.getCol();
-  MsgLoc[msg::Location::MacroFile] = (**File).getUID();
+  MsgLoc[msg::Location::MacroFile] = MsgLoc[msg::Location::File];
   MsgLoc[msg::Location::MacroLine] = Loc.getLine();
   MsgLoc[msg::Location::MacroColumn] = Loc.getCol();
   return MsgLoc;
