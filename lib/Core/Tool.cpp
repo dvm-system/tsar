@@ -467,6 +467,7 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-fstandalone-debug");
   mCommandLine.emplace_back("-gcolumn-info");
+  mCommandLine.emplace_back("-Qunused-arguments");
   for (auto &Warning : Options::get().EnableWarnings)
     mCommandLine.push_back("-W" + Warning);
   if (Options::get().CaretDiagnostics)
