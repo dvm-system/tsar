@@ -230,9 +230,12 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     };
     if (!bcl::shrinkPair(DeclLoc.first, DeclLoc.second, ShrinkedDeclLoc))
       emitUnableShrink(F->getContext(), *F, getDbgLoc(), DS_Warning);
-    auto Filename = (ClientDIVar->getFilename().empty()
-                         ? StringRef(F->getParent()->getSourceFileName())
-                         : ClientDIVar->getFilename());
+    SmallString<128> PathToFile;
+    StringRef Filename{F->getParent()->getSourceFileName()};
+    if (ClientDIVar->getFile())
+      Filename = getAbsolutePath(*ClientDIVar->getFile(), PathToFile);
+    else if (sys::fs::real_path(Filename, PathToFile))
+      Filename = PathToFile;
     auto DIMemoryItr = DIMatcher->find<MD>(ClientDIEM.getVariable());
     assert(DIMemoryItr != DIMatcher->end() &&
            "Unknown AST-level representation of an array!");

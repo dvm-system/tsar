@@ -206,8 +206,15 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
     auto DIFunc = Caller.first->getSubprogram();
     /// TODO (kaniandr@gmail.com): should we emit warning or error if filename
     /// is not available from debug information.
-    FI.fileName = DIFunc && !DIFunc->getFilename().empty() ?
-      DIFunc->getFilename().str() : M.getSourceFileName();
+    if (DIFunc && DIFunc->getFile()) {
+      SmallString<128> PathToFile;
+      FI.fileName = getAbsolutePath(*DIFunc, PathToFile).str();
+    } else {
+      SmallString<128> PathToFile;
+      FI.fileName = sys::fs::real_path(M.getSourceFileName(), PathToFile)
+                        ? PathToFile.str().str()
+                        : M.getSourceFileName();
+    }
     // TODO (kaniandr@gmail.com): allow to use command line option to determine
     // entry point.
     if (auto DWLang = getLanguage(*Caller.first))

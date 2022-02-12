@@ -157,8 +157,11 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
     __spf_printToLongBuf(MsgRu, R68, to_wstring(A.GetShortName()).c_str());
     auto DiagLoc{*A.GetDeclInfo().begin()};
     if (Loc) {
-      if (bcl::shrinkPair(Loc.getLine(), Loc.getCol(), DiagLoc.second))
-        DiagLoc.first = cast<DIScope>(Loc.getScope())->getFilename().str();
+      if (bcl::shrinkPair(Loc.getLine(), Loc.getCol(), DiagLoc.second)) {
+        SmallString<128> Path;
+        DiagLoc.first =
+            getAbsolutePath(*cast<DIScope>(Loc.getScope()), Path).str();
+      }
     }
     getObjectForFileFromMap(DiagLoc.first.c_str(), Diags)
         .push_back(Messages{WARR, DiagLoc.second, MsgRu, MsgEn, 1037});

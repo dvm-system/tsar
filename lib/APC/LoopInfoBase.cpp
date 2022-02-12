@@ -254,14 +254,21 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   if (auto &Loc = LocRange.getStart()) {
     if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), APCLoop.lineNum))
       emitUnableShrink(M->getContext(), *F, Loc, DS_Warning);
-    if (auto Scope = dyn_cast_or_null<DIScope>(LocRange.getStart().getScope()))
-      APCLoop.fileName = Scope->getFilename().str();
+    if (auto Scope{dyn_cast_or_null<DIScope>(LocRange.getStart().getScope())};
+        Scope && Scope->getFile()) {
+      SmallString<128> PathToFile;
+      APCLoop.fileName = getAbsolutePath(*Scope, PathToFile).str();
+    }
   }
   if (auto &Loc = LocRange.getEnd())
     if (!bcl::shrinkPair(Loc.getLine(), Loc.getCol(), APCLoop.lineNumAfterLoop))
       emitUnableShrink(M->getContext(), *F, Loc, DS_Warning);
-  if (APCLoop.fileName.empty())
-    APCLoop.fileName = M->getSourceFileName();
+  if (APCLoop.fileName.empty()) {
+    SmallString<128> PathToFile;
+    APCLoop.fileName = sys::fs::real_path(M->getSourceFileName(), PathToFile)
+                           ? PathToFile.str().str()
+                           : M->getSourceFileName();
+  }
   assert(mRegions->getRegionFor(&L) && "Loop region must not be null!");
   auto DFL = cast<DFLoop>(mRegions->getRegionFor(&L));
   APCLoop.perfectLoop =
