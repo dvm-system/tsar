@@ -275,8 +275,6 @@ private:
   void checkNotDistributedDecl(const DeclT *D,
     ClangTransformationContext &TfmCtx) {
     auto &Ctx = TfmCtx.getContext();
-    auto &SrcMgr = Ctx.getSourceManager();
-    auto &Diags = Ctx.getDiagnostics();
     for (auto *Redecl : D->getFirstDecl()->redecls()) {
       auto StartOfDecl = Redecl->getBeginLoc();
       // We have not inserted directives in a macro.
@@ -289,7 +287,7 @@ private:
       if (auto CtxItr{mInsertedDirs.find(CtxToTransform)};
           CtxItr != mInsertedDirs.end())
         if (CtxItr->second.count(StartOfDecl.getRawEncoding()))
-          toDiag(Diags, StartOfDecl,
+          toDiag(CtxToTransform->getContext().getDiagnostics(), StartOfDecl,
                  tsar::diag::err_apc_not_distr_decl_directive);
     }
   }
