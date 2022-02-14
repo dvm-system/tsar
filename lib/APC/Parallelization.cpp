@@ -684,7 +684,7 @@ void APCParallelizationPass:: selectComputationDistribution(
       DepInfoForLoopGraph,
       getObjectForFileFromMap(FileInfo.getKeyData(), APCMsgs));
   for (auto *Expr : FileInfo.second.get<apc::ArrayRefExp>()) {
-    if (!Expr->isInLoop())
+    if (!Expr->isInLoop() || Expr->getArray()->IsNotDistribute())
       continue;
     auto APCLoop{std::get<apc::LoopGraph *>(Expr->getScope())};
     std::vector<apc::LoopGraph *> LoopNest;
