@@ -69,7 +69,8 @@ public:
 
   /// List of traits.
   using ASTRegionTraitInfo =
-      bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Private>,
+      bcl::tagged_tuple<bcl::tagged<SortedVarListT, trait::Local>,
+                        bcl::tagged<SortedVarListT, trait::Private>,
                         bcl::tagged<SortedVarListT, trait::FirstPrivate>,
                         bcl::tagged<SortedVarListT, trait::LastPrivate>,
                         bcl::tagged<SortedVarListT, trait::ReadOccurred>,

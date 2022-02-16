@@ -278,6 +278,7 @@ public:
   using TraitList = bcl::tagged_tuple<
       bcl::tagged<tsar::dvmh::ShadowVarListT, tsar::trait::Dependence>,
       bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::Private>,
+      bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::Local>,
       bcl::tagged<tsar::dvmh::ReductionVarListT, tsar::trait::Reduction>,
       bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::ReadOccurred>,
       bcl::tagged<tsar::dvmh::SortedVarListT, tsar::trait::WriteOccurred>>;

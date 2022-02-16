@@ -367,6 +367,7 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
       APCLoop.loop = S;
       mAPCContext->addStatement(S);
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
+      S->getTraits().get<trait::Local>() = DepInfo.get<trait::Local>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
       dvmh::SortedVarMultiListT NotLocalized;
       auto Localized{RegionAnalysis.evaluateDefUse(&NotLocalized)};

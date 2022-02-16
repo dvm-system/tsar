@@ -354,10 +354,11 @@ void APCParallelizationPass::collectArrayAccessInfo(
     if (!APCArray->IsNotDistribute())
       return false;
     auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
-    assert(LpStmt && "IR-level description of a looop must not be null!");
+    assert(LpStmt && "IR-level description of a loop must not be null!");
     auto Var{APCArray->GetDeclSymbol()->getVariable(LpStmt->getFunction())};
     assert(Var && "Variable must not be null!");
-    if (LpStmt->getTraits().get<trait::Private>().count(*Var))
+    if (LpStmt->getTraits().get<trait::Private>().count(*Var) ||
+        LpStmt->getTraits().get<trait::Local>().count(*Var))
       return true;
     return false;
   };

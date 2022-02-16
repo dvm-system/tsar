@@ -192,26 +192,32 @@ VariableCollector::findDecl(const DIMemory &DIM,
 bool VariableCollector::localize(DIAliasTrait &TS,
               const DIMemoryMatcher &ASTToClient,
               const ClonedDIMemoryMatcher &ClientToServer,
-              SortedVarListT &VarNames, SortedVarMultiListT *Error) {
+              SortedVarListT &VarNames, SortedVarListT &LocalVarNames,
+              SortedVarMultiListT *Error) {
   bool IsOk{true};
   for (auto &T : TS)
     IsOk &= localize(*T, *TS.getNode(), ASTToClient, ClientToServer, VarNames,
-                     Error);
+                     LocalVarNames, Error);
   return IsOk;
 }
 
 bool VariableCollector::localize(DIMemoryTrait &T, const DIAliasNode &DIN,
     const DIMemoryMatcher &ASTToClient,
     const ClonedDIMemoryMatcher &ClientToServer,
-    SortedVarListT &VarNames, SortedVarMultiListT *Error) {
+    SortedVarListT &VarNames, SortedVarListT &LocalVarNames,
+    SortedVarMultiListT *Error) {
   auto Res = localize(T, DIN, ASTToClient, ClientToServer);
   if (!std::get<2>(Res)) {
     if (Error && std::get<VarDecl *>(Res))
       Error->emplace(std::get<VarDecl *>(Res), std::get<DIMemory *>(Res));
     return false;
   }
-  if (std::get<VarDecl *>(Res) && !std::get<3>(Res))
-    VarNames.emplace(std::get<VarDecl *>(Res), std::get<DIMemory *>(Res));
+  if (std::get<VarDecl *>(Res))
+    if (!std::get<3>(Res))
+      VarNames.emplace(std::get<VarDecl *>(Res), std::get<DIMemory *>(Res));
+    else
+      LocalVarNames.emplace(std::get<VarDecl *>(Res),
+                            std::get<DIMemory *>(Res));
   return true;
 }
 

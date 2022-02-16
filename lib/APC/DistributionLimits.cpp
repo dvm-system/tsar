@@ -277,7 +277,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
           return;
         auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
         assert(LpStmt && "IR-level description of a looop must not be null!");
-        for (auto &Var : LpStmt->getTraits().get<trait::Private>()) {
+        auto process = [L, &APCCtx, &toMessages](auto &Var) {
           if (Var.get<MD>())
             if (auto *APCArray{APCCtx.findArray(Var.get<MD>()->getAsMDNode())};
                 APCArray && !APCArray->IsNotDistribute()) {
@@ -292,7 +292,11 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
                          L"a parallelizable loop");
               APCArray->SetDistributeFlag(Distribution::SPF_PRIV);
             }
-        }
+        };
+        for (auto &Var : LpStmt->getTraits().get<trait::Private>())
+          process(Var);
+        for (auto &Var : LpStmt->getTraits().get<trait::Local>())
+          process(Var);
       });
   return false;
 }

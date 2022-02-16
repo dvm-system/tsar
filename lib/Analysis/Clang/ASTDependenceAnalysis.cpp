@@ -164,6 +164,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           getErrorInfo(tsar::diag::note_parallel_localize_private_unable)};
       if (!mASTVars.localize(TS, mASTToClient, mDIMemoryMatcher,
                              mDependenceInfo.get<trait::Private>(),
+                             mDependenceInfo.get<trait::Local>(),
                              !IgnoreRedundant
                                  ? &std::get<SortedVarMultiListT>(Status)
                                  : nullptr) &&
@@ -196,6 +197,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           getErrorInfo(tsar::diag::note_parallel_localize_reduction_unable)};
       if (!mASTVars.localize(
               **I, *TS.getNode(), mASTToClient, mDIMemoryMatcher, ReductionList,
+              mDependenceInfo.get<trait::Local>(),
               !IgnoreRedundant ? &std::get<SortedVarMultiListT>(NotLocalized)
                                : nullptr) &&
           !IgnoreRedundant)
@@ -213,7 +215,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
           }
         } else if (!mASTVars.localize(
                        **I, *TS.getNode(), mASTToClient, mDIMemoryMatcher,
-                       ReductionList,
+                       ReductionList, mDependenceInfo.get<trait::Local>(),
                        !IgnoreRedundant
                            ? &std::get<SortedVarMultiListT>(NotLocalized)
                            : nullptr) &&
@@ -266,6 +268,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
             getErrorInfo(tsar::diag::note_parallel_localize_private_unable)};
         if (!mASTVars.localize(TS, mASTToClient, mDIMemoryMatcher,
                                mDependenceInfo.get<trait::LastPrivate>(),
+                               mDependenceInfo.get<trait::Local>(),
                                !IgnoreRedundant
                                    ? &std::get<SortedVarMultiListT>(Status)
                                    : nullptr) &&
@@ -277,6 +280,7 @@ bool ClangDependenceAnalyzer::evaluateDependency() {
             getErrorInfo(tsar::diag::note_parallel_localize_private_unable)};
         if (!mASTVars.localize(TS, mASTToClient, mDIMemoryMatcher,
                                mDependenceInfo.get<trait::FirstPrivate>(),
+                               mDependenceInfo.get<trait::Local>(),
                                !IgnoreRedundant
                                    ? &std::get<SortedVarMultiListT>(Status)
                                    : nullptr) &&
@@ -347,13 +351,13 @@ bool ClangDependenceAnalyzer::evaluateDefUse(SortedVarMultiListT *Errors) {
   if (!Errors)
     Errors = &Stub;
   for (auto *TS : mInToLocalize)
-    IsOk &=
-        mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
-                          mDependenceInfo.get<trait::ReadOccurred>(), Errors);
+    IsOk &= mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
+                              mDependenceInfo.get<trait::ReadOccurred>(),
+                              mDependenceInfo.get<trait::Local>(), Errors);
   for (auto *TS : mOutToLocalize)
-    IsOk &=
-        mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
-                          mDependenceInfo.get<trait::WriteOccurred>(), Errors);
+    IsOk &= mASTVars.localize(*TS, mASTToClient, mDIMemoryMatcher,
+                              mDependenceInfo.get<trait::WriteOccurred>(),
+                              mDependenceInfo.get<trait::Local>(), Errors);
   mDependenceInfo.get<trait::ReadOccurred>().insert(
       mDependenceInfo.get<trait::FirstPrivate>().begin(),
       mDependenceInfo.get<trait::FirstPrivate>().end());
