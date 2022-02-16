@@ -91,52 +91,58 @@ bool APCClangDiagnosticPrinter::runOnModule(llvm::Module &M) {
     }
     auto &SrcMgr{TfmCtx->getRewriter().getSourceMgr()};
     auto &FileMgr{SrcMgr.getFileManager()};
-    for (auto &&[File, Diags] : APCCtx.mImpl->Diags) {
-      if (VisitedFiles.count(File))
+    SmallVector<const FileEntry *, 32> FEs;
+    FileMgr.GetUniqueIDMapping(FEs);
+    for (auto *FE : FEs) {
+      SmallString<128> PathToFile{FE->getName()};
+      FileMgr.makeAbsolutePath(PathToFile);
+      if (VisitedFiles.count(PathToFile))
         continue;
-      if (auto FileRef{FileMgr.getOptionalFileRef(File)}) {
-        VisitedFiles.insert(File);
-        auto DiagIDs{SrcMgr.getDiagnostics().getDiagnosticIDs()};
-        for (auto &Msg : Diags) {
-          SourceLocation Loc;
-          std::pair<unsigned, unsigned> RawLoc;
-          bcl::restoreShrinkedPair(Msg.line, RawLoc.first, RawLoc.second);
-          if (RawLoc.first == 0) {
-            Loc = SrcMgr.getLocForStartOfFile(
-                SrcMgr.translateFile(&FileRef->getFileEntry()));
-          } else {
-            // Line and column have to start from 1, so if we do not know column
-            // just point to the line beginning.
-            if (RawLoc.second == 0)
-              ++RawLoc.second;
-            Loc = SrcMgr.translateFileLineCol(&FileRef->getFileEntry(),
-                                              RawLoc.first, RawLoc.second);
-          }
-          SmallString<256> Str;
-          messageToString(Msg, Str);
-          Str += " (";
-          Twine(Msg.group).toVector(Str);
-          Str += ")";
-          unsigned CustomId{0};
-          switch (Msg.type) {
-          default:
-            llvm_unreachable("Unsupported diagnostic kind!");
-          case ERROR:
-            WasError = true;
-            CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Error, Str);
-            break;
-          case WARR:
-            CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Warning, Str);
-            break;
-          case NOTE:
-            CustomId =
-                DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Remark, Str);
-            break;
-          }
-          SrcMgr.getDiagnostics().Report(Loc, CustomId);
+      auto DiagsItr{APCCtx.mImpl->Diags.find(PathToFile.str().str())};
+      if (DiagsItr == APCCtx.mImpl->Diags.end())
+        continue;
+      auto FID{SrcMgr.translateFile(FE)};
+      if (FID.isInvalid())
+        continue;
+      VisitedFiles.insert(DiagsItr->first);
+      auto &Diags{DiagsItr->second};
+      auto DiagIDs{SrcMgr.getDiagnostics().getDiagnosticIDs()};
+      for (auto &Msg : Diags) {
+        SourceLocation Loc;
+        std::pair<unsigned, unsigned> RawLoc;
+        bcl::restoreShrinkedPair(Msg.line, RawLoc.first, RawLoc.second);
+        if (RawLoc.first == 0) {
+          Loc = SrcMgr.getLocForStartOfFile(FID);
+        } else {
+          // Line and column have to start from 1, so if we do not know column
+          // just point to the line beginning.
+          if (RawLoc.second == 0)
+            ++RawLoc.second;
+          Loc = SrcMgr.translateLineCol(FID, RawLoc.first, RawLoc.second);
         }
+        SmallString<256> Str;
+        messageToString(Msg, Str);
+        Str += " (";
+        Twine(Msg.group).toVector(Str);
+        Str += ")";
+        unsigned CustomId{0};
+        switch (Msg.type) {
+        default:
+          llvm_unreachable("Unsupported diagnostic kind!");
+        case ERROR:
+          WasError = true;
+          CustomId = DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Error, Str);
+          break;
+        case WARR:
+          CustomId =
+              DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Warning, Str);
+          break;
+        case NOTE:
+          CustomId =
+              DiagIDs->getCustomDiagID(clang::DiagnosticIDs::Remark, Str);
+          break;
+        }
+        SrcMgr.getDiagnostics().Report(Loc, CustomId);
       }
     }
   }
