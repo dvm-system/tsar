@@ -212,7 +212,7 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
             LLVM_DEBUG(
                 dbgs() << "[APC DISTRIBUTION LIMITS]: disable distribution of "
                        << APCArray->GetName() << " (intrinsic) ";
-                I.print(dbgs()); dbgs() << "\n");  std::wstring MsgEn, MsgRu;
+                I.print(dbgs()); dbgs() << "\n");
             toMessages(
                 I.getDebugLoc(), *APCArray,
                 L"disable distribution of '%s': unsupported memory access");
@@ -278,8 +278,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
         auto *LpStmt{cast<apc::LoopStatement>(APCLoop->loop)};
         assert(LpStmt && "IR-level description of a looop must not be null!");
         auto process = [L, &APCCtx, &toMessages](auto &Var) {
-          if (Var.get<MD>())
-            if (auto *APCArray{APCCtx.findArray(Var.get<MD>()->getAsMDNode())};
+          if (Var.template get<MD>())
+            if (auto *APCArray{
+                    APCCtx.findArray(Var.template get<MD>()->getAsMDNode())};
                 APCArray && !APCArray->IsNotDistribute()) {
               LLVM_DEBUG(
                   dbgs()
