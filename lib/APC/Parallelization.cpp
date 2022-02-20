@@ -1044,6 +1044,12 @@ bool APCParallelizationPass::runOnModule(Module &M) {
                                  APCCtx.mImpl->Diags);
     for (auto &Access : *DIArrayInfo)
       collectArrayAccessInfo(M, Access, APCCtx, AccessPool, Files, ArrayIds);
+    for (auto &Info : Files) {
+      auto &Msgs{getObjectForFileFromMap(Info.getKey().str().c_str(),
+                                         APCCtx.mImpl->Diags)};
+      for (auto &&[Loc, L] : Info.second.get<apc::LoopGraph>())
+        L->addConflictMessages(&Msgs);
+    }
     // A stub variable which is not used at this moment.
     std::map<PFIKeyT, apc::Array *> CreatedArrays;
     buildDataDistributionGraph(Regions, FormalToActual, ArrayRWs, FileToLoop,
