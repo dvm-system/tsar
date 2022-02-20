@@ -42,9 +42,17 @@
 #include <clang/AST/ParentMapContext.h>
 #include <llvm/Frontend/OpenMP/OMPConstants.h>
 
-using namespace clang;
 using namespace llvm;
 using namespace tsar;
+
+using clang::ASTContext;
+using clang::CompoundStmt;
+using clang::ForStmt;
+using clang::LangOptions;
+using clang::SourceLocation;
+using clang::SourceManager;
+using clang::Stmt;
+using clang::Token;
 
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-openmp-parallel"
@@ -580,7 +588,7 @@ static SourceLocation getLoopEnd(Stmt *S, const SourceManager &SrcMgr,
                                  const LangOptions &LangOpts) {
   Token Tok;
   return (!getRawTokenAfter(S->getEndLoc(), SrcMgr, LangOpts, Tok) &&
-          Tok.is(tok::semi))
+          Tok.is(clang::tok::semi))
              ? Tok.getLocation()
              : S->getEndLoc();
 }
