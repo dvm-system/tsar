@@ -26,6 +26,7 @@
 
 #include "AstWrapperImpl.h"
 #include "tsar/Analysis/AnalysisServer.h"
+#include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Clang/DIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/ClonedDIMemoryMatcher.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
@@ -106,6 +107,8 @@ void APCArrayInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool APCArrayInfoPass::runOnFunction(Function &Func) {
   releaseMemory();
+  if (hasFnAttr(Func, AttrKind::LibFunc))
+    return false;
   auto *F = &Func;
   auto *DI = &getAnalysis<DelinearizationPass>().getDelinearizeInfo();
   auto *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
@@ -149,6 +152,8 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       }
     }
   }
+  if (hasFnAttr(*F, AttrKind::LibFunc))
+    return false;
   auto &DL = F->getParent()->getDataLayout();
   auto &APCCtx = getAnalysis<APCContextWrapper>().get();
   for (auto *A: DI->getArrays()) {
