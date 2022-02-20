@@ -5,6 +5,8 @@ set(TSAR_LLVM_VERSION @LLVM_VERSION@)
 
 set(TSAR_ENABLE_FORTRAN "@FLANG_FOUND@")
 
+set(TSAR_ENABLE_APC "@APC_FOUND@")
+
 set(TSAR_INCLUDE_SUFFIX "@TSAR_INCLUDE_PATH@")
 
 # Set list of extenal tools, such as clang or llvm-link, available
