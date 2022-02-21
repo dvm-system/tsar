@@ -1,4 +1,4 @@
-set(APC_SOURCES Passes.cpp APCContext.cpp Utils.cpp LoopInfoBase.cpp
+set(APC_SOURCES Passes.cpp APCContext.cpp Utils.cpp LoopInfo.cpp
   ArrayInfo.cpp FunctionInfo.cpp Parallelization.cpp ClangDVMHWriter.cpp
   DistributionLimits.cpp DirectivesCollector.cpp DiagnosticPrinter.cpp)
 

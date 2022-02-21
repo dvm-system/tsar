@@ -36,7 +36,6 @@
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
-#include "tsar/Core/Query.h"
 #include "tsar/Support/Diagnostic.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/NumericUtils.h"
@@ -74,24 +73,21 @@ public:
 
 private:
   std::vector<apc::Array *> mArrays;
-  bool mMultipleLaunch = false;
 };
 }
 
 char APCArrayInfoPass::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(APCArrayInfoPass, "apc-array-info",
-  "Array Collector (APC)", true, true,
-  DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_BEGIN(APCArrayInfoPass, "apc-array-info",
+  "Array Collector (APC)", true, true)
   INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
   INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
   INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
-INITIALIZE_PASS_IN_GROUP_END(APCArrayInfoPass, "apc-array-info",
-  "Array Collector (APC)", true, true,
-  DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_END(APCArrayInfoPass, "apc-array-info",
+  "Array Collector (APC)", true, true)
 
 FunctionPass * llvm::createAPCArrayInfoPass() { return new APCArrayInfoPass; }
 
@@ -249,10 +245,6 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
     Var.get<MD>() = &ClientDIEM;
     if (auto *A{APCCtx.findArray(ClientRawDIM)}) {
       auto S{A->GetDeclSymbol()};
-      // This pass may be executed in analysis mode. It depends on -print-only
-      // and -print-step options. In case of parallelization pass manager must
-      // invokes this pass only once for each function.
-      mMultipleLaunch |= S->getVariable(&Func).hasValue();
       S->addRedeclaration(std::move(Var));
       continue;
     }
@@ -267,7 +259,6 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
       llvm_unreachable("Unable to add new array to an APC context!");
       delete APCArray;
       mArrays.push_back(APCCtx.findArray(ClientRawDIM));
-      mMultipleLaunch = true;
       continue;
     }
     mArrays.push_back(APCArray);
@@ -289,9 +280,6 @@ bool APCArrayInfoPass::runOnFunction(Function &Func) {
 }
 
 void APCArrayInfoPass::print(raw_ostream &OS, const Module *M) const {
-  if (mMultipleLaunch)
-    OS << "warning: possible multiple launches of the pass for the same "
-          "function: print merged results\n";
   for (auto *A : mArrays) {
     OS << format("%s [short=%s, unique=%s, id=%d]\n", A->GetName().c_str(),
       A->GetShortName().c_str(), A->GetArrayUniqKey().c_str(), A->GetId());

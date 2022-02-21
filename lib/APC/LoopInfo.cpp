@@ -1,4 +1,4 @@
-//===---- LoopInfoBase.cpp ----- APC Loop Graph Builder  --------*- C++ -*-===//
+//===---- LoopInfo.cpp ----- APC Loop Graph Builder  --------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -44,7 +44,6 @@
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
 #include "tsar/APC/Utils.h"
-#include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/NumericUtils.h"
@@ -68,7 +67,7 @@ using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "apc-loop-base"
+#define DEBUG_TYPE "apc-loop-info"
 
 namespace {
 class APCLoopInfoBasePass : public FunctionPass, private bcl::Uncopyable {
@@ -138,9 +137,8 @@ private:
 
 char APCLoopInfoBasePass::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
-  "Loop Graph Builder (APC)", true, true,
-  DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
+  "Loop Graph Builder (APC)", true, true)
   INITIALIZE_PASS_DEPENDENCY(AnalysisSocketImmutableWrapper)
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
@@ -155,9 +153,8 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCLoopInfoBasePass, "apc-loop-info",
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(ParallelLoopPass)
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_IN_GROUP_END(APCLoopInfoBasePass, "apc-loop-info",
-  "Loop Graph Builder (APC)", true, true,
-    DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_END(APCLoopInfoBasePass, "apc-loop-info",
+  "Loop Graph Builder (APC)", true, true)
 
 FunctionPass * llvm::createAPCLoopInfoBasePass() {
   return new APCLoopInfoBasePass;

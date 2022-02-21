@@ -31,7 +31,6 @@
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
-#include "tsar/Core/Query.h"
 #include "tsar/Support/Diagnostic.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Utils.h"
@@ -57,16 +56,6 @@ namespace {
 using APCFunctionInfoPassProvider =
     FunctionPassAAProvider<DIEstimateMemoryPass, EstimateMemoryPass,
                            DominatorTreeWrapperPass, AAResultsWrapperPass>;
-
-class APCFunctionInfoPassInfo final : public PassGroupInfo {
-  bool isNecessaryPass(llvm::AnalysisID ID) const override {
-    static llvm::AnalysisID Passes[] = {
-      getPassIDAndErase(createAPCLoopInfoBasePass()),
-      getPassIDAndErase(createAPCArrayInfoPass()),
-    };
-    return count(Passes, ID);
-  }
-};
 
 class APCFunctionInfoPass: public ModulePass, private bcl::Uncopyable {
 public:
@@ -137,10 +126,8 @@ char APCFunctionInfoPass::ID = 0;
 INITIALIZE_PROVIDER(APCFunctionInfoPassProvider, "apc-function-info-provider",
   "Function Collector (APC, Provider")
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
-  "Function Collector (APC)", true, true,
-  DefaultQueryManager::PrintPassGroup::getPassRegistry())
-  INITIALIZE_PASS_IN_GROUP_INFO(APCFunctionInfoPassInfo);
+INITIALIZE_PASS_BEGIN(APCFunctionInfoPass, "apc-function-info",
+  "Function Collector (APC)", true, true)
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(DIMemoryEnvironmentWrapper)
   INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
@@ -151,9 +138,8 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(APCFunctionInfoPass, "apc-function-info",
   INITIALIZE_PASS_DEPENDENCY(APCContextWrapper)
   INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
   INITIALIZE_PASS_DEPENDENCY(APCFunctionInfoPassProvider)
-INITIALIZE_PASS_IN_GROUP_END(APCFunctionInfoPass, "apc-function-info",
-  "Function Collector (APC)", true, true,
-  DefaultQueryManager::PrintPassGroup::getPassRegistry())
+INITIALIZE_PASS_END(APCFunctionInfoPass, "apc-function-info",
+  "Function Collector (APC)", true, true)
 
 ModulePass * llvm::createAPCFunctionInfoPass() {
   return new APCFunctionInfoPass;
@@ -195,13 +181,6 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
       continue;
     auto Pair = registerFunction(const_cast<Function &>(*Caller.first), APCCtx);
     mFunctions.push_back(Pair.first);
-    if (!Pair.second) {
-      // This pass may be executed in analysis mode. It depends on -print-only
-      // and -print-step options. In case of parallelization pass manager must
-      // invokes this pass only once for each function.
-      mMultipleLaunch = true;
-      continue;
-    }
     auto &FI = *Pair.first;
     auto DIFunc = Caller.first->getSubprogram();
     /// TODO (kaniandr@gmail.com): should we emit warning or error if filename
@@ -382,9 +361,6 @@ bool APCFunctionInfoPass::runOnModule(Module &M) {
 }
 
 void APCFunctionInfoPass::print(raw_ostream &OS, const Module *M) const {
-  if (mMultipleLaunch)
-    OS << "warning: possible multiple launches of the pass for the same "
-          "module: print merged results\n";
   auto printParams = [&OS](const apc::FuncParam &Params, const Twine &Prefix) {
     for (std::size_t I = 0, EI = Params.countOfPars; I < EI; ++I) {
       OS << Prefix << "idx: " << I << "\n";
