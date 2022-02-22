@@ -53,7 +53,7 @@ using namespace tsar;
 using namespace tsar::dvmh;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-dvmh-parallel"
+#define DEBUG_TYPE "clang-dvmh-ipo"
 
 namespace {
 using DVMHDataTransferIPOPassProvider = FunctionPassAAProvider<
@@ -550,21 +550,21 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
   assert(!Level.is<Function *>() ||
          mReplacementFor.empty() && "Replacement stack must be empty!");
   mReplacementFor.emplace_back();
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: add to replacement stack ("
                     << mReplacementFor.size() << ")\n");
   if (Level.is<Function *>()) {
-    LLVM_DEBUG(dbgs() << "[DVMH SM]: process function "
+    LLVM_DEBUG(dbgs() << "[DVMH IPO]: process function "
                       << Level.get<Function *>()->getName() << "\n");
     mToActual.clear();
     mToGetActual.clear();
     mDistinctMemory.clear();
     auto RF{mSocket->getAnalysis<DIEstimateMemoryPass>(F)};
     if (!RF) {
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: disable IPO due to absence of "
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: disable IPO due to absence of "
                            "metadata-level alias tree for the function"
                         << F.getName() << "\n");
       mReplacementFor.pop_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       ParallelCtx.getIPORoot().invalidate();
       return false;
@@ -572,7 +572,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
     SmallVector<BasicBlock *, 8> OutermostBlocks;
     if (!OptimizeChildren) {
       mReplacementFor.emplace_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: add to replacement stack ("
                         << mReplacementFor.size() << ")\n");
     } else {
       assert(IPOInfoItr != mIPOMap.end() && "Function must not be optimized!");
@@ -606,7 +606,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
         collectForIPO(mIPOToGetActual, mToGetActual);
       }
       mReplacementFor.emplace_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: add to replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: add to replacement stack ("
                         << mReplacementFor.size() << ")\n");
       auto &ServerDIAT{RF->value<DIEstimateMemoryPass *>()->getAliasTree()};
       for (auto &DIM :
@@ -657,7 +657,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
     }
     if (mToActual.empty() && mToGetActual.empty()) {
       LLVM_DEBUG(if (!OptimizeChildren) dbgs()
-                 << "[DVMH SM]: optimize region boundary function "
+                 << "[DVMH IPO]: optimize region boundary function "
                  << F.getName() << "\n");
       // If the  current function is outside optimization regions
       // (OptimizeChildrent == true), we extract actual/get_actual directives
@@ -675,10 +675,10 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
                         Call.second->getFunction(), true);
       }
       mReplacementFor.pop_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       return false;
     }
@@ -690,7 +690,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
         collectInCallees(*BB, !OptimizeAll);
       }
       LLVM_DEBUG(
-          dbgs() << "[DVMH SM]: number of directives to replace at a level "
+          dbgs() << "[DVMH IPO]: number of directives to replace at a level "
                  << mReplacementFor.size() << " is "
                  << mReplacementFor.back().get<Sibling>().size() << "\n");
     return true;
@@ -740,7 +740,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
         collectInCallees(*BB, !NeedToOptimize);
     }
   }
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: number of directives to replace at a level "
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: number of directives to replace at a level "
                     << mReplacementFor.size() << " is "
                     << mReplacementFor.back().get<Sibling>().size() << "\n");
   return true;
@@ -749,7 +749,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalIn(
 bool DVMHDataTransferIPOPass::optimizeGlobalOut(
     PointerUnion<Loop *, Function *> Level,
     const DVMHDataTransferIPOPassProvider &Provider) {
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: global optimization, visit level upward\n");
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: global optimization, visit level upward\n");
   auto &ParallelCtx{getAnalysis<DVMHParallelizationContext>()};
   auto &F{Level.is<Function *>()
               ? *Level.get<Function *>()
@@ -1011,7 +1011,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
           });
     }
   };
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: optimize level " << mReplacementFor.size()
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: optimize level " << mReplacementFor.size()
                     << "\n");
   // Normalize replacement level numbers which specify replacement levels which
   // depends on corresponding memory locations.
@@ -1023,15 +1023,15 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
         std::min<unsigned>(Data.get<Hierarchy>(), mReplacementFor.size() - 1);
   SmallVector<ParallelItem *, 2> ConservativeReplacements;
   if (Level.is<Function *>()) {
-    LLVM_DEBUG(dbgs() << "[DVMH SM]: finalize function "
+    LLVM_DEBUG(dbgs() << "[DVMH IPO]: finalize function "
                       << Level.get<Function *>()->getName() << "\n");
     LLVM_DEBUG(
-      dbgs() << "[DVMH SM]: local actual: ";
+      dbgs() << "[DVMH IPO]: local actual: ";
       for (auto &Data : mToActual)
         for (auto &Var : Data.template get<VariableT>())
           dbgs() << Var.get<AST>()->getName() << " ";
       dbgs() << "\n";
-      dbgs() << "[DVMH SM]: local get_actual: ";
+      dbgs() << "[DVMH IPO]: local get_actual: ";
       for (auto &Data : mToGetActual)
         for (auto &Var : Data.template get<VariableT>())
           dbgs() << Var.get<AST>()->getName() << " ";
@@ -1040,10 +1040,10 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
     if (!needToOptimize(*Level.get<Function *>()).first) {
       for (auto *PL: mReplacementFor.back().get<Sibling>())
         PL->finalize();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       mReplacementFor.pop_back();
       return false;
@@ -1136,7 +1136,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       for (auto *PL: mReplacementFor.back().get<Sibling>())
         PL->finalize();
       mReplacementFor.pop_back();
-      LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+      LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                         << mReplacementFor.size() << ")\n");
       return true;
     }
@@ -1183,9 +1183,9 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       processBB(*BB);
   }
   LLVM_DEBUG(
-      dbgs() << "[DVMH SM]: number of directives to optimize this level is "
+      dbgs() << "[DVMH IPO]: number of directives to optimize this level is "
              << mReplacementFor.back().get<Sibling>().size() << "\n");
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: size of replacement target is "
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: size of replacement target is "
                     << mReplacementFor.back().get<Hierarchy>().size() << "\n");
   // Update replacement relation after all inner levels have benn processed.
   for (auto *PL : mReplacementFor.back().get<Sibling>())
@@ -1193,7 +1193,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       PL->child_insert(ToReplace);
       ToReplace->parent_insert(PL);
     }
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: conservative replacement size is "
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: conservative replacement size is "
                     << ConservativeReplacements.size() << "\n");
   // The created directives are necessary to remove optimized ones. So, we
   // update replacement relation.
@@ -1203,7 +1203,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       ToReplace->parent_insert(PL);
     }
   mReplacementFor.pop_back();
-  LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+  LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                     << mReplacementFor.size() << ")\n");
   if (!Level.is<Function *>()) {
     for (auto *ToReplace : ConservativeReplacements)
@@ -1226,7 +1226,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       }
     }
     mReplacementFor.pop_back();
-    LLVM_DEBUG(dbgs() << "[DVMH SM]: extract from replacement stack ("
+    LLVM_DEBUG(dbgs() << "[DVMH IPO]: extract from replacement stack ("
                       << mReplacementFor.size() << ")\n");
   }
   return true;
