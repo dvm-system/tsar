@@ -62,9 +62,12 @@
 using namespace llvm;
 using namespace tsar;
 
+#define LLVM_DEBUG(X) X
+
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-remove-redarray"
 #define DEBUG_PREFIX "[REMOVE REDARRAY]: "
+
 
 namespace {
 class ClangRemoveRedarray : public FunctionPass, private bcl::Uncopyable {
@@ -313,6 +316,7 @@ public:
   }
 
   bool TraverseStmt(clang::Stmt *S) {
+	  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "launch remove_redarray\n");
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
     switch (mStatus) {
@@ -544,8 +548,8 @@ public:
       auto [SizeLiteral, SizeStmt] = mSwaps[1];
       auto IndexName = mIndex->getName();
 //      std::string CaseBody = mRewriter.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
-      std::string switchText = "switch (" + IndexName + ") {\n";
-      for (int i = 0; i < std::stoi(SizeLiteral->getString.str()); i++) {
+      std::string switchText = "switch (" + IndexName.str() + ") {\n";
+      for (int i = 0; i < std::stoi(SizeLiteral->getString().str()); i++) {
         ExternalRewriter Canvas(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()), mSrcMgr, mLangOpts);
         auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue();
         auto [ArrayLiteral, ArrayStmt] = mSwaps[0];
@@ -554,7 +558,7 @@ public:
         for (auto Subscr: mArraySubscriptExpr) {
           Canvas.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), ArrName + std::to_string(i));
         }
-        std::string caseBody = Canvas.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()));
+        std::string caseBody = Canvas.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc())).str();
         switchText += "case " + std::to_string(i) + ":\n" + caseBody + "\nbreak;\n";
       }
       switchText += "}";
@@ -725,6 +729,9 @@ private:
 } // namespace
 
 bool ClangRemoveRedarray::runOnFunction(Function &F) {
+
+	dbgs() << DEBUG_PREFIX << "launch remove_redarray\n";
+
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
