@@ -90,11 +90,14 @@ class ClangRemoveRedarrayInfo final : public tsar::PassGroupInfo {
 
 void ClangRemoveRedarrayInfo::addBeforePass(
     legacy::PassManager &Passes) const {
+	dbgs() << DEBUG_PREFIX << "launch before_pass remove_redarray\n";
   addImmutableAliasAnalysis(Passes);
   addInitialTransformations(Passes);
   Passes.add(createAnalysisSocketImmutableStorage());
   Passes.add(createDIMemoryTraitPoolStorage());
   Passes.add(createDIMemoryEnvironmentStorage());
+  Passes.add(createGlobalsAccessStorage());
+  Passes.add(createGlobalsAccessCollector());
   Passes.add(createDIEstimateMemoryPass());
   Passes.add(createDIMemoryAnalysisServer());
   Passes.add(createAnalysisWaitServerPass());
@@ -108,7 +111,8 @@ void ClangRemoveRedarrayInfo::addAfterPass(legacy::PassManager &Passes) const {
 }
 
 void ClangRemoveRedarray::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<AnalysisSocketImmutableWrapper>();
+	dbgs() << DEBUG_PREFIX << "launch getAnalysisUsage remove_redarray\n";
+  //AU.addRequired<AnalysisSocketImmutableWrapper>();
   AU.addRequired<CanonicalLoopPass>();
   AU.addRequired<ClangDIMemoryMatcherPass>();
   AU.addRequired<ClangPerfectLoopPass>();
@@ -120,7 +124,8 @@ void ClangRemoveRedarray::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
-  AU.setPreservesAll();
+  //AU.setPreservesAll();
+  dbgs() << DEBUG_PREFIX << "end getAnalysisUsage remove_redarray\n";
 }
 
 char ClangRemoveRedarray::ID = 0;
@@ -129,12 +134,13 @@ INITIALIZE_PASS_IN_GROUP_BEGIN(ClangRemoveRedarray, "clang-remove-redarray",
                                "Remove Redarray (Clang)", false, false,
                                TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_IN_GROUP_INFO(ClangRemoveRedarrayInfo)
-INITIALIZE_PASS_DEPENDENCY(AnalysisClientServerMatcherWrapper)
+//INITIALIZE_PASS_DEPENDENCY(AnalysisClientServerMatcherWrapper)
 INITIALIZE_PASS_DEPENDENCY(CanonicalLoopPass)
+INITIALIZE_PASS_DEPENDENCY(ClangPerfectLoopPass)
 INITIALIZE_PASS_DEPENDENCY(ClangDIMemoryMatcherPass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
-INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
+//INITIALIZE_PASS_DEPENDENCY(ClonedDIMemoryMatcherWrapper)
+//INITIALIZE_PASS_DEPENDENCY(DIDependencyAnalysisPass)
 INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
@@ -284,13 +290,15 @@ public:
   // }
 
   bool TraverseVarDecl(clang::VarDecl *VD) {
+	  dbgs() << DEBUG_PREFIX << "launch VarDecl remove_redarray\n";
     if (mStatus == FIND_INDEX) {
       mIndex = VD;
     }
-    return RecursiveASTVisitor::TraverseDecl(VD);
+    return RecursiveASTVisitor::TraverseVarDecl(VD);
   }
 
   bool TraverseDecl(clang::Decl *D) {
+	dbgs() << DEBUG_PREFIX << "launch Decl remove_redarray\n";
     if (!D)
       return RecursiveASTVisitor::TraverseDecl(D);
     if (mStatus == TRAVERSE_STMT) {
@@ -302,6 +310,7 @@ public:
   }
 
   bool TraverseBinaryOperator(clang::BinaryOperator * B) {
+	  dbgs() << DEBUG_PREFIX << "launch BinaryOperator remove_redarray\n";
     if (mStatus != GET_ALL_ARRAY_SUBSCRIPTS) {
       return RecursiveASTVisitor::TraverseBinaryOperator(B);
     }
@@ -309,6 +318,7 @@ public:
   }
 
   bool TraverseUnaryOperator(clang::UnaryOperator *U) {
+	  dbgs() << DEBUG_PREFIX << "launch UnaryOperator remove_redarray\n";
     if (mStatus != GET_ALL_ARRAY_SUBSCRIPTS) {
       return RecursiveASTVisitor::TraverseUnaryOperator(U);
     }
@@ -316,7 +326,7 @@ public:
   }
 
   bool TraverseStmt(clang::Stmt *S) {
-	  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "launch remove_redarray\n");
+	  dbgs() << DEBUG_PREFIX << "launch Stmt remove_redarray\n";
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
     switch (mStatus) {
@@ -730,30 +740,37 @@ private:
 
 bool ClangRemoveRedarray::runOnFunction(Function &F) {
 
-	dbgs() << DEBUG_PREFIX << "launch remove_redarray\n";
+	dbgs() << DEBUG_PREFIX << "launch runOnFunction remove_redarray\n";
 
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
+  dbgs() << DEBUG_PREFIX << "DISub initialized runOnFunction remove_redarray\n";
   auto *CU{DISub->getUnit()};
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;
+  dbgs() << DEBUG_PREFIX << "getSourceLanguage runOnFunction remove_redarray\n";
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  dbgs() << DEBUG_PREFIX << "getAnalysis runOnFunction remove_redarray\n";
   auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                              TfmInfo->getContext(*CU))
                        : nullptr};
+  dbgs() << DEBUG_PREFIX << "TfmInfo ClangTransformationContext runOnFunction remove_redarray\n";
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     F.getContext().emitError("can not transform sources"
                               ": transformation context is not available");
     return false;
   }
+  dbgs() << DEBUG_PREFIX << "TfmCtx runOnFunction remove_redarray\n";
   auto *FD{TfmCtx->getDeclForMangledName(F.getName())};
   if (!FD)
     return false;
+  dbgs() << DEBUG_PREFIX << "FD runOnFunction remove_redarray\n";
   ASTImportInfo ImportStub;
   const auto *ImportInfo{&ImportStub};
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
+  dbgs() << DEBUG_PREFIX << "end of runOnFunction remove_redarray\n";
   ClangRemoveRedarrayVisitor(*this, F, TfmCtx, *ImportInfo).TraverseDecl(FD);
   return false;
 }
