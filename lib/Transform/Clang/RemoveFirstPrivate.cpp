@@ -226,6 +226,7 @@ public:
         tmp.lvalName = varName;
         varStack.push(tmp);
         varStack.top().dimensionsNum = getDimensionsNum(qt, varStack.top().default_dimensions);
+        waitingForDimensions = false;
       } else {              // get rvalue
         ValueDecl *vd = Ex -> getDecl();
         QualType qt = vd -> getType();
