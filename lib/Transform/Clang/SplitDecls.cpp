@@ -31,6 +31,9 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
+
+#include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
+
 #include <clang/AST/TypeLoc.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/Type.h>
@@ -41,7 +44,8 @@
 #include <llvm/ADT/SmallString.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/StringSet.h>
-#include "llvm/IR/DebugInfoMetadata.h"
+//#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Debug.h>
@@ -190,6 +194,7 @@ public:
       ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
 
       SourceRange Range(S->getLocation());
+      std::cout << "Range: " << Canvas.getRewrittenText(Range).str() << std::endl;
       varDeclsStarts.push_front(S->getBeginLoc());
       varDeclsEnds.push_front(S->getEndLoc());
       SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
@@ -234,6 +239,13 @@ public:
     return true;
   }
 
+  bool VisitParmVarDecl(ParmVarDecl *S) {
+    std::cout << "is ParmVarDecl" << std::endl;
+    isNotSingleFlag = false;
+    return true;
+  }
+
+
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
       mClauses.clear();
@@ -264,11 +276,17 @@ public:
   DenseSet<DeclStmt*> mMultipleDecls;
   std::deque<SourceLocation> varDeclsStarts;
   std::deque<SourceLocation> varDeclsEnds;
+  std::deque<SourceLocation> starts;
+  std::deque<SourceLocation> ends;
   std::deque<SourceRange> Ranges;
   std::deque<std::string> varDeclsNames;
+  std::deque<std::string> names;
   int varDeclsNum = 0;
+  int varsNum = 0;
   SourceLocation notSingleDeclStart;
   SourceLocation notSingleDeclEnd;
+  SourceLocation DeclStart;
+  SourceLocation DeclEnd;
   SourceRange TypeRange;
   bool SplitDeclarationFlag = false;
   bool isNotSingleFlag = false;
@@ -276,6 +294,7 @@ public:
   bool isFirstVar = true;
   std::string txtStr;
   std::string varDeclType;
+  std::string DeclType;
   SourceLocation start;
 };
 }
