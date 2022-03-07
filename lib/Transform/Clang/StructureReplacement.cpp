@@ -788,8 +788,9 @@ public:
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *Expr) {
-    mLastDeclRef = nullptr;
-    if (!mIsInnermostMember && !mReplacements.inClause(Expr)) {
+    if (mReplacements.inClause(Expr))
+      return true;
+    if (!mIsInnermostMember) {
       auto ND = Expr->getFoundDecl();
       if (mReplacements.Candidates.count(ND)) {
         toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
@@ -798,10 +799,30 @@ public:
           tsar::diag::note_replace_struct_arrow);
         mReplacements.Candidates.erase(ND);
       }
-    } else {
-      mLastDeclRef = Expr;
+     } else {
+      auto ND = Expr->getFoundDecl();
+      auto ReplacementItr = mReplacements.Candidates.find(ND);
+      if (ReplacementItr != mReplacements.Candidates.end())
+        mLastDeclRef = Expr;
     }
     return true;
+  }
+
+  bool TraverseStmt(Stmt *S) {
+    auto Res{RecursiveASTVisitor::TraverseStmt(S)};
+    if (!mIsInnermostMember || !mLastDeclRef || isa<DeclRefExpr>(S))
+      return Res;
+    if (auto *Cast{dyn_cast<ImplicitCastExpr>(S)};
+        Cast && Cast->getCastKind() == CK_LValueToRValue)
+      return Res;
+    auto ND = mLastDeclRef->getFoundDecl();
+    toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
+           tsar::diag::warn_disable_replace_struct);
+    toDiag(mSrcMgr.getDiagnostics(), cast<Expr>(S)->getExprLoc(),
+           tsar::diag::note_replace_struct_arrow);
+    mReplacements.Candidates.erase(ND);
+    mLastDeclRef = nullptr;
+    return Res;
   }
 
   bool TraverseMemberExpr(MemberExpr *Expr) {
@@ -810,27 +831,26 @@ public:
     auto Res = RecursiveASTVisitor::TraverseMemberExpr(Expr);
     if (mIsInnermostMember && mLastDeclRef) {
       auto ND = mLastDeclRef->getFoundDecl();
-      auto ReplacementItr = mReplacements.Candidates.find(ND);
-      if (ReplacementItr != mReplacements.Candidates.end()) {
-        if (!Expr->isArrow()) {
-          toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
-            tsar::diag::warn_disable_replace_struct);
-          toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
-            tsar::diag::note_replace_struct_arrow);
-          mReplacements.Candidates.erase(ReplacementItr);
-        } else if (!checkMacroBoundsAndEmitDiag(
-                       Expr, mReplacements.Definition->getLocation(), mSrcMgr,
-                       mLangOpts)) {
-          mReplacements.Candidates.erase(ReplacementItr);
-        } else {
-          auto Itr = addToReplacement(Expr->getMemberDecl(),
-            ReplacementItr->get<Replacement>());
-          Itr->Ranges.emplace_back(Expr->getSourceRange());
-          Itr->InAssignment |= CurrInAssignment;
-        }
+      if (!Expr->isArrow()) {
+        toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
+               tsar::diag::warn_disable_replace_struct);
+        toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
+               tsar::diag::note_replace_struct_arrow);
+        mReplacements.Candidates.erase(ND);
+      } else if (!checkMacroBoundsAndEmitDiag(
+                     Expr, mReplacements.Definition->getLocation(), mSrcMgr,
+                     mLangOpts)) {
+        mReplacements.Candidates.erase(ND);
+      } else {
+        auto ReplacementItr = mReplacements.Candidates.find(ND);
+        auto Itr = addToReplacement(Expr->getMemberDecl(),
+                                    ReplacementItr->get<Replacement>());
+        Itr->Ranges.emplace_back(Expr->getSourceRange());
+        Itr->InAssignment |= CurrInAssignment;
       }
     }
     mIsInnermostMember = false;
+    mLastDeclRef = nullptr;
     return Res;
   }
 
@@ -853,7 +873,7 @@ private:
   ReplacementMap &mReplacementInfo;
 
   bool mIsInnermostMember = false;
-  DeclRefExpr *mLastDeclRef;
+  DeclRefExpr *mLastDeclRef = nullptr;
   bool mInAssignment = true;
 };
 
