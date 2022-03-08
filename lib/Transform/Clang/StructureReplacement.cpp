@@ -810,10 +810,14 @@ public:
 
   bool TraverseStmt(Stmt *S) {
     auto Res{RecursiveASTVisitor::TraverseStmt(S)};
-    if (!mIsInnermostMember || !mLastDeclRef || isa<DeclRefExpr>(S))
+    if (!mIsInnermostMember || !mLastDeclRef || isa<DeclRefExpr>(S) ||
+        isa<ParenExpr>(S))
       return Res;
     if (auto *Cast{dyn_cast<ImplicitCastExpr>(S)};
         Cast && Cast->getCastKind() == CK_LValueToRValue)
+      return Res;
+    if (auto *Op{dyn_cast<UnaryOperator>(S)};
+        Op && Op->getOpcode() == UnaryOperatorKind::UO_Deref)
       return Res;
     auto ND = mLastDeclRef->getFoundDecl();
     toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
@@ -831,13 +835,7 @@ public:
     auto Res = RecursiveASTVisitor::TraverseMemberExpr(Expr);
     if (mIsInnermostMember && mLastDeclRef) {
       auto ND = mLastDeclRef->getFoundDecl();
-      if (!Expr->isArrow()) {
-        toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
-               tsar::diag::warn_disable_replace_struct);
-        toDiag(mSrcMgr.getDiagnostics(), Expr->getOperatorLoc(),
-               tsar::diag::note_replace_struct_arrow);
-        mReplacements.Candidates.erase(ND);
-      } else if (!checkMacroBoundsAndEmitDiag(
+      if (!checkMacroBoundsAndEmitDiag(
                      Expr, mReplacements.Definition->getLocation(), mSrcMgr,
                      mLangOpts)) {
         mReplacements.Candidates.erase(ND);
