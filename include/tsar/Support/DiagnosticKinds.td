@@ -165,6 +165,7 @@ def warn_disable_replace_struct_no_param : Warning<"unable to replace any variab
 def warn_disable_replace_struct_no_pointer : Warning<"disable replacement of a non-pointer type">;
 def warn_disable_replace_struct_no_struct : Warning<"disable replacement of a non-structure type">;
 def warn_disable_replace_struct_system : Warning<"disable replacement of a non-user defined function">;
+def warn_disable_replace_struct_array_strict : Warning<"diasable strict replacement of a structure-type with array">;
 
 def note_replace_struct_arrow: Note<"not-arrow access prevent replacement">;
 def note_replace_struct_decl: Note<"unable to build declaration of a record member">;
@@ -177,6 +178,7 @@ def remark_replace_struct: Remark<"structure replacement">;
 def warn_replace_call_unable : Warning<"unable to replace call expression">;
 def warn_replace_call_indirect_unable : Warning<"unable to replace indirect call expression">;
 def note_replace_call_no_md : Note<"replacement metadata not found for function %0">;
+def note_replace_call_no_array : Note<"unable to pass pointer to a member of a structure as an array">;
 
 def error_replace_md_missing : Error<"missing replacement metadata">;
 def error_replace_md_target_param_expected : Error<"expected replacement for target parameter">;
