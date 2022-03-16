@@ -24,23 +24,23 @@
 
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
+#include "tsar/Support/MetadataUtils.h"
+#include "tsar/Transform/Clang/Passes.h"
+#include <bcl/utility.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
-#include "tsar/Analysis/Memory/Utils.h"
-#include "tsar/Support/MetadataUtils.h"
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
-#include "tsar/Transform/Clang/Passes.h"
-#include <bcl/utility.h>
-#include <llvm/Pass.h>
 #include <stack>
 
 using namespace clang;
@@ -50,25 +50,25 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-rfp"
 
-static int getDimensionsNum(QualType qt, std::vector<int>& default_dimensions) {
+static int getDimensionsNum(QualType qt, std::vector<int> &default_dimensions) {
   int res = 0;
   bool sizeIsKnown = true;
-  while(1) {
-    if (qt -> isArrayType()) {
-      auto at = qt -> getAsArrayTypeUnsafe();
-      auto t =  dyn_cast_or_null<ConstantArrayType>(at);
+  while (1) {
+    if (qt->isArrayType()) {
+      auto at = qt->getAsArrayTypeUnsafe();
+      auto t = dyn_cast_or_null<ConstantArrayType>(at);
       if (sizeIsKnown && t) { // get size
-        uint64_t dim = t -> getSize().getLimitedValue();
+        uint64_t dim = t->getSize().getLimitedValue();
         default_dimensions.push_back(dim);
       }
-      qt = at -> getElementType();
+      qt = at->getElementType();
       res++;
-    } else if (qt -> isPointerType()) {
-        sizeIsKnown = false;
-        qt = qt -> getPointeeType();
-        res++;
+    } else if (qt->isPointerType()) {
+      sizeIsKnown = false;
+      qt = qt->getPointeeType();
+      res++;
     } else {
-        return res;
+      return res;
     }
   }
 }
@@ -87,26 +87,26 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
-struct vars {                   // contains information about variables in
-  bool rvalIsArray = false;     // initialize clause
+struct vars {               // contains information about variables in
+  bool rvalIsArray = false; // initialize clause
   std::string lvalName;
   std::string rvalName;
   int dimensionsNum;
   std::vector<int> dimensions;
   std::vector<int> default_dimensions;
 };
-}
+} // namespace
 
 char ClangInitialize::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangInitialize, "initialize",
-  "Initialize variables in for", false, false,
-  TransformationQueryManager::getPassRegistry())
+                               "Initialize variables in for", false, false,
+                               TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
 INITIALIZE_PASS_IN_GROUP_END(ClangInitialize, "initialize",
-  "Initialize variables in for", false, false,
-  TransformationQueryManager::getPassRegistry())
+                             "Initialize variables in for", false, false,
+                             TransformationQueryManager::getPassRegistry())
 
 namespace {
 
@@ -117,6 +117,7 @@ class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
 
     Stmt *Scope;
   };
+
 public:
   explicit DeclVisitor(ClangTransformationContext &TfmCtx,
                        const ASTImportInfo &ImportInfo)
@@ -132,7 +133,7 @@ public:
     Pragma P(*S);
 
     if (findClause(P, ClauseId::Initialize, mClauses)) {
-      auto locationForInits = S -> getEndLoc();
+      auto locationForInits = S->getEndLoc();
       isInPragma = true;
       ast = RecursiveASTVisitor::TraverseStmt(S);
       isInPragma = false;
@@ -140,23 +141,24 @@ public:
       std::string txtStr, beforeFor, forBody, lval, rval, indeces;
       std::vector<std::string> inits;
       while (varStack.size()) {
-        if (varStack.top().dimensionsNum) {   // lvalue is array
+        if (varStack.top().dimensionsNum) { // lvalue is array
           if (varStack.top().dimensions.size() < varStack.top().dimensionsNum) {
-            if (varStack.top().default_dimensions.size() == varStack.top().dimensionsNum) {
+            if (varStack.top().default_dimensions.size() ==
+                varStack.top().dimensionsNum) {
               varStack.top().dimensions = varStack.top().default_dimensions;
             } else {
               varStack.pop();
-              continue;         // dimensions ar mandatory for arrays, skip
-            }                   // initialization if no dimensions found
+              continue; // dimensions ar mandatory for arrays, skip
+            }           // initialization if no dimensions found
           }
           forBody = std::string();
           indeces = std::string();
           lval = varStack.top().lvalName;
           rval = varStack.top().rvalName;
           txtStr = std::string();
-          for (std::vector<int>::iterator it = varStack.top().dimensions.begin();
-             it != varStack.top().dimensions.end();
-             it ++) {
+          for (std::vector<int>::iterator it =
+                   varStack.top().dimensions.begin();
+               it != varStack.top().dimensions.end(); it++) {
             int intCounter = it - varStack.top().dimensions.begin();
             std::string strCounter = "i" + std::to_string(intCounter);
             indeces += "[" + strCounter + "]";
@@ -172,8 +174,9 @@ public:
           for (int i = 0; i < varStack.top().dimensionsNum; i++) {
             txtStr += "}\n";
           }
-        } else {  // Initialize non-array variable
-          txtStr = varStack.top().lvalName + " = " + varStack.top().rvalName + ";\n";
+        } else { // Initialize non-array variable
+          txtStr =
+              varStack.top().lvalName + " = " + varStack.top().rvalName + ";\n";
         }
         inits.push_back(txtStr);
         varStack.pop();
@@ -185,13 +188,13 @@ public:
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            tsar::diag::warn_remove_directive_in_macro);
+                 tsar::diag::warn_remove_directive_in_macro);
         else if (IsPossible.second & PragmaFlags::IsInHeader)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            tsar::diag::warn_remove_directive_in_include);
+                 tsar::diag::warn_remove_directive_in_include);
         else
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
-            tsar::diag::warn_remove_directive);
+                 tsar::diag::warn_remove_directive);
       Rewriter::RewriteOptions RemoveEmptyLine;
       /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
       /// set to true then removing (in RewriterBuffer) works incorrect.
@@ -199,7 +202,8 @@ public:
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
 
-      for (std::vector<std::string>::iterator it = inits.begin(); it != inits.end(); ++it) {
+      for (std::vector<std::string>::iterator it = inits.begin();
+           it != inits.end(); ++it) {
         mRewriter.InsertTextAfterToken(locationForInits, *it);
       }
       return ast;
@@ -210,33 +214,34 @@ public:
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
     std::string varName;
     if (isInPragma) {
-      if (waitingForDimensions && curDimensionNum == varStack.top().dimensionsNum) {
+      if (waitingForDimensions &&
+          curDimensionNum == varStack.top().dimensionsNum) {
         waitingForDimensions = false;
         curDimensionNum = 0;
       }
       if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())}) {
-        varName = Var -> getName();
+        varName = Var->getName();
       }
-      if (waitingForVar) {  // get lvalue
-        ValueDecl *vd = Ex -> getDecl();
-        QualType qt = vd -> getType();
+      if (waitingForVar) { // get lvalue
+        ValueDecl *vd = Ex->getDecl();
+        QualType qt = vd->getType();
         vars tmp;
 
         tmp.lvalName = varName;
         varStack.push(tmp);
-        varStack.top().dimensionsNum = getDimensionsNum(qt, varStack.top().default_dimensions);
+        varStack.top().dimensionsNum =
+            getDimensionsNum(qt, varStack.top().default_dimensions);
         waitingForDimensions = false;
-      } else {              // get rvalue
-        ValueDecl *vd = Ex -> getDecl();
-        QualType qt = vd -> getType();
-        if (qt -> isArrayType() || qt -> isPointerType()) {
+      } else { // get rvalue
+        ValueDecl *vd = Ex->getDecl();
+        QualType qt = vd->getType();
+        if (qt->isArrayType() || qt->isPointerType()) {
           varStack.top().rvalIsArray = true;
         }
         varStack.top().rvalName = varName;
         if (varStack.top().dimensionsNum > 0) {
           waitingForDimensions = true;
         }
-
       }
       waitingForVar = !waitingForVar;
     }
@@ -246,17 +251,18 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
     if (isInPragma) {
-      if (waitingForDimensions && curDimensionNum == varStack.top().dimensionsNum) {
+      if (waitingForDimensions &&
+          curDimensionNum == varStack.top().dimensionsNum) {
         waitingForDimensions = false;
         curDimensionNum = 0;
       }
-      int val = IL -> getValue().getLimitedValue();
+      int val = IL->getValue().getLimitedValue();
       if (waitingForDimensions) {
         if (varStack.size()) {
           varStack.top().dimensions.push_back(val);
           curDimensionNum++;
         }
-      } else if (!waitingForVar) {    // get rvalue
+      } else if (!waitingForVar) { // get rvalue
         varStack.top().rvalName = std::to_string(val);
         waitingForVar = !waitingForVar;
         if (varStack.top().dimensionsNum > 0) {
@@ -280,7 +286,7 @@ private:
   bool waitingForVar = true;
   bool waitingForDimensions = false;
   int curDimensionNum = 0;
-  std::vector<Stmt*> mScopes;
+  std::vector<Stmt *> mScopes;
   ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
   Rewriter &mRewriter;
@@ -290,7 +296,7 @@ private:
   SmallVector<Stmt *, 1> mClauses;
   std::stack<vars> varStack;
 };
-}
+} // namespace
 
 bool ClangInitialize::runOnFunction(Function &F) {
   auto *M = F.getParent();
@@ -333,6 +339,4 @@ void ClangInitialize::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
 }
 
-FunctionPass *llvm::createClangInitialize() {
-  return new ClangInitialize();
-}
+FunctionPass *llvm::createClangInitialize() { return new ClangInitialize(); }
