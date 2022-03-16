@@ -88,7 +88,7 @@ public:
   /// (for identifier `A`).
   void visitEK_Identifier(Token &Tok) {
     assert(Tok.is(tok::identifier) && "Token must be an identifier!");
-    // Each identifier 'I' will be replace by (void)(sizeof((long long)(I))).
+    // Each identifier 'I' will be replace by (void)(sizeof(&I)).
     // This construction is necessary to disable warnings for unused expressions
     // (cast to void) and to disable generation of LLVM IR for it (sizeof).
     // Cast to void inside 'sizeof' operator is necessary in case of variable
@@ -99,20 +99,17 @@ public:
     // (void)(sizeof((void)(A))) // This does not produce LLVM IR.
     // However it is forbidden to apply 'sizeof' to the void type in C++,
     // it is also forbidden to apply 'sizeof' to a function type in C++.
-    // So, we use 'long long' instead of 'void'.
+    // It is also forbidden to cast aggregate types to void and arithmetic
+    // types, so the use of ampersand instead of a cast operation allows
+    // using identifier of aggregate types.
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::kw_void, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::kw_sizeof, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::kw_long, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::kw_long, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
-    AddToken(tok::l_paren, Tok.getLocation(), 1, getReplacement());
+    AddToken(tok::amp, Tok.getLocation(), 1, getReplacement());
     getReplacement().push_back(Tok);
-    AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::r_paren, Tok.getLocation(), 1, getReplacement());
     AddToken(tok::semi, Tok.getLocation(), 1, getReplacement());
