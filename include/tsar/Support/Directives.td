@@ -167,8 +167,10 @@ def ReplaceMetadata : Clause<"replace", Metadata,
           One<[
             LBrace,
               ZeroOrOne<[
-                Period, PPIdentifier, Equal, Identifier,
-                ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                ZeroOrOne<[LSquare, RSquare]>,
+                  Period, PPIdentifier, Equal, Identifier,
+                ZeroOrMore<[Comma, ZeroOrOne<[LSquare, RSquare]>,
+                  Period, PPIdentifier, Equal, Identifier]>
               ]>,
             RBrace
           ]>
@@ -179,8 +181,10 @@ def ReplaceMetadata : Clause<"replace", Metadata,
             One<[
               LBrace,
                 ZeroOrOne<[
-                  Period, PPIdentifier, Equal, Identifier,
-                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                  ZeroOrOne<[LSquare, RSquare]>,
+                    Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, ZeroOrOne<[LSquare, RSquare]>,
+                    Period, PPIdentifier, Equal, Identifier]>
                 ]>,
               RBrace
             ]>
@@ -196,8 +200,10 @@ def ReplaceMetadata : Clause<"replace", Metadata,
             One<[
               LBrace,
                 ZeroOrOne<[
-                  Period, PPIdentifier, Equal, Identifier,
-                  ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                  ZeroOrOne<[LSquare, RSquare]>,
+                    Period, PPIdentifier, Equal, Identifier,
+                  ZeroOrMore<[Comma, ZeroOrOne<[LSquare, RSquare]>,
+                    Period, PPIdentifier, Equal, Identifier]>
                 ]>,
               RBrace
             ]>
@@ -208,8 +214,10 @@ def ReplaceMetadata : Clause<"replace", Metadata,
               One<[
                 LBrace,
                   ZeroOrOne<[
-                    Period, PPIdentifier, Equal, Identifier,
-                    ZeroOrMore<[Comma, Period, PPIdentifier, Equal, Identifier]>
+                    ZeroOrOne<[LSquare, RSquare]>,
+                      Period, PPIdentifier, Equal, Identifier,
+                    ZeroOrMore<[Comma, ZeroOrOne<[LSquare, RSquare]>,
+                      Period, PPIdentifier, Equal, Identifier]>
                   ]>,
                 RBrace
               ]>
