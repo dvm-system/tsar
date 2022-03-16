@@ -629,6 +629,8 @@ private:
           toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
                  tsar::diag::warn_disable_replace_struct_no_struct);
         }
+      } else if (auto StructTy = dyn_cast<clang::RecordType>(Ty)) {
+        mCurrFunc->Candidates.try_emplace(PD);
       } else {
         toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
           tsar::diag::warn_disable_replace_struct_no_pointer);
@@ -852,7 +854,8 @@ public:
         Cast && Cast->getCastKind() == CK_LValueToRValue)
       return Res;
     if (auto *Op{dyn_cast<UnaryOperator>(S)};
-        Op && Op->getOpcode() == UnaryOperatorKind::UO_Deref)
+        Op && (Op->getOpcode() == UnaryOperatorKind::UO_Deref ||
+               Op->getOpcode() == UnaryOperatorKind::UO_AddrOf))
       return Res;
     auto ND = mLastDeclRef->getFoundDecl();
     toDiag(mSrcMgr.getDiagnostics(), ND->getBeginLoc(),
@@ -1504,7 +1507,11 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
   Verifier.TraverseDecl(FuncInfo.Definition);
   for (auto &C : FuncInfo.Candidates)
     for (auto &R : C.get<Replacement>())
-      if (isa<clang::ArrayType>(R.Member->getType()))
+      if (isa<ValueDecl>(C.get<NamedDecl>()) &&
+          isa<clang::RecordType>(
+              getCanonicalUnqualifiedType(cast<ValueDecl>(C.get<NamedDecl>()))))
+        R.Flags &= ~Replacement::InAssignment;
+      else if (isa<clang::ArrayType>(R.Member->getType()))
         R.Flags &= ~Replacement::InAssignment;
       else if (FuncInfo.Strict)
         R.Flags |= Replacement::InAssignment;
