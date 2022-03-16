@@ -1,8 +1,8 @@
-//=== RemoveFirstPrivate.cpp - RFP (Clang) --*- C++ -*===//
+//=== Initialize.cpp (Clang) --*- C++ -*===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2022 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass to initialize firstprivate variables.
+// This file implements a pass to initialize arrays and variables.
 //
 //===----------------------------------------------------------------------===//
 
@@ -75,12 +75,12 @@ static int getDimensionsNum(QualType qt, std::vector<int>& default_dimensions) {
 
 namespace {
 
-class ClangRemoveFirstPrivate : public FunctionPass, private bcl::Uncopyable {
+class ClangInitialize : public FunctionPass, private bcl::Uncopyable {
 public:
   static char ID;
 
-  ClangRemoveFirstPrivate() : FunctionPass(ID) {
-    initializeClangRemoveFirstPrivatePass(*PassRegistry::getPassRegistry());
+  ClangInitialize() : FunctionPass(ID) {
+    initializeClangInitializePass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnFunction(Function &F) override;
@@ -88,7 +88,7 @@ public:
 };
 
 struct vars {                   // contains information about variables in
-  bool rvalIsArray = false;     // removefirstprivate clause
+  bool rvalIsArray = false;     // initialize clause
   std::string lvalName;
   std::string rvalName;
   int dimensionsNum;
@@ -97,14 +97,14 @@ struct vars {                   // contains information about variables in
 };
 }
 
-char ClangRemoveFirstPrivate::ID = 0;
+char ClangInitialize::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(ClangRemoveFirstPrivate, "remove-firstprivate",
+INITIALIZE_PASS_IN_GROUP_BEGIN(ClangInitialize, "initialize",
   "Initialize variables in for", false, false,
   TransformationQueryManager::getPassRegistry())
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_IN_GROUP_END(ClangRemoveFirstPrivate, "remove-firstprivate",
+INITIALIZE_PASS_IN_GROUP_END(ClangInitialize, "initialize",
   "Initialize variables in for", false, false,
   TransformationQueryManager::getPassRegistry())
 
@@ -118,12 +118,11 @@ class DeclVisitor : public RecursiveASTVisitor<DeclVisitor> {
     Stmt *Scope;
   };
 public:
-  explicit DeclVisitor(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo,
-      ClangGlobalInfoPass::RawInfo &RawInfo) :
-    mTfmCtx(&TfmCtx), mImportInfo(ImportInfo),
-    mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
-    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-    mLangOpts(mRewriter.getLangOpts()) {}
+  explicit DeclVisitor(ClangTransformationContext &TfmCtx,
+                       const ASTImportInfo &ImportInfo)
+      : mTfmCtx(&TfmCtx), mImportInfo(ImportInfo),
+        mRewriter(TfmCtx.getRewriter()), mContext(TfmCtx.getContext()),
+        mSrcMgr(mRewriter.getSourceMgr()), mLangOpts(mRewriter.getLangOpts()) {}
 
   bool TraverseStmt(Stmt *S) {
     if (!S)
@@ -132,7 +131,7 @@ public:
     bool ast = false;
     Pragma P(*S);
 
-    if (findClause(P, ClauseId::RemoveFirstPrivate, mClauses)) {
+    if (findClause(P, ClauseId::Initialize, mClauses)) {
       auto locationForInits = S -> getEndLoc();
       isInPragma = true;
       ast = RecursiveASTVisitor::TraverseStmt(S);
@@ -268,10 +267,6 @@ public:
     return RecursiveASTVisitor::TraverseIntegerLiteral(IL);
   }
 
-#ifdef LLVM_DEBUG
-// debug info
-#endif
-
 private:
   /// Return current scope.
   Stmt *getScope() {
@@ -285,26 +280,20 @@ private:
   bool waitingForVar = true;
   bool waitingForDimensions = false;
   int curDimensionNum = 0;
-
   std::vector<Stmt*> mScopes;
-
-  TransformationContext *mTfmCtx;
+  ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
-  ClangGlobalInfoPass::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-
   std::stack<vars> varStack;
-
 };
 }
 
-bool ClangRemoveFirstPrivate::runOnFunction(Function &F) {
+bool ClangInitialize::runOnFunction(Function &F) {
   auto *M = F.getParent();
-
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
@@ -322,28 +311,28 @@ bool ClangRemoveFirstPrivate::runOnFunction(Function &F) {
         F.getName() + "' function");
     return false;
   }
-
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
-
   ASTImportInfo ImportStub;
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
+  auto *GI{GIP.getGlobalInfo(TfmCtx)};
+  assert(GI && "Global declaration must be collected!");
+  DeclVisitor Visitor(*TfmCtx, *ImportInfo);
 
-  DeclVisitor Visitor(*TfmCtx, *ImportInfo, GIP.getRawInfo());
   Visitor.TraverseDecl(FuncDecl);
   return false;
 }
 
-void ClangRemoveFirstPrivate::getAnalysisUsage(AnalysisUsage &AU) const {
+void ClangInitialize::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
   AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
-FunctionPass *llvm::createClangRemoveFirstPrivate() {
-  return new ClangRemoveFirstPrivate();
+FunctionPass *llvm::createClangInitialize() {
+  return new ClangInitialize();
 }

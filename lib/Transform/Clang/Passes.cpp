@@ -39,5 +39,5 @@ void llvm::initializeClangTransform(PassRegistry &Registry) {
   initializeDVMHDataTransferIPOPassPass(Registry);
   initializeClangLoopInterchangePass(Registry);
   initializeClangLoopReversePass(Registry);
-  initializeClangRemoveFirstPrivatePass(Registry);
+  initializeClangInitializePass(Registry);
 }
