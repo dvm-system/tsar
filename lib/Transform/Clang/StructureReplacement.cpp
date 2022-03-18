@@ -105,9 +105,10 @@ struct Replacement {
 /// replacement string.
 using ReplacementCandidates = SmallDenseMap<
     NamedDecl *,
-    std::tuple<SmallVector<Replacement, 8>, std::string>, 8,
+    std::tuple<DeclStmt *, SmallVector<Replacement, 8>, std::string>, 8,
     DenseMapInfo<NamedDecl *>,
     TaggedDenseMapTuple<bcl::tagged<NamedDecl *, NamedDecl>,
+                        bcl::tagged<DeclStmt *, DeclStmt>,
                         bcl::tagged<SmallVector<Replacement, 8>, Replacement>,
                         bcl::tagged<std::string, std::string>>>;
 
@@ -181,6 +182,9 @@ struct FunctionInfo {
   /// List of parameters of this function, which are specified in 'replace'
   /// clause, which should be replaced.
   ReplacementCandidates Candidates;
+
+  /// List of declarations statements which contain replacement candidates.
+  SmallSetVector<DeclStmt *, 8> DeclarationStmts;
 
   /// List of calls from this function, which are marked with a 'with' clause,
   /// which should be replaced.
@@ -619,25 +623,25 @@ private:
   bool VisitReplaceClauseExpr(DeclRefExpr *Expr) {
     mCurrFunc->Meta.insert(Expr);
     auto ND = Expr->getFoundDecl();
-    if (auto PD = dyn_cast<ParmVarDecl>(ND)) {
-      auto Ty = getCanonicalUnqualifiedType(PD);
+    if (auto VD{dyn_cast<VarDecl>(ND)}; VD && VD->isLocalVarDeclOrParm()) {
+      auto Ty = getCanonicalUnqualifiedType(VD);
       if (auto PtrTy = dyn_cast<clang::PointerType>(Ty)) {
         auto PointeeTy = PtrTy->getPointeeType().getTypePtr();
         if (auto StructTy = dyn_cast<clang::RecordType>(PointeeTy)) {
-          mCurrFunc->Candidates.try_emplace(PD);
+          mCurrFunc->Candidates.try_emplace(VD);
         } else {
           toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
                  tsar::diag::warn_disable_replace_struct_no_struct);
         }
       } else if (auto StructTy = dyn_cast<clang::RecordType>(Ty)) {
-        mCurrFunc->Candidates.try_emplace(PD);
+        mCurrFunc->Candidates.try_emplace(VD);
       } else {
         toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-          tsar::diag::warn_disable_replace_struct_no_pointer);
+               tsar::diag::warn_disable_replace_struct_no_struct);
       }
     } else {
       toDiag(mSrcMgr.getDiagnostics(), Expr->getBeginLoc(),
-        tsar::diag::warn_disable_replace_struct_no_param);
+        tsar::diag::warn_disable_replace_struct_no_local);
     }
     return true;
   }
@@ -824,6 +828,29 @@ public:
     return Res;
   }
 
+  bool VisitVarDecl(VarDecl* VD) {
+    if (isa_and_nonnull<DeclStmt>(mParent))
+      if (auto I{mReplacements.Candidates.find(VD)};
+          I != mReplacements.Candidates.end()) {
+        if (!isa_and_nonnull<CompoundStmt>(mScope)) {
+        toDiag(mSrcMgr.getDiagnostics(), VD->getLocation(),
+          tsar::diag::warn_disable_replace_struct);
+          if (mScope)
+            toDiag(mSrcMgr.getDiagnostics(), mScope->getBeginLoc(),
+                   tsar::diag::note_replace_struct_not_compound_stmt);
+          mReplacements.Candidates.erase(I);
+        }
+        else if (VD->hasInit()) {
+          toDiag(mSrcMgr.getDiagnostics(), VD->getLocation(),
+                 tsar::diag::warn_disable_replace_struct_init);
+          mReplacements.Candidates.erase(I);
+        }
+        I->get<DeclStmt>() = cast<DeclStmt>(mParent);
+        mReplacements.DeclarationStmts.insert(cast<DeclStmt>(mParent));
+      }
+    return true;
+  }
+
   bool VisitDeclRefExpr(DeclRefExpr *Expr) {
     if (mReplacements.inClause(Expr))
       return true;
@@ -846,7 +873,15 @@ public:
   }
 
   bool TraverseStmt(Stmt *S) {
+    auto StashParent{mParent};
+    mParent = S;
+    auto StashScope(mScope);
+    if (S && (isa<CompoundStmt>(S) || isa<ForStmt>(S) || isa<WhileStmt>(S) ||
+              isa<DoStmt>(S) || isa<IfStmt>(S)))
+      mScope = S;
     auto Res{RecursiveASTVisitor::TraverseStmt(S)};
+    mParent = StashParent;
+    mScope = StashScope;
     if (!mIsInnermostMember || !mLastDeclRef || isa<DeclRefExpr>(S) ||
         isa<ParenExpr>(S) || isa<ArraySubscriptExpr>(S))
       return Res;
@@ -918,6 +953,8 @@ private:
   FunctionInfo &mReplacements;
   ReplacementMap &mReplacementInfo;
 
+  Stmt *mParent = nullptr;
+  Stmt *mScope = nullptr;
   bool mIsInnermostMember = false;
   DeclRefExpr *mLastDeclRef = nullptr;
   bool mInAssignment = true;
@@ -1298,13 +1335,21 @@ private:
   /// Remove replacement candidates if it cannot be replaced in callee.
   void sanitizeCandidatesInCalls(scc_iterator<CallGraph *> &SCC);
 
-  void buildParameters(FunctionInfo &FuncInfo);
-  void buildParameters(scc_iterator<CallGraph *> &SCC) {
+  StringRef buildMemberDeclaration(VarDecl *VD, char Separator, Replacement &R,
+                                   std::string &Context,
+                                   SmallVectorImpl<char> &DeclString);
+
+  SmallString<128>
+  buildMemberDeclaration(char Separator, std::string &Context,
+                         ReplacementCandidates::value_type &Candidate);
+
+  void buildDeclarations(FunctionInfo &FuncInfo);
+  void buildDeclarations(scc_iterator<CallGraph *> &SCC) {
     for (auto *CGN : *SCC) {
       auto FuncInfo = tieCallGraphNode(CGN);
       if (!FuncInfo || !FuncInfo->hasCandidates())
         continue;
-      buildParameters(*FuncInfo);
+      buildDeclarations(*FuncInfo);
     }
   }
 
@@ -1328,18 +1373,24 @@ private:
       auto FuncInfo = tieCallGraphNode(CGN);
       if (!FuncInfo || !FuncInfo->hasCandidates())
         continue;
-      auto OriginDefString = Lexer::getSourceText(
-        CharSourceRange::getTokenRange(
-          FuncInfo->Definition->getBeginLoc(),
-          FuncInfo->Definition
-          ->getParamDecl(FuncInfo->Definition->getNumParams() - 1)
-          ->getEndLoc()),
-        SrcMgr, LangOpts);
+      auto OriginDefStart{Lexer::getSourceText(
+          CharSourceRange::getTokenRange(FuncInfo->Definition->getBeginLoc(),
+                                         FuncInfo->Definition->getLocation()),
+          SrcMgr, LangOpts)};
+      StringRef OriginDefParams;
+      if (FuncInfo->Definition->getNumParams() > 0)
+        OriginDefParams = Lexer::getSourceText(
+            CharSourceRange::getTokenRange(
+                FuncInfo->Definition->getParamDecl(0)->getBeginLoc(),
+                FuncInfo->Definition
+                    ->getParamDecl(FuncInfo->Definition->getNumParams() - 1)
+                    ->getEndLoc()),
+            SrcMgr, LangOpts);
       auto LocToInsert =
           SrcMgr.getExpansionLoc(FuncInfo->Definition->getEndLoc());
-      Rewriter.InsertTextAfterToken(
-        LocToInsert,
-        ("\n\n/* Replacement for " + OriginDefString + ") */\n").str());
+      Rewriter.InsertTextAfterToken(LocToInsert,
+        ("\n\n/* Replacement for " +
+          OriginDefStart + "(" + OriginDefParams + ") */\n").str());
       Rewriter.InsertTextAfterToken(LocToInsert, CanvasItr->getBuffer());
     }
     return true;
@@ -1493,10 +1544,10 @@ void ClangStructureReplacementPass::sanitizeCandidates(FunctionInfo &FuncInfo) {
   } else {
     SmallVector<NamedDecl *, 4> ToRemove;
     for (auto &C : FuncInfo.Candidates) {
-      auto *PD = C.get<NamedDecl>();
-      if (!checkMacroBoundsAndEmitDiag(PD, FuncInfo.Definition->getLocation(),
+      auto *VD = C.get<NamedDecl>();
+      if (!checkMacroBoundsAndEmitDiag(VD, FuncInfo.Definition->getLocation(),
                                        SrcMgr, LangOpts)) {
-        ToRemove.push_back(PD);
+        ToRemove.push_back(VD);
         continue;
       }
     }
@@ -1753,7 +1804,62 @@ static Optional<std::string> buildParameterType(const Replacement &R) {
   return ParamType;
 }
 
-void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
+inline StringRef ClangStructureReplacementPass::buildMemberDeclaration(
+    VarDecl *VD, char Separator, Replacement &R,
+    std::string &Context, SmallVectorImpl<char> &DeclString) {
+  auto &SrcMgr{mTfmCtx->getContext().getSourceManager()};
+  TypeSearch TS(VD, R.Member, SrcMgr, *mGlobalInfo);
+  TS.TraverseDecl(R.Member);
+  if (!TS.isOk())
+    return StringRef{};
+  addSuffix(VD->getName() + "_" + R.Member->getName(), R.Identifier);
+  auto ParamType{buildParameterType(R)};
+  if (!ParamType)
+    return StringRef{};
+  StringMap<std::string> Replacements;
+  auto Tokens{
+      buildDeclStringRef(*ParamType, R.Identifier, Context, Replacements)};
+  if (Tokens.empty())
+    return StringRef{};
+  if (!DeclString.empty())
+    DeclString.push_back(Separator);
+  auto Size{DeclString.size()};
+  join(Tokens.begin(), Tokens.end(), " ", DeclString);
+  Context += StringRef(DeclString.data() + Size, DeclString.size() - Size);
+  Context += ";";
+  return StringRef{DeclString.data() + Size, DeclString.size() - Size};
+}
+
+inline SmallString<128> ClangStructureReplacementPass::buildMemberDeclaration(
+    char Separator, std::string &Context,
+    ReplacementCandidates::value_type &Candidate) {
+  auto &SrcMgr{mTfmCtx->getContext().getSourceManager()};
+  SmallString<128> NewDecls;
+  auto StashContextSize = Context.size();
+  for (auto &R : Candidate.get<Replacement>()) {
+    auto NewDecl{
+        buildMemberDeclaration(cast<VarDecl>(Candidate.get<NamedDecl>()),
+                               Separator, R, Context, NewDecls)};
+    if (NewDecl.empty()) {
+      Context.resize(StashContextSize);
+      NewDecls.clear();
+      toDiag(SrcMgr.getDiagnostics(), Candidate.get<NamedDecl>()->getLocation(),
+             tsar::diag::warn_disable_replace_struct);
+      toDiag(SrcMgr.getDiagnostics(), R.Member->getBeginLoc(),
+             tsar::diag::note_replace_struct_decl);
+      break;
+    }
+    LLVM_DEBUG(dbgs() << "[REPLACE]: replacement for "
+                      << Candidate.get<NamedDecl>()->getName()
+                      << (isa<ParmVarDecl>(Candidate.get<NamedDecl>())
+                              ? " parameter: "
+                              : " variable: ")
+                      << NewDecl << "\n");
+  }
+  return NewDecls;
+}
+
+void ClangStructureReplacementPass::buildDeclarations(FunctionInfo &FuncInfo) {
   auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
   auto &LangOpts = mTfmCtx->getContext().getLangOpts();
   // Look up for declaration of types of parameters.
@@ -1797,59 +1903,30 @@ void ClangStructureReplacementPass::buildParameters(FunctionInfo &FuncInfo) {
     if (ReplacementItr == FuncInfo.Candidates.end() ||
         ReplacementItr->get<Replacement>().empty())
       continue;
-    SmallString<128> NewParams;
-    auto StashContextSize = Context.size();
-    for (auto &R : ReplacementItr->get<Replacement>()) {
-      TypeSearch TS(PD, R.Member, SrcMgr, *mGlobalInfo);
-      TS.TraverseDecl(R.Member);
-      if (!TS.isOk()) {
-        Context.resize(StashContextSize);
-        NewParams.clear();
-        break;
-      }
-      addSuffix(PD->getName() + "_" + R.Member->getName(), R.Identifier);
-      auto ParamType{buildParameterType(R)};
-      if (!ParamType) {
-        Context.resize(StashContextSize);
-        NewParams.clear();
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-               tsar::diag::warn_disable_replace_struct);
-        toDiag(SrcMgr.getDiagnostics(), R.Member->getBeginLoc(),
-               tsar::diag::note_replace_struct_decl);
-        break;
-      }
-      auto Tokens =
-        buildDeclStringRef(*ParamType, R.Identifier, Context, Replacements);
-      if (Tokens.empty()) {
-        Context.resize(StashContextSize);
-        NewParams.clear();
-        toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-          tsar::diag::warn_disable_replace_struct);
-        toDiag(SrcMgr.getDiagnostics(), R.Member->getBeginLoc(),
-          tsar::diag::note_replace_struct_decl);
-        break;
-      }
-      if (!NewParams.empty())
-        NewParams.push_back(',');
-      auto Size = NewParams.size();
-      join(Tokens.begin(), Tokens.end(), " ", NewParams);
-      Context += StringRef(NewParams.data() + Size, NewParams.size() - Size);
-      Context += ";";
-      LLVM_DEBUG(dbgs() << "[REPLACE]: replacement for " << I
-        << " parameter: "
-        << StringRef(NewParams.data() + Size,
-          NewParams.size() - Size)
-        << "\n");
-    }
+    auto NewParams{buildMemberDeclaration(',', Context, *ReplacementItr)};
     if (!NewParams.empty())
       ReplacementItr->get<std::string>() = std::string(NewParams);
     else
       FuncInfo.Candidates.erase(ReplacementItr);
   }
+  // Replace aggregate variables with separate variables.
+  SmallVector<NamedDecl *, 8> ToRemove;
+  for (auto &Candidate : FuncInfo.Candidates) {
+    if (isa<ParmVarDecl>(Candidate.get<NamedDecl>()))
+      continue;
+    if (Candidate.get<Replacement>().empty())
+      continue;
+    auto NewDecls{buildMemberDeclaration(';', Context, Candidate)};
+    if (!NewDecls.empty())
+      Candidate.get<std::string>() = (NewDecls + ";").str();
+    else
+      ToRemove.push_back(Candidate.get<NamedDecl>());
+  }
+  for_each(ToRemove, [&FuncInfo](auto *ND) { FuncInfo.Candidates.erase(ND); });
 }
 
-bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
-    SmallVectorImpl<ExternalRewriter> &CanvasList) {
+bool ClangStructureReplacementPass::insertNewFunction(
+    FunctionInfo &FuncInfo, SmallVectorImpl<ExternalRewriter> &CanvasList) {
   auto &Rewriter = mTfmCtx->getRewriter();
   auto &SrcMgr = Rewriter.getSourceMgr();
   auto &LangOpts = Rewriter.getLangOpts();
@@ -1862,14 +1939,29 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
       SrcMgr, LangOpts);
   auto &Canvas = CanvasList.back();
   // Build unique name for a new function.
-  addSuffix(FuncInfo.Definition->getName() + "_spf",
-            FuncInfo.ReplacmenetName);
+  addSuffix(FuncInfo.Definition->getName() + "_spf", FuncInfo.ReplacmenetName);
   SourceRange NameRange(
       SrcMgr.getExpansionLoc(FuncInfo.Definition->getLocation()));
   NameRange.setEnd(NameRange.getBegin().getLocWithOffset(
       FuncInfo.Definition->getName().size() - 1));
   Canvas.ReplaceText(NameRange, FuncInfo.ReplacmenetName);
- // Replace aggregate parameters with separate variables.
+  // Replace accesses to variables.
+  auto replaceAccesses = [&SrcMgr, &Canvas](auto ReplacementItr) {
+    for (auto &R : ReplacementItr->template get<Replacement>()) {
+      for (auto Range : R.RangesToReplace) {
+        SmallString<64> Tmp;
+        auto AccessString = (R.Flags & Replacement::InAssignment &&
+                             !(R.Flags & Replacement::InArray))
+                                ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
+                                : StringRef(R.Identifier);
+        Canvas.ReplaceText(getExpansionRange(SrcMgr, Range).getAsRange(),
+                           AccessString);
+      }
+      for (auto Range : R.RangesToRemove)
+        Canvas.RemoveText(getExpansionRange(SrcMgr, Range).getAsRange());
+    }
+  };
+  // Replace aggregate parameters with separate variables.
   bool TheLastParam = true;
   for (unsigned I = FuncInfo.Definition->getNumParams(); I > 0; --I) {
     auto *PD = FuncInfo.Definition->getParamDecl(I - 1);
@@ -1878,10 +1970,10 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     if (TheLastParam || (ReplacementItr != FuncInfo.Candidates.end() &&
                          ReplacementItr->get<Replacement>().empty())) {
       Token CommaTok;
-      if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr,
-        LangOpts, CommaTok)) {
+      if (getRawTokenAfter(SrcMgr.getExpansionLoc(EndLoc), SrcMgr, LangOpts,
+                           CommaTok)) {
         toDiag(SrcMgr.getDiagnostics(), PD->getEndLoc(),
-          tsar::diag::warn_transform_internal);
+               tsar::diag::warn_transform_internal);
         return false;
       }
       if (CommaTok.is(tok::comma))
@@ -1898,12 +1990,13 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     // We also remove an unused parameter if it is mentioned in replace clause.
     if (ReplacementItr->get<Replacement>().empty()) {
       Canvas.RemoveText(CharSourceRange::getTokenRange(
-        SrcMgr.getExpansionLoc(PD->getBeginLoc()),
-        SrcMgr.getExpansionLoc(EndLoc)).getAsRange());
+                            SrcMgr.getExpansionLoc(PD->getBeginLoc()),
+                            SrcMgr.getExpansionLoc(EndLoc))
+                            .getAsRange());
       toDiag(SrcMgr.getDiagnostics(), PD->getLocation(),
-        tsar::diag::remark_replace_struct);
+             tsar::diag::remark_replace_struct);
       toDiag(SrcMgr.getDiagnostics(), PD->getBeginLoc(),
-        tsar::diag::remark_remove_de_decl);
+             tsar::diag::remark_remove_de_decl);
       // Do not update TheLastParam variable. If the current parameter is the
       // last in the list and if it is removed than the previous parameter
       // in the list become the last one.
@@ -1911,22 +2004,62 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
     }
     TheLastParam = false;
     auto ReplaceRange = CharSourceRange::getTokenRange(
-        SrcMgr.getExpansionLoc(PD->getBeginLoc()),
-        SrcMgr.getExpansionLoc(EndLoc)).getAsRange();
+                            SrcMgr.getExpansionLoc(PD->getBeginLoc()),
+                            SrcMgr.getExpansionLoc(EndLoc))
+                            .getAsRange();
     Canvas.ReplaceText(ReplaceRange, ReplacementItr->get<std::string>());
-    // Replace accesses to parameters.
-    for (auto &R : ReplacementItr->get<Replacement>()) {
-      for (auto Range : R.RangesToReplace) {
-        SmallString<64> Tmp;
-        auto AccessString = (R.Flags & Replacement::InAssignment &&
-                             !(R.Flags & Replacement::InArray))
-                                ? ("(*" + R.Identifier + ")").toStringRef(Tmp)
-                                : StringRef(R.Identifier);
-        Canvas.ReplaceText(getExpansionRange(SrcMgr, Range).getAsRange(),
-                           AccessString);
+    replaceAccesses(ReplacementItr);
+  }
+  for (auto &DS : FuncInfo.DeclarationStmts) {
+    Decl *NotToReplace{nullptr};
+    SmallVector<Decl *, 4> Unused, Candidates;
+    for (auto *D : DS->getDeclGroup()) {
+      auto ReplacementItr{FuncInfo.Candidates.find(cast<NamedDecl>(D))};
+      if (ReplacementItr == FuncInfo.Candidates.end()) {
+        NotToReplace = D;
+        continue;
       }
-      for (auto Range : R.RangesToRemove)
-        Canvas.RemoveText(getExpansionRange(SrcMgr, Range).getAsRange());
+      Candidates.push_back(D);
+      if (!ReplacementItr->get<Replacement>().empty()) {
+        if (DS->getEndLoc().isMacroID())
+          Canvas.InsertTextAfterToken(SrcMgr.getExpansionLoc(DS->getEndLoc()),
+                                      " ");
+        Canvas.InsertTextAfterToken(SrcMgr.getExpansionLoc(DS->getEndLoc()),
+                                    ReplacementItr->get<std::string>());
+        replaceAccesses(ReplacementItr);
+      } else {
+        Unused.push_back(D);
+      }
+    }
+    if (!NotToReplace) {
+      if (!checkMacroBoundsAndEmitDiag(DS, FuncInfo.Definition->getLocation(),
+                                       SrcMgr, LangOpts)) {
+        for (auto *D : Candidates) {
+          toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+                 tsar::diag::remark_replace_struct);
+          toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+                 tsar::diag::note_replace_struct_de_decl);
+        }
+      } else {
+        Canvas.RemoveText(SrcMgr.getExpansionRange(DS->getSourceRange()));
+        for (auto *D : Unused) {
+          toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+                 tsar::diag::remark_replace_struct);
+          toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+                 tsar::diag::remark_remove_de_decl);
+        }
+      }
+    } else {
+      toDiag(SrcMgr.getDiagnostics(), DS->getBeginLoc(),
+             tsar::diag::remark_replace_struct);
+      toDiag(SrcMgr.getDiagnostics(), NotToReplace->getLocation(),
+             tsar::diag::note_de_multiple_prevent);
+      for (auto *D : Candidates) {
+        toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+               tsar::diag::remark_replace_struct);
+        toDiag(SrcMgr.getDiagnostics(), D->getLocation(),
+               tsar::diag::note_replace_struct_de_decl);
+      }
     }
   }
   // Build implicit metadata.
@@ -2064,7 +2197,7 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
         });
       }
     }
-    buildParameters(SCC);
+    buildDeclarations(SCC);
     sanitizeCandidatesInCalls(SCC);
     if (!insertNewFunctions(SCC))
       return false;
