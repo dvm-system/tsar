@@ -12,7 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either expRess or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
@@ -48,27 +48,27 @@ using namespace llvm;
 using namespace tsar;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "clang-rfp"
+#define DEBUG_TYPE "clang-init"
 
-static int getDimensionsNum(QualType qt, std::vector<int> &default_dimensions) {
-  int res = 0;
-  bool sizeIsKnown = true;
+static int getDimensionsNum(QualType QT, std::vector<int> &DefaultDimensions) {
+  int Res = 0;
+  bool SizeIsKnown = true;
   while (1) {
-    if (qt->isArrayType()) {
-      auto at = qt->getAsArrayTypeUnsafe();
-      auto t = dyn_cast_or_null<ConstantArrayType>(at);
-      if (sizeIsKnown && t) { // get size
-        uint64_t dim = t->getSize().getLimitedValue();
-        default_dimensions.push_back(dim);
+    if (QT->isArrayType()) {
+      auto AT = QT->getAsArrayTypeUnsafe();
+      auto T = dyn_cast_or_null<ConstantArrayType>(AT);
+      if (SizeIsKnown && T) { // get size
+        uint64_t Dim = T->getSize().getLimitedValue();
+        DefaultDimensions.push_back(Dim);
       }
-      qt = at->getElementType();
-      res++;
-    } else if (qt->isPointerType()) {
-      sizeIsKnown = false;
-      qt = qt->getPointeeType();
-      res++;
+      QT = AT->getElementType();
+      Res++;
+    } else if (QT->isPointerType()) {
+      SizeIsKnown = false;
+      QT = QT->getPointeeType();
+      Res++;
     } else {
-      return res;
+      return Res;
     }
   }
 }
@@ -87,13 +87,15 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
-struct vars {               // contains information about variables in
-  bool rvalIsArray = false; // initialize clause
-  std::string lvalName;
-  std::string rvalName;
-  int dimensionsNum;
-  std::vector<int> dimensions;
-  std::vector<int> default_dimensions;
+// contains information about variables in
+// initialize clause
+struct Vars {
+  bool RvalIsArray = false;
+  std::string LvalName;
+  std::string RvalName;
+  int DimensionsNum;
+  std::vector<int> Dimensions;
+  std::vector<int> DefaultDimensions;
 };
 } // namespace
 
@@ -134,52 +136,48 @@ public:
 
     if (findClause(P, ClauseId::Initialize, mClauses)) {
       auto locationForInits = S->getEndLoc();
-      isInPragma = true;
+      mIsInPragma = true;
       ast = RecursiveASTVisitor::TraverseStmt(S);
-      isInPragma = false;
-
-      std::string txtStr, beforeFor, forBody, lval, rval, indeces;
+      mIsInPragma = false;
       std::vector<std::string> inits;
-      while (varStack.size()) {
-        if (varStack.top().dimensionsNum) { // lvalue is array
-          if (varStack.top().dimensions.size() < varStack.top().dimensionsNum) {
-            if (varStack.top().default_dimensions.size() ==
-                varStack.top().dimensionsNum) {
-              varStack.top().dimensions = varStack.top().default_dimensions;
+      while (mVarStack.size()) {
+        std::string txtStr, beforeFor, forBody, lval, rval, indeces;
+        if (mVarStack.top().DimensionsNum) { // lvalue is array
+          if (mVarStack.top().Dimensions.size() < mVarStack.top().DimensionsNum) {
+            if (mVarStack.top().DefaultDimensions.size() ==
+                mVarStack.top().DimensionsNum) {
+              mVarStack.top().Dimensions = mVarStack.top().DefaultDimensions;
             } else {
-              varStack.pop();
+              mVarStack.pop();
               continue; // dimensions ar mandatory for arrays, skip
             }           // initialization if no dimensions found
           }
-          forBody = std::string();
-          indeces = std::string();
-          lval = varStack.top().lvalName;
-          rval = varStack.top().rvalName;
-          txtStr = std::string();
-          for (std::vector<int>::iterator it =
-                   varStack.top().dimensions.begin();
-               it != varStack.top().dimensions.end(); it++) {
-            int intCounter = it - varStack.top().dimensions.begin();
+          lval = mVarStack.top().LvalName;
+          rval = mVarStack.top().RvalName;
+          for (auto it{mVarStack.top().Dimensions.begin()},
+               EI{mVarStack.top().Dimensions.end()};
+               it != EI; ++it) {
+            int intCounter = it - mVarStack.top().Dimensions.begin();
             std::string strCounter = "i" + std::to_string(intCounter);
             indeces += "[" + strCounter + "]";
             txtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
           }
-          if (varStack.top().rvalIsArray) {
+          if (mVarStack.top().RvalIsArray) {
             rval += indeces;
           }
           lval += indeces;
           forBody = lval + " = " + rval + ";\n";
           txtStr += forBody;
-          for (int i = 0; i < varStack.top().dimensionsNum; i++) {
+          for (int i = 0; i < mVarStack.top().DimensionsNum; i++) {
             txtStr += "}\n";
           }
         } else { // Initialize non-array variable
           txtStr =
-              varStack.top().lvalName + " = " + varStack.top().rvalName + ";\n";
+              mVarStack.top().LvalName + " = " + mVarStack.top().RvalName + ";\n";
         }
         inits.push_back(txtStr);
-        varStack.pop();
+        mVarStack.pop();
       }
 
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -212,61 +210,61 @@ public:
   }
 
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
-    std::string varName;
-    if (isInPragma) {
-      if (waitingForDimensions &&
-          curDimensionNum == varStack.top().dimensionsNum) {
-        waitingForDimensions = false;
-        curDimensionNum = 0;
+    std::string VarName;
+    if (mIsInPragma) {
+      if (mWaitingForDimensions &&
+          mCurDimensionNum == mVarStack.top().DimensionsNum) {
+        mWaitingForDimensions = false;
+        mCurDimensionNum = 0;
       }
       if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())}) {
-        varName = Var->getName();
+        VarName = Var->getName();
       }
-      if (waitingForVar) { // get lvalue
-        ValueDecl *vd = Ex->getDecl();
-        QualType qt = vd->getType();
-        vars tmp;
+      if (mWaitingForVar) { // get lvalue
+        ValueDecl *VD = Ex->getDecl();
+        QualType QT = VD->getType();
+        Vars Tmp;
 
-        tmp.lvalName = varName;
-        varStack.push(tmp);
-        varStack.top().dimensionsNum =
-            getDimensionsNum(qt, varStack.top().default_dimensions);
-        waitingForDimensions = false;
+        Tmp.LvalName = VarName;
+        mVarStack.push(Tmp);
+        mVarStack.top().DimensionsNum =
+            getDimensionsNum(QT, mVarStack.top().DefaultDimensions);
+        mWaitingForDimensions = false;
       } else { // get rvalue
-        ValueDecl *vd = Ex->getDecl();
-        QualType qt = vd->getType();
-        if (qt->isArrayType() || qt->isPointerType()) {
-          varStack.top().rvalIsArray = true;
+        ValueDecl *VD = Ex->getDecl();
+        QualType QT = VD->getType();
+        if (QT->isArrayType() || QT->isPointerType()) {
+          mVarStack.top().RvalIsArray = true;
         }
-        varStack.top().rvalName = varName;
-        if (varStack.top().dimensionsNum > 0) {
-          waitingForDimensions = true;
+        mVarStack.top().RvalName = VarName;
+        if (mVarStack.top().DimensionsNum > 0) {
+          mWaitingForDimensions = true;
         }
       }
-      waitingForVar = !waitingForVar;
+      mWaitingForVar = !mWaitingForVar;
     }
     return RecursiveASTVisitor::TraverseDeclRefExpr(Ex);
   }
 
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
-    if (isInPragma) {
-      if (waitingForDimensions &&
-          curDimensionNum == varStack.top().dimensionsNum) {
-        waitingForDimensions = false;
-        curDimensionNum = 0;
+    if (mIsInPragma) {
+      if (mWaitingForDimensions &&
+          mCurDimensionNum == mVarStack.top().DimensionsNum) {
+        mWaitingForDimensions = false;
+        mCurDimensionNum = 0;
       }
-      int val = IL->getValue().getLimitedValue();
-      if (waitingForDimensions) {
-        if (varStack.size()) {
-          varStack.top().dimensions.push_back(val);
-          curDimensionNum++;
+      int Val = IL->getValue().getLimitedValue();
+      if (mWaitingForDimensions) {
+        if (mVarStack.size()) {
+          mVarStack.top().Dimensions.push_back(Val);
+          mCurDimensionNum++;
         }
-      } else if (!waitingForVar) { // get rvalue
-        varStack.top().rvalName = std::to_string(val);
-        waitingForVar = !waitingForVar;
-        if (varStack.top().dimensionsNum > 0) {
-          waitingForDimensions = true;
+      } else if (!mWaitingForVar) { // get rvalue
+        mVarStack.top().RvalName = std::to_string(Val);
+        mWaitingForVar = !mWaitingForVar;
+        if (mVarStack.top().DimensionsNum > 0) {
+          mWaitingForDimensions = true;
         }
       }
     }
@@ -282,10 +280,10 @@ private:
     return nullptr;
   }
 
-  bool isInPragma = false;
-  bool waitingForVar = true;
-  bool waitingForDimensions = false;
-  int curDimensionNum = 0;
+  bool mIsInPragma = false;
+  bool mWaitingForVar = true;
+  bool mWaitingForDimensions = false;
+  int mCurDimensionNum = 0;
   std::vector<Stmt *> mScopes;
   ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
@@ -294,7 +292,7 @@ private:
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-  std::stack<vars> varStack;
+  std::stack<Vars> mVarStack;
 };
 } // namespace
 
