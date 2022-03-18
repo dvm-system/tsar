@@ -161,17 +161,18 @@ def warn_region_add_call_unable : Warning<"unable to mark function call for opti
 def warn_region_not_found : Warning<"optimization region with name '%0' not found">;
 
 def warn_disable_replace_struct : Warning<"disable structure replacement">;
-def warn_disable_replace_struct_no_param : Warning<"unable to replace any variable except argument">;
-def warn_disable_replace_struct_no_pointer : Warning<"disable replacement of a non-pointer type">;
+def warn_disable_replace_struct_no_local : Warning<"unable to replace any object except an argument or a local variable">;
 def warn_disable_replace_struct_no_struct : Warning<"disable replacement of a non-structure type">;
 def warn_disable_replace_struct_system : Warning<"disable replacement of a non-user defined function">;
 def warn_disable_replace_struct_array_strict : Warning<"diasable strict replacement of a structure-type with array">;
+def warn_disable_replace_struct_init : Warning<"inititialization prevent structure replacement">;
 
 def note_replace_struct_arrow: Note<"not-arrow access prevent replacement">;
 def note_replace_struct_decl: Note<"unable to build declaration of a record member">;
 def note_replace_struct_macro_prevent : Note<"macro prevent replacement">;
 def note_replace_struct_de_decl : Note<"unable to remove unused declaration">;
 def note_replace_struct_decl_internal : Note<"unable to replace declaration">;
+def note_replace_struct_not_compound_stmt : Note<"unable to replace declaration not in a compound statement">;
 
 def remark_replace_struct: Remark<"structure replacement">;
 
