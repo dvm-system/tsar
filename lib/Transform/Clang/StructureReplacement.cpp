@@ -1726,7 +1726,7 @@ void ClangStructureReplacementPass::sanitizeCandidatesInCalls(
                       if (Itr == FuncInfo->Candidates.end())
                         return;
                       toDiag(SrcMgr.getDiagnostics(),
-                             Itr->get<NamedDecl>()->getLocation(),
+                             Itr->template get<NamedDecl>()->getLocation(),
                              tsar::diag::warn_disable_replace_struct);
                       toDiag(SrcMgr.getDiagnostics(), Arg->getBeginLoc(),
                              tsar::diag::note_replace_struct_arrow);
