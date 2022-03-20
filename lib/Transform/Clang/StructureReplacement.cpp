@@ -1652,15 +1652,24 @@ void ClangStructureReplacementPass::fillReplacementMembersFromCallees(
                 return R.Member == CalleeR.Member;
               });
             if (CallerRItr != Itr->get<Replacement>().end()) {
-              if (!(CallerRItr->Flags & Replacement::InAssignment) &&
-                  CalleeR.Flags & Replacement::InAssignment)
-                IsChanged = (CallerRItr->Flags |= Replacement::InAssignment);
-              if (!(CallerRItr->Flags & Replacement::InArray) &&
-                  CalleeR.Flags & Replacement::InArray)
-                IsChanged = (CallerRItr->Flags |= Replacement::InArray);
+              if (!(isa<ValueDecl>(Itr->get<NamedDecl>()) &&
+                    isa<clang::RecordType>(getCanonicalUnqualifiedType(
+                        cast<ValueDecl>(Itr->get<NamedDecl>()))))) {
+                if (!(CallerRItr->Flags & Replacement::InAssignment) &&
+                    CalleeR.Flags & Replacement::InAssignment)
+                  IsChanged = (CallerRItr->Flags |= Replacement::InAssignment);
+                if (!(CallerRItr->Flags & Replacement::InArray) &&
+                    CalleeR.Flags & Replacement::InArray)
+                  IsChanged = (CallerRItr->Flags |= Replacement::InArray);
+              }
             } else {
               Itr->get<Replacement>().emplace_back(CalleeR.Member);
               Itr->get<Replacement>().back().Flags = CalleeR.Flags;
+              if (isa<ValueDecl>(Itr->get<NamedDecl>()) &&
+                  isa<clang::RecordType>(getCanonicalUnqualifiedType(
+                      cast<ValueDecl>(Itr->get<NamedDecl>()))))
+                Itr->get<Replacement>().back().Flags &=
+                    ~Replacement::InAssignment;
               IsChanged = true;
             }
           }
