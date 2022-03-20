@@ -259,6 +259,23 @@ ReplacementCandidates::iterator isExprInCandidates(const clang::Expr *ArgExpr,
   return Candidates.end();
 }
 
+bool isImmediateMacroArg(SourceLocation Loc, const SourceManager &SrcMgr) {
+  assert(Loc.isValid() && "Location must be valid!");
+  if (!Loc.isMacroID())
+    return false;
+  auto &EI{SrcMgr.getSLocEntry(SrcMgr.getFileID(Loc)).getExpansion()};
+  bool IsArg{EI.isMacroArgExpansion()};
+  Loc = EI.getExpansionLocStart();
+  bool IsPrevArg{IsArg};
+  while (!Loc.isFileID()) {
+    IsPrevArg = IsArg;
+    auto &EI{SrcMgr.getSLocEntry(SrcMgr.getFileID(Loc)).getExpansion()};
+    IsArg = EI.isMacroArgExpansion();
+    Loc = EI.getExpansionLocStart();
+  }
+  return IsPrevArg;
+}
+
 template<class T>
 bool checkMacroBoundsAndEmitDiag(T *Obj, SourceLocation FuncLoc,
                                  const SourceManager &SrcMgr,
@@ -281,8 +298,6 @@ bool checkMacroBoundsAndEmitDiag(T *Obj, SourceLocation FuncLoc,
   }
   return true;
 }
-
-
 
 using CallList = std::vector<clang::CallExpr *>;
 
@@ -910,10 +925,12 @@ public:
     bool CurrInAssignment = mInAssignment;
     auto Res = RecursiveASTVisitor::TraverseMemberExpr(Expr);
     if (mIsInnermostMember && mLastDeclRef) {
+      bool IsMacroArg{isImmediateMacroArg(Expr->getBeginLoc(), mSrcMgr) &&
+                       isImmediateMacroArg(Expr->getEndLoc(), mSrcMgr)};
       auto ND = mLastDeclRef->getFoundDecl();
-      if (!checkMacroBoundsAndEmitDiag(
-                     Expr, mReplacements.Definition->getLocation(), mSrcMgr,
-                     mLangOpts)) {
+      if (!IsMacroArg && !checkMacroBoundsAndEmitDiag(
+                             Expr, mReplacements.Definition->getLocation(),
+                             mSrcMgr, mLangOpts)) {
         mReplacements.Candidates.erase(ND);
       } else {
         auto ReplacementItr = mReplacements.Candidates.find(ND);
@@ -921,13 +938,20 @@ public:
                                     ReplacementItr->get<Replacement>());
         if (auto *Subscript{
                 dyn_cast<ArraySubscriptExpr>(*Expr->child_begin())}) {
-          Itr->RangesToReplace.emplace_back(
-              Subscript->getBase()->getSourceRange());
-          Itr->RangesToRemove.emplace_back(
-              SourceRange{Expr->getOperatorLoc(), Expr->getEndLoc()});
+          auto ToReplace{Subscript->getBase()->getSourceRange()};
+          if (IsMacroArg)
+            ToReplace = getSpellingRange(mSrcMgr, ToReplace).getAsRange();
+          Itr->RangesToReplace.emplace_back(std::move(ToReplace));
+          SourceRange ToRemove{Expr->getOperatorLoc(), Expr->getEndLoc()};
+          if (IsMacroArg)
+            ToRemove = getSpellingRange(mSrcMgr, ToRemove).getAsRange();
+          Itr->RangesToRemove.emplace_back(std::move(ToRemove));
           Itr->Flags |= Replacement::InArray;
         } else {
-          Itr->RangesToReplace.emplace_back(Expr->getSourceRange());
+          auto Range(Expr->getSourceRange());
+          if (IsMacroArg)
+            Range = getSpellingRange(mSrcMgr, Range).getAsRange();
+          Itr->RangesToReplace.emplace_back(std::move(Range));
         }
         if (CurrInAssignment)
           Itr->Flags |= Replacement::InAssignment;
