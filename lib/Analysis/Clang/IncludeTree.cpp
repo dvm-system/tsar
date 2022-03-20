@@ -79,11 +79,10 @@ bool FileTree::reconstruct(TransformationContextBase &TfmCtx,
       // because insert() may invalidate iterators.
       auto *FN = &*FileInfo.first;
       while (Loc.first.isValid() && FileInfo.second) {
-        auto ParentInfo = insert(Loc.first, *TfmCtxImpl);
-        assert(ParentInfo.first != file_end() && "FileNode must not be null!");
-        ParentInfo.first->push_back(FN);
-        FileInfo = std::move(ParentInfo);
-        auto *FN = &*FileInfo.first;
+        FileInfo = insert(Loc.first, *TfmCtxImpl);
+        assert(FileInfo.first != file_end() && "FileNode must not be null!");
+        FileInfo.first->push_back(FN);
+        FN = &*FileInfo.first;
         Loc = SrcMgr.getDecomposedIncludedLoc(Loc.first);
       }
     }
