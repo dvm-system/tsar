@@ -78,7 +78,7 @@ bool FileTree::reconstruct(TransformationContextBase &TfmCtx,
       // Do not use FileInfo.first iterator after insert() inside the loop
       // because insert() may invalidate iterators.
       auto *FN = &*FileInfo.first;
-      while (Loc.first.isValid()) {
+      while (Loc.first.isValid() && FileInfo.second) {
         auto ParentInfo = insert(Loc.first, *TfmCtxImpl);
         assert(ParentInfo.first != file_end() && "FileNode must not be null!");
         ParentInfo.first->push_back(FN);
