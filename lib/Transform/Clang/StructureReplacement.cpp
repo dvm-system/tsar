@@ -839,11 +839,14 @@ public:
             toDiag(mSrcMgr.getDiagnostics(), mScope->getBeginLoc(),
                    tsar::diag::note_replace_struct_not_compound_stmt);
           mReplacements.Candidates.erase(I);
-        }
-        else if (VD->hasInit()) {
-          toDiag(mSrcMgr.getDiagnostics(), VD->getLocation(),
-                 tsar::diag::warn_disable_replace_struct_init);
-          mReplacements.Candidates.erase(I);
+        } else if (auto Init{VD->getInit()}) {
+          if (!(isa<CXXConstructExpr>(Init) && cast<CXXConstructExpr>(Init)
+                                                   ->getConstructor()
+                                                   ->isDefaultConstructor())) {
+            toDiag(mSrcMgr.getDiagnostics(), VD->getLocation(),
+                   tsar::diag::warn_disable_replace_struct_init);
+            mReplacements.Candidates.erase(I);
+          }
         }
         I->get<DeclStmt>() = cast<DeclStmt>(mParent);
         mReplacements.DeclarationStmts.insert(cast<DeclStmt>(mParent));
