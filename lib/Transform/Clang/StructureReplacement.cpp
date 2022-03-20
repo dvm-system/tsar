@@ -239,6 +239,12 @@ using ReplacementMap =
 
 
 clang::DeclRefExpr *getCandidate(clang::Expr *ArgExpr) {
+  while (auto *UO{dyn_cast<UnaryOperator>(ArgExpr)})
+    if (UO->getOpcode() == UnaryOperatorKind::UO_Deref ||
+        UO->getOpcode() == UnaryOperatorKind::UO_AddrOf)
+      ArgExpr = UO->getSubExpr();
+    else
+      break;
   if (auto *Cast = dyn_cast<ImplicitCastExpr>(ArgExpr))
     if (Cast->getCastKind() == CK_LValueToRValue)
       ArgExpr = Cast->getSubExpr();
@@ -246,6 +252,12 @@ clang::DeclRefExpr *getCandidate(clang::Expr *ArgExpr) {
 }
 
 const clang::DeclRefExpr *getCandidate(const clang::Expr *ArgExpr) {
+  while (auto *UO{dyn_cast<UnaryOperator>(ArgExpr)})
+    if (UO->getOpcode() == UnaryOperatorKind::UO_Deref ||
+        UO->getOpcode() == UnaryOperatorKind::UO_AddrOf)
+      ArgExpr = UO->getSubExpr();
+    else
+      break;
   if (auto *Cast = dyn_cast<ImplicitCastExpr>(ArgExpr))
     if (Cast->getCastKind() == CK_LValueToRValue)
       ArgExpr = Cast->getSubExpr();
