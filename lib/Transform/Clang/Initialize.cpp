@@ -130,18 +130,16 @@ public:
   bool TraverseStmt(Stmt *S) {
     if (!S)
       return true;
-
-    bool ast = false;
     Pragma P(*S);
 
     if (findClause(P, ClauseId::Initialize, mClauses)) {
       auto locationForInits = S->getEndLoc();
       mIsInPragma = true;
-      ast = RecursiveASTVisitor::TraverseStmt(S);
+      bool Ast = RecursiveASTVisitor::TraverseStmt(S);
       mIsInPragma = false;
-      std::vector<std::string> inits;
+      std::vector<std::string> Inits;
       while (mVarStack.size()) {
-        std::string txtStr, beforeFor, forBody, lval, rval, indeces;
+        std::string TxtStr, BeforeFor, ForBody, Lval, Rval, Indeces;
         if (mVarStack.top().DimensionsNum) { // lvalue is array
           if (mVarStack.top().Dimensions.size() < mVarStack.top().DimensionsNum) {
             if (mVarStack.top().DefaultDimensions.size() ==
@@ -152,31 +150,30 @@ public:
               continue; // dimensions ar mandatory for arrays, skip
             }           // initialization if no dimensions found
           }
-          lval = mVarStack.top().LvalName;
-          rval = mVarStack.top().RvalName;
+          Lval = mVarStack.top().LvalName;
+          Rval = mVarStack.top().RvalName;
           for (auto it{mVarStack.top().Dimensions.begin()},
                EI{mVarStack.top().Dimensions.end()};
                it != EI; ++it) {
-            int intCounter = it - mVarStack.top().Dimensions.begin();
-            std::string strCounter = "i" + std::to_string(intCounter);
-            indeces += "[" + strCounter + "]";
-            txtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
+            int IntCounter = it - mVarStack.top().Dimensions.begin();
+            std::string strCounter = "i" + std::to_string(IntCounter);
+            Indeces += "[" + strCounter + "]";
+            TxtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
           }
-          if (mVarStack.top().RvalIsArray) {
-            rval += indeces;
-          }
-          lval += indeces;
-          forBody = lval + " = " + rval + ";\n";
-          txtStr += forBody;
+          if (mVarStack.top().RvalIsArray)
+            Rval += Indeces;
+          Lval += Indeces;
+          ForBody = Lval + " = " + Rval + ";\n";
+          TxtStr += ForBody;
           for (int i = 0; i < mVarStack.top().DimensionsNum; i++) {
-            txtStr += "}\n";
+            TxtStr += "}\n";
           }
         } else { // Initialize non-array variable
-          txtStr =
+          TxtStr =
               mVarStack.top().LvalName + " = " + mVarStack.top().RvalName + ";\n";
         }
-        inits.push_back(txtStr);
+        Inits.push_back(TxtStr);
         mVarStack.pop();
       }
 
@@ -200,46 +197,43 @@ public:
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
 
-      for (std::vector<std::string>::iterator it = inits.begin();
-           it != inits.end(); ++it) {
-        mRewriter.InsertTextAfterToken(locationForInits, *it);
+      for (std::vector<std::string>::iterator It = Inits.begin();
+           It != Inits.end(); ++It) {
+        mRewriter.InsertTextAfterToken(locationForInits, *It);
       }
-      return ast;
+      return Ast;
     }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
-    std::string VarName;
+    llvm::StringRef VarName;
     if (mIsInPragma) {
       if (mWaitingForDimensions &&
           mCurDimensionNum == mVarStack.top().DimensionsNum) {
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
-      if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())}) {
+      if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())})
         VarName = Var->getName();
-      }
       if (mWaitingForVar) { // get lvalue
         ValueDecl *VD = Ex->getDecl();
         QualType QT = VD->getType();
         Vars Tmp;
 
         Tmp.LvalName = VarName;
-        mVarStack.push(Tmp);
+        mVarStack.push(std::move(Tmp));
         mVarStack.top().DimensionsNum =
             getDimensionsNum(QT, mVarStack.top().DefaultDimensions);
         mWaitingForDimensions = false;
       } else { // get rvalue
         ValueDecl *VD = Ex->getDecl();
         QualType QT = VD->getType();
-        if (QT->isArrayType() || QT->isPointerType()) {
+        if (QT->isArrayType() || QT->isPointerType())
           mVarStack.top().RvalIsArray = true;
-        }
         mVarStack.top().RvalName = VarName;
-        if (mVarStack.top().DimensionsNum > 0) {
+        if (mVarStack.top().DimensionsNum > 0)
           mWaitingForDimensions = true;
-        }
       }
       mWaitingForVar = !mWaitingForVar;
     }
@@ -254,7 +248,7 @@ public:
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
-      int Val = IL->getValue().getLimitedValue();
+      auto Val = IL->getValue().getLimitedValue();
       if (mWaitingForDimensions) {
         if (mVarStack.size()) {
           mVarStack.top().Dimensions.push_back(Val);
@@ -263,9 +257,8 @@ public:
       } else if (!mWaitingForVar) { // get rvalue
         mVarStack.top().RvalName = std::to_string(Val);
         mWaitingForVar = !mWaitingForVar;
-        if (mVarStack.top().DimensionsNum > 0) {
+        if (mVarStack.top().DimensionsNum > 0)
           mWaitingForDimensions = true;
-        }
       }
     }
     return RecursiveASTVisitor::TraverseIntegerLiteral(IL);
