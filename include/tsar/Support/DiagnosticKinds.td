@@ -217,5 +217,9 @@ def warn_reverse_increment_complex: Warning<"complex increment expression preven
 def warn_reverse_condition_complex: Warning<"complex conditional expression prevents loop reversal">;
 def warn_reverse_initialization_complex: Warning<"complex initialization expression prevents loop reversal">;
 
+def warn_unknown_dimensions : Warning<"Unknown array dimensions. Specify them manually">;
+def warn_dimensions_do_not_match : Warning<"Array dimensions do not match">;
+def warn_too_many_dimensions : Warning<"Too many dimensions given">;
+
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;

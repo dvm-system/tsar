@@ -12,7 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either expRess or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
@@ -30,18 +30,6 @@
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Transform/Clang/Passes.h"
-#include <bcl/utility.h>
-#include <clang/AST/Decl.h>
-#include <clang/AST/RecursiveASTVisitor.h>
-#include <clang/AST/Stmt.h>
-#include <clang/Basic/SourceLocation.h>
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Pass.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
-#include <stack>
 
 using namespace clang;
 using namespace llvm;
@@ -50,7 +38,8 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-init"
 
-static int getDimensionsNum(QualType QT, std::vector<int> &DefaultDimensions) {
+static int getDimensionsNum(QualType QT, std::vector<int> &DefaultDimensions,
+                            bool &ArrSizeIsKnown) {
   int Res = 0;
   bool SizeIsKnown = true;
   while (1) {
@@ -68,6 +57,7 @@ static int getDimensionsNum(QualType QT, std::vector<int> &DefaultDimensions) {
       QT = QT->getPointeeType();
       Res++;
     } else {
+      ArrSizeIsKnown = SizeIsKnown;
       return Res;
     }
   }
@@ -93,9 +83,13 @@ struct Vars {
   bool RvalIsArray = false;
   std::string LvalName;
   std::string RvalName;
-  int DimensionsNum;
+  bool RSizeIsKnown;
+  bool LSizeIsKnown;
+  int LDimensionsNum = 0;
+  int RDimensionsNum = 0;
   std::vector<int> Dimensions;
-  std::vector<int> DefaultDimensions;
+  std::vector<int> LDefaultDimensions;
+  std::vector<int> RDefaultDimensions;
 };
 } // namespace
 
@@ -139,14 +133,25 @@ public:
       mIsInPragma = false;
       std::vector<std::string> Inits;
       while (mVarStack.size()) {
+        int LDimensionsNum = mVarStack.top().LDimensionsNum;
+        int RDimensionsNum = mVarStack.top().RDimensionsNum;
         std::string TxtStr, BeforeFor, ForBody, Lval, Rval, Indeces;
-        if (mVarStack.top().DimensionsNum) { // lvalue is array
-          if (mVarStack.top().Dimensions.size() < mVarStack.top().DimensionsNum) {
-            if (mVarStack.top().DefaultDimensions.size() ==
-                mVarStack.top().DimensionsNum) {
-              mVarStack.top().Dimensions = mVarStack.top().DefaultDimensions;
+        if (mVarStack.top().LSizeIsKnown && LDimensionsNum < RDimensionsNum ||
+            mVarStack.top().RSizeIsKnown && mVarStack.top().RvalIsArray &&
+                RDimensionsNum < LDimensionsNum) {
+          mVarStack.pop();
+          continue;
+        }
+        if (LDimensionsNum) { // lvalue is array
+          if (mVarStack.top().Dimensions.size() < LDimensionsNum) {
+            if ((mVarStack.top().LDefaultDimensions.size() == LDimensionsNum) &&
+                (!RDimensionsNum || mVarStack.top().LDefaultDimensions ==
+                                        mVarStack.top().RDefaultDimensions)) {
+              mVarStack.top().Dimensions = mVarStack.top().LDefaultDimensions;
             } else {
               mVarStack.pop();
+              toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+                     tsar::diag::warn_unknown_dimensions);
               continue; // dimensions ar mandatory for arrays, skip
             }           // initialization if no dimensions found
           }
@@ -166,12 +171,12 @@ public:
           Lval += Indeces;
           ForBody = Lval + " = " + Rval + ";\n";
           TxtStr += ForBody;
-          for (int i = 0; i < mVarStack.top().DimensionsNum; i++) {
+          for (int i = 0; i < LDimensionsNum; i++) {
             TxtStr += "}\n";
           }
         } else { // Initialize non-array variable
-          TxtStr =
-              mVarStack.top().LvalName + " = " + mVarStack.top().RvalName + ";\n";
+          TxtStr = mVarStack.top().LvalName + " = " + mVarStack.top().RvalName +
+                   ";\n";
         }
         Inits.push_back(TxtStr);
         mVarStack.pop();
@@ -210,29 +215,30 @@ public:
     llvm::StringRef VarName;
     if (mIsInPragma) {
       if (mWaitingForDimensions &&
-          mCurDimensionNum == mVarStack.top().DimensionsNum) {
+          mCurDimensionNum == mVarStack.top().LDimensionsNum) {
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
       if (auto *Var{dyn_cast<VarDecl>(Ex->getDecl())})
         VarName = Var->getName();
+      ValueDecl *VD = Ex->getDecl();
+      QualType QT = VD->getType();
       if (mWaitingForVar) { // get lvalue
-        ValueDecl *VD = Ex->getDecl();
-        QualType QT = VD->getType();
         Vars Tmp;
-
         Tmp.LvalName = VarName;
         mVarStack.push(std::move(Tmp));
-        mVarStack.top().DimensionsNum =
-            getDimensionsNum(QT, mVarStack.top().DefaultDimensions);
+        mVarStack.top().LDimensionsNum =
+            getDimensionsNum(QT, mVarStack.top().LDefaultDimensions,
+                             mVarStack.top().LSizeIsKnown);
         mWaitingForDimensions = false;
       } else { // get rvalue
-        ValueDecl *VD = Ex->getDecl();
-        QualType QT = VD->getType();
+        mVarStack.top().RDimensionsNum =
+            getDimensionsNum(QT, mVarStack.top().RDefaultDimensions,
+                             mVarStack.top().RSizeIsKnown);
         if (QT->isArrayType() || QT->isPointerType())
           mVarStack.top().RvalIsArray = true;
         mVarStack.top().RvalName = VarName;
-        if (mVarStack.top().DimensionsNum > 0)
+        if (mVarStack.top().LDimensionsNum > 0)
           mWaitingForDimensions = true;
       }
       mWaitingForVar = !mWaitingForVar;
@@ -243,8 +249,17 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
     if (mIsInPragma) {
+      if ((mVarStack.top().LSizeIsKnown &&
+           mVarStack.top().Dimensions.size() >
+               mVarStack.top().LDimensionsNum) ||
+          (mVarStack.top().RSizeIsKnown &&
+           mVarStack.top().Dimensions.size() >
+               mVarStack.top().LDimensionsNum)) {
+        toDiag(mSrcMgr.getDiagnostics(), IL->getBeginLoc(),
+               tsar::diag::warn_too_many_dimensions);
+      }
       if (mWaitingForDimensions &&
-          mCurDimensionNum == mVarStack.top().DimensionsNum) {
+          mCurDimensionNum == mVarStack.top().LDimensionsNum) {
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
@@ -257,7 +272,7 @@ public:
       } else if (!mWaitingForVar) { // get rvalue
         mVarStack.top().RvalName = std::to_string(Val);
         mWaitingForVar = !mWaitingForVar;
-        if (mVarStack.top().DimensionsNum > 0)
+        if (mVarStack.top().LDimensionsNum > 0)
           mWaitingForDimensions = true;
       }
     }
