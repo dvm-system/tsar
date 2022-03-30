@@ -439,6 +439,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     };
     std::map<const apc::AlignRule *, dvmh::VariableT, AlignRuleLess> Globals;
     DenseMap<Function *, SmallVector<const apc::AlignRule *, 16>> Locals;
+    DenseMap<Function *, SmallVector<const apc::AlignRule *, 4>> Loops;
   };
   DenseMap<ClangTransformationContext *, ArraysToAlign> ArraysInContext;
   auto emitTfmError = [](const Function &F) {
@@ -449,6 +450,27 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
   for (auto &AR : DataDirs.alignRules) {
     auto *APCSymbol{AR.alignArray->GetDeclSymbol()};
     assert(APCSymbol && "Symbol must not be null!");
+    if (APCSymbol->isStatement()) {
+      if (auto *LS{dyn_cast<apc::LoopStatement>(APCSymbol->getStatement())}) {
+        auto &F{*LS->getFunction()};
+        if (auto *DISub{findMetadata(&F)})
+          if (auto *CU{DISub->getUnit()};
+              isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+            auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                                       TfmInfo->getContext(*CU))
+                                 : nullptr};
+            if (TfmCtx && TfmCtx->hasInstance()) {
+              auto Itr{ArraysInContext.try_emplace(TfmCtx).first};
+              auto FuncItr{Itr->second.Loops.try_emplace(&F).first};
+              FuncItr->second.push_back(&AR);
+              continue;
+            }
+          }
+        emitTfmError(F);
+        return false;
+      }
+      continue;
+    }
     for (auto &Var : APCSymbol->getVariable()) {
       auto *DIAN{ Var.get<MD>()->getAliasNode() };
       auto *DIAT{ DIAN->getAliasTree() };
@@ -495,7 +517,7 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
       // We should add declaration of template before 'align' directive.
       // So, we remember file with 'align' directive if this directive
       // has been successfully inserted.
-      if (DefLoc.isValid()) {
+      if (DefLoc.isValid() && AR.alignWith->IsTemplate()) {
         auto &SrcMgr = TfmCtx->getContext().getSourceManager();
         auto FID = SrcMgr.getFileID(DefLoc);
         auto TplItr = Templates.try_emplace(FID).first;
@@ -529,6 +551,18 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
     for (auto &&[AR, Var] : Arrays.Globals) {
       insertAlignAndCollectTpl(*Var.get<AST>(), *AR);
       NotDistrCanonicalDecls.erase(Var.get<AST>());
+    }
+    for (auto &&[F, Loops] : Arrays.Loops) {
+      auto *FD{cast<FunctionDecl>(TfmCtx->getDeclForMangledName(F->getName()))};
+      assert(FD && "AST-level function declaration must not be null!");
+      auto &SrcMgr{TfmCtx->getContext().getSourceManager()};
+      auto FID{SrcMgr.getFileID(FD->getBeginLoc())};
+      auto TplItr{Templates.try_emplace(FID).first};
+      for (auto *AR : Loops) {
+        if (!AR->alignWith->IsTemplate())
+          continue;
+        TplItr->second.try_emplace(AR->alignWith);
+      }
     }
     checkNotDistributedDecls(NotDistrCanonicalDecls, *TfmCtx);
     auto visitRealign = [&TemplatesMap, &Templates](PragmaRealign *Realign,

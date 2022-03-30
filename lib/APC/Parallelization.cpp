@@ -104,6 +104,13 @@ using FileToLoopMap = std::map<std::string, std::vector<apc::LoopGraph *>>;
 /// Map from a file name to a list of messages emitted for this file.
 using FileToMessageMap = APCContextImpl::FileDiagnostics;
 
+/// Map from a function to a list of top level loops.
+using FuncToLoopMap = DenseMap<
+    apc::FuncInfo *, std::tuple<std::vector<apc::LoopGraph *>>,
+    DenseMapInfo<apc::FuncInfo *>,
+    TaggedDenseMapTuple<bcl::tagged<apc::FuncInfo *, apc::FuncInfo>,
+                        bcl::tagged<std::vector<apc::LoopGraph *>, Root>>>;
+
 /// Map from a loop to a set of accessed arrays and descriptions of accesses.
 using LoopToArrayMap =
     std::map<apc::LoopGraph *, std::map<apc::Array *, apc::ArrayInfo *>>;
@@ -158,7 +165,7 @@ private:
   void collectFunctionsAndLoops(
       Module &M, APCContext &APCCtx, NameToFunctionMap &Functions,
       FileToFuncMap &FileToFunc, FileInfoMap &Files, FileToLoopMap &FileToLoop,
-      APCToIRLoopsMap &APCToIRLoops);
+      FuncToLoopMap &FuncToLoop, APCToIRLoopsMap &APCToIRLoops);
 
   void collectArrayAccessInfo(
       Module &M, DIArrayAccess &Access, APCContext &APCCtx,
@@ -170,14 +177,15 @@ private:
 
   void buildDataDistributionGraph(
       const RegionList &Regions,  const FormalToActualMap &FormalToActual,
-      const ArrayAccessSummary &ArrayRWs, FileToLoopMap &FileToLoop,
+      const ArrayAccessSummary &ArrayRWs, const FileToFuncMap &FileToFunc,
+      const FuncToLoopMap &FuncToLoop, FileToLoopMap &FileToLoop,
       FileInfoMap &Files, KeyToArrayMap &CreatedArrays,
       FileToMessageMap &APCMsgs);
 
   void buildDataDistribution(
       const RegionList &Regions, const FormalToActualMap &FormalToActual,
-      const ArrayToKeyMap &ArrayIds, APCContext &APCCtx,
-      DVMHParallelizationContext &ParallelCtx,
+      const ArrayToKeyMap &ArrayIds, const FileInfoMap &Files,
+      APCContext &APCCtx, DVMHParallelizationContext &ParallelCtx,
       std::set<apc::Array *> &DistributedArrays, KeyToArrayMap &CreatedArrays,
       FileToMessageMap &APCMsgs);
 
@@ -258,7 +266,7 @@ void APCParallelizationPass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 void APCParallelizationPass::collectFunctionsAndLoops(Module &M,
   APCContext &APCCtx, NameToFunctionMap &Functions, FileToFuncMap &FileToFunc,
-  FileInfoMap &Files, FileToLoopMap &FileToLoop,
+  FileInfoMap &Files, FileToLoopMap &FileToLoop, FuncToLoopMap &FuncToLoop,
   APCToIRLoopsMap &APCToIRLoops) {
   for (auto &F : M) {
     auto *FI{APCCtx.findFunction(F)};
@@ -275,16 +283,19 @@ void APCParallelizationPass::collectFunctionsAndLoops(Module &M,
     auto &Provider{getAnalysis<APCDataDistributionProvider>(F)};
     auto &FileInfo{Files.try_emplace(FI->fileName).first->second};
     auto &LoopList{FileToLoop.try_emplace(FI->fileName).first->second};
+    auto &FuncLoopList{*FuncToLoop.try_emplace(FI).first};
     for_each_loop(
         Provider.get<LoopInfoWrapperPass>().getLoopInfo(),
-        [&APCCtx, &FileInfo, &LoopList, &APCToIRLoops](Loop *L) {
+        [&APCCtx, &FileInfo, &LoopList, &APCToIRLoops, &FuncLoopList](Loop *L) {
           if (auto ID{L->getLoopID()})
             if (auto APCLoop{APCCtx.findLoop(ID)}) {
               FileInfo.get<apc::LoopGraph>().emplace(APCLoop->lineNum, APCLoop);
               LoopList.push_back(APCLoop);
               APCToIRLoops.try_emplace(APCLoop->loop, L->getHeader());
-              if (!APCLoop->parent)
+              if (!APCLoop->parent) {
                 FileInfo.get<Root>().push_back(APCLoop);
+                FuncLoopList.get<Root>().push_back(APCLoop);
+              }
             }
         });
   }
@@ -563,8 +574,9 @@ void APCParallelizationPass::bindFormalAndActualPrameters(
 }
 
 void APCParallelizationPass::buildDataDistributionGraph(
-    const RegionList &Regions,  const FormalToActualMap &FormalToActual,
-    const ArrayAccessSummary &ArrayRWs, FileToLoopMap &FileToLoop,
+    const RegionList &Regions, const FormalToActualMap &FormalToActual,
+    const ArrayAccessSummary &ArrayRWs, const FileToFuncMap &FileToFunc,
+    const FuncToLoopMap &FuncToLoop, FileToLoopMap &FileToLoop,
     FileInfoMap &Files, KeyToArrayMap &CreatedArrays,
     FileToMessageMap &APCMsgs) {
   // Build a data distribution graph.
@@ -596,6 +608,13 @@ void APCParallelizationPass::buildDataDistributionGraph(
     auto &Accesses{FileInfo.second.get<LoopToArrayMap>()};
     processLoopInformationForFunction(Accesses);
     addToDistributionGraph(Accesses, FormalToActual);
+    if (auto FuncItr{FileToFunc.find(FileInfo.getKey().str())};
+        FuncItr != FileToFunc.end())
+      for (auto *FI : FuncItr->second)
+        if (auto LoopItr{FuncToLoop.find(FI)}; LoopItr != FuncToLoop.end())
+          selectFreeLoopsForParallelization(
+              LoopItr->get<Root>(), FI->funcName, true, Regions,
+              getObjectForFileFromMap(FileInfo.getKeyData(), APCMsgs));
   }
 }
 
@@ -614,7 +633,8 @@ static void dotGraphLog(apc::ParallelRegion &APCRegion) {
 
 void APCParallelizationPass::buildDataDistribution(const RegionList &Regions,
     const FormalToActualMap &FormalToActual, const ArrayToKeyMap &ArrayIds,
-    APCContext &APCCtx, DVMHParallelizationContext &ParallelCtx,
+    const FileInfoMap &Files, APCContext &APCCtx,
+    DVMHParallelizationContext &ParallelCtx,
     std::set<apc::Array *> &DistributedArrays, KeyToArrayMap &CreatedArrays,
     FileToMessageMap &APCMsgs) {
   std::set<apc::Array *> ArraysInAllRegions;
@@ -652,6 +672,16 @@ void APCParallelizationPass::buildDataDistribution(const RegionList &Regions,
         auto *Tpl{ParallelCtx.makeTemplate(A->GetShortName())};
         APCCtx.addArray(Tpl, A);
         auto APCSymbol{new apc::Symbol(&APCCtx, Tpl)};
+        APCCtx.addSymbol(APCSymbol);
+        A->SetDeclSymbol(APCSymbol);
+      } else if (A->IsLoopArray()) {
+        auto FileItr{Files.find(A->GetDeclInfo().begin()->first)};
+        assert(FileItr != Files.end() && "File must be known!");
+        auto I{FileItr->second.get<apc::LoopGraph>().find(
+            A->GetDeclInfo().begin()->second)};
+        assert(I != FileItr->second.get<apc::LoopGraph>().end() &&
+               "A loop the array is attached to must be known!");
+        auto APCSymbol{new apc::Symbol(&APCCtx, I->second->loop)};
         APCCtx.addSymbol(APCSymbol);
         A->SetDeclSymbol(APCSymbol);
       }
@@ -876,7 +906,7 @@ void APCParallelizationPass::addRemoteAccessDirectives(
   DenseMap<const DIAliasNode *, SmallVector<dvmh::Align, 1>>
       ToDistribute;
   for (auto *A : DistributedArrays) {
-    if (A->IsTemplate())
+    if (A->IsTemplate() || A->IsLoopArray())
       continue;
     auto *S{A->GetDeclSymbol()};
     auto Var{S->getVariable(&ClientF)};
@@ -1014,12 +1044,13 @@ bool APCParallelizationPass::runOnModule(Module &M) {
   NameToFunctionMap Functions;
   FileToFuncMap FileToFunc;
   FileToLoopMap FileToLoop;
+  FuncToLoopMap FuncToLoop;
   APCToIRLoopsMap APCToIRLoops;
   FileInfoMap Files;
   ArrayAccessPool AccessPool;
   ArrayAccessSummary ArrayRWs;
   collectFunctionsAndLoops(M, APCCtx, Functions, FileToFunc, Files, FileToLoop,
-                           APCToIRLoops);
+                           FuncToLoop, APCToIRLoops);
   // Initial initialization of loop properties that depends on arrays accesses
   // to be collected further.
   for (auto &&[F, LoopList] : FileToLoop)
@@ -1052,15 +1083,24 @@ bool APCParallelizationPass::runOnModule(Module &M) {
     }
     // A stub variable which is not used at this moment.
     std::map<PFIKeyT, apc::Array *> CreatedArrays;
-    buildDataDistributionGraph(Regions, FormalToActual, ArrayRWs, FileToLoop,
-                               Files, CreatedArrays, APCCtx.mImpl->Diags);
-    buildDataDistribution(Regions, FormalToActual, ArrayIds, APCCtx,
+    buildDataDistributionGraph(Regions, FormalToActual, ArrayRWs, FileToFunc,
+                               FuncToLoop, FileToLoop, Files, CreatedArrays,
+                               APCCtx.mImpl->Diags);
+    buildDataDistribution(Regions, FormalToActual, ArrayIds, Files, APCCtx,
                           ParallelCtx, DistributedArrays, CreatedArrays,
                           APCCtx.mImpl->Diags);
     for (auto &FileInfo : Files) {
       createParallelDirectives(
           FileInfo.second.get<LoopToArrayMap>(), Regions, FormalToActual,
           getObjectForFileFromMap(FileInfo.getKeyData(), APCCtx.mImpl->Diags));
+      if (auto FuncItr{FileToFunc.find(FileInfo.getKey().str())};
+          FuncItr != FileToFunc.end())
+        for (auto *FI : FuncItr->second)
+          if (auto LoopItr{FuncToLoop.find(FI)}; LoopItr != FuncToLoop.end())
+            selectFreeLoopsForParallelization(
+                LoopItr->get<Root>(), FI->funcName, false, Regions,
+                getObjectForFileFromMap(FileInfo.getKeyData(),
+                                        APCCtx.mImpl->Diags));
       UniteNestedDirectives(FileInfo.second.get<Root>());
       for (auto *APCRegion : Regions) {
         std::vector<apc::Directive *> ParallelDirs;
@@ -1275,6 +1315,8 @@ apc::Directive * ParallelDirective::genDirective(File *F,
       assert(A && "Array must be known!");
       assert(!A->IsTemplate() &&
              "Template cannot be referenced in across clause!");
+      assert(!A->IsLoopArray() &&
+             "Loop cannot be referenced in across clause!");
       auto AcrossItr{
           Clauses.get<trait::Dependence>()
               .try_emplace(A->GetDeclSymbol()->getVariable(Func).getValue())
@@ -1313,6 +1355,8 @@ apc::Directive * ParallelDirective::genDirective(File *F,
       assert(A && "Array must be known!");
       assert(!A->IsTemplate() &&
              "Template cannot be referenced in shadow_renew clause!");
+      assert(!A->IsLoopArray() &&
+             "Loop cannot be referenced in shadow_renew clause!");
       LLVM_DEBUG(dbgs() << "[APC]: calculate shadow_renew for "
                         << A->GetShortName() << " (" << A << ")\n");
       auto ShadowItr{
