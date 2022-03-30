@@ -92,7 +92,7 @@ std::pair<DebugLoc, DebugLoc> getFunctionRange(const Function &F) {
   };
   for (auto &I : instructions(F)) {
     auto Loc = I.getDebugLoc();
-    if (!Loc)
+    if (!Loc || Loc.getLine() == 0 && Loc.getCol() == 0)
       continue;
     if (!StartLoc || isLess(Loc, StartLoc))
       StartLoc = Loc;
