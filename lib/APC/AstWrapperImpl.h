@@ -36,13 +36,15 @@
 struct LoopGraph;
 struct FuncInfo;
 
-namespace Distribution{
+namespace Distribution {
 class Array;
 }
 
 namespace tsar {
 class APCContext;
 }
+
+class Statement;
 
 class Symbol {
 public:
@@ -56,6 +58,10 @@ public:
       : mContext(Ctx), mMemory(DIM) {
     assert(Ctx && "Context must not be null!");
   }
+  Symbol(tsar::APCContext *Ctx, Statement *S)
+      : mContext(Ctx), mMemory(S) {
+    assert(Ctx && "Context must not be null!");
+  }
 
   virtual ~Symbol() {}
 
@@ -66,6 +72,19 @@ public:
   auto *getTemplate() { return std::get<tsar::dvmh::Template *>(mMemory); }
   const auto *getTemplate() const {
     return std::get<tsar::dvmh::Template *>(mMemory);
+  }
+
+  bool isStatement() const {
+    return std::holds_alternative<Statement *>(mMemory);
+  }
+
+  auto *getStatement() { return std::get<Statement *>(mMemory); }
+  const auto *getStatement() const {
+    return std::get<Statement *>(mMemory);
+  }
+
+  bool isVariable() const {
+    return std::holds_alternative<Redeclarations>(mMemory);
   }
 
   auto &getVariable() { return std::get<Redeclarations>(mMemory); }
@@ -96,7 +115,7 @@ public:
   const tsar::APCContext *getContext() const noexcept { return mContext; }
 private:
   tsar::APCContext *mContext;
-  std::variant<Redeclarations, tsar::dvmh::Template *> mMemory;
+  std::variant<Redeclarations, tsar::dvmh::Template *, Statement *> mMemory;
 };
 
 class File {};
