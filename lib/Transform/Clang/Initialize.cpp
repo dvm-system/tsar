@@ -160,13 +160,11 @@ public:
           }
           Lval = mVarStack.top().LvalName;
           Rval = mVarStack.top().RvalName;
-          TxtStr = "";
           for (auto it{mVarStack.top().Dimensions.begin()},
                EI{mVarStack.top().Dimensions.end()};
                it != EI; ++it) {
             int IntCounter = it - mVarStack.top().Dimensions.begin();
             std::string strCounter = "i" + std::to_string(IntCounter);
-            llvm::StringRef IndecesPart("[" + strCounter + "]");
             Indeces += "[" + strCounter + "]";
             TxtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
