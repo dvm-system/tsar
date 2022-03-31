@@ -81,8 +81,8 @@ public:
 // initialize clause
 struct Vars {
   bool RvalIsArray = false;
-  std::string LvalName;
-  std::string RvalName;
+  llvm::SmallString<64> LvalName;
+  llvm::SmallString<64> RvalName;
   bool RSizeIsKnown;
   bool LSizeIsKnown;
   int LDimensionsNum = 0;
@@ -135,11 +135,14 @@ public:
       while (mVarStack.size()) {
         int LDimensionsNum = mVarStack.top().LDimensionsNum;
         int RDimensionsNum = mVarStack.top().RDimensionsNum;
-        std::string TxtStr, BeforeFor, ForBody, Lval, Rval, Indeces;
+        llvm::SmallString<128> BeforeFor, ForBody, Lval, Rval, Indeces;
+        std::string TxtStr;
         if (mVarStack.top().LSizeIsKnown && LDimensionsNum < RDimensionsNum ||
             mVarStack.top().RSizeIsKnown && mVarStack.top().RvalIsArray &&
                 RDimensionsNum < LDimensionsNum) {
           mVarStack.pop();
+          toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+                     tsar::diag::warn_dimensions_do_not_match);
           continue;
         }
         if (LDimensionsNum) { // lvalue is array
@@ -157,11 +160,13 @@ public:
           }
           Lval = mVarStack.top().LvalName;
           Rval = mVarStack.top().RvalName;
+          TxtStr = "";
           for (auto it{mVarStack.top().Dimensions.begin()},
                EI{mVarStack.top().Dimensions.end()};
                it != EI; ++it) {
             int IntCounter = it - mVarStack.top().Dimensions.begin();
             std::string strCounter = "i" + std::to_string(IntCounter);
+            llvm::StringRef IndecesPart("[" + strCounter + "]");
             Indeces += "[" + strCounter + "]";
             TxtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
@@ -169,15 +174,13 @@ public:
           if (mVarStack.top().RvalIsArray)
             Rval += Indeces;
           Lval += Indeces;
-          ForBody = Lval + " = " + Rval + ";\n";
+          (Lval + " = " + Rval + ";\n").toStringRef(ForBody);
           TxtStr += ForBody;
           for (int i = 0; i < LDimensionsNum; i++) {
             TxtStr += "}\n";
           }
-        } else { // Initialize non-array variable
-          TxtStr = mVarStack.top().LvalName + " = " + mVarStack.top().RvalName +
-                   ";\n";
-        }
+        } else // Initialize non-array variable
+          TxtStr = (mVarStack.top().LvalName + " = " + mVarStack.top().RvalName + ";\n").str();
         Inits.push_back(TxtStr);
         mVarStack.pop();
       }
@@ -201,7 +204,6 @@ public:
       RemoveEmptyLine.RemoveLineIfEmpty = false;
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
-
       for (std::vector<std::string>::iterator It = Inits.begin();
            It != Inits.end(); ++It) {
         mRewriter.InsertTextAfterToken(locationForInits, *It);
@@ -214,6 +216,13 @@ public:
   bool TraverseDeclRefExpr(clang::DeclRefExpr *Ex) {
     llvm::StringRef VarName;
     if (mIsInPragma) {
+      NamedDecl *test = Ex->getFoundDecl();
+      auto type = Ex->getDecl()->getType();
+      if (type->isFunctionType() || type->isFunctionPointerType() ||
+          type->isStructureOrClassType()) {
+        toDiag(mSrcMgr.getDiagnostics(), Ex->getBeginLoc(),
+               tsar::diag::error_not_var);
+      }
       if (mWaitingForDimensions &&
           mCurDimensionNum == mVarStack.top().LDimensionsNum) {
         mWaitingForDimensions = false;
@@ -250,10 +259,10 @@ public:
 
     if (mIsInPragma) {
       if ((mVarStack.top().LSizeIsKnown &&
-           mVarStack.top().Dimensions.size() >
+           mVarStack.top().Dimensions.size() >=
                mVarStack.top().LDimensionsNum) ||
           (mVarStack.top().RSizeIsKnown &&
-           mVarStack.top().Dimensions.size() >
+           mVarStack.top().Dimensions.size() >=
                mVarStack.top().LDimensionsNum)) {
         toDiag(mSrcMgr.getDiagnostics(), IL->getBeginLoc(),
                tsar::diag::warn_too_many_dimensions);
@@ -263,14 +272,14 @@ public:
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
-      auto Val = IL->getValue().getLimitedValue();
+      auto Val = IL->getValue();
       if (mWaitingForDimensions) {
         if (mVarStack.size()) {
-          mVarStack.top().Dimensions.push_back(Val);
+          mVarStack.top().Dimensions.push_back(Val.getLimitedValue());
           mCurDimensionNum++;
         }
       } else if (!mWaitingForVar) { // get rvalue
-        mVarStack.top().RvalName = std::to_string(Val);
+        Val.toStringUnsigned(mVarStack.top().RvalName);
         mWaitingForVar = !mWaitingForVar;
         if (mVarStack.top().LDimensionsNum > 0)
           mWaitingForDimensions = true;

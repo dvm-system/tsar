@@ -220,6 +220,7 @@ def warn_reverse_initialization_complex: Warning<"complex initialization express
 def warn_unknown_dimensions : Warning<"Unknown array dimensions. Specify them manually">;
 def warn_dimensions_do_not_match : Warning<"Array dimensions do not match">;
 def warn_too_many_dimensions : Warning<"Too many dimensions given">;
+def error_not_var : Error<"Given DeclRefExpr is not a variable">;
 
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
