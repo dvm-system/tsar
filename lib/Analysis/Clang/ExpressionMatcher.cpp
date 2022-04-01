@@ -54,6 +54,13 @@ namespace {
 class MatchExprVisitor :
   public MatchASTBase<Value *, DynTypedNode>,
   public RecursiveASTVisitor<MatchExprVisitor> {
+
+  enum AccessKind : uint8_t {
+    AK_Store,
+    AK_AddrOf,
+    AK_Other
+  };
+
 public:
   MatchExprVisitor(SourceManager &SrcMgr, Matcher &MM,
     UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
@@ -91,7 +98,7 @@ public:
     LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: visit " << D->getDeclKindName()
                       << D->getName() << "\n");
     VisitItem(DynTypedNode::create(*D), D->getLocation());
-    return true;    
+    return true;
   }
 
   bool TraverseStmt(Stmt *S) {
@@ -142,11 +149,12 @@ public:
         if (!RecursiveASTVisitor::TraverseStmt(S))
           return false;
       }
-      auto [InArraySubscriptBase, InStore] = isInArraySubscriptBaseAndStore(S);
+      auto [InArraySubscriptBase, AK] =
+          isInArraySubscriptBaseAndAccessKind(S);
       // Match current statement if it is an innermost array subscript
       // expression. Note, that assignment-like expressions have been already
       // matched.
-      if (!mHasChildArraySubscript && !InStore)
+      if (!mHasChildArraySubscript && AK != AK_Store && AK != AK_AddrOf)
         VisitItem(DynTypedNode::create(*SE), SE->getExprLoc());
       mHasChildArraySubscript = InArraySubscriptBase;
       return true;
@@ -168,7 +176,7 @@ public:
       // only).
       if (auto VD{dyn_cast<VarDecl>(DRE->getDecl())};
           VD && isa<clang::ArrayType>(VD->getType()) &&
-          isInArraySubscriptBaseAndStore(S).first)
+          std::get<bool>(isInArraySubscriptBaseAndAccessKind(S)))
         return true;
     }
     if (isa<ReturnStmt>(S) || isa<DeclRefExpr>(S) ||
@@ -190,27 +198,30 @@ public:
   }
 
 private:
-  std::pair<bool, bool> isInArraySubscriptBaseAndStore(const Stmt *S) {
+  std::tuple<bool, AccessKind>
+  isInArraySubscriptBaseAndAccessKind(const Stmt *S) {
     auto *Prev{S};
     bool IsInArraySubscriptBase{false};
     for (auto *P : reverse(mParents)) {
       if (auto *SE{dyn_cast<ArraySubscriptExpr>(P)}) {
         if (SE->getBase() != Prev)
-          return std::pair{IsInArraySubscriptBase, false};
+          return std::tuple{IsInArraySubscriptBase, AK_Other};
         IsInArraySubscriptBase = true;
       } else {
-        if (auto BO{ dyn_cast<clang::BinaryOperator>(P) };
-          BO && BO->isAssignmentOp() && BO->getLHS() == Prev)
-          return std::pair{ IsInArraySubscriptBase, true };
-        if (auto UO{ dyn_cast<clang::UnaryOperator>(P) };
-          UO && (UO->isPrefix() || UO->isPostfix()))
-          return std::pair{ IsInArraySubscriptBase, true };
+        if (auto BO{dyn_cast<clang::BinaryOperator>(P)};
+            BO && BO->isAssignmentOp() && BO->getLHS() == Prev)
+          return std::tuple{IsInArraySubscriptBase, AK_Store};
+        if (auto UO{dyn_cast<clang::UnaryOperator>(P)})
+          if (UO->isPrefix() || UO->isPostfix())
+            return std::tuple{IsInArraySubscriptBase, AK_Store};
+          else if (UO->getOpcode() == UnaryOperatorKind::UO_AddrOf)
+            return std::tuple{IsInArraySubscriptBase, AK_AddrOf};
         if (!isa<CastExpr>(P))
-          return std::pair{ IsInArraySubscriptBase, false };
+          return std::tuple{IsInArraySubscriptBase, AK_Other};
       }
       Prev = P;
     }
-    return std::pair{IsInArraySubscriptBase, false};
+    return std::tuple{IsInArraySubscriptBase, AK_Other};
   }
 
   SmallVector<Stmt *, 8> mParents;
@@ -277,6 +288,9 @@ bool ClangExprMatcherPass::runOnFunction(Function &F) {
     ++NumNonMatchIRExpr;
     auto Loc = I.getDebugLoc();
     if (Loc) {
+      LLVM_DEBUG(dbgs() << "[EXPR MATCHER]: remember instruction ";
+                 I.print(dbgs()); dbgs() << " at "; Loc.print(dbgs());
+                 dbgs() << "\n");
       auto Itr{ LocToExpr.try_emplace(Loc).first };
       Itr->second.push_back(&I);
     }
