@@ -63,19 +63,6 @@ using namespace tsar;
 
 char ClangSplitDeclsPass::ID = 0;
 
-struct notSingleDecl {
-  bool isNotSingleFlag = false;
-  int varDeclsNum = 0;
-  bool isFirstVar = true;
-  SourceLocation notSingleDeclStart;
-  SourceLocation notSingleDeclEnd;
-  std::deque<SourceLocation> starts;
-  std::deque<SourceLocation> ends;
-  std::deque<std::string> names;
-  std::string varDeclType;
-};
-
-
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangSplitDeclsPass, "clang-split",
   "Separation of variable declaration statements (Clang)", false, false,
   tsar::TransformationQueryManager::getPassRegistry())
@@ -99,22 +86,38 @@ namespace {
 /// The visitor searches a pragma `split` and performs splitting for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
+
+struct notSingleDecl {
+  bool isNotSingleFlag = false;
+  int varDeclsNum = 0;
+  bool isFirstVar = true;
+  SourceLocation notSingleDeclStart;
+  SourceLocation notSingleDeclEnd;
+  std::deque<SourceLocation> starts;
+  std::deque<SourceLocation> ends;
+  std::deque<std::string> names;
+  std::string varDeclType;
+};
+
+
 class ClangSplitter : public RecursiveASTVisitor<ClangSplitter> {
 public:
-  ClangSplitter(TransformationContext &TfmCtx, const ASTImportInfo &ImportInfo, const GlobalInfoExtractor &GlobalInfo,
-      ClangGlobalInfoPass::RawInfo &RawInfo) :
-    mTfmCtx(&TfmCtx), mImportInfo(ImportInfo), mGlobalInfo(GlobalInfo),
-    mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
-    mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
-    mLangOpts(mRewriter.getLangOpts()) {}
+  ClangSplitter(ClangTransformationContext &TfmCtx,
+                const ASTImportInfo &ImportInfo,
+                const GlobalInfoExtractor &GlobalInfo,
+                ClangGlobalInfo::RawInfo &RawInfo)
+      : mTfmCtx(&TfmCtx), mImportInfo(ImportInfo), mGlobalInfo(GlobalInfo),
+        mRawInfo(&RawInfo), mRewriter(TfmCtx.getRewriter()),
+        mContext(TfmCtx.getContext()), mSrcMgr(mRewriter.getSourceMgr()),
+        mLangOpts(mRewriter.getLangOpts()) {}
 
   bool TraverseStmt(Stmt *S) { // to traverse the parse tree and visit each statement
     if (!S) {
       return RecursiveASTVisitor::TraverseStmt(S);
     }
     Pragma P(*S); // the Pragma class is used to check if a statement is a pragma or not
-    splitPragmaFlag = true;
     if (findClause(P, ClauseId::SplitDeclaration, mClauses)) { // mClauses contains all SplitDeclaration pragmas
+      splitPragmaFlag = true;
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove; // a vector of statements that will match the root in the tree
       auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
                                             mImportInfo, ToRemove); // ToRemove - the range of positions we want to remove
@@ -188,34 +191,7 @@ public:
         }
       }
     }
-    if (mClauses.empty() || !isa<CompoundStmt>(S) &&
-        !isa<ForStmt>(S) && !isa<DoStmt>(S) && !isa<WhileStmt>(S))
-      return RecursiveASTVisitor::TraverseStmt(S);
-    // There was a pragma split, so check absence of macros and perform
-    // splitting.
-    mClauses.clear();
-    bool StashSplitState = mActiveSplit;
-    // We do not perform search of macros in case of nested 'split'
-    // directives and active splitting. The search has been already performed.
-    if (!mActiveSplit) {
-      bool HasMacro = false;
-      for_each_macro(S, mSrcMgr, mContext.getLangOpts(), mRawInfo->Macros,
-        [&HasMacro, this](clang::SourceLocation Loc) {
-          if (!HasMacro) {
-            toDiag(mContext.getDiagnostics(), Loc,
-              tsar::diag::warn_splitdeclaration_macro_prevent);
-            HasMacro = true;
-        }
-      });
-      // We should not stop traverse because some nested split directives
-      // may exist.
-      if (HasMacro)
-        return RecursiveASTVisitor::TraverseStmt(S);
-      mActiveSplit = true;
-    }
-    auto Res = RecursiveASTVisitor::TraverseStmt(S);
-    mActiveSplit = StashSplitState;
-    return Res;
+    return RecursiveASTVisitor::TraverseStmt(S);
   }
 
   std::string getType(SourceLocation start, SourceLocation endLoc) {
@@ -303,10 +279,10 @@ public:
         std::map<clang::SourceLocation, notSingleDecl>::iterator it;
         for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
           if (it->first != S->getBeginLoc()) {
-            it->second.starts.clear();
-            it->second.ends.clear();
-            it->second.names.clear();
-            globalVarDeclsMap.erase(it->first);
+            //it->second.starts.clear();
+            //it->second.ends.clear();
+            //it->second.names.clear();
+            //globalVarDeclsMap.erase(it->first);
           }
         }
       }
@@ -370,22 +346,22 @@ public:
 
   private:
 
-  TransformationContext *mTfmCtx;
+  ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
   const GlobalInfoExtractor &mGlobalInfo;
 
-  ClangGlobalInfoPass::RawInfo *mRawInfo;
+  ClangGlobalInfo::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-  bool mActiveSplit = false;
   bool splitPragmaFlag = false;
 
   std::map<SourceLocation, notSingleDecl> globalVarDeclsMap;
   std::map<SourceLocation, SourceLocation> varPositions;
   notSingleDecl localVarDecls;
+  notSingleDecl tmpVarDecl;
   std::string txtStr;
   SourceLocation start;
 };
@@ -402,7 +378,7 @@ bool ClangSplitDeclsPass::runOnModule(llvm::Module &M) {
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  auto &GIP{getAnalysis<ClangGlobalInfoPass>()};
+  //auto &GIP{getAnalysis<ClangGlobalInfoPass>()};
   auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
   for (auto *MD : CUs->operands()) {
     auto *CU{cast<DICompileUnit>(MD)};
@@ -418,10 +394,8 @@ bool ClangSplitDeclsPass::runOnModule(llvm::Module &M) {
     if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
       ImportInfo = &ImportPass->getImportInfo();
     auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-    //mGlobalInfo = &GIP.getGlobalInfo();
-    const auto &GlobalInfo = GIP.getGlobalInfo();
-    ClangSplitter Vis(*TfmCtx, *ImportInfo, GlobalInfo, GIP.getRawInfo());
+    ClangSplitter Vis(*TfmCtx, *ImportInfo, GIP.getGlobalInfo(TfmCtx)->GIE, GIP.getGlobalInfo(TfmCtx)->RI);
     Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
-    return false;
   }
+  return false;
 }
