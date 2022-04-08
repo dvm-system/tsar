@@ -137,12 +137,11 @@ public:
         int RDimensionsNum = mVarStack.top().RDimensionsNum;
         llvm::SmallString<128> BeforeFor, ForBody, Lval, Rval, Indeces;
         std::string TxtStr;
-        if (mVarStack.top().LSizeIsKnown && LDimensionsNum < RDimensionsNum ||
-            mVarStack.top().RSizeIsKnown && mVarStack.top().RvalIsArray &&
-                RDimensionsNum < LDimensionsNum) {
+        if (LDimensionsNum < RDimensionsNum ||
+            mVarStack.top().RvalIsArray && RDimensionsNum < LDimensionsNum) {
           mVarStack.pop();
           toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
-                     tsar::diag::warn_dimensions_do_not_match);
+                 tsar::diag::warn_dimensions_do_not_match);
           continue;
         }
         if (LDimensionsNum) { // lvalue is array
@@ -178,7 +177,9 @@ public:
             TxtStr += "}\n";
           }
         } else // Initialize non-array variable
-          TxtStr = (mVarStack.top().LvalName + " = " + mVarStack.top().RvalName + ";\n").str();
+          TxtStr = (mVarStack.top().LvalName + " = " +
+                    mVarStack.top().RvalName + ";\n")
+                       .str();
         Inits.push_back(TxtStr);
         mVarStack.pop();
       }
@@ -256,12 +257,10 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
     if (mIsInPragma) {
-      if ((mVarStack.top().LSizeIsKnown &&
-           mVarStack.top().Dimensions.size() >=
-               mVarStack.top().LDimensionsNum) ||
-          (mVarStack.top().RSizeIsKnown &&
-           mVarStack.top().Dimensions.size() >=
-               mVarStack.top().LDimensionsNum)) {
+      if (mWaitingForDimensions && (mVarStack.top().Dimensions.size() >=
+                                        mVarStack.top().LDimensionsNum ||
+                                    mVarStack.top().Dimensions.size() >=
+                                        mVarStack.top().LDimensionsNum)) {
         toDiag(mSrcMgr.getDiagnostics(), IL->getBeginLoc(),
                tsar::diag::warn_too_many_dimensions);
       }
