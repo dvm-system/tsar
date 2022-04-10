@@ -170,7 +170,7 @@ inline bool isStubType(llvm::DIType *DITy) {
 ///
 /// TODO (kaniandr@gmail.com): may be we should use other way to distinguish
 /// such types. How LLVM uses 'artificial' flag on variables?
-inline bool isStubVariable(llvm::DIVariable &DIVar) {
+inline bool isStubVariable(const llvm::DIVariable &DIVar) {
   return llvm::isa<llvm::DILocalVariable>(DIVar) &&
          llvm::cast<llvm::DILocalVariable>(DIVar).isArtificial() ||
          llvm::isa<llvm::DIGlobalVariable>(DIVar) &&
