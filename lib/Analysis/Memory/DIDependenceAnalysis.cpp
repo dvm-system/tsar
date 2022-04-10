@@ -1688,22 +1688,32 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
               auto *UserBB = UI->getParent();
               if (InnerL->contains(UserBB))
                 continue;
-              ReductionCopy Copy;
+              SmallPtrSet<Instruction *, 4> Visited;
               do {
-                Copy = useReduction(UI);
-                // Skip intermediate phi-nodes which only forward value.
-                if (!Copy.To && !Copy.From && UI->hasNUses(1) &&
-                    UI->getNumIncomingValues() == 1 &&
+                ReductionCopy Copy;
+                do {
+                  Visited.insert(UI);
+                  Copy = useReduction(UI);
+                  // Skip intermediate phi-nodes which only forward value.
+                  if (!Copy.To && !Copy.From && UI->hasNUses(1) &&
+                      UI->getNumIncomingValues() == 1 &&
+                      !InnerL->contains(UserBB = UI->getParent()))
+                    UI = dyn_cast<PHINode>(*UI->user_begin());
+                  else
+                    break;
+                } while (UI && !Visited.count(UI));
+                if (!UI || !Copy.To)
+                  continue;
+                if (Copy.From)
+                  return true;
+                LCSSAPhis.insert(UI);
+                // We also want to remember self-copying instructions.
+                if (UI->hasNUses(1) && UI->getNumIncomingValues() == 1 &&
                     !InnerL->contains(UserBB = UI->getParent()))
                   UI = dyn_cast<PHINode>(*UI->user_begin());
                 else
                   break;
-              } while (UI);
-              if (!UI || !Copy.To)
-                continue;
-              if (Copy.From)
-                return true;
-              LCSSAPhis.insert(UI);
+              } while (UI && !Visited.count(UI));
             }
     }
     return false;
