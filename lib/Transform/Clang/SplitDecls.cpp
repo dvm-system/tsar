@@ -97,6 +97,7 @@ struct notSingleDecl {
   std::deque<SourceLocation> ends;
   std::deque<std::string> names;
   std::string varDeclType;
+  bool typeFlag = false;
 };
 
 
@@ -171,6 +172,7 @@ public:
 
       std::map<clang::SourceLocation, notSingleDecl>::iterator it;
       for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
+        std::cout << "GLOBAL INSERT\n";
         if (it->second.isNotSingleFlag) {
           // SourceRange toInsert(it->second.notSingleDeclStart, it->second.ends.back());
           SourceRange toInsert(it->second.notSingleDeclStart, it->second.ends.back());
@@ -208,7 +210,9 @@ public:
       return RecursiveASTVisitor::TraverseTypeLoc(Loc);
     }
     for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
-      if (it->second.varDeclsNum == 1) {
+      if (it->second.isNotSingleFlag && !it->second.typeFlag) {
+      // if (it->second.varDeclsNum == 1) {
+        it->second.typeFlag = true;
         it->second.varDeclType = getType(it->first, Loc.getEndLoc());
         return RecursiveASTVisitor::TraverseTypeLoc(Loc);
       }
@@ -279,17 +283,17 @@ public:
         std::map<clang::SourceLocation, notSingleDecl>::iterator it;
         for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
           if (it->first != S->getBeginLoc()) {
-            //it->second.starts.clear();
-            //it->second.ends.clear();
-            //it->second.names.clear();
-            //globalVarDeclsMap.erase(it->first);
+            // it->second.starts.clear();
+            // it->second.ends.clear();
+            // it->second.names.clear();
+            // globalVarDeclsMap.erase(it->first);
           }
         }
       }
-      if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 1) {
+      globalVarDeclsMap[S->getBeginLoc()].varDeclsNum++;
+      if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 2) {
         globalVarDeclsMap[S->getBeginLoc()].isNotSingleFlag = true;
       }
-      globalVarDeclsMap[S->getBeginLoc()].varDeclsNum++;
       SourceRange toInsert(S->getBeginLoc(), S->getEndLoc());
       ProcessGlobalDeclaration(S, toInsert);
     }
