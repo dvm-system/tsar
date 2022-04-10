@@ -454,6 +454,8 @@ bool AnalysisReader::runOnFunction(Function &F) {
       if (!DIEM)
         continue;
       auto *DIVar = DIEM->getVariable();
+      if (isStubVariable(*DIVar))
+        continue;
       auto *DIExpr = DIEM->getExpression();
       assert(DIVar && DIExpr && "Invalid memory location!");
       VariableT Var;
