@@ -97,7 +97,6 @@ struct notSingleDecl {
   std::deque<SourceLocation> ends;
   std::deque<std::string> names;
   std::string varDeclType;
-  bool typeFlag = false;
 };
 
 
@@ -209,11 +208,10 @@ public:
       localVarDecls.varDeclType = getType(start, Loc.getEndLoc());
       return RecursiveASTVisitor::TraverseTypeLoc(Loc);
     }
-    for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
-      if (it->second.isNotSingleFlag && !it->second.typeFlag) {
-      // if (it->second.varDeclsNum == 1) {
-        it->second.typeFlag = true;
-        it->second.varDeclType = getType(it->first, Loc.getEndLoc());
+    if (globalVarDeclsMap.count(currentSL)) {
+      if (globalVarDeclsMap[currentSL].varDeclsNum == 1) {
+        std::cout << "CURRENT = " << globalVarDeclsMap.count(currentSL) << std::endl;
+        globalVarDeclsMap[currentSL].varDeclType = getType(currentSL, Loc.getEndLoc());
         return RecursiveASTVisitor::TraverseTypeLoc(Loc);
       }
     }
@@ -221,6 +219,7 @@ public:
   }
 
   void ProcessLocalDeclaration(VarDecl *S, SourceRange toInsert) {
+    std::string txtStr;
     ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
     SourceRange Range(S->getLocation());
     std::cout << "Range: " << Canvas.getRewrittenText(Range).str() << std::endl;
@@ -247,6 +246,7 @@ public:
   }
 
   void ProcessGlobalDeclaration(VarDecl *S, SourceRange toInsert) {
+    std::string txtStr;
     ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
     SourceRange Range(S->getLocation());
     std::cout << "Range: " << Canvas.getRewrittenText(Range).str() << std::endl;
@@ -278,6 +278,7 @@ public:
   }
 
   bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
+      currentSL = S->getBeginLoc();
     if (mGlobalInfo.findOutermostDecl(S)) {
       if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 0) {
         std::map<clang::SourceLocation, notSingleDecl>::iterator it;
@@ -365,9 +366,8 @@ public:
   std::map<SourceLocation, notSingleDecl> globalVarDeclsMap;
   std::map<SourceLocation, SourceLocation> varPositions;
   notSingleDecl localVarDecls;
-  notSingleDecl tmpVarDecl;
-  std::string txtStr;
   SourceLocation start;
+  SourceLocation currentSL;
 };
 }
 
