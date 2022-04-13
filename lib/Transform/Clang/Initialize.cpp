@@ -80,6 +80,7 @@ public:
 // contains information about variables in
 // initialize clause
 struct Vars {
+  bool ErrorFlag = false;
   bool RvalIsArray = false;
   llvm::SmallString<64> LvalName;
   llvm::SmallString<64> RvalName;
@@ -131,6 +132,9 @@ public:
       mIsInPragma = true;
       bool Ast = RecursiveASTVisitor::TraverseStmt(S);
       mIsInPragma = false;
+      if (mErrorFlag) {
+        return true;
+      }
       std::vector<std::string> Inits;
       while (mVarStack.size()) {
         int LDimensionsNum = mVarStack.top().LDimensionsNum;
@@ -221,7 +225,7 @@ public:
           type->isStructureOrClassType()) {
         toDiag(mSrcMgr.getDiagnostics(), Ex->getBeginLoc(),
                tsar::diag::error_not_var);
-        exit(1);
+        mErrorFlag = true;
       }
       if (mWaitingForDimensions &&
           mCurDimensionNum == mVarStack.top().LDimensionsNum) {
@@ -295,6 +299,7 @@ private:
     return nullptr;
   }
 
+  bool mErrorFlag = false;
   bool mIsInPragma = false;
   bool mWaitingForVar = true;
   bool mWaitingForDimensions = false;
