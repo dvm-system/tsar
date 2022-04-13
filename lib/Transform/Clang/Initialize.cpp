@@ -221,6 +221,7 @@ public:
           type->isStructureOrClassType()) {
         toDiag(mSrcMgr.getDiagnostics(), Ex->getBeginLoc(),
                tsar::diag::error_not_var);
+        exit(1);
       }
       if (mWaitingForDimensions &&
           mCurDimensionNum == mVarStack.top().LDimensionsNum) {
