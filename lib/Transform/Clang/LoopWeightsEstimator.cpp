@@ -134,7 +134,7 @@ uint64_t getExecutionCount(Instruction *I,
 uint64_t getInstructionEffectiveWeight(Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs,
     TargetTransformInfo &TTI,
-    std::map<llvm::Function *, uint64_t> &FunctionEffectiveWeights) {
+    std::map<llvm::Function *, uint64_t> &FunctionBaseWeights) {
   uint64_t InstructionExecutionCount = getExecutionCount(I, CRs);
   uint64_t InstructionEffectiveWeight =
       TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency)
@@ -142,11 +142,10 @@ uint64_t getInstructionEffectiveWeight(Instruction *I,
   Function *Called = nullptr;
   if ((isa<CallInst>(I) || isa<InvokeInst>(I))
       && (Called = cast<CallBase>(I)->getCalledFunction())
-      && !(Called->isIntrinsic())) {
-    uint64_t CalledEffectiveWeight = FunctionEffectiveWeights[Called];
-    uint64_t CalledExecutionCount = Called->getEntryCount().getCount();
-    InstructionEffectiveWeight +=
-        CalledEffectiveWeight * InstructionExecutionCount / CalledExecutionCount;
+      && !(Called->isIntrinsic())
+      && !(Called->empty())) {
+    uint64_t CalledBaseWeight = FunctionBaseWeights[Called];
+    InstructionEffectiveWeight += CalledBaseWeight * InstructionExecutionCount;
   }
   return InstructionEffectiveWeight;
 }
@@ -159,21 +158,20 @@ ClangLoopWeightsEstimator::ClangLoopWeightsEstimator() : ModulePass(ID) {
 bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
   auto &CRs = getAnalysis<ClangCountedRegionsExtractor>().getCountedRegions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  std::map<Function *, uint64_t> FunctionEffectiveWeights;
   for (scc_iterator<CallGraph *> SCCIt = scc_begin(&CG); !SCCIt.isAtEnd(); ++SCCIt) {
     for (auto *CGN : *SCCIt) {
       Function *F = nullptr;
-      if ((F = CGN->getFunction()) && !(F->isIntrinsic())) {
+      if ((F = CGN->getFunction()) && !(F->isIntrinsic()) && !(F->empty())) {
         auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*F);
         std::map<Instruction *, uint64_t> InstructionEffectiveWeights;
-        uint64_t FunctionEffectiveWeight = 0;
+        uint64_t FunctionBaseWeight = 0;
         for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
           uint64_t InstructionEffectiveWeight = getInstructionEffectiveWeight(&*I, CRs, TTI,
-              FunctionEffectiveWeights);
+              mFunctionBaseWeights);
           InstructionEffectiveWeights[&*I] = InstructionEffectiveWeight;
-          FunctionEffectiveWeight += InstructionEffectiveWeight;
+          FunctionBaseWeight += InstructionEffectiveWeight;
         }
-        FunctionEffectiveWeights[F] = FunctionEffectiveWeight;
+        mFunctionBaseWeights[F] = FunctionBaseWeight;
         bool *Changed = new bool();
         *Changed = false;
         auto &LI = getAnalysis<LoopInfoWrapperPass>(*F, Changed).getLoopInfo();
@@ -187,13 +185,13 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
               LoopEffectiveWeight += InstructionEffectiveWeights[&I];
             }
           }
-          LoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
+          mLoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
         }
       }
     }
   }
   std::cout << "Loop Weights:" << std::endl;
-  for (const auto &[LoopId, LoopWeight] : LoopEffectiveWeights) {
+  for (const auto &[LoopId, LoopWeight] : mLoopEffectiveWeights) {
     std::cout << "\t" << LoopId << ": " << LoopWeight << std::endl;
   }
   return false;
@@ -201,7 +199,7 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
 
 const std::map<MDNode *, uint64_t> &
 ClangLoopWeightsEstimator::getLoopWeights() const noexcept {
-	return LoopEffectiveWeights;
+	return mLoopEffectiveWeights;
 }
 
 void ClangLoopWeightsEstimator::getAnalysisUsage(AnalysisUsage &AU) const {

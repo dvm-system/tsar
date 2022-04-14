@@ -47,7 +47,8 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  std::map<MDNode *, uint64_t> LoopEffectiveWeights{};
+  std::map<Function *, uint64_t> mFunctionBaseWeights{};
+  std::map<MDNode *, uint64_t> mLoopEffectiveWeights{};
 };
 }
 #endif//TSAR_CLANG_LOOP_WEIGHTS_H
