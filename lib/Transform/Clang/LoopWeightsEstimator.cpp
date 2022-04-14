@@ -108,7 +108,7 @@ bool operator>=(const coverage::LineColPair &lhs, const coverage::LineColPair &r
   return rhs <= lhs;
 }
 
-uint64_t getExecutionCount(Instruction *I,
+uint64_t getInstructionExecutionCount(Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs) {
   const auto &DL = I->getDebugLoc();
   if (!DL) {
@@ -131,11 +131,18 @@ uint64_t getExecutionCount(Instruction *I,
   return InstructionExecutionCount;
 }
 
+uint64_t getLoopExecutionCount(Loop *L,
+    const std::vector<llvm::coverage::CountedRegion> &CRs) {
+  Instruction *HeadInstruction = &*L->getHeader()->begin();
+  uint64_t LoopExecutionCount = getInstructionExecutionCount(HeadInstruction, CRs);
+  return LoopExecutionCount;
+}
+
 uint64_t getInstructionEffectiveWeight(Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs,
     TargetTransformInfo &TTI,
     std::map<llvm::Function *, uint64_t> &FunctionBaseWeights) {
-  uint64_t InstructionExecutionCount = getExecutionCount(I, CRs);
+  uint64_t InstructionExecutionCount = getInstructionExecutionCount(I, CRs);
   uint64_t InstructionEffectiveWeight =
       TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency)
       * InstructionExecutionCount;
@@ -156,6 +163,7 @@ ClangLoopWeightsEstimator::ClangLoopWeightsEstimator() : ModulePass(ID) {
 }
 
 bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
+  std::cout << "Loop & Function Weights:" << std::endl << std::endl;
   auto &CRs = getAnalysis<ClangCountedRegionsExtractor>().getCountedRegions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   for (scc_iterator<CallGraph *> SCCIt = scc_begin(&CG); !SCCIt.isAtEnd(); ++SCCIt) {
@@ -172,13 +180,27 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
           FunctionBaseWeight += InstructionEffectiveWeight;
         }
         mFunctionBaseWeights[F] = FunctionBaseWeight;
+        std::cout << F->getName().str()
+            << ": base weight " << FunctionBaseWeight
+            << ", loops:"
+            << std::endl;
+        std::map<MDNode *, uint64_t> LoopIterationsOriginal;
+        std::map<MDNode *, uint64_t> LoopIterationsAccumulated;
         bool *Changed = new bool();
         *Changed = false;
         auto &LI = getAnalysis<LoopInfoWrapperPass>(*F, Changed).getLoopInfo();
         auto Loops = LI.getLoopsInPreorder();
         for (Loop **LPtr = Loops.begin(), **LEndPtr = Loops.end(); LPtr != LEndPtr; ++LPtr) {
-          uint64_t LoopEffectiveWeight = 0;
           Loop *L = *LPtr;
+          uint64_t LParentIterationsAccumulated = 1;
+          if (Loop *LParent = L->getParentLoop()) {
+            LParentIterationsAccumulated = LoopIterationsAccumulated[LParent->getLoopID()];
+          }
+          uint64_t LExecutionCount = getLoopExecutionCount(L, CRs);
+          LoopIterationsAccumulated[L->getLoopID()] = LExecutionCount;
+          LoopIterationsOriginal[L->getLoopID()] =
+              LExecutionCount / LParentIterationsAccumulated;
+          uint64_t LoopEffectiveWeight = 0;
           for (auto BBPtr = L->block_begin(), BBEndPtr = L->block_end(); BBPtr != BBEndPtr; ++BBPtr) {
             BasicBlock *BB = *BBPtr;
             for (Instruction &I : *BB) {
@@ -186,13 +208,16 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
             }
           }
           mLoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
+          mLoopBaseWeights[L->getLoopID()] = LoopEffectiveWeight / LParentIterationsAccumulated;
+          std::cout << "\t" << L->getName().str()
+              << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
+              << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
+              << ": eff weight " << LoopEffectiveWeight
+              << std::endl;
         }
+        std::cout << std::endl;
       }
     }
-  }
-  std::cout << "Loop Weights:" << std::endl;
-  for (const auto &[LoopId, LoopWeight] : mLoopEffectiveWeights) {
-    std::cout << "\t" << LoopId << ": " << LoopWeight << std::endl;
   }
   return false;
 }

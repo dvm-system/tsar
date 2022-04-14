@@ -48,6 +48,7 @@ public:
 
 private:
   std::map<Function *, uint64_t> mFunctionBaseWeights{};
+  std::map<MDNode *, uint64_t> mLoopBaseWeights{};
   std::map<MDNode *, uint64_t> mLoopEffectiveWeights{};
 };
 }
