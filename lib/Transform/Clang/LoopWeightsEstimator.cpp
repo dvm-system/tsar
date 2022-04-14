@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/IRUtils.h"
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
@@ -108,7 +109,7 @@ bool operator>=(const coverage::LineColPair &lhs, const coverage::LineColPair &r
   return rhs <= lhs;
 }
 
-uint64_t getInstructionExecutionCount(Instruction *I,
+uint64_t getInstructionExecutionCount(const Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs) {
   const auto &DL = I->getDebugLoc();
   if (!DL) {
@@ -131,14 +132,14 @@ uint64_t getInstructionExecutionCount(Instruction *I,
   return InstructionExecutionCount;
 }
 
-uint64_t getLoopExecutionCount(Loop *L,
+uint64_t getLoopExecutionCount(const Loop *L,
     const std::vector<llvm::coverage::CountedRegion> &CRs) {
   Instruction *HeadInstruction = &*L->getHeader()->begin();
   uint64_t LoopExecutionCount = getInstructionExecutionCount(HeadInstruction, CRs);
   return LoopExecutionCount;
 }
 
-uint64_t getInstructionEffectiveWeight(Instruction *I,
+uint64_t getInstructionEffectiveWeight(const Instruction *I,
     const std::vector<llvm::coverage::CountedRegion> &CRs,
     TargetTransformInfo &TTI,
     std::map<llvm::Function *, uint64_t> &FunctionBaseWeights) {
@@ -190,31 +191,37 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
         *Changed = false;
         auto &LI = getAnalysis<LoopInfoWrapperPass>(*F, Changed).getLoopInfo();
         auto Loops = LI.getLoopsInPreorder();
-        for (Loop **LPtr = Loops.begin(), **LEndPtr = Loops.end(); LPtr != LEndPtr; ++LPtr) {
-          Loop *L = *LPtr;
-          uint64_t LParentIterationsAccumulated = 1;
-          if (Loop *LParent = L->getParentLoop()) {
-            LParentIterationsAccumulated = LoopIterationsAccumulated[LParent->getLoopID()];
-          }
-          uint64_t LExecutionCount = getLoopExecutionCount(L, CRs);
-          LoopIterationsAccumulated[L->getLoopID()] = LExecutionCount;
-          LoopIterationsOriginal[L->getLoopID()] =
-              LExecutionCount / LParentIterationsAccumulated;
-          uint64_t LoopEffectiveWeight = 0;
-          for (auto BBPtr = L->block_begin(), BBEndPtr = L->block_end(); BBPtr != BBEndPtr; ++BBPtr) {
-            BasicBlock *BB = *BBPtr;
-            for (Instruction &I : *BB) {
-              LoopEffectiveWeight += InstructionEffectiveWeights[&I];
-            }
-          }
-          mLoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
-          mLoopBaseWeights[L->getLoopID()] = LoopEffectiveWeight / LParentIterationsAccumulated;
-          std::cout << "\t" << L->getName().str()
-              << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
-              << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
-              << ": eff weight " << LoopEffectiveWeight
-              << std::endl;
-        }
+        for_each_loop(
+            LI, [&CRs,
+            &InstructionEffectiveWeights,
+            &LoopIterationsOriginal,
+            &LoopIterationsAccumulated,
+            this](const Loop *L) {
+              if (L->getLoopID()) {
+                uint64_t LParentIterationsAccumulated = 1;
+                if (Loop *LParent = L->getParentLoop()) {
+                  LParentIterationsAccumulated = LoopIterationsAccumulated[LParent->getLoopID()];
+                }
+                uint64_t LExecutionCount = getLoopExecutionCount(L, CRs);
+                LoopIterationsAccumulated[L->getLoopID()] = LExecutionCount;
+                LoopIterationsOriginal[L->getLoopID()] =
+                    LExecutionCount / LParentIterationsAccumulated;
+                uint64_t LoopEffectiveWeight = 0;
+                for (auto BBPtr = L->block_begin(), BBEndPtr = L->block_end(); BBPtr != BBEndPtr; ++BBPtr) {
+                  BasicBlock *BB = *BBPtr;
+                  for (Instruction &I : *BB) {
+                    LoopEffectiveWeight += InstructionEffectiveWeights[&I];
+                  }
+                }
+                mLoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
+                mLoopBaseWeights[L->getLoopID()] = LoopEffectiveWeight / LParentIterationsAccumulated;
+                std::cout << "\t" << L->getName().str()
+                    << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
+                    << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
+                    << ": eff weight " << LoopEffectiveWeight
+                    << std::endl;
+              }
+            });
         std::cout << std::endl;
       }
     }
