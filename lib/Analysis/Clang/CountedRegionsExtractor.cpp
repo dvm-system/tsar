@@ -80,7 +80,7 @@ void ClangCountedRegionsExtractor::initializePass() {
     return;
   }
 
-  std::cout << "Coverage loading done" << std::endl;
+  LLVM_DEBUG(llvm:dbgs() << "Coverage loading done\n";);
 
   const auto &Coverage = CoverageOrErr->get();
   
@@ -90,13 +90,15 @@ void ClangCountedRegionsExtractor::initializePass() {
     }
   }
 
-  std::cout << "Stored CountedRegions:" << std::endl;
+  LLVM_DEBUG(llvm:dbgs() << "Stored CountedRegions:\n";);
   for (const auto &CR : CountedRegions) {
-    std::cout << "\tstart: " << CR.LineStart << ":" << CR.ColumnStart
-        << ", end: " << CR.LineEnd << ":" << CR.ColumnEnd
-        << ", count: " << CR.ExecutionCount << std::endl;
+    LLVM_DEBUG(
+      llvm:dbgs() << "\tstart: " << CR.LineStart << ":" << CR.ColumnStart
+      << ", end: " << CR.LineEnd << ":" << CR.ColumnEnd
+      << ", count: " << CR.ExecutionCount << "\n";
+    );
   }
-  std::cout << std::endl;
+  LLVM_DEBUG(llvm:dbgs() << "\n";);
 }
 
 const std::vector<coverage::CountedRegion> &

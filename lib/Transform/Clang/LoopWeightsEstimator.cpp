@@ -164,7 +164,7 @@ ClangLoopWeightsEstimator::ClangLoopWeightsEstimator() : ModulePass(ID) {
 }
 
 bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
-  std::cout << "Loop & Function Weights:" << std::endl << std::endl;
+  LLVM_DEBUG(llvm::dbgs() << "Loop & Function Weights:\n\n";);
   auto &CRs = getAnalysis<ClangCountedRegionsExtractor>().getCountedRegions();
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   for (scc_iterator<CallGraph *> SCCIt = scc_begin(&CG); !SCCIt.isAtEnd(); ++SCCIt) {
@@ -181,10 +181,11 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
           FunctionBaseWeight += InstructionEffectiveWeight;
         }
         mFunctionBaseWeights[F] = FunctionBaseWeight;
-        std::cout << F->getName().str()
-            << ": base weight " << FunctionBaseWeight
-            << ", loops:"
-            << std::endl;
+        LLVM_DEBUG(
+          llvm::dbgs() << F->getName().str()
+          << ": base weight " << FunctionBaseWeight
+          << ", loops:\n";
+        );
         std::map<MDNode *, uint64_t> LoopIterationsOriginal;
         std::map<MDNode *, uint64_t> LoopIterationsAccumulated;
         bool *Changed = new bool();
@@ -215,14 +216,16 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
                 }
                 mLoopEffectiveWeights[L->getLoopID()] = LoopEffectiveWeight;
                 mLoopBaseWeights[L->getLoopID()] = LoopEffectiveWeight / LParentIterationsAccumulated;
-                std::cout << "\t" << L->getName().str()
-                    << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
-                    << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
-                    << ": eff weight " << LoopEffectiveWeight
-                    << std::endl;
+                LLVM_DEBUG(
+                  llvm::dbgs() << "\t" << L->getName().str()
+                  << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
+                  << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
+                  << ": eff weight " << LoopEffectiveWeight
+                  << "\n";
+                );
               }
             });
-        std::cout << std::endl;
+        LLVM_DEBUG(llvm::dbgs() << "\n";);
       }
     }
   }
