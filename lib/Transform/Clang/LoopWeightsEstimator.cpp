@@ -59,23 +59,14 @@ using namespace tsar;
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-loop-weights"
 
-class ClangCopyPropagationInfo final : public PassGroupInfo {
-  void addBeforePass(llvm::legacy::PassManager &PM) const override {
-    PM.add(createClangCountedRegionsExtractor());
-  }
-};
-
 char ClangLoopWeightsEstimator::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangLoopWeightsEstimator, "clang-loop-weights",
   "Loop Weights Estimator (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
-INITIALIZE_PASS_IN_GROUP_INFO(ClangCopyPropagationInfo);
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)  // causes build error "‘initializeCallGraphWrapperPassPass’ was not declared in this scope"
-INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)  // the same
-INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)  // the same
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ClangCountedRegionsExtractor)
 INITIALIZE_PASS_IN_GROUP_END(ClangLoopWeightsEstimator, "clang-loop-weights",
   "Loop Weights Estimator (Clang)", false, false,
@@ -238,8 +229,6 @@ ClangLoopWeightsEstimator::getLoopWeights() const noexcept {
 }
 
 void ClangLoopWeightsEstimator::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
   AU.addRequired<CallGraphWrapperPass>();
   AU.addRequired<TargetTransformInfoWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();

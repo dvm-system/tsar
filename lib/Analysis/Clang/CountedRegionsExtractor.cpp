@@ -52,12 +52,7 @@ using namespace tsar;
 
 char ClangCountedRegionsExtractor::ID = 0;
 
-INITIALIZE_PASS_IN_GROUP_BEGIN(ClangCountedRegionsExtractor, "clang-counted-regions-extractor",
-  "Extracting Of CountedRegions From Code Coverage (Clang)", false, false,
-  TransformationQueryManager::getPassRegistry())
-INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
-INITIALIZE_PASS_DEPENDENCY(ClangGlobalInfoPass)
-INITIALIZE_PASS_IN_GROUP_END(ClangCountedRegionsExtractor, "clang-counted-regions-extractor",
+INITIALIZE_PASS_IN_GROUP(ClangCountedRegionsExtractor, "clang-counted-regions-extractor",
   "Extracting Of CountedRegions From Code Coverage (Clang)", false, false,
   TransformationQueryManager::getPassRegistry())
 
@@ -107,8 +102,6 @@ ClangCountedRegionsExtractor::getCountedRegions() const noexcept {
 }
 
 void ClangCountedRegionsExtractor::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<ClangGlobalInfoPass>();
   AU.setPreservesAll();
 }
 
