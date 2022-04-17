@@ -176,6 +176,7 @@ void addAfterSROAAnalysis(const GlobalOptions &GO, const DataLayout &DL,
   Passes.add(createCFGSimplificationPass());
   Passes.add(createInstructionCombiningPass());
   Passes.add(createLoopSimplifyPass());
+  Passes.add(createPointerScalarizerPass());
   Passes.add(createSCEVAAWrapperPass());
   Passes.add(createGlobalsAAWrapperPass());
   Passes.add(createRPOFunctionAttrsAnalysis());

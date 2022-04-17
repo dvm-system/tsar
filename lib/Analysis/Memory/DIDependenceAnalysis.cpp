@@ -596,6 +596,67 @@ trait::Reduction::Kind getReductionKind(
   return trait::DIReduction::RK_NoReduction;
 }
 
+bool handleLoopEmptyBindings(
+    const Loop *L, const DIMemoryTrait &DITraitItr,
+    DIMemoryTraitRegionPool &Pool,
+    const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR) {
+  auto *Mem = DITraitItr.getMemory();
+  if (Mem->emptyBinding())
+    return true;
+  for (auto &Loc : *Mem) {
+    if (!Loc.pointsToAliveValue())
+      continue;
+    for (auto *User : Loc->users())
+      if (auto *I = dyn_cast<Instruction>(User))
+        if (L->contains(I)) {
+          return false;
+        }
+    if (auto *CE = dyn_cast<ConstantExpr>(Loc)) {
+      SmallVector<ConstantExpr *, 4> WorkList{CE};
+      do {
+        auto *Expr = WorkList.pop_back_val();
+        for (auto &ExprU : Expr->uses()) {
+          auto ExprUse = ExprU.getUser();
+          if (auto ExprUseInst = dyn_cast<Instruction>(ExprUse))
+            if (L->contains(ExprUseInst))
+              return false;
+            else if (auto ExprUseExpr = dyn_cast<ConstantExpr>(ExprUse))
+              WorkList.push_back(ExprUseExpr);
+        }
+      } while (!WorkList.empty());
+    }
+  }
+  if (!DITraitItr.is<trait::DirectAccess>())
+    return false;
+  for (auto &Trait: Pool) {
+    if (!Trait.is<trait::DirectAccess>())
+      continue;
+    auto *PoolNode = Trait.getMemory()->getAliasNode();
+    auto *MemNode = Mem->getAliasNode();
+
+    if (Trait.getMemory() != Mem && !DIAliasSTR.isUnreachable(PoolNode, MemNode))
+      return false;
+  }
+  return true;
+}
+
+MDNode *mdNodeFromAliasTreeMapping(const Function *F, DIMemoryLocation &Loc) {
+  auto MD = F->getMetadata("alias.tree.mapping");
+  if (MD == nullptr)
+    return nullptr;
+  for (auto &op : MD->operands()) {
+    auto *DIN = dyn_cast<MDNode>(op);
+    if (!DIN)
+      continue;
+    assert(DIN->getNumOperands() == 2 && "Alias tree mapping node must contain three elements");
+    auto *DINewVar = dyn_cast<DIVariable>(DIN->getOperand(1));
+    if (Loc.Var == DINewVar) {
+      return dyn_cast<MDNode>(DIN->getOperand(0));
+    }
+  }
+  return nullptr;
+}
+
 /// Update traits of metadata-level locations related to a specified Phi-node
 /// in a specified loop. This function uses a specified `TraitInserter` functor
 /// to update traits for a single memory location.
@@ -619,7 +680,10 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
   if (DILocs.empty())
     return;
   for (auto &DILoc : DILocs) {
-    auto *MD = getRawDIMemoryIfExists(Phi->getContext(), DILoc);
+    auto *MD = mdNodeFromAliasTreeMapping(Phi->getFunction(), DILoc);
+    if (!MD) {
+      MD = getRawDIMemoryIfExists(Phi->getContext(), DILoc);
+    }
     // If a memory location is partially promoted we will try to use
     // dbg.declare or dbg.addr intrinsics to find the corresponding node in
     // the alias tree.
@@ -648,7 +712,7 @@ template<class FuncT> void updateTraits(const Loop *L, const PHINode *Phi,
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
         DIMTraitItr->getMemory()->isOriginal() ||
-        !DIMTraitItr->getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
         !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
         isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       continue;
@@ -1450,13 +1514,14 @@ void DIDependencyAnalysisPass::analyzePrivatePromoted(Loop *L,
   for (auto &Candidate : Privates) {
     if (OutwardUses.count(Candidate))
       continue;
-    auto *MD =
-        getRawDIMemoryIfExists(L->getHeader()->getContext(), Candidate);
+    auto MD{mdNodeFromAliasTreeMapping(L->getHeader()->getParent(), Candidate)};
+    if (!MD)
+      MD = getRawDIMemoryIfExists(L->getHeader()->getContext(), Candidate);
     if (!MD)
       continue;
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() || DIMTraitItr->getMemory()->isOriginal() ||
-        !DIMTraitItr->getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
         !DIMTraitItr->is_any<trait::Anti, trait::Flow, trait::Output,
                              trait::LastPrivate, trait::SecondToLastPrivate,
                              trait::FirstPrivate, trait::DynamicPrivate>() ||
@@ -1494,7 +1559,7 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
              L->getStartLoc().print(dbgs()); dbgs() << "\n");
   for (auto &DIMTrait : Pool) {
     if (DIMTrait.getMemory()->isOriginal() ||
-        !DIMTrait.getMemory()->emptyBinding() ||
+        !handleLoopEmptyBindings(L, DIMTrait, Pool, DIAliasSTR) ||
         isLockedTrait(DIMTrait, LockedTraits, DIAliasSTR))
       continue;
     DIMTrait.unset<trait::AddressAccess>();
@@ -1619,14 +1684,14 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
     return;
   SmallVector<DIMemoryTraitRegionPool::iterator, 2> Traits;
   auto allowToUpdate =
-    [&Pool, &LockedTraits, &DIAliasSTR, &Traits](DIMemoryLocation &DILoc) {
+    [&Pool, &LockedTraits, &DIAliasSTR, &Traits, &L](DIMemoryLocation &DILoc) {
     auto *MD = getRawDIMemoryIfExists(DILoc.Var->getContext(), DILoc);
     if (!MD)
       return false;
     auto DIMTraitItr = Pool.find_as(MD);
     if (DIMTraitItr == Pool.end() ||
       DIMTraitItr->getMemory()->isOriginal() ||
-      !DIMTraitItr->getMemory()->emptyBinding() ||
+      !handleLoopEmptyBindings(L, *DIMTraitItr, Pool, DIAliasSTR) ||
       !DIMTraitItr->is<trait::Anti, trait::Flow, trait::Output>() ||
       isLockedTrait(*DIMTraitItr, LockedTraits, DIAliasSTR))
       return false;
@@ -1766,7 +1831,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
     const SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const DIMemory *> LockedTraits, const GlobalOptions &GlobalOpts,
     DependenceSet &DepSet, DIDependenceSet &DIDepSet,
-    DIMemoryTraitRegionPool &Pool) {
+    DIMemoryTraitRegionPool &Pool, Loop *L) {
   assert(!DIN.empty() && "Alias node must contain memory locations!");
   auto *AN = findBoundAliasNode(*mAT, AliasSTR, DIN);
   auto ATraitItr = AN ? DepSet.find_as(AN) : DepSet.end();
@@ -1779,6 +1844,29 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
       dbgs() << "\n";
     });
     auto DIMTraitItr = Pool.find_as(&M);
+    bool IsAccessed{false};
+    auto *F{L->getHeader()->getParent()}; // L - придется добавить как параметр к `analyzeNode`
+    if (auto MD{F->getMetadata("alias.tree.mapping")}) {
+      for (auto &Op : MD->operands()) {
+        auto *OpMD{dyn_cast<MDNode>(Op)};
+        if (!OpMD)
+          continue;
+        assert(OpMD->getNumOperands() == 2 &&
+               "Alias tree mapping node must contain two elements");
+        auto MappingMD{dyn_cast<MDNode>(OpMD->getOperand(0))};
+        if (MappingMD == M.getAsMDNode()) {
+          IsAccessed = true;
+        }
+      }
+    }
+    bool UsedInLoop = false;
+    if (IsAccessed)
+      for (auto &Loc : M)
+        if (auto *I = dyn_cast<Instruction>(Loc))
+          if (L->contains(I)) {
+            UsedInLoop = true;
+            break;
+          }
     if (M.isOriginal() || M.emptyBinding() || ATraitItr == DepSet.end()) {
       if (DIMTraitItr == Pool.end())
         continue;
@@ -1796,13 +1884,13 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
               MustNoAccessValues.insert(Bind);
           if (IsChanged) {
             clarify(DIMTrait, *DIMTraitItr);
-          } else {
+          } else if (!UsedInLoop) {
             LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
             LLVM_DEBUG(dbgs() << "[DA DI]: mark as redundant\n");
             DIMTraitItr->set<trait::Redundant>();
             DIMTraitItr->unset<trait::NoRedundant>();
           }
-        } else {
+        } else if (!UsedInLoop) {
           LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
           if ((!M.emptyBinding() && ATraitItr == DepSet.end()) ||
               (M.emptyBinding() && M.isOriginal())) {
@@ -1849,7 +1937,7 @@ void DIDependencyAnalysisPass::analyzeNode(DIAliasMemoryNode &DIN,
         } else {
           clarify(DIMTrait, *DIMTraitItr);
         }
-      } else {
+      } else if (!UsedInLoop) {
         if (DIMTraitItr == Pool.end())
           continue;
         LLVM_DEBUG(dbgs() << "[DA DI]: use existing traits\n");
@@ -2056,7 +2144,7 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       if (isa<DIAliasTopNode>(DIN))
         continue;
       analyzeNode(cast<DIAliasMemoryNode>(*DIN), DWLang, AliasSTR, DIAliasSTR,
-        LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool);
+        LockedTraits, GlobalOpts, DepSet, DIDepSet, *Pool, L);
       for (auto &DIM : cast<DIAliasMemoryNode>(*DIN))
         if (auto *DIEM = dyn_cast<DIEstimateMemory>(&DIM))
           if (DIEM->getExpression()->getNumElements() == 0)
