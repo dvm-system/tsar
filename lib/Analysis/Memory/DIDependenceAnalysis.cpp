@@ -315,6 +315,12 @@ bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
     FromDIMTrait.template set<trait::IndirectAccess>();
   if (DIMTrait.is<trait::ExplicitAccess>())
     FromDIMTrait.template set<trait::ExplicitAccess>();
+  if (!DIMTrait.is<trait::Flow>())
+    FromDIMTrait.template unset<trait::Flow>();
+  if (!DIMTrait.is<trait::Anti>())
+    FromDIMTrait.template unset<trait::Anti>();
+  if (!DIMTrait.is<trait::Output>())
+    FromDIMTrait.template unset<trait::Output>();
   if (DIMTrait.is_any<trait::NoAccess, trait::Readonly>())
     return false;
   if (DIMTrait.is<trait::Shared>() &&
