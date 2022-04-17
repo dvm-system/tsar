@@ -35,6 +35,7 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Frontend/Clang/Pragma.h"
+#include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/MetadataUtils.h"
@@ -312,7 +313,7 @@ void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
       ToMerge.front()->getHeader(), ToMerge.front()->getLoopID(), true);
   auto MergedMarker =
       ParallelizationInfo.find<ParallelMarker<OMPParallelDirective>>(
-          ToMerge.back()->getExitingBlock(), ToMerge.back()->getLoopID(),
+          getValidExitingBlock(*ToMerge.back()), ToMerge.back()->getLoopID(),
           false);
   cast<ParallelMarker<OMPParallelDirective>>(MergedMarker)
       ->parent_insert(MergedRegion.getUnchecked());
@@ -329,7 +330,7 @@ void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
     }
   };
   auto removeEndOfRegion = [&remove, &ParallelizationInfo](Loop *L) {
-    auto ExitingBB = L->getExitingBlock();
+    auto ExitingBB = getValidExitingBlock(*L);
     auto ID = L->getLoopID();
     auto Marker =
         ParallelizationInfo.find<ParallelMarker<OMPParallelDirective>>(
@@ -339,7 +340,7 @@ void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
            ExitPB);
   };
   auto removeStartOfRegion = [&remove, &ParallelizationInfo](Loop *L) {
-    auto HeaderBB = L->getExitingBlock();
+    auto HeaderBB = getValidExitingBlock(*L);
     auto ID = L->getLoopID();
     auto Region =
         ParallelizationInfo.find<OMPParallelDirective>(L->getHeader(), ID);
@@ -532,7 +533,7 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     assert(EntryInfo.second && "Unable to create a parallel block!");
     EntryInfo.first->get<ParallelLocation>().emplace_back();
     EntryInfo.first->get<ParallelLocation>().back().Anchor = LoopID;
-    auto ExitingBB = DFL.getLoop()->getExitingBlock();
+    auto ExitingBB = getValidExitingBlock(*DFL.getLoop());
     assert(ExitingBB && "Parallel loop must have a single exit!");
     ParallelLocation *ExitLoc = nullptr;
     if (ExitingBB == DFL.getLoop()->getHeader()) {
