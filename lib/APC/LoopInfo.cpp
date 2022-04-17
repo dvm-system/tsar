@@ -493,15 +493,20 @@ APCLoopInfoBasePass::evaluateInduction(const Loop &L,
 
 void APCLoopInfoBasePass::evaluateExits(const Loop &L, const DFLoop &DFL,
     apc::LoopGraph &APCLoop) {
-  if (DFL.getExitNode()->numberOfPredecessors() < 2) {
     APCLoop.hasGoto = false;
-  } else {
+  if (DFL.getExitNode()->numberOfPredecessors() > 1) {
     auto M = L.getHeader()->getModule();
     auto F = L.getHeader()->getParent();
-    APCLoop.hasGoto = true;
     SmallVector<BasicBlock *, 4> Exiting;
     L.getExitingBlocks(Exiting);
+    unsigned NumberOfExits{0};
     for (auto *BB : Exiting) {
+      if (all_of(successors(BB), [&L](llvm::BasicBlock *SuccBB) {
+            return L.contains(SuccBB) ||
+                   llvm::isa<llvm::UnreachableInst>(SuccBB->front());
+          }))
+        continue;
+      ++NumberOfExits;
       auto I = BB->getTerminator();
       if (!I || !I->getDebugLoc())
         continue;
@@ -512,6 +517,10 @@ void APCLoopInfoBasePass::evaluateExits(const Loop &L, const DFLoop &DFL,
       else
         APCLoop.linesOfExternalGoTo.push_back(ShrinkLoc);
     }
+    if (NumberOfExits == 1)
+      APCLoop.linesOfExternalGoTo.clear();
+    else
+      APCLoop.hasGoto = true;
   }
 }
 
