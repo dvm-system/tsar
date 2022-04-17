@@ -157,6 +157,30 @@ void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
       F(UI);
   }
 }
+
+/// Return a block inside the loop that have successors outside of the loop if
+/// there is no other blocks inside the loop that have reachable successors
+/// outside of the loop.
+inline llvm::BasicBlock* getValidExitingBlock(const llvm::Loop& L) {
+  llvm::SmallVector<llvm::BasicBlock *, 4> ExitingBlocks;
+  L.getExitingBlocks(ExitingBlocks);
+  if (ExitingBlocks.size() == 1)
+    return ExitingBlocks.front();
+  unsigned ValidCount = 0;
+  llvm::BasicBlock *ValidBB{nullptr};
+  for (auto *BB : ExitingBlocks) {
+    if (any_of(successors(BB), [&L](llvm::BasicBlock *SuccBB) {
+          return !L.contains(SuccBB) &&
+                 !llvm::isa<llvm::UnreachableInst>(SuccBB->front());
+        })) {
+      ValidBB = BB;
+      ++ValidCount;
+    }
+  }
+  if (ValidCount == 1)
+    return ValidBB;
+  return nullptr;
+}
 }
 
 #endif//TSAR_SUPPORT_IR_UTILS_H

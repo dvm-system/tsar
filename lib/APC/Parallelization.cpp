@@ -782,7 +782,7 @@ void APCParallelizationPass::updateParallelization(
       EntryInfo.first->get<ParallelLocation>().back().Anchor = LpStmt->getId();
       auto *LLVMLoop{LpInfo.getLoopFor(HeaderBB)};
       assert(LLVMLoop && "LLVM IR representation of a loop must be known!");
-      auto ExitingBB{LLVMLoop->getExitingBlock()};
+      auto ExitingBB{getValidExitingBlock(*LLVMLoop)};
       assert(ExitingBB && "Parallel loop must have a single exit!");
       ParallelLocation *ExitLoc{nullptr};
       if (ExitingBB == LLVMLoop->getHeader()) {

@@ -47,6 +47,7 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/IRUtils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Clang/DVMHDirecitves.h"
@@ -270,7 +271,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     EntryInfo.first->get<ParallelLocation>().emplace_back();
     EntryInfo.first->get<ParallelLocation>().back().Anchor =
         IR.getLoop()->getLoopID();
-    auto ExitingBB = IR.getLoop()->getExitingBlock();
+    auto ExitingBB{getValidExitingBlock(*IR.getLoop())};
     assert(ExitingBB && "Parallel loop must have a single exit!");
     ParallelLocation *ExitLoc = nullptr;
     if (ExitingBB == IR.getLoop()->getHeader()) {
@@ -326,7 +327,7 @@ static void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
   auto MergedRegion = ParallelizationInfo.find<PragmaRegion>(
       ToMerge.front()->getHeader(), ToMerge.front()->getLoopID(), true);
   auto MergedMarker = ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
-      ToMerge.back()->getExitingBlock(), ToMerge.back()->getLoopID(), false);
+      getValidExitingBlock(*ToMerge.back()), ToMerge.back()->getLoopID(), false);
   auto &MergedActual = *[&PB = MergedRegion.getPL()->Entry]() {
     auto I = find_if(PB, [](auto &PI) { return isa<PragmaActual>(*PI); });
     if (I != PB.end())
@@ -386,7 +387,7 @@ static void mergeRegions(const SmallVectorImpl<Loop *> &ToMerge,
   };
   auto removeEndOfRegion = [&copyActual, &remove, &MergedGetActual,
                             &ParallelizationInfo](Loop *L) {
-    auto ExitingBB = L->getExitingBlock();
+    auto ExitingBB{getValidExitingBlock(*L)};
     auto ID = L->getLoopID();
     auto Marker = ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
         ExitingBB, ID, false);
@@ -509,7 +510,7 @@ static void sanitizeAcrossLoops(ItrT I, ItrT EI,
              tsar::diag::note_parallel_across_tie_unable);
     // Remote parallel loop, enclosing region and actualization directives.
     auto ID{(**I).getLoopID()};
-    auto ExitingBB{(**I).getExitingBlock()};
+    auto ExitingBB{getValidExitingBlock(**I)};
     auto Marker{ParallelizationInfo.find<ParallelMarker<PragmaRegion>>(
         ExitingBB, ID, false)};
     auto &ExitPB{Marker.getPL()->Exit};
