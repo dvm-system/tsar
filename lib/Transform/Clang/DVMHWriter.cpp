@@ -476,7 +476,11 @@ static void addVar(const dvmh::Align &A, FunctionT &&getIdxName,
               Str.append(Name.begin(), Name.end());
               if (!V.Offset.isNullValue()) {
                 Str.push_back('+');
+                if (V.Offset.isNegative())
+                  Str.push_back('(');
                 V.Offset.toString(Str);
+                if (V.Offset.isNegative())
+                  Str.push_back(')');
               }
             } else {
               V.toString(Str);
