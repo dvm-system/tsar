@@ -1220,7 +1220,8 @@ apc::Directive * ParallelDirective::genDirective(File *F,
     if (parallel[I] != "*") {
       auto Itr{find_if(Nest, [&Name = parallel[I]](auto &L) {
         auto LpStmt{cast<apc::LoopStatement>(L->loop)};
-        return LpStmt->getInduction().template get<AST>()->getName() == Name;
+        return LpStmt->hasInduction() &&
+               LpStmt->getInduction().template get<AST>()->getName() == Name;
       })};
       assert(Itr != Nest.end() && "Unknown parallel loop!");
       auto LpStmt{cast<apc::LoopStatement>((**Itr).loop)};
