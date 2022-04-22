@@ -94,14 +94,14 @@ Function for_each_loop(const llvm::LoopInfo &LI, Function F) {
 }
 
 /// Check if predicate is `true` for at least one instruction which uses
-/// result of a specified instruction.
+/// result of a specified value.
 ///
 /// This function tries to find instruction which covers each user of a
-/// specified instruction (a user may be a constant expression for example).
+/// specified value (a user may be a constant expression for example).
 /// If corresponding instruction is not found then a user is passed to a
 /// functor.
 template<class FunctionT>
-bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
+bool any_of_user_insts(llvm::Value &I, FunctionT F) {
   for (auto *U : I.users()) {
     if (auto *UI = llvm::dyn_cast<llvm::Instruction>(U)) {
       if (F(UI))
@@ -112,7 +112,7 @@ bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
         auto *Expr = WorkList.pop_back_val();
         for (auto *ExprU : Expr->users()) {
           if (auto ExprUseInst = llvm::dyn_cast<llvm::Instruction>(ExprU)) {
-            if (F(UI))
+            if (F(ExprUseInst))
               return true;
           } else if (auto Expr = llvm::dyn_cast<llvm::ConstantExpr>(ExprU)) {
             WorkList.push_back(Expr);
@@ -121,23 +121,22 @@ bool any_of_user_insts(llvm::Instruction &I, FunctionT F) {
           }
         }
       } while (!WorkList.empty());
-    } else if (F(UI)) {
+    } else if (F(U)) {
       return true;
     }
   }
   return false;
 }
 
-/// Apply a specified function to each instruction which uses result of a
-/// specified instruction.
+/// Apply a specified function to each instruction which uses a specified value.
 ///
 /// This function tries to find instruction which covers each user of a
-/// specified instruction (a user may be a constant expression for example).
+/// specified value (a user may be a constant expression for example).
 /// If corresponding instruction is not found then a user is passed to a
 /// functor.
 template<class FunctionT>
-void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
-  for (auto *U : I.users()) {
+void for_each_user_insts(llvm::Value &V, FunctionT F) {
+  for (auto *U : V.users()) {
     if (auto *UI = llvm::dyn_cast<llvm::Instruction>(U)) {
       F(UI);
     } else if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(U)) {
@@ -146,7 +145,7 @@ void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
         auto *Expr = WorkList.pop_back_val();
         for (auto *ExprU : Expr->users()) {
           if (auto ExprUseInst = llvm::dyn_cast<llvm::Instruction>(ExprU))
-            F(UI);
+            F(ExprUseInst);
           else if (auto ExprUseExpr = llvm::dyn_cast<llvm::ConstantExpr>(ExprU))
             WorkList.push_back(ExprUseExpr);
           else
@@ -154,7 +153,7 @@ void for_each_user_insts(llvm::Instruction &I, FunctionT F) {
         }
       } while (!WorkList.empty());
     } else
-      F(UI);
+      F(U);
   }
 }
 
