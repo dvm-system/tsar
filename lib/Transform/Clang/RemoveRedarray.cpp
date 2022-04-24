@@ -321,6 +321,7 @@ public:
       }
       auto [ArrName, ArrayStmt] = mSwaps[0];
       auto [SizeLiteral, SizeStmt] = mSwaps[1];
+      std::string OldArrName = ArrName;
       ArrName += "_subscr_";
       std::string ToInsert = cast<clang::DeclRefExpr>(ArrayStmt)->getType().getAsString();
       ToInsert.erase(ToInsert.find('['), ToInsert.find(']'));
@@ -338,6 +339,11 @@ public:
       auto Res = RecursiveASTVisitor::TraverseStmt(S);
       mStatus = FIND_OP;
       Res = RecursiveASTVisitor::TraverseStmt(S);
+      ToInsert = "";
+      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
+          ToInsert += OldArrName + "[" + std::to_string(i) + "] = " + ArrName + std::to_string(i) + ";\n";
+      }
+      mRewriter.InsertTextAfterToken(S->getEndLoc(), ToInsert);
       return true;
 
     }
