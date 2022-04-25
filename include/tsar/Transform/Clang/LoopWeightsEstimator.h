@@ -47,7 +47,9 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
+  std::map<Function *, uint64_t> mFunctionEntryCounts{};
   std::map<Function *, uint64_t> mFunctionBaseWeights{};
+  std::map<Function *, uint64_t> mFunctionEffectiveWeights{};
   std::map<MDNode *, uint64_t> mLoopBaseWeights{};
   std::map<MDNode *, uint64_t> mLoopEffectiveWeights{};
 };

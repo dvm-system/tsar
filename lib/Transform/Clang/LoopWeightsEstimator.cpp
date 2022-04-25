@@ -39,7 +39,6 @@
 #include <llvm/IR/DebugLoc.h>
 #include <llvm/IR/Function.h>
 #include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/InstIterator.h"
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
@@ -126,8 +125,20 @@ uint64_t getInstructionExecutionCount(const Instruction *I,
 uint64_t getLoopExecutionCount(const Loop *L,
     const std::vector<llvm::coverage::CountedRegion> &CRs) {
   Instruction *HeadInstruction = &*L->getHeader()->begin();
-  uint64_t LoopExecutionCount = getInstructionExecutionCount(HeadInstruction, CRs);
+  uint64_t LoopExecutionCount =
+      getInstructionExecutionCount(HeadInstruction, CRs);
   return LoopExecutionCount;
+}
+
+Function *getCalledIfIsFunctionCall(const Instruction *I) {
+  Function *Called = nullptr;
+  if ((isa<CallInst>(I) || isa<InvokeInst>(I))
+      && (Called = cast<CallBase>(I)->getCalledFunction())
+      && !(Called->isIntrinsic())
+      && !(Called->empty())) {
+    return Called;
+  }
+  return nullptr;
 }
 
 uint64_t getInstructionEffectiveWeight(const Instruction *I,
@@ -138,11 +149,7 @@ uint64_t getInstructionEffectiveWeight(const Instruction *I,
   uint64_t InstructionEffectiveWeight =
       TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency)
       * InstructionExecutionCount;
-  Function *Called = nullptr;
-  if ((isa<CallInst>(I) || isa<InvokeInst>(I))
-      && (Called = cast<CallBase>(I)->getCalledFunction())
-      && !(Called->isIntrinsic())
-      && !(Called->empty())) {
+  if (Function *Called = getCalledIfIsFunctionCall(I)) {
     uint64_t CalledBaseWeight = FunctionBaseWeights[Called];
     InstructionEffectiveWeight += CalledBaseWeight * InstructionExecutionCount;
   }
@@ -163,34 +170,60 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
       Function *F = nullptr;
       if ((F = CGN->getFunction()) && !(F->isIntrinsic()) && !(F->empty())) {
         auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*F);
-        std::map<Instruction *, uint64_t> InstructionEffectiveWeights;
-        uint64_t FunctionBaseWeight = 0;
-        for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-          uint64_t InstructionEffectiveWeight = getInstructionEffectiveWeight(&*I, CRs, TTI,
-              mFunctionBaseWeights);
-          InstructionEffectiveWeights[&*I] = InstructionEffectiveWeight;
-          FunctionBaseWeight += InstructionEffectiveWeight;
+        for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It) {
+          Instruction *I = &*It;
+          if (Function *Called = getCalledIfIsFunctionCall(I)) {
+            uint64_t TimesCalled = getInstructionExecutionCount(I, CRs);
+            mFunctionEntryCounts[Called] += TimesCalled;
+          }
         }
-        mFunctionBaseWeights[F] = FunctionBaseWeight;
+      }
+    }
+  }
+  for (scc_iterator<CallGraph *> SCCIt = scc_begin(&CG); !SCCIt.isAtEnd(); ++SCCIt) {
+    for (auto *CGN : *SCCIt) {
+      Function *F = nullptr;
+      if ((F = CGN->getFunction()) && !(F->isIntrinsic()) && !(F->empty())) {
+        auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*F);
+        std::map<Instruction *, uint64_t> InstructionEffectiveWeights;
+        uint64_t FunctionEffectiveWeight = 0;
+        for (inst_iterator It = inst_begin(F), E = inst_end(F); It != E; ++It) {
+          Instruction *I = &*It;
+          uint64_t InstructionEffectiveWeight = getInstructionEffectiveWeight(I, CRs, TTI,
+              mFunctionBaseWeights);
+          InstructionEffectiveWeights[I] = InstructionEffectiveWeight;
+          FunctionEffectiveWeight += InstructionEffectiveWeight;
+        }
+        mFunctionEffectiveWeights[F] = FunctionEffectiveWeight;
+        if (mFunctionEntryCounts.find(F) == mFunctionEntryCounts.end()) {
+          mFunctionEntryCounts[F] = 1;  // function was never called, i. e. main
+        }
+        mFunctionBaseWeights[F] = FunctionEffectiveWeight / mFunctionEntryCounts[F];
         LLVM_DEBUG(
           llvm::dbgs() << F->getName().str()
-          << ": base weight " << FunctionBaseWeight
+          << ": entry count: " << mFunctionEntryCounts[F]
+          << ", base weight " << FunctionEffectiveWeight / mFunctionEntryCounts[F]
+          << ", effective weight " << FunctionEffectiveWeight
           << ", loops:\n";
         );
         std::map<MDNode *, uint64_t> LoopIterationsOriginal;
         std::map<MDNode *, uint64_t> LoopIterationsAccumulated;
+        uint64_t FunctionEntryCount = mFunctionEntryCounts[F];
         bool *Changed = new bool();
         *Changed = false;
         auto &LI = getAnalysis<LoopInfoWrapperPass>(*F, Changed).getLoopInfo();
         auto Loops = LI.getLoopsInPreorder();
         for_each_loop(
-            LI, [&CRs,
-            &InstructionEffectiveWeights,
-            &LoopIterationsOriginal,
-            &LoopIterationsAccumulated,
-            this](const Loop *L) {
+            LI, [
+              FunctionEntryCount,
+              &CRs,
+              &InstructionEffectiveWeights,
+              &LoopIterationsOriginal,
+              &LoopIterationsAccumulated,
+              this
+            ](const Loop *L) {
               if (L->getLoopID()) {
-                uint64_t LParentIterationsAccumulated = 1;
+                uint64_t LParentIterationsAccumulated = FunctionEntryCount;
                 if (Loop *LParent = L->getParentLoop()) {
                   LParentIterationsAccumulated = LoopIterationsAccumulated[LParent->getLoopID()];
                 }
@@ -211,7 +244,7 @@ bool ClangLoopWeightsEstimator::runOnModule(Module &M) {
                   llvm::dbgs() << "\t" << L->getName().str()
                   << ", start " << L->getStartLoc().getLine() << ":" << L->getStartLoc().getCol()
                   << ": base weight " << LoopEffectiveWeight / LParentIterationsAccumulated
-                  << ": eff weight " << LoopEffectiveWeight
+                  << ": effective weight " << LoopEffectiveWeight
                   << "\n";
                 );
               }
