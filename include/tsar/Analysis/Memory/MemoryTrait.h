@@ -267,7 +267,7 @@ private:
 using MemoryDescriptor = bcl::TraitDescriptor<
   trait::AddressAccess, trait::ExplicitAccess, trait::HeaderAccess, trait::Lock,
   trait::Redundant, trait::NoRedundant, trait::NoPromotedScalar,
-  trait::DirectAccess, trait::IndirectAccess,
+  trait::DirectAccess, trait::IndirectAccess, trait::UseAfterLoop,
   bcl::TraitAlternative<
     trait::NoAccess, trait::Readonly, trait::Reduction, trait::Induction,
     bcl::TraitUnion<trait::Flow, trait::Anti, trait::Output>,
@@ -319,7 +319,8 @@ using MemoryStatistic = bcl::tagged_tuple<
   bcl::tagged<llvm::Statistic &, trait::NoRedundant>,
   bcl::tagged<llvm::Statistic &, trait::NoPromotedScalar>,
   bcl::tagged<llvm::Statistic &, trait::DirectAccess>,
-  bcl::tagged<llvm::Statistic &, trait::IndirectAccess>>;
+  bcl::tagged<llvm::Statistic &, trait::IndirectAccess>,
+  bcl::tagged<llvm::Statistic &, trait::UseAfterLoop>>;
 
 /// A macro to make definition of statistics really simple.
 ///
@@ -348,14 +349,17 @@ using MemoryStatistic = bcl::tagged_tuple<
   STATISTIC(VARNAME##NoPromotedScalar, "Number of not promoted scalars"); \
   STATISTIC(VARNAME##DirectAccess, "Number of not directly accessed locations"); \
   STATISTIC(VARNAME##IndirectAccess, "Number of not indirectly accessed locations"); \
-  static ::tsar::MemoryStatistic VARNAME = {\
-    VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess, \
-    VARNAME##Readonly, VARNAME##Shared, VARNAME##Private, \
-    VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate, VARNAME##LastPrivate, \
-    VARNAME##DynamicPrivate, VARNAME##Reduction, VARNAME##Induction, \
-    VARNAME##Flow, VARNAME##Anti, VARNAME##Output, VARNAME##Lock, \
-    VARNAME##Redundant, VARNAME##NoRedundant, VARNAME##NoPromotedScalar, \
-    VARNAME##DirectAccess, VARNAME##IndirectAccess };
+  STATISTIC(VARNAME##UseAfterLoop, "Number of locations used after exit from a loop"); \
+  static ::tsar::MemoryStatistic VARNAME = {                                   \
+      VARNAME##AddressAccess, VARNAME##HeaderAccess, VARNAME##ExplicitAccess,  \
+      VARNAME##Readonly, VARNAME##Shared, VARNAME##Private,                    \
+      VARNAME##FirstPrivate, VARNAME##SecondToLastPrivate,                     \
+      VARNAME##LastPrivate, VARNAME##DynamicPrivate, VARNAME##Reduction,       \
+      VARNAME##Induction, VARNAME##Flow, VARNAME##Anti, VARNAME##Output,       \
+      VARNAME##Lock, VARNAME##Redundant, VARNAME##NoRedundant,                 \
+      VARNAME##NoPromotedScalar, VARNAME##DirectAccess,                        \
+      VARNAME##IndirectAccess, VARNAME##UseAfterLoop                           \
+  };
 }
 #endif//TSAR_MEMORY_TRAIT_H
 

@@ -547,6 +547,8 @@ bool AnalysisReader::runOnFunction(Function &F) {
         if (!TraitItr->second.get<trait::Output>())
           DITrait.unset<trait::Output>();
       }
+      if (!TraitItr->second.get<trait::UseAfterLoop>())
+        DITrait.unset<trait::UseAfterLoop>();
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set traits to ";
                  DITrait.print(dbgs()); dbgs() << "\n");
     }

@@ -779,19 +779,18 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
       SharedTrait = BitMemoryTrait::SharedJoin;
       DefTrait = BitMemoryTrait::Shared;
     }
+    // TODO (kaniandr@gmail.com): live memory analysis does not expand
+    // analysis results from aggregated array representation to explicit
+    // accesses, so we conservatively use analysis for the whole array
+    // instead of analysis results for an explicitly accessed memory location.
+    auto isLiveAggregate = [this, &LS](auto &Loc) {
+      auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
+      if (BasePtr == Loc.Ptr)
+        return false;
+      return LS.getOut().overlap(
+          MemoryLocation(BasePtr, LocationSize::unknown(), Loc.AATags));
+    };
     if (!DefUse.hasUse(Loc)) {
-      // TODO (kaniandr@gmail.com): live memory analysis does not expand
-      // analysis results from aggregated array representation to explicit
-      // accesses, so we conservatively use analysis for the whole array
-      // instead of analysis results for an explicitly accessed memory location.
-      auto isLiveAggregate = [this, &LS](auto &Loc) {
-        auto BasePtr =
-            GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
-        if (BasePtr == Loc.Ptr)
-          return false;
-        return LS.getOut().overlap(
-            MemoryLocation(BasePtr, LocationSize::unknown(), Loc.AATags));
-      };
       if (!LS.getOut().overlap(Loc) && !isLiveAggregate(Loc))
         CurrTraits &= BitMemoryTrait::Private | SharedTrait;
       else {
@@ -818,11 +817,16 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
           // if it has not been assigned.
           CurrTraits &= BitMemoryTrait::DynamicPrivate &
           BitMemoryTrait::FirstPrivate | SharedTrait;
+        CurrTraits &= BitMemoryTrait::UseAfterLoop;
       }
     } else if ((DefUse.hasMayDef(Loc) || DefUse.hasDef(Loc))) {
       CurrTraits &= DefTrait;
+      if (LS.getOut().overlap(Loc) || isLiveAggregate(Loc))
+        CurrTraits &= BitMemoryTrait::UseAfterLoop;
     } else {
       CurrTraits &= BitMemoryTrait::Readonly;
+      if (LS.getOut().overlap(Loc) || isLiveAggregate(Loc))
+        CurrTraits &= BitMemoryTrait::UseAfterLoop;
     }
     LLVM_DEBUG(updateTraitsLog(Base, CurrTraits));
   }
