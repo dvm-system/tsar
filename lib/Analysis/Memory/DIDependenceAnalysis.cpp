@@ -309,6 +309,8 @@ bool clarifyDescriptor(TraitT &&FromDIMTrait, DIMemoryTrait &DIMTrait) {
     FromDIMTrait.template unset<trait::HeaderAccess>();
   if (DIMTrait.is<trait::AddressAccess>())
     FromDIMTrait.template set<trait::AddressAccess>();
+  if (DIMTrait.is<trait::UseAfterLoop>())
+    FromDIMTrait.template set<trait::UseAfterLoop>();
   if (DIMTrait.is<trait::DirectAccess>())
     FromDIMTrait.template set<trait::DirectAccess>();
   if (DIMTrait.is<trait::IndirectAccess>())

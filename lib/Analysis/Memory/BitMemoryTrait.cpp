@@ -29,6 +29,8 @@ using namespace tsar;
 BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
   if (Dptr.is<trait::AddressAccess>())
     mId &= AddressAccess;
+  if (Dptr.is<trait::UseAfterLoop>())
+    mId &= UseAfterLoop;
   if (Dptr.is<trait::HeaderAccess>())
     mId &= HeaderAccess;
   if (Dptr.is<trait::NoPromotedScalar>())
@@ -81,6 +83,10 @@ BitMemoryTrait::BitMemoryTrait(const MemoryDescriptor &Dptr) : mId(NoAccess) {
 MemoryDescriptor BitMemoryTrait::toDescriptor(unsigned TraitNumber,
   MemoryStatistic &Stat) const {
   MemoryDescriptor Dptr;
+  if (!(get() & ~UseAfterLoop)) {
+    Dptr.set<trait::UseAfterLoop>();
+    Stat.get<trait::UseAfterLoop>() += TraitNumber;
+  }
   if (!(get() & ~AddressAccess)) {
     Dptr.set<trait::AddressAccess>();
     Stat.get<trait::AddressAccess>() += TraitNumber;
