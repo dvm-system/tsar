@@ -29,6 +29,7 @@
 
 #include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/Passes.h"
 #include <bcl/utility.h>
 #include <llvm/ADT/ArrayRef.h>
@@ -50,6 +51,7 @@ class BitMemoryTrait;
 class DIAliasMemoryNode;
 class DIMemory;
 class DependenceSet;
+class DFRegionInfo;
 template<class GraphType> class SpanningTreeRelation;
 struct GlobalOptions;
 
@@ -117,6 +119,9 @@ public:
     mAT = nullptr;
     mDT = nullptr;
     mSE = nullptr;
+    mLiveInfo = nullptr;
+    mRegionInfo = nullptr;
+    mTLI = nullptr;
   }
 
   /// Prints out the internal state of the pass. This also used to produce
@@ -128,6 +133,7 @@ private:
   /// updates description of metadata-level traits in a specified pool if
   /// necessary.
   void analyzePromoted(Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
     const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DIMemoryTraitRegionPool &Pool);
@@ -135,6 +141,7 @@ private:
   /// Determine promoted memory locations which could be privitized in the
   /// original program.
   void analyzePrivatePromoted(Loop *L, Optional<unsigned> DWLang,
+    const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
     const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const tsar::DIMemory *> LockedTraits,
     tsar::DIMemoryTraitRegionPool &Pool);
@@ -156,14 +163,17 @@ private:
     const tsar::SpanningTreeRelation<tsar::AliasTree *> &AliasSTR,
     const tsar::SpanningTreeRelation<const tsar::DIAliasTree *> &DIAliasSTR,
     ArrayRef<const tsar::DIMemory *> LockedTraits,
-    const tsar::GlobalOptions &GlobalOpts,
+    const tsar::GlobalOptions &GlobalOpts, const llvm::Loop &L,
     tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
-    tsar::DIMemoryTraitRegionPool &Pool, Loop *L);
+    tsar::DIMemoryTraitRegionPool &Pool);
 
   bool mIsInitialization;
   tsar::DIDependencInfo mDeps;
   tsar::AliasTree *mAT;
   tsar::DIMemoryTraitPool *mTraitPool;
+  tsar::LiveMemoryInfo *mLiveInfo;
+  tsar::DFRegionInfo *mRegionInfo;
+  TargetLibraryInfo *mTLI;
   LoopInfo *mLI;
   DominatorTree *mDT;
   ScalarEvolution *mSE;
