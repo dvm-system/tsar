@@ -101,11 +101,10 @@ void initializeNoCaptureAnalysisPass(PassRegistry &Registry);
 /// Create a pass calculating preserved parameters.
 Pass * createNoCaptureAnalysisPass();
 
-/// Initialize a pass which attempts to promote pointer
-/// values to registers.
+/// Initialize a pass which attempts to promote pointer values to registers.
 void initializePointerScalarizerPassPass(PassRegistry &Registry);
 
-/// Create a pass which attempts to promote pointer
-/// values to registers.
+/// Create a pass which attempts to promote pointer values to registers.
+FunctionPass *createPointerScalarizerPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
