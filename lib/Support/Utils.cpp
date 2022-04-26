@@ -26,6 +26,7 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/MetadataUtils.h"
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/DIBuilder.h>
 #include <regex>
 
 using namespace llvm;
@@ -111,5 +112,19 @@ bool pointsToLocalMemory(const Value &V, const Loop &L) {
           }
         }
   return false;
+}
+
+llvm::DIType *createStubType(llvm::Module &M, unsigned int AS,
+                             llvm::DIBuilder &DIB) {
+  /// TODO (kaniandr@gmail.com): we create a stub instead of an appropriate
+  /// type because type must not be set to nullptr. We mark such type as
+  /// artificial type with name "sapfor.type", however may be this is not
+  /// a good way to distinguish such types?
+  auto DIBasicTy = DIB.createBasicType(
+      "char", llvm::Type::getInt1Ty(M.getContext())->getScalarSizeInBits(),
+      dwarf::DW_ATE_unsigned_char);
+  auto PtrSize = M.getDataLayout().getPointerSizeInBits(AS);
+  return DIB.createArtificialType(
+      DIB.createPointerType(DIBasicTy, PtrSize, 0, None, "sapfor.type"));
 }
 }
