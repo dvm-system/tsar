@@ -26,6 +26,7 @@
 #include "tsar/Analysis/KnownFunctionTraits.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #include <bcl/utility.h>
@@ -61,19 +62,6 @@ public:
   }
 
 private:
-  DIType *createStubType(llvm::Module &M, unsigned int AS, DIBuilder &DIB) {
-    /// TODO (kaniandr@gmail.com): we create a stub instead of an appropriate
-    /// type because type must not be set to nullptr. We mark such type as
-    /// artificial type with name "sapfor.type", however may be this is not
-    /// a good way to distinguish such types?
-    auto DIBasicTy = DIB.createBasicType(
-      "char", llvm::Type::getInt1Ty(M.getContext())->getScalarSizeInBits(),
-      dwarf::DW_ATE_unsigned_char);
-    auto PtrSize = M.getDataLayout().getPointerSizeInBits(AS);
-    return DIB.createArtificialType(
-      DIB.createPointerType(DIBasicTy, PtrSize, 0, None, "sapfor.type"));
-  }
-
   /// Insert artificial metadata for allocas.
   void insertDeclareIfNotExist(Function &F, DIFile *FileCU, DIBuilder &DIB) {
     for (auto &I : instructions(F))

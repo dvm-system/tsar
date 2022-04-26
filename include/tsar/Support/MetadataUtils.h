@@ -32,6 +32,10 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/FileSystem.h>
 
+namespace llvm {
+class DIBuilder;
+}
+
 namespace tsar {
 /// Returns a language for a specified function.
 inline llvm::Optional<unsigned> getLanguage(const llvm::Function &F) {
@@ -163,6 +167,10 @@ inline llvm::AAMDNodes sanitizeAAInfo(llvm::AAMDNodes AAInfo) {
 inline bool isStubType(llvm::DIType *DITy) {
   return !DITy || (DITy->isArtificial() && DITy->getName() == "sapfor.type");
 }
+
+/// Create auxiliary type of internal needs.
+llvm::DIType *createStubType(llvm::Module &M, unsigned int AS,
+                             llvm::DIBuilder &DIB);
 
 /// Additional variables may be necessary for metadata-level analysis.
 /// This function returns 'true' if a specified variable is one of these
