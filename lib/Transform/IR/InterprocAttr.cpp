@@ -285,11 +285,12 @@ AttrKind POFunctionAttrsAnalysis::addDirectUserCalleeAttr() {
 
 AttrKind POFunctionAttrsAnalysis::addAlwaysReturnAttr() {
   for (auto *SCCF : mSCCFuncs) {
-    if (SCCF->hasFnAttribute(Attribute::NoReturn) ||
-        (SCCF->isDeclaration() &&
-         !SCCF->isIntrinsic() && !hasFnAttr(*SCCF, AttrKind::LibFunc)))
+    if (!SCCF->hasFnAttribute(Attribute::WillReturn) &&
+        (SCCF->hasFnAttribute(Attribute::NoReturn) ||
+         (SCCF->isDeclaration() && !SCCF->isIntrinsic() &&
+          !hasFnAttr(*SCCF, AttrKind::LibFunc))))
       return AttrKind::not_attribute;
-    }
+  }
   for (auto *CF : mCalleeFuncs)
     if (!hasFnAttr(*CF, AttrKind::AlwaysReturn))
       return AttrKind::not_attribute;
