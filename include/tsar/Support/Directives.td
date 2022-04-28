@@ -158,6 +158,9 @@ def AssertNoMacro : Clause<"nomacro", Assert>;
 def RegionName : Clause<"name", Region,
   [LParen, PPIdentifier, ZeroOrMore<[Comma, PPIdentifier]>, RParen]>;
 
+def Initialize : Clause<"initialize", Transform,
+  [LParen, Identifier, Equal, OneOf<[Identifier, NumericConstant]>, ZeroOrMore<[LSquare, NumericConstant, RSquare]>, ZeroOrMore<[Comma, Identifier, Equal, OneOf<[Identifier, NumericConstant]>, ZeroOrMore<[LSquare, NumericConstant, RSquare]>]>, RParen]>;
+
 def ReplaceMetadata : Clause<"replace", Metadata,
   [LParen,
     Identifier, LParen,
