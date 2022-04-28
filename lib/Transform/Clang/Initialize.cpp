@@ -136,43 +136,41 @@ public:
         return true;
       }
       std::vector<std::string> Inits;
-      while (mVarStack.size()) {
-        int LDimensionsNum = mVarStack.top().LDimensionsNum;
-        int RDimensionsNum = mVarStack.top().RDimensionsNum;
+      for(std::vector<struct Vars>::iterator It = mVarVector.begin(); It != mVarVector.end(); ++It) {
+        int LDimensionsNum = It->LDimensionsNum;
+        int RDimensionsNum = It->RDimensionsNum;
         llvm::SmallString<128> BeforeFor, ForBody, Lval, Rval, Indeces;
         std::string TxtStr;
         if (LDimensionsNum < RDimensionsNum ||
-            mVarStack.top().RvalIsArray && RDimensionsNum < LDimensionsNum) {
-          mVarStack.pop();
+            It->RvalIsArray && RDimensionsNum < LDimensionsNum) {
           toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
                  tsar::diag::warn_dimensions_do_not_match);
           continue;
         }
         if (LDimensionsNum) { // lvalue is array
-          if (mVarStack.top().Dimensions.size() < LDimensionsNum) {
-            if ((mVarStack.top().LDefaultDimensions.size() == LDimensionsNum) &&
-                (!RDimensionsNum || mVarStack.top().LDefaultDimensions ==
-                                        mVarStack.top().RDefaultDimensions)) {
-              mVarStack.top().Dimensions = mVarStack.top().LDefaultDimensions;
+          if (It->Dimensions.size() < LDimensionsNum) {
+            if ((It->LDefaultDimensions.size() == LDimensionsNum) &&
+                (!RDimensionsNum || It->LDefaultDimensions ==
+                                        It->RDefaultDimensions)) {
+              It->Dimensions = It->LDefaultDimensions;
             } else {
-              mVarStack.pop();
               toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
                      tsar::diag::warn_unknown_dimensions);
               continue; // dimensions ar mandatory for arrays, skip
             }           // initialization if no dimensions found
           }
-          Lval = mVarStack.top().LvalName;
-          Rval = mVarStack.top().RvalName;
-          for (auto it{mVarStack.top().Dimensions.begin()},
-               EI{mVarStack.top().Dimensions.end()};
+          Lval = It->LvalName;
+          Rval = It->RvalName;
+          for (auto it{It->Dimensions.begin()},
+               EI{It->Dimensions.end()};
                it != EI; ++it) {
-            int IntCounter = it - mVarStack.top().Dimensions.begin();
+            int IntCounter = it - It->Dimensions.begin();
             std::string strCounter = "i" + std::to_string(IntCounter);
             Indeces += "[" + strCounter + "]";
             TxtStr += "for (int " + strCounter + " = 0; " + strCounter + " < " +
                       std::to_string(*it) + "; " + strCounter + "++) {\n";
           }
-          if (mVarStack.top().RvalIsArray)
+          if (It->RvalIsArray)
             Rval += Indeces;
           Lval += Indeces;
           (Lval + " = " + Rval + ";\n").toStringRef(ForBody);
@@ -181,11 +179,10 @@ public:
             TxtStr += "}\n";
           }
         } else // Initialize non-array variable
-          TxtStr = (mVarStack.top().LvalName + " = " +
-                    mVarStack.top().RvalName + ";\n")
+          TxtStr = (It->LvalName + " = " +
+                    It->RvalName + ";\n")
                        .str();
         Inits.push_back(TxtStr);
-        mVarStack.pop();
       }
 
       llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
@@ -228,7 +225,7 @@ public:
         mErrorFlag = true;
       }
       if (mWaitingForDimensions &&
-          mCurDimensionNum == mVarStack.top().LDimensionsNum) {
+          mCurDimensionNum == mVarVector.back().LDimensionsNum) {
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
@@ -239,19 +236,19 @@ public:
       if (mWaitingForVar) { // get lvalue
         Vars Tmp;
         Tmp.LvalName = VarName;
-        mVarStack.push(std::move(Tmp));
-        mVarStack.top().LDimensionsNum =
-            getDimensionsNum(QT, mVarStack.top().LDefaultDimensions,
-                             mVarStack.top().LSizeIsKnown);
+        mVarVector.push_back(std::move(Tmp));
+        mVarVector.back().LDimensionsNum =
+            getDimensionsNum(QT, mVarVector.back().LDefaultDimensions,
+                             mVarVector.back().LSizeIsKnown);
         mWaitingForDimensions = false;
       } else { // get rvalue
-        mVarStack.top().RDimensionsNum =
-            getDimensionsNum(QT, mVarStack.top().RDefaultDimensions,
-                             mVarStack.top().RSizeIsKnown);
+        mVarVector.back().RDimensionsNum =
+            getDimensionsNum(QT, mVarVector.back().RDefaultDimensions,
+                             mVarVector.back().RSizeIsKnown);
         if (QT->isArrayType() || QT->isPointerType())
-          mVarStack.top().RvalIsArray = true;
-        mVarStack.top().RvalName = VarName;
-        if (mVarStack.top().LDimensionsNum > 0)
+          mVarVector.back().RvalIsArray = true;
+        mVarVector.back().RvalName = VarName;
+        if (mVarVector.back().LDimensionsNum > 0)
           mWaitingForDimensions = true;
       }
       mWaitingForVar = !mWaitingForVar;
@@ -262,28 +259,28 @@ public:
   bool TraverseIntegerLiteral(IntegerLiteral *IL) {
 
     if (mIsInPragma) {
-      if (mWaitingForDimensions && (mVarStack.top().Dimensions.size() >=
-                                        mVarStack.top().LDimensionsNum ||
-                                    mVarStack.top().Dimensions.size() >=
-                                        mVarStack.top().LDimensionsNum)) {
+      if (mWaitingForDimensions && (mVarVector.back().Dimensions.size() >=
+                                        mVarVector.back().LDimensionsNum ||
+                                    mVarVector.back().Dimensions.size() >=
+                                        mVarVector.back().LDimensionsNum)) {
         toDiag(mSrcMgr.getDiagnostics(), IL->getBeginLoc(),
                tsar::diag::warn_too_many_dimensions);
       }
       if (mWaitingForDimensions &&
-          mCurDimensionNum == mVarStack.top().LDimensionsNum) {
+          mCurDimensionNum == mVarVector.back().LDimensionsNum) {
         mWaitingForDimensions = false;
         mCurDimensionNum = 0;
       }
       auto Val = IL->getValue();
       if (mWaitingForDimensions) {
-        if (mVarStack.size()) {
-          mVarStack.top().Dimensions.push_back(Val.getLimitedValue());
+        if (mVarVector.size()) {
+          mVarVector.back().Dimensions.push_back(Val.getLimitedValue());
           mCurDimensionNum++;
         }
       } else if (!mWaitingForVar) { // get rvalue
-        Val.toStringUnsigned(mVarStack.top().RvalName);
+        Val.toStringUnsigned(mVarVector.back().RvalName);
         mWaitingForVar = !mWaitingForVar;
-        if (mVarStack.top().LDimensionsNum > 0)
+        if (mVarVector.back().LDimensionsNum > 0)
           mWaitingForDimensions = true;
       }
     }
@@ -312,7 +309,7 @@ private:
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-  std::stack<Vars> mVarStack;
+  std::vector<Vars> mVarVector;
 };
 } // namespace
 
