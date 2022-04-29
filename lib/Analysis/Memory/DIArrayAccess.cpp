@@ -769,7 +769,7 @@ copySubscriptToClient(const DIAffineSubscript &Subscript,
   auto Symbol{copySymbol(Subscript.getSymbol())};
   auto *ClientAccess =
       Access.make<DIAffineSubscript>(Subscript.getDimension(), Symbol);
-  for (auto &I : seq(0u, Subscript.getNumberOfMonoms())) {
+  for (auto I : seq(0u, Subscript.getNumberOfMonoms())) {
     auto LoopItr = ServerToClientLoop.find(Subscript.getMonom(I).Column);
     if (LoopItr == ServerToClientLoop.end()) {
       Access.reset(Subscript.getDimension());

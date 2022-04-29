@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.4.3)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-project(TSAR VERSION 0.0.0 LANGUAGES CXX)
+project(TSAR VERSION 0.0.0 LANGUAGES C CXX)
 
 if(SAPFOR_VERSION)
   set(TSAR_VERSION ${SAPFOR_VERSION})
@@ -205,7 +205,7 @@ message(STATUS ${LLVM_STATUS})
 set(LLVM_COMPONENTS
   analysis asmparser bitreader core instrumentation irreader scalaropts support
   tablegen target transformutils coverage mcparser option debuginfodwarf
-  frontendopenacc)
+  frontendopenacc lto windowsdriver)
 
 llvm_map_components_to_libnames(LLVM_LIBS ${LLVM_COMPONENTS})
 
@@ -227,6 +227,13 @@ set(CLANG_LIBS
 if(FLANG_FOUND)
   set(FLANG_LIBS
     FortranSemantics FortranEvaluate FortranParser FortranDecimal FortranCommon)
+  include(TestBigEndian)
+  test_big_endian(IS_BIGENDIAN)
+  if (IS_BIGENDIAN)
+    add_compile_definitions(FLANG_BIG_ENDIAN=1)
+  else()
+    add_compile_definitions(FLANG_LITTLE_ENDIAN=1)
+  endif()
 endif()
 
 if(NOT PACKAGE_LLVM)

@@ -231,7 +231,7 @@ template<class T> struct Traits<llvm::Optional<T>> {
     "Underlining type must be default constructible!");
   static_assert(std::is_copy_assignable<T>::value,
     "Underlining type must be copy assignable!");
-  static bool parse(llvm::Optional<T> &Dest, json::Lexer &Lex) noexcept {
+  static bool parse(llvm::Optional<T> &Dest, ::json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);

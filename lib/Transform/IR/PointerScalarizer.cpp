@@ -354,7 +354,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
               for (auto *BB : L->getBlocks())
                 for (auto &I : BB->getInstList())
                   if (auto *DVI{dyn_cast<DbgVariableIntrinsic>(&I)};
-                      DVI && DVI->getVariableLocation() == V)
+                      DVI && DVI->getVariableLocationOp(0) == V)
                     return true;
               return false;
             }() ||

@@ -727,7 +727,7 @@ void findAvailableDecls(Instruction &DI, Instruction &UI,
   }
   for (auto *Op : Ops) {
     auto *Call = dyn_cast<CallBase>(Op);
-    if ((Call && !Call->onlyReadsMemory() && !Call->doesNotReadMemory()) ||
+    if ((Call && !Call->onlyReadsMemory() && !Call->doesNotAccessMemory()) ||
         (Call && !Call->doesNotThrow())) {
       LLVM_DEBUG(dbgs() << "[PROPAGATION]: disable due to ";
         TSAR_LLVM_DUMP(Op->dump()));
@@ -837,8 +837,8 @@ bool ClangExprPropagation::unparseReplacement(
       else
         return false;
     } else if (auto *GEP = dyn_cast<GEPOperator>(&Def)) {
-      auto MD =
-        buildDIMemory(MemoryLocation(GEP), GEP->getContext(), *mDL, *mDT);
+      auto MD = buildDIMemory(MemoryLocation::getAfter(GEP), GEP->getContext(),
+                              *mDL, *mDT);
       if (MD && MD->isValid() && !MD->Template) {
         if (unparseToString(DWLang, *MD, DefStr, false)) {
           auto NumberOfDims = 1 + dimensionsNum(

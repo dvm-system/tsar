@@ -60,6 +60,8 @@ static inline int sizeOfSCEV(const SCEV *S) {
 struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
   // Except in the trivial case described above, we do not know how to divide
   // Expr by Denominator for the following functions with empty implementation.
+  void visitPtrToIntExpr(const SCEVPtrToIntExpr *Numerator) {}
+  void visitSequentialUMinExpr(const SCEVSequentialUMinExpr *NUmberator) {}
   void visitUDivExpr(const SCEVUDivExpr *Numerator) {}
   void visitSMaxExpr(const SCEVSMaxExpr *Numerator) {}
   void visitUMaxExpr(const SCEVUMaxExpr *Numerator) {}
@@ -258,17 +260,15 @@ struct SCEVDivision : public SCEVVisitor<SCEVDivision, void> {
     if (!isa<SCEVUnknown>(Denominator))
       return;
     // The Remainder is obtained by replacing Denominator by 0 in Numerator.
-    ValueToValueMap RewriteMap;
-    RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] =
-      cast<SCEVConstant>(Zero)->getValue();
+    ValueToSCEVMapTy RewriteMap;
+    RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] = Zero;
     Res.Remainder =
-      SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap, true);
+      SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap);
     if (Res.Remainder->isZero()) {
       // The Quotient is obtained by replacing Denominator by 1 in Numerator.
-      RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] =
-        cast<SCEVConstant>(One)->getValue();
+      RewriteMap[cast<SCEVUnknown>(Denominator)->getValue()] = One;
       Res.Quotient =
-        SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap, true);
+        SCEVParameterRewriter::rewrite(Numerator, SE, RewriteMap);
       return;
     }
     if (Numerator->getType() != Res.Remainder->getType())
@@ -405,6 +405,10 @@ struct SCEVBionmialSearch : public SCEVVisitor<SCEVBionmialSearch, void> {
     }
   }
 
+  void visitPtrToIntExpr(const SCEVPtrToIntExpr *S) { FreeTerm = S; }
+  void visitSequentialUMinExpr(const SCEVSequentialUMinExpr *S) {
+    FreeTerm = S;
+  }
   void visitConstant(const SCEVConstant *S) { FreeTerm = S; }
   void visitUDivExpr(const SCEVUDivExpr *S) { FreeTerm = S; }
   void visitSMaxExpr(const SCEVSMaxExpr *S) { FreeTerm = S; }

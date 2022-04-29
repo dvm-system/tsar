@@ -44,6 +44,7 @@
 #include <llvm/Analysis/MemoryLocation.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/InitializePasses.h>
+#include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Function.h>
@@ -52,7 +53,6 @@
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ScalarEvolutionExpander.h>
 #include <vector>
 
@@ -770,7 +770,7 @@ void Instrumentation::visitCallBase(llvm::CallBase &Call) {
       auto FuncTy = Call.getFunctionType();
       assert(FuncTy && "Function type must not be null!");
       assert(mDT && "Dominator tree must not be null!");
-      auto DIM = buildDIMemory(MemoryLocation(CalledValue),
+      auto DIM = buildDIMemory(MemoryLocation::getAfter(CalledValue),
         M->getContext(), M->getDataLayout(), *mDT);
       regFunction(*CalledValue, FuncTy->getReturnType(), FuncTy->getNumParams(),
         DIM ? DIM->Var : nullptr, FuncIdx, *M);
@@ -806,8 +806,8 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
     if (Info.second) {
       auto M = InsertBefore.getModule();
       assert(mDT && "Dominator tree must not be null!");
-      auto DIM =
-        buildDIMemory(MemoryLocation(BasePtr), Ctx, M->getDataLayout(), *mDT);
+      auto DIM = buildDIMemory(MemoryLocation::getAfter(BasePtr), Ctx,
+                               M->getDataLayout(), *mDT);
       auto ArraySize = ConstantInt::get(Type::getInt64Ty(Ctx), 1);
       regValue(BasePtr, BasePtr->getType(), ArraySize,
         DIM ? &*DIM : nullptr, OpIdx, InsertBefore, *InsertBefore.getModule());
@@ -822,7 +822,7 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
   auto DIVar = createPointerToDI(OpIdx, *DILoc);
   auto BasePtrTy = cast_or_null<PointerType>(BasePtr->getType());
   llvm::Instruction *ArrayBase =
-    ((BasePtrTy && isa<ArrayType>(BasePtrTy->getElementType())) ||
+    ((BasePtrTy && isa<ArrayType>(BasePtrTy->getPointerElementType())) ||
      (isa<AllocaInst>(BasePtr) &&
       cast<AllocaInst>(BasePtr)->isArrayAllocation())) ?
       new BitCastInst(BasePtr, Type::getInt8PtrTy(Ctx),
@@ -1018,7 +1018,7 @@ GetElementPtrInst* Instrumentation::createDIStringPtr(
   Var->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
   auto Int0 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 0);
   return GetElementPtrInst::CreateInBounds(
-    Var, { Int0,Int0 }, "distring", &InsertBefore);
+    Var->getValueType(), Var, { Int0,Int0 }, "distring", &InsertBefore);
 }
 
 LoadInst* Instrumentation::createPointerToDI(

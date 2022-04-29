@@ -126,7 +126,7 @@ bool ParallelLoopPass::runOnFunction(Function &F) {
                      SLoc.print(dbgs()); dbgs() << "\n");
           return;
         } else {
-          if (!Callee->doesNotReadMemory() && !Callee->isSpeculatable() &&
+          if (!Callee->doesNotAccessMemory() && !Callee->isSpeculatable() &&
               (!isa<IntrinsicInst>(I) ||
                !isDbgInfoIntrinsic(Callee->getIntrinsicID()) &&
                    !isMemoryMarkerIntrinsic(Callee->getIntrinsicID()))) {

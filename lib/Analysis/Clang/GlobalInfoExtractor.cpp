@@ -88,11 +88,12 @@ bool ClangGlobalInfoPass::runOnModule(llvm::Module &M) {
     Itr->second->GIE.TraverseDecl(Context.getTranslationUnitDecl());
     for (auto *File : Itr->second->GIE.getFiles()) {
       StringMap<SourceLocation> RawIncludes;
-      const llvm::MemoryBuffer *Buffer =
-          const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFile(File);
+      auto Buffer{
+          const_cast<SourceManager &>(SrcMgr).getMemoryBufferForFileOrNone(
+              File)};
       FileID FID = SrcMgr.translateFile(File);
       getRawMacrosAndIncludes(
-          FID, Buffer, SrcMgr, LangOpts, Itr->second->RI.Macros,
+          FID, *Buffer, SrcMgr, LangOpts, Itr->second->RI.Macros,
           Itr->second->RI.Includes, Itr->second->RI.Identifiers);
     }
   }

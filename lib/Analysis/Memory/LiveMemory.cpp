@@ -83,12 +83,12 @@ INITIALIZE_PASS_END(LiveMemoryPass, "live-mem",
     DataFlowTraits<LiveDFFwk *>::ValueType MayLives;
     for (auto &Loc : DefUse->getDefs()) {
       assert(Loc.Ptr && "Pointer to location must not be null!");
-      if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+      if (!isa<AllocaInst>(getUnderlyingObject(Loc.Ptr, 0)))
         MayLives.insert(Loc);
     }
     for (auto &Loc : DefUse->getMayDefs()) {
       assert(Loc.Ptr && "Pointer to location must not be null!");
-      if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+      if (!isa<AllocaInst>(getUnderlyingObject(Loc.Ptr, 0)))
         MayLives.insert(Loc);
     }
     LS->setOut(std::move(MayLives));

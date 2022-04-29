@@ -198,7 +198,7 @@ private:
 }
 
 bool MainAction::BeginSourceFileAction(CompilerInstance &CI) {
-  TimePassesIsEnabled = CI.getFrontendOpts().ShowTimers;
+  TimePassesIsEnabled = CI.getCodeGenOpts().TimePasses;
   return mQueryManager->beginSourceFile(CI, getCurrentFile());
 }
 
@@ -221,7 +221,7 @@ class ASTSocket final : public SMStringSocketBase<ASTSocket> {
 public:
   void processResponse(const std::string &Response) const {
     llvm::StringRef Json{Response.data() + 1, Response.size() - 2};
-    json::Parser<SourceResponse> Parser(Json.str());
+    ::json::Parser<SourceResponse> Parser(Json.str());
     SourceResponse R;
     if (!Parser.parse(R))
       mTfmCtx = nullptr;
@@ -266,7 +266,7 @@ public:
                Response[SourceResponse::Context] =
                    TfmInfo->getContext(*cast<DICompileUnit>(*I));
                return ASTSocket::Data +
-                      json::Parser<SourceResponse>::unparseAsObject(Response);
+                      ::json::Parser<SourceResponse>::unparseAsObject(Response);
              } else {
                return {ASTSocket::Invalid};
              }
@@ -340,6 +340,7 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
     Options.isFixedForm =
       (Extension == ".f" || Extension == ".F" || Extension == ".ff");
     Options.searchDirectories.emplace_back("."s);
+    Options.needProvenanceRangeToCharBlockMappings = true;
     IntrusiveRefCntPtr<TransformationContextBase> TfmCtx{
         new FlangTransformationContext{Options, DefaultKinds}};
     auto &Parsing{cast<FlangTransformationContext>(TfmCtx)->getParsing()};
@@ -347,13 +348,13 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
                     cast<FlangTransformationContext>(TfmCtx)->getOptions());
     if (!Parsing.messages().empty() &&
       Parsing.messages().AnyFatalError()) {
-      Parsing.messages().Emit(errs(), Parsing.cooked());
+      Parsing.messages().Emit(errs(), Parsing.allCooked());
       errs() << IRSource << " could not scan " << Path << '\n';
       return nullptr;
     }
     Parsing.Parse(outs());
     Parsing.ClearLog();
-    Parsing.messages().Emit(errs(), Parsing.cooked());
+    Parsing.messages().Emit(errs(), Parsing.allCooked());
     if (!Parsing.consumedWholeFile()) {
       Parsing.EmitMessage(errs(), Parsing.finalRestingPlace(),
         "parser FAIL (final position)");
@@ -367,7 +368,7 @@ struct ActionHelper<TransformationContextBase::TC_Flang> {
     auto &ParseTree{ *Parsing.parseTree() };
     Fortran::semantics::Semantics Semantics{
         cast<FlangTransformationContext>(TfmCtx)->getContext(), ParseTree,
-        Parsing.cooked(), false};
+        false};
     Semantics.Perform();
     Semantics.EmitMessages(llvm::errs());
     if (Semantics.AnyFatalError()) {
@@ -424,13 +425,12 @@ void MainAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   SourceManager &SM = CI.getSourceManager();
   FileID FID = SM.getMainFileID();
-  auto *MainFile = SM.getBuffer(FID, &Invalid);
-  if (Invalid)
+  auto MainFile = SM.getBufferOrNone(FID);
+  if (!MainFile)
     return;
   llvm::SMDiagnostic Err;
   LLVMContext Ctx;
-  std::unique_ptr<llvm::Module> M =
-    parseIR(MainFile->getMemBufferRef(), Err, Ctx);
+  std::unique_ptr<llvm::Module> M = parseIR(*MainFile, Err, Ctx);
   if (!M) {
     // Translate from the diagnostic info to the SourceManager location if
     // available.

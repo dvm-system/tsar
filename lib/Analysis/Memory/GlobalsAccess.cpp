@@ -163,10 +163,10 @@ bool GlobalsAccessCollector::runOnModule(Module &M) {
             Value *Prev{Op}, *Curr{Op};
             do {
               Prev = Curr;
-              Curr = GetUnderlyingObject(Op, DL, 0);
+              Curr = getUnderlyingObject(Op, 0);
               if (Operator::getOpcode(Curr) == Instruction::PtrToInt)
-                Curr = GetUnderlyingObject(cast<Operator>(Curr)->getOperand(0),
-                                           DL, 0);
+                Curr = getUnderlyingObject(cast<Operator>(Curr)->getOperand(0),
+                                           0);
             } while (Curr != Prev);
             if (auto *GV{dyn_cast<GlobalVariable>(Curr)})
               SCCAccesses.insert(const_cast<GlobalVariable *>(GV));

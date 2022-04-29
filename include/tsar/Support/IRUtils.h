@@ -26,6 +26,7 @@
 #define TSAR_SUPPORT_IR_UTILS_H
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Type.h>
 #include <llvm/ADT/SmallVector.h>
 

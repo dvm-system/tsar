@@ -47,7 +47,10 @@ Fortran::parser::Message &toDiag(Fortran::semantics::SemanticsContext &Ctx,
   // temporary object Text.
   return Ctx.Say(Loc, Fortran::parser::MessageFormattedText{
                           Fortran::parser::MessageFixedText{
-                              Text.data(), Text.size(), Diag->isError()},
+                              Text.data(), Text.size(),
+                              Diag->isError()
+                                  ? Fortran::parser::Severity::Error
+                                  : Fortran::parser::Severity::Warning},
                           std::forward<ArgT>(Args)...});
 }
 
@@ -55,7 +58,7 @@ Fortran::parser::Message &toDiag(Fortran::semantics::SemanticsContext &Ctx,
 template <typename... ArgT>
 Fortran::parser::Message &toDiag(Fortran::semantics::SemanticsContext &Ctx,
                                  unsigned int DiagId, ArgT &&... Args) {
-  auto Loc{Ctx.allSources().GetFirstFileProvenance()};
+  auto Loc{Ctx.allCookedSources().allSources().GetFirstFileProvenance()};
   assert(Loc && "At least one file must be parsed!");
   return toDiag(Ctx, *Loc, DiagId, std::forward<ArgT>(Args)...);
 }

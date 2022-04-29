@@ -80,8 +80,9 @@ void FlangTransformationContext::initialize(
     NameHierarchyMapT::key_type Names;
     match(Child, Names, NameHierarchy, mGlobals);
   }
-  mRewriter = std::make_unique<FlangRewriter>(mParsing.cooked());
-  mParsing.cooked().CompileProvenanceRangeToOffsetMappings();
+  mRewriter =
+      std::make_unique<FlangRewriter>(mParsing.cooked(), mAllCookedSources);
+  //mParsing.cooked().CompileProvenanceRangeToOffsetMappings(mAllSources);
 }
 
 std::pair<std::string, bool> FlangTransformationContext::release(
@@ -118,6 +119,6 @@ std::pair<std::string, bool> FlangTransformationContext::release(
         MainFile = Name;
     }
   }
-  mContext.messages().Emit(errs(), mParsing.cooked());
+  mContext.messages().Emit(errs(), mAllCookedSources);
   return std::make_pair(std::move(MainFile), AllWritten);
   }

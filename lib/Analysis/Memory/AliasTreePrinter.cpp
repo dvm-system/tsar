@@ -152,11 +152,11 @@ struct EstimateMemoryPassGraphTraits {
 
 namespace {
 struct AliasTreePrinter:
-  public DOTGraphTraitsPrinter<EstimateMemoryPass,
+  public DOTGraphTraitsPrinterWrapperPass<EstimateMemoryPass,
     false, tsar::AliasTree *, EstimateMemoryPassGraphTraits> {
   static char ID;
   AliasTreePrinter() :
-    DOTGraphTraitsPrinter<EstimateMemoryPass,
+    DOTGraphTraitsPrinterWrapperPass<EstimateMemoryPass,
       false, tsar::AliasTree *, EstimateMemoryPassGraphTraits>("em", ID) {
     initializeAliasTreePrinterPass(*PassRegistry::getPassRegistry());
   }
@@ -165,11 +165,11 @@ struct AliasTreePrinter:
 char AliasTreePrinter::ID = 0;
 
 struct AliasTreeOnlyPrinter :
-  public DOTGraphTraitsPrinter<EstimateMemoryPass,
+  public DOTGraphTraitsPrinterWrapperPass<EstimateMemoryPass,
     true, tsar::AliasTree *, EstimateMemoryPassGraphTraits> {
   static char ID;
   AliasTreeOnlyPrinter() :
-    DOTGraphTraitsPrinter<EstimateMemoryPass,
+    DOTGraphTraitsPrinterWrapperPass<EstimateMemoryPass,
       true, tsar::AliasTree *, EstimateMemoryPassGraphTraits>("emonly", ID) {
     initializeAliasTreeOnlyPrinterPass(*PassRegistry::getPassRegistry());
   }
@@ -178,11 +178,11 @@ struct AliasTreeOnlyPrinter :
 char AliasTreeOnlyPrinter::ID = 0;
 
 struct AliasTreeViewer :
-  public DOTGraphTraitsViewer<EstimateMemoryPass,
+  public DOTGraphTraitsViewerWrapperPass<EstimateMemoryPass,
     false, tsar::AliasTree *, EstimateMemoryPassGraphTraits> {
   static char ID;
   AliasTreeViewer() :
-    DOTGraphTraitsViewer<EstimateMemoryPass,
+    DOTGraphTraitsViewerWrapperPass<EstimateMemoryPass,
       false, tsar::AliasTree *, EstimateMemoryPassGraphTraits>("em", ID) {
     initializeAliasTreeViewerPass(*PassRegistry::getPassRegistry());
   }
@@ -191,11 +191,11 @@ struct AliasTreeViewer :
 char AliasTreeViewer::ID = 0;
 
 struct AliasTreeOnlyViewer :
-  public DOTGraphTraitsViewer<EstimateMemoryPass,
+  public DOTGraphTraitsViewerWrapperPass<EstimateMemoryPass,
     true, tsar::AliasTree *, EstimateMemoryPassGraphTraits> {
   static char ID;
   AliasTreeOnlyViewer() :
-    DOTGraphTraitsViewer<EstimateMemoryPass,
+    DOTGraphTraitsViewerWrapperPass<EstimateMemoryPass,
       true, tsar::AliasTree *, EstimateMemoryPassGraphTraits>("emonly", ID) {
     initializeAliasTreeOnlyViewerPass(*PassRegistry::getPassRegistry());
   }

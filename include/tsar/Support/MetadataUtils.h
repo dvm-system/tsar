@@ -27,6 +27,7 @@
 
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/Optional.h>
+#include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Support/Path.h>

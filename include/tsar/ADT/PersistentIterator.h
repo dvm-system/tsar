@@ -31,7 +31,7 @@
 #include <type_traits>
 
 namespace llvm {
-template<class T> struct DenseMapInfo;
+template<typename T, typename Enable> struct DenseMapInfo;
 }
 
 namespace tsar {
@@ -119,7 +119,7 @@ private:
 template<class PersistentT, class MapT>
 class PersistentIteratorC {
   friend struct PersistentValueWrapper<PersistentT, MapT>;
-  friend struct llvm::DenseMapInfo<PersistentIteratorC>;
+  friend struct llvm::DenseMapInfo<PersistentIteratorC, void>;
   using NotPersistentIteratorC = NotPersistentIterator<true, PersistentT, MapT>;
 protected:
   using PersistentBucket = typename MapT::value_type;

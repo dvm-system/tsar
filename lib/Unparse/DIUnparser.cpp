@@ -169,7 +169,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
     if (!WasGEPChain) {
       auto Size = Str.size();
       if (!unparseToString(Str, I.getOperand(), mDT)) {
-        Str.set_size(Size);
+        Str.resize(Size);
         Str.push_back('?');
       }
     } else {
@@ -217,7 +217,7 @@ bool DIUnparser::unparse(const GEPOperator *GEP, SmallVectorImpl<char> &Str) {
     Str.push_back('[');
     auto Size = Str.size();
     if (!unparseToString(Str, I.getOperand(), mDT)) {
-      Str.set_size(Size);
+      Str.resize(Size);
       Str.push_back('?');
     }
     Str.push_back(']');

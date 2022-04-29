@@ -26,6 +26,7 @@
 
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/LoopPass.h>
 #include <bcl/utility.h>
 #include <functional>

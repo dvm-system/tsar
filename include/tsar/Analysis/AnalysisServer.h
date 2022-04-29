@@ -260,7 +260,7 @@ public:
         WaitForRequest = false;
         return { tsar::AnalysisSocket::Notify };
       }
-      json::Parser<tsar::AnalysisRequest> Parser(Request);
+      ::json::Parser<tsar::AnalysisRequest> Parser(Request);
       tsar::AnalysisRequest R;
       if (!Parser.parse(R)) {
         llvm_unreachable("Unknown request: listen for analysis request!");
@@ -332,7 +332,7 @@ public:
         }
       }
       return tsar::AnalysisSocket::Data +
-             json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
+             ::json::Parser<tsar::AnalysisResponse>::unparseAsObject(Response);
     }))
       ;
     return false;

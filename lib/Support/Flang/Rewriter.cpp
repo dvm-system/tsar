@@ -45,14 +45,15 @@ void FlangRewriter::FileRewriter::Map(Fortran::parser::Provenance P,
                     << mBuffer[Offset] << "\n");
  }
 
-FlangRewriter::FlangRewriter(Fortran::parser::CookedSource &Cooked) {
-  for (auto &Ch : Cooked.data()) {
-    auto Range{Cooked.GetProvenanceRange(&Ch)};
+FlangRewriter::FlangRewriter(const Fortran::parser::CookedSource &Cooked,
+                             Fortran::parser::AllCookedSources &AllCooked) {
+  for (auto &Ch : Cooked.AsCharBlock()) {
+    auto Range{AllCooked.GetProvenanceRange(&Ch)};
     assert(Range && "Provenance range must be known!");
-    auto Position{Cooked.GetSourcePositionRange(&Ch)};
+    auto Position{AllCooked.GetSourcePositionRange(&Ch)};
     // Check for compiler insertions, beginning spaces and macros.
     if (Position) {
-      auto *File{Cooked.allSources().GetSourceFile(Range->start())};
+      auto *File{AllCooked.allSources().GetSourceFile(Range->start())};
       assert(File && "File must not be null!");
       auto [Itr, IsNew] = mFiles.try_emplace(File);
       if (IsNew)
@@ -72,9 +73,9 @@ FlangRewriter::FlangRewriter(Fortran::parser::CookedSource &Cooked) {
       Info->getRange().start().offset() + Info->getRange().size() - 1,
       Info.get());
   }
-  for (auto &Ch : Cooked.data()) {
-    auto Range{Cooked.GetProvenanceRange(&Ch)};
-    auto Position{Cooked.GetSourcePositionRange(&Ch)};
+  for (auto &Ch : Cooked.AsCharBlock()) {
+    auto Range{AllCooked.GetProvenanceRange(&Ch)};
+    auto Position{AllCooked.GetSourcePositionRange(&Ch)};
     // Check for compiler insertions, beginning spaces and macros.
     if (Position) {
       auto *FI{mIntervals.find(Range->start().offset()).value()};
@@ -85,8 +86,8 @@ FlangRewriter::FlangRewriter(Fortran::parser::CookedSource &Cooked) {
       FI->Map(Range->start(), Position->first);
     }
   }
-  auto FirstRange{Cooked.allSources().GetFirstFileProvenance()};
-  auto *FirstFile{Cooked.allSources().GetSourceFile(FirstRange->start())};
+  auto FirstRange{AllCooked.allSources().GetFirstFileProvenance()};
+  auto *FirstFile{AllCooked.allSources().GetSourceFile(FirstRange->start())};
   assert(FirstFile && mFiles.count(FirstFile) &&
       "Main file must not be null!");
   mMainFile = mFiles[FirstFile].get();

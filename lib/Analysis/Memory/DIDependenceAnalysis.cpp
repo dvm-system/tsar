@@ -53,9 +53,10 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/DiagnosticInfo.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Debug.h>
-#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/IR/DebugInfo.h>
 #include <tuple>
 #include <utility>
 
@@ -571,31 +572,31 @@ AliasNode * findBoundAliasNode(AliasTree &AT,
 trait::Reduction::Kind getReductionKind(
   const RecurrenceDescriptor &RD) {
   switch (const_cast<RecurrenceDescriptor &>(RD).getRecurrenceKind()) {
-  case RecurrenceDescriptor::RK_IntegerAdd:
-  case RecurrenceDescriptor::RK_FloatAdd:
+  case RecurKind::Add:
+  case RecurKind::FAdd:
     return trait::DIReduction::RK_Add;
-  case RecurrenceDescriptor::RK_IntegerMult:
-  case RecurrenceDescriptor::RK_FloatMult:
+  case RecurKind::Mul:
+  case RecurKind::FMul:
     return trait::DIReduction::RK_Mult;
-  case RecurrenceDescriptor::RK_IntegerOr:
+  case RecurKind::Or:
     return trait::DIReduction::RK_Or;
-  case RecurrenceDescriptor::RK_IntegerAnd:
+  case RecurKind::And:
     return trait::DIReduction::RK_And;
-  case RecurrenceDescriptor::RK_IntegerXor:
+  case RecurKind::Xor:
     return trait::DIReduction::RK_Xor;
-  case RecurrenceDescriptor::RK_IntegerMinMax:
-  case RecurrenceDescriptor::RK_FloatMinMax:
-    switch (const_cast<RecurrenceDescriptor &>(RD).getMinMaxRecurrenceKind()) {
-    case RecurrenceDescriptor::MRK_FloatMax:
-    case RecurrenceDescriptor::MRK_SIntMax:
-    case RecurrenceDescriptor::MRK_UIntMax:
-      return trait::DIReduction::RK_Max;
-    case RecurrenceDescriptor::MRK_FloatMin:
-    case RecurrenceDescriptor::MRK_SIntMin:
-    case RecurrenceDescriptor::MRK_UIntMin:
-      return trait::DIReduction::RK_Min;
-    }
-    break;
+  case RecurKind::FMax:
+  case RecurKind::SMax:
+  case RecurKind::UMax:
+    return trait::DIReduction::RK_Max;
+  case RecurKind::FMin:
+  case RecurKind::SMin:
+  case RecurKind::UMin:
+    return trait::DIReduction::RK_Min;
+  case RecurKind::FMulAdd:
+  case RecurKind::SelectICmp:
+  case RecurKind::SelectFCmp:
+    //TODO (kaniandr@gmail.com): add support for these kinds of reductions.
+    return trait::DIReduction::RK_NoReduction;
   }
   llvm_unreachable("Unknown kind of reduction!");
   return trait::DIReduction::RK_NoReduction;

@@ -81,7 +81,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!isValidPtr(Loc.Ptr))
           return;
         Func(*Call, std::move(Loc), Idx,
-          (Call->doesNotReadMemory() || IsMarker)
+          (Call->doesNotAccessMemory() || IsMarker)
              ? AccessInfo::No : AccessInfo::May,
           (Call->onlyReadsMemory() || IsMarker)
              ? AccessInfo::No : AccessInfo::May);
@@ -93,7 +93,7 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!isValidPtr(Loc.Ptr))
           return;
         Func(*Call, std::move(Loc), Idx,
-          Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+          Call->doesNotAccessMemory() ? AccessInfo::No : AccessInfo::May,
           Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       });
     } else {
@@ -106,14 +106,14 @@ void for_each_memory(llvm::Instruction &I, llvm::TargetLibraryInfo &TLI,
         if (!isValidPtr(Loc.Ptr))
           continue;
         Func(*Call, std::move(Loc), Idx,
-         Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+         Call->doesNotAccessMemory() ? AccessInfo::No : AccessInfo::May,
          Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
       }
     }
     if (!IsMarker && !Call->onlyAccessesArgMemory() &&
         Call->mayReadOrWriteMemory())
       UnknownFunc(*Call,
-                  Call->doesNotReadMemory() ? AccessInfo::No : AccessInfo::May,
+                  Call->doesNotAccessMemory() ? AccessInfo::No : AccessInfo::May,
                   Call->onlyReadsMemory() ? AccessInfo::No : AccessInfo::May);
   };
   switch (I.getOpcode()) {

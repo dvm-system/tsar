@@ -39,12 +39,12 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/InitializePasses.h>
+#include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
-#include <llvm/Transforms/Utils/Local.h>
 #include <bcl/Json.h>
 #include <utility>
 #include <cmath>
@@ -149,7 +149,7 @@ std::tuple<Value *, Value *, bool> GetUnderlyingArray(Value *Ptr,
     // Attached metadata may refer to an inlined function after callee has been
     // inlined. Try to find metadata related to the current function.
     if (CurrFuncDbgItr == DbgUsers.end()) {
-      auto InlineBasePtr = GetUnderlyingObject(BasePtrInfo.first, DL, 1);
+      auto InlineBasePtr = getUnderlyingObject(BasePtrInfo.first, 1);
       if (InlineBasePtr != BasePtrInfo.first)
         return GetUnderlyingArray(InlineBasePtr, DL);
     }
@@ -496,7 +496,7 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
               DbgInsts.push_back(DII);
           if (DbgInsts.size() == 1) {
             ArrayInfo.setDimSize(DimIdx + PassPtrDim,
-              mSE->getSCEV(DbgInsts.front()->getVariableLocation()));
+              mSE->getSCEV(DbgInsts.front()->getVariableLocationOp(0)));
           }
         }
         LLVM_DEBUG(dbgs() << DIVar->getName() << "\n");

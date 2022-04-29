@@ -83,12 +83,12 @@ static inline void clarifyUnknownSize(const DataLayout &DL,
 namespace tsar {
 Value * stripPointer(const DataLayout &DL, Value *Ptr) {
   assert(Ptr && "Pointer to memory location must not be null!");
-  Ptr = GetUnderlyingObject(Ptr, DL, 0);
+  Ptr = getUnderlyingObject(Ptr, 0);
   if (auto LI = dyn_cast<LoadInst>(Ptr))
     return stripPointer(DL, LI->getPointerOperand());
   if (Operator::getOpcode(Ptr) == Instruction::IntToPtr) {
     return stripPointer(DL,
-      GetUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), DL, 0));
+      getUnderlyingObject(cast<Operator>(Ptr)->getOperand(0), 0));
   }
   return Ptr;
 }
@@ -107,7 +107,7 @@ void stripToBase(const DataLayout &DL, MemoryLocation &Loc) {
   // analysis works well in this case. LLVM IR specification requires that
   // if the address space conversion is legal then both result and operand
   // refer to the same memory location.
-  auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), DL, 1);
+  auto BasePtr = getUnderlyingObject(const_cast<Value *>(Loc.Ptr), 1);
   if (BasePtr == Loc.Ptr)
     return;
   Loc.Ptr = BasePtr;
@@ -120,9 +120,10 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   auto Ty = Loc.Ptr->getType();
   if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
-    auto Size = PtrTy->getElementType()->isSized() ?
-      LocationSize::precise(DL.getTypeStoreSize(PtrTy->getElementType())) :
-      LocationSize::unknown();
+    auto Size = PtrTy->getPointerElementType()->isSized()
+                    ? LocationSize::precise(
+                          DL.getTypeStoreSize(PtrTy->getPointerElementType()))
+                    : LocationSize::afterPointer();
     if (MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) > 0) {
       Loc.Size = Size;
       return true;
@@ -190,12 +191,12 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       }
     }
     for (;;) {
-      auto BasePtr = GetUnderlyingObject(Loc.Ptr, DL, 0);
+      auto BasePtr = getUnderlyingObject(Loc.Ptr, 0);
       if (BasePtr == Loc.Ptr)
         break;
       Loc.Ptr = BasePtr;
     }
-    Loc.Size = LocationSize::unknown();
+    Loc.Size = LocationSize::afterPointer();
     clarifyUnknownSize(DL, Loc);
     return true;
   }
@@ -245,9 +246,9 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
     isAAInfoCorrupted(RHS.AATags) ? RHS.getWithoutAATags() : RHS);
   switch (AR) {
   default: llvm_unreachable("Unknown result of alias analysis!");
-  case NoAlias: Dptr.set<trait::NoAlias>(); break;
-  case MayAlias: Dptr.set<trait::MayAlias>(); break;
-  case PartialAlias:
+  case AliasResult::NoAlias: Dptr.set<trait::NoAlias>(); break;
+  case AliasResult::MayAlias: Dptr.set<trait::MayAlias>(); break;
+  case AliasResult::PartialAlias:
     {
       Dptr.set<trait::PartialAlias>();
       // Now we try to prove that one location covers other location.
@@ -260,11 +261,11 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
       if (OffsetLHS == 0 && OffsetRHS == 0)
         break;
       auto BaseAlias = AA.alias(
-        BaseLHS, LocationSize::unknown(),
-        BaseRHS, LocationSize::unknown());
+        BaseLHS, LocationSize::afterPointer(),
+        BaseRHS, LocationSize::afterPointer());
       // It is possible to precisely compare two partially overlapped
       // locations in case of the same base pointer only.
-      if (BaseAlias != MustAlias)
+      if (BaseAlias != AliasResult::MustAlias)
         break;
       if (OffsetLHS < OffsetRHS &&
           OffsetLHS + LHS.Size.getValue() >= OffsetRHS + RHS.Size.getValue())
@@ -274,7 +275,7 @@ AliasDescriptor aliasRelation(AAResults &AA, const DataLayout &DL,
         Dptr.set<trait::ContainedAlias>();
     }
     break;
-  case MustAlias:
+  case AliasResult::MustAlias:
     Dptr.set<trait::MustAlias>();
     if (!LHS.Size.isPrecise() || !RHS.Size.isPrecise()) {
       // It is safe to compare sizes, which are not precise, if pointers are
@@ -681,7 +682,7 @@ AliasEstimateNode::slowMayAliasImp(const EstimateMemory &EM, AAResults &AA) {
         auto AR = AA.alias(
           MemoryLocation(LHSPtr, ThisEM.getSize(), ThisEM.getAAInfo()),
           MemoryLocation(RHSPtr, EM.getSize(), EM.getAAInfo()));
-        if (AR == NoAlias)
+        if (AR == AliasResult::NoAlias)
           continue;
         return std::make_pair(true, &ThisEM);
       }
@@ -818,11 +819,11 @@ AliasResult AliasTree::isSamePointer(
     switch (mAA->alias(
         MemoryLocation(Ptr, 1, EM.getAAInfo()),
         MemoryLocation(Loc.Ptr, 1, LocAATags))) {
-      case MustAlias: return MustAlias;
-      case MayAlias: IsAmbiguous = true; break;
+      case AliasResult::MustAlias: return AliasResult::MustAlias;
+      case AliasResult::MayAlias: IsAmbiguous = true; break;
     }
   }
-  return IsAmbiguous ? MayAlias : NoAlias;
+  return IsAmbiguous ? AliasResult::MayAlias : AliasResult::NoAlias;
 }
 
 const AliasUnknownNode * AliasTree::findUnknown(
@@ -859,9 +860,9 @@ const EstimateMemory * AliasTree::find(const llvm::MemoryLocation &Loc) const {
     if (!isSameBase(*mDL, Chain->front(), Base.Ptr))
       continue;
     switch (isSamePointer(*Chain, Base)) {
-    case NoAlias: continue;
-    case MustAlias: break;
-    case MayAlias:
+    case AliasResult::NoAlias: continue;
+    case AliasResult::MustAlias: break;
+    case AliasResult::MayAlias:
       llvm_unreachable("It seems that something goes wrong or memory location"\
                        "was not added to alias tree!"); break;
     default:
@@ -940,9 +941,9 @@ AliasTree::insert(const MemoryLocation &Base) {
       default: llvm_unreachable("Unknown result of alias query!"); break;
       // TODO(kaniandr@gmail.com): Is it correct to ignore NoAlias? Algorithm
       // should be accurately explored to understand this case.
-      case NoAlias: continue;
-      case MustAlias: break;
-      case MayAlias:
+      case AliasResult::NoAlias: continue;
+      case AliasResult::MustAlias: break;
+      case AliasResult::MayAlias:
         AddAmbiguous = true;
         Chain->getAmbiguousList()->push_back(Base.Ptr);
         break;
@@ -1087,12 +1088,12 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
         return;
     if (AccessedMemory.count(V))
       return;
-    auto PointeeTy = cast<PointerType>(V->getType())->getElementType();
+    auto PointeeTy = cast<PointerType>(V->getType())->getPointerElementType();
     assert(PointeeTy && "Pointee type must not be null!");
     addLocation(MemoryLocation(
         V, PointeeTy->isSized()
                ? LocationSize::precise(DL.getTypeStoreSize(PointeeTy))
-               : LocationSize::unknown()));
+               : LocationSize::afterPointer()));
   };
   for (auto &Arg : F.args())
     addPointeeIfNeed(&Arg);

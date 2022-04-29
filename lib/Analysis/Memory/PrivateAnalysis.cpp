@@ -784,11 +784,11 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
     // accesses, so we conservatively use analysis for the whole array
     // instead of analysis results for an explicitly accessed memory location.
     auto isLiveAggregate = [this, &LS](auto &Loc) {
-      auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
+      auto BasePtr = getUnderlyingObject(const_cast<Value *>(Loc.Ptr), 0);
       if (BasePtr == Loc.Ptr)
         return false;
       return LS.getOut().overlap(
-          MemoryLocation(BasePtr, LocationSize::unknown(), Loc.AATags));
+          MemoryLocation::getAfter(BasePtr, Loc.AATags));
     };
     if (!DefUse.hasUse(Loc)) {
       if (!LS.getOut().overlap(Loc) && !isLiveAggregate(Loc))
@@ -849,7 +849,7 @@ void PrivateRecognitionPass::resolveAccesses(Loop *L, const DFNode *LatchNode,
 void PrivateRecognitionPass::resolvePointers(
     const tsar::DefUseSet &DefUse, TraitMap &ExplicitAccesses) {
   for (const auto &Loc : DefUse.getExplicitAccesses()) {
-    auto BasePtr = GetUnderlyingObject(const_cast<Value *>(Loc.Ptr), *mDL, 0);
+    auto BasePtr = getUnderlyingObject(const_cast<Value *>(Loc.Ptr), 0);
     // *p means that address of location should be loaded from p using 'load'.
     if (auto *LI = dyn_cast<LoadInst>(BasePtr)) {
       auto *EM = mAliasTree->find(Loc);

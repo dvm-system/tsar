@@ -100,7 +100,7 @@ AtomicallyMovedFile::AtomicallyMovedFile(StringRef File, ErrorT *Error) :
   if (!mUseTemporary) {
     std::error_code EC;
     mFileStream.reset(
-      new llvm::raw_fd_ostream(mFilename, EC, llvm::sys::fs::F_Text));
+      new llvm::raw_fd_ostream(mFilename, EC, llvm::sys::fs::OF_Text));
     if (EC && mError)
       *mError = std::tuple{tsar::diag::err_fe_unable_to_open_output,
                            std::tuple{std::string{mFilename}, EC.message()}};

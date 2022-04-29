@@ -55,10 +55,10 @@ LocationSize DIMemoryLocation::getSize() const {
   assert(isValid() && "Debug memory location is invalid!");
   auto Fragment = Expr->getFragmentInfo();
   if (Fragment.hasValue())
-    return Fragment->SizeInBits == 0 ? LocationSize::unknown() :
+    return Fragment->SizeInBits == 0 ? LocationSize::afterPointer() :
       LocationSize::precise((Fragment->SizeInBits + 7) / 8);
   if (hasDeref())
-    return LocationSize::unknown();
+    return LocationSize::afterPointer();
   if (auto Ty = stripDIType(Var->getType())) {
     // There is no dereference and size of type is known, so try to determine
     // size. We should check that the last offset does not lead to out of range
@@ -72,7 +72,7 @@ LocationSize DIMemoryLocation::getSize() const {
       return LocationSize::precise(TySize - Offsets.back());
   }
   // Return UnknownSize in case of out of range memory access.
-  return LocationSize::unknown();
+  return LocationSize::afterPointer();
 }
 void DIMemoryLocation::getOffsets(
     SmallVectorImpl<uint64_t> &Offsets, SmallBitVector &SignMask) const {

@@ -75,7 +75,7 @@ public:
   bool BeginSourceFileAction(clang::CompilerInstance& CI) override;
   void EndSourceFileAction() override;
 private:
-  llvm::SmallVector<std::unique_ptr<PragmaNamespaceReplacer>, 1> mNamespaces;
+  llvm::SmallVector<PragmaNamespaceReplacer *, 1> mNamespaces;
   clang::Preprocessor* mPP = nullptr;
 };
 }

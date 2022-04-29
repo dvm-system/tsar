@@ -171,7 +171,7 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
   releaseMemory();
   mFunc = &F;
   if (!(mDWLang = getLanguage(F)))
-    return false;  
+    return false;
   auto &DL = F.getParent()->getDataLayout();
   auto &DFI = getAnalysis<DFRegionInfoPass>().getRegionInfo();
   auto &DU = getAnalysis<DefinedMemoryPass>().getDefInfo();
@@ -184,7 +184,7 @@ bool NotInitializedMemoryAnalysis::runOnFunction(Function &F) {
     auto *EM = AT.find(Loc);
     assert(EM && "Estimate memory must not be null!");
     auto *Root = EM->getTopLevelParent();
-    auto Object = GetUnderlyingObject(Root->front(), DL, 0);
+    auto Object = getUnderlyingObject(Root->front(), 0);
     if (isa<Function>(Object) || isa<GlobalIFunc>(Object) ||
         isa<ConstantData>(Object) || isa<ConstantAggregate>(Object))
       continue;

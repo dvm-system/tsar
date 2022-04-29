@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "BitMemoryTrait.h"
+#include <llvm/Support/ErrorHandling.h>
 
 using namespace tsar;
 

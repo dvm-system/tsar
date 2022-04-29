@@ -64,16 +64,16 @@ void AllocasAAResult::analyzeFunction(const Function &F) {
 
 AliasResult AllocasAAResult::alias(const MemoryLocation &LocA,
     const MemoryLocation &LocB, AAQueryInfo &AAQI) {
-  auto P1 = GetUnderlyingObject(LocA.Ptr, mDL, 0);
-  auto P2 = GetUnderlyingObject(LocB.Ptr, mDL, 0);
+  auto P1 = getUnderlyingObject(LocA.Ptr, 0);
+  auto P2 = getUnderlyingObject(LocB.Ptr, 0);
   if (P1 != P2 && isIdentifiedObject(P1) && isIdentifiedObject(P2))
-    return NoAlias;
+    return AliasResult::NoAlias;
   return AAResultBase::alias(LocA, LocB, AAQI);
 }
 
 ModRefInfo AllocasAAResult::getModRefInfo(const CallBase *Call,
     const MemoryLocation &Loc, AAQueryInfo &AAQI) {
-  auto P = GetUnderlyingObject(Loc.Ptr, mDL, 0);
+  auto P = getUnderlyingObject(Loc.Ptr, 0);
   if (auto *AI = dyn_cast<AllocaInst>(P);
       AI && mNonAddressTakenAllocas.count(AI))
     return ModRefInfo::NoModRef;
