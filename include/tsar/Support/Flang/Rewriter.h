@@ -110,7 +110,8 @@ class FlangRewriter {
 public:
   using buffer_iterator = FileMap::const_iterator;
 
-  explicit FlangRewriter(Fortran::parser::CookedSource &Cooked);
+  explicit FlangRewriter(const Fortran::parser::CookedSource &Cooked,
+                         Fortran::parser::AllCookedSources &AllCooked);
 
   bool isMacroOrCompiler(Fortran::parser::Provenance P) const {
     if (mMainFile && mMainFile->getRange().Contains(P))

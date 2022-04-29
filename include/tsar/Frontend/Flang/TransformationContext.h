@@ -48,7 +48,7 @@ public:
       const Fortran::common::IntrinsicTypeDefaultKinds &DefaultKinds)
     : TransformationContextBase(TC_Flang)
     , mOptions(Opts)
-    , mContext(DefaultKinds, Opts.features, mAllSources) {}
+    , mContext(DefaultKinds, Opts.features, mAllCookedSources) {}
 
   void initialize(const llvm::Module &M, const llvm::DICompileUnit &CU);
 
@@ -97,7 +97,8 @@ public:
 private:
   Fortran::parser::AllSources mAllSources;
   Fortran::parser::Options mOptions;
-  Fortran::parser::Parsing mParsing{mAllSources};
+  Fortran::parser::AllCookedSources mAllCookedSources{mAllSources};
+  Fortran::parser::Parsing mParsing{mAllCookedSources};
   Fortran::semantics::SemanticsContext mContext;
   MangledToSourceMapT mGlobals;
   std::unique_ptr<FlangRewriter> mRewriter{nullptr};

@@ -215,12 +215,12 @@ private:
       Incr->getOpcode() == UO_PreInc;
     bool LessCondition = Condition->getOpcode() == BO_LT ||
       Condition->getOpcode() == BO_LE;
-    APSInt Start, End;
-    if (Init->isIntegerConstantExpr(Start, *Ctx) &&
-        (ReversedCond ? Condition->getLHS()->isIntegerConstantExpr(End, *Ctx) :
-          Condition->getRHS()->isIntegerConstantExpr(End, *Ctx)))
-      if (Increment && Start >= End || !Increment && Start <= End)
-        return false;
+    if (auto Start{Init->getIntegerConstantExpr(*Ctx)})
+      if (auto End{ReversedCond
+                       ? Condition->getLHS()->getIntegerConstantExpr(*Ctx)
+                       : Condition->getRHS()->getIntegerConstantExpr(*Ctx)})
+        if (Increment && *Start >= *End || !Increment && *Start <= *End)
+          return false;
     return Increment && LessCondition && !ReversedCond ||
       Increment && !LessCondition && ReversedCond ||
       !Increment && !LessCondition && !ReversedCond ||
@@ -243,26 +243,26 @@ private:
   bool coherent(const clang::Expr *Init, const clang::BinaryOperator *Incr,
       const clang::BinaryOperator *Condition, bool ReversedCond,
       ASTContext *Ctx) {
-    APSInt Step;
+    Optional<APSInt> Step;
     // If step is not constant we can not prove anything.
-    if (!Incr->getRHS()->isIntegerConstantExpr(Step, *Ctx) &&
-        !Incr->getLHS()->isIntegerConstantExpr(Step, *Ctx))
-      return true;
-    if (Step.isNonNegative() && !Step.isStrictlyPositive())
+    if (!(Step = Incr->getRHS()->getIntegerConstantExpr(*Ctx)))
+      if (!(Step = Incr->getLHS()->getIntegerConstantExpr(*Ctx)))
+        return true;
+    if (Step->isNonNegative() && !Step->isStrictlyPositive())
       return false;
     bool Increment =
-      Step.isStrictlyPositive() &&
+      Step->isStrictlyPositive() &&
         (Incr->getOpcode() == BO_Add || Incr->getOpcode() == BO_AddAssign) ||
-      Step.isNegative() &&
+      Step->isNegative() &&
         (Incr->getOpcode() == BO_Sub || Incr->getOpcode() == BO_SubAssign);
     bool LessCondition = Condition->getOpcode() == BO_LT ||
       Condition->getOpcode() == BO_LE;
-    APSInt Start, End;
-    if (Init->isIntegerConstantExpr(Start, *Ctx) &&
-        (ReversedCond ? Condition->getLHS()->isIntegerConstantExpr(End, *Ctx) :
-          Condition->getRHS()->isIntegerConstantExpr(End, *Ctx)))
-      if (Increment && Start >= End || !Increment && Start <= End)
-        return false;
+    if (auto Start{Init->getIntegerConstantExpr(*Ctx)})
+      if (auto End{ReversedCond
+                       ? Condition->getLHS()->getIntegerConstantExpr(*Ctx)
+                       : Condition->getRHS()->getIntegerConstantExpr(*Ctx)})
+        if (Increment && *Start >= *End || !Increment && *Start <= *End)
+          return false;
     return Increment && LessCondition && !ReversedCond ||
       Increment && !LessCondition && ReversedCond ||
       !Increment && !LessCondition && !ReversedCond ||

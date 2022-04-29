@@ -71,7 +71,7 @@ public:
     iterator() = default;
     iterator(ChildrenT::iterator I)
       : iterator_adaptor_base(std::move(I)) {}
-    ChildT &operator*() { return this->I->first; }
+    ChildT &operator*() const { return this->I->first; }
   };
 
   using iterator_range = llvm::iterator_range<iterator>;
@@ -211,10 +211,10 @@ class FileTree {
   public:
     iterator_impl() = default;
 
-    FileNode::ChildT & operator*() {
+    FileNode::ChildT & operator*() const {
       return FileNode::isDecl(*mRootItr) ? *mRootItr : **mChildItr;
     }
-    FileNode::ChildT * operator->() { return &operator*(); }
+    FileNode::ChildT * operator->() const { return &operator*(); }
 
     iterator &operator++() {
       if (FileNode::isDecl(*mRootItr)) {

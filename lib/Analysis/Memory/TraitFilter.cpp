@@ -26,7 +26,7 @@
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/TraitFilter.h"
-#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/IR/DebugInfo.h>
 
 using namespace llvm;
 
@@ -41,7 +41,7 @@ void markIfNotPromoted(const DataLayout &DL, DIMemoryTrait &T) {
       continue;
     auto *AI = dyn_cast<AllocaInst>(stripPointer(DL, VH));
     if (!AI || AI->isArrayAllocation() ||
-      AI->getType()->getElementType()->isArrayTy())
+      AI->getType()->getPointerElementType()->isArrayTy())
       continue;
     bool DbgDeclareFound = false;
     for (auto *U : FindDbgAddrUses(AI)) {

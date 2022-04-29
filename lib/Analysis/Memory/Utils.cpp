@@ -34,7 +34,7 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/ValueTracking.h>
-#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/IR/DebugInfo.h>>
 #include <llvm/IR/Dominators.h>
 
 using namespace llvm;
@@ -132,7 +132,7 @@ std::pair<Value *, bool> GetUnderlyingObjectWithMetadata(
     if (V->isUsedByMetadata())
       return std::make_pair(V, true);
   }
-  auto BasePtr = GetUnderlyingObject(V, DL, 1);
+  auto BasePtr = getUnderlyingObject(V, 1);
   return V == BasePtr ? std::make_pair(V, false) :
     GetUnderlyingObjectWithMetadata(BasePtr, DL);
 }
@@ -496,12 +496,12 @@ std::pair<bool, bool> isPure(const llvm::Function &F, const DefUseSet &DUS) {
     return std::pair{false, false};
   for (auto &Arg : F.args())
     if (auto Ty = dyn_cast<PointerType>(Arg.getType()))
-      if (hasUnderlyingPointer(Ty->getElementType()))
+      if (hasUnderlyingPointer(Ty->getPointerElementType()))
         return std::pair{false, false};
   auto &DL = F.getParent()->getDataLayout();
   bool HasGlobalAccess{false};
   for (auto &Range : DUS.getExplicitAccesses()) {
-    auto *Ptr{GetUnderlyingObject(const_cast<Value *>(Range.Ptr), DL, 0)};
+    auto *Ptr{getUnderlyingObject(const_cast<Value *>(Range.Ptr), 0)};
     if (isa<GlobalValue>(Ptr))
       HasGlobalAccess = true;
     if (isa<GlobalValue>(stripPointer(DL, Ptr)))

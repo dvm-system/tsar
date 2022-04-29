@@ -416,7 +416,7 @@ JSON_DEFAULT_TRAITS(tsar::msg::, Dependence)
 namespace json {
 /// Specialization of JSON serialization traits for tsar::msg::LoopType type.
 template<> struct Traits<tsar::msg::LoopType> {
-  static bool parse(tsar::msg::LoopType &Dest, json::Lexer &Lex) noexcept {
+  static bool parse(tsar::msg::LoopType &Dest, ::json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
@@ -447,7 +447,7 @@ template<> struct Traits<tsar::msg::LoopType> {
 
 /// Specialization of JSON serialization traits for tsar::msg::StmtKind type.
 template<> struct Traits<tsar::msg::StmtKind> {
-  static bool parse(tsar::msg::StmtKind &Dest, json::Lexer &Lex) noexcept {
+  static bool parse(tsar::msg::StmtKind &Dest, ::json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
@@ -478,7 +478,8 @@ template<> struct Traits<tsar::msg::StmtKind> {
 
 /// Specialization of JSON serialization traits for tsar::DIAliasNode::Kind type.
 template<> struct Traits<tsar::DIAliasNode::Kind> {
-  static bool parse(tsar::DIAliasNode::Kind &Dest, json::Lexer &Lex) noexcept {
+  static bool parse(tsar::DIAliasNode::Kind &Dest,
+                    ::json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
@@ -510,7 +511,7 @@ template<> struct Traits<tsar::DIAliasNode::Kind> {
 /// tsar::trait::DIInduction::InductionKind type.
 template<> struct Traits<trait::DIInduction::InductionKind> {
   static bool parse(trait::DIInduction::InductionKind &Dest,
-      json::Lexer &Lex) noexcept {
+      ::json::Lexer &Lex) noexcept {
     try {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
@@ -548,7 +549,7 @@ template<> struct Traits<trait::DIInduction::InductionKind> {
 
 /// Specialization of JSON serialization traits for tsar::trait::DIInduction.
 template<> struct Traits<trait::DIInduction *> {
-  static bool parse(trait::DIInduction *&Dest, json::Lexer &Lex) {
+  static bool parse(trait::DIInduction *&Dest, ::json::Lexer &Lex) {
     msg::Induction TmpDest;
     auto Res = Traits<msg::Induction>::parse(TmpDest, Lex);
     if (!Res)
@@ -588,7 +589,7 @@ template<> struct Traits<trait::DIInduction *> {
 
 /// Specialization of JSON serialization traits for tsar::trait::DIIReduction.
 template<> struct Traits<trait::DIReduction *> {
-  static bool parse(trait::DIReduction *&Dest, json::Lexer &Lex) {
+  static bool parse(trait::DIReduction *&Dest, ::json::Lexer &Lex) {
     msg::Reduction TmpDest;
     auto Res = Traits<msg::Reduction>::parse(TmpDest, Lex);
     if (!Res)
@@ -606,7 +607,7 @@ template<> struct Traits<trait::DIReduction *> {
 
 /// Specialization of JSON serialization traits for tsar::trait::DIDependence.
 template<> struct Traits<trait::DIDependence *> {
-  static bool parse(trait::DIDependence *&Dest, json::Lexer &Lex) {
+  static bool parse(trait::DIDependence *&Dest, ::json::Lexer &Lex) {
     msg::Dependence TmpDest;
     auto Res = Traits<msg::Dependence>::parse(TmpDest, Lex);
     if (!Res)
@@ -685,7 +686,7 @@ template<> struct Traits<DIMemoryTraitSet> {
 
     StringRef TraitStr;
     DIMemoryTraitSet &TS;
-    json::Lexer &Lex;
+    ::json::Lexer &Lex;
     bool Result;
   };
   struct ToJSONFunctor {
@@ -711,11 +712,11 @@ template<> struct Traits<DIMemoryTraitSet> {
     const DIMemoryTraitSet &TS;
     String &JSON;
   };
-  static bool parse(DIMemoryTraitSet &Dest, json::Lexer &Lex) {
+  static bool parse(DIMemoryTraitSet &Dest, ::json::Lexer &Lex) {
     Dest.unset_all();
     return Parser<>::traverse<Traits<DIMemoryTraitSet>>(Dest, Lex);
   }
-  static bool parse(DIMemoryTraitSet &Dest, json::Lexer &Lex,
+  static bool parse(DIMemoryTraitSet &Dest, ::json::Lexer &Lex,
       std::pair<Position, Position> Key) noexcept {
     Lex.storePosition();
     Lex.setPosition(Key.first);
@@ -753,7 +754,7 @@ template<> struct Traits<MemoryDescriptor> {
     }
     String &JSON;
   };
-  static bool parse(MemoryDescriptor &Dest, json::Lexer &Lex) {
+  static bool parse(MemoryDescriptor &Dest, ::json::Lexer &Lex) {
     Position MaxIdx, Count;
     bool Ok;
     std::tie(Count, MaxIdx, Ok) = Parser<>::numberOfKeys(Lex);
@@ -762,7 +763,7 @@ template<> struct Traits<MemoryDescriptor> {
     Dest.unset_all();
     return Parser<>::traverse<Traits<MemoryDescriptor>>(Dest, Lex);
   }
-  static bool parse(MemoryDescriptor &Dest, json::Lexer &Lex,
+  static bool parse(MemoryDescriptor &Dest, ::json::Lexer &Lex,
       std::pair<Position, Position> Key) noexcept {
     try {
       auto Value = Lex.discardQuote();
@@ -786,7 +787,7 @@ template<> struct Traits<MemoryDescriptor> {
 
 /// Specialization of JSON serialization traits for tsar::CFFlags.
 template<> struct Traits<CFFlags> {
-  static bool parse(CFFlags &Dest, json::Lexer &Lex) {
+  static bool parse(CFFlags &Dest, ::json::Lexer &Lex) {
     Position MaxIdx, Count;
     bool Ok;
     std::tie(Count, MaxIdx, Ok) = Parser<>::numberOfKeys(Lex);
@@ -795,7 +796,7 @@ template<> struct Traits<CFFlags> {
     Dest = CFFlags::DefaultFlags;
     return Parser<>::traverse<Traits<CFFlags>>(Dest, Lex);
   }
-  static bool parse(CFFlags &Dest, json::Lexer &Lex,
+  static bool parse(CFFlags &Dest, ::json::Lexer &Lex,
       std::pair<Position, Position> Key) noexcept {
     try {
       auto Value = Lex.discardQuote();
@@ -1120,7 +1121,7 @@ std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
           std::make_pair(msg::Analysis::No, Loops.second));
     }
   }
-  return json::Parser<msg::Statistic>::unparseAsObject(Stat);
+  return ::json::Parser<msg::Statistic>::unparseAsObject(Stat);
 }
 
 std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
@@ -1143,7 +1144,7 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
         DefItr->second->Id != Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
-      return json::Parser<msg::LoopTree>::unparseAsObject(Request);
+      return ::json::Parser<msg::LoopTree>::unparseAsObject(Request);
     msg::LoopTree LoopTree;
     LoopTree[msg::LoopTree::FunctionID] = Request[msg::LoopTree::FunctionID];
     auto &SrcMgr = TfmCtx->getContext().getSourceManager();
@@ -1240,9 +1241,9 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       Loop[msg::Loop::Level] = Levels.size() + 1;
       Levels.push_back(Loop[msg::Loop::EndLocation]);
     }
-    return json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
+    return ::json::Parser<msg::LoopTree>::unparseAsObject(LoopTree);
   }
-  return json::Parser<msg::LoopTree>::unparseAsObject(Request);
+  return ::json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
 void PrivateServerPass::collectBuiltinFunctions(
@@ -1309,7 +1310,7 @@ std::string PrivateServerPass::answerFileList() {
       }
     }
   }
-  return json::Parser<msg::FileList>::unparseAsObject(FileList);
+  return ::json::Parser<msg::FileList>::unparseAsObject(FileList);
 }
 
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
@@ -1424,7 +1425,7 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     for (auto *FD : Funcs.second.get<clang::FunctionDecl>())
       mVisibleToUser.try_emplace(FD, Funcs.second.get<Definition>());
   }
-  return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
+  return ::json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
 std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
@@ -1447,7 +1448,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         DefItr->second->Id != Request[msg::CalleeFuncList::FuncID])
       continue;
     if (F.isDeclaration())
-      return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+      return ::json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
     msg::CalleeFuncList StmtList = Request;
     auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
@@ -1475,7 +1476,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
           }
       }
       if (!Loop.get<AST>())
-        return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+        return ::json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
       auto I = CFLoopInfo.find(Loop.get<AST>());
       if (I != CFLoopInfo.end())
         Info = &I->second;
@@ -1483,7 +1484,7 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
       Info = &FuncInfo;
     }
     if (!Info)
-      return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+      return ::json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
     DenseMap<const clang::FunctionDecl *, msg::CalleeFuncInfo> FuncMap;
     std::array<msg::CalleeFuncInfo,
                static_cast<std::size_t>(msg::StmtKind::Number)>
@@ -1525,9 +1526,9 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         StmtList[msg::CalleeFuncList::Functions].push_back(std::move(CFI));
     for (auto &CFI: FuncMap)
       StmtList[msg::CalleeFuncList::Functions].push_back(std::move(CFI.second));
-    return json::Parser<msg::CalleeFuncList>::unparseAsObject(StmtList);
+    return ::json::Parser<msg::CalleeFuncList>::unparseAsObject(StmtList);
   }
-  return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
+  return ::json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
 }
 
 std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
@@ -1550,7 +1551,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
         DefItr->second->Id != Request[msg::AliasTree::FuncID])
       continue;
     if (F.isDeclaration())
-      return json::Parser<msg::AliasTree>::unparseAsObject(Request);
+      return ::json::Parser<msg::AliasTree>::unparseAsObject(Request);
     auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &LoopMatcher = Provider.get<LoopMatcherPass>().getMatcher();
@@ -1566,7 +1567,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
           break;
         }
       if (!Loop.get<AST>() || !Loop.get<IR>()->getLoopID())
-        return json::Parser<msg::AliasTree>::unparseAsObject(Request);
+        return ::json::Parser<msg::AliasTree>::unparseAsObject(Request);
       auto RF = mSocket->getAnalysis<
         DIEstimateMemoryPass, DIDependencyAnalysisPass>(F);
       assert(RF && "Dependence analysis must be available!");
@@ -1585,7 +1586,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
       auto ServerLoopID =
           cast<MDNode>(*CToS.getMappedMD(Loop.get<IR>()->getLoopID()));
       if (!ServerLoopID)
-        return json::Parser<msg::AliasTree>::unparseAsObject(Request);
+        return ::json::Parser<msg::AliasTree>::unparseAsObject(Request);
       auto DIDepSet = DIDepInfo[ServerLoopID];
       DenseSet<const DIAliasNode *> Coverage;
       accessCoverage<bcl::SimpleInserter>(DIDepSet, DIAT, Coverage,
@@ -1695,10 +1696,10 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
             reinterpret_cast<std::uintptr_t>(&C), N[msg::AliasNode::Kind]);
         }
       }
-      return json::Parser<msg::AliasTree>::unparseAsObject(Response);
+      return ::json::Parser<msg::AliasTree>::unparseAsObject(Response);
     }
   }
-  return json::Parser<msg::AliasTree>::unparseAsObject(Request);
+  return ::json::Parser<msg::AliasTree>::unparseAsObject(Request);
 }
 
 bool PrivateServerPass::runOnModule(llvm::Module &M) {
@@ -1770,9 +1771,9 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     msg::Diagnostic Diag(msg::Status::Error);
     if (mStdErr->isDiff()) {
       Diag[msg::Diagnostic::Terminal] += mStdErr->diff();
-      return json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
+      return ::json::Parser<msg::Diagnostic>::unparseAsObject(Diag);
     }
-    json::Parser<msg::Statistic, msg::FileList, msg::LoopTree,
+    ::json::Parser<msg::Statistic, msg::FileList, msg::LoopTree,
       msg::FunctionList, msg::CalleeFuncList, msg::AliasTree> P(Request);
     auto Obj = P.parse();
     assert(Obj && "Invalid request!");

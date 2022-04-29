@@ -84,7 +84,7 @@ public:
   /// analysis pass. A `nullptr` could be encoded with empty string.
   void processResponse(const std::string &Response) const {
     llvm::StringRef Json(Response.data() + 1, Response.size() - 2);
-    json::Parser<AnalysisResponse> Parser(Json.str());
+    ::json::Parser<AnalysisResponse> Parser(Json.str());
     AnalysisResponse R;
     if (!Parser.parse(R))
       mAnalysis.clear();
@@ -103,7 +103,7 @@ public:
     R[AnalysisRequest::Function] = nullptr;
     bcl::TypeList<AnalysisType...>::for_each_type(PushBackAnalysisID{R});
     auto Request =
-        json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
+        ::json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
     for (auto &Callback : mReceiveCallbacks)
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
@@ -130,7 +130,7 @@ public:
     R[AnalysisRequest::Function] = &F;
     bcl::TypeList<AnalysisType...>::for_each_type(PushBackAnalysisID{R});
     auto Request =
-        json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
+        ::json::Parser<AnalysisRequest>::unparseAsObject(R) + Delimiter;
     for (auto &Callback : mReceiveCallbacks)
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already

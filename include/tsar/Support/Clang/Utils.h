@@ -103,7 +103,7 @@ std::vector<clang::Token> getRawIdentifiers(clang::SourceRange SR,
 /// Note, that if there are several macro definitions with the same name
 /// (or includes of the same file), then only the first one will be remembered.
 void getRawMacrosAndIncludes(
-  clang::FileID FID, const llvm::MemoryBuffer *InputBuffer,
+  clang::FileID FID, const llvm::MemoryBufferRef &InputBuffer,
   const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
   llvm::StringMap<clang::SourceLocation> &Macros,
   llvm::StringMap<clang::SourceLocation> &Includes,

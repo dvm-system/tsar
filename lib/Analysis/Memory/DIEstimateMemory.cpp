@@ -1485,7 +1485,7 @@ std::pair<DIVariable *, DILocation *> buildDIExpression(
     Base = GetPointerBaseWithConstantOffset(Curr, CurrOffset, DL);
     Offset += CurrOffset;
     if (Curr == Base) {
-      Base = GetUnderlyingObject(const_cast<Value *>(Curr), DL, 1);
+      Base = getUnderlyingObject(const_cast<Value *>(Curr), 1);
       if (Curr == Base)
         break;
       IsTemplate = true;

@@ -92,11 +92,11 @@ struct DIEstimateMemoryPassGraphTraits {
 
 namespace {
 struct DIAliasTreePrinter :
-    public DOTGraphTraitsPrinter<DIEstimateMemoryPass,
+    public DOTGraphTraitsPrinterWrapperPass<DIEstimateMemoryPass,
       false, tsar::DIAliasTree *, DIEstimateMemoryPassGraphTraits> {
   static char ID;
   DIAliasTreePrinter() :
-      DOTGraphTraitsPrinter<DIEstimateMemoryPass, false,
+      DOTGraphTraitsPrinterWrapperPass<DIEstimateMemoryPass, false,
         tsar::DIAliasTree *, DIEstimateMemoryPassGraphTraits>("em-di", ID) {
     initializeDIAliasTreePrinterPass(*PassRegistry::getPassRegistry());
   }
@@ -105,11 +105,11 @@ struct DIAliasTreePrinter :
 char DIAliasTreePrinter::ID = 0;
 
 struct DIAliasTreeViewer :
-  public DOTGraphTraitsViewer<DIEstimateMemoryPass,
+  public DOTGraphTraitsViewerWrapperPass<DIEstimateMemoryPass,
     false, tsar::DIAliasTree *, DIEstimateMemoryPassGraphTraits> {
   static char ID;
   DIAliasTreeViewer() :
-      DOTGraphTraitsViewer<DIEstimateMemoryPass, false,
+      DOTGraphTraitsViewerWrapperPass<DIEstimateMemoryPass, false,
         tsar::DIAliasTree *, DIEstimateMemoryPassGraphTraits>("em-di", ID) {
     initializeDIAliasTreeViewerPass(*PassRegistry::getPassRegistry());
   }

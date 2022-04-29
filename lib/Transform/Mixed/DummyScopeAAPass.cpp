@@ -162,7 +162,7 @@ bool FlangDummyAliasAnalysis::runOnFunction(Function &F) {
   bool IsChanged = false;
   for (auto &I : instructions(F)) {
     if (auto SI = dyn_cast<StoreInst>(&I)) {
-      auto BasePtr = GetUnderlyingObject(SI->getPointerOperand(), DL, 0);
+      auto BasePtr = getUnderlyingObject(SI->getPointerOperand(), 0);
       if (auto ArgItr = Scopes.find(BasePtr); ArgItr != Scopes.end()) {
         updateNoAliasMD(*SI, BasePtr);
         MDNode *ScopeMD{MDNode::get(Ctx, {ArgItr->second})};
@@ -172,7 +172,7 @@ bool FlangDummyAliasAnalysis::runOnFunction(Function &F) {
         IsChanged = true;
       }
     } else if (auto LI = dyn_cast<LoadInst>(&I)) {
-      auto BasePtr = GetUnderlyingObject(LI->getPointerOperand(), DL, 0);
+      auto BasePtr = getUnderlyingObject(LI->getPointerOperand(), 0);
       if (auto ArgItr = Scopes.find(BasePtr); ArgItr != Scopes.end()) {
         updateNoAliasMD(*LI, BasePtr);
         IsChanged = true;

@@ -267,7 +267,7 @@ std::pair<MemoryLocationRange, bool> aggregate(
   LLVM_DEBUG(dbgs() << "[AGGREGATE] Array info: " << *ArrayPtr->getBase() <<
       ", IsAddress: " << ArrayPtr->isAddressOfVariable() << ".\n");
   auto BaseType = ArrayPtr->getBase()->getType();
-  auto ArrayType = cast<PointerType>(BaseType)->getElementType();
+  auto ArrayType = cast<PointerType>(BaseType)->getPointerElementType();
   if (ArrayPtr->isAddressOfVariable()) {
     ResLoc.Kind = LocKind::NonCollapsable;
     return std::make_pair(ResLoc, true);
@@ -448,7 +448,7 @@ public:
                   : mLoc.Size.hasValue()
                         ? LocationSize::upperBound(
                             OffsetLoc - OffsetALoc + mLoc.Size.getValue())
-                        : LocationSize::unknown();
+                        : LocationSize::afterPointer();
           MemoryLocationRange Range(ALoc.Ptr,
             LocationSize::precise(OffsetLoc - OffsetALoc),
             UpperBound, ALoc.AATags);
@@ -644,7 +644,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
             UnknownAddressAccess = false;
             for (auto *Ptr : DUS->getAddressAccesses()) {
               if (auto *GV{
-                      dyn_cast<GlobalValue>(GetUnderlyingObject(Ptr, DL, 0))})
+                      dyn_cast<GlobalValue>(getUnderlyingObject(Ptr, 0))})
                 if (AT.find(MemoryLocation(GV, LocationSize::precise(0))))
                   DU->addAddressTransitives(GV, &I);
               else UnknownAddressAccess = true;
@@ -769,7 +769,7 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
                 for (auto &Loc :
                      InterDUItr->get<DefUseSet>()->getExplicitAccesses())
                   if (auto *GV{dyn_cast<GlobalValue>(
-                          GetUnderlyingObject(Loc.Ptr, DL, 0))}) {
+                          getUnderlyingObject(Loc.Ptr, 0))}) {
                     auto EM{
                         AT.find(MemoryLocation(GV, LocationSize::precise(0)))};
                     if (!EM) {

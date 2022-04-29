@@ -46,6 +46,7 @@
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Pass.h>
 
 using namespace llvm;
@@ -235,7 +236,7 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
       if (auto *DIEM{
               dyn_cast_or_null<DIEstimateMemory>(Var.template get<MD>())};
           DIEM && !DIEM->emptyBinding() && *DIEM->begin() &&
-          isa<GlobalVariable>(GetUnderlyingObject(*DIEM->begin(), DL, 0))) {
+          isa<GlobalVariable>(getUnderlyingObject(*DIEM->begin(), 0))) {
         assert(DIEM->begin() + 1 == DIEM->end() &&
                "Alias tree is corrupted: multiple binded globals!");
         ToOptimize.try_emplace(*DIEM->begin(), Var.template get<AST>());
@@ -313,7 +314,7 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
            ++FuncItr)
         for (auto &I : instructions(*std::get<Function *>(*FuncItr)))
           for (auto &Op : I.operands()) {
-            auto Ptr{GetUnderlyingObject(Op.get(), M.getDataLayout(), 0)};
+            auto Ptr{getUnderlyingObject(Op.get(), 0)};
             if (!isa<GlobalVariable>(Ptr) ||
                 (!mIPOToActual.count(Ptr) && !mIPOToGetActual.count(Ptr)))
               continue;
@@ -349,7 +350,7 @@ bool DVMHDataTransferIPOPass::initializeIPO(Module &M) {
       if (isa<LoadInst>(I))
         continue;
       for (auto &Op: I.operands()) {
-        auto Ptr{GetUnderlyingObject(Op.get(), M.getDataLayout(), 0)};
+        auto Ptr{getUnderlyingObject(Op.get(), 0)};
         if (!isa<GlobalVariable>(Ptr) ||
             (!mIPOToActual.count(Ptr) && !mIPOToGetActual.count(Ptr)))
           continue;
@@ -799,7 +800,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
       auto IsIPOVar{false};
       if (auto MH{Var.template get<MD>()}; MH && !MH->emptyBinding())
         if (auto BindItr{MH->begin()}; *BindItr)
-          if (auto Ptr{GetUnderlyingObject(*BindItr, DL, 0)};
+          if (auto Ptr{getUnderlyingObject(*BindItr, 0)};
               IPOVars.count(Ptr) && (IPOCalleeItr == mIPOMap.end() ||
                                      !IPOCalleeItr->get<Value>().count(Ptr)))
             IsIPOVar = true;
@@ -1069,7 +1070,7 @@ bool DVMHDataTransferIPOPass::optimizeGlobalOut(
                 if (auto BindItr{DIEM->begin()}; FinalPragma != IPOPragma &&
                                                  !DIEM->emptyBinding() &&
                                                  *BindItr)
-                  if (auto Ptr{GetUnderlyingObject(*BindItr, DL, 0)};
+                  if (auto Ptr{getUnderlyingObject(*BindItr, 0)};
                       IPOMemory.count(Ptr) &&
                       !IPOInfoItr->get<Value>().count(Ptr))
                     IPOPragma->getMemory().emplace(Var);
@@ -1319,4 +1320,3 @@ INITIALIZE_PASS_END(DVMHDataTransferIPOPass, "dvmh-actual-ipo",
 ModulePass *llvm::createDVMHDataTransferIPOPass() {
   return new DVMHDataTransferIPOPass;
 }
-

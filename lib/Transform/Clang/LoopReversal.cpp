@@ -596,8 +596,11 @@ private:
       return false;
     }
     auto InitStr{mRewriter.getRewrittenText(InitRange)};
-    if (Start)
-      InitStr = Start->toString(10);
+    if (Start) {
+      SmallString<8> Init;
+      Start->toString(Init, 10);
+      InitStr = Init.str().str();
+    }
     auto CondStr{mRewriter.getRewrittenText(CE.ExprRange)};
     SmallString<128> NewInitStr;
     if (End && Step) {

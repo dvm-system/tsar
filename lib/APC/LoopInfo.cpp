@@ -269,7 +269,7 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
   assert(mRegions->getRegionFor(&L) && "Loop region must not be null!");
   auto DFL = cast<DFLoop>(mRegions->getRegionFor(&L));
   APCLoop.perfectLoop =
-    !L.empty() && mPerfect->getPerfectLoopInfo().count(DFL) ? 1 : 0;
+    !L.isInnermost() && mPerfect->getPerfectLoopInfo().count(DFL) ? 1 : 0;
   bool KnownMaxBackageCount = false;
   auto MaxBackedgeCount = mSE->getConstantMaxBackedgeTakenCount(&L);
   if (MaxBackedgeCount && !isa<SCEVCouldNotCompute>(MaxBackedgeCount)) {

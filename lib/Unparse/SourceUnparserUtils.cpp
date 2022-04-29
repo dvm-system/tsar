@@ -118,7 +118,7 @@ bool unparseCallee(const llvm::CallBase &CB, llvm::Module &M,
     S.assign(F->getName().begin(), F->getName().end());
     return true;
   }
-  auto DIM = buildDIMemory(MemoryLocation(Callee),
+  auto DIM = buildDIMemory(MemoryLocation(Callee, LocationSize::afterPointer()),
     M.getContext(), M.getDataLayout(), DT);
   if (DIM && DIM->isValid())
     if (auto DWLang = getLanguage(*DIM->Var))

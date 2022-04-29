@@ -128,14 +128,14 @@ void initMayLivesWithIPO(Function &F, LiveMemoryForCalls &LiveSetForCalls,
   }
   auto init = [&DL, &F, &FOut, &MayLives](const MemoryLocationRange &Loc) {
     assert(Loc.Ptr && "Pointer to location must not be null!");
-    auto Ptr = GetUnderlyingObject(Loc.Ptr, DL, 0);
+    auto Ptr = getUnderlyingObject(Loc.Ptr, 0);
     if (isa<AllocaInst>(Ptr))
       return;
     if (find_if(F.args(), [Ptr](Argument &Arg) { return Ptr == &Arg; }) !=
             F.arg_end() ||
         isa<GlobalValue>(Ptr)) {
       if (Ptr == Loc.Ptr && !FOut.overlap(Loc) ||
-          !FOut.overlap(MemoryLocation(Ptr)))
+          !FOut.overlap(MemoryLocation::getAfter(Ptr)))
         return;
     }
     MayLives.insert(Loc);
@@ -306,10 +306,10 @@ bool GlobalLiveMemory::runOnModule(Module &M) {
       LLVM_DEBUG(dbgs() << "[GLOBAL LIVE MEMORY]: "
         "use conservative boundary conditions\n");
       for (auto &Loc : DefUse->getDefs())
-        if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+        if (!isa<AllocaInst>(getUnderlyingObject(Loc.Ptr, 0)))
           MayLives.insert(Loc);
       for (auto &Loc : DefUse->getMayDefs())
-        if (!isa<AllocaInst>(GetUnderlyingObject(Loc.Ptr, DL, 0)))
+        if (!isa<AllocaInst>(getUnderlyingObject(Loc.Ptr, 0)))
           MayLives.insert(Loc);
     }
     LiveMemoryInfo IntraLiveInfo;

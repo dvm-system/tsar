@@ -30,8 +30,14 @@
 #include <llvm/IR/Module.h>
 #include <tuple>
 
-using namespace llvm;
 using namespace tsar;
+
+using llvm::FunctionType;
+using llvm::LLVMContext;
+using llvm::Module;
+using llvm::PointerType;
+using llvm::StringRef;
+using llvm::Type;
 
 /// Table of string intrinsic names indexed by enum value.
 static const char * const IntrinsicNameTable[] = {
@@ -102,13 +108,13 @@ StringRef getName(IntrinsicId Id) {
 FunctionType *getType(LLVMContext &Ctx, IntrinsicId Id) {
   auto Offset = PrototypeOffsetTable[static_cast<unsigned>(Id)];
   Type *ResultTy = DecodeType(Ctx, Offset.Start);
-  SmallVector<Type *, 8> ArgsTys;
+  llvm::SmallVector<Type *, 8> ArgsTys;
   while (Offset.Start < Offset.End)
     ArgsTys.push_back(DecodeType(Ctx, Offset.Start));
   return FunctionType::get(ResultTy, ArgsTys, false);
 }
 
-llvm::FunctionCallee getDeclaration(Module *M, IntrinsicId Id) {
+llvm::FunctionCallee getDeclaration(llvm::Module *M, IntrinsicId Id) {
   return M->getOrInsertFunction(getName(Id), getType(M->getContext(), Id));
 }
 

@@ -1108,8 +1108,7 @@ public:
   /// to undefined behavior.
   const EstimateMemory * find(const MemoryLocationRange &Loc) const {
     return (Loc.Kind & MemoryLocationRange::LocKind::Collapsed) ?
-           find(llvm::MemoryLocation(Loc.Ptr, LocationSize::unknown(),
-                Loc.AATags)) :
+           find(llvm::MemoryLocation::getBeforeOrAfter(Loc.Ptr, Loc.AATags)) :
            find(llvm::MemoryLocation(Loc.Ptr, Loc.UpperBound, Loc.AATags));
   }
 

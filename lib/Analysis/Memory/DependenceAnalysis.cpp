@@ -62,6 +62,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/Delinearization.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -666,25 +667,25 @@ static AliasResult underlyingObjectsAlias(AliasAnalysis *AA,
   // tbaa, incompatible underlying object locations, etc.
   MemoryLocation LocAS(LocA.Ptr, MemoryLocation::UnknownSize, LocA.AATags);
   MemoryLocation LocBS(LocB.Ptr, MemoryLocation::UnknownSize, LocB.AATags);
-  if (AA->alias(LocAS, LocBS) == NoAlias)
-    return NoAlias;
+  if (AA->alias(LocAS, LocBS) == AliasResult::NoAlias)
+    return AliasResult::NoAlias;
 
   // Check the underlying objects are the same
-  const Value *AObj = GetUnderlyingObject(LocA.Ptr, DL);
-  const Value *BObj = GetUnderlyingObject(LocB.Ptr, DL);
+  const Value *AObj = getUnderlyingObject(LocA.Ptr);
+  const Value *BObj = getUnderlyingObject(LocB.Ptr);
 
   // If the underlying objects are the same, they must alias
   if (AObj == BObj)
-    return MustAlias;
+    return AliasResult::MustAlias;
 
   // We may have hit the recursion limit for underlying objects, or have
   // underlying objects where we don't know they will alias.
   if (!isIdentifiedObject(AObj) || !isIdentifiedObject(BObj))
-    return MayAlias;
+    return AliasResult::MayAlias;
 
   // Otherwise we know the objects are different and both identified objects so
   // must not alias.
-  return NoAlias;
+  return AliasResult::NoAlias;
 }
 
 
@@ -3484,15 +3485,15 @@ bool DependenceInfo::tryDelinearize(Instruction *Src, Instruction *Dst,
 
     // First step: collect parametric terms in both array references.
     SmallVector<const SCEV *, 4> Terms;
-    SE->collectParametricTerms(SrcAR, Terms);
-    SE->collectParametricTerms(DstAR, Terms);
+    collectParametricTerms(*SE, SrcAR, Terms);
+    collectParametricTerms(*SE, DstAR, Terms);
 
     // Second step: find subscript sizes.
-    SE->findArrayDimensions(Terms, Sizes, ElementSize);
+    findArrayDimensions(*SE, Terms, Sizes, ElementSize);
 
     // Third step: compute the access functions for each subscript.
-    SE->computeAccessFunctions(SrcAR, SrcSubscripts, Sizes);
-    SE->computeAccessFunctions(DstAR, DstSubscripts, Sizes);
+    computeAccessFunctions(*SE, SrcAR, SrcSubscripts, Sizes);
+    computeAccessFunctions(*SE, DstAR, DstSubscripts, Sizes);
   }
 
   // Fail when there is only a subscript: that's a linearized access function.
@@ -3603,16 +3604,16 @@ DependenceInfo::depends(Instruction *Src, Instruction *Dst,
   switch (underlyingObjectsAlias(AA, F->getParent()->getDataLayout(),
                                  MemoryLocation::get(Dst),
                                  MemoryLocation::get(Src))) {
-  case MayAlias:
-  case PartialAlias:
+  case AliasResult::MayAlias:
+  case AliasResult::PartialAlias:
     // cannot analyse objects if we don't understand their aliasing.
     LLVM_DEBUG(dbgs() << "can't analyze may or partial alias\n");
     return std::make_unique<Dependence>(Src, Dst);
-  case NoAlias:
+  case AliasResult::NoAlias:
     // If the objects noalias, they are distinct, accesses are independent.
     LLVM_DEBUG(dbgs() << "no alias\n");
     return nullptr;
-  case MustAlias:
+  case AliasResult::MustAlias:
     break; // The underlying objects alias; test accesses for dependence.
   }
 
@@ -4038,9 +4039,9 @@ const SCEV *DependenceInfo::getSplitIteration(const Dependence &Dep,
   assert(isLoadOrStore(Dst));
   Value *SrcPtr = getLoadStorePointerOperand(Src);
   Value *DstPtr = getLoadStorePointerOperand(Dst);
-  assert(underlyingObjectsAlias(AA, F->getParent()->getDataLayout(),
-                                MemoryLocation::get(Dst),
-                                MemoryLocation::get(Src)) == MustAlias);
+  assert(underlyingObjectsAlias(
+             AA, F->getParent()->getDataLayout(), MemoryLocation::getAfter(Dst),
+             MemoryLocation::getAfter(Src)) == AliasResult::MustAlias);
 
   // establish loop nesting levels
   establishNestingLevels(Src, Dst);

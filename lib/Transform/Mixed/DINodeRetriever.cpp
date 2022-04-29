@@ -32,13 +32,13 @@
 #include <bcl/utility.h>
 #include <clang/Basic/LangOptions.h>
 #include <clang/AST/Decl.h>
+#include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/FileSystem.h>
-#include <llvm/Transforms/Utils/Local.h>
 
 using namespace clang;
 using namespace llvm;
@@ -80,9 +80,8 @@ private:
                 auto DistinctDIVar = DILocalVariable::getDistinct(
                     Ctx, DIVar->getScope(), "sapfor.var", DIVar->getFile(),
                     DIVar->getLine(), DIVar->getType(), DIVar->getArg(),
-                    DIVar->getFlags(), DIVar->getAlignInBits());
-                DbgInst->setArgOperand(
-                    1, MetadataAsValue::get(Ctx, DistinctDIVar));
+                    DIVar->getFlags(), DIVar->getAlignInBits(), nullptr);
+                DbgInst->setVariable(DistinctDIVar);
             }
           }
           continue;
@@ -92,7 +91,7 @@ private:
         auto *DISub = F.getSubprogram();
         auto *DIVar = DILocalVariable::getDistinct(
             Ctx, DISub, "sapfor.var", FileCU, 0, DITy, 0,
-            DINode::FlagArtificial, AI->getAlignment());
+            DINode::FlagArtificial, AI->getAlignment(), nullptr);
         DIB.insertDeclare(AI, DIVar, DIExpression::get(Ctx, {}),
             DILocation::get(AI->getContext(), 0, 0, DISub), AI->getParent());
       }
@@ -144,7 +143,7 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     auto *GV = DIGlobalVariable::getDistinct(
       Ctx, File, Name, GlobalVar.getName(), File, Line, DITy,
       GlobalVar.hasLocalLinkage(), GlobalVar.isDeclaration(),
-      nullptr, nullptr, 0);
+      nullptr, nullptr, 0, nullptr);
     auto *GVE =
       DIGlobalVariableExpression::get(Ctx, GV, DIExpression::get(Ctx, {}));
     GlobalVar.setMetadata("sapfor.dbg", GVE);

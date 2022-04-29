@@ -26,6 +26,7 @@
 #include "APCContextImpl.h"
 #include "tsar/APC/APCContext.h"
 #include "tsar/APC/Passes.h"
+#include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include <map>
 

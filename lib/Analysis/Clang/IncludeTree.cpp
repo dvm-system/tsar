@@ -198,11 +198,11 @@ struct ClangIncludeTreePassGraphTraits {
   }
 };
 
-struct ClangIncludeTreePrinter : public DOTGraphTraitsModulePrinter<
+struct ClangIncludeTreePrinter : public DOTGraphTraitsModulePrinterWrapperPass<
     ClangIncludeTreePass, false, tsar::FileTree *,
     ClangIncludeTreePassGraphTraits> {
   static char ID;
-  ClangIncludeTreePrinter() : DOTGraphTraitsModulePrinter<
+  ClangIncludeTreePrinter() : DOTGraphTraitsModulePrinterWrapperPass<
       ClangIncludeTreePass, false, tsar::FileTree *,
       ClangIncludeTreePassGraphTraits>("files", ID) {
     initializeClangIncludeTreePrinterPass(*PassRegistry::getPassRegistry());
@@ -210,11 +210,11 @@ struct ClangIncludeTreePrinter : public DOTGraphTraitsModulePrinter<
 };
 char ClangIncludeTreePrinter::ID = 0;
 
-struct ClangIncludeTreeOnlyPrinter : public DOTGraphTraitsModulePrinter<
+struct ClangIncludeTreeOnlyPrinter : public DOTGraphTraitsModulePrinterWrapperPass<
     ClangIncludeTreePass, true, tsar::FileTree *,
     ClangIncludeTreePassGraphTraits> {
   static char ID;
-  ClangIncludeTreeOnlyPrinter() : DOTGraphTraitsModulePrinter<
+  ClangIncludeTreeOnlyPrinter() : DOTGraphTraitsModulePrinterWrapperPass<
       ClangIncludeTreePass, true, tsar::FileTree *,
       ClangIncludeTreePassGraphTraits>("files-only", ID) {
     initializeClangIncludeTreeOnlyPrinterPass(*PassRegistry::getPassRegistry());
@@ -222,11 +222,11 @@ struct ClangIncludeTreeOnlyPrinter : public DOTGraphTraitsModulePrinter<
 };
 char ClangIncludeTreeOnlyPrinter::ID = 0;
 
-struct ClangIncludeTreeViewer : public DOTGraphTraitsModuleViewer<
+struct ClangIncludeTreeViewer : public DOTGraphTraitsModuleViewerWrapperPass<
     ClangIncludeTreePass, false, tsar::FileTree *,
     ClangIncludeTreePassGraphTraits> {
   static char ID;
-  ClangIncludeTreeViewer() : DOTGraphTraitsModuleViewer<
+  ClangIncludeTreeViewer() : DOTGraphTraitsModuleViewerWrapperPass<
       ClangIncludeTreePass, false, tsar::FileTree *,
       ClangIncludeTreePassGraphTraits>("files", ID) {
     initializeClangIncludeTreeViewerPass(*PassRegistry::getPassRegistry());
@@ -234,11 +234,11 @@ struct ClangIncludeTreeViewer : public DOTGraphTraitsModuleViewer<
 };
 char ClangIncludeTreeViewer::ID = 0;
 
-struct ClangIncludeTreeOnlyViewer : public DOTGraphTraitsModuleViewer<
+struct ClangIncludeTreeOnlyViewer : public DOTGraphTraitsModuleViewerWrapperPass<
     ClangIncludeTreePass, true, tsar::FileTree *,
     ClangIncludeTreePassGraphTraits> {
   static char ID;
-  ClangIncludeTreeOnlyViewer() : DOTGraphTraitsModuleViewer<
+  ClangIncludeTreeOnlyViewer() : DOTGraphTraitsModuleViewerWrapperPass<
       ClangIncludeTreePass, true, tsar::FileTree *,
       ClangIncludeTreePassGraphTraits>("files-only", ID) {
     initializeClangIncludeTreeOnlyViewerPass(*PassRegistry::getPassRegistry());

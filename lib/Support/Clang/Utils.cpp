@@ -130,7 +130,7 @@ std::vector<clang::Token> tsar::getRawIdentifiers(clang::SourceRange SR,
 }
 
 void tsar::getRawMacrosAndIncludes(
-    clang::FileID FID, const llvm::MemoryBuffer *InputBuffer,
+    clang::FileID FID, const llvm::MemoryBufferRef &InputBuffer,
     const clang::SourceManager &SM, const clang::LangOptions &LangOpts,
     llvm::StringMap<clang::SourceLocation> &Macros,
     llvm::StringMap<clang::SourceLocation> &Includes,

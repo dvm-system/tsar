@@ -34,6 +34,7 @@
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Pass.h>
