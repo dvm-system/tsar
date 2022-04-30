@@ -40,6 +40,12 @@
 #include <optional>
 #include <variant>
 
+namespace clang {
+namespace tooling {
+class CompilationDatabase;
+}
+} // namespace clang
+
 namespace llvm {
 class DICompileUnit;
 class Module;
@@ -187,13 +193,15 @@ public:
       llvm::mapped_iterator<TransformationMap::iterator, iterator_helper>;
 
   /// Create storage for transformation contexts.
-  ///
-  /// \param [in] CL Command line which has been used to run analysis.
-  explicit TransformationInfo(llvm::ArrayRef<std::string> CL)
-    : mCommandLine(CL) {}
+  explicit TransformationInfo(
+      const clang::tooling::CompilationDatabase &Compilations)
+      : mCompilations(Compilations) {}
 
   /// Returns command line which has been used to run analysis.
-  llvm::ArrayRef<std::string> getCommandLine() const { return mCommandLine; }
+  const clang::tooling::CompilationDatabase &
+  getCompilationDatabase() const noexcept {
+    return mCompilations;
+  }
 
   /// Set transformation context for a specified compilation unit.
   void setContext(llvm::DICompileUnit &CU,
@@ -216,7 +224,7 @@ public:
 
 private:
   TransformationMap mTransformPool;
-  std::vector<std::string> mCommandLine;
+  const clang::tooling::CompilationDatabase &mCompilations;
 };
 } // namespace tsar
 
