@@ -1,7 +1,8 @@
 configure_file(${PROJECT_SOURCE_DIR}/include/tsar/Core/tsar-config.h.in
   tsar-config.h)
 
-set(CORE_SOURCES TransformationContext.cpp Query.cpp Passes.cpp Tool.cpp)
+set(CORE_SOURCES TransformationContext.cpp Query.cpp Passes.cpp Tool.cpp
+  IRAction.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE CORE_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

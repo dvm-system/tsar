@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Core/IRAction.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Core/Passes.h"
 #include "tsar/Core/Tool.h"
@@ -374,12 +375,14 @@ static std::vector<const char *> addInternalArgs(int Argc, const char **Argv) {
 }
 
 Tool::Tool(int Argc, const char **Argv) {
-  assert(Argv && "List of command line arguments must not be null!");
+  assert(Argv && Argc > 1 &&
+         "List of command line arguments must not be null!");
   Options::get(); // At first, initialize command line options.
   std::string Descr = std::string(TSAR_DESCRIPTION) + "(TSAR)";
   // Passes should be initialized previously then command line options are
   // parsed, due to initialize list of available passes.
   initializeTSAR(*PassRegistry::getPassRegistry());
+  mToolName = Argv[0];
   auto Args = addInternalArgs(Argc, Argv);
   cl::ParseCommandLineOptions(Args.size(), Args.data(), Descr);
   storeCLOptions();
@@ -761,12 +764,12 @@ int Tool::run(QueryManager *QM) {
               .get());
     if (!ImportInfoStorage)
       return CTool.run(newActionFactory<MainAction, tsar::ASTMergeAction>(
-                           std::forward_as_tuple(mCommandLine, QM),
+                           std::forward_as_tuple(*mCompilations, *QM),
                            std::forward_as_tuple(SourcesToMerge))
                            .get());
     return CTool.run(
         newActionFactory<MainAction, ASTMergeActionWithInfo>(
-            std::forward_as_tuple(mCommandLine, QM),
+            std::forward_as_tuple(*mCompilations, *QM),
             std::forward_as_tuple(SourcesToMerge, ImportInfoStorage))
             .get());
   }
@@ -779,12 +782,10 @@ int Tool::run(QueryManager *QM) {
     return CTool.run(
         newActionFactory<tsar::ASTPrintAction, tsar::GenPCHPragmaAction>()
             .get());
-  // Do not search pragmas in .ll file to avoid internal assertion fails.
-  ClangTool CLLTool(*mCompilations, LLSources);
-  return
-    CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
-      std::forward_as_tuple(mCommandLine, QM)).get()) ||
-    CLLTool.run(newActionFactory<MainAction>(
-      std::forward_as_tuple(mCommandLine, QM, mLoadSources)).get()) ?
-    1 : 0;
+  auto CRes{CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
+                          std::forward_as_tuple(*mCompilations, *QM))
+                          .get())};
+  auto LLRes{executeIRAction(mToolName, LLSources, *QM,
+                             mLoadSources ? mCompilations.get() : nullptr)};
+  return (CRes != 0 && LLRes != 0) ? (CRes > 1 || LLRes > 1) ? 2 : 1 : 0;
 }

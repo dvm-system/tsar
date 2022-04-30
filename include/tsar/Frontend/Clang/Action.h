@@ -39,8 +39,9 @@ class QueryManager;
 /// Base front-end action to analyze and transform sources.
 class MainAction : public clang::ASTFrontendAction {
 public:
-  MainAction(llvm::ArrayRef<std::string> CL, QueryManager *QM,
-             bool LoadSources = true);
+  MainAction(const clang::tooling::CompilationDatabase &Compilations,
+             QueryManager &QM)
+      : mTfmInfo(Compilations), mQueryManager(QM) {}
 
   /// Callback at the start of processing a single input.
   ///
@@ -54,19 +55,13 @@ public:
   /// BeginSourceFileAction (and BeginSourceFile).
   void EndSourceFileAction() override;
 
-  /// Return true because this action supports use with IR files.
-  bool hasIRSupport() const override { return true; }
-
-  /// Execute action, evaluation of IR files is also supported.
-  void ExecuteAction() override;
-
   /// Create AST Consumer.
   std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
     clang::CompilerInstance &CI, llvm::StringRef InFile) override;
 
 private:
-  tsar::QueryManager *mQueryManager;
-  std::unique_ptr<TransformationInfo> mTfmInfo;
+  TransformationInfo mTfmInfo;
+  QueryManager &mQueryManager;
 };
 
 /// Creates an analysis/transformations actions factory.

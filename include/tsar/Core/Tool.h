@@ -96,6 +96,7 @@ private:
   ///
   void storePrintOptions(OptionList &IncompatibleOpts);
 
+  std::string mToolName;
   GlobalOptions mGlobalOpts;
   std::vector<std::string> mCommandLine;
   std::vector<std::string> mSources;
