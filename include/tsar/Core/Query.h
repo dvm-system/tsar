@@ -27,6 +27,7 @@
 #define TSAR_QUERY_H
 
 #include "tsar/Frontend/Clang/ASTImportInfo.h"
+#include "tsar/Support/OutputFile.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/ADT/StringRef.h>
@@ -45,8 +46,7 @@ class PassManager;
 }
 
 namespace clang {
-class CompilerInstance;
-class CodeGenOptions;
+class DiagnosticsEngine;
 }
 
 namespace tsar {
@@ -110,7 +110,10 @@ public:
   /// \brief Callback at the start of processing a single input.
   ///
   /// \return True on success, on failure run() passes will not be called.
-  virtual bool beginSourceFile(clang::CompilerInstance &, llvm::StringRef) {
+  virtual bool beginSourceFile(clang::DiagnosticsEngine &Diags,
+                               llvm::StringRef InputFile,
+                               llvm::StringRef OutputFile,
+                               llvm::StringRef WorkingDir) {
     return true;
   }
 
@@ -118,7 +121,7 @@ public:
   ///
   /// This is guaranteed to only be called following a successful call to
   /// beginSourceFile().
-  virtual void endSourceFile() {}
+  virtual void endSourceFile(bool HasErrorOccurred) {}
 
   /// Analysis the specified module and transforms source file associated with
   /// it if rewriter context is specified.
@@ -253,19 +256,17 @@ private:
 /// This prints LLVM IR to the standard output stream.
 class EmitLLVMQueryManager : public QueryManager {
 public:
-  bool beginSourceFile(
-    clang::CompilerInstance &CI, llvm::StringRef InFile) override;
+  bool beginSourceFile(clang::DiagnosticsEngine &Diags,
+                       llvm::StringRef InputFile, llvm::StringRef OutputFIle,
+                       llvm::StringRef WorkingDir) override;
   void run(llvm::Module *M, tsar::TransformationInfo *) override;
 
-  void endSourceFile() override {
-    // An output stream attached to a temporary output file should be freed.
-    // Otherwise it prevents renaming a temporary output file to a regular one.
-    mOS.reset();
-  }
+  void endSourceFile(bool HasErrorOccurred) override;
 
 protected:
-  std::unique_ptr<llvm::raw_pwrite_stream > mOS;
-  const clang::CodeGenOptions *mCodeGenOpts = nullptr;
+  llvm::Optional<tsar::OutputFile> mOutputFile;
+  std::string mWorkingDir;
+  clang::DiagnosticsEngine *mDiags{nullptr};
 };
 
 /// This performs instrumentation of LLVM IR and prints it to the standard

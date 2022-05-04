@@ -23,6 +23,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Support/Clang/Utils.h"
+#include "tsar/Support/OutputFile.h"
+#include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Utils.h"
 #include <bcl/utility.h>
 #include <clang/Analysis/CFG.h>
@@ -453,4 +455,30 @@ StringRef tsar::getFunctionName(FunctionDecl &FD,
     }
   }
   return FD.getName();
+}
+
+Optional<OutputFile> tsar::createDefaultOutputFile(
+    clang::DiagnosticsEngine &Diags, StringRef OutputPath,
+    bool Binary, llvm::StringRef BaseInput,
+    llvm::StringRef Extension, bool RemoveFileOnSignal,
+    bool UseTemporary,
+    bool CreateMissingDirectories) {
+  Optional<SmallString<128>> PathStorage;
+  if (OutputPath.empty()) {
+    if (BaseInput == "-" || Extension.empty()) {
+      OutputPath = "-";
+    } else {
+      PathStorage.emplace(BaseInput);
+      llvm::sys::path::replace_extension(*PathStorage, Extension);
+      OutputPath = *PathStorage;
+    }
+  }
+
+  auto OF{OutputFile::create(OutputPath, Binary, RemoveFileOnSignal,
+                             UseTemporary, CreateMissingDirectories)};
+  if (OF)
+    return std::move(*OF);
+  toDiag(Diags, tsar::diag::err_fe_unable_to_open_output)
+      << OutputPath << errorToErrorCode(OF.takeError()).message();
+  return None;
 }

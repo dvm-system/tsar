@@ -1,5 +1,5 @@
 
-set(FRONTEND_SOURCES TransformationContext.cpp)
+set(FRONTEND_SOURCES TransformationContext.cpp Tooling.cpp Action.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE FRONTEND_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

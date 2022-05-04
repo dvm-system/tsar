@@ -32,6 +32,10 @@
 #include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
 
+namespace llvm::sys::fs {
+class TempFile;
+}
+
 #if !defined LLVM_RELEASE_BUILD && defined TSAR_ENABLE_LLVM_DUMP
 /// Use this macro if dump() is called for LLVM objects. Otherwise, link-time
 /// errors occur if configuration of LLVM build is not Debug.
@@ -130,5 +134,6 @@ bool operator!=(const llvm::SmallPtrSet<PtrType, SmallSize> &LHS,
   const llvm::SmallPtrSet<PtrType, SmallSize> &RHS) {
   return !(LHS == RHS);
 }
+
 }
-#endif//TSAR_SUPPORT_UTILS_H
+#endif // TSAR_SUPPORT_UTILS_H

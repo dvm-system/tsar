@@ -1,4 +1,4 @@
-//===--- Action.h ----------- TSAR Frontend Action --------------*- C++ -*-===//
+//===--- Action.h ------- TSAR Frontend Action (Clang) ----------*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
@@ -23,24 +23,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_ACTION_H
-#define TSAR_ACTION_H
+#ifndef TSAR_CLANG_ACTION_H
+#define TSAR_CLANG_ACTION_H
 
+#include "tsar/Frontend/ActionFactory.h"
 #include "tsar/Core/TransformationContext.h"
-#include <bcl/utility.h>
 #include <clang/Tooling/Tooling.h>
-#include <memory>
-#include <vector>
 
 namespace tsar {
-class TransformationInfo;
 class QueryManager;
 
 /// Base front-end action to analyze and transform sources.
-class MainAction : public clang::ASTFrontendAction {
+class ClangMainAction : public clang::ASTFrontendAction {
 public:
-  MainAction(const clang::tooling::CompilationDatabase &Compilations,
-             QueryManager &QM)
+  ClangMainAction(const clang::tooling::CompilationDatabase &Compilations,
+                  QueryManager &QM)
       : mTfmInfo(Compilations), mQueryManager(QM) {}
 
   /// Callback at the start of processing a single input.
@@ -53,7 +50,7 @@ public:
   ///
   /// This is guaranteed to only be called following a successful call to
   /// BeginSourceFileAction (and BeginSourceFile).
-  void EndSourceFileAction() override;
+  bool shouldEraseOutputFiles() override;
 
   /// Create AST Consumer.
   std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
@@ -68,49 +65,19 @@ private:
 template <typename ActionT, typename... ArgT>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
 newActionFactory(std::tuple<ArgT...> Args) {
-  class ActionFactory : public clang::tooling::FrontendActionFactory {
-  public:
-    explicit ActionFactory(std::tuple<ArgT...> Args) : mArgs{std::move(Args)} {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      return std::unique_ptr<clang::FrontendAction>(
-          bcl::make_unique_piecewise<ActionT>(mArgs).release());
-    }
-
-  private:
-    std::tuple<ArgT...> mArgs;
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-      new ActionFactory(std::move(Args)));
+  return newActionFactory<clang::tooling::FrontendActionFactory,
+                          clang::FrontendAction, ActionT>(std::move(Args));
 }
 
 /// Creates an analysis/transformations actions factory with adaptor.
 template <typename ActionT, typename AdaptorT, typename... ActionArgT,
           typename... AdaptorArgT>
 std::unique_ptr<clang::tooling::FrontendActionFactory>
-newActionFactory(std::tuple<ActionArgT...> ActionArgs = {},
-                 std::tuple<AdaptorArgT...> AdaptorArgs = {}) {
-  class ActionFactory : public clang::tooling::FrontendActionFactory {
-  public:
-    ActionFactory(std::tuple<ActionArgT...> ActionArgs,
-                  std::tuple<AdaptorArgT...> AdaptorArgs)
-        : mActionArgs{std::move(ActionArgs)}
-        , mAdaptorArgs{std::move(AdaptorArgs)} {}
-    std::unique_ptr<clang::FrontendAction> create() override {
-      std::unique_ptr<clang::FrontendAction> Action{
-          bcl::make_unique_piecewise<ActionT>(mActionArgs).release()};
-      return std::unique_ptr<clang::FrontendAction>(
-          bcl::make_unique_piecewise<AdaptorT>(
-              std::tuple_cat(std::forward_as_tuple(std::move(Action)),
-                             mAdaptorArgs))
-              .release());
-    }
-
-  private:
-    std::tuple<ActionArgT...> mActionArgs;
-    std::tuple<AdaptorArgT...> mAdaptorArgs;
-  };
-  return std::unique_ptr<clang::tooling::FrontendActionFactory>(
-      new ActionFactory(std::move(ActionArgs), std::move(AdaptorArgs)));
+newClangActionFactory(std::tuple<ActionArgT...> ActionArgs = {},
+                      std::tuple<AdaptorArgT...> AdaptorArgs = {}) {
+  return newActionFactory<clang::tooling::FrontendActionFactory,
+                          clang::FrontendAction, ActionT, AdaptorT>(
+      std::move(ActionArgs), std::move(AdaptorArgs));
 }
 }
-#endif//TSAR_ACTION_H
+#endif//TSAR_CLANG_ACTION_H

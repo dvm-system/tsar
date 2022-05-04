@@ -173,17 +173,21 @@ private:
 };
 }
 
-bool MainAction::BeginSourceFileAction(CompilerInstance &CI) {
+bool ClangMainAction::BeginSourceFileAction(CompilerInstance &CI) {
   TimePassesIsEnabled = CI.getCodeGenOpts().TimePasses;
-  return mQueryManager.beginSourceFile(CI, getCurrentFile());
+  return mQueryManager.beginSourceFile(CI.getDiagnostics(), getCurrentFile(),
+                                       CI.getFrontendOpts().OutputFile,
+                                       CI.getFileSystemOpts().WorkingDir);
 }
 
-void MainAction::EndSourceFileAction() {
-  mQueryManager.endSourceFile();
+bool ClangMainAction::shouldEraseOutputFiles() {
+  mQueryManager.endSourceFile(
+      getCompilerInstance().getDiagnostics().hasErrorOccurred());
+  return clang::ASTFrontendAction::shouldEraseOutputFiles();
 }
 
-std::unique_ptr<ASTConsumer> MainAction::CreateASTConsumer(CompilerInstance &CI,
-                                                           StringRef InFile) {
+std::unique_ptr<ASTConsumer>
+ClangMainAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   return std::make_unique<AnalysisConsumer>(CI, InFile, mTfmInfo,
                                             mQueryManager);
 }

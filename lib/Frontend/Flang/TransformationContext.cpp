@@ -76,13 +76,12 @@ void FlangTransformationContext::initialize(
   assert(hasInstance() && "Transformation context is not configured!");
   NameHierarchyMapT NameHierarchy;
   collect(M, CU, NameHierarchy);
-  for (auto &Child : mContext.globalScope().children()) {
+  for (auto &Child : mContext->globalScope().children()) {
     NameHierarchyMapT::key_type Names;
     match(Child, Names, NameHierarchy, mGlobals);
   }
-  mRewriter =
-      std::make_unique<FlangRewriter>(mParsing.cooked(), mAllCookedSources);
-  //mParsing.cooked().CompileProvenanceRangeToOffsetMappings(mAllSources);
+  mRewriter = std::make_unique<FlangRewriter>(mParsing->cooked(),
+                                              mParsing->allCooked());
 }
 
 std::pair<std::string, bool> FlangTransformationContext::release(
@@ -104,13 +103,13 @@ std::pair<std::string, bool> FlangTransformationContext::release(
         I->second->write(File.getStream());
     }
     if (Error) {
-      auto Pos{*mParsing.cooked().GetCharBlock(I->second->getRange())};
+      auto Pos{*mParsing->cooked().GetCharBlock(I->second->getRange())};
       AllWritten = false;
       std::visit(
           [this, &Error, Pos](const auto &Args) {
             bcl::forward_as_args(
-                Args, [this, &Error, Pos](const auto &... Args) {
-                  toDiag(mContext, Pos, std::get<unsigned>(*Error), Args...);
+                Args, [this, &Error, Pos](const auto &...Args) {
+                  toDiag(*mContext, Pos, std::get<unsigned>(*Error), Args...);
                 });
           },
           std::get<AtomicallyMovedFile::ErrorArgsT>(*Error));
@@ -119,6 +118,6 @@ std::pair<std::string, bool> FlangTransformationContext::release(
         MainFile = Name;
     }
   }
-  mContext.messages().Emit(errs(), mAllCookedSources);
+  mContext->messages().Emit(errs(), mParsing->allCooked());
   return std::make_pair(std::move(MainFile), AllWritten);
-  }
+}

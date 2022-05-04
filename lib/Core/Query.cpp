@@ -36,10 +36,12 @@
 #include "tsar/Core/Query.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/OutputFile.h"
 #include "tsar/Support/PassBarrier.h"
 #include "tsar/Transform/AST/Passes.h"
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
+#include "tsar/Support/Clang/Utils.h"
 #include <clang/Frontend/CompilerInstance.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/Analysis/CFLAndersAliasAnalysis.h>
@@ -358,17 +360,29 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   Passes.run(*M);
 }
 
-bool EmitLLVMQueryManager::beginSourceFile(
-    CompilerInstance &CI, StringRef InFile) {
-  mOS = CI.createDefaultOutputFile(false, InFile, "ll");
-  mCodeGenOpts = &CI.getCodeGenOpts();
-  return mOS && mCodeGenOpts;
+bool EmitLLVMQueryManager::beginSourceFile(clang::DiagnosticsEngine &Diags,
+                                           StringRef InputFile,
+                                           StringRef OutputFile,
+                                           StringRef WorkingDir) {
+  mDiags = &Diags;
+  mWorkingDir = WorkingDir.str();
+  mOutputFile = std::move(createDefaultOutputFile(Diags, OutputFile, false,
+                                                  InputFile, "ll", true, true));
+  return mOutputFile.hasValue();
+}
+
+void EmitLLVMQueryManager::endSourceFile(bool HasErrorOccurred) {
+  auto E{mOutputFile->clear(mWorkingDir, HasErrorOccurred)};
+  if (E && !HasErrorOccurred && mOutputFile->useTemporary())
+    mDiags->Report(diag::err_unable_to_rename_temp)
+        << mOutputFile->getTemporary().TmpName << mOutputFile->getFilename()
+        << std::move(E);
 }
 
 void EmitLLVMQueryManager::run(llvm::Module *M, TransformationInfo *) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
-  Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
+  Passes.add(createPrintModulePass(mOutputFile->getStream(), ""));
   Passes.run(*M);
 }
 
@@ -390,7 +404,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M,
   Passes.add(createGlobalsAccessStorage());
   Passes.add(createGlobalsAccessCollector());
   Passes.add(createInstrumentationPass(mInstrEntry, mInstrStart));
-  Passes.add(createPrintModulePass(*mOS, "", mCodeGenOpts->EmitLLVMUseLists));
+  Passes.add(createPrintModulePass(mOutputFile->getStream(), ""));
   Passes.run(*M);
 }
 
