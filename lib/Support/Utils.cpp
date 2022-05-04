@@ -25,8 +25,12 @@
 #include "tsar/Support/Utils.h"
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/MetadataUtils.h"
+#include "tsar/Support/OutputFile.h"
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/DIBuilder.h>
+#include <llvm/Support/Errc.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/raw_ostream.h>
 #include <regex>
 
 using namespace llvm;
@@ -126,5 +130,137 @@ llvm::DIType *createStubType(llvm::Module &M, unsigned int AS,
   auto PtrSize = M.getDataLayout().getPointerSizeInBits(AS);
   return DIB.createArtificialType(
       DIB.createPointerType(DIBasicTy, PtrSize, 0, None, "sapfor.type"));
+}
+
+Expected<OutputFile>
+OutputFile::create(StringRef OutputPath, bool Binary,
+                 bool RemoveFileOnSignal, bool UseTemporary,
+                 bool CreateMissingDirectories) {
+  assert((!CreateMissingDirectories || UseTemporary) &&
+         "CreateMissingDirectories is only allowed when using temporary files");
+
+  std::unique_ptr<llvm::raw_fd_ostream> OS;
+  Optional<StringRef> OSFile;
+
+  if (UseTemporary) {
+    if (OutputPath == "-")
+      UseTemporary = false;
+    else {
+      llvm::sys::fs::file_status Status;
+      llvm::sys::fs::status(OutputPath, Status);
+      if (llvm::sys::fs::exists(Status)) {
+        // Fail early if we can't write to the final destination.
+        if (!llvm::sys::fs::can_write(OutputPath))
+          return llvm::errorCodeToError(
+              make_error_code(llvm::errc::operation_not_permitted));
+
+        // Don't use a temporary if the output is a special file. This handles
+        // things like '-o /dev/null'
+        if (!llvm::sys::fs::is_regular_file(Status))
+          UseTemporary = false;
+      }
+    }
+  }
+  Optional<llvm::sys::fs::TempFile> Temp;
+  if (UseTemporary) {
+    // Create a temporary file.
+    // Insert -%%%%%%%% before the extension (if any), and because some tools
+    // (noticeable, clang's own GlobalModuleIndex.cpp) glob for build
+    // artifacts, also append .tmp.
+    StringRef OutputExtension = llvm::sys::path::extension(OutputPath);
+    SmallString<128> TempPath =
+        StringRef(OutputPath).drop_back(OutputExtension.size());
+    TempPath += "-%%%%%%%%";
+    TempPath += OutputExtension;
+    TempPath += ".tmp";
+    Expected<llvm::sys::fs::TempFile> ExpectedFile =
+        llvm::sys::fs::TempFile::create(
+            TempPath, llvm::sys::fs::all_read | llvm::sys::fs::all_write,
+            Binary ? llvm::sys::fs::OF_None : llvm::sys::fs::OF_Text);
+
+    llvm::Error E = handleErrors(
+        ExpectedFile.takeError(), [&](const llvm::ECError &E) -> llvm::Error {
+          std::error_code EC = E.convertToErrorCode();
+          if (CreateMissingDirectories &&
+              EC == llvm::errc::no_such_file_or_directory) {
+            StringRef Parent = llvm::sys::path::parent_path(OutputPath);
+            EC = llvm::sys::fs::create_directories(Parent);
+            if (!EC) {
+              ExpectedFile = llvm::sys::fs::TempFile::create(TempPath);
+              if (!ExpectedFile)
+                return llvm::errorCodeToError(
+                    llvm::errc::no_such_file_or_directory);
+            }
+          }
+          return llvm::errorCodeToError(EC);
+        });
+
+    if (E) {
+      consumeError(std::move(E));
+    } else {
+      Temp = std::move(ExpectedFile.get());
+      OS.reset(new llvm::raw_fd_ostream(Temp->FD, /*shouldClose=*/false));
+      OSFile = Temp->TmpName;
+    }
+    // If we failed to create the temporary, fallback to writing to the file
+    // directly. This handles the corner case where we cannot write to the
+    // directory, but can write to the file.
+  }
+
+  if (!OS) {
+    OSFile = OutputPath;
+    std::error_code EC;
+    OS.reset(new llvm::raw_fd_ostream(
+        *OSFile, EC,
+        (Binary ? llvm::sys::fs::OF_None : llvm::sys::fs::OF_TextWithCRLF)));
+    if (EC)
+      return llvm::errorCodeToError(EC);
+  }
+
+  // Don't try to remove "-", since this means we are using stdin.
+  if (!Binary || OS->supportsSeeking())
+    return OutputFile{(OutputPath != "-") ? OutputPath : "",
+                      Binary,
+                      RemoveFileOnSignal,
+                      CreateMissingDirectories,
+                      std::move(OS),
+                      std::move(Temp)};
+
+  return OutputFile{
+      (OutputPath != "-") ? OutputPath : "",
+      Binary,
+      RemoveFileOnSignal,
+      CreateMissingDirectories,
+      std::make_unique<llvm::buffer_unique_ostream>(std::move(OS)),
+      std::move(Temp)};
+}
+
+llvm::Error OutputFile::clear(StringRef WorkingDir, bool EraseFile) {
+  assert(isValid() && "The file has been already cleared!");
+  mOS.reset();
+  // Ignore errors that occur when trying to discard the temp file.
+  if (EraseFile) {
+    if (mTemp)
+      consumeError(mTemp->discard());
+    if (!mFilename.empty())
+      llvm::sys::fs::remove(mFilename);
+    return Error::success();
+  }
+  if (!mTemp)
+    return Error::success();
+  if (mTemp->TmpName.empty()) {
+    consumeError(mTemp->discard());
+    return Error::success();
+  }
+  SmallString<128> NewOutFile{mFilename};
+  if (!WorkingDir.empty() && !llvm::sys::path::is_absolute(mFilename)) {
+    NewOutFile = WorkingDir;
+    llvm::sys::path::append(NewOutFile, mFilename);
+  }
+  llvm::Error E = mTemp->keep(NewOutFile);
+  if (!E)
+    return Error::success();
+  llvm::sys::fs::remove(mTemp->TmpName);
+  return std::move(E);
 }
 }

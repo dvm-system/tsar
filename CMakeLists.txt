@@ -151,7 +151,7 @@ else()
   message(STATUS ${LLVM_STATUS})
   set(LLVM_PROJECTS clang)
   if (BUILD_FLANG)
-    set(LLVM_PROJECTS ${LLVM_PROJECTS} flang)
+    set(LLVM_PROJECTS ${LLVM_PROJECTS} flang mlir)
   endif()
   if (BUILD_PROFILE)
     set(LLVM_PROJECTS ${LLVM_PROJECTS} compiler-rt)
@@ -226,7 +226,20 @@ set(CLANG_LIBS
 
 if(FLANG_FOUND)
   set(FLANG_LIBS
-    FortranSemantics FortranEvaluate FortranParser FortranDecimal FortranCommon)
+    flangFrontend FortranLower FortranSemantics FortranEvaluate FortranParser
+    FortranDecimal FortranCommon FIRCodeGen FIRTransforms FIRBuilder
+    FIRDialect FIRSupport MLIROpenMPToLLVM MLIROpenMPToLLVMIRTranslation
+    MLIRLLVMToLLVMIRTranslation MLIROpenACC MLIROpenMP MLIRSCFToControlFlow
+    MLIRFuncToLLVM MLIRArithmeticToLLVM MLIRControlFlowToLLVM
+    MLIRTargetLLVMIRExport MLIRDLTI MLIRLLVMIRTransforms MLIRMemRefToLLVM
+    MLIRParser MLIRSCF MLIRBufferization MLIRAffine MLIRVector MLIRMemRef
+    MLIRVectorInterfaces MLIRLLVMCommonConversion MLIRTransforms MLIRLLVMIR
+    MLIRFunc MLIRControlFlow MLIRTensor MLIRArithmeticUtils MLIRComplex
+    MLIRArithmetic MLIRDialectUtils MLIRTransformUtils MLIRRewrite
+    MLIRPDLToPDLInterp MLIRPDLInterp MLIRPDL MLIRPass MLIRAnalysis
+    MLIRCallInterfaces MLIRControlFlowInterfaces MLIRInferTypeOpInterface
+    MLIRSideEffectInterfaces MLIRDataLayoutInterfaces MLIRViewLikeInterface
+    MLIRIR MLIRSupport)
   include(TestBigEndian)
   test_big_endian(IS_BIGENDIAN)
   if (IS_BIGENDIAN)

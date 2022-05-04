@@ -42,9 +42,9 @@
 #include <clang/Tooling/CompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #ifdef FLANG_FOUND
+# include "tsar/Frontend/Flang/Action.h"
+# include "tsar/Frontend/Flang/Tooling.h"
 # include "tsar/Frontend/Flang/TransformationContext.h"
-# include <flang/Parser/parsing.h>
-# include <flang/Semantics/semantics.h>
 #endif
 #include <vector>
 
@@ -151,7 +151,7 @@ struct ActionHelper<TransformationContextBase::TC_Clang> {
         [this, &Compilations, &Path](bcl::IntrusiveConnection C) {
           tooling::ClangTool CTool(Compilations, makeArrayRef(Path.str()));
           SourceQueryManager SQM{&C};
-          CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
+          CTool.run(newClangActionFactory<ClangMainAction, GenPCHPragmaAction>(
                         std::forward_as_tuple(Compilations,
                                               static_cast<QueryManager &>(SQM)))
                         .get());
@@ -166,60 +166,33 @@ private:
 #ifdef FLANG_FOUND
 template<>
 struct ActionHelper<TransformationContextBase::TC_Flang> {
-  Fortran::common::IntrinsicTypeDefaultKinds DefaultKinds;
+  ~ActionHelper() {
+    for (auto &S : mSockets)
+      S->release();
+  }
 
   IntrusiveRefCntPtr<TransformationContextBase> CreateTransformationContext(
-      const llvm::Module &M, const DICompileUnit &CU, StringRef IRSource,
-      StringRef Path, const tooling::CompilationDatabase &Compilations) {
-    Fortran::parser::Options Options;
-    Options.predefinitions.emplace_back("__F18", "1");
-    Options.predefinitions.emplace_back("__F18_MAJOR__", "1");
-    Options.predefinitions.emplace_back("__F18_MINOR__", "1");
-    Options.predefinitions.emplace_back("__F18_PATCHLEVEL__", "1");
-    Options.features.Enable(
-      Fortran::common::LanguageFeature::BackslashEscapes, true);
-    auto Extension = sys::path::extension(Path);
-    Options.isFixedForm =
-      (Extension == ".f" || Extension == ".F" || Extension == ".ff");
-    Options.searchDirectories.emplace_back("."s);
-    Options.needProvenanceRangeToCharBlockMappings = true;
-    IntrusiveRefCntPtr<TransformationContextBase> TfmCtx{
-        new FlangTransformationContext{Options, DefaultKinds}};
-    auto &Parsing{cast<FlangTransformationContext>(TfmCtx)->getParsing()};
-    Parsing.Prescan(std::string{Path},
-                    cast<FlangTransformationContext>(TfmCtx)->getOptions());
-    if (!Parsing.messages().empty() &&
-      Parsing.messages().AnyFatalError()) {
-      Parsing.messages().Emit(errs(), Parsing.allCooked());
-      errs() << IRSource << " could not scan " << Path << '\n';
-      return nullptr;
-    }
-    Parsing.Parse(outs());
-    Parsing.ClearLog();
-    Parsing.messages().Emit(errs(), Parsing.allCooked());
-    if (!Parsing.consumedWholeFile()) {
-      Parsing.EmitMessage(errs(), Parsing.finalRestingPlace(),
-        "parser FAIL (final position)");
-      return nullptr;
-    }
-    if (!Parsing.messages().empty() &&
-      Parsing.messages().AnyFatalError() || !Parsing.parseTree()) {
-      errs() << IRSource << " could not parse " << Path << '\n';
-      return nullptr;
-    }
-    auto &ParseTree{ *Parsing.parseTree() };
-    Fortran::semantics::Semantics Semantics{
-        cast<FlangTransformationContext>(TfmCtx)->getContext(), ParseTree,
-        false};
-    Semantics.Perform();
-    Semantics.EmitMessages(llvm::errs());
-    if (Semantics.AnyFatalError()) {
-      errs() << IRSource << " semantic errors in " << Path << '\n';
-      return nullptr;
-    }
-    cast<FlangTransformationContext>(TfmCtx)->initialize(M, CU);
-    return TfmCtx;
+      [[maybe_unused]] const llvm::Module &M,
+      [[maybe_unused]] const DICompileUnit &CU,
+      [[maybe_unused]] StringRef IRSource, StringRef Path,
+      const tooling::CompilationDatabase &Compilations) {
+    mSockets.push_back(std::make_unique<ASTSocket>());
+    bcl::IntrusiveConnection::connect(
+        mSockets.back().get(), ASTSocket::Delimiter,
+        [this, &Compilations, &Path](bcl::IntrusiveConnection C) {
+          FlangTool FortranTool(Compilations, makeArrayRef(Path.str()));
+          SourceQueryManager SQM{&C};
+          FortranTool.run(
+              newFlangActionFactory<FlangMainAction>(
+                  std::forward_as_tuple(Compilations,
+                                        static_cast<QueryManager &>(SQM)))
+                  .get());
+        });
+    return mSockets.back()->getContext();
   }
+
+private:
+  std::vector<std::unique_ptr<ASTSocket>> mSockets;
 };
 #endif
 }

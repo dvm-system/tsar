@@ -39,41 +39,58 @@ class DICompileUnit;
 namespace tsar {
 class FlangTransformationContext : public TransformationContextBase {
   using MangledToSourceMapT = llvm::StringMap<Fortran::semantics::Symbol *>;
+
 public:
   static bool classof(const TransformationContextBase *Ctx) noexcept {
     return Ctx->getKind() == TC_Flang;
   }
 
-  FlangTransformationContext(const Fortran::parser::Options &Opts,
-      const Fortran::common::IntrinsicTypeDefaultKinds &DefaultKinds)
-    : TransformationContextBase(TC_Flang)
-    , mOptions(Opts)
-    , mContext(DefaultKinds, Opts.features, mAllCookedSources) {}
-
-  void initialize(const llvm::Module &M, const llvm::DICompileUnit &CU);
+  FlangTransformationContext(Fortran::parser::Parsing &Parsing,
+                             Fortran::parser::Options &Options,
+                             Fortran::semantics::SemanticsContext &Context,
+                             const llvm::Module &M,
+                             const llvm::DICompileUnit &CU)
+      : TransformationContextBase(TC_Flang), mParsing(&Parsing),
+        mOptions(&Options), mContext(&Context) {
+    initialize(M, CU);
+  }
 
   bool hasInstance() const override {
     auto *This{const_cast<FlangTransformationContext *>(this)};
-    return This->mParsing.parseTree().has_value() &&
-           !This->mParsing.messages().AnyFatalError() &&
-           !This->mContext.AnyFatalError() &&
-           mRewriter;
+    return This->mParsing && This->mParsing->parseTree().has_value() &&
+           !This->mParsing->messages().AnyFatalError() && This->mOptions &&
+           This->mContext && !This->mContext->AnyFatalError();
   }
 
   bool hasModification() const override {
     return hasInstance() && mRewriter->hasModification();
   }
 
-  std::pair<std::string, bool> release(
-      const FilenameAdjuster &FA = getDumpFilenameAdjuster()) override;
+  std::pair<std::string, bool>
+  release(const FilenameAdjuster &FA = getDumpFilenameAdjuster()) override;
 
-  auto &getParsing() noexcept { return mParsing; }
-  const auto &getParsing() const noexcept { return mParsing; }
+  auto &getParsing() noexcept {
+    assert(hasInstance() && "Transformation context must be configured!");
+    return *mParsing;
+  }
+  const auto &getParsing() const noexcept {
+    assert(hasInstance() && "Transformation context must be configured!");
+    return *mParsing;
+  }
 
-  const auto &getOptions() const noexcept { return mOptions; }
+  const auto &getOptions() const noexcept {
+    assert(hasInstance() && "Transformation context must be configured!");
+    return *mOptions;
+  }
 
-  auto &getContext() noexcept { return mContext; }
-  const auto &getContext() const noexcept { return mContext; }
+  auto &getContext() noexcept {
+    assert(hasInstance() && "Transformation context must be configured!");
+    return *mContext;
+  }
+  const auto &getContext() const noexcept {
+    assert(hasInstance() && "Transformation context must be configured!");
+    return *mContext;
+  }
 
   auto &getRewriter() {
     assert(hasInstance() && "Transformation context is not configured!");
@@ -95,14 +112,13 @@ public:
   }
 
 private:
-  Fortran::parser::AllSources mAllSources;
-  Fortran::parser::Options mOptions;
-  Fortran::parser::AllCookedSources mAllCookedSources{mAllSources};
-  Fortran::parser::Parsing mParsing{mAllCookedSources};
-  Fortran::semantics::SemanticsContext mContext;
+  void initialize(const llvm::Module &M, const llvm::DICompileUnit &CU);
+
+  Fortran::parser::Parsing *mParsing{nullptr};
+  Fortran::parser::Options *mOptions{nullptr};
+  Fortran::semantics::SemanticsContext *mContext{nullptr};
   MangledToSourceMapT mGlobals;
   std::unique_ptr<FlangRewriter> mRewriter{nullptr};
 };
 }
-
 #endif//TSAR_FLANG_TRANSFORMATION_CONTEXT_H

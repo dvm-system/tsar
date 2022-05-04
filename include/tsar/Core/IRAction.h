@@ -24,6 +24,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef TSAR_IR_ACTION_H
+#define TSAR_IR_ACTION_H
+
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
 #include <string>
@@ -42,3 +45,4 @@ int executeIRAction(
     QueryManager &QM,
     const clang::tooling::CompilationDatabase *Compilations = nullptr);
 }
+#endif//TSAR_IR_ACTION_H

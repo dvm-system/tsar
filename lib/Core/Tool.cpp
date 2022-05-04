@@ -36,6 +36,11 @@
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
+#ifdef FLANG_FOUND
+# include "tsar/Frontend/Flang/Action.h"
+# include "tsar/Frontend/Flang/Tooling.h"
+# include <flang/Frontend/FrontendOptions.h>
+#endif
 #include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/Path.h>
@@ -668,27 +673,52 @@ void Tool::storeCLOptions() {
 }
 
 int Tool::run(QueryManager *QM) {
-  std::vector<std::string> NoASTSources;
-  std::vector<std::string> SourcesToMerge;
+  std::vector<std::string> NoASTCSources;
+  std::vector<std::string> CSourcesToMerge;
   std::vector<std::string> LLSources;
-  std::vector<std::string> NoLLSources;
-  bool IsLLVMSources = false;
+  std::vector<std::string> CSources;
+  [[maybe_unused]] std::vector<std::string> FortranSources;
   for (auto &Src : mSources) {
-    auto InputKind = FrontendOptions::getInputKindForExtension(
-        sys::path::extension(Src).substr(1)); // ignore first . in extension
-    if (mLanguage != "ast" && InputKind.getLanguage() == Language::LLVM_IR)
+    auto Extension{
+        sys::path::extension(Src).substr(1)}; // ignore first . in extension
+    auto InputKind{FrontendOptions::getInputKindForExtension(Extension)};
+    if (!mLanguage.empty()) {
+      if (mLanguage == "ast") {
+        CSources.push_back(Src);
+        CSourcesToMerge.push_back(Src);
+      } else if (mLanguage == "llvm") {
+        LLSources.push_back(Src);
+      } else if (mLanguage == "c" || mLanguage == "cxx" || mLanguage == "c++") {
+        CSources.push_back(Src);
+        NoASTCSources.push_back(Src);
+      } else if (mLanguage == "fortran") {
+        FortranSources.push_back(Src);
+      }
+    } else if (InputKind.getLanguage() == clang::Language::C ||
+               InputKind.getLanguage() == clang::Language::CXX) {
+      CSources.push_back(Src);
+      if (InputKind.getFormat() == InputKind::Precompiled)
+        CSourcesToMerge.push_back(Src);
+      else
+        NoASTCSources.push_back(Src);
+    } else if (InputKind.getLanguage() == clang::Language::LLVM_IR) {
       LLSources.push_back(Src);
-    else
-      NoLLSources.push_back(Src);
-    if (mLanguage != "ast" && InputKind.getFormat() != InputKind::Precompiled)
-      NoASTSources.push_back(Src);
-    else
-      SourcesToMerge.push_back(Src);
+    } else {
+#ifdef FLANG_FOUND
+      auto FortranKind{
+          Fortran::frontend::FrontendOptions::getInputKindForExtension(
+              Extension)};
+      if (FortranKind.getLanguage() == Fortran::frontend::Language::Fortran)
+        FortranSources.push_back(Src);
+      else
+#endif
+        errs() << "Skipping " << Src << ". Language is not recognized.\n";
+    }
   }
   // Evaluation of Clang AST files by this tool leads an error,
   // so these sources should be excluded.
-  ClangTool EmitPCHTool(*mCompilations, NoASTSources);
-  auto ArgumentsAdjuster = [&SourcesToMerge, this](
+  ClangTool EmitPCHTool(*mCompilations, NoASTCSources);
+  auto ArgumentsAdjuster = [&CSourcesToMerge, this](
     const CommandLineArguments &CL, StringRef Filename) {
     CommandLineArguments Adjusted;
     for (std::size_t I = 0; I < CL.size(); ++I) {
@@ -704,22 +734,22 @@ int Tool::run(QueryManager *QM) {
       SmallString<128> PCHFile = Filename;
       sys::path::replace_extension(PCHFile, ".ast");
       Adjusted.push_back(std::string(PCHFile));
-      SourcesToMerge.push_back(std::string(PCHFile));
+      CSourcesToMerge.push_back(std::string(PCHFile));
     } else {
       Adjusted.push_back(mOutputFilename);
-      SourcesToMerge.push_back(mOutputFilename);
+      CSourcesToMerge.push_back(mOutputFilename);
     }
     return Adjusted;
   };
   EmitPCHTool.appendArgumentsAdjuster(ArgumentsAdjuster);
   if (mEmitAST) {
-    if (!mOutputFilename.empty() && NoASTSources.size() > 1) {
+    if (!mOutputFilename.empty() && NoASTCSources.size() > 1) {
       errs() << "WARNING: The -o (output filename) option is ignored when "
                 "generating multiple output files.\n";
       mOutputFilename.clear();
     }
     return EmitPCHTool.run(
-        newActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
+        newClangActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!mOutputFilename.empty())
     errs() << "WARNING: The -o (output filename) option is ignored when "
@@ -728,12 +758,12 @@ int Tool::run(QueryManager *QM) {
   // for EmitPCHTool will be invoked.
   mOutputFilename.clear();
   // Emit Clang AST files for source inputs if inputs should be merged before
-  // analysis. AST files will be stored in SourcesToMerge collection.
+  // analysis. AST files will be stored in CSourcesToMerge collection.
   // If an input file already contains Clang AST it will be pushed into
-  // the SourcesToMerge collection only.
+  // the CSourcesToMerge collection only.
   if (mMergeAST) {
     EmitPCHTool.run(
-        newActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
+        newClangActionFactory<GeneratePCHAction, GenPCHPragmaAction>().get());
   }
   if (!QM) {
     if (mEmitLLVM)
@@ -750,42 +780,53 @@ int Tool::run(QueryManager *QM) {
   }
   auto ImportInfoStorage = QM->initializeImportInfo();
   if (mMergeAST) {
-    ClangTool CTool(*mCompilations, SourcesToMerge.back());
-    SourcesToMerge.pop_back();
+    ClangTool CTool(*mCompilations, CSourcesToMerge.back());
+    CSourcesToMerge.pop_back();
     if (mDumpAST)
       return CTool.run(
-          newActionFactory<tsar::ASTDumpAction, tsar::ASTMergeAction>(
-              std::forward_as_tuple(), std::forward_as_tuple(SourcesToMerge))
+          newClangActionFactory<tsar::ASTDumpAction, tsar::ASTMergeAction>(
+              std::forward_as_tuple(), std::forward_as_tuple(CSourcesToMerge))
               .get());
     if (mPrintAST)
       return CTool.run(
-          newActionFactory<tsar::ASTPrintAction, tsar::ASTMergeAction>(
-              std::forward_as_tuple(), std::forward_as_tuple(SourcesToMerge))
+          newClangActionFactory<tsar::ASTPrintAction, tsar::ASTMergeAction>(
+              std::forward_as_tuple(), std::forward_as_tuple(CSourcesToMerge))
               .get());
     if (!ImportInfoStorage)
-      return CTool.run(newActionFactory<MainAction, tsar::ASTMergeAction>(
-                           std::forward_as_tuple(*mCompilations, *QM),
-                           std::forward_as_tuple(SourcesToMerge))
-                           .get());
+      return CTool.run(
+          newClangActionFactory<ClangMainAction, tsar::ASTMergeAction>(
+              std::forward_as_tuple(*mCompilations, *QM),
+              std::forward_as_tuple(CSourcesToMerge))
+              .get());
     return CTool.run(
-        newActionFactory<MainAction, ASTMergeActionWithInfo>(
+        newClangActionFactory<ClangMainAction, ASTMergeActionWithInfo>(
             std::forward_as_tuple(*mCompilations, *QM),
-            std::forward_as_tuple(SourcesToMerge, ImportInfoStorage))
+            std::forward_as_tuple(CSourcesToMerge, ImportInfoStorage))
             .get());
   }
-  ClangTool CTool(*mCompilations, NoLLSources);
+  ClangTool CTool(*mCompilations, CSources);
   if (mDumpAST)
     return CTool.run(
-        newActionFactory<tsar::ASTDumpAction, tsar::GenPCHPragmaAction>()
+        newClangActionFactory<tsar::ASTDumpAction, tsar::GenPCHPragmaAction>()
             .get());
   if (mPrintAST)
     return CTool.run(
-        newActionFactory<tsar::ASTPrintAction, tsar::GenPCHPragmaAction>()
+        newClangActionFactory<tsar::ASTPrintAction, tsar::GenPCHPragmaAction>()
             .get());
-  auto CRes{CTool.run(newActionFactory<MainAction, GenPCHPragmaAction>(
-                          std::forward_as_tuple(*mCompilations, *QM))
-                          .get())};
+  auto CRes{
+      CTool.run(newClangActionFactory<ClangMainAction, GenPCHPragmaAction>(
+                    std::forward_as_tuple(*mCompilations, *QM))
+                    .get())};
+  int FortranRes{0};
+#ifdef FLANG_FOUND
+  FlangTool FortranTool(*mCompilations, FortranSources);
+  FortranRes = FortranTool.run(newFlangActionFactory<FlangMainAction>(
+                                   std::forward_as_tuple(*mCompilations, *QM))
+                                   .get());
+#endif
   auto LLRes{executeIRAction(mToolName, LLSources, *QM,
                              mLoadSources ? mCompilations.get() : nullptr)};
-  return (CRes != 0 && LLRes != 0) ? (CRes > 1 || LLRes > 1) ? 2 : 1 : 0;
+  return (CRes != 0 || FortranRes != 0 || LLRes != 0)
+             ? (CRes > 1 || FortranRes > 1 || LLRes > 1) ? 2 : 1
+             : 0;
 }

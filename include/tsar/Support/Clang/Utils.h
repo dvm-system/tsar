@@ -41,6 +41,7 @@ template <typename PtrType> class SmallPtrSetImpl;
 
 namespace clang {
 class CFG;
+class DiagnosticEngine;
 class CFGBlock;
 class FunctionDecl;
 class LangOptions;
@@ -49,6 +50,8 @@ class SourceManager;
 }
 
 namespace tsar {
+class OutputFile;
+
 /// Returns kind of Clang token for a specified clause expression
 // or tok::unknown.
 clang::tok::TokenKind getTokenKind(ClauseExpr EK) noexcept;
@@ -304,5 +307,16 @@ inline bool isSubRange(const clang::SourceManager &SM,
 /// SmallVector and a StringRef to the SmallVector's data is returned.
 llvm::StringRef getFunctionName(clang::FunctionDecl &FD,
     llvm::SmallVectorImpl<char> &Name);
+
+/// Create a new output file.
+///
+/// Emit diagnostic on error and return nullptr.
+/// This function is copied from clang::CompilerInstance.
+llvm::Optional<OutputFile> createDefaultOutputFile(
+    clang::DiagnosticsEngine &Diags, llvm::StringRef OutputPath = "",
+    bool Binary = true, llvm::StringRef BaseInput = "",
+    llvm::StringRef Extension = "", bool RemoveFileOnSignal = true,
+    bool UseTemporary = true,
+    bool CreateMissingDirectories = false);
 }
 #endif//TSAR_CLANG_UTILS_H
