@@ -115,14 +115,14 @@ public:
                       << "\n");
     if (auto CE = dyn_cast<CallExpr>(S)) {
       if (!CE->getDirectCallee()) {
-        StashParent [[maybe_unused]] Stash{CE->getCallee(), mParents};
+        [[maybe_unused]] StashParent Stash{CE->getCallee(), mParents};
         // We match expression which computes callee before this call.
         if (!TraverseStmt(CE->getCallee()))
           return false;
       }
       VisitItem(DynTypedNode::create(*S), S->getBeginLoc());
       for (auto Arg : CE->arguments()) {
-        StashParent [[maybe_unused]] Stash{Arg, mParents};
+        [[maybe_unused]] StashParent Stash{Arg, mParents};
         if (!TraverseStmt(Arg))
           return false;
       }
@@ -135,7 +135,7 @@ public:
       if (auto *T{
               dyn_cast<VariableArrayType>(U->getArgumentType().getTypePtr())}) {
         for (auto *C : U->children()) {
-          StashParent [[maybe_unused]] Stash{C, mParents};
+          [[maybe_unused]] StashParent Stash{C, mParents};
           if (!TraverseStmt(C))
             return false;
         }
@@ -166,7 +166,7 @@ public:
       // For `++ <expr>` we match `++` with store and `<expr>` with load.
       VisitItem(DynTypedNode::create(*UO->getSubExpr()), UO->getOperatorLoc());
       VisitItem(DynTypedNode::create(*S), UO->getOperatorLoc());
-      StashParent [[maybe_unused]] Stash{UO->getSubExpr(), mParents};
+      [[maybe_unused]] StashParent Stash{UO->getSubExpr(), mParents};
       return TraverseStmt(UO->getSubExpr());
     }
     if (auto DRE{dyn_cast<DeclRefExpr>(S)}) {
@@ -193,7 +193,7 @@ public:
     } else if (auto *ME = dyn_cast<MemberExpr>(S)) {
       VisitItem(DynTypedNode::create(*S), ME->getMemberLoc());
     }
-    StashParent [[maybe_unused]] Stash{S, mParents};
+    [[maybe_unused]] StashParent Stash{S, mParents};
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
